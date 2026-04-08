@@ -1,0 +1,26 @@
+export const layoutText = {
+  ko: {
+    checking: "확인 중...",
+    logout: "로그아웃",
+    sales: "매출",
+    inventory: "재고",
+    attendance: "근태",
+    preparing: "준비중",
+    loginRequired: "로그인 후 접근 가능",
+    logoutDone: "로그아웃 완료",
+    mypage: "마이페이지",
+    loggedInSuffix: "님 로그인 중",
+  },
+  vi: {
+    checking: "Đang kiểm tra...",
+    logout: "Đăng xuất",
+    sales: "Doanh thu",
+    inventory: "Tồn kho",
+    attendance: "Chấm công",
+    preparing: "Đang chuẩn bị",
+    loginRequired: "Vui lòng đăng nhập trước",
+    logoutDone: "Đăng xuất thành công",
+    mypage: "Trang cá nhân",
+    loggedInSuffix: "đang đăng nhập",
+  },
+} as const;
