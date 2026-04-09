@@ -25,7 +25,7 @@ export default function MyPage() {
 
   const t = mypageText[lang];
 
-  const formatDate = (value: string | null) => {
+  const formatDate = (value?: string | null) => {
     if (!value) return "-";
     return value;
   };
