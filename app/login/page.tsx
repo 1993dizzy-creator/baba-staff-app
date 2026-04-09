@@ -37,8 +37,6 @@ export default function LoginPage() {
         }
 
         localStorage.setItem("baba_user", JSON.stringify(data));
-        alert("Login successful");
-        setLoading(false);
         router.push("/inventory");
     };
 
