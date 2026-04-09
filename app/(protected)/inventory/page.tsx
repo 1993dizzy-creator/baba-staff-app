@@ -475,7 +475,7 @@ export default function InventoryPage() {
 
     const handleKeyDown = (
         e: React.KeyboardEvent,
-        nextRef: React.RefObject<HTMLInputElement | HTMLSelectElement | null>
+        nextRef?: React.RefObject<HTMLInputElement | HTMLSelectElement | null>
     ) => {
         if (e.key === "Enter") {
             e.preventDefault();
