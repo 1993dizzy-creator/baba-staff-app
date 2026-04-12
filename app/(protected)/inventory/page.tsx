@@ -107,6 +107,41 @@ export default function InventoryPage() {
     const categoryOptions =
         CATEGORY_OPTIONS_BY_PART[part as keyof typeof CATEGORY_OPTIONS_BY_PART] ?? [];
 
+    const customCategoryOptions = Array.from(
+        new Set(
+            inventoryList
+                .filter((item) => item.part === part)
+                .map((item) =>
+                    lang === "vi"
+                        ? item.category_vi || item.category || ""
+                        : item.category || item.category_vi || ""
+                )
+                .map((value) => value.trim())
+                .filter(Boolean)
+        )
+    );
+
+    const mergedCategoryOptions = [
+        ...categoryOptions.map((option) => ({
+            label: lang === "vi" ? option.vi : option.ko,
+            ko: option.ko,
+            vi: option.vi,
+        })),
+        ...customCategoryOptions
+            .filter(
+                (value) =>
+                    !categoryOptions.some((option) => {
+                        const label = lang === "vi" ? option.vi : option.ko;
+                        return label.trim().toLowerCase() === value.trim().toLowerCase();
+                    })
+            )
+            .map((value) => ({
+                label: value,
+                ko: lang === "ko" ? value : "",
+                vi: lang === "vi" ? value : "",
+            })),
+    ];
+
     const getDisplayItemName = (item: any) => {
         return lang === "vi"
             ? item.item_name_vi || item.item_name || "-"
@@ -950,8 +985,8 @@ export default function InventoryPage() {
                                     return;
                                 }
 
-                                const selected = categoryOptions.find(
-                                    (option) => (lang === "vi" ? option.vi : option.ko) === value
+                                const selected = mergedCategoryOptions.find(
+                                    (option) => option.label === value
                                 );
 
                                 setIsCustomCategory(false);
@@ -974,14 +1009,11 @@ export default function InventoryPage() {
                         >
                             <option value="">{t.categoryPlaceholder}</option>
 
-                            {categoryOptions.map((option) => {
-                                const label = lang === "vi" ? option.vi : option.ko;
-                                return (
-                                    <option key={`${part}-${option.ko}`} value={label}>
-                                        {label}
-                                    </option>
-                                );
-                            })}
+                            {mergedCategoryOptions.map((option) => (
+                                <option key={`${part}-${option.label}`} value={option.label}>
+                                    {option.label}
+                                </option>
+                            ))}
 
                             <option value="__custom__">
                                 {lang === "vi" ? "Nhập trực tiếp" : "직접 입력"}
@@ -1060,6 +1092,40 @@ export default function InventoryPage() {
                             ref={unitRef}
                             onKeyDown={(e) => handleKeyDown(e, quantityRef)}
                         />
+
+                        <div
+                            style={{
+                                display: "flex",
+                                gap: 8,
+                                flexWrap: "wrap",
+                                marginTop: -4,
+                            }}
+                        >
+                            {["Kg", "g", "L", "ml", lang === "vi" ? "chai" : "병"].map((u) => {
+                                const active = unit === u;
+
+                                return (
+                                    <button
+                                        key={u}
+                                        type="button"
+                                        onClick={() => setUnit(u)}
+                                        style={{
+                                            padding: "6px 10px",
+                                            borderRadius: 999,
+                                            border: active ? "1px solid #111827" : "1px solid #d1d5db",
+                                            background: active ? "#111827" : "#f9fafb",
+                                            color: active ? "#fff" : "#111827",
+                                            fontWeight: 700,
+                                            fontSize: 13,
+                                            whiteSpace: "nowrap",
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        {u}
+                                    </button>
+                                );
+                            })}
+                        </div>
 
                         <input
                             type="number"
