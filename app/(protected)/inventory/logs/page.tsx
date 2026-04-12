@@ -7,6 +7,7 @@ import { useLanguage } from "@/lib/language-context";
 import { inventoryLogsText } from "@/lib/text";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
+import { getUser } from "@/lib/supabase/auth";
 
 export default function InventoryLogsPage() {
     const [logs, setLogs] = useState<any[]>([]);
@@ -16,6 +17,7 @@ export default function InventoryLogsPage() {
     const [partFilter, setPartFilter] = useState("all");
     const [openLogId, setOpenLogId] = useState<number | null>(null);
     const [visibleCount, setVisibleCount] = useState(20);
+    const [selectedLogIds, setSelectedLogIds] = useState<number[]>([]);
 
     const fetchLogs = async () => {
         const { data, error } = await supabase
@@ -38,6 +40,9 @@ export default function InventoryLogsPage() {
     useEffect(() => {
         setVisibleCount(20);
     }, [search, filterType, partFilter, sortOrder]);
+
+    const currentUser = getUser();
+    const isMaster = currentUser?.role === "master";
 
     const { lang } = useLanguage();
     const t = inventoryLogsText[lang];
@@ -119,6 +124,34 @@ export default function InventoryLogsPage() {
         if (action === "create") return "seagreen";
         if (action === "delete") return "crimson";
         return "royalblue";
+    };
+
+    const handleDeleteSelectedLogs = async () => {
+        if (!isMaster) return;
+
+        if (selectedLogIds.length === 0) {
+            alert("삭제할 로그를 선택해 주세요.");
+            return;
+        }
+
+        const ok = confirm(`선택한 로그 ${selectedLogIds.length}개를 삭제할까요?`);
+        if (!ok) return;
+
+        const { error } = await supabase
+            .from("inventory_logs")
+            .delete()
+            .in("id", selectedLogIds);
+
+        if (error) {
+            console.error(error);
+            alert("로그 삭제에 실패했습니다.");
+            return;
+        }
+
+        alert("선택한 로그를 삭제했습니다.");
+        setSelectedLogIds([]);
+        setOpenLogId(null);
+        await fetchLogs();
     };
 
     return (
@@ -287,6 +320,72 @@ export default function InventoryLogsPage() {
                 </div>
             </div>
 
+            {isMaster && (
+                <div
+                    style={{
+                        ...ui.card,
+                        padding: 12,
+                        marginBottom: 16,
+                        display: "flex",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                    }}
+                >
+                    <button
+                        type="button"
+                        onClick={() => setSelectedLogIds(visibleLogs.map((log) => log.id))}
+                        style={{
+                            ...ui.subButton,
+                            width: "auto",
+                            padding: "8px 12px",
+                            fontWeight: 700,
+                        }}
+                    >
+                        전체선택
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => setSelectedLogIds([])}
+                        style={{
+                            ...ui.subButton,
+                            width: "auto",
+                            padding: "8px 12px",
+                            fontWeight: 700,
+                        }}
+                    >
+                        전체해제
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={handleDeleteSelectedLogs}
+                        style={{
+                            ...ui.subButton,
+                            width: "auto",
+                            padding: "8px 12px",
+                            fontWeight: 700,
+                            background: "crimson",
+                            color: "white",
+                            border: "1px solid crimson",
+                        }}
+                    >
+                        선택삭제
+                    </button>
+
+                    <span
+                        style={{
+                            ...ui.metaText,
+                            fontWeight: 700,
+                            marginLeft: "auto",
+                        }}
+                    >
+                        선택됨: {selectedLogIds.length}
+                    </span>
+                </div>
+            )}
+
             {/* 리스트 카드 */}
             <div
                 style={{
@@ -311,6 +410,37 @@ export default function InventoryLogsPage() {
                                 }}
                             >
                                 <div style={ui.cardRow}>
+
+                                    {isMaster && (
+                                        <div
+                                            onClick={(e) => e.stopPropagation()}
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                marginRight: 8,
+                                            }}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedLogIds.includes(log.id)}
+                                                onChange={(e) => {
+                                                    const checked = e.target.checked;
+
+                                                    setSelectedLogIds((prev) =>
+                                                        checked
+                                                            ? [...prev, log.id]
+                                                            : prev.filter((id) => id !== log.id)
+                                                    );
+                                                }}
+                                                style={{
+                                                    width: 16,
+                                                    height: 16,
+                                                    cursor: "pointer",
+                                                }}
+                                            />
+                                        </div>
+                                    )}
+
                                     {/* LEFT */}
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                         <div
