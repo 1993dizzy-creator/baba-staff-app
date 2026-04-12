@@ -1101,7 +1101,7 @@ export default function InventoryPage() {
                                 marginTop: -4,
                             }}
                         >
-                            {["Kg", "g", "L", "ml", lang === "vi" ? "chai" : "병"].map((u) => {
+                            {["Kg", "g", "L", "ml", lang === "vi" ? "Chai" : "병"].map((u) => {
                                 const active = unit === u;
 
                                 return (
