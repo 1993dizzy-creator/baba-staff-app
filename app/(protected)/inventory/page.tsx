@@ -333,18 +333,48 @@ export default function InventoryPage() {
         setEditingId(item.id);
         setOpenItemId(item.id);
         setItemName(lang === "vi" ? item.item_name_vi || "" : item.item_name || "");
-        setCategory(lang === "vi" ? item.category_vi || "" : item.category || "");;
-        setCategoryKo(item.category || "");
-        setCategoryVi(item.category_vi || "");
-        const currentCategory = lang === "vi" ? item.category_vi || "" : item.category || "";
-        const matched = categoryOptions.find(
-            (option) => (lang === "vi" ? option.vi : option.ko) === currentCategory
+        const nextPart = item.part || "";
+        const nextCategory = lang === "vi" ? item.category_vi || "" : item.category || "";
+        const nextCategoryOptions =
+            CATEGORY_OPTIONS_BY_PART[nextPart as keyof typeof CATEGORY_OPTIONS_BY_PART] ?? [];
+
+        const nextItemName =
+            lang === "vi"
+                ? item.item_name_vi || item.item_name || ""
+                : item.item_name || item.item_name_vi || "";
+
+        setIsFormOpen(true);
+        setEditingId(item.id);
+        setOpenItemId(item.id);
+        setPart(nextPart);
+        setItemName(nextItemName);
+        setCategory(nextCategory);
+        setCategoryKo(item.category || item.category_vi || "");
+        setCategoryVi(item.category_vi || item.category || "");
+
+        const matched = nextCategoryOptions.find(
+            (option) => (lang === "vi" ? option.vi : option.ko) === nextCategory
         );
-        setIsCustomCategory(!matched && !!currentCategory);
+        setIsCustomCategory(!matched && !!nextCategory);
+
         setQuantity(String(item.quantity));
         setUnit(item.unit);
         setNote(item.note || "");
-        setPart(item.part || "");
+        setPurchasePrice(
+            item.purchase_price !== null && item.purchase_price !== undefined
+                ? Number(item.purchase_price).toLocaleString()
+                : ""
+        );
+        setSupplier(item.supplier || "");
+        setCode(item.code || "");
+        setLowStockThreshold(String(item.low_stock_threshold ?? 1));
+
+        setTimeout(() => {
+            formRef.current?.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+            });
+        }, 0);
         setPurchasePrice(
             item.purchase_price !== null && item.purchase_price !== undefined
                 ? Number(item.purchase_price).toLocaleString()
@@ -615,11 +645,13 @@ export default function InventoryPage() {
     }, [partFilter]);
 
     useEffect(() => {
+        if (editingId) return;
+
         setCategory("");
         setCategoryKo("");
         setCategoryVi("");
         setIsCustomCategory(false);
-    }, [part]);
+    }, [part, editingId]);
 
     const lowStockCount = inventoryList.filter(
         (item) => Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
