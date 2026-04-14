@@ -54,6 +54,9 @@ export const inventoryText = {
         quickChangeFail: "빠른 수량 변경 실패",
         updatedAt: "업데이트",
         loadMore: "더 보기",
+        detail: "상세",
+        close: "닫기",
+        saveQuantity: "수량 저장",
     },
     vi: {
         deleteConfirm: "Bạn có muốn xóa dữ liệu tồn kho này không?",
@@ -110,5 +113,8 @@ export const inventoryText = {
         quickChangeFail: "Cập nhật nhanh số lượng thất bại",
         updatedAt: "Cập nhật",
         loadMore: "Xem thêm",
+        detail: "Chi tiết",
+        close: "Đóng",
+        saveQuantity: "Lưu số lượng",
     },
 } as const;

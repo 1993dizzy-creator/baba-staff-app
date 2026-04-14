@@ -140,7 +140,7 @@ function ProtectedLayoutContent({
           height: 64,
         }}
       >
-        {/* <Link
+        <Link
           href="/sales"
           style={{
             textAlign: "center",
@@ -155,9 +155,9 @@ function ProtectedLayoutContent({
           }}
         >
           {t.sales}
-        </Link> */}
+        </Link>
 
-        <div
+        {/* <div
           style={{
             textAlign: "center",
             color: "#bbb",
@@ -173,7 +173,7 @@ function ProtectedLayoutContent({
         >
           <span>{t.sales}</span>
           <span style={{ fontSize: 11, marginTop: 2 }}>{t.preparing}</span>
-        </div>
+        </div> */}
 
         <Link
           href="/inventory"

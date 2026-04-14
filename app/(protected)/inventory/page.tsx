@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase/client";
 import { useLanguage } from "@/lib/language-context";
@@ -58,16 +58,25 @@ const CATEGORY_OPTIONS_BY_PART = {
         { ko: "음료", vi: "Đồ uống" },
         { ko: "기타", vi: "Khác" },
     ],
-    etc: [
-        { ko: "기타", vi: "Khác" },
-    ],
+    etc: [{ ko: "기타", vi: "Khác" }],
 };
+
+const PART_VALUES = ["kitchen", "hall", "bar", "etc"] as const;
+type PartValue = (typeof PART_VALUES)[number];
 
 export default function InventoryPage() {
     const currentUser = getUser();
     const actorName = currentUser?.name || "";
     const actorUsername = currentUser?.username || "";
+
+    const defaultPart: PartValue =
+        PART_VALUES.includes(currentUser?.part as PartValue)
+            ? (currentUser?.part as PartValue)
+            : "kitchen";
+
     const { lang } = useLanguage();
+    const t = inventoryText[lang];
+
     const [itemName, setItemName] = useState("");
     const [quantity, setQuantity] = useState("");
     const [unit, setUnit] = useState("");
@@ -81,17 +90,19 @@ export default function InventoryPage() {
     const [supplier, setSupplier] = useState("");
     const [lowStockThreshold, setLowStockThreshold] = useState("");
     const [code, setCode] = useState("");
+
     const [inventoryList, setInventoryList] = useState<any[]>([]);
+    const [recentLogs, setRecentLogs] = useState<any[]>([]);
     const [editingId, setEditingId] = useState<number | null>(null);
+    const [openItemId, setOpenItemId] = useState<number | null>(null);
+    const [isFormOpen, setIsFormOpen] = useState(false);
+
     const [search, setSearch] = useState("");
-    const [partFilter, setPartFilter] = useState("all");
+    const [partFilter, setPartFilter] = useState<PartValue>(defaultPart);
     const [categoryFilter, setCategoryFilter] = useState("all");
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
-    const [recentLogs, setRecentLogs] = useState<any[]>([]);
-    const [openItemId, setOpenItemId] = useState<number | null>(null);
-    const [isFormOpen, setIsFormOpen] = useState(true);
-    const [visibleCount, setVisibleCount] = useState(20);
-    const categoryRef = useRef<HTMLInputElement>(null);
+    const [quantityDrafts, setQuantityDrafts] = useState<Record<number, string>>({});
+
     const itemNameRef = useRef<HTMLInputElement>(null);
     const supplierRef = useRef<HTMLInputElement>(null);
     const priceRef = useRef<HTMLInputElement>(null);
@@ -101,8 +112,6 @@ export default function InventoryPage() {
     const formRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
     const lowStockThresholdRef = useRef<HTMLInputElement>(null);
-
-    const t = inventoryText[lang];
 
     const categoryOptions =
         CATEGORY_OPTIONS_BY_PART[part as keyof typeof CATEGORY_OPTIONS_BY_PART] ?? [];
@@ -142,29 +151,25 @@ export default function InventoryPage() {
             })),
     ];
 
-    const getDisplayItemName = (item: any) => {
-        return lang === "vi"
+    const getDisplayItemName = (item: any) =>
+        lang === "vi"
             ? item.item_name_vi || item.item_name || "-"
             : item.item_name || item.item_name_vi || "-";
-    };
 
-    const getDisplayCategory = (item: any) => {
-        return lang === "vi"
+    const getDisplayCategory = (item: any) =>
+        lang === "vi"
             ? item.category_vi || item.category || "-"
             : item.category || item.category_vi || "-";
-    };
 
-    const getDisplayLogItemName = (log: any) => {
-        return lang === "vi"
+    const getDisplayLogItemName = (log: any) =>
+        lang === "vi"
             ? log.item_name_vi || log.item_name || "-"
             : log.item_name || log.item_name_vi || "-";
-    };
 
-    const getDisplayLogCategory = (log: any) => {
-        return lang === "vi"
+    const getDisplayLogCategory = (log: any) =>
+        lang === "vi"
             ? log.category_vi || log.category || "-"
             : log.category || log.category_vi || "-";
-    };
 
     const getPartLabel = (value: string) => {
         switch (value) {
@@ -180,22 +185,6 @@ export default function InventoryPage() {
                 return value || "-";
         }
     };
-
-    const categoryTabs = [
-        "all",
-        ...Array.from(
-            new Set(
-                inventoryList
-                    .filter((item) => partFilter === "all" || item.part === partFilter)
-                    .map((item) => getDisplayCategory(item))
-                    .filter((value) => value && value !== "-")
-            )
-        ),
-    ];
-
-    const lowStockItems = inventoryList.filter(
-        (item) => Number(item.quantity) <= Number(item.low_stock_threshold ?? 0)
-    );
 
     const fetchInventory = async () => {
         const { data, error } = await supabase
@@ -226,71 +215,48 @@ export default function InventoryPage() {
         setRecentLogs(data || []);
     };
 
-    const handleQuickChange = async (item: any, diff: number) => {
-        const currentQty = Number(item.quantity || 0);
-        const nextQty = currentQty + diff;
+    const formatNumber = (value: string) => {
+        const number = value.replace(/,/g, "");
+        if (!number) return "";
+        return Number(number).toLocaleString();
+    };
 
-        if (nextQty < 0) {
-            alert(t.quantityCannotBeNegative);
-            return;
-        }
+    const parsePrice = (value: string) => {
+        const raw = value.replace(/,/g, "");
+        return raw ? Number(raw) : null;
+    };
 
-        const { error: updateError } = await supabase
-            .from("inventory")
-            .update({
-                quantity: nextQty,
-                updated_at: new Date().toISOString(),
-                updated_by_name: actorName,
-                updated_by_username: actorUsername,
-            })
-            .eq("id", item.id);
+    const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
 
-        if (updateError) {
-            console.error(updateError);
-            alert(t.quickChangeFail);
-            return;
-        }
+    const parseDecimal = (value: string | number | null | undefined) => {
+        if (value === null || value === undefined || value === "") return 0;
+        const normalized = String(value).replace(/,/g, "").trim();
+        const num = Number(normalized);
+        return Number.isNaN(num) ? 0 : num;
+    };
 
-        const { error: logError } = await supabase.from("inventory_logs").insert([
-            {
-                item_id: item.id,
-                item_name: item.item_name,
-                item_name_vi: item.item_name_vi ?? null,
-                action: "update",
-                part: item.part,
-                category: item.category,
-                category_vi: item.category_vi ?? null,
-                prev_quantity: currentQty,
-                new_quantity: nextQty,
-                change_quantity: diff,
-                prev_purchase_price: item.purchase_price ?? null,
-                new_purchase_price: item.purchase_price ?? null,
-                prev_note: item.note ?? null,
-                new_note: item.note ?? null,
-                unit: item.unit,
-                code: item.code,
-                actor_name: actorName,
-                actor_username: actorUsername,
-            },
-        ]);
-
-        if (logError) {
-            console.error(logError);
-            alert(t.quickChangeFail);
-            return;
-        }
-
-        await fetchInventory();
-        await fetchRecentLogs();
+    const resetForm = () => {
+        setItemName("");
+        setQuantity("");
+        setUnit("");
+        setNote("");
+        setPart("");
+        setCategory("");
+        setPurchasePrice("");
+        setSupplier("");
+        setCode("");
+        setLowStockThreshold("");
+        setEditingId(null);
+        setIsCustomCategory(false);
+        setCategoryKo("");
+        setCategoryVi("");
     };
 
     const handleDelete = async (id: number) => {
         const ok = confirm(t.deleteConfirm);
-
         if (!ok) return;
 
         const targetItem = inventoryList.find((item) => item.id === id);
-
         if (!targetItem) {
             alert(t.deleteTargetNotFound);
             return;
@@ -301,18 +267,18 @@ export default function InventoryPage() {
             .delete()
             .eq("id", id)
             .select(`
-            id,
-            item_name,
-            item_name_vi,
-            part,
-            category,
-            category_vi,
-            quantity,
-            purchase_price,
-            note,
-            unit,
-            code
-        `);
+                id,
+                item_name,
+                item_name_vi,
+                part,
+                category,
+                category_vi,
+                quantity,
+                purchase_price,
+                note,
+                unit,
+                code
+            `);
 
         if (deleteError) {
             console.error(deleteError);
@@ -333,18 +299,14 @@ export default function InventoryPage() {
                 item_name: deletedItem.item_name,
                 item_name_vi: deletedItem.item_name_vi ?? null,
                 action: "delete",
-
                 part: deletedItem.part,
                 category: deletedItem.category,
                 category_vi: deletedItem.category_vi ?? null,
-
                 prev_quantity: deletedItem.quantity,
                 new_quantity: 0,
                 change_quantity: -Number(deletedItem.quantity),
-
                 prev_purchase_price: deletedItem.purchase_price ?? null,
                 new_purchase_price: null,
-
                 prev_note: deletedItem.note ?? null,
                 new_note: null,
                 unit: deletedItem.unit,
@@ -364,15 +326,10 @@ export default function InventoryPage() {
     };
 
     const handleEdit = (item: any) => {
-        setIsFormOpen(true);
-        setEditingId(item.id);
-        setOpenItemId(item.id);
-        setItemName(lang === "vi" ? item.item_name_vi || "" : item.item_name || "");
         const nextPart = item.part || "";
         const nextCategory = lang === "vi" ? item.category_vi || "" : item.category || "";
         const nextCategoryOptions =
             CATEGORY_OPTIONS_BY_PART[nextPart as keyof typeof CATEGORY_OPTIONS_BY_PART] ?? [];
-
         const nextItemName =
             lang === "vi"
                 ? item.item_name_vi || item.item_name || ""
@@ -392,8 +349,8 @@ export default function InventoryPage() {
         );
         setIsCustomCategory(!matched && !!nextCategory);
 
-        setQuantity(String(item.quantity));
-        setUnit(item.unit);
+        setQuantity(String(item.quantity ?? ""));
+        setUnit(item.unit || "");
         setNote(item.note || "");
         setPurchasePrice(
             item.purchase_price !== null && item.purchase_price !== undefined
@@ -410,73 +367,17 @@ export default function InventoryPage() {
                 block: "start",
             });
         }, 0);
-        setPurchasePrice(
-            item.purchase_price !== null && item.purchase_price !== undefined
-                ? Number(item.purchase_price).toLocaleString()
-                : ""
-        );
-        setSupplier(item.supplier || "");
-        setCode(item.code || "");
-        setTimeout(() => {
-            formRef.current?.scrollIntoView({
-                behavior: "smooth",
-                block: "start",
-            });
-        }, 0);
-        setLowStockThreshold(String(item.low_stock_threshold ?? 1));
-    };
-
-    const formatNumber = (value: string) => {
-        const number = value.replace(/,/g, "");
-        if (!number) return "";
-        return Number(number).toLocaleString();
-    };
-
-    const parsePrice = (value: string) => {
-        const raw = value.replace(/,/g, "");
-        return raw ? Number(raw) : null;
-    };
-
-    const normalizeText = (value: string) => {
-        return value.replace(/\s+/g, " ").trim();
-    };
-
-    const parseDecimal = (value: string | number | null | undefined) => {
-        if (value === null || value === undefined || value === "") return 0;
-
-        const normalized = String(value).replace(/,/g, "").trim();
-        const num = Number(normalized);
-
-        return Number.isNaN(num) ? 0 : num;
-    };
-
-
-    const resetForm = () => {
-        setItemName("");
-        setQuantity("");
-        setUnit("");
-        setNote("");
-        setPart("");
-        setCategory("");
-        setPurchasePrice("");
-        setSupplier("");
-        setCode("");
-        setLowStockThreshold("");
-        setEditingId(null);
-        setIsCustomCategory(false);
-        setCategoryKo("");
-        setCategoryVi("");
     };
 
     const handleSubmit = async () => {
         const normalizedItemName = normalizeText(itemName);
-        const normalizedCategory = normalizeText(category);
         const normalizedCategoryKo = normalizeText(categoryKo || (lang === "ko" ? category : ""));
         const normalizedCategoryVi = normalizeText(categoryVi || (lang === "vi" ? category : ""));
         const normalizedSupplier = normalizeText(supplier);
         const normalizedUnit = normalizeText(unit);
         const normalizedNote = normalizeText(note);
         const normalizedCode = normalizeText(code);
+
         if (!normalizedItemName || !quantity || !normalizedUnit) {
             alert(t.requiredFields);
             return;
@@ -494,7 +395,7 @@ export default function InventoryPage() {
                         quantity: parseDecimal(quantity),
                         unit: normalizedUnit,
                         note: normalizedNote,
-                        part: part,
+                        part,
                         purchase_price: parsePrice(purchasePrice),
                         supplier: normalizedSupplier,
                         code: normalizedCode,
@@ -510,7 +411,7 @@ export default function InventoryPage() {
                         quantity: parseDecimal(quantity),
                         unit: normalizedUnit,
                         note: normalizedNote,
-                        part: part,
+                        part,
                         purchase_price: parsePrice(purchasePrice),
                         supplier: normalizedSupplier,
                         code: normalizedCode,
@@ -534,22 +435,21 @@ export default function InventoryPage() {
             await supabase.from("inventory_logs").insert([
                 {
                     item_id: editingId,
-                    item_name: lang === "ko" ? itemName : targetItem?.item_name ?? null,
-                    item_name_vi: lang === "vi" ? itemName : targetItem?.item_name_vi ?? null,
+                    item_name: lang === "ko" ? normalizedItemName : targetItem?.item_name ?? null,
+                    item_name_vi: lang === "vi" ? normalizedItemName : targetItem?.item_name_vi ?? null,
                     action: "update",
-                    part: part,
-                    category: lang === "ko" ? category : targetItem?.category ?? null,
-                    category_vi: lang === "vi" ? category : targetItem?.category_vi ?? null,
+                    part,
+                    category: normalizedCategoryKo,
+                    category_vi: normalizedCategoryVi,
                     prev_quantity: targetItem?.quantity ?? 0,
                     new_quantity: parseDecimal(quantity),
                     change_quantity: parseDecimal(quantity) - Number(targetItem?.quantity ?? 0),
-
                     prev_purchase_price: targetItem?.purchase_price ?? null,
                     new_purchase_price: parsePrice(purchasePrice),
                     prev_note: targetItem?.note ?? null,
-                    new_note: note,
-                    unit: unit,
-                    code: code,
+                    new_note: normalizedNote,
+                    unit: normalizedUnit,
+                    code: normalizedCode,
                     actor_name: actorName,
                     actor_username: actorUsername,
                 },
@@ -567,7 +467,7 @@ export default function InventoryPage() {
                         quantity: parseDecimal(quantity),
                         unit: normalizedUnit,
                         note: normalizedNote,
-                        part: part,
+                        part,
                         purchase_price: parsePrice(purchasePrice),
                         supplier: normalizedSupplier,
                         code: normalizedCode,
@@ -584,7 +484,7 @@ export default function InventoryPage() {
                         quantity: parseDecimal(quantity),
                         unit: normalizedUnit,
                         note: normalizedNote,
-                        part: part,
+                        part,
                         purchase_price: parsePrice(purchasePrice),
                         supplier: normalizedSupplier,
                         code: normalizedCode,
@@ -636,8 +536,76 @@ export default function InventoryPage() {
         await fetchRecentLogs();
 
         resetForm();
-        categoryRef.current?.focus();
         setIsFormOpen(false);
+        itemNameRef.current?.focus();
+    };
+
+    const handleQuantitySave = async (item: any) => {
+        const draft = quantityDrafts[item.id];
+        const nextQty = parseDecimal(draft);
+        const currentQty = Number(item.quantity ?? 0);
+
+        if (draft === undefined || String(draft).trim() === "") {
+            alert(t.requiredFields);
+            return;
+        }
+
+        if (nextQty < 0) {
+            alert(t.quantityCannotBeNegative);
+            return;
+        }
+
+        const { error: updateError } = await supabase
+            .from("inventory")
+            .update({
+                quantity: nextQty,
+                updated_at: new Date().toISOString(),
+                updated_by_name: actorName,
+                updated_by_username: actorUsername,
+            })
+            .eq("id", item.id);
+
+        if (updateError) {
+            console.error(updateError);
+            alert(t.quickChangeFail);
+            return;
+        }
+
+        const { error: logError } = await supabase.from("inventory_logs").insert([
+            {
+                item_id: item.id,
+                item_name: item.item_name,
+                item_name_vi: item.item_name_vi ?? null,
+                action: "update",
+                part: item.part,
+                category: item.category,
+                category_vi: item.category_vi ?? null,
+                prev_quantity: currentQty,
+                new_quantity: nextQty,
+                change_quantity: nextQty - currentQty,
+                prev_purchase_price: item.purchase_price ?? null,
+                new_purchase_price: item.purchase_price ?? null,
+                prev_note: item.note ?? null,
+                new_note: item.note ?? null,
+                unit: item.unit,
+                code: item.code,
+                actor_name: actorName,
+                actor_username: actorUsername,
+            },
+        ]);
+
+        if (logError) {
+            console.error(logError);
+            alert(t.quickChangeFail);
+            return;
+        }
+
+        await fetchInventory();
+        await fetchRecentLogs();
+        setQuantityDrafts((prev) => ({
+            ...prev,
+            [item.id]: String(nextQty),
+        }));
     };
 
     const handleKeyDown = (
@@ -662,18 +630,17 @@ export default function InventoryPage() {
 
     useEffect(() => {
         const savedPartFilter = localStorage.getItem("inventory_part_filter");
-        if (savedPartFilter) {
-            setPartFilter(savedPartFilter);
+        if (savedPartFilter && PART_VALUES.includes(savedPartFilter as PartValue)) {
+            setPartFilter(savedPartFilter as PartValue);
+        } else {
+            setPartFilter(defaultPart);
         }
-    }, []);
+    }, [defaultPart]);
 
     useEffect(() => {
         localStorage.setItem("inventory_part_filter", partFilter);
     }, [partFilter]);
 
-    useEffect(() => {
-        setVisibleCount(20);
-    }, [search, partFilter, showLowStockOnly]);
 
     useEffect(() => {
         setCategoryFilter("all");
@@ -688,27 +655,38 @@ export default function InventoryPage() {
         setIsCustomCategory(false);
     }, [part, editingId]);
 
-    const lowStockCount = inventoryList.filter(
-        (item) => Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
-    ).length;
+    const lowStockItems = inventoryList.filter(
+        (item) => Number(item.quantity) <= Number(item.low_stock_threshold ?? 0)
+    );
+
+    const categoryTabs = useMemo(() => {
+        return [
+            "all",
+            ...Array.from(
+                new Set(
+                    inventoryList
+                        .filter((item) => item.part === partFilter)
+                        .map((item) => getDisplayCategory(item))
+                        .filter((value) => value && value !== "-")
+                )
+            ),
+        ];
+    }, [inventoryList, partFilter, lang]);
 
     const filteredInventory = inventoryList
         .filter((item) => {
-            const keyword = search.toLowerCase();
-
+            const keyword = search.trim().toLowerCase();
             const displayItemName = getDisplayItemName(item).toLowerCase();
             const displayCategory = getDisplayCategory(item);
 
             const matchSearch =
+                !keyword ||
                 displayItemName.includes(keyword) ||
                 displayCategory.toLowerCase().includes(keyword);
 
-            const matchPart =
-                partFilter === "all" || item.part === partFilter;
-
+            const matchPart = item.part === partFilter;
             const matchCategory =
                 categoryFilter === "all" || displayCategory === categoryFilter;
-
             const matchLowStock =
                 !showLowStockOnly ||
                 Number(item.quantity) <= Number(item.low_stock_threshold ?? 1);
@@ -721,17 +699,16 @@ export default function InventoryPage() {
                 new Date(a.updated_at || a.created_at).getTime()
         );
 
-    const visibleInventory = filteredInventory.slice(0, visibleCount);
 
     return (
         <Container>
+            <h1 style={ui.pageTitle}>{t.title}</h1>
 
-            {/* 재고부족 알림창 */}
             {lowStockItems.length > 0 && (
                 <div
                     onClick={() => {
                         setSearch("");
-                        setPartFilter("all");
+                        setPartFilter(defaultPart);
                         setCategoryFilter("all");
                         setShowLowStockOnly(true);
 
@@ -757,157 +734,435 @@ export default function InventoryPage() {
                 </div>
             )}
 
-            <h1 style={ui.pageTitle}>{t.title}</h1>
-
-            {/* 재고 로그 보기 */}
-            <div style={{ marginBottom: 20 }}>
-                <Link
-                    href="/inventory/logs"
-                    style={{
-                        ...ui.button,
-                        width: "100%",
-                    }}
-                >
-                    {t.viewLogs}
-                </Link>
-            </div>
-
-
-            {/* 최근 변경 로그 */}
+            {/* 재고목록 */}
             <div
+                ref={listRef}
                 style={{
                     ...ui.card,
                     padding: 20,
-                    marginBottom: 30,
+                    marginBottom: 24,
                 }}
             >
-                <h2 style={ui.sectionTitle}>{t.recentLogs}</h2>
+                <h2 style={ui.sectionTitle}>{t.listTitle}</h2>
 
-                {recentLogs.length === 0 ? (
-                    <p>{t.noLogs}</p>
+                <div style={ui.filterBox}>
+                    <div
+                        style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(4, 1fr)",
+                            gap: 8,
+                            marginBottom: 16,
+                        }}
+                    >
+                        {[
+                            { value: "kitchen", label: t.kitchen },
+                            { value: "hall", label: t.hall },
+                            { value: "bar", label: t.bar },
+                            { value: "etc", label: t.etc },
+                        ].map((partOption) => {
+                            const active = partFilter === partOption.value;
+
+                            return (
+                                <button
+                                    key={partOption.value}
+                                    type="button"
+                                    onClick={() => setPartFilter(partOption.value as PartValue)}
+                                    style={{
+                                        padding: "10px 12px",
+                                        borderRadius: 8,
+                                        border: active ? "1px solid #111827" : "1px solid #d1d5db",
+                                        background: active ? "#111827" : "#f9fafb",
+                                        color: active ? "white" : "#111827",
+                                        fontWeight: 700,
+                                        fontSize: 14,
+                                        cursor: "pointer",
+                                        whiteSpace: "nowrap",
+                                    }}
+                                >
+                                    {partOption.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <input
+                        type="text"
+                        placeholder={t.searchPlaceholder}
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        style={{
+                            ...ui.input,
+                            marginBottom: 16,
+                        }}
+                    />
+
+                    <div
+                        style={{
+                            display: "flex",
+                            gap: 8,
+                            overflowX: "auto",
+                            paddingBottom: 6,
+                            marginBottom: 16,
+                        }}
+                    >
+                        {categoryTabs.map((cat) => {
+                            const active = categoryFilter === cat;
+
+                            return (
+                                <button
+                                    key={cat}
+                                    type="button"
+                                    onClick={() => setCategoryFilter(cat)}
+                                    style={{
+                                        padding: "8px 12px",
+                                        borderRadius: 999,
+                                        border: active ? "1px solid #111827" : "1px solid #d1d5db",
+                                        background: active ? "#111827" : "#f9fafb",
+                                        color: active ? "#fff" : "#111827",
+                                        fontWeight: 700,
+                                        fontSize: 13,
+                                        whiteSpace: "nowrap",
+                                        cursor: "pointer",
+                                        flexShrink: 0,
+                                    }}
+                                >
+                                    {cat === "all" ? "전체" : cat}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <div
+                        style={{
+                            display: "flex",
+                            gap: 8,
+                            marginTop: 12,
+                            paddingTop: 2,
+                        }}
+                    >
+                        <button
+                            onClick={() => setShowLowStockOnly(!showLowStockOnly)}
+                            style={{
+                                flex: 1,
+                                padding: "10px 14px",
+                                background: showLowStockOnly ? "crimson" : "#f5f5f5",
+                                color: showLowStockOnly ? "white" : "black",
+                                border: showLowStockOnly ? "1px solid crimson" : "1px solid #ddd",
+                                borderRadius: 8,
+                                cursor: "pointer",
+                                fontWeight: 600,
+                            }}
+                        >
+                            {showLowStockOnly ? t.viewAllItems : t.viewLowStockOnly}
+                        </button>
+
+                        <button
+                            onClick={() => {
+                                setSearch("");
+                                setPartFilter(defaultPart);
+                                setCategoryFilter("all");
+                                setShowLowStockOnly(false);
+                            }}
+                            style={{
+                                ...ui.subButton,
+                                flex: 1,
+                                padding: "10px 14px",
+                            }}
+                        >
+                            {t.reset}
+                        </button>
+                    </div>
+                </div>
+
+                {filteredInventory.length === 0 ? (
+                    <p>{t.noData}</p>
                 ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {recentLogs.map((log) => (
-                            <div
-                                key={log.id}
-                                style={{
-                                    ...ui.card,
-                                    padding: "6px 10px",
-                                    borderLeft:
-                                        log.action === "create"
-                                            ? "4px solid seagreen"
-                                            : log.action === "delete"
+                    <div
+                        style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                            maxHeight: 360,
+                            overflowY: "auto",
+                            paddingRight: 4,
+                        }}
+                    >
+                        {filteredInventory.map((item) => {
+                            const isOpen = openItemId === item.id;
+                            const quantityDraft =
+                                quantityDrafts[item.id] ?? String(item.quantity ?? "");
+
+                            return (
+                                <div
+                                    key={item.id}
+                                    style={{
+                                        ...ui.card,
+                                        padding: "8px 10px",
+                                        borderLeft:
+                                            Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
                                                 ? "4px solid crimson"
-                                                : "4px solid royalblue",
-                                    background: "#fff",
-                                }}
-                            >
-                                <div style={ui.cardRow}>
-                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                : "4px solid #d1d5db",
+                                        background: "#fff",
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            justifyContent: "space-between",
+                                            alignItems: "center",
+                                            padding: "2px 0",
+                                            minHeight: 32,
+                                            gap: 10,
+                                        }}
+                                    >
+                                        <div style={{ minWidth: 0, flex: 1 }}>
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 6,
+                                                    flexWrap: "wrap",
+                                                    lineHeight: 1.2,
+                                                }}
+                                            >
+                                                <span
+                                                    style={{
+                                                        fontSize: 14,
+                                                        fontWeight: 700,
+                                                        color: "#111827",
+                                                        wordBreak: "break-word",
+                                                    }}
+                                                >
+                                                    {[item.code ? `[${item.code}]` : "", getDisplayItemName(item)]
+                                                        .filter(Boolean)
+                                                        .join(" ")}
+                                                </span>
+
+                                                {Number(item.quantity) <= Number(item.low_stock_threshold ?? 1) && (
+                                                    <span
+                                                        style={{
+                                                            ...ui.badgeMini,
+                                                            background: "crimson",
+                                                        }}
+                                                    >
+                                                        {t.low}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            <div style={ui.metaText}>
+                                                {[getPartLabel(item.part || ""), getDisplayCategory(item)].join(" · ")}
+                                            </div>
+                                        </div>
+
                                         <div
                                             style={{
                                                 display: "flex",
                                                 alignItems: "center",
-                                                gap: 6,
-                                                flexWrap: "wrap",
+                                                gap: 10,
+                                                flexShrink: 0,
                                             }}
                                         >
-                                            <span
+                                            <div
                                                 style={{
-                                                    ...ui.badgeMini,
-                                                    background:
-                                                        log.action === "create"
-                                                            ? "seagreen"
-                                                            : log.action === "delete"
-                                                                ? "crimson"
-                                                                : "royalblue",
-                                                }}
-                                            >
-                                                {log.action === "create" ? "NEW" : log.action === "delete" ? "DEL" : "UP"}
-                                            </span>
-
-                                            <span
-                                                style={{
-                                                    fontSize: 14,
-                                                    fontWeight: 700,
+                                                    minWidth: 64,
+                                                    textAlign: "right",
                                                     lineHeight: 1.2,
-                                                    color: "#111827",
-                                                    wordBreak: "break-word",
+                                                    whiteSpace: "nowrap",
                                                 }}
                                             >
-                                                {[
-                                                    log.code ? `[${log.code}]` : "",
-                                                    getDisplayLogItemName(log),
-                                                ]
-                                                    .filter(Boolean)
-                                                    .join(" ")}
-                                            </span>
-                                        </div>
-
-                                        <div style={ui.metaText}>
-                                            {[
-                                                getPartLabel(log.part || ""),
-                                                getDisplayLogCategory(log),
-                                            ].join(" · ")}
-                                        </div>
-                                    </div>
-
-                                    <div
-                                        style={{
-                                            textAlign: "right",
-                                            flexShrink: 0,
-                                            marginLeft: 10,
-                                        }}
-                                    >
-                                        <div
-                                            style={{
-                                                fontSize: 14,
-                                                fontWeight: 700,
-                                                lineHeight: 1.2,
-                                                whiteSpace: "nowrap",
-                                            }}
-                                        >
-                                            <span
-                                                style={{
-                                                    color:
-                                                        Number(log.change_quantity) > 0
-                                                            ? "green"
-                                                            : Number(log.change_quantity) < 0
+                                                <span
+                                                    style={{
+                                                        fontSize: 14,
+                                                        fontWeight: 700,
+                                                        color:
+                                                            Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
                                                                 ? "crimson"
                                                                 : "#111827",
+                                                    }}
+                                                >
+                                                    {item.quantity}
+                                                </span>{" "}
+                                                <span
+                                                    style={{
+                                                        fontSize: 14,
+                                                        fontWeight: 700,
+                                                        color: "#111827",
+                                                    }}
+                                                >
+                                                    {item.unit}
+                                                </span>
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const nextOpen = !isOpen;
+                                                    setOpenItemId(nextOpen ? item.id : null);
+                                                    if (nextOpen) {
+                                                        setQuantityDrafts((prev) => ({
+                                                            ...prev,
+                                                            [item.id]: String(item.quantity ?? ""),
+                                                        }));
+                                                    }
+                                                }}
+                                                style={{
+                                                    ...ui.subButton,
+                                                    width: "auto",
+                                                    minWidth: 74,
+                                                    padding: "8px 12px",
+                                                    fontWeight: 700,
                                                 }}
                                             >
-                                                {Number(log.change_quantity) > 0 ? "+" : ""}
-                                                {log.change_quantity ?? 0}
-                                            </span>{" "}
-                                            <span style={{ color: "#111827" }}>
-                                                {log.unit || ""}
-                                            </span>
-                                        </div>
-
-                                        <div style={ui.metaText}>
-                                            {[
-                                                log.created_at
-                                                    ? new Date(log.created_at).toLocaleTimeString([], {
-                                                        hour: "2-digit",
-                                                        minute: "2-digit",
-                                                        hour12: false,
-                                                    })
-                                                    : "-",
-                                                log.actor_name || "-",
-                                            ].join(" · ")}
+                                                {isOpen ? t.close : t.detail}
+                                            </button>
                                         </div>
                                     </div>
+
+                                    {isOpen && (
+                                        <div
+                                            style={{
+                                                borderTop: "1px solid #eee",
+                                                paddingTop: 10,
+                                                marginTop: 10,
+                                            }}
+                                        >
+                                            <div
+                                                style={{
+                                                    display: "grid",
+                                                    gridTemplateColumns: "1fr auto",
+                                                    gap: 8,
+                                                    alignItems: "center",
+                                                    marginBottom: 14,
+                                                }}
+                                            >
+                                                <input
+                                                    type="number"
+                                                    step="0.1"
+                                                    value={quantityDraft}
+                                                    onChange={(e) =>
+                                                        setQuantityDrafts((prev) => ({
+                                                            ...prev,
+                                                            [item.id]: e.target.value,
+                                                        }))
+                                                    }
+                                                    style={ui.input}
+                                                />
+
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleQuantitySave(item)}
+                                                    style={{
+                                                        ...ui.button,
+                                                        width: "auto",
+                                                        minWidth: 84,
+                                                        padding: "12px 16px",
+                                                    }}
+                                                >
+                                                    {t.saveQuantity}
+                                                </button>
+                                            </div>
+
+                                            <div style={ui.detailGrid}>
+                                                <div style={ui.detailLabel}>{t.supplier}</div>
+                                                <div style={ui.detailValue}>{item.supplier || "-"}</div>
+
+                                                <div style={ui.detailLabel}>{t.purchasePrice}</div>
+                                                <div style={ui.detailValue}>
+                                                    {item.purchase_price !== null && item.purchase_price !== undefined
+                                                        ? Number(item.purchase_price).toLocaleString() + " ₫"
+                                                        : "-"}
+                                                </div>
+
+                                                <div style={ui.detailLabel}>{t.lowStockThreshold}</div>
+                                                <div style={ui.detailValue}>{item.low_stock_threshold ?? 1}</div>
+
+                                                <div style={ui.detailLabel}>{t.updatedAt}</div>
+                                                <div style={ui.detailValue}>
+                                                    {item.updated_at
+                                                        ? (() => {
+                                                            const d = new Date(item.updated_at);
+                                                            const yy = String(d.getFullYear()).slice(2);
+                                                            const mm = String(d.getMonth() + 1).padStart(2, "0");
+                                                            const dd = String(d.getDate()).padStart(2, "0");
+                                                            const hh = String(d.getHours()).padStart(2, "0");
+                                                            const min = String(d.getMinutes()).padStart(2, "0");
+                                                            return `${yy}.${mm}.${dd} ${hh}:${min} · ${item.updated_by_name || "-"}`;
+                                                        })()
+                                                        : "-"}
+                                                </div>
+
+                                                <div style={ui.detailLabel}>{t.note}</div>
+                                                <div style={ui.detailValue}>{item.note || "-"}</div>
+                                            </div>
+
+                                            {Number(item.quantity) <= Number(item.low_stock_threshold ?? 1) && (
+                                                <div
+                                                    style={{
+                                                        marginTop: 10,
+                                                        color: "crimson",
+                                                        fontWeight: "bold",
+                                                        fontSize: 13,
+                                                    }}
+                                                >
+                                                    {t.stockLow}
+                                                </div>
+                                            )}
+
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    gap: 8,
+                                                    marginTop: 12,
+                                                    paddingTop: 2,
+                                                    justifyContent: "flex-end",
+                                                }}
+                                            >
+                                                <button
+                                                    onClick={() => handleEdit(item)}
+                                                    style={{
+                                                        ...ui.subButton,
+                                                        width: "auto",
+                                                        minWidth: 64,
+                                                        padding: "8px 14px",
+                                                        background: "royalblue",
+                                                        color: "white",
+                                                        border: "1px solid royalblue",
+                                                        fontSize: 14,
+                                                        fontWeight: 700,
+                                                    }}
+                                                >
+                                                    {t.edit}
+                                                </button>
+
+                                                <button
+                                                    onClick={() => handleDelete(item.id)}
+                                                    style={{
+                                                        ...ui.subButton,
+                                                        width: "auto",
+                                                        minWidth: 64,
+                                                        padding: "8px 14px",
+                                                        background: "crimson",
+                                                        color: "white",
+                                                        border: "1px solid crimson",
+                                                        fontSize: 14,
+                                                        fontWeight: 700,
+                                                    }}
+                                                >
+                                                    {t.delete}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
+
                     </div>
                 )}
             </div>
 
-
-            {/* 입력폼 접기 */}
-
+            {/* 재고입력 */}
             <button
                 onClick={() => setIsFormOpen(!isFormOpen)}
                 style={{
@@ -920,15 +1175,13 @@ export default function InventoryPage() {
                 {isFormOpen ? t.closeInventoryForm : t.openInventoryForm}
             </button>
 
-            {/* 재고입력 */}
-
             {isFormOpen && (
                 <div
                     ref={formRef}
                     style={{
                         ...ui.card,
                         padding: 20,
-                        marginBottom: 30,
+                        marginBottom: 24,
                     }}
                 >
                     <h2 style={ui.sectionTitle}>{t.inputTitle}</h2>
@@ -1129,7 +1382,7 @@ export default function InventoryPage() {
 
                         <input
                             type="number"
-                            step="1"
+                            step="0.1"
                             placeholder={t.quantityPlaceholder}
                             value={quantity}
                             onChange={(e) => setQuantity(e.target.value)}
@@ -1140,7 +1393,7 @@ export default function InventoryPage() {
 
                         <input
                             type="number"
-                            step="1"
+                            step="0.1"
                             placeholder={t.lowStockThresholdPlaceholder}
                             value={lowStockThreshold}
                             onChange={(e) => setLowStockThreshold(e.target.value)}
@@ -1159,18 +1412,13 @@ export default function InventoryPage() {
                             onKeyDown={(e) => handleKeyDown(e)}
                         />
 
-                        <button
-                            onClick={handleSubmit}
-                            style={ui.button}
-                        >
+                        <button onClick={handleSubmit} style={ui.button}>
                             {editingId ? t.editSave : t.save}
                         </button>
 
                         {editingId && (
                             <button
-                                onClick={() => {
-                                    resetForm();
-                                }}
+                                onClick={() => resetForm()}
                                 style={{
                                     ...ui.button,
                                     background: "#e5e7eb",
@@ -1185,439 +1433,145 @@ export default function InventoryPage() {
                 </div>
             )}
 
-
-            {/* 재고목록 */}
+            {/* 최근 변경 로그 */}
             <div
-                ref={listRef}
                 style={{
                     ...ui.card,
                     padding: 20,
+                    marginBottom: 20,
                 }}
             >
-                <h2 style={ui.sectionTitle}>{t.listTitle}</h2>
+                <h2 style={ui.sectionTitle}>{t.recentLogs}</h2>
 
-                <div
-                    style={ui.filterBox}
-                >
-
-
-                    <div
-                        style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(5, 1fr)",
-                            gap: 8,
-                            marginBottom: 16,
-                        }}
-                    >
-                        {[
-                            { value: "all", label: t.allPart },
-                            { value: "kitchen", label: t.kitchen },
-                            { value: "hall", label: t.hall },
-                            { value: "bar", label: t.bar },
-                            { value: "etc", label: t.etc },
-                        ].map((partOption) => {
-                            const active = partFilter === partOption.value;
-
-                            return (
-                                <button
-                                    key={partOption.value}
-                                    type="button"
-                                    onClick={() => setPartFilter(partOption.value)}
-                                    style={{
-                                        padding: "10px 12px",
-                                        borderRadius: 8,
-                                        border: active ? "1px solid #111827" : "1px solid #d1d5db",
-                                        background: active ? "#111827" : "#f9fafb",
-                                        color: active ? "white" : "#111827",
-                                        fontWeight: 700,
-                                        fontSize: 14,
-                                        cursor: "pointer",
-                                        whiteSpace: "nowrap",
-                                    }}
-                                >
-                                    {partOption.label}
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    <input
-                        type="text"
-                        placeholder={t.searchPlaceholder}
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        style={{
-                            ...ui.input,
-                            marginBottom: 16,
-                        }}
-                    />
-
-                    <div
-                        style={{
-                            display: "flex",
-                            gap: 8,
-                            overflowX: "auto",
-                            paddingBottom: 6,
-                            marginBottom: 16,
-                        }}
-                    >
-                        {categoryTabs.map((cat) => {
-                            const active = categoryFilter === cat;
-
-                            return (
-                                <button
-                                    key={cat}
-                                    type="button"
-                                    onClick={() => setCategoryFilter(cat)}
-                                    style={{
-                                        padding: "8px 12px",
-                                        borderRadius: 999,
-                                        border: active ? "1px solid #111827" : "1px solid #d1d5db",
-                                        background: active ? "#111827" : "#f9fafb",
-                                        color: active ? "#fff" : "#111827",
-                                        fontWeight: 700,
-                                        fontSize: 13,
-                                        whiteSpace: "nowrap",
-                                        cursor: "pointer",
-                                        flexShrink: 0,
-                                    }}
-                                >
-                                    {cat === "all" ? t.allPart : cat}
-                                </button>
-                            );
-                        })}
-                    </div>
-
-
-                    <div
-                        style={{
-                            display: "flex",
-                            gap: 8,
-                            marginTop: 12,
-                            paddingTop: 2,
-                        }}
-                    >
-                        <button
-                            onClick={() => setShowLowStockOnly(!showLowStockOnly)}
-                            style={{
-                                flex: 1,
-                                padding: "10px 14px",
-                                background: showLowStockOnly ? "crimson" : "#f5f5f5",
-                                color: showLowStockOnly ? "white" : "black",
-                                border: showLowStockOnly ? "1px solid crimson" : "1px solid #ddd",
-                                borderRadius: 8,
-                                cursor: "pointer",
-                                fontWeight: 600,
-                            }}
-                        >
-                            {showLowStockOnly ? t.viewAllItems : t.viewLowStockOnly}
-                        </button>
-
-                        <button
-                            onClick={() => {
-                                setSearch("");
-                                setPartFilter("all");
-                                setCategoryFilter("all");
-                                setShowLowStockOnly(false);
-                            }}
-                            style={{
-                                ...ui.subButton,
-                                flex: 1,
-                                padding: "10px 14px",
-                            }}
-                        >
-                            {t.reset}
-                        </button>
-                    </div>
-                </div>
-
-                {filteredInventory.length === 0 ? (
-                    <p>{t.noData}</p>
+                {recentLogs.length === 0 ? (
+                    <p>{t.noLogs}</p>
                 ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                        {visibleInventory.map((item) => (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {recentLogs.map((log) => (
                             <div
-                                key={item.id}
+                                key={log.id}
                                 style={{
                                     ...ui.card,
-                                    padding: "8px 10px",
+                                    padding: "6px 10px",
                                     borderLeft:
-                                        Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
-                                            ? "4px solid crimson"
-                                            : "4px solid #d1d5db",
+                                        log.action === "create"
+                                            ? "4px solid seagreen"
+                                            : log.action === "delete"
+                                                ? "4px solid crimson"
+                                                : "4px solid royalblue",
                                     background: "#fff",
                                 }}
                             >
-                                <div
-                                    onClick={() => setOpenItemId(openItemId === item.id ? null : item.id)}
-                                    style={{
-                                        display: "flex",
-                                        justifyContent: "space-between",
-                                        alignItems: "center",
-                                        cursor: "pointer",
-                                        padding: "2px 0",
-                                        minHeight: 32,
-                                        marginBottom: openItemId === item.id ? 10 : 0,
-                                    }}
-                                >
-                                    <div style={{ minWidth: 0 }}>
+                                <div style={ui.cardRow}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
                                         <div
                                             style={{
                                                 display: "flex",
                                                 alignItems: "center",
                                                 gap: 6,
                                                 flexWrap: "wrap",
-                                                lineHeight: 1.2,
                                             }}
                                         >
                                             <span
                                                 style={{
+                                                    ...ui.badgeMini,
+                                                    background:
+                                                        log.action === "create"
+                                                            ? "seagreen"
+                                                            : log.action === "delete"
+                                                                ? "crimson"
+                                                                : "royalblue",
+                                                }}
+                                            >
+                                                {log.action === "create"
+                                                    ? "NEW"
+                                                    : log.action === "delete"
+                                                        ? "DEL"
+                                                        : "UP"}
+                                            </span>
+
+                                            <span
+                                                style={{
                                                     fontSize: 14,
                                                     fontWeight: 700,
+                                                    lineHeight: 1.2,
                                                     color: "#111827",
                                                     wordBreak: "break-word",
                                                 }}
                                             >
-                                                {[item.code ? `[${item.code}]` : "", getDisplayItemName(item)]
+                                                {[log.code ? `[${log.code}]` : "", getDisplayLogItemName(log)]
                                                     .filter(Boolean)
                                                     .join(" ")}
                                             </span>
-
-                                            {Number(item.quantity) <= Number(item.low_stock_threshold ?? 1) && (
-                                                <span
-                                                    style={{
-                                                        ...ui.badgeMini,
-                                                        background: "crimson",
-                                                    }}
-                                                >
-                                                    {t.low}
-                                                </span>
-                                            )}
                                         </div>
 
                                         <div style={ui.metaText}>
-                                            {[getPartLabel(item.part || ""), getDisplayCategory(item)].join(" · ")}
+                                            {[getPartLabel(log.part || ""), getDisplayLogCategory(log)].join(" · ")}
                                         </div>
                                     </div>
 
                                     <div
                                         style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 8,
-                                            fontSize: 14,
+                                            textAlign: "right",
                                             flexShrink: 0,
                                             marginLeft: 10,
                                         }}
                                     >
-                                        <button
-                                            type="button"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleQuickChange(item, -1);
-                                            }}
-                                            style={{
-                                                ...ui.subButton,
-                                                width: "auto",
-                                                minWidth: 30,
-                                                padding: "4px 8px",
-                                                lineHeight: 1,
-                                            }}
-                                        >
-                                            -
-                                        </button>
-
                                         <div
                                             style={{
-                                                minWidth: 58,
-                                                textAlign: "center",
+                                                fontSize: 14,
+                                                fontWeight: 700,
                                                 lineHeight: 1.2,
                                                 whiteSpace: "nowrap",
                                             }}
                                         >
                                             <span
                                                 style={{
-                                                    fontSize: 14,
-                                                    fontWeight: 700,
                                                     color:
-                                                        Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
-                                                            ? "crimson"
-                                                            : "#111827",
+                                                        Number(log.change_quantity) > 0
+                                                            ? "green"
+                                                            : Number(log.change_quantity) < 0
+                                                                ? "crimson"
+                                                                : "#111827",
                                                 }}
                                             >
-                                                {item.quantity}
+                                                {Number(log.change_quantity) > 0 ? "+" : ""}
+                                                {log.change_quantity ?? 0}
                                             </span>{" "}
-                                            <span
-                                                style={{
-                                                    fontSize: 14,
-                                                    fontWeight: 700,
-                                                    color: "#111827",
-                                                }}
-                                            >
-                                                {item.unit}
-                                            </span>
+                                            <span style={{ color: "#111827" }}>{log.unit || ""}</span>
                                         </div>
 
-                                        <button
-                                            type="button"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleQuickChange(item, 1);
-                                            }}
-                                            style={{
-                                                ...ui.subButton,
-                                                width: "auto",
-                                                minWidth: 30,
-                                                padding: "4px 8px",
-                                                lineHeight: 1,
-                                            }}
-                                        >
-                                            +
-                                        </button>
-
-                                        <span
-                                            style={{
-                                                color: "#999",
-                                                fontSize: 14,
-                                                fontWeight: "bold",
-                                                lineHeight: 1,
-                                                width: 16,
-                                                textAlign: "center",
-                                            }}
-                                        >
-                                            {openItemId === item.id ? "▴" : "▾"}
-                                        </span>
+                                        <div style={ui.metaText}>
+                                            {[
+                                                log.created_at
+                                                    ? new Date(log.created_at).toLocaleTimeString([], {
+                                                        hour: "2-digit",
+                                                        minute: "2-digit",
+                                                        hour12: false,
+                                                    })
+                                                    : "-",
+                                                log.actor_name || "-",
+                                            ].join(" · ")}
+                                        </div>
                                     </div>
                                 </div>
-
-                                {openItemId === item.id && (
-                                    <div
-                                        style={{
-                                            borderTop: "1px solid #eee",
-                                            paddingTop: 10,
-                                            marginTop: 2,
-                                        }}
-                                    >
-                                        <div style={ui.detailGrid}>
-                                            <div style={ui.detailLabel}>{t.supplier}</div>
-                                            <div style={ui.detailValue}>{item.supplier || "-"}</div>
-
-                                            <div style={ui.detailLabel}>{t.purchasePrice}</div>
-                                            <div style={ui.detailValue}>
-                                                {item.purchase_price !== null && item.purchase_price !== undefined
-                                                    ? Number(item.purchase_price).toLocaleString() + " ₫"
-                                                    : "-"}
-                                            </div>
-
-                                            <div style={ui.detailLabel}>{t.lowStockThreshold}</div>
-                                            <div style={ui.detailValue}>{item.low_stock_threshold ?? 1}</div>
-
-                                            <div style={ui.detailLabel}>{t.updatedAt}</div>
-                                            <div style={ui.detailValue}>
-                                                {item.updated_at
-                                                    ? (() => {
-                                                        const d = new Date(item.updated_at);
-                                                        const yy = String(d.getFullYear()).slice(2);
-                                                        const mm = String(d.getMonth() + 1).padStart(2, "0");
-                                                        const dd = String(d.getDate()).padStart(2, "0");
-                                                        const hh = String(d.getHours()).padStart(2, "0");
-                                                        const min = String(d.getMinutes()).padStart(2, "0");
-                                                        return `${yy}.${mm}.${dd} ${hh}:${min} · ${item.updated_by_name || "-"}`;
-                                                    })()
-                                                    : "-"}
-                                            </div>
-
-                                            <div style={ui.detailLabel}>{t.note}</div>
-                                            <div style={ui.detailValue}>{item.note || "-"}</div>
-                                        </div>
-
-                                        {Number(item.quantity) <= Number(item.low_stock_threshold ?? 1) && (
-                                            <div
-                                                style={{
-                                                    marginTop: 10,
-                                                    color: "crimson",
-                                                    fontWeight: "bold",
-                                                    fontSize: 13,
-                                                }}
-                                            >
-                                                {t.stockLow}
-                                            </div>
-                                        )}
-
-                                        <div
-                                            style={{
-                                                display: "flex",
-                                                gap: 8,
-                                                marginTop: 12,
-                                                paddingTop: 2,
-                                                justifyContent: "flex-end",
-                                            }}
-                                        >
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleEdit(item);
-                                                }}
-                                                style={{
-                                                    ...ui.subButton,
-                                                    width: "auto",
-                                                    minWidth: 64,
-                                                    padding: "8px 14px",
-                                                    background: "royalblue",
-                                                    color: "white",
-                                                    border: "1px solid royalblue",
-                                                    fontSize: 14,
-                                                    fontWeight: 700,
-                                                }}
-                                            >
-                                                {t.edit}
-                                            </button>
-
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleDelete(item.id);
-                                                }}
-                                                style={{
-                                                    ...ui.subButton,
-                                                    width: "auto",
-                                                    minWidth: 64,
-                                                    padding: "8px 14px",
-                                                    background: "crimson",
-                                                    color: "white",
-                                                    border: "1px solid crimson",
-                                                    fontSize: 14,
-                                                    fontWeight: 700,
-                                                }}
-                                            >
-                                                {t.delete}
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
                             </div>
                         ))}
-                        {filteredInventory.length > visibleCount && (
-                            <div style={{ marginTop: 16 }}>
-                                <button
-                                    type="button"
-                                    onClick={() => setVisibleCount((prev) => prev + 20)}
-                                    style={{
-                                        ...ui.subButton,
-                                        width: "100%",
-                                        padding: "10px 14px",
-                                        fontWeight: 700,
-                                    }}
-                                >
-                                    {t.loadMore
-                                        ? `${t.loadMore} (${visibleInventory.length}/${filteredInventory.length})`
-                                        : `더 보기 (${visibleInventory.length}/${filteredInventory.length})`}
-                                </button>
-                            </div>
-                        )}
                     </div>
-
                 )}
+            </div>
+
+            {/* 재고 로그 보기 */}
+            <div style={{ marginBottom: 20 }}>
+                <Link
+                    href="/inventory/logs"
+                    style={{
+                        ...ui.button,
+                        width: "100%",
+                    }}
+                >
+                    {t.viewLogs}
+                </Link>
             </div>
         </Container>
     );
