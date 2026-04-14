@@ -3,11 +3,6 @@ import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
-
 function getVietnamDateParts(date = new Date()) {
     const formatter = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Asia/Ho_Chi_Minh",
@@ -43,6 +38,11 @@ function getSnapshotDate() {
 }
 
 export async function GET(request: Request) {
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+    
     try {
         const authHeader = request.headers.get("authorization");
         const expected = `Bearer ${process.env.CRON_SECRET}`;
