@@ -850,16 +850,19 @@ export default function InventoryPage() {
             });
         });
 
-    const groupedInventory = filteredInventory.reduce((acc, item) => {
-        const categoryKey = getDisplayCategory(item) || "-";
+    const groupedInventory: Record<string, any[]> = filteredInventory.reduce(
+        (acc: Record<string, any[]>, item) => {
+            const categoryKey = getDisplayCategory(item) || "-";
 
-        if (!acc[categoryKey]) {
-            acc[categoryKey] = [];
-        }
+            if (!acc[categoryKey]) {
+                acc[categoryKey] = [];
+            }
 
-        acc[categoryKey].push(item);
-        return acc;
-    }, {} as Record<string, any[]>);
+            acc[categoryKey].push(item);
+            return acc;
+        },
+        {}
+    );
 
     return (
         <Container>
@@ -1060,7 +1063,7 @@ export default function InventoryPage() {
                             paddingRight: 4,
                         }}
                     >
-                        {Object.entries(groupedInventory).map(([categoryName, items]) => (
+                        {Object.entries(groupedInventory).map(([categoryName, items]: [string, any[]]) => (
                             <div
                                 key={categoryName}
                                 style={{
