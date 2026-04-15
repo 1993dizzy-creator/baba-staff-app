@@ -13,11 +13,10 @@ export default function InventoryLogsPage() {
     const [logs, setLogs] = useState<any[]>([]);
     const [filterType, setFilterType] = useState<"all" | "create" | "update" | "delete">("all");
     const [search, setSearch] = useState("");
-    const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
     const [partFilter, setPartFilter] = useState("all");
-    const [openLogId, setOpenLogId] = useState<number | null>(null);
+    const [openGroupKey, setOpenGroupKey] = useState<string | null>(null);
     const [visibleCount, setVisibleCount] = useState(20);
-    const [selectedLogIds, setSelectedLogIds] = useState<number[]>([]);
+    const [inventoryNoteMap, setInventoryNoteMap] = useState<Record<string, string>>({});
 
     const fetchLogs = async () => {
         const { data, error } = await supabase
@@ -33,13 +32,69 @@ export default function InventoryLogsPage() {
         setLogs(data || []);
     };
 
+    const handleDeleteSingleLog = async (logId: number) => {
+        if (!isMaster) return;
+
+        const ok = confirm(t.deleteLogConfirm);
+
+        if (!ok) return;
+
+        const { error } = await supabase
+            .from("inventory_logs")
+            .delete()
+            .eq("id", logId);
+
+        if (error) {
+            console.error(error);
+            alert(t.deleteLogFail);
+            return;
+        }
+
+        alert(t.deleteLogSuccess);
+        await fetchLogs();
+    };
+
+    const fetchInventoryNotes = async () => {
+        const { data, error } = await supabase
+            .from("inventory")
+            .select("id, part, code, item_name, item_name_vi, note");
+
+        if (error) {
+            console.error(error);
+            return;
+        }
+
+        const nextMap: Record<string, string> = {};
+
+        (data || []).forEach((item) => {
+            const keyById =
+                item.id !== null && item.id !== undefined ? `item-${item.id}` : null;
+
+            const keyByFallback = [
+                item.part || "",
+                item.code || "",
+                item.item_name || "",
+                item.item_name_vi || "",
+            ].join("|");
+
+            if (keyById) {
+                nextMap[keyById] = item.note || "-";
+            }
+
+            nextMap[keyByFallback] = item.note || "-";
+        });
+
+        setInventoryNoteMap(nextMap);
+    };
+
     useEffect(() => {
         fetchLogs();
+        fetchInventoryNotes();
     }, []);
 
     useEffect(() => {
         setVisibleCount(20);
-    }, [search, filterType, partFilter, sortOrder]);
+    }, [search, filterType, partFilter]);
 
     const currentUser = getUser();
     const isMaster = currentUser?.role === "master";
@@ -74,6 +129,32 @@ export default function InventoryLogsPage() {
             : log.category || log.category_vi || "-";
     };
 
+    const formatDateTime = (value: string) => {
+        const date = new Date(value);
+
+        const yy = String(date.getFullYear()).slice(2);
+        const mm = String(date.getMonth() + 1).padStart(2, "0");
+        const dd = String(date.getDate()).padStart(2, "0");
+        const hh = String(date.getHours()).padStart(2, "0");
+        const min = String(date.getMinutes()).padStart(2, "0");
+
+        return `${yy}.${mm}.${dd} ${hh}:${min}`;
+    };
+
+    const getGroupKey = (log: any) => {
+        if (log.item_id !== null && log.item_id !== undefined) {
+            return `item-${log.item_id}`;
+        }
+
+        return [
+            log.part || "",
+            log.code || "",
+            log.item_name || "",
+            log.item_name_vi || "",
+        ].join("|");
+    };
+
+
     const filteredLogs = logs
         .filter((log) => {
             const keyword = search.toLowerCase();
@@ -92,27 +173,191 @@ export default function InventoryLogsPage() {
 
             return matchType && matchSearch && matchPart;
         })
-        .sort((a, b) => {
-            if (sortOrder === "desc") {
-                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-            } else {
-                return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        .sort(
+            (a, b) =>
+                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+
+    const groupedLogsMap = filteredLogs.reduce((acc, log) => {
+        const key = getGroupKey(log);
+
+        if (!acc[key]) {
+            acc[key] = [];
+        }
+
+        acc[key].push(log);
+        return acc;
+    }, {} as Record<string, any[]>);
+
+    const groupedLogs = Object.entries(groupedLogsMap).map(([groupKey, items]) => {
+        const sortedItems = [...items].sort(
+            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+
+        const latest = sortedItems[0];
+
+        return {
+            groupKey,
+            latest,
+            logs: sortedItems,
+        };
+    });
+
+    const visibleGroups = groupedLogs.slice(0, visibleCount);
+
+
+
+    const changeFieldConfig = [
+        {
+            key: "quantity",
+            labelKo: "수량",
+            labelVi: "Số lượng",
+            type: "number",
+        },
+        {
+            key: "purchase_price",
+            labelKo: "구매가",
+            labelVi: "Giá nhập",
+            type: "price",
+        },
+        {
+            key: "note",
+            labelKo: "비고",
+            labelVi: "Ghi chú",
+            type: "text",
+        },
+        {
+            key: "supplier",
+            labelKo: "거래처",
+            labelVi: "Nhà cung cấp",
+            type: "text",
+        },
+        {
+            key: "code",
+            labelKo: "코드",
+            labelVi: "Mã",
+            type: "text",
+        },
+        {
+            key: "unit",
+            labelKo: "단위",
+            labelVi: "Đơn vị",
+            type: "text",
+        },
+        {
+            key: "category",
+            labelKo: "카테고리",
+            labelVi: "Danh mục",
+            type: "text",
+        },
+        {
+            key: "category_vi",
+            labelKo: "카테고리(vi)",
+            labelVi: "Danh mục (vi)",
+            type: "text",
+        },
+        {
+            key: "part",
+            labelKo: "파트",
+            labelVi: "Bộ phận",
+            type: "text",
+        },
+    ];
+
+    function getLogChanges(log: any, lang: string) {
+        const changes: Array<{
+            label: string;
+            before?: string;
+            after: string;
+            color?: string;
+        }> = [];
+
+        if (log.action === "create") {
+            return [
+                {
+                    label: t.filterCreate,
+                    after: t.createDone,
+                    color: "#111827",
+                },
+            ];
+        }
+
+        if (log.action === "delete") {
+            return [
+                {
+                    label: t.filterDelete,
+                    after: t.deleteDone,
+                    color: "#6b7280",
+                },
+            ];
+        }
+
+        changeFieldConfig.forEach((field) => {
+            const prev = log[`prev_${field.key}`];
+            const next = log[`new_${field.key}`];
+
+            if ((prev ?? "") === (next ?? "")) return;
+
+            const label = lang === "vi" ? field.labelVi : field.labelKo;
+
+            let before = "";
+            let after = "";
+            let color = "#111827";
+
+            if (field.type === "number") {
+                const prevNum = Number(prev ?? 0);
+                const nextNum = Number(next ?? 0);
+
+                before = `${prevNum}`;
+                after = `${nextNum}${log.unit ? ` ${log.unit}` : ""}`;
+
+                color =
+                    nextNum > prevNum
+                        ? "seagreen"
+                        : nextNum < prevNum
+                            ? "crimson"
+                            : "#111827";
             }
+
+            if (field.type === "price") {
+                const prevStr =
+                    prev !== null && prev !== undefined
+                        ? Number(prev).toLocaleString() + " ₫"
+                        : "-";
+
+                const nextStr =
+                    next !== null && next !== undefined
+                        ? Number(next).toLocaleString() + " ₫"
+                        : "-";
+
+                before = prevStr;
+                after = nextStr;
+                color = "#2563eb";
+            }
+
+            if (field.type === "text") {
+                before = prev || "-";
+                after = next || "-";
+                color = "#2563eb";
+            }
+
+            changes.push({ label, before, after, color });
         });
 
-    const visibleLogs = filteredLogs.slice(0, visibleCount);
+        if (changes.length === 0) {
+            return [
+                {
+                    label: t.filterUpdate,
+                    after: t.noChangeDetail,
+                    color: "#111827",
+                },
+            ];
+        }
 
-    const formatDateTime = (value: string) => {
-        const date = new Date(value);
+        return changes;
+    }
 
-        const yy = String(date.getFullYear()).slice(2);
-        const mm = String(date.getMonth() + 1).padStart(2, "0");
-        const dd = String(date.getDate()).padStart(2, "0");
-        const hh = String(date.getHours()).padStart(2, "0");
-        const min = String(date.getMinutes()).padStart(2, "0");
 
-        return `${yy}.${mm}.${dd} ${hh}:${min}`;
-    };
 
     const getActionBadge = (action: string) => {
         if (action === "create") return "NEW";
@@ -126,33 +371,6 @@ export default function InventoryLogsPage() {
         return "royalblue";
     };
 
-    const handleDeleteSelectedLogs = async () => {
-        if (!isMaster) return;
-
-        if (selectedLogIds.length === 0) {
-            alert("삭제할 로그를 선택해 주세요.");
-            return;
-        }
-
-        const ok = confirm(`선택한 로그 ${selectedLogIds.length}개를 삭제할까요?`);
-        if (!ok) return;
-
-        const { error } = await supabase
-            .from("inventory_logs")
-            .delete()
-            .in("id", selectedLogIds);
-
-        if (error) {
-            console.error(error);
-            alert("로그 삭제에 실패했습니다.");
-            return;
-        }
-
-        alert("선택한 로그를 삭제했습니다.");
-        setSelectedLogIds([]);
-        setOpenLogId(null);
-        await fetchLogs();
-    };
 
     return (
         <Container>
@@ -276,32 +494,17 @@ export default function InventoryLogsPage() {
                         })}
                     </div>
 
-                    <div
-                        style={{
-                            display: "grid",
-                            gridTemplateColumns: "1fr 1fr",
-                            gap: 10,
-                        }}
-                    >
-                        <select
-                            value={sortOrder}
-                            onChange={(e) => setSortOrder(e.target.value as "desc" | "asc")}
-                            style={ui.input}
-                        >
-                            <option value="desc">{t.sortDesc}</option>
-                            <option value="asc">{t.sortAsc}</option>
-                        </select>
-
+                    <div>
                         <button
                             onClick={() => {
                                 setSearch("");
                                 setFilterType("all");
                                 setPartFilter("all");
-                                setSortOrder("desc");
                             }}
                             style={{
                                 ...ui.subButton,
                                 padding: "12px 14px",
+                                width: "100%",
                             }}
                         >
                             {t.resetFilter}
@@ -320,72 +523,6 @@ export default function InventoryLogsPage() {
                 </div>
             </div>
 
-            {isMaster && (
-                <div
-                    style={{
-                        ...ui.card,
-                        padding: 12,
-                        marginBottom: 16,
-                        display: "flex",
-                        gap: 8,
-                        flexWrap: "wrap",
-                        alignItems: "center",
-                    }}
-                >
-                    <button
-                        type="button"
-                        onClick={() => setSelectedLogIds(visibleLogs.map((log) => log.id))}
-                        style={{
-                            ...ui.subButton,
-                            width: "auto",
-                            padding: "8px 12px",
-                            fontWeight: 700,
-                        }}
-                    >
-                        전체선택
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => setSelectedLogIds([])}
-                        style={{
-                            ...ui.subButton,
-                            width: "auto",
-                            padding: "8px 12px",
-                            fontWeight: 700,
-                        }}
-                    >
-                        전체해제
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={handleDeleteSelectedLogs}
-                        style={{
-                            ...ui.subButton,
-                            width: "auto",
-                            padding: "8px 12px",
-                            fontWeight: 700,
-                            background: "crimson",
-                            color: "white",
-                            border: "1px solid crimson",
-                        }}
-                    >
-                        선택삭제
-                    </button>
-
-                    <span
-                        style={{
-                            ...ui.metaText,
-                            fontWeight: 700,
-                            marginLeft: "auto",
-                        }}
-                    >
-                        선택됨: {selectedLogIds.length}
-                    </span>
-                </div>
-            )}
-
             {/* 리스트 카드 */}
             <div
                 style={{
@@ -397,244 +534,216 @@ export default function InventoryLogsPage() {
                     <p>{t.noLogs}</p>
                 ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                        {visibleLogs.map((log) => (
-                            <div
-                                key={log.id}
-                                onClick={() => setOpenLogId(openLogId === log.id ? null : log.id)}
-                                style={{
-                                    ...ui.card,
-                                    padding: "6px 10px",
-                                    borderLeft: `4px solid ${getActionColor(log.action)}`,
-                                    background: "#fff",
-                                    cursor: "pointer",
-                                }}
-                            >
-                                <div style={ui.cardRow}>
+                        {visibleGroups.map((group) => {
+                            const log = group.latest;
+                            const isOpen = openGroupKey === group.groupKey;
 
-                                    {isMaster && (
-                                        <div
-                                            onClick={(e) => e.stopPropagation()}
-                                            style={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                                marginRight: 8,
-                                            }}
-                                        >
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedLogIds.includes(log.id)}
-                                                onChange={(e) => {
-                                                    const checked = e.target.checked;
-
-                                                    setSelectedLogIds((prev) =>
-                                                        checked
-                                                            ? [...prev, log.id]
-                                                            : prev.filter((id) => id !== log.id)
-                                                    );
-                                                }}
+                            return (
+                                <div
+                                    key={group.groupKey}
+                                    style={{
+                                        ...ui.card,
+                                        padding: "8px 10px",
+                                        borderLeft: `4px solid ${getActionColor(log.action)}`,
+                                        background: "#fff",
+                                    }}
+                                >
+                                    <div style={ui.cardRow}>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div
                                                 style={{
-                                                    width: 16,
-                                                    height: 16,
-                                                    cursor: "pointer",
-                                                }}
-                                            />
-                                        </div>
-                                    )}
-
-                                    {/* LEFT */}
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div
-                                            style={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: 6,
-                                                flexWrap: "wrap",
-                                            }}
-                                        >
-                                            <span
-                                                style={{
-                                                    ...ui.badgeMini,
-                                                    background: getActionColor(log.action),
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 6,
+                                                    flexWrap: "wrap",
                                                 }}
                                             >
-                                                {getActionBadge(log.action)}
-                                            </span>
+                                                <span
+                                                    style={{
+                                                        ...ui.badgeMini,
+                                                        background: getActionColor(log.action),
+                                                    }}
+                                                >
+                                                    {getActionBadge(log.action)}
+                                                </span>
 
-                                            <span
-                                                style={{
-                                                    fontSize: 14,
-                                                    fontWeight: 700,
-                                                    lineHeight: 1.2,
-                                                    color: "#111827",
-                                                }}
-                                            >
-                                                {[
-                                                    log.code ? `[${log.code}]` : "",
-                                                    getDisplayLogItemName(log),
-                                                ]
-                                                    .filter(Boolean)
-                                                    .join(" ")}
-                                            </span>
-                                        </div>
-
-                                        <div style={ui.metaText}>
-                                            {[
-                                                getPartLabel(log.part || ""),
-                                                getDisplayLogCategory(log),
-                                            ].join(" · ")}
-                                        </div>
-                                    </div>
-
-                                    {/* RIGHT */}
-                                    <div
-                                        style={{
-                                            textAlign: "right",
-                                            flexShrink: 0,
-                                            marginLeft: 10,
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 8,
-                                        }}
-                                    >
-                                        <div>
-                                            {Number(log.change_quantity ?? 0) !== 0 ? (
-                                                <div
+                                                <span
                                                     style={{
                                                         fontSize: 14,
                                                         fontWeight: 700,
                                                         lineHeight: 1.2,
-                                                        whiteSpace: "nowrap",
+                                                        color: "#111827",
                                                     }}
                                                 >
-                                                    <span
-                                                        style={{
-                                                            color:
-                                                                log.action === "delete"
-                                                                    ? "#999"
-                                                                    : Number(log.change_quantity) > 0
-                                                                        ? "green"
-                                                                        : "crimson",
-                                                        }}
-                                                    >
-                                                        {Number(log.change_quantity) > 0 ? "+" : ""}
-                                                        {log.change_quantity}
-                                                    </span>{" "}
-                                                    <span style={{ color: "#111827" }}>
-                                                        {log.unit || ""}
-                                                    </span>
-                                                </div>
-                                            ) : null}
+                                                    {[log.code ? `[${log.code}]` : "", getDisplayLogItemName(log)]
+                                                        .filter(Boolean)
+                                                        .join(" ")}
+                                                </span>
+                                            </div>
 
                                             <div style={ui.metaText}>
-                                                {[
-                                                    log.created_at
-                                                        ? new Date(log.created_at).toLocaleTimeString([], {
-                                                            hour: "2-digit",
-                                                            minute: "2-digit",
-                                                            hour12: false,
-                                                        })
-                                                        : "-",
-                                                    log.actor_name || "-",
-                                                ].join(" · ")}
+                                                {[getPartLabel(log.part || ""), getDisplayLogCategory(log)].join(" · ")}
+                                            </div>
+
+                                            <div
+                                                style={{
+                                                    marginTop: 4,
+                                                    fontSize: 13,
+                                                    color: "#4b5563",
+                                                    wordBreak: "break-word",
+                                                }}
+                                            >
+                                                {inventoryNoteMap[group.groupKey] || "-"}
                                             </div>
                                         </div>
 
-                                        <span
+                                        <div
                                             style={{
-                                                color: "#999",
-                                                fontSize: 14,
-                                                fontWeight: "bold",
-                                                lineHeight: 1,
-                                                width: 16,
-                                                textAlign: "center",
+                                                textAlign: "right",
+                                                flexShrink: 0,
+                                                marginLeft: 10,
                                             }}
                                         >
-                                            {openLogId === log.id ? "▴" : "▾"}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                {/* 펼침 영역 유지 */}
-                                {openLogId === log.id && (
-                                    <div
-                                        style={{
-                                            marginTop: 10,
-                                            paddingTop: 10,
-                                            borderTop: "1px solid #eee",
-                                        }}
-                                    >
-                                        <div style={ui.detailGrid}>
-                                            {Number(log.prev_quantity ?? 0) !== Number(log.new_quantity ?? 0) && (
-                                                <>
-                                                    <div style={ui.detailLabel}>{t.quantity}</div>
-                                                    <div style={ui.detailValue}>
-                                                        {(log.prev_quantity ?? 0)} →{" "}
-                                                        <span
-                                                            style={{
-                                                                color:
-                                                                    (log.new_quantity ?? 0) > (log.prev_quantity ?? 0)
-                                                                        ? "green"
-                                                                        : "crimson",
-                                                                fontWeight: "bold",
-                                                            }}
-                                                        >
-                                                            {log.new_quantity ?? 0}
-                                                        </span>{" "}
-                                                        {log.unit || ""}
-                                                    </div>
-                                                </>
-                                            )}
-
-                                            {Number(log.prev_purchase_price ?? 0) !== Number(log.new_purchase_price ?? 0) && (
-                                                <>
-                                                    <div style={ui.detailLabel}>{t.price}</div>
-                                                    <div style={ui.detailValue}>
-                                                        {log.prev_purchase_price !== null && log.prev_purchase_price !== undefined
-                                                            ? Number(log.prev_purchase_price).toLocaleString()
-                                                            : "-"} ₫
-                                                        {" → "}
-                                                        <span
-                                                            style={{
-                                                                color:
-                                                                    (log.new_purchase_price ?? 0) > (log.prev_purchase_price ?? 0)
-                                                                        ? "green"
-                                                                        : "crimson",
-                                                                fontWeight: "bold",
-                                                            }}
-                                                        >
-                                                            {log.new_purchase_price !== null && log.new_purchase_price !== undefined
-                                                                ? Number(log.new_purchase_price).toLocaleString()
-                                                                : "-"} ₫
-                                                        </span>
-                                                    </div>
-                                                </>
-                                            )}
-
-                                            <div style={ui.detailLabel}>{t.updatedAt}</div>
-                                            <div style={ui.detailValue}>
-                                                {log.created_at
-                                                    ? `${formatDateTime(log.created_at)} · ${log.actor_name || "-"} (${log.actor_username || "-"})`
-                                                    : "-"}
+                                            <div style={ui.metaText}>
+                                                {log.created_at ? formatDateTime(log.created_at) : "-"}
+                                            </div>
+                                            <div style={ui.metaText}>
+                                                {log.actor_name || "-"}
                                             </div>
 
-                                            {(log.prev_note ?? "") !== (log.new_note ?? "") && (
-                                                <>
-                                                    <div style={ui.detailLabel}>{t.note}</div>
-                                                    <div style={ui.detailValue}>
-                                                        {log.prev_note || "-"} →{" "}
-                                                        <span style={{ color: "royalblue", fontWeight: "bold" }}>
-                                                            {log.new_note || "-"}
-                                                        </span>
-                                                    </div>
-                                                </>
-                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    setOpenGroupKey(isOpen ? null : group.groupKey)
+                                                }
+                                                style={{
+                                                    ...ui.subButton,
+                                                    width: "auto",
+                                                    minWidth: 72,
+                                                    padding: "6px 10px",
+                                                    marginTop: 6,
+                                                    fontWeight: 700,
+                                                }}
+                                            >
+                                                {isOpen ? t.close : t.detail}
+                                            </button>
                                         </div>
                                     </div>
-                                )}
-                            </div>
-                        ))}
 
-                        {filteredLogs.length > visibleCount && (
+                                    {isOpen && (
+                                        <div
+                                            style={{
+                                                marginTop: 10,
+                                                paddingTop: 10,
+                                                borderTop: "1px solid #eee",
+                                                display: "flex",
+                                                flexDirection: "column",
+                                                gap: 8,
+                                            }}
+                                        >
+                                            {group.logs.map((history) => {
+                                                const changes = getLogChanges(history, lang);
+
+                                                return (
+                                                    <div
+                                                        key={history.id}
+                                                        style={{
+                                                            display: "flex",
+                                                            justifyContent: "space-between",
+                                                            gap: 10,
+                                                            padding: "8px 0",
+                                                            borderBottom: "1px solid #f3f4f6",
+                                                        }}
+                                                    >
+                                                        <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                                                            {changes.map((change, index) => (
+                                                                <div
+                                                                    key={`${history.id}-${index}`}
+                                                                    style={{
+                                                                        display: "flex",
+                                                                        alignItems: "center",
+                                                                        gap: 8,
+                                                                        minWidth: 0,
+                                                                    }}
+                                                                >
+                                                                    <span
+                                                                        style={{
+                                                                            ...ui.badgeMini,
+                                                                            background: "#111827",
+                                                                            flexShrink: 0,
+                                                                        }}
+                                                                    >
+                                                                        {change.label}
+                                                                    </span>
+
+                                                                    <div
+                                                                        style={{
+                                                                            fontSize: 13,
+                                                                            fontWeight: 700,
+                                                                            wordBreak: "break-word",
+                                                                            minWidth: 0,
+                                                                        }}
+                                                                    >
+                                                                        {change.before ? (
+                                                                            <>
+                                                                                <span style={{ color: "#111827" }}>{change.before}</span>
+                                                                                <span style={{ color: "#9ca3af" }}> → </span>
+                                                                                <span style={{ color: change.color || "#111827" }}>{change.after}</span>
+                                                                            </>
+                                                                        ) : (
+                                                                            <span style={{ color: change.color || "#111827" }}>{change.after}</span>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+
+                                                        <div
+                                                            style={{
+                                                                textAlign: "right",
+                                                                flexShrink: 0,
+                                                                fontSize: 12,
+                                                                color: "#6b7280",
+                                                                whiteSpace: "nowrap",
+                                                                display: "flex",
+                                                                flexDirection: "column",
+                                                                alignItems: "flex-end",
+                                                                gap: 6,
+                                                            }}
+                                                        >
+                                                            <div>{history.created_at ? formatDateTime(history.created_at) : "-"}</div>
+                                                            <div>{history.actor_name || "-"}</div>
+
+                                                            {isMaster && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleDeleteSingleLog(history.id)}
+                                                                    style={{
+                                                                        ...ui.subButton,
+                                                                        width: "auto",
+                                                                        minWidth: 52,
+                                                                        padding: "4px 8px",
+                                                                        background: "crimson",
+                                                                        color: "white",
+                                                                        border: "1px solid crimson",
+                                                                        fontSize: 12,
+                                                                        fontWeight: 700,
+                                                                    }}
+                                                                >
+                                                                    {t.delete}
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+
+                        {groupedLogs.length > visibleCount && (
                             <div style={{ marginTop: 16 }}>
                                 <button
                                     type="button"
@@ -646,9 +755,7 @@ export default function InventoryLogsPage() {
                                         fontWeight: 700,
                                     }}
                                 >
-                                    {t.loadMore
-                                        ? `${t.loadMore} (${visibleLogs.length}/${filteredLogs.length})`
-                                        : `더 보기 (${visibleLogs.length}/${filteredLogs.length})`}
+                                    {`${t.loadMore} (${visibleGroups.length}/${groupedLogs.length})`}
                                 </button>
                             </div>
                         )}

@@ -57,6 +57,9 @@ export const inventoryText = {
         detail: "상세",
         close: "닫기",
         saveQuantity: "수량 저장",
+        snapshotBaseDate: "기준일",
+        snapshotDiffLabel: "전일",
+        snapshotView: "일자별 재고확인",
     },
     vi: {
         deleteConfirm: "Bạn có muốn xóa dữ liệu tồn kho này không?",
@@ -116,5 +119,8 @@ export const inventoryText = {
         detail: "Chi tiết",
         close: "Đóng",
         saveQuantity: "Lưu số lượng",
+        snapshotBaseDate: "Ngày gốc",
+        snapshotDiffLabel: "So với hôm trước",
+        snapshotView: "Kiểm tra tồn kho theo ngày",
     },
 } as const;

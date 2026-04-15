@@ -163,9 +163,6 @@ export default function InventoryPage() {
             ? item.category_vi || item.category || "-"
             : item.category || item.category_vi || "-";
 
-    const getCategoryKey = (item: any) =>
-        item.category || item.category_vi || "-";
-
     const getDisplayLogItemName = (log: any) =>
         lang === "vi"
             ? log.item_name_vi || log.item_name || "-"
@@ -785,20 +782,14 @@ export default function InventoryPage() {
 
     const categoryTabs = useMemo(() => {
         return [
-            { key: "all", label: lang === "vi" ? "Tất cả" : "전체" },
+            "all",
             ...Array.from(
-                new Map(
+                new Set(
                     inventoryList
                         .filter((item) => item.part === partFilter)
-                        .filter((item) => getCategoryKey(item) && getCategoryKey(item) !== "-")
-                        .map((item) => [
-                            getCategoryKey(item),
-                            {
-                                key: getCategoryKey(item),
-                                label: getDisplayCategory(item),
-                            },
-                        ])
-                ).values()
+                        .map((item) => getDisplayCategory(item))
+                        .filter((value) => value && value !== "-")
+                )
             ),
         ];
     }, [inventoryList, partFilter, lang]);
@@ -808,7 +799,6 @@ export default function InventoryPage() {
             const keyword = search.trim().toLowerCase();
             const displayItemName = getDisplayItemName(item).toLowerCase();
             const displayCategory = getDisplayCategory(item);
-            const categoryKey = getCategoryKey(item);
 
             const matchSearch =
                 !keyword ||
@@ -817,7 +807,7 @@ export default function InventoryPage() {
 
             const matchPart = item.part === partFilter;
             const matchCategory =
-                categoryFilter === "all" || categoryKey === categoryFilter;
+                categoryFilter === "all" || displayCategory === categoryFilter;
             const matchLowStock =
                 !showLowStockOnly ||
                 Number(item.quantity) <= Number(item.low_stock_threshold ?? 1);
@@ -850,16 +840,6 @@ export default function InventoryPage() {
             });
         });
 
-    const groupedInventory = filteredInventory.reduce((acc, item) => {
-        const categoryKey = getDisplayCategory(item) || "-";
-
-        if (!acc[categoryKey]) {
-            acc[categoryKey] = [];
-        }
-
-        acc[categoryKey].push(item);
-        return acc;
-    }, {} as Record<string, any[]>);
 
     return (
         <Container>
@@ -979,13 +959,13 @@ export default function InventoryPage() {
                         }}
                     >
                         {categoryTabs.map((cat) => {
-                            const active = categoryFilter === cat.key;
+                            const active = categoryFilter === cat;
 
                             return (
                                 <button
-                                    key={cat.key}
+                                    key={cat}
                                     type="button"
-                                    onClick={() => setCategoryFilter(cat.key)}
+                                    onClick={() => setCategoryFilter(cat)}
                                     style={{
                                         padding: "8px 12px",
                                         borderRadius: 999,
@@ -999,7 +979,7 @@ export default function InventoryPage() {
                                         flexShrink: 0,
                                     }}
                                 >
-                                    {cat.label}
+                                    {cat === "all" ? "전체" : cat}
                                 </button>
                             );
                         })}
@@ -1060,324 +1040,302 @@ export default function InventoryPage() {
                             paddingRight: 4,
                         }}
                     >
-                        {Object.entries(groupedInventory).map(([categoryName, items]) => (
-                            <div
-                                key={categoryName}
-                                style={{
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    gap: 8,
-                                }}
-                            >
+                        {filteredInventory.map((item) => {
+                            const isOpen = openItemId === item.id;
+                            const quantityDraft =
+                                quantityDrafts[item.id] ?? String(item.quantity ?? "");
+
+                            const snapshotQty = latestSnapshotMap[item.id];
+                            const hasSnapshot = snapshotQty !== undefined;
+                            const diffQty = hasSnapshot ? Number(item.quantity ?? 0) - Number(snapshotQty) : null;
+
+                            return (
                                 <div
+                                    key={item.id}
                                     style={{
-                                        fontSize: 13,
-                                        fontWeight: 800,
-                                        color: "#374151",
-                                        padding: "4px 2px 0",
+                                        ...ui.card,
+                                        padding: "8px 10px",
+                                        borderLeft:
+                                            Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
+                                                ? "4px solid crimson"
+                                                : "4px solid #d1d5db",
+                                        background: "#fff",
                                     }}
                                 >
-                                    {categoryName}
-                                </div>
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            justifyContent: "space-between",
+                                            alignItems: "center",
+                                            padding: "2px 0",
+                                            minHeight: 32,
+                                            gap: 10,
+                                        }}
+                                    >
+                                        <div style={{ minWidth: 0, flex: 1 }}>
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 6,
+                                                    flexWrap: "wrap",
+                                                    lineHeight: 1.2,
+                                                }}
+                                            >
+                                                <span
+                                                    style={{
+                                                        fontSize: 14,
+                                                        fontWeight: 700,
+                                                        color: "#111827",
+                                                        wordBreak: "break-word",
+                                                    }}
+                                                >
+                                                    {[item.code ? `[${item.code}]` : "", getDisplayItemName(item)]
+                                                        .filter(Boolean)
+                                                        .join(" ")}
+                                                </span>
 
-                                {items.map((item) => {
-                                    const isOpen = openItemId === item.id;
-                                    const quantityDraft =
-                                        quantityDrafts[item.id] ?? String(item.quantity ?? "");
+                                                {Number(item.quantity) <= Number(item.low_stock_threshold ?? 1) && (
+                                                    <span
+                                                        style={{
+                                                            ...ui.badgeMini,
+                                                            background: "crimson",
+                                                        }}
+                                                    >
+                                                        {t.low}
+                                                    </span>
+                                                )}
+                                            </div>
 
-                                    const snapshotQty = latestSnapshotMap[item.id];
-                                    const hasSnapshot = snapshotQty !== undefined;
-                                    const diffQty = hasSnapshot ? Number(item.quantity ?? 0) - Number(snapshotQty) : null;
+                                            <div style={ui.metaText}>
+                                                {[getPartLabel(item.part || ""), getDisplayCategory(item)].join(" · ")}
+                                            </div>
+                                        </div>
 
-                                    return (
                                         <div
-                                            key={item.id}
                                             style={{
-                                                ...ui.card,
-                                                padding: "8px 10px",
-                                                borderLeft:
-                                                    Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
-                                                        ? "4px solid crimson"
-                                                        : "4px solid #d1d5db",
-                                                background: "#fff",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 10,
+                                                flexShrink: 0,
                                             }}
                                         >
                                             <div
                                                 style={{
-                                                    display: "flex",
-                                                    justifyContent: "space-between",
-                                                    alignItems: "center",
-                                                    padding: "2px 0",
-                                                    minHeight: 32,
-                                                    gap: 10,
+                                                    minWidth: 64,
+                                                    textAlign: "right",
+                                                    lineHeight: 1.2,
+                                                    whiteSpace: "nowrap",
                                                 }}
                                             >
-                                                <div style={{ minWidth: 0, flex: 1 }}>
-                                                    <div
+                                                <div>
+                                                    <span
                                                         style={{
-                                                            display: "flex",
-                                                            alignItems: "center",
-                                                            gap: 6,
-                                                            flexWrap: "wrap",
-                                                            lineHeight: 1.2,
+                                                            fontSize: 14,
+                                                            fontWeight: 700,
+                                                            color:
+                                                                Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
+                                                                    ? "crimson"
+                                                                    : "#111827",
                                                         }}
                                                     >
-                                                        <span
-                                                            style={{
-                                                                fontSize: 14,
-                                                                fontWeight: 700,
-                                                                color: "#111827",
-                                                                wordBreak: "break-word",
-                                                            }}
-                                                        >
-                                                            {[item.code ? `[${item.code}]` : "", getDisplayItemName(item)]
-                                                                .filter(Boolean)
-                                                                .join(" ")}
-                                                        </span>
-
-                                                        {Number(item.quantity) <= Number(item.low_stock_threshold ?? 1) && (
-                                                            <span
-                                                                style={{
-                                                                    ...ui.badgeMini,
-                                                                    background: "crimson",
-                                                                }}
-                                                            >
-                                                                {t.low}
-                                                            </span>
-                                                        )}
-                                                    </div>
-
-                                                    <div style={ui.metaText}>
-                                                        {[getPartLabel(item.part || ""), getDisplayCategory(item)].join(" · ")}
-                                                    </div>
+                                                        {item.quantity}
+                                                    </span>{" "}
+                                                    <span
+                                                        style={{
+                                                            fontSize: 14,
+                                                            fontWeight: 700,
+                                                            color: "#111827",
+                                                        }}
+                                                    >
+                                                        {item.unit}
+                                                    </span>
                                                 </div>
 
                                                 <div
                                                     style={{
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        gap: 10,
-                                                        flexShrink: 0,
+                                                        marginTop: 2,
+                                                        fontSize: 12,
+                                                        fontWeight: 700,
+                                                        color:
+                                                            diffQty === null
+                                                                ? "#9ca3af"
+                                                                : diffQty > 0
+                                                                    ? "seagreen"
+                                                                    : diffQty < 0
+                                                                        ? "crimson"
+                                                                        : "#6b7280",
                                                     }}
                                                 >
-                                                    <div
-                                                        style={{
-                                                            minWidth: 64,
-                                                            textAlign: "right",
-                                                            lineHeight: 1.2,
-                                                            whiteSpace: "nowrap",
-                                                        }}
-                                                    >
-                                                        <div>
-                                                            <span
-                                                                style={{
-                                                                    fontSize: 14,
-                                                                    fontWeight: 700,
-                                                                    color:
-                                                                        Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
-                                                                            ? "crimson"
-                                                                            : "#111827",
-                                                                }}
-                                                            >
-                                                                {item.quantity}
-                                                            </span>{" "}
-                                                            <span
-                                                                style={{
-                                                                    fontSize: 14,
-                                                                    fontWeight: 700,
-                                                                    color: "#111827",
-                                                                }}
-                                                            >
-                                                                {item.unit}
-                                                            </span>
-                                                        </div>
-
-                                                        <div
-                                                            style={{
-                                                                marginTop: 2,
-                                                                fontSize: 12,
-                                                                fontWeight: 700,
-                                                                color:
-                                                                    diffQty === null
-                                                                        ? "#9ca3af"
-                                                                        : diffQty > 0
-                                                                            ? "seagreen"
-                                                                            : diffQty < 0
-                                                                                ? "crimson"
-                                                                                : "#6b7280",
-                                                            }}
-                                                        >
-                                                            {diffQty === null
-                                                                ? "-"
-                                                                : `${t.snapshotDiffLabel} ${diffQty > 0 ? "+" : ""}${diffQty}`}
-                                                        </div>
-                                                    </div>
-
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            const nextOpen = !isOpen;
-                                                            setOpenItemId(nextOpen ? item.id : null);
-                                                            if (nextOpen) {
-                                                                setQuantityDrafts((prev) => ({
-                                                                    ...prev,
-                                                                    [item.id]: String(item.quantity ?? ""),
-                                                                }));
-                                                            }
-                                                        }}
-                                                        style={{
-                                                            ...ui.subButton,
-                                                            width: "auto",
-                                                            minWidth: 74,
-                                                            padding: "8px 12px",
-                                                            fontWeight: 700,
-                                                        }}
-                                                    >
-                                                        {isOpen ? t.close : t.detail}
-                                                    </button>
+                                                    {diffQty === null
+                                                        ? "-"
+                                                        : `${t.snapshotDiffLabel} ${diffQty > 0 ? "+" : ""}${diffQty}`}
                                                 </div>
                                             </div>
 
-                                            {isOpen && (
-                                                <div
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const nextOpen = !isOpen;
+                                                    setOpenItemId(nextOpen ? item.id : null);
+                                                    if (nextOpen) {
+                                                        setQuantityDrafts((prev) => ({
+                                                            ...prev,
+                                                            [item.id]: String(item.quantity ?? ""),
+                                                        }));
+                                                    }
+                                                }}
+                                                style={{
+                                                    ...ui.subButton,
+                                                    width: "auto",
+                                                    minWidth: 74,
+                                                    padding: "8px 12px",
+                                                    fontWeight: 700,
+                                                }}
+                                            >
+                                                {isOpen ? t.close : t.detail}
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {isOpen && (
+                                        <div
+                                            style={{
+                                                borderTop: "1px solid #eee",
+                                                paddingTop: 10,
+                                                marginTop: 10,
+                                            }}
+                                        >
+                                            <div
+                                                style={{
+                                                    display: "grid",
+                                                    gridTemplateColumns: "1fr auto",
+                                                    gap: 8,
+                                                    alignItems: "center",
+                                                    marginBottom: 14,
+                                                }}
+                                            >
+                                                <input
+                                                    type="number"
+                                                    step="0.1"
+                                                    value={quantityDraft}
+                                                    onChange={(e) =>
+                                                        setQuantityDrafts((prev) => ({
+                                                            ...prev,
+                                                            [item.id]: e.target.value,
+                                                        }))
+                                                    }
+                                                    style={ui.input}
+                                                />
+
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleQuantitySave(item)}
                                                     style={{
-                                                        borderTop: "1px solid #eee",
-                                                        paddingTop: 10,
-                                                        marginTop: 10,
+                                                        ...ui.button,
+                                                        width: "auto",
+                                                        minWidth: 84,
+                                                        padding: "12px 16px",
                                                     }}
                                                 >
-                                                    <div
-                                                        style={{
-                                                            display: "grid",
-                                                            gridTemplateColumns: "1fr auto",
-                                                            gap: 8,
-                                                            alignItems: "center",
-                                                            marginBottom: 14,
-                                                        }}
-                                                    >
-                                                        <input
-                                                            type="number"
-                                                            step="0.1"
-                                                            value={quantityDraft}
-                                                            onChange={(e) =>
-                                                                setQuantityDrafts((prev) => ({
-                                                                    ...prev,
-                                                                    [item.id]: e.target.value,
-                                                                }))
-                                                            }
-                                                            style={ui.input}
-                                                        />
+                                                    {t.saveQuantity}
+                                                </button>
+                                            </div>
 
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleQuantitySave(item)}
-                                                            style={{
-                                                                ...ui.button,
-                                                                width: "auto",
-                                                                minWidth: 84,
-                                                                padding: "12px 16px",
-                                                            }}
-                                                        >
-                                                            {t.saveQuantity}
-                                                        </button>
-                                                    </div>
+                                            <div style={ui.detailGrid}>
+                                                <div style={ui.detailLabel}>{t.supplier}</div>
+                                                <div style={ui.detailValue}>{item.supplier || "-"}</div>
 
-                                                    <div style={ui.detailGrid}>
-                                                        <div style={ui.detailLabel}>{t.supplier}</div>
-                                                        <div style={ui.detailValue}>{item.supplier || "-"}</div>
+                                                <div style={ui.detailLabel}>{t.purchasePrice}</div>
+                                                <div style={ui.detailValue}>
+                                                    {item.purchase_price !== null && item.purchase_price !== undefined
+                                                        ? Number(item.purchase_price).toLocaleString() + " ₫"
+                                                        : "-"}
+                                                </div>
 
-                                                        <div style={ui.detailLabel}>{t.purchasePrice}</div>
-                                                        <div style={ui.detailValue}>
-                                                            {item.purchase_price !== null && item.purchase_price !== undefined
-                                                                ? Number(item.purchase_price).toLocaleString() + " ₫"
-                                                                : "-"}
-                                                        </div>
+                                                <div style={ui.detailLabel}>{t.lowStockThreshold}</div>
+                                                <div style={ui.detailValue}>{item.low_stock_threshold ?? 1}</div>
 
-                                                        <div style={ui.detailLabel}>{t.lowStockThreshold}</div>
-                                                        <div style={ui.detailValue}>{item.low_stock_threshold ?? 1}</div>
+                                                <div style={ui.detailLabel}>{t.updatedAt}</div>
+                                                <div style={ui.detailValue}>
+                                                    {item.updated_at
+                                                        ? (() => {
+                                                            const d = new Date(item.updated_at);
+                                                            const yy = String(d.getFullYear()).slice(2);
+                                                            const mm = String(d.getMonth() + 1).padStart(2, "0");
+                                                            const dd = String(d.getDate()).padStart(2, "0");
+                                                            const hh = String(d.getHours()).padStart(2, "0");
+                                                            const min = String(d.getMinutes()).padStart(2, "0");
+                                                            return `${yy}.${mm}.${dd} ${hh}:${min} · ${item.updated_by_name || "-"}`;
+                                                        })()
+                                                        : "-"}
+                                                </div>
 
-                                                        <div style={ui.detailLabel}>{t.updatedAt}</div>
-                                                        <div style={ui.detailValue}>
-                                                            {item.updated_at
-                                                                ? (() => {
-                                                                    const d = new Date(item.updated_at);
-                                                                    const yy = String(d.getFullYear()).slice(2);
-                                                                    const mm = String(d.getMonth() + 1).padStart(2, "0");
-                                                                    const dd = String(d.getDate()).padStart(2, "0");
-                                                                    const hh = String(d.getHours()).padStart(2, "0");
-                                                                    const min = String(d.getMinutes()).padStart(2, "0");
-                                                                    return `${yy}.${mm}.${dd} ${hh}:${min} · ${item.updated_by_name || "-"}`;
-                                                                })()
-                                                                : "-"}
-                                                        </div>
+                                                <div style={ui.detailLabel}>{t.note}</div>
+                                                <div style={ui.detailValue}>{item.note || "-"}</div>
+                                            </div>
 
-                                                        <div style={ui.detailLabel}>{t.note}</div>
-                                                        <div style={ui.detailValue}>{item.note || "-"}</div>
-                                                    </div>
-
-                                                    {Number(item.quantity) <= Number(item.low_stock_threshold ?? 1) && (
-                                                        <div
-                                                            style={{
-                                                                marginTop: 10,
-                                                                color: "crimson",
-                                                                fontWeight: "bold",
-                                                                fontSize: 13,
-                                                            }}
-                                                        >
-                                                            {t.stockLow}
-                                                        </div>
-                                                    )}
-
-                                                    <div
-                                                        style={{
-                                                            display: "flex",
-                                                            gap: 8,
-                                                            marginTop: 12,
-                                                            paddingTop: 2,
-                                                            justifyContent: "flex-end",
-                                                        }}
-                                                    >
-                                                        <button
-                                                            onClick={() => handleEdit(item)}
-                                                            style={{
-                                                                ...ui.subButton,
-                                                                width: "auto",
-                                                                minWidth: 64,
-                                                                padding: "8px 14px",
-                                                                background: "royalblue",
-                                                                color: "white",
-                                                                border: "1px solid royalblue",
-                                                                fontSize: 14,
-                                                                fontWeight: 700,
-                                                            }}
-                                                        >
-                                                            {t.edit}
-                                                        </button>
-
-                                                        <button
-                                                            onClick={() => handleDelete(item.id)}
-                                                            style={{
-                                                                ...ui.subButton,
-                                                                width: "auto",
-                                                                minWidth: 64,
-                                                                padding: "8px 14px",
-                                                                background: "crimson",
-                                                                color: "white",
-                                                                border: "1px solid crimson",
-                                                                fontSize: 14,
-                                                                fontWeight: 700,
-                                                            }}
-                                                        >
-                                                            {t.delete}
-                                                        </button>
-                                                    </div>
+                                            {Number(item.quantity) <= Number(item.low_stock_threshold ?? 1) && (
+                                                <div
+                                                    style={{
+                                                        marginTop: 10,
+                                                        color: "crimson",
+                                                        fontWeight: "bold",
+                                                        fontSize: 13,
+                                                    }}
+                                                >
+                                                    {t.stockLow}
                                                 </div>
                                             )}
+
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    gap: 8,
+                                                    marginTop: 12,
+                                                    paddingTop: 2,
+                                                    justifyContent: "flex-end",
+                                                }}
+                                            >
+                                                <button
+                                                    onClick={() => handleEdit(item)}
+                                                    style={{
+                                                        ...ui.subButton,
+                                                        width: "auto",
+                                                        minWidth: 64,
+                                                        padding: "8px 14px",
+                                                        background: "royalblue",
+                                                        color: "white",
+                                                        border: "1px solid royalblue",
+                                                        fontSize: 14,
+                                                        fontWeight: 700,
+                                                    }}
+                                                >
+                                                    {t.edit}
+                                                </button>
+
+                                                <button
+                                                    onClick={() => handleDelete(item.id)}
+                                                    style={{
+                                                        ...ui.subButton,
+                                                        width: "auto",
+                                                        minWidth: 64,
+                                                        padding: "8px 14px",
+                                                        background: "crimson",
+                                                        color: "white",
+                                                        border: "1px solid crimson",
+                                                        fontSize: 14,
+                                                        fontWeight: 700,
+                                                    }}
+                                                >
+                                                    {t.delete}
+                                                </button>
+                                            </div>
                                         </div>
-                                    );
-                                })}
-                            </div>
-                        ))}
+                                    )}
+                                </div>
+                            );
+                        })}
 
                     </div>
                 )}
