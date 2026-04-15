@@ -178,30 +178,37 @@ export default function InventoryLogsPage() {
                 new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         );
 
-    const groupedLogsMap = filteredLogs.reduce((acc, log) => {
-        const key = getGroupKey(log);
+    const groupedLogsMap: Record<string, any[]> = filteredLogs.reduce(
+        (acc: Record<string, any[]>, log) => {
+            const key = getGroupKey(log);
 
-        if (!acc[key]) {
-            acc[key] = [];
+            if (!acc[key]) {
+                acc[key] = [];
+            }
+
+            acc[key].push(log);
+            return acc;
+        },
+        {}
+    );
+
+    const groupedLogs = Object.entries(groupedLogsMap).map(
+        ([groupKey, items]: [string, any[]]) => {
+            const sortedItems = [...items].sort(
+                (a, b) =>
+                    new Date(b.created_at).getTime() -
+                    new Date(a.created_at).getTime()
+            );
+
+            const latest = sortedItems[0];
+
+            return {
+                groupKey,
+                latest,
+                logs: sortedItems,
+            };
         }
-
-        acc[key].push(log);
-        return acc;
-    }, {} as Record<string, any[]>);
-
-    const groupedLogs = Object.entries(groupedLogsMap).map(([groupKey, items]) => {
-        const sortedItems = [...items].sort(
-            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        );
-
-        const latest = sortedItems[0];
-
-        return {
-            groupKey,
-            latest,
-            logs: sortedItems,
-        };
-    });
+    );
 
     const visibleGroups = groupedLogs.slice(0, visibleCount);
 
