@@ -21,20 +21,23 @@ function getVietnamDateParts(date = new Date()) {
 }
 
 function getSnapshotDate() {
+    console.log("snapshotDate:", snapshotDate);
+    console.log("server now:", new Date().toISOString());
     const now = new Date();
 
-    // 베트남 시간 기준 "오늘 날짜"
-    const { year, month, day } = getVietnamDateParts(now);
+    // 베트남 기준 현재 시간
+    const vietnamNow = new Date(
+        now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
+    );
 
-    // 베트남 기준 오늘 00:00으로 만든 뒤 하루 빼서 전 영업일 계산
-    const vietnamToday = new Date(`${year}-${month}-${day}T00:00:00+07:00`);
-    vietnamToday.setDate(vietnamToday.getDate() - 1);
+    // 하루 빼기
+    vietnamNow.setDate(vietnamNow.getDate() - 1);
 
-    const snapshotYear = vietnamToday.getFullYear();
-    const snapshotMonth = String(vietnamToday.getMonth() + 1).padStart(2, "0");
-    const snapshotDay = String(vietnamToday.getDate()).padStart(2, "0");
+    const yyyy = vietnamNow.getFullYear();
+    const mm = String(vietnamNow.getMonth() + 1).padStart(2, "0");
+    const dd = String(vietnamNow.getDate()).padStart(2, "0");
 
-    return `${snapshotYear}-${snapshotMonth}-${snapshotDay}`;
+    return `${yyyy}-${mm}-${dd}`;
 }
 
 export async function GET(request: Request) {
@@ -81,6 +84,7 @@ export async function GET(request: Request) {
         }
 
         if (existingBatch) {
+            console.log("SKIPPED - already exists:", snapshotDate);
             return NextResponse.json({
                 ok: true,
                 skipped: true,
