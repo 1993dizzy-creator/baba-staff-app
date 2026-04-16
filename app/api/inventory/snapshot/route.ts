@@ -1,14 +1,26 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase/client";
+import { createClient } from "@supabase/supabase-js";
 
 function getSnapshotDate() {
     const now = new Date();
-    const vietnamTime = new Date(now.getTime() + 7 * 60 * 60 * 1000);
-    vietnamTime.setDate(vietnamTime.getDate() - 1);
 
-    const yyyy = vietnamTime.getFullYear();
-    const mm = String(vietnamTime.getMonth() + 1).padStart(2, "0");
-    const dd = String(vietnamTime.getDate()).padStart(2, "0");
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Ho_Chi_Minh",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(now);
+
+    const year = Number(parts.find((p) => p.type === "year")?.value);
+    const month = Number(parts.find((p) => p.type === "month")?.value);
+    const day = Number(parts.find((p) => p.type === "day")?.value);
+
+    const date = new Date(Date.UTC(year, month - 1, day));
+    date.setUTCDate(date.getUTCDate() - 1);
+
+    const yyyy = date.getUTCFullYear();
+    const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(date.getUTCDate()).padStart(2, "0");
 
     return `${yyyy}-${mm}-${dd}`;
 }
@@ -27,6 +39,11 @@ export async function GET(request: Request) {
             );
         }
 
+        const supabase = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!
+        );
+
         const snapshotDate = getSnapshotDate();
 
         const { data: existingBatch, error: existingBatchError } = await supabase
@@ -40,7 +57,106 @@ export async function GET(request: Request) {
                 {
                     ok: false,
                     step: "existing-batch-query-failed",
+                    snapshotDate,
                     error: existingBatchError.message,
+                },
+                { status: 500 }
+            );
+        }
+
+        if (existingBatch) {
+            return NextResponse.json({
+                ok: true,
+                step: "batch-already-exists",
+                snapshotDate,
+                batchId: existingBatch.id,
+                message: "Snapshot already created for this date",
+            });
+        }
+
+        const { data: createdBatch, error: createBatchError } = await supabase
+            .from("inventory_snapshot_batches")
+            .insert({
+                snapshot_date: snapshotDate,
+                note: "daily auto snapshot",
+            })
+            .select("id, snapshot_date, created_at")
+            .single();
+
+        if (createBatchError || !createdBatch) {
+            return NextResponse.json(
+                {
+                    ok: false,
+                    step: "batch-insert-failed",
+                    snapshotDate,
+                    error: createBatchError?.message ?? "Batch insert failed",
+                },
+                { status: 500 }
+            );
+        }
+
+        const batchId = createdBatch.id;
+
+        const { data: inventoryItems, error: inventoryError } = await supabase
+            .from("inventory")
+            .select(
+                "id, item_name, item_name_vi, quantity, unit, purchase_price, part, category, category_vi, code, low_stock_threshold"
+            )
+            .order("updated_at", { ascending: false });
+
+        if (inventoryError) {
+            return NextResponse.json(
+                {
+                    ok: false,
+                    step: "inventory-query-failed",
+                    snapshotDate,
+                    batchId,
+                    error: inventoryError.message,
+                },
+                { status: 500 }
+            );
+        }
+
+        const snapshotRows = (inventoryItems ?? []).map((item) => ({
+            batch_id: batchId,
+            item_id: item.id,
+            item_name: item.item_name ?? "",
+            item_name_vi: item.item_name_vi ?? "",
+            part: item.part ?? "",
+            category: item.category ?? "",
+            category_vi: item.category_vi ?? "",
+            code: item.code ?? "",
+            unit: item.unit ?? "",
+            quantity: item.quantity ?? 0,
+            purchase_price: item.purchase_price,
+            low_stock_threshold: item.low_stock_threshold ?? 0,
+        }));
+
+        if (snapshotRows.length === 0) {
+            return NextResponse.json({
+                ok: true,
+                step: "no-inventory-items",
+                snapshotDate,
+                batchId,
+                insertedCount: 0,
+            });
+        }
+
+        const { data: insertedItems, error: snapshotItemsError } = await supabase
+            .from("inventory_snapshot_items")
+            .insert(snapshotRows)
+            .select("id");
+
+        if (snapshotItemsError) {
+            return NextResponse.json(
+                {
+                    ok: false,
+                    step: "snapshot-items-insert-failed",
+                    snapshotDate,
+                    batchId,
+                    rowCount: snapshotRows.length,
+                    error: snapshotItemsError.message,
+                    sampleRow: snapshotRows[0] ?? null,
                 },
                 { status: 500 }
             );
@@ -48,17 +164,10 @@ export async function GET(request: Request) {
 
         return NextResponse.json({
             ok: true,
-            step: "existing-batch-query-ok",
+            step: "snapshot-complete",
             snapshotDate,
-            existingBatch,
-        });
-
-        return NextResponse.json({
-            ok: true,
-            step: "passed-before-db",
-            userAgent,
-            isCron,
-            snapshotDate,
+            batchId,
+            insertedCount: insertedItems?.length ?? 0,
             now: new Date().toISOString(),
         });
     } catch (error) {
