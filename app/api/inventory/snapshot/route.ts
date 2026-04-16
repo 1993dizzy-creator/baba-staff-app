@@ -23,17 +23,15 @@ function getVietnamDateParts(date = new Date()) {
 function getSnapshotDate() {
     const now = new Date();
 
-    // 베트남 기준 현재 시간
-    const vietnamNow = new Date(
-        now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
-    );
+    // UTC 기준 → 베트남 시간 보정 (+7)
+    const vietnamTime = new Date(now.getTime() + 7 * 60 * 60 * 1000);
 
     // 하루 빼기
-    vietnamNow.setDate(vietnamNow.getDate() - 1);
+    vietnamTime.setDate(vietnamTime.getDate() - 1);
 
-    const yyyy = vietnamNow.getFullYear();
-    const mm = String(vietnamNow.getMonth() + 1).padStart(2, "0");
-    const dd = String(vietnamNow.getDate()).padStart(2, "0");
+    const yyyy = vietnamTime.getFullYear();
+    const mm = String(vietnamTime.getMonth() + 1).padStart(2, "0");
+    const dd = String(vietnamTime.getDate()).padStart(2, "0");
 
     return `${yyyy}-${mm}-${dd}`;
 }
