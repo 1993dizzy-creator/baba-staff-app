@@ -104,6 +104,11 @@ export default function InventoryPage() {
     const [quantityDrafts, setQuantityDrafts] = useState<Record<number, string>>({});
     const [latestSnapshotMap, setLatestSnapshotMap] = useState<Record<number, number>>({});
     const [latestSnapshotDate, setLatestSnapshotDate] = useState<string>("");
+    const [quickSaveItem, setQuickSaveItem] = useState<any | null>(null);
+    const [quickSaveReason, setQuickSaveReason] = useState<
+        "check" | "purchase" | "service" | "other" | null
+    >(null);
+    const [quickSaveOtherText, setQuickSaveOtherText] = useState("");
 
     const itemNameRef = useRef<HTMLInputElement>(null);
     const supplierRef = useRef<HTMLInputElement>(null);
@@ -189,6 +194,33 @@ export default function InventoryPage() {
             default:
                 return value || "-";
         }
+    };
+
+    const getQuickReasonLabel = (
+        reason: "check" | "purchase" | "service" | "other",
+        customText?: string
+    ) => {
+        if (reason === "check") return t.quickReasonCheck;
+        if (reason === "purchase") return t.quickReasonPurchase;
+        if (reason === "service") return t.quickReasonService;
+        return customText?.trim() || t.quickReasonOther;
+    };
+
+    const buildQuickChangeNote = ({
+        currentQty,
+        nextQty,
+        reason,
+        customText,
+    }: {
+        currentQty: number;
+        nextQty: number;
+        reason: "check" | "purchase" | "service" | "other";
+        customText?: string;
+    }) => {
+        const diff = nextQty - currentQty;
+        const diffText = `${diff > 0 ? "+" : ""}${diff}`;
+        const reasonLabel = getQuickReasonLabel(reason, customText);
+        return `${diffText} (${reasonLabel})`;
     };
 
     const fetchInventory = async () => {
@@ -663,10 +695,34 @@ export default function InventoryPage() {
         itemNameRef.current?.focus();
     };
 
-    const handleQuantitySave = async (item: any) => {
+    const handleQuantitySave = (item: any) => {
         const draft = quantityDrafts[item.id];
+
+        if (draft === undefined || String(draft).trim() === "") {
+            alert(t.requiredFields);
+            return;
+        }
+
         const nextQty = parseDecimal(draft);
-        const currentQty = Number(item.quantity ?? 0);
+
+        if (nextQty < 0) {
+            alert(t.quantityCannotBeNegative);
+            return;
+        }
+
+        setQuickSaveItem(item);
+        setQuickSaveReason(null);
+        setQuickSaveOtherText("");
+    };
+
+    const handleQuickSaveConfirm = async (
+        reason: "check" | "purchase" | "service" | "other"
+    ) => {
+        if (!quickSaveItem) return;
+
+        const draft = quantityDrafts[quickSaveItem.id];
+        const nextQty = parseDecimal(draft);
+        const currentQty = Number(quickSaveItem.quantity ?? 0);
 
         if (draft === undefined || String(draft).trim() === "") {
             alert(t.requiredFields);
@@ -678,15 +734,28 @@ export default function InventoryPage() {
             return;
         }
 
+        if (reason === "other" && !quickSaveOtherText.trim()) {
+            alert(lang === "vi" ? "Vui lòng nhập nội dung khác" : "기타 내용을 입력하세요.");
+            return;
+        }
+
+        const quickNote = buildQuickChangeNote({
+            currentQty,
+            nextQty,
+            reason,
+            customText: quickSaveOtherText,
+        });
+
         const { error: updateError } = await supabase
             .from("inventory")
             .update({
                 quantity: nextQty,
+                note: quickNote,
                 updated_at: new Date().toISOString(),
                 updated_by_name: actorName,
                 updated_by_username: actorUsername,
             })
-            .eq("id", item.id);
+            .eq("id", quickSaveItem.id);
 
         if (updateError) {
             console.error(updateError);
@@ -696,22 +765,22 @@ export default function InventoryPage() {
 
         const { error: logError } = await supabase.from("inventory_logs").insert([
             {
-                item_id: item.id,
-                item_name: item.item_name,
-                item_name_vi: item.item_name_vi ?? null,
+                item_id: quickSaveItem.id,
+                item_name: quickSaveItem.item_name,
+                item_name_vi: quickSaveItem.item_name_vi ?? null,
                 action: "update",
-                part: item.part,
-                category: item.category,
-                category_vi: item.category_vi ?? null,
+                part: quickSaveItem.part,
+                category: quickSaveItem.category,
+                category_vi: quickSaveItem.category_vi ?? null,
                 prev_quantity: currentQty,
                 new_quantity: nextQty,
                 change_quantity: nextQty - currentQty,
-                prev_purchase_price: item.purchase_price ?? null,
-                new_purchase_price: item.purchase_price ?? null,
-                prev_note: item.note ?? null,
-                new_note: item.note ?? null,
-                unit: item.unit,
-                code: item.code,
+                prev_purchase_price: quickSaveItem.purchase_price ?? null,
+                new_purchase_price: quickSaveItem.purchase_price ?? null,
+                prev_note: quickSaveItem.note ?? null,
+                new_note: quickNote,
+                unit: quickSaveItem.unit,
+                code: quickSaveItem.code,
                 actor_name: actorName,
                 actor_username: actorUsername,
             },
@@ -725,10 +794,15 @@ export default function InventoryPage() {
 
         await fetchInventory();
         await fetchRecentLogs();
+
         setQuantityDrafts((prev) => ({
             ...prev,
-            [item.id]: String(nextQty),
+            [quickSaveItem.id]: String(nextQty),
         }));
+
+        setQuickSaveItem(null);
+        setQuickSaveReason(null);
+        setQuickSaveOtherText("");
     };
 
     const handleKeyDown = (
@@ -1817,6 +1891,125 @@ export default function InventoryPage() {
                     {t.snapshotView}
                 </Link>
             </div>
+
+            {quickSaveItem && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        zIndex: 1000,
+                        padding: 20,
+                    }}
+                    onClick={() => {
+                        setQuickSaveItem(null);
+                        setQuickSaveReason(null);
+                        setQuickSaveOtherText("");
+                    }}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 360,
+                            background: "#fff",
+                            borderRadius: 14,
+                            padding: 18,
+                            boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 10,
+                        }}
+                    >
+                        <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
+                            {t.quickReasonTitle}
+                        </div>
+
+                        <div style={{ ...ui.metaText, marginBottom: 4 }}>
+                            {[quickSaveItem.code ? `[${quickSaveItem.code}]` : "", getDisplayItemName(quickSaveItem)]
+                                .filter(Boolean)
+                                .join(" ")}
+                        </div>
+
+                        <div
+                            style={{
+                                display: "grid",
+                                gridTemplateColumns: "1fr 1fr",
+                                gap: 8,
+                            }}
+                        >
+                            <button
+                                type="button"
+                                onClick={() => handleQuickSaveConfirm("check")}
+                                style={ui.subButton}
+                            >
+                                {t.quickReasonCheck}
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => handleQuickSaveConfirm("purchase")}
+                                style={ui.subButton}
+                            >
+                                {t.quickReasonPurchase}
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => handleQuickSaveConfirm("service")}
+                                style={ui.subButton}
+                            >
+                                {t.quickReasonService}
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => setQuickSaveReason("other")}
+                                style={ui.subButton}
+                            >
+                                {t.quickReasonOther}
+                            </button>
+                        </div>
+
+                        {quickSaveReason === "other" && (
+                            <>
+                                <input
+                                    type="text"
+                                    value={quickSaveOtherText}
+                                    onChange={(e) => setQuickSaveOtherText(e.target.value)}
+                                    placeholder={t.quickReasonOtherPlaceholder}
+                                    style={ui.input}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => handleQuickSaveConfirm("other")}
+                                    style={ui.button}
+                                >
+                                    {t.editSave}
+                                </button>
+                            </>
+                        )}
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setQuickSaveItem(null);
+                                setQuickSaveReason(null);
+                                setQuickSaveOtherText("");
+                            }}
+                            style={{
+                                ...ui.subButton,
+                                marginTop: 4,
+                            }}
+                        >
+                            {lang === "vi" ? "Đóng" : "닫기"}
+                        </button>
+                    </div>
+                </div>
+            )}
         </Container>
     );
 }
