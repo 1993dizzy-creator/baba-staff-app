@@ -21,8 +21,6 @@ function getVietnamDateParts(date = new Date()) {
 }
 
 function getSnapshotDate() {
-    console.log("snapshotDate:", snapshotDate);
-    console.log("server now:", new Date().toISOString());
     const now = new Date();
 
     // 베트남 기준 현재 시간
@@ -63,6 +61,9 @@ export async function GET(request: Request) {
 
         const snapshotDate = getSnapshotDate();
         // 이하 기존 코드 그대로
+
+        console.log("snapshotDate:", snapshotDate);
+        console.log("server now:", new Date().toISOString());
 
         // 1) 같은 날짜 스냅샷이 이미 있는지 확인
         const { data: existingBatch, error: existingBatchError } = await supabase
