@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase/client";
 
 function getSnapshotDate() {
     const now = new Date();
@@ -27,6 +28,30 @@ export async function GET(request: Request) {
         }
 
         const snapshotDate = getSnapshotDate();
+
+        const { data: existingBatch, error: existingBatchError } = await supabase
+            .from("inventory_snapshot_batches")
+            .select("id, snapshot_date")
+            .eq("snapshot_date", snapshotDate)
+            .maybeSingle();
+
+        if (existingBatchError) {
+            return NextResponse.json(
+                {
+                    ok: false,
+                    step: "existing-batch-query-failed",
+                    error: existingBatchError.message,
+                },
+                { status: 500 }
+            );
+        }
+
+        return NextResponse.json({
+            ok: true,
+            step: "existing-batch-query-ok",
+            snapshotDate,
+            existingBatch,
+        });
 
         return NextResponse.json({
             ok: true,
