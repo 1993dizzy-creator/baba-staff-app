@@ -42,12 +42,16 @@ export async function GET(request: Request) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
-    
+
     try {
         const authHeader = request.headers.get("authorization");
+        const userAgent = request.headers.get("user-agent") || "";
+
+        const isCron = userAgent.includes("vercel-cron");
+
         const expected = `Bearer ${process.env.CRON_SECRET}`;
 
-        if (authHeader !== expected) {
+        if (!isCron && authHeader !== expected) {
             return NextResponse.json(
                 { ok: false, message: "Unauthorized" },
                 { status: 401 }
