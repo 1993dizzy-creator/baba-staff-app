@@ -8,6 +8,7 @@ import { inventoryText } from "@/lib/text";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
+import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 
 const CATEGORY_OPTIONS_BY_PART = {
     kitchen: [
@@ -109,6 +110,13 @@ export default function InventoryPage() {
         "check" | "purchase" | "service" | "other" | null
     >(null);
     const [quickSaveOtherText, setQuickSaveOtherText] = useState("");
+    const [logModalItem, setLogModalItem] = useState<any | null>(null);
+    const [itemLogs, setItemLogs] = useState<any[]>([]);
+    const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
+    const [itemLogOpenGroupKey, setItemLogOpenGroupKey] = useState<string | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isDeletingId, setIsDeletingId] = useState<number | null>(null);
+    const [isQuickSaving, setIsQuickSaving] = useState(false);
 
     const itemNameRef = useRef<HTMLInputElement>(null);
     const supplierRef = useRef<HTMLInputElement>(null);
@@ -196,6 +204,153 @@ export default function InventoryPage() {
         }
     };
 
+    const getActionBadge = (action: string) => {
+        if (action === "create") return "NEW";
+        if (action === "delete") return "DEL";
+        return "UP";
+    };
+
+    const getActionColor = (action: string) => {
+        if (action === "create") return "seagreen";
+        if (action === "delete") return "crimson";
+        return "royalblue";
+    };
+
+    const formatDateTime = (value: string) => {
+        const d = new Date(value);
+        const yy = String(d.getFullYear()).slice(2);
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        const hh = String(d.getHours()).padStart(2, "0");
+        const min = String(d.getMinutes()).padStart(2, "0");
+        return `${yy}.${mm}.${dd} ${hh}:${min}`;
+    };
+
+    const getLogChanges = (log: any, lang: string) => {
+        const changes: {
+            label: string;
+            before?: string;
+            after: string;
+            color?: string;
+        }[] = [];
+
+        if (log.action === "create") {
+            changes.push({
+                label: lang === "vi" ? "Tạo" : "생성",
+                after: `${log.new_quantity ?? 0}${log.unit ? ` ${log.unit}` : ""}`,
+                color: "seagreen",
+            });
+            return changes;
+        }
+
+        if (log.action === "delete") {
+            changes.push({
+                label: lang === "vi" ? "Xóa" : "삭제",
+                before: `${log.prev_quantity ?? 0}${log.unit ? ` ${log.unit}` : ""}`,
+                after: `0${log.unit ? ` ${log.unit}` : ""}`,
+                color: "crimson",
+            });
+            return changes;
+        }
+
+        if (
+            log.prev_quantity !== log.new_quantity &&
+            !(log.prev_quantity == null && log.new_quantity == null)
+        ) {
+            changes.push({
+                label: lang === "vi" ? "SL" : "수량",
+                before: `${log.prev_quantity ?? 0}${log.unit ? ` ${log.unit}` : ""}`,
+                after: `${log.new_quantity ?? 0}${log.unit ? ` ${log.unit}` : ""}`,
+                color:
+                    Number(log.new_quantity ?? 0) > Number(log.prev_quantity ?? 0)
+                        ? "seagreen"
+                        : Number(log.new_quantity ?? 0) < Number(log.prev_quantity ?? 0)
+                            ? "crimson"
+                            : "#111827",
+            });
+        }
+
+        if ((log.prev_note || "") !== (log.new_note || "")) {
+            changes.push({
+                label: lang === "vi" ? "GC" : "비고",
+                before: log.prev_note || "-",
+                after: log.new_note || "-",
+            });
+        }
+
+        if ((log.prev_supplier || "") !== (log.new_supplier || "")) {
+            changes.push({
+                label: lang === "vi" ? "NCC" : "거래처",
+                before: log.prev_supplier || "-",
+                after: log.new_supplier || "-",
+            });
+        }
+
+        if ((log.prev_code || "") !== (log.new_code || "")) {
+            changes.push({
+                label: lang === "vi" ? "Mã" : "코드",
+                before: log.prev_code || "-",
+                after: log.new_code || "-",
+            });
+        }
+
+        if ((log.prev_unit || "") !== (log.new_unit || "")) {
+            changes.push({
+                label: lang === "vi" ? "ĐV" : "단위",
+                before: log.prev_unit || "-",
+                after: log.new_unit || "-",
+            });
+        }
+
+        if ((log.prev_category || "") !== (log.new_category || "")) {
+            changes.push({
+                label: lang === "vi" ? "DM" : "카테고리",
+                before:
+                    lang === "vi"
+                        ? log.prev_category_vi || log.prev_category || "-"
+                        : log.prev_category || log.prev_category_vi || "-",
+                after:
+                    lang === "vi"
+                        ? log.new_category_vi || log.new_category || "-"
+                        : log.new_category || log.new_category_vi || "-",
+            });
+        }
+
+        if ((log.prev_part || "") !== (log.new_part || "")) {
+            changes.push({
+                label: lang === "vi" ? "BP" : "파트",
+                before: getPartLabel(log.prev_part || "-"),
+                after: getPartLabel(log.new_part || "-"),
+            });
+        }
+
+        if (
+            log.prev_purchase_price !== log.new_purchase_price &&
+            !(log.prev_purchase_price == null && log.new_purchase_price == null)
+        ) {
+            changes.push({
+                label: lang === "vi" ? "Giá" : "구매가",
+                before:
+                    log.prev_purchase_price !== null && log.prev_purchase_price !== undefined
+                        ? `${Number(log.prev_purchase_price).toLocaleString()} ₫`
+                        : "-",
+                after:
+                    log.new_purchase_price !== null && log.new_purchase_price !== undefined
+                        ? `${Number(log.new_purchase_price).toLocaleString()} ₫`
+                        : "-",
+            });
+        }
+
+        if (changes.length === 0) {
+            changes.push({
+                label: lang === "vi" ? "Sửa" : "변경",
+                after: lang === "vi" ? "Không có chi tiết" : "변경 내역 없음",
+            });
+        }
+
+        return changes;
+    };
+
     const getQuickReasonLabel = (
         reason: "check" | "purchase" | "service" | "other",
         customText?: string
@@ -250,6 +405,29 @@ export default function InventoryPage() {
         }
 
         setRecentLogs(data || []);
+    };
+
+    const fetchItemLogs = async (item: any) => {
+        setLogModalItem(item);
+        setIsItemLogsLoading(true);
+        setItemLogOpenGroupKey(null);
+
+        const { data, error } = await supabase
+            .from("inventory_logs")
+            .select("*")
+            .eq("item_id", item.id)
+            .order("created_at", { ascending: false })
+            .limit(50);
+
+        if (error) {
+            console.error(error);
+            setItemLogs([]);
+            setIsItemLogsLoading(false);
+            return;
+        }
+
+        setItemLogs(data || []);
+        setIsItemLogsLoading(false);
     };
 
     const fetchLatestSnapshot = async () => {
@@ -318,7 +496,7 @@ export default function InventoryPage() {
         setQuantity("");
         setUnit("");
         setNote("");
-        setPart("");
+        setPart(defaultPart);
         setCategory("");
         setPurchasePrice("");
         setSupplier("");
@@ -331,20 +509,25 @@ export default function InventoryPage() {
     };
 
     const handleDelete = async (id: number) => {
+        if (isDeletingId === id) return;
+
         const ok = confirm(t.deleteConfirm);
         if (!ok) return;
 
-        const targetItem = inventoryList.find((item) => item.id === id);
-        if (!targetItem) {
-            alert(t.deleteTargetNotFound);
-            return;
-        }
+        setIsDeletingId(id);
 
-        const { data: deletedRows, error: deleteError } = await supabase
-            .from("inventory")
-            .delete()
-            .eq("id", id)
-            .select(`
+        try {
+            const targetItem = inventoryList.find((item) => item.id === id);
+            if (!targetItem) {
+                alert(t.deleteTargetNotFound);
+                return;
+            }
+
+            const { data: deletedRows, error: deleteError } = await supabase
+                .from("inventory")
+                .delete()
+                .eq("id", id)
+                .select(`
                 id,
                 item_name,
                 item_name_vi,
@@ -359,73 +542,76 @@ export default function InventoryPage() {
                 supplier
             `);
 
-        if (deleteError) {
-            console.error(deleteError);
-            alert(t.deleteFail);
-            return;
+            if (deleteError) {
+                console.error(deleteError);
+                alert(t.deleteFail);
+                return;
+            }
+
+            if (!deletedRows || deletedRows.length === 0) {
+                alert(t.deleteTargetNotFound);
+                return;
+            }
+
+            const deletedItem = deletedRows[0];
+
+            const { error: logError } = await supabase.from("inventory_logs").insert([
+                {
+                    item_id: deletedItem.id,
+                    item_name: deletedItem.item_name,
+                    item_name_vi: deletedItem.item_name_vi ?? null,
+                    action: "delete",
+
+                    part: deletedItem.part,
+                    category: deletedItem.category,
+                    category_vi: deletedItem.category_vi ?? null,
+
+                    prev_quantity: deletedItem.quantity ?? 0,
+                    new_quantity: 0,
+                    change_quantity: -Number(deletedItem.quantity ?? 0),
+
+                    prev_purchase_price: deletedItem.purchase_price ?? null,
+                    new_purchase_price: null,
+
+                    prev_note: deletedItem.note ?? null,
+                    new_note: null,
+
+                    prev_supplier: deletedItem.supplier ?? null,
+                    new_supplier: null,
+
+                    prev_code: deletedItem.code ?? null,
+                    new_code: null,
+
+                    prev_unit: deletedItem.unit ?? null,
+                    new_unit: null,
+
+                    prev_category: deletedItem.category ?? null,
+                    new_category: null,
+
+                    prev_category_vi: deletedItem.category_vi ?? null,
+                    new_category_vi: null,
+
+                    prev_part: deletedItem.part ?? null,
+                    new_part: null,
+
+                    unit: deletedItem.unit ?? null,
+                    code: deletedItem.code ?? null,
+
+                    actor_name: actorName,
+                    actor_username: actorUsername,
+                },
+            ]);
+
+            if (logError) {
+                console.error(logError);
+                alert(t.deleteLogSaveFail);
+            }
+
+            await fetchInventory();
+            await fetchRecentLogs();
+        } finally {
+            setIsDeletingId(null);
         }
-
-        if (!deletedRows || deletedRows.length === 0) {
-            alert(t.deleteTargetNotFound);
-            return;
-        }
-
-        const deletedItem = deletedRows[0];
-
-        const { error: logError } = await supabase.from("inventory_logs").insert([
-            {
-                item_id: deletedItem.id,
-                item_name: deletedItem.item_name,
-                item_name_vi: deletedItem.item_name_vi ?? null,
-                action: "delete",
-
-                part: deletedItem.part,
-                category: deletedItem.category,
-                category_vi: deletedItem.category_vi ?? null,
-
-                prev_quantity: deletedItem.quantity ?? 0,
-                new_quantity: 0,
-                change_quantity: -Number(deletedItem.quantity ?? 0),
-
-                prev_purchase_price: deletedItem.purchase_price ?? null,
-                new_purchase_price: null,
-
-                prev_note: deletedItem.note ?? null,
-                new_note: null,
-
-                prev_supplier: deletedItem.supplier ?? null,
-                new_supplier: null,
-
-                prev_code: deletedItem.code ?? null,
-                new_code: null,
-
-                prev_unit: deletedItem.unit ?? null,
-                new_unit: null,
-
-                prev_category: deletedItem.category ?? null,
-                new_category: null,
-
-                prev_category_vi: deletedItem.category_vi ?? null,
-                new_category_vi: null,
-
-                prev_part: deletedItem.part ?? null,
-                new_part: null,
-
-                unit: deletedItem.unit ?? null,
-                code: deletedItem.code ?? null,
-
-                actor_name: actorName,
-                actor_username: actorUsername,
-            },
-        ]);
-
-        if (logError) {
-            console.error(logError);
-            alert(t.deleteLogSaveFail);
-        }
-
-        await fetchInventory();
-        await fetchRecentLogs();
     };
 
     const handleEdit = (item: any) => {
@@ -473,226 +659,261 @@ export default function InventoryPage() {
     };
 
     const handleSubmit = async () => {
-        const normalizedItemName = normalizeText(itemName);
-        const normalizedCategoryKo = normalizeText(categoryKo || (lang === "ko" ? category : ""));
-        const normalizedCategoryVi = normalizeText(categoryVi || (lang === "vi" ? category : ""));
-        const normalizedSupplier = normalizeText(supplier);
-        const normalizedUnit = normalizeText(unit);
-        const normalizedNote = normalizeText(note);
-        const normalizedCode = normalizeText(code);
+        if (isSubmitting) return;
+        setIsSubmitting(true);
 
-        if (!normalizedItemName || !quantity || !normalizedUnit) {
-            alert(t.requiredFields);
-            return;
+        try {
+            const normalizedItemName = normalizeText(itemName);
+            const normalizedCategoryKo = normalizeText(categoryKo || (lang === "ko" ? category : ""));
+            const normalizedCategoryVi = normalizeText(categoryVi || (lang === "vi" ? category : ""));
+            const normalizedSupplier = normalizeText(supplier);
+            const normalizedUnit = normalizeText(unit);
+            const normalizedNote = normalizeText(note);
+            const normalizedCode = normalizeText(code);
+
+            if (!part || !normalizedItemName || !quantity || !normalizedUnit) {
+                alert(t.requiredFields);
+                return;
+            }
+
+            if (editingId) {
+                const targetItem = inventoryList.find((item) => item.id === editingId);
+
+                if (!targetItem) {
+                    alert(t.editFail);
+                    return;
+                }
+
+                const nextQuantity = parseDecimal(quantity);
+                const nextPurchasePrice = parsePrice(purchasePrice);
+
+                const currentItemName =
+                    lang === "vi"
+                        ? targetItem.item_name_vi || targetItem.item_name || ""
+                        : targetItem.item_name || targetItem.item_name_vi || "";
+
+                const hasChanges =
+                    normalizeText(currentItemName) !== normalizedItemName ||
+                    normalizeText(targetItem.category || "") !== normalizedCategoryKo ||
+                    normalizeText(targetItem.category_vi || "") !== normalizedCategoryVi ||
+                    parseDecimal(targetItem.quantity) !== nextQuantity ||
+                    normalizeText(targetItem.unit || "") !== normalizedUnit ||
+                    normalizeText(targetItem.note || "") !== normalizedNote ||
+                    (targetItem.part || "") !== part ||
+                    (targetItem.purchase_price ?? null) !== nextPurchasePrice ||
+                    normalizeText(targetItem.supplier || "") !== normalizedSupplier ||
+                    normalizeText(targetItem.code || "") !== normalizedCode ||
+                    parseDecimal(targetItem.low_stock_threshold ?? 1) !==
+                    parseDecimal(lowStockThreshold ? lowStockThreshold : 1);
+
+                if (!hasChanges) {
+                    alert(lang === "vi" ? "Không có thay đổi" : "변경사항 없음");
+                    return;
+                }
+
+                const updatePayload =
+                    lang === "ko"
+                        ? {
+                            item_name: normalizedItemName,
+                            category: normalizedCategoryKo,
+                            category_vi: normalizedCategoryVi,
+                            quantity: parseDecimal(quantity),
+                            purchase_price: parsePrice(purchasePrice),
+                            low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
+                            unit: normalizedUnit,
+                            note: normalizedNote,
+                            part,
+                            supplier: normalizedSupplier,
+                            code: normalizedCode,
+                            updated_at: new Date().toISOString(),
+                            updated_by_name: actorName,
+                            updated_by_username: actorUsername,
+                        }
+                        : {
+                            item_name_vi: normalizedItemName,
+                            category: normalizedCategoryKo,
+                            category_vi: normalizedCategoryVi,
+                            quantity: parseDecimal(quantity),
+                            purchase_price: parsePrice(purchasePrice),
+                            low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
+                            unit: normalizedUnit,
+                            note: normalizedNote,
+                            part,
+                            supplier: normalizedSupplier,
+                            code: normalizedCode,
+                            updated_at: new Date().toISOString(),
+                            updated_by_name: actorName,
+                            updated_by_username: actorUsername,
+                        };
+
+                const { error } = await supabase
+                    .from("inventory")
+                    .update(updatePayload)
+                    .eq("id", editingId);
+
+                if (error) {
+                    console.error(error);
+                    alert(t.editFail);
+                    return;
+                }
+
+                await supabase.from("inventory_logs").insert([
+                    {
+                        item_id: editingId,
+                        item_name: lang === "ko" ? normalizedItemName : targetItem.item_name ?? null,
+                        item_name_vi: lang === "vi" ? normalizedItemName : targetItem.item_name_vi ?? null,
+                        action: "update",
+
+                        part,
+                        category: normalizedCategoryKo,
+                        category_vi: normalizedCategoryVi,
+
+                        prev_quantity: targetItem.quantity ?? 0,
+                        new_quantity: nextQuantity,
+                        change_quantity: nextQuantity - Number(targetItem.quantity ?? 0),
+                        new_purchase_price: nextPurchasePrice,
+
+                        prev_purchase_price: targetItem.purchase_price ?? null,
+
+                        prev_note: targetItem.note ?? null,
+                        new_note: normalizedNote,
+
+                        prev_supplier: targetItem.supplier ?? null,
+                        new_supplier: normalizedSupplier || null,
+
+                        prev_code: targetItem.code ?? null,
+                        new_code: normalizedCode || null,
+
+                        prev_unit: targetItem.unit ?? null,
+                        new_unit: normalizedUnit || null,
+
+                        prev_category: targetItem.category ?? null,
+                        new_category: normalizedCategoryKo || null,
+
+                        prev_category_vi: targetItem.category_vi ?? null,
+                        new_category_vi: normalizedCategoryVi || null,
+
+                        prev_part: targetItem.part ?? null,
+                        new_part: part || null,
+
+                        unit: normalizedUnit,
+                        code: normalizedCode,
+
+                        actor_name: actorName,
+                        actor_username: actorUsername,
+                    },
+                ]);
+
+                alert(t.editSuccess);
+            } else {
+                const insertPayload =
+                    lang === "ko"
+                        ? {
+                            item_name: normalizedItemName,
+                            category: normalizedCategoryKo,
+                            item_name_vi: "",
+                            category_vi: normalizedCategoryVi,
+                            quantity: parseDecimal(quantity),
+                            unit: normalizedUnit,
+                            note: normalizedNote,
+                            part,
+                            purchase_price: parsePrice(purchasePrice),
+                            supplier: normalizedSupplier,
+                            code: normalizedCode,
+                            low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
+                            updated_at: new Date().toISOString(),
+                            updated_by_name: actorName,
+                            updated_by_username: actorUsername,
+                        }
+                        : {
+                            item_name: "",
+                            category: normalizedCategoryKo,
+                            item_name_vi: normalizedItemName,
+                            category_vi: normalizedCategoryVi,
+                            quantity: parseDecimal(quantity),
+                            unit: normalizedUnit,
+                            note: normalizedNote,
+                            part,
+                            purchase_price: parsePrice(purchasePrice),
+                            supplier: normalizedSupplier,
+                            code: normalizedCode,
+                            low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
+                            updated_at: new Date().toISOString(),
+                            updated_by_name: actorName,
+                            updated_by_username: actorUsername,
+                        };
+
+                const { data: insertedData, error } = await supabase
+                    .from("inventory")
+                    .insert([insertPayload])
+                    .select()
+                    .single();
+
+                if (error || !insertedData) {
+                    console.error(error);
+                    alert(t.saveFail);
+                    return;
+                }
+
+                await supabase.from("inventory_logs").insert([
+                    {
+                        item_id: insertedData.id,
+                        item_name: insertedData.item_name ?? null,
+                        item_name_vi: insertedData.item_name_vi ?? null,
+                        action: "create",
+
+                        part: insertedData.part,
+                        category: insertedData.category ?? null,
+                        category_vi: insertedData.category_vi ?? null,
+
+                        prev_quantity: 0,
+                        new_quantity: insertedData.quantity ?? 0,
+                        change_quantity: insertedData.quantity ?? 0,
+
+                        prev_purchase_price: null,
+                        new_purchase_price: insertedData.purchase_price ?? null,
+
+                        prev_note: null,
+                        new_note: insertedData.note ?? null,
+
+                        prev_supplier: null,
+                        new_supplier: insertedData.supplier ?? null,
+
+                        prev_code: null,
+                        new_code: insertedData.code ?? null,
+
+                        prev_unit: null,
+                        new_unit: insertedData.unit ?? null,
+
+                        prev_category: null,
+                        new_category: insertedData.category ?? null,
+
+                        prev_category_vi: null,
+                        new_category_vi: insertedData.category_vi ?? null,
+
+                        prev_part: null,
+                        new_part: insertedData.part ?? null,
+
+                        unit: insertedData.unit ?? null,
+                        code: insertedData.code ?? null,
+
+                        actor_name: actorName,
+                        actor_username: actorUsername,
+                    },
+                ]);
+
+                alert(t.saveSuccess);
+            }
+
+            await fetchInventory();
+            await fetchRecentLogs();
+
+            resetForm();
+            setIsFormOpen(false);
+            itemNameRef.current?.focus();
+        } finally {
+            setIsSubmitting(false);
         }
-
-        if (editingId) {
-            const targetItem = inventoryList.find((item) => item.id === editingId);
-
-            if (!targetItem) {
-                alert(t.editFail);
-                return;
-            }
-            const updatePayload =
-                lang === "ko"
-                    ? {
-                        item_name: normalizedItemName,
-                        category: normalizedCategoryKo,
-                        category_vi: normalizedCategoryVi,
-                        quantity: parseDecimal(quantity),
-                        unit: normalizedUnit,
-                        note: normalizedNote,
-                        part,
-                        purchase_price: parsePrice(purchasePrice),
-                        supplier: normalizedSupplier,
-                        code: normalizedCode,
-                        low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
-                        updated_at: new Date().toISOString(),
-                        updated_by_name: actorName,
-                        updated_by_username: actorUsername,
-                    }
-                    : {
-                        item_name_vi: normalizedItemName,
-                        category: normalizedCategoryKo,
-                        category_vi: normalizedCategoryVi,
-                        quantity: parseDecimal(quantity),
-                        unit: normalizedUnit,
-                        note: normalizedNote,
-                        part,
-                        purchase_price: parsePrice(purchasePrice),
-                        supplier: normalizedSupplier,
-                        code: normalizedCode,
-                        low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
-                        updated_at: new Date().toISOString(),
-                        updated_by_name: actorName,
-                        updated_by_username: actorUsername,
-                    };
-
-            const { error } = await supabase
-                .from("inventory")
-                .update(updatePayload)
-                .eq("id", editingId);
-
-            if (error) {
-                console.error(error);
-                alert(t.editFail);
-                return;
-            }
-
-            await supabase.from("inventory_logs").insert([
-                {
-                    item_id: editingId,
-                    item_name: lang === "ko" ? normalizedItemName : targetItem.item_name ?? null,
-                    item_name_vi: lang === "vi" ? normalizedItemName : targetItem.item_name_vi ?? null,
-                    action: "update",
-
-                    part,
-                    category: normalizedCategoryKo,
-                    category_vi: normalizedCategoryVi,
-
-                    prev_quantity: targetItem.quantity ?? 0,
-                    new_quantity: parseDecimal(quantity),
-                    change_quantity: parseDecimal(quantity) - Number(targetItem.quantity ?? 0),
-
-                    prev_purchase_price: targetItem.purchase_price ?? null,
-                    new_purchase_price: parsePrice(purchasePrice),
-
-                    prev_note: targetItem.note ?? null,
-                    new_note: normalizedNote,
-
-                    prev_supplier: targetItem.supplier ?? null,
-                    new_supplier: normalizedSupplier || null,
-
-                    prev_code: targetItem.code ?? null,
-                    new_code: normalizedCode || null,
-
-                    prev_unit: targetItem.unit ?? null,
-                    new_unit: normalizedUnit || null,
-
-                    prev_category: targetItem.category ?? null,
-                    new_category: normalizedCategoryKo || null,
-
-                    prev_category_vi: targetItem.category_vi ?? null,
-                    new_category_vi: normalizedCategoryVi || null,
-
-                    prev_part: targetItem.part ?? null,
-                    new_part: part || null,
-
-                    unit: normalizedUnit,
-                    code: normalizedCode,
-
-                    actor_name: actorName,
-                    actor_username: actorUsername,
-                },
-            ]);
-
-            alert(t.editSuccess);
-        } else {
-            const insertPayload =
-                lang === "ko"
-                    ? {
-                        item_name: normalizedItemName,
-                        category: normalizedCategoryKo,
-                        item_name_vi: "",
-                        category_vi: normalizedCategoryVi,
-                        quantity: parseDecimal(quantity),
-                        unit: normalizedUnit,
-                        note: normalizedNote,
-                        part,
-                        purchase_price: parsePrice(purchasePrice),
-                        supplier: normalizedSupplier,
-                        code: normalizedCode,
-                        low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
-                        updated_at: new Date().toISOString(),
-                        updated_by_name: actorName,
-                        updated_by_username: actorUsername,
-                    }
-                    : {
-                        item_name: "",
-                        category: normalizedCategoryKo,
-                        item_name_vi: normalizedItemName,
-                        category_vi: normalizedCategoryVi,
-                        quantity: parseDecimal(quantity),
-                        unit: normalizedUnit,
-                        note: normalizedNote,
-                        part,
-                        purchase_price: parsePrice(purchasePrice),
-                        supplier: normalizedSupplier,
-                        code: normalizedCode,
-                        low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
-                        updated_at: new Date().toISOString(),
-                        updated_by_name: actorName,
-                        updated_by_username: actorUsername,
-                    };
-
-            const { data: insertedData, error } = await supabase
-                .from("inventory")
-                .insert([insertPayload])
-                .select()
-                .single();
-
-            if (error || !insertedData) {
-                console.error(error);
-                alert(t.saveFail);
-                return;
-            }
-
-            await supabase.from("inventory_logs").insert([
-                {
-                    item_id: insertedData.id,
-                    item_name: insertedData.item_name ?? null,
-                    item_name_vi: insertedData.item_name_vi ?? null,
-                    action: "create",
-
-                    part: insertedData.part,
-                    category: insertedData.category ?? null,
-                    category_vi: insertedData.category_vi ?? null,
-
-                    prev_quantity: 0,
-                    new_quantity: insertedData.quantity ?? 0,
-                    change_quantity: insertedData.quantity ?? 0,
-
-                    prev_purchase_price: null,
-                    new_purchase_price: insertedData.purchase_price ?? null,
-
-                    prev_note: null,
-                    new_note: insertedData.note ?? null,
-
-                    prev_supplier: null,
-                    new_supplier: insertedData.supplier ?? null,
-
-                    prev_code: null,
-                    new_code: insertedData.code ?? null,
-
-                    prev_unit: null,
-                    new_unit: insertedData.unit ?? null,
-
-                    prev_category: null,
-                    new_category: insertedData.category ?? null,
-
-                    prev_category_vi: null,
-                    new_category_vi: insertedData.category_vi ?? null,
-
-                    prev_part: null,
-                    new_part: insertedData.part ?? null,
-
-                    unit: insertedData.unit ?? null,
-                    code: insertedData.code ?? null,
-
-                    actor_name: actorName,
-                    actor_username: actorUsername,
-                },
-            ]);
-
-            alert(t.saveSuccess);
-        }
-
-        await fetchInventory();
-        await fetchRecentLogs();
-
-        resetForm();
-        setIsFormOpen(false);
-        itemNameRef.current?.focus();
     };
 
     const handleQuantitySave = (item: any) => {
@@ -718,91 +939,103 @@ export default function InventoryPage() {
     const handleQuickSaveConfirm = async (
         reason: "check" | "purchase" | "service" | "other"
     ) => {
-        if (!quickSaveItem) return;
+        if (isQuickSaving) return;
+        setIsQuickSaving(true);
 
-        const draft = quantityDrafts[quickSaveItem.id];
-        const nextQty = parseDecimal(draft);
-        const currentQty = Number(quickSaveItem.quantity ?? 0);
+        try {
+            if (!quickSaveItem) return;
 
-        if (draft === undefined || String(draft).trim() === "") {
-            alert(t.requiredFields);
-            return;
+            const draft = quantityDrafts[quickSaveItem.id];
+            const nextQty = parseDecimal(draft);
+            const currentQty = Number(quickSaveItem.quantity ?? 0);
+
+            if (draft === undefined || String(draft).trim() === "") {
+                alert(t.requiredFields);
+                return;
+            }
+
+            if (nextQty < 0) {
+                alert(t.quantityCannotBeNegative);
+                return;
+            }
+
+            if (nextQty === currentQty) {
+                alert(lang === "vi" ? "Số lượng không thay đổi" : "수량 변화 없음");
+                return;
+            }
+
+            if (reason === "other" && !quickSaveOtherText.trim()) {
+                alert(lang === "vi" ? "Vui lòng nhập nội dung khác" : "기타 내용을 입력하세요.");
+                return;
+            }
+
+            const quickNote = buildQuickChangeNote({
+                currentQty,
+                nextQty,
+                reason,
+                customText: quickSaveOtherText,
+            });
+
+            const { error: updateError } = await supabase
+                .from("inventory")
+                .update({
+                    quantity: nextQty,
+                    note: quickNote,
+                    updated_at: new Date().toISOString(),
+                    updated_by_name: actorName,
+                    updated_by_username: actorUsername,
+                })
+                .eq("id", quickSaveItem.id);
+
+            if (updateError) {
+                console.error(updateError);
+                alert(t.quickChangeFail);
+                return;
+            }
+
+            const { error: logError } = await supabase.from("inventory_logs").insert([
+                {
+                    item_id: quickSaveItem.id,
+                    item_name: quickSaveItem.item_name,
+                    item_name_vi: quickSaveItem.item_name_vi ?? null,
+                    action: "update",
+                    part: quickSaveItem.part,
+                    category: quickSaveItem.category,
+                    category_vi: quickSaveItem.category_vi ?? null,
+                    prev_quantity: currentQty,
+                    new_quantity: nextQty,
+                    change_quantity: nextQty - currentQty,
+                    prev_purchase_price: quickSaveItem.purchase_price ?? null,
+                    new_purchase_price: quickSaveItem.purchase_price ?? null,
+                    prev_note: quickSaveItem.note ?? null,
+                    new_note: quickNote,
+                    unit: quickSaveItem.unit,
+                    code: quickSaveItem.code,
+                    actor_name: actorName,
+                    actor_username: actorUsername,
+                },
+            ]);
+
+            if (logError) {
+                console.error(logError);
+                alert(t.quickChangeFail);
+                return;
+            }
+
+            await fetchInventory();
+            await fetchRecentLogs();
+
+            setQuantityDrafts((prev) => ({
+                ...prev,
+                [quickSaveItem.id]: String(nextQty),
+            }));
+
+            setQuickSaveItem(null);
+            setQuickSaveReason(null);
+            setQuickSaveOtherText("");
+        } finally {
+            setIsQuickSaving(false);
         }
-
-        if (nextQty < 0) {
-            alert(t.quantityCannotBeNegative);
-            return;
-        }
-
-        if (reason === "other" && !quickSaveOtherText.trim()) {
-            alert(lang === "vi" ? "Vui lòng nhập nội dung khác" : "기타 내용을 입력하세요.");
-            return;
-        }
-
-        const quickNote = buildQuickChangeNote({
-            currentQty,
-            nextQty,
-            reason,
-            customText: quickSaveOtherText,
-        });
-
-        const { error: updateError } = await supabase
-            .from("inventory")
-            .update({
-                quantity: nextQty,
-                note: quickNote,
-                updated_at: new Date().toISOString(),
-                updated_by_name: actorName,
-                updated_by_username: actorUsername,
-            })
-            .eq("id", quickSaveItem.id);
-
-        if (updateError) {
-            console.error(updateError);
-            alert(t.quickChangeFail);
-            return;
-        }
-
-        const { error: logError } = await supabase.from("inventory_logs").insert([
-            {
-                item_id: quickSaveItem.id,
-                item_name: quickSaveItem.item_name,
-                item_name_vi: quickSaveItem.item_name_vi ?? null,
-                action: "update",
-                part: quickSaveItem.part,
-                category: quickSaveItem.category,
-                category_vi: quickSaveItem.category_vi ?? null,
-                prev_quantity: currentQty,
-                new_quantity: nextQty,
-                change_quantity: nextQty - currentQty,
-                prev_purchase_price: quickSaveItem.purchase_price ?? null,
-                new_purchase_price: quickSaveItem.purchase_price ?? null,
-                prev_note: quickSaveItem.note ?? null,
-                new_note: quickNote,
-                unit: quickSaveItem.unit,
-                code: quickSaveItem.code,
-                actor_name: actorName,
-                actor_username: actorUsername,
-            },
-        ]);
-
-        if (logError) {
-            console.error(logError);
-            alert(t.quickChangeFail);
-            return;
-        }
-
-        await fetchInventory();
-        await fetchRecentLogs();
-
-        setQuantityDrafts((prev) => ({
-            ...prev,
-            [quickSaveItem.id]: String(nextQty),
-        }));
-
-        setQuickSaveItem(null);
-        setQuickSaveReason(null);
-        setQuickSaveOtherText("");
     };
 
     const handleKeyDown = (
@@ -882,12 +1115,14 @@ export default function InventoryPage() {
             const keyword = search.trim().toLowerCase();
             const displayItemName = getDisplayItemName(item).toLowerCase();
             const displayCategory = getDisplayCategory(item);
+            const displayCode = String(item.code || "").toLowerCase();
             const categoryKey = getCategoryKey(item);
 
             const matchSearch =
                 !keyword ||
                 displayItemName.includes(keyword) ||
-                displayCategory.toLowerCase().includes(keyword);
+                displayCategory.toLowerCase().includes(keyword) ||
+                displayCode.includes(keyword);
 
             const matchPart = item.part === partFilter;
             const matchCategory =
@@ -937,6 +1172,18 @@ export default function InventoryPage() {
         },
         {}
     );
+
+    const itemLogGroups = logModalItem
+        ? [
+            {
+                item_id: logModalItem.id,
+                noteKey: itemLogs[0]?.new_note || itemLogs[0]?.prev_note || "",
+                groupKey: `item-${logModalItem.id}`,
+                latest: itemLogs[0] || null,
+                logs: itemLogs,
+            },
+        ].filter((group) => group.latest)
+        : [];
 
     return (
         <Container>
@@ -1412,8 +1659,23 @@ export default function InventoryPage() {
                                                             marginTop: 12,
                                                             paddingTop: 2,
                                                             justifyContent: "flex-end",
+                                                            flexWrap: "wrap",
                                                         }}
                                                     >
+                                                        <button
+                                                            onClick={() => fetchItemLogs(item)}
+                                                            style={{
+                                                                ...ui.subButton,
+                                                                width: "auto",
+                                                                minWidth: 64,
+                                                                padding: "8px 14px",
+                                                                fontSize: 14,
+                                                                fontWeight: 700,
+                                                            }}
+                                                        >
+                                                            {lang === "vi" ? "Log" : "로그"}
+                                                        </button>
+
                                                         <button
                                                             onClick={() => handleEdit(item)}
                                                             style={{
@@ -1433,6 +1695,7 @@ export default function InventoryPage() {
 
                                                         <button
                                                             onClick={() => handleDelete(item.id)}
+                                                            disabled={isDeletingId === item.id}
                                                             style={{
                                                                 ...ui.subButton,
                                                                 width: "auto",
@@ -1443,9 +1706,13 @@ export default function InventoryPage() {
                                                                 border: "1px solid crimson",
                                                                 fontSize: 14,
                                                                 fontWeight: 700,
+                                                                opacity: isDeletingId === item.id ? 0.6 : 1,
+                                                                cursor: isDeletingId === item.id ? "not-allowed" : "pointer",
                                                             }}
                                                         >
-                                                            {t.delete}
+                                                            {isDeletingId === item.id
+                                                                ? (lang === "vi" ? "Đang xóa..." : "삭제 중...")
+                                                                : t.delete}
                                                         </button>
                                                     </div>
                                                 </div>
@@ -1710,8 +1977,20 @@ export default function InventoryPage() {
                             onKeyDown={(e) => handleKeyDown(e)}
                         />
 
-                        <button onClick={handleSubmit} style={ui.button}>
-                            {editingId ? t.editSave : t.save}
+                        <button
+                            onClick={handleSubmit}
+                            disabled={isSubmitting}
+                            style={{
+                                ...ui.button,
+                                opacity: isSubmitting ? 0.6 : 1,
+                                cursor: isSubmitting ? "not-allowed" : "pointer",
+                            }}
+                        >
+                            {isSubmitting
+                                ? (lang === "vi" ? "Đang lưu..." : "저장 중...")
+                                : editingId
+                                    ? t.editSave
+                                    : t.save}
                         </button>
 
                         {editingId && (
@@ -1944,7 +2223,12 @@ export default function InventoryPage() {
                             <button
                                 type="button"
                                 onClick={() => handleQuickSaveConfirm("check")}
-                                style={ui.subButton}
+                                disabled={isQuickSaving}
+                                style={{
+                                    ...ui.subButton,
+                                    opacity: isQuickSaving ? 0.6 : 1,
+                                    cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                }}
                             >
                                 {t.quickReasonCheck}
                             </button>
@@ -1952,7 +2236,12 @@ export default function InventoryPage() {
                             <button
                                 type="button"
                                 onClick={() => handleQuickSaveConfirm("purchase")}
-                                style={ui.subButton}
+                                disabled={isQuickSaving}
+                                style={{
+                                    ...ui.subButton,
+                                    opacity: isQuickSaving ? 0.6 : 1,
+                                    cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                }}
                             >
                                 {t.quickReasonPurchase}
                             </button>
@@ -1960,7 +2249,12 @@ export default function InventoryPage() {
                             <button
                                 type="button"
                                 onClick={() => handleQuickSaveConfirm("service")}
-                                style={ui.subButton}
+                                disabled={isQuickSaving}
+                                style={{
+                                    ...ui.subButton,
+                                    opacity: isQuickSaving ? 0.6 : 1,
+                                    cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                }}
                             >
                                 {t.quickReasonService}
                             </button>
@@ -1968,7 +2262,12 @@ export default function InventoryPage() {
                             <button
                                 type="button"
                                 onClick={() => setQuickSaveReason("other")}
-                                style={ui.subButton}
+                                disabled={isQuickSaving}
+                                style={{
+                                    ...ui.subButton,
+                                    opacity: isQuickSaving ? 0.6 : 1,
+                                    cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                }}
                             >
                                 {t.quickReasonOther}
                             </button>
@@ -1986,9 +2285,16 @@ export default function InventoryPage() {
                                 <button
                                     type="button"
                                     onClick={() => handleQuickSaveConfirm("other")}
-                                    style={ui.button}
+                                    disabled={isQuickSaving}
+                                    style={{
+                                        ...ui.button,
+                                        opacity: isQuickSaving ? 0.6 : 1,
+                                        cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                    }}
                                 >
-                                    {t.editSave}
+                                    {isQuickSaving
+                                        ? (lang === "vi" ? "Đang lưu..." : "저장 중...")
+                                        : t.editSave}
                                 </button>
                             </>
                         )}
@@ -2004,6 +2310,106 @@ export default function InventoryPage() {
                                 ...ui.subButton,
                                 marginTop: 4,
                             }}
+                        >
+                            {lang === "vi" ? "Đóng" : "닫기"}
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {logModalItem && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        zIndex: 1000,
+                        padding: 20,
+                    }}
+                    onClick={() => {
+                        setLogModalItem(null);
+                        setItemLogs([]);
+                        setItemLogOpenGroupKey(null);
+                    }}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 560,
+                            maxHeight: "80vh",
+                            overflow: "hidden",
+                            background: "#fff",
+                            borderRadius: 14,
+                            padding: 18,
+                            boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
+                            {lang === "vi" ? "Lịch sử vật phẩm" : "품목 로그"}
+                        </div>
+
+                        <div style={{ ...ui.metaText }}>
+                            {[logModalItem.code ? `[${logModalItem.code}]` : "", getDisplayItemName(logModalItem)]
+                                .filter(Boolean)
+                                .join(" ")}
+                        </div>
+
+                        <div
+                            style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 8,
+                                overflowY: "auto",
+                                paddingRight: 4,
+                            }}
+                        >
+                            {isItemLogsLoading ? (
+                                <div>{lang === "vi" ? "Đang tải..." : "불러오는 중..."}</div>
+                            ) : itemLogGroups.length === 0 ? (
+                                <div>{lang === "vi" ? "Không có log" : "로그 없음"}</div>
+                            ) : (
+                                itemLogGroups.map((group) => {
+                                    const log = group.latest;
+
+                                    return (
+                                        <InventoryLogGroupCard
+                                            key={group.groupKey}
+                                            group={group}
+                                            isOpen={true}
+                                            lang={lang}
+                                            noteText={group.noteKey || "-"}
+                                            partLabel={getPartLabel(log.part || "")}
+                                            itemName={getDisplayLogItemName(log)}
+                                            categoryName={getDisplayLogCategory(log)}
+                                            detailLabel={t.detail}
+                                            closeLabel={t.close}
+                                            deleteLabel={t.delete}
+                                            isMaster={false}
+                                            getActionBadge={getActionBadge}
+                                            getActionColor={getActionColor}
+                                            formatDateTime={formatDateTime}
+                                            getLogChanges={getLogChanges}
+                                        />
+                                    );
+                                })
+                            )}
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setLogModalItem(null);
+                                setItemLogs([]);
+                                setItemLogOpenGroupKey(null);
+                            }}
+                            style={ui.subButton}
                         >
                             {lang === "vi" ? "Đóng" : "닫기"}
                         </button>
