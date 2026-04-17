@@ -21,7 +21,7 @@ type Props = {
     closeLabel: string;
     deleteLabel: string;
     isMaster?: boolean;
-    onToggle: () => void;
+    onToggle?: () => void;
     onDeleteSingleLog?: (logId: number) => void;
     getActionBadge: (action: string) => string;
     getActionColor: (action: string) => string;
