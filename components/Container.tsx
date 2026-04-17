@@ -8,7 +8,7 @@ export default function Container({ children }: ContainerProps) {
       style={{
         maxWidth: 800,
         margin: "20px auto",
-        padding: "20px 20px 90px",
+        padding: "20px 20px",
       }}
     >
       {children}

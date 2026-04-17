@@ -270,6 +270,12 @@ export default function InventoryLogsPage() {
             labelVi: "Bộ phận",
             type: "text",
         },
+        {
+            key: "low_stock_threshold",
+            labelKo: "부족기준",
+            labelVi: "Ngưỡng",
+            type: "number",
+        },
     ];
 
     function getLogChanges(log: any, lang: string) {

@@ -49,17 +49,17 @@ export const ui = {
 
     card: {
         background: "white",
-        border: "1px solid #e5e5e5",
+        border: "1px solid #dcdfe4",
         borderRadius: 20,
-        boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
+        boxShadow: "0 8px 24px rgba(0,0,0,0.05)",
     },
 
     filterBox: {
         padding: 16,
         marginBottom: 16,
-        border: "1px solid #eee",
+        border: "1px solid #e3e5e8",
         borderRadius: 12,
-        background: "#fafafa",
+        background: "#f7f7f8",
     },
 
     pageTitle: {

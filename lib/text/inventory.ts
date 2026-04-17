@@ -66,6 +66,8 @@ export const inventoryText = {
         quickReasonService: "서비스",
         quickReasonOther: "기타",
         quickReasonOtherPlaceholder: "기타 사유 입력",
+        viewTodayUpdatedOnly: "오늘 변경만",
+        viewAllFromTodayFilter: "전체 보기",
     },
     vi: {
         deleteConfirm: "Bạn có muốn xóa dữ liệu tồn kho này không?",
@@ -134,5 +136,7 @@ export const inventoryText = {
         quickReasonService: "Dùng cho khách",
         quickReasonOther: "Khác",
         quickReasonOtherPlaceholder: "Nhập lý do khác",
+        viewTodayUpdatedOnly: "Chỉ hôm nay",
+        viewAllFromTodayFilter: "Xem tất cả",
     },
 } as const;

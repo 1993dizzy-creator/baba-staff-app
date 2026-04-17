@@ -62,8 +62,39 @@ const CATEGORY_OPTIONS_BY_PART = {
     etc: [{ ko: "기타", vi: "Khác" }],
 };
 
+
 const PART_VALUES = ["kitchen", "hall", "bar", "etc"] as const;
 type PartValue = (typeof PART_VALUES)[number];
+
+const PART_META: Record<
+    PartValue,
+    {
+        color: string;
+        soft: string;
+        emoji: string;
+    }
+> = {
+    kitchen: {
+        color: "#f59e0b",
+        soft: "#fff7ed",
+        emoji: "🍳",
+    },
+    hall: {
+        color: "#10b981",
+        soft: "#ecfdf5",
+        emoji: "🍺",
+    },
+    bar: {
+        color: "#3b82f6",
+        soft: "#eff6ff",
+        emoji: "🍸",
+    },
+    etc: {
+        color: "#8b5cf6",
+        soft: "#f5f3ff",
+        emoji: "📦",
+    },
+};
 
 export default function InventoryPage() {
     const currentUser = getUser();
@@ -82,11 +113,12 @@ export default function InventoryPage() {
     const [quantity, setQuantity] = useState("");
     const [unit, setUnit] = useState("");
     const [note, setNote] = useState("");
-    const [part, setPart] = useState("");
+    const [part, setPart] = useState<PartValue>(defaultPart);
     const [category, setCategory] = useState("");
     const [categoryKo, setCategoryKo] = useState("");
     const [categoryVi, setCategoryVi] = useState("");
     const [isCustomCategory, setIsCustomCategory] = useState(false);
+    const [isCustomSupplier, setIsCustomSupplier] = useState(false);
     const [purchasePrice, setPurchasePrice] = useState("");
     const [supplier, setSupplier] = useState("");
     const [lowStockThreshold, setLowStockThreshold] = useState("");
@@ -102,6 +134,7 @@ export default function InventoryPage() {
     const [partFilter, setPartFilter] = useState<PartValue>(defaultPart);
     const [categoryFilter, setCategoryFilter] = useState("all");
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
+    const [showTodayUpdatedOnly, setShowTodayUpdatedOnly] = useState(false);
     const [quantityDrafts, setQuantityDrafts] = useState<Record<number, string>>({});
     const [latestSnapshotMap, setLatestSnapshotMap] = useState<Record<number, number>>({});
     const [latestSnapshotDate, setLatestSnapshotDate] = useState<string>("");
@@ -113,7 +146,6 @@ export default function InventoryPage() {
     const [logModalItem, setLogModalItem] = useState<any | null>(null);
     const [itemLogs, setItemLogs] = useState<any[]>([]);
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
-    const [itemLogOpenGroupKey, setItemLogOpenGroupKey] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDeletingId, setIsDeletingId] = useState<number | null>(null);
     const [isQuickSaving, setIsQuickSaving] = useState(false);
@@ -165,6 +197,18 @@ export default function InventoryPage() {
                 vi: lang === "vi" ? value : "",
             })),
     ];
+
+    const customSupplierOptions = Array.from(
+        new Set(
+            inventoryList
+                .map((item) => (item.supplier || "").trim())
+                .filter(Boolean)
+        )
+    );
+
+    const mergedSupplierOptions = customSupplierOptions.sort((a, b) =>
+        a.localeCompare(b, "vi")
+    );
 
     const getDisplayItemName = (item: any) =>
         lang === "vi"
@@ -325,6 +369,17 @@ export default function InventoryPage() {
         }
 
         if (
+            parseDecimal(log.prev_low_stock_threshold ?? 1) !==
+            parseDecimal(log.new_low_stock_threshold ?? 1)
+        ) {
+            changes.push({
+                label: lang === "vi" ? "Ngưỡng" : "부족기준",
+                before: String(log.prev_low_stock_threshold ?? 1),
+                after: String(log.new_low_stock_threshold ?? 1),
+            });
+        }
+
+        if (
             log.prev_purchase_price !== log.new_purchase_price &&
             !(log.prev_purchase_price == null && log.new_purchase_price == null)
         ) {
@@ -410,7 +465,6 @@ export default function InventoryPage() {
     const fetchItemLogs = async (item: any) => {
         setLogModalItem(item);
         setIsItemLogsLoading(true);
-        setItemLogOpenGroupKey(null);
 
         const { data, error } = await supabase
             .from("inventory_logs")
@@ -504,6 +558,7 @@ export default function InventoryPage() {
         setLowStockThreshold("");
         setEditingId(null);
         setIsCustomCategory(false);
+        setIsCustomSupplier(false);
         setCategoryKo("");
         setCategoryVi("");
     };
@@ -539,7 +594,8 @@ export default function InventoryPage() {
                 note,
                 unit,
                 code,
-                supplier
+                supplier,
+                low_stock_threshold
             `);
 
             if (deleteError) {
@@ -599,6 +655,9 @@ export default function InventoryPage() {
 
                     actor_name: actorName,
                     actor_username: actorUsername,
+
+                    prev_low_stock_threshold: deletedItem.low_stock_threshold ?? 1,
+                    new_low_stock_threshold: null,
                 },
             ]);
 
@@ -647,6 +706,14 @@ export default function InventoryPage() {
                 : ""
         );
         setSupplier(item.supplier || "");
+
+        setIsCustomSupplier(
+            !!item.supplier &&
+            !mergedSupplierOptions.some(
+                (option) =>
+                    option.trim().toLowerCase() === String(item.supplier || "").trim().toLowerCase()
+            )
+        );
         setCode(item.code || "");
         setLowStockThreshold(String(item.low_stock_threshold ?? 1));
 
@@ -676,6 +743,16 @@ export default function InventoryPage() {
                 return;
             }
 
+            const nextLowStock = lowStockThreshold ? parseDecimal(lowStockThreshold) : 1;
+
+            if (nextLowStock < 0) {
+                alert(t.quantityCannotBeNegative);
+                return;
+            }
+
+            const nextQuantity = parseDecimal(quantity);
+            const nextPurchasePrice = parsePrice(purchasePrice);
+
             if (editingId) {
                 const targetItem = inventoryList.find((item) => item.id === editingId);
 
@@ -683,9 +760,6 @@ export default function InventoryPage() {
                     alert(t.editFail);
                     return;
                 }
-
-                const nextQuantity = parseDecimal(quantity);
-                const nextPurchasePrice = parsePrice(purchasePrice);
 
                 const currentItemName =
                     lang === "vi"
@@ -703,8 +777,7 @@ export default function InventoryPage() {
                     (targetItem.purchase_price ?? null) !== nextPurchasePrice ||
                     normalizeText(targetItem.supplier || "") !== normalizedSupplier ||
                     normalizeText(targetItem.code || "") !== normalizedCode ||
-                    parseDecimal(targetItem.low_stock_threshold ?? 1) !==
-                    parseDecimal(lowStockThreshold ? lowStockThreshold : 1);
+                    parseDecimal(targetItem.low_stock_threshold ?? 1) !== nextLowStock;
 
                 if (!hasChanges) {
                     alert(lang === "vi" ? "Không có thay đổi" : "변경사항 없음");
@@ -717,9 +790,9 @@ export default function InventoryPage() {
                             item_name: normalizedItemName,
                             category: normalizedCategoryKo,
                             category_vi: normalizedCategoryVi,
-                            quantity: parseDecimal(quantity),
-                            purchase_price: parsePrice(purchasePrice),
-                            low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
+                            quantity: nextQuantity,
+                            purchase_price: nextPurchasePrice,
+                            low_stock_threshold: nextLowStock,
                             unit: normalizedUnit,
                             note: normalizedNote,
                             part,
@@ -733,9 +806,9 @@ export default function InventoryPage() {
                             item_name_vi: normalizedItemName,
                             category: normalizedCategoryKo,
                             category_vi: normalizedCategoryVi,
-                            quantity: parseDecimal(quantity),
-                            purchase_price: parsePrice(purchasePrice),
-                            low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
+                            quantity: nextQuantity,
+                            purchase_price: nextPurchasePrice,
+                            low_stock_threshold: nextLowStock,
                             unit: normalizedUnit,
                             note: normalizedNote,
                             part,
@@ -801,6 +874,9 @@ export default function InventoryPage() {
 
                         actor_name: actorName,
                         actor_username: actorUsername,
+
+                        prev_low_stock_threshold: targetItem.low_stock_threshold ?? 1,
+                        new_low_stock_threshold: nextLowStock,
                     },
                 ]);
 
@@ -813,14 +889,14 @@ export default function InventoryPage() {
                             category: normalizedCategoryKo,
                             item_name_vi: "",
                             category_vi: normalizedCategoryVi,
-                            quantity: parseDecimal(quantity),
+                            quantity: nextQuantity,
                             unit: normalizedUnit,
                             note: normalizedNote,
                             part,
-                            purchase_price: parsePrice(purchasePrice),
+                            purchase_price: nextPurchasePrice,
                             supplier: normalizedSupplier,
                             code: normalizedCode,
-                            low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
+                            low_stock_threshold: nextLowStock,
                             updated_at: new Date().toISOString(),
                             updated_by_name: actorName,
                             updated_by_username: actorUsername,
@@ -830,14 +906,14 @@ export default function InventoryPage() {
                             category: normalizedCategoryKo,
                             item_name_vi: normalizedItemName,
                             category_vi: normalizedCategoryVi,
-                            quantity: parseDecimal(quantity),
+                            quantity: nextQuantity,
                             unit: normalizedUnit,
                             note: normalizedNote,
                             part,
-                            purchase_price: parsePrice(purchasePrice),
+                            purchase_price: nextPurchasePrice,
                             supplier: normalizedSupplier,
                             code: normalizedCode,
-                            low_stock_threshold: lowStockThreshold ? parseDecimal(lowStockThreshold) : 1,
+                            low_stock_threshold: nextLowStock,
                             updated_at: new Date().toISOString(),
                             updated_by_name: actorName,
                             updated_by_username: actorUsername,
@@ -899,6 +975,9 @@ export default function InventoryPage() {
 
                         actor_name: actorName,
                         actor_username: actorUsername,
+
+                        prev_low_stock_threshold: null,
+                        new_low_stock_threshold: insertedData.low_stock_threshold ?? 1,
                     },
                 ]);
 
@@ -1110,6 +1189,44 @@ export default function InventoryPage() {
         ];
     }, [inventoryList, partFilter, lang]);
 
+    const isToday = (value?: string) => {
+        if (!value) return false;
+
+        const date = new Date(value);
+        const now = new Date();
+
+        return (
+            date.getFullYear() === now.getFullYear() &&
+            date.getMonth() === now.getMonth() &&
+            date.getDate() === now.getDate()
+        );
+    };
+
+    const getPartMeta = (value?: string) => {
+        const safePart: PartValue =
+            value && PART_VALUES.includes(value as PartValue)
+                ? (value as PartValue)
+                : "etc";
+
+        return PART_META[safePart];
+    };
+
+    const getPartButtonStyle = (value: PartValue, active: boolean) => {
+        const meta = PART_META[value];
+
+        return {
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: active ? `1px solid ${meta.color}` : "1px solid #d1d5db",
+            background: active ? meta.color : "#f9fafb",
+            color: active ? "#fff" : "#111827",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+            whiteSpace: "nowrap" as const,
+        };
+    };
+
     const filteredInventory = inventoryList
         .filter((item) => {
             const keyword = search.trim().toLowerCase();
@@ -1131,7 +1248,16 @@ export default function InventoryPage() {
                 !showLowStockOnly ||
                 Number(item.quantity) <= Number(item.low_stock_threshold ?? 1);
 
-            return matchSearch && matchPart && matchCategory && matchLowStock;
+            const matchTodayUpdated =
+                !showTodayUpdatedOnly || isToday(item.updated_at);
+
+            return (
+                matchSearch &&
+                matchPart &&
+                matchCategory &&
+                matchLowStock &&
+                matchTodayUpdated
+            );
         })
         .sort((a, b) => {
             const codeA = (a.code || "").toLowerCase();
@@ -1185,6 +1311,15 @@ export default function InventoryPage() {
         ].filter((group) => group.latest)
         : [];
 
+
+
+    const labelStyle = {
+        fontSize: 13,
+        fontWeight: 700,
+        color: "#374151",
+        marginBottom: 6,
+    };
+
     return (
         <Container>
             <h1 style={ui.pageTitle}>{t.title}</h1>
@@ -1196,6 +1331,7 @@ export default function InventoryPage() {
                         setPartFilter(defaultPart);
                         setCategoryFilter("all");
                         setShowLowStockOnly(true);
+                        setShowTodayUpdatedOnly(false);
 
                         setTimeout(() => {
                             listRef.current?.scrollIntoView({
@@ -1257,26 +1393,18 @@ export default function InventoryPage() {
                             { value: "bar", label: t.bar },
                             { value: "etc", label: t.etc },
                         ].map((partOption) => {
-                            const active = partFilter === partOption.value;
+                            const partValue = partOption.value as PartValue;
+                            const active = partFilter === partValue;
+                            const meta = PART_META[partValue];
 
                             return (
                                 <button
                                     key={partOption.value}
                                     type="button"
-                                    onClick={() => setPartFilter(partOption.value as PartValue)}
-                                    style={{
-                                        padding: "10px 12px",
-                                        borderRadius: 8,
-                                        border: active ? "1px solid #111827" : "1px solid #d1d5db",
-                                        background: active ? "#111827" : "#f9fafb",
-                                        color: active ? "white" : "#111827",
-                                        fontWeight: 700,
-                                        fontSize: 14,
-                                        cursor: "pointer",
-                                        whiteSpace: "nowrap",
-                                    }}
+                                    onClick={() => setPartFilter(partValue)}
+                                    style={getPartButtonStyle(partValue, active)}
                                 >
-                                    {partOption.label}
+                                    {meta.emoji} {partOption.label}
                                 </button>
                             );
                         })}
@@ -1354,19 +1482,19 @@ export default function InventoryPage() {
                         </button>
 
                         <button
-                            onClick={() => {
-                                setSearch("");
-                                setPartFilter(defaultPart);
-                                setCategoryFilter("all");
-                                setShowLowStockOnly(false);
-                            }}
+                            onClick={() => setShowTodayUpdatedOnly(!showTodayUpdatedOnly)}
                             style={{
-                                ...ui.subButton,
                                 flex: 1,
                                 padding: "10px 14px",
+                                background: showTodayUpdatedOnly ? "royalblue" : "#f5f5f5",
+                                color: showTodayUpdatedOnly ? "white" : "black",
+                                border: showTodayUpdatedOnly ? "1px solid royalblue" : "1px solid #ddd",
+                                borderRadius: 8,
+                                cursor: "pointer",
+                                fontWeight: 600,
                             }}
                         >
-                            {t.reset}
+                            {showTodayUpdatedOnly ? t.viewAllFromTodayFilter : t.viewTodayUpdatedOnly}
                         </button>
                     </div>
                 </div>
@@ -1379,7 +1507,7 @@ export default function InventoryPage() {
                             display: "flex",
                             flexDirection: "column",
                             gap: 12,
-                            maxHeight: 360,
+                            maxHeight: 400,
                             overflowY: "auto",
                             paddingRight: 4,
                         }}
@@ -1422,7 +1550,7 @@ export default function InventoryPage() {
                                                 borderLeft:
                                                     Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
                                                         ? "4px solid crimson"
-                                                        : "4px solid #d1d5db",
+                                                        : `4px solid ${getPartMeta(item.part).color}`,
                                                 background: "#fff",
                                             }}
                                         >
@@ -1555,6 +1683,11 @@ export default function InventoryPage() {
                                                             minWidth: 74,
                                                             padding: "8px 12px",
                                                             fontWeight: 700,
+                                                            background: isOpen ? getPartMeta(item.part).color : "#f5f5f5",
+                                                            color: isOpen ? "#fff" : "#111827",
+                                                            border: isOpen
+                                                                ? `1px solid ${getPartMeta(item.part).color}`
+                                                                : "1px solid #ddd",
                                                         }}
                                                     >
                                                         {isOpen ? t.close : t.detail}
@@ -1595,11 +1728,14 @@ export default function InventoryPage() {
                                                         <button
                                                             type="button"
                                                             onClick={() => handleQuantitySave(item)}
+                                                            disabled={isQuickSaving}
                                                             style={{
                                                                 ...ui.button,
                                                                 width: "auto",
                                                                 minWidth: 84,
                                                                 padding: "12px 16px",
+                                                                opacity: isQuickSaving ? 0.6 : 1,
+                                                                cursor: isQuickSaving ? "not-allowed" : "pointer",
                                                             }}
                                                         >
                                                             {t.saveQuantity}
@@ -1751,172 +1887,248 @@ export default function InventoryPage() {
                 >
                     <h2 style={ui.sectionTitle}>{t.inputTitle}</h2>
 
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                        <div
-                            style={{
-                                display: "grid",
-                                gridTemplateColumns: "repeat(4, 1fr)",
-                                gap: 8,
-                            }}
-                        >
-                            {[
-                                { value: "kitchen", label: t.kitchen },
-                                { value: "hall", label: t.hall },
-                                { value: "bar", label: t.bar },
-                                { value: "etc", label: t.etc },
-                            ].map((partOption) => {
-                                const active = part === partOption.value;
+                    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                        {/* 파트 */}
+                        <div>
+                            <div style={labelStyle}>
+                                {lang === "vi" ? "Bộ phận" : "파트"}
+                            </div>
+                            <div
+                                style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "repeat(4, 1fr)",
+                                    gap: 8,
+                                }}
+                            >
+                                {[
+                                    { value: "kitchen", label: t.kitchen },
+                                    { value: "hall", label: t.hall },
+                                    { value: "bar", label: t.bar },
+                                    { value: "etc", label: t.etc },
+                                ].map((partOption) => {
+                                    const partValue = partOption.value as PartValue;
+                                    const active = part === partValue;
+                                    const meta = PART_META[partValue];
 
-                                return (
-                                    <button
-                                        key={partOption.value}
-                                        type="button"
-                                        onClick={() => setPart(partOption.value)}
-                                        style={{
-                                            padding: "10px 12px",
-                                            borderRadius: 8,
-                                            border: active ? "1px solid #111827" : "1px solid #d1d5db",
-                                            background: active ? "#111827" : "#f9fafb",
-                                            color: active ? "white" : "#111827",
-                                            fontWeight: 700,
-                                            fontSize: 14,
-                                            cursor: "pointer",
-                                            whiteSpace: "nowrap",
-                                        }}
-                                    >
-                                        {partOption.label}
-                                    </button>
-                                );
-                            })}
+                                    return (
+                                        <button
+                                            key={partOption.value}
+                                            type="button"
+                                            onClick={() => setPart(partValue)}
+                                            style={getPartButtonStyle(partValue, active)}
+                                        >
+                                            {meta.emoji} {partOption.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         </div>
 
-                        <select
-                            value={isCustomCategory ? "__custom__" : category}
-                            onChange={(e) => {
-                                const value = e.target.value;
-
-                                if (value === "__custom__") {
-                                    setIsCustomCategory(true);
-                                    setCategory("");
-                                    setCategoryKo("");
-                                    setCategoryVi("");
-                                    return;
-                                }
-
-                                const selected = mergedCategoryOptions.find(
-                                    (option) => option.label === value
-                                );
-
-                                setIsCustomCategory(false);
-                                setCategory(value);
-
-                                if (selected) {
-                                    setCategoryKo(selected.ko);
-                                    setCategoryVi(selected.vi);
-                                } else {
-                                    if (lang === "vi") {
-                                        setCategoryKo("");
-                                        setCategoryVi(value);
-                                    } else {
-                                        setCategoryKo(value);
-                                        setCategoryVi("");
-                                    }
-                                }
-                            }}
-                            style={ui.input}
-                        >
-                            <option value="">{t.categoryPlaceholder}</option>
-
-                            {mergedCategoryOptions.map((option) => (
-                                <option key={`${part}-${option.label}`} value={option.label}>
-                                    {option.label}
-                                </option>
-                            ))}
-
-                            <option value="__custom__">
-                                {lang === "vi" ? "Nhập trực tiếp" : "직접 입력"}
-                            </option>
-                        </select>
-
-                        {isCustomCategory && (
-                            <input
-                                type="text"
-                                placeholder={lang === "vi" ? "Nhập danh mục mới" : "새 카테고리 입력"}
-                                value={category}
+                        {/* 카테고리 */}
+                        <div>
+                            <div style={labelStyle}>
+                                {lang === "vi" ? "Danh mục" : "카테고리"}
+                            </div>
+                            <select
+                                value={isCustomCategory ? "__custom__" : category}
                                 onChange={(e) => {
                                     const value = e.target.value;
+
+                                    if (value === "__custom__") {
+                                        setIsCustomCategory(true);
+                                        setCategory("");
+                                        setCategoryKo("");
+                                        setCategoryVi("");
+                                        return;
+                                    }
+
+                                    const selected = mergedCategoryOptions.find(
+                                        (option) => option.label === value
+                                    );
+
+                                    setIsCustomCategory(false);
                                     setCategory(value);
 
-                                    if (lang === "vi") {
-                                        setCategoryKo("");
-                                        setCategoryVi(value);
+                                    if (selected) {
+                                        setCategoryKo(selected.ko);
+                                        setCategoryVi(selected.vi);
                                     } else {
-                                        setCategoryKo(value);
-                                        setCategoryVi("");
+                                        if (lang === "vi") {
+                                            setCategoryKo("");
+                                            setCategoryVi(value);
+                                        } else {
+                                            setCategoryKo(value);
+                                            setCategoryVi("");
+                                        }
                                     }
                                 }}
                                 style={ui.input}
-                                onKeyDown={(e) => handleKeyDown(e, itemNameRef)}
-                            />
+                            >
+                                <option value="">{t.categoryPlaceholder}</option>
+
+                                {mergedCategoryOptions.map((option) => (
+                                    <option key={`${part}-${option.label}`} value={option.label}>
+                                        {option.label}
+                                    </option>
+                                ))}
+
+                                <option value="__custom__">
+                                    {lang === "vi" ? "Nhập trực tiếp" : "직접 입력"}
+                                </option>
+                            </select>
+                        </div>
+
+                        {isCustomCategory && (
+                            <div>
+                                <div style={labelStyle}>
+                                    {lang === "vi" ? "Danh mục mới" : "새 카테고리"}
+                                </div>
+                                <input
+                                    type="text"
+                                    placeholder={lang === "vi" ? "Nhập danh mục mới" : "새 카테고리 입력"}
+                                    value={category}
+                                    onChange={(e) => {
+                                        const value = e.target.value;
+                                        setCategory(value);
+
+                                        if (lang === "vi") {
+                                            setCategoryKo("");
+                                            setCategoryVi(value);
+                                        } else {
+                                            setCategoryKo(value);
+                                            setCategoryVi("");
+                                        }
+                                    }}
+                                    style={ui.input}
+                                    onKeyDown={(e) => handleKeyDown(e, itemNameRef)}
+                                />
+                            </div>
                         )}
 
-                        <input
-                            type="text"
-                            placeholder={t.codePlaceholder}
-                            value={code}
-                            onChange={(e) => setCode(e.target.value)}
-                            style={ui.input}
-                        />
+                        {/* 코드 */}
+                        <div>
+                            <div style={labelStyle}>
+                                {lang === "vi" ? "Mã" : "코드"}
+                            </div>
+                            <input
+                                type="text"
+                                placeholder={t.codePlaceholder}
+                                value={code}
+                                onChange={(e) => setCode(e.target.value)}
+                                style={ui.input}
+                            />
+                        </div>
 
-                        <input
-                            type="text"
-                            placeholder={t.itemNamePlaceholder}
-                            value={itemName}
-                            onChange={(e) => setItemName(e.target.value)}
-                            style={ui.input}
-                            ref={itemNameRef}
-                            onKeyDown={(e) => handleKeyDown(e, supplierRef)}
-                        />
+                        {/* 품목명 */}
+                        <div>
+                            <div style={labelStyle}>
+                                {lang === "vi" ? "Tên sản phẩm" : "품목명"}
+                            </div>
+                            <input
+                                type="text"
+                                placeholder={t.itemNamePlaceholder}
+                                value={itemName}
+                                onChange={(e) => setItemName(e.target.value)}
+                                style={ui.input}
+                                ref={itemNameRef}
+                                onKeyDown={(e) => handleKeyDown(e, supplierRef)}
+                            />
+                        </div>
 
-                        <input
-                            type="text"
-                            placeholder={t.supplierPlaceholder}
-                            value={supplier}
-                            onChange={(e) => setSupplier(e.target.value)}
-                            style={ui.input}
-                            ref={supplierRef}
-                            onKeyDown={(e) => handleKeyDown(e, priceRef)}
-                        />
+                        {/* 거래처 */}
+                        <div>
+                            <div style={labelStyle}>
+                                {lang === "vi" ? "Nhà cung cấp" : "거래처"}
+                            </div>
 
-                        <input
-                            type="text"
-                            placeholder={t.purchasePricePlaceholder}
-                            value={purchasePrice}
-                            onChange={(e) => {
-                                const raw = e.target.value.replace(/[^0-9]/g, "");
-                                setPurchasePrice(formatNumber(raw));
-                            }}
-                            style={ui.input}
-                            ref={priceRef}
-                            onKeyDown={(e) => handleKeyDown(e, unitRef)}
-                        />
+                            <select
+                                value={isCustomSupplier ? "__custom__" : supplier}
+                                onChange={(e) => {
+                                    const value = e.target.value;
 
-                        <input
-                            type="text"
-                            placeholder={t.unitPlaceholder}
-                            value={unit}
-                            onChange={(e) => setUnit(e.target.value)}
-                            style={ui.input}
-                            ref={unitRef}
-                            onKeyDown={(e) => handleKeyDown(e, quantityRef)}
-                        />
+                                    if (value === "__custom__") {
+                                        setIsCustomSupplier(true);
+                                        setSupplier("");
+                                        return;
+                                    }
+
+                                    setIsCustomSupplier(false);
+                                    setSupplier(value);
+                                }}
+                                style={ui.input}
+                            >
+                                <option value="">{t.supplierPlaceholder}</option>
+
+                                {mergedSupplierOptions.map((option) => (
+                                    <option key={option} value={option}>
+                                        {option}
+                                    </option>
+                                ))}
+
+                                <option value="__custom__">
+                                    {lang === "vi" ? "Nhập trực tiếp" : "직접 입력"}
+                                </option>
+                            </select>
+                        </div>
+
+                        {isCustomSupplier && (
+                            <div>
+                                <div style={labelStyle}>
+                                    {lang === "vi" ? "Nhà cung cấp mới" : "새 거래처"}
+                                </div>
+                                <input
+                                    type="text"
+                                    placeholder={lang === "vi" ? "Nhập nhà cung cấp mới" : "새 거래처 입력"}
+                                    value={supplier}
+                                    onChange={(e) => setSupplier(e.target.value)}
+                                    style={ui.input}
+                                    ref={supplierRef}
+                                    onKeyDown={(e) => handleKeyDown(e, priceRef)}
+                                />
+                            </div>
+                        )}
+
+                        {/* 구매가 */}
+                        <div>
+                            <div style={labelStyle}>
+                                {lang === "vi" ? "Giá nhập" : "구매가"}
+                            </div>
+                            <input
+                                type="text"
+                                placeholder={t.purchasePricePlaceholder}
+                                value={purchasePrice}
+                                onChange={(e) => {
+                                    const raw = e.target.value.replace(/[^0-9]/g, "");
+                                    setPurchasePrice(formatNumber(raw));
+                                }}
+                                style={ui.input}
+                                ref={priceRef}
+                                onKeyDown={(e) => handleKeyDown(e, unitRef)}
+                            />
+                        </div>
+
+                        {/* 단위 */}
+                        <div>
+                            <div style={labelStyle}>
+                                {lang === "vi" ? "Đơn vị" : "단위"}
+                            </div>
+                            <input
+                                type="text"
+                                placeholder={t.unitPlaceholder}
+                                value={unit}
+                                onChange={(e) => setUnit(e.target.value)}
+                                style={ui.input}
+                                ref={unitRef}
+                                onKeyDown={(e) => handleKeyDown(e, quantityRef)}
+                            />
+                        </div>
 
                         <div
                             style={{
                                 display: "flex",
                                 gap: 8,
                                 flexWrap: "wrap",
-                                marginTop: -4,
+                                marginTop: -6,
                             }}
                         >
                             {["Kg", "g", "L", "ml", lang === "vi" ? "Chai" : "병"].map((u) => {
@@ -1945,37 +2157,55 @@ export default function InventoryPage() {
                             })}
                         </div>
 
-                        <input
-                            type="number"
-                            step="0.1"
-                            placeholder={t.quantityPlaceholder}
-                            value={quantity}
-                            onChange={(e) => setQuantity(e.target.value)}
-                            style={ui.input}
-                            ref={quantityRef}
-                            onKeyDown={(e) => handleKeyDown(e, lowStockThresholdRef)}
-                        />
+                        {/* 수량 */}
+                        <div>
+                            <div style={labelStyle}>
+                                {lang === "vi" ? "Số lượng" : "수량"}
+                            </div>
+                            <input
+                                type="number"
+                                step="0.1"
+                                placeholder={t.quantityPlaceholder}
+                                value={quantity}
+                                onChange={(e) => setQuantity(e.target.value)}
+                                style={ui.input}
+                                ref={quantityRef}
+                                onKeyDown={(e) => handleKeyDown(e, lowStockThresholdRef)}
+                            />
+                        </div>
 
-                        <input
-                            type="number"
-                            step="0.1"
-                            placeholder={t.lowStockThresholdPlaceholder}
-                            value={lowStockThreshold}
-                            onChange={(e) => setLowStockThreshold(e.target.value)}
-                            style={ui.input}
-                            ref={lowStockThresholdRef}
-                            onKeyDown={(e) => handleKeyDown(e, noteRef)}
-                        />
+                        {/* 부족기준 */}
+                        <div>
+                            <div style={labelStyle}>
+                                {lang === "vi" ? "Ngưỡng thấp" : "부족기준"}
+                            </div>
+                            <input
+                                type="number"
+                                step="0.1"
+                                placeholder={t.lowStockThresholdPlaceholder}
+                                value={lowStockThreshold}
+                                onChange={(e) => setLowStockThreshold(e.target.value)}
+                                style={ui.input}
+                                ref={lowStockThresholdRef}
+                                onKeyDown={(e) => handleKeyDown(e, noteRef)}
+                            />
+                        </div>
 
-                        <input
-                            type="text"
-                            placeholder={t.notePlaceholder}
-                            value={note}
-                            onChange={(e) => setNote(e.target.value)}
-                            style={ui.input}
-                            ref={noteRef}
-                            onKeyDown={(e) => handleKeyDown(e)}
-                        />
+                        {/* 비고 */}
+                        <div>
+                            <div style={labelStyle}>
+                                {lang === "vi" ? "Ghi chú" : "비고"}
+                            </div>
+                            <input
+                                type="text"
+                                placeholder={t.notePlaceholder}
+                                value={note}
+                                onChange={(e) => setNote(e.target.value)}
+                                style={ui.input}
+                                ref={noteRef}
+                                onKeyDown={(e) => handleKeyDown(e)}
+                            />
+                        </div>
 
                         <button
                             onClick={handleSubmit}
@@ -2332,7 +2562,6 @@ export default function InventoryPage() {
                     onClick={() => {
                         setLogModalItem(null);
                         setItemLogs([]);
-                        setItemLogOpenGroupKey(null);
                     }}
                 >
                     <div
@@ -2407,7 +2636,6 @@ export default function InventoryPage() {
                             onClick={() => {
                                 setLogModalItem(null);
                                 setItemLogs([]);
-                                setItemLogOpenGroupKey(null);
                             }}
                             style={ui.subButton}
                         >
