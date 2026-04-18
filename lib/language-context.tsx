@@ -12,6 +12,18 @@ type LanguageContextType = {
 
 const LanguageContext = createContext<LanguageContextType | null>(null);
 
+function getDefaultLangFromUser(user: any): Language {
+  if (user?.language === "vi" || user?.language === "ko") {
+    return user.language;
+  }
+
+  if (user?.role === "staff") {
+    return "vi";
+  }
+
+  return "ko";
+}
+
 export function LanguageProvider({
   children,
 }: {
@@ -21,14 +33,20 @@ export function LanguageProvider({
 
   useEffect(() => {
     const savedUser = localStorage.getItem("baba_user");
-
     if (!savedUser) return;
 
-    const parsedUser = JSON.parse(savedUser);
-    const savedLang = parsedUser?.language;
+    try {
+      const parsedUser = JSON.parse(savedUser);
+      const defaultLang = getDefaultLangFromUser(parsedUser);
 
-    if (savedLang === "vi" || savedLang === "ko") {
-      setLangState(savedLang);
+      setLangState(defaultLang);
+
+      if (parsedUser.language !== defaultLang) {
+        parsedUser.language = defaultLang;
+        localStorage.setItem("baba_user", JSON.stringify(parsedUser));
+      }
+    } catch (error) {
+      console.error("Failed to parse baba_user from localStorage", error);
     }
   }, []);
 
@@ -38,9 +56,13 @@ export function LanguageProvider({
     const savedUser = localStorage.getItem("baba_user");
     if (!savedUser) return;
 
-    const parsedUser = JSON.parse(savedUser);
-    parsedUser.language = newLang;
-    localStorage.setItem("baba_user", JSON.stringify(parsedUser));
+    try {
+      const parsedUser = JSON.parse(savedUser);
+      parsedUser.language = newLang;
+      localStorage.setItem("baba_user", JSON.stringify(parsedUser));
+    } catch (error) {
+      console.error("Failed to update language in baba_user", error);
+    }
   };
 
   const toggleLang = () => {

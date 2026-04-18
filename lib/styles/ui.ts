@@ -102,7 +102,7 @@ export const ui = {
     detailGrid: {
         display: "grid",
         gridTemplateColumns: "88px 1fr",
-        rowGap: 6,
+        rowGap: 4,
         columnGap: 10,
         alignItems: "start",
     },

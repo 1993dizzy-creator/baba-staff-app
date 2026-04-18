@@ -2,7 +2,7 @@ export const inventoryLogsText = {
   ko: {
     title: "재고 변경 로그",
     backToInventory: "재고 페이지로 돌아가기",
-    searchPlaceholder: "품목명 / 카테고리 검색",
+    searchPlaceholder: "품목명 / 카테고리 / 코드 검색",
     filterAll: "전체 보기",
     filterUpdate: "수정",
     filterDelete: "삭제",
@@ -36,7 +36,7 @@ export const inventoryLogsText = {
   vi: {
     title: "Lịch sử thay đổi tồn kho",
     backToInventory: "Quay lại trang tồn kho",
-    searchPlaceholder: "Tìm theo tên / danh mục",
+    searchPlaceholder: "Tìm theo tên / danh mục / mã",
     filterAll: "Xem tất cả",
     filterUpdate: "Sửa",
     filterDelete: "Xóa",

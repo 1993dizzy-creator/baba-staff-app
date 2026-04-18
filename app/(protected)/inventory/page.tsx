@@ -9,6 +9,7 @@ import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
+import InventorySubNav from "@/components/InventorySubNav";
 
 const CATEGORY_OPTIONS_BY_PART = {
     kitchen: [
@@ -149,6 +150,7 @@ export default function InventoryPage() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDeletingId, setIsDeletingId] = useState<number | null>(null);
     const [isQuickSaving, setIsQuickSaving] = useState(false);
+    const [showLowStockBanner, setShowLowStockBanner] = useState(true);
 
     const itemNameRef = useRef<HTMLInputElement>(null);
     const supplierRef = useRef<HTMLInputElement>(null);
@@ -1165,8 +1167,23 @@ export default function InventoryPage() {
         setIsCustomCategory(false);
     }, [part, editingId]);
 
+    useEffect(() => {
+        if (!isFormOpen) return;
+
+        setTimeout(() => {
+            formRef.current?.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+            });
+        }, 0);
+
+        setTimeout(() => {
+            itemNameRef.current?.focus();
+        }, 180);
+    }, [isFormOpen]);
+
     const lowStockItems = inventoryList.filter(
-        (item) => Number(item.quantity) <= Number(item.low_stock_threshold ?? 0)
+        (item) => Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
     );
 
     const categoryTabs = useMemo(() => {
@@ -1227,6 +1244,36 @@ export default function InventoryPage() {
         };
     };
 
+    const getFilterToggleButtonStyle = (active: boolean, activeColor: string) => {
+        return {
+            flex: 1,
+            padding: "10px 14px",
+            background: active ? activeColor : "#f5f5f5",
+            color: active ? "#fff" : "#111827",
+            border: active ? `1px solid ${activeColor}` : "1px solid #ddd",
+            borderRadius: 8,
+            cursor: "pointer",
+            fontWeight: 600,
+        };
+    };
+
+    const getCategoryTabButtonStyle = (active: boolean) => {
+        return {
+            padding: "8px 12px",
+            borderRadius: 999,
+            border: active ? "1px solid #111827" : "1px solid #d1d5db",
+            background: active ? "#111827" : "#f9fafb",
+            color: active ? "#fff" : "#111827",
+            fontWeight: 700,
+            fontSize: 13,
+            whiteSpace: "nowrap" as const,
+            cursor: "pointer",
+            flexShrink: 0,
+        };
+    };
+
+    // 재고 메인 목록은 운영 편의상 최신 수정순이 아니라 코드 > 이름순으로 고정한다.
+    // (로그 / 스냅샷 페이지는 최신순 기준 유지 가능)
     const filteredInventory = inventoryList
         .filter((item) => {
             const keyword = search.trim().toLowerCase();
@@ -1321,37 +1368,100 @@ export default function InventoryPage() {
     };
 
     return (
-        <Container>
-            <h1 style={ui.pageTitle}>{t.title}</h1>
+        <Container noPaddingTop>
+            <InventorySubNav />
 
-            {lowStockItems.length > 0 && (
-                <div
-                    onClick={() => {
-                        setSearch("");
-                        setPartFilter(defaultPart);
-                        setCategoryFilter("all");
-                        setShowLowStockOnly(true);
-                        setShowTodayUpdatedOnly(false);
-
-                        setTimeout(() => {
-                            listRef.current?.scrollIntoView({
-                                behavior: "smooth",
-                                block: "start",
-                            });
-                        }, 0);
-                    }}
+            <div
+                style={{
+                    position: "relative",
+                    marginBottom: 8,
+                }}
+            >
+                {/* 돋보기 아이콘 */}
+                <span
                     style={{
-                        marginBottom: 16,
-                        padding: "12px 16px",
+                        position: "absolute",
+                        left: 12,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        fontSize: 16,
+                        color: "#9ca3af",
+                        pointerEvents: "none",
+                    }}
+                >
+                    🔍
+                </span>
+
+                <input
+                    type="text"
+                    placeholder={t.searchPlaceholder}
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    style={{
+                        ...ui.input,
+                        paddingLeft: 40,   // 🔥 핵심 (아이콘 공간)
+                        marginBottom: 0,
+                    }}
+                />
+            </div>
+
+            {lowStockItems.length > 0 && showLowStockBanner && (
+                <div
+                    style={{
+                        marginBottom: 12,
+                        padding: "10px 12px",
                         borderRadius: 10,
                         background: "#fff5f5",
                         border: "1px solid #f3caca",
-                        color: "crimson",
-                        fontWeight: 600,
-                        cursor: "pointer",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 10,
                     }}
                 >
-                    {t.lowStockBanner(lowStockItems.length)}
+                    {/* 좌측 (기존 기능 유지) */}
+                    <div
+                        onClick={() => {
+                            setSearch("");
+                            setPartFilter(defaultPart);
+                            setCategoryFilter("all");
+                            setShowLowStockOnly(true);
+                            setShowTodayUpdatedOnly(false);
+
+                            setTimeout(() => {
+                                listRef.current?.scrollIntoView({
+                                    behavior: "smooth",
+                                    block: "start",
+                                });
+                            }, 0);
+                        }}
+                        style={{
+                            color: "crimson",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            cursor: "pointer",
+                            flex: 1,
+                        }}
+                    >
+                        {t.lowStockBanner(lowStockItems.length)}
+                    </div>
+
+                    {/* 우측 닫기 버튼 */}
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation(); // 🔥 핵심 (부모 클릭 막기)
+                            setShowLowStockBanner(false);
+                        }}
+                        style={{
+                            border: "none",
+                            background: "transparent",
+                            fontSize: 16,
+                            cursor: "pointer",
+                            color: "#9ca3af",
+                        }}
+                    >
+                        ✕
+                    </button>
                 </div>
             )}
 
@@ -1360,23 +1470,40 @@ export default function InventoryPage() {
                 ref={listRef}
                 style={{
                     ...ui.card,
-                    padding: 20,
-                    marginBottom: 24,
+                    padding: 14,
+                    marginBottom: 16,
                 }}
             >
-                <h2 style={ui.sectionTitle}>{t.listTitle}</h2>
-
-                {latestSnapshotDate && (
-                    <div
+                <div
+                    style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginBottom: 10,
+                    }}
+                >
+                    <span
                         style={{
-                            ...ui.metaText,
-                            marginBottom: 12,
+                            fontSize: 15,
                             fontWeight: 700,
+                            color: "#111827",
                         }}
                     >
-                        {t.snapshotBaseDate}: {latestSnapshotDate}
-                    </div>
-                )}
+                        {t.listTitle}
+                    </span>
+
+                    {latestSnapshotDate && (
+                        <span
+                            style={{
+                                fontSize: 12,
+                                fontWeight: 600,
+                                color: "#6b7280",
+                            }}
+                        >
+                            {latestSnapshotDate}
+                        </span>
+                    )}
+                </div>
 
                 <div style={ui.filterBox}>
                     <div
@@ -1410,17 +1537,6 @@ export default function InventoryPage() {
                         })}
                     </div>
 
-                    <input
-                        type="text"
-                        placeholder={t.searchPlaceholder}
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        style={{
-                            ...ui.input,
-                            marginBottom: 16,
-                        }}
-                    />
-
                     <div
                         style={{
                             display: "flex",
@@ -1438,18 +1554,7 @@ export default function InventoryPage() {
                                     key={cat.key}
                                     type="button"
                                     onClick={() => setCategoryFilter(cat.key)}
-                                    style={{
-                                        padding: "8px 12px",
-                                        borderRadius: 999,
-                                        border: active ? "1px solid #111827" : "1px solid #d1d5db",
-                                        background: active ? "#111827" : "#f9fafb",
-                                        color: active ? "#fff" : "#111827",
-                                        fontWeight: 700,
-                                        fontSize: 13,
-                                        whiteSpace: "nowrap",
-                                        cursor: "pointer",
-                                        flexShrink: 0,
-                                    }}
+                                    style={getCategoryTabButtonStyle(active)}
                                 >
                                     {cat.label}
                                 </button>
@@ -1460,39 +1565,21 @@ export default function InventoryPage() {
                     <div
                         style={{
                             display: "flex",
-                            gap: 8,
-                            marginTop: 12,
+                            gap: 6,
+                            marginTop: 8,
                             paddingTop: 2,
                         }}
                     >
                         <button
                             onClick={() => setShowLowStockOnly(!showLowStockOnly)}
-                            style={{
-                                flex: 1,
-                                padding: "10px 14px",
-                                background: showLowStockOnly ? "crimson" : "#f5f5f5",
-                                color: showLowStockOnly ? "white" : "black",
-                                border: showLowStockOnly ? "1px solid crimson" : "1px solid #ddd",
-                                borderRadius: 8,
-                                cursor: "pointer",
-                                fontWeight: 600,
-                            }}
+                            style={getFilterToggleButtonStyle(showLowStockOnly, "crimson")}
                         >
                             {showLowStockOnly ? t.viewAllItems : t.viewLowStockOnly}
                         </button>
 
                         <button
                             onClick={() => setShowTodayUpdatedOnly(!showTodayUpdatedOnly)}
-                            style={{
-                                flex: 1,
-                                padding: "10px 14px",
-                                background: showTodayUpdatedOnly ? "royalblue" : "#f5f5f5",
-                                color: showTodayUpdatedOnly ? "white" : "black",
-                                border: showTodayUpdatedOnly ? "1px solid royalblue" : "1px solid #ddd",
-                                borderRadius: 8,
-                                cursor: "pointer",
-                                fontWeight: 600,
-                            }}
+                            style={getFilterToggleButtonStyle(showTodayUpdatedOnly, "royalblue")}
                         >
                             {showTodayUpdatedOnly ? t.viewAllFromTodayFilter : t.viewTodayUpdatedOnly}
                         </button>
@@ -1500,13 +1587,27 @@ export default function InventoryPage() {
                 </div>
 
                 {filteredInventory.length === 0 ? (
-                    <p>{t.noData}</p>
+                    <div
+                        style={{
+                            height: 160,
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            color: "#9ca3af",
+                            fontSize: 13,
+                            gap: 6,
+                        }}
+                    >
+                        <div style={{ fontSize: 22 }}>📭</div>
+                        <div>{t.noData}</div>
+                    </div>
                 ) : (
                     <div
                         style={{
                             display: "flex",
                             flexDirection: "column",
-                            gap: 12,
+                            gap: 8,
                             maxHeight: 400,
                             overflowY: "auto",
                             paddingRight: 4,
@@ -1518,7 +1619,7 @@ export default function InventoryPage() {
                                 style={{
                                     display: "flex",
                                     flexDirection: "column",
-                                    gap: 8,
+                                    gap: 6,
                                 }}
                             >
                                 <div
@@ -1546,7 +1647,7 @@ export default function InventoryPage() {
                                             key={item.id}
                                             style={{
                                                 ...ui.card,
-                                                padding: "8px 10px",
+                                                padding: "6px 10px",
                                                 borderLeft:
                                                     Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
                                                         ? "4px solid crimson"
@@ -1560,7 +1661,7 @@ export default function InventoryPage() {
                                                     justifyContent: "space-between",
                                                     alignItems: "center",
                                                     padding: "2px 0",
-                                                    minHeight: 32,
+                                                    minHeight: 28,
                                                     gap: 10,
                                                 }}
                                             >
@@ -1699,17 +1800,17 @@ export default function InventoryPage() {
                                                 <div
                                                     style={{
                                                         borderTop: "1px solid #eee",
-                                                        paddingTop: 10,
-                                                        marginTop: 10,
+                                                        paddingTop: 6,
+                                                        marginTop: 6,
                                                     }}
                                                 >
                                                     <div
                                                         style={{
                                                             display: "grid",
                                                             gridTemplateColumns: "1fr auto",
-                                                            gap: 8,
+                                                            gap: 6,
                                                             alignItems: "center",
-                                                            marginBottom: 14,
+                                                            marginBottom: 10,
                                                         }}
                                                     >
                                                         <input
@@ -1791,8 +1892,8 @@ export default function InventoryPage() {
                                                     <div
                                                         style={{
                                                             display: "flex",
-                                                            gap: 8,
-                                                            marginTop: 12,
+                                                            gap: 6,
+                                                            marginTop: 8,
                                                             paddingTop: 2,
                                                             justifyContent: "flex-end",
                                                             flexWrap: "wrap",
@@ -1865,12 +1966,22 @@ export default function InventoryPage() {
 
             {/* 재고입력 */}
             <button
-                onClick={() => setIsFormOpen(!isFormOpen)}
+                onClick={() => setIsFormOpen((prev) => !prev)}
                 style={{
-                    ...ui.subButton,
                     width: "100%",
                     marginBottom: 12,
-                    padding: "8px 12px",
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid #1f2937",
+
+                    background: isFormOpen ? "#1f2937" : "#111827", // 🔥 핵심
+                    color: "#ffffff",
+
+                    fontSize: 14,
+                    fontWeight: 700,
+                    letterSpacing: "-0.2px",
+
+                    cursor: "pointer",
                 }}
             >
                 {isFormOpen ? t.closeInventoryForm : t.openInventoryForm}
@@ -2139,17 +2250,7 @@ export default function InventoryPage() {
                                         key={u}
                                         type="button"
                                         onClick={() => setUnit(u)}
-                                        style={{
-                                            padding: "6px 10px",
-                                            borderRadius: 999,
-                                            border: active ? "1px solid #111827" : "1px solid #d1d5db",
-                                            background: active ? "#111827" : "#f9fafb",
-                                            color: active ? "#fff" : "#111827",
-                                            fontWeight: 700,
-                                            fontSize: 13,
-                                            whiteSpace: "nowrap",
-                                            cursor: "pointer",
-                                        }}
+                                        style={getCategoryTabButtonStyle(active)}
                                     >
                                         {u}
                                     </button>
@@ -2251,7 +2352,21 @@ export default function InventoryPage() {
                 <h2 style={ui.sectionTitle}>{t.recentLogs}</h2>
 
                 {recentLogs.length === 0 ? (
-                    <p>{t.noLogs}</p>
+                    <div
+                        style={{
+                            height: 120,
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            color: "#9ca3af",
+                            fontSize: 13,
+                            gap: 6,
+                        }}
+                    >
+                        <div style={{ fontSize: 20 }}>📭</div>
+                        <div>{t.noLogs}</div>
+                    </div>
                 ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {recentLogs.map((log) => (
@@ -2366,39 +2481,6 @@ export default function InventoryPage() {
                         ))}
                     </div>
                 )}
-            </div>
-
-            {/* 재고 로그 보기 */}
-            <div
-                style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 10,
-                    marginBottom: 20,
-                }}
-            >
-                <Link
-                    href="/inventory/logs"
-                    style={{
-                        ...ui.button,
-                        width: "100%",
-                    }}
-                >
-                    {t.viewLogs}
-                </Link>
-
-                <Link
-                    href="/inventory/snapshots"
-                    style={{
-                        ...ui.subButton,
-                        width: "100%",
-                        textAlign: "center",
-                        fontWeight: 700,
-                        padding: "12px 14px",
-                    }}
-                >
-                    {t.snapshotView}
-                </Link>
             </div>
 
             {quickSaveItem && (

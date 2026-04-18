@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
-import Link from "next/link";
 import { useLanguage } from "@/lib/language-context";
 import { inventoryLogsText } from "@/lib/text";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
+import InventorySubNav from "@/components/InventorySubNav";
 
 export default function InventoryLogsPage() {
     const [logs, setLogs] = useState<any[]>([]);
@@ -118,6 +118,45 @@ export default function InventoryLogsPage() {
         }
     };
 
+    const getPartButtonStyle = (
+        value: "kitchen" | "hall" | "bar" | "etc",
+        active: boolean
+    ) => {
+        const colorMap = {
+            kitchen: "#f59e0b",
+            hall: "#10b981",
+            bar: "#3b82f6",
+            etc: "#8b5cf6",
+        };
+
+        const color = colorMap[value];
+
+        return {
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: active ? `1px solid ${color}` : "1px solid #d1d5db",
+            background: active ? color : "#f9fafb",
+            color: active ? "#fff" : "#111827",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+            whiteSpace: "nowrap" as const,
+        };
+    };
+
+    const getFilterToggleButtonStyle = (active: boolean, activeColor: string) => {
+        return {
+            flex: 1,
+            padding: "10px 14px",
+            background: active ? activeColor : "#f5f5f5",
+            color: active ? "#fff" : "#111827",
+            border: active ? `1px solid ${activeColor}` : "1px solid #ddd",
+            borderRadius: 8,
+            cursor: "pointer",
+            fontWeight: 600,
+        };
+    };
+
     const getDisplayLogItemName = (log: any) => {
         return lang === "vi"
             ? log.item_name_vi || log.item_name || "-"
@@ -158,16 +197,19 @@ export default function InventoryLogsPage() {
 
     const filteredLogs = logs
         .filter((log) => {
-            const keyword = search.toLowerCase();
+            const keyword = search.trim().toLowerCase();
 
             const matchType = filterType === "all" || log.action === filterType;
 
             const displayItemName = getDisplayLogItemName(log).toLowerCase();
             const displayCategory = getDisplayLogCategory(log).toLowerCase();
+            const displayCode = String(log.code || "").toLowerCase();
 
             const matchSearch =
+                !keyword ||
                 displayItemName.includes(keyword) ||
-                displayCategory.includes(keyword);
+                displayCategory.includes(keyword) ||
+                displayCode.includes(keyword);
 
             const matchPart =
                 partFilter === "all" || log.part === partFilter;
@@ -387,19 +429,40 @@ export default function InventoryLogsPage() {
 
 
     return (
-        <Container>
-            <h1 style={ui.pageTitle}>{t.title}</h1>
+        <Container noPaddingTop>
+            <InventorySubNav />
 
-            <div style={{ marginBottom: 20 }}>
-                <Link
-                    href="/inventory"
+            <div
+                style={{
+                    position: "relative",
+                    marginBottom: 8,
+                }}
+            >
+                <span
                     style={{
-                        ...ui.button,
-                        width: "100%",
+                        position: "absolute",
+                        left: 12,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        fontSize: 16,
+                        color: "#9ca3af",
+                        pointerEvents: "none",
                     }}
                 >
-                    {t.backToInventory}
-                </Link>
+                    🔍
+                </span>
+
+                <input
+                    type="text"
+                    placeholder={t.searchPlaceholder}
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    style={{
+                        ...ui.input,
+                        paddingLeft: 40,
+                        marginBottom: 0,
+                    }}
+                />
             </div>
 
             {/* 필터 카드 */}
@@ -410,17 +473,6 @@ export default function InventoryLogsPage() {
                     marginBottom: 20,
                 }}
             >
-                <input
-                    type="text"
-                    placeholder={t.searchPlaceholder}
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    style={{
-                        ...ui.input,
-                        marginBottom: 12,
-                    }}
-                />
-
                 <div
                     style={{
                         display: "flex",
@@ -451,17 +503,16 @@ export default function InventoryLogsPage() {
                                     onClick={() =>
                                         setFilterType(option.value as "all" | "create" | "update" | "delete")
                                     }
-                                    style={{
-                                        padding: "10px 12px",
-                                        borderRadius: 8,
-                                        border: active ? "1px solid #111827" : "1px solid #d1d5db",
-                                        background: active ? "#111827" : "#f9fafb",
-                                        color: active ? "white" : "#111827",
-                                        fontWeight: 700,
-                                        fontSize: 14,
-                                        cursor: "pointer",
-                                        whiteSpace: "nowrap",
-                                    }}
+                                    style={getFilterToggleButtonStyle(
+                                        active,
+                                        option.value === "create"
+                                            ? "seagreen"
+                                            : option.value === "update"
+                                                ? "royalblue"
+                                                : option.value === "delete"
+                                                    ? "crimson"
+                                                    : "#111827"
+                                    )}
                                 >
                                     {option.label}
                                 </button>

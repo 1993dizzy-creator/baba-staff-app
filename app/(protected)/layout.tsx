@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { isLoggedIn, getUser } from "@/lib/supabase/auth";
 import Link from "next/link";
 import { LanguageProvider, useLanguage } from "@/lib/language-context";
 import { layoutText } from "@/lib/text/layout";
+import BottomNav from "@/components/BottomNav";
 
 function ProtectedLayoutContent({
   children,
@@ -16,13 +17,19 @@ function ProtectedLayoutContent({
   const pathname = usePathname();
   const [checked, setChecked] = useState(false);
   const [currentUserName, setCurrentUserName] = useState("");
-  const { lang, toggleLang } = useLanguage();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [isReady, setIsReady] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
+  const { lang, toggleLang } = useLanguage();
   const t = layoutText[lang];
 
   useEffect(() => {
-    if (!isLoggedIn()) {
-      alert(lang === "vi" ? "Vui lòng đăng nhập trước" : "로그인 후 접근 가능");
+    const loggedIn = isLoggedIn();
+
+    if (!loggedIn) {
+      setIsReady(true);
+      alert(t.loginRequired);
       router.replace("/login");
       return;
     }
@@ -30,7 +37,26 @@ function ProtectedLayoutContent({
     const user = getUser();
     setCurrentUserName(user?.name || "");
     setChecked(true);
-  }, [router]);
+    setIsReady(true);
+  }, [router, t.loginRequired]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
 
   const handleLogout = () => {
     localStorage.removeItem("baba_user");
@@ -38,195 +64,187 @@ function ProtectedLayoutContent({
     router.push("/login");
   };
 
-
-
-  if (!checked) {
-    return <main style={{ padding: 40 }}>{t.checking}</main>;
-  }
-
   const handleToggleLanguage = () => {
     toggleLang();
   };
 
-  const isSalesPage = pathname.startsWith("/sales");
-  const isInventoryPage = pathname.startsWith("/inventory");
-  const isMyPage = pathname.startsWith("/mypage");
+
+
+if (!isReady || !checked) {
+  return <main style={{ padding: 40 }}>{t.checking}</main>;
+}
 
   return (
-
-    <div style={{ minHeight: "100vh", paddingBottom: 90 }}>
-      <div
+    <div
+      style={{
+        minHeight: "100vh",
+        paddingTop: 54,
+        paddingBottom: 56,
+        background: "#ffffff",
+      }}
+    >
+      <header
         style={{
-          maxWidth: 1200,
-          margin: "0 auto",
-          padding: "12px 20px 0",
-          minHeight: 56,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 12,
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 54,
+          background: "#111827",
+          borderBottom: "1px solid #1f2937",
+          zIndex: 1100,
+          boxShadow: "0 2px 10px rgba(0,0,0,0.10)",
         }}
       >
-        <p
+        <div
           style={{
-            margin: 0,
-            color: "#666",
-            fontSize: 14,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            flex: 1,
+            maxWidth: 1200,
+            height: "100%",
+            margin: "0 auto",
+            padding: "0 16px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
           }}
         >
-          {currentUserName
-            ? `${currentUserName} ${t.loggedInSuffix}`
-            : ""}
-        </p>
-        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-          <button
-            onClick={handleToggleLanguage}
+          <div
             style={{
-              padding: "8px 10px",
-              minWidth: 44,
-              height: 40,
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "white",
-              cursor: "pointer",
-              fontSize: 16,
+              flex: 1,
+              minWidth: 0,
+              color: "#ffffff",
+              fontSize: 14,
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              letterSpacing: "-0.2px",
+            }}
+          >
+            {currentUserName || "BABA"}
+          </div>
+
+          <div
+            style={{
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
+              gap: 12,
+              flexShrink: 0,
+              color: "#ffffff",
+              lineHeight: 1,
             }}
           >
-            {lang === "ko" ? "🇰🇷" : "🇻🇳"}
-          </button>
+            <span
+              onClick={handleToggleLanguage}
+              style={{
+                cursor: "pointer",
+                fontSize: 20,
+                lineHeight: 1,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                userSelect: "none",
+                WebkitTapHighlightColor: "transparent",
+              }}
+            >
+              {lang === "ko" ? "🇰🇷" : "🇻🇳"}
+            </span>
 
-          <button
-            onClick={handleLogout}
-            style={{
-              padding: "0 12px",
-              height: 40,
-              border: "1px solid #ddd",
-              borderRadius: 10,
-              background: "white",
-              cursor: "pointer",
-              fontSize: 14,
-              fontWeight: 500,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {t.logout}
-          </button>
+            <div ref={menuRef} style={{ position: "relative" }}>
+              <div
+                onClick={() => setMenuOpen((prev) => !prev)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  userSelect: "none",
+                  WebkitTapHighlightColor: "transparent",
+                  padding: 6,
+                }}
+              >
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <path
+                    d="M20 21C20 17.6863 16.4183 15 12 15C7.58172 15 4 17.6863 4 21"
+                    stroke="#ffffff"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                  <circle
+                    cx="12"
+                    cy="8"
+                    r="4"
+                    stroke="#ffffff"
+                    strokeWidth="2"
+                  />
+                </svg>
+              </div>
+              {menuOpen && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 36,
+                    right: 0,
+                    width: 154,
+                    borderRadius: 14,
+                    boxShadow: "0 16px 32px rgba(0,0,0,0.16)",
+                    background: "#ffffff",
+                    border: "1px solid #e5e7eb",
+                    overflow: "hidden",
+                    zIndex: 1200,
+                  }}
+                >
+                  <Link
+                    href="/mypage"
+                    style={{
+                      display: "block",
+                      padding: "12px 14px",
+                      textDecoration: "none",
+                      color: "#111827",
+                      fontSize: 14,
+                      fontWeight: 600,
+                      borderBottom: "1px solid #f3f4f6",
+                      background: pathname.startsWith("/mypage")
+                        ? "#f9fafb"
+                        : "#ffffff",
+                    }}
+                  >
+                    {t.mypage}
+                  </Link>
+
+                  <button
+                    onClick={handleLogout}
+                    style={{
+                      width: "100%",
+                      padding: "12px 14px",
+                      border: "none",
+                      background: "#ffffff",
+                      color: "#111827",
+                      fontSize: 14,
+                      fontWeight: 600,
+                      textAlign: "left",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {t.logout}
+                  </button>
+                </div>
+              )}
+            </div>
+
+          </div>
         </div>
-      </div>
+      </header>
 
       {children}
 
-      <nav
-        style={{
-          position: "fixed",
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "white",
-          borderTop: "1px solid #e5e5e5",
-          boxShadow: "0 -4px 12px rgba(0,0,0,0.04)",
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr 1fr 1fr",
-          padding: "6px 6px max(6px, env(safe-area-inset-bottom))",
-          gap: 6,
-          zIndex: 100,
-          height: 64,
-        }}
-      >
-        <Link
-          href="/sales"
-          style={{
-            textAlign: "center",
-            textDecoration: "none",
-            color: isSalesPage ? "black" : "#999",
-            fontWeight: isSalesPage ? 700 : 500,
-            padding: "10px 0",
-            borderRadius: 10,
-            background: isSalesPage ? "#f1f1f1" : "transparent",
-            boxShadow: isSalesPage ? "inset 0 0 0 1px #e5e5e5" : "none",
-            fontSize: 13,
-          }}
-        >
-          {t.sales}
-        </Link>
-
-        {/* <div
-          style={{
-            textAlign: "center",
-            color: "#bbb",
-            fontWeight: 500,
-            padding: "10px 0",
-            borderRadius: 10,
-            fontSize: 13,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            lineHeight: 1.2,
-          }}
-        >
-          <span>{t.sales}</span>
-          <span style={{ fontSize: 11, marginTop: 2 }}>{t.preparing}</span>
-        </div> */}
-
-        <Link
-          href="/inventory"
-          style={{
-            textAlign: "center",
-            textDecoration: "none",
-            color: isInventoryPage ? "black" : "#999",
-            fontWeight: isInventoryPage ? 700 : 500,
-            padding: "10px 0",
-            borderRadius: 10,
-            background: isInventoryPage ? "#f5f5f5" : "transparent",
-            fontSize: 13,
-          }}
-        >
-          {t.inventory}
-        </Link>
-
-        <Link
-          href="/mypage"
-          style={{
-            textAlign: "center",
-            textDecoration: "none",
-            color: isMyPage ? "black" : "#999",
-            fontWeight: isMyPage ? 700 : 500,
-            padding: "10px 0",
-            borderRadius: 10,
-            background: isMyPage ? "#f5f5f5" : "transparent",
-            fontSize: 13,
-          }}
-        >
-          {t.mypage}
-        </Link>
-
-        <div
-          style={{
-            textAlign: "center",
-            color: "#bbb",
-            fontWeight: 500,
-            padding: "10px 0",
-            borderRadius: 10,
-            fontSize: 13,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            lineHeight: 1.2,
-          }}
-        >
-          <span>{t.attendance}</span>
-          <span style={{ fontSize: 11, marginTop: 2 }}>{t.preparing}</span>
-        </div>
-
-      </nav >
-    </div >
+      <BottomNav />
+    </div>
   );
 }
 
