@@ -118,6 +118,25 @@ export default function InventoryLogsPage() {
         }
     };
 
+    const PART_META = {
+        kitchen: {
+            color: "#f59e0b",
+            emoji: "🍳",
+        },
+        hall: {
+            color: "#10b981",
+            emoji: "🍺",
+        },
+        bar: {
+            color: "#3b82f6",
+            emoji: "🍸",
+        },
+        etc: {
+            color: "#8b5cf6",
+            emoji: "📦",
+        },
+    };
+
     const getPartButtonStyle = (
         value: "kitchen" | "hall" | "bar" | "etc",
         active: boolean
@@ -129,18 +148,22 @@ export default function InventoryLogsPage() {
             etc: "#8b5cf6",
         };
 
-        const color = colorMap[value];
+        const color = PART_META[value].color;
 
         return {
-            padding: "10px 12px",
+            width: "100%",
+            padding: "8px 6px",
             borderRadius: 8,
             border: active ? `1px solid ${color}` : "1px solid #d1d5db",
             background: active ? color : "#f9fafb",
             color: active ? "#fff" : "#111827",
             fontWeight: 700,
-            fontSize: 14,
+            fontSize: 12,
             cursor: "pointer",
-            whiteSpace: "nowrap" as const,
+            lineHeight: 1.25,
+            whiteSpace: "normal" as const,
+            textAlign: "center" as const,
+            wordBreak: "keep-all" as const,
         };
     };
 
@@ -154,6 +177,21 @@ export default function InventoryLogsPage() {
             borderRadius: 8,
             cursor: "pointer",
             fontWeight: 600,
+        };
+    };
+
+    const getActionFilterButtonStyle = (active: boolean, activeColor: string) => {
+        return {
+            width: "100%",
+            padding: "8px 10px",
+            borderRadius: 8,
+            border: active ? `1px solid ${activeColor}` : "1px solid #d1d5db",
+            background: active ? activeColor : "#f9fafb",
+            color: active ? "#fff" : "#111827",
+            fontWeight: 700,
+            fontSize: 13,
+            cursor: "pointer",
+            lineHeight: 1.25,
         };
     };
 
@@ -503,7 +541,7 @@ export default function InventoryLogsPage() {
                                     onClick={() =>
                                         setFilterType(option.value as "all" | "create" | "update" | "delete")
                                     }
-                                    style={getFilterToggleButtonStyle(
+                                    style={getActionFilterButtonStyle(
                                         active,
                                         option.value === "create"
                                             ? "seagreen"
@@ -542,18 +580,28 @@ export default function InventoryLogsPage() {
                                     type="button"
                                     onClick={() => setPartFilter(option.value)}
                                     style={{
-                                        padding: "10px 12px",
+                                        padding: "8px 10px",
                                         borderRadius: 8,
-                                        border: active ? "1px solid #111827" : "1px solid #d1d5db",
-                                        background: active ? "#111827" : "#f9fafb",
+                                        border:
+                                            option.value !== "all" && active
+                                                ? `1px solid ${PART_META[option.value].color}`
+                                                : "1px solid #d1d5db",
+                                        background:
+                                            option.value !== "all" && active
+                                                ? PART_META[option.value].color
+                                                : active
+                                                    ? "#111827"
+                                                    : "#f9fafb",
                                         color: active ? "white" : "#111827",
                                         fontWeight: 700,
-                                        fontSize: 14,
+                                        fontSize: 13,
                                         cursor: "pointer",
                                         whiteSpace: "nowrap",
                                     }}
                                 >
-                                    {option.label}
+                                    {option.value !== "all"
+                                        ? `${PART_META[option.value].emoji} ${option.label}`
+                                        : option.label}
                                 </button>
                             );
                         })}

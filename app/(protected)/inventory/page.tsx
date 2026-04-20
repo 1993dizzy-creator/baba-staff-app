@@ -292,8 +292,8 @@ export default function InventoryPage() {
         if (log.action === "delete") {
             changes.push({
                 label: lang === "vi" ? "Xóa" : "삭제",
-                before: `${log.prev_quantity ?? 0}${log.unit ? ` ${log.unit}` : ""}`,
-                after: `0${log.unit ? ` ${log.unit}` : ""}`,
+                before: `${formatDecimalDisplay(log.prev_quantity)}${log.unit ? ` ${log.unit}` : ""}`,
+                after: `${formatDecimalDisplay(log.new_quantity)}${log.unit ? ` ${log.unit}` : ""}`,
                 color: "crimson",
             });
             return changes;
@@ -305,8 +305,8 @@ export default function InventoryPage() {
         ) {
             changes.push({
                 label: lang === "vi" ? "SL" : "수량",
-                before: `${log.prev_quantity ?? 0}${log.unit ? ` ${log.unit}` : ""}`,
-                after: `${log.new_quantity ?? 0}${log.unit ? ` ${log.unit}` : ""}`,
+                before: `${formatDecimalDisplay(log.prev_quantity)}${log.unit ? ` ${log.unit}` : ""}`,
+                after: `${formatDecimalDisplay(log.new_quantity)}${log.unit ? ` ${log.unit}` : ""}`,
                 color:
                     Number(log.new_quantity ?? 0) > Number(log.prev_quantity ?? 0)
                         ? "seagreen"
@@ -430,7 +430,7 @@ export default function InventoryPage() {
         customText?: string;
     }) => {
         const diff = nextQty - currentQty;
-        const diffText = `${diff > 0 ? "+" : ""}${diff}`;
+        const diffText = `${diff > 0 ? "+" : ""}${formatDecimalDisplay(diff)}`;
         const reasonLabel = getQuickReasonLabel(reason, customText);
         return `${diffText} (${reasonLabel})`;
     };
@@ -545,6 +545,23 @@ export default function InventoryPage() {
         const normalized = String(value).replace(/,/g, "").trim();
         const num = Number(normalized);
         return Number.isNaN(num) ? 0 : num;
+    };
+
+    const formatDecimalDisplay = (value: string | number | null | undefined) => {
+        if (value === null || value === undefined || value === "") return "0";
+
+        const num =
+            typeof value === "number"
+                ? value
+                : Number(String(value).replace(/,/g, "").trim());
+
+        if (!Number.isFinite(num)) return "0";
+
+        return num.toFixed(2).replace(/\.?0+$/, "");
+    };
+
+    const roundDecimal = (value: number) => {
+        return Math.round(value * 100) / 100;
     };
 
     const resetForm = () => {
@@ -1027,8 +1044,9 @@ export default function InventoryPage() {
             if (!quickSaveItem) return;
 
             const draft = quantityDrafts[quickSaveItem.id];
-            const nextQty = parseDecimal(draft);
-            const currentQty = Number(quickSaveItem.quantity ?? 0);
+            const nextQty = roundDecimal(parseDecimal(draft));
+            const currentQty = roundDecimal(Number(quickSaveItem.quantity ?? 0));
+            const diffQty = roundDecimal(nextQty - currentQty);
 
             if (draft === undefined || String(draft).trim() === "") {
                 alert(t.requiredFields);
@@ -1085,7 +1103,7 @@ export default function InventoryPage() {
                     category_vi: quickSaveItem.category_vi ?? null,
                     prev_quantity: currentQty,
                     new_quantity: nextQty,
-                    change_quantity: nextQty - currentQty,
+                    change_quantity: diffQty,
                     prev_purchase_price: quickSaveItem.purchase_price ?? null,
                     new_purchase_price: quickSaveItem.purchase_price ?? null,
                     prev_note: quickSaveItem.note ?? null,
@@ -2458,7 +2476,7 @@ export default function InventoryPage() {
                                                 }}
                                             >
                                                 {Number(log.change_quantity) > 0 ? "+" : ""}
-                                                {log.change_quantity ?? 0}
+                                                {formatDecimalDisplay(log.change_quantity)}
                                             </span>{" "}
                                             <span style={{ color: "#111827" }}>{log.unit || ""}</span>
                                         </div>

@@ -54,7 +54,7 @@ export default function InventoryLogGroupCard({
         <div
             style={{
                 ...ui.card,
-                padding: "8px 10px",
+                padding: "7px 10px",
                 borderLeft: `4px solid ${getActionColor(log.action)}`,
                 background: "#fff",
             }}
@@ -92,34 +92,27 @@ export default function InventoryLogGroupCard({
                         </span>
                     </div>
 
-                    <div style={ui.metaText}>
-                        {[partLabel, categoryName].join(" · ")}
-                    </div>
-
                     <div
                         style={{
-                            marginTop: 4,
-                            fontSize: 13,
-                            color: "#4b5563",
+                            ...ui.metaText,
+                            marginTop: 2,
                             wordBreak: "break-word",
                         }}
                     >
-                        {noteText || "-"}
+                        {[partLabel, categoryName, noteText && noteText !== "-" ? noteText : ""]
+                            .filter(Boolean)
+                            .join(" · ")}
                     </div>
                 </div>
 
                 <div
                     style={{
-                        textAlign: "right",
                         flexShrink: 0,
                         marginLeft: 10,
+                        display: "flex",
+                        alignItems: "center",
                     }}
                 >
-                    <div style={ui.metaText}>
-                        {log.created_at ? formatDateTime(log.created_at) : "-"}
-                    </div>
-                    <div style={ui.metaText}>{log.actor_name || "-"}</div>
-
                     {onToggle && (
                         <button
                             type="button"
@@ -129,7 +122,6 @@ export default function InventoryLogGroupCard({
                                 width: "auto",
                                 minWidth: 72,
                                 padding: "6px 10px",
-                                marginTop: 6,
                                 fontWeight: 700,
                             }}
                         >
