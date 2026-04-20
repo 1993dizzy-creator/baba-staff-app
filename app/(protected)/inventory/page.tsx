@@ -1671,7 +1671,9 @@ export default function InventoryPage() {
 
                                     const snapshotQty = latestSnapshotMap[item.id];
                                     const hasSnapshot = snapshotQty !== undefined;
-                                    const diffQty = hasSnapshot ? Number(item.quantity ?? 0) - Number(snapshotQty) : null;
+                                    const diffQty = hasSnapshot
+                                        ? roundDecimal(Number(item.quantity ?? 0) - Number(snapshotQty))
+                                        : null;
 
                                     return (
                                         <div

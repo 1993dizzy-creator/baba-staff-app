@@ -109,6 +109,24 @@ function ProtectedLayoutContent({
             gap: 12,
           }}
         >
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <img
+              src="/img/logo-w.png"
+              alt="BABA"
+              style={{
+                height: 38,
+                width: "auto",
+                objectFit: "contain",
+              }}
+            />
+          </div>
           <div
             style={{
               flex: 1,
