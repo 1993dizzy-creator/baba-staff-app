@@ -70,15 +70,15 @@ function ProtectedLayoutContent({
 
 
 
-if (!isReady || !checked) {
-  return <main style={{ padding: 40 }}>{t.checking}</main>;
-}
+  if (!isReady || !checked) {
+    return <main style={{ padding: 40 }}>{t.checking}</main>;
+  }
 
   return (
     <div
       style={{
         minHeight: "100vh",
-        paddingTop: 54,
+        paddingTop: "calc(54px + env(safe-area-inset-top))",
         paddingBottom: 56,
         background: "#ffffff",
       }}
@@ -89,7 +89,8 @@ if (!isReady || !checked) {
           top: 0,
           left: 0,
           right: 0,
-          height: 54,
+          height: "calc(54px + env(safe-area-inset-top))",
+          paddingTop: "env(safe-area-inset-top)",
           background: "#111827",
           borderBottom: "1px solid #1f2937",
           zIndex: 1100,
@@ -99,7 +100,7 @@ if (!isReady || !checked) {
         <div
           style={{
             maxWidth: 1200,
-            height: "100%",
+            height: 54,
             margin: "0 auto",
             padding: "0 16px",
             display: "flex",
