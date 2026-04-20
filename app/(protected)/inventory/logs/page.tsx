@@ -16,7 +16,6 @@ export default function InventoryLogsPage() {
     const [search, setSearch] = useState("");
     const [partFilter, setPartFilter] = useState("all");
     const [openGroupKey, setOpenGroupKey] = useState<string | null>(null);
-    const [visibleCount, setVisibleCount] = useState(20);
     const [inventoryNoteMap, setInventoryNoteMap] = useState<Record<string, string>>({});
 
     const fetchLogs = async () => {
@@ -93,9 +92,6 @@ export default function InventoryLogsPage() {
         fetchInventoryNotes();
     }, []);
 
-    useEffect(() => {
-        setVisibleCount(20);
-    }, [search, filterType, partFilter]);
 
     const currentUser = getUser();
     const isMaster = currentUser?.role === "master";
@@ -291,9 +287,7 @@ export default function InventoryLogsPage() {
         }
     );
 
-    const visibleGroups = groupedLogs.slice(0, visibleCount);
-
-
+    const visibleGroups = groupedLogs;
 
     const changeFieldConfig = [
         {
@@ -646,7 +640,16 @@ export default function InventoryLogsPage() {
                 {filteredLogs.length === 0 ? (
                     <p>{t.noLogs}</p>
                 ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div
+                        style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 6,
+                            maxHeight: 560,
+                            overflowY: "auto",
+                            paddingRight: 4,
+                        }}
+                    >
                         {visibleGroups.map((group) => {
                             const log = group.latest;
                             const isOpen = openGroupKey === group.groupKey;
@@ -677,22 +680,7 @@ export default function InventoryLogsPage() {
                             );
                         })}
 
-                        {groupedLogs.length > visibleCount && (
-                            <div style={{ marginTop: 16 }}>
-                                <button
-                                    type="button"
-                                    onClick={() => setVisibleCount((prev) => prev + 20)}
-                                    style={{
-                                        ...ui.subButton,
-                                        width: "100%",
-                                        padding: "10px 14px",
-                                        fontWeight: 700,
-                                    }}
-                                >
-                                    {`${t.loadMore} (${visibleGroups.length}/${groupedLogs.length})`}
-                                </button>
-                            </div>
-                        )}
+                      
                     </div>
                 )}
             </div>

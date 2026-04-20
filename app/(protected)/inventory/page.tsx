@@ -1014,6 +1014,18 @@ export default function InventoryPage() {
         }
     };
 
+    const adjustQuantityDraft = (itemId: number, delta: number) => {
+        setQuantityDrafts((prev) => {
+            const current = parseDecimal(prev[itemId] ?? "0");
+            const next = roundDecimal(current + delta);
+
+            return {
+                ...prev,
+                [itemId]: String(next < 0 ? 0 : next),
+            };
+        });
+    };
+
     const handleQuantitySave = (item: any) => {
         const draft = quantityDrafts[item.id];
 
@@ -1250,13 +1262,13 @@ export default function InventoryPage() {
         const meta = PART_META[value];
 
         return {
-            padding: "10px 12px",
+            padding: "8px 10px",
             borderRadius: 8,
             border: active ? `1px solid ${meta.color}` : "1px solid #d1d5db",
             background: active ? meta.color : "#f9fafb",
             color: active ? "#fff" : "#111827",
             fontWeight: 700,
-            fontSize: 14,
+            fontSize: 13,
             cursor: "pointer",
             whiteSpace: "nowrap" as const,
         };
@@ -1265,25 +1277,26 @@ export default function InventoryPage() {
     const getFilterToggleButtonStyle = (active: boolean, activeColor: string) => {
         return {
             flex: 1,
-            padding: "10px 14px",
+            padding: "8px 12px",
             background: active ? activeColor : "#f5f5f5",
             color: active ? "#fff" : "#111827",
             border: active ? `1px solid ${activeColor}` : "1px solid #ddd",
             borderRadius: 8,
             cursor: "pointer",
             fontWeight: 600,
+            fontSize: 13, // 🔥 추가
         };
     };
 
     const getCategoryTabButtonStyle = (active: boolean) => {
         return {
-            padding: "8px 12px",
+            padding: "7px 10px",
             borderRadius: 999,
             border: active ? "1px solid #111827" : "1px solid #d1d5db",
             background: active ? "#111827" : "#f9fafb",
             color: active ? "#fff" : "#111827",
             fontWeight: 700,
-            fontSize: 13,
+            fontSize: 12,
             whiteSpace: "nowrap" as const,
             cursor: "pointer",
             flexShrink: 0,
@@ -1488,7 +1501,7 @@ export default function InventoryPage() {
                 ref={listRef}
                 style={{
                     ...ui.card,
-                    padding: 14,
+                    padding: 12,
                     marginBottom: 16,
                 }}
             >
@@ -1528,8 +1541,8 @@ export default function InventoryPage() {
                         style={{
                             display: "grid",
                             gridTemplateColumns: "repeat(4, 1fr)",
-                            gap: 8,
-                            marginBottom: 16,
+                            gap: 6,
+                            marginBottom: 10,
                         }}
                     >
                         {[
@@ -1558,10 +1571,10 @@ export default function InventoryPage() {
                     <div
                         style={{
                             display: "flex",
-                            gap: 8,
+                            gap: 6,
                             overflowX: "auto",
-                            paddingBottom: 6,
-                            marginBottom: 16,
+                            paddingBottom: 4,
+                            marginBottom: 10,
                         }}
                     >
                         {categoryTabs.map((cat) => {
@@ -1584,8 +1597,8 @@ export default function InventoryPage() {
                         style={{
                             display: "flex",
                             gap: 6,
-                            marginTop: 8,
-                            paddingTop: 2,
+                            marginTop: 2,
+                            paddingTop: 0,
                         }}
                     >
                         <button
@@ -1637,7 +1650,7 @@ export default function InventoryPage() {
                                 style={{
                                     display: "flex",
                                     flexDirection: "column",
-                                    gap: 6,
+                                    gap: 4,
                                 }}
                             >
                                 <div
@@ -1645,7 +1658,7 @@ export default function InventoryPage() {
                                         fontSize: 13,
                                         fontWeight: 800,
                                         color: "#374151",
-                                        padding: "4px 2px 0",
+                                        padding: "2px 2px 0",
                                     }}
                                 >
                                     {categoryName}
@@ -1665,7 +1678,7 @@ export default function InventoryPage() {
                                             key={item.id}
                                             style={{
                                                 ...ui.card,
-                                                padding: "6px 10px",
+                                                padding: "5px 8px",
                                                 borderLeft:
                                                     Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
                                                         ? "4px solid crimson"
@@ -1679,8 +1692,8 @@ export default function InventoryPage() {
                                                     justifyContent: "space-between",
                                                     alignItems: "center",
                                                     padding: "2px 0",
-                                                    minHeight: 28,
-                                                    gap: 10,
+                                                    minHeight: 24,
+                                                    gap: 8,
                                                 }}
                                             >
                                                 <div style={{ minWidth: 0, flex: 1 }}>
@@ -1727,13 +1740,13 @@ export default function InventoryPage() {
                                                     style={{
                                                         display: "flex",
                                                         alignItems: "center",
-                                                        gap: 10,
+                                                        gap: 8,
                                                         flexShrink: 0,
                                                     }}
                                                 >
                                                     <div
                                                         style={{
-                                                            minWidth: 64,
+                                                            minWidth: 58,
                                                             textAlign: "right",
                                                             lineHeight: 1.2,
                                                             whiteSpace: "nowrap",
@@ -1799,8 +1812,9 @@ export default function InventoryPage() {
                                                         style={{
                                                             ...ui.subButton,
                                                             width: "auto",
-                                                            minWidth: 74,
-                                                            padding: "8px 12px",
+                                                            minWidth: 68,
+                                                            padding: "7px 10px",
+                                                            fontSize: 13,
                                                             fontWeight: 700,
                                                             background: isOpen ? getPartMeta(item.part).color : "#f5f5f5",
                                                             color: isOpen ? "#fff" : "#111827",
@@ -1818,17 +1832,17 @@ export default function InventoryPage() {
                                                 <div
                                                     style={{
                                                         borderTop: "1px solid #eee",
-                                                        paddingTop: 6,
-                                                        marginTop: 6,
+                                                        paddingTop: 5,
+                                                        marginTop: 5,
                                                     }}
                                                 >
                                                     <div
                                                         style={{
                                                             display: "grid",
-                                                            gridTemplateColumns: "1fr auto",
+                                                            gridTemplateColumns: "1fr auto auto",
                                                             gap: 6,
                                                             alignItems: "center",
-                                                            marginBottom: 10,
+                                                            marginBottom: 8,
                                                         }}
                                                     >
                                                         <input
@@ -1841,8 +1855,100 @@ export default function InventoryPage() {
                                                                     [item.id]: e.target.value,
                                                                 }))
                                                             }
-                                                            style={ui.input}
+                                                            style={{
+                                                                ...ui.input,
+                                                                marginBottom: 0,
+                                                                minWidth: 0,
+                                                                padding: "0 10px",
+                                                                height: 34,
+                                                                fontSize: 13,
+                                                                lineHeight: 1,
+                                                            }}
                                                         />
+
+                                                        <div
+                                                            style={{
+                                                                display: "grid",
+                                                                gridTemplateColumns: "repeat(4, auto)",
+                                                                gap: 4,
+                                                            }}
+                                                        >
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => adjustQuantityDraft(item.id, -0.1)}
+                                                                style={{
+                                                                    ...ui.subButton,
+                                                                    width: "auto",
+                                                                    minWidth: 0,
+                                                                    height: 34,
+                                                                    padding: "0 10px",
+                                                                    fontSize: 12,
+                                                                    fontWeight: 700,
+                                                                    background: "#fee2e2",
+                                                                    color: "crimson",
+                                                                    border: "1px solid #fecaca",
+                                                                }}
+                                                            >
+                                                                -0.1
+                                                            </button>
+
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => adjustQuantityDraft(item.id, 0.1)}
+                                                                style={{
+                                                                    ...ui.subButton,
+                                                                    width: "auto",
+                                                                    minWidth: 0,
+                                                                    height: 34,
+                                                                    padding: "0 10px",
+                                                                    fontSize: 12,
+                                                                    fontWeight: 700,
+                                                                    background: "#dcfce7",
+                                                                    color: "seagreen",
+                                                                    border: "1px solid #bbf7d0",
+                                                                }}
+                                                            >
+                                                                +0.1
+                                                            </button>
+
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => adjustQuantityDraft(item.id, -1)}
+                                                                style={{
+                                                                    ...ui.subButton,
+                                                                    width: "auto",
+                                                                    minWidth: 0,
+                                                                    height: 34,
+                                                                    padding: "0 10px",
+                                                                    fontSize: 12,
+                                                                    fontWeight: 700,
+                                                                    background: "#fee2e2",
+                                                                    color: "crimson",
+                                                                    border: "1px solid #fecaca",
+                                                                }}
+                                                            >
+                                                                -1
+                                                            </button>
+
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => adjustQuantityDraft(item.id, 1)}
+                                                                style={{
+                                                                    ...ui.subButton,
+                                                                    width: "auto",
+                                                                    minWidth: 0,
+                                                                    height: 34,
+                                                                    padding: "0 10px",
+                                                                    fontSize: 12,
+                                                                    fontWeight: 700,
+                                                                    background: "#dcfce7",
+                                                                    color: "seagreen",
+                                                                    border: "1px solid #bbf7d0",
+                                                                }}
+                                                            >
+                                                                +1
+                                                            </button>
+                                                        </div>
 
                                                         <button
                                                             type="button"
@@ -1851,8 +1957,11 @@ export default function InventoryPage() {
                                                             style={{
                                                                 ...ui.button,
                                                                 width: "auto",
-                                                                minWidth: 84,
-                                                                padding: "12px 16px",
+                                                                minWidth: 68,
+                                                                height: 34,
+                                                                padding: "0 12px",
+                                                                fontSize: 13,
+                                                                fontWeight: 700,
                                                                 opacity: isQuickSaving ? 0.6 : 1,
                                                                 cursor: isQuickSaving ? "not-allowed" : "pointer",
                                                             }}
@@ -1910,9 +2019,9 @@ export default function InventoryPage() {
                                                     <div
                                                         style={{
                                                             display: "flex",
-                                                            gap: 6,
-                                                            marginTop: 8,
-                                                            paddingTop: 2,
+                                                            gap: 5,
+                                                            marginTop: 6,
+                                                            paddingTop: 0,
                                                             justifyContent: "flex-end",
                                                             flexWrap: "wrap",
                                                         }}
@@ -1922,9 +2031,9 @@ export default function InventoryPage() {
                                                             style={{
                                                                 ...ui.subButton,
                                                                 width: "auto",
-                                                                minWidth: 64,
-                                                                padding: "8px 14px",
-                                                                fontSize: 14,
+                                                                minWidth: 58,
+                                                                padding: "7px 12px",
+                                                                fontSize: 13,
                                                                 fontWeight: 700,
                                                             }}
                                                         >
@@ -1936,12 +2045,12 @@ export default function InventoryPage() {
                                                             style={{
                                                                 ...ui.subButton,
                                                                 width: "auto",
-                                                                minWidth: 64,
-                                                                padding: "8px 14px",
+                                                                minWidth: 58,
+                                                                padding: "7px 12px",
+                                                                fontSize: 13,
                                                                 background: "royalblue",
                                                                 color: "white",
                                                                 border: "1px solid royalblue",
-                                                                fontSize: 14,
                                                                 fontWeight: 700,
                                                             }}
                                                         >
@@ -1954,12 +2063,12 @@ export default function InventoryPage() {
                                                             style={{
                                                                 ...ui.subButton,
                                                                 width: "auto",
-                                                                minWidth: 64,
-                                                                padding: "8px 14px",
+                                                                minWidth: 58,
+                                                                padding: "7px 12px",
+                                                                fontSize: 13,
                                                                 background: "crimson",
                                                                 color: "white",
                                                                 border: "1px solid crimson",
-                                                                fontSize: 14,
                                                                 fontWeight: 700,
                                                                 opacity: isDeletingId === item.id ? 0.6 : 1,
                                                                 cursor: isDeletingId === item.id ? "not-allowed" : "pointer",
@@ -2363,8 +2472,8 @@ export default function InventoryPage() {
             <div
                 style={{
                     ...ui.card,
-                    padding: 20,
-                    marginBottom: 20,
+                    padding: 16,
+                    marginBottom: 18,
                 }}
             >
                 <h2 style={ui.sectionTitle}>{t.recentLogs}</h2>
@@ -2386,13 +2495,13 @@ export default function InventoryPage() {
                         <div>{t.noLogs}</div>
                     </div>
                 ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                         {recentLogs.map((log) => (
                             <div
                                 key={log.id}
                                 style={{
                                     ...ui.card,
-                                    padding: "6px 10px",
+                                    padding: "5px 8px",
                                     borderLeft:
                                         log.action === "create"
                                             ? "4px solid seagreen"
