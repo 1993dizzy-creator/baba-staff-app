@@ -584,11 +584,11 @@ export default function InventoryLogsPage() {
                                         borderRadius: 8,
                                         border:
                                             option.value !== "all" && active
-                                                ? `1px solid ${PART_META[option.value].color}`
+                                                ? `1px solid ${PART_META[option.value as keyof typeof PART_META].color}`
                                                 : "1px solid #d1d5db",
                                         background:
                                             option.value !== "all" && active
-                                                ? PART_META[option.value].color
+                                                ? PART_META[option.value as keyof typeof PART_META].color
                                                 : active
                                                     ? "#111827"
                                                     : "#f9fafb",
@@ -600,7 +600,7 @@ export default function InventoryLogsPage() {
                                     }}
                                 >
                                     {option.value !== "all"
-                                        ? `${PART_META[option.value].emoji} ${option.label}`
+                                        ? `${PART_META[option.value as keyof typeof PART_META].emoji} ${option.label}`
                                         : option.label}
                                 </button>
                             );
