@@ -387,14 +387,8 @@ export default function InventoryPage() {
         ) {
             changes.push({
                 label: lang === "vi" ? "Giá" : "구매가",
-                before:
-                    log.prev_purchase_price !== null && log.prev_purchase_price !== undefined
-                        ? `${Number(log.prev_purchase_price).toLocaleString()} ₫`
-                        : "-",
-                after:
-                    log.new_purchase_price !== null && log.new_purchase_price !== undefined
-                        ? `${Number(log.new_purchase_price).toLocaleString()} ₫`
-                        : "-",
+                before: formatMoneyDisplay(log.prev_purchase_price),
+                after: formatMoneyDisplay(log.new_purchase_price),
             });
         }
 
@@ -527,15 +521,31 @@ export default function InventoryPage() {
         setLatestSnapshotDate(batchRow.snapshot_date || "");
     };
 
-    const formatNumber = (value: string) => {
-        const number = value.replace(/,/g, "");
-        if (!number) return "";
-        return Number(number).toLocaleString();
+    const normalizePriceInput = (value: string | number | null | undefined) => {
+        return String(value ?? "").replace(/[^\d]/g, "");
     };
 
-    const parsePrice = (value: string) => {
-        const raw = value.replace(/,/g, "");
-        return raw ? Number(raw) : null;
+    const formatNumber = (value: string | number | null | undefined) => {
+        const digits = normalizePriceInput(value);
+        return digits ? Number(digits).toLocaleString("en-US") : "";
+    };
+
+    const parsePrice = (value: string | number | null | undefined) => {
+        const digits = normalizePriceInput(value);
+        return digits ? Number(digits) : null;
+    };
+
+    const formatMoneyDisplay = (value: string | number | null | undefined) => {
+        if (value === null || value === undefined || value === "") return "-";
+
+        const num =
+            typeof value === "number"
+                ? value
+                : Number(String(value).replace(/[^\d.-]/g, ""));
+
+        if (!Number.isFinite(num)) return "-";
+
+        return `${num.toLocaleString("en-US")} ₫`;
     };
 
     const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -719,11 +729,7 @@ export default function InventoryPage() {
         setQuantity(String(item.quantity ?? ""));
         setUnit(item.unit || "");
         setNote(item.note || "");
-        setPurchasePrice(
-            item.purchase_price !== null && item.purchase_price !== undefined
-                ? Number(item.purchase_price).toLocaleString()
-                : ""
-        );
+        setPurchasePrice(formatNumber(item.purchase_price));
         setSupplier(item.supplier || "");
 
         setIsCustomSupplier(
@@ -770,7 +776,8 @@ export default function InventoryPage() {
             }
 
             const nextQuantity = parseDecimal(quantity);
-            const nextPurchasePrice = parsePrice(purchasePrice);
+            const nextPurchasePrice =
+                purchasePrice.trim() === "" ? null : parsePrice(purchasePrice);
 
             if (editingId) {
                 const targetItem = inventoryList.find((item) => item.id === editingId);
@@ -1795,7 +1802,7 @@ export default function InventoryPage() {
                                                         >
                                                             {diffQty === null
                                                                 ? "-"
-                                                                : `${t.snapshotDiffLabel} ${diffQty > 0 ? "+" : ""}${diffQty}`}
+                                                                : `${t.snapshotDiffLabel} ${diffQty > 0 ? "+" : ""}${formatDecimalDisplay(diffQty)}`}
                                                         </div>
                                                     </div>
 
@@ -1841,115 +1848,125 @@ export default function InventoryPage() {
                                                     <div
                                                         style={{
                                                             display: "grid",
-                                                            gridTemplateColumns: "1fr auto auto",
-                                                            gap: 6,
-                                                            alignItems: "center",
+                                                            gridTemplateColumns: "1fr 92px",
+                                                            gap: 8,
+                                                            alignItems: "stretch",
                                                             marginBottom: 8,
                                                         }}
                                                     >
-                                                        <input
-                                                            type="number"
-                                                            step="0.1"
-                                                            value={quantityDraft}
-                                                            onChange={(e) =>
-                                                                setQuantityDrafts((prev) => ({
-                                                                    ...prev,
-                                                                    [item.id]: e.target.value,
-                                                                }))
-                                                            }
-                                                            style={{
-                                                                ...ui.input,
-                                                                marginBottom: 0,
-                                                                minWidth: 0,
-                                                                padding: "0 10px",
-                                                                height: 34,
-                                                                fontSize: 13,
-                                                                lineHeight: 1,
-                                                            }}
-                                                        />
-
                                                         <div
                                                             style={{
-                                                                display: "grid",
-                                                                gridTemplateColumns: "repeat(4, auto)",
-                                                                gap: 4,
+                                                                display: "flex",
+                                                                flexDirection: "column",
+                                                                gap: 6,
+                                                                minWidth: 0,
                                                             }}
                                                         >
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => adjustQuantityDraft(item.id, -0.1)}
+                                                            <input
+                                                                type="number"
+                                                                step="0.1"
+                                                                value={quantityDraft}
+                                                                placeholder={lang === "vi" ? "Nhập số lượng mới" : "새 수량 입력"}
+                                                                onChange={(e) =>
+                                                                    setQuantityDrafts((prev) => ({
+                                                                        ...prev,
+                                                                        [item.id]: e.target.value,
+                                                                    }))
+                                                                }
                                                                 style={{
-                                                                    ...ui.subButton,
-                                                                    width: "auto",
+                                                                    ...ui.input,
+                                                                    marginBottom: 0,
                                                                     minWidth: 0,
-                                                                    height: 34,
                                                                     padding: "0 10px",
-                                                                    fontSize: 12,
-                                                                    fontWeight: 700,
-                                                                    background: "#fee2e2",
-                                                                    color: "crimson",
-                                                                    border: "1px solid #fecaca",
+                                                                    height: 36,
+                                                                    fontSize: 13,
+                                                                    lineHeight: 1,
                                                                 }}
-                                                            >
-                                                                -0.1
-                                                            </button>
+                                                            />
 
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => adjustQuantityDraft(item.id, 0.1)}
+                                                            <div
                                                                 style={{
-                                                                    ...ui.subButton,
-                                                                    width: "auto",
-                                                                    minWidth: 0,
-                                                                    height: 34,
-                                                                    padding: "0 10px",
-                                                                    fontSize: 12,
-                                                                    fontWeight: 700,
-                                                                    background: "#dcfce7",
-                                                                    color: "seagreen",
-                                                                    border: "1px solid #bbf7d0",
+                                                                    display: "grid",
+                                                                    gridTemplateColumns: "repeat(4, 1fr)",
+                                                                    gap: 4,
                                                                 }}
                                                             >
-                                                                +0.1
-                                                            </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => adjustQuantityDraft(item.id, -0.1)}
+                                                                    style={{
+                                                                        ...ui.subButton,
+                                                                        width: "100%",
+                                                                        minWidth: 0,
+                                                                        height: 34,
+                                                                        padding: "0 6px",
+                                                                        fontSize: 12,
+                                                                        fontWeight: 700,
+                                                                        background: "#fee2e2",
+                                                                        color: "crimson",
+                                                                        border: "1px solid #fecaca",
+                                                                    }}
+                                                                >
+                                                                    -0.1
+                                                                </button>
 
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => adjustQuantityDraft(item.id, -1)}
-                                                                style={{
-                                                                    ...ui.subButton,
-                                                                    width: "auto",
-                                                                    minWidth: 0,
-                                                                    height: 34,
-                                                                    padding: "0 10px",
-                                                                    fontSize: 12,
-                                                                    fontWeight: 700,
-                                                                    background: "#fee2e2",
-                                                                    color: "crimson",
-                                                                    border: "1px solid #fecaca",
-                                                                }}
-                                                            >
-                                                                -1
-                                                            </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => adjustQuantityDraft(item.id, 0.1)}
+                                                                    style={{
+                                                                        ...ui.subButton,
+                                                                        width: "100%",
+                                                                        minWidth: 0,
+                                                                        height: 34,
+                                                                        padding: "0 6px",
+                                                                        fontSize: 12,
+                                                                        fontWeight: 700,
+                                                                        background: "#dcfce7",
+                                                                        color: "seagreen",
+                                                                        border: "1px solid #bbf7d0",
+                                                                    }}
+                                                                >
+                                                                    +0.1
+                                                                </button>
 
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => adjustQuantityDraft(item.id, 1)}
-                                                                style={{
-                                                                    ...ui.subButton,
-                                                                    width: "auto",
-                                                                    minWidth: 0,
-                                                                    height: 34,
-                                                                    padding: "0 10px",
-                                                                    fontSize: 12,
-                                                                    fontWeight: 700,
-                                                                    background: "#dcfce7",
-                                                                    color: "seagreen",
-                                                                    border: "1px solid #bbf7d0",
-                                                                }}
-                                                            >
-                                                                +1
-                                                            </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => adjustQuantityDraft(item.id, -1)}
+                                                                    style={{
+                                                                        ...ui.subButton,
+                                                                        width: "100%",
+                                                                        minWidth: 0,
+                                                                        height: 34,
+                                                                        padding: "0 6px",
+                                                                        fontSize: 12,
+                                                                        fontWeight: 700,
+                                                                        background: "#fee2e2",
+                                                                        color: "crimson",
+                                                                        border: "1px solid #fecaca",
+                                                                    }}
+                                                                >
+                                                                    -1
+                                                                </button>
+
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => adjustQuantityDraft(item.id, 1)}
+                                                                    style={{
+                                                                        ...ui.subButton,
+                                                                        width: "100%",
+                                                                        minWidth: 0,
+                                                                        height: 34,
+                                                                        padding: "0 6px",
+                                                                        fontSize: 12,
+                                                                        fontWeight: 700,
+                                                                        background: "#dcfce7",
+                                                                        color: "seagreen",
+                                                                        border: "1px solid #bbf7d0",
+                                                                    }}
+                                                                >
+                                                                    +1
+                                                                </button>
+                                                            </div>
                                                         </div>
 
                                                         <button
@@ -1958,18 +1975,35 @@ export default function InventoryPage() {
                                                             disabled={isQuickSaving}
                                                             style={{
                                                                 ...ui.button,
-                                                                width: "auto",
-                                                                minWidth: 68,
-                                                                height: 34,
-                                                                padding: "0 12px",
+                                                                width: "100%",
+                                                                minWidth: 0,
+                                                                height: "100%",
+                                                                minHeight: 76,
+                                                                padding: "0 10px",
                                                                 fontSize: 13,
-                                                                fontWeight: 700,
+                                                                fontWeight: 800,
+                                                                lineHeight: 1.2,
+                                                                whiteSpace: "normal",
+                                                                wordBreak: "keep-all",
                                                                 opacity: isQuickSaving ? 0.6 : 1,
                                                                 cursor: isQuickSaving ? "not-allowed" : "pointer",
                                                             }}
                                                         >
-                                                            {t.saveQuantity}
+                                                            {lang === "vi" ? "Lưu nhanh" : "빠른저장"}
                                                         </button>
+                                                    </div>
+
+                                                    <div
+                                                        style={{
+                                                            fontSize: 12,
+                                                            color: "#6b7280",
+                                                            marginBottom: 10,
+                                                            lineHeight: 1.4,
+                                                        }}
+                                                    >
+                                                        {lang === "vi"
+                                                            ? "Nhập số lượng mới hoặc bấm nút +/- rồi lưu nhanh."
+                                                            : "새 수량 입력 또는 +/- 버튼 조정 후 빠른저장."}
                                                     </div>
 
                                                     <div style={ui.detailGrid}>
@@ -1978,9 +2012,7 @@ export default function InventoryPage() {
 
                                                         <div style={ui.detailLabel}>{t.purchasePrice}</div>
                                                         <div style={ui.detailValue}>
-                                                            {item.purchase_price !== null && item.purchase_price !== undefined
-                                                                ? Number(item.purchase_price).toLocaleString() + " ₫"
-                                                                : "-"}
+                                                            {formatMoneyDisplay(item.purchase_price)}
                                                         </div>
 
                                                         <div style={ui.detailLabel}>{t.lowStockThreshold}</div>
@@ -2338,8 +2370,7 @@ export default function InventoryPage() {
                                 placeholder={t.purchasePricePlaceholder}
                                 value={purchasePrice}
                                 onChange={(e) => {
-                                    const raw = e.target.value.replace(/[^0-9]/g, "");
-                                    setPurchasePrice(formatNumber(raw));
+                                    setPurchasePrice(formatNumber(e.target.value));
                                 }}
                                 style={ui.input}
                                 ref={priceRef}
