@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { isLoggedIn, getUser } from "@/lib/supabase/auth";
 import Link from "next/link";
-import { LanguageProvider, useLanguage } from "@/lib/language-context";
+import { useLanguage } from "@/lib/language-context";
 import { layoutText } from "@/lib/text/layout";
 import BottomNav from "@/components/BottomNav";
 
@@ -273,8 +273,8 @@ export default function ProtectedLayout({
   children: React.ReactNode;
 }) {
   return (
-    <LanguageProvider>
-      <ProtectedLayoutContent>{children}</ProtectedLayoutContent>
-    </LanguageProvider>
+    <ProtectedLayoutContent>
+      {children}
+    </ProtectedLayoutContent>
   );
 }

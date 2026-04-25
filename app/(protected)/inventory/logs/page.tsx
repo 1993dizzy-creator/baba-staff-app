@@ -8,7 +8,10 @@ import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
-import InventorySubNav from "@/components/InventorySubNav";
+import SubNav from "@/components/SubNav";
+import { usePathname } from "next/navigation";
+import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
+
 
 export default function InventoryLogsPage() {
     const [logs, setLogs] = useState<any[]>([]);
@@ -459,10 +462,13 @@ export default function InventoryLogsPage() {
         return "royalblue";
     };
 
+    const pathname = usePathname();
+    const inventoryTabs = getInventoryTabs(pathname, lang);
+
 
     return (
         <Container noPaddingTop>
-            <InventorySubNav />
+           <SubNav tabs={inventoryTabs} />
 
             <div
                 style={{
@@ -680,7 +686,7 @@ export default function InventoryLogsPage() {
                             );
                         })}
 
-                      
+
                     </div>
                 )}
             </div>

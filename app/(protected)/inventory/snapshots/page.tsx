@@ -6,7 +6,10 @@ import { useLanguage } from "@/lib/language-context";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { inventorySnapshotText } from "@/lib/text";
-import InventorySubNav from "@/components/InventorySubNav";
+import SubNav from "@/components/SubNav";
+import { usePathname } from "next/navigation";
+import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
+
 
 type SnapshotBatch = {
     id: number;
@@ -495,9 +498,12 @@ export default function InventorySnapshotsPage() {
         };
     };
 
+    const pathname = usePathname();
+    const inventoryTabs = getInventoryTabs(pathname, lang);
+
     return (
         <Container noPaddingTop>
-            <InventorySubNav />
+            <SubNav tabs={inventoryTabs} />
 
             <div
                 style={{

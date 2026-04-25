@@ -64,6 +64,8 @@ export default function BottomNav() {
   const { lang } = useLanguage();
   const t = layoutText[lang];
 
+  const isAttendance = pathname.startsWith("/attendance");
+
   const isInventory =
     pathname === "/inventory" || pathname.startsWith("/inventory/");
 
@@ -83,10 +85,13 @@ export default function BottomNav() {
           <span>{t.sales}</span>
         </div>
 
-        <div style={inactiveItemStyle()}>
+        <Link
+          href="/attendance"
+          style={isAttendance ? activeItemStyle() : inactiveItemStyle()}
+        >
           <span style={iconStyle}>🕒</span>
           <span>{t.attendance}</span>
-        </div>
+        </Link>
 
         <div style={inactiveItemStyle()}>
           <span style={iconStyle}>📢</span>

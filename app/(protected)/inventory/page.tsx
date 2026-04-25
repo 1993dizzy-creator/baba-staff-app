@@ -9,7 +9,10 @@ import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
-import InventorySubNav from "@/components/InventorySubNav";
+import { usePathname } from "next/navigation";
+import SubNav from "@/components/SubNav";
+import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
+
 
 const CATEGORY_OPTIONS_BY_PART = {
     kitchen: [
@@ -97,7 +100,9 @@ const PART_META: Record<
     },
 };
 
+
 export default function InventoryPage() {
+
     const currentUser = getUser();
     const actorName = currentUser?.name || "";
     const actorUsername = currentUser?.username || "";
@@ -1405,9 +1410,12 @@ export default function InventoryPage() {
         marginBottom: 6,
     };
 
+    const pathname = usePathname();
+    const inventoryTabs = getInventoryTabs(pathname, lang);
+
     return (
         <Container noPaddingTop>
-            <InventorySubNav />
+            <SubNav tabs={inventoryTabs} />
 
             <div
                 style={{

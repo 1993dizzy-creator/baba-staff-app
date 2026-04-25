@@ -4,3 +4,4 @@ export { inventoryText } from "./inventory";
 export { inventoryLogsText } from "./inventory-logs";
 export { inventorySnapshotText } from "./snapshots";
 export { commonText } from "./common";
+export { attendanceText } from "./attendance";
