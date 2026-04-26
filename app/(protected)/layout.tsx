@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { isLoggedIn, getUser } from "@/lib/supabase/auth";
+import { isLoggedIn, getUser, isAdmin } from "@/lib/supabase/auth";
 import Link from "next/link";
 import { useLanguage } from "@/lib/language-context";
 import { layoutText } from "@/lib/text/layout";
 import BottomNav from "@/components/BottomNav";
+import { supabase } from "@/lib/supabase/client";
 
 function ProtectedLayoutContent({
   children,
@@ -20,6 +21,7 @@ function ProtectedLayoutContent({
   const [menuOpen, setMenuOpen] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const leaveAlertShownRef = useRef(false);
 
   const { lang, toggleLang } = useLanguage();
   const t = layoutText[lang];
@@ -57,6 +59,40 @@ function ProtectedLayoutContent({
   useEffect(() => {
     setMenuOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    const checkLeaveAlert = async () => {
+      if (!checked || !isReady) return;
+      if (leaveAlertShownRef.current) return;
+      if (pathname === "/attendance/leave") return;
+
+      const user = getUser();
+      if (!isAdmin(user)) return;
+
+const { count, error } = await supabase
+  .from("attendance_records")
+  .select("id", { count: "exact", head: true })
+  .eq("status", "leave")
+  .eq("approval_status", "pending");
+
+      if (error) return;
+      if (!count || count <= 0) return;
+
+      leaveAlertShownRef.current = true;
+
+      const confirmed = window.confirm(
+        lang === "vi"
+          ? `Có ${count} đơn nghỉ đang chờ duyệt. Bạn có muốn xem không?`
+          : `${count}건의 휴무 신청이 대기중입니다. 확인하시겠습니까?`
+      );
+
+      if (confirmed) {
+        router.push("/attendance/leave");
+      }
+    };
+
+    checkLeaveAlert();
+  }, [checked, isReady, pathname, router, lang]);
 
   const handleLogout = () => {
     localStorage.removeItem("baba_user");

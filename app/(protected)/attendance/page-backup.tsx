@@ -216,39 +216,14 @@ const ALLOWED_DISTANCE_M = 100;
 function getDeviceId() {
   if (typeof window === "undefined") return "";
 
-  const storageKey = "baba_device_id";
+  let id = localStorage.getItem("baba_device_id");
 
-  const createId = () => {
-    if (typeof crypto !== "undefined" && crypto.randomUUID) {
-      return crypto.randomUUID();
-    }
-
-    return `device_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  };
-
-  try {
-    let id = localStorage.getItem(storageKey);
-
-    if (!id) {
-      id = createId();
-      localStorage.setItem(storageKey, id);
-    }
-
-    return id;
-  } catch {
-    try {
-      let id = sessionStorage.getItem(storageKey);
-
-      if (!id) {
-        id = createId();
-        sessionStorage.setItem(storageKey, id);
-      }
-
-      return id;
-    } catch {
-      return createId();
-    }
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("baba_device_id", id);
   }
+
+  return id;
 }
 
 function getDeviceInfo() {
@@ -556,8 +531,6 @@ function MyAttendance() {
         return;
       }
 
-      let deviceWarningReason: string | null = null;
-
       if (!dbUser.device_id) {
         const { error: deviceUpdateError } = await supabase
           .from("users")
@@ -570,10 +543,20 @@ function MyAttendance() {
           .eq("id", user.id);
 
         if (deviceUpdateError) {
-          deviceWarningReason = "DEVICE_REGISTER_FAILED_BUT_ALLOWED";
+          await saveCheckLog(false, "DEVICE_REGISTER_FAILED");
+
+          alert(lang === "vi" ? "Không thể đăng ký thiết bị." : "기기 등록에 실패했습니다.");
+          return;
         }
       } else if (dbUser.device_id !== deviceId) {
-        deviceWarningReason = "DEVICE_MISMATCH_BUT_ALLOWED";
+        await saveCheckLog(false, "DEVICE_MISMATCH");
+
+        alert(
+          lang === "vi"
+            ? "Thiết bị này không được phép chấm công. Vui lòng liên hệ quản lý."
+            : "등록된 기기가 아닙니다. 관리자에게 기기 초기화를 요청하세요."
+        );
+        return;
       }
 
       const { data, error } = await supabase
@@ -615,7 +598,7 @@ function MyAttendance() {
         return;
       }
 
-      await saveCheckLog(true, deviceWarningReason);
+      await saveCheckLog(true);
 
       setAttendance((prev) => ({
         ...prev,
@@ -711,8 +694,6 @@ function MyAttendance() {
         return;
       }
 
-      let deviceWarningReason: string | null = null;
-
       const { data: dbUser, error: userFetchError } = await supabase
         .from("users")
         .select("id, device_id")
@@ -727,9 +708,25 @@ function MyAttendance() {
       }
 
       if (!dbUser.device_id) {
-        deviceWarningReason = "DEVICE_NOT_REGISTERED_BUT_ALLOWED";
-      } else if (dbUser.device_id !== deviceId) {
-        deviceWarningReason = "DEVICE_MISMATCH_BUT_ALLOWED";
+        await saveCheckLog(false, "DEVICE_NOT_REGISTERED");
+
+        alert(
+          lang === "vi"
+            ? "Thiết bị chưa được đăng ký. Vui lòng chấm công vào trước."
+            : "등록된 기기가 없습니다. 먼저 출근 인증을 진행하세요."
+        );
+        return;
+      }
+
+      if (dbUser.device_id !== deviceId) {
+        await saveCheckLog(false, "DEVICE_MISMATCH");
+
+        alert(
+          lang === "vi"
+            ? "Thiết bị này không được phép chấm công. Vui lòng liên hệ quản lý."
+            : "등록된 기기가 아닙니다. 관리자에게 기기 초기화를 요청하세요."
+        );
+        return;
       }
 
       const { data: todayRecord, error: fetchError } = await supabase
@@ -781,7 +778,7 @@ function MyAttendance() {
         return;
       }
 
-      await saveCheckLog(true, deviceWarningReason);
+      await saveCheckLog(true);
 
       setAttendance((prev) => ({
         ...prev,

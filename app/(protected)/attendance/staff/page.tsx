@@ -9,6 +9,7 @@ import { useLanguage } from "@/lib/language-context";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { supabase } from "@/lib/supabase/client";
 import { attendanceStaffText } from "@/lib/text/attendance-staff";
+import { getUser, isAdmin } from "@/lib/supabase/auth";
 
 type UserRow = {
   id: string;
@@ -236,7 +237,7 @@ export default function AttendanceStaffPage() {
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loginUser, setLoginUser] = useState<any>(null);
-  const isAdmin = loginUser?.role === "owner" || loginUser?.role === "master";
+ const canManage = isAdmin(loginUser);
 
   const [manualModal, setManualModal] = useState<{
     type: "check_in" | "check_out";
@@ -246,9 +247,7 @@ export default function AttendanceStaffPage() {
   } | null>(null);
 
   useEffect(() => {
-    const savedUser = localStorage.getItem("baba_user");
-    setLoginUser(savedUser ? JSON.parse(savedUser) : null);
-
+    setLoginUser(getUser());
     fetchList();
   }, []);
 
@@ -284,6 +283,15 @@ export default function AttendanceStaffPage() {
   };
 
   const handleForceCheckIn = async (targetUser: UserRow, timeValue: string) => {
+    if (!isAdmin(loginUser)) {
+      alert(t.noPermission);
+      return;
+    }
+
+    if (!timeValue) {
+      alert(t.inputTimeRequired);
+      return;
+    }
 
     setManualModal(null);
 
@@ -317,7 +325,7 @@ export default function AttendanceStaffPage() {
 
     if (error) {
       console.log("force check-in error:", JSON.stringify(error, null, 2));
-      alert("출근 시간 수정 실패");
+      alert(t.checkInUpdateFailed);
       return;
     }
 
@@ -343,18 +351,27 @@ export default function AttendanceStaffPage() {
       },
     ]);
 
-    alert("출근 시간이 수정되었습니다.");
+    alert(t.checkInUpdated);
     await fetchList();
   };
 
   const handleForceCheckOut = async (targetUser: UserRow, timeValue: string) => {
+    if (!isAdmin(loginUser)) {
+      alert(t.noPermission);
+      return;
+    }
+
+    if (!timeValue) {
+      alert(t.inputTimeRequired);
+      return;
+    }
 
     setManualModal(null);
 
     const record = recordMap.get(targetUser.id);
 
     if (!record?.check_in_at) {
-      alert("출근 시간이 먼저 있어야 퇴근 시간을 설정할 수 있습니다.");
+      alert(t.checkInRequiredFirst);
       return;
     }
 
@@ -379,7 +396,7 @@ export default function AttendanceStaffPage() {
 
     if (error) {
       console.log("force check-out error:", JSON.stringify(error, null, 2));
-      alert("퇴근 시간 수정 실패");
+      alert(t.checkOutUpdateFailed);
       return;
     }
 
@@ -405,12 +422,17 @@ export default function AttendanceStaffPage() {
       },
     ]);
 
-    alert("퇴근 시간이 수정되었습니다.");
+    alert(t.checkOutUpdated);
     await fetchList();
   };
 
   const handleResetDevice = async (targetUser: UserRow) => {
-    const ok = confirm(`${targetUser.name} 기기를 초기화하시겠습니까?`);
+    if (!isAdmin(loginUser)) {
+      alert(t.noPermission);
+      return;
+    }
+
+    const ok = confirm(`${targetUser.name} ${t.resetDeviceConfirm}`);
     if (!ok) return;
 
     const { error } = await supabase
@@ -425,7 +447,7 @@ export default function AttendanceStaffPage() {
 
     if (error) {
       console.log("device reset error:", error);
-      alert("기기 초기화 실패");
+      alert(t.resetDeviceFailed);
       return;
     }
 
@@ -449,7 +471,7 @@ export default function AttendanceStaffPage() {
       },
     ]);
 
-    alert("기기 초기화 완료");
+    alert(t.resetDeviceDone);
   };
 
   const recordMap = useMemo(() => {
@@ -571,7 +593,7 @@ export default function AttendanceStaffPage() {
                             />
                           </div>
 
-                          {isAdmin && (
+                          {canManage && (
                             <div
                               style={{
                                 marginTop: 8,
@@ -605,7 +627,7 @@ export default function AttendanceStaffPage() {
                                   })
                                 }
                               >
-                                출근
+                                {t.updateCheckIn}
                               </button>
 
                               <button
@@ -629,7 +651,7 @@ export default function AttendanceStaffPage() {
                                   })
                                 }
                               >
-                                퇴근
+                                {t.updateCheckOut}
                               </button>
 
                               <button
@@ -646,7 +668,7 @@ export default function AttendanceStaffPage() {
                                 }}
                                 onClick={() => handleResetDevice(user)}
                               >
-                                기기초기화
+                                {t.resetDevice}
                               </button>
                             </div>
                           )}
@@ -667,7 +689,7 @@ export default function AttendanceStaffPage() {
           <div style={modalBoxStyle}>
             <div style={modalTitleStyle}>
               {manualModal.user.name}{" "}
-              {manualModal.type === "check_in" ? "출근 처리" : "퇴근 처리"}
+              {manualModal.type === "check_in" ? t.checkInProcess : t.checkOutProcess}
             </div>
 
             {manualModal.mode === "standard" ? (
@@ -689,7 +711,7 @@ export default function AttendanceStaffPage() {
                       }
                     }}
                   >
-                    {manualModal.type === "check_in" ? "정시 출근" : "정시 퇴근"}
+                    {manualModal.type === "check_in" ? t.standardCheckIn : t.standardCheckOut}
                   </button>
 
                   <button
@@ -703,14 +725,18 @@ export default function AttendanceStaffPage() {
                             mode: "manual",
                             timeValue:
                               prev.type === "check_in"
-                                ? formatTime(recordMap.get(prev.user.id)?.check_in_at || null).replace("-", "")
-                                : formatTime(recordMap.get(prev.user.id)?.check_out_at || null).replace("-", ""),
+                                ? recordMap.get(prev.user.id)?.check_in_at
+                                  ? formatTime(recordMap.get(prev.user.id)?.check_in_at || null)
+                                  : prev.user.work_start_time || "16:00"
+                                : recordMap.get(prev.user.id)?.check_out_at
+                                  ? formatTime(recordMap.get(prev.user.id)?.check_out_at || null)
+                                  : prev.user.work_end_time || "01:00",
                           }
                           : prev
                       )
                     }
                   >
-                    직접 입력
+                    {t.manualInput}
                   </button>
                 </div>
 
@@ -719,7 +745,7 @@ export default function AttendanceStaffPage() {
                   style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
                   onClick={() => setManualModal(null)}
                 >
-                  취소
+                  {t.cancel}
                 </button>
               </>
             ) : (
@@ -754,7 +780,7 @@ export default function AttendanceStaffPage() {
                       }
                     }}
                   >
-                    처리
+                    {t.submit}
                   </button>
                 </div>
 
@@ -763,7 +789,7 @@ export default function AttendanceStaffPage() {
                   style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
                   onClick={() => setManualModal(null)}
                 >
-                  취소
+                  {t.cancel}
                 </button>
               </>
             )}

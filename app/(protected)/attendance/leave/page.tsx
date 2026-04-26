@@ -9,6 +9,7 @@ import { useLanguage } from "@/lib/language-context";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { supabase } from "@/lib/supabase/client";
 import { attendanceLeaveText } from "@/lib/text/attendance-leave";
+import { getUser, isAdmin } from "@/lib/supabase/auth";
 
 type UserRow = {
   id: string | number;
@@ -48,18 +49,7 @@ const PART_META: Record<
   etc: { label: "Etc", color: "#8b5cf6", soft: "#f5f3ff", emoji: "📦", rank: 99 },
 };
 
-function getCurrentUser(): CurrentUser | null {
-  if (typeof window === "undefined") return null;
 
-  const raw = localStorage.getItem("baba_user");
-  if (!raw) return null;
-
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
 
 function formatDateKey(date: Date) {
   const year = date.getFullYear();
@@ -176,8 +166,9 @@ export default function AttendanceLeavePage() {
   const tabs = getAttendanceTabs(pathname, lang);
   const t = attendanceLeaveText[lang];
 
-  const currentUser = getCurrentUser();
-  const canApprove = currentUser?.role === "master";
+  const currentUser = getUser();
+  const canManageLeave = isAdmin(currentUser);
+
   const todayWorkDate = getVietnamWorkDate();
 
   const [calendarDate, setCalendarDate] = useState(new Date());
@@ -298,7 +289,7 @@ export default function AttendanceLeavePage() {
   };
 
   const handleApproveLeave = async (recordId: number) => {
-    if (!canApprove) return;
+    if (!canManageLeave) return;
 
     const { error } = await supabase
       .from("attendance_records")
@@ -318,7 +309,7 @@ export default function AttendanceLeavePage() {
   };
 
   const handleCancelApproval = async (recordId: number) => {
-    if (!canApprove) return;
+    if (!canManageLeave) return;
 
     const { data, error } = await supabase
       .from("attendance_records")
@@ -347,7 +338,6 @@ export default function AttendanceLeavePage() {
   };
 
   const handleCancelPendingLeave = async (recordId: number) => {
-    if (!canApprove) return;
 
     const ok = confirm(
       lang === "vi"
@@ -605,46 +595,43 @@ export default function AttendanceLeavePage() {
                         <span style={userMetaStyle}>{user.position || user.username}</span>
                       </div>
 
-                      <span
-                        style={{
-                          ...approvalBadgeStyle,
-                          color: isApproved ? "#10b981" : "#f59e0b",
-                          borderColor: isApproved ? "#10b981" : "#f59e0b",
-                          background: isApproved ? "#ecfdf5" : "#fffbeb",
-                        }}
-                      >
-                        {isApproved
-                          ? lang === "vi"
-                            ? "Đã duyệt"
-                            : "승인완료"
-                          : lang === "vi"
-                            ? "Chờ duyệt"
-                            : "승인대기"}
-                      </span>
-                    </div>
+                      <div style={leaveActionRowStyle}>
+                        <span
+                          style={{
+                            ...approvalBadgeStyle,
+                            color: isApproved ? "#10b981" : "#f59e0b",
+                            borderColor: isApproved ? "#10b981" : "#f59e0b",
+                            background: isApproved ? "#ecfdf5" : "#fffbeb",
+                          }}
+                        >
+                          {isApproved
+                            ? lang === "vi"
+                              ? "Đã duyệt"
+                              : "승인완료"
+                            : lang === "vi"
+                              ? "Chờ duyệt"
+                              : "승인대기"}
+                        </span>
 
-                    {record.note && <div style={reasonStyle}>{record.note}</div>}
-
-                    {canApprove && (
-                      <div style={approvalActionRowStyle}>
-                        {isApproved ? (
+                        {canManageLeave ? (
                           <button
                             type="button"
-                            style={cancelApprovalButtonStyle}
-                            onClick={() => handleCancelApproval(record.id)}
+                            style={isApproved ? cancelApprovalButtonStyle : approveButtonStyle}
+                            onClick={() =>
+                              isApproved ? handleCancelApproval(record.id) : handleApproveLeave(record.id)
+                            }
                           >
-                            {lang === "vi" ? "Hủy duyệt" : "승인취소"}
+                            {isApproved
+                              ? lang === "vi"
+                                ? "Hủy"
+                                : "취소"
+                              : lang === "vi"
+                                ? "Duyệt"
+                                : "승인"}
                           </button>
                         ) : (
-                          <>
-                            <button
-                              type="button"
-                              style={approveButtonStyle}
-                              onClick={() => handleApproveLeave(record.id)}
-                            >
-                              {lang === "vi" ? "Duyệt" : "승인완료"}
-                            </button>
-
+                          normalizeId(currentUser?.id) === normalizeId(record.user_id) &&
+                          !isApproved && (
                             <button
                               type="button"
                               style={cancelApprovalButtonStyle}
@@ -652,24 +639,30 @@ export default function AttendanceLeavePage() {
                             >
                               {lang === "vi" ? "Hủy" : "취소"}
                             </button>
-                          </>
+                          )
                         )}
                       </div>
-                    )}
+                    </div>
+
+                    {record.note && <div style={reasonStyle}>{record.note}</div>}
+
+
                   </div>
                 );
               })
             )}
 
-            <button type="button" style={requestButtonStyle} onClick={handleLeaveRequest}>
-              {mySelectedRecord
-                ? lang === "vi"
-                  ? "Hủy ngày nghỉ"
-                  : "휴무취소"
-                : lang === "vi"
-                  ? "Đăng ký nghỉ"
-                  : "휴무신청"}
-            </button>
+            {!canManageLeave && (
+              <button type="button" style={requestButtonStyle} onClick={handleLeaveRequest}>
+                {mySelectedRecord
+                  ? lang === "vi"
+                    ? "Hủy ngày nghỉ"
+                    : "휴무취소"
+                  : lang === "vi"
+                    ? "Đăng ký nghỉ"
+                    : "휴무신청"}
+              </button>
+            )}
           </div>
         </div>
 
@@ -918,17 +911,20 @@ const approvalBadgeStyle: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
+const leaveActionRowStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  flexShrink: 0,
+};
+
 const reasonStyle: CSSProperties = {
   fontSize: 11,
   color: "#6b7280",
   paddingLeft: 30,
 };
 
-const approvalActionRowStyle: CSSProperties = {
-  display: "flex",
-  justifyContent: "flex-end",
-  gap: 6,
-};
+
 
 const approveButtonStyle: CSSProperties = {
   border: "none",
