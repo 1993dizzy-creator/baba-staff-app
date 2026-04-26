@@ -14,9 +14,12 @@ type UserRow = {
   id: string;
   name: string;
   username: string;
+  role: string | null;
   part: string | null;
   position: string | null;
   is_active: boolean;
+  work_start_time: string | null;
+  work_end_time: string | null;
 };
 
 type AttendanceRecord = {
@@ -177,6 +180,49 @@ function getPartMeta(part?: string | null) {
   };
 }
 
+function buildVietnamIso(workDate: string, timeValue: string) {
+  const [hourText, minuteText] = timeValue.split(":");
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+
+  const base = new Date(`${workDate}T00:00:00+07:00`);
+
+  if (hour < 3) {
+    base.setDate(base.getDate() + 1);
+  }
+
+  base.setHours(hour, minute, 0, 0);
+
+  return base.toISOString();
+}
+
+function getMinutesBetween(startIso: string | null, endIso: string | null) {
+  if (!startIso || !endIso) return 0;
+
+  const diff = new Date(endIso).getTime() - new Date(startIso).getTime();
+  return Math.max(0, Math.floor(diff / 60000));
+}
+
+function getLateMinutes(checkInIso: string, workDate: string, workStartTime?: string | null) {
+  const standardTime = workStartTime || "16:00";
+  const standardIso = buildVietnamIso(workDate, standardTime);
+
+  return Math.max(
+    0,
+    Math.floor((new Date(checkInIso).getTime() - new Date(standardIso).getTime()) / 60000)
+  );
+}
+
+function getEarlyLeaveMinutes(checkOutIso: string, workDate: string, workEndTime?: string | null) {
+  const standardTime = workEndTime || "01:00";
+  const standardIso = buildVietnamIso(workDate, standardTime);
+
+  return Math.max(
+    0,
+    Math.floor((new Date(standardIso).getTime() - new Date(checkOutIso).getTime()) / 60000)
+  );
+}
+
 export default function AttendanceStaffPage() {
   const { lang } = useLanguage();
   const pathname = usePathname();
@@ -189,8 +235,20 @@ export default function AttendanceStaffPage() {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loginUser, setLoginUser] = useState<any>(null);
+  const isAdmin = loginUser?.role === "owner" || loginUser?.role === "master";
+
+  const [manualModal, setManualModal] = useState<{
+    type: "check_in" | "check_out";
+    user: UserRow;
+    mode: "standard" | "manual";
+    timeValue: string;
+  } | null>(null);
 
   useEffect(() => {
+    const savedUser = localStorage.getItem("baba_user");
+    setLoginUser(savedUser ? JSON.parse(savedUser) : null);
+
     fetchList();
   }, []);
 
@@ -200,9 +258,8 @@ export default function AttendanceStaffPage() {
     try {
       const { data: userData, error: userError } = await supabase
         .from("users")
-        .select("id, name, username, part, position, is_active")
+        .select("id, name, username, role, part, position, is_active, work_start_time, work_end_time")
         .eq("is_active", true)
-        .neq("position", "owner");
 
       if (userError) {
         console.log("fetch users error:", JSON.stringify(userError, null, 2));
@@ -224,6 +281,175 @@ export default function AttendanceStaffPage() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleForceCheckIn = async (targetUser: UserRow, timeValue: string) => {
+
+    setManualModal(null);
+
+    const record = recordMap.get(targetUser.id);
+    const checkInIso = buildVietnamIso(todayWorkDate, timeValue);
+    const checkOutIso = record?.check_out_at || null;
+
+    const workMinutes = getMinutesBetween(checkInIso, checkOutIso);
+    const lateMinutes = getLateMinutes(checkInIso, todayWorkDate, targetUser.work_start_time);
+
+    const payload = {
+      user_id: targetUser.id,
+      work_date: todayWorkDate,
+      status: checkOutIso ? "done" : "working",
+      check_in_at: checkInIso,
+      late_minutes: lateMinutes,
+      work_minutes: workMinutes,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = record
+      ? await supabase.from("attendance_records").update(payload).eq("id", record.id)
+      : await supabase.from("attendance_records").insert([
+        {
+          ...payload,
+          check_out_at: null,
+          early_leave_minutes: 0,
+          approval_status: "approved",
+        },
+      ]);
+
+    if (error) {
+      console.log("force check-in error:", JSON.stringify(error, null, 2));
+      alert("출근 시간 수정 실패");
+      return;
+    }
+
+    await supabase.from("attendance_check_logs").insert([
+      {
+        user_id: targetUser.id,
+        user_name: targetUser.name,
+        username: targetUser.username,
+        work_date: todayWorkDate,
+        action: "manual_check_in",
+        checked_at: new Date().toISOString(),
+        success: true,
+        fail_reason: null,
+        device_id: "ADMIN",
+        device_info: {
+          admin_id: loginUser?.id,
+          admin_name: loginUser?.name,
+          admin_username: loginUser?.username,
+          prev_check_in_at: record?.check_in_at || null,
+          new_check_in_at: checkInIso,
+        },
+        user_agent: navigator.userAgent,
+      },
+    ]);
+
+    alert("출근 시간이 수정되었습니다.");
+    await fetchList();
+  };
+
+  const handleForceCheckOut = async (targetUser: UserRow, timeValue: string) => {
+
+    setManualModal(null);
+
+    const record = recordMap.get(targetUser.id);
+
+    if (!record?.check_in_at) {
+      alert("출근 시간이 먼저 있어야 퇴근 시간을 설정할 수 있습니다.");
+      return;
+    }
+
+    const checkOutIso = buildVietnamIso(todayWorkDate, timeValue);
+    const workMinutes = getMinutesBetween(record.check_in_at, checkOutIso);
+    const earlyLeaveMinutes = getEarlyLeaveMinutes(
+      checkOutIso,
+      todayWorkDate,
+      targetUser.work_end_time
+    );
+
+    const { error } = await supabase
+      .from("attendance_records")
+      .update({
+        status: earlyLeaveMinutes > 0 ? "early_leave" : "done",
+        check_out_at: checkOutIso,
+        work_minutes: workMinutes,
+        early_leave_minutes: earlyLeaveMinutes,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", record.id);
+
+    if (error) {
+      console.log("force check-out error:", JSON.stringify(error, null, 2));
+      alert("퇴근 시간 수정 실패");
+      return;
+    }
+
+    await supabase.from("attendance_check_logs").insert([
+      {
+        user_id: targetUser.id,
+        user_name: targetUser.name,
+        username: targetUser.username,
+        work_date: todayWorkDate,
+        action: "manual_check_out",
+        checked_at: new Date().toISOString(),
+        success: true,
+        fail_reason: null,
+        device_id: "ADMIN",
+        device_info: {
+          admin_id: loginUser?.id,
+          admin_name: loginUser?.name,
+          admin_username: loginUser?.username,
+          prev_check_out_at: record?.check_out_at || null,
+          new_check_out_at: checkOutIso,
+        },
+        user_agent: navigator.userAgent,
+      },
+    ]);
+
+    alert("퇴근 시간이 수정되었습니다.");
+    await fetchList();
+  };
+
+  const handleResetDevice = async (targetUser: UserRow) => {
+    const ok = confirm(`${targetUser.name} 기기를 초기화하시겠습니까?`);
+    if (!ok) return;
+
+    const { error } = await supabase
+      .from("users")
+      .update({
+        device_id: null,
+        device_info: null,
+        device_registered_at: null,
+        device_updated_at: null,
+      })
+      .eq("id", targetUser.id);
+
+    if (error) {
+      console.log("device reset error:", error);
+      alert("기기 초기화 실패");
+      return;
+    }
+
+    await supabase.from("attendance_check_logs").insert([
+      {
+        user_id: targetUser.id,
+        user_name: targetUser.name,
+        username: targetUser.username,
+        work_date: todayWorkDate,
+        action: "reset_device",
+        checked_at: new Date().toISOString(),
+        success: true,
+        fail_reason: null,
+        device_id: "ADMIN",
+        device_info: {
+          admin_id: loginUser?.id,
+          admin_name: loginUser?.name,
+          admin_username: loginUser?.username,
+        },
+        user_agent: navigator.userAgent,
+      },
+    ]);
+
+    alert("기기 초기화 완료");
   };
 
   const recordMap = useMemo(() => {
@@ -330,20 +556,103 @@ export default function AttendanceStaffPage() {
                       </button>
 
                       {isExpanded && (
-                        <div style={detailGridStyle}>
-                          <InfoBox label={t.checkIn} value={formatTime(record?.check_in_at || null)} />
-                          <InfoBox label={t.checkOut} value={formatTime(record?.check_out_at || null)} />
-                          <InfoBox label={t.workTime} value={formatWorkMinutes(record?.work_minutes)} />
-                          <InfoBox
-                            label={t.late}
-                            value={`${Number(record?.late_minutes || 0)}${t.minute}`}
-                          />
-                          <InfoBox
-                            label={t.earlyLeave}
-                            value={`${Number(record?.early_leave_minutes || 0)}${t.minute}`}
-                          />
-                        </div>
+                        <>
+                          <div style={detailGridStyle}>
+                            <InfoBox label={t.checkIn} value={formatTime(record?.check_in_at || null)} />
+                            <InfoBox label={t.checkOut} value={formatTime(record?.check_out_at || null)} />
+                            <InfoBox label={t.workTime} value={formatWorkMinutes(record?.work_minutes)} />
+                            <InfoBox
+                              label={t.late}
+                              value={`${Number(record?.late_minutes || 0)}${t.minute}`}
+                            />
+                            <InfoBox
+                              label={t.earlyLeave}
+                              value={`${Number(record?.early_leave_minutes || 0)}${t.minute}`}
+                            />
+                          </div>
+
+                          {isAdmin && (
+                            <div
+                              style={{
+                                marginTop: 8,
+                                padding: 8,
+                                borderRadius: 12,
+                                border: "1px solid #d1d5db",
+                                background: "#ffffff",
+                                display: "grid",
+                                gridTemplateColumns: "repeat(3, 1fr)",
+                                gap: 6,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                style={{
+                                  padding: "7px 6px",
+                                  borderRadius: 9,
+                                  border: "1px solid #bfdbfe",
+                                  background: "#eff6ff",
+                                  color: "#1d4ed8",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                }}
+                                onClick={() =>
+                                  setManualModal({
+                                    type: "check_in",
+                                    user,
+                                    mode: "standard",
+                                    timeValue: user.work_start_time || "16:00",
+                                  })
+                                }
+                              >
+                                출근
+                              </button>
+
+                              <button
+                                type="button"
+                                style={{
+                                  padding: "7px 6px",
+                                  borderRadius: 9,
+                                  border: "1px solid #bbf7d0",
+                                  background: "#f0fdf4",
+                                  color: "#15803d",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                }}
+                                onClick={() =>
+                                  setManualModal({
+                                    type: "check_out",
+                                    user,
+                                    mode: "standard",
+                                    timeValue: user.work_end_time || "01:00",
+                                  })
+                                }
+                              >
+                                퇴근
+                              </button>
+
+                              <button
+                                type="button"
+                                style={{
+                                  padding: "7px 6px",
+                                  borderRadius: 9,
+                                  border: "1px solid #fecaca",
+                                  background: "#fef2f2",
+                                  color: "#dc2626",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                }}
+                                onClick={() => handleResetDevice(user)}
+                              >
+                                기기초기화
+                              </button>
+                            </div>
+                          )}
+                        </>
                       )}
+
                     </div>
                   );
                 })}
@@ -352,6 +661,115 @@ export default function AttendanceStaffPage() {
           ))
         )}
       </div>
+
+      {manualModal && (
+        <div style={modalOverlayStyle}>
+          <div style={modalBoxStyle}>
+            <div style={modalTitleStyle}>
+              {manualModal.user.name}{" "}
+              {manualModal.type === "check_in" ? "출근 처리" : "퇴근 처리"}
+            </div>
+
+            {manualModal.mode === "standard" ? (
+              <>
+                <div style={modalOptionGridStyle}>
+                  <button
+                    type="button"
+                    style={{
+                      ...modalOptionButtonStyle,
+                      borderColor: "#2563eb",
+                      background: "#eff6ff",
+                      color: "#1d4ed8",
+                    }}
+                    onClick={() => {
+                      if (manualModal.type === "check_in") {
+                        handleForceCheckIn(manualModal.user, manualModal.timeValue);
+                      } else {
+                        handleForceCheckOut(manualModal.user, manualModal.timeValue);
+                      }
+                    }}
+                  >
+                    {manualModal.type === "check_in" ? "정시 출근" : "정시 퇴근"}
+                  </button>
+
+                  <button
+                    type="button"
+                    style={modalOptionButtonStyle}
+                    onClick={() =>
+                      setManualModal((prev) =>
+                        prev
+                          ? {
+                            ...prev,
+                            mode: "manual",
+                            timeValue:
+                              prev.type === "check_in"
+                                ? formatTime(recordMap.get(prev.user.id)?.check_in_at || null).replace("-", "")
+                                : formatTime(recordMap.get(prev.user.id)?.check_out_at || null).replace("-", ""),
+                          }
+                          : prev
+                      )
+                    }
+                  >
+                    직접 입력
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
+                  onClick={() => setManualModal(null)}
+                >
+                  취소
+                </button>
+              </>
+            ) : (
+              <>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto",
+                    gap: 8,
+                    alignItems: "center",
+                  }}
+                >
+                  <input
+                    type="time"
+                    value={manualModal.timeValue}
+                    onChange={(e) =>
+                      setManualModal((prev) =>
+                        prev ? { ...prev, timeValue: e.target.value } : prev
+                      )
+                    }
+                    style={modalInputStyle}
+                  />
+
+                  <button
+                    type="button"
+                    style={modalSubmitButtonStyle}
+                    onClick={() => {
+                      if (manualModal.type === "check_in") {
+                        handleForceCheckIn(manualModal.user, manualModal.timeValue);
+                      } else {
+                        handleForceCheckOut(manualModal.user, manualModal.timeValue);
+                      }
+                    }}
+                  >
+                    처리
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
+                  onClick={() => setManualModal(null)}
+                >
+                  취소
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </Container>
   );
 }
@@ -364,6 +782,80 @@ function InfoBox({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+
+const modalOverlayStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,0.35)",
+  zIndex: 50,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 16,
+};
+
+const modalBoxStyle: CSSProperties = {
+  width: "100%",
+  maxWidth: 340,
+  background: "#ffffff",
+  borderRadius: 16,
+  padding: 16,
+  boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
+};
+
+const modalTitleStyle: CSSProperties = {
+  fontSize: 15,
+  fontWeight: 900,
+  color: "#111827",
+  marginBottom: 12,
+};
+
+const modalOptionGridStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: 8,
+};
+
+const modalOptionButtonStyle: CSSProperties = {
+  padding: "10px 8px",
+  borderRadius: 10,
+  border: "1px solid #e5e7eb",
+  fontSize: 13,
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const modalInputStyle: CSSProperties = {
+  width: "100%",
+  padding: "10px 12px",
+  borderRadius: 10,
+  border: "1px solid #d1d5db",
+  fontSize: 14,
+  fontWeight: 700,
+  boxSizing: "border-box",
+};
+
+const modalSubmitButtonStyle: CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 10,
+  border: "none",
+  background: "#111827",
+  color: "#ffffff",
+  fontSize: 13,
+  fontWeight: 900,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
+
+const modalCancelButtonStyle: CSSProperties = {
+  padding: "10px 8px",
+  borderRadius: 10,
+  border: "1px solid #d1d5db",
+  background: "#ffffff",
+  fontSize: 13,
+  fontWeight: 800,
+  cursor: "pointer",
+};
 
 const sectionStyle: CSSProperties = {
   display: "grid",
@@ -466,13 +958,16 @@ const detailGridStyle: CSSProperties = {
   gridTemplateColumns: "repeat(5, 1fr)",
   gap: 6,
   marginTop: 8,
+
 };
 
 const infoBoxStyle: CSSProperties = {
   background: "#f9fafb",
+  border: "1px solid #d1d5db",
   borderRadius: 10,
   padding: "7px 5px",
   textAlign: "center",
+  boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.7)",
 };
 
 const infoLabelStyle: CSSProperties = {

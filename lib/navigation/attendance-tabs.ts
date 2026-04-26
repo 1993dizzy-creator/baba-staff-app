@@ -9,11 +9,6 @@ export function getAttendanceTabs(
       active: pathname === "/attendance" || pathname === "/attendance/",
     },
     {
-      href: "/attendance/summary",
-      label: lang === "vi" ? "Tổng quan" : "전체 현황",
-      active: pathname.startsWith("/attendance/summary"),
-    },
-    {
       href: "/attendance/staff",
       label: lang === "vi" ? "Nhân viên" : "출근 명부",
       active: pathname.startsWith("/attendance/staff"),
