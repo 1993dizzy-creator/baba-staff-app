@@ -213,56 +213,6 @@ const STORE_LAT = 21.170365726028983; // TODO: 매장 위도
 const STORE_LNG = 106.05620440469892; // TODO: 매장 경도
 const ALLOWED_DISTANCE_M = 100;
 
-function getDeviceId() {
-  if (typeof window === "undefined") return "";
-
-  const storageKey = "baba_device_id";
-
-  const createId = () => {
-    if (typeof crypto !== "undefined" && crypto.randomUUID) {
-      return crypto.randomUUID();
-    }
-
-    return `device_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  };
-
-  try {
-    let id = localStorage.getItem(storageKey);
-
-    if (!id) {
-      id = createId();
-      localStorage.setItem(storageKey, id);
-    }
-
-    return id;
-  } catch {
-    try {
-      let id = sessionStorage.getItem(storageKey);
-
-      if (!id) {
-        id = createId();
-        sessionStorage.setItem(storageKey, id);
-      }
-
-      return id;
-    } catch {
-      return createId();
-    }
-  }
-}
-
-function getDeviceInfo() {
-  if (typeof window === "undefined") return {};
-
-  return {
-    userAgent: navigator.userAgent,
-    platform: navigator.platform,
-    language: navigator.language,
-    screenWidth: window.screen.width,
-    screenHeight: window.screen.height,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  };
-}
 
 function getDistanceMeters(
   lat1: number,
@@ -493,9 +443,6 @@ function MyAttendance() {
     const nowIso = new Date().toISOString();
     const workDate = getVietnamWorkDate();
 
-    const deviceId = getDeviceId();
-    const deviceInfo = getDeviceInfo();
-
     let latitude: number | null = null;
     let longitude: number | null = null;
     let distanceM: number | null = null;
@@ -514,9 +461,6 @@ function MyAttendance() {
           longitude,
           distance_m: distanceM,
           is_location_valid: isLocationValid,
-          device_id: deviceId,
-          device_info: deviceInfo,
-          user_agent: typeof navigator !== "undefined" ? navigator.userAgent : "",
           success,
           fail_reason: failReason,
         },
@@ -543,38 +487,6 @@ function MyAttendance() {
         return;
       }
 
-      const { data: dbUser, error: userFetchError } = await supabase
-        .from("users")
-        .select("id, device_id")
-        .eq("id", user.id)
-        .single();
-
-      if (userFetchError || !dbUser) {
-        await saveCheckLog(false, "USER_FETCH_FAILED");
-
-        alert(lang === "vi" ? "Không thể xác minh người dùng." : "사용자 인증에 실패했습니다.");
-        return;
-      }
-
-      let deviceWarningReason: string | null = null;
-
-      if (!dbUser.device_id) {
-        const { error: deviceUpdateError } = await supabase
-          .from("users")
-          .update({
-            device_id: deviceId,
-            device_info: deviceInfo,
-            device_registered_at: nowIso,
-            device_updated_at: nowIso,
-          })
-          .eq("id", user.id);
-
-        if (deviceUpdateError) {
-          deviceWarningReason = "DEVICE_REGISTER_FAILED_BUT_ALLOWED";
-        }
-      } else if (dbUser.device_id !== deviceId) {
-        deviceWarningReason = "DEVICE_MISMATCH_BUT_ALLOWED";
-      }
 
       const { data, error } = await supabase
         .from("attendance_records")
@@ -587,7 +499,6 @@ function MyAttendance() {
             late_minutes: calculateLateMinutes(user.work_start_time || "16:00"),
             early_leave_minutes: 0,
             work_minutes: 0,
-            check_in_device_id: deviceId,
             check_in_latitude: latitude,
             check_in_longitude: longitude,
             check_in_distance_m: distanceM,
@@ -615,7 +526,7 @@ function MyAttendance() {
         return;
       }
 
-      await saveCheckLog(true, deviceWarningReason);
+      await saveCheckLog(true);
 
       setAttendance((prev) => ({
         ...prev,
@@ -659,9 +570,6 @@ function MyAttendance() {
     const nowIso = new Date().toISOString();
     const workDate = getVietnamWorkDate();
 
-    const deviceId = getDeviceId();
-    const deviceInfo = getDeviceInfo();
-
     let latitude: number | null = null;
     let longitude: number | null = null;
     let distanceM: number | null = null;
@@ -682,9 +590,6 @@ function MyAttendance() {
           longitude,
           distance_m: distanceM,
           is_location_valid: isLocationValid,
-          device_id: deviceId,
-          device_info: deviceInfo,
-          user_agent: typeof navigator !== "undefined" ? navigator.userAgent : "",
           success,
           fail_reason: failReason,
         },
@@ -711,26 +616,6 @@ function MyAttendance() {
         return;
       }
 
-      let deviceWarningReason: string | null = null;
-
-      const { data: dbUser, error: userFetchError } = await supabase
-        .from("users")
-        .select("id, device_id")
-        .eq("id", user.id)
-        .single();
-
-      if (userFetchError || !dbUser) {
-        await saveCheckLog(false, "USER_FETCH_FAILED");
-
-        alert(lang === "vi" ? "Không thể xác minh người dùng." : "사용자 인증에 실패했습니다.");
-        return;
-      }
-
-      if (!dbUser.device_id) {
-        deviceWarningReason = "DEVICE_NOT_REGISTERED_BUT_ALLOWED";
-      } else if (dbUser.device_id !== deviceId) {
-        deviceWarningReason = "DEVICE_MISMATCH_BUT_ALLOWED";
-      }
 
       const { data: todayRecord, error: fetchError } = await supabase
         .from("attendance_records")
@@ -761,7 +646,6 @@ function MyAttendance() {
           check_out_at: nowIso,
           work_minutes: workMinutes,
           early_leave_minutes: earlyLeaveMinutes,
-          check_out_device_id: deviceId,
           check_out_latitude: latitude,
           check_out_longitude: longitude,
           check_out_distance_m: distanceM,
@@ -781,7 +665,7 @@ function MyAttendance() {
         return;
       }
 
-      await saveCheckLog(true, deviceWarningReason);
+      await saveCheckLog(true);
 
       setAttendance((prev) => ({
         ...prev,
