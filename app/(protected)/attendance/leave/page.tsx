@@ -592,7 +592,9 @@ export default function AttendanceLeavePage() {
                         <span style={userNameStyle}>
                           {index + 1}. {user.name}
                         </span>
-                        <span style={userMetaStyle}>{user.position || user.username}</span>
+                        <span style={userMetaStyle}>
+                          {t.positions?.[user.position as keyof typeof t.positions] || user.position || user.username}
+                        </span>
                       </div>
 
                       <div style={leaveActionRowStyle}>
@@ -685,7 +687,7 @@ export default function AttendanceLeavePage() {
                       borderLeft: `4px solid ${group.meta.color}`,
                     }}
                   >
-                    {group.meta.emoji} {group.meta.label}
+                    {group.meta.emoji} {t.parts?.[group.part as keyof typeof t.parts] || group.meta.label}
                   </div>
 
                   {group.items.map((item) => (

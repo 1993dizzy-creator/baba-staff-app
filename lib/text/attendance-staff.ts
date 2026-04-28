@@ -35,6 +35,21 @@ export const attendanceStaffText = {
     resetDeviceConfirm: "기기를 초기화하시겠습니까?",
     resetDeviceFailed: "기기 초기화 실패",
     resetDeviceDone: "기기 초기화 완료",
+    confirmSetLeave: "휴무 처리하시겠습니까?",
+    setLeaveFailed: "휴무 처리 실패",
+    setLeaveDone: "휴무 처리 완료",
+
+    parts: {
+      kitchen: "주방",
+      hall: "홀",
+      bar: "바",
+    },
+
+    positions: {
+      staff: "직원",
+      team_leader: "파트장",
+      manager: "매니저",
+    },
   },
   vi: {
     loading: "Đang tải...",
@@ -72,5 +87,20 @@ export const attendanceStaffText = {
     resetDeviceConfirm: "Bạn có muốn đặt lại thiết bị không?",
     resetDeviceFailed: "Đặt lại thiết bị thất bại",
     resetDeviceDone: "Đã đặt lại thiết bị",
+    confirmSetLeave: "Bạn có muốn chuyển sang nghỉ không?",
+    setLeaveFailed: "Xử lý nghỉ thất bại",
+    setLeaveDone: "Đã chuyển sang nghỉ",
+    parts: {
+      kitchen: "Bếp",
+      hall: "Phục vụ",
+      bar: "Bar",
+    },
+
+    positions: {
+      staff: "Nhân viên",
+      team_leader: "Trưởng bộ phận",
+      manager: "Quản lý",
+    },
+
   },
 };

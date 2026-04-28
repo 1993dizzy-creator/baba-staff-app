@@ -146,6 +146,12 @@ function calculateEarlyLeaveMinutes(workEndTime: string) {
   return Math.max(0, diffMinutes);
 }
 
+function getAutoCheckOutType(workEndTime: string): "done" | "early_leave" {
+  const earlyLeaveMinutes = calculateEarlyLeaveMinutes(workEndTime);
+
+  return earlyLeaveMinutes >= 90 ? "early_leave" : "done";
+}
+
 function isApprovedLeave(record: any) {
   return record?.status === "leave" && record?.approval_status === "approved";
 }
@@ -313,6 +319,7 @@ function MyAttendance() {
   const [isLoadingToday, setIsLoadingToday] = useState(true);
   const { lang } = useLanguage();
   const t = attendanceText[lang];
+  const [isSubmittingAttendance, setIsSubmittingAttendance] = useState(false);
 
   const [nowText, setNowText] = useState("");
 
@@ -338,7 +345,6 @@ function MyAttendance() {
 
   const [attendance, setAttendance] =
     useState<AttendanceState>(initialAttendanceState);
-  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -429,9 +435,12 @@ function MyAttendance() {
   };
 
   const handleCheckIn = async () => {
+    if (isSubmittingAttendance) return;
     if (isLoadingToday) return;
     if (attendance.status !== "before") return;
     if (attendance.checkInTime !== "-") return;
+
+    setIsSubmittingAttendance(true);
 
     const user = getUser();
 
@@ -551,15 +560,24 @@ function MyAttendance() {
           : "GPS 위치를 가져올 수 없습니다. 위치 권한을 허용해주세요."
       );
     }
+    finally {
+      setIsSubmittingAttendance(false);
+    }
   };
 
 
   const handleCheckOutClick = () => {
     if (attendance.status !== "working") return;
-    setShowCheckoutModal(true);
+
+    const user = getUser();
+    const type = getAutoCheckOutType(user?.work_end_time || "01:00");
+
+    handleConfirmCheckOut(type);
   };
 
   const handleConfirmCheckOut = async (type: "done" | "early_leave") => {
+    if (isSubmittingAttendance) return;
+    setIsSubmittingAttendance(true);
     const user = getUser();
 
     if (!user?.id) {
@@ -634,15 +652,17 @@ function MyAttendance() {
       }
 
       const workMinutes = calculateWorkMinutes(todayRecord.check_in_at, nowIso);
+      const calculatedEarlyLeaveMinutes = calculateEarlyLeaveMinutes(user.work_end_time || "01:00");
+      const checkOutStatus =
+        calculatedEarlyLeaveMinutes >= 90 ? "early_leave" : "done";
+
       const earlyLeaveMinutes =
-        type === "early_leave"
-          ? calculateEarlyLeaveMinutes(user.work_end_time || "01:00")
-          : 0;
+        checkOutStatus === "early_leave" ? calculatedEarlyLeaveMinutes : 0;
 
       const { data, error } = await supabase
         .from("attendance_records")
         .update({
-          status: type,
+          status: checkOutStatus,
           check_out_at: nowIso,
           work_minutes: workMinutes,
           early_leave_minutes: earlyLeaveMinutes,
@@ -669,7 +689,7 @@ function MyAttendance() {
 
       setAttendance((prev) => ({
         ...prev,
-        status: data.status || type,
+        status: data.status || checkOutStatus,
         checkOutTime: data.check_out_at ? formatTimeForDisplay(data.check_out_at) : "-",
         workDuration: formatMinutesToHHMM(data.work_minutes || 0),
         earlyLeaveMinutes: data.early_leave_minutes || 0,
@@ -678,7 +698,6 @@ function MyAttendance() {
       await fetchMonthSummary();
       setCalendarRefreshKey((prev) => prev + 1);
 
-      setShowCheckoutModal(false);
     } catch (error) {
       console.error(error);
 
@@ -690,6 +709,9 @@ function MyAttendance() {
           : "GPS 위치를 가져올 수 없습니다. 위치 권한을 허용해주세요."
       );
     }
+    finally {
+      setIsSubmittingAttendance(false);
+    }
   };
 
   const isBefore = attendance.status === "before";
@@ -697,10 +719,15 @@ function MyAttendance() {
   const isEarlyLeave = attendance.status === "early_leave";
 
   const checkInDisabled =
-    isLoadingToday || attendance.status !== "before" || attendance.checkInTime !== "-";
+    isLoadingToday ||
+    isSubmittingAttendance ||
+    attendance.status !== "before" ||
+    attendance.checkInTime !== "-";
 
   const checkOutDisabled =
-    isLoadingToday || attendance.status !== "working";
+    isLoadingToday ||
+    isSubmittingAttendance ||
+    attendance.status !== "working";
 
   const lateDisplayText =
     attendance.lateMinutes > 0
@@ -885,47 +912,6 @@ function MyAttendance() {
         </div>
       </div>
 
-      {showCheckoutModal && (
-        <div style={modalOverlayStyle} onClick={() => setShowCheckoutModal(false)}>
-          <div style={modalCardStyle} onClick={(e) => e.stopPropagation()}>
-            <div style={modalTitleStyle}>
-              {lang === "vi" ? "Chọn hình thức tan ca" : "퇴근 유형 선택"}
-            </div>
-
-            <div style={modalDescStyle}>
-              {lang === "vi"
-                ? "Vui lòng chọn tan ca bình thường hoặc về sớm."
-                : "정상 퇴근 또는 조퇴를 선택하세요."}
-            </div>
-
-            <div style={modalButtonGridStyle}>
-              <button
-                type="button"
-                style={modalPrimaryButtonStyle}
-                onClick={() => handleConfirmCheckOut("done")}
-              >
-                {lang === "vi" ? "Tan ca bình thường" : "정상 퇴근"}
-              </button>
-
-              <button
-                type="button"
-                style={modalSecondaryButtonStyle}
-                onClick={() => handleConfirmCheckOut("early_leave")}
-              >
-                {lang === "vi" ? "Về sớm" : "조퇴"}
-              </button>
-            </div>
-
-            <button
-              type="button"
-              style={modalCloseButtonStyle}
-              onClick={() => setShowCheckoutModal(false)}
-            >
-              {lang === "vi" ? "Đóng" : "닫기"}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

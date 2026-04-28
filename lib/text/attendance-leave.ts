@@ -9,6 +9,19 @@ export const attendanceLeaveText = {
     leaveCount: "휴무",
     people: "명",
     days: "일",
+    parts: {
+      kitchen: "주방",
+      hall: "홀",
+      bar: "바",
+      etc: "기타",
+    },
+
+    positions: {
+      staff: "직원",
+      team_leader: "파트장",
+      manager: "매니저",
+      part_time: "파트타임",
+    },
   },
   vi: {
     todayLeave: "Nghỉ hôm nay",
@@ -20,5 +33,18 @@ export const attendanceLeaveText = {
     leaveCount: "Nghỉ",
     people: "người",
     days: "ngày",
+    parts: {
+      kitchen: "Bếp",
+      hall: "Phục vụ",
+      bar: "Bar",
+      etc: "Khác",
+    },
+
+    positions: {
+      staff: "Nhân viên",
+      team_leader: "Trưởng bộ phận",
+      manager: "Quản lý",
+      part_time: "Part-time",
+    },
   },
 };
