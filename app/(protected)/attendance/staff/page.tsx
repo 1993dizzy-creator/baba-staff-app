@@ -432,7 +432,7 @@ export default function AttendanceStaffPage() {
       return;
     }
 
-    const ok = confirm(`${targetUser.name} ${t.statusLeave} 처리하시겠습니까?`);
+    const ok = confirm(`${targetUser.name} ${t.confirmSetLeave}`);
     if (!ok) return;
 
     const payload = {
@@ -454,7 +454,7 @@ export default function AttendanceStaffPage() {
 
     if (error) {
       console.log("set leave error:", JSON.stringify(error, null, 2));
-      alert("휴무 처리 실패");
+      alert(t.setLeaveFailed);
       return;
     }
 
@@ -569,7 +569,7 @@ return (
                             {getStatusText(t, record)}
                           </span>
 
-                          {record?.late_minutes > 0 && (
+                          {Number(record?.late_minutes || 0) > 0 && (
                             <span
                               style={{
                                 ...miniBadgeStyle,
