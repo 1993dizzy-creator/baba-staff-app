@@ -210,17 +210,18 @@ export default function AttendanceLeavePage() {
         (user) => user.position !== "owner"
       );
 
-      const { data: recordData, error: recordError } = await supabase
-        .from("attendance_records")
-        .select("id, user_id, work_date, status, note, approval_status, approved_by, approved_at, created_at")
-        .eq("status", "leave")
-        .gte("work_date", startDate)
-        .lte("work_date", endDate);
+      const recordRes = await fetch(
+        `/api/attendance/records?status=leave&start_date=${startDate}&end_date=${endDate}`
+      );
 
-      if (recordError) {
-        console.log("fetch leave records error:", JSON.stringify(recordError, null, 2));
+      const recordResult = await recordRes.json();
+
+      if (!recordRes.ok || !recordResult.ok) {
+        console.log("fetch leave records error:", recordResult);
         return;
       }
+
+      const recordData = recordResult.records || [];
 
       setUsers(userData || []);
       setLeaveRecords(recordData || []);

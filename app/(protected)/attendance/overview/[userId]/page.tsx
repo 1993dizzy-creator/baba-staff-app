@@ -185,18 +185,18 @@ export default function AttendanceUserDetailPage() {
                 return;
             }
 
-            const { data: recordData, error: recordError } = await supabase
-                .from("attendance_records")
-                .select("*")
-                .eq("user_id", userId)
-                .gte("work_date", startText)
-                .lte("work_date", endText)
-                .order("work_date", { ascending: true });
+            const recordRes = await fetch(
+                `/api/attendance/records?user_id=${userId}&start_date=${startText}&end_date=${endText}`
+            );
 
-            if (recordError) {
-                console.log("fetch user attendance error:", JSON.stringify(recordError, null, 2));
+            const recordResult = await recordRes.json();
+
+            if (!recordRes.ok || !recordResult.ok) {
+                console.log("fetch user attendance error:", recordResult);
                 return;
             }
+
+            const recordData = recordResult.records || [];
 
             setUser(userData);
             setRecords(recordData || []);

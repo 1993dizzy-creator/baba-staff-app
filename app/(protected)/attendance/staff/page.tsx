@@ -265,15 +265,18 @@ export default function AttendanceStaffPage() {
 
       const userData = userResult.users || [];
 
-      const { data: recordData, error: recordError } = await supabase
-        .from("attendance_records")
-        .select("*")
-        .eq("work_date", todayWorkDate);
+      const recordRes = await fetch(
+        `/api/attendance/records?work_date=${todayWorkDate}`
+      );
 
-      if (recordError) {
-        console.log("fetch attendance records error:", JSON.stringify(recordError, null, 2));
+      const recordResult = await recordRes.json();
+
+      if (!recordRes.ok || !recordResult.ok) {
+        console.log("fetch attendance records error:", recordResult);
         return;
       }
+
+      const recordData = recordResult.records || [];
 
       setUsers((userData as UserRow[]).filter((user) => !isAdmin(user)));
       setRecords(recordData || []);

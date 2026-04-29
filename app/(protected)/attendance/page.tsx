@@ -361,17 +361,18 @@ function MyAttendance() {
 
       const workDate = getVietnamWorkDate();
 
-      const { data, error } = await supabase
-        .from("attendance_records")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("work_date", workDate)
-        .maybeSingle();
+      const res = await fetch(
+        `/api/attendance/records?user_id=${user.id}&work_date=${workDate}`
+      );
 
-      if (error) {
-        console.log("fetch today attendance error:", JSON.stringify(error, null, 2));
+      const result = await res.json();
+
+      if (!res.ok || !result.ok) {
+        console.log("fetch today attendance error:", result);
         return;
       }
+
+      const data = result.records?.[0] || null;
 
       if (!data) {
         setAttendance(initialAttendanceState);
@@ -414,17 +415,18 @@ function MyAttendance() {
     const lastDay = new Date(year, month, 0).getDate();
     const end = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
-    const { data, error } = await supabase
-      .from("attendance_records")
-      .select("*")
-      .eq("user_id", user.id)
-      .gte("work_date", start)
-      .lte("work_date", end);
+    const res = await fetch(
+      `/api/attendance/records?user_id=${user.id}&start_date=${start}&end_date=${end}`
+    );
 
-    if (error) {
-      console.log("fetch month summary error:", JSON.stringify(error, null, 2));
+    const result = await res.json();
+
+    if (!res.ok || !result.ok) {
+      console.log("fetchMonthSummary error:", result);
       return;
     }
+
+    const data = result.records || [];
 
     const monthSummary = calculateMonthSummary(data || []);
 
@@ -945,17 +947,18 @@ function Calendar({ refreshKey }: { refreshKey: number }) {
     const lastDay = new Date(year, month, 0).getDate();
     const end = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
-    const { data, error } = await supabase
-      .from("attendance_records")
-      .select("*")
-      .eq("user_id", user.id)
-      .gte("work_date", start)
-      .lte("work_date", end);
+    const res = await fetch(
+      `/api/attendance/records?user_id=${user.id}&start_date=${start}&end_date=${end}`
+    );
 
-    if (error) {
-      console.log("fetch month attendance error:", JSON.stringify(error, null, 2));
+    const result = await res.json();
+
+    if (!res.ok || !result.ok) {
+      console.log("fetchMonthAttendance error:", result);
       return;
     }
+
+    const data = result.records || [];
 
     setMonthRecords(data || []);
   };

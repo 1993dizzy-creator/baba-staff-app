@@ -7,7 +7,7 @@ export default function AppVersionChecker() {
     const { lang } = useLanguage();
 
     useEffect(() => {
-        const CURRENT_VERSION = "1.0.2";
+        const CURRENT_VERSION = "1.0.3";
 
         const checkVersion = async () => {
             try {
