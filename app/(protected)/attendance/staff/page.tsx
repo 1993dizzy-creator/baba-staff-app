@@ -285,183 +285,97 @@ export default function AttendanceStaffPage() {
     }
   };
 
-  const handleForceCheckIn = async (targetUser: UserRow, timeValue: string) => {
-    if (!isAdmin(loginUser)) {
-      alert(t.noPermission);
-      return;
-    }
-
-    if (!timeValue) {
-      alert(t.inputTimeRequired);
-      return;
-    }
-
-    setManualModal(null);
-
-    const record = recordMap.get(targetUser.id);
-    const checkInIso = buildVietnamIso(todayWorkDate, timeValue);
-    const checkOutIso = record?.check_out_at || null;
-
-    const workMinutes = getMinutesBetween(checkInIso, checkOutIso);
-    const lateMinutes = getLateMinutes(checkInIso, todayWorkDate, targetUser.work_start_time);
-
-    const payload = {
-      user_id: targetUser.id,
-      work_date: todayWorkDate,
-      status: checkOutIso ? "done" : "working",
-      check_in_at: checkInIso,
-      late_minutes: lateMinutes,
-      work_minutes: workMinutes,
-      updated_at: new Date().toISOString(),
-    };
-
-    const { error } = record
-      ? await supabase.from("attendance_records").update(payload).eq("id", record.id)
-      : await supabase.from("attendance_records").insert([
-        {
-          ...payload,
-          check_out_at: null,
-          early_leave_minutes: 0,
-          approval_status: "approved",
+  const handleForceCheckIn = async (user: UserRow, time: string) => {
+    const me = getUser();
+    try {
+      const res = await fetch("/api/attendance/admin", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      ]);
+        body: JSON.stringify({
+          action: "force_check_in",
+          user_id: user.id,
+          work_date: todayWorkDate,
+          time,
+          admin_name: me?.name || "",
+        }),
+      });
 
-    if (error) {
-      console.log("force check-in error:", JSON.stringify(error, null, 2));
-      alert(t.checkInUpdateFailed);
-      return;
+      const result = await res.json();
+
+      if (!res.ok || !result.ok) {
+        alert(result.message || "출근 수정 실패");
+        return;
+      }
+
+      await fetchList();
+    } catch (err) {
+      console.error(err);
+      alert("출근 수정 중 오류 발생");
     }
-
-    await supabase.from("attendance_check_logs").insert([
-      {
-        user_id: targetUser.id,
-        user_name: targetUser.name,
-        username: targetUser.username,
-        work_date: todayWorkDate,
-        action: "manual_check_in",
-        checked_at: new Date().toISOString(),
-        success: true,
-        fail_reason: null,
-        device_id: "ADMIN",
-        device_info: {
-          admin_id: loginUser?.id,
-          admin_name: loginUser?.name,
-          admin_username: loginUser?.username,
-          prev_check_in_at: record?.check_in_at || null,
-          new_check_in_at: checkInIso,
-        },
-        user_agent: navigator.userAgent,
-      },
-    ]);
-
-    alert(t.checkInUpdated);
-    await fetchList();
   };
 
-  const handleForceCheckOut = async (targetUser: UserRow, timeValue: string) => {
-    if (!isAdmin(loginUser)) {
-      alert(t.noPermission);
-      return;
-    }
+  const handleForceCheckOut = async (user: UserRow, time: string) => {
+    const me = getUser();
 
-    if (!timeValue) {
-      alert(t.inputTimeRequired);
-      return;
-    }
-
-    setManualModal(null);
-
-    const record = recordMap.get(targetUser.id);
-
-    if (!record?.check_in_at) {
-      alert(t.checkInRequiredFirst);
-      return;
-    }
-
-    const checkOutIso = buildVietnamIso(todayWorkDate, timeValue);
-    const workMinutes = getMinutesBetween(record.check_in_at, checkOutIso);
-    const earlyLeaveMinutes = getEarlyLeaveMinutes(
-      checkOutIso,
-      todayWorkDate,
-      targetUser.work_end_time
-    );
-
-    const { error } = await supabase
-      .from("attendance_records")
-      .update({
-        status: earlyLeaveMinutes > 0 ? "early_leave" : "done",
-        check_out_at: checkOutIso,
-        work_minutes: workMinutes,
-        early_leave_minutes: earlyLeaveMinutes,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", record.id);
-
-    if (error) {
-      console.log("force check-out error:", JSON.stringify(error, null, 2));
-      alert(t.checkOutUpdateFailed);
-      return;
-    }
-
-    await supabase.from("attendance_check_logs").insert([
-      {
-        user_id: targetUser.id,
-        user_name: targetUser.name,
-        username: targetUser.username,
-        work_date: todayWorkDate,
-        action: "manual_check_out",
-        checked_at: new Date().toISOString(),
-        success: true,
-        fail_reason: null,
-        device_id: "ADMIN",
-        device_info: {
-          admin_id: loginUser?.id,
-          admin_name: loginUser?.name,
-          admin_username: loginUser?.username,
-          prev_check_out_at: record?.check_out_at || null,
-          new_check_out_at: checkOutIso,
+    try {
+      const res = await fetch("/api/attendance/admin", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-        user_agent: navigator.userAgent,
-      },
-    ]);
+        body: JSON.stringify({
+          action: "force_check_out",
+          user_id: user.id,
+          work_date: todayWorkDate,
+          time,
+          admin_name: me?.name || "",
+        }),
+      });
 
-    alert(t.checkOutUpdated);
-    await fetchList();
+      const result = await res.json();
+
+      if (!res.ok || !result.ok) {
+        alert(result.message || "퇴근 수정 실패");
+        return;
+      }
+
+      await fetchList();
+    } catch (err) {
+      console.error(err);
+      alert("퇴근 수정 중 오류 발생");
+    }
   };
 
-  const handleSetLeave = async (targetUser: UserRow, record?: AttendanceRecord) => {
-    if (!isAdmin(loginUser)) {
-      alert(t.noPermission);
-      return;
+  const handleSetLeave = async (user: UserRow) => {
+    const me = getUser();
+    try {
+      const res = await fetch("/api/attendance/admin", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "set_leave",
+          user_id: user.id,
+          work_date: todayWorkDate,
+          admin_name: me?.name || "",
+        }),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok || !result.ok) {
+        alert(result.message || "휴무 처리 실패");
+        return;
+      }
+
+      await fetchList();
+    } catch (err) {
+      console.error(err);
+      alert("휴무 처리 중 오류 발생");
     }
-
-    const ok = confirm(`${targetUser.name} ${t.confirmSetLeave}`);
-    if (!ok) return;
-
-    const payload = {
-      user_id: targetUser.id,
-      work_date: todayWorkDate,
-      status: "leave",
-      check_in_at: null,
-      check_out_at: null,
-      late_minutes: 0,
-      early_leave_minutes: 0,
-      work_minutes: 0,
-      approval_status: "approved",
-      updated_at: new Date().toISOString(),
-    };
-
-    const { error } = record
-      ? await supabase.from("attendance_records").update(payload).eq("id", record.id)
-      : await supabase.from("attendance_records").insert([payload]);
-
-    if (error) {
-      console.log("set leave error:", JSON.stringify(error, null, 2));
-      alert(t.setLeaveFailed);
-      return;
-    }
-
-    await fetchList();
   };
 
 
@@ -678,7 +592,7 @@ export default function AttendanceStaffPage() {
                                   fontWeight: 700,
                                   cursor: "pointer",
                                 }}
-                                onClick={() => handleSetLeave(user, record)}
+                                onClick={() => handleSetLeave(user)}
                               >
                                 {t.statusLeave}
                               </button>

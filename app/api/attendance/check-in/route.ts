@@ -38,12 +38,21 @@ function getLang(value: unknown): Lang {
 }
 
 function getTodayVietnamDate() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+  const now = new Date();
+
+  const vietnamTime = new Date(
+    now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
+  );
+
+  if (vietnamTime.getHours() < 3) {
+    vietnamTime.setDate(vietnamTime.getDate() - 1);
+  }
+
+  const year = vietnamTime.getFullYear();
+  const month = String(vietnamTime.getMonth() + 1).padStart(2, "0");
+  const day = String(vietnamTime.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
 export async function POST(req: Request) {
@@ -152,19 +161,19 @@ export async function POST(req: Request) {
 
     const { data, error } = existing
       ? await supabaseServer
-          .from("attendance_records")
-          .update(payload)
-          .eq("id", existing.id)
-          .select()
-          .single()
+        .from("attendance_records")
+        .update(payload)
+        .eq("id", existing.id)
+        .select()
+        .single()
       : await supabaseServer
-          .from("attendance_records")
-          .insert({
-            ...payload,
-            approval_status: "approved",
-          })
-          .select()
-          .single();
+        .from("attendance_records")
+        .insert({
+          ...payload,
+          approval_status: "approved",
+        })
+        .select()
+        .single();
 
     if (error) {
       console.error("check-in save error:", error);
