@@ -10,6 +10,7 @@ import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { supabase } from "@/lib/supabase/client";
 import { attendanceLeaveText } from "@/lib/text/attendance-leave";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
+import { useSearchParams } from "next/navigation";
 
 type UserRow = {
   id: string | number;
@@ -161,6 +162,8 @@ function formatSummaryDate(dateKey: string) {
 }
 
 export default function AttendanceLeavePage() {
+  const searchParams = useSearchParams();
+  const monthParam = searchParams.get("month");
   const { lang } = useLanguage();
   const pathname = usePathname();
   const tabs = getAttendanceTabs(pathname, lang);
@@ -171,10 +174,18 @@ export default function AttendanceLeavePage() {
 
   const todayWorkDate = getVietnamWorkDate();
 
-  const [calendarDate, setCalendarDate] = useState(new Date());
+  const initialCalendarDate = monthParam
+    ? new Date(`${monthParam}-01T12:00:00`)
+    : new Date();
+
+  const initialSelectedDate = monthParam
+    ? formatDateKey(initialCalendarDate)
+    : todayWorkDate;
+
+  const [calendarDate, setCalendarDate] = useState(initialCalendarDate);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [leaveRecords, setLeaveRecords] = useState<AttendanceRecord[]>([]);
-  const [selectedDate, setSelectedDate] = useState(todayWorkDate);
+  const [selectedDate, setSelectedDate] = useState(initialSelectedDate);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -187,16 +198,17 @@ export default function AttendanceLeavePage() {
     try {
       const { startDate, endDate } = getMonthRange(calendarDate);
 
-      const { data: userData, error: userError } = await supabase
-        .from("users")
-        .select("id, name, username, part, position, is_active")
-        .eq("is_active", true)
-        .neq("position", "owner");
+      const userRes = await fetch("/api/attendance/users");
+      const userResult = await userRes.json();
 
-      if (userError) {
-        console.log("fetch users error:", JSON.stringify(userError, null, 2));
+      if (!userRes.ok || !userResult.ok) {
+        console.log("fetch users error:", userResult);
         return;
       }
+
+      const userData = ((userResult.users || []) as UserRow[]).filter(
+        (user) => user.position !== "owner"
+      );
 
       const { data: recordData, error: recordError } = await supabase
         .from("attendance_records")

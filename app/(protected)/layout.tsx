@@ -69,16 +69,23 @@ function ProtectedLayoutContent({
       const user = getUser();
       if (!isAdmin(user)) return;
 
-const { count, error } = await supabase
-  .from("attendance_records")
-  .select("id", { count: "exact", head: true })
-  .eq("status", "leave")
-  .eq("approval_status", "pending");
+      const alertKey = "baba_leave_pending_alert_shown";
+
+      if (sessionStorage.getItem(alertKey) === "true") return;
+
+      const { data, count, error } = await supabase
+        .from("attendance_records")
+        .select("id, work_date", { count: "exact" })
+        .eq("status", "leave")
+        .eq("approval_status", "pending")
+        .order("work_date", { ascending: true })
+        .limit(1);
 
       if (error) return;
       if (!count || count <= 0) return;
 
       leaveAlertShownRef.current = true;
+      sessionStorage.setItem(alertKey, "true");
 
       const confirmed = window.confirm(
         lang === "vi"
@@ -87,7 +94,14 @@ const { count, error } = await supabase
       );
 
       if (confirmed) {
-        router.push("/attendance/leave");
+        const targetDate = data?.[0]?.work_date;
+        const targetMonth = targetDate ? targetDate.slice(0, 7) : "";
+
+        router.push(
+          targetMonth
+            ? `/attendance/leave?month=${targetMonth}`
+            : "/attendance/leave"
+        );
       }
     };
 

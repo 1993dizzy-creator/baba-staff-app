@@ -446,35 +446,14 @@ function MyAttendance() {
 
     if (!user?.id) {
       alert(lang === "vi" ? "Không tìm thấy người dùng." : "사용자 정보를 찾을 수 없습니다.");
+      setIsSubmittingAttendance(false);
       return;
     }
-
-    const nowIso = new Date().toISOString();
-    const workDate = getVietnamWorkDate();
 
     let latitude: number | null = null;
     let longitude: number | null = null;
     let distanceM: number | null = null;
     let isLocationValid = false;
-
-    const saveCheckLog = async (success: boolean, failReason: string | null = null) => {
-      await supabase.from("attendance_check_logs").insert([
-        {
-          user_id: user.id,
-          user_name: user.name || user.full_name || "",
-          username: user.username || "",
-          work_date: workDate,
-          action: "check_in",
-          checked_at: nowIso,
-          latitude,
-          longitude,
-          distance_m: distanceM,
-          is_location_valid: isLocationValid,
-          success,
-          fail_reason: failReason,
-        },
-      ]);
-    };
 
     try {
       const position = await getCurrentPosition();
@@ -486,8 +465,6 @@ function MyAttendance() {
       isLocationValid = distanceM <= ALLOWED_DISTANCE_M;
 
       if (!isLocationValid) {
-        await saveCheckLog(false, "LOCATION_OUT_OF_RANGE");
-
         alert(
           lang === "vi"
             ? `Bạn đang ở ngoài phạm vi chấm công. Khoảng cách hiện tại: ${distanceM}m`
@@ -496,50 +473,35 @@ function MyAttendance() {
         return;
       }
 
+      const res = await fetch("/api/attendance/check-in", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          user_id: user.id,
+          user_name: user.name || user.full_name || "",
+          username: user.username || "",
+          language: lang,
+          latitude,
+          longitude,
+          distance_m: distanceM,
+          is_location_valid: isLocationValid,
+        }),
+      });
 
-      const { data, error } = await supabase
-        .from("attendance_records")
-        .insert([
-          {
-            user_id: user.id,
-            work_date: workDate,
-            status: "working",
-            check_in_at: nowIso,
-            late_minutes: calculateLateMinutes(user.work_start_time || "16:00"),
-            early_leave_minutes: 0,
-            work_minutes: 0,
-            check_in_latitude: latitude,
-            check_in_longitude: longitude,
-            check_in_distance_m: distanceM,
-            check_in_location_valid: isLocationValid,
-          },
-        ])
-        .select()
-        .single();
+      const result = await res.json();
 
-      if (error) {
-        if (error.code === "23505") {
-          await fetchTodayAttendance();
-          return;
-        }
-
-        console.log("check-in error:", JSON.stringify(error, null, 2));
-
-        await saveCheckLog(false, "ATTENDANCE_INSERT_FAILED");
-
-        alert(
-          lang === "vi"
-            ? `Không thể ghi nhận giờ vào.\n${error.message || ""}`
-            : `출근 기록에 실패했습니다.\n${error.message || ""}`
-        );
+      if (!res.ok || !result.ok) {
+        alert(result.message || (lang === "vi" ? "Không thể ghi nhận giờ vào." : "출근 기록에 실패했습니다."));
         return;
       }
 
-      await saveCheckLog(true);
+      const data = result.record;
 
       setAttendance((prev) => ({
         ...prev,
-        status: "working",
+        status: data.status || "working",
         checkInTime: data.check_in_at ? formatTimeForDisplay(data.check_in_at) : "-",
         checkOutTime: "-",
         workDuration: "00:00",
@@ -552,15 +514,12 @@ function MyAttendance() {
     } catch (error) {
       console.error(error);
 
-      await saveCheckLog(false, "GPS_FAILED");
-
       alert(
         lang === "vi"
           ? "Không thể lấy vị trí GPS. Vui lòng bật quyền vị trí."
           : "GPS 위치를 가져올 수 없습니다. 위치 권한을 허용해주세요."
       );
-    }
-    finally {
+    } finally {
       setIsSubmittingAttendance(false);
     }
   };
@@ -577,42 +536,21 @@ function MyAttendance() {
 
   const handleConfirmCheckOut = async (type: "done" | "early_leave") => {
     if (isSubmittingAttendance) return;
+
     setIsSubmittingAttendance(true);
+
     const user = getUser();
 
     if (!user?.id) {
       alert(lang === "vi" ? "Không tìm thấy người dùng." : "사용자 정보를 찾을 수 없습니다.");
+      setIsSubmittingAttendance(false);
       return;
     }
-
-    const nowIso = new Date().toISOString();
-    const workDate = getVietnamWorkDate();
 
     let latitude: number | null = null;
     let longitude: number | null = null;
     let distanceM: number | null = null;
     let isLocationValid = false;
-
-    const action = type === "early_leave" ? "early_leave" : "check_out";
-
-    const saveCheckLog = async (success: boolean, failReason: string | null = null) => {
-      await supabase.from("attendance_check_logs").insert([
-        {
-          user_id: user.id,
-          user_name: user.name || user.full_name || "",
-          username: user.username || "",
-          work_date: workDate,
-          action,
-          checked_at: nowIso,
-          latitude,
-          longitude,
-          distance_m: distanceM,
-          is_location_valid: isLocationValid,
-          success,
-          fail_reason: failReason,
-        },
-      ]);
-    };
 
     try {
       const position = await getCurrentPosition();
@@ -624,8 +562,6 @@ function MyAttendance() {
       isLocationValid = distanceM <= ALLOWED_DISTANCE_M;
 
       if (!isLocationValid) {
-        await saveCheckLog(false, "LOCATION_OUT_OF_RANGE");
-
         alert(
           lang === "vi"
             ? `Bạn đang ở ngoài phạm vi chấm công. Khoảng cách hiện tại: ${distanceM}m`
@@ -634,62 +570,35 @@ function MyAttendance() {
         return;
       }
 
+      const res = await fetch("/api/attendance/check-out", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          user_id: user.id,
+          user_name: user.name || user.full_name || "",
+          username: user.username || "",
+          language: lang,
+          latitude,
+          longitude,
+          distance_m: distanceM,
+          is_location_valid: isLocationValid,
+        }),
+      });
 
-      const { data: todayRecord, error: fetchError } = await supabase
-        .from("attendance_records")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("work_date", workDate)
-        .maybeSingle();
+      const result = await res.json();
 
-      if (fetchError || !todayRecord) {
-        console.error(fetchError);
-
-        await saveCheckLog(false, "ATTENDANCE_RECORD_NOT_FOUND");
-
-        alert(lang === "vi" ? "Không tìm thấy dữ liệu chấm công." : "출근 기록을 찾을 수 없습니다.");
+      if (!res.ok || !result.ok) {
+        alert(result.message || (lang === "vi" ? "Không thể ghi nhận giờ ra." : "퇴근 기록에 실패했습니다."));
         return;
       }
 
-      const workMinutes = calculateWorkMinutes(todayRecord.check_in_at, nowIso);
-      const calculatedEarlyLeaveMinutes = calculateEarlyLeaveMinutes(user.work_end_time || "01:00");
-      const checkOutStatus =
-        calculatedEarlyLeaveMinutes >= 90 ? "early_leave" : "done";
-
-      const earlyLeaveMinutes =
-        checkOutStatus === "early_leave" ? calculatedEarlyLeaveMinutes : 0;
-
-      const { data, error } = await supabase
-        .from("attendance_records")
-        .update({
-          status: checkOutStatus,
-          check_out_at: nowIso,
-          work_minutes: workMinutes,
-          early_leave_minutes: earlyLeaveMinutes,
-          check_out_latitude: latitude,
-          check_out_longitude: longitude,
-          check_out_distance_m: distanceM,
-          check_out_location_valid: isLocationValid,
-          updated_at: nowIso,
-        })
-        .eq("id", todayRecord.id)
-        .select()
-        .single();
-
-      if (error) {
-        console.error(error);
-
-        await saveCheckLog(false, "ATTENDANCE_UPDATE_FAILED");
-
-        alert(lang === "vi" ? "Không thể ghi nhận giờ ra." : "퇴근 기록에 실패했습니다.");
-        return;
-      }
-
-      await saveCheckLog(true);
+      const data = result.record;
 
       setAttendance((prev) => ({
         ...prev,
-        status: data.status || checkOutStatus,
+        status: data.status || "done",
         checkOutTime: data.check_out_at ? formatTimeForDisplay(data.check_out_at) : "-",
         workDuration: formatMinutesToHHMM(data.work_minutes || 0),
         earlyLeaveMinutes: data.early_leave_minutes || 0,
@@ -697,19 +606,15 @@ function MyAttendance() {
 
       await fetchMonthSummary();
       setCalendarRefreshKey((prev) => prev + 1);
-
     } catch (error) {
       console.error(error);
-
-      await saveCheckLog(false, "GPS_FAILED");
 
       alert(
         lang === "vi"
           ? "Không thể lấy vị trí GPS. Vui lòng bật quyền vị trí."
           : "GPS 위치를 가져올 수 없습니다. 위치 권한을 허용해주세요."
       );
-    }
-    finally {
+    } finally {
       setIsSubmittingAttendance(false);
     }
   };
@@ -1225,7 +1130,7 @@ function statusBadgeStyle(status: AttendanceStatus): CSSProperties {
     },
   };
 
-  const color = map[status];
+  const color = map[status] || map.before;
 
   return {
     display: "inline-flex",

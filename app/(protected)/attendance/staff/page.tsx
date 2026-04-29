@@ -255,15 +255,15 @@ export default function AttendanceStaffPage() {
     setIsLoading(true);
 
     try {
-      const { data: userData, error: userError } = await supabase
-        .from("users")
-        .select("id, name, username, role, part, position, is_active, work_start_time, work_end_time")
-        .eq("is_active", true)
+      const userRes = await fetch("/api/attendance/users");
+      const userResult = await userRes.json();
 
-      if (userError) {
-        console.log("fetch users error:", JSON.stringify(userError, null, 2));
+      if (!userRes.ok || !userResult.ok) {
+        console.log("fetch users error:", userResult);
         return;
       }
+
+      const userData = userResult.users || [];
 
       const { data: recordData, error: recordError } = await supabase
         .from("attendance_records")
@@ -275,7 +275,7 @@ export default function AttendanceStaffPage() {
         return;
       }
 
-      setUsers((userData || []).filter((user) => !isAdmin(user)));
+      setUsers((userData as UserRow[]).filter((user) => !isAdmin(user)));
       setRecords(recordData || []);
     } finally {
       setIsLoading(false);
@@ -461,352 +461,352 @@ export default function AttendanceStaffPage() {
     await fetchList();
   };
 
- 
 
-const recordMap = useMemo(() => {
-  const map = new Map<string, AttendanceRecord>();
 
-  records.forEach((record) => {
-    const prev = map.get(record.user_id);
+  const recordMap = useMemo(() => {
+    const map = new Map<string, AttendanceRecord>();
 
-    if (!prev) {
-      map.set(record.user_id, record);
-      return;
-    }
+    records.forEach((record) => {
+      const prev = map.get(record.user_id);
 
-    if (isApprovedLeave(record)) {
-      map.set(record.user_id, record);
-    }
-  });
+      if (!prev) {
+        map.set(record.user_id, record);
+        return;
+      }
 
-  return map;
-}, [records]);
-
-const groupedUsers = useMemo(() => {
-  const groupMap = new Map<string, UserRow[]>();
-
-  users.forEach((user) => {
-    const partKey = getPartKey(user.part);
-    const prev = groupMap.get(partKey) || [];
-    groupMap.set(partKey, [...prev, user]);
-  });
-
-  return Array.from(groupMap.entries())
-    .map(([part, groupUsers]) => ({
-      part,
-      meta: getPartMeta(part),
-      users: groupUsers.sort((a, b) => {
-        const rankDiff = getPositionRank(a.position) - getPositionRank(b.position);
-        if (rankDiff !== 0) return rankDiff;
-        return a.name.localeCompare(b.name);
-      }),
-    }))
-    .sort((a, b) => {
-      const rankDiff = a.meta.rank - b.meta.rank;
-      if (rankDiff !== 0) return rankDiff;
-      return a.part.localeCompare(b.part);
+      if (isApprovedLeave(record)) {
+        map.set(record.user_id, record);
+      }
     });
-}, [users]);
 
-return (
-  <Container noPaddingTop>
-    <SubNav tabs={tabs} />
+    return map;
+  }, [records]);
 
-    <div style={sectionStyle}>
-      {isLoading ? (
-        <div style={emptyStyle}>{t.loading}</div>
-      ) : groupedUsers.length === 0 ? (
-        <div style={emptyStyle}>{t.empty}</div>
-      ) : (
-        groupedUsers.map((group) => (
-          <div key={group.part} style={partGroupStyle}>
-            <div
-              style={{
-                ...partTitleStyle,
-                color: group.meta.color,
-                background: group.meta.bg,
-                borderLeft: `4px solid ${group.meta.border}`,
-              }}
-            >
-              <span>{group.meta.emoji}</span>
-              <span>
-                {t.parts?.[group.part as keyof typeof t.parts] || group.meta.label}
-              </span>
-              <span style={partCountStyle}>{group.users.length}</span>
-            </div>
+  const groupedUsers = useMemo(() => {
+    const groupMap = new Map<string, UserRow[]>();
 
-            <div style={partListStyle}>
-              {group.users.map((user) => {
-                const record = recordMap.get(user.id);
-                const statusColor = getStatusColor(record);
-                const isExpanded = expandedUserId === user.id;
+    users.forEach((user) => {
+      const partKey = getPartKey(user.part);
+      const prev = groupMap.get(partKey) || [];
+      groupMap.set(partKey, [...prev, user]);
+    });
 
-                return (
-                  <div key={user.id} style={staffCardStyle}>
-                    <button
-                      type="button"
-                      onClick={() => setExpandedUserId(isExpanded ? null : user.id)}
-                      style={staffSummaryButtonStyle}
-                    >
-                      <div style={staffLeftStyle}>
-                        <span style={staffNameStyle}>{user.name}</span>
-                        <span style={staffMetaStyle}>
-                          {user.position
-                            ? t.positions?.[user.position as keyof typeof t.positions] || user.position
-                            : user.username}
-                        </span>
-                      </div>
+    return Array.from(groupMap.entries())
+      .map(([part, groupUsers]) => ({
+        part,
+        meta: getPartMeta(part),
+        users: groupUsers.sort((a, b) => {
+          const rankDiff = getPositionRank(a.position) - getPositionRank(b.position);
+          if (rankDiff !== 0) return rankDiff;
+          return a.name.localeCompare(b.name);
+        }),
+      }))
+      .sort((a, b) => {
+        const rankDiff = a.meta.rank - b.meta.rank;
+        if (rankDiff !== 0) return rankDiff;
+        return a.part.localeCompare(b.part);
+      });
+  }, [users]);
 
-                      <div style={staffRightStyle}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span
-                            style={{
-                              ...miniBadgeStyle,
-                              borderColor: statusColor,
-                              color: statusColor,
-                            }}
-                          >
-                            {getStatusText(t, record)}
+  return (
+    <Container noPaddingTop>
+      <SubNav tabs={tabs} />
+
+      <div style={sectionStyle}>
+        {isLoading ? (
+          <div style={emptyStyle}>{t.loading}</div>
+        ) : groupedUsers.length === 0 ? (
+          <div style={emptyStyle}>{t.empty}</div>
+        ) : (
+          groupedUsers.map((group) => (
+            <div key={group.part} style={partGroupStyle}>
+              <div
+                style={{
+                  ...partTitleStyle,
+                  color: group.meta.color,
+                  background: group.meta.bg,
+                  borderLeft: `4px solid ${group.meta.border}`,
+                }}
+              >
+                <span>{group.meta.emoji}</span>
+                <span>
+                  {t.parts?.[group.part as keyof typeof t.parts] || group.meta.label}
+                </span>
+                <span style={partCountStyle}>{group.users.length}</span>
+              </div>
+
+              <div style={partListStyle}>
+                {group.users.map((user) => {
+                  const record = recordMap.get(user.id);
+                  const statusColor = getStatusColor(record);
+                  const isExpanded = expandedUserId === user.id;
+
+                  return (
+                    <div key={user.id} style={staffCardStyle}>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedUserId(isExpanded ? null : user.id)}
+                        style={staffSummaryButtonStyle}
+                      >
+                        <div style={staffLeftStyle}>
+                          <span style={staffNameStyle}>{user.name}</span>
+                          <span style={staffMetaStyle}>
+                            {user.position
+                              ? t.positions?.[user.position as keyof typeof t.positions] || user.position
+                              : user.username}
                           </span>
+                        </div>
 
-                          {Number(record?.late_minutes || 0) > 0 && (
+                        <div style={staffRightStyle}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <span
                               style={{
                                 ...miniBadgeStyle,
-                                borderColor: "#f59e0b",
-                                color: "#f59e0b",
+                                borderColor: statusColor,
+                                color: statusColor,
                               }}
                             >
-                              {t.late}
+                              {getStatusText(t, record)}
                             </span>
-                          )}
-                        </div>
 
-                        <span style={expandIconStyle}>{isExpanded ? "⌃" : "⌄"}</span>
-                      </div>
-                    </button>
-
-                    {isExpanded && (
-                      <>
-                        <div style={detailGridStyle}>
-                          <InfoBox label={t.checkIn} value={formatTime(record?.check_in_at || null)} />
-                          <InfoBox label={t.checkOut} value={formatTime(record?.check_out_at || null)} />
-                          <InfoBox label={t.workTime} value={formatWorkMinutes(record?.work_minutes)} />
-                          <InfoBox
-                            label={t.late}
-                            value={`${Number(record?.late_minutes || 0)}${t.minute}`}
-                          />
-                          <InfoBox
-                            label={t.earlyLeave}
-                            value={`${Number(record?.early_leave_minutes || 0)}${t.minute}`}
-                          />
-                        </div>
-
-                        {canManage && (
-                          <div
-                            style={{
-                              marginTop: 8,
-                              padding: 8,
-                              borderRadius: 12,
-                              border: "1px solid #d1d5db",
-                              background: "#ffffff",
-                              display: "grid",
-                              gridTemplateColumns: "repeat(3, 1fr)",
-                              gap: 6,
-                            }}
-                          >
-                            <button
-                              type="button"
-                              style={{
-                                padding: "7px 6px",
-                                borderRadius: 9,
-                                border: "1px solid #bfdbfe",
-                                background: "#eff6ff",
-                                color: "#1d4ed8",
-                                fontSize: 12,
-                                fontWeight: 700,
-                                cursor: "pointer",
-                              }}
-                              onClick={() =>
-                                setManualModal({
-                                  type: "check_in",
-                                  user,
-                                  mode: "standard",
-                                  timeValue: user.work_start_time || "16:00",
-                                })
-                              }
-                            >
-                              {t.updateCheckIn}
-                            </button>
-
-                            <button
-                              type="button"
-                              style={{
-                                padding: "7px 6px",
-                                borderRadius: 9,
-                                border: "1px solid #bbf7d0",
-                                background: "#f0fdf4",
-                                color: "#15803d",
-                                fontSize: 12,
-                                fontWeight: 700,
-                                cursor: "pointer",
-                              }}
-                              onClick={() =>
-                                setManualModal({
-                                  type: "check_out",
-                                  user,
-                                  mode: "standard",
-                                  timeValue: user.work_end_time || "01:00",
-                                })
-                              }
-                            >
-                              {t.updateCheckOut}
-                            </button>
-
-                            <button
-                              type="button"
-                              style={{
-                                padding: "7px 6px",
-                                borderRadius: 9,
-                                border: "1px solid #fecaca",
-                                background: "#fef2f2",
-                                color: "#dc2626",
-                                fontSize: 12,
-                                fontWeight: 700,
-                                cursor: "pointer",
-                              }}
-                              onClick={() => handleSetLeave(user, record)}
-                            >
-                              {t.statusLeave}
-                            </button>
+                            {Number(record?.late_minutes || 0) > 0 && (
+                              <span
+                                style={{
+                                  ...miniBadgeStyle,
+                                  borderColor: "#f59e0b",
+                                  color: "#f59e0b",
+                                }}
+                              >
+                                {t.late}
+                              </span>
+                            )}
                           </div>
-                        )}
-                      </>
-                    )}
 
-                  </div>
-                );
-              })}
+                          <span style={expandIconStyle}>{isExpanded ? "⌃" : "⌄"}</span>
+                        </div>
+                      </button>
+
+                      {isExpanded && (
+                        <>
+                          <div style={detailGridStyle}>
+                            <InfoBox label={t.checkIn} value={formatTime(record?.check_in_at || null)} />
+                            <InfoBox label={t.checkOut} value={formatTime(record?.check_out_at || null)} />
+                            <InfoBox label={t.workTime} value={formatWorkMinutes(record?.work_minutes)} />
+                            <InfoBox
+                              label={t.late}
+                              value={`${Number(record?.late_minutes || 0)}${t.minute}`}
+                            />
+                            <InfoBox
+                              label={t.earlyLeave}
+                              value={`${Number(record?.early_leave_minutes || 0)}${t.minute}`}
+                            />
+                          </div>
+
+                          {canManage && (
+                            <div
+                              style={{
+                                marginTop: 8,
+                                padding: 8,
+                                borderRadius: 12,
+                                border: "1px solid #d1d5db",
+                                background: "#ffffff",
+                                display: "grid",
+                                gridTemplateColumns: "repeat(3, 1fr)",
+                                gap: 6,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                style={{
+                                  padding: "7px 6px",
+                                  borderRadius: 9,
+                                  border: "1px solid #bfdbfe",
+                                  background: "#eff6ff",
+                                  color: "#1d4ed8",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                }}
+                                onClick={() =>
+                                  setManualModal({
+                                    type: "check_in",
+                                    user,
+                                    mode: "standard",
+                                    timeValue: user.work_start_time || "16:00",
+                                  })
+                                }
+                              >
+                                {t.updateCheckIn}
+                              </button>
+
+                              <button
+                                type="button"
+                                style={{
+                                  padding: "7px 6px",
+                                  borderRadius: 9,
+                                  border: "1px solid #bbf7d0",
+                                  background: "#f0fdf4",
+                                  color: "#15803d",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                }}
+                                onClick={() =>
+                                  setManualModal({
+                                    type: "check_out",
+                                    user,
+                                    mode: "standard",
+                                    timeValue: user.work_end_time || "01:00",
+                                  })
+                                }
+                              >
+                                {t.updateCheckOut}
+                              </button>
+
+                              <button
+                                type="button"
+                                style={{
+                                  padding: "7px 6px",
+                                  borderRadius: 9,
+                                  border: "1px solid #fecaca",
+                                  background: "#fef2f2",
+                                  color: "#dc2626",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                }}
+                                onClick={() => handleSetLeave(user, record)}
+                              >
+                                {t.statusLeave}
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))
-      )}
-    </div>
-
-    {manualModal && (
-      <div style={modalOverlayStyle}>
-        <div style={modalBoxStyle}>
-          <div style={modalTitleStyle}>
-            {manualModal.user.name}{" "}
-            {manualModal.type === "check_in" ? t.checkInProcess : t.checkOutProcess}
-          </div>
-
-          {manualModal.mode === "standard" ? (
-            <>
-              <div style={modalOptionGridStyle}>
-                <button
-                  type="button"
-                  style={{
-                    ...modalOptionButtonStyle,
-                    borderColor: "#2563eb",
-                    background: "#eff6ff",
-                    color: "#1d4ed8",
-                  }}
-                  onClick={() => {
-                    if (manualModal.type === "check_in") {
-                      handleForceCheckIn(manualModal.user, manualModal.timeValue);
-                    } else {
-                      handleForceCheckOut(manualModal.user, manualModal.timeValue);
-                    }
-                  }}
-                >
-                  {manualModal.type === "check_in" ? t.standardCheckIn : t.standardCheckOut}
-                </button>
-
-                <button
-                  type="button"
-                  style={modalOptionButtonStyle}
-                  onClick={() =>
-                    setManualModal((prev) =>
-                      prev
-                        ? {
-                          ...prev,
-                          mode: "manual",
-                          timeValue:
-                            prev.type === "check_in"
-                              ? recordMap.get(prev.user.id)?.check_in_at
-                                ? formatTime(recordMap.get(prev.user.id)?.check_in_at || null)
-                                : prev.user.work_start_time || "16:00"
-                              : recordMap.get(prev.user.id)?.check_out_at
-                                ? formatTime(recordMap.get(prev.user.id)?.check_out_at || null)
-                                : prev.user.work_end_time || "01:00",
-                        }
-                        : prev
-                    )
-                  }
-                >
-                  {t.manualInput}
-                </button>
-              </div>
-
-              <button
-                type="button"
-                style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
-                onClick={() => setManualModal(null)}
-              >
-                {t.cancel}
-              </button>
-            </>
-          ) : (
-            <>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr auto",
-                  gap: 8,
-                  alignItems: "center",
-                }}
-              >
-                <input
-                  type="time"
-                  value={manualModal.timeValue}
-                  onChange={(e) =>
-                    setManualModal((prev) =>
-                      prev ? { ...prev, timeValue: e.target.value } : prev
-                    )
-                  }
-                  style={modalInputStyle}
-                />
-
-                <button
-                  type="button"
-                  style={modalSubmitButtonStyle}
-                  onClick={() => {
-                    if (manualModal.type === "check_in") {
-                      handleForceCheckIn(manualModal.user, manualModal.timeValue);
-                    } else {
-                      handleForceCheckOut(manualModal.user, manualModal.timeValue);
-                    }
-                  }}
-                >
-                  {t.submit}
-                </button>
-              </div>
-
-              <button
-                type="button"
-                style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
-                onClick={() => setManualModal(null)}
-              >
-                {t.cancel}
-              </button>
-            </>
-          )}
-        </div>
+          ))
+        )}
       </div>
-    )}
-  </Container>
-);
+
+      {manualModal && (
+        <div style={modalOverlayStyle}>
+          <div style={modalBoxStyle}>
+            <div style={modalTitleStyle}>
+              {manualModal.user.name}{" "}
+              {manualModal.type === "check_in" ? t.checkInProcess : t.checkOutProcess}
+            </div>
+
+            {manualModal.mode === "standard" ? (
+              <>
+                <div style={modalOptionGridStyle}>
+                  <button
+                    type="button"
+                    style={{
+                      ...modalOptionButtonStyle,
+                      borderColor: "#2563eb",
+                      background: "#eff6ff",
+                      color: "#1d4ed8",
+                    }}
+                    onClick={() => {
+                      if (manualModal.type === "check_in") {
+                        handleForceCheckIn(manualModal.user, manualModal.timeValue);
+                      } else {
+                        handleForceCheckOut(manualModal.user, manualModal.timeValue);
+                      }
+                    }}
+                  >
+                    {manualModal.type === "check_in" ? t.standardCheckIn : t.standardCheckOut}
+                  </button>
+
+                  <button
+                    type="button"
+                    style={modalOptionButtonStyle}
+                    onClick={() =>
+                      setManualModal((prev) =>
+                        prev
+                          ? {
+                            ...prev,
+                            mode: "manual",
+                            timeValue:
+                              prev.type === "check_in"
+                                ? recordMap.get(prev.user.id)?.check_in_at
+                                  ? formatTime(recordMap.get(prev.user.id)?.check_in_at || null)
+                                  : prev.user.work_start_time || "16:00"
+                                : recordMap.get(prev.user.id)?.check_out_at
+                                  ? formatTime(recordMap.get(prev.user.id)?.check_out_at || null)
+                                  : prev.user.work_end_time || "01:00",
+                          }
+                          : prev
+                      )
+                    }
+                  >
+                    {t.manualInput}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
+                  onClick={() => setManualModal(null)}
+                >
+                  {t.cancel}
+                </button>
+              </>
+            ) : (
+              <>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto",
+                    gap: 8,
+                    alignItems: "center",
+                  }}
+                >
+                  <input
+                    type="time"
+                    value={manualModal.timeValue}
+                    onChange={(e) =>
+                      setManualModal((prev) =>
+                        prev ? { ...prev, timeValue: e.target.value } : prev
+                      )
+                    }
+                    style={modalInputStyle}
+                  />
+
+                  <button
+                    type="button"
+                    style={modalSubmitButtonStyle}
+                    onClick={() => {
+                      if (manualModal.type === "check_in") {
+                        handleForceCheckIn(manualModal.user, manualModal.timeValue);
+                      } else {
+                        handleForceCheckOut(manualModal.user, manualModal.timeValue);
+                      }
+                    }}
+                  >
+                    {t.submit}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
+                  onClick={() => setManualModal(null)}
+                >
+                  {t.cancel}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </Container>
+  );
 }
 
 function InfoBox({ label, value }: { label: string; value: string }) {

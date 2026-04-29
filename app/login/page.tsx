@@ -1,12 +1,13 @@
 "use client";
 
+import { useLanguage } from "@/lib/language-context";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase/client";
 import Image from "next/image";
 import { ui } from "@/lib/styles/ui";
 
 export default function LoginPage() {
+    const { lang } = useLanguage();
     const router = useRouter();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
@@ -22,21 +23,27 @@ export default function LoginPage() {
         if (loading) return;
         setLoading(true);
 
-        const { data, error } = await supabase
-            .from("users")
-            .select("*")
-            .eq("username", username)
-            .eq("password", password)
-            .eq("is_active", true)
-            .single();
+        const res = await fetch("/api/login", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                username,
+                password,
+                lang, // 👈 이거 추가
+            }),
+        });
 
-        if (error || !data) {
+        const result = await res.json();
+
+        if (!res.ok || !result.ok) {
             setLoading(false);
-            alert("Login failed");
+            alert(result.message || "Login failed");
             return;
         }
 
-        localStorage.setItem("baba_user", JSON.stringify(data));
+        localStorage.setItem("baba_user", JSON.stringify(result.user));
         router.push("/inventory");
     };
 
