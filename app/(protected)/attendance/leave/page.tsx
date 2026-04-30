@@ -637,21 +637,35 @@ export default function AttendanceLeavePage() {
                         </span>
 
                         {canManageLeave && (
-                          <button
-                            type="button"
-                            style={isApproved ? cancelApprovalButtonStyle : approveButtonStyle}
-                            onClick={() =>
-                              isApproved ? handleCancelApproval(record.id) : handleApproveLeave(record.id)
-                            }
-                          >
-                            {isApproved
-                              ? lang === "vi"
-                                ? "Hủy duyệt"
-                                : "승인취소"
-                              : lang === "vi"
-                                ? "Duyệt"
-                                : "승인"}
-                          </button>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            {!isApproved && (
+                              <button
+                                type="button"
+                                style={approveButtonStyle}
+                                onClick={() => handleApproveLeave(record.id)}
+                              >
+                                {lang === "vi" ? "Duyệt" : "승인"}
+                              </button>
+                            )}
+
+                            {isApproved ? (
+                              <button
+                                type="button"
+                                style={cancelApprovalButtonStyle}
+                                onClick={() => handleCancelApproval(record.id)}
+                              >
+                                {lang === "vi" ? "Hủy duyệt" : "승인취소"}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                style={cancelApprovalButtonStyle}
+                                onClick={() => handleCancelPendingLeave(record.id)}
+                              >
+                                {lang === "vi" ? "Hủy đơn" : "신청취소"}
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
