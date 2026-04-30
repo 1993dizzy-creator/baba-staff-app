@@ -7,7 +7,6 @@ import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
-import { supabase } from "@/lib/supabase/client";
 import { attendanceLeaveText } from "@/lib/text/attendance-leave";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { useSearchParams } from "next/navigation";
@@ -246,22 +245,22 @@ export default function AttendanceLeavePage() {
       const ok = confirm(lang === "vi" ? "Hủy ngày nghỉ này?" : "이 휴무 신청을 취소할까요?");
       if (!ok) return;
 
-      const { data, error } = await supabase
-        .from("attendance_records")
-        .delete()
-        .eq("id", alreadyRequested.id)
-        .eq("status", "leave")
-        .select("id");
+      const res = await fetch("/api/attendance/leave", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "cancel",
+          record_id: alreadyRequested.id,
+          language: lang,
+        }),
+      });
 
-      console.log("leave cancel result:", { data, error });
+      const result = await res.json();
 
-      if (error) {
-        alert(error.message);
-        return;
-      }
-
-      if (!data || data.length === 0) {
-        alert("삭제된 휴무 신청이 없습니다. 조건 불일치 또는 권한 문제입니다.");
+      if (!res.ok || !result.ok) {
+        alert(result.message || (lang === "vi" ? "Đã xảy ra lỗi." : "오류가 발생했습니다."));
         return;
       }
 
@@ -285,16 +284,24 @@ export default function AttendanceLeavePage() {
       reason = input.trim();
     }
 
-    const { error } = await supabase.from("attendance_records").insert({
-      user_id: currentUser.id,
-      work_date: selectedDate,
-      status: "leave",
-      note: reason,
-      approval_status: "pending",
+    const res = await fetch("/api/attendance/leave", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "request",
+        user_id: currentUser.id,
+        work_date: selectedDate,
+        note: reason,
+        language: lang,
+      }),
     });
 
-    if (error) {
-      alert(error.message);
+    const result = await res.json();
+
+    if (!res.ok || !result.ok) {
+      alert(result.message || (lang === "vi" ? "Đã xảy ra lỗi." : "오류가 발생했습니다."));
       return;
     }
 
@@ -304,17 +311,23 @@ export default function AttendanceLeavePage() {
   const handleApproveLeave = async (recordId: number) => {
     if (!canManageLeave) return;
 
-    const { error } = await supabase
-      .from("attendance_records")
-      .update({
-        approval_status: "approved",
-        approved_by: currentUser?.name || currentUser?.username || null,
-        approved_at: new Date().toISOString(),
-      })
-      .eq("id", recordId);
+    const res = await fetch("/api/attendance/leave-admin", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "approve",
+        record_id: recordId,
+        admin_name: currentUser?.name || currentUser?.username || null,
+        language: lang,
+      }),
+    });
 
-    if (error) {
-      alert(error.message);
+    const result = await res.json();
+
+    if (!res.ok || !result.ok) {
+      alert(result.message || (lang === "vi" ? "Đã xảy ra lỗi." : "오류가 발생했습니다."));
       return;
     }
 
@@ -324,26 +337,22 @@ export default function AttendanceLeavePage() {
   const handleCancelApproval = async (recordId: number) => {
     if (!canManageLeave) return;
 
-    const { data, error } = await supabase
-      .from("attendance_records")
-      .update({
-        approval_status: "pending",
-        approved_by: null,
-        approved_at: null,
-      })
-      .eq("id", recordId)
-      .eq("status", "leave")
-      .select("id, approval_status, approved_by, approved_at");
+    const res = await fetch("/api/attendance/leave-admin", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "cancel-approval",
+        record_id: recordId,
+        language: lang,
+      }),
+    });
 
-    console.log("cancel approval result:", { data, error });
+    const result = await res.json();
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    if (!data || data.length === 0) {
-      alert("승인취소된 데이터가 없습니다. 조건 불일치 또는 권한 문제입니다.");
+    if (!res.ok || !result.ok) {
+      alert(result.message || (lang === "vi" ? "Đã xảy ra lỗi." : "오류가 발생했습니다."));
       return;
     }
 
@@ -351,7 +360,6 @@ export default function AttendanceLeavePage() {
   };
 
   const handleCancelPendingLeave = async (recordId: number) => {
-
     const ok = confirm(
       lang === "vi"
         ? "Hủy yêu cầu nghỉ này?"
@@ -359,22 +367,22 @@ export default function AttendanceLeavePage() {
     );
     if (!ok) return;
 
-    const { data, error } = await supabase
-      .from("attendance_records")
-      .delete()
-      .eq("id", recordId)
-      .eq("status", "leave")
-      .select("id");
+    const res = await fetch("/api/attendance/leave", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "cancel",
+        record_id: recordId,
+        language: lang,
+      }),
+    });
 
-    console.log("cancel pending leave result:", { data, error });
+    const result = await res.json();
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    if (!data || data.length === 0) {
-      alert("취소된 휴무 신청이 없습니다. 조건 불일치 또는 권한 문제입니다.");
+    if (!res.ok || !result.ok) {
+      alert(result.message || (lang === "vi" ? "Đã xảy ra lỗi." : "오류가 발생했습니다."));
       return;
     }
 
@@ -628,7 +636,7 @@ export default function AttendanceLeavePage() {
                               : "승인대기"}
                         </span>
 
-                        {canManageLeave ? (
+                        {canManageLeave && (
                           <button
                             type="button"
                             style={isApproved ? cancelApprovalButtonStyle : approveButtonStyle}
@@ -638,23 +646,12 @@ export default function AttendanceLeavePage() {
                           >
                             {isApproved
                               ? lang === "vi"
-                                ? "Hủy"
-                                : "취소"
+                                ? "Hủy duyệt"
+                                : "승인취소"
                               : lang === "vi"
                                 ? "Duyệt"
                                 : "승인"}
                           </button>
-                        ) : (
-                          normalizeId(currentUser?.id) === normalizeId(record.user_id) &&
-                          !isApproved && (
-                            <button
-                              type="button"
-                              style={cancelApprovalButtonStyle}
-                              onClick={() => handleCancelPendingLeave(record.id)}
-                            >
-                              {lang === "vi" ? "Hủy" : "취소"}
-                            </button>
-                          )
                         )}
                       </div>
                     </div>

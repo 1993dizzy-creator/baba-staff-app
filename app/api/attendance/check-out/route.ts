@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import {
+  getMinutesDiff,
+  getEarlyLeaveMinutes,
+  getStatus,
+} from "@/lib/attendance/utils";
 
 const messages = {
   ko: {
@@ -58,10 +63,15 @@ function getTodayVietnamDate() {
 }
 
 function diffMinutes(startIso: string, endIso: string) {
-  return Math.max(
-    0,
-    Math.floor((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000)
+  let diff = Math.floor(
+    (new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000
   );
+
+  if (diff < 0) {
+    diff += 24 * 60;
+  }
+
+  return Math.max(0, diff);
 }
 
 export async function POST(req: Request) {
@@ -124,7 +134,10 @@ export async function POST(req: Request) {
       .from("attendance_records")
       .select("*")
       .eq("user_id", user_id)
-      .eq("work_date", workDate)
+      .not("check_in_at", "is", null)
+      .is("check_out_at", null)
+      .order("check_in_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (existingError) {
@@ -149,36 +162,23 @@ export async function POST(req: Request) {
       );
     }
 
-    const workMinutes = diffMinutes(existing.check_in_at, nowIso);
+    const workMinutes = getMinutesDiff(existing.check_in_at, nowIso);
 
-    let earlyLeaveMinutes = 0;
+    const earlyLeaveMinutes = getEarlyLeaveMinutes(
+      existing.check_in_at,
+      nowIso,
+      user.work_end_time
+    );
 
-    if (user.work_end_time) {
-      const standardEnd = new Date(`${workDate}T${user.work_end_time}:00+07:00`);
-      const now = new Date(nowIso);
-
-      earlyLeaveMinutes = Math.max(
-        0,
-        Math.floor((standardEnd.getTime() - now.getTime()) / 60000)
-      );
-    }
-
-    const status = earlyLeaveMinutes >= 90 ? "early_leave" : "done";
-
-    if (status === "done") {
-      earlyLeaveMinutes = 0;
-    }
+    const status = getStatus(earlyLeaveMinutes);
 
     const { data, error } = await supabaseServer
       .from("attendance_records")
       .update({
-        status,
         check_out_at: nowIso,
+        status,
         work_minutes: workMinutes,
         early_leave_minutes: earlyLeaveMinutes,
-        check_out_latitude: latitude ?? null,
-        check_out_longitude: longitude ?? null,
-        check_out_distance_m: distance_m ?? null,
         updated_at: nowIso,
       })
       .eq("id", existing.id)
