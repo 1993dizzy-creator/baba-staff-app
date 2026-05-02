@@ -6,7 +6,6 @@ import {
   getLateMinutes,
   getEarlyLeaveMinutes,
   getMinutesDiff,
-  getStatus,
 } from "@/lib/attendance/utils";
 
 type Action = "force_check_in" | "force_check_out" | "set_leave";
@@ -169,15 +168,21 @@ export async function POST(req: Request) {
         ? getMinutesDiff(checkInIso, checkOutIso)
         : existing?.work_minutes ?? 0;
 
-      const earlyLeaveMinutes = checkOutIso
-        ? getEarlyLeaveMinutes(
+      let earlyLeaveMinutes = existing?.early_leave_minutes ?? 0;
+      let status = "working";
+
+      if (checkOutIso) {
+        const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
           checkInIso,
           checkOutIso,
           user.work_end_time
-        )
-        : existing?.early_leave_minutes ?? 0;
+        );
 
-      const status = checkOutIso ? getStatus(earlyLeaveMinutes) : "working";
+        status = rawEarlyLeaveMinutes >= 90 ? "early_leave" : "done";
+
+        earlyLeaveMinutes =
+          status === "early_leave" ? rawEarlyLeaveMinutes : 0;
+      }
 
       const payload = {
         user_id,
@@ -240,14 +245,18 @@ export async function POST(req: Request) {
 
       const checkOutIso = makeCheckOutIso(work_date, time, checkInIso);
 
-      const earlyLeaveMinutes = getEarlyLeaveMinutes(
+      const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
         checkInIso,
         checkOutIso,
         user.work_end_time
       );
 
       const workMinutes = getMinutesDiff(checkInIso, checkOutIso);
-      const status = getStatus(earlyLeaveMinutes);
+
+      const status = rawEarlyLeaveMinutes >= 90 ? "early_leave" : "done";
+
+      const earlyLeaveMinutes =
+        status === "early_leave" ? rawEarlyLeaveMinutes : 0;
 
       const { data, error } = await supabaseServer
         .from("attendance_records")

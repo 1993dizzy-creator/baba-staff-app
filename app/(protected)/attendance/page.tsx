@@ -187,7 +187,10 @@ function calculateMonthSummary(records: any[]) {
   );
 
   const totalEarlyLeaveMinutes = records.reduce(
-    (sum, record) => sum + Number(record.early_leave_minutes || 0),
+    (sum, record) =>
+      record.status === "early_leave"
+        ? sum + Number(record.early_leave_minutes || 0)
+        : sum,
     0
   );
 
@@ -204,9 +207,7 @@ function calculateMonthSummary(records: any[]) {
     lateMinutes: totalLateMinutes,
 
     earlyLeaveCount: records.filter(
-      (r) =>
-        r.status === "early_leave" ||
-        Number(r.early_leave_minutes || 0) > 0
+      (r) => r.status === "early_leave"
     ).length,
 
     earlyLeaveMinutes: totalEarlyLeaveMinutes,

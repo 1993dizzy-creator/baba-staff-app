@@ -3,7 +3,6 @@ import { supabaseServer } from "@/lib/supabase/server";
 import {
   getMinutesDiff,
   getEarlyLeaveMinutes,
-  getStatus,
 } from "@/lib/attendance/utils";
 
 const messages = {
@@ -164,13 +163,16 @@ export async function POST(req: Request) {
 
     const workMinutes = getMinutesDiff(existing.check_in_at, nowIso);
 
-    const earlyLeaveMinutes = getEarlyLeaveMinutes(
+    const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
       existing.check_in_at,
       nowIso,
       user.work_end_time
     );
 
-    const status = getStatus(earlyLeaveMinutes);
+    const status = rawEarlyLeaveMinutes >= 90 ? "early_leave" : "done";
+
+    const earlyLeaveMinutes =
+      status === "early_leave" ? rawEarlyLeaveMinutes : 0;
 
     const { data, error } = await supabaseServer
       .from("attendance_records")

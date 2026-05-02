@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase/client";
 import { useLanguage } from "@/lib/language-context";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
@@ -28,6 +27,11 @@ type SnapshotItem = {
     quantity: number | null;
     unit: string | null;
     code: string | null;
+    prev_quantity: number | null;
+    change_quantity: number | null;
+    purchase_price: number | null;
+    supplier: string | null;
+    total_purchase_price: number | null;
 };
 
 const PART_VALUES = ["kitchen", "hall", "bar", "etc"] as const;
@@ -78,6 +82,8 @@ export default function InventorySnapshotsPage() {
     const [categoryFilter, setCategoryFilter] = useState("all");
     const [showChangedOnly, setShowChangedOnly] = useState(false);
     const [calendarMonth, setCalendarMonth] = useState("");
+    const [purchaseBatchMap, setPurchaseBatchMap] = useState<Record<number, boolean>>({});
+    const [supplierTab, setSupplierTab] = useState("all");
 
     const getPartLabel = (value: string | null) => {
         switch (value) {
@@ -122,80 +128,62 @@ export default function InventorySnapshotsPage() {
         return num.toFixed(2).replace(/\.?0+$/, "");
     };
 
-    const fetchBatches = async () => {
-        setLoadingBatches(true);
+ const fetchBatches = async () => {
+    setLoadingBatches(true);
 
-        const { data, error } = await supabase
-            .from("inventory_snapshot_batches")
-            .select("id, snapshot_date")
-            .order("snapshot_date", { ascending: false });
+    try {
+        const res = await fetch("/api/inventory/snapshot/list");
+        const json = await res.json();
 
-        if (error) {
-            console.error(error);
+        if (!res.ok || !json.ok) {
+            console.error(json.message);
             setBatchList([]);
             setSelectedBatchId(null);
             setLoadingBatches(false);
             return;
         }
 
-        const nextBatches = (data || []) as SnapshotBatch[];
+        const nextBatches = (json.batches || []) as SnapshotBatch[];
+
         setBatchList(nextBatches);
         setSelectedBatchId(nextBatches[0]?.id ?? null);
+        setPurchaseBatchMap(json.purchaseBatchMap || {});
+
+        if (nextBatches[0]?.snapshot_date) {
+            setCalendarMonth(nextBatches[0].snapshot_date.slice(0, 7));
+        }
+    } catch (error) {
+        console.error(error);
+        setBatchList([]);
+        setSelectedBatchId(null);
+    } finally {
         setLoadingBatches(false);
-    };
+    }
+};
 
-    const fetchSnapshotItems = async (batchId: number) => {
-        setLoadingItems(true);
+const fetchSnapshotItems = async (batchId: number) => {
+    setLoadingItems(true);
 
-        const { data, error } = await supabase
-            .from("inventory_snapshot_items")
-            .select(`
-                id,
-                batch_id,
-                item_id,
-                item_name,
-                item_name_vi,
-                part,
-                category,
-                category_vi,
-                quantity,
-                unit,
-                code
-            `)
-            .eq("batch_id", batchId);
+    try {
+        const res = await fetch(`/api/inventory/snapshot/${batchId}`);
+        const json = await res.json();
 
-        if (error) {
-            console.error(error);
+        if (!res.ok || !json.ok) {
+            console.error(json.message);
             setSnapshotItems([]);
             setLoadingItems(false);
             return;
         }
 
-        setSnapshotItems((data || []) as SnapshotItem[]);
+        setSnapshotItems((json.items || []) as SnapshotItem[]);
+    } catch (error) {
+        console.error(error);
+        setSnapshotItems([]);
+    } finally {
         setLoadingItems(false);
-    };
+    }
+};
 
-    const fetchCurrentInventory = async () => {
-        const { data, error } = await supabase
-            .from("inventory")
-            .select("id, quantity");
-
-        if (error) {
-            console.error(error);
-            setCurrentQuantityMap({});
-            return;
-        }
-
-        const nextMap: Record<number, number> = {};
-
-        (data || []).forEach((item) => {
-            if (item.id !== null && item.id !== undefined) {
-                nextMap[Number(item.id)] = Number(item.quantity ?? 0);
-            }
-        });
-
-        setCurrentQuantityMap(nextMap);
-    };
 
     const moveCalendarMonth = (diff: number) => {
         if (!calendarMonth) return;
@@ -211,7 +199,6 @@ export default function InventorySnapshotsPage() {
 
     useEffect(() => {
         fetchBatches();
-        fetchCurrentInventory();
     }, []);
 
     useEffect(() => {
@@ -219,6 +206,8 @@ export default function InventorySnapshotsPage() {
     }, [partFilter]);
 
     useEffect(() => {
+        setSupplierTab("all");
+
         if (!selectedBatchId) {
             setSnapshotItems([]);
             return;
@@ -282,13 +271,7 @@ export default function InventorySnapshotsPage() {
                 const matchCategory =
                     categoryFilter === "all" || categoryKey === categoryFilter;
 
-                const snapshotQty = Number(item.quantity ?? 0);
-                const currentQty =
-                    item.item_id !== null && item.item_id !== undefined
-                        ? Number(currentQuantityMap[item.item_id] ?? 0)
-                        : 0;
-                const diffQty = currentQty - snapshotQty;
-
+                const diffQty = Number(item.change_quantity ?? 0);
                 const matchChanged = !showChangedOnly || diffQty !== 0;
 
                 return matchSearch && matchPart && matchCategory && matchChanged;
@@ -315,7 +298,7 @@ export default function InventorySnapshotsPage() {
                     sensitivity: "base",
                 });
             });
-    }, [snapshotItems, search, partFilter, categoryFilter, showChangedOnly, currentQuantityMap, lang]);
+    }, [snapshotItems, search, partFilter, categoryFilter, showChangedOnly, lang]);
 
     const groupedItems: Record<string, SnapshotItem[]> = filteredItems.reduce(
         (acc: Record<string, SnapshotItem[]>, item) => {
@@ -333,6 +316,51 @@ export default function InventorySnapshotsPage() {
 
     const selectedBatch =
         batchList.find((batch) => batch.id === selectedBatchId) || null;
+
+    const purchasedItems = useMemo(() => {
+        return snapshotItems
+            .filter((item) => Number(item.change_quantity ?? 0) > 0)
+            .sort((a, b) => {
+                const supplierA = (a.supplier || "").toLowerCase();
+                const supplierB = (b.supplier || "").toLowerCase();
+
+                if (supplierA !== supplierB) {
+                    return supplierA.localeCompare(supplierB);
+                }
+
+                return getDisplayItemName(a).localeCompare(getDisplayItemName(b), undefined, {
+                    numeric: true,
+                    sensitivity: "base",
+                });
+            });
+    }, [snapshotItems, lang]);
+
+    const supplierTabs = useMemo(() => {
+        return [
+            { key: "all", label: lang === "vi" ? "Tất cả" : "전체" },
+            ...Array.from(
+                new Set(
+                    purchasedItems.map((item) => item.supplier || "-")
+                )
+            ).map((supplier) => ({
+                key: supplier,
+                label: supplier,
+            })),
+        ];
+    }, [purchasedItems, lang]);
+
+    const filteredPurchasedItems = useMemo(() => {
+        return purchasedItems.filter((item) => {
+            const supplier = item.supplier || "-";
+            return supplierTab === "all" || supplier === supplierTab;
+        });
+    }, [purchasedItems, supplierTab]);
+
+    const purchaseTotalAmount = useMemo(() => {
+        return filteredPurchasedItems.reduce((sum, item) => {
+            return sum + Number(item.total_purchase_price ?? 0);
+        }, 0);
+    }, [filteredPurchasedItems]);
 
     const batchCalendar = useMemo(() => {
         const map = new Map<string, SnapshotBatch>();
@@ -356,8 +384,8 @@ export default function InventorySnapshotsPage() {
             };
         }
 
-        const latestDate = sortedDates[sortedDates.length - 1];
-        const [year, month] = latestDate.split("-");
+        const baseMonth = calendarMonth || sortedDates[sortedDates.length - 1].slice(0, 7);
+        const [year, month] = baseMonth.split("-");
         const firstDay = new Date(Number(year), Number(month) - 1, 1);
         const lastDate = new Date(Number(year), Number(month), 0).getDate();
 
@@ -402,7 +430,7 @@ export default function InventorySnapshotsPage() {
             monthLabel: `${year}.${month}`,
             cells,
         };
-    }, [batchList]);
+    }, [batchList, calendarMonth]);
 
     const getPartMeta = (value?: string | null) => {
         const safePart: PartValue =
@@ -470,31 +498,30 @@ export default function InventorySnapshotsPage() {
         const isSaturday = dayOfWeek === 6;
 
         return {
-            height: 38,
-            borderRadius: 8,
+            height: 44,
+            borderRadius: 10,
             border: active
                 ? "1px solid #111827"
-                : hasBatch
-                    ? "1px solid #d1d5db"
-                    : "1px solid #ececec",
-            background: active ? "#111827" : hasBatch ? "#ffffff" : "#f9fafb",
+                : "1px solid #e5e7eb",
+            background: active ? "#111827" : "#ffffff",
             color: active
                 ? "#fff"
-                : !hasBatch
-                    ? "#d1d5db"
-                    : isSunday
-                        ? "crimson"
-                        : isSaturday
-                            ? "royalblue"
-                            : "#111827",
-            fontWeight: active ? 800 : 700,
+                : isSunday
+                    ? "crimson"
+                    : isSaturday
+                        ? "royalblue"
+                        : "#111827",
+            fontWeight: 800,
             fontSize: 13,
             cursor: hasBatch ? "pointer" : "default",
             display: "flex",
+            flexDirection: "column" as const,
             alignItems: "center",
             justifyContent: "center",
             boxSizing: "border-box" as const,
             padding: 0,
+            gap: 2,
+            opacity: hasBatch || active ? 1 : 0.45,
         };
     };
 
@@ -699,15 +726,262 @@ export default function InventorySnapshotsPage() {
                                         }}
                                         style={getCalendarCellStyle(active, hasBatch, dayOfWeek)}
                                     >
-                                        {cell.day ?? ""}
+                                        <>
+                                            <span>{cell.day ?? ""}</span>
+
+                                            {hasBatch && purchaseBatchMap[cell.batch!.id] && (
+                                                <span
+                                                    style={{
+                                                        width: 5,
+                                                        height: 5,
+                                                        borderRadius: 999,
+                                                        background: active ? "#fff" : "#2563eb",
+                                                        display: "block",
+                                                        marginTop: 3,
+                                                    }}
+                                                />
+                                            )}
+                                        </>
                                     </button>
                                 );
                             })}
+                        </div>
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                marginTop: 10,
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: "#6b7280",
+                            }}
+                        >
+                            <span
+                                style={{
+                                    width: 6,
+                                    height: 6,
+                                    borderRadius: 999,
+                                    background: "#2563eb",
+                                    display: "inline-block",
+                                }}
+                            />
+                            <span>
+                                {lang === "vi"
+                                    ? "Dấu chấm = có hàng nhập trong ngày kiểm kho"
+                                    : "점 = 해당 재고확인일에 입고 상품 있음"}
+                            </span>
                         </div>
                     </>
                 )}
             </div>
 
+            {selectedBatch && purchasedItems.length > 0 && (
+                <div
+                    style={{
+                        ...ui.card,
+                        padding: 12,
+                        marginBottom: 16,
+                    }}
+                >
+                    <div
+                        style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: 10,
+                            gap: 8,
+                        }}
+                    >
+                        <span
+                            style={{
+                                fontSize: 15,
+                                fontWeight: 800,
+                                color: "#111827",
+                            }}
+                        >
+                            {lang === "vi" ? "Hàng nhập trong ngày" : "일자별 입고 상품"}
+                        </span>
+
+                        <span
+                            style={{
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: "#6b7280",
+                            }}
+                        >
+                            {selectedBatch.snapshot_date}
+                        </span>
+                    </div>
+
+                    <div
+                        style={{
+                            display: "flex",
+                            gap: 6,
+                            overflowX: "auto",
+                            paddingBottom: 6,
+                            marginBottom: 10,
+                        }}
+                    >
+                        {supplierTabs.map((tab) => {
+                            const active = supplierTab === tab.key;
+
+                            return (
+                                <button
+                                    key={tab.key}
+                                    type="button"
+                                    onClick={() => setSupplierTab(tab.key)}
+                                    style={{
+                                        padding: "7px 10px",
+                                        borderRadius: 999,
+                                        border: active ? "1px solid #111827" : "1px solid #d1d5db",
+                                        background: active ? "#111827" : "#f9fafb",
+                                        color: active ? "#fff" : "#111827",
+                                        fontWeight: 700,
+                                        fontSize: 12,
+                                        whiteSpace: "nowrap",
+                                        cursor: "pointer",
+                                        flexShrink: 0,
+                                    }}
+                                >
+                                    {tab.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <div
+                        style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 8,
+                        }}
+                    >
+                        {filteredPurchasedItems.map((item) => {
+                            const qty = Number(item.change_quantity ?? 0);
+                            const price = item.purchase_price;
+                            const total = item.total_purchase_price;
+
+                            return (
+                                <div
+                                    key={item.id}
+                                    style={{
+                                        border: "1px solid #e5e7eb",
+                                        borderRadius: 10,
+                                        padding: 10,
+                                        background: "#ffffff",
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            justifyContent: "space-between",
+                                            gap: 10,
+                                            alignItems: "flex-start",
+                                        }}
+                                    >
+                                        <div style={{ minWidth: 0 }}>
+                                            <div
+                                                style={{
+                                                    fontSize: 14,
+                                                    fontWeight: 800,
+                                                    color: "#111827",
+                                                    wordBreak: "break-word",
+                                                }}
+                                            >
+                                                {[item.code ? `[${item.code}]` : "", getDisplayItemName(item)]
+                                                    .filter(Boolean)
+                                                    .join(" ")}
+                                            </div>
+
+                                            <div
+                                                style={{
+                                                    marginTop: 3,
+                                                    fontSize: 12,
+                                                    fontWeight: 600,
+                                                    color: "#6b7280",
+                                                }}
+                                            >
+                                                {item.supplier || "-"}
+                                            </div>
+                                        </div>
+
+                                        <div
+                                            style={{
+                                                textAlign: "right",
+                                                fontSize: 13,
+                                                fontWeight: 700,
+                                                color: "#111827",
+                                                whiteSpace: "nowrap",
+                                            }}
+                                        >
+                                            +{formatDecimalDisplay(qty)} {item.unit || ""}
+                                        </div>
+                                    </div>
+
+                                    <div
+                                        style={{
+                                            display: "grid",
+                                            gridTemplateColumns: "1fr 1fr 1fr",
+                                            gap: 6,
+                                            marginTop: 8,
+                                            fontSize: 12,
+                                        }}
+                                    >
+                                        <div>
+                                            <div style={{ color: "#9ca3af", fontWeight: 700 }}>
+                                                {lang === "vi" ? "Đơn giá" : "단가"}
+                                            </div>
+                                            <div style={{ fontWeight: 800 }}>
+                                                {price === null || price === undefined
+                                                    ? "-"
+                                                    : `${Number(price).toLocaleString()} ₫`}
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <div style={{ color: "#9ca3af", fontWeight: 700 }}>
+                                                {lang === "vi" ? "Số lượng" : "수량"}
+                                            </div>
+                                            <div style={{ fontWeight: 800 }}>
+                                                {formatDecimalDisplay(qty)} {item.unit || ""}
+                                            </div>
+                                        </div>
+
+                                        <div style={{ textAlign: "right" }}>
+                                            <div style={{ color: "#9ca3af", fontWeight: 700 }}>
+                                                {lang === "vi" ? "Thành tiền" : "금액"}
+                                            </div>
+                                            <div style={{ fontWeight: 900 }}>
+                                                {total === null || total === undefined
+                                                    ? "-"
+                                                    : `${Number(total).toLocaleString()} ₫`}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div
+                        style={{
+                            marginTop: 10,
+                            paddingTop: 10,
+                            borderTop: "1px solid #e5e7eb",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            fontSize: 14,
+                            fontWeight: 900,
+                            color: "#111827",
+                        }}
+                    >
+                        <span>{lang === "vi" ? "Tổng cộng" : "총 합계"}</span>
+                        <span>{purchaseTotalAmount.toLocaleString()} ₫</span>
+                    </div>
+                </div>
+            )}
 
 
             <div
@@ -961,11 +1235,8 @@ export default function InventorySnapshotsPage() {
 
                                 {items.map((item) => {
                                     const snapshotQty = Number(item.quantity ?? 0);
-                                    const currentQty =
-                                        item.item_id !== null && item.item_id !== undefined
-                                            ? Number(currentQuantityMap[item.item_id] ?? 0)
-                                            : 0;
-                                    const diffQty = currentQty - snapshotQty;
+                                    const prevQty = item.prev_quantity;
+                                    const diffQty = Number(item.change_quantity ?? 0);
 
                                     return (
                                         <div
@@ -1066,7 +1337,7 @@ export default function InventorySnapshotsPage() {
                                                                             : "#6b7280",
                                                             }}
                                                         >
-                                                            {lang === "vi" ? "Hiện tại" : "현재"}{" "}
+                                                            {lang === "vi" ? "So với hôm trước" : "전일대비"}{" "}
                                                             {diffQty > 0 ? "+" : ""}
                                                             {formatDecimalDisplay(diffQty)}
                                                         </div>

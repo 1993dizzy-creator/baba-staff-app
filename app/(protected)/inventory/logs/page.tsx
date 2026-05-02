@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase/client";
 import { useLanguage } from "@/lib/language-context";
 import { inventoryLogsText } from "@/lib/text";
 import Container from "@/components/Container";
@@ -22,17 +21,18 @@ export default function InventoryLogsPage() {
     const [inventoryNoteMap, setInventoryNoteMap] = useState<Record<string, string>>({});
 
     const fetchLogs = async () => {
-        const { data, error } = await supabase
-            .from("inventory_logs")
-            .select("*")
-            .order("created_at", { ascending: false });
+        const res = await fetch("/api/inventory/logs?mode=logs", {
+            cache: "no-store",
+        });
 
-        if (error) {
-            console.error(error);
+        const result = await res.json();
+
+        if (!res.ok || !result.ok) {
+            console.error(result);
             return;
         }
 
-        setLogs(data || []);
+        setLogs(result.data || []);
     };
 
     const handleDeleteSingleLog = async (logId: number) => {
@@ -42,13 +42,27 @@ export default function InventoryLogsPage() {
 
         if (!ok) return;
 
-        const { error } = await supabase
-            .from("inventory_logs")
-            .delete()
-            .eq("id", logId);
+        const res = await fetch("/api/inventory/logs", {
+            method: "DELETE",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                logId,
+                actorUsername: currentUser?.username || "",
+            }),
+        });
 
-        if (error) {
-            console.error(error);
+        const result = await res.json();
+
+        if (!res.ok || !result.ok) {
+            console.error(result);
+
+            if (res.status === 403) {
+                alert(lang === "vi" ? "Không có quyền xóa." : "삭제 권한이 없습니다.");
+                return;
+            }
+
             alert(t.deleteLogFail);
             return;
         }
@@ -58,18 +72,20 @@ export default function InventoryLogsPage() {
     };
 
     const fetchInventoryNotes = async () => {
-        const { data, error } = await supabase
-            .from("inventory")
-            .select("id, part, code, item_name, item_name_vi, note");
+        const res = await fetch("/api/inventory/logs?mode=notes", {
+            cache: "no-store",
+        });
 
-        if (error) {
-            console.error(error);
+        const result = await res.json();
+
+        if (!res.ok || !result.ok) {
+            console.error(result);
             return;
         }
 
         const nextMap: Record<string, string> = {};
 
-        (data || []).forEach((item) => {
+        (result.data || []).forEach((item: any) => {
             const keyById =
                 item.id !== null && item.id !== undefined ? `item-${item.id}` : null;
 
@@ -468,7 +484,7 @@ export default function InventoryLogsPage() {
 
     return (
         <Container noPaddingTop>
-           <SubNav tabs={inventoryTabs} />
+            <SubNav tabs={inventoryTabs} />
 
             <div
                 style={{

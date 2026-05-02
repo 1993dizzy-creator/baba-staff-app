@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { supabase } from "@/lib/supabase/client";
 import { useLanguage } from "@/lib/language-context";
 import { inventoryText } from "@/lib/text";
 import Container from "@/components/Container";
@@ -435,95 +433,72 @@ export default function InventoryPage() {
     };
 
     const fetchInventory = async () => {
-        const { data, error } = await supabase
-            .from("inventory")
-            .select("*")
-            .order("updated_at", { ascending: false });
+        const res = await fetch("/api/inventory/items?mode=list", {
+            cache: "no-store",
+        });
 
-        if (error) {
-            console.error(error);
+        const result = await res.json();
+
+        if (!res.ok || !result.ok) {
+            console.error(result);
             return;
         }
 
-        setInventoryList(data || []);
+        setInventoryList(result.data || []);
     };
 
     const fetchRecentLogs = async () => {
-        const { data, error } = await supabase
-            .from("inventory_logs")
-            .select("*")
-            .order("created_at", { ascending: false })
-            .limit(3);
+        const res = await fetch("/api/inventory/items?mode=recent-logs", {
+            cache: "no-store",
+        });
 
-        if (error) {
-            console.error(error);
+        const result = await res.json();
+
+        if (!res.ok || !result.ok) {
+            console.error(result);
             return;
         }
 
-        setRecentLogs(data || []);
+        setRecentLogs(result.data || []);
     };
 
     const fetchItemLogs = async (item: any) => {
         setLogModalItem(item);
         setIsItemLogsLoading(true);
 
-        const { data, error } = await supabase
-            .from("inventory_logs")
-            .select("*")
-            .eq("item_id", item.id)
-            .order("created_at", { ascending: false })
-            .limit(50);
+        try {
+            const res = await fetch(`/api/inventory/items?mode=item-logs&itemId=${item.id}`, {
+                cache: "no-store",
+            });
 
-        if (error) {
-            console.error(error);
-            setItemLogs([]);
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                console.error(result);
+                setItemLogs([]);
+                return;
+            }
+
+            setItemLogs(result.data || []);
+        } finally {
             setIsItemLogsLoading(false);
-            return;
         }
-
-        setItemLogs(data || []);
-        setIsItemLogsLoading(false);
     };
 
     const fetchLatestSnapshot = async () => {
-        const { data: batchRow, error: batchError } = await supabase
-            .from("inventory_snapshot_batches")
-            .select("id, snapshot_date")
-            .order("snapshot_date", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-        if (batchError) {
-            console.error(batchError);
-            return;
-        }
-
-        if (!batchRow) {
-            setLatestSnapshotMap({});
-            setLatestSnapshotDate("");
-            return;
-        }
-
-        const { data: snapshotItems, error: itemsError } = await supabase
-            .from("inventory_snapshot_items")
-            .select("item_id, quantity")
-            .eq("batch_id", batchRow.id);
-
-        if (itemsError) {
-            console.error(itemsError);
-            return;
-        }
-
-        const nextMap: Record<number, number> = {};
-
-        (snapshotItems || []).forEach((row) => {
-            if (row.item_id !== null && row.item_id !== undefined) {
-                nextMap[Number(row.item_id)] = Number(row.quantity ?? 0);
-            }
+        const res = await fetch("/api/inventory/items?mode=latest-snapshot", {
+            cache: "no-store",
         });
 
-        setLatestSnapshotMap(nextMap);
-        setLatestSnapshotDate(batchRow.snapshot_date || "");
+        const result = await res.json();
+
+        if (!res.ok || !result.ok) {
+            console.error(result);
+            return;
+        }
+
+        setLatestSnapshotMap(result.data?.snapshotMap || {});
+        setLatestSnapshotDate(result.data?.snapshotDate || "");
     };
 
     const normalizePriceInput = (value: string | number | null | undefined) => {
@@ -607,97 +582,36 @@ export default function InventoryPage() {
 
         try {
             const targetItem = inventoryList.find((item) => item.id === id);
+
             if (!targetItem) {
                 alert(t.deleteTargetNotFound);
                 return;
             }
 
-            const { data: deletedRows, error: deleteError } = await supabase
-                .from("inventory")
-                .delete()
-                .eq("id", id)
-                .select(`
-                id,
-                item_name,
-                item_name_vi,
-                part,
-                category,
-                category_vi,
-                quantity,
-                purchase_price,
-                note,
-                unit,
-                code,
-                supplier,
-                low_stock_threshold
-            `);
+            const res = await fetch("/api/inventory/items", {
+                method: "DELETE",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    id,
+                    actorName,
+                    actorUsername,
+                }),
+            });
 
-            if (deleteError) {
-                console.error(deleteError);
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                console.error(result);
+
+                if (res.status === 403) {
+                    alert(lang === "vi" ? "Không có quyền xóa." : "삭제 권한이 없습니다.");
+                    return;
+                }
+
                 alert(t.deleteFail);
                 return;
-            }
-
-            if (!deletedRows || deletedRows.length === 0) {
-                alert(t.deleteTargetNotFound);
-                return;
-            }
-
-            const deletedItem = deletedRows[0];
-
-            const { error: logError } = await supabase.from("inventory_logs").insert([
-                {
-                    item_id: deletedItem.id,
-                    item_name: deletedItem.item_name,
-                    item_name_vi: deletedItem.item_name_vi ?? null,
-                    action: "delete",
-
-                    part: deletedItem.part,
-                    category: deletedItem.category,
-                    category_vi: deletedItem.category_vi ?? null,
-
-                    prev_quantity: deletedItem.quantity ?? 0,
-                    new_quantity: 0,
-                    change_quantity: -Number(deletedItem.quantity ?? 0),
-
-                    prev_purchase_price: deletedItem.purchase_price ?? null,
-                    new_purchase_price: null,
-
-                    prev_note: deletedItem.note ?? null,
-                    new_note: null,
-
-                    prev_supplier: deletedItem.supplier ?? null,
-                    new_supplier: null,
-
-                    prev_code: deletedItem.code ?? null,
-                    new_code: null,
-
-                    prev_unit: deletedItem.unit ?? null,
-                    new_unit: null,
-
-                    prev_category: deletedItem.category ?? null,
-                    new_category: null,
-
-                    prev_category_vi: deletedItem.category_vi ?? null,
-                    new_category_vi: null,
-
-                    prev_part: deletedItem.part ?? null,
-                    new_part: null,
-
-                    unit: deletedItem.unit ?? null,
-                    code: deletedItem.code ?? null,
-
-                    actor_name: actorName,
-                    actor_username: actorUsername,
-
-                    prev_low_stock_threshold: deletedItem.low_stock_threshold ?? 1,
-                    new_low_stock_threshold: null,
-                },
-            ]);
-
-            if (logError) {
-                console.error(logError);
-                alert(t.deleteLogSaveFail);
             }
 
             await fetchInventory();
@@ -784,6 +698,7 @@ export default function InventoryPage() {
             const nextPurchasePrice =
                 purchasePrice.trim() === "" ? null : parsePrice(purchasePrice);
 
+            // ===================== 수정 =====================
             if (editingId) {
                 const targetItem = inventoryList.find((item) => item.id === editingId);
 
@@ -815,7 +730,7 @@ export default function InventoryPage() {
                     return;
                 }
 
-                const updatePayload =
+                const payload =
                     lang === "ko"
                         ? {
                             item_name: normalizedItemName,
@@ -850,70 +765,79 @@ export default function InventoryPage() {
                             updated_by_username: actorUsername,
                         };
 
-                const { error } = await supabase
-                    .from("inventory")
-                    .update(updatePayload)
-                    .eq("id", editingId);
+                const logPayload = {
+                    item_id: editingId,
+                    item_name: lang === "ko" ? normalizedItemName : targetItem.item_name ?? null,
+                    item_name_vi: lang === "vi" ? normalizedItemName : targetItem.item_name_vi ?? null,
+                    action: "update",
 
-                if (error) {
-                    console.error(error);
+                    part,
+                    category: normalizedCategoryKo,
+                    category_vi: normalizedCategoryVi,
+
+                    prev_quantity: targetItem.quantity ?? 0,
+                    new_quantity: nextQuantity,
+                    change_quantity: nextQuantity - Number(targetItem.quantity ?? 0),
+
+                    prev_purchase_price: targetItem.purchase_price ?? null,
+                    new_purchase_price: nextPurchasePrice,
+
+                    prev_note: targetItem.note ?? null,
+                    new_note: normalizedNote,
+
+                    prev_supplier: targetItem.supplier ?? null,
+                    new_supplier: normalizedSupplier || null,
+
+                    prev_code: targetItem.code ?? null,
+                    new_code: normalizedCode || null,
+
+                    prev_unit: targetItem.unit ?? null,
+                    new_unit: normalizedUnit || null,
+
+                    prev_category: targetItem.category ?? null,
+                    new_category: normalizedCategoryKo || null,
+
+                    prev_category_vi: targetItem.category_vi ?? null,
+                    new_category_vi: normalizedCategoryVi || null,
+
+                    prev_part: targetItem.part ?? null,
+                    new_part: part || null,
+
+                    unit: normalizedUnit,
+                    code: normalizedCode,
+
+                    prev_low_stock_threshold: targetItem.low_stock_threshold ?? 1,
+                    new_low_stock_threshold: nextLowStock,
+                };
+
+                const res = await fetch("/api/inventory/items", {
+                    method: "PATCH",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        id: editingId,
+                        payload,
+                        logPayload,
+                        actorName,
+                        actorUsername,
+                    }),
+                });
+
+                const result = await res.json();
+
+                if (!res.ok || !result.ok) {
+                    console.error(result);
                     alert(t.editFail);
                     return;
                 }
 
-                await supabase.from("inventory_logs").insert([
-                    {
-                        item_id: editingId,
-                        item_name: lang === "ko" ? normalizedItemName : targetItem.item_name ?? null,
-                        item_name_vi: lang === "vi" ? normalizedItemName : targetItem.item_name_vi ?? null,
-                        action: "update",
-
-                        part,
-                        category: normalizedCategoryKo,
-                        category_vi: normalizedCategoryVi,
-
-                        prev_quantity: targetItem.quantity ?? 0,
-                        new_quantity: nextQuantity,
-                        change_quantity: nextQuantity - Number(targetItem.quantity ?? 0),
-                        new_purchase_price: nextPurchasePrice,
-
-                        prev_purchase_price: targetItem.purchase_price ?? null,
-
-                        prev_note: targetItem.note ?? null,
-                        new_note: normalizedNote,
-
-                        prev_supplier: targetItem.supplier ?? null,
-                        new_supplier: normalizedSupplier || null,
-
-                        prev_code: targetItem.code ?? null,
-                        new_code: normalizedCode || null,
-
-                        prev_unit: targetItem.unit ?? null,
-                        new_unit: normalizedUnit || null,
-
-                        prev_category: targetItem.category ?? null,
-                        new_category: normalizedCategoryKo || null,
-
-                        prev_category_vi: targetItem.category_vi ?? null,
-                        new_category_vi: normalizedCategoryVi || null,
-
-                        prev_part: targetItem.part ?? null,
-                        new_part: part || null,
-
-                        unit: normalizedUnit,
-                        code: normalizedCode,
-
-                        actor_name: actorName,
-                        actor_username: actorUsername,
-
-                        prev_low_stock_threshold: targetItem.low_stock_threshold ?? 1,
-                        new_low_stock_threshold: nextLowStock,
-                    },
-                ]);
-
                 alert(t.editSuccess);
-            } else {
-                const insertPayload =
+            }
+
+            // ===================== 생성 =====================
+            else {
+                const payload =
                     lang === "ko"
                         ? {
                             item_name: normalizedItemName,
@@ -950,67 +874,25 @@ export default function InventoryPage() {
                             updated_by_username: actorUsername,
                         };
 
-                const { data: insertedData, error } = await supabase
-                    .from("inventory")
-                    .insert([insertPayload])
-                    .select()
-                    .single();
+                const res = await fetch("/api/inventory/items", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        payload,
+                        actorName,
+                        actorUsername,
+                    }),
+                });
 
-                if (error || !insertedData) {
-                    console.error(error);
+                const result = await res.json();
+
+                if (!res.ok || !result.ok) {
+                    console.error(result);
                     alert(t.saveFail);
                     return;
                 }
-
-                await supabase.from("inventory_logs").insert([
-                    {
-                        item_id: insertedData.id,
-                        item_name: insertedData.item_name ?? null,
-                        item_name_vi: insertedData.item_name_vi ?? null,
-                        action: "create",
-
-                        part: insertedData.part,
-                        category: insertedData.category ?? null,
-                        category_vi: insertedData.category_vi ?? null,
-
-                        prev_quantity: 0,
-                        new_quantity: insertedData.quantity ?? 0,
-                        change_quantity: insertedData.quantity ?? 0,
-
-                        prev_purchase_price: null,
-                        new_purchase_price: insertedData.purchase_price ?? null,
-
-                        prev_note: null,
-                        new_note: insertedData.note ?? null,
-
-                        prev_supplier: null,
-                        new_supplier: insertedData.supplier ?? null,
-
-                        prev_code: null,
-                        new_code: insertedData.code ?? null,
-
-                        prev_unit: null,
-                        new_unit: insertedData.unit ?? null,
-
-                        prev_category: null,
-                        new_category: insertedData.category ?? null,
-
-                        prev_category_vi: null,
-                        new_category_vi: insertedData.category_vi ?? null,
-
-                        prev_part: null,
-                        new_part: insertedData.part ?? null,
-
-                        unit: insertedData.unit ?? null,
-                        code: insertedData.code ?? null,
-
-                        actor_name: actorName,
-                        actor_username: actorUsername,
-
-                        prev_low_stock_threshold: null,
-                        new_low_stock_threshold: insertedData.low_stock_threshold ?? 1,
-                    },
-                ]);
 
                 alert(t.saveSuccess);
             }
@@ -1099,48 +981,52 @@ export default function InventoryPage() {
                 customText: quickSaveOtherText,
             });
 
-            const { error: updateError } = await supabase
-                .from("inventory")
-                .update({
-                    quantity: nextQty,
-                    note: quickNote,
-                    updated_at: new Date().toISOString(),
-                    updated_by_name: actorName,
-                    updated_by_username: actorUsername,
-                })
-                .eq("id", quickSaveItem.id);
+            const payload = {
+                quantity: nextQty,
+                note: quickNote,
+                updated_at: new Date().toISOString(),
+                updated_by_name: actorName,
+                updated_by_username: actorUsername,
+            };
 
-            if (updateError) {
-                console.error(updateError);
-                alert(t.quickChangeFail);
-                return;
-            }
+            const logPayload = {
+                item_id: quickSaveItem.id,
+                item_name: quickSaveItem.item_name,
+                item_name_vi: quickSaveItem.item_name_vi ?? null,
+                action: "update",
+                part: quickSaveItem.part,
+                category: quickSaveItem.category,
+                category_vi: quickSaveItem.category_vi ?? null,
+                prev_quantity: currentQty,
+                new_quantity: nextQty,
+                change_quantity: diffQty,
+                prev_purchase_price: quickSaveItem.purchase_price ?? null,
+                new_purchase_price: quickSaveItem.purchase_price ?? null,
+                prev_note: quickSaveItem.note ?? null,
+                new_note: quickNote,
+                unit: quickSaveItem.unit,
+                code: quickSaveItem.code,
+            };
 
-            const { error: logError } = await supabase.from("inventory_logs").insert([
-                {
-                    item_id: quickSaveItem.id,
-                    item_name: quickSaveItem.item_name,
-                    item_name_vi: quickSaveItem.item_name_vi ?? null,
-                    action: "update",
-                    part: quickSaveItem.part,
-                    category: quickSaveItem.category,
-                    category_vi: quickSaveItem.category_vi ?? null,
-                    prev_quantity: currentQty,
-                    new_quantity: nextQty,
-                    change_quantity: diffQty,
-                    prev_purchase_price: quickSaveItem.purchase_price ?? null,
-                    new_purchase_price: quickSaveItem.purchase_price ?? null,
-                    prev_note: quickSaveItem.note ?? null,
-                    new_note: quickNote,
-                    unit: quickSaveItem.unit,
-                    code: quickSaveItem.code,
-                    actor_name: actorName,
-                    actor_username: actorUsername,
+            const res = await fetch("/api/inventory/items", {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
                 },
-            ]);
+                body: JSON.stringify({
+                    mode: "quick-save",
+                    id: quickSaveItem.id,
+                    payload,
+                    logPayload,
+                    actorName,
+                    actorUsername,
+                }),
+            });
 
-            if (logError) {
-                console.error(logError);
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                console.error(result);
                 alert(t.quickChangeFail);
                 return;
             }
@@ -1248,17 +1134,39 @@ export default function InventoryPage() {
         ];
     }, [inventoryList, partFilter, lang]);
 
+    const BUSINESS_DAY_START_HOUR = 16;
+    const BUSINESS_DAY_END_HOUR = 3;
+
+    const getBusinessWindow = () => {
+        const now = new Date();
+
+        const start = new Date(now);
+        const end = new Date(now);
+
+        if (now.getHours() < BUSINESS_DAY_END_HOUR) {
+            // 새벽 00:00 ~ 02:59는 전날 영업일
+            start.setDate(start.getDate() - 1);
+            start.setHours(BUSINESS_DAY_START_HOUR, 0, 0, 0);
+
+            end.setHours(BUSINESS_DAY_END_HOUR, 0, 0, 0);
+        } else {
+            // 03:00 이후는 오늘 영업일
+            start.setHours(BUSINESS_DAY_START_HOUR, 0, 0, 0);
+
+            end.setDate(end.getDate() + 1);
+            end.setHours(BUSINESS_DAY_END_HOUR, 0, 0, 0);
+        }
+
+        return { start, end };
+    };
+
     const isToday = (value?: string) => {
         if (!value) return false;
 
         const date = new Date(value);
-        const now = new Date();
+        const { start, end } = getBusinessWindow();
 
-        return (
-            date.getFullYear() === now.getFullYear() &&
-            date.getMonth() === now.getMonth() &&
-            date.getDate() === now.getDate()
-        );
+        return date >= start && date < end;
     };
 
     const getPartMeta = (value?: string) => {
