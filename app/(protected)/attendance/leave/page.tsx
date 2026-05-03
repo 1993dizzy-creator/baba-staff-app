@@ -10,6 +10,11 @@ import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { attendanceLeaveText } from "@/lib/text/attendance-leave";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { useSearchParams } from "next/navigation";
+import {
+  ATTENDANCE_STATUS,
+  APPROVAL_STATUS,
+  LEAVE_ACTION,
+} from "@/lib/attendance/status";
 
 type UserRow = {
   id: string | number;
@@ -136,7 +141,9 @@ function normalizeId(value?: string | number | null) {
 }
 
 function getApprovalStatus(record: AttendanceRecord) {
-  return record.approval_status === "approved" ? "approved" : "pending";
+  return record.approval_status === APPROVAL_STATUS.APPROVED
+    ? APPROVAL_STATUS.APPROVED
+    : APPROVAL_STATUS.PENDING;
 }
 
 function getPositionRank(position?: string | null) {
@@ -251,7 +258,7 @@ export default function AttendanceLeavePage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          action: "cancel",
+          action: LEAVE_ACTION.CANCEL,
           record_id: alreadyRequested.id,
           language: lang,
         }),
@@ -290,7 +297,7 @@ export default function AttendanceLeavePage() {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        action: "request",
+        action: LEAVE_ACTION.REQUEST,
         user_id: currentUser.id,
         work_date: selectedDate,
         note: reason,
@@ -317,9 +324,10 @@ export default function AttendanceLeavePage() {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        action: "approve",
+        action: LEAVE_ACTION.APPROVE,
         record_id: recordId,
         admin_name: currentUser?.name || currentUser?.username || null,
+        admin_id: currentUser?.id,
         language: lang,
       }),
     });
@@ -343,8 +351,9 @@ export default function AttendanceLeavePage() {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        action: "cancel-approval",
+        action: LEAVE_ACTION.CANCEL_APPROVAL,
         record_id: recordId,
+        admin_id: currentUser?.id,
         language: lang,
       }),
     });
@@ -373,7 +382,7 @@ export default function AttendanceLeavePage() {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        action: "cancel",
+        action: LEAVE_ACTION.CANCEL,
         record_id: recordId,
         language: lang,
       }),
@@ -589,7 +598,7 @@ export default function AttendanceLeavePage() {
               selectedDateLeaves.map((item, index) => {
                 const { user, record } = item;
                 const meta = getPartMeta(user.part);
-                const isApproved = getApprovalStatus(record) === "approved";
+                const isApproved = getApprovalStatus(record) === APPROVAL_STATUS.APPROVED;
 
                 return (
                   <div

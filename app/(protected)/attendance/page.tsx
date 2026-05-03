@@ -11,6 +11,7 @@ import { attendanceText } from "@/lib/text/attendance";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { supabase } from "@/lib/supabase/client";
 import { getUser } from "@/lib/supabase/auth";
+import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 
 
 function formatTodayDate(lang: "ko" | "vi") {
@@ -36,7 +37,9 @@ function formatCalendarTitle(lang: "ko" | "vi", date: Date) {
   return `${year}년 ${date.getMonth() + 1}월`;
 }
 
-type AttendanceStatus = "before" | "working" | "done" | "early_leave" | "leave";
+type AttendanceStatus =
+  | "before"
+  | (typeof ATTENDANCE_STATUS)[keyof typeof ATTENDANCE_STATUS];
 
 type AttendanceState = {
   status: AttendanceStatus;
@@ -146,14 +149,18 @@ function calculateEarlyLeaveMinutes(workEndTime: string) {
   return Math.max(0, diffMinutes);
 }
 
-function getAutoCheckOutType(workEndTime: string): "done" | "early_leave" {
+function getAutoCheckOutType(
+  workEndTime: string
+): typeof ATTENDANCE_STATUS.DONE | typeof ATTENDANCE_STATUS.EARLY_LEAVE {
   const earlyLeaveMinutes = calculateEarlyLeaveMinutes(workEndTime);
 
-  return earlyLeaveMinutes >= 90 ? "early_leave" : "done";
+  return earlyLeaveMinutes >= 90
+    ? ATTENDANCE_STATUS.EARLY_LEAVE
+    : ATTENDANCE_STATUS.DONE;
 }
 
 function isApprovedLeave(record: any) {
-  return record?.status === "leave" && record?.approval_status === "approved";
+  return record?.status === ATTENDANCE_STATUS.LEAVE && record?.approval_status === "approved";
 }
 
 function calculateMonthSummary(records: any[]) {
@@ -188,7 +195,7 @@ function calculateMonthSummary(records: any[]) {
 
   const totalEarlyLeaveMinutes = records.reduce(
     (sum, record) =>
-      record.status === "early_leave"
+      record.status === ATTENDANCE_STATUS.EARLY_LEAVE
         ? sum + Number(record.early_leave_minutes || 0)
         : sum,
     0
@@ -207,7 +214,7 @@ function calculateMonthSummary(records: any[]) {
     lateMinutes: totalLateMinutes,
 
     earlyLeaveCount: records.filter(
-      (r) => r.status === "early_leave"
+      (r) => r.status === ATTENDANCE_STATUS.EARLY_LEAVE
     ).length,
 
     earlyLeaveMinutes: totalEarlyLeaveMinutes,
@@ -289,12 +296,12 @@ function getStatusLabel(
   t: (typeof attendanceText)["ko"] | (typeof attendanceText)["vi"]
 ) {
   if (status === "before") return t.statusBefore;
-  if (status === "done") return t.statusDone;
-  if (status === "early_leave") {
+  if (status === ATTENDANCE_STATUS.DONE) return t.statusDone;
+  if (status === ATTENDANCE_STATUS.EARLY_LEAVE) {
     return lang === "vi" ? "Về sớm" : "조퇴";
   }
 
-  if (status === "leave") {
+  if (status === ATTENDANCE_STATUS.LEAVE) {
     return lang === "vi" ? "Nghỉ" : "휴무";
   }
 
@@ -380,7 +387,7 @@ function MyAttendance() {
         return;
       }
 
-      if (data.status === "leave" && !isApprovedLeave(data)) {
+      if (data.status === ATTENDANCE_STATUS.LEAVE && !isApprovedLeave(data)) {
         setAttendance(initialAttendanceState);
         return;
       }
@@ -504,7 +511,7 @@ function MyAttendance() {
 
       setAttendance((prev) => ({
         ...prev,
-        status: data.status || "working",
+        status: data.status || ATTENDANCE_STATUS.WORKING,
         checkInTime: data.check_in_at ? formatTimeForDisplay(data.check_in_at) : "-",
         checkOutTime: "-",
         workDuration: "00:00",
@@ -529,7 +536,7 @@ function MyAttendance() {
 
 
   const handleCheckOutClick = () => {
-    if (attendance.status !== "working") return;
+    if (attendance.status !== ATTENDANCE_STATUS.WORKING) return;
 
     const user = getUser();
     const type = getAutoCheckOutType(user?.work_end_time || "01:00");
@@ -537,7 +544,9 @@ function MyAttendance() {
     handleConfirmCheckOut(type);
   };
 
-  const handleConfirmCheckOut = async (type: "done" | "early_leave") => {
+  const handleConfirmCheckOut = async (
+  type: typeof ATTENDANCE_STATUS.DONE | typeof ATTENDANCE_STATUS.EARLY_LEAVE
+) => {
     if (isSubmittingAttendance) return;
 
     setIsSubmittingAttendance(true);
@@ -601,7 +610,7 @@ function MyAttendance() {
 
       setAttendance((prev) => ({
         ...prev,
-        status: data.status || "done",
+        status: data.status || ATTENDANCE_STATUS.DONE,
         checkOutTime: data.check_out_at ? formatTimeForDisplay(data.check_out_at) : "-",
         workDuration: formatMinutesToHHMM(data.work_minutes || 0),
         earlyLeaveMinutes: data.early_leave_minutes || 0,
@@ -623,8 +632,8 @@ function MyAttendance() {
   };
 
   const isBefore = attendance.status === "before";
-  const isWorking = attendance.status === "working";
-  const isEarlyLeave = attendance.status === "early_leave";
+  const isWorking = attendance.status === ATTENDANCE_STATUS.WORKING;
+  const isEarlyLeave = attendance.status === ATTENDANCE_STATUS.EARLY_LEAVE;
 
   const checkInDisabled =
     isLoadingToday ||
@@ -635,7 +644,7 @@ function MyAttendance() {
   const checkOutDisabled =
     isLoadingToday ||
     isSubmittingAttendance ||
-    attendance.status !== "working";
+    attendance.status !== ATTENDANCE_STATUS.WORKING;
 
   const lateDisplayText =
     attendance.lateMinutes > 0
@@ -1045,7 +1054,7 @@ function Calendar({ refreshKey }: { refreshKey: number }) {
 
             let dotColor = "#10b981";
 
-            if (record?.status === "early_leave") {
+            if (record?.status === ATTENDANCE_STATUS.EARLY_LEAVE) {
               dotColor = "#ef4444";
             } else if (Number(record?.late_minutes || 0) > 0) {
               dotColor = "#f59e0b";
@@ -1065,7 +1074,7 @@ function Calendar({ refreshKey }: { refreshKey: number }) {
               >
                 <div>{displayDay}</div>
 
-                {!isMuted && record && (record.status !== "leave" || isApprovedLeave(record)) && (
+                {!isMuted && record && (record.status !== ATTENDANCE_STATUS.LEAVE || isApprovedLeave(record)) && (
                   <div
                     style={{
                       ...calendarDotStyle,
@@ -1106,33 +1115,38 @@ function LegendItem({
 
 function statusBadgeStyle(status: AttendanceStatus): CSSProperties {
 
-  const map = {
-    before: {
-      background: "#fef3c7",
-      color: "#92400e",
-      border: "#fde68a",
-    },
-    working: {
-      background: "#dcfce7",
-      color: "#16a34a",
-      border: "#bbf7d0",
-    },
-    done: {
-      background: "#e5e7eb",
-      color: "#374151",
-      border: "#d1d5db",
-    },
-    early_leave: {
-      background: "#fee2e2",
-      color: "#dc2626",
-      border: "#fecaca",
-    },
-    leave: {
-      background: "#f3f4f6",
-      color: "#374151",
-      border: "#d1d5db",
-    },
-  };
+const map = {
+  before: {
+    background: "#fef3c7",
+    color: "#92400e",
+    border: "#fde68a",
+  },
+  [ATTENDANCE_STATUS.WORKING]: {
+    background: "#dcfce7",
+    color: "#16a34a",
+    border: "#bbf7d0",
+  },
+  [ATTENDANCE_STATUS.DONE]: {
+    background: "#e5e7eb",
+    color: "#374151",
+    border: "#d1d5db",
+  },
+  [ATTENDANCE_STATUS.EARLY_LEAVE]: {
+    background: "#fee2e2",
+    color: "#dc2626",
+    border: "#fecaca",
+  },
+  [ATTENDANCE_STATUS.LEAVE]: {
+    background: "#f3f4f6",
+    color: "#374151",
+    border: "#d1d5db",
+  },
+  [ATTENDANCE_STATUS.LATE]: {
+  background: "#fffbeb",
+  color: "#d97706",
+  border: "#fde68a",
+},
+};
 
   const color = map[status] || map.before;
 

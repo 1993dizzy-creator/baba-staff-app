@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import {
+  getAttendanceWorkDate,
+  getLateMinutes,
+} from "@/lib/attendance/time";
+import {
+  ATTENDANCE_STATUS,
+  APPROVAL_STATUS,
+} from "@/lib/attendance/status";
 
 const messages = {
   ko: {
@@ -37,24 +45,6 @@ function getLang(value: unknown): Lang {
   return value === "vi" ? "vi" : "ko";
 }
 
-function getTodayVietnamDate() {
-  const now = new Date();
-
-  const vietnamTime = new Date(
-    now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
-  );
-
-  if (vietnamTime.getHours() < 3) {
-    vietnamTime.setDate(vietnamTime.getDate() - 1);
-  }
-
-  const year = vietnamTime.getFullYear();
-  const month = String(vietnamTime.getMonth() + 1).padStart(2, "0");
-  const day = String(vietnamTime.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
 export async function POST(req: Request) {
   let lang: Lang = "ko";
 
@@ -86,7 +76,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const workDate = getTodayVietnamDate();
+    const workDate = getAttendanceWorkDate();
     const nowIso = new Date().toISOString();
 
     const { data: user, error: userError } = await supabaseServer
@@ -133,19 +123,9 @@ export async function POST(req: Request) {
       );
     }
 
-    let lateMinutes = 0;
+    const lateMinutes = getLateMinutes(nowIso, user.work_start_time);
 
-    if (user.work_start_time) {
-      const standardStart = new Date(`${workDate}T${user.work_start_time}:00+07:00`);
-      const now = new Date(nowIso);
-
-      lateMinutes = Math.max(
-        0,
-        Math.floor((now.getTime() - standardStart.getTime()) / 60000)
-      );
-    }
-
-    const status = "working";
+    const status = ATTENDANCE_STATUS.WORKING;
 
     const payload = {
       user_id,
@@ -170,7 +150,7 @@ export async function POST(req: Request) {
         .from("attendance_records")
         .insert({
           ...payload,
-          approval_status: "approved",
+          approval_status: APPROVAL_STATUS.APPROVED,
         })
         .select()
         .single();

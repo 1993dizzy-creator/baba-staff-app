@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import {
+  ATTENDANCE_STATUS,
+  APPROVAL_STATUS,
+  LEAVE_ACTION,
+} from "@/lib/attendance/status";
 
 const messages = {
   ko: {
@@ -52,7 +57,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (action === "request") {
+    if (action === LEAVE_ACTION.REQUEST) {
       if (!user_id) {
         return NextResponse.json(
           { ok: false, message: messages[lang].missingUser },
@@ -72,7 +77,7 @@ export async function POST(req: Request) {
         .select("id")
         .eq("user_id", user_id)
         .eq("work_date", work_date)
-        .eq("status", "leave")
+        .eq("status", ATTENDANCE_STATUS.LEAVE)
         .maybeSingle();
 
       if (existingError) {
@@ -95,9 +100,9 @@ export async function POST(req: Request) {
         .insert({
           user_id,
           work_date,
-          status: "leave",
+          status: ATTENDANCE_STATUS.LEAVE,
           note: note || "",
-          approval_status: "pending",
+          approval_status: APPROVAL_STATUS.PENDING,
         })
         .select()
         .single();
@@ -117,7 +122,7 @@ export async function POST(req: Request) {
       });
     }
 
-    if (action === "cancel") {
+   if (action === LEAVE_ACTION.CANCEL) {
       if (!record_id) {
         return NextResponse.json(
           { ok: false, message: messages[lang].noCancelTarget },
@@ -129,7 +134,7 @@ export async function POST(req: Request) {
         .from("attendance_records")
         .delete()
         .eq("id", record_id)
-        .eq("status", "leave")
+        .eq("status", ATTENDANCE_STATUS.LEAVE)
         .select("id");
 
       if (error) {

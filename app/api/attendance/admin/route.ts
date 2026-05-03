@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
+  getEarlyLeaveMinutes,
+  getLateMinutes,
+  getMinutesDiff,
+  getStatusByMinutes,
   makeCheckInIso,
   makeCheckOutIso,
-  getLateMinutes,
-  getEarlyLeaveMinutes,
-  getMinutesDiff,
-} from "@/lib/attendance/utils";
+} from "@/lib/attendance/time";
+import {
+  ATTENDANCE_STATUS,
+  APPROVAL_STATUS,
+} from "@/lib/attendance/status";
 
 type Action = "force_check_in" | "force_check_out" | "set_leave";
 
@@ -99,14 +104,14 @@ export async function POST(req: Request) {
       const payload = {
         user_id,
         work_date,
-        status: "leave",
+        status: ATTENDANCE_STATUS.LEAVE,
         check_in_at: null,
         check_out_at: null,
         late_minutes: 0,
         early_leave_minutes: 0,
         work_minutes: 0,
         note: note || "관리자 휴무 처리",
-        approval_status: "approved",
+        approval_status: APPROVAL_STATUS.APPROVED,
         approved_by: admin_name || null,
         approved_at: nowIso,
         updated_at: nowIso,
@@ -169,7 +174,8 @@ export async function POST(req: Request) {
         : existing?.work_minutes ?? 0;
 
       let earlyLeaveMinutes = existing?.early_leave_minutes ?? 0;
-      let status = "working";
+      let status: typeof ATTENDANCE_STATUS[keyof typeof ATTENDANCE_STATUS] =
+        ATTENDANCE_STATUS.WORKING;
 
       if (checkOutIso) {
         const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
@@ -178,10 +184,10 @@ export async function POST(req: Request) {
           user.work_end_time
         );
 
-        status = rawEarlyLeaveMinutes >= 90 ? "early_leave" : "done";
+        status = getStatusByMinutes(lateMinutes, rawEarlyLeaveMinutes);
 
         earlyLeaveMinutes =
-          status === "early_leave" ? rawEarlyLeaveMinutes : 0;
+          status === ATTENDANCE_STATUS.EARLY_LEAVE ? rawEarlyLeaveMinutes : 0;
       }
 
       const payload = {
@@ -192,7 +198,7 @@ export async function POST(req: Request) {
         late_minutes: lateMinutes,
         early_leave_minutes: earlyLeaveMinutes,
         work_minutes: workMinutes,
-        approval_status: "approved",
+        approval_status: APPROVAL_STATUS.APPROVED,
         note: note || existing?.note || null,
         updated_at: nowIso,
       };
@@ -253,10 +259,13 @@ export async function POST(req: Request) {
 
       const workMinutes = getMinutesDiff(checkInIso, checkOutIso);
 
-      const status = rawEarlyLeaveMinutes >= 90 ? "early_leave" : "done";
+      const status = getStatusByMinutes(
+        Number(existing.late_minutes || 0),
+        rawEarlyLeaveMinutes
+      );
 
       const earlyLeaveMinutes =
-        status === "early_leave" ? rawEarlyLeaveMinutes : 0;
+        status === ATTENDANCE_STATUS.EARLY_LEAVE ? rawEarlyLeaveMinutes : 0;
 
       const { data, error } = await supabaseServer
         .from("attendance_records")
@@ -265,7 +274,7 @@ export async function POST(req: Request) {
           check_out_at: checkOutIso,
           work_minutes: workMinutes,
           early_leave_minutes: earlyLeaveMinutes,
-          approval_status: "approved",
+          approval_status: APPROVAL_STATUS.APPROVED,
           note: note || existing.note || null,
           updated_at: nowIso,
         })

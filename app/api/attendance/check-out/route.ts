@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
-  getMinutesDiff,
+  getAttendanceWorkDate,
   getEarlyLeaveMinutes,
-} from "@/lib/attendance/utils";
+  getMinutesDiff,
+  getStatusByMinutes,
+} from "@/lib/attendance/time";
+import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 
 const messages = {
   ko: {
@@ -43,35 +46,6 @@ function getLang(value: unknown): Lang {
   return value === "vi" ? "vi" : "ko";
 }
 
-function getTodayVietnamDate() {
-  const now = new Date();
-
-  const vietnamTime = new Date(
-    now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
-  );
-
-  if (vietnamTime.getHours() < 3) {
-    vietnamTime.setDate(vietnamTime.getDate() - 1);
-  }
-
-  const year = vietnamTime.getFullYear();
-  const month = String(vietnamTime.getMonth() + 1).padStart(2, "0");
-  const day = String(vietnamTime.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-function diffMinutes(startIso: string, endIso: string) {
-  let diff = Math.floor(
-    (new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000
-  );
-
-  if (diff < 0) {
-    diff += 24 * 60;
-  }
-
-  return Math.max(0, diff);
-}
 
 export async function POST(req: Request) {
   let lang: Lang = "ko";
@@ -104,7 +78,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const workDate = getTodayVietnamDate();
+    const workDate = getAttendanceWorkDate();
     const nowIso = new Date().toISOString();
 
     const { data: user, error: userError } = await supabaseServer
@@ -169,10 +143,13 @@ export async function POST(req: Request) {
       user.work_end_time
     );
 
-    const status = rawEarlyLeaveMinutes >= 90 ? "early_leave" : "done";
+    const status = getStatusByMinutes(
+      Number(existing.late_minutes || 0),
+      rawEarlyLeaveMinutes
+    );
 
     const earlyLeaveMinutes =
-      status === "early_leave" ? rawEarlyLeaveMinutes : 0;
+      status === ATTENDANCE_STATUS.EARLY_LEAVE ? rawEarlyLeaveMinutes : 0;
 
     const { data, error } = await supabaseServer
       .from("attendance_records")

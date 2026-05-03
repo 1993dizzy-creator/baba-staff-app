@@ -10,6 +10,7 @@ import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { supabase } from "@/lib/supabase/client";
 import { attendanceStaffText } from "@/lib/text/attendance-staff";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
+import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 
 type UserRow = {
   id: string;
@@ -117,7 +118,7 @@ function formatWorkMinutes(minutes?: number | null) {
 }
 
 function isApprovedLeave(record?: AttendanceRecord) {
-  return record?.status === "leave" && record?.approval_status === "approved";
+  return record?.status === ATTENDANCE_STATUS.LEAVE && record?.approval_status === "approved";
 }
 
 function getStatusText(
@@ -126,22 +127,22 @@ function getStatusText(
 ) {
   if (!record) return t.statusNotChecked;
 
-  if (record.status === "working") return t.statusWorking;
-  if (record.status === "done") return t.statusDone;
-  if (record.status === "early_leave") return t.statusEarlyLeave;
+  if (record.status === ATTENDANCE_STATUS.WORKING) return t.statusWorking;
+  if (record.status === ATTENDANCE_STATUS.DONE) return t.statusDone;
+  if (record.status === ATTENDANCE_STATUS.EARLY_LEAVE) return t.statusEarlyLeave;
   if (isApprovedLeave(record)) return t.statusLeave;
-  if (record.status === "leave") return t.statusNotChecked;
+  if (record.status === ATTENDANCE_STATUS.LEAVE) return t.statusNotChecked;
 
   return record.status;
 }
 
 function getStatusColor(record?: AttendanceRecord) {
   if (!record) return "#6b7280";
-  if (record.status === "working") return "#10b981";
-  if (record.status === "done") return "#2563eb";
-  if (record.status === "early_leave") return "#ef4444";
+  if (record.status === ATTENDANCE_STATUS.WORKING) return "#10b981";
+  if (record.status === ATTENDANCE_STATUS.DONE) return "#2563eb";
+  if (record.status === ATTENDANCE_STATUS.EARLY_LEAVE) return "#ef4444";
   if (isApprovedLeave(record)) return "#6b7280";
-  if (record.status === "leave") return "#6b7280";
+  if (record.status === ATTENDANCE_STATUS.LEAVE) return "#6b7280";
   return "#6b7280";
 }
 
@@ -179,49 +180,6 @@ function getPartMeta(part?: string | null) {
     border: "#d1d5db",
     rank: 99,
   };
-}
-
-function buildVietnamIso(workDate: string, timeValue: string) {
-  const [hourText, minuteText] = timeValue.split(":");
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-
-  const base = new Date(`${workDate}T00:00:00+07:00`);
-
-  if (hour < 3) {
-    base.setDate(base.getDate() + 1);
-  }
-
-  base.setHours(hour, minute, 0, 0);
-
-  return base.toISOString();
-}
-
-function getMinutesBetween(startIso: string | null, endIso: string | null) {
-  if (!startIso || !endIso) return 0;
-
-  const diff = new Date(endIso).getTime() - new Date(startIso).getTime();
-  return Math.max(0, Math.floor(diff / 60000));
-}
-
-function getLateMinutes(checkInIso: string, workDate: string, workStartTime?: string | null) {
-  const standardTime = workStartTime || "16:00";
-  const standardIso = buildVietnamIso(workDate, standardTime);
-
-  return Math.max(
-    0,
-    Math.floor((new Date(checkInIso).getTime() - new Date(standardIso).getTime()) / 60000)
-  );
-}
-
-function getEarlyLeaveMinutes(checkOutIso: string, workDate: string, workEndTime?: string | null) {
-  const standardTime = workEndTime || "01:00";
-  const standardIso = buildVietnamIso(workDate, standardTime);
-
-  return Math.max(
-    0,
-    Math.floor((new Date(standardIso).getTime() - new Date(checkOutIso).getTime()) / 60000)
-  );
 }
 
 export default function AttendanceStaffPage() {

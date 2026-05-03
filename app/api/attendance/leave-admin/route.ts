@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 
+import {
+  ATTENDANCE_STATUS,
+  APPROVAL_STATUS,
+  LEAVE_ACTION,
+} from "@/lib/attendance/status";
+
 const messages = {
   ko: {
     missingAction: "요청 구분이 없습니다.",
@@ -31,13 +37,32 @@ function getLang(value: unknown): Lang {
 }
 
 export async function POST(req: Request) {
+
   let lang: Lang = "ko";
 
   try {
     const body = await req.json();
     lang = getLang(body.language);
 
-    const { action, record_id, admin_name } = body;
+    const { action, record_id, admin_name, admin_id } = body;
+
+    const { data: adminUser, error: adminError } = await supabaseServer
+      .from("users")
+      .select("id, name, role, is_active")
+      .eq("id", admin_id)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (
+      adminError ||
+      !adminUser ||
+      !["owner", "master"].includes(adminUser.role)
+    ) {
+      return NextResponse.json(
+        { ok: false, message: messages[lang].noPermission },
+        { status: 403 }
+      );
+    }
 
     if (!action) {
       return NextResponse.json(
@@ -53,16 +78,16 @@ export async function POST(req: Request) {
       );
     }
 
-    if (action === "approve") {
+    if (action === LEAVE_ACTION.APPROVE) {
       const { data, error } = await supabaseServer
         .from("attendance_records")
         .update({
-          approval_status: "approved",
-          approved_by: admin_name || null,
+          approval_status: APPROVAL_STATUS.APPROVED,
+          approved_by: adminUser.name ?? admin_name ?? null,
           approved_at: new Date().toISOString(),
         })
         .eq("id", record_id)
-        .eq("status", "leave")
+        .eq("status", ATTENDANCE_STATUS.LEAVE)
         .select("id, approval_status, approved_by, approved_at");
 
       if (error) {
@@ -86,16 +111,16 @@ export async function POST(req: Request) {
       });
     }
 
-    if (action === "cancel-approval") {
+    if (action === LEAVE_ACTION.CANCEL_APPROVAL) {
       const { data, error } = await supabaseServer
         .from("attendance_records")
         .update({
-          approval_status: "pending",
+          approval_status: APPROVAL_STATUS.PENDING,
           approved_by: null,
           approved_at: null,
         })
         .eq("id", record_id)
-        .eq("status", "leave")
+        .eq("status", ATTENDANCE_STATUS.LEAVE)
         .select("id, approval_status, approved_by, approved_at");
 
       if (error) {
