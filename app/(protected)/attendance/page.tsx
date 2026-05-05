@@ -7,9 +7,8 @@ import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { ui } from "@/lib/styles/ui";
 import { useLanguage } from "@/lib/language-context";
-import { attendanceText } from "@/lib/text/attendance";
+import { commonText, attendanceText } from "@/lib/text";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
-import { supabase } from "@/lib/supabase/client";
 import { getUser } from "@/lib/supabase/auth";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 
@@ -295,22 +294,21 @@ function getStatusLabel(
   status: AttendanceStatus,
   t: (typeof attendanceText)["ko"] | (typeof attendanceText)["vi"]
 ) {
-  if (status === "before") return t.statusBefore;
-  if (status === ATTENDANCE_STATUS.DONE) return t.statusDone;
+  if (status === "before") return t.workBefore;
+  if (status === ATTENDANCE_STATUS.DONE) return t.workDone;
   if (status === ATTENDANCE_STATUS.EARLY_LEAVE) {
-    return lang === "vi" ? "Về sớm" : "조퇴";
+    return t.workEarlyLeave;
   }
 
   if (status === ATTENDANCE_STATUS.LEAVE) {
-    return lang === "vi" ? "Nghỉ" : "휴무";
+    return t.workLeave;
   }
 
-  return t.statusWorking;
+  return t.working;
 }
 
 export default function AttendancePage() {
   const { lang } = useLanguage();
-  const t = attendanceText[lang];
   const pathname = usePathname();
   const attendanceTabs = getAttendanceTabs(pathname, lang);
 
@@ -326,6 +324,7 @@ function MyAttendance() {
 
   const [isLoadingToday, setIsLoadingToday] = useState(true);
   const { lang } = useLanguage();
+  const c = commonText[lang];
   const t = attendanceText[lang];
   const [isSubmittingAttendance, setIsSubmittingAttendance] = useState(false);
 
@@ -455,7 +454,7 @@ function MyAttendance() {
     const user = getUser();
 
     if (!user?.id) {
-      alert(lang === "vi" ? "Không tìm thấy người dùng." : "사용자 정보를 찾을 수 없습니다.");
+      alert(c.noData);
       setIsSubmittingAttendance(false);
       return;
     }
@@ -475,11 +474,7 @@ function MyAttendance() {
       isLocationValid = distanceM <= ALLOWED_DISTANCE_M;
 
       if (!isLocationValid) {
-        alert(
-          lang === "vi"
-            ? `Bạn đang ở ngoài phạm vi chấm công. Khoảng cách hiện tại: ${distanceM}m`
-            : `출근 가능 범위를 벗어났습니다. 현재 거리: ${distanceM}m`
-        );
+        alert(t.checkInOutOfRange.replace("{distance}", String(distanceM)));
         return;
       }
 
@@ -503,7 +498,7 @@ function MyAttendance() {
       const result = await res.json();
 
       if (!res.ok || !result.ok) {
-        alert(result.message || (lang === "vi" ? "Không thể ghi nhận giờ vào." : "출근 기록에 실패했습니다."));
+        alert(result.message || t.checkInFail);
         return;
       }
 
@@ -524,11 +519,7 @@ function MyAttendance() {
     } catch (error) {
       console.error(error);
 
-      alert(
-        lang === "vi"
-          ? "Không thể lấy vị trí GPS. Vui lòng bật quyền vị trí."
-          : "GPS 위치를 가져올 수 없습니다. 위치 권한을 허용해주세요."
-      );
+      alert(t.gpsFail);
     } finally {
       setIsSubmittingAttendance(false);
     }
@@ -554,7 +545,7 @@ function MyAttendance() {
     const user = getUser();
 
     if (!user?.id) {
-      alert(lang === "vi" ? "Không tìm thấy người dùng." : "사용자 정보를 찾을 수 없습니다.");
+      alert(c.noData);
       setIsSubmittingAttendance(false);
       return;
     }
@@ -574,11 +565,7 @@ function MyAttendance() {
       isLocationValid = distanceM <= ALLOWED_DISTANCE_M;
 
       if (!isLocationValid) {
-        alert(
-          lang === "vi"
-            ? `Bạn đang ở ngoài phạm vi chấm công. Khoảng cách hiện tại: ${distanceM}m`
-            : `퇴근 가능 범위를 벗어났습니다. 현재 거리: ${distanceM}m`
-        );
+        alert(t.checkOutOutOfRange.replace("{distance}", String(distanceM)));
         return;
       }
 
@@ -602,7 +589,7 @@ function MyAttendance() {
       const result = await res.json();
 
       if (!res.ok || !result.ok) {
-        alert(result.message || (lang === "vi" ? "Không thể ghi nhận giờ ra." : "퇴근 기록에 실패했습니다."));
+       alert(result.message || t.checkOutFail);
         return;
       }
 
@@ -621,18 +608,12 @@ function MyAttendance() {
     } catch (error) {
       console.error(error);
 
-      alert(
-        lang === "vi"
-          ? "Không thể lấy vị trí GPS. Vui lòng bật quyền vị trí."
-          : "GPS 위치를 가져올 수 없습니다. 위치 권한을 허용해주세요."
-      );
+      alert(t.gpsFail);
     } finally {
       setIsSubmittingAttendance(false);
     }
   };
 
-  const isBefore = attendance.status === "before";
-  const isWorking = attendance.status === ATTENDANCE_STATUS.WORKING;
   const isEarlyLeave = attendance.status === ATTENDANCE_STATUS.EARLY_LEAVE;
 
   const checkInDisabled =
@@ -649,9 +630,7 @@ function MyAttendance() {
   const lateDisplayText =
     attendance.lateMinutes > 0
       ? t.lateText.replace("{minutes}", String(attendance.lateMinutes))
-      : lang === "vi"
-        ? "Đúng giờ"
-        : "정상";
+      : t.workNormal;
 
   const lateDisplayColor = attendance.lateMinutes > 0 ? "#f59e0b" : "#10b981";
 
@@ -684,7 +663,7 @@ function MyAttendance() {
 
           <div style={todayStatusDivider} />
 
-          <TodayInfoBlock label={t.summaryLate}>
+          <TodayInfoBlock label={t.workLate}>
             <span style={{ color: lateDisplayColor }}>{lateDisplayText}</span>
           </TodayInfoBlock>
 
@@ -693,12 +672,10 @@ function MyAttendance() {
           <TodayInfoBlock
             label={t.workDurationLabel}
             subValue={
-              isEarlyLeave
-                ? lang === "vi"
-                  ? `Về sớm ${attendance.earlyLeaveMinutes} phút`
-                  : `조퇴 ${attendance.earlyLeaveMinutes}분`
-                : undefined
-            }
+  isEarlyLeave
+    ? t.earlyLeaveText.replace("{minutes}", String(attendance.earlyLeaveMinutes))
+    : undefined
+}
             subColor="#ef4444"
           >
             {attendance.workDuration}
@@ -719,7 +696,7 @@ function MyAttendance() {
             <span style={actionButtonIcon}>↪</span>
             <div style={actionButtonTextWrap}>
               <div style={actionButtonTitle}>
-                {isLoadingToday ? (lang === "vi" ? "Đang tải" : "불러오는 중") : t.checkInButton}
+                {isLoadingToday ? c.loading : t.checkInButton}
               </div>
               <div style={actionButtonSubDark}>{t.checkInButtonDesc}</div>
             </div>
@@ -738,7 +715,7 @@ function MyAttendance() {
             <span style={actionButtonIconDark}>↩</span>
             <div style={actionButtonTextWrap}>
               <div style={actionButtonTitleDark}>
-                {isLoadingToday ? (lang === "vi" ? "Đang tải" : "불러오는 중") : t.checkOutButton}
+                {isLoadingToday ? c.loading : t.checkOutButton}
               </div>
               <div style={actionButtonSubDark}>{t.checkOutButtonDesc}</div>
             </div>
@@ -786,7 +763,7 @@ function MyAttendance() {
             icon="🟠"
             iconBg="#fff7ed"
             iconColor="#f97316"
-            label={t.summaryLate}
+            label={t.workLate}
             value={
               lang === "vi"
                 ? `${attendance.monthSummary.lateCount} lần`
@@ -802,7 +779,7 @@ function MyAttendance() {
             icon="⟳"
             iconBg="#fef2f2"
             iconColor="#ef4444"
-            label={t.summaryEarlyLeave}
+            label={t.workEarlyLeave}
             value={
               lang === "vi"
                 ? `${attendance.monthSummary.earlyLeaveCount} lần`
@@ -818,7 +795,7 @@ function MyAttendance() {
             icon="💼"
             iconBg="#f3f4f6"
             iconColor="#6b7280"
-            label={t.summaryLeave}
+            label={t.workLeave}
             value={
               lang === "vi"
                 ? `${attendance.monthSummary.leaveDays} ngày`
@@ -937,6 +914,7 @@ function getCalendarCells(baseDate: Date) {
 function Calendar({ refreshKey }: { refreshKey: number }) {
   const { lang } = useLanguage();
   const t = attendanceText[lang];
+  const c = commonText[lang];
   const [calendarDate, setCalendarDate] = useState(new Date());
   const calendarCells = getCalendarCells(calendarDate);
 
@@ -1010,16 +988,16 @@ function Calendar({ refreshKey }: { refreshKey: number }) {
         </div>
 
         <div style={calendarLegendStyle}>
-          <LegendItem label={t.legendNormal} color="#10b981" />
-          <LegendItem label={t.legendLate} color="#f59e0b" />
-          <LegendItem label={t.legendEarlyLeave} color="#ef4444" />
-          <LegendItem label={t.legendLeave} color="#6b7280" />
+          <LegendItem label={t.workNormal} color="#10b981" />
+          <LegendItem label={t.workLate} color="#f59e0b" />
+          <LegendItem label={t.workEarlyLeave} color="#ef4444" />
+          <LegendItem label={t.workLeave} color="#6b7280" />
         </div>
       </div>
 
       <div style={calendarWrapStyle}>
         <div style={weekHeaderGridStyle}>
-          {t.calendarWeekdays.map((day) => (
+          {c.calendarWeekdays.map((day) => (
             <div
               key={day}
               style={{

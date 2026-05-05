@@ -10,28 +10,11 @@ import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import { usePathname } from "next/navigation";
 import SubNav from "@/components/SubNav";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
-import { getPartLabel } from "@/lib/common/part-label";
-import {
-    PART_VALUES,
-    PART_META,
-    type PartValue,
-} from "@/lib/common/parts";
-import {
-    QUICK_REASON_VALUES,
-    type QuickReasonValue,
-} from "@/lib/inventory/reasons";
+import {PART_VALUES, PART_META, type PartValue,} from "@/lib/common/parts";
+import { type QuickReasonValue } from "@/lib/inventory/reasons";
 import { CATEGORY_OPTIONS_BY_PART } from "@/lib/inventory/categories";
-import {
-    parseDecimal,
-    formatDecimalDisplay,
-    roundDecimal,
-} from "@/lib/inventory/number";
-import {
-    normalizePriceInput,
-    formatNumber,
-    parsePrice,
-    formatMoneyDisplay,
-} from "@/lib/inventory/money";
+import { parseDecimal,formatDecimalDisplay,roundDecimal,} from "@/lib/inventory/number";
+import { formatNumber,parsePrice,formatMoneyDisplay,} from "@/lib/inventory/money";
 import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
 
 
@@ -229,7 +212,7 @@ export default function InventoryPage() {
             !(log.prev_quantity == null && log.new_quantity == null)
         ) {
             changes.push({
-                label: t.quantity,
+                label: c.quantity,
                 before: `${formatDecimalDisplay(log.prev_quantity)}${log.unit ? ` ${log.unit}` : ""}`,
                 after: `${formatDecimalDisplay(log.new_quantity)}${log.unit ? ` ${log.unit}` : ""}`,
                 color:
@@ -251,7 +234,7 @@ export default function InventoryPage() {
 
         if ((log.prev_supplier || "") !== (log.new_supplier || "")) {
             changes.push({
-                label: t.supplier,
+                label: c.supplier,
                 before: log.prev_supplier || "-",
                 after: log.new_supplier || "-",
             });
@@ -259,7 +242,7 @@ export default function InventoryPage() {
 
         if ((log.prev_code || "") !== (log.new_code || "")) {
             changes.push({
-                label: t.code,
+                label: c.code,
                 before: log.prev_code || "-",
                 after: log.new_code || "-",
             });
@@ -267,7 +250,7 @@ export default function InventoryPage() {
 
         if ((log.prev_unit || "") !== (log.new_unit || "")) {
             changes.push({
-                label: t.unit,
+                label: c.unit,
                 before: log.prev_unit || "-",
                 after: log.new_unit || "-",
             });
@@ -275,7 +258,7 @@ export default function InventoryPage() {
 
         if ((log.prev_category || "") !== (log.new_category || "")) {
             changes.push({
-                label: t.category,
+                label: c.category,
                 before:
                     lang === "vi"
                         ? log.prev_category_vi || log.prev_category || "-"
@@ -289,9 +272,13 @@ export default function InventoryPage() {
 
         if ((log.prev_part || "") !== (log.new_part || "")) {
             changes.push({
-                label: t.part,
-                before: getPartLabel(log.prev_part || "-", t),
-                after: getPartLabel(log.new_part || "-", t),
+                label: c.part,
+                before: log.prev_part
+                    ? c[log.prev_part as keyof typeof c] || log.prev_part
+                    : "-",
+                after: log.new_part
+                    ? c[log.new_part as keyof typeof c] || log.new_part
+                    : "-",
             });
         }
 
@@ -1426,7 +1413,10 @@ export default function InventoryPage() {
                                                     </div>
 
                                                     <div style={ui.metaText}>
-                                                        {[getPartLabel(item.part || "", t), getDisplayCategory(item)].join(" · ")}
+                                                        {[
+                                                            item.part ? c[item.part as keyof typeof c] || item.part : "",
+                                                            getDisplayCategory(item)
+                                                        ].filter(Boolean).join(" · ")}
                                                     </div>
                                                 </div>
 
@@ -1551,7 +1541,7 @@ export default function InventoryPage() {
                                                                 type="number"
                                                                 step="0.1"
                                                                 value={quantityDraft}
-                                                                placeholder={lang === "vi" ? "Nhập số lượng mới" : "새 수량 입력"}
+                                                                placeholder={c.quantity}
                                                                 onChange={(e) =>
                                                                     setQuantityDrafts((prev) => ({
                                                                         ...prev,
@@ -1690,7 +1680,7 @@ export default function InventoryPage() {
                                                     </div>
 
                                                     <div style={ui.detailGrid}>
-                                                        <div style={ui.detailLabel}>{t.supplier}</div>
+                                                        <div style={ui.detailLabel}>{c.supplier}</div>
                                                         <div style={ui.detailValue}>{item.supplier || "-"}</div>
 
                                                         <div style={ui.detailLabel}>{t.purchasePrice}</div>
@@ -1754,7 +1744,7 @@ export default function InventoryPage() {
                                                                 fontWeight: 700,
                                                             }}
                                                         >
-                                                            {lang === "vi" ? "Log" : "로그"}
+                                                            {t.logItemTitle}
                                                         </button>
 
                                                         <button
@@ -1846,7 +1836,7 @@ export default function InventoryPage() {
                         {/* 파트 */}
                         <div>
                             <div style={labelStyle}>
-                                {t.part}
+                                {c.part}
                             </div>
                             <div
                                 style={{
@@ -1882,7 +1872,7 @@ export default function InventoryPage() {
                         {/* 카테고리 */}
                         <div>
                             <div style={labelStyle}>
-                                {t.category}
+                                {c.category}
                             </div>
                             <select
                                 value={isCustomCategory ? "__custom__" : category}
@@ -1928,7 +1918,7 @@ export default function InventoryPage() {
                                 ))}
 
                                 <option value="__custom__">
-                                    {t.directInput}
+                                    {c.directInput}
                                 </option>
                             </select>
                         </div>
@@ -1963,11 +1953,11 @@ export default function InventoryPage() {
                         {/* 코드 */}
                         <div>
                             <div style={labelStyle}>
-                                {t.code}
+                                {c.code}
                             </div>
                             <input
                                 type="text"
-                                placeholder={t.selectInput}
+                                placeholder={c.selectInput}
                                 value={code}
                                 onChange={(e) => setCode(e.target.value)}
                                 style={ui.input}
@@ -1977,11 +1967,11 @@ export default function InventoryPage() {
                         {/* 품목명 */}
                         <div>
                             <div style={labelStyle}>
-                                {t.itemName}
+                                {c.itemName}
                             </div>
                             <input
                                 type="text"
-                                placeholder={t.itemName}
+                                placeholder={c.itemName}
                                 value={itemName}
                                 onChange={(e) => setItemName(e.target.value)}
                                 style={ui.input}
@@ -1993,7 +1983,7 @@ export default function InventoryPage() {
                         {/* 거래처 */}
                         <div>
                             <div style={labelStyle}>
-                                {t.supplier}
+                                {c.supplier}
                             </div>
 
                             <select
@@ -2012,7 +2002,7 @@ export default function InventoryPage() {
                                 }}
                                 style={ui.input}
                             >
-                                <option value="">{t.supplier}</option>
+                                <option value="">{c.supplier}</option>
 
                                 {mergedSupplierOptions.map((option) => (
                                     <option key={option} value={option}>
@@ -2021,7 +2011,7 @@ export default function InventoryPage() {
                                 ))}
 
                                 <option value="__custom__">
-                                    {t.directInput}
+                                    {c.directInput}
                                 </option>
                             </select>
                         </div>
@@ -2064,7 +2054,7 @@ export default function InventoryPage() {
                         {/* 단위 */}
                         <div>
                             <div style={labelStyle}>
-                                {t.unit}
+                                {c.unit}
                             </div>
                             <input
                                 type="text"
@@ -2104,12 +2094,12 @@ export default function InventoryPage() {
                         {/* 수량 */}
                         <div>
                             <div style={labelStyle}>
-                                {t.quantity}
+                                {c.quantity}
                             </div>
                             <input
                                 type="number"
                                 step="0.1"
-                                placeholder={t.quantity}
+                                placeholder={c.quantity}
                                 value={quantity}
                                 onChange={(e) => setQuantity(e.target.value)}
                                 style={ui.input}
@@ -2271,7 +2261,10 @@ export default function InventoryPage() {
                                         </div>
 
                                         <div style={ui.metaText}>
-                                            {[getPartLabel(log.part || "", t), getDisplayLogCategory(log)].join(" · ")}
+                                            {[
+                                                log.part ? c[log.part as keyof typeof c] || log.part : "",
+                                                getDisplayLogCategory(log)
+                                            ].filter(Boolean).join(" · ")}
                                         </div>
                                     </div>
 
@@ -2525,9 +2518,9 @@ export default function InventoryPage() {
                             }}
                         >
                             {isItemLogsLoading ? (
-                                <div>{lang === "vi" ? "Đang tải..." : "불러오는 중..."}</div>
+                                <div>{c.loading}</div>
                             ) : itemLogGroups.length === 0 ? (
-                                <div>{lang === "vi" ? "Không có log" : "로그 없음"}</div>
+                                <div>{c.noLogs}</div>
                             ) : (
                                 itemLogGroups.map((group) => {
                                     const log = group.latest;
@@ -2539,7 +2532,7 @@ export default function InventoryPage() {
                                             isOpen={true}
                                             lang={lang}
                                             noteText={group.noteKey || "-"}
-                                            partLabel={getPartLabel(log.part || "", t)}
+                                            partLabel={c[log.part as keyof typeof c] || log.part}
                                             itemName={getDisplayLogItemName(log)}
                                             categoryName={getDisplayLogCategory(log)}
                                             detailLabel={c.detail}

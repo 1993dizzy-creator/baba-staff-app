@@ -8,13 +8,9 @@ import { commonText, inventoryText } from "@/lib/text";
 import SubNav from "@/components/SubNav";
 import { usePathname } from "next/navigation";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
-import {
-    PART_VALUES,
-    PART_META,
-    type PartValue,
-} from "@/lib/common/parts";
-import { getPartLabel } from "@/lib/common/part-label";
+import {PART_VALUES,PART_META,type PartValue,} from "@/lib/common/parts";
 import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
+import { formatDecimalDisplay } from "@/lib/inventory/number";
 
 
 type SnapshotBatch = {
@@ -75,18 +71,6 @@ export default function InventorySnapshotsPage() {
     const getCategoryKey = (item: SnapshotItem) =>
         item.category || item.category_vi || "-";
 
-    const formatDecimalDisplay = (value: string | number | null | undefined) => {
-        if (value === null || value === undefined || value === "") return "0";
-
-        const num =
-            typeof value === "number"
-                ? value
-                : Number(String(value).replace(/,/g, "").trim());
-
-        if (!Number.isFinite(num)) return "0";
-
-        return num.toFixed(2).replace(/\.?0+$/, "");
-    };
 
     const fetchBatches = async () => {
         setLoadingBatches(true);
@@ -692,7 +676,7 @@ export default function InventorySnapshotsPage() {
                             fontSize: 13,
                         }}
                     >
-                        Loading...
+                        {c.loading}
                     </div>
                 ) : batchList.length === 0 ? (
                     <div
@@ -1055,7 +1039,7 @@ export default function InventorySnapshotsPage() {
                             color: "#111827",
                         }}
                     >
-                        <span>{t.total}</span>
+                        <span>{c.total}</span>
                         <span>{purchaseTotalAmount.toLocaleString()} ₫</span>
                     </div>
                 </div>
@@ -1173,7 +1157,7 @@ export default function InventorySnapshotsPage() {
                             }}
                             style={getFilterToggleButtonStyle(false, "#111827")}
                         >
-                            {t.resetFilter}
+                            {c.resetFilter}
                         </button>
                     </div>
                 </div>
@@ -1240,7 +1224,7 @@ export default function InventorySnapshotsPage() {
                         }}
                     >
                         <div style={{ fontSize: 22 }}>⏳</div>
-                        <div>Loading...</div>
+                        <div>{c.loading}</div>
                     </div>
                 ) : viewMode === "snapshot" && !selectedBatchId ? (
                     <div
@@ -1272,7 +1256,7 @@ export default function InventorySnapshotsPage() {
                         }}
                     >
                         <div style={{ fontSize: 22 }}>📭</div>
-                        <div>{t.noItems}</div>
+                        <div>{c.noData}</div>
                     </div>
                 ) : (
                     <div
@@ -1355,7 +1339,10 @@ export default function InventorySnapshotsPage() {
                                                     </div>
 
                                                     <div style={ui.metaText}>
-                                                        {[getPartLabel(item.part, t), getDisplayCategory(item)].join(" · ")}
+                                                        {[
+                                                            item.part ? c[item.part as keyof typeof c] || item.part : "",
+                                                            getDisplayCategory(item)
+                                                        ].filter(Boolean).join(" · ")}
                                                     </div>
                                                 </div>
 

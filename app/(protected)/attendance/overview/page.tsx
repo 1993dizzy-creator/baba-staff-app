@@ -7,8 +7,9 @@ import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
-import { supabase } from "@/lib/supabase/client";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
+import { commonText, attendanceText } from "@/lib/text";
+
 
 
 type UserRow = {
@@ -89,12 +90,13 @@ function getMonthRange(month: Date) {
     return { startText, endText };
 }
 
-function formatMonth(month: Date, lang: "ko" | "vi") {
+function formatMonth(month: Date, monthFormat: string) {
     const year = String(month.getFullYear()).slice(2);
-    const monthNumber = month.getMonth() + 1;
+    const monthNumber = String(month.getMonth() + 1);
 
-    if (lang === "vi") return `Tháng ${monthNumber}/${year}`;
-    return `${year}년 ${monthNumber}월`;
+    return monthFormat
+        .replace("{year}", year)
+        .replace("{month}", monthNumber);
 }
 
 function getAge(birthDate?: string | null) {
@@ -118,24 +120,23 @@ function isApprovedLeave(record: AttendanceRecord) {
     return record.status === "leave" && record.approval_status === "approved";
 }
 
-function formatMinutes(minutes: number, lang: "ko" | "vi") {
+function formatMinutes(
+    minutes: number,
+    c: { hour: string; minute: string }
+) {
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
 
-    if (lang === "vi") {
-        if (h <= 0) return `${m} p`;
-        if (m <= 0) return `${h} giờ`;
-        return `${h} giờ ${m} p`;
-    }
-
-    if (h <= 0) return `${m}분`;
-    if (m <= 0) return `${h}시간`;
-    return `${h}시간 ${m}분`;
+    if (h <= 0) return `${m}${c.minute}`;
+    if (m <= 0) return `${h}${c.hour}`;
+    return `${h}${c.hour} ${m}${c.minute}`;
 }
 
 export default function AttendanceOverviewPage() {
     const router = useRouter();
     const { lang } = useLanguage();
+    const c = commonText[lang];
+    const t = attendanceText[lang];
     const pathname = usePathname();
     const tabs = getAttendanceTabs(pathname, lang);
 
@@ -325,7 +326,7 @@ export default function AttendanceOverviewPage() {
                     ‹
                 </button>
 
-                <div style={monthTitleStyle}>{formatMonth(currentMonth, lang)}</div>
+                <div style={monthTitleStyle}>{formatMonth(currentMonth, t.monthFormat)}</div>
 
                 <button type="button" style={monthButtonStyle} onClick={() => moveMonth(1)}>
                     ›
@@ -334,9 +335,9 @@ export default function AttendanceOverviewPage() {
 
             <div style={sectionStyle}>
                 {isLoading ? (
-                    <div style={emptyStyle}>{lang === "vi" ? "Đang tải..." : "불러오는 중..."}</div>
+                    <div style={emptyStyle}>{c.loading}</div>
                 ) : groupedSummaries.length === 0 ? (
-                    <div style={emptyStyle}>{lang === "vi" ? "Không có nhân viên." : "직원이 없습니다."}</div>
+                    <div style={emptyStyle}>{c.noData}</div>
                 ) : (
                     groupedSummaries.map((group) => (
                         <div key={group.part} style={partGroupStyle}>
@@ -349,7 +350,7 @@ export default function AttendanceOverviewPage() {
                                 }}
                             >
                                 <span>{group.meta.emoji}</span>
-                                <span>{group.meta.label}</span>
+                                <span>{c[group.part as keyof typeof c] || group.meta.label}</span>
                                 <span style={partCountStyle}>{group.summaries.length}</span>
                             </div>
 
@@ -372,28 +373,30 @@ export default function AttendanceOverviewPage() {
                                                         {age ? ` (${age})` : ""}
                                                     </span>
                                                     <span style={staffMetaStyle}>
-                                                        {user.position || user.username}
+                                                        {user.position
+                                                            ? t.positions?.[user.position as keyof typeof t.positions] || user.position
+                                                            : user.username}
                                                     </span>
                                                 </div>
 
                                                 <div style={staffRightStyle}>
                                                     <span style={miniBadgeStyle}>
-                                                        {lang === "vi" ? "Làm" : "근무"} {summary.workDays}
+                                                        {t.workTime} {summary.workDays}
                                                     </span>
 
                                                     <span style={miniBadgeStyle}>
-                                                        {lang === "vi" ? "Nghỉ" : "휴무"} {summary.leaveDays}
+                                                        {t.workLeave} {summary.leaveDays}
                                                     </span>
 
                                                     {summary.lateCount > 0 && (
                                                         <span style={warningBadgeStyle}>
-                                                            {lang === "vi" ? "Trễ" : "지각"} {summary.lateCount}
+                                                            {t.workLate} {summary.lateCount}
                                                         </span>
                                                     )}
 
                                                     {summary.earlyLeaveCount > 0 && (
                                                         <span style={dangerBadgeStyle}>
-                                                            {lang === "vi" ? "Sớm" : "조퇴"} {summary.earlyLeaveCount}
+                                                            {t.workEarlyLeave} {summary.earlyLeaveCount}
                                                         </span>
                                                     )}
 
@@ -404,21 +407,21 @@ export default function AttendanceOverviewPage() {
                                             {isExpanded && (
                                                 <div style={detailGridStyle}>
                                                     <InfoBox
-                                                        label={lang === "vi" ? "Tổng giờ" : "총 근무"}
-                                                        value={formatMinutes(summary.totalWorkMinutes, lang)}
+                                                        label={t.summaryTotalWorkTime}
+                                                        value={formatMinutes(summary.totalWorkMinutes, c)}
                                                     />
                                                     <InfoBox
-                                                        label={lang === "vi" ? "trễ" : "지각"}
-                                                        value={formatMinutes(summary.totalLateMinutes, lang)}
-                                                    />
-
-                                                    <InfoBox
-                                                        label={lang === "vi" ? "về sớm" : "조퇴"}
-                                                        value={formatMinutes(summary.totalEarlyLeaveMinutes, lang)}
+                                                        label={t.workLate}
+                                                        value={formatMinutes(summary.totalLateMinutes, c)}
                                                     />
 
                                                     <InfoBox
-                                                        label={lang === "vi" ? "Vắng" : "미출근"}
+                                                        label={t.workEarlyLeave}
+                                                        value={formatMinutes(summary.totalEarlyLeaveMinutes, c)}
+                                                    />
+
+                                                    <InfoBox
+                                                        label={t.absent}
                                                         value={`${summary.absentCount}`}
                                                     />
 
@@ -428,7 +431,7 @@ export default function AttendanceOverviewPage() {
                                                             onClick={() => goDetail(user.id)}
                                                             style={detailButtonStyle}
                                                         >
-                                                            {lang === "vi" ? "Xem chi tiết" : "상세보기"}
+                                                            {t.viewDetail}
                                                         </button>
                                                     </div>
                                                 </div>

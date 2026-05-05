@@ -7,14 +7,10 @@ import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
-import { attendanceLeaveText } from "@/lib/text/attendance-leave";
+import { commonText, attendanceText } from "@/lib/text";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { useSearchParams } from "next/navigation";
-import {
-  ATTENDANCE_STATUS,
-  APPROVAL_STATUS,
-  LEAVE_ACTION,
-} from "@/lib/attendance/status";
+import { APPROVAL_STATUS, LEAVE_ACTION, } from "@/lib/attendance/status";
 
 type UserRow = {
   id: string | number;
@@ -173,7 +169,9 @@ export default function AttendanceLeavePage() {
   const { lang } = useLanguage();
   const pathname = usePathname();
   const tabs = getAttendanceTabs(pathname, lang);
-  const t = attendanceLeaveText[lang];
+  const t = attendanceText[lang];
+  const c = commonText[lang];
+
 
   const currentUser = getUser();
   const canManageLeave = isAdmin(currentUser);
@@ -238,7 +236,7 @@ export default function AttendanceLeavePage() {
 
   const handleLeaveRequest = async () => {
     if (!currentUser?.id) {
-      alert(lang === "vi" ? "Vui lòng đăng nhập lại." : "다시 로그인해주세요.");
+      alert(c.loginAgain);
       return;
     }
 
@@ -249,7 +247,7 @@ export default function AttendanceLeavePage() {
     );
 
     if (alreadyRequested) {
-      const ok = confirm(lang === "vi" ? "Hủy ngày nghỉ này?" : "이 휴무 신청을 취소할까요?");
+      const ok = confirm(t.leaveCancelConfirm);
       if (!ok) return;
 
       const res = await fetch("/api/attendance/leave", {
@@ -267,7 +265,7 @@ export default function AttendanceLeavePage() {
       const result = await res.json();
 
       if (!res.ok || !result.ok) {
-        alert(result.message || (lang === "vi" ? "Đã xảy ra lỗi." : "오류가 발생했습니다."));
+        alert(result.message || c.errorDefault);
         return;
       }
 
@@ -281,11 +279,7 @@ export default function AttendanceLeavePage() {
     let reason = "";
 
     if (isFridayOrSaturday) {
-      const input = prompt(
-        lang === "vi"
-          ? "Vui lòng nhập lý do nghỉ."
-          : "금/토요일 휴무는 사유를 입력해주세요."
-      );
+      const input = prompt(t.leaveReasonRequired);
 
       if (!input?.trim()) return;
       reason = input.trim();
@@ -308,7 +302,7 @@ export default function AttendanceLeavePage() {
     const result = await res.json();
 
     if (!res.ok || !result.ok) {
-      alert(result.message || (lang === "vi" ? "Đã xảy ra lỗi." : "오류가 발생했습니다."));
+      alert(result.message || c.errorDefault);
       return;
     }
 
@@ -335,7 +329,7 @@ export default function AttendanceLeavePage() {
     const result = await res.json();
 
     if (!res.ok || !result.ok) {
-      alert(result.message || (lang === "vi" ? "Đã xảy ra lỗi." : "오류가 발생했습니다."));
+      alert(result.message || c.errorDefault);
       return;
     }
 
@@ -361,7 +355,7 @@ export default function AttendanceLeavePage() {
     const result = await res.json();
 
     if (!res.ok || !result.ok) {
-      alert(result.message || (lang === "vi" ? "Đã xảy ra lỗi." : "오류가 발생했습니다."));
+      alert(result.message || c.errorDefault);
       return;
     }
 
@@ -369,11 +363,7 @@ export default function AttendanceLeavePage() {
   };
 
   const handleCancelPendingLeave = async (recordId: number) => {
-    const ok = confirm(
-      lang === "vi"
-        ? "Hủy yêu cầu nghỉ này?"
-        : "이 휴무 신청을 취소할까요?"
-    );
+    const ok = confirm(t.leaveCancelConfirm);
     if (!ok) return;
 
     const res = await fetch("/api/attendance/leave", {
@@ -391,7 +381,7 @@ export default function AttendanceLeavePage() {
     const result = await res.json();
 
     if (!res.ok || !result.ok) {
-      alert(result.message || (lang === "vi" ? "Đã xảy ra lỗi." : "오류가 발생했습니다."));
+      alert(result.message || c.errorDefault);
       return;
     }
 
@@ -529,10 +519,7 @@ export default function AttendanceLeavePage() {
           </div>
 
           <div style={weekGridStyle}>
-            {(lang === "vi"
-              ? ["CN", "T2", "T3", "T4", "T5", "T6", "T7"]
-              : ["일", "월", "화", "수", "목", "금", "토"]
-            ).map((day, index) => (
+            {c.calendarWeekdays.map((day, index) => (
               <div
                 key={day}
                 style={{
@@ -593,7 +580,7 @@ export default function AttendanceLeavePage() {
 
           <div style={selectedListStyle}>
             {selectedDateLeaves.length === 0 ? (
-              <div style={selectedEmptyStyle}>{t.noLeave}</div>
+              <div style={selectedEmptyStyle}>{c.noLogs}</div>
             ) : (
               selectedDateLeaves.map((item, index) => {
                 const { user, record } = item;
@@ -636,13 +623,7 @@ export default function AttendanceLeavePage() {
                             background: isApproved ? "#ecfdf5" : "#fffbeb",
                           }}
                         >
-                          {isApproved
-                            ? lang === "vi"
-                              ? "Đã duyệt"
-                              : "승인완료"
-                            : lang === "vi"
-                              ? "Chờ duyệt"
-                              : "승인대기"}
+                          {isApproved ? t.approvalApproved : t.approvalPending}
                         </span>
 
                         {canManageLeave && (
@@ -653,7 +634,7 @@ export default function AttendanceLeavePage() {
                                 style={approveButtonStyle}
                                 onClick={() => handleApproveLeave(record.id)}
                               >
-                                {lang === "vi" ? "Duyệt" : "승인"}
+                                {t.approve}
                               </button>
                             )}
 
@@ -663,7 +644,7 @@ export default function AttendanceLeavePage() {
                                 style={cancelApprovalButtonStyle}
                                 onClick={() => handleCancelApproval(record.id)}
                               >
-                                {lang === "vi" ? "Hủy duyệt" : "승인취소"}
+                                {t.cancelApproval}
                               </button>
                             ) : (
                               <button
@@ -671,7 +652,7 @@ export default function AttendanceLeavePage() {
                                 style={cancelApprovalButtonStyle}
                                 onClick={() => handleCancelPendingLeave(record.id)}
                               >
-                                {lang === "vi" ? "Hủy đơn" : "신청취소"}
+                                {t.cancelRequest}
                               </button>
                             )}
                           </div>
@@ -689,13 +670,7 @@ export default function AttendanceLeavePage() {
 
             {!canManageLeave && (
               <button type="button" style={requestButtonStyle} onClick={handleLeaveRequest}>
-                {mySelectedRecord
-                  ? lang === "vi"
-                    ? "Hủy ngày nghỉ"
-                    : "휴무취소"
-                  : lang === "vi"
-                    ? "Đăng ký nghỉ"
-                    : "휴무신청"}
+                {mySelectedRecord ? t.leaveCancel : t.leaveRequest}
               </button>
             )}
           </div>
@@ -705,9 +680,9 @@ export default function AttendanceLeavePage() {
 
         <div style={cardStyle}>
           {isLoading ? (
-            <Empty text={t.loading} />
+            <Empty text={c.loading} />
           ) : staffSummaryGroups.length === 0 ? (
-            <Empty text={t.noLeave} />
+            <Empty text={c.noLogs} />
           ) : (
             <div style={summaryListStyle}>
               {staffSummaryGroups.map((group) => (
@@ -720,16 +695,18 @@ export default function AttendanceLeavePage() {
                       borderLeft: `4px solid ${group.meta.color}`,
                     }}
                   >
-                    {group.meta.emoji} {t.parts?.[group.part as keyof typeof t.parts] || group.meta.label}
+                    {group.meta.emoji} {c[group.part as keyof typeof c] || group.meta.label}
                   </div>
 
                   {group.items.map((item) => (
                     <div key={item.user.id} style={summaryRowStyle}>
                       <span style={userNameStyle}>{item.user.name}</span>
-                      <span style={userMetaStyle}>{item.user.position || item.user.username}</span>
+                      <span style={userMetaStyle}>
+                        {t.positions?.[item.user.position as keyof typeof t.positions] || item.user.position || item.user.username}
+                      </span>
                       <span style={summaryCountStyle}>
                         {item.count}
-                        {t.days}
+                        {c.days}
                         <span style={summaryDatesStyle}>
                           (
                           {item.dates.map((dateKey, index) => {

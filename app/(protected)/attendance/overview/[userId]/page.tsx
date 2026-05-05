@@ -6,11 +6,12 @@ import { useParams, usePathname, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
-import { attendanceText } from "@/lib/text/attendance";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { ui } from "@/lib/styles/ui";
 import { supabase } from "@/lib/supabase/client";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
+import { commonText, attendanceText } from "@/lib/text";
+
 
 type UserRow = {
     id: number;
@@ -58,13 +59,13 @@ function getMonthRange(month: Date) {
     return { start, end, startText, endText };
 }
 
-function formatCalendarTitle(lang: "ko" | "vi", date: Date) {
-    if (lang === "vi") {
-        return `Tháng ${date.getMonth() + 1}\n${date.getFullYear()}`;
-    }
-
+function formatCalendarTitle(date: Date, monthFormat: string) {
     const year = String(date.getFullYear()).slice(2);
-    return `${year}년 ${date.getMonth() + 1}월`;
+    const month = String(date.getMonth() + 1);
+
+    return monthFormat
+        .replace("{year}", year)
+        .replace("{month}", month);
 }
 
 function isApprovedLeave(record: AttendanceRecord | null | undefined) {
@@ -119,24 +120,23 @@ function getCalendarCells(baseDate: Date) {
     return cells;
 }
 
-function formatMinutes(minutes: number, lang: "ko" | "vi") {
+function formatMinutes(
+    minutes: number,
+    text: { hour: string; minute: string }
+) {
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
 
-    if (lang === "vi") {
-        if (h <= 0) return `${m} p`;
-        if (m <= 0) return `${h} giờ`;
-        return `${h} giờ ${m} p`;
-    }
-
-    if (h <= 0) return `${m}분`;
-    if (m <= 0) return `${h}시간`;
-    return `${h}시간 ${m}분`;
+    if (h <= 0) return `${m}${text.minute}`;
+    if (m <= 0) return `${h}${text.hour}`;
+    return `${h}${text.hour} ${m}${text.minute}`;
 }
 
 
 export default function AttendanceUserDetailPage() {
     const { lang } = useLanguage();
+    const c = commonText[lang];
+    const t = attendanceText[lang];
     const pathname = usePathname();
     const params = useParams();
     const searchParams = useSearchParams();
@@ -257,23 +257,25 @@ export default function AttendanceUserDetailPage() {
                 <div style={userTitleStyle}>
                     <div style={userNameStyle}>{user?.name || "-"}</div>
                     <div style={userMetaStyle}>
-                        {user?.position || user?.username || "-"}
+                        {user?.position
+                            ? t.positions?.[user.position as keyof typeof t.positions] || user.position
+                            : user?.username || "-"}
                     </div>
                 </div>
             </div>
 
 
             {isLoading ? (
-                <div style={emptyStyle}>{lang === "vi" ? "Đang tải..." : "불러오는 중..."}</div>
+                <div style={emptyStyle}>{c.loading}</div>
             ) : (
                 <>
                     <div style={summaryGridStyle}>
 
-                        <InfoBox label={lang === "vi" ? "Làm" : "근무일"} value={`${summary.workDays}`} />
-                        <InfoBox label={lang === "vi" ? "Nghỉ" : "휴무일"} value={`${summary.leaveDays}`} />
-                        <InfoBox label={lang === "vi" ? "Trễ" : "지각"} value={`${summary.lateCount}`} />
-                        <InfoBox label={lang === "vi" ? "Sớm" : "조퇴"} value={`${summary.earlyLeaveCount}`} />
-                        <InfoBox label={lang === "vi" ? "Tổng giờ" : "총 근무"} value={formatMinutes(summary.totalWorkMinutes, lang)} />
+                        <InfoBox label={t.summaryWorkDays} value={`${summary.workDays}`} />
+                        <InfoBox label={t.workLeave} value={`${summary.leaveDays}`} />
+                        <InfoBox label={t.workLate} value={`${summary.lateCount}`} />
+                        <InfoBox label={t.workEarlyLeave} value={`${summary.earlyLeaveCount}`} />
+                        <InfoBox label={t.summaryTotalWorkTime} value={formatMinutes(summary.totalWorkMinutes, c)} />
 
                     </div>
 
@@ -309,6 +311,7 @@ function Calendar({
     records: AttendanceRecord[];
 }) {
     const { lang } = useLanguage();
+    const c = commonText[lang];
     const t = attendanceText[lang];
     const calendarCells = getCalendarCells(calendarDate);
 
@@ -335,7 +338,7 @@ function Calendar({
                         ‹
                     </button>
 
-                    <div style={calendarTitle}>{formatCalendarTitle(lang, calendarDate)}</div>
+                    <div style={calendarTitle}>{formatCalendarTitle(calendarDate, t.monthFormat)}</div>
 
                     <button
                         type="button"
@@ -349,16 +352,16 @@ function Calendar({
                 </div>
 
                 <div style={calendarLegendStyle}>
-                    <LegendItem label={t.legendNormal} color="#10b981" />
-                    <LegendItem label={t.legendLate} color="#f59e0b" />
-                    <LegendItem label={t.legendEarlyLeave} color="#ef4444" />
-                    <LegendItem label={t.legendLeave} color="#6b7280" />
+                    <LegendItem label={t.workNormal} color="#10b981" />
+                    <LegendItem label={t.workLate} color="#f59e0b" />
+                    <LegendItem label={t.workEarlyLeave} color="#ef4444" />
+                    <LegendItem label={t.workLeave} color="#6b7280" />
                 </div>
             </div>
 
             <div style={calendarWrapStyle}>
                 <div style={weekHeaderGridStyle}>
-                    {t.calendarWeekdays.map((day) => (
+                    {c.calendarWeekdays.map((day) => (
                         <div
                             key={day}
                             style={{

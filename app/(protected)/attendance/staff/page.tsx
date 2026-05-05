@@ -7,15 +7,11 @@ import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
-import { supabase } from "@/lib/supabase/client";
-import { attendanceStaffText } from "@/lib/text/attendance-staff";
+import { commonText, attendanceText } from "@/lib/text";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
-import {
-  PART_META,
-  type PartValue,
-} from "@/lib/common/parts";
-import { getPartLabel } from "@/lib/common/part-label";
+import { PART_META, type PartValue,} from "@/lib/common/parts";
+
 
 type UserRow = {
   id: string;
@@ -82,16 +78,16 @@ function isApprovedLeave(record?: AttendanceRecord) {
 }
 
 function getStatusText(
-  t: (typeof attendanceStaffText)["ko"] | (typeof attendanceStaffText)["vi"],
+  t: (typeof attendanceText)["ko"] | (typeof attendanceText)["vi"],
   record?: AttendanceRecord
 ) {
-  if (!record) return t.statusNotChecked;
+  if (!record) return t.workBefore;
 
-  if (record.status === ATTENDANCE_STATUS.WORKING) return t.statusWorking;
-  if (record.status === ATTENDANCE_STATUS.DONE) return t.statusDone;
-  if (record.status === ATTENDANCE_STATUS.EARLY_LEAVE) return t.statusEarlyLeave;
-  if (isApprovedLeave(record)) return t.statusLeave;
-  if (record.status === ATTENDANCE_STATUS.LEAVE) return t.statusNotChecked;
+  if (record.status === ATTENDANCE_STATUS.WORKING) return t.working;
+  if (record.status === ATTENDANCE_STATUS.DONE) return t.workDone;
+  if (record.status === ATTENDANCE_STATUS.EARLY_LEAVE) return t.workEarlyLeave;
+  if (isApprovedLeave(record)) return t.workLeave;
+  if (record.status === ATTENDANCE_STATUS.LEAVE) return t.workBefore;
 
   return record.status;
 }
@@ -135,7 +131,8 @@ export default function AttendanceStaffPage() {
   const { lang } = useLanguage();
   const pathname = usePathname();
   const tabs = getAttendanceTabs(pathname, lang);
-  const t = attendanceStaffText[lang];
+  const t = attendanceText[lang];
+const c = commonText[lang];
 
   const todayWorkDate = getVietnamWorkDate();
 
@@ -212,14 +209,14 @@ export default function AttendanceStaffPage() {
       const result = await res.json();
 
       if (!res.ok || !result.ok) {
-        alert(result.message || "출근 수정 실패");
+        alert(result.message || c.editFail);
         return;
       }
 
       await fetchList();
     } catch (err) {
       console.error(err);
-      alert("출근 수정 중 오류 발생");
+      alert(c.editFail);
     }
   };
 
@@ -244,14 +241,14 @@ export default function AttendanceStaffPage() {
       const result = await res.json();
 
       if (!res.ok || !result.ok) {
-        alert(result.message || "퇴근 수정 실패");
+        alert(result.message || c.editFail);
         return;
       }
 
       await fetchList();
     } catch (err) {
       console.error(err);
-      alert("퇴근 수정 중 오류 발생");
+      alert(c.editFail);
     }
   };
 
@@ -274,14 +271,14 @@ export default function AttendanceStaffPage() {
       const result = await res.json();
 
       if (!res.ok || !result.ok) {
-        alert(result.message || "휴무 처리 실패");
+        alert(result.message || c.editFail);
         return;
       }
 
       await fetchList();
     } catch (err) {
       console.error(err);
-      alert("휴무 처리 중 오류 발생");
+      alert(c.editFail);
     }
   };
 
@@ -338,9 +335,9 @@ export default function AttendanceStaffPage() {
 
       <div style={sectionStyle}>
         {isLoading ? (
-          <div style={emptyStyle}>{t.loading}</div>
+          <div style={emptyStyle}>{c.loading}</div>
         ) : groupedUsers.length === 0 ? (
-          <div style={emptyStyle}>{t.empty}</div>
+          <div style={emptyStyle}>{c.noData}</div>
         ) : (
           groupedUsers.map((group) => (
             <div key={group.part} style={partGroupStyle}>
@@ -354,7 +351,7 @@ export default function AttendanceStaffPage() {
               >
                 <span>{group.meta.emoji}</span>
                 <span>
-                  {t.parts?.[group.part as keyof typeof t.parts] || getPartLabel(group.part, t)}
+                 {c[group.part as keyof typeof c] || group.part}
                 </span>
                 <span style={partCountStyle}>{group.users.length}</span>
               </div>
@@ -376,8 +373,8 @@ export default function AttendanceStaffPage() {
                           <span style={staffNameStyle}>{user.name}</span>
                           <span style={staffMetaStyle}>
                             {user.position
-                              ? t.positions?.[user.position as keyof typeof t.positions] || user.position
-                              : user.username}
+  ? c[user.position as keyof typeof c] || user.position
+  : user.username}
                           </span>
                         </div>
 
@@ -401,7 +398,7 @@ export default function AttendanceStaffPage() {
                                   color: "#f59e0b",
                                 }}
                               >
-                                {t.late}
+                                {t.workLate}
                               </span>
                             )}
                           </div>
@@ -417,12 +414,12 @@ export default function AttendanceStaffPage() {
                             <InfoBox label={t.checkOut} value={formatTime(record?.check_out_at || null)} />
                             <InfoBox label={t.workTime} value={formatWorkMinutes(record?.work_minutes)} />
                             <InfoBox
-                              label={t.late}
-                              value={`${Number(record?.late_minutes || 0)}${t.minute}`}
+                              label={t.workLate}
+                              value={`${Number(record?.late_minutes || 0)}${c.minute}`}
                             />
                             <InfoBox
-                              label={t.earlyLeave}
-                              value={`${Number(record?.early_leave_minutes || 0)}${t.minute}`}
+                              label={t.workEarlyLeave}
+                              value={`${Number(record?.early_leave_minutes || 0)}${c.minute}`}
                             />
                           </div>
 
@@ -501,7 +498,7 @@ export default function AttendanceStaffPage() {
                                 }}
                                 onClick={() => handleSetLeave(user)}
                               >
-                                {t.statusLeave}
+                                {t.workLeave}
                               </button>
                             </div>
                           )}
@@ -569,7 +566,7 @@ export default function AttendanceStaffPage() {
                       )
                     }
                   >
-                    {t.manualInput}
+                    {c.directInput}
                   </button>
                 </div>
 
@@ -578,7 +575,7 @@ export default function AttendanceStaffPage() {
                   style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
                   onClick={() => setManualModal(null)}
                 >
-                  {t.cancel}
+                  {c.cancel}
                 </button>
               </>
             ) : (
@@ -613,7 +610,7 @@ export default function AttendanceStaffPage() {
                       }
                     }}
                   >
-                    {t.submit}
+                    {c.submit}
                   </button>
                 </div>
 
@@ -622,7 +619,7 @@ export default function AttendanceStaffPage() {
                   style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
                   onClick={() => setManualModal(null)}
                 >
-                  {t.cancel}
+                  {c.cancel}
                 </button>
               </>
             )}

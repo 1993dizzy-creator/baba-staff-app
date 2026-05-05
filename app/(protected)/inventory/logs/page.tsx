@@ -11,8 +11,6 @@ import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import SubNav from "@/components/SubNav";
 import { usePathname } from "next/navigation";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
-import { getPartLabel } from "@/lib/common/part-label";
-
 
 export default function InventoryLogsPage() {
     const [logs, setLogs] = useState<any[]>([]);
@@ -243,7 +241,7 @@ export default function InventoryLogsPage() {
 
     const changeFieldConfig = {
         quantity: {
-            label: t.quantity,
+            label: c.quantity,
             type: "number",
         },
         purchase_price: {
@@ -255,23 +253,23 @@ export default function InventoryLogsPage() {
             type: "text",
         },
         supplier: {
-            label: t.supplier,
+            label: c.supplier,
             type: "text",
         },
         code: {
-            label: t.code,
+            label: c.code,
             type: "text",
         },
         unit: {
-            label: t.unit,
+            label: c.unit,
             type: "text",
         },
         category: {
-            label: t.category,
+            label: c.category,
             type: "text",
         },
         part: {
-            label: t.part,
+            label: c.part,
             type: "text",
         },
         low_stock_threshold: {
@@ -555,7 +553,7 @@ export default function InventoryLogsPage() {
                                 width: "100%",
                             }}
                         >
-                            {t.resetFilter}
+                            {c.resetFilter}
                         </button>
                     </div>
                 </div>
@@ -602,7 +600,7 @@ export default function InventoryLogsPage() {
                                     isOpen={isOpen}
                                     lang={lang}
                                     noteText={inventoryNoteMap[group.groupKey] || "-"}
-                                    partLabel={getPartLabel(log.part || "", t)}
+                                    partLabel={c[log.part as keyof typeof c] || log.part}
                                     itemName={getDisplayLogItemName(log)}
                                     categoryName={getDisplayLogCategory(log)}
                                     detailLabel={c.detail}
