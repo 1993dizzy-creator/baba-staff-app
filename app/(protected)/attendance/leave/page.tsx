@@ -11,6 +11,8 @@ import { commonText, attendanceText } from "@/lib/text";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { useSearchParams } from "next/navigation";
 import { APPROVAL_STATUS, LEAVE_ACTION, } from "@/lib/attendance/status";
+import { getPartMeta, getPartKey } from "@/lib/common/parts";
+import { getPositionRank } from "@/lib/common/positions";
 
 type UserRow = {
   id: string | number;
@@ -39,18 +41,6 @@ type AttendanceRecord = {
   approved_at: string | null;
   created_at: string | null;
 };
-
-const PART_META: Record<
-  string,
-  { label: string; color: string; soft: string; emoji: string; rank: number }
-> = {
-  kitchen: { label: "Kitchen", color: "#f59e0b", soft: "#fff7ed", emoji: "🍳", rank: 1 },
-  hall: { label: "Hall", color: "#10b981", soft: "#ecfdf5", emoji: "🍺", rank: 2 },
-  bar: { label: "Bar", color: "#3b82f6", soft: "#eff6ff", emoji: "🍸", rank: 3 },
-  etc: { label: "Etc", color: "#8b5cf6", soft: "#f5f3ff", emoji: "📦", rank: 99 },
-};
-
-
 
 function formatDateKey(date: Date) {
   const year = date.getFullYear();
@@ -110,28 +100,6 @@ function formatMonthTitle(lang: "ko" | "vi", date: Date) {
   return `${String(date.getFullYear()).slice(2)}년 ${date.getMonth() + 1}월`;
 }
 
-function getPartKey(part?: string | null) {
-  const value = String(part || "").toLowerCase();
-  if (value.includes("kitchen")) return "kitchen";
-  if (value.includes("hall")) return "hall";
-  if (value.includes("bar")) return "bar";
-  if (value.includes("etc")) return "etc";
-  return value || "etc";
-}
-
-function getPartMeta(part?: string | null) {
-  const key = getPartKey(part);
-  return (
-    PART_META[key] || {
-      label: part || "Etc",
-      color: "#8b5cf6",
-      soft: "#f5f3ff",
-      emoji: "📦",
-      rank: 99,
-    }
-  );
-}
-
 function normalizeId(value?: string | number | null) {
   return String(value ?? "");
 }
@@ -140,19 +108,6 @@ function getApprovalStatus(record: AttendanceRecord) {
   return record.approval_status === APPROVAL_STATUS.APPROVED
     ? APPROVAL_STATUS.APPROVED
     : APPROVAL_STATUS.PENDING;
-}
-
-function getPositionRank(position?: string | null) {
-  const value = String(position || "").toLowerCase();
-
-  if (value.includes("manager") || value.includes("master")) return 1;
-  if (value.includes("leader") || value.includes("head")) return 2;
-  if (value.includes("captain")) return 3;
-  if (value.includes("senior")) return 4;
-  if (value.includes("staff")) return 5;
-  if (value.includes("part")) return 6;
-
-  return 99;
 }
 
 function formatSummaryDate(dateKey: string) {

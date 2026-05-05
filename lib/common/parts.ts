@@ -51,3 +51,15 @@ export const PART_META: Record<
     rank: 99,
   },
 };
+
+export function getPartKey(part?: string | null): PartValue {
+  if (part === "kitchen") return "kitchen";
+  if (part === "hall") return "hall";
+  if (part === "bar") return "bar";
+  return "etc";
+}
+
+export function getPartMeta(part?: string | null) {
+  const key = getPartKey(part);
+  return PART_META[key];
+}

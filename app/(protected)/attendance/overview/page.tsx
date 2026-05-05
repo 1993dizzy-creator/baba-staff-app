@@ -9,7 +9,8 @@ import { useLanguage } from "@/lib/language-context";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { commonText, attendanceText } from "@/lib/text";
-
+import { getPartMeta, getPartKey } from "@/lib/common/parts";
+import { getPositionRank } from "@/lib/common/positions";
 
 
 type UserRow = {
@@ -35,47 +36,6 @@ type AttendanceRecord = {
     work_minutes: number | null;
     approval_status: "pending" | "approved" | null;
 };
-
-const PART_META: Record<string, { label: string; emoji: string; color: string; bg: string; border: string; rank: number }> = {
-    kitchen: { label: "Kitchen", emoji: "🍳", color: "#f59e0b", bg: "#fff7ed", border: "#f59e0b", rank: 1 },
-    hall: { label: "Hall", emoji: "🍺", color: "#10b981", bg: "#ecfdf5", border: "#10b981", rank: 2 },
-    bar: { label: "Bar", emoji: "🍸", color: "#3b82f6", bg: "#eff6ff", border: "#3b82f6", rank: 3 },
-    etc: { label: "Etc", emoji: "📦", color: "#8b5cf6", bg: "#f5f3ff", border: "#8b5cf6", rank: 99 },
-};
-
-function getPartKey(part?: string | null) {
-    const value = String(part || "").toLowerCase();
-    if (value.includes("kitchen")) return "kitchen";
-    if (value.includes("hall")) return "hall";
-    if (value.includes("bar")) return "bar";
-    if (value.includes("etc")) return "etc";
-    return value || "etc";
-}
-
-function getPartMeta(part?: string | null) {
-    const key = getPartKey(part);
-    return PART_META[key] || {
-        label: part || "Etc",
-        emoji: "📦",
-        color: "#4b5563",
-        bg: "#f9fafb",
-        border: "#d1d5db",
-        rank: 99,
-    };
-}
-
-function getPositionRank(position?: string | null) {
-    const value = String(position || "").toLowerCase();
-
-    if (value.includes("manager") || value.includes("master")) return 1;
-    if (value.includes("leader") || value.includes("head")) return 2;
-    if (value.includes("captain")) return 3;
-    if (value.includes("senior")) return 4;
-    if (value.includes("staff")) return 5;
-    if (value.includes("part")) return 6;
-
-    return 99;
-}
 
 function getMonthRange(month: Date) {
     const year = month.getFullYear();
@@ -114,10 +74,6 @@ function getAge(birthDate?: string | null) {
     }
 
     return age;
-}
-
-function isApprovedLeave(record: AttendanceRecord) {
-    return record.status === "leave" && record.approval_status === "approved";
 }
 
 function formatMinutes(

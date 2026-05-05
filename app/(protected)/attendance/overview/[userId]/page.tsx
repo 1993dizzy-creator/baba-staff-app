@@ -8,7 +8,6 @@ import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { ui } from "@/lib/styles/ui";
-import { supabase } from "@/lib/supabase/client";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { commonText, attendanceText } from "@/lib/text";
 

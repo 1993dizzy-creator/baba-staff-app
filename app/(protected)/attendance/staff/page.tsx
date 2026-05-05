@@ -10,7 +10,7 @@ import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { commonText, attendanceText } from "@/lib/text";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
-import { PART_META, type PartValue,} from "@/lib/common/parts";
+import { getPartMeta, getPartKey } from "@/lib/common/parts";
 
 
 type UserRow = {
@@ -113,18 +113,6 @@ function getPositionRank(position?: string | null) {
   if (value.includes("part")) return 6;
 
   return 99;
-}
-
-function getPartKey(part?: string | null): PartValue {
-  if (part === "kitchen") return "kitchen";
-  if (part === "hall") return "hall";
-  if (part === "bar") return "bar";
-  return "etc";
-}
-
-function getPartMeta(part?: string | null) {
-  const key = getPartKey(part);
-  return PART_META[key];
 }
 
 export default function AttendanceStaffPage() {

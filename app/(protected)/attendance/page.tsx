@@ -105,58 +105,6 @@ function calculateWorkMinutes(startIso: string, endIso: string) {
   return Math.floor((end - start) / 1000 / 60);
 }
 
-function calculateLateMinutes(workStartTime: string) {
-  const now = new Date();
-
-  const vietnamNow = new Date(
-    now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
-  );
-
-  const [hour, minute] = workStartTime.split(":").map(Number);
-
-  const startTime = new Date(vietnamNow);
-  startTime.setHours(hour, minute, 0, 0);
-
-  const diffMinutes = Math.floor(
-    (vietnamNow.getTime() - startTime.getTime()) / 1000 / 60
-  );
-
-  return Math.max(0, diffMinutes);
-}
-
-function calculateEarlyLeaveMinutes(workEndTime: string) {
-  const now = new Date();
-
-  const vietnamNow = new Date(
-    now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
-  );
-
-  const [hour, minute] = workEndTime.split(":").map(Number);
-
-  const endTime = new Date(vietnamNow);
-  endTime.setHours(hour, minute, 0, 0);
-
-  // 퇴근 기준 시간이 새벽이면 다음날 기준으로 보정
-  if (hour < 12 && vietnamNow.getHours() >= 12) {
-    endTime.setDate(endTime.getDate() + 1);
-  }
-
-  const diffMinutes = Math.floor(
-    (endTime.getTime() - vietnamNow.getTime()) / 1000 / 60
-  );
-
-  return Math.max(0, diffMinutes);
-}
-
-function getAutoCheckOutType(
-  workEndTime: string
-): typeof ATTENDANCE_STATUS.DONE | typeof ATTENDANCE_STATUS.EARLY_LEAVE {
-  const earlyLeaveMinutes = calculateEarlyLeaveMinutes(workEndTime);
-
-  return earlyLeaveMinutes >= 90
-    ? ATTENDANCE_STATUS.EARLY_LEAVE
-    : ATTENDANCE_STATUS.DONE;
-}
 
 function isApprovedLeave(record: any) {
   return record?.status === ATTENDANCE_STATUS.LEAVE && record?.approval_status === "approved";
@@ -530,14 +478,10 @@ function MyAttendance() {
     if (attendance.status !== ATTENDANCE_STATUS.WORKING) return;
 
     const user = getUser();
-    const type = getAutoCheckOutType(user?.work_end_time || "01:00");
-
-    handleConfirmCheckOut(type);
+    handleConfirmCheckOut();
   };
 
-  const handleConfirmCheckOut = async (
-  type: typeof ATTENDANCE_STATUS.DONE | typeof ATTENDANCE_STATUS.EARLY_LEAVE
-) => {
+  const handleConfirmCheckOut = async () => {
     if (isSubmittingAttendance) return;
 
     setIsSubmittingAttendance(true);
@@ -589,7 +533,7 @@ function MyAttendance() {
       const result = await res.json();
 
       if (!res.ok || !result.ok) {
-       alert(result.message || t.checkOutFail);
+        alert(result.message || t.checkOutFail);
         return;
       }
 
@@ -672,10 +616,10 @@ function MyAttendance() {
           <TodayInfoBlock
             label={t.workDurationLabel}
             subValue={
-  isEarlyLeave
-    ? t.earlyLeaveText.replace("{minutes}", String(attendance.earlyLeaveMinutes))
-    : undefined
-}
+              isEarlyLeave
+                ? t.earlyLeaveText.replace("{minutes}", String(attendance.earlyLeaveMinutes))
+                : undefined
+            }
             subColor="#ef4444"
           >
             {attendance.workDuration}
@@ -1093,38 +1037,38 @@ function LegendItem({
 
 function statusBadgeStyle(status: AttendanceStatus): CSSProperties {
 
-const map = {
-  before: {
-    background: "#fef3c7",
-    color: "#92400e",
-    border: "#fde68a",
-  },
-  [ATTENDANCE_STATUS.WORKING]: {
-    background: "#dcfce7",
-    color: "#16a34a",
-    border: "#bbf7d0",
-  },
-  [ATTENDANCE_STATUS.DONE]: {
-    background: "#e5e7eb",
-    color: "#374151",
-    border: "#d1d5db",
-  },
-  [ATTENDANCE_STATUS.EARLY_LEAVE]: {
-    background: "#fee2e2",
-    color: "#dc2626",
-    border: "#fecaca",
-  },
-  [ATTENDANCE_STATUS.LEAVE]: {
-    background: "#f3f4f6",
-    color: "#374151",
-    border: "#d1d5db",
-  },
-  [ATTENDANCE_STATUS.LATE]: {
-  background: "#fffbeb",
-  color: "#d97706",
-  border: "#fde68a",
-},
-};
+  const map = {
+    before: {
+      background: "#fef3c7",
+      color: "#92400e",
+      border: "#fde68a",
+    },
+    [ATTENDANCE_STATUS.WORKING]: {
+      background: "#dcfce7",
+      color: "#16a34a",
+      border: "#bbf7d0",
+    },
+    [ATTENDANCE_STATUS.DONE]: {
+      background: "#e5e7eb",
+      color: "#374151",
+      border: "#d1d5db",
+    },
+    [ATTENDANCE_STATUS.EARLY_LEAVE]: {
+      background: "#fee2e2",
+      color: "#dc2626",
+      border: "#fecaca",
+    },
+    [ATTENDANCE_STATUS.LEAVE]: {
+      background: "#f3f4f6",
+      color: "#374151",
+      border: "#d1d5db",
+    },
+    [ATTENDANCE_STATUS.LATE]: {
+      background: "#fffbeb",
+      color: "#d97706",
+      border: "#fde68a",
+    },
+  };
 
   const color = map[status] || map.before;
 
@@ -1502,78 +1446,3 @@ const summarySubValueStyle: CSSProperties = {
   lineHeight: 1.2,
 };
 
-const modalOverlayStyle: CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(17, 24, 39, 0.45)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: 20,
-  zIndex: 1000,
-};
-
-const modalCardStyle: CSSProperties = {
-  width: "100%",
-  maxWidth: 340,
-  background: "#ffffff",
-  borderRadius: 16,
-  padding: 16,
-  boxShadow: "0 20px 50px rgba(0,0,0,0.18)",
-  display: "flex",
-  flexDirection: "column",
-  gap: 12,
-};
-
-const modalTitleStyle: CSSProperties = {
-  fontSize: 15,
-  fontWeight: 800,
-  color: "#111827",
-  lineHeight: 1.3,
-};
-
-const modalDescStyle: CSSProperties = {
-  fontSize: 13,
-  fontWeight: 700,
-  color: "#6b7280",
-  lineHeight: 1.4,
-};
-
-const modalButtonGridStyle: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "1fr",
-  gap: 8,
-};
-
-const modalPrimaryButtonStyle: CSSProperties = {
-  height: 42,
-  borderRadius: 12,
-  border: "1px solid #111827",
-  background: "#111827",
-  color: "#ffffff",
-  fontSize: 13,
-  fontWeight: 800,
-  cursor: "pointer",
-};
-
-const modalSecondaryButtonStyle: CSSProperties = {
-  height: 42,
-  borderRadius: 12,
-  border: "1px solid #111827",
-  background: "#ffffff",
-  color: "#111827",
-  fontSize: 13,
-  fontWeight: 800,
-  cursor: "pointer",
-};
-
-const modalCloseButtonStyle: CSSProperties = {
-  height: 38,
-  borderRadius: 12,
-  border: "1px solid #d1d5db",
-  background: "#f9fafb",
-  color: "#6b7280",
-  fontSize: 13,
-  fontWeight: 700,
-  cursor: "pointer",
-};

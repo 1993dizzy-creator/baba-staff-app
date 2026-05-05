@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
-
 import {
   ATTENDANCE_STATUS,
   APPROVAL_STATUS,
@@ -37,7 +36,6 @@ function getLang(value: unknown): Lang {
 }
 
 export async function POST(req: Request) {
-
   let lang: Lang = "ko";
 
   try {
