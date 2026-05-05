@@ -1,38 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-
-function getSnapshotDate() {
-  const now = new Date();
-
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-
-  const year = Number(parts.find((p) => p.type === "year")?.value);
-  const month = Number(parts.find((p) => p.type === "month")?.value);
-  const day = Number(parts.find((p) => p.type === "day")?.value);
-
-  const date = new Date(Date.UTC(year, month - 1, day));
-  date.setUTCDate(date.getUTCDate() - 1);
-
-  const yyyy = date.getUTCFullYear();
-  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(date.getUTCDate()).padStart(2, "0");
-
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function toNumber(value: any) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function roundNumber(value: number) {
-  return Math.round(value * 1000) / 1000;
-}
+import { toNumber, roundDecimal } from "@/lib/inventory/number";
+import { getSnapshotDate } from "@/lib/inventory/business-day";
 
 export async function GET(request: Request) {
   try {
@@ -183,7 +152,7 @@ export async function GET(request: Request) {
       const changeQuantity =
         prevQuantity === null
           ? null
-          : roundNumber(currentQuantity - prevQuantity);
+          : roundDecimal(currentQuantity - prevQuantity);
 
       const purchasePrice =
         item.purchase_price === null || item.purchase_price === undefined
@@ -192,7 +161,7 @@ export async function GET(request: Request) {
 
       const totalPurchasePrice =
         changeQuantity !== null && changeQuantity > 0 && purchasePrice !== null
-          ? roundNumber(changeQuantity * purchasePrice)
+          ? roundDecimal(changeQuantity * purchasePrice)
           : null;
 
       return {
@@ -216,7 +185,7 @@ export async function GET(request: Request) {
         supplier: item.supplier ?? "",
         total_purchase_price: totalPurchasePrice,
 
-        low_stock_threshold: item.low_stock_threshold ?? 0,
+        low_stock_threshold: item.low_stock_threshold ?? 1,
       };
     });
 

@@ -4,10 +4,17 @@ import { useEffect, useMemo, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
-import { inventorySnapshotText } from "@/lib/text";
+import { commonText, inventoryText } from "@/lib/text";
 import SubNav from "@/components/SubNav";
 import { usePathname } from "next/navigation";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
+import {
+    PART_VALUES,
+    PART_META,
+    type PartValue,
+} from "@/lib/common/parts";
+import { getPartLabel } from "@/lib/common/part-label";
+import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
 
 
 type SnapshotBatch = {
@@ -34,71 +41,24 @@ type SnapshotItem = {
     total_purchase_price: number | null;
 };
 
-const PART_VALUES = ["kitchen", "hall", "bar", "etc"] as const;
-type PartValue = (typeof PART_VALUES)[number];
-
-const PART_META: Record<
-    PartValue,
-    {
-        color: string;
-        soft: string;
-        emoji: string;
-    }
-> = {
-    kitchen: {
-        color: "#f59e0b",
-        soft: "#fff7ed",
-        emoji: "🍳",
-    },
-    hall: {
-        color: "#10b981",
-        soft: "#ecfdf5",
-        emoji: "🍺",
-    },
-    bar: {
-        color: "#3b82f6",
-        soft: "#eff6ff",
-        emoji: "🍸",
-    },
-    etc: {
-        color: "#8b5cf6",
-        soft: "#f5f3ff",
-        emoji: "📦",
-    },
-};
-
 export default function InventorySnapshotsPage() {
     const { lang } = useLanguage();
-    const t = inventorySnapshotText[lang];
+    const t = inventoryText[lang];
+    const c = commonText[lang];
 
     const [batchList, setBatchList] = useState<SnapshotBatch[]>([]);
     const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
     const [snapshotItems, setSnapshotItems] = useState<SnapshotItem[]>([]);
     const [search, setSearch] = useState("");
     const [partFilter, setPartFilter] = useState<"all" | PartValue>("all");
+    const [viewMode, setViewMode] = useState<"current" | "snapshot">("current");
     const [loadingBatches, setLoadingBatches] = useState(true);
     const [loadingItems, setLoadingItems] = useState(false);
-    const [currentQuantityMap, setCurrentQuantityMap] = useState<Record<number, number>>({});
     const [categoryFilter, setCategoryFilter] = useState("all");
     const [showChangedOnly, setShowChangedOnly] = useState(false);
     const [calendarMonth, setCalendarMonth] = useState("");
     const [purchaseBatchMap, setPurchaseBatchMap] = useState<Record<number, boolean>>({});
     const [supplierTab, setSupplierTab] = useState("all");
-
-    const getPartLabel = (value: string | null) => {
-        switch (value) {
-            case "kitchen":
-                return t.partKitchen;
-            case "hall":
-                return t.partHall;
-            case "bar":
-                return t.partBar;
-            case "etc":
-                return t.partEtc;
-            default:
-                return value || "-";
-        }
-    };
 
     const getDisplayItemName = (item: SnapshotItem) => {
         return lang === "vi"
@@ -128,61 +88,131 @@ export default function InventorySnapshotsPage() {
         return num.toFixed(2).replace(/\.?0+$/, "");
     };
 
- const fetchBatches = async () => {
-    setLoadingBatches(true);
+    const fetchBatches = async () => {
+        setLoadingBatches(true);
 
-    try {
-        const res = await fetch("/api/inventory/snapshot/list");
-        const json = await res.json();
+        try {
+            const res = await fetch("/api/inventory/snapshot/list");
+            const json = await res.json();
 
-        if (!res.ok || !json.ok) {
-            console.error(json.message);
+            if (!res.ok || !json.ok) {
+                console.error(json.message);
+                setBatchList([]);
+                setSelectedBatchId(null);
+                setLoadingBatches(false);
+                return;
+            }
+
+            const nextBatches = (json.batches || []) as SnapshotBatch[];
+
+            setBatchList(nextBatches);
+            setSelectedBatchId(null);
+            setPurchaseBatchMap(json.purchaseBatchMap || {});
+
+            if (nextBatches[0]?.snapshot_date) {
+                setCalendarMonth(nextBatches[0].snapshot_date.slice(0, 7));
+            }
+        } catch (error) {
+            console.error(error);
             setBatchList([]);
             setSelectedBatchId(null);
+        } finally {
             setLoadingBatches(false);
+        }
+    };
+
+    const fetchSnapshotItems = async (
+        batchId: number | string | null | undefined
+    ) => {
+        const safeBatchId = Number(batchId);
+
+        if (!batchId || !Number.isFinite(safeBatchId) || safeBatchId <= 0) {
+            console.warn("[SNAPSHOT_SKIP_INVALID_BATCH_ID]", batchId);
             return;
         }
 
-        const nextBatches = (json.batches || []) as SnapshotBatch[];
+        setLoadingItems(true);
 
-        setBatchList(nextBatches);
-        setSelectedBatchId(nextBatches[0]?.id ?? null);
-        setPurchaseBatchMap(json.purchaseBatchMap || {});
+        try {
+            const res = await fetch(`/api/inventory/snapshot/${safeBatchId}`, {
+                cache: "no-store",
+            });
 
-        if (nextBatches[0]?.snapshot_date) {
-            setCalendarMonth(nextBatches[0].snapshot_date.slice(0, 7));
-        }
-    } catch (error) {
-        console.error(error);
-        setBatchList([]);
-        setSelectedBatchId(null);
-    } finally {
-        setLoadingBatches(false);
-    }
-};
+            const json = await res.json();
 
-const fetchSnapshotItems = async (batchId: number) => {
-    setLoadingItems(true);
+            if (!res.ok || !json.ok) {
+                console.error("[SNAPSHOT_FETCH_ERROR]", {
+                    batchId,
+                    safeBatchId,
+                    message: json.message,
+                });
+                setSnapshotItems([]);
+                return;
+            }
 
-    try {
-        const res = await fetch(`/api/inventory/snapshot/${batchId}`);
-        const json = await res.json();
-
-        if (!res.ok || !json.ok) {
-            console.error(json.message);
+            setSnapshotItems(json.items || []);
+        } catch (error) {
+            console.error("[SNAPSHOT_FETCH_EXCEPTION]", error);
             setSnapshotItems([]);
+        } finally {
             setLoadingItems(false);
-            return;
         }
+    };
 
-        setSnapshotItems((json.items || []) as SnapshotItem[]);
-    } catch (error) {
-        console.error(error);
+    const fetchTodayPurchasedItems = async () => {
+        setLoadingItems(true);
         setSnapshotItems([]);
-    } finally {
-        setLoadingItems(false);
-    }
-};
+        setSupplierTab("all");
+
+        try {
+            const res = await fetch("/api/inventory/logs?mode=logs", {
+                cache: "no-store",
+            });
+
+            const json = await res.json();
+
+            if (!res.ok || !json.ok) {
+                console.error(json.message);
+                setSnapshotItems([]);
+                return;
+            }
+
+            const todayItems = (json.data || [])
+                .filter((log: any) => {
+                    const isPurchase = Number(log.change_quantity ?? 0) > 0;
+                    const isToday = isInCurrentBusinessDay(log.created_at);
+
+                    return isPurchase && isToday;
+                })
+                .map((log: any) => ({
+                    id: log.id,
+                    batch_id: null,
+                    item_id: log.item_id,
+                    item_name: log.item_name,
+                    item_name_vi: log.item_name_vi,
+                    part: log.part,
+                    category: log.category,
+                    category_vi: log.category_vi,
+                    quantity: log.new_quantity,
+                    prev_quantity: log.prev_quantity,
+                    change_quantity: log.change_quantity,
+                    unit: log.unit,
+                    code: log.code,
+                    purchase_price: log.new_purchase_price ?? log.purchase_price,
+                    supplier: log.new_supplier ?? log.supplier,
+                    total_purchase_price:
+                        Number(log.change_quantity ?? 0) *
+                        Number(log.new_purchase_price ?? log.purchase_price ?? 0),
+                }));
+
+            setSnapshotItems(todayItems as SnapshotItem[]);
+        } catch (error) {
+            console.error(error);
+            setSnapshotItems([]);
+        } finally {
+            setLoadingItems(false);
+        }
+    };
 
 
     const moveCalendarMonth = (diff: number) => {
@@ -199,6 +229,7 @@ const fetchSnapshotItems = async (batchId: number) => {
 
     useEffect(() => {
         fetchBatches();
+        fetchTodayPurchasedItems();
     }, []);
 
     useEffect(() => {
@@ -206,15 +237,14 @@ const fetchSnapshotItems = async (batchId: number) => {
     }, [partFilter]);
 
     useEffect(() => {
+        if (viewMode !== "snapshot") return;
+
         setSupplierTab("all");
 
-        if (!selectedBatchId) {
-            setSnapshotItems([]);
-            return;
-        }
+        if (!selectedBatchId) return;
 
         fetchSnapshotItems(selectedBatchId);
-    }, [selectedBatchId]);
+    }, [selectedBatchId, viewMode]);
 
     useEffect(() => {
         if (batchList.length === 0) return;
@@ -231,7 +261,7 @@ const fetchSnapshotItems = async (batchId: number) => {
 
     const categoryTabs = useMemo(() => {
         return [
-            { key: "all", label: lang === "vi" ? "Tất cả" : "전체" },
+            { key: "all", label: c.all },
             ...Array.from(
                 new Map(
                     snapshotItems
@@ -315,29 +345,32 @@ const fetchSnapshotItems = async (batchId: number) => {
     );
 
     const selectedBatch =
-        batchList.find((batch) => batch.id === selectedBatchId) || null;
+        batchList.find((batch) => Number(batch.id) === Number(selectedBatchId)) || null;
 
     const purchasedItems = useMemo(() => {
-        return snapshotItems
-            .filter((item) => Number(item.change_quantity ?? 0) > 0)
-            .sort((a, b) => {
-                const supplierA = (a.supplier || "").toLowerCase();
-                const supplierB = (b.supplier || "").toLowerCase();
+        const baseItems =
+            viewMode === "snapshot"
+                ? snapshotItems.filter((item) => Number(item.change_quantity ?? 0) > 0)
+                : snapshotItems;
 
-                if (supplierA !== supplierB) {
-                    return supplierA.localeCompare(supplierB);
-                }
+        return baseItems.sort((a, b) => {
+            const supplierA = (a.supplier || "").toLowerCase();
+            const supplierB = (b.supplier || "").toLowerCase();
 
-                return getDisplayItemName(a).localeCompare(getDisplayItemName(b), undefined, {
-                    numeric: true,
-                    sensitivity: "base",
-                });
+            if (supplierA !== supplierB) {
+                return supplierA.localeCompare(supplierB);
+            }
+
+            return getDisplayItemName(a).localeCompare(getDisplayItemName(b), undefined, {
+                numeric: true,
+                sensitivity: "base",
             });
-    }, [snapshotItems, lang]);
+        });
+    }, [snapshotItems, lang, viewMode]);
 
     const supplierTabs = useMemo(() => {
         return [
-            { key: "all", label: lang === "vi" ? "Tất cả" : "전체" },
+            { key: "all", label: c.all },
             ...Array.from(
                 new Set(
                     purchasedItems.map((item) => item.supplier || "-")
@@ -431,6 +464,12 @@ const fetchSnapshotItems = async (batchId: number) => {
             cells,
         };
     }, [batchList, calendarMonth]);
+
+    const todayDateKey = new Date(
+        new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" })
+    )
+        .toISOString()
+        .slice(0, 10);
 
     const getPartMeta = (value?: string | null) => {
         const safePart: PartValue =
@@ -588,7 +627,7 @@ const fetchSnapshotItems = async (batchId: number) => {
                             color: "#111827",
                         }}
                     >
-                        {lang === "vi" ? "Lịch snapshot" : "스냅샷 캘린더"}
+                        {t.snapshotCalendar}
                     </span>
 
                     <div
@@ -666,7 +705,7 @@ const fetchSnapshotItems = async (batchId: number) => {
                             fontSize: 13,
                         }}
                     >
-                        {t.noBatches}
+                        {c.noData}
                     </div>
                 ) : (
                     <>
@@ -678,10 +717,7 @@ const fetchSnapshotItems = async (batchId: number) => {
                                 marginBottom: 6,
                             }}
                         >
-                            {(lang === "vi"
-                                ? ["CN", "T2", "T3", "T4", "T5", "T6", "T7"]
-                                : ["일", "월", "화", "수", "목", "금", "토"]
-                            ).map((label, index) => (
+                            {c.calendarWeekdays.map((label, index) => (
                                 <div
                                     key={label}
                                     style={{
@@ -710,7 +746,11 @@ const fetchSnapshotItems = async (batchId: number) => {
                             }}
                         >
                             {batchCalendar.cells.map((cell, index) => {
-                                const active = cell.batch?.id === selectedBatchId;
+                                const isToday = cell.date === todayDateKey;
+                                const active =
+                                    viewMode === "snapshot"
+                                        ? cell.batch?.id === selectedBatchId
+                                        : isToday;
                                 const hasBatch = !!cell.batch;
                                 const dayOfWeek = index % 7;
 
@@ -718,29 +758,58 @@ const fetchSnapshotItems = async (batchId: number) => {
                                     <button
                                         key={cell.key}
                                         type="button"
-                                        disabled={!hasBatch}
+                                        disabled={!hasBatch && !isToday}
                                         onClick={() => {
-                                            if (cell.batch) {
-                                                setSelectedBatchId(cell.batch.id);
+                                            if (cell.batch?.id) {
+                                                setViewMode("snapshot");
+                                                setSelectedBatchId(Number(cell.batch.id));
+                                                return;
+                                            }
+
+                                            if (isToday) {
+                                                setViewMode("current");
+                                                setSelectedBatchId(null);
+                                                fetchTodayPurchasedItems();
                                             }
                                         }}
-                                        style={getCalendarCellStyle(active, hasBatch, dayOfWeek)}
+                                        style={getCalendarCellStyle(active, hasBatch || isToday, dayOfWeek)}
                                     >
                                         <>
                                             <span>{cell.day ?? ""}</span>
 
-                                            {hasBatch && purchaseBatchMap[cell.batch!.id] && (
-                                                <span
-                                                    style={{
-                                                        width: 5,
-                                                        height: 5,
-                                                        borderRadius: 999,
-                                                        background: active ? "#fff" : "#2563eb",
-                                                        display: "block",
-                                                        marginTop: 3,
-                                                    }}
-                                                />
-                                            )}
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    gap: 3,
+                                                    marginTop: 3,
+                                                    justifyContent: "center",
+                                                    minHeight: 5,
+                                                }}
+                                            >
+                                                {hasBatch && purchaseBatchMap[cell.batch!.id] && (
+                                                    <span
+                                                        style={{
+                                                            width: 5,
+                                                            height: 5,
+                                                            borderRadius: 999,
+                                                            background: active ? "#fff" : "#2563eb",
+                                                            display: "block",
+                                                        }}
+                                                    />
+                                                )}
+
+                                                {isToday && (
+                                                    <span
+                                                        style={{
+                                                            width: 5,
+                                                            height: 5,
+                                                            borderRadius: 999,
+                                                            background: active ? "#fff" : "#16a34a",
+                                                            display: "block",
+                                                        }}
+                                                    />
+                                                )}
+                                            </div>
                                         </>
                                     </button>
                                 );
@@ -750,33 +819,44 @@ const fetchSnapshotItems = async (batchId: number) => {
                             style={{
                                 display: "flex",
                                 alignItems: "center",
-                                gap: 6,
+                                gap: 12,
                                 marginTop: 10,
                                 fontSize: 12,
                                 fontWeight: 700,
                                 color: "#6b7280",
                             }}
                         >
-                            <span
-                                style={{
-                                    width: 6,
-                                    height: 6,
-                                    borderRadius: 999,
-                                    background: "#2563eb",
-                                    display: "inline-block",
-                                }}
-                            />
-                            <span>
-                                {lang === "vi"
-                                    ? "Dấu chấm = có hàng nhập trong ngày kiểm kho"
-                                    : "점 = 해당 재고확인일에 입고 상품 있음"}
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                <span
+                                    style={{
+                                        width: 6,
+                                        height: 6,
+                                        borderRadius: 999,
+                                        background: "#2563eb",
+                                        display: "inline-block",
+                                    }}
+                                />
+                                {t.legendPurchase}
+                            </span>
+
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                <span
+                                    style={{
+                                        width: 6,
+                                        height: 6,
+                                        borderRadius: 999,
+                                        background: "#16a34a",
+                                        display: "inline-block",
+                                    }}
+                                />
+                                {c.today}
                             </span>
                         </div>
                     </>
                 )}
             </div>
 
-            {selectedBatch && purchasedItems.length > 0 && (
+            {purchasedItems.length > 0 && (
                 <div
                     style={{
                         ...ui.card,
@@ -800,7 +880,7 @@ const fetchSnapshotItems = async (batchId: number) => {
                                 color: "#111827",
                             }}
                         >
-                            {lang === "vi" ? "Hàng nhập trong ngày" : "일자별 입고 상품"}
+                            {t.snapshotTitle}
                         </span>
 
                         <span
@@ -810,7 +890,9 @@ const fetchSnapshotItems = async (batchId: number) => {
                                 color: "#6b7280",
                             }}
                         >
-                            {selectedBatch.snapshot_date}
+                            {viewMode === "snapshot" && selectedBatch
+                                ? selectedBatch.snapshot_date
+                                : c.today}
                         </span>
                     </div>
 
@@ -867,8 +949,9 @@ const fetchSnapshotItems = async (batchId: number) => {
                                     key={item.id}
                                     style={{
                                         border: "1px solid #e5e7eb",
+                                        borderLeft: `4px solid ${PART_META[(item.part || "etc") as keyof typeof PART_META]?.color || "#9ca3af"}`,
                                         borderRadius: 10,
-                                        padding: 10,
+                                        padding: "8px 10px",
                                         background: "#ffffff",
                                     }}
                                 >
@@ -876,87 +959,82 @@ const fetchSnapshotItems = async (batchId: number) => {
                                         style={{
                                             display: "flex",
                                             justifyContent: "space-between",
-                                            gap: 10,
                                             alignItems: "flex-start",
+                                            gap: 10,
+                                            marginBottom: 7,
                                         }}
                                     >
-                                        <div style={{ minWidth: 0 }}>
-                                            <div
+                                        <div
+                                            style={{
+                                                minWidth: 0,
+                                                fontSize: 14,
+                                                fontWeight: 800,
+                                                color: "#111827",
+                                                lineHeight: 1.25,
+                                                wordBreak: "break-word",
+                                            }}
+                                        >
+                                            {[item.code ? `[${item.code}]` : "", getDisplayItemName(item)]
+                                                .filter(Boolean)
+                                                .join(" ")}
+                                            <span
                                                 style={{
-                                                    fontSize: 14,
-                                                    fontWeight: 800,
-                                                    color: "#111827",
-                                                    wordBreak: "break-word",
+                                                    marginLeft: 4,
+                                                    fontSize: 11,
+                                                    fontWeight: 700,
+                                                    color: "#9ca3af",
                                                 }}
                                             >
-                                                {[item.code ? `[${item.code}]` : "", getDisplayItemName(item)]
-                                                    .filter(Boolean)
-                                                    .join(" ")}
-                                            </div>
-
-                                            <div
-                                                style={{
-                                                    marginTop: 3,
-                                                    fontSize: 12,
-                                                    fontWeight: 600,
-                                                    color: "#6b7280",
-                                                }}
-                                            >
-                                                {item.supplier || "-"}
-                                            </div>
+                                                / {getDisplayCategory(item)}
+                                            </span>
                                         </div>
 
                                         <div
                                             style={{
+                                                flexShrink: 0,
                                                 textAlign: "right",
-                                                fontSize: 13,
-                                                fontWeight: 700,
-                                                color: "#111827",
+                                                fontSize: 11,
+                                                fontWeight: 800,
+                                                color: "#6b7280",
                                                 whiteSpace: "nowrap",
                                             }}
                                         >
-                                            +{formatDecimalDisplay(qty)} {item.unit || ""}
+                                            {price === null || price === undefined
+                                                ? "-"
+                                                : `${Number(price).toLocaleString()} ₫`}
+                                            <span
+                                                style={{
+                                                    marginLeft: 3,
+                                                    fontSize: 11,
+                                                    fontWeight: 700,
+                                                    color: "#6b7280",
+                                                }}
+                                            >
+                                                / {item.unit || "-"}
+                                            </span>
                                         </div>
                                     </div>
 
                                     <div
                                         style={{
-                                            display: "grid",
-                                            gridTemplateColumns: "1fr 1fr 1fr",
-                                            gap: 6,
-                                            marginTop: 8,
+                                            display: "flex",
+                                            justifyContent: "space-between",
+                                            alignItems: "center",
+                                            paddingTop: 6,
+                                            borderTop: "1px solid #f1f5f9",
                                             fontSize: 12,
+                                            fontWeight: 800,
+                                            color: "#111827",
                                         }}
                                     >
                                         <div>
-                                            <div style={{ color: "#9ca3af", fontWeight: 700 }}>
-                                                {lang === "vi" ? "Đơn giá" : "단가"}
-                                            </div>
-                                            <div style={{ fontWeight: 800 }}>
-                                                {price === null || price === undefined
-                                                    ? "-"
-                                                    : `${Number(price).toLocaleString()} ₫`}
-                                            </div>
+                                            {formatDecimalDisplay(qty)} {item.unit || ""}
                                         </div>
 
-                                        <div>
-                                            <div style={{ color: "#9ca3af", fontWeight: 700 }}>
-                                                {lang === "vi" ? "Số lượng" : "수량"}
-                                            </div>
-                                            <div style={{ fontWeight: 800 }}>
-                                                {formatDecimalDisplay(qty)} {item.unit || ""}
-                                            </div>
-                                        </div>
-
-                                        <div style={{ textAlign: "right" }}>
-                                            <div style={{ color: "#9ca3af", fontWeight: 700 }}>
-                                                {lang === "vi" ? "Thành tiền" : "금액"}
-                                            </div>
-                                            <div style={{ fontWeight: 900 }}>
-                                                {total === null || total === undefined
-                                                    ? "-"
-                                                    : `${Number(total).toLocaleString()} ₫`}
-                                            </div>
+                                        <div style={{ textAlign: "right", fontWeight: 900 }}>
+                                            {total === null || total === undefined
+                                                ? "-"
+                                                : `${Number(total).toLocaleString()} ₫`}
                                         </div>
                                     </div>
                                 </div>
@@ -977,7 +1055,7 @@ const fetchSnapshotItems = async (batchId: number) => {
                             color: "#111827",
                         }}
                     >
-                        <span>{lang === "vi" ? "Tổng cộng" : "총 합계"}</span>
+                        <span>{t.total}</span>
                         <span>{purchaseTotalAmount.toLocaleString()} ₫</span>
                     </div>
                 </div>
@@ -1019,14 +1097,14 @@ const fetchSnapshotItems = async (batchId: number) => {
                                 whiteSpace: "nowrap",
                             }}
                         >
-                            {t.partAll}
+                            {c.all}
                         </button>
 
                         {[
-                            { value: "kitchen", label: t.partKitchen },
-                            { value: "hall", label: t.partHall },
-                            { value: "bar", label: t.partBar },
-                            { value: "etc", label: t.partEtc },
+                            { value: "kitchen", label: c.kitchen },
+                            { value: "hall", label: c.hall },
+                            { value: "bar", label: c.bar },
+                            { value: "etc", label: c.etc },
                         ].map((option) => {
                             const partValue = option.value as PartValue;
                             const active = partFilter === partValue;
@@ -1082,13 +1160,7 @@ const fetchSnapshotItems = async (batchId: number) => {
                             onClick={() => setShowChangedOnly(!showChangedOnly)}
                             style={getFilterToggleButtonStyle(showChangedOnly, "royalblue")}
                         >
-                            {lang === "vi"
-                                ? showChangedOnly
-                                    ? "Xem tất cả"
-                                    : "Chỉ xem mặt hàng có thay đổi"
-                                : showChangedOnly
-                                    ? "전체 보기"
-                                    : "변화 있는 품목만 보기"}
+                            {showChangedOnly ? c.all : t.filterChange}
                         </button>
 
                         <button
@@ -1170,7 +1242,7 @@ const fetchSnapshotItems = async (batchId: number) => {
                         <div style={{ fontSize: 22 }}>⏳</div>
                         <div>Loading...</div>
                     </div>
-                ) : !selectedBatchId ? (
+                ) : viewMode === "snapshot" && !selectedBatchId ? (
                     <div
                         style={{
                             height: 160,
@@ -1184,7 +1256,7 @@ const fetchSnapshotItems = async (batchId: number) => {
                         }}
                     >
                         <div style={{ fontSize: 22 }}>📭</div>
-                        <div>{t.noBatches}</div>
+                        <div>{c.noData}</div>
                     </div>
                 ) : filteredItems.length === 0 ? (
                     <div
@@ -1283,7 +1355,7 @@ const fetchSnapshotItems = async (batchId: number) => {
                                                     </div>
 
                                                     <div style={ui.metaText}>
-                                                        {[getPartLabel(item.part), getDisplayCategory(item)].join(" · ")}
+                                                        {[getPartLabel(item.part, t), getDisplayCategory(item)].join(" · ")}
                                                     </div>
                                                 </div>
 
@@ -1337,7 +1409,7 @@ const fetchSnapshotItems = async (batchId: number) => {
                                                                             : "#6b7280",
                                                             }}
                                                         >
-                                                            {lang === "vi" ? "So với hôm trước" : "전일대비"}{" "}
+                                                            {t.previousDay}{" "}
                                                             {diffQty > 0 ? "+" : ""}
                                                             {formatDecimalDisplay(diffQty)}
                                                         </div>

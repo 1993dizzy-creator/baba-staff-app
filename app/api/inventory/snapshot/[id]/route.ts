@@ -42,7 +42,8 @@ export async function GET(
         total_purchase_price
       `)
       .eq("batch_id", batchId)
-      .order("code", { ascending: true });
+      .order("code", { ascending: true })
+      .order("item_name", { ascending: true });
 
     if (error) {
       return NextResponse.json(

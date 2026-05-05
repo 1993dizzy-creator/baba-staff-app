@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
-import { inventoryLogsText } from "@/lib/text";
+import { PART_META } from "@/lib/common/parts";
+import { commonText, inventoryText } from "@/lib/text";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
@@ -10,6 +11,7 @@ import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import SubNav from "@/components/SubNav";
 import { usePathname } from "next/navigation";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
+import { getPartLabel } from "@/lib/common/part-label";
 
 
 export default function InventoryLogsPage() {
@@ -38,7 +40,7 @@ export default function InventoryLogsPage() {
     const handleDeleteSingleLog = async (logId: number) => {
         if (!isMaster) return;
 
-        const ok = confirm(t.deleteLogConfirm);
+        const ok = confirm(c.deleteConfirm);
 
         if (!ok) return;
 
@@ -59,15 +61,15 @@ export default function InventoryLogsPage() {
             console.error(result);
 
             if (res.status === 403) {
-                alert(lang === "vi" ? "Không có quyền xóa." : "삭제 권한이 없습니다.");
+                alert(c.noPermission);
                 return;
             }
 
-            alert(t.deleteLogFail);
+            alert(c.deleteFail);
             return;
         }
 
-        alert(t.deleteLogSuccess);
+        alert(c.deleteSuccess);
         await fetchLogs();
     };
 
@@ -116,84 +118,8 @@ export default function InventoryLogsPage() {
     const isMaster = currentUser?.role === "master";
 
     const { lang } = useLanguage();
-    const t = inventoryLogsText[lang];
-
-    const getPartLabel = (value: string) => {
-        switch (value) {
-            case "kitchen":
-                return t.partKitchen;
-            case "hall":
-                return t.partHall;
-            case "bar":
-                return t.partBar;
-            case "etc":
-                return t.partEtc;
-            default:
-                return value || "-";
-        }
-    };
-
-    const PART_META = {
-        kitchen: {
-            color: "#f59e0b",
-            emoji: "🍳",
-        },
-        hall: {
-            color: "#10b981",
-            emoji: "🍺",
-        },
-        bar: {
-            color: "#3b82f6",
-            emoji: "🍸",
-        },
-        etc: {
-            color: "#8b5cf6",
-            emoji: "📦",
-        },
-    };
-
-    const getPartButtonStyle = (
-        value: "kitchen" | "hall" | "bar" | "etc",
-        active: boolean
-    ) => {
-        const colorMap = {
-            kitchen: "#f59e0b",
-            hall: "#10b981",
-            bar: "#3b82f6",
-            etc: "#8b5cf6",
-        };
-
-        const color = PART_META[value].color;
-
-        return {
-            width: "100%",
-            padding: "8px 6px",
-            borderRadius: 8,
-            border: active ? `1px solid ${color}` : "1px solid #d1d5db",
-            background: active ? color : "#f9fafb",
-            color: active ? "#fff" : "#111827",
-            fontWeight: 700,
-            fontSize: 12,
-            cursor: "pointer",
-            lineHeight: 1.25,
-            whiteSpace: "normal" as const,
-            textAlign: "center" as const,
-            wordBreak: "keep-all" as const,
-        };
-    };
-
-    const getFilterToggleButtonStyle = (active: boolean, activeColor: string) => {
-        return {
-            flex: 1,
-            padding: "10px 14px",
-            background: active ? activeColor : "#f5f5f5",
-            color: active ? "#fff" : "#111827",
-            border: active ? `1px solid ${activeColor}` : "1px solid #ddd",
-            borderRadius: 8,
-            cursor: "pointer",
-            fontWeight: 600,
-        };
-    };
+    const t = inventoryText[lang];
+    const c = commonText[lang];
 
     const getActionFilterButtonStyle = (active: boolean, activeColor: string) => {
         return {
@@ -308,68 +234,51 @@ export default function InventoryLogsPage() {
 
     const visibleGroups = groupedLogs;
 
-    const changeFieldConfig = [
-        {
-            key: "quantity",
-            labelKo: "수량",
-            labelVi: "Số lượng",
+    type ChangeFieldType = "number" | "price" | "text";
+
+    type ChangeFieldConfig = {
+        label: string;
+        type: ChangeFieldType;
+    };
+
+    const changeFieldConfig = {
+        quantity: {
+            label: t.quantity,
             type: "number",
         },
-        {
-            key: "purchase_price",
-            labelKo: "구매가",
-            labelVi: "Giá nhập",
+        purchase_price: {
+            label: t.purchasePrice,
             type: "price",
         },
-        {
-            key: "note",
-            labelKo: "비고",
-            labelVi: "Ghi chú",
+        note: {
+            label: c.note,
             type: "text",
         },
-        {
-            key: "supplier",
-            labelKo: "거래처",
-            labelVi: "Nhà cung cấp",
+        supplier: {
+            label: t.supplier,
             type: "text",
         },
-        {
-            key: "code",
-            labelKo: "코드",
-            labelVi: "Mã",
+        code: {
+            label: t.code,
             type: "text",
         },
-        {
-            key: "unit",
-            labelKo: "단위",
-            labelVi: "Đơn vị",
+        unit: {
+            label: t.unit,
             type: "text",
         },
-        {
-            key: "category",
-            labelKo: "카테고리",
-            labelVi: "Danh mục",
+        category: {
+            label: t.category,
             type: "text",
         },
-        {
-            key: "category_vi",
-            labelKo: "카테고리(vi)",
-            labelVi: "Danh mục (vi)",
+        part: {
+            label: t.part,
             type: "text",
         },
-        {
-            key: "part",
-            labelKo: "파트",
-            labelVi: "Bộ phận",
-            type: "text",
-        },
-        {
-            key: "low_stock_threshold",
-            labelKo: "부족기준",
-            labelVi: "Ngưỡng",
+        low_stock_threshold: {
+            label: t.lowStockThreshold,
             type: "number",
         },
-    ];
+    } satisfies Record<string, ChangeFieldConfig>;
 
     function getLogChanges(log: any, lang: string) {
         const changes: Array<{
@@ -382,7 +291,7 @@ export default function InventoryLogsPage() {
         if (log.action === "create") {
             return [
                 {
-                    label: t.filterCreate,
+                    label: c.create,
                     after: t.createDone,
                     color: "#111827",
                 },
@@ -392,28 +301,30 @@ export default function InventoryLogsPage() {
         if (log.action === "delete") {
             return [
                 {
-                    label: t.filterDelete,
-                    after: t.deleteDone,
+                    label: c.delete,
+                    after: c.deleteSuccess,
                     color: "#6b7280",
                 },
             ];
         }
 
-        changeFieldConfig.forEach((field) => {
-            const prev = log[`prev_${field.key}`];
-            const next = log[`new_${field.key}`];
+        (Object.keys(changeFieldConfig) as Array<keyof typeof changeFieldConfig>).forEach((field) => {
+            const config = changeFieldConfig[field];
 
-            if ((prev ?? "") === (next ?? "")) return;
+            const prev = log[`prev_${String(field)}`];
+            const next = log[`new_${String(field)}`];
 
-            const label = lang === "vi" ? field.labelVi : field.labelKo;
+            const label = config.label;
 
             let before = "";
             let after = "";
             let color = "#111827";
 
-            if (field.type === "number") {
+            if (config.type === "number") {
                 const prevNum = Number(prev ?? 0);
                 const nextNum = Number(next ?? 0);
+
+                if (prevNum === nextNum) return;
 
                 before = `${prevNum}`;
                 after = `${nextNum}${log.unit ? ` ${log.unit}` : ""}`;
@@ -426,25 +337,33 @@ export default function InventoryLogsPage() {
                             : "#111827";
             }
 
-            if (field.type === "price") {
-                const prevStr =
-                    prev !== null && prev !== undefined
-                        ? Number(prev).toLocaleString() + " ₫"
+            if (config.type === "price") {
+                const prevNum = prev !== null && prev !== undefined ? Number(prev) : null;
+                const nextNum = next !== null && next !== undefined ? Number(next) : null;
+
+                if (prevNum === nextNum) return;
+
+                before =
+                    prevNum !== null
+                        ? prevNum.toLocaleString() + " ₫"
                         : "-";
 
-                const nextStr =
-                    next !== null && next !== undefined
-                        ? Number(next).toLocaleString() + " ₫"
+                after =
+                    nextNum !== null
+                        ? nextNum.toLocaleString() + " ₫"
                         : "-";
 
-                before = prevStr;
-                after = nextStr;
                 color = "#2563eb";
             }
 
-            if (field.type === "text") {
-                before = prev || "-";
-                after = next || "-";
+            if (config.type === "text") {
+                const prevText = String(prev ?? "").trim();
+                const nextText = String(next ?? "").trim();
+
+                if (prevText === nextText) return;
+
+                before = prevText || "-";
+                after = nextText || "-";
                 color = "#2563eb";
             }
 
@@ -454,8 +373,8 @@ export default function InventoryLogsPage() {
         if (changes.length === 0) {
             return [
                 {
-                    label: t.filterUpdate,
-                    after: t.noChangeDetail,
+                    label: c.edit,
+                    after: c.noChanges,
                     color: "#111827",
                 },
             ];
@@ -543,10 +462,10 @@ export default function InventoryLogsPage() {
                         }}
                     >
                         {[
-                            { value: "all", label: t.filterAll },
-                            { value: "create", label: t.filterCreate },
-                            { value: "update", label: t.filterUpdate },
-                            { value: "delete", label: t.filterDelete },
+                            { value: "all", label: c.all },
+                            { value: "create", label: c.create },
+                            { value: "update", label: c.edit },
+                            { value: "delete", label: c.delete },
                         ].map((option) => {
                             const active = filterType === option.value;
 
@@ -582,11 +501,11 @@ export default function InventoryLogsPage() {
                         }}
                     >
                         {[
-                            { value: "all", label: t.partAll },
-                            { value: "kitchen", label: t.partKitchen },
-                            { value: "hall", label: t.partHall },
-                            { value: "bar", label: t.partBar },
-                            { value: "etc", label: t.partEtc },
+                            { value: "all", label: c.all },
+                            { value: "kitchen", label: c.kitchen },
+                            { value: "hall", label: c.hall },
+                            { value: "bar", label: c.bar },
+                            { value: "etc", label: c.etc },
                         ].map((option) => {
                             const active = partFilter === option.value;
 
@@ -660,7 +579,7 @@ export default function InventoryLogsPage() {
                 }}
             >
                 {filteredLogs.length === 0 ? (
-                    <p>{t.noLogs}</p>
+                    <p>{c.noLogs}</p>
                 ) : (
                     <div
                         style={{
@@ -683,12 +602,12 @@ export default function InventoryLogsPage() {
                                     isOpen={isOpen}
                                     lang={lang}
                                     noteText={inventoryNoteMap[group.groupKey] || "-"}
-                                    partLabel={getPartLabel(log.part || "")}
+                                    partLabel={getPartLabel(log.part || "", t)}
                                     itemName={getDisplayLogItemName(log)}
                                     categoryName={getDisplayLogCategory(log)}
-                                    detailLabel={t.detail}
-                                    closeLabel={t.close}
-                                    deleteLabel={t.delete}
+                                    detailLabel={c.detail}
+                                    closeLabel={c.close}
+                                    deleteLabel={c.delete}
                                     isMaster={isMaster}
                                     onToggle={() =>
                                         setOpenGroupKey(isOpen ? null : group.groupKey)

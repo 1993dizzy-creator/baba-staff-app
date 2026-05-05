@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { roundDecimal } from "@/lib/inventory/number";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -19,108 +20,22 @@ const getActor = async (actorUsername?: string) => {
   return data;
 };
 
-const isMaster = (user: any) => user?.role === "master";
-
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const mode = searchParams.get("mode");
-
+export async function GET() {
   try {
-    if (mode === "list") {
-      const { data, error } = await supabaseAdmin
-        .from("inventory")
-        .select("*")
-        .order("updated_at", { ascending: false });
+    const { data, error } = await supabaseAdmin
+      .from("inventory")
+      .select("*")
+      .order("updated_at", { ascending: false });
 
-      if (error) throw error;
+    if (error) throw error;
 
-      return NextResponse.json({ ok: true, data: data || [] });
-    }
-
-    if (mode === "recent-logs") {
-      const { data, error } = await supabaseAdmin
-        .from("inventory_logs")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(3);
-
-      if (error) throw error;
-
-      return NextResponse.json({ ok: true, data: data || [] });
-    }
-
-    if (mode === "item-logs") {
-      const itemId = searchParams.get("itemId");
-
-      if (!itemId) {
-        return NextResponse.json(
-          { ok: false, message: "Missing itemId" },
-          { status: 400 }
-        );
-      }
-
-      const { data, error } = await supabaseAdmin
-        .from("inventory_logs")
-        .select("*")
-        .eq("item_id", Number(itemId))
-        .order("created_at", { ascending: false })
-        .limit(50);
-
-      if (error) throw error;
-
-      return NextResponse.json({ ok: true, data: data || [] });
-    }
-
-    if (mode === "latest-snapshot") {
-      const { data: batchRow, error: batchError } = await supabaseAdmin
-        .from("inventory_snapshot_batches")
-        .select("id, snapshot_date")
-        .order("snapshot_date", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (batchError) throw batchError;
-
-      if (!batchRow) {
-        return NextResponse.json({
-          ok: true,
-          data: {
-            snapshotDate: "",
-            snapshotMap: {},
-          },
-        });
-      }
-
-      const { data: snapshotItems, error: itemsError } = await supabaseAdmin
-        .from("inventory_snapshot_items")
-        .select("item_id, quantity")
-        .eq("batch_id", batchRow.id);
-
-      if (itemsError) throw itemsError;
-
-      const snapshotMap: Record<number, number> = {};
-
-      (snapshotItems || []).forEach((row: any) => {
-        if (row.item_id !== null && row.item_id !== undefined) {
-          snapshotMap[Number(row.item_id)] = Number(row.quantity ?? 0);
-        }
-      });
-
-      return NextResponse.json({
-        ok: true,
-        data: {
-          snapshotDate: batchRow.snapshot_date || "",
-          snapshotMap,
-        },
-      });
-    }
-
-    return NextResponse.json(
-      { ok: false, message: "Invalid mode" },
-      { status: 400 }
-    );
+    return NextResponse.json({
+      ok: true,
+      data: data || [],
+    });
   } catch (error: any) {
-    console.error("[INVENTORY_GET_ERROR]", error);
+    console.error("[INVENTORY_ITEMS_GET_ERROR]", error);
+
     return NextResponse.json(
       { ok: false, message: error?.message || "Server error" },
       { status: 500 }
@@ -199,8 +114,8 @@ export async function POST(req: Request) {
         unit: insertedData.unit ?? null,
         code: insertedData.code ?? null,
 
-        actor_name: actorName || actor.name || "",
-        actor_username: actorUsername || actor.username || "",
+        actor_name: actor.name || "",
+        actor_username: actor.username || "",
 
         prev_low_stock_threshold: null,
         new_low_stock_threshold: insertedData.low_stock_threshold ?? 1,
@@ -226,7 +141,6 @@ export async function PATCH(req: Request) {
       mode,
       id,
       payload,
-      logPayload,
       actorUsername,
       actorName,
     } = body;
@@ -247,24 +161,112 @@ export async function PATCH(req: Request) {
       );
     }
 
-    const { error: updateError } = await supabaseAdmin
+    const { data: prevItem, error: prevError } = await supabaseAdmin
+      .from("inventory")
+      .select(`
+    id,
+    item_name,
+    item_name_vi,
+    part,
+    category,
+    category_vi,
+    quantity,
+    purchase_price,
+    note,
+    unit,
+    code,
+    supplier,
+    low_stock_threshold
+  `)
+      .eq("id", Number(id))
+      .maybeSingle();
+
+    if (prevError) throw prevError;
+
+    if (!prevItem) {
+      return NextResponse.json(
+        { ok: false, message: "Target not found" },
+        { status: 404 }
+      );
+    }
+
+    const { data: updatedItem, error: updateError } = await supabaseAdmin
       .from("inventory")
       .update(payload)
-      .eq("id", Number(id));
+      .eq("id", Number(id))
+      .select(`
+    id,
+    item_name,
+    item_name_vi,
+    part,
+    category,
+    category_vi,
+    quantity,
+    purchase_price,
+    note,
+    unit,
+    code,
+    supplier,
+    low_stock_threshold
+  `)
+      .single();
 
-    if (updateError) throw updateError;
+    if (updateError || !updatedItem) throw updateError;
 
-    if (logPayload) {
-      const { error: logError } = await supabaseAdmin.from("inventory_logs").insert([
-        {
-          ...logPayload,
-          actor_name: actorName || actor.name || "",
-          actor_username: actorUsername || actor.username || "",
-        },
-      ]);
+    const prevQuantity = roundDecimal(Number(prevItem.quantity ?? 0));
+    const newQuantity = roundDecimal(Number(updatedItem.quantity ?? 0));
 
-      if (logError) throw logError;
-    }
+    const { error: logError } = await supabaseAdmin.from("inventory_logs").insert([
+      {
+        item_id: updatedItem.id,
+        item_name: updatedItem.item_name ?? null,
+        item_name_vi: updatedItem.item_name_vi ?? null,
+        action: "update",
+
+        part: updatedItem.part,
+        category: updatedItem.category ?? null,
+        category_vi: updatedItem.category_vi ?? null,
+
+        prev_quantity: prevQuantity,
+        new_quantity: newQuantity,
+        change_quantity: roundDecimal(newQuantity - prevQuantity),
+
+        prev_purchase_price: prevItem.purchase_price ?? null,
+        new_purchase_price: updatedItem.purchase_price ?? null,
+
+        prev_note: prevItem.note ?? null,
+        new_note: updatedItem.note ?? null,
+
+        prev_supplier: prevItem.supplier ?? null,
+        new_supplier: updatedItem.supplier ?? null,
+
+        prev_code: prevItem.code ?? null,
+        new_code: updatedItem.code ?? null,
+
+        prev_unit: prevItem.unit ?? null,
+        new_unit: updatedItem.unit ?? null,
+
+        prev_category: prevItem.category ?? null,
+        new_category: updatedItem.category ?? null,
+
+        prev_category_vi: prevItem.category_vi ?? null,
+        new_category_vi: updatedItem.category_vi ?? null,
+
+        prev_part: prevItem.part ?? null,
+        new_part: updatedItem.part ?? null,
+
+        unit: updatedItem.unit ?? null,
+        code: updatedItem.code ?? null,
+
+        actor_name: actor.name || "",
+        actor_username: actor.username || "",
+
+        prev_low_stock_threshold: prevItem.low_stock_threshold ?? 1,
+        new_low_stock_threshold: updatedItem.low_stock_threshold ?? 1,
+      },
+    ]);
+
+    if (logError) throw logError;
 
     return NextResponse.json({ ok: true, mode });
   } catch (error: any) {
@@ -370,8 +372,8 @@ export async function DELETE(req: Request) {
         unit: deletedItem.unit ?? null,
         code: deletedItem.code ?? null,
 
-        actor_name: actorName || actor.name || "",
-        actor_username: actorUsername || actor.username || "",
+        actor_name: actor.name || "",
+        actor_username: actor.username || "",
 
         prev_low_stock_threshold: deletedItem.low_stock_threshold ?? 1,
         new_low_stock_threshold: null,

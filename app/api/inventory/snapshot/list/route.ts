@@ -11,7 +11,7 @@ export async function GET() {
     const { data: batches, error: batchError } = await supabase
       .from("inventory_snapshot_batches")
       .select("id, snapshot_date, created_at, note")
-      .order("snapshot_date", { ascending: false });
+      .order("id", { ascending: false });
 
     if (batchError) {
       return NextResponse.json(

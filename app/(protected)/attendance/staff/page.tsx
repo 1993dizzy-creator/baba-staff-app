@@ -11,6 +11,11 @@ import { supabase } from "@/lib/supabase/client";
 import { attendanceStaffText } from "@/lib/text/attendance-staff";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
+import {
+  PART_META,
+  type PartValue,
+} from "@/lib/common/parts";
+import { getPartLabel } from "@/lib/common/part-label";
 
 type UserRow = {
   id: string;
@@ -35,51 +40,6 @@ type AttendanceRecord = {
   early_leave_minutes: number | null;
   work_minutes: number | null;
   approval_status: "pending" | "approved" | null;
-};
-
-const PART_META: Record<
-  string,
-  {
-    label: string;
-    emoji: string;
-    color: string;
-    bg: string;
-    border: string;
-    rank: number;
-  }
-> = {
-  kitchen: {
-    label: "Kitchen",
-    emoji: "🍳",
-    color: "#f59e0b",
-    bg: "#fff7ed",
-    border: "#f59e0b",
-    rank: 1,
-  },
-  hall: {
-    label: "Hall",
-    emoji: "🍺",
-    color: "#10b981",
-    bg: "#ecfdf5",
-    border: "#10b981",
-    rank: 2,
-  },
-  bar: {
-    label: "Bar",
-    emoji: "🍸",
-    color: "#3b82f6",
-    bg: "#eff6ff",
-    border: "#3b82f6",
-    rank: 3,
-  },
-  etc: {
-    label: "Etc",
-    emoji: "📦",
-    color: "#8b5cf6",
-    bg: "#f5f3ff",
-    border: "#8b5cf6",
-    rank: 99,
-  },
 };
 
 function getVietnamWorkDate() {
@@ -159,27 +119,16 @@ function getPositionRank(position?: string | null) {
   return 99;
 }
 
-function getPartKey(part?: string | null) {
-  const value = String(part || "").toLowerCase();
-
-  if (value.includes("kitchen")) return "kitchen";
-  if (value.includes("hall")) return "hall";
-  if (value.includes("bar")) return "bar";
-  if (value.includes("etc")) return "etc";
-
-  return value || "etc";
+function getPartKey(part?: string | null): PartValue {
+  if (part === "kitchen") return "kitchen";
+  if (part === "hall") return "hall";
+  if (part === "bar") return "bar";
+  return "etc";
 }
 
 function getPartMeta(part?: string | null) {
   const key = getPartKey(part);
-  return PART_META[key] || {
-    label: part || "Etc",
-    emoji: "📦",
-    color: "#4b5563",
-    bg: "#f9fafb",
-    border: "#d1d5db",
-    rank: 99,
-  };
+  return PART_META[key];
 }
 
 export default function AttendanceStaffPage() {
@@ -405,7 +354,7 @@ export default function AttendanceStaffPage() {
               >
                 <span>{group.meta.emoji}</span>
                 <span>
-                  {t.parts?.[group.part as keyof typeof t.parts] || group.meta.label}
+                  {t.parts?.[group.part as keyof typeof t.parts] || getPartLabel(group.part, t)}
                 </span>
                 <span style={partCountStyle}>{group.users.length}</span>
               </div>

@@ -1,5 +1,17 @@
 export const attendanceText = {
   ko: {
+    pageTitle: "근태",
+    pageDescription: "출근, 퇴근, 근태 현황을 확인하세요.",
+
+    tabs: {
+      myAttendance: "내 근태",
+      summary: "전체현황",
+      staff: "출근명부",
+      leave: "휴무관리",
+    },
+
+    todayCardTitle: "오늘 근태",
+    todayDate: "2025.05.20 (화)",
 
     statusLabel: "상태",
     statusBefore: "출근전",

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
-import { inventoryText } from "@/lib/text";
+import { commonText, inventoryText } from "@/lib/text";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
@@ -10,93 +10,29 @@ import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import { usePathname } from "next/navigation";
 import SubNav from "@/components/SubNav";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
-
-
-const CATEGORY_OPTIONS_BY_PART = {
-    kitchen: [
-        { ko: "채소", vi: "Rau củ" },
-        { ko: "허브", vi: "Rau thơm" },
-        { ko: "과일", vi: "Trái cây" },
-        { ko: "버섯", vi: "Nấm" },
-        { ko: "육류", vi: "Thịt" },
-        { ko: "해산물", vi: "Hải sản" },
-        { ko: "가공육", vi: "Thịt chế biến" },
-        { ko: "건어물", vi: "Đồ khô" },
-        { ko: "유제품", vi: "Sản phẩm sữa" },
-        { ko: "치즈", vi: "Phô mai" },
-        { ko: "소스", vi: "Nước sốt" },
-        { ko: "조미료", vi: "Gia vị" },
-        { ko: "면류", vi: "Mì" },
-        { ko: "튀김류", vi: "Đồ chiên" },
-        { ko: "스낵", vi: "Snack" },
-        { ko: "견과류", vi: "Hạt" },
-        { ko: "기름", vi: "Dầu" },
-        { ko: "분말", vi: "Bột" },
-        { ko: "감미료", vi: "Chất tạo ngọt" },
-        { ko: "절임", vi: "Đồ ngâm" },
-        { ko: "소모품", vi: "Vật tư tiêu hao" },
-        { ko: "식자재", vi: "Nguyên liệu" },
-        { ko: "기타", vi: "Khác" },
-    ],
-    bar: [
-        { ko: "위스키", vi: "Whisky" },
-        { ko: "진", vi: "Gin" },
-        { ko: "럼", vi: "Rum" },
-        { ko: "보드카", vi: "Vodka" },
-        { ko: "데킬라", vi: "Tequila" },
-        { ko: "와인", vi: "Wine" },
-        { ko: "코냑", vi: "Cognac" },
-        { ko: "리큐르", vi: "Liqueur" },
-        { ko: "시럽", vi: "Syrup" },
-        { ko: "비터", vi: "Bitters" },
-        { ko: "베르무트", vi: "Vermouth" },
-        { ko: "기타", vi: "Khác" },
-    ],
-    hall: [
-        { ko: "맥주", vi: "Bia" },
-        { ko: "생맥주", vi: "Bia tươi" },
-        { ko: "병맥주", vi: "Bia chai" },
-        { ko: "수제맥주", vi: "Bia thủ công" },
-        { ko: "소주", vi: "Soju" },
-        { ko: "음료", vi: "Đồ uống" },
-        { ko: "기타", vi: "Khác" },
-    ],
-    etc: [{ ko: "기타", vi: "Khác" }],
-};
-
-
-const PART_VALUES = ["kitchen", "hall", "bar", "etc"] as const;
-type PartValue = (typeof PART_VALUES)[number];
-
-const PART_META: Record<
-    PartValue,
-    {
-        color: string;
-        soft: string;
-        emoji: string;
-    }
-> = {
-    kitchen: {
-        color: "#f59e0b",
-        soft: "#fff7ed",
-        emoji: "🍳",
-    },
-    hall: {
-        color: "#10b981",
-        soft: "#ecfdf5",
-        emoji: "🍺",
-    },
-    bar: {
-        color: "#3b82f6",
-        soft: "#eff6ff",
-        emoji: "🍸",
-    },
-    etc: {
-        color: "#8b5cf6",
-        soft: "#f5f3ff",
-        emoji: "📦",
-    },
-};
+import { getPartLabel } from "@/lib/common/part-label";
+import {
+    PART_VALUES,
+    PART_META,
+    type PartValue,
+} from "@/lib/common/parts";
+import {
+    QUICK_REASON_VALUES,
+    type QuickReasonValue,
+} from "@/lib/inventory/reasons";
+import { CATEGORY_OPTIONS_BY_PART } from "@/lib/inventory/categories";
+import {
+    parseDecimal,
+    formatDecimalDisplay,
+    roundDecimal,
+} from "@/lib/inventory/number";
+import {
+    normalizePriceInput,
+    formatNumber,
+    parsePrice,
+    formatMoneyDisplay,
+} from "@/lib/inventory/money";
+import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
 
 
 export default function InventoryPage() {
@@ -112,6 +48,7 @@ export default function InventoryPage() {
 
     const { lang } = useLanguage();
     const t = inventoryText[lang];
+    const c = commonText[lang];
 
     const [itemName, setItemName] = useState("");
     const [quantity, setQuantity] = useState("");
@@ -144,7 +81,7 @@ export default function InventoryPage() {
     const [latestSnapshotDate, setLatestSnapshotDate] = useState<string>("");
     const [quickSaveItem, setQuickSaveItem] = useState<any | null>(null);
     const [quickSaveReason, setQuickSaveReason] = useState<
-        "check" | "purchase" | "service" | "other" | null
+        QuickReasonValue | null
     >(null);
     const [quickSaveOtherText, setQuickSaveOtherText] = useState("");
     const [logModalItem, setLogModalItem] = useState<any | null>(null);
@@ -238,21 +175,6 @@ export default function InventoryPage() {
             ? log.category_vi || log.category || "-"
             : log.category || log.category_vi || "-";
 
-    const getPartLabel = (value: string) => {
-        switch (value) {
-            case "kitchen":
-                return t.kitchen;
-            case "hall":
-                return t.hall;
-            case "bar":
-                return t.bar;
-            case "etc":
-                return t.etc;
-            default:
-                return value || "-";
-        }
-    };
-
     const getActionBadge = (action: string) => {
         if (action === "create") return "NEW";
         if (action === "delete") return "DEL";
@@ -285,7 +207,7 @@ export default function InventoryPage() {
 
         if (log.action === "create") {
             changes.push({
-                label: lang === "vi" ? "Tạo" : "생성",
+                label: c.create,
                 after: `${log.new_quantity ?? 0}${log.unit ? ` ${log.unit}` : ""}`,
                 color: "seagreen",
             });
@@ -294,7 +216,7 @@ export default function InventoryPage() {
 
         if (log.action === "delete") {
             changes.push({
-                label: lang === "vi" ? "Xóa" : "삭제",
+                label: c.delete,
                 before: `${formatDecimalDisplay(log.prev_quantity)}${log.unit ? ` ${log.unit}` : ""}`,
                 after: `${formatDecimalDisplay(log.new_quantity)}${log.unit ? ` ${log.unit}` : ""}`,
                 color: "crimson",
@@ -307,7 +229,7 @@ export default function InventoryPage() {
             !(log.prev_quantity == null && log.new_quantity == null)
         ) {
             changes.push({
-                label: lang === "vi" ? "SL" : "수량",
+                label: t.quantity,
                 before: `${formatDecimalDisplay(log.prev_quantity)}${log.unit ? ` ${log.unit}` : ""}`,
                 after: `${formatDecimalDisplay(log.new_quantity)}${log.unit ? ` ${log.unit}` : ""}`,
                 color:
@@ -321,7 +243,7 @@ export default function InventoryPage() {
 
         if ((log.prev_note || "") !== (log.new_note || "")) {
             changes.push({
-                label: lang === "vi" ? "GC" : "비고",
+                label: c.note,
                 before: log.prev_note || "-",
                 after: log.new_note || "-",
             });
@@ -329,7 +251,7 @@ export default function InventoryPage() {
 
         if ((log.prev_supplier || "") !== (log.new_supplier || "")) {
             changes.push({
-                label: lang === "vi" ? "NCC" : "거래처",
+                label: t.supplier,
                 before: log.prev_supplier || "-",
                 after: log.new_supplier || "-",
             });
@@ -337,7 +259,7 @@ export default function InventoryPage() {
 
         if ((log.prev_code || "") !== (log.new_code || "")) {
             changes.push({
-                label: lang === "vi" ? "Mã" : "코드",
+                label: t.code,
                 before: log.prev_code || "-",
                 after: log.new_code || "-",
             });
@@ -345,7 +267,7 @@ export default function InventoryPage() {
 
         if ((log.prev_unit || "") !== (log.new_unit || "")) {
             changes.push({
-                label: lang === "vi" ? "ĐV" : "단위",
+                label: t.unit,
                 before: log.prev_unit || "-",
                 after: log.new_unit || "-",
             });
@@ -353,7 +275,7 @@ export default function InventoryPage() {
 
         if ((log.prev_category || "") !== (log.new_category || "")) {
             changes.push({
-                label: lang === "vi" ? "DM" : "카테고리",
+                label: t.category,
                 before:
                     lang === "vi"
                         ? log.prev_category_vi || log.prev_category || "-"
@@ -367,9 +289,9 @@ export default function InventoryPage() {
 
         if ((log.prev_part || "") !== (log.new_part || "")) {
             changes.push({
-                label: lang === "vi" ? "BP" : "파트",
-                before: getPartLabel(log.prev_part || "-"),
-                after: getPartLabel(log.new_part || "-"),
+                label: t.part,
+                before: getPartLabel(log.prev_part || "-", t),
+                after: getPartLabel(log.new_part || "-", t),
             });
         }
 
@@ -378,7 +300,7 @@ export default function InventoryPage() {
             parseDecimal(log.new_low_stock_threshold ?? 1)
         ) {
             changes.push({
-                label: lang === "vi" ? "Ngưỡng" : "부족기준",
+                label: t.lowStockThreshold,
                 before: String(log.prev_low_stock_threshold ?? 1),
                 after: String(log.new_low_stock_threshold ?? 1),
             });
@@ -389,7 +311,7 @@ export default function InventoryPage() {
             !(log.prev_purchase_price == null && log.new_purchase_price == null)
         ) {
             changes.push({
-                label: lang === "vi" ? "Giá" : "구매가",
+                label: t.purchasePrice,
                 before: formatMoneyDisplay(log.prev_purchase_price),
                 after: formatMoneyDisplay(log.new_purchase_price),
             });
@@ -397,8 +319,8 @@ export default function InventoryPage() {
 
         if (changes.length === 0) {
             changes.push({
-                label: lang === "vi" ? "Sửa" : "변경",
-                after: lang === "vi" ? "Không có chi tiết" : "변경 내역 없음",
+                label: c.update,
+                after: c.noData,
             });
         }
 
@@ -406,13 +328,13 @@ export default function InventoryPage() {
     };
 
     const getQuickReasonLabel = (
-        reason: "check" | "purchase" | "service" | "other",
+        reason: QuickReasonValue,
         customText?: string
     ) => {
-        if (reason === "check") return t.quickReasonCheck;
-        if (reason === "purchase") return t.quickReasonPurchase;
-        if (reason === "service") return t.quickReasonService;
-        return customText?.trim() || t.quickReasonOther;
+        if (reason === "check") return t.reasonCheck;
+        if (reason === "purchase") return t.purchase;
+        if (reason === "service") return t.service;
+        return customText?.trim() || c.etc;
     };
 
     const buildQuickChangeNote = ({
@@ -423,7 +345,7 @@ export default function InventoryPage() {
     }: {
         currentQty: number;
         nextQty: number;
-        reason: "check" | "purchase" | "service" | "other";
+        reason: QuickReasonValue;
         customText?: string;
     }) => {
         const diff = nextQty - currentQty;
@@ -433,7 +355,7 @@ export default function InventoryPage() {
     };
 
     const fetchInventory = async () => {
-        const res = await fetch("/api/inventory/items?mode=list", {
+        const res = await fetch("/api/inventory/items", {
             cache: "no-store",
         });
 
@@ -448,7 +370,7 @@ export default function InventoryPage() {
     };
 
     const fetchRecentLogs = async () => {
-        const res = await fetch("/api/inventory/items?mode=recent-logs", {
+        const res = await fetch("/api/inventory/logs/recent", {
             cache: "no-store",
         });
 
@@ -467,7 +389,7 @@ export default function InventoryPage() {
         setIsItemLogsLoading(true);
 
         try {
-            const res = await fetch(`/api/inventory/items?mode=item-logs&itemId=${item.id}`, {
+            const res = await fetch(`/api/inventory/items/${item.id}/logs`, {
                 cache: "no-store",
             });
 
@@ -486,7 +408,7 @@ export default function InventoryPage() {
     };
 
     const fetchLatestSnapshot = async () => {
-        const res = await fetch("/api/inventory/items?mode=latest-snapshot", {
+        const res = await fetch("/api/inventory/snapshot/latest", {
             cache: "no-store",
         });
 
@@ -501,58 +423,7 @@ export default function InventoryPage() {
         setLatestSnapshotDate(result.data?.snapshotDate || "");
     };
 
-    const normalizePriceInput = (value: string | number | null | undefined) => {
-        return String(value ?? "").replace(/[^\d]/g, "");
-    };
-
-    const formatNumber = (value: string | number | null | undefined) => {
-        const digits = normalizePriceInput(value);
-        return digits ? Number(digits).toLocaleString("en-US") : "";
-    };
-
-    const parsePrice = (value: string | number | null | undefined) => {
-        const digits = normalizePriceInput(value);
-        return digits ? Number(digits) : null;
-    };
-
-    const formatMoneyDisplay = (value: string | number | null | undefined) => {
-        if (value === null || value === undefined || value === "") return "-";
-
-        const num =
-            typeof value === "number"
-                ? value
-                : Number(String(value).replace(/[^\d.-]/g, ""));
-
-        if (!Number.isFinite(num)) return "-";
-
-        return `${num.toLocaleString("en-US")} ₫`;
-    };
-
     const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
-
-    const parseDecimal = (value: string | number | null | undefined) => {
-        if (value === null || value === undefined || value === "") return 0;
-        const normalized = String(value).replace(/,/g, "").trim();
-        const num = Number(normalized);
-        return Number.isNaN(num) ? 0 : num;
-    };
-
-    const formatDecimalDisplay = (value: string | number | null | undefined) => {
-        if (value === null || value === undefined || value === "") return "0";
-
-        const num =
-            typeof value === "number"
-                ? value
-                : Number(String(value).replace(/,/g, "").trim());
-
-        if (!Number.isFinite(num)) return "0";
-
-        return num.toFixed(2).replace(/\.?0+$/, "");
-    };
-
-    const roundDecimal = (value: number) => {
-        return Math.round(value * 100) / 100;
-    };
 
     const resetForm = () => {
         setItemName("");
@@ -575,7 +446,7 @@ export default function InventoryPage() {
     const handleDelete = async (id: number) => {
         if (isDeletingId === id) return;
 
-        const ok = confirm(t.deleteConfirm);
+        const ok = confirm(c.deleteConfirm);
         if (!ok) return;
 
         setIsDeletingId(id);
@@ -584,7 +455,7 @@ export default function InventoryPage() {
             const targetItem = inventoryList.find((item) => item.id === id);
 
             if (!targetItem) {
-                alert(t.deleteTargetNotFound);
+                alert(c.noData);
                 return;
             }
 
@@ -606,11 +477,11 @@ export default function InventoryPage() {
                 console.error(result);
 
                 if (res.status === 403) {
-                    alert(lang === "vi" ? "Không có quyền xóa." : "삭제 권한이 없습니다.");
+                    alert(c.noPermission);
                     return;
                 }
 
-                alert(t.deleteFail);
+                alert(c.deleteFail);
                 return;
             }
 
@@ -703,7 +574,7 @@ export default function InventoryPage() {
                 const targetItem = inventoryList.find((item) => item.id === editingId);
 
                 if (!targetItem) {
-                    alert(t.editFail);
+                    alert(c.editFail);
                     return;
                 }
 
@@ -726,7 +597,7 @@ export default function InventoryPage() {
                     parseDecimal(targetItem.low_stock_threshold ?? 1) !== nextLowStock;
 
                 if (!hasChanges) {
-                    alert(lang === "vi" ? "Không có thay đổi" : "변경사항 없음");
+                    alert(c.noChanges);
                     return;
                 }
 
@@ -765,51 +636,6 @@ export default function InventoryPage() {
                             updated_by_username: actorUsername,
                         };
 
-                const logPayload = {
-                    item_id: editingId,
-                    item_name: lang === "ko" ? normalizedItemName : targetItem.item_name ?? null,
-                    item_name_vi: lang === "vi" ? normalizedItemName : targetItem.item_name_vi ?? null,
-                    action: "update",
-
-                    part,
-                    category: normalizedCategoryKo,
-                    category_vi: normalizedCategoryVi,
-
-                    prev_quantity: targetItem.quantity ?? 0,
-                    new_quantity: nextQuantity,
-                    change_quantity: nextQuantity - Number(targetItem.quantity ?? 0),
-
-                    prev_purchase_price: targetItem.purchase_price ?? null,
-                    new_purchase_price: nextPurchasePrice,
-
-                    prev_note: targetItem.note ?? null,
-                    new_note: normalizedNote,
-
-                    prev_supplier: targetItem.supplier ?? null,
-                    new_supplier: normalizedSupplier || null,
-
-                    prev_code: targetItem.code ?? null,
-                    new_code: normalizedCode || null,
-
-                    prev_unit: targetItem.unit ?? null,
-                    new_unit: normalizedUnit || null,
-
-                    prev_category: targetItem.category ?? null,
-                    new_category: normalizedCategoryKo || null,
-
-                    prev_category_vi: targetItem.category_vi ?? null,
-                    new_category_vi: normalizedCategoryVi || null,
-
-                    prev_part: targetItem.part ?? null,
-                    new_part: part || null,
-
-                    unit: normalizedUnit,
-                    code: normalizedCode,
-
-                    prev_low_stock_threshold: targetItem.low_stock_threshold ?? 1,
-                    new_low_stock_threshold: nextLowStock,
-                };
-
                 const res = await fetch("/api/inventory/items", {
                     method: "PATCH",
                     headers: {
@@ -818,7 +644,6 @@ export default function InventoryPage() {
                     body: JSON.stringify({
                         id: editingId,
                         payload,
-                        logPayload,
                         actorName,
                         actorUsername,
                     }),
@@ -828,11 +653,11 @@ export default function InventoryPage() {
 
                 if (!res.ok || !result.ok) {
                     console.error(result);
-                    alert(t.editFail);
+                    alert(c.editFail);
                     return;
                 }
 
-                alert(t.editSuccess);
+                alert(c.editSuccess);
             }
 
             // ===================== 생성 =====================
@@ -890,11 +715,11 @@ export default function InventoryPage() {
 
                 if (!res.ok || !result.ok) {
                     console.error(result);
-                    alert(t.saveFail);
+                    alert(c.saveFail);
                     return;
                 }
 
-                alert(t.saveSuccess);
+                alert(c.saveSuccess);
             }
 
             await fetchInventory();
@@ -952,7 +777,6 @@ export default function InventoryPage() {
             const draft = quantityDrafts[quickSaveItem.id];
             const nextQty = roundDecimal(parseDecimal(draft));
             const currentQty = roundDecimal(Number(quickSaveItem.quantity ?? 0));
-            const diffQty = roundDecimal(nextQty - currentQty);
 
             if (draft === undefined || String(draft).trim() === "") {
                 alert(t.requiredFields);
@@ -965,12 +789,12 @@ export default function InventoryPage() {
             }
 
             if (nextQty === currentQty) {
-                alert(lang === "vi" ? "Số lượng không thay đổi" : "수량 변화 없음");
+                alert(t.quantityNoChange);
                 return;
             }
 
             if (reason === "other" && !quickSaveOtherText.trim()) {
-                alert(lang === "vi" ? "Vui lòng nhập nội dung khác" : "기타 내용을 입력하세요.");
+                alert(t.otherReason);
                 return;
             }
 
@@ -989,25 +813,6 @@ export default function InventoryPage() {
                 updated_by_username: actorUsername,
             };
 
-            const logPayload = {
-                item_id: quickSaveItem.id,
-                item_name: quickSaveItem.item_name,
-                item_name_vi: quickSaveItem.item_name_vi ?? null,
-                action: "update",
-                part: quickSaveItem.part,
-                category: quickSaveItem.category,
-                category_vi: quickSaveItem.category_vi ?? null,
-                prev_quantity: currentQty,
-                new_quantity: nextQty,
-                change_quantity: diffQty,
-                prev_purchase_price: quickSaveItem.purchase_price ?? null,
-                new_purchase_price: quickSaveItem.purchase_price ?? null,
-                prev_note: quickSaveItem.note ?? null,
-                new_note: quickNote,
-                unit: quickSaveItem.unit,
-                code: quickSaveItem.code,
-            };
-
             const res = await fetch("/api/inventory/items", {
                 method: "PATCH",
                 headers: {
@@ -1017,7 +822,6 @@ export default function InventoryPage() {
                     mode: "quick-save",
                     id: quickSaveItem.id,
                     payload,
-                    logPayload,
                     actorName,
                     actorUsername,
                 }),
@@ -1027,7 +831,7 @@ export default function InventoryPage() {
 
             if (!res.ok || !result.ok) {
                 console.error(result);
-                alert(t.quickChangeFail);
+                alert(c.editFail);
                 return;
             }
 
@@ -1116,7 +920,7 @@ export default function InventoryPage() {
 
     const categoryTabs = useMemo(() => {
         return [
-            { key: "all", label: lang === "vi" ? "Tất cả" : "전체" },
+            { key: "all", label: c.all },
             ...Array.from(
                 new Map(
                     inventoryList
@@ -1133,41 +937,6 @@ export default function InventoryPage() {
             ),
         ];
     }, [inventoryList, partFilter, lang]);
-
-    const BUSINESS_DAY_START_HOUR = 16;
-    const BUSINESS_DAY_END_HOUR = 3;
-
-    const getBusinessWindow = () => {
-        const now = new Date();
-
-        const start = new Date(now);
-        const end = new Date(now);
-
-        if (now.getHours() < BUSINESS_DAY_END_HOUR) {
-            // 새벽 00:00 ~ 02:59는 전날 영업일
-            start.setDate(start.getDate() - 1);
-            start.setHours(BUSINESS_DAY_START_HOUR, 0, 0, 0);
-
-            end.setHours(BUSINESS_DAY_END_HOUR, 0, 0, 0);
-        } else {
-            // 03:00 이후는 오늘 영업일
-            start.setHours(BUSINESS_DAY_START_HOUR, 0, 0, 0);
-
-            end.setDate(end.getDate() + 1);
-            end.setHours(BUSINESS_DAY_END_HOUR, 0, 0, 0);
-        }
-
-        return { start, end };
-    };
-
-    const isToday = (value?: string) => {
-        if (!value) return false;
-
-        const date = new Date(value);
-        const { start, end } = getBusinessWindow();
-
-        return date >= start && date < end;
-    };
 
     const getPartMeta = (value?: string) => {
         const safePart: PartValue =
@@ -1247,7 +1016,7 @@ export default function InventoryPage() {
                 Number(item.quantity) <= Number(item.low_stock_threshold ?? 1);
 
             const matchTodayUpdated =
-                !showTodayUpdatedOnly || isToday(item.updated_at);
+                !showTodayUpdatedOnly || isInCurrentBusinessDay(item.updated_at);
 
             return (
                 matchSearch &&
@@ -1469,10 +1238,10 @@ export default function InventoryPage() {
                         }}
                     >
                         {[
-                            { value: "kitchen", label: t.kitchen },
-                            { value: "hall", label: t.hall },
-                            { value: "bar", label: t.bar },
-                            { value: "etc", label: t.etc },
+                            { value: "kitchen", label: c.kitchen },
+                            { value: "hall", label: c.hall },
+                            { value: "bar", label: c.bar },
+                            { value: "etc", label: c.etc },
                         ].map((partOption) => {
                             const partValue = partOption.value as PartValue;
                             const active = partFilter === partValue;
@@ -1528,14 +1297,14 @@ export default function InventoryPage() {
                             onClick={() => setShowLowStockOnly(!showLowStockOnly)}
                             style={getFilterToggleButtonStyle(showLowStockOnly, "crimson")}
                         >
-                            {showLowStockOnly ? t.viewAllItems : t.viewLowStockOnly}
+                            {showLowStockOnly ? c.all : t.filterLowStock}
                         </button>
 
                         <button
                             onClick={() => setShowTodayUpdatedOnly(!showTodayUpdatedOnly)}
                             style={getFilterToggleButtonStyle(showTodayUpdatedOnly, "royalblue")}
                         >
-                            {showTodayUpdatedOnly ? t.viewAllFromTodayFilter : t.viewTodayUpdatedOnly}
+                            {showTodayUpdatedOnly ? c.all : t.filterToday}
                         </button>
                     </div>
                 </div>
@@ -1554,7 +1323,7 @@ export default function InventoryPage() {
                         }}
                     >
                         <div style={{ fontSize: 22 }}>📭</div>
-                        <div>{t.noData}</div>
+                        <div>{c.noData}</div>
                     </div>
                 ) : (
                     <div
@@ -1657,7 +1426,7 @@ export default function InventoryPage() {
                                                     </div>
 
                                                     <div style={ui.metaText}>
-                                                        {[getPartLabel(item.part || ""), getDisplayCategory(item)].join(" · ")}
+                                                        {[getPartLabel(item.part || "", t), getDisplayCategory(item)].join(" · ")}
                                                     </div>
                                                 </div>
 
@@ -1718,7 +1487,7 @@ export default function InventoryPage() {
                                                         >
                                                             {diffQty === null
                                                                 ? "-"
-                                                                : `${t.snapshotDiffLabel} ${diffQty > 0 ? "+" : ""}${formatDecimalDisplay(diffQty)}`}
+                                                                : `${t.snapshotDiff} ${diffQty > 0 ? "+" : ""}${formatDecimalDisplay(diffQty)}`}
                                                         </div>
                                                     </div>
 
@@ -1748,7 +1517,7 @@ export default function InventoryPage() {
                                                                 : "1px solid #ddd",
                                                         }}
                                                     >
-                                                        {isOpen ? t.close : t.detail}
+                                                        {isOpen ? c.close : c.detail}
                                                     </button>
                                                 </div>
                                             </div>
@@ -1905,7 +1674,7 @@ export default function InventoryPage() {
                                                                 cursor: isQuickSaving ? "not-allowed" : "pointer",
                                                             }}
                                                         >
-                                                            {lang === "vi" ? "Lưu nhanh" : "빠른저장"}
+                                                            {t.quickSave}
                                                         </button>
                                                     </div>
 
@@ -1917,9 +1686,7 @@ export default function InventoryPage() {
                                                             lineHeight: 1.4,
                                                         }}
                                                     >
-                                                        {lang === "vi"
-                                                            ? "Nhập số lượng mới hoặc bấm nút +/- rồi lưu nhanh."
-                                                            : "새 수량 입력 또는 +/- 버튼 조정 후 빠른저장."}
+                                                        {t.quickGuide}
                                                     </div>
 
                                                     <div style={ui.detailGrid}>
@@ -1934,7 +1701,7 @@ export default function InventoryPage() {
                                                         <div style={ui.detailLabel}>{t.lowStockThreshold}</div>
                                                         <div style={ui.detailValue}>{item.low_stock_threshold ?? 1}</div>
 
-                                                        <div style={ui.detailLabel}>{t.updatedAt}</div>
+                                                        <div style={ui.detailLabel}>{c.update}</div>
                                                         <div style={ui.detailValue}>
                                                             {item.updated_at
                                                                 ? (() => {
@@ -1949,7 +1716,7 @@ export default function InventoryPage() {
                                                                 : "-"}
                                                         </div>
 
-                                                        <div style={ui.detailLabel}>{t.note}</div>
+                                                        <div style={ui.detailLabel}>{c.note}</div>
                                                         <div style={ui.detailValue}>{item.note || "-"}</div>
                                                     </div>
 
@@ -2004,7 +1771,7 @@ export default function InventoryPage() {
                                                                 fontWeight: 700,
                                                             }}
                                                         >
-                                                            {t.edit}
+                                                            {c.edit}
                                                         </button>
 
                                                         <button
@@ -2025,8 +1792,8 @@ export default function InventoryPage() {
                                                             }}
                                                         >
                                                             {isDeletingId === item.id
-                                                                ? (lang === "vi" ? "Đang xóa..." : "삭제 중...")
-                                                                : t.delete}
+                                                                ? (c.deleting)
+                                                                : c.delete}
                                                         </button>
                                                     </div>
                                                 </div>
@@ -2079,7 +1846,7 @@ export default function InventoryPage() {
                         {/* 파트 */}
                         <div>
                             <div style={labelStyle}>
-                                {lang === "vi" ? "Bộ phận" : "파트"}
+                                {t.part}
                             </div>
                             <div
                                 style={{
@@ -2089,10 +1856,10 @@ export default function InventoryPage() {
                                 }}
                             >
                                 {[
-                                    { value: "kitchen", label: t.kitchen },
-                                    { value: "hall", label: t.hall },
-                                    { value: "bar", label: t.bar },
-                                    { value: "etc", label: t.etc },
+                                    { value: "kitchen", label: c.kitchen },
+                                    { value: "hall", label: c.hall },
+                                    { value: "bar", label: c.bar },
+                                    { value: "etc", label: c.etc },
                                 ].map((partOption) => {
                                     const partValue = partOption.value as PartValue;
                                     const active = part === partValue;
@@ -2115,7 +1882,7 @@ export default function InventoryPage() {
                         {/* 카테고리 */}
                         <div>
                             <div style={labelStyle}>
-                                {lang === "vi" ? "Danh mục" : "카테고리"}
+                                {t.category}
                             </div>
                             <select
                                 value={isCustomCategory ? "__custom__" : category}
@@ -2161,7 +1928,7 @@ export default function InventoryPage() {
                                 ))}
 
                                 <option value="__custom__">
-                                    {lang === "vi" ? "Nhập trực tiếp" : "직접 입력"}
+                                    {t.directInput}
                                 </option>
                             </select>
                         </div>
@@ -2169,11 +1936,11 @@ export default function InventoryPage() {
                         {isCustomCategory && (
                             <div>
                                 <div style={labelStyle}>
-                                    {lang === "vi" ? "Danh mục mới" : "새 카테고리"}
+                                    {t.newCategory}
                                 </div>
                                 <input
                                     type="text"
-                                    placeholder={lang === "vi" ? "Nhập danh mục mới" : "새 카테고리 입력"}
+                                    placeholder={t.newCategoryPlaceholder}
                                     value={category}
                                     onChange={(e) => {
                                         const value = e.target.value;
@@ -2196,11 +1963,11 @@ export default function InventoryPage() {
                         {/* 코드 */}
                         <div>
                             <div style={labelStyle}>
-                                {lang === "vi" ? "Mã" : "코드"}
+                                {t.code}
                             </div>
                             <input
                                 type="text"
-                                placeholder={t.codePlaceholder}
+                                placeholder={t.selectInput}
                                 value={code}
                                 onChange={(e) => setCode(e.target.value)}
                                 style={ui.input}
@@ -2210,11 +1977,11 @@ export default function InventoryPage() {
                         {/* 품목명 */}
                         <div>
                             <div style={labelStyle}>
-                                {lang === "vi" ? "Tên sản phẩm" : "품목명"}
+                                {t.itemName}
                             </div>
                             <input
                                 type="text"
-                                placeholder={t.itemNamePlaceholder}
+                                placeholder={t.itemName}
                                 value={itemName}
                                 onChange={(e) => setItemName(e.target.value)}
                                 style={ui.input}
@@ -2226,7 +1993,7 @@ export default function InventoryPage() {
                         {/* 거래처 */}
                         <div>
                             <div style={labelStyle}>
-                                {lang === "vi" ? "Nhà cung cấp" : "거래처"}
+                                {t.supplier}
                             </div>
 
                             <select
@@ -2245,7 +2012,7 @@ export default function InventoryPage() {
                                 }}
                                 style={ui.input}
                             >
-                                <option value="">{t.supplierPlaceholder}</option>
+                                <option value="">{t.supplier}</option>
 
                                 {mergedSupplierOptions.map((option) => (
                                     <option key={option} value={option}>
@@ -2254,7 +2021,7 @@ export default function InventoryPage() {
                                 ))}
 
                                 <option value="__custom__">
-                                    {lang === "vi" ? "Nhập trực tiếp" : "직접 입력"}
+                                    {t.directInput}
                                 </option>
                             </select>
                         </div>
@@ -2262,11 +2029,11 @@ export default function InventoryPage() {
                         {isCustomSupplier && (
                             <div>
                                 <div style={labelStyle}>
-                                    {lang === "vi" ? "Nhà cung cấp mới" : "새 거래처"}
+                                    {t.newSupplier}
                                 </div>
                                 <input
                                     type="text"
-                                    placeholder={lang === "vi" ? "Nhập nhà cung cấp mới" : "새 거래처 입력"}
+                                    placeholder={t.newSupplierPlaceholder}
                                     value={supplier}
                                     onChange={(e) => setSupplier(e.target.value)}
                                     style={ui.input}
@@ -2279,11 +2046,11 @@ export default function InventoryPage() {
                         {/* 구매가 */}
                         <div>
                             <div style={labelStyle}>
-                                {lang === "vi" ? "Giá nhập" : "구매가"}
+                                {t.purchasePrice}
                             </div>
                             <input
                                 type="text"
-                                placeholder={t.purchasePricePlaceholder}
+                                placeholder={t.purchasePrice}
                                 value={purchasePrice}
                                 onChange={(e) => {
                                     setPurchasePrice(formatNumber(e.target.value));
@@ -2297,7 +2064,7 @@ export default function InventoryPage() {
                         {/* 단위 */}
                         <div>
                             <div style={labelStyle}>
-                                {lang === "vi" ? "Đơn vị" : "단위"}
+                                {t.unit}
                             </div>
                             <input
                                 type="text"
@@ -2337,12 +2104,12 @@ export default function InventoryPage() {
                         {/* 수량 */}
                         <div>
                             <div style={labelStyle}>
-                                {lang === "vi" ? "Số lượng" : "수량"}
+                                {t.quantity}
                             </div>
                             <input
                                 type="number"
                                 step="0.1"
-                                placeholder={t.quantityPlaceholder}
+                                placeholder={t.quantity}
                                 value={quantity}
                                 onChange={(e) => setQuantity(e.target.value)}
                                 style={ui.input}
@@ -2354,12 +2121,12 @@ export default function InventoryPage() {
                         {/* 부족기준 */}
                         <div>
                             <div style={labelStyle}>
-                                {lang === "vi" ? "Ngưỡng thấp" : "부족기준"}
+                                {t.lowStockThreshold}
                             </div>
                             <input
                                 type="number"
                                 step="0.1"
-                                placeholder={t.lowStockThresholdPlaceholder}
+                                placeholder={t.lowStockThreshold}
                                 value={lowStockThreshold}
                                 onChange={(e) => setLowStockThreshold(e.target.value)}
                                 style={ui.input}
@@ -2371,11 +2138,11 @@ export default function InventoryPage() {
                         {/* 비고 */}
                         <div>
                             <div style={labelStyle}>
-                                {lang === "vi" ? "Ghi chú" : "비고"}
+                                {c.note}
                             </div>
                             <input
                                 type="text"
-                                placeholder={t.notePlaceholder}
+                                placeholder={c.note}
                                 value={note}
                                 onChange={(e) => setNote(e.target.value)}
                                 style={ui.input}
@@ -2394,10 +2161,10 @@ export default function InventoryPage() {
                             }}
                         >
                             {isSubmitting
-                                ? (lang === "vi" ? "Đang lưu..." : "저장 중...")
+                                ? (c.saving)
                                 : editingId
-                                    ? t.editSave
-                                    : t.save}
+                                    ? c.save
+                                    : c.save}
                         </button>
 
                         {editingId && (
@@ -2410,7 +2177,7 @@ export default function InventoryPage() {
                                     border: "1px solid #d1d5db",
                                 }}
                             >
-                                {t.cancelEdit}
+                                {c.cancel}
                             </button>
                         )}
                     </div>
@@ -2425,7 +2192,7 @@ export default function InventoryPage() {
                     marginBottom: 18,
                 }}
             >
-                <h2 style={ui.sectionTitle}>{t.recentLogs}</h2>
+                <h2 style={ui.sectionTitle}>{t.logRecent}</h2>
 
                 {recentLogs.length === 0 ? (
                     <div
@@ -2441,7 +2208,7 @@ export default function InventoryPage() {
                         }}
                     >
                         <div style={{ fontSize: 20 }}>📭</div>
-                        <div>{t.noLogs}</div>
+                        <div>{c.noLogs}</div>
                     </div>
                 ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -2504,7 +2271,7 @@ export default function InventoryPage() {
                                         </div>
 
                                         <div style={ui.metaText}>
-                                            {[getPartLabel(log.part || ""), getDisplayLogCategory(log)].join(" · ")}
+                                            {[getPartLabel(log.part || "", t), getDisplayLogCategory(log)].join(" · ")}
                                         </div>
                                     </div>
 
@@ -2592,7 +2359,7 @@ export default function InventoryPage() {
                         }}
                     >
                         <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
-                            {t.quickReasonTitle}
+                            {t.otherReason}
                         </div>
 
                         <div style={{ ...ui.metaText, marginBottom: 4 }}>
@@ -2618,7 +2385,7 @@ export default function InventoryPage() {
                                     cursor: isQuickSaving ? "not-allowed" : "pointer",
                                 }}
                             >
-                                {t.quickReasonCheck}
+                                {t.reasonCheck}
                             </button>
 
                             <button
@@ -2631,7 +2398,7 @@ export default function InventoryPage() {
                                     cursor: isQuickSaving ? "not-allowed" : "pointer",
                                 }}
                             >
-                                {t.quickReasonPurchase}
+                                {t.purchase}
                             </button>
 
                             <button
@@ -2644,7 +2411,7 @@ export default function InventoryPage() {
                                     cursor: isQuickSaving ? "not-allowed" : "pointer",
                                 }}
                             >
-                                {t.quickReasonService}
+                                {t.service}
                             </button>
 
                             <button
@@ -2657,7 +2424,7 @@ export default function InventoryPage() {
                                     cursor: isQuickSaving ? "not-allowed" : "pointer",
                                 }}
                             >
-                                {t.quickReasonOther}
+                                {c.etc}
                             </button>
                         </div>
 
@@ -2667,7 +2434,7 @@ export default function InventoryPage() {
                                     type="text"
                                     value={quickSaveOtherText}
                                     onChange={(e) => setQuickSaveOtherText(e.target.value)}
-                                    placeholder={t.quickReasonOtherPlaceholder}
+                                    placeholder={t.otherReason}
                                     style={ui.input}
                                 />
                                 <button
@@ -2681,8 +2448,8 @@ export default function InventoryPage() {
                                     }}
                                 >
                                     {isQuickSaving
-                                        ? (lang === "vi" ? "Đang lưu..." : "저장 중...")
-                                        : t.editSave}
+                                        ? (c.saving)
+                                        : c.save}
                                 </button>
                             </>
                         )}
@@ -2699,7 +2466,7 @@ export default function InventoryPage() {
                                 marginTop: 4,
                             }}
                         >
-                            {lang === "vi" ? "Đóng" : "닫기"}
+                            {c.close}
                         </button>
                     </div>
                 </div>
@@ -2739,7 +2506,7 @@ export default function InventoryPage() {
                         }}
                     >
                         <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
-                            {lang === "vi" ? "Lịch sử vật phẩm" : "품목 로그"}
+                            {t.logItemTitle}
                         </div>
 
                         <div style={{ ...ui.metaText }}>
@@ -2772,12 +2539,12 @@ export default function InventoryPage() {
                                             isOpen={true}
                                             lang={lang}
                                             noteText={group.noteKey || "-"}
-                                            partLabel={getPartLabel(log.part || "")}
+                                            partLabel={getPartLabel(log.part || "", t)}
                                             itemName={getDisplayLogItemName(log)}
                                             categoryName={getDisplayLogCategory(log)}
-                                            detailLabel={t.detail}
-                                            closeLabel={t.close}
-                                            deleteLabel={t.delete}
+                                            detailLabel={c.detail}
+                                            closeLabel={c.close}
+                                            deleteLabel={c.delete}
                                             isMaster={false}
                                             getActionBadge={getActionBadge}
                                             getActionColor={getActionColor}
@@ -2797,7 +2564,7 @@ export default function InventoryPage() {
                             }}
                             style={ui.subButton}
                         >
-                            {lang === "vi" ? "Đóng" : "닫기"}
+                            {c.close}
                         </button>
                     </div>
                 </div>
