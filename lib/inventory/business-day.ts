@@ -9,6 +9,19 @@ const getDateString = (date: Date) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+const getVietnamDate = (baseDate = new Date()) => {
+  return new Date(
+    baseDate.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
+  );
+};
+
+const getVietnamDateString = (baseDate = new Date(), offsetDays = 0) => {
+  const date = getVietnamDate(baseDate);
+  date.setDate(date.getDate() + offsetDays);
+
+  return getDateString(date);
+};
+
 export const getBusinessWindow = (baseDate = new Date()) => {
   const start = new Date(baseDate);
   const end = new Date(baseDate);
@@ -48,8 +61,5 @@ export const getBusinessDate = (baseDate = new Date()) => {
 };
 
 export const getSnapshotDate = (baseDate = new Date()) => {
-  const date = new Date(baseDate);
-  date.setDate(date.getDate() - 1);
-
-  return getDateString(date);
+  return getVietnamDateString(baseDate, -1);
 };
