@@ -38,6 +38,13 @@ type AttendanceRecord = {
   approval_status: "pending" | "approved" | null;
 };
 
+type LoginUser = {
+  id?: string | number;
+  name?: string;
+  username?: string;
+  role?: string | null;
+};
+
 function getVietnamWorkDate() {
   const now = new Date();
   const vietnamTime = new Date(
@@ -86,6 +93,7 @@ function getStatusText(
   if (record.status === ATTENDANCE_STATUS.WORKING) return t.working;
   if (record.status === ATTENDANCE_STATUS.DONE) return t.workDone;
   if (record.status === ATTENDANCE_STATUS.EARLY_LEAVE) return t.workEarlyLeave;
+  if (record.status === ATTENDANCE_STATUS.LATE) return t.workLate;
   if (isApprovedLeave(record)) return t.workLeave;
   if (record.status === ATTENDANCE_STATUS.LEAVE) return t.workBefore;
 
@@ -97,6 +105,7 @@ function getStatusColor(record?: AttendanceRecord) {
   if (record.status === ATTENDANCE_STATUS.WORKING) return "#10b981";
   if (record.status === ATTENDANCE_STATUS.DONE) return "#2563eb";
   if (record.status === ATTENDANCE_STATUS.EARLY_LEAVE) return "#ef4444";
+  if (record.status === ATTENDANCE_STATUS.LATE) return "#f59e0b";
   if (isApprovedLeave(record)) return "#6b7280";
   if (record.status === ATTENDANCE_STATUS.LEAVE) return "#6b7280";
   return "#6b7280";
@@ -107,10 +116,7 @@ function getPositionRank(position?: string | null) {
 
   if (value.includes("manager") || value.includes("master")) return 1;
   if (value.includes("leader") || value.includes("head")) return 2;
-  if (value.includes("captain")) return 3;
-  if (value.includes("senior")) return 4;
-  if (value.includes("staff")) return 5;
-  if (value.includes("part")) return 6;
+  if (value.includes("staff")) return 3;
 
   return 99;
 }
@@ -120,15 +126,13 @@ export default function AttendanceStaffPage() {
   const pathname = usePathname();
   const tabs = getAttendanceTabs(pathname, lang);
   const t = attendanceText[lang];
-const c = commonText[lang];
-
-  const todayWorkDate = getVietnamWorkDate();
+  const c = commonText[lang];
 
   const [users, setUsers] = useState<UserRow[]>([]);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [loginUser, setLoginUser] = useState<any>(null);
+  const [loginUser, setLoginUser] = useState<LoginUser | null>(null);
   const canManage = isAdmin(loginUser);
 
   const [manualModal, setManualModal] = useState<{
@@ -141,12 +145,30 @@ const c = commonText[lang];
   useEffect(() => {
     setLoginUser(getUser());
     fetchList();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        fetchList();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    const pollingTimer = window.setInterval(() => {
+      fetchList();
+    }, 60000);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.clearInterval(pollingTimer);
+    };
   }, []);
 
   const fetchList = async () => {
     setIsLoading(true);
 
     try {
+      const workDate = getVietnamWorkDate();
       const userRes = await fetch("/api/attendance/users");
       const userResult = await userRes.json();
 
@@ -158,7 +180,7 @@ const c = commonText[lang];
       const userData = userResult.users || [];
 
       const recordRes = await fetch(
-        `/api/attendance/records?work_date=${todayWorkDate}`
+        `/api/attendance/records?work_date=${workDate}`
       );
 
       const recordResult = await recordRes.json();
@@ -179,6 +201,7 @@ const c = commonText[lang];
 
   const handleForceCheckIn = async (user: UserRow, time: string) => {
     const me = getUser();
+    const workDate = getVietnamWorkDate();
     try {
       const res = await fetch("/api/attendance/admin", {
         method: "POST",
@@ -188,9 +211,10 @@ const c = commonText[lang];
         body: JSON.stringify({
           action: "force_check_in",
           user_id: user.id,
-          work_date: todayWorkDate,
+          work_date: workDate,
           time,
           admin_name: me?.name || "",
+          actorUsername: me?.username || "",
         }),
       });
 
@@ -210,6 +234,7 @@ const c = commonText[lang];
 
   const handleForceCheckOut = async (user: UserRow, time: string) => {
     const me = getUser();
+    const workDate = getVietnamWorkDate();
 
     try {
       const res = await fetch("/api/attendance/admin", {
@@ -220,9 +245,10 @@ const c = commonText[lang];
         body: JSON.stringify({
           action: "force_check_out",
           user_id: user.id,
-          work_date: todayWorkDate,
+          work_date: workDate,
           time,
           admin_name: me?.name || "",
+          actorUsername: me?.username || "",
         }),
       });
 
@@ -242,6 +268,7 @@ const c = commonText[lang];
 
   const handleSetLeave = async (user: UserRow) => {
     const me = getUser();
+    const workDate = getVietnamWorkDate();
     try {
       const res = await fetch("/api/attendance/admin", {
         method: "POST",
@@ -251,8 +278,9 @@ const c = commonText[lang];
         body: JSON.stringify({
           action: "set_leave",
           user_id: user.id,
-          work_date: todayWorkDate,
+          work_date: workDate,
           admin_name: me?.name || "",
+          actorUsername: me?.username || "",
         }),
       });
 
@@ -361,8 +389,8 @@ const c = commonText[lang];
                           <span style={staffNameStyle}>{user.name}</span>
                           <span style={staffMetaStyle}>
                             {user.position
-  ? c[user.position as keyof typeof c] || user.position
-  : user.username}
+                              ? t.positions?.[user.position as keyof typeof t.positions] || user.position
+                              : user.username}
                           </span>
                         </div>
 

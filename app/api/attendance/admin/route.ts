@@ -15,6 +15,10 @@ import {
 
 type Action = "force_check_in" | "force_check_out" | "set_leave";
 
+function isAdminActor(user: { role?: string | null } | null) {
+  return user?.role === "owner" || user?.role === "master";
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -26,7 +30,17 @@ export async function POST(req: Request) {
       time,
       note,
       admin_name,
+      actorUsername,
       lang = "ko", // 🔥 핵심
+    }: {
+      action?: Action;
+      user_id?: string | number;
+      work_date?: string;
+      time?: string;
+      note?: string;
+      admin_name?: string;
+      actorUsername?: string;
+      lang?: "ko" | "vi";
     } = body;
 
     if (!action || !user_id || !work_date) {
@@ -39,6 +53,39 @@ export async function POST(req: Request) {
               : "필수 정보가 없습니다.",
         },
         { status: 400 }
+      );
+    }
+
+    const { data: actor, error: actorError } = await supabaseServer
+      .from("users")
+      .select("id, username, name, role, is_active")
+      .eq("username", actorUsername || "")
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (actorError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            lang === "vi"
+              ? "Lỗi khi kiểm tra quyền quản lý."
+              : "관리자 권한 확인 중 오류가 발생했습니다.",
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!isAdminActor(actor)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            lang === "vi"
+              ? "Không có quyền."
+              : "권한이 없습니다.",
+        },
+        { status: 403 }
       );
     }
 
@@ -308,7 +355,7 @@ export async function POST(req: Request) {
       },
       { status: 400 }
     );
-  } catch (err) {
+  } catch {
     return NextResponse.json(
       {
         ok: false,
