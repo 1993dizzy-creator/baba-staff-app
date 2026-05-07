@@ -16,30 +16,60 @@ const SECRET_KEY =
 
 const LOGIN_URL = `${BASE_URL}/api/Account/Login`;
 
-/**
- * 🔑 Signature 생성 (여기만 나중에 수정하면 됨)
- */
-function createSignature(loginTime: number) {
-  // 👉 현재는 가장 기본 형태로 넣어둠 (추후 MISA 답변에 맞게 수정)
-  const raw = `domain=${DOMAIN}&appid=${APP_ID}&logintime=${loginTime}`;
+function maskSensitiveValue(value: unknown) {
+  if (typeof value !== "string") return value;
+  if (value.length <= 10) return "***";
 
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
+
+function maskSensitiveData(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => maskSensitiveData(item));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entryValue]) => {
+        const normalizedKey = key.toLowerCase();
+        const isSensitive =
+          normalizedKey.includes("accesstoken") ||
+          normalizedKey.includes("access_token") ||
+          normalizedKey.includes("token") ||
+          normalizedKey.includes("authorization");
+
+        return [
+          key,
+          isSensitive
+            ? maskSensitiveValue(entryValue)
+            : maskSensitiveData(entryValue),
+        ];
+      })
+    );
+  }
+
+  return value;
+}
+
+function createSignature(message: string) {
   return crypto
     .createHmac("sha256", SECRET_KEY)
-    .update(raw, "utf8")
+    .update(message, "utf8")
     .digest("hex");
 }
 
-/**
- * 📡 CUKCUK 로그인 요청
- */
 async function requestLogin() {
-  const loginTime = Date.now();
-  const signature = createSignature(loginTime);
+  const loginTime = new Date().toISOString();
+  const signaturePayload = {
+    AppID: APP_ID,
+    Domain: DOMAIN,
+    LoginTime: loginTime,
+  };
+  const signatureMessage = JSON.stringify(signaturePayload);
+  const signature = createSignature(signatureMessage);
 
   const body = {
-    Domain: DOMAIN,
-    AppID: APP_ID,
-    LoginTime: loginTime,
+    ...signaturePayload,
     SignatureInfo: signature,
   };
 
@@ -62,13 +92,10 @@ async function requestLogin() {
 
   return {
     status: res.status,
-    data,
+    data: maskSensitiveData(data),
   };
 }
 
-/**
- * 🚀 API Route
- */
 export async function GET() {
   if (!DOMAIN || !APP_ID || !SECRET_KEY) {
     return NextResponse.json(
