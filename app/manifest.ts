@@ -7,8 +7,8 @@ export default function manifest(): MetadataRoute.Manifest {
         description: "BABA staff management app",
         start_url: "/",
         display: "standalone",
-        background_color: "#ffffff",
-        theme_color: "#ffffff",
+        background_color: "#383333",
+        theme_color: "#383333",
         orientation: "portrait",
         icons: [
             {

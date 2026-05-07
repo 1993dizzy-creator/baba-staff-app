@@ -24,11 +24,11 @@ export default function HomePage() {
       style={{
         minHeight: "100dvh",
         background:
-          "radial-gradient(circle at top, #ffffff 0%, #f9fafb 48%, #eef2f7 100%)",
+          "radial-gradient(circle at top, #374151 0%, #111827 45%, #030712 100%)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        color: "#111827",
+        color: "white",
         overflow: "hidden",
       }}
     >
@@ -45,9 +45,9 @@ export default function HomePage() {
             width: 118,
             height: 118,
             borderRadius: 28,
-            background: "#ffffff",
-            border: "1px solid #e5e7eb",
-            boxShadow: "0 24px 80px rgba(17,24,39,0.12)",
+            background: "rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.16)",
+            boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -56,7 +56,7 @@ export default function HomePage() {
           }}
         >
           <img
-            src="/img/logo-black.png"
+            src="/img/logo-w.png"
             alt="BABA"
             style={{
               width: 78,
@@ -71,7 +71,7 @@ export default function HomePage() {
             fontSize: 13,
             fontWeight: 700,
             letterSpacing: "0.18em",
-            color: "#4b5563",
+            color: "rgba(255,255,255,0.72)",
           }}
         >
           BABA STAFF APP
@@ -82,7 +82,7 @@ export default function HomePage() {
             width: 120,
             height: 3,
             borderRadius: 999,
-            background: "#e5e7eb",
+            background: "rgba(255,255,255,0.14)",
             overflow: "hidden",
           }}
         >
@@ -91,7 +91,7 @@ export default function HomePage() {
               width: "45%",
               height: "100%",
               borderRadius: 999,
-              background: "#111827",
+              background: "white",
               animation: "loadingBar 1.1s ease-in-out infinite",
             }}
           />
