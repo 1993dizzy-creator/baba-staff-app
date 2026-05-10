@@ -1,128 +1,69 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
+import {
+  CukcukAuthError,
+  type CukcukLoginRawResponse,
+  loginCukcuk,
+} from "@/lib/pos/cukcuk/auth";
+import { requirePosAdminSecret } from "@/lib/pos/api-guard";
 
-const BASE_URL =
-  process.env.CUKCUK_BASE_URL?.replace(/^["']|["']$/g, "").trim() ||
-  "https://graphapi.cukcuk.vn";
+export const runtime = "nodejs";
 
-const DOMAIN =
-  process.env.CUKCUK_DOMAIN?.replace(/^["']|["']$/g, "").trim() || "";
-
-const APP_ID =
-  process.env.CUKCUK_APP_ID?.replace(/^["']|["']$/g, "").trim() || "";
-
-const SECRET_KEY =
-  process.env.CUKCUK_SECRET_KEY?.replace(/^["']|["']$/g, "").trim() || "";
-
-const LOGIN_URL = `${BASE_URL}/api/Account/Login`;
-
-function maskSensitiveValue(value: unknown) {
-  if (typeof value !== "string") return value;
-  if (value.length <= 10) return "***";
-
-  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+function maskToken(token?: string) {
+  if (!token) return token;
+  if (token.length <= 12) return "마스킹됨";
+  return `${token.slice(0, 6)}...${token.slice(-6)}`;
 }
 
-function maskSensitiveData(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => maskSensitiveData(item));
-  }
-
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entryValue]) => {
-        const normalizedKey = key.toLowerCase();
-        const isSensitive =
-          normalizedKey.includes("accesstoken") ||
-          normalizedKey.includes("access_token") ||
-          normalizedKey.includes("token") ||
-          normalizedKey.includes("authorization");
-
-        return [
-          key,
-          isSensitive
-            ? maskSensitiveValue(entryValue)
-            : maskSensitiveData(entryValue),
-        ];
-      })
-    );
-  }
-
-  return value;
-}
-
-function createSignature(message: string) {
-  return crypto
-    .createHmac("sha256", SECRET_KEY)
-    .update(message, "utf8")
-    .digest("hex");
-}
-
-async function requestLogin() {
-  const loginTime = new Date().toISOString();
-  const signaturePayload = {
-    AppID: APP_ID,
-    Domain: DOMAIN,
-    LoginTime: loginTime,
-  };
-  const signatureMessage = JSON.stringify(signaturePayload);
-  const signature = createSignature(signatureMessage);
-
-  const body = {
-    ...signaturePayload,
-    SignatureInfo: signature,
-  };
-
-  const res = await fetch(LOGIN_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-
-  let data: unknown = null;
-
-  try {
-    data = await res.json();
-  } catch {
-    data = await res.text();
-  }
+function maskLoginResponse(raw?: CukcukLoginRawResponse) {
+  if (!raw) return raw;
 
   return {
-    status: res.status,
-    data: maskSensitiveData(data),
+    ...raw,
+    Data: raw.Data
+      ? {
+          ...raw.Data,
+          AccessToken: maskToken(raw.Data.AccessToken),
+        }
+      : raw.Data,
   };
 }
 
-export async function GET() {
-  if (!DOMAIN || !APP_ID || !SECRET_KEY) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: "Missing required env values",
-      },
-      { status: 500 }
-    );
-  }
+export async function GET(req: Request) {
+  const guardResponse = requirePosAdminSecret(req);
+  if (guardResponse) return guardResponse;
 
   try {
-    const result = await requestLogin();
+    const result = await loginCukcuk();
 
     return NextResponse.json({
       ok: true,
       request: {
-        domain: DOMAIN,
-        appId: APP_ID,
+        domain: result.domain,
+        appId: result.appId,
+        loginTime: result.loginTime,
       },
-      result,
+      result: {
+        status: result.status,
+        data: maskLoginResponse(result.raw),
+      },
     });
   } catch (error) {
+    if (error instanceof CukcukAuthError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error.message,
+          status: error.status ?? 500,
+          data: maskLoginResponse(error.raw),
+        },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json(
       {
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 }
     );

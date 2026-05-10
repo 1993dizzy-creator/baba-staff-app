@@ -11,6 +11,7 @@ import { commonText, attendanceText } from "@/lib/text";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
+import { getBusinessDate } from "@/lib/common/business-time";
 
 
 type UserRow = {
@@ -44,23 +45,6 @@ type LoginUser = {
   username?: string;
   role?: string | null;
 };
-
-function getVietnamWorkDate() {
-  const now = new Date();
-  const vietnamTime = new Date(
-    now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
-  );
-
-  if (vietnamTime.getHours() < 3) {
-    vietnamTime.setDate(vietnamTime.getDate() - 1);
-  }
-
-  const year = vietnamTime.getFullYear();
-  const month = String(vietnamTime.getMonth() + 1).padStart(2, "0");
-  const day = String(vietnamTime.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
 
 function formatTime(value: string | null) {
   if (!value) return "-";
@@ -168,7 +152,7 @@ export default function AttendanceStaffPage() {
     setIsLoading(true);
 
     try {
-      const workDate = getVietnamWorkDate();
+      const workDate = getBusinessDate();
       const userRes = await fetch("/api/attendance/users");
       const userResult = await userRes.json();
 
@@ -201,7 +185,7 @@ export default function AttendanceStaffPage() {
 
   const handleForceCheckIn = async (user: UserRow, time: string) => {
     const me = getUser();
-    const workDate = getVietnamWorkDate();
+    const workDate = getBusinessDate();
     try {
       const res = await fetch("/api/attendance/admin", {
         method: "POST",
@@ -234,7 +218,7 @@ export default function AttendanceStaffPage() {
 
   const handleForceCheckOut = async (user: UserRow, time: string) => {
     const me = getUser();
-    const workDate = getVietnamWorkDate();
+    const workDate = getBusinessDate();
 
     try {
       const res = await fetch("/api/attendance/admin", {
@@ -268,7 +252,7 @@ export default function AttendanceStaffPage() {
 
   const handleSetLeave = async (user: UserRow) => {
     const me = getUser();
-    const workDate = getVietnamWorkDate();
+    const workDate = getBusinessDate();
     try {
       const res = await fetch("/api/attendance/admin", {
         method: "POST",

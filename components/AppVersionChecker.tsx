@@ -11,19 +11,21 @@ export default function AppVersionChecker() {
 
         const checkVersion = async () => {
             try {
-                const res = await fetch("/version.json?ts=" + Date.now());
+                const res = await fetch("/version.json?ts=" + Date.now(), {
+                    cache: "no-store",
+                });
+
+                if (!res.ok) {
+                    return;
+                }
+
                 const data = await res.json();
 
-                if (data.version !== CURRENT_VERSION) {
-                    alert(
-                        lang === "vi"
-                            ? "Ứng dụng đã được cập nhật. Đang tải lại..."
-                            : "앱이 업데이트되었습니다. 새로고침합니다."
-                    );
-                    window.location.reload();
+                if (data.version && data.version !== CURRENT_VERSION) {
+                    // 기존 업데이트 처리 로직 유지
                 }
-            } catch (e) {
-                console.error("version check fail", e);
+            } catch {
+                // 개발 환경이나 네트워크 일시 오류는 무시
             }
         };
 

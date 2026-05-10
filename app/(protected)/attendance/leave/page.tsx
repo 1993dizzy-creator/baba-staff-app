@@ -13,6 +13,7 @@ import { useSearchParams } from "next/navigation";
 import { APPROVAL_STATUS, LEAVE_ACTION, } from "@/lib/attendance/status";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
 import { getPositionRank } from "@/lib/common/positions";
+import { getBusinessDate } from "@/lib/common/business-time";
 
 type UserRow = {
   id: string | number;
@@ -47,19 +48,6 @@ function formatDateKey(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function getVietnamWorkDate() {
-  const now = new Date();
-  const vietnamTime = new Date(
-    now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
-  );
-
-  if (vietnamTime.getHours() < 3) {
-    vietnamTime.setDate(vietnamTime.getDate() - 1);
-  }
-
-  return formatDateKey(vietnamTime);
 }
 
 function getMonthRange(date: Date) {
@@ -131,7 +119,7 @@ export default function AttendanceLeavePage() {
   const currentUser = getUser();
   const canManageLeave = isAdmin(currentUser);
 
-  const todayWorkDate = getVietnamWorkDate();
+  const todayWorkDate = getBusinessDate();
 
   const initialCalendarDate = monthParam
     ? new Date(`${monthParam}-01T12:00:00`)

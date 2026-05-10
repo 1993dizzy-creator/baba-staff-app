@@ -3,8 +3,123 @@ import { createClient } from "@supabase/supabase-js";
 import { toNumber, roundDecimal } from "@/lib/inventory/number";
 import { getSnapshotDate } from "@/lib/inventory/business-day";
 
+const formatSnapshotDisplayDate = (value: string) => {
+  const d = new Date(value);
+  const yy = String(d.getFullYear()).slice(2);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yy}.${mm}.${dd}`;
+};
+
+const createSupabaseAdmin = () =>
+  createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
+async function getLatestSnapshotResponse() {
+  const supabase = createSupabaseAdmin();
+
+  const { data: latestBatch, error: batchError } = await supabase
+    .from("inventory_snapshot_batches")
+    .select("id, snapshot_date")
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (batchError) throw batchError;
+
+  if (!latestBatch) {
+    return NextResponse.json({
+      ok: true,
+      data: {
+        snapshotMap: {},
+        snapshotDate: "",
+      },
+    });
+  }
+
+  const { data: items, error: itemsError } = await supabase
+    .from("inventory_snapshot_items")
+    .select("item_id, quantity")
+    .eq("batch_id", latestBatch.id);
+
+  if (itemsError) throw itemsError;
+
+  const snapshotMap: Record<number, number> = {};
+
+  (items || []).forEach((item) => {
+    if (item.item_id !== null && item.item_id !== undefined) {
+      snapshotMap[Number(item.item_id)] = Number(item.quantity ?? 0);
+    }
+  });
+
+  return NextResponse.json({
+    ok: true,
+    data: {
+      snapshotMap,
+      snapshotDate: latestBatch.snapshot_date
+        ? formatSnapshotDisplayDate(latestBatch.snapshot_date)
+        : "",
+    },
+  });
+}
+
+async function getSnapshotListResponse() {
+  const supabase = createSupabaseAdmin();
+
+  const { data: batches, error: batchError } = await supabase
+    .from("inventory_snapshot_batches")
+    .select("id, snapshot_date, created_at, note")
+    .order("id", { ascending: false });
+
+  if (batchError) {
+    return NextResponse.json(
+      { ok: false, message: batchError.message },
+      { status: 500 }
+    );
+  }
+
+  const { data: purchaseRows, error: purchaseError } = await supabase
+    .from("inventory_snapshot_items")
+    .select("batch_id")
+    .gt("change_quantity", 0);
+
+  if (purchaseError) {
+    return NextResponse.json(
+      { ok: false, message: purchaseError.message },
+      { status: 500 }
+    );
+  }
+
+  const purchaseBatchMap: Record<number, boolean> = {};
+
+  (purchaseRows || []).forEach((row) => {
+    if (row.batch_id !== null && row.batch_id !== undefined) {
+      purchaseBatchMap[Number(row.batch_id)] = true;
+    }
+  });
+
+  return NextResponse.json({
+    ok: true,
+    batches: batches ?? [],
+    purchaseBatchMap,
+  });
+}
+
 export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url);
+    const mode = searchParams.get("mode");
+
+    if (mode === "latest") {
+      return await getLatestSnapshotResponse();
+    }
+
+    if (mode === "list") {
+      return await getSnapshotListResponse();
+    }
+
     const authHeader = request.headers.get("authorization");
     const userAgent = request.headers.get("user-agent") || "";
     const isCron = userAgent.includes("vercel-cron");
@@ -17,10 +132,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createSupabaseAdmin();
 
     const snapshotDate = getSnapshotDate();
 

@@ -37,6 +37,18 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, data: data || [] });
     }
 
+    if (mode === "recent") {
+      const { data, error } = await supabaseAdmin
+        .from("inventory_logs")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(3);
+
+      if (error) throw error;
+
+      return NextResponse.json({ ok: true, data: data || [] });
+    }
+
     if (mode === "notes") {
       const { data, error } = await supabaseAdmin
         .from("inventory")

@@ -450,7 +450,7 @@ export default function InventorySnapshotsPage() {
     }, [batchList, calendarMonth]);
 
     const todayDateKey = new Date(
-        new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" })
+        new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
     )
         .toISOString()
         .slice(0, 10);

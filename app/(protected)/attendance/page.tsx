@@ -11,6 +11,7 @@ import { commonText, attendanceText } from "@/lib/text";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { getUser } from "@/lib/supabase/auth";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
+import { getBusinessDate } from "@/lib/common/business-time";
 
 
 function formatTodayDate(lang: "ko" | "vi") {
@@ -216,27 +217,6 @@ function getCurrentPosition(): Promise<GeolocationPosition> {
 }
 
 
-function getVietnamWorkDate() {
-  const now = new Date();
-
-  const vietnamTime = new Date(
-    now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
-  );
-
-  // 새벽 3시 전이면 전날 영업일로 처리
-  if (vietnamTime.getHours() < 3) {
-    vietnamTime.setDate(vietnamTime.getDate() - 1);
-  }
-
-  const year = vietnamTime.getFullYear();
-  const month = String(vietnamTime.getMonth() + 1).padStart(2, "0");
-  const day = String(vietnamTime.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-
-
 function getStatusLabel(
   lang: "ko" | "vi",
   status: AttendanceStatus,
@@ -314,7 +294,7 @@ function MyAttendance() {
       const user = getUser();
       if (!user?.id) return;
 
-      const workDate = getVietnamWorkDate();
+      const workDate = getBusinessDate();
 
       const res = await fetch(
         `/api/attendance/records?user_id=${user.id}&work_date=${workDate}`
