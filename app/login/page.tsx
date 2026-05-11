@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { ui } from "@/lib/styles/ui";
+import { isAdmin } from "@/lib/supabase/auth";
 
 export default function LoginPage() {
     const { lang } = useLanguage();
@@ -31,7 +32,7 @@ export default function LoginPage() {
             body: JSON.stringify({
                 username,
                 password,
-                lang, // 👈 이거 추가
+                lang,
             }),
         });
 
@@ -44,7 +45,8 @@ export default function LoginPage() {
         }
 
         localStorage.setItem("baba_user", JSON.stringify(result.user));
-        router.push("/inventory");
+
+        router.replace(isAdmin(result.user) ? "/admin" : "/inventory");
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
