@@ -5,25 +5,32 @@ import type { CSSProperties } from "react";
 
 const adminMenus = [
   {
-    title: "POS 관리",
-    description: "CUKCUK POS 연동, dry-run, 재고 차감 검수 상태를 확인합니다.",
-    href: "/admin/pos",
-    badge: "POS",
-    status: "연동 관리",
+    title: "매출확인",
+    description: "POS 매출, 영수증, 일간/월간 현황을 확인합니다.",
+    href: "/admin/sales",
+    badge: "SALES",
+    status: "매출 관리",
   },
   {
-    title: "회원 생성",
-    description: "직원 계정, 권한, 파트, 직급, 근무 시간을 설정합니다.",
+    title: "직원생성",
+    description: "직원 계정을 생성하고 기본 권한, 파트, 직급을 설정합니다.",
     href: "/admin/users/create",
     badge: "USER",
     status: "준비 중",
   },
   {
-    title: "급여 관리",
+    title: "급여관리",
     description: "근태 기록을 기준으로 급여 정산 화면을 준비합니다.",
     href: "/admin/payroll",
     badge: "PAY",
     status: "준비 중",
+  },
+  {
+    title: "POS 설정",
+    description: "CUKCUK POS 연동, 상품 매핑, 재고 차감 설정을 관리합니다.",
+    href: "/admin/pos",
+    badge: "POS",
+    status: "연동 관리",
   },
 ];
 
