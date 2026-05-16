@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useLanguage } from "@/lib/language-context";
 import { layoutText } from "@/lib/text/layout";
 import BottomNav from "@/components/BottomNav";
+import UserSessionRefresher from "@/components/UserSessionRefresher";
 import { supabase } from "@/lib/supabase/client";
 
 function ProtectedLayoutContent({
@@ -27,19 +28,29 @@ function ProtectedLayoutContent({
   const t = layoutText[lang];
 
   useEffect(() => {
-    const loggedIn = isLoggedIn();
+    let cancelled = false;
 
-    if (!loggedIn) {
+    queueMicrotask(() => {
+      if (cancelled) return;
+
+      const loggedIn = isLoggedIn();
+
+      if (!loggedIn) {
+        setIsReady(true);
+        alert(t.loginRequired);
+        router.replace("/login");
+        return;
+      }
+
+      const user = getUser();
+      setCurrentUserName(user?.name || "");
+      setChecked(true);
       setIsReady(true);
-      alert(t.loginRequired);
-      router.replace("/login");
-      return;
-    }
+    });
 
-    const user = getUser();
-    setCurrentUserName(user?.name || "");
-    setChecked(true);
-    setIsReady(true);
+    return () => {
+      cancelled = true;
+    };
   }, [router, t.loginRequired]);
 
   useEffect(() => {
@@ -57,7 +68,9 @@ function ProtectedLayoutContent({
   }, []);
 
   useEffect(() => {
-    setMenuOpen(false);
+    queueMicrotask(() => {
+      setMenuOpen(false);
+    });
   }, [pathname]);
 
   useEffect(() => {
@@ -133,6 +146,8 @@ function ProtectedLayoutContent({
         background: "#ffffff",
       }}
     >
+      <UserSessionRefresher />
+
       <header
         style={{
           position: "fixed",

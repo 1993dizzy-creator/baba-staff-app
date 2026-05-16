@@ -168,14 +168,18 @@ export default function BottomNav() {
   useEffect(() => {
     let cancelled = false;
 
-    queueMicrotask(() => {
+    function refreshUserPermission() {
       if (cancelled) return;
       const user = getUser();
       setCanUseAdmin(isManage(user));
-    });
+    }
+
+    queueMicrotask(refreshUserPermission);
+    window.addEventListener("baba_user_updated", refreshUserPermission);
 
     return () => {
       cancelled = true;
+      window.removeEventListener("baba_user_updated", refreshUserPermission);
     };
   }, []);
 
