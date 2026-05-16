@@ -4,9 +4,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 
 type ReceiptRow = {
   id: number;
-  ref_id: string;
   business_date: string;
-  ref_date: string | null;
   payment_status: number | null;
   is_canceled: boolean | null;
   total_amount: number | string | null;
@@ -22,37 +20,17 @@ type LineRow = {
   business_date: string;
   payment_status: number | null;
   is_canceled: boolean | null;
-  is_option: boolean | null;
-  is_excluded: boolean | null;
-  mapping_status: string | null;
-  item_code: string | null;
-  item_name: string | null;
-  quantity: number | string | null;
-  amount: number | string | null;
-  final_amount: number | string | null;
   tax_rate: number | string | null;
   tax_amount: number | string | null;
 };
 
 type PaymentRow = {
   receipt_id: number | null;
+  business_date: string;
   payment_type: number | null;
   payment_name: string | null;
   card_name: string | null;
   amount: number | string | null;
-};
-
-type HourlyBucket = {
-  hour: string;
-  amount: number;
-  receiptCount: number;
-};
-
-type TopItemBucket = {
-  itemCode: string;
-  itemName: string;
-  quantity: number;
-  amount: number;
 };
 
 type TaxBucket = {
@@ -66,39 +44,43 @@ type TaxSummarySnapshot = {
   taxByRate: TaxBucket[];
 };
 
+type PaymentSummary = {
+  cashAmount: number;
+  transferAmount: number;
+  cardAmount: number;
+  otherAmount: number;
+  paymentTotalAmount: number;
+};
+
 const PAID_PAYMENT_STATUS = 3;
 const CANCELED_PAYMENT_STATUSES = new Set([4, 5]);
-const DEDUCTION_TARGET_MAPPING_STATUSES = new Set([
-  "unmapped",
-  "direct",
-  "manual",
-  "recipe",
-]);
 
-const businessHourOrder = [
-  "16:00",
-  "17:00",
-  "18:00",
-  "19:00",
-  "20:00",
-  "21:00",
-  "22:00",
-  "23:00",
-  "00:00",
-  "01:00",
-  "02:00",
-  "03:00",
-];
+function isValidMonth(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}$/.test(value);
+}
 
-const vietnamHourFormatter = new Intl.DateTimeFormat("en-US", {
-  timeZone: "Asia/Ho_Chi_Minh",
-  hour: "2-digit",
-  hour12: false,
-  hourCycle: "h23",
-});
+function getMonthRange(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
 
-function isValidBusinessDate(value: unknown): value is string {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  return {
+    fromDate: `${month}-01`,
+    toDate: `${month}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+function getMonthDays(month: string) {
+  const { fromDate, toDate } = getMonthRange(month);
+  const days: string[] = [];
+  const current = new Date(`${fromDate}T00:00:00Z`);
+  const end = new Date(`${toDate}T00:00:00Z`);
+
+  while (current <= end) {
+    days.push(current.toISOString().slice(0, 10));
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+
+  return days;
 }
 
 function toNumber(value: number | string | null | undefined) {
@@ -123,105 +105,6 @@ function isCanceled(row: Pick<ReceiptRow | LineRow, "payment_status" | "is_cance
     row.is_canceled === true ||
     CANCELED_PAYMENT_STATUSES.has(Number(row.payment_status))
   );
-}
-
-function isOptionLine(row: Pick<LineRow, "is_option" | "mapping_status">) {
-  return row.is_option === true || row.mapping_status === "option";
-}
-
-function isDeductionTargetLine(row: LineRow) {
-  return (
-    isPaid(row.payment_status) &&
-    !isOptionLine(row) &&
-    row.is_excluded !== true &&
-    DEDUCTION_TARGET_MAPPING_STATUSES.has(row.mapping_status || "")
-  );
-}
-
-function getVietnamHourLabel(value: string | null) {
-  if (!value) return null;
-
-  const date = new Date(value);
-
-  if (!Number.isFinite(date.getTime())) {
-    return null;
-  }
-
-  const hour = vietnamHourFormatter.format(date).padStart(2, "0");
-  return `${hour}:00`;
-}
-
-function buildHourlySales(receipts: ReceiptRow[]) {
-  const map = new Map<string, HourlyBucket>();
-
-  receipts
-    .filter((receipt) => isPaid(receipt.payment_status))
-    .forEach((receipt) => {
-      const hour = getVietnamHourLabel(receipt.ref_date);
-
-      if (!hour) return;
-
-      const current =
-        map.get(hour) ||
-        ({
-          hour,
-          amount: 0,
-          receiptCount: 0,
-        } satisfies HourlyBucket);
-
-      current.amount += toNumber(receipt.total_amount);
-      current.receiptCount += 1;
-      map.set(hour, current);
-    });
-
-  return Array.from(map.values()).sort((a, b) => {
-    const aIndex = businessHourOrder.indexOf(a.hour);
-    const bIndex = businessHourOrder.indexOf(b.hour);
-
-    if (aIndex === -1 && bIndex === -1) return a.hour.localeCompare(b.hour);
-    if (aIndex === -1) return 1;
-    if (bIndex === -1) return -1;
-
-    return aIndex - bIndex;
-  });
-}
-
-function buildTopItems(lines: LineRow[]) {
-  const map = new Map<string, TopItemBucket>();
-
-  lines
-    .filter((line) => {
-      return (
-        isPaid(line.payment_status) &&
-        !isOptionLine(line) &&
-        line.is_excluded !== true &&
-        Boolean(line.item_code)
-      );
-    })
-    .forEach((line) => {
-      const itemCode = line.item_code || "";
-      const itemName = line.item_name || "";
-      const key = `${itemCode}::${itemName}`;
-      const current =
-        map.get(key) ||
-        ({
-          itemCode,
-          itemName,
-          quantity: 0,
-          amount: 0,
-        } satisfies TopItemBucket);
-
-      current.quantity += toNumber(line.quantity);
-      current.amount += toNumber(line.final_amount) || toNumber(line.amount);
-      map.set(key, current);
-    });
-
-  return Array.from(map.values())
-    .sort((a, b) => {
-      if (b.quantity !== a.quantity) return b.quantity - a.quantity;
-      return b.amount - a.amount;
-    })
-    .slice(0, 5);
 }
 
 function normalizePaymentName(value: string | null | undefined) {
@@ -262,8 +145,8 @@ function isOtherPayment(paymentName: string, cardName: string) {
   );
 }
 
-function buildPaymentSummary(payments: PaymentRow[]) {
-  return payments.reduce(
+function buildPaymentSummary(payments: PaymentRow[]): PaymentSummary {
+  return payments.reduce<PaymentSummary>(
     (summary, payment) => {
       const amount = toNumber(payment.amount);
       const paymentName = normalizePaymentName(payment.payment_name);
@@ -342,8 +225,7 @@ function addTaxBucket(
   map.set(taxRate, current);
 }
 
-function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
-  const map = new Map<number, TaxBucket>();
+function buildLinesByReceiptId(receipts: ReceiptRow[], lines: LineRow[]) {
   const paidReceiptIds = new Set(
     receipts
       .filter((receipt) => isPaid(receipt.payment_status))
@@ -358,6 +240,32 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
     current.push(line);
     linesByReceiptId.set(line.receipt_id, current);
   });
+
+  return linesByReceiptId;
+}
+
+function buildTaxSavingAmount(
+  receipts: ReceiptRow[],
+  linesByReceiptId: Map<number, LineRow[]>
+) {
+  return receipts
+    .filter((receipt) => isPaid(receipt.payment_status) && receipt.is_modified)
+    .reduce((sum, receipt) => {
+      const adjustedTax = (linesByReceiptId.get(receipt.id) || []).reduce(
+        (lineSum, line) => lineSum + toNumber(line.tax_amount),
+        0
+      );
+      const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
+      const originalTax =
+        originalTaxSummary?.totalTaxAmount || toNumber(receipt.vat_amount);
+
+      return sum + Math.max(0, adjustedTax - originalTax);
+    }, 0);
+}
+
+function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
+  const map = new Map<number, TaxBucket>();
+  const linesByReceiptId = buildLinesByReceiptId(receipts, lines);
 
   receipts
     .filter((receipt) => isPaid(receipt.payment_status))
@@ -383,132 +291,163 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
       });
     });
 
-  const taxByRate = Array.from(map.values()).sort(
-    (a, b) => a.taxRate - b.taxRate
-  );
-
   return {
     totalTaxAmount: receipts.reduce(
       (sum, receipt) =>
         isPaid(receipt.payment_status) ? sum + toNumber(receipt.vat_amount) : sum,
       0
     ),
-    taxByRate,
+    taxByRate: Array.from(map.values()).sort((a, b) => a.taxRate - b.taxRate),
     taxSavingAmount: buildTaxSavingAmount(receipts, linesByReceiptId),
   };
 }
 
-function buildTaxSavingAmount(
-  receipts: ReceiptRow[],
-  linesByReceiptId: Map<number, LineRow[]>
-) {
-  return receipts
-    .filter((receipt) => isPaid(receipt.payment_status) && receipt.is_modified)
-    .reduce((sum, receipt) => {
-      const adjustedTax = (linesByReceiptId.get(receipt.id) || []).reduce(
-        (lineSum, line) => lineSum + toNumber(line.tax_amount),
-        0
-      );
-      const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
-      const originalTax =
-        originalTaxSummary?.totalTaxAmount || toNumber(receipt.vat_amount);
+function buildMonthlySummary(receipts: ReceiptRow[]) {
+  const paidReceipts = receipts.filter((receipt) => isPaid(receipt.payment_status));
+  const totalSales = paidReceipts.reduce(
+    (sum, receipt) => sum + toNumber(receipt.total_amount),
+    0
+  );
+  const receiptCount = paidReceipts.length;
 
-      return sum + Math.max(0, adjustedTax - originalTax);
-    }, 0);
+  return {
+    totalSales,
+    receiptCount,
+    totalReceiptCount: receipts.length,
+    canceledReceiptCount: receipts.filter(isCanceled).length,
+    averageReceiptAmount:
+      receiptCount > 0 ? Math.round(totalSales / receiptCount) : 0,
+  };
+}
+
+function filterPaidPayments(receipts: ReceiptRow[], payments: PaymentRow[]) {
+  const paidReceiptIds = new Set(
+    receipts
+      .filter((receipt) => isPaid(receipt.payment_status))
+      .map((receipt) => receipt.id)
+  );
+
+  return payments.filter(
+    (payment) => payment.receipt_id !== null && paidReceiptIds.has(payment.receipt_id)
+  );
+}
+
+function buildDays(params: {
+  month: string;
+  receipts: ReceiptRow[];
+  lines: LineRow[];
+  payments: PaymentRow[];
+}) {
+  return getMonthDays(params.month).map((businessDate) => {
+    const receipts = params.receipts.filter(
+      (receipt) => receipt.business_date === businessDate
+    );
+    const lines = params.lines.filter((line) => line.business_date === businessDate);
+    const paidReceipts = receipts.filter((receipt) => isPaid(receipt.payment_status));
+    const payments = filterPaidPayments(
+      receipts,
+      params.payments.filter((payment) => payment.business_date === businessDate)
+    );
+    const paymentSummary = buildPaymentSummary(payments);
+    const taxSummary = buildTaxSummary(receipts, lines);
+
+    return {
+      businessDate,
+      receiptCount: paidReceipts.length,
+      salesAmount: paidReceipts.reduce(
+        (sum, receipt) => sum + toNumber(receipt.total_amount),
+        0
+      ),
+      totalFinalAmount: paidReceipts.reduce(
+        (sum, receipt) => sum + toNumber(receipt.total_amount),
+        0
+      ),
+      paymentTotalAmount: paymentSummary.paymentTotalAmount,
+      cashAmount: paymentSummary.cashAmount,
+      transferAmount: paymentSummary.transferAmount,
+      cardAmount: paymentSummary.cardAmount,
+      otherAmount: paymentSummary.otherAmount,
+      taxAmount: taxSummary.totalTaxAmount,
+      taxSavingAmount: taxSummary.taxSavingAmount,
+    };
+  });
 }
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const businessDate = searchParams.get("businessDate") || getBusinessDate();
+    const month = searchParams.get("month") || getBusinessDate().slice(0, 7);
 
-    if (!isValidBusinessDate(businessDate)) {
+    if (!isValidMonth(month)) {
       return NextResponse.json(
         {
           ok: false,
-          error: "businessDate must use YYYY-MM-DD format.",
-          example: "/api/admin/sales/today?businessDate=2026-05-09",
+          error: "month must use YYYY-MM format.",
+          example: "/api/admin/sales/monthly?month=2026-05",
         },
         { status: 400 }
       );
     }
 
+    const { fromDate, toDate } = getMonthRange(month);
+
     const { data: receipts, error: receiptsError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary"
+        "id, business_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary"
       )
-      .eq("business_date", businessDate);
+      .gte("business_date", fromDate)
+      .lte("business_date", toDate);
 
     if (receiptsError) {
-      throw new Error(`Failed to fetch sales receipts: ${receiptsError.message}`);
+      throw new Error(`Failed to fetch monthly sales receipts: ${receiptsError.message}`);
     }
 
     const { data: lines, error: linesError } = await supabaseServer
       .from("pos_sales_receipt_lines")
       .select(
-        "id, receipt_id, business_date, payment_status, is_canceled, is_option, is_excluded, mapping_status, item_code, item_name, quantity, amount, final_amount, tax_rate, tax_amount"
+        "id, receipt_id, business_date, payment_status, is_canceled, tax_rate, tax_amount"
       )
-      .eq("business_date", businessDate);
+      .gte("business_date", fromDate)
+      .lte("business_date", toDate);
 
     if (linesError) {
-      throw new Error(`Failed to fetch sales lines: ${linesError.message}`);
+      throw new Error(`Failed to fetch monthly sales lines: ${linesError.message}`);
     }
 
     const { data: payments, error: paymentsError } = await supabaseServer
       .from("pos_sales_receipt_payments")
-      .select("receipt_id, payment_type, payment_name, card_name, amount")
-      .eq("business_date", businessDate);
+      .select("receipt_id, business_date, payment_type, payment_name, card_name, amount")
+      .gte("business_date", fromDate)
+      .lte("business_date", toDate);
 
     if (paymentsError) {
-      throw new Error(`Failed to fetch sales payments: ${paymentsError.message}`);
+      throw new Error(`Failed to fetch monthly sales payments: ${paymentsError.message}`);
     }
 
     const receiptRows = (receipts || []) as ReceiptRow[];
     const lineRows = (lines || []) as LineRow[];
     const paymentRows = (payments || []) as PaymentRow[];
 
-    const paidReceipts = receiptRows.filter((receipt) =>
-      isPaid(receipt.payment_status)
-    );
-    const paidReceiptIds = new Set(paidReceipts.map((receipt) => receipt.id));
-    const paidPaymentRows = paymentRows.filter(
-      (payment) => payment.receipt_id !== null && paidReceiptIds.has(payment.receipt_id)
-    );
-    const canceledReceipts = receiptRows.filter(isCanceled);
-    const totalSales = paidReceipts.reduce(
-      (sum, receipt) => sum + toNumber(receipt.total_amount),
-      0
-    );
-    const paidReceiptCount = paidReceipts.length;
-    const summary = {
-      totalSales,
-      receiptCount: paidReceiptCount,
-      paidReceiptCount,
-      canceledReceiptCount: canceledReceipts.length,
-      lineCount: lineRows.length,
-      salesLineCount: lineRows.filter((line) => line.is_option === false).length,
-      optionLineCount: lineRows.filter(isOptionLine).length,
-      averageReceiptAmount:
-        paidReceiptCount > 0 ? Math.round(totalSales / paidReceiptCount) : 0,
-      deductionTargetLineCount: lineRows.filter(isDeductionTargetLine).length,
-    };
-
     return NextResponse.json({
       ok: true,
-      businessDate,
-      summary,
-      status: {
-        paid: paidReceiptCount,
-        canceled: canceledReceipts.length,
+      month,
+      range: {
+        fromDate,
+        toDate,
       },
-      paymentSummary: buildPaymentSummary(paidPaymentRows),
+      summary: buildMonthlySummary(receiptRows),
+      paymentSummary: buildPaymentSummary(filterPaidPayments(receiptRows, paymentRows)),
       taxSummary: buildTaxSummary(receiptRows, lineRows),
-      hourlySales: buildHourlySales(receiptRows),
-      topItems: buildTopItems(lineRows),
+      days: buildDays({
+        month,
+        receipts: receiptRows,
+        lines: lineRows,
+        payments: paymentRows,
+      }),
     });
   } catch (error) {
-    console.error("[SALES_TODAY_GET_ERROR]", error);
+    console.error("[SALES_MONTHLY_GET_ERROR]", error);
 
     return NextResponse.json(
       {
@@ -516,7 +455,7 @@ export async function GET(req: Request) {
         error:
           error instanceof Error
             ? error.message
-            : "Failed to fetch today's sales.",
+            : "Failed to fetch monthly sales.",
       },
       { status: 500 }
     );

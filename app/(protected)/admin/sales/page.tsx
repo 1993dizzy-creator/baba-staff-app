@@ -1,26 +1,52 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
+import { getBusinessDate } from "@/lib/common/business-time";
+import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
+import { commonText, salesText } from "@/lib/text";
 
 const salesTabs = [
   {
     href: "/admin/sales",
-    label: "일간현황",
+    key: "daily",
   },
   {
     href: "/admin/sales/receipts",
-    label: "영수증",
+    key: "receipts",
   },
   {
     href: "/admin/sales/monthly",
-    label: "월간현황",
+    key: "monthly",
   },
-];
+] as const;
+
+type SalesDailyText = (typeof salesText)[keyof typeof salesText]["daily"];
+type SalesCommonText = (typeof salesText)[keyof typeof salesText]["common"];
+type CommonText = (typeof commonText)[keyof typeof commonText];
+type SalesDailyViewText = SalesCommonText &
+  SalesDailyText &
+  Pick<
+    CommonText,
+    | "noData"
+    | "loading"
+    | "error"
+    | "loadFailed"
+    | "cash"
+    | "transfer"
+    | "card"
+    | "totalTax"
+    | "vat"
+    | "options"
+    | "canceled"
+  > & {
+    other: CommonText["etc"];
+    paymentCompleted: CommonText["paid"];
+  };
 
 type SalesTodayResponse = {
   ok: boolean;
@@ -44,6 +70,22 @@ type SalesTodayResponse = {
     unchecked: number;
     checked: number;
   };
+  paymentSummary?: {
+    cashAmount: number;
+    transferAmount: number;
+    cardAmount: number;
+    otherAmount: number;
+    paymentTotalAmount: number;
+  };
+  taxSummary?: {
+    totalTaxAmount: number;
+    taxSavingAmount: number;
+    taxByRate: {
+      taxRate: number;
+      taxAmount: number;
+      lineCount: number;
+    }[];
+  };
   hourlySales?: {
     hour: string;
     amount: number;
@@ -56,6 +98,40 @@ type SalesTodayResponse = {
     amount: number;
   }[];
 };
+
+type SalesSyncResponse = {
+  ok: boolean;
+  error?: string;
+  result?: {
+    invoiceCount?: number;
+    lineCount?: number;
+    receiptCreatedCount?: number;
+    receiptUpdatedCount?: number;
+    lineCreatedCount?: number;
+    lineUpdatedCount?: number;
+  };
+};
+
+function getStoredActor() {
+  if (typeof window === "undefined") {
+    return { actorUsername: "" };
+  }
+
+  try {
+    const raw = window.localStorage.getItem("baba_user");
+    if (!raw) return { actorUsername: "" };
+
+    const user = JSON.parse(raw) as {
+      username?: string;
+    };
+
+    return {
+      actorUsername: user.username || "",
+    };
+  } catch {
+    return { actorUsername: "" };
+  }
+}
 
 function formatVnd(value?: number) {
   return new Intl.NumberFormat("vi-VN", {
@@ -73,23 +149,55 @@ function formatNumber(value?: number) {
 
 export default function SalesPage() {
   const pathname = usePathname();
-  const [businessDate, setBusinessDate] = useState("");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { lang } = useLanguage();
+  const t = salesText[lang];
+  const c = commonText[lang];
+  const s = t.common;
+  const dailyText = useMemo(
+    () => ({
+      ...s,
+      ...t.daily,
+      noData: c.noData,
+      loading: c.loading,
+      error: c.error,
+      loadFailed: c.loadFailed,
+      cash: c.cash,
+      transfer: c.transfer,
+      card: c.card,
+      other: c.etc,
+      totalTax: c.totalTax,
+      vat: c.vat,
+      options: c.options,
+      canceled: c.canceled,
+      paymentCompleted: c.paid,
+    }),
+    [c, s, t.daily]
+  );
+  const initialBusinessDate = searchParams.get("businessDate") || getBusinessDate();
+  const [businessDate, setBusinessDate] = useState(initialBusinessDate);
   const [salesData, setSalesData] = useState<SalesTodayResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [syncMessage, setSyncMessage] = useState("");
 
-  const tabs = salesTabs.map((tab) => ({
-    ...tab,
-    active:
-      tab.href === "/admin/sales"
-        ? pathname === "/admin/sales" || pathname === "/admin/sales/"
-        : pathname.startsWith(tab.href),
-  }));
+  const tabs = salesTabs.map((tab) => {
+    const href = `${tab.href}?businessDate=${encodeURIComponent(businessDate)}`;
 
-  useEffect(() => {
-    const controller = new AbortController();
+    return {
+      label: t.tabs[tab.key],
+      href,
+      active:
+        tab.href === "/admin/sales"
+          ? pathname === "/admin/sales" || pathname === "/admin/sales/"
+          : pathname.startsWith(tab.href),
+    };
+  });
 
-    const fetchSalesToday = async () => {
+  const fetchSalesToday = useCallback(
+    async (signal?: AbortSignal) => {
       setIsLoading(true);
       setErrorMessage("");
 
@@ -99,12 +207,12 @@ export default function SalesPage() {
           : "";
         const res = await fetch(`/api/admin/sales/today${query}`, {
           cache: "no-store",
-          signal: controller.signal,
+          signal,
         });
         const result = (await res.json()) as SalesTodayResponse;
 
         if (!res.ok || !result.ok) {
-          throw new Error(result.error || "매출 데이터를 불러오지 못했습니다.");
+          throw new Error(result.error || dailyText.loadFailed);
         }
 
         setSalesData(result);
@@ -116,119 +224,164 @@ export default function SalesPage() {
         setErrorMessage(
           error instanceof Error
             ? error.message
-            : "매출 데이터를 불러오지 못했습니다."
+            : dailyText.loadFailed
         );
         setSalesData(null);
       } finally {
-        if (!controller.signal.aborted) {
+        if (!signal?.aborted) {
           setIsLoading(false);
         }
       }
-    };
+    },
+    [businessDate, dailyText.loadFailed]
+  );
 
-    fetchSalesToday();
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetchSalesToday(controller.signal);
 
     return () => controller.abort();
-  }, [businessDate]);
+  }, [fetchSalesToday]);
+
+  function handleBusinessDateChange(value: string) {
+    setBusinessDate(value);
+    setSyncMessage("");
+    router.replace(`${pathname}?businessDate=${encodeURIComponent(value)}`, {
+      scroll: false,
+    });
+  }
+
+  async function handleSyncSales() {
+    const actor = getStoredActor();
+
+    if (!actor.actorUsername) {
+      setErrorMessage(`${dailyText.noLogin}. ${c.loginAgain}`);
+      setSyncMessage("");
+      return;
+    }
+
+    setIsSyncing(true);
+    setErrorMessage("");
+    setSyncMessage("");
+
+    try {
+      const body: {
+        businessDate?: string;
+        limit: number;
+        actorUsername: string;
+      } = {
+        limit: 100,
+        actorUsername: actor.actorUsername,
+      };
+
+      if (businessDate.trim()) {
+        body.businessDate = businessDate.trim();
+      }
+
+      const res = await fetch("/api/admin/sales/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      const result = (await res.json().catch(() => null)) as
+        | SalesSyncResponse
+        | null;
+
+      if (!res.ok || !result?.ok) {
+        throw new Error(
+          result?.error || dailyText.syncFailed
+        );
+      }
+
+      const receiptCount = result.result?.invoiceCount || 0;
+      const lineCount = result.result?.lineCount || 0;
+
+      setSyncMessage(
+        `${dailyText.syncSuccess}: ${dailyText.receipts} ${formatNumber(receiptCount)}${dailyText.receiptCountSuffix}, ${dailyText.soldItems} ${formatNumber(lineCount)}${dailyText.itemCountSuffix}`
+      );
+
+      await fetchSalesToday();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : dailyText.syncFailed
+      );
+    } finally {
+      setIsSyncing(false);
+    }
+  }
 
   const summary = salesData?.summary;
-  const status = salesData?.status;
+  const paymentSummary = salesData?.paymentSummary;
+  const taxSummary = salesData?.taxSummary;
   const hasError = Boolean(errorMessage);
 
   const summaryCards = useMemo(
     () => [
       {
-        label: "💰 일 매출",
+        label: dailyText.totalSales,
         value: isLoading
-          ? "불러오는 중"
+          ? dailyText.loading
           : hasError
-            ? "오류"
+            ? dailyText.error
             : formatVnd(summary?.totalSales),
-        meta: "POS 결제 완료 기준",
+        meta: dailyText.paidReceiptBase,
       },
       {
-        label: "🧾 영수증",
+        label: dailyText.receipts,
         value: isLoading
-          ? "불러오는 중"
+          ? dailyText.loading
           : hasError
-            ? "오류"
-            : `${formatNumber(summary?.receiptCount)}건`,
-        meta: `결제 완료 ${formatNumber(summary?.paidReceiptCount)} / 취소 ${formatNumber(summary?.canceledReceiptCount)}`,
+            ? dailyText.error
+            : `${formatNumber(summary?.receiptCount)}${dailyText.receiptCountSuffix}`,
+        meta: `${dailyText.paymentCompleted} ${formatNumber(summary?.paidReceiptCount)} / ${dailyText.canceled} ${formatNumber(summary?.canceledReceiptCount)}`,
       },
       {
-        label: "🍽️ 판매 라인",
+        label: dailyText.soldItems,
         value: isLoading
-          ? "불러오는 중"
+          ? dailyText.loading
           : hasError
-            ? "오류"
-            : `${formatNumber(summary?.salesLineCount)}개`,
-        meta: `옵션 ${formatNumber(summary?.optionLineCount)}개`,
+            ? dailyText.error
+            : `${formatNumber(summary?.salesLineCount)}${dailyText.itemCountSuffix}`,
+        meta: `${dailyText.options} ${formatNumber(summary?.optionLineCount)}${dailyText.itemCountSuffix}`,
       },
       {
-        label: "🧮 객단가",
+        label: dailyText.averageReceiptAmount,
         value: isLoading
-          ? "불러오는 중"
+          ? dailyText.loading
           : hasError
-            ? "오류"
+            ? dailyText.error
             : formatVnd(summary?.averageReceiptAmount),
-        meta: "매출 ÷ 결제 완료 영수증",
+        meta: dailyText.paidReceiptBase,
       },
     ],
-    [hasError, isLoading, summary]
+    [dailyText, hasError, isLoading, summary]
   );
 
-  const statusRows = useMemo(
+  const paymentRows = useMemo(
     () => [
       {
-        label: "결제 완료",
-        value: isLoading
-          ? "불러오는 중"
-          : hasError
-            ? "오류"
-            : `${formatNumber(status?.paid)}건`,
+        label: dailyText.cash,
+        value: formatVnd(paymentSummary?.cashAmount),
       },
       {
-        label: "취소/환불",
-        value: isLoading
-          ? "불러오는 중"
-          : hasError
-            ? "오류"
-            : `${formatNumber(status?.canceled)}건`,
+        label: dailyText.transfer,
+        value: formatVnd(paymentSummary?.transferAmount),
       },
       {
-        label: "미확인",
-        value: isLoading
-          ? "불러오는 중"
-          : hasError
-            ? "오류"
-            : `${formatNumber(status?.unchecked)}건`,
+        label: dailyText.card,
+        value: formatVnd(paymentSummary?.cardAmount),
       },
       {
-        label: "확인 완료",
-        value: isLoading
-          ? "불러오는 중"
-          : hasError
-            ? "오류"
-            : `${formatNumber(status?.checked)}건`,
-      },
-      {
-        label: "검토 필요",
-        value: isLoading
-          ? "불러오는 중"
-          : hasError
-            ? "오류"
-            : `${formatNumber(status?.needsReview)}건`,
-      },
-      {
-        label: "재고 차감 대상",
-        value: isLoading
-          ? "불러오는 중"
-          : hasError
-            ? "오류"
-            : `${formatNumber(summary?.deductionTargetLineCount)}개`,
+        label: dailyText.other,
+        value: formatVnd(paymentSummary?.otherAmount),
       },
     ],
-    [hasError, isLoading, status, summary]
+    [dailyText, paymentSummary]
   );
 
   return (
@@ -238,19 +391,31 @@ export default function SalesPage() {
       <div style={sectionStyle}>
         <section style={noticeCardStyle}>
           <div style={noticeHeaderStyle}>
-            <span style={noticeBadgeStyle}>TODAY</span>
-            <span style={noticeTitleStyle}>일간현황</span>
+            <span style={noticeBadgeStyle}>{dailyText.badge}</span>
+            <span style={noticeTitleStyle}>{dailyText.title}</span>
           </div>
           <div style={dateFilterStyle}>
             <label style={dateInputWrapStyle}>
               <input
                 type="date"
                 value={businessDate}
-                onChange={(event) => setBusinessDate(event.target.value)}
+                onChange={(event) => handleBusinessDateChange(event.target.value)}
                 style={dateInputStyle}
               />
             </label>
+            <button
+              type="button"
+              onClick={handleSyncSales}
+              disabled={isSyncing}
+              style={{
+                ...syncButtonStyle,
+                ...(isSyncing ? syncButtonDisabledStyle : null),
+              }}
+            >
+              {isSyncing ? `${dailyText.syncing}...` : dailyText.syncButton}
+            </button>
           </div>
+          {syncMessage ? <p style={successTextStyle}>{syncMessage}</p> : null}
           {errorMessage ? <p style={errorTextStyle}>{errorMessage}</p> : null}
         </section>
 
@@ -266,38 +431,73 @@ export default function SalesPage() {
         </section>
 
         <section style={cardStyle}>
-          <h2 style={sectionTitleStyle}>📌 일간 판매 상태</h2>
+          <div style={sectionHeaderStyle}>
+            <h2 style={sectionTitleStyle}>{dailyText.paymentSummary}</h2>
+            <span style={sectionMetaStyle}>{dailyText.paymentBase}</span>
+          </div>
 
-          <div style={statusListStyle}>
-            {statusRows.map((row) => (
-              <div key={row.label} style={statusRowStyle}>
-                <span style={statusLabelStyle}>{row.label}</span>
-                <strong style={statusValueStyle}>{row.value}</strong>
+          <div style={paymentMethodGridStyle}>
+            {paymentRows.map((row) => (
+              <div key={row.label} style={paymentMethodStyle}>
+                <span style={paymentMethodLabelStyle}>{row.label}</span>
+                <strong style={paymentMethodValueStyle}>
+                  {isLoading ? dailyText.loading : hasError ? dailyText.error : row.value}
+                </strong>
               </div>
             ))}
+          </div>
+
+          <div style={paymentTotalStyle}>
+            <span style={paymentTotalLabelStyle}>{dailyText.paymentTotal}</span>
+            <strong style={paymentTotalValueStyle}>
+              {isLoading
+                ? dailyText.loading
+                : hasError
+                  ? dailyText.error
+                  : formatVnd(paymentSummary?.paymentTotalAmount)}
+            </strong>
           </div>
         </section>
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>⏰ 시간대별 매출</h2>
-            <span style={sectionMetaStyle}>영업일 기준</span>
+            <h2 style={sectionTitleStyle}>{dailyText.taxSummary}</h2>
+            <span style={sectionMetaStyle}>
+              {dailyText.totalTax} {isLoading ? "-" : formatVnd(taxSummary?.totalTaxAmount)}
+            </span>
           </div>
 
-          <HourlySalesList
+          <TaxSummaryList
             isLoading={isLoading}
-            hourlySales={salesData?.hourlySales || []}
+            hasError={hasError}
+            text={dailyText}
+            taxByRate={taxSummary?.taxByRate || []}
+            taxSavingAmount={taxSummary?.taxSavingAmount || 0}
           />
         </section>
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>🏆 많이 팔린 상품</h2>
-            <span style={sectionMetaStyle}>판매라인 기준</span>
+            <h2 style={sectionTitleStyle}>{dailyText.hourlySales}</h2>
+            <span style={sectionMetaStyle}>{dailyText.businessDayBase}</span>
+          </div>
+
+          <HourlySalesList
+            isLoading={isLoading}
+            hourlySales={salesData?.hourlySales || []}
+            text={dailyText}
+          />
+        </section>
+
+        <section style={cardStyle}>
+          <div style={sectionHeaderStyle}>
+            <h2 style={sectionTitleStyle}>{dailyText.topItems}</h2>
+            <span style={sectionMetaStyle}>{dailyText.soldItemBase}</span>
           </div>
 
           <TopItemsList
             isLoading={isLoading}
+            text={dailyText}
             topItems={salesData?.topItems || []}
           />
         </section>
@@ -324,29 +524,68 @@ function SummaryCard({
   );
 }
 
+function TaxSummaryList({
+  isLoading,
+  hasError,
+  text,
+  taxByRate,
+  taxSavingAmount,
+}: {
+  isLoading: boolean;
+  hasError: boolean;
+  text: SalesDailyViewText;
+  taxByRate: NonNullable<SalesTodayResponse["taxSummary"]>["taxByRate"];
+  taxSavingAmount: number;
+}) {
+  if (isLoading) {
+    return <EmptyState title={text.loading} text={text.taxDataLoading} />;
+  }
+
+  if (hasError) {
+    return <EmptyState title={text.error} text={text.taxDataLoadFailed} />;
+  }
+
+  if (taxByRate.length === 0) {
+    return <EmptyState title={text.noData} text={text.noTaxData} />;
+  }
+
+  return (
+    <div style={itemListStyle}>
+      {taxByRate.map((item) => (
+        <div key={item.taxRate} style={taxRowStyle}>
+          <span style={taxRateStyle}>
+            {text.vat} {formatNumber(item.taxRate)}%
+          </span>
+          <strong style={statusValueStyle}>{formatVnd(item.taxAmount)}</strong>
+          <span style={taxLineCountStyle}>
+            {formatNumber(item.lineCount)}{text.itemCountSuffix}
+          </span>
+        </div>
+      ))}
+      <div style={taxRowStyle}>
+        <span style={taxRateStyle}>{text.taxSaving}</span>
+        <strong style={statusValueStyle}>{formatVnd(taxSavingAmount)}</strong>
+        <span style={taxLineCountStyle}>{text.adjustedReceiptBase}</span>
+      </div>
+    </div>
+  );
+}
+
 function HourlySalesList({
   isLoading,
+  text,
   hourlySales,
 }: {
   isLoading: boolean;
+  text: SalesDailyViewText;
   hourlySales: NonNullable<SalesTodayResponse["hourlySales"]>;
 }) {
   if (isLoading) {
-    return (
-      <EmptyState
-        title="불러오는 중"
-        text="시간대별 매출 데이터를 불러오고 있습니다."
-      />
-    );
+    return <EmptyState title={text.loading} text={text.hourlyDataLoading} />;
   }
 
   if (hourlySales.length === 0) {
-    return (
-      <EmptyState
-        title="데이터 없음"
-        text="동기화된 매출 데이터가 없습니다."
-      />
-    );
+    return <EmptyState title={text.noData} text={text.noHourlySalesData} />;
   }
 
   const maxAmount = Math.max(...hourlySales.map((item) => item.amount), 1);
@@ -365,7 +604,9 @@ function HourlySalesList({
             <div style={barTrackStyle}>
               <div style={{ ...barFillStyle, width }} />
             </div>
-            <div style={hourMetaStyle}>{formatNumber(item.receiptCount)}건</div>
+            <div style={hourMetaStyle}>
+              {formatNumber(item.receiptCount)}{text.receiptCountSuffix}
+            </div>
           </div>
         );
       })}
@@ -375,27 +616,19 @@ function HourlySalesList({
 
 function TopItemsList({
   isLoading,
+  text,
   topItems,
 }: {
   isLoading: boolean;
+  text: SalesDailyViewText;
   topItems: NonNullable<SalesTodayResponse["topItems"]>;
 }) {
   if (isLoading) {
-    return (
-      <EmptyState
-        title="불러오는 중"
-        text="많이 팔린 상품 데이터를 불러오고 있습니다."
-      />
-    );
+    return <EmptyState title={text.loading} text={text.topItemsLoading} />;
   }
 
   if (topItems.length === 0) {
-    return (
-      <EmptyState
-        title="데이터 없음"
-        text="동기화된 상품 판매 데이터가 없습니다."
-      />
-    );
+    return <EmptyState title={text.noData} text={text.noTopItemsData} />;
   }
 
   return (
@@ -406,7 +639,7 @@ function TopItemsList({
           <div style={itemContentStyle}>
             <span style={itemNameStyle}>{item.itemName || "-"}</span>
             <span style={itemMetaStyle}>
-              {formatNumber(item.quantity)}개 · {formatVnd(item.amount)}
+              {formatNumber(item.quantity)}{text.itemCountSuffix} · {formatVnd(item.amount)}
             </span>
           </div>
         </div>
@@ -470,6 +703,8 @@ const errorTextStyle: CSSProperties = {
 
 const dateFilterStyle: CSSProperties = {
   marginTop: 8,
+  display: "grid",
+  gap: 8,
 };
 
 const dateInputWrapStyle: CSSProperties = {
@@ -483,6 +718,27 @@ const dateInputStyle: CSSProperties = {
   padding: "9px 10px",
   fontSize: 13,
   borderRadius: 10,
+};
+
+const syncButtonStyle: CSSProperties = {
+  ...ui.button,
+  padding: "10px 12px",
+  fontSize: 13,
+  borderRadius: 10,
+  fontWeight: 800,
+};
+
+const syncButtonDisabledStyle: CSSProperties = {
+  opacity: 0.65,
+  cursor: "not-allowed",
+};
+
+const successTextStyle: CSSProperties = {
+  margin: "7px 0 0",
+  fontSize: 12,
+  lineHeight: 1.45,
+  color: "#047857",
+  fontWeight: 800,
 };
 
 const summaryGridStyle: CSSProperties = {
@@ -518,6 +774,64 @@ const summaryMetaStyle: CSSProperties = {
   fontWeight: 700,
 };
 
+const paymentMethodGridStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: 6,
+};
+
+const paymentMethodStyle: CSSProperties = {
+  padding: "8px 9px",
+  border: "1px solid #eef0f3",
+  borderRadius: 10,
+  background: "#f9fafb",
+  minWidth: 0,
+};
+
+const paymentMethodLabelStyle: CSSProperties = {
+  display: "block",
+  fontSize: 11,
+  lineHeight: 1.25,
+  fontWeight: 700,
+  color: "#6b7280",
+};
+
+const paymentMethodValueStyle: CSSProperties = {
+  display: "block",
+  marginTop: 4,
+  fontSize: 12,
+  lineHeight: 1.25,
+  fontWeight: 900,
+  color: "#111827",
+  wordBreak: "break-word",
+};
+
+const paymentTotalStyle: CSSProperties = {
+  marginTop: 8,
+  padding: "9px 10px",
+  border: "1px solid #d1d5db",
+  borderRadius: 10,
+  background: "#111827",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+};
+
+const paymentTotalLabelStyle: CSSProperties = {
+  fontSize: 12,
+  lineHeight: 1.3,
+  fontWeight: 800,
+  color: "#e5e7eb",
+};
+
+const paymentTotalValueStyle: CSSProperties = {
+  fontSize: 14,
+  lineHeight: 1.3,
+  fontWeight: 900,
+  color: "#ffffff",
+};
+
 const sectionHeaderStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -539,34 +853,33 @@ const sectionMetaStyle: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-const statusListStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 6,
-  marginTop: 10,
+const statusValueStyle: CSSProperties = {
+  fontSize: 13,
+  fontWeight: 900,
+  color: "#111827",
 };
 
-const statusRowStyle: CSSProperties = {
-  display: "flex",
+const taxRowStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "72px 1fr auto",
   alignItems: "center",
-  justifyContent: "space-between",
-  gap: 12,
-  padding: "9px 10px",
+  gap: 8,
+  padding: "8px 10px",
   border: "1px solid #eef0f3",
   borderRadius: 10,
   background: "#f9fafb",
 };
 
-const statusLabelStyle: CSSProperties = {
-  fontSize: 13,
-  fontWeight: 700,
+const taxRateStyle: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 900,
   color: "#374151",
 };
 
-const statusValueStyle: CSSProperties = {
-  fontSize: 13,
-  fontWeight: 900,
-  color: "#111827",
+const taxLineCountStyle: CSSProperties = {
+  ...ui.metaText,
+  fontWeight: 700,
+  whiteSpace: "nowrap",
 };
 
 const emptyBoxStyle: CSSProperties = {

@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { useLanguage } from "@/lib/language-context";
 import { layoutText } from "@/lib/text/layout";
-import { getUser, isAdmin } from "@/lib/supabase/auth";
+import { getUser, isManage } from "@/lib/supabase/auth";
 
 const navWrapStyle: CSSProperties = {
   position: "fixed",
@@ -79,6 +79,17 @@ function inactiveItemStyle(): CSSProperties {
     ...baseItem,
     color: "#9ca3af",
     background: "transparent",
+  };
+}
+
+function disabledItemStyle(): CSSProperties {
+  return {
+    ...inactiveItemStyle(),
+    border: 0,
+    padding: 0,
+    fontFamily: "inherit",
+    cursor: "not-allowed",
+    opacity: 0.72,
   };
 }
 
@@ -155,16 +166,23 @@ export default function BottomNav() {
   const [canUseAdmin, setCanUseAdmin] = useState(false);
 
   useEffect(() => {
-    const user = getUser();
-    setCanUseAdmin(isAdmin(user));
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const user = getUser();
+      setCanUseAdmin(isManage(user));
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const isAttendance = pathname.startsWith("/attendance");
 
   const isInventory =
     pathname === "/inventory" || pathname.startsWith("/inventory/");
-
-  const isSales = pathname === "/sales" || pathname.startsWith("/sales/");
 
   const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
 
@@ -181,13 +199,14 @@ export default function BottomNav() {
           <span>{t.inventory}</span>
         </Link>
 
-        <Link
-          href="/sales"
-          style={isSales ? activeItemStyle() : inactiveItemStyle()}
+        <button
+          type="button"
+          disabled
+          style={disabledItemStyle()}
         >
-          <span style={iconStyle}>💰</span>
-          <span>{t.sales}</span>
-        </Link>
+          <span style={iconStyle} aria-hidden="true">🏪</span>
+          <span>{t.operation}</span>
+        </button>
 
         {canUseAdmin && (
           <Link href="/admin" style={adminItemStyle(isAdminPage)}>

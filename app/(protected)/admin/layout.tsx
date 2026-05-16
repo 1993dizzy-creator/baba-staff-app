@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CSSProperties, ReactNode } from "react";
-import { getUser, isAdmin } from "@/lib/supabase/auth";
+import { getUser, isManage } from "@/lib/supabase/auth";
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -11,17 +11,27 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   const [allowed, setAllowed] = useState(false);
 
   useEffect(() => {
-    const user = getUser();
+    let cancelled = false;
 
-    if (!user || !isAdmin(user)) {
-      setAllowed(false);
+    queueMicrotask(() => {
+      if (cancelled) return;
+
+      const user = getUser();
+
+      if (!user || !isManage(user)) {
+        setAllowed(false);
+        setChecked(true);
+        router.replace("/");
+        return;
+      }
+
+      setAllowed(true);
       setChecked(true);
-      router.replace("/");
-      return;
-    }
+    });
 
-    setAllowed(true);
-    setChecked(true);
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   if (!checked) {

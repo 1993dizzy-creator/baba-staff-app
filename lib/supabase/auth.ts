@@ -21,3 +21,11 @@ export const isMaster = (user = getUser()) => {
 export const isAdmin = (user = getUser()) => {
   return user?.role === "owner" || user?.role === "master";
 };
+
+export const isManage = (user = getUser()) => {
+  return (
+    user?.role === "owner" ||
+    user?.role === "master" ||
+    user?.role === "manager"
+  );
+};
