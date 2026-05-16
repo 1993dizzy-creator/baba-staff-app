@@ -26,6 +26,10 @@ function isValidBusinessDate(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
+function canSyncPosSales(role: unknown) {
+  return role === "owner" || role === "master" || role === "manager";
+}
+
 async function getAdminActor(actorUsername: string) {
   if (!actorUsername) return null;
 
@@ -37,7 +41,7 @@ async function getAdminActor(actorUsername: string) {
     .maybeSingle();
 
   if (!data) return null;
-  if (data.role !== "owner" && data.role !== "master") return null;
+  if (!canSyncPosSales(data.role)) return null;
 
   return data;
 }

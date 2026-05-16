@@ -232,6 +232,10 @@ function parseReceiptId(value: string) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function canManageSalesReceipt(role: unknown) {
+  return role === "owner" || role === "master" || role === "manager";
+}
+
 async function getAdminActor(actorUsername: unknown) {
   if (typeof actorUsername !== "string" || !actorUsername.trim()) {
     return null;
@@ -248,7 +252,7 @@ async function getAdminActor(actorUsername: unknown) {
     throw new Error(`Failed to verify admin actor: ${error.message}`);
   }
 
-  if (data?.role !== "owner" && data?.role !== "master") {
+  if (!canManageSalesReceipt(data?.role)) {
     return null;
   }
 
