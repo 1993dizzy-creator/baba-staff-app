@@ -119,6 +119,13 @@ type ReceiptDetailResponse = {
   lines?: LineDetail[];
 };
 
+type AmountSummarySnapshot = {
+  totalAmount: number;
+  vatAmount: number;
+  finalAmount: number;
+  paymentTotalAmount: number;
+};
+
 type ReceiptDetail = {
   id: number;
   refId: string;
@@ -141,6 +148,7 @@ type ReceiptDetail = {
   modificationNote: string | null;
   reviewStatus: string | null;
   adminNote: string | null;
+  originalAmountSummary: AmountSummarySnapshot | null;
 };
 
 type PaymentDetail = {
@@ -314,6 +322,18 @@ function calculateLineTaxAmount(
   const rate = toFiniteNumber(taxRate);
   if (!Number.isFinite(finalAmount) || finalAmount <= 0 || rate <= 0) return 0;
   return Math.round((finalAmount * rate) / 100);
+}
+
+function getOriginalFinalAmount(receipt: ReceiptDetail) {
+  const originalAmountSummary = receipt.originalAmountSummary;
+
+  if (!originalAmountSummary) return null;
+
+  return (
+    toFiniteNumber(originalAmountSummary.finalAmount) ||
+    toFiniteNumber(originalAmountSummary.paymentTotalAmount) ||
+    null
+  );
 }
 
 function formatTime(value: string | null) {
@@ -1305,10 +1325,11 @@ function ReceiptEditPanel({
     0
   );
   const draftPaymentTotal = draftSalesSubtotal + draftAdjustedTaxAmount;
-  const taxSavingAmount = Math.max(
-    0,
-    currentTotalTaxAmount - receipt.vatAmount
-  );
+  const originalFinalAmount = getOriginalFinalAmount(receipt);
+  const taxSavingAmount =
+    originalFinalAmount === null
+      ? Math.max(0, currentTotalTaxAmount - receipt.vatAmount)
+      : Math.max(0, receipt.finalAmount - originalFinalAmount);
   const returnAmount =
     paymentMethod === "cash"
       ? Math.max(0, cashReceivedAmount - draftPaymentTotal)

@@ -12,6 +12,7 @@ type ReceiptRow = {
   vat_amount: number | string | null;
   is_modified: boolean | null;
   original_tax_summary: unknown | null;
+  original_amount_summary: unknown | null;
 };
 
 type LineRow = {
@@ -42,6 +43,13 @@ type TaxBucket = {
 type TaxSummarySnapshot = {
   totalTaxAmount: number;
   taxByRate: TaxBucket[];
+};
+
+type AmountSummarySnapshot = {
+  totalAmount: number;
+  vatAmount: number;
+  finalAmount: number;
+  paymentTotalAmount: number;
 };
 
 type PaymentSummary = {
@@ -204,6 +212,52 @@ function normalizeTaxSummary(value: unknown): TaxSummarySnapshot | null {
   };
 }
 
+function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
+  if (!value || typeof value !== "object") return null;
+
+  const summary = value as {
+    totalAmount?: unknown;
+    vatAmount?: unknown;
+    finalAmount?: unknown;
+    paymentTotalAmount?: unknown;
+  };
+
+  return {
+    totalAmount: toNumber(summary.totalAmount as number | string | null),
+    vatAmount: toNumber(summary.vatAmount as number | string | null),
+    finalAmount: toNumber(summary.finalAmount as number | string | null),
+    paymentTotalAmount: toNumber(
+      summary.paymentTotalAmount as number | string | null
+    ),
+  };
+}
+
+function getReceiptTaxAmount(receipt: ReceiptRow) {
+  const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
+
+  if (receipt.is_modified && originalTaxSummary) {
+    return originalTaxSummary.totalTaxAmount;
+  }
+
+  return toNumber(receipt.vat_amount);
+}
+
+function getOriginalFinalAmount(receipt: ReceiptRow) {
+  const originalAmountSummary = normalizeAmountSummary(
+    receipt.original_amount_summary
+  );
+
+  if (originalAmountSummary) {
+    return (
+      originalAmountSummary.finalAmount ||
+      originalAmountSummary.paymentTotalAmount ||
+      0
+    );
+  }
+
+  return toNumber(receipt.final_amount);
+}
+
 function addTaxBucket(
   map: Map<number, TaxBucket>,
   taxRate: number,
@@ -244,22 +298,14 @@ function buildLinesByReceiptId(receipts: ReceiptRow[], lines: LineRow[]) {
   return linesByReceiptId;
 }
 
-function buildTaxSavingAmount(
-  receipts: ReceiptRow[],
-  linesByReceiptId: Map<number, LineRow[]>
-) {
+function buildTaxSavingAmount(receipts: ReceiptRow[]) {
   return receipts
     .filter((receipt) => isPaid(receipt.payment_status) && receipt.is_modified)
     .reduce((sum, receipt) => {
-      const adjustedTax = (linesByReceiptId.get(receipt.id) || []).reduce(
-        (lineSum, line) => lineSum + toNumber(line.tax_amount),
-        0
-      );
-      const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
-      const originalTax =
-        originalTaxSummary?.totalTaxAmount || toNumber(receipt.vat_amount);
+      const originalFinalAmount = getOriginalFinalAmount(receipt);
+      const adjustedFinalAmount = toNumber(receipt.final_amount);
 
-      return sum + Math.max(0, adjustedTax - originalTax);
+      return sum + Math.max(0, adjustedFinalAmount - originalFinalAmount);
     }, 0);
 }
 
@@ -294,11 +340,11 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
   return {
     totalTaxAmount: receipts.reduce(
       (sum, receipt) =>
-        isPaid(receipt.payment_status) ? sum + toNumber(receipt.vat_amount) : sum,
+        isPaid(receipt.payment_status) ? sum + getReceiptTaxAmount(receipt) : sum,
       0
     ),
     taxByRate: Array.from(map.values()).sort((a, b) => a.taxRate - b.taxRate),
-    taxSavingAmount: buildTaxSavingAmount(receipts, linesByReceiptId),
+    taxSavingAmount: buildTaxSavingAmount(receipts),
   };
 }
 
@@ -394,7 +440,7 @@ export async function GET(req: Request) {
     const { data: receipts, error: receiptsError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, business_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary"
+        "id, business_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary"
       )
       .gte("business_date", fromDate)
       .lte("business_date", toDate);

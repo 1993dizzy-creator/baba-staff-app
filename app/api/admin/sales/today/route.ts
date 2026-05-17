@@ -14,6 +14,7 @@ type ReceiptRow = {
   vat_amount: number | string | null;
   is_modified: boolean | null;
   original_tax_summary: unknown | null;
+  original_amount_summary: unknown | null;
 };
 
 type LineRow = {
@@ -64,6 +65,13 @@ type TaxBucket = {
 type TaxSummarySnapshot = {
   totalTaxAmount: number;
   taxByRate: TaxBucket[];
+};
+
+type AmountSummarySnapshot = {
+  totalAmount: number;
+  vatAmount: number;
+  finalAmount: number;
+  paymentTotalAmount: number;
 };
 
 const PAID_PAYMENT_STATUS = 3;
@@ -321,6 +329,65 @@ function normalizeTaxSummary(value: unknown): TaxSummarySnapshot | null {
   };
 }
 
+function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
+  if (!value || typeof value !== "object") return null;
+
+  const summary = value as {
+    totalAmount?: unknown;
+    vatAmount?: unknown;
+    finalAmount?: unknown;
+    paymentTotalAmount?: unknown;
+  };
+
+  return {
+    totalAmount: toNumber(summary.totalAmount as number | string | null),
+    vatAmount: toNumber(summary.vatAmount as number | string | null),
+    finalAmount: toNumber(summary.finalAmount as number | string | null),
+    paymentTotalAmount: toNumber(
+      summary.paymentTotalAmount as number | string | null
+    ),
+  };
+}
+
+function getReceiptTaxAmount(receipt: ReceiptRow) {
+  const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
+
+  if (receipt.is_modified && originalTaxSummary) {
+    return originalTaxSummary.totalTaxAmount;
+  }
+
+  return toNumber(receipt.vat_amount);
+}
+
+function getOriginalFinalAmount(receipt: ReceiptRow) {
+  const originalAmountSummary = normalizeAmountSummary(
+    receipt.original_amount_summary
+  );
+
+  if (originalAmountSummary) {
+    return (
+      originalAmountSummary.finalAmount ||
+      originalAmountSummary.paymentTotalAmount ||
+      0
+    );
+  }
+
+  return toNumber(receipt.final_amount);
+}
+
+function getAdjustedFinalAmount(receipt: ReceiptRow, lines: LineRow[]) {
+  const receiptFinalAmount = toNumber(receipt.final_amount);
+
+  if (receiptFinalAmount > 0) {
+    return receiptFinalAmount;
+  }
+
+  return lines.reduce(
+    (sum, line) => sum + toNumber(line.final_amount) + toNumber(line.tax_amount),
+    0
+  );
+}
+
 function addTaxBucket(
   map: Map<number, TaxBucket>,
   taxRate: number,
@@ -390,7 +457,7 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
   return {
     totalTaxAmount: receipts.reduce(
       (sum, receipt) =>
-        isPaid(receipt.payment_status) ? sum + toNumber(receipt.vat_amount) : sum,
+        isPaid(receipt.payment_status) ? sum + getReceiptTaxAmount(receipt) : sum,
       0
     ),
     taxByRate,
@@ -405,15 +472,11 @@ function buildTaxSavingAmount(
   return receipts
     .filter((receipt) => isPaid(receipt.payment_status) && receipt.is_modified)
     .reduce((sum, receipt) => {
-      const adjustedTax = (linesByReceiptId.get(receipt.id) || []).reduce(
-        (lineSum, line) => lineSum + toNumber(line.tax_amount),
-        0
-      );
-      const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
-      const originalTax =
-        originalTaxSummary?.totalTaxAmount || toNumber(receipt.vat_amount);
+      const receiptLines = linesByReceiptId.get(receipt.id) || [];
+      const originalFinalAmount = getOriginalFinalAmount(receipt);
+      const adjustedFinalAmount = getAdjustedFinalAmount(receipt, receiptLines);
 
-      return sum + Math.max(0, adjustedTax - originalTax);
+      return sum + Math.max(0, adjustedFinalAmount - originalFinalAmount);
     }, 0);
 }
 
@@ -436,7 +499,7 @@ export async function GET(req: Request) {
     const { data: receipts, error: receiptsError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary"
+        "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary"
       )
       .eq("business_date", businessDate);
 

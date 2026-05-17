@@ -24,6 +24,7 @@ type ReceiptRow = {
   review_status: string | null;
   admin_note: string | null;
   original_tax_summary: unknown | null;
+  original_amount_summary: unknown | null;
 };
 
 type LineRow = {
@@ -196,6 +197,13 @@ type TaxSummary = {
   taxByRate: TaxBucket[];
 };
 
+type AmountSummarySnapshot = {
+  totalAmount: number;
+  vatAmount: number;
+  finalAmount: number;
+  paymentTotalAmount: number;
+};
+
 function normalizeTaxSummary(value: unknown): TaxSummary | null {
   if (!value || typeof value !== "object") return null;
 
@@ -223,6 +231,24 @@ function normalizeTaxSummary(value: unknown): TaxSummary | null {
         };
       })
       .filter((item) => item.taxAmount > 0 || item.lineCount > 0),
+  };
+}
+
+function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
+  if (!value || typeof value !== "object") return null;
+
+  const summary = value as {
+    totalAmount?: unknown;
+    vatAmount?: unknown;
+    finalAmount?: unknown;
+    paymentTotalAmount?: unknown;
+  };
+
+  return {
+    totalAmount: toNumber(summary.totalAmount),
+    vatAmount: toNumber(summary.vatAmount),
+    finalAmount: toNumber(summary.finalAmount),
+    paymentTotalAmount: toNumber(summary.paymentTotalAmount),
   };
 }
 
@@ -366,7 +392,7 @@ export async function GET(
     const { data: receipt, error: receiptError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, customer_name, table_name, is_modified, modified_at, modified_by, modification_note, review_status, admin_note, original_tax_summary"
+        "id, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, customer_name, table_name, is_modified, modified_at, modified_by, modification_note, review_status, admin_note, original_tax_summary, original_amount_summary"
       )
       .eq("id", receiptId)
       .maybeSingle();
@@ -415,9 +441,13 @@ export async function GET(
     );
 
     const taxSummary = {
-      totalTaxAmount: toNumber(receiptRow.vat_amount),
+      totalTaxAmount:
+        savedOriginalTaxSummary?.totalTaxAmount || toNumber(receiptRow.vat_amount),
       taxByRate: savedOriginalTaxSummary?.taxByRate || adjustedTaxSummary.taxByRate,
     };
+    const originalAmountSummary = normalizeAmountSummary(
+      receiptRow.original_amount_summary
+    );
 
     return NextResponse.json({
       ok: true,
@@ -443,6 +473,7 @@ export async function GET(
         modificationNote: receiptRow.modification_note,
         reviewStatus: receiptRow.review_status,
         adminNote: receiptRow.admin_note,
+        originalAmountSummary,
       },
       payments: paymentRows.map((payment) => ({
         id: payment.id,
@@ -551,7 +582,7 @@ export async function PATCH(
     const { data: receipt, error: receiptError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, ref_id, business_date, ref_date, payment_status, is_canceled, vat_amount, original_tax_summary"
+        "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, vat_amount, final_amount, original_tax_summary, original_amount_summary"
       )
       .eq("id", receiptId)
       .maybeSingle();
@@ -569,8 +600,11 @@ export async function PATCH(
         | "ref_date"
         | "payment_status"
         | "is_canceled"
+        | "total_amount"
         | "vat_amount"
+        | "final_amount"
         | "original_tax_summary"
+        | "original_amount_summary"
       >
       | null;
 
@@ -611,11 +645,38 @@ export async function PATCH(
     const existingOriginalTaxSummary = normalizeTaxSummary(
       receiptRow.original_tax_summary
     );
+    const existingOriginalAmountSummary = normalizeAmountSummary(
+      receiptRow.original_amount_summary
+    );
 
     const originalTaxSummaryForSave =
       existingOriginalTaxSummary || {
         totalTaxAmount: toNumber(receiptRow.vat_amount),
         taxByRate: buildTaxSummary(currentLineRows).taxByRate,
+      };
+    const { data: currentPayments, error: currentPaymentsError } =
+      await supabaseServer
+        .from("pos_sales_receipt_payments")
+        .select("amount")
+        .eq("receipt_id", receiptId);
+
+    if (currentPaymentsError) {
+      throw new Error(
+        `Failed to fetch sales receipt payments: ${currentPaymentsError.message}`
+      );
+    }
+
+    const originalPaymentTotalAmount = (currentPayments || []).reduce(
+      (sum, payment) => sum + toNumber(payment.amount),
+      0
+    );
+    const originalAmountSummaryForSave =
+      existingOriginalAmountSummary || {
+        totalAmount: toNumber(receiptRow.total_amount),
+        vatAmount: toNumber(receiptRow.vat_amount),
+        finalAmount: toNumber(receiptRow.final_amount),
+        paymentTotalAmount:
+          originalPaymentTotalAmount || toNumber(receiptRow.final_amount),
       };
     const existingLineInputs = nextLines.filter(
       (line): line is Extract<NormalizedLineInput, { id: number }> =>
@@ -930,6 +991,10 @@ export async function PATCH(
 
     if (!existingOriginalTaxSummary) {
       receiptUpdate.original_tax_summary = originalTaxSummaryForSave;
+    }
+
+    if (!existingOriginalAmountSummary) {
+      receiptUpdate.original_amount_summary = originalAmountSummaryForSave;
     }
 
     console.log("[RECEIPT_EDIT_PATCH_DEBUG]", {
