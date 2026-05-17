@@ -33,7 +33,9 @@ type AttendanceRecord = {
     late_minutes: number | null;
     early_leave_minutes: number | null;
     work_minutes: number | null;
+    note: string | null;
     approval_status: "pending" | "approved" | null;
+    updated_at?: string | null;
 };
 
 function getMonthFromParam(monthParam: string | null) {
@@ -67,6 +69,25 @@ function formatCalendarTitle(date: Date, monthFormat: string) {
         .replace("{month}", month);
 }
 
+function formatDateKey(date: Date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+}
+
+function getInitialSelectedDate(month: Date) {
+    const today = new Date();
+    if (
+        today.getFullYear() === month.getFullYear() &&
+        today.getMonth() === month.getMonth()
+    ) {
+        return formatDateKey(today);
+    }
+
+    return getMonthRange(month).startText;
+}
+
 function isApprovedLeave(record: AttendanceRecord | null | undefined) {
     return record?.status === "leave" && record?.approval_status === "approved";
 }
@@ -79,6 +100,11 @@ function formatTime(value: string | null) {
         minute: "2-digit",
         hour12: false,
     });
+}
+
+function formatTimeInput(value: string | null) {
+    const text = formatTime(value);
+    return text === "-" ? "" : text;
 }
 
 function getCalendarCells(baseDate: Date) {
@@ -146,9 +172,12 @@ export default function AttendanceUserDetailPage() {
     const initialMonth = getMonthFromParam(searchParams.get("month"));
 
     const [currentMonth, setCurrentMonth] = useState(initialMonth);
+    const [selectedDate, setSelectedDate] = useState(getInitialSelectedDate(initialMonth));
     const [user, setUser] = useState<UserRow | null>(null);
     const [records, setRecords] = useState<AttendanceRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [message, setMessage] = useState("");
+    const [isSaving, setIsSaving] = useState(false);
 
     useEffect(() => {
         const loginUser = getUser();
@@ -201,6 +230,69 @@ export default function AttendanceUserDetailPage() {
             setRecords(recordData || []);
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const selectedRecord = useMemo(
+        () => records.find((record) => record.work_date === selectedDate) || null,
+        [records, selectedDate]
+    );
+
+    const handleMonthChange = (nextMonth: Date) => {
+        setCurrentMonth(nextMonth);
+        setSelectedDate(getInitialSelectedDate(nextMonth));
+        setMessage("");
+    };
+
+    const handleSaveRecord = async ({
+        note,
+        checkOutTime,
+        markNormal,
+    }: {
+        note: string;
+        checkOutTime?: string;
+        markNormal?: boolean;
+    }) => {
+        if (!user) return;
+
+        const loginUser = getUser();
+        setIsSaving(true);
+        setMessage("");
+
+        try {
+            const res = await fetch("/api/attendance/admin", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    action: "update_record",
+                    user_id: user.id,
+                    work_date: selectedDate,
+                    time: checkOutTime || undefined,
+                    note,
+                    mark_normal: markNormal === true,
+                    actorUsername: loginUser?.username || "",
+                    lang,
+                }),
+            });
+
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                throw new Error(result.message || t.correctionFailed);
+            }
+
+            setRecords((current) =>
+                current.map((record) =>
+                    record.id === result.record.id ? result.record : record
+                )
+            );
+            setMessage(t.correctionDone);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : t.correctionFailed);
+        } finally {
+            setIsSaving(false);
         }
     };
 
@@ -280,10 +372,20 @@ export default function AttendanceUserDetailPage() {
 
                     <Calendar
                         calendarDate={currentMonth}
-                        setCalendarDate={setCurrentMonth}
+                        setCalendarDate={handleMonthChange}
                         records={records}
+                        selectedDate={selectedDate}
+                        onSelectDate={setSelectedDate}
                     />
 
+                    <RecordDetailPanel
+                        key={`${selectedDate}-${selectedRecord?.id || "none"}-${selectedRecord?.updated_at || ""}`}
+                        selectedDate={selectedDate}
+                        record={selectedRecord}
+                        isSaving={isSaving}
+                        message={message}
+                        onSave={handleSaveRecord}
+                    />
 
                 </>
             )}
@@ -304,10 +406,14 @@ function Calendar({
     calendarDate,
     setCalendarDate,
     records,
+    selectedDate,
+    onSelectDate,
 }: {
     calendarDate: Date;
-    setCalendarDate: React.Dispatch<React.SetStateAction<Date>>;
+    setCalendarDate: (date: Date) => void;
     records: AttendanceRecord[];
+    selectedDate: string;
+    onSelectDate: (date: string) => void;
 }) {
     const { lang } = useLanguage();
     const c = commonText[lang];
@@ -331,7 +437,7 @@ function Calendar({
                         type="button"
                         style={calendarMonthButtonStyle}
                         onClick={() =>
-                            setCalendarDate((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))
+                            setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1))
                         }
                     >
                         ‹
@@ -343,7 +449,7 @@ function Calendar({
                         type="button"
                         style={calendarMonthButtonStyle}
                         onClick={() =>
-                            setCalendarDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))
+                            setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1))
                         }
                     >
                         ›
@@ -392,6 +498,11 @@ function Calendar({
                         const isSaturday = index % 7 === 6;
 
                         const record = cell.type === "current" ? getDayRecord(displayDay) : null;
+                        const dateStr =
+                            cell.type === "current"
+                                ? `${calendarDate.getFullYear()}-${String(calendarDate.getMonth() + 1).padStart(2, "0")}-${String(displayDay).padStart(2, "0")}`
+                                : "";
+                        const isSelected = selectedDate === dateStr;
 
                         let dotColor = "#10b981";
 
@@ -407,13 +518,18 @@ function Calendar({
                         }
 
                         return (
-                            <div
+                            <button
                                 key={`${cell.type}-${displayDay}-${index}`}
+                                type="button"
+                                onClick={() => {
+                                    if (!isMuted) onSelectDate(dateStr);
+                                }}
                                 style={calendarCellStyle({
                                     isToday,
                                     isMuted,
                                     isSunday,
                                     isSaturday,
+                                    isSelected,
                                 })}
                             >
                                 <div>{displayDay}</div>
@@ -437,11 +553,147 @@ function Calendar({
                                 )}
 
                                 {isMuted && <div style={calendarMutedDotStyle}>·</div>}
-                            </div>
+                            </button>
                         );
                     })}
                 </div>
             </div>
+        </div>
+    );
+}
+
+function RecordDetailPanel({
+    selectedDate,
+    record,
+    isSaving,
+    message,
+    onSave,
+}: {
+    selectedDate: string;
+    record: AttendanceRecord | null;
+    isSaving: boolean;
+    message: string;
+    onSave: (input: {
+        note: string;
+        checkOutTime?: string;
+        markNormal?: boolean;
+    }) => void;
+}) {
+    const { lang } = useLanguage();
+    const c = commonText[lang];
+    const t = attendanceText[lang];
+    const [note, setNote] = useState(record?.note || "");
+    const [checkOutTime, setCheckOutTime] = useState(formatTimeInput(record?.check_out_at || null));
+
+    const canEditCheckOut = !!record?.check_in_at && record.status !== "leave";
+    const checkOutChanged = checkOutTime !== formatTimeInput(record?.check_out_at || null);
+    const savePayload = {
+        note,
+        checkOutTime: checkOutChanged ? checkOutTime : undefined,
+    };
+
+    function getStatusLabel(status?: string | null) {
+        if (status === "working") return t.working;
+        if (status === "done") return t.workDone;
+        if (status === "late") return t.workLate;
+        if (status === "early_leave") return t.workEarlyLeave;
+        if (status === "leave") return t.workLeave;
+        return status || "-";
+    }
+
+    return (
+        <div style={detailPanelStyle}>
+            <div style={detailHeaderStyle}>
+                <span>{t.attendanceDetail}</span>
+                <span style={detailDateStyle}>{selectedDate}</span>
+            </div>
+
+            {!record ? (
+                <div style={emptyInlineStyle}>{t.noRecord}</div>
+            ) : (
+                <>
+                    <div style={detailGridStyle}>
+                        <DetailItem label={t.selectedDate} value={record.work_date} />
+                        <DetailItem label={c.status} value={getStatusLabel(record.status)} />
+                        <DetailItem label={t.checkInTimeLabel} value={formatTime(record.check_in_at)} />
+                        <DetailItem label={t.checkOutTimeLabel} value={formatTime(record.check_out_at)} />
+                        <DetailItem
+                            label={t.workLate}
+                            value={`${Number(record.late_minutes || 0)}${c.minute}`}
+                        />
+                        <DetailItem
+                            label={t.workEarlyLeave}
+                            value={`${Number(record.early_leave_minutes || 0)}${c.minute}`}
+                        />
+                        <DetailItem
+                            label={t.workDurationLabel}
+                            value={formatMinutes(Number(record.work_minutes || 0), c)}
+                        />
+                    </div>
+
+                    <div style={editBlockStyle}>
+                        <label style={fieldStyle}>
+                            <span style={fieldLabelStyle}>{t.note}</span>
+                            <textarea
+                                value={note}
+                                onChange={(event) => setNote(event.target.value)}
+                                style={textareaStyle}
+                                rows={2}
+                            />
+                        </label>
+
+                        {canEditCheckOut ? (
+                            <label style={fieldStyle}>
+                                <span style={fieldLabelStyle}>{t.checkoutCorrection}</span>
+                                <input
+                                    type="time"
+                                    value={checkOutTime}
+                                    onChange={(event) => setCheckOutTime(event.target.value)}
+                                    style={inputStyle}
+                                />
+                            </label>
+                        ) : null}
+
+                        <div style={actionRowStyle}>
+                            <button
+                                type="button"
+                                style={secondaryActionButtonStyle}
+                                disabled={isSaving}
+                                onClick={() => onSave(savePayload)}
+                            >
+                                {isSaving ? c.saving : t.saveCorrection}
+                            </button>
+
+                            {record.status !== "leave" && Number(record.late_minutes || 0) > 0 ? (
+                                <button
+                                    type="button"
+                                    style={primaryActionButtonStyle}
+                                    disabled={isSaving}
+                                    onClick={() =>
+                                        onSave({
+                                            ...savePayload,
+                                            markNormal: true,
+                                        })
+                                    }
+                                >
+                                    {t.markNormal}
+                                </button>
+                            ) : null}
+                        </div>
+
+                        {message ? <div style={messageStyle}>{message}</div> : null}
+                    </div>
+                </>
+            )}
+        </div>
+    );
+}
+
+function DetailItem({ label, value }: { label: string; value: string }) {
+    return (
+        <div style={detailItemStyle}>
+            <span style={detailItemLabelStyle}>{label}</span>
+            <strong style={detailItemValueStyle}>{value}</strong>
         </div>
     );
 }
@@ -525,25 +777,32 @@ function calendarCellStyle({
     isMuted,
     isSunday,
     isSaturday,
+    isSelected,
 }: {
     isToday: boolean;
     isMuted: boolean;
     isSunday: boolean;
     isSaturday: boolean;
+    isSelected: boolean;
 }): CSSProperties {
     return {
         minHeight: 48,
+        width: "100%",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "flex-start",
         gap: 2,
         paddingTop: 4,
+        borderTop: "none",
+        borderLeft: "none",
         borderRight: "1px solid #e5e7eb",
         borderBottom: "1px solid #e5e7eb",
-        background: isToday ? "#f8fbff" : "#ffffff",
+        background: isSelected ? "#111827" : isToday ? "#f8fbff" : "#ffffff",
         color: isMuted
             ? "#9ca3af"
+            : isSelected
+                ? "#ffffff"
             : isSunday
                 ? "#dc2626"
                 : isSaturday
@@ -553,6 +812,7 @@ function calendarCellStyle({
         fontWeight: isToday ? 800 : 700,
         borderRadius: 0,
         boxSizing: "border-box",
+        cursor: isMuted ? "default" : "pointer",
     };
 }
 
@@ -660,6 +920,134 @@ const calendarTimeTextStyle: CSSProperties = {
     fontWeight: 700,
     color: "#6b7280",
     whiteSpace: "nowrap",
+};
+
+const detailPanelStyle: CSSProperties = {
+    ...ui.card,
+    marginTop: 12,
+    padding: 12,
+    display: "grid",
+    gap: 10,
+};
+
+const detailHeaderStyle: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    fontSize: 13,
+    fontWeight: 900,
+    color: "#111827",
+};
+
+const detailDateStyle: CSSProperties = {
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#6b7280",
+};
+
+const detailGridStyle: CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, 1fr)",
+    gap: 6,
+};
+
+const detailItemStyle: CSSProperties = {
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: "7px 8px",
+    background: "#ffffff",
+};
+
+const detailItemLabelStyle: CSSProperties = {
+    display: "block",
+    marginBottom: 2,
+    fontSize: 10,
+    fontWeight: 800,
+    color: "#6b7280",
+};
+
+const detailItemValueStyle: CSSProperties = {
+    display: "block",
+    fontSize: 12,
+    fontWeight: 900,
+    color: "#111827",
+};
+
+const editBlockStyle: CSSProperties = {
+    display: "grid",
+    gap: 7,
+    borderTop: "1px dashed #e5e7eb",
+    paddingTop: 8,
+};
+
+const fieldStyle: CSSProperties = {
+    display: "grid",
+    gap: 4,
+};
+
+const fieldLabelStyle: CSSProperties = {
+    fontSize: 11,
+    fontWeight: 900,
+    color: "#374151",
+};
+
+const inputStyle: CSSProperties = {
+    ...ui.input,
+    padding: "7px 8px",
+    borderRadius: 8,
+    fontSize: 12,
+};
+
+const textareaStyle: CSSProperties = {
+    ...ui.input,
+    minHeight: 54,
+    padding: "7px 8px",
+    borderRadius: 8,
+    fontSize: 12,
+    resize: "vertical",
+};
+
+const actionRowStyle: CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    gap: 6,
+};
+
+const secondaryActionButtonStyle: CSSProperties = {
+    width: "auto",
+    border: "1px solid #d1d5db",
+    background: "#ffffff",
+    color: "#374151",
+    borderRadius: 999,
+    padding: "6px 10px",
+    fontSize: 12,
+    fontWeight: 900,
+    cursor: "pointer",
+};
+
+const primaryActionButtonStyle: CSSProperties = {
+    ...secondaryActionButtonStyle,
+    border: "1px solid #111827",
+    background: "#111827",
+    color: "#ffffff",
+};
+
+const messageStyle: CSSProperties = {
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#111827",
+};
+
+const emptyInlineStyle: CSSProperties = {
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: 10,
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#6b7280",
+    background: "#ffffff",
 };
 
 const emptyStyle: CSSProperties = {

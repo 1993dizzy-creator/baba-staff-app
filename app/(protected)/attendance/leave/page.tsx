@@ -361,9 +361,15 @@ export default function AttendanceLeavePage() {
   }, [leaveRecords, selectedDate, userMap]);
 
   const leaveCountByDate = useMemo(() => {
-    const map = new Map<string, number>();
+    const map = new Map<string, { approved: number; pending: number }>();
     leaveRecords.forEach((record) => {
-      map.set(record.work_date, (map.get(record.work_date) || 0) + 1);
+      const prev = map.get(record.work_date) || { approved: 0, pending: 0 };
+      const isApproved = getApprovalStatus(record) === APPROVAL_STATUS.APPROVED;
+
+      map.set(record.work_date, {
+        approved: prev.approved + (isApproved ? 1 : 0),
+        pending: prev.pending + (isApproved ? 0 : 1),
+      });
     });
     return map;
   }, [leaveRecords]);
@@ -481,10 +487,15 @@ export default function AttendanceLeavePage() {
                 return <div key={`empty-${index}`} style={emptyCalendarCellStyle} />;
               }
 
-              const count = leaveCountByDate.get(cell.dateKey || "") || 0;
+              const leaveCount = leaveCountByDate.get(cell.dateKey || "") || {
+                approved: 0,
+                pending: 0,
+              };
               const active = selectedDate === cell.dateKey;
               const isSunday = index % 7 === 0;
               const isSaturday = index % 7 === 6;
+              const hasApproved = leaveCount.approved > 0;
+              const hasPending = leaveCount.pending > 0;
 
               return (
                 <button
@@ -493,8 +504,20 @@ export default function AttendanceLeavePage() {
                   onClick={() => setSelectedDate(cell.dateKey || todayWorkDate)}
                   style={{
                     ...calendarCellStyle,
-                    borderColor: active ? "#111827" : "#e5e7eb",
-                    background: active ? "#111827" : "#ffffff",
+                    borderColor: active
+                      ? "#111827"
+                      : hasPending
+                        ? "#f59e0b"
+                        : hasApproved
+                          ? "#10b981"
+                          : "#e5e7eb",
+                    background: active
+                      ? "#111827"
+                      : hasPending
+                        ? "#fffbeb"
+                        : hasApproved
+                          ? "#ecfdf5"
+                          : "#ffffff",
                     color: active
                       ? "#ffffff"
                       : isSunday
@@ -505,15 +528,30 @@ export default function AttendanceLeavePage() {
                   }}
                 >
                   <span>{cell.day}</span>
-                  {count > 0 && (
-                    <span
-                      style={{
-                        ...countDotStyle,
-                        background: active ? "#ffffff" : "#111827",
-                        color: active ? "#111827" : "#ffffff",
-                      }}
-                    >
-                      {count}
+                  {(hasApproved || hasPending) && (
+                    <span style={countGroupStyle}>
+                      {hasApproved && (
+                        <span
+                          style={{
+                            ...countDotStyle,
+                            background: active ? "#dcfce7" : "#10b981",
+                            color: active ? "#065f46" : "#ffffff",
+                          }}
+                        >
+                          {leaveCount.approved}
+                        </span>
+                      )}
+                      {hasPending && (
+                        <span
+                          style={{
+                            ...countDotStyle,
+                            background: active ? "#fef3c7" : "#f59e0b",
+                            color: active ? "#92400e" : "#ffffff",
+                          }}
+                        >
+                          {leaveCount.pending}
+                        </span>
+                      )}
                     </span>
                   )}
                 </button>
@@ -784,15 +822,21 @@ const calendarCellStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  gap: 3,
+  gap: 2,
   cursor: "pointer",
 };
 
+const countGroupStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 2,
+};
+
 const countDotStyle: CSSProperties = {
-  minWidth: 15,
-  height: 15,
+  minWidth: 14,
+  height: 14,
   borderRadius: 999,
-  fontSize: 10,
+  fontSize: 9,
   fontWeight: 900,
   display: "inline-flex",
   alignItems: "center",

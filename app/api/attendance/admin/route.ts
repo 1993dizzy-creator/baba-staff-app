@@ -13,7 +13,7 @@ import {
   APPROVAL_STATUS,
 } from "@/lib/attendance/status";
 
-type Action = "force_check_in" | "force_check_out" | "set_leave";
+type Action = "force_check_in" | "force_check_out" | "set_leave" | "update_record";
 
 function isAdminActor(user: { role?: string | null } | null) {
   return user?.role === "owner" || user?.role === "master";
@@ -29,6 +29,7 @@ export async function POST(req: Request) {
       work_date,
       time,
       note,
+      mark_normal,
       admin_name,
       actorUsername,
       lang = "ko", // 🔥 핵심
@@ -38,6 +39,7 @@ export async function POST(req: Request) {
       work_date?: string;
       time?: string;
       note?: string;
+      mark_normal?: boolean;
       admin_name?: string;
       actorUsername?: string;
       lang?: "ko" | "vi";
@@ -185,6 +187,103 @@ export async function POST(req: Request) {
               lang === "vi"
                 ? "Lỗi khi xử lý nghỉ phép."
                 : "휴무 처리 중 오류가 발생했습니다.",
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({ ok: true, record: data });
+    }
+
+    if (action === "update_record") {
+      if (!existing) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Không có dữ liệu chấm công."
+                : "근태 기록이 없습니다.",
+          },
+          { status: 404 }
+        );
+      }
+
+      let nextStatus = existing.status;
+      let nextCheckOutIso = existing.check_out_at;
+      let nextWorkMinutes = Number(existing.work_minutes || 0);
+      let nextLateMinutes = Number(existing.late_minutes || 0);
+      let nextEarlyLeaveMinutes = Number(existing.early_leave_minutes || 0);
+
+      if (mark_normal === true) {
+        nextLateMinutes = 0;
+        nextEarlyLeaveMinutes = 0;
+        nextStatus = existing.check_out_at
+          ? ATTENDANCE_STATUS.DONE
+          : ATTENDANCE_STATUS.WORKING;
+      }
+
+      if (time) {
+        const checkInIso = existing.check_in_at;
+
+        if (!checkInIso) {
+          return NextResponse.json(
+            {
+              ok: false,
+              message:
+                lang === "vi"
+                  ? "Không có dữ liệu giờ vào."
+                  : "출근 기록이 없습니다.",
+            },
+            { status: 409 }
+          );
+        }
+
+        nextCheckOutIso = makeCheckOutIso(work_date, time, checkInIso);
+        nextWorkMinutes = getMinutesDiff(checkInIso, nextCheckOutIso);
+
+        const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
+          checkInIso,
+          nextCheckOutIso,
+          user.work_end_time
+        );
+
+        nextStatus = getStatusByMinutes(nextLateMinutes, rawEarlyLeaveMinutes);
+        nextEarlyLeaveMinutes =
+          nextStatus === ATTENDANCE_STATUS.EARLY_LEAVE
+            ? rawEarlyLeaveMinutes
+            : 0;
+
+        if (mark_normal === true) {
+          nextStatus = ATTENDANCE_STATUS.DONE;
+          nextEarlyLeaveMinutes = 0;
+        }
+      }
+
+      const { data, error } = await supabaseServer
+        .from("attendance_records")
+        .update({
+          status: nextStatus,
+          check_out_at: nextCheckOutIso,
+          late_minutes: nextLateMinutes,
+          early_leave_minutes: nextEarlyLeaveMinutes,
+          work_minutes: nextWorkMinutes,
+          approval_status: APPROVAL_STATUS.APPROVED,
+          note: note ?? existing.note ?? null,
+          updated_at: nowIso,
+        })
+        .eq("id", existing.id)
+        .select()
+        .single();
+
+      if (error) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Lỗi khi chỉnh sửa chấm công."
+                : "근태 기록 보정 중 오류가 발생했습니다.",
           },
           { status: 500 }
         );
