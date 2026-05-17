@@ -18,7 +18,7 @@ const adminMenus = [
     },
     description: {
       ko: "POS 매출, 영수증, 일간/월간 현황을 확인합니다.",
-      vi: "Kiểm tra doanh thu, hóa đơn và tình hình bán hàng.",
+      vi: "Kiểm tra doanh thu POS, hóa đơn và tình hình bán hàng.",
     },
     href: "/admin/sales",
     badge: "SALES",
@@ -27,14 +27,14 @@ const adminMenus = [
   },
   {
     title: {
-      ko: "직원생성",
-      vi: "Tạo nhân viên",
+      ko: "직원관리",
+      vi: "Quản lý nhân viên",
     },
     description: {
-      ko: "직원 계정을 생성하고 기본 권한, 파트, 직급을 설정합니다.",
-      vi: "Tạo tài khoản nhân viên và thiết lập quyền cơ bản.",
+      ko: "직원 계정, 권한, 파트, 직급, 근무시간을 관리합니다.",
+      vi: "Quản lý tài khoản, quyền, bộ phận, chức vụ và giờ làm.",
     },
-    href: "/admin/users/create",
+    href: "/admin/users",
     badge: "USER",
     emoji: "👤",
     access: "admin" as AdminMenuAccess,
@@ -46,7 +46,7 @@ const adminMenus = [
     },
     description: {
       ko: "근태 기록을 기준으로 급여 정산 화면을 준비합니다.",
-      vi: "Quản lý lương dựa trên dữ liệu chấm công.",
+      vi: "Chuẩn bị tính lương dựa trên dữ liệu chấm công.",
     },
     href: "/admin/payroll",
     badge: "PAY",
@@ -55,12 +55,12 @@ const adminMenus = [
   },
   {
     title: {
-      ko: "포스설정",
+      ko: "POS 설정",
       vi: "Cài đặt POS",
     },
     description: {
       ko: "CUKCUK POS 연동, 상품 매핑, 재고 차감 설정을 관리합니다.",
-      vi: "Thiết lập POS và kiểm tra dữ liệu liên kết.",
+      vi: "Quản lý liên kết POS, ánh xạ món và trừ kho.",
     },
     href: "/admin/pos",
     badge: "POS",
@@ -97,8 +97,7 @@ export default function AdminPage() {
 
     queueMicrotask(() => {
       if (cancelled) return;
-      const user = getUser();
-      setCurrentUser(user);
+      setCurrentUser(getUser());
       setPermissionChecked(true);
     });
 
@@ -110,8 +109,8 @@ export default function AdminPage() {
   const visibleMenus =
     permissionChecked && currentUser
       ? adminMenus.filter((menu) =>
-          menu.access === "manage" ? isManage(currentUser) : isAdmin(currentUser),
-        )
+        menu.access === "manage" ? isManage(currentUser) : isAdmin(currentUser)
+      )
       : [];
 
   return (
@@ -143,7 +142,7 @@ export default function AdminPage() {
               </span>
 
               <span style={styles.arrow} aria-hidden="true">
-                →
+                &gt;
               </span>
             </Link>
           ))}
@@ -200,7 +199,7 @@ const styles = {
     display: "flex",
     alignItems: "center",
     gap: 10,
-    padding: "11px 12px",
+    padding: "12px 13px",
     borderRadius: 14,
     color: "#111827",
     textDecoration: "none",
@@ -210,7 +209,7 @@ const styles = {
     display: "flex",
     alignItems: "center",
     gap: 10,
-    padding: "11px 12px",
+    padding: "12px 13px",
     borderRadius: 14,
     color: "#111827",
   },
