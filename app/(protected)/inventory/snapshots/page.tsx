@@ -9,8 +9,12 @@ import SubNav from "@/components/SubNav";
 import { usePathname } from "next/navigation";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import {PART_VALUES,PART_META,type PartValue,} from "@/lib/common/parts";
-import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
+import { getBusinessDate } from "@/lib/inventory/business-day";
 import { formatDecimalDisplay } from "@/lib/inventory/number";
+import {
+    INVENTORY_REASON_LABELS,
+    type InventoryReasonValue,
+} from "@/lib/inventory/reasons";
 
 
 type SnapshotBatch = {
@@ -20,7 +24,7 @@ type SnapshotBatch = {
 
 type SnapshotItem = {
     id: number;
-    batch_id: number;
+    batch_id: number | null;
     item_id: number | null;
     item_name: string | null;
     item_name_vi: string | null;
@@ -35,6 +39,36 @@ type SnapshotItem = {
     purchase_price: number | null;
     supplier: string | null;
     total_purchase_price: number | null;
+    reason?: InventoryReasonValue | null;
+    source?: string | null;
+    business_date?: string | null;
+};
+
+type InventoryLog = {
+    id: number;
+    item_id: number | null;
+    action: string | null;
+    item_name: string | null;
+    item_name_vi: string | null;
+    part: string | null;
+    category: string | null;
+    category_vi: string | null;
+    prev_quantity: number | null;
+    new_quantity: number | null;
+    change_quantity: number | null;
+    unit: string | null;
+    code: string | null;
+    purchase_price?: number | null;
+    new_purchase_price?: number | null;
+    supplier?: string | null;
+    new_supplier?: string | null;
+    reason?: InventoryReasonValue | null;
+    source?: string | null;
+    business_date?: string | null;
+    created_at: string | null;
+    actor_name: string | null;
+    new_note: string | null;
+    prev_note: string | null;
 };
 
 export default function InventorySnapshotsPage() {
@@ -55,6 +89,14 @@ export default function InventorySnapshotsPage() {
     const [calendarMonth, setCalendarMonth] = useState("");
     const [purchaseBatchMap, setPurchaseBatchMap] = useState<Record<number, boolean>>({});
     const [supplierTab, setSupplierTab] = useState("all");
+    const [movementItems, setMovementItems] = useState<SnapshotItem[]>([]);
+    const [movementReasonTab, setMovementReasonTab] =
+        useState<"stock_check" | "service" | "other">("stock_check");
+    const [loadingMovements, setLoadingMovements] = useState(false);
+    const [logModalItem, setLogModalItem] = useState<SnapshotItem | null>(null);
+    const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
+    const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
+    const [itemLogsError, setItemLogsError] = useState("");
 
     const getDisplayItemName = (item: SnapshotItem) => {
         return lang === "vi"
@@ -70,6 +112,37 @@ export default function InventorySnapshotsPage() {
 
     const getCategoryKey = (item: SnapshotItem) =>
         item.category || item.category_vi || "-";
+
+    const getDisplayLogItemName = (log: InventoryLog) => {
+        return lang === "vi"
+            ? log.item_name_vi || log.item_name || "-"
+            : log.item_name || log.item_name_vi || "-";
+    };
+
+    const formatLogDateTime = (value?: string | null) => {
+        if (!value) return "-";
+
+        const date = new Date(value);
+        const yy = String(date.getFullYear()).slice(2);
+        const mm = String(date.getMonth() + 1).padStart(2, "0");
+        const dd = String(date.getDate()).padStart(2, "0");
+        const hh = String(date.getHours()).padStart(2, "0");
+        const min = String(date.getMinutes()).padStart(2, "0");
+
+        return `${yy}.${mm}.${dd} ${hh}:${min}`;
+    };
+
+    const getActionBadge = (action?: string | null) => {
+        if (action === "create") return "NEW";
+        if (action === "delete") return "DEL";
+        return "UP";
+    };
+
+    const getActionColor = (action?: string | null) => {
+        if (action === "create") return "seagreen";
+        if (action === "delete") return "crimson";
+        return "royalblue";
+    };
 
 
     const fetchBatches = async () => {
@@ -143,13 +216,77 @@ export default function InventorySnapshotsPage() {
         }
     };
 
-    const fetchTodayPurchasedItems = async () => {
-        setLoadingItems(true);
-        setSnapshotItems([]);
+    const fetchItemLogs = async (item: SnapshotItem) => {
+        const itemId = Number(item.item_id);
+
+        setLogModalItem(item);
+        setItemLogs([]);
+        setItemLogsError("");
+
+        if (!Number.isFinite(itemId) || itemId <= 0) {
+            setItemLogsError(c.noData);
+            return;
+        }
+
+        setIsItemLogsLoading(true);
+
+        try {
+            const res = await fetch(`/api/inventory/items/${itemId}/logs`, {
+                cache: "no-store",
+            });
+
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                console.error(result);
+                setItemLogsError(c.loadFailed);
+                setItemLogs([]);
+                return;
+            }
+
+            setItemLogs(result.data || []);
+        } catch (error) {
+            console.error(error);
+            setItemLogsError(c.loadFailed);
+            setItemLogs([]);
+        } finally {
+            setIsItemLogsLoading(false);
+        }
+    };
+
+    const mapLogToSnapshotItem = (log: InventoryLog): SnapshotItem => {
+        const changeQuantity = Number(log.change_quantity ?? 0);
+        const purchasePrice = log.new_purchase_price ?? log.purchase_price ?? null;
+
+        return {
+            id: log.id,
+            batch_id: null,
+            item_id: log.item_id,
+            item_name: log.item_name,
+            item_name_vi: log.item_name_vi,
+            part: log.part,
+            category: log.category,
+            category_vi: log.category_vi,
+            quantity: log.new_quantity,
+            prev_quantity: log.prev_quantity,
+            change_quantity: log.change_quantity,
+            unit: log.unit,
+            code: log.code,
+            purchase_price: purchasePrice,
+            supplier: log.new_supplier ?? log.supplier ?? null,
+            total_purchase_price: changeQuantity * Number(purchasePrice ?? 0),
+            reason: log.reason ?? null,
+            source: log.source ?? null,
+            business_date: log.business_date ?? null,
+        };
+    };
+
+    const fetchMovementItems = async (businessDate: string) => {
+        setLoadingMovements(true);
         setSupplierTab("all");
 
         try {
-            const res = await fetch("/api/inventory/logs?mode=logs", {
+            const res = await fetch(`/api/inventory/logs?mode=logs&businessDate=${businessDate}`, {
                 cache: "no-store",
             });
 
@@ -157,44 +294,16 @@ export default function InventorySnapshotsPage() {
 
             if (!res.ok || !json.ok) {
                 console.error(json.message);
-                setSnapshotItems([]);
+                setMovementItems([]);
                 return;
             }
 
-            const todayItems = (json.data || [])
-                .filter((log: any) => {
-                    const isPurchase = Number(log.change_quantity ?? 0) > 0;
-                    const isToday = isInCurrentBusinessDay(log.created_at);
-
-                    return isPurchase && isToday;
-                })
-                .map((log: any) => ({
-                    id: log.id,
-                    batch_id: null,
-                    item_id: log.item_id,
-                    item_name: log.item_name,
-                    item_name_vi: log.item_name_vi,
-                    part: log.part,
-                    category: log.category,
-                    category_vi: log.category_vi,
-                    quantity: log.new_quantity,
-                    prev_quantity: log.prev_quantity,
-                    change_quantity: log.change_quantity,
-                    unit: log.unit,
-                    code: log.code,
-                    purchase_price: log.new_purchase_price ?? log.purchase_price,
-                    supplier: log.new_supplier ?? log.supplier,
-                    total_purchase_price:
-                        Number(log.change_quantity ?? 0) *
-                        Number(log.new_purchase_price ?? log.purchase_price ?? 0),
-                }));
-
-            setSnapshotItems(todayItems as SnapshotItem[]);
+            setMovementItems((json.data || []).map(mapLogToSnapshotItem));
         } catch (error) {
             console.error(error);
-            setSnapshotItems([]);
+            setMovementItems([]);
         } finally {
-            setLoadingItems(false);
+            setLoadingMovements(false);
         }
     };
 
@@ -213,7 +322,7 @@ export default function InventorySnapshotsPage() {
 
     useEffect(() => {
         fetchBatches();
-        fetchTodayPurchasedItems();
+        fetchMovementItems(getBusinessDate());
     }, []);
 
     useEffect(() => {
@@ -229,6 +338,18 @@ export default function InventorySnapshotsPage() {
 
         fetchSnapshotItems(selectedBatchId);
     }, [selectedBatchId, viewMode]);
+
+    useEffect(() => {
+        if (viewMode === "current") {
+            fetchMovementItems(getBusinessDate());
+            return;
+        }
+
+        const batch = batchList.find((item) => Number(item.id) === Number(selectedBatchId));
+        if (batch?.snapshot_date) {
+            fetchMovementItems(batch.snapshot_date);
+        }
+    }, [batchList, selectedBatchId, viewMode]);
 
     useEffect(() => {
         if (batchList.length === 0) return;
@@ -332,10 +453,11 @@ export default function InventorySnapshotsPage() {
         batchList.find((batch) => Number(batch.id) === Number(selectedBatchId)) || null;
 
     const purchasedItems = useMemo(() => {
-        const baseItems =
-            viewMode === "snapshot"
-                ? snapshotItems.filter((item) => Number(item.change_quantity ?? 0) > 0)
-                : snapshotItems;
+        const baseItems = movementItems.filter(
+            (item) =>
+                item.reason === "purchase" &&
+                Number(item.change_quantity ?? 0) > 0
+        );
 
         return baseItems.sort((a, b) => {
             const supplierA = (a.supplier || "").toLowerCase();
@@ -350,7 +472,22 @@ export default function InventorySnapshotsPage() {
                 sensitivity: "base",
             });
         });
-    }, [snapshotItems, lang, viewMode]);
+    }, [movementItems, lang]);
+
+    const otherMovementItems = useMemo(() => {
+        return movementItems
+            .filter(
+                (item) =>
+                    item.reason === movementReasonTab &&
+                    Number(item.change_quantity ?? 0) !== 0
+            )
+            .sort((a, b) =>
+                getDisplayItemName(a).localeCompare(getDisplayItemName(b), undefined, {
+                    numeric: true,
+                    sensitivity: "base",
+                })
+            );
+    }, [movementItems, movementReasonTab, lang]);
 
     const supplierTabs = useMemo(() => {
         return [
@@ -753,7 +890,7 @@ export default function InventorySnapshotsPage() {
                                             if (isToday) {
                                                 setViewMode("current");
                                                 setSelectedBatchId(null);
-                                                fetchTodayPurchasedItems();
+                                                fetchMovementItems(getBusinessDate());
                                             }
                                         }}
                                         style={getCalendarCellStyle(active, hasBatch || isToday, dayOfWeek)}
@@ -921,6 +1058,10 @@ export default function InventorySnapshotsPage() {
                             display: "flex",
                             flexDirection: "column",
                             gap: 8,
+                            maxHeight: 320,
+                            overflowY: "auto",
+                            paddingRight: 4,
+                            WebkitOverflowScrolling: "touch",
                         }}
                     >
                         {filteredPurchasedItems.map((item) => {
@@ -931,12 +1072,22 @@ export default function InventorySnapshotsPage() {
                             return (
                                 <div
                                     key={item.id}
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={() => fetchItemLogs(item)}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter" || event.key === " ") {
+                                            event.preventDefault();
+                                            fetchItemLogs(item);
+                                        }
+                                    }}
                                     style={{
                                         border: "1px solid #e5e7eb",
                                         borderLeft: `4px solid ${PART_META[(item.part || "etc") as keyof typeof PART_META]?.color || "#9ca3af"}`,
-                                        borderRadius: 10,
-                                        padding: "8px 10px",
+                                        borderRadius: 8,
+                                        padding: "7px 9px",
                                         background: "#ffffff",
+                                        cursor: "pointer",
                                     }}
                                 >
                                     <div
@@ -944,17 +1095,17 @@ export default function InventorySnapshotsPage() {
                                             display: "flex",
                                             justifyContent: "space-between",
                                             alignItems: "flex-start",
-                                            gap: 10,
-                                            marginBottom: 7,
+                                            gap: 8,
+                                            marginBottom: 5,
                                         }}
                                     >
                                         <div
                                             style={{
                                                 minWidth: 0,
                                                 fontSize: 14,
-                                                fontWeight: 800,
+                                                fontWeight: 700,
                                                 color: "#111827",
-                                                lineHeight: 1.25,
+                                                lineHeight: 1.2,
                                                 wordBreak: "break-word",
                                             }}
                                         >
@@ -964,9 +1115,9 @@ export default function InventorySnapshotsPage() {
                                             <span
                                                 style={{
                                                     marginLeft: 4,
-                                                    fontSize: 11,
-                                                    fontWeight: 700,
-                                                    color: "#9ca3af",
+                                                    fontSize: 12,
+                                                    fontWeight: 600,
+                                                    color: "#6b7280",
                                                 }}
                                             >
                                                 / {getDisplayCategory(item)}
@@ -977,9 +1128,10 @@ export default function InventorySnapshotsPage() {
                                             style={{
                                                 flexShrink: 0,
                                                 textAlign: "right",
-                                                fontSize: 11,
-                                                fontWeight: 800,
+                                                fontSize: 12,
+                                                fontWeight: 600,
                                                 color: "#6b7280",
+                                                lineHeight: 1.2,
                                                 whiteSpace: "nowrap",
                                             }}
                                         >
@@ -989,8 +1141,8 @@ export default function InventorySnapshotsPage() {
                                             <span
                                                 style={{
                                                     marginLeft: 3,
-                                                    fontSize: 11,
-                                                    fontWeight: 700,
+                                                    fontSize: 12,
+                                                    fontWeight: 600,
                                                     color: "#6b7280",
                                                 }}
                                             >
@@ -1004,18 +1156,26 @@ export default function InventorySnapshotsPage() {
                                             display: "flex",
                                             justifyContent: "space-between",
                                             alignItems: "center",
-                                            paddingTop: 6,
+                                            paddingTop: 5,
                                             borderTop: "1px solid #f1f5f9",
-                                            fontSize: 12,
-                                            fontWeight: 800,
-                                            color: "#111827",
+                                            fontSize: 14,
+                                            fontWeight: 700,
+                                            lineHeight: 1.2,
                                         }}
                                     >
-                                        <div>
-                                            {formatDecimalDisplay(qty)} {item.unit || ""}
+                                        <div style={{ color: "seagreen" }}>
+                                            +{formatDecimalDisplay(qty)} {item.unit || ""}
                                         </div>
 
-                                        <div style={{ textAlign: "right", fontWeight: 900 }}>
+                                        <div
+                                            style={{
+                                                color: "#111827",
+                                                textAlign: "right",
+                                                fontSize: 12,
+                                                fontWeight: 700,
+                                                whiteSpace: "nowrap",
+                                            }}
+                                        >
                                             {total === null || total === undefined
                                                 ? "-"
                                                 : `${Number(total).toLocaleString()} ₫`}
@@ -1042,6 +1202,213 @@ export default function InventorySnapshotsPage() {
                         <span>{c.total}</span>
                         <span>{purchaseTotalAmount.toLocaleString()} ₫</span>
                     </div>
+                </div>
+            )}
+
+            {(movementItems.length > 0 || loadingMovements) && (
+                <div
+                    style={{
+                        ...ui.card,
+                        padding: 12,
+                        marginBottom: 16,
+                    }}
+                >
+                    <div
+                        style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: 10,
+                            gap: 8,
+                        }}
+                    >
+                        <span
+                            style={{
+                                fontSize: 15,
+                                fontWeight: 800,
+                                color: "#111827",
+                            }}
+                        >
+                            {t.otherMovements}
+                        </span>
+
+                        <span style={{ ...ui.metaText, fontWeight: 700 }}>
+                            {viewMode === "snapshot" && selectedBatch
+                                ? selectedBatch.snapshot_date
+                                : c.today}
+                        </span>
+                    </div>
+
+                    <div
+                        style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(3, 1fr)",
+                            gap: 6,
+                            marginBottom: 10,
+                        }}
+                    >
+                        {[
+                            { value: "stock_check" as const, label: INVENTORY_REASON_LABELS[lang].stock_check },
+                            { value: "service" as const, label: INVENTORY_REASON_LABELS[lang].service },
+                            { value: "other" as const, label: INVENTORY_REASON_LABELS[lang].other },
+                        ].map((option) => {
+                            const active = movementReasonTab === option.value;
+
+                            return (
+                                <button
+                                    key={option.value}
+                                    type="button"
+                                    onClick={() => setMovementReasonTab(option.value)}
+                                    style={{
+                                        padding: "7px 10px",
+                                        borderRadius: 8,
+                                        border: active ? "1px solid #111827" : "1px solid #d1d5db",
+                                        background: active ? "#111827" : "#f9fafb",
+                                        color: active ? "#fff" : "#111827",
+                                        fontWeight: 700,
+                                        fontSize: 12,
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    {option.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    {loadingMovements ? (
+                        <div>{c.loading}</div>
+                    ) : otherMovementItems.length === 0 ? (
+                        <div style={ui.metaText}>{c.noData}</div>
+                    ) : (
+                        <div
+                            style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 8,
+                                maxHeight: 320,
+                                overflowY: "auto",
+                                paddingRight: 4,
+                                WebkitOverflowScrolling: "touch",
+                            }}
+                        >
+                            {otherMovementItems.map((item) => {
+                                const qty = Number(item.change_quantity ?? 0);
+                                const price = item.purchase_price;
+                                const total = item.total_purchase_price;
+                                const qtyColor = qty > 0 ? "seagreen" : "crimson";
+
+                                return (
+                                    <div
+                                        key={item.id}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => fetchItemLogs(item)}
+                                        onKeyDown={(event) => {
+                                            if (event.key === "Enter" || event.key === " ") {
+                                                event.preventDefault();
+                                                fetchItemLogs(item);
+                                            }
+                                        }}
+                                        style={{
+                                            border: "1px solid #e5e7eb",
+                                            borderLeft: `4px solid ${PART_META[(item.part || "etc") as keyof typeof PART_META]?.color || "#9ca3af"}`,
+                                            borderRadius: 8,
+                                            padding: "7px 9px",
+                                            background: "#ffffff",
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                alignItems: "flex-start",
+                                                gap: 8,
+                                                marginBottom: 5,
+                                            }}
+                                        >
+                                            <div
+                                                style={{
+                                                    minWidth: 0,
+                                                    fontSize: 14,
+                                                    fontWeight: 700,
+                                                    color: "#111827",
+                                                    lineHeight: 1.2,
+                                                    wordBreak: "break-word",
+                                                }}
+                                            >
+                                                {[item.code ? `[${item.code}]` : "", getDisplayItemName(item)]
+                                                    .filter(Boolean)
+                                                    .join(" ")}
+                                                <span
+                                                    style={{
+                                                        marginLeft: 4,
+                                                        fontSize: 12,
+                                                        fontWeight: 600,
+                                                        color: "#6b7280",
+                                                    }}
+                                                >
+                                                    / {getDisplayCategory(item)}
+                                                </span>
+                                            </div>
+
+                                            <div
+                                                style={{
+                                                    flexShrink: 0,
+                                                    textAlign: "right",
+                                                    fontSize: 12,
+                                                    fontWeight: 600,
+                                                    color: "#6b7280",
+                                                    lineHeight: 1.2,
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                            >
+                                                {price === null || price === undefined
+                                                    ? "-"
+                                                    : `${Number(price).toLocaleString()} ₫`}
+                                                <span style={{ marginLeft: 3 }}>
+                                                    / {item.unit || "-"}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        <div
+                                            style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                alignItems: "center",
+                                                paddingTop: 5,
+                                                borderTop: "1px solid #f1f5f9",
+                                                fontSize: 14,
+                                                fontWeight: 700,
+                                                lineHeight: 1.2,
+                                            }}
+                                        >
+                                            <div style={{ color: qtyColor }}>
+                                                {qty > 0 ? "+" : ""}
+                                                {formatDecimalDisplay(qty)} {item.unit || ""}
+                                            </div>
+
+                                            <div
+                                                style={{
+                                                    color: "#111827",
+                                                    textAlign: "right",
+                                                    fontSize: 12,
+                                                    fontWeight: 700,
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                            >
+                                                {total === null || total === undefined
+                                                    ? "-"
+                                                    : `${Number(total).toLocaleString()} ₫`}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -1291,7 +1658,6 @@ export default function InventorySnapshotsPage() {
 
                                 {items.map((item) => {
                                     const snapshotQty = Number(item.quantity ?? 0);
-                                    const prevQty = item.prev_quantity;
                                     const diffQty = Number(item.change_quantity ?? 0);
 
                                     return (
@@ -1411,6 +1777,167 @@ export default function InventorySnapshotsPage() {
                     </div>
                 )}
             </div>
+
+            {logModalItem && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        zIndex: 1000,
+                        padding: 20,
+                    }}
+                    onClick={() => {
+                        setLogModalItem(null);
+                        setItemLogs([]);
+                        setItemLogsError("");
+                    }}
+                >
+                    <div
+                        onClick={(event) => event.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 560,
+                            maxHeight: "80vh",
+                            overflow: "hidden",
+                            background: "#fff",
+                            borderRadius: 14,
+                            padding: 18,
+                            boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 12,
+                        }}
+                    >
+                        <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
+                            {t.logItemTitle}
+                        </div>
+
+                        <div style={{ ...ui.metaText }}>
+                            {[logModalItem.code ? `[${logModalItem.code}]` : "", getDisplayItemName(logModalItem)]
+                                .filter(Boolean)
+                                .join(" ")}
+                        </div>
+
+                        <div
+                            style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 8,
+                                overflowY: "auto",
+                                paddingRight: 4,
+                            }}
+                        >
+                            {isItemLogsLoading ? (
+                                <div>{c.loading}</div>
+                            ) : itemLogsError ? (
+                                <div>{itemLogsError}</div>
+                            ) : itemLogs.length === 0 ? (
+                                <div>{c.noLogs}</div>
+                            ) : (
+                                itemLogs.map((log) => {
+                                    const changeQuantity = Number(log.change_quantity ?? 0);
+
+                                    return (
+                                        <div
+                                            key={log.id}
+                                            style={{
+                                                ...ui.card,
+                                                padding: "8px 10px",
+                                                borderLeft: `4px solid ${getActionColor(log.action)}`,
+                                                background: "#fff",
+                                            }}
+                                        >
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    justifyContent: "space-between",
+                                                    alignItems: "flex-start",
+                                                    gap: 10,
+                                                }}
+                                            >
+                                                <div style={{ minWidth: 0, flex: 1 }}>
+                                                    <div
+                                                        style={{
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: 6,
+                                                            flexWrap: "wrap",
+                                                        }}
+                                                    >
+                                                        <span
+                                                            style={{
+                                                                ...ui.badgeMini,
+                                                                background: getActionColor(log.action),
+                                                            }}
+                                                        >
+                                                            {getActionBadge(log.action)}
+                                                        </span>
+                                                        <span
+                                                            style={{
+                                                                fontSize: 14,
+                                                                fontWeight: 800,
+                                                                color: "#111827",
+                                                                wordBreak: "break-word",
+                                                            }}
+                                                        >
+                                                            {getDisplayLogItemName(log)}
+                                                        </span>
+                                                    </div>
+                                                    <div style={ui.metaText}>
+                                                        {[formatLogDateTime(log.created_at), log.actor_name || "-"]
+                                                            .filter(Boolean)
+                                                            .join(" · ")}
+                                                    </div>
+                                                    {(log.new_note || log.prev_note) && (
+                                                        <div style={{ ...ui.metaText, marginTop: 4 }}>
+                                                            {log.new_note || log.prev_note}
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div
+                                                    style={{
+                                                        flexShrink: 0,
+                                                        textAlign: "right",
+                                                        fontSize: 14,
+                                                        fontWeight: 900,
+                                                        color:
+                                                            changeQuantity > 0
+                                                                ? "seagreen"
+                                                                : changeQuantity < 0
+                                                                    ? "crimson"
+                                                                    : "#111827",
+                                                        whiteSpace: "nowrap",
+                                                    }}
+                                                >
+                                                    {changeQuantity > 0 ? "+" : ""}
+                                                    {formatDecimalDisplay(changeQuantity)} {log.unit || ""}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setLogModalItem(null);
+                                setItemLogs([]);
+                                setItemLogsError("");
+                            }}
+                            style={ui.subButton}
+                        >
+                            {c.close}
+                        </button>
+                    </div>
+                </div>
+            )}
         </Container>
     );
 }

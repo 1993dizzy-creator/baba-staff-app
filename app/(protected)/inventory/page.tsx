@@ -11,11 +11,80 @@ import { usePathname } from "next/navigation";
 import SubNav from "@/components/SubNav";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import {PART_VALUES, PART_META, type PartValue,} from "@/lib/common/parts";
-import { type QuickReasonValue } from "@/lib/inventory/reasons";
+import {
+    INVENTORY_REASON_LABELS,
+    type InventoryRegistrationType,
+    type QuickReasonValue,
+} from "@/lib/inventory/reasons";
 import { CATEGORY_OPTIONS_BY_PART } from "@/lib/inventory/categories";
 import { parseDecimal,formatDecimalDisplay,roundDecimal,} from "@/lib/inventory/number";
 import { formatNumber,parsePrice,formatMoneyDisplay,} from "@/lib/inventory/money";
 import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
+
+type InventoryItem = {
+    id: number;
+    item_name?: string | null;
+    item_name_vi?: string | null;
+    part?: string | null;
+    category?: string | null;
+    category_vi?: string | null;
+    quantity?: string | number | null;
+    unit?: string | null;
+    note?: string | null;
+    purchase_price?: string | number | null;
+    supplier?: string | null;
+    code?: string | null;
+    low_stock_threshold?: string | number | null;
+    updated_at?: string | null;
+    updated_by_name?: string | null;
+};
+
+type InventoryLog = {
+    id: number;
+    item_id?: number | null;
+    item_name?: string | null;
+    item_name_vi?: string | null;
+    action?: string | null;
+    part?: string | null;
+    category?: string | null;
+    category_vi?: string | null;
+    prev_quantity?: string | number | null;
+    new_quantity?: string | number | null;
+    change_quantity?: string | number | null;
+    prev_purchase_price?: string | number | null;
+    new_purchase_price?: string | number | null;
+    prev_note?: string | null;
+    new_note?: string | null;
+    prev_supplier?: string | null;
+    new_supplier?: string | null;
+    prev_code?: string | null;
+    new_code?: string | null;
+    prev_unit?: string | null;
+    new_unit?: string | null;
+    prev_category?: string | null;
+    new_category?: string | null;
+    prev_category_vi?: string | null;
+    new_category_vi?: string | null;
+    prev_part?: string | null;
+    new_part?: string | null;
+    prev_low_stock_threshold?: string | number | null;
+    new_low_stock_threshold?: string | number | null;
+    unit?: string | null;
+    code?: string | null;
+    created_at?: string | null;
+    actor_name?: string | null;
+    reason?: string | null;
+    source?: string | null;
+    business_date?: string | null;
+};
+
+type InventoryLogGroup = {
+    item_id: number;
+    noteKey: string;
+    groupKey: string;
+    latest: InventoryLog;
+    logs: InventoryLog[];
+};
 
 
 export default function InventoryPage() {
@@ -48,11 +117,14 @@ export default function InventoryPage() {
     const [lowStockThreshold, setLowStockThreshold] = useState("");
     const [code, setCode] = useState("");
 
-    const [inventoryList, setInventoryList] = useState<any[]>([]);
-    const [recentLogs, setRecentLogs] = useState<any[]>([]);
+    const [inventoryList, setInventoryList] = useState<InventoryItem[]>([]);
+    const [recentLogs, setRecentLogs] = useState<InventoryLog[]>([]);
     const [editingId, setEditingId] = useState<number | null>(null);
     const [openItemId, setOpenItemId] = useState<number | null>(null);
     const [isFormOpen, setIsFormOpen] = useState(false);
+    const [isRegistrationTypeModalOpen, setIsRegistrationTypeModalOpen] = useState(false);
+    const [registrationType, setRegistrationType] =
+        useState<InventoryRegistrationType | null>(null);
 
     const [search, setSearch] = useState("");
     const [partFilter, setPartFilter] = useState<PartValue>(defaultPart);
@@ -62,13 +134,13 @@ export default function InventoryPage() {
     const [quantityDrafts, setQuantityDrafts] = useState<Record<number, string>>({});
     const [latestSnapshotMap, setLatestSnapshotMap] = useState<Record<number, number>>({});
     const [latestSnapshotDate, setLatestSnapshotDate] = useState<string>("");
-    const [quickSaveItem, setQuickSaveItem] = useState<any | null>(null);
+    const [quickSaveItem, setQuickSaveItem] = useState<InventoryItem | null>(null);
     const [quickSaveReason, setQuickSaveReason] = useState<
         QuickReasonValue | null
     >(null);
     const [quickSaveOtherText, setQuickSaveOtherText] = useState("");
-    const [logModalItem, setLogModalItem] = useState<any | null>(null);
-    const [itemLogs, setItemLogs] = useState<any[]>([]);
+    const [logModalItem, setLogModalItem] = useState<InventoryItem | null>(null);
+    const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDeletingId, setIsDeletingId] = useState<number | null>(null);
@@ -135,25 +207,25 @@ export default function InventoryPage() {
         a.localeCompare(b, "vi")
     );
 
-    const getDisplayItemName = (item: any) =>
+    const getDisplayItemName = (item: InventoryItem) =>
         lang === "vi"
             ? item.item_name_vi || item.item_name || "-"
             : item.item_name || item.item_name_vi || "-";
 
-    const getDisplayCategory = (item: any) =>
+    const getDisplayCategory = (item: InventoryItem) =>
         lang === "vi"
             ? item.category_vi || item.category || "-"
             : item.category || item.category_vi || "-";
 
-    const getCategoryKey = (item: any) =>
+    const getCategoryKey = (item: InventoryItem) =>
         item.category || item.category_vi || "-";
 
-    const getDisplayLogItemName = (log: any) =>
+    const getDisplayLogItemName = (log: InventoryLog) =>
         lang === "vi"
             ? log.item_name_vi || log.item_name || "-"
             : log.item_name || log.item_name_vi || "-";
 
-    const getDisplayLogCategory = (log: any) =>
+    const getDisplayLogCategory = (log: InventoryLog) =>
         lang === "vi"
             ? log.category_vi || log.category || "-"
             : log.category || log.category_vi || "-";
@@ -180,7 +252,7 @@ export default function InventoryPage() {
         return `${yy}.${mm}.${dd} ${hh}:${min}`;
     };
 
-    const getLogChanges = (log: any, lang: string) => {
+    const getLogChanges = (log: InventoryLog, lang: string) => {
         const changes: {
             label: string;
             before?: string;
@@ -224,10 +296,9 @@ export default function InventoryPage() {
             });
         }
 
-        if ((log.prev_note || "") !== (log.new_note || "")) {
+        if ((log.prev_note || "") !== (log.new_note || "") && log.new_note) {
             changes.push({
                 label: c.note,
-                before: log.prev_note || "-",
                 after: log.new_note || "-",
             });
         }
@@ -274,10 +345,10 @@ export default function InventoryPage() {
             changes.push({
                 label: c.part,
                 before: log.prev_part
-                    ? c[log.prev_part as keyof typeof c] || log.prev_part
+                    ? String(c[log.prev_part as keyof typeof c] || log.prev_part)
                     : "-",
                 after: log.new_part
-                    ? c[log.new_part as keyof typeof c] || log.new_part
+                    ? String(c[log.new_part as keyof typeof c] || log.new_part)
                     : "-",
             });
         }
@@ -318,9 +389,9 @@ export default function InventoryPage() {
         reason: QuickReasonValue,
         customText?: string
     ) => {
-        if (reason === "check") return t.reasonCheck;
-        if (reason === "purchase") return t.purchase;
-        if (reason === "service") return t.service;
+        if (reason === "purchase") return INVENTORY_REASON_LABELS[lang].purchase;
+        if (reason === "stock_check") return INVENTORY_REASON_LABELS[lang].stock_check;
+        if (reason === "service") return INVENTORY_REASON_LABELS[lang].service;
         return customText?.trim() || c.etc;
     };
 
@@ -371,7 +442,7 @@ export default function InventoryPage() {
         setRecentLogs(result.data || []);
     };
 
-    const fetchItemLogs = async (item: any) => {
+    const fetchItemLogs = async (item: InventoryItem) => {
         setLogModalItem(item);
         setIsItemLogsLoading(true);
 
@@ -424,6 +495,7 @@ export default function InventoryPage() {
         setCode("");
         setLowStockThreshold("");
         setEditingId(null);
+        setRegistrationType(null);
         setIsCustomCategory(false);
         setIsCustomSupplier(false);
         setCategoryKo("");
@@ -479,8 +551,10 @@ export default function InventoryPage() {
         }
     };
 
-    const handleEdit = (item: any) => {
-        const nextPart = item.part || "";
+    const handleEdit = (item: InventoryItem) => {
+        const nextPart: PartValue = PART_VALUES.includes(item.part as PartValue)
+            ? (item.part as PartValue)
+            : defaultPart;
         const nextCategory = lang === "vi" ? item.category_vi || "" : item.category || "";
         const nextCategoryOptions =
             CATEGORY_OPTIONS_BY_PART[nextPart as keyof typeof CATEGORY_OPTIONS_BY_PART] ?? [];
@@ -490,6 +564,8 @@ export default function InventoryPage() {
                 : item.item_name || item.item_name_vi || "";
 
         setIsFormOpen(true);
+        setIsRegistrationTypeModalOpen(false);
+        setRegistrationType(null);
         setEditingId(item.id);
         setOpenItemId(item.id);
         setPart(nextPart);
@@ -574,7 +650,6 @@ export default function InventoryPage() {
                     normalizeText(currentItemName) !== normalizedItemName ||
                     normalizeText(targetItem.category || "") !== normalizedCategoryKo ||
                     normalizeText(targetItem.category_vi || "") !== normalizedCategoryVi ||
-                    parseDecimal(targetItem.quantity) !== nextQuantity ||
                     normalizeText(targetItem.unit || "") !== normalizedUnit ||
                     normalizeText(targetItem.note || "") !== normalizedNote ||
                     (targetItem.part || "") !== part ||
@@ -594,7 +669,6 @@ export default function InventoryPage() {
                             item_name: normalizedItemName,
                             category: normalizedCategoryKo,
                             category_vi: normalizedCategoryVi,
-                            quantity: nextQuantity,
                             purchase_price: nextPurchasePrice,
                             low_stock_threshold: nextLowStock,
                             unit: normalizedUnit,
@@ -610,7 +684,6 @@ export default function InventoryPage() {
                             item_name_vi: normalizedItemName,
                             category: normalizedCategoryKo,
                             category_vi: normalizedCategoryVi,
-                            quantity: nextQuantity,
                             purchase_price: nextPurchasePrice,
                             low_stock_threshold: nextLowStock,
                             unit: normalizedUnit,
@@ -633,6 +706,7 @@ export default function InventoryPage() {
                         payload,
                         actorName,
                         actorUsername,
+                        source: "edit_form",
                     }),
                 });
 
@@ -695,6 +769,7 @@ export default function InventoryPage() {
                         payload,
                         actorName,
                         actorUsername,
+                        registrationType,
                     }),
                 });
 
@@ -732,7 +807,7 @@ export default function InventoryPage() {
         });
     };
 
-    const handleQuantitySave = (item: any) => {
+    const handleQuantitySave = (item: InventoryItem) => {
         const draft = quantityDrafts[item.id];
 
         if (draft === undefined || String(draft).trim() === "") {
@@ -748,12 +823,12 @@ export default function InventoryPage() {
         }
 
         setQuickSaveItem(item);
-        setQuickSaveReason(null);
+        setQuickSaveReason("stock_check");
         setQuickSaveOtherText("");
     };
 
     const handleQuickSaveConfirm = async (
-        reason: "check" | "purchase" | "service" | "other"
+        reason: QuickReasonValue
     ) => {
         if (isQuickSaving) return;
         setIsQuickSaving(true);
@@ -799,6 +874,7 @@ export default function InventoryPage() {
                 updated_by_name: actorName,
                 updated_by_username: actorUsername,
             };
+            const savedItemId = quickSaveItem.id;
 
             const res = await fetch("/api/inventory/items", {
                 method: "PATCH",
@@ -807,10 +883,12 @@ export default function InventoryPage() {
                 },
                 body: JSON.stringify({
                     mode: "quick-save",
-                    id: quickSaveItem.id,
+                    id: savedItemId,
                     payload,
                     actorName,
                     actorUsername,
+                    expectedQuantity: currentQty,
+                    reason,
                 }),
             });
 
@@ -818,21 +896,36 @@ export default function InventoryPage() {
 
             if (!res.ok || !result.ok) {
                 console.error(result);
+
+                if (res.status === 409) {
+                    alert("현재 재고가 다른 사용자에 의해 변경되었습니다. 새로고침 후 다시 저장해주세요.");
+                    await fetchInventory();
+                    return;
+                }
+
                 alert(c.editFail);
                 return;
             }
 
-            await fetchInventory();
-            await fetchRecentLogs();
-
             setQuantityDrafts((prev) => ({
                 ...prev,
-                [quickSaveItem.id]: String(nextQty),
+                [savedItemId]: String(nextQty),
             }));
 
             setQuickSaveItem(null);
             setQuickSaveReason(null);
             setQuickSaveOtherText("");
+
+            const refreshResults = await Promise.allSettled([
+                fetchInventory(),
+                fetchRecentLogs(),
+            ]);
+
+            refreshResults.forEach((result) => {
+                if (result.status === "rejected") {
+                    console.error(result.reason);
+                }
+            });
         } finally {
             setIsQuickSaving(false);
         }
@@ -917,15 +1010,18 @@ export default function InventoryPage() {
                             getCategoryKey(item),
                             {
                                 key: getCategoryKey(item),
-                                label: getDisplayCategory(item),
+                                label:
+                                    lang === "vi"
+                                        ? item.category_vi || item.category || "-"
+                                        : item.category || item.category_vi || "-",
                             },
                         ])
                 ).values()
             ),
         ];
-    }, [inventoryList, partFilter, lang]);
+    }, [inventoryList, partFilter, lang, c.all]);
 
-    const getPartMeta = (value?: string) => {
+    const getPartMeta = (value?: string | null) => {
         const safePart: PartValue =
             value && PART_VALUES.includes(value as PartValue)
                 ? (value as PartValue)
@@ -1039,8 +1135,8 @@ export default function InventoryPage() {
             });
         });
 
-    const groupedInventory: Record<string, any[]> = filteredInventory.reduce(
-        (acc: Record<string, any[]>, item) => {
+    const groupedInventory: Record<string, InventoryItem[]> = filteredInventory.reduce(
+        (acc: Record<string, InventoryItem[]>, item) => {
             const categoryKey = getDisplayCategory(item) || "-";
 
             if (!acc[categoryKey]) {
@@ -1053,7 +1149,7 @@ export default function InventoryPage() {
         {}
     );
 
-    const itemLogGroups = logModalItem
+    const itemLogGroups: InventoryLogGroup[] = logModalItem
         ? [
             {
                 item_id: logModalItem.id,
@@ -1062,7 +1158,7 @@ export default function InventoryPage() {
                 latest: itemLogs[0] || null,
                 logs: itemLogs,
             },
-        ].filter((group) => group.latest)
+        ].filter((group): group is InventoryLogGroup => Boolean(group.latest))
         : [];
 
 
@@ -1323,7 +1419,7 @@ export default function InventoryPage() {
                             paddingRight: 4,
                         }}
                     >
-                        {Object.entries(groupedInventory).map(([categoryName, items]: [string, any[]]) => (
+                        {Object.entries(groupedInventory).map(([categoryName, items]) => (
                             <div
                                 key={categoryName}
                                 style={{
@@ -1412,11 +1508,28 @@ export default function InventoryPage() {
                                                         )}
                                                     </div>
 
-                                                    <div style={ui.metaText}>
-                                                        {[
-                                                            item.part ? c[item.part as keyof typeof c] || item.part : "",
-                                                            getDisplayCategory(item)
-                                                        ].filter(Boolean).join(" · ")}
+                                                    <div
+                                                        style={{
+                                                            ...ui.metaText,
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: 4,
+                                                            minWidth: 0,
+                                                        }}
+                                                    >
+                                                        <span
+                                                            style={{
+                                                                fontSize: 11,
+                                                                minWidth: 0,
+                                                                overflow: "hidden",
+                                                                textOverflow: "ellipsis",
+                                                                whiteSpace: "nowrap",
+                                                            }}
+                                                        >
+                                                            {item.supplier || "-"}
+                                                        </span>
+                                                        <span>·</span>
+                                                        <span>{formatMoneyDisplay(item.purchase_price)}</span>
                                                     </div>
                                                 </div>
 
@@ -1680,14 +1793,6 @@ export default function InventoryPage() {
                                                     </div>
 
                                                     <div style={ui.detailGrid}>
-                                                        <div style={ui.detailLabel}>{c.supplier}</div>
-                                                        <div style={ui.detailValue}>{item.supplier || "-"}</div>
-
-                                                        <div style={ui.detailLabel}>{t.purchasePrice}</div>
-                                                        <div style={ui.detailValue}>
-                                                            {formatMoneyDisplay(item.purchase_price)}
-                                                        </div>
-
                                                         <div style={ui.detailLabel}>{t.lowStockThreshold}</div>
                                                         <div style={ui.detailValue}>{item.low_stock_threshold ?? 1}</div>
 
@@ -1800,7 +1905,15 @@ export default function InventoryPage() {
 
             {/* 재고입력 */}
             <button
-                onClick={() => setIsFormOpen((prev) => !prev)}
+                onClick={() => {
+                    if (isFormOpen) {
+                        setIsFormOpen(false);
+                        resetForm();
+                        return;
+                    }
+
+                    setIsRegistrationTypeModalOpen(true);
+                }}
                 style={{
                     width: "100%",
                     marginBottom: 12,
@@ -1820,6 +1933,103 @@ export default function InventoryPage() {
             >
                 {isFormOpen ? t.closeInventoryForm : t.openInventoryForm}
             </button>
+
+            {isRegistrationTypeModalOpen && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        zIndex: 1000,
+                        padding: 20,
+                    }}
+                    onClick={() => setIsRegistrationTypeModalOpen(false)}
+                >
+                    <div
+                        onClick={(event) => event.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 380,
+                            background: "#fff",
+                            borderRadius: 14,
+                            padding: 18,
+                            boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 10,
+                        }}
+                    >
+                        <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
+                            {t.openInventoryForm}
+                        </div>
+
+                        {[
+                            {
+                                value: "existing_stock" as const,
+                                emoji: "📦",
+                                label: t.existingStockRegistration,
+                                description: t.existingStockRegistrationDesc,
+                            },
+                            {
+                                value: "new_purchase" as const,
+                                emoji: "🛒",
+                                label: t.newPurchaseRegistration,
+                                description: t.newPurchaseRegistrationDesc,
+                            },
+                        ].map((option) => (
+                            <button
+                                key={option.value}
+                                type="button"
+                                onClick={() => {
+                                    resetForm();
+                                    setRegistrationType(option.value);
+                                    setIsRegistrationTypeModalOpen(false);
+                                    setIsFormOpen(true);
+                                }}
+                                style={{
+                                    ...ui.subButton,
+                                    width: "100%",
+                                    padding: "12px 14px",
+                                    textAlign: "left",
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        minWidth: 0,
+                                        whiteSpace: "nowrap",
+                                        fontSize: 14,
+                                        fontWeight: 800,
+                                    }}
+                                >
+                                    <span aria-hidden="true" style={{ flexShrink: 0 }}>
+                                        {option.emoji}
+                                    </span>
+                                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {option.label}
+                                    </span>
+                                </div>
+                                <div style={{ ...ui.metaText, marginTop: 4 }}>
+                                    {option.description}
+                                </div>
+                            </button>
+                        ))}
+
+                        <button
+                            type="button"
+                            onClick={() => setIsRegistrationTypeModalOpen(false)}
+                            style={ui.subButton}
+                        >
+                            {c.cancel}
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {isFormOpen && (
                 <div
@@ -2102,10 +2312,16 @@ export default function InventoryPage() {
                                 placeholder={c.quantity}
                                 value={quantity}
                                 onChange={(e) => setQuantity(e.target.value)}
+                                readOnly={!!editingId}
                                 style={ui.input}
                                 ref={quantityRef}
                                 onKeyDown={(e) => handleKeyDown(e, lowStockThresholdRef)}
                             />
+                            {editingId && (
+                                <div style={{ ...ui.metaText, marginTop: -8, marginBottom: 10 }}>
+                                    {t.quantityEditQuickSaveOnly}
+                                </div>
+                            )}
                         </div>
 
                         {/* 부족기준 */}
@@ -2370,7 +2586,7 @@ export default function InventoryPage() {
                         >
                             <button
                                 type="button"
-                                onClick={() => handleQuickSaveConfirm("check")}
+                                onClick={() => handleQuickSaveConfirm("stock_check")}
                                 disabled={isQuickSaving}
                                 style={{
                                     ...ui.subButton,
@@ -2378,7 +2594,18 @@ export default function InventoryPage() {
                                     cursor: isQuickSaving ? "not-allowed" : "pointer",
                                 }}
                             >
-                                {t.reasonCheck}
+                                <span
+                                    style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        gap: 6,
+                                        whiteSpace: "nowrap",
+                                    }}
+                                >
+                                    <span aria-hidden="true">✅</span>
+                                    <span>{INVENTORY_REASON_LABELS[lang].stock_check}</span>
+                                </span>
                             </button>
 
                             <button
@@ -2391,7 +2618,18 @@ export default function InventoryPage() {
                                     cursor: isQuickSaving ? "not-allowed" : "pointer",
                                 }}
                             >
-                                {t.purchase}
+                                <span
+                                    style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        gap: 6,
+                                        whiteSpace: "nowrap",
+                                    }}
+                                >
+                                    <span aria-hidden="true">🛒</span>
+                                    <span>{INVENTORY_REASON_LABELS[lang].purchase}</span>
+                                </span>
                             </button>
 
                             <button
@@ -2404,7 +2642,18 @@ export default function InventoryPage() {
                                     cursor: isQuickSaving ? "not-allowed" : "pointer",
                                 }}
                             >
-                                {t.service}
+                                <span
+                                    style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        gap: 6,
+                                        whiteSpace: "nowrap",
+                                    }}
+                                >
+                                    <span aria-hidden="true">🎁</span>
+                                    <span>{INVENTORY_REASON_LABELS[lang].service}</span>
+                                </span>
                             </button>
 
                             <button
@@ -2417,7 +2666,18 @@ export default function InventoryPage() {
                                     cursor: isQuickSaving ? "not-allowed" : "pointer",
                                 }}
                             >
-                                {c.etc}
+                                <span
+                                    style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        gap: 6,
+                                        whiteSpace: "nowrap",
+                                    }}
+                                >
+                                    <span aria-hidden="true">📝</span>
+                                    <span>{c.etc}</span>
+                                </span>
                             </button>
                         </div>
 
@@ -2532,7 +2792,7 @@ export default function InventoryPage() {
                                             isOpen={true}
                                             lang={lang}
                                             noteText={group.noteKey || "-"}
-                                            partLabel={c[log.part as keyof typeof c] || log.part}
+                                            partLabel={String(c[log.part as keyof typeof c] || log.part || "")}
                                             itemName={getDisplayLogItemName(log)}
                                             categoryName={getDisplayLogCategory(log)}
                                             detailLabel={c.detail}

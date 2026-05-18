@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { roundDecimal } from "@/lib/inventory/number";
+import { getBusinessDate } from "@/lib/common/business-time";
+import {
+  type InventoryReasonValue,
+  type InventorySourceValue,
+  getReasonByRegistrationType,
+  normalizeInventoryReason,
+} from "@/lib/inventory/reasons";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -20,6 +27,48 @@ const getActor = async (actorUsername?: string) => {
   return data;
 };
 
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : "Server error";
+
+type InventoryLogPayload = Record<string, unknown>;
+
+const insertInventoryLog = async (
+  payload: InventoryLogPayload,
+  meta: {
+    reason: InventoryReasonValue;
+    source: InventorySourceValue;
+  }
+) => {
+  const businessDate = getBusinessDate();
+  const logPayload = {
+    ...payload,
+    reason: meta.reason,
+    source: meta.source,
+    business_date: businessDate,
+  };
+
+  const { data, error } = await supabaseAdmin
+    .from("inventory_logs")
+    .insert([logPayload])
+    .select("id, reason, source, business_date")
+    .single();
+
+  if (error) throw error;
+
+  if (data && (!data.reason || !data.source || !data.business_date)) {
+    const { error: metadataError } = await supabaseAdmin
+      .from("inventory_logs")
+      .update({
+        reason: meta.reason,
+        source: meta.source,
+        business_date: businessDate,
+      })
+      .eq("id", data.id);
+
+    if (metadataError) throw metadataError;
+  }
+};
+
 export async function GET() {
   try {
     const { data, error } = await supabaseAdmin
@@ -33,11 +82,11 @@ export async function GET() {
       ok: true,
       data: data || [],
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[INVENTORY_ITEMS_GET_ERROR]", error);
 
     return NextResponse.json(
-      { ok: false, message: error?.message || "Server error" },
+      { ok: false, message: getErrorMessage(error) },
       { status: 500 }
     );
   }
@@ -46,7 +95,7 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { payload, actorUsername, actorName } = body;
+    const { payload, actorUsername, registrationType, reason } = body;
 
     if (!payload) {
       return NextResponse.json(
@@ -72,14 +121,19 @@ export async function POST(req: Request) {
 
     if (error || !insertedData) throw error;
 
-    const { error: logError } = await supabaseAdmin.from("inventory_logs").insert([
+    const logReason =
+      registrationType === "existing_stock" || registrationType === "new_purchase"
+        ? getReasonByRegistrationType(registrationType)
+        : normalizeInventoryReason(reason, "unclassified");
+
+    await insertInventoryLog(
       {
         item_id: insertedData.id,
         item_name: insertedData.item_name ?? null,
         item_name_vi: insertedData.item_name_vi ?? null,
         action: "create",
 
-        part: insertedData.part,
+        part: insertedData.part ?? null,
         category: insertedData.category ?? null,
         category_vi: insertedData.category_vi ?? null,
 
@@ -120,15 +174,17 @@ export async function POST(req: Request) {
         prev_low_stock_threshold: null,
         new_low_stock_threshold: insertedData.low_stock_threshold ?? 1,
       },
-    ]);
-
-    if (logError) throw logError;
+      {
+        reason: logReason,
+        source: "create",
+      }
+    );
 
     return NextResponse.json({ ok: true, data: insertedData });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[INVENTORY_POST_ERROR]", error);
     return NextResponse.json(
-      { ok: false, message: error?.message || "Server error" },
+      { ok: false, message: getErrorMessage(error) },
       { status: 500 }
     );
   }
@@ -142,7 +198,8 @@ export async function PATCH(req: Request) {
       id,
       payload,
       actorUsername,
-      actorName,
+      expectedQuantity,
+      reason,
     } = body;
 
     if (!id || !payload) {
@@ -190,6 +247,31 @@ export async function PATCH(req: Request) {
       );
     }
 
+    if (mode === "quick-save" && expectedQuantity !== undefined) {
+      const currentQuantity = roundDecimal(Number(prevItem.quantity ?? 0));
+      const baseQuantity = roundDecimal(Number(expectedQuantity));
+
+      if (!Number.isFinite(baseQuantity)) {
+        return NextResponse.json(
+          { ok: false, message: "Invalid expected quantity" },
+          { status: 400 }
+        );
+      }
+
+      if (currentQuantity !== baseQuantity) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: "QUANTITY_CONFLICT",
+            message:
+              "Inventory quantity was changed by another user. Refresh and try again.",
+            currentQuantity,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const { data: updatedItem, error: updateError } = await supabaseAdmin
       .from("inventory")
       .update(payload)
@@ -215,21 +297,29 @@ export async function PATCH(req: Request) {
 
     const prevQuantity = roundDecimal(Number(prevItem.quantity ?? 0));
     const newQuantity = roundDecimal(Number(updatedItem.quantity ?? 0));
+    const changeQuantity = roundDecimal(newQuantity - prevQuantity);
+    const logReason =
+      mode === "quick-save"
+        ? normalizeInventoryReason(reason, "stock_check")
+        : changeQuantity !== 0
+          ? "stock_check"
+          : "other";
+    const logSource = mode === "quick-save" ? "quick_save" : "edit_form";
 
-    const { error: logError } = await supabaseAdmin.from("inventory_logs").insert([
+    await insertInventoryLog(
       {
         item_id: updatedItem.id,
         item_name: updatedItem.item_name ?? null,
         item_name_vi: updatedItem.item_name_vi ?? null,
         action: "update",
 
-        part: updatedItem.part,
+        part: updatedItem.part ?? null,
         category: updatedItem.category ?? null,
         category_vi: updatedItem.category_vi ?? null,
 
         prev_quantity: prevQuantity,
         new_quantity: newQuantity,
-        change_quantity: roundDecimal(newQuantity - prevQuantity),
+        change_quantity: changeQuantity,
 
         prev_purchase_price: prevItem.purchase_price ?? null,
         new_purchase_price: updatedItem.purchase_price ?? null,
@@ -264,15 +354,17 @@ export async function PATCH(req: Request) {
         prev_low_stock_threshold: prevItem.low_stock_threshold ?? 1,
         new_low_stock_threshold: updatedItem.low_stock_threshold ?? 1,
       },
-    ]);
-
-    if (logError) throw logError;
+      {
+        reason: logReason,
+        source: logSource,
+      }
+    );
 
     return NextResponse.json({ ok: true, mode });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[INVENTORY_PATCH_ERROR]", error);
     return NextResponse.json(
-      { ok: false, message: error?.message || "Server error" },
+      { ok: false, message: getErrorMessage(error) },
       { status: 500 }
     );
   }
@@ -281,7 +373,7 @@ export async function PATCH(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const body = await req.json();
-    const { id, actorUsername, actorName } = body;
+    const { id, actorUsername } = body;
 
     if (!id) {
       return NextResponse.json(
@@ -330,15 +422,15 @@ export async function DELETE(req: Request) {
 
     const deletedItem = deletedRows[0];
 
-    const { error: logError } = await supabaseAdmin.from("inventory_logs").insert([
+    await insertInventoryLog(
       {
         item_id: deletedItem.id,
-        item_name: deletedItem.item_name,
+        item_name: deletedItem.item_name ?? null,
         item_name_vi: deletedItem.item_name_vi ?? null,
         action: "delete",
 
-        part: deletedItem.part,
-        category: deletedItem.category,
+        part: deletedItem.part ?? null,
+        category: deletedItem.category ?? null,
         category_vi: deletedItem.category_vi ?? null,
 
         prev_quantity: deletedItem.quantity ?? 0,
@@ -378,15 +470,17 @@ export async function DELETE(req: Request) {
         prev_low_stock_threshold: deletedItem.low_stock_threshold ?? 1,
         new_low_stock_threshold: null,
       },
-    ]);
-
-    if (logError) throw logError;
+      {
+        reason: "other",
+        source: "delete",
+      }
+    );
 
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[INVENTORY_DELETE_ERROR]", error);
     return NextResponse.json(
-      { ok: false, message: error?.message || "Server error" },
+      { ok: false, message: getErrorMessage(error) },
       { status: 500 }
     );
   }

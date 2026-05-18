@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { normalizeInventoryReason } from "@/lib/inventory/reasons";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -19,18 +20,42 @@ const getActor = async (actorUsername?: string) => {
   return data;
 };
 
-const isMaster = (user: any) => user?.role === "master";
+type Actor = {
+  role?: string | null;
+};
+
+const isMaster = (user: Actor | null) => user?.role === "master";
+
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : "Server error";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const mode = searchParams.get("mode");
+  const businessDate = searchParams.get("businessDate");
+  const reason = searchParams.get("reason");
+  const itemId = searchParams.get("itemId");
 
   try {
     if (mode === "logs") {
-      const { data, error } = await supabaseAdmin
+      let query = supabaseAdmin
         .from("inventory_logs")
         .select("*")
         .order("created_at", { ascending: false });
+
+      if (businessDate) {
+        query = query.eq("business_date", businessDate);
+      }
+
+      if (reason) {
+        query = query.eq("reason", normalizeInventoryReason(reason));
+      }
+
+      if (itemId) {
+        query = query.eq("item_id", Number(itemId));
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
 
@@ -63,11 +88,11 @@ export async function GET(req: Request) {
       { ok: false, message: "Invalid mode" },
       { status: 400 }
     );
-  } catch (error: any) {
+  } catch (error) {
     console.error("[INVENTORY_LOGS_GET_ERROR]", error);
 
     return NextResponse.json(
-      { ok: false, message: error?.message || "Server error" },
+      { ok: false, message: getErrorMessage(error) },
       { status: 500 }
     );
   }
@@ -109,11 +134,11 @@ export async function DELETE(req: Request) {
     if (error) throw error;
 
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[INVENTORY_LOGS_DELETE_ERROR]", error);
 
     return NextResponse.json(
-      { ok: false, message: error?.message || "Server error" },
+      { ok: false, message: getErrorMessage(error) },
       { status: 500 }
     );
   }
