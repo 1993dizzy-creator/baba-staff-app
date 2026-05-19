@@ -38,6 +38,22 @@ export const QUICK_REASON_VALUES = [
   "other",
 ] as const satisfies readonly QuickReasonValue[];
 
+export const INVENTORY_REASON_EMOJIS = {
+  purchase: "🛒",
+  stock_check: "✅",
+  service: "🎁",
+  other: "✏️",
+  unclassified: "❔",
+} satisfies Record<InventoryReasonValue, string>;
+
+export const INVENTORY_REASON_META = {
+  purchase: { emoji: INVENTORY_REASON_EMOJIS.purchase },
+  stock_check: { emoji: INVENTORY_REASON_EMOJIS.stock_check },
+  service: { emoji: INVENTORY_REASON_EMOJIS.service },
+  other: { emoji: INVENTORY_REASON_EMOJIS.other },
+  unclassified: { emoji: INVENTORY_REASON_EMOJIS.unclassified },
+} satisfies Record<InventoryReasonValue, { emoji: string }>;
+
 export const INVENTORY_REASON_LABELS = {
   ko: {
     purchase: "구매입고",

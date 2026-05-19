@@ -12,8 +12,11 @@ import {PART_VALUES,PART_META,type PartValue,} from "@/lib/common/parts";
 import { getBusinessDate } from "@/lib/inventory/business-day";
 import { formatDecimalDisplay } from "@/lib/inventory/number";
 import {
+    INVENTORY_REASON_EMOJIS,
     INVENTORY_REASON_LABELS,
+    QUICK_REASON_VALUES,
     type InventoryReasonValue,
+    type QuickReasonValue,
 } from "@/lib/inventory/reasons";
 
 
@@ -97,6 +100,35 @@ export default function InventorySnapshotsPage() {
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
     const [itemLogsError, setItemLogsError] = useState("");
+    const [changingReasonLogId, setChangingReasonLogId] = useState<number | null>(null);
+
+    const reasonChangeOptions = QUICK_REASON_VALUES.map((value) => ({
+        value,
+        label: INVENTORY_REASON_LABELS[lang][value],
+    }));
+
+    const getSelectedBusinessDate = () => {
+        if (viewMode === "snapshot") {
+            const batch = batchList.find((item) => Number(item.id) === Number(selectedBatchId));
+            if (batch?.snapshot_date) return batch.snapshot_date;
+        }
+
+        return getBusinessDate();
+    };
+
+    const getReasonEmoji = (reason?: InventoryReasonValue | null) => {
+        return INVENTORY_REASON_EMOJIS[reason || "unclassified"];
+    };
+
+    const formatReasonItemName = (item: SnapshotItem) => {
+        return [
+            getReasonEmoji(item.reason),
+            item.code ? `[${item.code}]` : "",
+            getDisplayItemName(item),
+        ]
+            .filter(Boolean)
+            .join(" ");
+    };
 
     const getDisplayItemName = (item: SnapshotItem) => {
         return lang === "vi"
@@ -304,6 +336,45 @@ export default function InventorySnapshotsPage() {
             setMovementItems([]);
         } finally {
             setLoadingMovements(false);
+        }
+    };
+
+    const changeLogReason = async (log: InventoryLog, reason: QuickReasonValue) => {
+        if (changingReasonLogId || log.reason === reason) return;
+
+        setChangingReasonLogId(log.id);
+        setItemLogsError("");
+
+        try {
+            const res = await fetch("/api/inventory/logs", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: log.id, reason }),
+            });
+
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                setItemLogsError(result.message || c.loadFailed);
+                return;
+            }
+
+            setItemLogs((prev) =>
+                prev.map((item) =>
+                    item.id === log.id ? { ...item, reason: result.data.reason } : item
+                )
+            );
+
+            if (logModalItem) {
+                await fetchItemLogs(logModalItem);
+            }
+
+            await fetchMovementItems(getSelectedBusinessDate());
+        } catch (error) {
+            console.error(error);
+            setItemLogsError(c.loadFailed);
+        } finally {
+            setChangingReasonLogId(null);
         }
     };
 
@@ -1109,9 +1180,7 @@ export default function InventorySnapshotsPage() {
                                                 wordBreak: "break-word",
                                             }}
                                         >
-                                            {[item.code ? `[${item.code}]` : "", getDisplayItemName(item)]
-                                                .filter(Boolean)
-                                                .join(" ")}
+                                            {formatReasonItemName(item)}
                                             <span
                                                 style={{
                                                     marginLeft: 4,
@@ -1338,9 +1407,7 @@ export default function InventorySnapshotsPage() {
                                                     wordBreak: "break-word",
                                                 }}
                                             >
-                                                {[item.code ? `[${item.code}]` : "", getDisplayItemName(item)]
-                                                    .filter(Boolean)
-                                                    .join(" ")}
+                                                {formatReasonItemName(item)}
                                                 <span
                                                     style={{
                                                         marginLeft: 4,
@@ -1878,6 +1945,18 @@ export default function InventorySnapshotsPage() {
                                                         </span>
                                                         <span
                                                             style={{
+                                                                ...ui.badgeMini,
+                                                                minWidth: "auto",
+                                                                background: "#f3f4f6",
+                                                                color: "#374151",
+                                                                border: "1px solid #e5e7eb",
+                                                            }}
+                                                        >
+                                                            {getReasonEmoji(log.reason)}{" "}
+                                                            {INVENTORY_REASON_LABELS[lang][log.reason || "unclassified"]}
+                                                        </span>
+                                                        <span
+                                                            style={{
                                                                 fontSize: 14,
                                                                 fontWeight: 800,
                                                                 color: "#111827",
@@ -1897,6 +1976,44 @@ export default function InventorySnapshotsPage() {
                                                             {log.new_note || log.prev_note}
                                                         </div>
                                                     )}
+                                                    <div
+                                                        style={{
+                                                            display: "flex",
+                                                            flexWrap: "wrap",
+                                                            gap: 4,
+                                                            marginTop: 7,
+                                                        }}
+                                                    >
+                                                        {reasonChangeOptions.map((option) => {
+                                                            const active = log.reason === option.value;
+                                                            const disabled = changingReasonLogId === log.id;
+
+                                                            return (
+                                                                <button
+                                                                    key={option.value}
+                                                                    type="button"
+                                                                    disabled={disabled}
+                                                                    onClick={() => changeLogReason(log, option.value)}
+                                                                    style={{
+                                                                        padding: "3px 7px",
+                                                                        borderRadius: 999,
+                                                                        border: active
+                                                                            ? "1px solid #111827"
+                                                                            : "1px solid #d1d5db",
+                                                                        background: active ? "#111827" : "#ffffff",
+                                                                        color: active ? "#ffffff" : "#374151",
+                                                                        fontSize: 11,
+                                                                        fontWeight: 700,
+                                                                        lineHeight: 1.2,
+                                                                        cursor: disabled ? "default" : "pointer",
+                                                                        opacity: disabled && !active ? 0.55 : 1,
+                                                                    }}
+                                                                >
+                                                                    {getReasonEmoji(option.value)} {option.label}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
                                                 </div>
 
                                                 <div

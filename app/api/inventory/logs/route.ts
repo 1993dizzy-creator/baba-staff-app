@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { normalizeInventoryReason } from "@/lib/inventory/reasons";
+import {
+  QUICK_REASON_VALUES,
+  normalizeInventoryReason,
+} from "@/lib/inventory/reasons";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -90,6 +93,61 @@ export async function GET(req: Request) {
     );
   } catch (error) {
     console.error("[INVENTORY_LOGS_GET_ERROR]", error);
+
+    return NextResponse.json(
+      { ok: false, message: getErrorMessage(error) },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const body = await req.json();
+    const id = Number(body?.id);
+    const reason = normalizeInventoryReason(body?.reason);
+
+    if (!Number.isFinite(id) || id <= 0) {
+      return NextResponse.json(
+        { ok: false, message: "Missing id" },
+        { status: 400 }
+      );
+    }
+
+    if (!QUICK_REASON_VALUES.includes(reason as (typeof QUICK_REASON_VALUES)[number])) {
+      return NextResponse.json(
+        { ok: false, message: "Invalid reason" },
+        { status: 400 }
+      );
+    }
+
+    const { data: existing, error: findError } = await supabaseAdmin
+      .from("inventory_logs")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (findError) throw findError;
+
+    if (!existing) {
+      return NextResponse.json(
+        { ok: false, message: "Log not found" },
+        { status: 404 }
+      );
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("inventory_logs")
+      .update({ reason })
+      .eq("id", id)
+      .select("id, reason, business_date, change_quantity")
+      .single();
+
+    if (error) throw error;
+
+    return NextResponse.json({ ok: true, data });
+  } catch (error) {
+    console.error("[INVENTORY_LOGS_PATCH_ERROR]", error);
 
     return NextResponse.json(
       { ok: false, message: getErrorMessage(error) },
