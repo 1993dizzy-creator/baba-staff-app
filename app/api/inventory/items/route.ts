@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { roundDecimal } from "@/lib/inventory/number";
 import { getBusinessDate } from "@/lib/common/business-time";
+import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
 import {
   type InventoryReasonValue,
   type InventorySourceValue,
@@ -37,9 +38,10 @@ const insertInventoryLog = async (
   meta: {
     reason: InventoryReasonValue;
     source: InventorySourceValue;
+    businessDate?: string;
   }
 ) => {
-  const businessDate = getBusinessDate();
+  const businessDate = meta.businessDate ?? getBusinessDate();
   const logPayload = {
     ...payload,
     reason: meta.reason,
@@ -67,6 +69,8 @@ const insertInventoryLog = async (
 
     if (metadataError) throw metadataError;
   }
+
+  return data;
 };
 
 export async function GET() {
@@ -126,6 +130,8 @@ export async function POST(req: Request) {
         ? getReasonByRegistrationType(registrationType)
         : normalizeInventoryReason(reason, "unclassified");
 
+    const businessDate = getBusinessDate();
+
     await insertInventoryLog(
       {
         item_id: insertedData.id,
@@ -177,8 +183,22 @@ export async function POST(req: Request) {
       {
         reason: logReason,
         source: "create",
+        businessDate,
       }
     );
+
+    await insertInventoryPriceLog({
+      supabase: supabaseAdmin,
+      itemId: insertedData.id,
+      itemName: insertedData.item_name,
+      itemCode: insertedData.code,
+      oldPrice: null,
+      newPrice: insertedData.purchase_price,
+      businessDate,
+      source: "create",
+      reason: "create",
+      actorUsername: actor.username,
+    });
 
     return NextResponse.json({ ok: true, data: insertedData });
   } catch (error) {
@@ -306,6 +326,8 @@ export async function PATCH(req: Request) {
           : "other";
     const logSource = mode === "quick-save" ? "quick_save" : "edit_form";
 
+    const businessDate = getBusinessDate();
+
     await insertInventoryLog(
       {
         item_id: updatedItem.id,
@@ -357,8 +379,42 @@ export async function PATCH(req: Request) {
       {
         reason: logReason,
         source: logSource,
+        businessDate,
       }
     );
+
+    if (mode === "quick-save" && logReason === "purchase") {
+      await insertInventoryPriceLog({
+        supabase: supabaseAdmin,
+        itemId: updatedItem.id,
+        itemName: updatedItem.item_name,
+        itemCode: updatedItem.code,
+        oldPrice: prevItem.purchase_price,
+        newPrice: updatedItem.purchase_price,
+        businessDate,
+        source: "quick_save",
+        reason: "purchase",
+        actorUsername: actor.username,
+      });
+    }
+
+    if (
+      mode !== "quick-save" &&
+      Object.prototype.hasOwnProperty.call(payload, "purchase_price")
+    ) {
+      await insertInventoryPriceLog({
+        supabase: supabaseAdmin,
+        itemId: updatedItem.id,
+        itemName: updatedItem.item_name,
+        itemCode: updatedItem.code,
+        oldPrice: prevItem.purchase_price,
+        newPrice: updatedItem.purchase_price,
+        businessDate: typeof body.business_date === "string" ? body.business_date : businessDate,
+        source: "edit_form",
+        reason: "manual_price_update",
+        actorUsername: actor.username,
+      });
+    }
 
     return NextResponse.json({ ok: true, mode });
   } catch (error) {

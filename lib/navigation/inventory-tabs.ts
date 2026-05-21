@@ -7,12 +7,12 @@ export function getInventoryTabs(pathname: string, lang: "ko" | "vi") {
     },
     {
       href: "/inventory/snapshots",
-      label: lang === "vi" ? "Tồn kho theo ngày" : "일자별재고",
+      label: lang === "vi" ? "Ngày" : "일자별재고",
       active: pathname.startsWith("/inventory/snapshots"),
     },
     {
       href: "/inventory/monthly",
-      label: lang === "vi" ? "Tổng quan tháng" : "월간현황",
+      label: lang === "vi" ? "Tháng" : "월간현황",
       active: pathname.startsWith("/inventory/monthly"),
     },
   ];

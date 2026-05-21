@@ -430,6 +430,11 @@ export default function AttendanceLeavePage() {
       normalizeId(record.user_id) === normalizeId(currentUser?.id) &&
       record.work_date === selectedDate
   );
+  const hasMySelectedLeave = Boolean(mySelectedRecord);
+  const leaveRequestButtonLabel = getLeaveRequestButtonLabel(
+    lang,
+    hasMySelectedLeave
+  );
 
   return (
     <Container noPaddingTop>
@@ -650,8 +655,16 @@ export default function AttendanceLeavePage() {
             )}
 
             {!canManageLeave && (
-              <button type="button" style={requestButtonStyle} onClick={handleLeaveRequest}>
-                {mySelectedRecord ? t.leaveCancel : t.leaveRequest}
+              <button
+                type="button"
+                style={
+                  hasMySelectedLeave
+                    ? leaveCancelRequestButtonStyle
+                    : requestButtonStyle
+                }
+                onClick={handleLeaveRequest}
+              >
+                {leaveRequestButtonLabel}
               </button>
             )}
           </div>
@@ -731,6 +744,21 @@ function SectionTitle({ title }: { title: string }) {
 
 function Empty({ text }: { text: string }) {
   return <div style={emptyStyle}>{text}</div>;
+}
+
+function getLeaveRequestButtonLabel(
+  lang: "ko" | "vi",
+  hasSelectedLeave: boolean
+) {
+  if (hasSelectedLeave) {
+    return lang === "vi"
+      ? "\u21A9\uFE0F H\u1EE7y ngh\u1EC9"
+      : "\u21A9\uFE0F \uD734\uBB34\uCDE8\uC18C";
+  }
+
+  return lang === "vi"
+    ? "\uD83D\uDCDD Xin ngh\u1EC9"
+    : "\uD83D\uDCDD \uD734\uBB34\uC2E0\uCCAD";
 }
 
 const summaryDatesStyle: CSSProperties = {
@@ -952,11 +980,19 @@ const requestButtonStyle: CSSProperties = {
   height: 40,
   border: "none",
   borderRadius: 10,
-  background: "#111827",
+  backgroundColor: "#111827",
   color: "#ffffff",
   fontSize: 13,
   fontWeight: 900,
   cursor: "pointer",
+};
+
+const leaveCancelRequestButtonStyle: CSSProperties = {
+  ...requestButtonStyle,
+  backgroundColor: "#fee2e2",
+  color: "#b91c1c",
+  border: "1px solid #fecaca",
+  borderColor: "#fecaca",
 };
 
 const summaryListStyle: CSSProperties = {

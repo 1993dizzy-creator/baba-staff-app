@@ -146,6 +146,20 @@ function isDeductionTargetLine(row: LineRow) {
   );
 }
 
+function isPaidReceiptLine(line: LineRow, paidReceiptIds: Set<number>) {
+  return (
+    line.receipt_id !== null &&
+    paidReceiptIds.has(line.receipt_id) &&
+    isPaid(line.payment_status) &&
+    !isCanceled(line) &&
+    line.is_excluded !== true
+  );
+}
+
+function isSalesLine(line: LineRow) {
+  return !isOptionLine(line);
+}
+
 function getVietnamHourLabel(value: string | null) {
   if (!value) return null;
 
@@ -194,15 +208,14 @@ function buildHourlySales(receipts: ReceiptRow[]) {
   });
 }
 
-function buildTopItems(lines: LineRow[]) {
+function buildTopItems(lines: LineRow[], paidReceiptIds: Set<number>) {
   const map = new Map<string, TopItemBucket>();
 
   lines
     .filter((line) => {
       return (
-        isPaid(line.payment_status) &&
-        !isOptionLine(line) &&
-        line.is_excluded !== true &&
+        isPaidReceiptLine(line, paidReceiptIds) &&
+        isSalesLine(line) &&
         Boolean(line.item_code)
       );
     })
@@ -375,17 +388,13 @@ function getOriginalFinalAmount(receipt: ReceiptRow) {
   return toNumber(receipt.final_amount);
 }
 
-function getAdjustedFinalAmount(receipt: ReceiptRow, lines: LineRow[]) {
-  const receiptFinalAmount = toNumber(receipt.final_amount);
+function getOriginalTaxAmount(receipt: ReceiptRow) {
+  const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
+  return originalTaxSummary?.totalTaxAmount || toNumber(receipt.vat_amount);
+}
 
-  if (receiptFinalAmount > 0) {
-    return receiptFinalAmount;
-  }
-
-  return lines.reduce(
-    (sum, line) => sum + toNumber(line.final_amount) + toNumber(line.tax_amount),
-    0
-  );
+function getAdjustedTaxAmount(lines: LineRow[]) {
+  return lines.reduce((sum, line) => sum + toNumber(line.tax_amount), 0);
 }
 
 function addTaxBucket(
@@ -462,6 +471,7 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
     ),
     taxByRate,
     taxSavingAmount: buildTaxSavingAmount(receipts, linesByReceiptId),
+    amountDifferenceAmount: buildAmountDifferenceAmount(receipts),
   };
 }
 
@@ -473,10 +483,21 @@ function buildTaxSavingAmount(
     .filter((receipt) => isPaid(receipt.payment_status) && receipt.is_modified)
     .reduce((sum, receipt) => {
       const receiptLines = linesByReceiptId.get(receipt.id) || [];
-      const originalFinalAmount = getOriginalFinalAmount(receipt);
-      const adjustedFinalAmount = getAdjustedFinalAmount(receipt, receiptLines);
+      const originalTaxAmount = getOriginalTaxAmount(receipt);
+      const adjustedTaxAmount = getAdjustedTaxAmount(receiptLines);
 
-      return sum + Math.max(0, adjustedFinalAmount - originalFinalAmount);
+      return sum + Math.max(0, adjustedTaxAmount - originalTaxAmount);
+    }, 0);
+}
+
+function buildAmountDifferenceAmount(receipts: ReceiptRow[]) {
+  return receipts
+    .filter((receipt) => isPaid(receipt.payment_status) && receipt.is_modified)
+    .reduce((sum, receipt) => {
+      const originalFinalAmount = getOriginalFinalAmount(receipt);
+      const adjustedFinalAmount = toNumber(receipt.final_amount);
+
+      return sum + (adjustedFinalAmount - originalFinalAmount);
     }, 0);
 }
 
@@ -544,17 +565,20 @@ export async function GET(req: Request) {
       0
     );
     const paidReceiptCount = paidReceipts.length;
+    const paidActiveLines = lineRows.filter((line) =>
+      isPaidReceiptLine(line, paidReceiptIds)
+    );
     const summary = {
       totalSales,
       receiptCount: paidReceiptCount,
       paidReceiptCount,
       canceledReceiptCount: canceledReceipts.length,
-      lineCount: lineRows.length,
-      salesLineCount: lineRows.filter((line) => line.is_option === false).length,
-      optionLineCount: lineRows.filter(isOptionLine).length,
+      lineCount: paidActiveLines.length,
+      salesLineCount: paidActiveLines.filter(isSalesLine).length,
+      optionLineCount: paidActiveLines.filter(isOptionLine).length,
       averageReceiptAmount:
         paidReceiptCount > 0 ? Math.round(totalSales / paidReceiptCount) : 0,
-      deductionTargetLineCount: lineRows.filter(isDeductionTargetLine).length,
+      deductionTargetLineCount: paidActiveLines.filter(isDeductionTargetLine).length,
     };
 
     return NextResponse.json({
@@ -568,7 +592,7 @@ export async function GET(req: Request) {
       paymentSummary: buildPaymentSummary(paidPaymentRows),
       taxSummary: buildTaxSummary(receiptRows, lineRows),
       hourlySales: buildHourlySales(receiptRows),
-      topItems: buildTopItems(lineRows),
+      topItems: buildTopItems(lineRows, paidReceiptIds),
     });
   } catch (error) {
     console.error("[SALES_TODAY_GET_ERROR]", error);

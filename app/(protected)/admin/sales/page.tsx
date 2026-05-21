@@ -48,6 +48,23 @@ type SalesDailyViewText = SalesCommonText &
     paymentCompleted: CommonText["paid"];
   };
 
+const SALES_UI_EMOJIS = {
+  totalSales: "\u{1F4B0}",
+  receipts: "\u{1F9FE}",
+  soldItems: "\u{1F6CD}\uFE0F",
+  averageReceiptAmount: "\u{1F9EE}",
+  paymentSummary: "\u{1F4B3}",
+  taxSummary: "\u{1F9FE}",
+  hourlySales: "\u23F0",
+  topItems: "\u{1F3C6}",
+  taxSaving: "\u{1F4B8}",
+  amountDifference: "\u2194\uFE0F",
+} as const;
+
+function withEmoji(emoji: string, label: string) {
+  return `${emoji} ${label}`;
+}
+
 type SalesTodayResponse = {
   ok: boolean;
   businessDate?: string;
@@ -80,6 +97,7 @@ type SalesTodayResponse = {
   taxSummary?: {
     totalTaxAmount: number;
     taxSavingAmount: number;
+    amountDifferenceAmount: number;
     taxByRate: {
       taxRate: number;
       taxAmount: number;
@@ -323,7 +341,7 @@ export default function SalesPage() {
   const summaryCards = useMemo(
     () => [
       {
-        label: dailyText.totalSales,
+        label: withEmoji(SALES_UI_EMOJIS.totalSales, dailyText.totalSales),
         value: isLoading
           ? dailyText.loading
           : hasError
@@ -332,7 +350,7 @@ export default function SalesPage() {
         meta: dailyText.paidReceiptBase,
       },
       {
-        label: dailyText.receipts,
+        label: withEmoji(SALES_UI_EMOJIS.receipts, dailyText.receipts),
         value: isLoading
           ? dailyText.loading
           : hasError
@@ -341,7 +359,7 @@ export default function SalesPage() {
         meta: `${dailyText.paymentCompleted} ${formatNumber(summary?.paidReceiptCount)} / ${dailyText.canceled} ${formatNumber(summary?.canceledReceiptCount)}`,
       },
       {
-        label: dailyText.soldItems,
+        label: withEmoji(SALES_UI_EMOJIS.soldItems, dailyText.soldItems),
         value: isLoading
           ? dailyText.loading
           : hasError
@@ -350,7 +368,10 @@ export default function SalesPage() {
         meta: `${dailyText.options} ${formatNumber(summary?.optionLineCount)}${dailyText.itemCountSuffix}`,
       },
       {
-        label: dailyText.averageReceiptAmount,
+        label: withEmoji(
+          SALES_UI_EMOJIS.averageReceiptAmount,
+          dailyText.averageReceiptAmount
+        ),
         value: isLoading
           ? dailyText.loading
           : hasError
@@ -432,7 +453,9 @@ export default function SalesPage() {
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>{dailyText.paymentSummary}</h2>
+            <h2 style={sectionTitleStyle}>
+              {withEmoji(SALES_UI_EMOJIS.paymentSummary, dailyText.paymentSummary)}
+            </h2>
             <span style={sectionMetaStyle}>{dailyText.paymentBase}</span>
           </div>
 
@@ -461,7 +484,9 @@ export default function SalesPage() {
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>{dailyText.taxSummary}</h2>
+            <h2 style={sectionTitleStyle}>
+              {withEmoji(SALES_UI_EMOJIS.taxSummary, dailyText.taxSummary)}
+            </h2>
             <span style={sectionMetaStyle}>
               {dailyText.totalTax} {isLoading ? "-" : formatVnd(taxSummary?.totalTaxAmount)}
             </span>
@@ -473,12 +498,15 @@ export default function SalesPage() {
             text={dailyText}
             taxByRate={taxSummary?.taxByRate || []}
             taxSavingAmount={taxSummary?.taxSavingAmount || 0}
+            amountDifferenceAmount={taxSummary?.amountDifferenceAmount || 0}
           />
         </section>
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>{dailyText.hourlySales}</h2>
+            <h2 style={sectionTitleStyle}>
+              {withEmoji(SALES_UI_EMOJIS.hourlySales, dailyText.hourlySales)}
+            </h2>
             <span style={sectionMetaStyle}>{dailyText.businessDayBase}</span>
           </div>
 
@@ -491,7 +519,9 @@ export default function SalesPage() {
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>{dailyText.topItems}</h2>
+            <h2 style={sectionTitleStyle}>
+              {withEmoji(SALES_UI_EMOJIS.topItems, dailyText.topItems)}
+            </h2>
             <span style={sectionMetaStyle}>{dailyText.soldItemBase}</span>
           </div>
 
@@ -530,12 +560,14 @@ function TaxSummaryList({
   text,
   taxByRate,
   taxSavingAmount,
+  amountDifferenceAmount,
 }: {
   isLoading: boolean;
   hasError: boolean;
   text: SalesDailyViewText;
   taxByRate: NonNullable<SalesTodayResponse["taxSummary"]>["taxByRate"];
   taxSavingAmount: number;
+  amountDifferenceAmount: number;
 }) {
   if (isLoading) {
     return <EmptyState title={text.loading} text={text.taxDataLoading} />;
@@ -563,8 +595,19 @@ function TaxSummaryList({
         </div>
       ))}
       <div style={taxRowStyle}>
-        <span style={taxRateStyle}>{text.taxSaving}</span>
+        <span style={taxRateStyle}>
+          {withEmoji(SALES_UI_EMOJIS.taxSaving, text.taxSaving)}
+        </span>
         <strong style={statusValueStyle}>{formatVnd(taxSavingAmount)}</strong>
+        <span style={taxLineCountStyle}>{text.adjustedReceiptBase}</span>
+      </div>
+      <div style={taxRowStyle}>
+        <span style={taxRateStyle}>
+          {withEmoji(SALES_UI_EMOJIS.amountDifference, text.amountDifference)}
+        </span>
+        <strong style={statusValueStyle}>
+          {formatVnd(amountDifferenceAmount)}
+        </strong>
         <span style={taxLineCountStyle}>{text.adjustedReceiptBase}</span>
       </div>
     </div>

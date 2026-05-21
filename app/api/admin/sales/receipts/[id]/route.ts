@@ -195,6 +195,8 @@ function buildTaxSummary(lines: LineRow[]) {
 type TaxSummary = {
   totalTaxAmount: number;
   taxByRate: TaxBucket[];
+  taxSavingAmount?: number;
+  amountDifferenceAmount?: number;
 };
 
 type AmountSummarySnapshot = {
@@ -250,6 +252,24 @@ function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
     finalAmount: toNumber(summary.finalAmount),
     paymentTotalAmount: toNumber(summary.paymentTotalAmount),
   };
+}
+
+function getOriginalFinalAmount(
+  receipt: Pick<ReceiptRow, "final_amount" | "original_amount_summary">
+) {
+  const originalAmountSummary = normalizeAmountSummary(
+    receipt.original_amount_summary
+  );
+
+  if (originalAmountSummary) {
+    return (
+      originalAmountSummary.finalAmount ||
+      originalAmountSummary.paymentTotalAmount ||
+      0
+    );
+  }
+
+  return toNumber(receipt.final_amount);
 }
 
 function parseReceiptId(value: string) {
@@ -444,6 +464,19 @@ export async function GET(
       totalTaxAmount:
         savedOriginalTaxSummary?.totalTaxAmount || toNumber(receiptRow.vat_amount),
       taxByRate: savedOriginalTaxSummary?.taxByRate || adjustedTaxSummary.taxByRate,
+      taxSavingAmount:
+        receiptRow.is_modified === true
+          ? Math.max(
+              0,
+              adjustedTaxSummary.totalTaxAmount -
+                (savedOriginalTaxSummary?.totalTaxAmount ||
+                  toNumber(receiptRow.vat_amount))
+            )
+          : 0,
+      amountDifferenceAmount:
+        receiptRow.is_modified === true
+          ? toNumber(receiptRow.final_amount) - getOriginalFinalAmount(receiptRow)
+          : 0,
     };
     const originalAmountSummary = normalizeAmountSummary(
       receiptRow.original_amount_summary

@@ -258,6 +258,15 @@ function getOriginalFinalAmount(receipt: ReceiptRow) {
   return toNumber(receipt.final_amount);
 }
 
+function getOriginalTaxAmount(receipt: ReceiptRow) {
+  const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
+  return originalTaxSummary?.totalTaxAmount || toNumber(receipt.vat_amount);
+}
+
+function getAdjustedTaxAmount(lines: LineRow[]) {
+  return lines.reduce((sum, line) => sum + toNumber(line.tax_amount), 0);
+}
+
 function addTaxBucket(
   map: Map<number, TaxBucket>,
   taxRate: number,
@@ -298,14 +307,29 @@ function buildLinesByReceiptId(receipts: ReceiptRow[], lines: LineRow[]) {
   return linesByReceiptId;
 }
 
-function buildTaxSavingAmount(receipts: ReceiptRow[]) {
+function buildTaxSavingAmount(
+  receipts: ReceiptRow[],
+  linesByReceiptId: Map<number, LineRow[]>
+) {
+  return receipts
+    .filter((receipt) => isPaid(receipt.payment_status) && receipt.is_modified)
+    .reduce((sum, receipt) => {
+      const receiptLines = linesByReceiptId.get(receipt.id) || [];
+      const originalTaxAmount = getOriginalTaxAmount(receipt);
+      const adjustedTaxAmount = getAdjustedTaxAmount(receiptLines);
+
+      return sum + Math.max(0, adjustedTaxAmount - originalTaxAmount);
+    }, 0);
+}
+
+function buildAmountDifferenceAmount(receipts: ReceiptRow[]) {
   return receipts
     .filter((receipt) => isPaid(receipt.payment_status) && receipt.is_modified)
     .reduce((sum, receipt) => {
       const originalFinalAmount = getOriginalFinalAmount(receipt);
       const adjustedFinalAmount = toNumber(receipt.final_amount);
 
-      return sum + Math.max(0, adjustedFinalAmount - originalFinalAmount);
+      return sum + (adjustedFinalAmount - originalFinalAmount);
     }, 0);
 }
 
@@ -344,7 +368,8 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
       0
     ),
     taxByRate: Array.from(map.values()).sort((a, b) => a.taxRate - b.taxRate),
-    taxSavingAmount: buildTaxSavingAmount(receipts),
+    taxSavingAmount: buildTaxSavingAmount(receipts, linesByReceiptId),
+    amountDifferenceAmount: buildAmountDifferenceAmount(receipts),
   };
 }
 
@@ -415,6 +440,7 @@ function buildDays(params: {
       otherAmount: paymentSummary.otherAmount,
       taxAmount: taxSummary.totalTaxAmount,
       taxSavingAmount: taxSummary.taxSavingAmount,
+      amountDifferenceAmount: taxSummary.amountDifferenceAmount,
     };
   });
 }

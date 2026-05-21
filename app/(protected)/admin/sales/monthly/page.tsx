@@ -30,6 +30,22 @@ type SalesMonthlyViewText = SalesCommonText &
     weekdays: CommonText["calendarWeekdays"];
   };
 
+const SALES_UI_EMOJIS = {
+  monthly: "\u{1F4C5}",
+  totalSales: "\u{1F4B0}",
+  receipts: "\u{1F9FE}",
+  averageReceiptAmount: "\u{1F9EE}",
+  paymentSummary: "\u{1F4B3}",
+  taxSummary: "\u{1F9FE}",
+  dailySales: "\u{1F4CA}",
+  taxSaving: "\u{1F4B8}",
+  amountDifference: "\u2194\uFE0F",
+} as const;
+
+function withEmoji(emoji: string, label: string) {
+  return `${emoji} ${label}`;
+}
+
 type PaymentSummary = {
   cashAmount: number;
   transferAmount: number;
@@ -41,6 +57,7 @@ type PaymentSummary = {
 type TaxSummary = {
   totalTaxAmount: number;
   taxSavingAmount: number;
+  amountDifferenceAmount: number;
   taxByRate: {
     taxRate: number;
     taxAmount: number;
@@ -60,6 +77,7 @@ type MonthlyDay = {
   otherAmount: number;
   taxAmount: number;
   taxSavingAmount: number;
+  amountDifferenceAmount: number;
 };
 
 type SalesMonthlyResponse = {
@@ -268,7 +286,7 @@ export default function SalesMonthlyPage() {
   const summaryCards = useMemo(
     () => [
       {
-        label: monthlyText.totalSales,
+        label: withEmoji(SALES_UI_EMOJIS.totalSales, monthlyText.totalSales),
         value: isLoading
           ? monthlyText.loading
           : hasError
@@ -277,13 +295,16 @@ export default function SalesMonthlyPage() {
         meta: monthlyText.paidReceiptBase,
       },
       {
-        label: monthlyText.receipts,
+        label: withEmoji(SALES_UI_EMOJIS.receipts, monthlyText.receipts),
         value: isLoading
           ? monthlyText.loading
           : hasError
             ? monthlyText.error
             : `${formatNumber(summary?.receiptCount)}${monthlyText.receiptCountSuffix}`,
-        meta: `${monthlyText.averageReceiptAmount} ${formatVnd(summary?.averageReceiptAmount)}`,
+        meta: `${withEmoji(
+          SALES_UI_EMOJIS.averageReceiptAmount,
+          monthlyText.averageReceiptAmount
+        )} ${formatVnd(summary?.averageReceiptAmount)}`,
       },
     ],
     [hasError, isLoading, monthlyText, summary]
@@ -310,7 +331,9 @@ export default function SalesMonthlyPage() {
         <section style={noticeCardStyle}>
           <div style={noticeHeaderStyle}>
             <span style={noticeBadgeStyle}>{monthlyText.badge}</span>
-            <span style={noticeTitleStyle}>{monthlyText.title}</span>
+            <span style={noticeTitleStyle}>
+              {withEmoji(SALES_UI_EMOJIS.monthly, monthlyText.title)}
+            </span>
           </div>
           <div style={monthControlStyle}>
             <button
@@ -350,7 +373,9 @@ export default function SalesMonthlyPage() {
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>{monthlyText.paymentSummary}</h2>
+            <h2 style={sectionTitleStyle}>
+              {withEmoji(SALES_UI_EMOJIS.paymentSummary, monthlyText.paymentSummary)}
+            </h2>
             <span style={sectionMetaStyle}>{monthlyText.paymentTotal}</span>
           </div>
 
@@ -379,7 +404,9 @@ export default function SalesMonthlyPage() {
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>{monthlyText.taxSummary}</h2>
+            <h2 style={sectionTitleStyle}>
+              {withEmoji(SALES_UI_EMOJIS.taxSummary, monthlyText.taxSummary)}
+            </h2>
             <span style={sectionMetaStyle}>
               {monthlyText.totalTax} {isLoading ? "-" : formatVnd(taxSummary?.totalTaxAmount)}
             </span>
@@ -391,12 +418,15 @@ export default function SalesMonthlyPage() {
             text={monthlyText}
             taxByRate={taxSummary?.taxByRate || []}
             taxSavingAmount={taxSummary?.taxSavingAmount || 0}
+            amountDifferenceAmount={taxSummary?.amountDifferenceAmount || 0}
           />
         </section>
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>{monthlyText.dailySales}</h2>
+            <h2 style={sectionTitleStyle}>
+              {withEmoji(SALES_UI_EMOJIS.dailySales, monthlyText.dailySales)}
+            </h2>
             <span style={sectionMetaStyle}>
               {monthlyText.dailyAverageSales} {formatVnd(averageDailyFinalAmount)}
             </span>
@@ -439,12 +469,14 @@ function TaxSummaryList({
   text,
   taxByRate,
   taxSavingAmount,
+  amountDifferenceAmount,
 }: {
   isLoading: boolean;
   hasError: boolean;
   text: SalesMonthlyViewText;
   taxByRate: TaxSummary["taxByRate"];
   taxSavingAmount: number;
+  amountDifferenceAmount: number;
 }) {
   if (isLoading) {
     return <EmptyState title={text.loading} text={text.taxDataLoading} />;
@@ -476,8 +508,19 @@ function TaxSummaryList({
         ))
       )}
       <div style={taxRowStyle}>
-        <span style={taxRateStyle}>{text.taxSaving}</span>
+        <span style={taxRateStyle}>
+          {withEmoji(SALES_UI_EMOJIS.taxSaving, text.taxSaving)}
+        </span>
         <strong style={statusValueStyle}>{formatVnd(taxSavingAmount)}</strong>
+        <span style={taxLineCountStyle}>{text.adjustedReceiptBase}</span>
+      </div>
+      <div style={taxRowStyle}>
+        <span style={taxRateStyle}>
+          {withEmoji(SALES_UI_EMOJIS.amountDifference, text.amountDifference)}
+        </span>
+        <strong style={statusValueStyle}>
+          {formatVnd(amountDifferenceAmount)}
+        </strong>
         <span style={taxLineCountStyle}>{text.adjustedReceiptBase}</span>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { getVietnamDateParts } from "@/lib/common/business-time";
+import { getBusinessDate, getVietnamDateParts } from "@/lib/common/business-time";
 import {
   type InventoryReasonValue,
   normalizeInventoryReason,
@@ -19,6 +19,20 @@ type SnapshotBatch = {
 type SnapshotItem = {
   id: number;
   item_id: number | null;
+  item_name: string | null;
+  item_name_vi: string | null;
+  part: string | null;
+  category: string | null;
+  category_vi: string | null;
+  quantity: string | number | null;
+  unit: string | null;
+  code: string | null;
+  purchase_price: string | number | null;
+  supplier: string | null;
+};
+
+type CurrentInventoryItem = {
+  id: number;
   item_name: string | null;
   item_name_vi: string | null;
   part: string | null;
@@ -50,6 +64,18 @@ type InventoryLog = {
   business_date: string | null;
 };
 
+type InventoryPriceLog = {
+  id: number;
+  item_id: number | null;
+  old_price: string | number | null;
+  new_price: string | number | null;
+  diff: string | number | null;
+  business_date: string | null;
+  changed_at?: string | null;
+  source: string | null;
+  reason: string | null;
+};
+
 type ItemStatus = "existing" | "new" | "missing";
 type MovementReason = Extract<
   InventoryReasonValue,
@@ -59,6 +85,9 @@ type MovementReason = Extract<
 type ItemAccumulator = {
   purchaseQuantity: number;
   purchaseLogCount: number;
+  purchaseAmountKnown: number;
+  purchaseHasKnownPrice: boolean;
+  purchaseHasMissingPrice: boolean;
   stockCheckNetChange: number;
   serviceNetChange: number;
   otherNetChange: number;
@@ -69,6 +98,62 @@ type DayAccumulator = {
   businessDate: string;
   purchaseQuantity: number;
   purchaseLogCount: number;
+  stockCheckNetChange: number;
+  serviceNetChange: number;
+  otherNetChange: number;
+  totalLogNetChange: number;
+};
+
+type MonthlyItemResult = {
+  itemId: number;
+  code: string | null;
+  name: string;
+  nameVi: string | null;
+  unit: string | null;
+  supplier: string | null;
+  supplierLabel: string;
+  part: string | null;
+  category: string | null;
+  categoryVi: string | null;
+  baselineQuantity: number | null;
+  latestQuantity: number | null;
+  stockNetChange: number;
+  baselinePurchasePrice: number | null;
+  latestPurchasePrice: number | null;
+  registeredPrice: number | null;
+  purchasePriceUsed: number | null;
+  purchasePriceDiff: number | null;
+  priceChangedDate: string | null;
+  priceChangeEvents: PriceChangeEvent[];
+  purchaseQuantity: number;
+  purchaseLogCount: number;
+  purchaseAmount: number | null;
+  purchaseAmountMissing: boolean;
+  stockCheckNetChange: number;
+  serviceNetChange: number;
+  otherNetChange: number;
+  totalLogNetChange: number;
+  status: ItemStatus;
+};
+
+type PriceChangeEvent = {
+  businessDate: string;
+  previousPrice: number | null;
+  newPrice: number;
+  diff: number | null;
+  source: string;
+  reason: string | null;
+  purchaseQuantity?: number | null;
+};
+
+type SupplierSummary = {
+  supplier: string | null;
+  supplierLabel: string;
+  itemCount: number;
+  purchaseQuantity: number;
+  purchaseAmountKnown: number;
+  purchaseAmountMissingCount: number;
+  stockNetChange: number;
   stockCheckNetChange: number;
   serviceNetChange: number;
   otherNetChange: number;
@@ -91,6 +176,11 @@ const toNullableNumber = (value: unknown) => {
 };
 
 const roundDecimal = (value: number) => Math.round(value * 1000) / 1000;
+
+const getSupplierLabel = (supplier?: string | null) => {
+  const trimmed = supplier?.trim();
+  return trimmed || "거래처 미등록";
+};
 
 const formatDateKey = (date: Date) => date.toISOString().slice(0, 10);
 
@@ -127,6 +217,9 @@ const getItemMap = (items: SnapshotItem[]) => {
 const createItemAccumulator = (): ItemAccumulator => ({
   purchaseQuantity: 0,
   purchaseLogCount: 0,
+  purchaseAmountKnown: 0,
+  purchaseHasKnownPrice: false,
+  purchaseHasMissingPrice: false,
   stockCheckNetChange: 0,
   serviceNetChange: 0,
   otherNetChange: 0,
@@ -158,7 +251,8 @@ const getDayAccumulator = (
 const addMovement = (
   target: ItemAccumulator | DayAccumulator,
   reason: MovementReason,
-  changeQuantity: number
+  changeQuantity: number,
+  purchasePrice?: number | null
 ) => {
   if (reason === "purchase") {
     if (changeQuantity > 0) {
@@ -166,6 +260,17 @@ const addMovement = (
         target.purchaseQuantity + changeQuantity
       );
       target.purchaseLogCount += 1;
+
+      if ("purchaseAmountKnown" in target) {
+        if (purchasePrice !== null && purchasePrice !== undefined) {
+          target.purchaseAmountKnown = roundDecimal(
+            target.purchaseAmountKnown + changeQuantity * purchasePrice
+          );
+          target.purchaseHasKnownPrice = true;
+        } else {
+          target.purchaseHasMissingPrice = true;
+        }
+      }
     }
     return;
   }
@@ -187,6 +292,37 @@ const addMovement = (
   }
 
   target.otherNetChange = roundDecimal(target.otherNetChange + changeQuantity);
+};
+
+const buildPriceChangeEvents = (
+  priceLogs: InventoryPriceLog[]
+) => {
+  return [...priceLogs]
+    .sort((a, b) => {
+      const aDate = a.business_date ?? "";
+      const bDate = b.business_date ?? "";
+      const dateCompare = aDate.localeCompare(bDate);
+      if (dateCompare !== 0) return dateCompare;
+      return a.id - b.id;
+    })
+    .reduce<PriceChangeEvent[]>((events, log) => {
+      const businessDate = log.business_date;
+      const newPrice = toNullableNumber(log.new_price);
+
+      if (!businessDate || newPrice === null) return events;
+
+      events.push({
+        businessDate,
+        previousPrice: toNullableNumber(log.old_price),
+        newPrice,
+        diff: toNullableNumber(log.diff),
+        source: log.source || "system",
+        reason: log.reason,
+        purchaseQuantity: null,
+      });
+
+      return events;
+    }, []);
 };
 
 const getSnapshotItems = async (batchId: number | null) => {
@@ -217,6 +353,107 @@ const getSnapshotItems = async (batchId: number | null) => {
   return (data ?? []) as SnapshotItem[];
 };
 
+const getCurrentInventoryItems = async () => {
+  const { data, error } = await supabaseAdmin
+    .from("inventory")
+    .select(
+      `
+        id,
+        item_name,
+        item_name_vi,
+        part,
+        category,
+        category_vi,
+        quantity,
+        unit,
+        code,
+        purchase_price,
+        supplier
+      `
+    );
+
+  if (error) throw error;
+
+  return ((data ?? []) as CurrentInventoryItem[]).map((item) => ({
+    id: item.id,
+    item_id: item.id,
+    item_name: item.item_name,
+    item_name_vi: item.item_name_vi,
+    part: item.part,
+    category: item.category,
+    category_vi: item.category_vi,
+    quantity: item.quantity,
+    unit: item.unit,
+    code: item.code,
+    purchase_price: item.purchase_price,
+    supplier: item.supplier,
+  })) satisfies SnapshotItem[];
+};
+
+const buildSupplierSummary = (items: MonthlyItemResult[]) => {
+  const map = new Map<string, SupplierSummary>();
+
+  for (const item of items) {
+    const supplierKey = item.supplier?.trim() || "__none__";
+    const existing =
+      map.get(supplierKey) ??
+      ({
+        supplier: item.supplier?.trim() || null,
+        supplierLabel: item.supplierLabel,
+        itemCount: 0,
+        purchaseQuantity: 0,
+        purchaseAmountKnown: 0,
+        purchaseAmountMissingCount: 0,
+        stockNetChange: 0,
+        stockCheckNetChange: 0,
+        serviceNetChange: 0,
+        otherNetChange: 0,
+        totalLogNetChange: 0,
+      } satisfies SupplierSummary);
+
+    existing.itemCount += 1;
+    existing.purchaseQuantity = roundDecimal(
+      existing.purchaseQuantity + item.purchaseQuantity
+    );
+    existing.purchaseAmountKnown = roundDecimal(
+      existing.purchaseAmountKnown + (item.purchaseAmount ?? 0)
+    );
+    if (item.purchaseAmountMissing) {
+      existing.purchaseAmountMissingCount += 1;
+    }
+    existing.stockNetChange = roundDecimal(
+      existing.stockNetChange + item.stockNetChange
+    );
+    existing.stockCheckNetChange = roundDecimal(
+      existing.stockCheckNetChange + item.stockCheckNetChange
+    );
+    existing.serviceNetChange = roundDecimal(
+      existing.serviceNetChange + item.serviceNetChange
+    );
+    existing.otherNetChange = roundDecimal(
+      existing.otherNetChange + item.otherNetChange
+    );
+    existing.totalLogNetChange = roundDecimal(
+      existing.totalLogNetChange + item.totalLogNetChange
+    );
+
+    map.set(supplierKey, existing);
+  }
+
+  return [...map.values()].sort((a, b) => {
+    const amountDiff = b.purchaseAmountKnown - a.purchaseAmountKnown;
+    if (amountDiff !== 0) return amountDiff;
+
+    const quantityDiff = b.purchaseQuantity - a.purchaseQuantity;
+    if (quantityDiff !== 0) return quantityDiff;
+
+    return a.supplierLabel.localeCompare(b.supplierLabel, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
+  });
+};
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const month = searchParams.get("month") || getDefaultMonth();
@@ -230,6 +467,10 @@ export async function GET(request: Request) {
 
   try {
     const { monthStart, monthEnd } = getMonthRange(month);
+    const currentMonth = getDefaultMonth();
+    const isCurrentMonth = month === currentMonth;
+    const currentBusinessDate = getBusinessDate();
+    const toDate = isCurrentMonth ? currentBusinessDate : monthEnd;
 
     const { data: baselineBatch, error: baselineError } = await supabaseAdmin
       .from("inventory_snapshot_batches")
@@ -241,24 +482,35 @@ export async function GET(request: Request) {
 
     if (baselineError) throw baselineError;
 
-    const { data: latestBatch, error: latestError } = await supabaseAdmin
-      .from("inventory_snapshot_batches")
-      .select("id, snapshot_date")
-      .gte("snapshot_date", monthStart)
-      .lte("snapshot_date", monthEnd)
-      .order("snapshot_date", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const latestBatchResult = isCurrentMonth
+      ? { data: null, error: null }
+      : await supabaseAdmin
+          .from("inventory_snapshot_batches")
+          .select("id, snapshot_date")
+          .gte("snapshot_date", monthStart)
+          .lte("snapshot_date", monthEnd)
+          .order("snapshot_date", { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-    if (latestError) throw latestError;
+    if (latestBatchResult.error) throw latestBatchResult.error;
 
     const baseline = (baselineBatch ?? null) as SnapshotBatch | null;
-    const latest = (latestBatch ?? null) as SnapshotBatch | null;
-    const toDate = latest?.snapshot_date || monthEnd;
+    const latest = (latestBatchResult.data ?? null) as SnapshotBatch | null;
+    const latestSnapshotDate = isCurrentMonth
+      ? currentBusinessDate
+      : latest?.snapshot_date ?? null;
+    const latestSource = isCurrentMonth
+      ? "current_inventory"
+      : latest
+        ? "snapshot"
+        : null;
 
     const [baselineItems, latestItems] = await Promise.all([
       getSnapshotItems(baseline?.id ?? null),
-      getSnapshotItems(latest?.id ?? null),
+      isCurrentMonth
+        ? getCurrentInventoryItems()
+        : getSnapshotItems(latest?.id ?? null),
     ]);
 
     const { data: logs, error: logsError } = await supabaseAdmin
@@ -289,6 +541,27 @@ export async function GET(request: Request) {
 
     if (logsError) throw logsError;
 
+    const { data: priceLogs, error: priceLogsError } = await supabaseAdmin
+      .from("inventory_price_logs")
+      .select(
+        `
+          id,
+          item_id,
+          old_price,
+          new_price,
+          diff,
+          business_date,
+          source,
+          reason
+        `
+      )
+      .gte("business_date", monthStart)
+      .lte("business_date", toDate)
+      .order("business_date", { ascending: true })
+      .order("id", { ascending: true });
+
+    if (priceLogsError) throw priceLogsError;
+
     const baselineMap = getItemMap(baselineItems);
     const latestMap = getItemMap(latestItems);
     const itemIds = new Set<number>([
@@ -297,11 +570,64 @@ export async function GET(request: Request) {
       ...((logs ?? []) as InventoryLog[])
         .map((log) => log.item_id)
         .filter((itemId): itemId is number => itemId !== null),
+      ...((priceLogs ?? []) as InventoryPriceLog[])
+        .map((log) => log.item_id)
+        .filter((itemId): itemId is number => itemId !== null),
     ]);
 
     const itemMovementMap = new Map<number, ItemAccumulator>();
+    const itemPriceLogMap = new Map<number, InventoryPriceLog[]>();
+    const registeredPriceMap = new Map<number, number>();
     const dayMap = new Map<string, DayAccumulator>();
     let unclassifiedLogCount = 0;
+
+    const safeItemIds = [...itemIds];
+
+    if (safeItemIds.length > 0) {
+      const { data: registeredPriceLogs, error: registeredPriceLogsError } =
+        await supabaseAdmin
+          .from("inventory_price_logs")
+          .select(
+            `
+              id,
+              item_id,
+              old_price,
+              new_price,
+              business_date,
+              changed_at,
+              reason
+            `
+          )
+          .in("item_id", safeItemIds)
+          .eq("reason", "create")
+          .is("old_price", null)
+          .order("business_date", { ascending: true })
+          .order("changed_at", { ascending: true })
+          .order("id", { ascending: true });
+
+      if (registeredPriceLogsError) throw registeredPriceLogsError;
+
+      for (const log of (registeredPriceLogs ?? []) as InventoryPriceLog[]) {
+        if (log.item_id === null || log.item_id === undefined) continue;
+
+        const itemId = Number(log.item_id);
+        if (registeredPriceMap.has(itemId)) continue;
+
+        const registeredPrice = toNullableNumber(log.new_price);
+        if (registeredPrice !== null) {
+          registeredPriceMap.set(itemId, registeredPrice);
+        }
+      }
+    }
+
+    for (const log of (priceLogs ?? []) as InventoryPriceLog[]) {
+      if (log.item_id === null || log.item_id === undefined) continue;
+
+      const itemId = Number(log.item_id);
+      const existing = itemPriceLogMap.get(itemId) ?? [];
+      existing.push(log);
+      itemPriceLogMap.set(itemId, existing);
+    }
 
     for (const log of (logs ?? []) as InventoryLog[]) {
       const businessDate = log.business_date;
@@ -324,13 +650,19 @@ export async function GET(request: Request) {
       }
 
       const changeQuantity = roundDecimal(toNumber(log.change_quantity));
+      const logPurchasePrice = toNullableNumber(log.new_purchase_price);
 
       if (itemId !== null && itemId !== undefined) {
         const safeItemId = Number(itemId);
         const itemAccumulator =
           itemMovementMap.get(safeItemId) ?? createItemAccumulator();
 
-        addMovement(itemAccumulator, normalizedReason, changeQuantity);
+        addMovement(
+          itemAccumulator,
+          normalizedReason,
+          changeQuantity,
+          logPurchasePrice
+        );
         itemMovementMap.set(safeItemId, itemAccumulator);
       }
 
@@ -338,11 +670,12 @@ export async function GET(request: Request) {
       addMovement(dayAccumulator, normalizedReason, changeQuantity);
     }
 
-    const items = [...itemIds].map((itemId) => {
+    const items: MonthlyItemResult[] = [...itemIds].map((itemId) => {
       const baselineItem = baselineMap.get(itemId) ?? null;
       const latestItem = latestMap.get(itemId) ?? null;
       const displayItem = latestItem ?? baselineItem;
       const movement = itemMovementMap.get(itemId) ?? createItemAccumulator();
+      const supplier = latestItem?.supplier ?? baselineItem?.supplier ?? null;
 
       const baselineQuantity =
         baselineItem === null ? null : toNumber(baselineItem.quantity);
@@ -358,15 +691,25 @@ export async function GET(request: Request) {
         baselineItem?.purchase_price
       );
       const latestPurchasePrice = toNullableNumber(latestItem?.purchase_price);
+      const registeredPrice =
+        registeredPriceMap.get(itemId) ??
+        baselinePurchasePrice ??
+        latestPurchasePrice;
       const purchasePriceUsed = baselinePurchasePrice ?? latestPurchasePrice;
       const purchasePriceDiff =
         baselinePurchasePrice !== null && latestPurchasePrice !== null
           ? roundDecimal(latestPurchasePrice - baselinePurchasePrice)
           : null;
+      const priceChangeEvents = buildPriceChangeEvents(
+        itemPriceLogMap.get(itemId) ?? []
+      );
+      const priceChangedDate = priceChangeEvents[0]?.businessDate ?? null;
       const purchaseAmount =
-        movement.purchaseQuantity > 0 && purchasePriceUsed !== null
-          ? roundDecimal(movement.purchaseQuantity * purchasePriceUsed)
+        movement.purchaseQuantity > 0 && movement.purchaseHasKnownPrice
+          ? roundDecimal(movement.purchaseAmountKnown)
           : null;
+      const purchaseAmountMissing =
+        movement.purchaseQuantity > 0 && movement.purchaseHasMissingPrice;
       const status: ItemStatus =
         baselineItem && latestItem ? "existing" : latestItem ? "new" : "missing";
 
@@ -376,7 +719,8 @@ export async function GET(request: Request) {
         name: displayItem?.item_name || displayItem?.item_name_vi || "-",
         nameVi: displayItem?.item_name_vi ?? null,
         unit: displayItem?.unit ?? null,
-        supplier: latestItem?.supplier ?? baselineItem?.supplier ?? null,
+        supplier,
+        supplierLabel: getSupplierLabel(supplier),
         part: displayItem?.part ?? null,
         category: displayItem?.category ?? null,
         categoryVi: displayItem?.category_vi ?? null,
@@ -387,12 +731,16 @@ export async function GET(request: Request) {
 
         baselinePurchasePrice,
         latestPurchasePrice,
+        registeredPrice,
         purchasePriceUsed,
         purchasePriceDiff,
+        priceChangedDate,
+        priceChangeEvents,
 
         purchaseQuantity: movement.purchaseQuantity,
         purchaseLogCount: movement.purchaseLogCount,
         purchaseAmount,
+        purchaseAmountMissing,
 
         stockCheckNetChange: movement.stockCheckNetChange,
         serviceNetChange: movement.serviceNetChange,
@@ -424,13 +772,14 @@ export async function GET(request: Request) {
     });
 
     const purchaseItems = items.filter((item) => item.purchaseQuantity > 0);
-    const purchaseAmountKnown = items.reduce(
-      (sum, item) => sum + (item.purchaseAmount ?? 0),
+    const purchaseAmountKnown = [...itemMovementMap.values()].reduce(
+      (sum, movement) => sum + movement.purchaseAmountKnown,
       0
     );
     const purchaseAmountMissingCount = items.filter(
-      (item) => item.purchaseQuantity > 0 && item.purchasePriceUsed === null
+      (item) => item.purchaseAmountMissing
     ).length;
+    const supplierSummary = buildSupplierSummary(items);
 
     const days = [...dayMap.values()].sort((a, b) =>
       a.businessDate.localeCompare(b.businessDate)
@@ -448,8 +797,9 @@ export async function GET(request: Request) {
         snapshotDate: baseline?.snapshot_date ?? null,
       },
       latest: {
-        snapshotId: latest?.id ?? null,
-        snapshotDate: latest?.snapshot_date ?? null,
+        snapshotId: isCurrentMonth ? null : latest?.id ?? null,
+        snapshotDate: latestSnapshotDate,
+        source: latestSource,
       },
       summary: {
         stockNetChange: roundDecimal(
@@ -479,6 +829,7 @@ export async function GET(request: Request) {
 
         unclassifiedLogCount,
       },
+      supplierSummary,
       days,
       items,
     });

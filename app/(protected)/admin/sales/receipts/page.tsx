@@ -161,6 +161,8 @@ type PaymentDetail = {
 
 type TaxSummary = {
   totalTaxAmount: number;
+  taxSavingAmount?: number;
+  amountDifferenceAmount?: number;
   taxByRate: {
     taxRate: number;
     taxAmount: number;
@@ -322,18 +324,6 @@ function calculateLineTaxAmount(
   const rate = toFiniteNumber(taxRate);
   if (!Number.isFinite(finalAmount) || finalAmount <= 0 || rate <= 0) return 0;
   return Math.round((finalAmount * rate) / 100);
-}
-
-function getOriginalFinalAmount(receipt: ReceiptDetail) {
-  const originalAmountSummary = receipt.originalAmountSummary;
-
-  if (!originalAmountSummary) return null;
-
-  return (
-    toFiniteNumber(originalAmountSummary.finalAmount) ||
-    toFiniteNumber(originalAmountSummary.paymentTotalAmount) ||
-    null
-  );
 }
 
 function formatTime(value: string | null) {
@@ -1068,13 +1058,10 @@ function ReceiptDropdown({
     detail.taxSummary?.totalTaxAmount ?? receipt.vatAmount
   );
 
-  // ?덉꽭 怨꾩궛?? API??adjustedTaxSummary???꾩옱 ?섏젙??line.tax_amount ?⑷퀎 湲곗?
-  const adjustedTotalTaxAmount = toFiniteNumber(
-    detail.adjustedTaxSummary?.totalTaxAmount
+  const taxSavingAmount = toFiniteNumber(detail.taxSummary?.taxSavingAmount);
+  const amountDifferenceAmount = toFiniteNumber(
+    detail.taxSummary?.amountDifferenceAmount
   );
-
-  const currentTotalTaxAmount =
-    adjustedTotalTaxAmount > 0 ? adjustedTotalTaxAmount : originalTotalTaxAmount;
 
   const showCashExtra =
     hasCashPayment(payments) &&
@@ -1195,7 +1182,8 @@ function ReceiptDropdown({
         receipt={receipt}
         lines={detail.lines || []}
         payments={payments}
-        currentTotalTaxAmount={currentTotalTaxAmount}
+        taxSavingAmount={taxSavingAmount}
+        amountDifferenceAmount={amountDifferenceAmount}
         isSaving={isEditSaving}
         errorMessage={editErrorMessage}
         onSave={(values) =>
@@ -1214,7 +1202,8 @@ function ReceiptEditPanel({
   receipt,
   lines,
   payments,
-  currentTotalTaxAmount,
+  taxSavingAmount,
+  amountDifferenceAmount,
   isSaving,
   errorMessage,
   onSave,
@@ -1223,7 +1212,8 @@ function ReceiptEditPanel({
   receipt: ReceiptDetail;
   lines: LineDetail[];
   payments: PaymentDetail[];
-  currentTotalTaxAmount: number;
+  taxSavingAmount: number;
+  amountDifferenceAmount: number;
   isSaving: boolean;
   errorMessage: string;
   onSave: (values: Omit<SaveReceiptEditInput, "receiptId">) => void;
@@ -1325,11 +1315,6 @@ function ReceiptEditPanel({
     0
   );
   const draftPaymentTotal = draftSalesSubtotal + draftAdjustedTaxAmount;
-  const originalFinalAmount = getOriginalFinalAmount(receipt);
-  const taxSavingAmount =
-    originalFinalAmount === null
-      ? Math.max(0, currentTotalTaxAmount - receipt.vatAmount)
-      : Math.max(0, receipt.finalAmount - originalFinalAmount);
   const returnAmount =
     paymentMethod === "cash"
       ? Math.max(0, cashReceivedAmount - draftPaymentTotal)
@@ -1445,6 +1430,10 @@ function ReceiptEditPanel({
           <strong style={miniValueStyle}>
             {text.taxSaving}:{" "}
             {formatVnd(taxSavingAmount)}
+          </strong>
+          <strong style={miniValueStyle}>
+            {text.amountDifference}:{" "}
+            {formatVnd(amountDifferenceAmount)}
           </strong>
           {isEditing ? (
             <span style={mutedTextStyle}>{text.taxRecalculateNotice}</span>
