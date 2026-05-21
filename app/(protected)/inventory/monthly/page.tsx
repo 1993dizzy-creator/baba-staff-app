@@ -67,6 +67,7 @@ type SupplierSummary = {
   serviceNetChange: number;
   otherNetChange: number;
   totalLogNetChange: number;
+  items: MonthlyItem[];
 };
 
 type SupplierGroup = {
@@ -465,7 +466,7 @@ export default function InventoryMonthlyPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expandedSupplierKeys, setExpandedSupplierKeys] = useState<Record<string, boolean>>({});
-  const [expandedItemIds, setExpandedItemIds] = useState<Record<number, boolean>>({});
+  const [expandedItemIds, setExpandedItemIds] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let ignore = false;
@@ -525,24 +526,8 @@ export default function InventoryMonthlyPage() {
         supplier: supplier.supplier,
         supplierLabel: supplier.supplierLabel || labels.unregisteredSupplier,
         summary: supplier,
-        items: [],
+        items: supplier.items ?? [],
       });
-    }
-
-    for (const item of data.items) {
-      const key = getSupplierKey(item.supplier);
-      const existing =
-        map.get(key) ??
-        ({
-          key,
-          supplier: item.supplier,
-          supplierLabel: item.supplierLabel || labels.unregisteredSupplier,
-          summary: null,
-          items: [],
-        } satisfies SupplierGroup);
-
-      existing.items.push(item);
-      map.set(key, existing);
     }
 
     return [...map.values()]
@@ -941,7 +926,8 @@ export default function InventoryMonthlyPage() {
                                 </div>
 
                                 {categoryGroup.items.map((item) => {
-                              const expanded = Boolean(expandedItemIds[item.itemId]);
+                              const itemExpansionKey = `${group.key}:${item.itemId}`;
+                              const expanded = Boolean(expandedItemIds[itemExpansionKey]);
                               const displayName = getDisplayName(item);
                               const itemAmountText = getItemAmountText(item);
                               const movementSignalCandidates: Array<MovementSignal | null> = [
@@ -1172,7 +1158,7 @@ export default function InventoryMonthlyPage() {
                               ];
                               return (
                                 <div
-                                  key={item.itemId}
+                                  key={itemExpansionKey}
                                   style={{
                                     border: "1px solid #e5e7eb",
                                     borderLeft: `4px solid ${getStatusColor(item.status)}`,
@@ -1187,7 +1173,7 @@ export default function InventoryMonthlyPage() {
                                   onClick={() =>
                                     setExpandedItemIds((prev) => ({
                                       ...prev,
-                                      [item.itemId]: !prev[item.itemId],
+                                      [itemExpansionKey]: !prev[itemExpansionKey],
                                     }))
                                   }
                                   style={{

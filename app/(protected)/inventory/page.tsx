@@ -86,6 +86,15 @@ type InventoryLogGroup = {
     logs: InventoryLog[];
 };
 
+const normalizeSearchText = (value: unknown) =>
+    String(value ?? "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/Đ/g, "D")
+        .toLowerCase()
+        .trim();
+
 
 export default function InventoryPage() {
 
@@ -101,7 +110,6 @@ export default function InventoryPage() {
     const { lang } = useLanguage();
     const t = inventoryText[lang];
     const c = commonText[lang];
-
     const [itemName, setItemName] = useState("");
     const [quantity, setQuantity] = useState("");
     const [unit, setUnit] = useState("");
@@ -139,6 +147,10 @@ export default function InventoryPage() {
         QuickReasonValue | null
     >(null);
     const [quickSaveOtherText, setQuickSaveOtherText] = useState("");
+    const [quickPurchaseSupplier, setQuickPurchaseSupplier] = useState("");
+    const [quickPurchasePrice, setQuickPurchasePrice] = useState("");
+    const [isQuickPurchaseCustomSupplier, setIsQuickPurchaseCustomSupplier] =
+        useState(false);
     const [logModalItem, setLogModalItem] = useState<InventoryItem | null>(null);
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
@@ -305,7 +317,7 @@ export default function InventoryPage() {
 
         if ((log.prev_supplier || "") !== (log.new_supplier || "")) {
             changes.push({
-                label: c.supplier,
+                label: lang === "vi" ? "Nơi mua trước" : "이전구매처",
                 before: log.prev_supplier || "-",
                 after: log.new_supplier || "-",
             });
@@ -369,7 +381,7 @@ export default function InventoryPage() {
             !(log.prev_purchase_price == null && log.new_purchase_price == null)
         ) {
             changes.push({
-                label: t.purchasePrice,
+                label: lang === "vi" ? "Giá trước" : "이전가격",
                 before: formatMoneyDisplay(log.prev_purchase_price),
                 after: formatMoneyDisplay(log.new_purchase_price),
             });
@@ -825,6 +837,34 @@ export default function InventoryPage() {
         setQuickSaveItem(item);
         setQuickSaveReason("stock_check");
         setQuickSaveOtherText("");
+        setQuickPurchaseSupplier(item.supplier || "");
+        setQuickPurchasePrice(formatNumber(item.purchase_price));
+        setIsQuickPurchaseCustomSupplier(false);
+    };
+
+    const closeQuickSaveModal = () => {
+        setQuickSaveItem(null);
+        setQuickSaveReason(null);
+        setQuickSaveOtherText("");
+        setQuickPurchaseSupplier("");
+        setQuickPurchasePrice("");
+        setIsQuickPurchaseCustomSupplier(false);
+    };
+
+    const openQuickPurchaseConfirm = () => {
+        if (!quickSaveItem) return;
+
+        setQuickSaveReason("purchase");
+        setQuickPurchaseSupplier(quickSaveItem.supplier || "");
+        setQuickPurchasePrice(formatNumber(quickSaveItem.purchase_price));
+        setIsQuickPurchaseCustomSupplier(
+            !!quickSaveItem.supplier &&
+            !mergedSupplierOptions.some(
+                (option) =>
+                    option.trim().toLowerCase() ===
+                    String(quickSaveItem.supplier || "").trim().toLowerCase()
+            )
+        );
     };
 
     const handleQuickSaveConfirm = async (
@@ -860,6 +900,12 @@ export default function InventoryPage() {
                 return;
             }
 
+            const normalizedQuickSupplier = normalizeText(quickPurchaseSupplier);
+            const nextPurchasePrice =
+                quickPurchasePrice.trim() === ""
+                    ? null
+                    : parsePrice(quickPurchasePrice);
+
             const quickNote = buildQuickChangeNote({
                 currentQty,
                 nextQty,
@@ -873,6 +919,12 @@ export default function InventoryPage() {
                 updated_at: new Date().toISOString(),
                 updated_by_name: actorName,
                 updated_by_username: actorUsername,
+                ...(reason === "purchase"
+                    ? {
+                        supplier: normalizedQuickSupplier,
+                        purchase_price: nextPurchasePrice,
+                    }
+                    : {}),
             };
             const savedItemId = quickSaveItem.id;
 
@@ -912,9 +964,7 @@ export default function InventoryPage() {
                 [savedItemId]: String(nextQty),
             }));
 
-            setQuickSaveItem(null);
-            setQuickSaveReason(null);
-            setQuickSaveOtherText("");
+            closeQuickSaveModal();
 
             const refreshResults = await Promise.allSettled([
                 fetchInventory(),
@@ -1079,17 +1129,27 @@ export default function InventoryPage() {
     // (로그 / 스냅샷 페이지는 최신순 기준 유지 가능)
     const filteredInventory = inventoryList
         .filter((item) => {
-            const keyword = search.trim().toLowerCase();
-            const displayItemName = getDisplayItemName(item).toLowerCase();
+            const keyword = normalizeSearchText(search);
+            const displayItemName = getDisplayItemName(item);
             const displayCategory = getDisplayCategory(item);
-            const displayCode = String(item.code || "").toLowerCase();
             const categoryKey = getCategoryKey(item);
+            const searchTargets = [
+                displayItemName,
+                item.item_name,
+                item.item_name_vi,
+                item.code,
+                displayCategory,
+                item.category,
+                item.category_vi,
+                item.supplier,
+                item.unit,
+            ];
 
             const matchSearch =
                 !keyword ||
-                displayItemName.includes(keyword) ||
-                displayCategory.toLowerCase().includes(keyword) ||
-                displayCode.includes(keyword);
+                searchTargets.some((target) =>
+                    normalizeSearchText(target).includes(keyword)
+                );
 
             const matchPart = item.part === partFilter;
             const matchCategory =
@@ -2547,11 +2607,7 @@ export default function InventoryPage() {
                         zIndex: 1000,
                         padding: 20,
                     }}
-                    onClick={() => {
-                        setQuickSaveItem(null);
-                        setQuickSaveReason(null);
-                        setQuickSaveOtherText("");
-                    }}
+                    onClick={closeQuickSaveModal}
                 >
                     <div
                         onClick={(e) => e.stopPropagation()}
@@ -2568,7 +2624,7 @@ export default function InventoryPage() {
                         }}
                     >
                         <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
-                            {t.otherReason}
+                            {lang === "vi" ? "Lưu nhanh" : "빠른저장"}
                         </div>
 
                         <div style={{ ...ui.metaText, marginBottom: 4 }}>
@@ -2610,7 +2666,7 @@ export default function InventoryPage() {
 
                             <button
                                 type="button"
-                                onClick={() => handleQuickSaveConfirm("purchase")}
+                                onClick={openQuickPurchaseConfirm}
                                 disabled={isQuickSaving}
                                 style={{
                                     ...ui.subButton,
@@ -2707,13 +2763,120 @@ export default function InventoryPage() {
                             </>
                         )}
 
+                        {quickSaveReason === "purchase" && (
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 8,
+                                    border: "1px solid #e5e7eb",
+                                    borderRadius: 10,
+                                    padding: 10,
+                                    background: "#f9fafb",
+                                }}
+                            >
+                                {(() => {
+                                    const draft = quantityDrafts[quickSaveItem.id];
+                                    const currentQty = roundDecimal(
+                                        Number(quickSaveItem.quantity ?? 0)
+                                    );
+                                    const nextQty = roundDecimal(parseDecimal(draft));
+                                    const changeQty = roundDecimal(nextQty - currentQty);
+
+                                    return (
+                                        <div
+                                            style={{
+                                                display: "grid",
+                                                gridTemplateColumns: "1fr 1fr",
+                                                gap: 6,
+                                                fontSize: 12,
+                                                fontWeight: 800,
+                                                color: "#374151",
+                                            }}
+                                        >
+                                            <span>
+                                                {lang === "vi" ? "Hiện tại" : "현재수량"}:{" "}
+                                                {formatDecimalDisplay(currentQty)}
+                                            </span>
+                                            <span>
+                                                {lang === "vi" ? "Sau nhập" : "최종수량"}:{" "}
+                                                {formatDecimalDisplay(nextQty)}
+                                            </span>
+                                            <span style={{ color: "seagreen" }}>
+                                                {INVENTORY_REASON_LABELS[lang].purchase}: +
+                                                {formatDecimalDisplay(changeQty)}
+                                            </span>
+                                        </div>
+                                    );
+                                })()}
+
+                                <select
+                                    value={
+                                        isQuickPurchaseCustomSupplier
+                                            ? "__custom__"
+                                            : quickPurchaseSupplier
+                                    }
+                                    onChange={(e) => {
+                                        const value = e.target.value;
+
+                                        if (value === "__custom__") {
+                                            setIsQuickPurchaseCustomSupplier(true);
+                                            setQuickPurchaseSupplier("");
+                                            return;
+                                        }
+
+                                        setIsQuickPurchaseCustomSupplier(false);
+                                        setQuickPurchaseSupplier(value);
+                                    }}
+                                    style={ui.input}
+                                >
+                                    <option value="">{c.supplier}</option>
+                                    {mergedSupplierOptions.map((option) => (
+                                        <option key={option} value={option}>
+                                            {option}
+                                        </option>
+                                    ))}
+                                    <option value="__custom__">{c.directInput}</option>
+                                </select>
+
+                                {isQuickPurchaseCustomSupplier && (
+                                    <input
+                                        type="text"
+                                        value={quickPurchaseSupplier}
+                                        onChange={(e) => setQuickPurchaseSupplier(e.target.value)}
+                                        placeholder={t.newSupplierPlaceholder}
+                                        style={ui.input}
+                                    />
+                                )}
+
+                                <input
+                                    type="text"
+                                    value={quickPurchasePrice}
+                                    onChange={(e) => setQuickPurchasePrice(e.target.value)}
+                                    placeholder={t.purchasePrice}
+                                    style={ui.input}
+                                />
+
+                                <button
+                                    type="button"
+                                    onClick={() => handleQuickSaveConfirm("purchase")}
+                                    disabled={isQuickSaving}
+                                    style={{
+                                        ...ui.button,
+                                        opacity: isQuickSaving ? 0.6 : 1,
+                                        cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                    }}
+                                >
+                                    {isQuickSaving
+                                        ? c.saving
+                                        : `${INVENTORY_REASON_LABELS[lang].purchase} ${c.save}`}
+                                </button>
+                            </div>
+                        )}
+
                         <button
                             type="button"
-                            onClick={() => {
-                                setQuickSaveItem(null);
-                                setQuickSaveReason(null);
-                                setQuickSaveOtherText("");
-                            }}
+                            onClick={closeQuickSaveModal}
                             style={{
                                 ...ui.subButton,
                                 marginTop: 4,

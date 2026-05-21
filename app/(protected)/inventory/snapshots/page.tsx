@@ -45,6 +45,7 @@ type SnapshotItem = {
     reason?: InventoryReasonValue | null;
     source?: string | null;
     business_date?: string | null;
+    created_at?: string | null;
 };
 
 type InventoryLog = {
@@ -101,6 +102,7 @@ export default function InventorySnapshotsPage() {
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
     const [itemLogsError, setItemLogsError] = useState("");
     const [changingReasonLogId, setChangingReasonLogId] = useState<number | null>(null);
+    const [syncingPurchaseLogId, setSyncingPurchaseLogId] = useState<number | null>(null);
 
     const reasonChangeOptions = QUICK_REASON_VALUES.map((value) => ({
         value,
@@ -310,6 +312,7 @@ export default function InventorySnapshotsPage() {
             reason: log.reason ?? null,
             source: log.source ?? null,
             business_date: log.business_date ?? null,
+            created_at: log.created_at ?? null,
         };
     };
 
@@ -375,6 +378,121 @@ export default function InventorySnapshotsPage() {
             setItemLogsError(c.loadFailed);
         } finally {
             setChangingReasonLogId(null);
+        }
+    };
+
+    const getLatestPurchaseItemForModal = (item: SnapshotItem) => {
+        const sameDayPurchaseItems = movementItems.filter(
+            (candidate) =>
+                candidate.reason === "purchase" &&
+                Number(candidate.change_quantity ?? 0) > 0 &&
+                candidate.item_id === item.item_id &&
+                candidate.business_date === item.business_date
+        );
+
+        return [...sameDayPurchaseItems].sort((a, b) => {
+            const createdCompare = String(b.created_at || "").localeCompare(
+                String(a.created_at || "")
+            );
+            if (createdCompare !== 0) return createdCompare;
+
+            return Number(b.id) - Number(a.id);
+        })[0] ?? item;
+    };
+
+    const openPurchaseLogModal = async (item: SnapshotItem) => {
+        const latestPurchaseItem = getLatestPurchaseItemForModal(item);
+        await fetchItemLogs(latestPurchaseItem);
+    };
+
+    const syncPurchaseInfoFromCurrentItem = async (item: SnapshotItem) => {
+        if (syncingPurchaseLogId) return;
+        setSyncingPurchaseLogId(item.id);
+
+        try {
+            const res = await fetch("/api/inventory/logs", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    id: item.id,
+                    syncCurrentItem: true,
+                }),
+            });
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                console.error(result);
+                alert(c.editFail);
+                return;
+            }
+
+            setMovementItems((prev) =>
+                prev.map((movementItem) => {
+                    if (movementItem.id !== item.id) return movementItem;
+
+                    const nextPurchasePrice = result.data.new_purchase_price ?? null;
+                    const nextSupplier = result.data.new_supplier ?? null;
+                    const nextItemName = result.data.item_name ?? movementItem.item_name;
+                    const nextItemNameVi = result.data.item_name_vi ?? movementItem.item_name_vi;
+                    const changeQuantity = Number(movementItem.change_quantity ?? 0);
+                    const totalPurchasePrice =
+                        nextPurchasePrice === null
+                            ? null
+                            : changeQuantity * Number(nextPurchasePrice);
+
+                    return {
+                        ...movementItem,
+                        item_name: nextItemName,
+                        item_name_vi: nextItemNameVi,
+                        supplier: nextSupplier,
+                        purchase_price: nextPurchasePrice,
+                        total_purchase_price: totalPurchasePrice,
+                    };
+                })
+            );
+
+            setLogModalItem((prev) => {
+                if (!prev || prev.id !== item.id) return prev;
+
+                const nextPurchasePrice = result.data.new_purchase_price ?? null;
+                const nextSupplier = result.data.new_supplier ?? null;
+                const nextItemName = result.data.item_name ?? prev.item_name;
+                const nextItemNameVi = result.data.item_name_vi ?? prev.item_name_vi;
+                const changeQuantity = Number(prev.change_quantity ?? 0);
+                const totalPurchasePrice =
+                    nextPurchasePrice === null
+                        ? null
+                        : changeQuantity * Number(nextPurchasePrice);
+
+                return {
+                    ...prev,
+                    item_name: nextItemName,
+                    item_name_vi: nextItemNameVi,
+                    supplier: nextSupplier,
+                    purchase_price: nextPurchasePrice,
+                    total_purchase_price: totalPurchasePrice,
+                };
+            });
+
+            setItemLogs((prev) =>
+                prev.map((log) =>
+                    log.id === item.id
+                        ? {
+                            ...log,
+                            item_name: result.data.item_name ?? log.item_name,
+                            item_name_vi: result.data.item_name_vi ?? log.item_name_vi,
+                            new_supplier: result.data.new_supplier ?? log.new_supplier,
+                            new_purchase_price:
+                                result.data.new_purchase_price ?? log.new_purchase_price,
+                        }
+                        : log
+                )
+            );
+        } catch (error) {
+            console.error(error);
+            alert(c.editFail);
+        } finally {
+            setSyncingPurchaseLogId(null);
         }
     };
 
@@ -586,6 +704,23 @@ export default function InventorySnapshotsPage() {
             return sum + Number(item.total_purchase_price ?? 0);
         }, 0);
     }, [filteredPurchasedItems]);
+
+    const recentQuantityLogs = useMemo(() => {
+        return [...itemLogs]
+            .filter((log) => {
+                const changeQuantity = Number(log.change_quantity);
+                return Number.isFinite(changeQuantity) && changeQuantity !== 0;
+            })
+            .sort((a, b) => {
+                const createdCompare = String(b.created_at || "").localeCompare(
+                    String(a.created_at || "")
+                );
+                if (createdCompare !== 0) return createdCompare;
+
+                return Number(b.id) - Number(a.id);
+            })
+            .slice(0, 3);
+    }, [itemLogs]);
 
     const batchCalendar = useMemo(() => {
         const map = new Map<string, SnapshotBatch>();
@@ -1145,11 +1280,11 @@ export default function InventorySnapshotsPage() {
                                     key={item.id}
                                     role="button"
                                     tabIndex={0}
-                                    onClick={() => fetchItemLogs(item)}
+                                    onClick={() => openPurchaseLogModal(item)}
                                     onKeyDown={(event) => {
                                         if (event.key === "Enter" || event.key === " ") {
                                             event.preventDefault();
-                                            fetchItemLogs(item);
+                                            openPurchaseLogModal(item);
                                         }
                                     }}
                                     style={{
@@ -1879,8 +2014,49 @@ export default function InventorySnapshotsPage() {
                             gap: 12,
                         }}
                     >
-                        <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
-                            {t.logItemTitle}
+                        <div
+                            style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: 10,
+                            }}
+                        >
+                            <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
+                                {t.logItemTitle}
+                            </div>
+                            {logModalItem.reason === "purchase" && (
+                                <button
+                                    type="button"
+                                    onClick={() => syncPurchaseInfoFromCurrentItem(logModalItem)}
+                                    disabled={syncingPurchaseLogId === logModalItem.id}
+                                    style={{
+                                        width: "auto",
+                                        minHeight: 30,
+                                        padding: "6px 10px",
+                                        borderRadius: 999,
+                                        border: "1px solid #d1d5db",
+                                        background: "#f9fafb",
+                                        color: "#111827",
+                                        fontSize: 12,
+                                        fontWeight: 800,
+                                        lineHeight: 1.2,
+                                        whiteSpace: "nowrap",
+                                        flexShrink: 0,
+                                        cursor:
+                                            syncingPurchaseLogId === logModalItem.id
+                                                ? "not-allowed"
+                                                : "pointer",
+                                        opacity: syncingPurchaseLogId === logModalItem.id ? 0.6 : 1,
+                                    }}
+                                >
+                                    {syncingPurchaseLogId === logModalItem.id
+                                        ? c.saving
+                                        : lang === "vi"
+                                            ? "Đồng bộ"
+                                            : "동기화"}
+                                </button>
+                            )}
                         </div>
 
                         <div style={{ ...ui.metaText }}>
@@ -1888,6 +2064,13 @@ export default function InventorySnapshotsPage() {
                                 .filter(Boolean)
                                 .join(" ")}
                         </div>
+                        {logModalItem.reason === "purchase" && (
+                            <div style={{ ...ui.metaText, marginTop: -6 }}>
+                                {lang === "vi"
+                                    ? "Đồng bộ tên món / nơi mua / giá hiện tại vào log nhập này."
+                                    : "현재 품목명/구매처/단가를 이 입고 기록에 반영합니다."}
+                            </div>
+                        )}
 
                         <div
                             style={{
@@ -1902,10 +2085,10 @@ export default function InventorySnapshotsPage() {
                                 <div>{c.loading}</div>
                             ) : itemLogsError ? (
                                 <div>{itemLogsError}</div>
-                            ) : itemLogs.length === 0 ? (
+                            ) : recentQuantityLogs.length === 0 ? (
                                 <div>{c.noLogs}</div>
                             ) : (
-                                itemLogs.map((log) => {
+                                recentQuantityLogs.map((log) => {
                                     const changeQuantity = Number(log.change_quantity ?? 0);
 
                                     return (

@@ -158,6 +158,11 @@ type SupplierSummary = {
   serviceNetChange: number;
   otherNetChange: number;
   totalLogNetChange: number;
+  items: MonthlyItemResult[];
+};
+
+type SupplierSummaryAccumulator = SupplierSummary & {
+  itemMap: Map<string, MonthlyItemResult>;
 };
 
 const getErrorMessage = (error: unknown) =>
@@ -390,16 +395,63 @@ const getCurrentInventoryItems = async () => {
   })) satisfies SnapshotItem[];
 };
 
-const buildSupplierSummary = (items: MonthlyItemResult[]) => {
-  const map = new Map<string, SupplierSummary>();
+const createSupplierPurchaseItem = (
+  log: InventoryLog,
+  baseItem: MonthlyItemResult | undefined,
+  supplier: string | null,
+  supplierLabel: string
+): MonthlyItemResult => ({
+  itemId: log.item_id ?? log.id * -1,
+  code: baseItem?.code ?? log.code ?? null,
+  name: baseItem?.name ?? log.item_name ?? log.item_name_vi ?? "-",
+  nameVi: baseItem?.nameVi ?? log.item_name_vi ?? null,
+  unit: baseItem?.unit ?? log.unit ?? null,
+  supplier,
+  supplierLabel,
+  part: baseItem?.part ?? log.part ?? null,
+  category: baseItem?.category ?? log.category ?? null,
+  categoryVi: baseItem?.categoryVi ?? log.category_vi ?? null,
+  baselineQuantity: baseItem?.baselineQuantity ?? null,
+  latestQuantity: baseItem?.latestQuantity ?? null,
+  stockNetChange: baseItem?.stockNetChange ?? 0,
+  baselinePurchasePrice: baseItem?.baselinePurchasePrice ?? null,
+  latestPurchasePrice: baseItem?.latestPurchasePrice ?? null,
+  registeredPrice: baseItem?.registeredPrice ?? null,
+  purchasePriceUsed: toNullableNumber(log.new_purchase_price),
+  purchasePriceDiff: baseItem?.purchasePriceDiff ?? null,
+  priceChangedDate: baseItem?.priceChangedDate ?? null,
+  priceChangeEvents: baseItem?.priceChangeEvents ?? [],
+  purchaseQuantity: 0,
+  purchaseLogCount: 0,
+  purchaseAmount: null,
+  purchaseAmountMissing: false,
+  stockCheckNetChange: 0,
+  serviceNetChange: 0,
+  otherNetChange: 0,
+  totalLogNetChange: 0,
+  status: baseItem?.status ?? "existing",
+});
 
-  for (const item of items) {
-    const supplierKey = item.supplier?.trim() || "__none__";
+const buildSupplierSummary = (
+  logs: InventoryLog[],
+  itemResultMap: Map<number, MonthlyItemResult>
+) => {
+  const map = new Map<string, SupplierSummaryAccumulator>();
+
+  for (const log of logs) {
+    const normalizedReason = normalizeInventoryReason(log.reason);
+    const changeQuantity = roundDecimal(toNumber(log.change_quantity));
+
+    if (normalizedReason !== "purchase" || changeQuantity <= 0) continue;
+
+    const supplier = log.new_supplier?.trim() || null;
+    const supplierKey = supplier || "__none__";
+    const supplierLabel = getSupplierLabel(supplier);
     const existing =
       map.get(supplierKey) ??
       ({
-        supplier: item.supplier?.trim() || null,
-        supplierLabel: item.supplierLabel,
+        supplier,
+        supplierLabel,
         itemCount: 0,
         purchaseQuantity: 0,
         purchaseAmountKnown: 0,
@@ -409,38 +461,81 @@ const buildSupplierSummary = (items: MonthlyItemResult[]) => {
         serviceNetChange: 0,
         otherNetChange: 0,
         totalLogNetChange: 0,
-      } satisfies SupplierSummary);
+        items: [],
+        itemMap: new Map<string, MonthlyItemResult>(),
+      } satisfies SupplierSummaryAccumulator);
 
-    existing.itemCount += 1;
+    const purchasePrice = toNullableNumber(log.new_purchase_price);
+    const purchaseAmount =
+      purchasePrice === null ? null : roundDecimal(changeQuantity * purchasePrice);
+    const itemKey =
+      log.item_id !== null && log.item_id !== undefined
+        ? String(log.item_id)
+        : `log:${log.id}`;
+    const baseItem =
+      log.item_id !== null && log.item_id !== undefined
+        ? itemResultMap.get(Number(log.item_id))
+        : undefined;
+    const supplierItem =
+      existing.itemMap.get(itemKey) ??
+      createSupplierPurchaseItem(log, baseItem, supplier, supplierLabel);
+
     existing.purchaseQuantity = roundDecimal(
-      existing.purchaseQuantity + item.purchaseQuantity
+      existing.purchaseQuantity + changeQuantity
     );
-    existing.purchaseAmountKnown = roundDecimal(
-      existing.purchaseAmountKnown + (item.purchaseAmount ?? 0)
+    supplierItem.purchaseQuantity = roundDecimal(
+      supplierItem.purchaseQuantity + changeQuantity
     );
-    if (item.purchaseAmountMissing) {
+    supplierItem.purchaseLogCount += 1;
+
+    if (purchaseAmount === null) {
       existing.purchaseAmountMissingCount += 1;
+      supplierItem.purchaseAmountMissing = true;
+    } else {
+      existing.purchaseAmountKnown = roundDecimal(
+        existing.purchaseAmountKnown + purchaseAmount
+      );
+      supplierItem.purchaseAmount = roundDecimal(
+        (supplierItem.purchaseAmount ?? 0) + purchaseAmount
+      );
     }
-    existing.stockNetChange = roundDecimal(
-      existing.stockNetChange + item.stockNetChange
-    );
-    existing.stockCheckNetChange = roundDecimal(
-      existing.stockCheckNetChange + item.stockCheckNetChange
-    );
-    existing.serviceNetChange = roundDecimal(
-      existing.serviceNetChange + item.serviceNetChange
-    );
-    existing.otherNetChange = roundDecimal(
-      existing.otherNetChange + item.otherNetChange
-    );
-    existing.totalLogNetChange = roundDecimal(
-      existing.totalLogNetChange + item.totalLogNetChange
-    );
+
+    existing.itemMap.set(itemKey, supplierItem);
 
     map.set(supplierKey, existing);
   }
 
-  return [...map.values()].sort((a, b) => {
+  return [...map.values()].map((supplier) => {
+    const items = [...supplier.itemMap.values()].sort((a, b) => {
+      const amountA = a.purchaseAmount ?? 0;
+      const amountB = b.purchaseAmount ?? 0;
+      const amountDiff = amountB - amountA;
+      if (amountDiff !== 0) return amountDiff;
+
+      const quantityDiff = b.purchaseQuantity - a.purchaseQuantity;
+      if (quantityDiff !== 0) return quantityDiff;
+
+      return a.name.localeCompare(b.name, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+    });
+
+    return {
+      supplier: supplier.supplier,
+      supplierLabel: supplier.supplierLabel,
+      itemCount: items.length,
+      purchaseQuantity: supplier.purchaseQuantity,
+      purchaseAmountKnown: supplier.purchaseAmountKnown,
+      purchaseAmountMissingCount: supplier.purchaseAmountMissingCount,
+      stockNetChange: supplier.stockNetChange,
+      stockCheckNetChange: supplier.stockCheckNetChange,
+      serviceNetChange: supplier.serviceNetChange,
+      otherNetChange: supplier.otherNetChange,
+      totalLogNetChange: supplier.totalLogNetChange,
+      items,
+    } satisfies SupplierSummary;
+  }).sort((a, b) => {
     const amountDiff = b.purchaseAmountKnown - a.purchaseAmountKnown;
     if (amountDiff !== 0) return amountDiff;
 
@@ -779,7 +874,11 @@ export async function GET(request: Request) {
     const purchaseAmountMissingCount = items.filter(
       (item) => item.purchaseAmountMissing
     ).length;
-    const supplierSummary = buildSupplierSummary(items);
+    const itemResultMap = new Map(items.map((item) => [item.itemId, item]));
+    const supplierSummary = buildSupplierSummary(
+      (logs ?? []) as InventoryLog[],
+      itemResultMap
+    );
 
     const days = [...dayMap.values()].sort((a, b) =>
       a.businessDate.localeCompare(b.businessDate)
