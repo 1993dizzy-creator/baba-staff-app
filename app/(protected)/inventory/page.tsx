@@ -104,7 +104,13 @@ const MAX_ORIGINAL_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_COMPRESSED_IMAGE_BYTES = 1024 * 1024;
 const MAX_IMAGE_SIDE = 900;
 const IMAGE_QUALITY = 0.72;
+const JPEG_FALLBACK_QUALITY = 0.78;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const UNSUPPORTED_MOBILE_IMAGE_TYPES = new Set(["image/heic", "image/heif"]);
+const UNSUPPORTED_IMAGE_MESSAGE =
+    "이 사진 형식은 업로드할 수 없습니다. 카메라 설정에서 JPG로 촬영하거나, 갤러리에서 JPG/PNG로 변환 후 다시 시도해주세요.";
+const COMPRESSED_IMAGE_TOO_LARGE_MESSAGE =
+    "압축 후 이미지가 1MB를 초과했습니다. 조금 더 작은 사진으로 다시 시도해주세요.";
 
 const getInventoryImageUrl = (imagePath?: string | null) => {
     if (!imagePath) return "";
@@ -120,13 +126,76 @@ const getInventoryImageUrl = (imagePath?: string | null) => {
     return `${supabaseUrl}/storage/v1/object/public/${INVENTORY_IMAGE_BUCKET}/${encodedPath}`;
 };
 
+const getFileExtension = (fileName: string) => {
+    const extension = fileName.split(".").pop()?.toLowerCase() || "";
+    return extension;
+};
+
+const getImageType = (file: File) => {
+    if (file.type) return file.type;
+
+    const extension = getFileExtension(file.name);
+    if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+    if (extension === "png") return "image/png";
+    if (extension === "webp") return "image/webp";
+    if (extension === "heic") return "image/heic";
+    if (extension === "heif") return "image/heif";
+    return "";
+};
+
+const canvasToBlob = (
+    canvas: HTMLCanvasElement,
+    type: "image/webp" | "image/jpeg",
+    quality: number
+) =>
+    new Promise<Blob | null>((resolve) => {
+        canvas.toBlob(resolve, type, quality);
+    });
+
+const getPhotoUploadErrorMessage = (error?: string, message?: string) => {
+    if (error === "file_too_large") return COMPRESSED_IMAGE_TOO_LARGE_MESSAGE;
+    if (error === "unsupported_file_type") return UNSUPPORTED_IMAGE_MESSAGE;
+    if (error === "storage_bucket_not_found") {
+        return "사진 저장소 설정을 찾을 수 없습니다. 관리자에게 문의해주세요.";
+    }
+    if (error === "storage_upload_failed") {
+        return "사진 저장 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+    }
+    if (error === "missing_server_env") {
+        return "서버 사진 업로드 설정이 누락되었습니다. 관리자에게 문의해주세요.";
+    }
+    if (error === "database_update_failed") {
+        return "사진은 저장됐지만 품목 정보 업데이트에 실패했습니다. 관리자에게 문의해주세요.";
+    }
+    if (error === "form_data_parse_failed") {
+        return "업로드 데이터를 읽지 못했습니다. 사진을 다시 선택해주세요.";
+    }
+    if (error === "missing_file") return "사진 파일을 찾을 수 없습니다. 다시 선택해주세요.";
+    if (error === "invalid_user") return "사용자 확인에 실패했습니다. 다시 로그인해주세요.";
+
+    return message || "사진 업로드에 실패했습니다.";
+};
+
 const compressInventoryImage = async (file: File) => {
-    if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
-        throw new Error("Unsupported image type");
+    const imageType = getImageType(file);
+
+    console.info("[INVENTORY_PHOTO_SELECTED_FILE]", {
+        name: file.name,
+        type: file.type || "(empty)",
+        inferredType: imageType || "(unknown)",
+        size: file.size,
+    });
+
+    if (UNSUPPORTED_MOBILE_IMAGE_TYPES.has(imageType)) {
+        throw new Error(UNSUPPORTED_IMAGE_MESSAGE);
+    }
+
+    if (!ALLOWED_IMAGE_TYPES.has(imageType)) {
+        throw new Error(UNSUPPORTED_IMAGE_MESSAGE);
     }
 
     if (file.size > MAX_ORIGINAL_IMAGE_BYTES) {
-        throw new Error("Image file is too large");
+        throw new Error("원본 이미지가 5MB를 초과했습니다. 조금 더 작은 사진으로 다시 시도해주세요.");
     }
 
     const objectUrl = URL.createObjectURL(file);
@@ -154,17 +223,25 @@ const compressInventoryImage = async (file: File) => {
 
         context.drawImage(image, 0, 0, width, height);
 
-        const blob = await new Promise<Blob | null>((resolve) => {
-            canvas.toBlob(resolve, "image/webp", IMAGE_QUALITY);
-        });
+        const webpBlob = await canvasToBlob(canvas, "image/webp", IMAGE_QUALITY);
+        const blob =
+            webpBlob && webpBlob.size > 0
+                ? webpBlob
+                : await canvasToBlob(canvas, "image/jpeg", JPEG_FALLBACK_QUALITY);
+        const compressedType =
+            webpBlob && webpBlob.size > 0 ? "image/webp" : "image/jpeg";
 
         if (!blob) throw new Error("Failed to compress image");
 
         if (blob.size > MAX_COMPRESSED_IMAGE_BYTES) {
-            throw new Error("Compressed image is too large");
+            throw new Error(COMPRESSED_IMAGE_TOO_LARGE_MESSAGE);
         }
 
-        return new File([blob], "main.webp", { type: "image/webp" });
+        return new File(
+            [blob],
+            compressedType === "image/webp" ? "main.webp" : "main.jpg",
+            { type: compressedType }
+        );
     } finally {
         URL.revokeObjectURL(objectUrl);
     }
@@ -1108,7 +1185,7 @@ export default function InventoryPage() {
 
             if (!res.ok || !result.ok) {
                 console.error(result);
-                alert(result.message || "Image upload failed");
+                alert(getPhotoUploadErrorMessage(result.error, result.message));
                 return false;
             }
 
