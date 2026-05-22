@@ -6,7 +6,7 @@ import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { commonText, inventoryText } from "@/lib/text";
 import SubNav from "@/components/SubNav";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import {PART_VALUES,PART_META,type PartValue,} from "@/lib/common/parts";
 import { getBusinessDate } from "@/lib/inventory/business-day";
@@ -79,6 +79,7 @@ export default function InventorySnapshotsPage() {
     const { lang } = useLanguage();
     const t = inventoryText[lang];
     const c = commonText[lang];
+    const router = useRouter();
 
     const [batchList, setBatchList] = useState<SnapshotBatch[]>([]);
     const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
@@ -403,6 +404,16 @@ export default function InventorySnapshotsPage() {
     const openPurchaseLogModal = async (item: SnapshotItem) => {
         const latestPurchaseItem = getLatestPurchaseItemForModal(item);
         await fetchItemLogs(latestPurchaseItem);
+    };
+
+    const openInventoryEdit = (item: SnapshotItem) => {
+        const itemId = Number(item.item_id);
+        if (!Number.isFinite(itemId) || itemId <= 0) {
+            alert(c.noData);
+            return;
+        }
+
+        router.push(`/inventory?itemId=${itemId}&mode=edit`);
     };
 
     const syncPurchaseInfoFromCurrentItem = async (item: SnapshotItem) => {
@@ -2025,7 +2036,15 @@ export default function InventorySnapshotsPage() {
                             <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
                                 {t.logItemTitle}
                             </div>
-                            {logModalItem.reason === "purchase" && (
+                            <div
+                                style={{
+                                    display: "flex",
+                                    gap: 6,
+                                    flexShrink: 0,
+                                    flexWrap: "wrap",
+                                    justifyContent: "flex-end",
+                                }}
+                            >
                                 <button
                                     type="button"
                                     onClick={() => syncPurchaseInfoFromCurrentItem(logModalItem)}
@@ -2042,7 +2061,6 @@ export default function InventorySnapshotsPage() {
                                         fontWeight: 800,
                                         lineHeight: 1.2,
                                         whiteSpace: "nowrap",
-                                        flexShrink: 0,
                                         cursor:
                                             syncingPurchaseLogId === logModalItem.id
                                                 ? "not-allowed"
@@ -2050,13 +2068,30 @@ export default function InventorySnapshotsPage() {
                                         opacity: syncingPurchaseLogId === logModalItem.id ? 0.6 : 1,
                                     }}
                                 >
-                                    {syncingPurchaseLogId === logModalItem.id
-                                        ? c.saving
-                                        : lang === "vi"
-                                            ? "Đồng bộ"
-                                            : "동기화"}
+                                    {syncingPurchaseLogId === logModalItem.id ? c.saving : "동기화"}
                                 </button>
-                            )}
+
+                                <button
+                                    type="button"
+                                    onClick={() => openInventoryEdit(logModalItem)}
+                                    style={{
+                                        width: "auto",
+                                        minHeight: 30,
+                                        padding: "6px 10px",
+                                        borderRadius: 999,
+                                        border: "1px solid royalblue",
+                                        background: "royalblue",
+                                        color: "#fff",
+                                        fontSize: 12,
+                                        fontWeight: 800,
+                                        lineHeight: 1.2,
+                                        whiteSpace: "nowrap",
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    수정
+                                </button>
+                            </div>
                         </div>
 
                         <div style={{ ...ui.metaText }}>

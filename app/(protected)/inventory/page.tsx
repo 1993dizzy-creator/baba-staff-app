@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import { commonText, inventoryText } from "@/lib/text";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import SubNav from "@/components/SubNav";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import {PART_VALUES, PART_META, type PartValue,} from "@/lib/common/parts";
@@ -35,6 +35,7 @@ type InventoryItem = {
     supplier?: string | null;
     code?: string | null;
     low_stock_threshold?: string | number | null;
+    image_path?: string | null;
     updated_at?: string | null;
     updated_by_name?: string | null;
 };
@@ -95,6 +96,80 @@ const normalizeSearchText = (value: unknown) =>
         .toLowerCase()
         .trim();
 
+const getErrorMessage = (error: unknown) =>
+    error instanceof Error ? error.message : "Server error";
+
+const INVENTORY_IMAGE_BUCKET = "inventory-images";
+const MAX_ORIGINAL_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_COMPRESSED_IMAGE_BYTES = 1024 * 1024;
+const MAX_IMAGE_SIDE = 900;
+const IMAGE_QUALITY = 0.72;
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+const getInventoryImageUrl = (imagePath?: string | null) => {
+    if (!imagePath) return "";
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    if (!supabaseUrl) return "";
+
+    const encodedPath = imagePath
+        .split("/")
+        .map((part) => encodeURIComponent(part))
+        .join("/");
+
+    return `${supabaseUrl}/storage/v1/object/public/${INVENTORY_IMAGE_BUCKET}/${encodedPath}`;
+};
+
+const compressInventoryImage = async (file: File) => {
+    if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+        throw new Error("Unsupported image type");
+    }
+
+    if (file.size > MAX_ORIGINAL_IMAGE_BYTES) {
+        throw new Error("Image file is too large");
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+
+    try {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error("Failed to load image"));
+            img.src = objectUrl;
+        });
+
+        const ratio = Math.min(
+            1,
+            MAX_IMAGE_SIDE / Math.max(image.naturalWidth, image.naturalHeight)
+        );
+        const width = Math.max(1, Math.round(image.naturalWidth * ratio));
+        const height = Math.max(1, Math.round(image.naturalHeight * ratio));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Failed to prepare image");
+
+        context.drawImage(image, 0, 0, width, height);
+
+        const blob = await new Promise<Blob | null>((resolve) => {
+            canvas.toBlob(resolve, "image/webp", IMAGE_QUALITY);
+        });
+
+        if (!blob) throw new Error("Failed to compress image");
+
+        if (blob.size > MAX_COMPRESSED_IMAGE_BYTES) {
+            throw new Error("Compressed image is too large");
+        }
+
+        return new File([blob], "main.webp", { type: "image/webp" });
+    } finally {
+        URL.revokeObjectURL(objectUrl);
+    }
+};
+
 
 export default function InventoryPage() {
 
@@ -108,6 +183,8 @@ export default function InventoryPage() {
             : "kitchen";
 
     const { lang } = useLanguage();
+    const pathname = usePathname();
+    const searchParams = useSearchParams();
     const t = inventoryText[lang];
     const c = commonText[lang];
     const [itemName, setItemName] = useState("");
@@ -124,6 +201,9 @@ export default function InventoryPage() {
     const [supplier, setSupplier] = useState("");
     const [lowStockThreshold, setLowStockThreshold] = useState("");
     const [code, setCode] = useState("");
+    const [formPhotoFile, setFormPhotoFile] = useState<File | null>(null);
+    const [formPhotoPreviewUrl, setFormPhotoPreviewUrl] = useState("");
+    const [isFormPhotoProcessing, setIsFormPhotoProcessing] = useState(false);
 
     const [inventoryList, setInventoryList] = useState<InventoryItem[]>([]);
     const [recentLogs, setRecentLogs] = useState<InventoryLog[]>([]);
@@ -157,6 +237,9 @@ export default function InventoryPage() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDeletingId, setIsDeletingId] = useState<number | null>(null);
     const [isQuickSaving, setIsQuickSaving] = useState(false);
+    const [photoBusyItemId, setPhotoBusyItemId] = useState<number | null>(null);
+    const [photoModalItem, setPhotoModalItem] = useState<InventoryItem | null>(null);
+    const [handledDeepLinkKey, setHandledDeepLinkKey] = useState("");
     const [showLowStockBanner, setShowLowStockBanner] = useState(true);
 
     const itemNameRef = useRef<HTMLInputElement>(null);
@@ -388,6 +471,14 @@ export default function InventoryPage() {
         }
 
         if (changes.length === 0) {
+            if (log.source === "edit_form") {
+                changes.push({
+                    label: c.itemName,
+                    after: getDisplayLogItemName(log),
+                });
+                return changes;
+            }
+
             changes.push({
                 label: c.update,
                 after: c.noData,
@@ -495,6 +586,15 @@ export default function InventoryPage() {
 
     const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
 
+    const clearFormPhotoDraft = () => {
+        if (formPhotoPreviewUrl) {
+            URL.revokeObjectURL(formPhotoPreviewUrl);
+        }
+
+        setFormPhotoFile(null);
+        setFormPhotoPreviewUrl("");
+    };
+
     const resetForm = () => {
         setItemName("");
         setQuantity("");
@@ -512,6 +612,7 @@ export default function InventoryPage() {
         setIsCustomSupplier(false);
         setCategoryKo("");
         setCategoryVi("");
+        clearFormPhotoDraft();
     };
 
     const handleDelete = async (id: number) => {
@@ -578,6 +679,7 @@ export default function InventoryPage() {
         setIsFormOpen(true);
         setIsRegistrationTypeModalOpen(false);
         setRegistrationType(null);
+        clearFormPhotoDraft();
         setEditingId(item.id);
         setOpenItemId(item.id);
         setPart(nextPart);
@@ -793,6 +895,14 @@ export default function InventoryPage() {
                     return;
                 }
 
+                if (formPhotoFile && result.data?.id) {
+                    const uploaded = await uploadInventoryPhoto(result.data.id, formPhotoFile);
+
+                    if (!uploaded) {
+                        alert("Item was saved, but image upload failed.");
+                    }
+                }
+
                 alert(c.saveSuccess);
             }
 
@@ -981,6 +1091,143 @@ export default function InventoryPage() {
         }
     };
 
+    const uploadInventoryPhoto = async (itemId: number, file: File) => {
+        setPhotoBusyItemId(itemId);
+
+        try {
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("actorUsername", actorUsername);
+
+            const res = await fetch(`/api/inventory/items/${itemId}/photo`, {
+                method: "POST",
+                body: formData,
+            });
+
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                console.error(result);
+                alert(result.message || "Image upload failed");
+                return false;
+            }
+
+            setInventoryList((prev) =>
+                prev.map((item) =>
+                    item.id === itemId
+                        ? {
+                            ...item,
+                            image_path: result.data?.image_path ?? null,
+                            updated_at: result.data?.updated_at ?? item.updated_at,
+                            updated_by_name:
+                                result.data?.updated_by_name ?? item.updated_by_name,
+                        }
+                        : item
+                )
+            );
+
+            return true;
+        } finally {
+            setPhotoBusyItemId(null);
+        }
+    };
+
+    const handleInventoryPhotoChange = async (
+        e: ChangeEvent<HTMLInputElement>,
+        itemId: number
+    ) => {
+        const file = e.target.files?.[0];
+        e.target.value = "";
+
+        if (!file) return;
+
+        try {
+            const compressedFile = await compressInventoryImage(file);
+            const uploaded = await uploadInventoryPhoto(itemId, compressedFile);
+
+            if (uploaded) {
+                setPhotoModalItem(null);
+            }
+        } catch (error) {
+            console.error(error);
+            alert(getErrorMessage(error));
+        }
+    };
+
+    const handleFormPhotoChange = async (e: ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = "";
+
+        if (!file) return;
+
+        setIsFormPhotoProcessing(true);
+
+        try {
+            const compressedFile = await compressInventoryImage(file);
+
+            if (editingId) {
+                await uploadInventoryPhoto(editingId, compressedFile);
+                clearFormPhotoDraft();
+                return;
+            }
+
+            if (formPhotoPreviewUrl) {
+                URL.revokeObjectURL(formPhotoPreviewUrl);
+            }
+
+            setFormPhotoFile(compressedFile);
+            setFormPhotoPreviewUrl(URL.createObjectURL(compressedFile));
+        } catch (error) {
+            console.error(error);
+            alert(getErrorMessage(error));
+        } finally {
+            setIsFormPhotoProcessing(false);
+        }
+    };
+
+    const handleInventoryPhotoDelete = async (itemId: number) => {
+        if (photoBusyItemId === itemId) return;
+
+        setPhotoBusyItemId(itemId);
+
+        try {
+            const res = await fetch(`/api/inventory/items/${itemId}/photo`, {
+                method: "DELETE",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    actorUsername,
+                }),
+            });
+
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                console.error(result);
+                alert(result.message || "Image delete failed");
+                return;
+            }
+
+            setInventoryList((prev) =>
+                prev.map((item) =>
+                    item.id === itemId
+                        ? {
+                            ...item,
+                            image_path: result.data?.image_path ?? null,
+                            updated_at: result.data?.updated_at ?? item.updated_at,
+                            updated_by_name:
+                                result.data?.updated_by_name ?? item.updated_by_name,
+                        }
+                        : item
+                )
+            );
+            setPhotoModalItem(null);
+        } finally {
+            setPhotoBusyItemId(null);
+        }
+    };
+
     const handleKeyDown = (
         e: React.KeyboardEvent,
         nextRef?: React.RefObject<HTMLInputElement | HTMLSelectElement | null>
@@ -1014,6 +1261,45 @@ export default function InventoryPage() {
     useEffect(() => {
         localStorage.setItem("inventory_part_filter", partFilter);
     }, [partFilter]);
+
+    useEffect(() => {
+        const itemIdParam = searchParams.get("itemId");
+        const mode = searchParams.get("mode");
+        const itemId = Number(itemIdParam);
+        const deepLinkKey = `${itemIdParam || ""}:${mode || ""}`;
+
+        if (!itemIdParam || handledDeepLinkKey === deepLinkKey) return;
+        if (!Number.isFinite(itemId) || itemId <= 0) {
+            setHandledDeepLinkKey(deepLinkKey);
+            return;
+        }
+
+        const targetItem = inventoryList.find((item) => item.id === itemId);
+        if (!targetItem) {
+            if (inventoryList.length > 0) setHandledDeepLinkKey(deepLinkKey);
+            return;
+        }
+
+        setPartFilter(
+            PART_VALUES.includes(targetItem.part as PartValue)
+                ? (targetItem.part as PartValue)
+                : defaultPart
+        );
+        setCategoryFilter("all");
+        setOpenItemId(targetItem.id);
+        setQuantityDrafts((prev) => ({
+            ...prev,
+            [targetItem.id]: String(targetItem.quantity ?? ""),
+        }));
+
+        if (mode === "edit") {
+            handleEdit(targetItem);
+        }
+
+        setHandledDeepLinkKey(deepLinkKey);
+        // handleEdit intentionally stays out of deps so this deep link runs once per query key.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [defaultPart, handledDeepLinkKey, inventoryList, searchParams]);
 
 
     useEffect(() => {
@@ -1221,6 +1507,9 @@ export default function InventoryPage() {
         ].filter((group): group is InventoryLogGroup => Boolean(group.latest))
         : [];
 
+    const editingItem = editingId
+        ? inventoryList.find((item) => item.id === editingId) || null
+        : null;
 
 
     const labelStyle = {
@@ -1230,7 +1519,6 @@ export default function InventoryPage() {
         marginBottom: 6,
     };
 
-    const pathname = usePathname();
     const inventoryTabs = getInventoryTabs(pathname, lang);
 
     return (
@@ -1852,6 +2140,85 @@ export default function InventoryPage() {
                                                         {t.quickGuide}
                                                     </div>
 
+                                                    <div
+                                                        style={{
+                                                            display: "flex",
+                                                            flexDirection: "column",
+                                                            gap: 8,
+                                                            marginBottom: 10,
+                                                        }}
+                                                    >
+                                                        {item.image_path ? (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setPhotoModalItem(item)}
+                                                                style={{
+                                                                    width: "100%",
+                                                                    padding: 0,
+                                                                    border: 0,
+                                                                    background: "transparent",
+                                                                    cursor: "pointer",
+                                                                }}
+                                                            >
+                                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                                <img
+                                                                    src={getInventoryImageUrl(item.image_path)}
+                                                                    alt={getDisplayItemName(item)}
+                                                                    style={{
+                                                                        width: "100%",
+                                                                        maxHeight: 240,
+                                                                        objectFit: "contain",
+                                                                        borderRadius: 12,
+                                                                        border: "1px solid #e5e7eb",
+                                                                        background: "#f8fafc",
+                                                                    }}
+                                                                />
+                                                            </button>
+                                                        ) : (
+                                                            <div
+                                                                style={{
+                                                                    display: "flex",
+                                                                    justifyContent: "center",
+                                                                    width: "100%",
+                                                                }}
+                                                            >
+                                                                <input
+                                                                    id={`inventory-photo-${item.id}`}
+                                                                    type="file"
+                                                                    accept="image/jpeg,image/png,image/webp"
+                                                                    onChange={(e) => handleInventoryPhotoChange(e, item.id)}
+                                                                    style={{ display: "none" }}
+                                                                />
+                                                                <label
+                                                                    htmlFor={`inventory-photo-${item.id}`}
+                                                                style={{
+                                                                    ...ui.subButton,
+                                                                    width: "100%",
+                                                                    minWidth: 94,
+                                                                    padding: "7px 12px",
+                                                                    fontSize: 13,
+                                                                    fontWeight: 700,
+                                                                    display: "flex",
+                                                                    alignItems: "center",
+                                                                    justifyContent: "center",
+                                                                    textAlign: "center",
+                                                                    cursor:
+                                                                        photoBusyItemId === item.id
+                                                                            ? "not-allowed"
+                                                                                : "pointer",
+                                                                        opacity: photoBusyItemId === item.id ? 0.6 : 1,
+                                                                        pointerEvents:
+                                                                            photoBusyItemId === item.id ? "none" : "auto",
+                                                                    }}
+                                                                >
+                                                                    {photoBusyItemId === item.id
+                                                                        ? c.saving
+                                                                        : "📷 사진 추가"}
+                                                                </label>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
                                                     <div style={ui.detailGrid}>
                                                         <div style={ui.detailLabel}>{t.lowStockThreshold}</div>
                                                         <div style={ui.detailValue}>{item.low_stock_threshold ?? 1}</div>
@@ -2250,6 +2617,115 @@ export default function InventoryPage() {
                             />
                         </div>
 
+                        <div>
+                            <div style={labelStyle}>사진</div>
+                            {(formPhotoPreviewUrl || editingItem?.image_path) && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                    src={
+                                        formPhotoPreviewUrl ||
+                                        getInventoryImageUrl(editingItem?.image_path)
+                                    }
+                                    alt={itemName || c.itemName}
+                                    style={{
+                                        width: "100%",
+                                        maxHeight: 240,
+                                        objectFit: "contain",
+                                        borderRadius: 12,
+                                        border: "1px solid #e5e7eb",
+                                        background: "#f8fafc",
+                                        marginBottom: 8,
+                                    }}
+                                />
+                            )}
+
+                            <div
+                                style={{
+                                    display: "flex",
+                                    gap: 6,
+                                    flexWrap: "wrap",
+                                }}
+                            >
+                                <input
+                                    id="inventory-form-photo"
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp"
+                                    onChange={handleFormPhotoChange}
+                                    style={{ display: "none" }}
+                                />
+                                <label
+                                    htmlFor="inventory-form-photo"
+                                    style={{
+                                        ...ui.subButton,
+                                        width: "auto",
+                                        minWidth: 84,
+                                        padding: "8px 12px",
+                                        fontSize: 13,
+                                        fontWeight: 700,
+                                        cursor:
+                                            isFormPhotoProcessing ||
+                                            (editingId && photoBusyItemId === editingId)
+                                                ? "not-allowed"
+                                                : "pointer",
+                                        opacity:
+                                            isFormPhotoProcessing ||
+                                            (editingId && photoBusyItemId === editingId)
+                                                ? 0.6
+                                                : 1,
+                                    }}
+                                >
+                                    {isFormPhotoProcessing ||
+                                    (editingId && photoBusyItemId === editingId)
+                                        ? c.saving
+                                        : formPhotoPreviewUrl || editingItem?.image_path
+                                            ? "사진 변경"
+                                            : "사진 추가"}
+                                </label>
+
+                                {formPhotoPreviewUrl && !editingId && (
+                                    <button
+                                        type="button"
+                                        onClick={clearFormPhotoDraft}
+                                        style={{
+                                            ...ui.subButton,
+                                            width: "auto",
+                                            minWidth: 84,
+                                            padding: "8px 12px",
+                                            fontSize: 13,
+                                            fontWeight: 700,
+                                            color: "crimson",
+                                            border: "1px solid #fecaca",
+                                            background: "#fff5f5",
+                                        }}
+                                    >
+                                        사진 삭제
+                                    </button>
+                                )}
+
+                                {editingId && editingItem?.image_path && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleInventoryPhotoDelete(editingId)}
+                                        disabled={photoBusyItemId === editingId}
+                                        style={{
+                                            ...ui.subButton,
+                                            width: "auto",
+                                            minWidth: 84,
+                                            padding: "8px 12px",
+                                            fontSize: 13,
+                                            fontWeight: 700,
+                                            color: "crimson",
+                                            border: "1px solid #fecaca",
+                                            background: "#fff5f5",
+                                            opacity: photoBusyItemId === editingId ? 0.6 : 1,
+                                        }}
+                                    >
+                                        사진 삭제
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
                         {/* 거래처 */}
                         <div>
                             <div style={labelStyle}>
@@ -2594,6 +3070,128 @@ export default function InventoryPage() {
                     </div>
                 )}
             </div>
+
+            {photoModalItem && photoModalItem.image_path && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        zIndex: 1000,
+                        padding: 16,
+                    }}
+                    onClick={() => setPhotoModalItem(null)}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 520,
+                            maxHeight: "90vh",
+                            overflowY: "auto",
+                            background: "#fff",
+                            borderRadius: 14,
+                            padding: 14,
+                            boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 10,
+                        }}
+                    >
+                        <div style={{ ...ui.metaText, fontWeight: 800 }}>
+                            {getDisplayItemName(photoModalItem)}
+                        </div>
+
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                            src={getInventoryImageUrl(photoModalItem.image_path)}
+                            alt={getDisplayItemName(photoModalItem)}
+                            style={{
+                                width: "100%",
+                                maxHeight: "62vh",
+                                objectFit: "contain",
+                                borderRadius: 12,
+                                background: "#f8fafc",
+                                border: "1px solid #e5e7eb",
+                            }}
+                        />
+
+                        <div
+                            style={{
+                                display: "grid",
+                                gridTemplateColumns: "1fr 1fr",
+                                gap: 8,
+                            }}
+                        >
+                            <input
+                                id={`inventory-photo-modal-${photoModalItem.id}`}
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
+                                onChange={(e) =>
+                                    handleInventoryPhotoChange(e, photoModalItem.id)
+                                }
+                                style={{ display: "none" }}
+                            />
+                            <label
+                                htmlFor={`inventory-photo-modal-${photoModalItem.id}`}
+                                style={{
+                                    ...ui.subButton,
+                                    width: "100%",
+                                    minWidth: 0,
+                                    padding: "9px 10px",
+                                    fontSize: 13,
+                                    fontWeight: 800,
+                                    textAlign: "center",
+                                    cursor:
+                                        photoBusyItemId === photoModalItem.id
+                                            ? "not-allowed"
+                                            : "pointer",
+                                    opacity:
+                                        photoBusyItemId === photoModalItem.id ? 0.6 : 1,
+                                    pointerEvents:
+                                        photoBusyItemId === photoModalItem.id ? "none" : "auto",
+                                }}
+                            >
+                                {photoBusyItemId === photoModalItem.id
+                                    ? c.saving
+                                    : "📷 사진 변경"}
+                            </label>
+
+                            <button
+                                type="button"
+                                onClick={() => handleInventoryPhotoDelete(photoModalItem.id)}
+                                disabled={photoBusyItemId === photoModalItem.id}
+                                style={{
+                                    ...ui.subButton,
+                                    width: "100%",
+                                    minWidth: 0,
+                                    padding: "9px 10px",
+                                    fontSize: 13,
+                                    fontWeight: 800,
+                                    color: "crimson",
+                                    border: "1px solid #fecaca",
+                                    background: "#fff5f5",
+                                    opacity:
+                                        photoBusyItemId === photoModalItem.id ? 0.6 : 1,
+                                }}
+                            >
+                                🗑️ 사진 삭제
+                            </button>
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={() => setPhotoModalItem(null)}
+                            style={ui.subButton}
+                        >
+                            {c.close}
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {quickSaveItem && (
                 <div

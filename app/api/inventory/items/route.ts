@@ -15,6 +15,8 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+const INVENTORY_IMAGE_BUCKET = "inventory-images";
+
 const getActor = async (actorUsername?: string) => {
   if (!actorUsername) return null;
 
@@ -253,7 +255,8 @@ export async function PATCH(req: Request) {
     unit,
     code,
     supplier,
-    low_stock_threshold
+    low_stock_threshold,
+    image_path
   `)
       .eq("id", Number(id))
       .maybeSingle();
@@ -309,7 +312,8 @@ export async function PATCH(req: Request) {
     unit,
     code,
     supplier,
-    low_stock_threshold
+    low_stock_threshold,
+    image_path
   `)
       .single();
 
@@ -464,7 +468,8 @@ export async function DELETE(req: Request) {
         unit,
         code,
         supplier,
-        low_stock_threshold
+        low_stock_threshold,
+        image_path
       `);
 
     if (deleteError) throw deleteError;
@@ -477,6 +482,16 @@ export async function DELETE(req: Request) {
     }
 
     const deletedItem = deletedRows[0];
+
+    if (deletedItem.image_path) {
+      const { error: removeImageError } = await supabaseAdmin.storage
+        .from(INVENTORY_IMAGE_BUCKET)
+        .remove([deletedItem.image_path]);
+
+      if (removeImageError) {
+        console.warn("[INVENTORY_DELETE_IMAGE_CLEANUP_ERROR]", removeImageError);
+      }
+    }
 
     await insertInventoryLog(
       {

@@ -13,6 +13,7 @@ export const INVENTORY_SOURCE_VALUES = [
   "edit_form",
   "create",
   "delete",
+  "photo",
   "system",
 ] as const;
 
