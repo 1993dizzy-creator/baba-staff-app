@@ -402,6 +402,13 @@ export default function InventoryPage() {
             ? log.category_vi || log.category || "-"
             : log.category || log.category_vi || "-";
 
+    const getDisplayPhotoLogNote = (note?: string | null) => {
+        if (note === "품목 사진 추가") return t.photoAdded;
+        if (note === "품목 사진 변경") return t.photoChanged;
+        if (note === "품목 사진 삭제") return t.photoDeleted;
+        return note || "-";
+    };
+
     const getActionBadge = (action: string) => {
         if (action === "create") return "NEW";
         if (action === "delete") return "DEL";
@@ -466,6 +473,14 @@ export default function InventoryPage() {
                             ? "crimson"
                             : "#111827",
             });
+        }
+
+        if (log.source === "photo" && log.new_note) {
+            changes.push({
+                label: t.photoLogLabel,
+                after: getDisplayPhotoLogNote(log.new_note),
+            });
+            return changes;
         }
 
         if ((log.prev_note || "") !== (log.new_note || "") && log.new_note) {
@@ -850,7 +865,7 @@ export default function InventoryPage() {
                     parseDecimal(targetItem.low_stock_threshold ?? 1) !== nextLowStock;
 
                 if (!hasChanges) {
-                    alert(c.noChanges);
+                    alert(t.noAdditionalChanges);
                     return;
                 }
 
@@ -1203,6 +1218,7 @@ export default function InventoryPage() {
                 )
             );
 
+            alert(t.photoSaved);
             return true;
         } finally {
             setPhotoBusyItemId(null);
@@ -1300,6 +1316,7 @@ export default function InventoryPage() {
                 )
             );
             setPhotoModalItem(null);
+            alert(t.photoSaved);
         } finally {
             setPhotoBusyItemId(null);
         }
@@ -2290,7 +2307,7 @@ export default function InventoryPage() {
                                                                 >
                                                                     {photoBusyItemId === item.id
                                                                         ? c.saving
-                                                                        : "📷 사진 추가"}
+                                                                        : `📷 ${t.photoAddButton}`}
                                                                 </label>
                                                             </div>
                                                         )}
@@ -2695,7 +2712,7 @@ export default function InventoryPage() {
                         </div>
 
                         <div>
-                            <div style={labelStyle}>사진</div>
+                            <div style={labelStyle}>{t.photoLogLabel}</div>
                             {(formPhotoPreviewUrl || editingItem?.image_path) && (
                                 // eslint-disable-next-line @next/next/no-img-element
                                 <img
@@ -2755,8 +2772,8 @@ export default function InventoryPage() {
                                     (editingId && photoBusyItemId === editingId)
                                         ? c.saving
                                         : formPhotoPreviewUrl || editingItem?.image_path
-                                            ? "사진 변경"
-                                            : "사진 추가"}
+                                            ? t.photoChangeButton
+                                            : t.photoAddButton}
                                 </label>
 
                                 {formPhotoPreviewUrl && !editingId && (
@@ -2775,7 +2792,7 @@ export default function InventoryPage() {
                                             background: "#fff5f5",
                                         }}
                                     >
-                                        사진 삭제
+                                        {t.photoDeleteButton}
                                     </button>
                                 )}
 
@@ -2797,7 +2814,7 @@ export default function InventoryPage() {
                                             opacity: photoBusyItemId === editingId ? 0.6 : 1,
                                         }}
                                     >
-                                        사진 삭제
+                                        {t.photoDeleteButton}
                                     </button>
                                 )}
                             </div>
@@ -3234,7 +3251,7 @@ export default function InventoryPage() {
                             >
                                 {photoBusyItemId === photoModalItem.id
                                     ? c.saving
-                                    : "📷 사진 변경"}
+                                    : `📷 ${t.photoChangeButton}`}
                             </label>
 
                             <button
@@ -3255,7 +3272,7 @@ export default function InventoryPage() {
                                         photoBusyItemId === photoModalItem.id ? 0.6 : 1,
                                 }}
                             >
-                                🗑️ 사진 삭제
+                                {`🗑️ ${t.photoDeleteButton}`}
                             </button>
                         </div>
 

@@ -2068,7 +2068,9 @@ export default function InventorySnapshotsPage() {
                                         opacity: syncingPurchaseLogId === logModalItem.id ? 0.6 : 1,
                                     }}
                                 >
-                                    {syncingPurchaseLogId === logModalItem.id ? c.saving : "동기화"}
+                                    {syncingPurchaseLogId === logModalItem.id
+                                        ? c.saving
+                                        : t.syncLog}
                                 </button>
 
                                 <button
@@ -2089,7 +2091,7 @@ export default function InventorySnapshotsPage() {
                                         cursor: "pointer",
                                     }}
                                 >
-                                    수정
+                                    {t.editItem}
                                 </button>
                             </div>
                         </div>
@@ -2099,13 +2101,9 @@ export default function InventorySnapshotsPage() {
                                 .filter(Boolean)
                                 .join(" ")}
                         </div>
-                        {logModalItem.reason === "purchase" && (
-                            <div style={{ ...ui.metaText, marginTop: -6 }}>
-                                {lang === "vi"
-                                    ? "Đồng bộ tên món / nơi mua / giá hiện tại vào log nhập này."
-                                    : "현재 품목명/구매처/단가를 이 입고 기록에 반영합니다."}
-                            </div>
-                        )}
+                        <div style={{ ...ui.metaText, marginTop: -6 }}>
+                            {t.syncCurrentItemHelp} {t.editItemHelp}
+                        </div>
 
                         <div
                             style={{
