@@ -1,12 +1,34 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+const createSupabaseAdmin = () => {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    const missing = [
+      !supabaseUrl ? "NEXT_PUBLIC_SUPABASE_URL" : null,
+      !serviceRoleKey ? "SUPABASE_SERVICE_ROLE_KEY" : null,
+    ].filter(Boolean);
+    const error = new Error(`Missing server env: ${missing.join(", ")}`);
+    error.name = "MissingServerEnvError";
+    throw error;
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+};
+
 export async function GET() {
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createSupabaseAdmin();
 
     const { data: batches, error: batchError } = await supabase
       .from("inventory_snapshot_batches")
@@ -15,7 +37,11 @@ export async function GET() {
 
     if (batchError) {
       return NextResponse.json(
-        { ok: false, message: batchError.message },
+        {
+          ok: false,
+          error: "snapshot_batches_query_failed",
+          message: batchError.message,
+        },
         { status: 500 }
       );
     }
@@ -27,7 +53,11 @@ export async function GET() {
 
     if (purchaseError) {
       return NextResponse.json(
-        { ok: false, message: purchaseError.message },
+        {
+          ok: false,
+          error: "snapshot_purchase_rows_query_failed",
+          message: purchaseError.message,
+        },
         { status: 500 }
       );
     }
@@ -46,10 +76,18 @@ export async function GET() {
       purchaseBatchMap,
     });
   } catch (error) {
+    const errorCode =
+      error instanceof Error && error.name === "MissingServerEnvError"
+        ? "missing_server_env"
+        : "snapshot_batches_fetch_failed";
+
+    console.error("[SNAPSHOT_BATCHES_FETCH_FAILED]", error);
+
     return NextResponse.json(
       {
         ok: false,
-        message: error instanceof Error ? error.message : String(error),
+        error: errorCode,
+        message: getErrorMessage(error),
       },
       { status: 500 }
     );

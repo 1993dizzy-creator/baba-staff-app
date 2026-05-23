@@ -12,6 +12,7 @@ import SubNav from "@/components/SubNav";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import {PART_VALUES, PART_META, type PartValue,} from "@/lib/common/parts";
 import {
+    INVENTORY_REASON_EMOJIS,
     INVENTORY_REASON_LABELS,
     type InventoryRegistrationType,
     type QuickReasonValue,
@@ -38,6 +39,24 @@ type InventoryItem = {
     image_path?: string | null;
     updated_at?: string | null;
     updated_by_name?: string | null;
+};
+
+type DuplicateInventoryItem = Pick<
+    InventoryItem,
+    "id" | "item_name" | "item_name_vi" | "code" | "part" | "category" | "category_vi"
+>;
+
+type InventoryItemMutationResult = {
+    ok?: boolean;
+    error?: string;
+    message?: string;
+    data?: InventoryItem;
+    duplicateItem?: DuplicateInventoryItem;
+};
+
+type EditFormPendingSave = {
+    id: number;
+    payload: Record<string, unknown>;
 };
 
 type InventoryLog = {
@@ -308,6 +327,9 @@ export default function InventoryPage() {
     const [quickPurchasePrice, setQuickPurchasePrice] = useState("");
     const [isQuickPurchaseCustomSupplier, setIsQuickPurchaseCustomSupplier] =
         useState(false);
+    const [editFormPendingSave, setEditFormPendingSave] =
+        useState<EditFormPendingSave | null>(null);
+    const [isEditReasonSaving, setIsEditReasonSaving] = useState(false);
     const [logModalItem, setLogModalItem] = useState<InventoryItem | null>(null);
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
@@ -409,6 +431,34 @@ export default function InventoryPage() {
         return note || "-";
     };
 
+    const getInventoryReasonLabel = (reason?: string | null) => {
+        if (
+            reason === "purchase" ||
+            reason === "stock_check" ||
+            reason === "service" ||
+            reason === "other" ||
+            reason === "unclassified"
+        ) {
+            return INVENTORY_REASON_LABELS[lang][reason];
+        }
+
+        return INVENTORY_REASON_LABELS[lang].unclassified;
+    };
+
+    const getInventoryReasonBadgeText = (reason?: string | null) => {
+        if (
+            reason !== "purchase" &&
+            reason !== "stock_check" &&
+            reason !== "service" &&
+            reason !== "other" &&
+            reason !== "unclassified"
+        ) {
+            return "";
+        }
+
+        return `${INVENTORY_REASON_EMOJIS[reason]} ${getInventoryReasonLabel(reason)}`;
+    };
+
     const getActionBadge = (action: string) => {
         if (action === "create") return "NEW";
         if (action === "delete") return "DEL";
@@ -481,6 +531,18 @@ export default function InventoryPage() {
                 after: getDisplayPhotoLogNote(log.new_note),
             });
             return changes;
+        }
+
+        if (
+            log.action === "update" &&
+            log.source === "edit_form" &&
+            roundDecimal(Number(log.change_quantity ?? 0)) === 0 &&
+            log.reason
+        ) {
+            changes.push({
+                label: c.note,
+                after: `${t.editInfoUpdatedNote} (${getInventoryReasonLabel(log.reason)})`,
+            });
         }
 
         if ((log.prev_note || "") !== (log.new_note || "") && log.new_note) {
@@ -707,6 +769,113 @@ export default function InventoryPage() {
         clearFormPhotoDraft();
     };
 
+    const getDuplicatePartLabel = (partValue?: string | null) => {
+        if (partValue === "kitchen") return c.kitchen;
+        if (partValue === "hall") return c.hall;
+        if (partValue === "bar") return c.bar;
+        if (partValue === "etc") return c.etc;
+        return "";
+    };
+
+    const getDuplicateItemAlertMessage = (duplicateItem?: DuplicateInventoryItem | null) => {
+        const partLabel = getDuplicatePartLabel(duplicateItem?.part);
+        const categoryLabel =
+            lang === "vi"
+                ? duplicateItem?.category_vi || duplicateItem?.category || ""
+                : duplicateItem?.category || duplicateItem?.category_vi || "";
+        const location = [partLabel, categoryLabel].filter(Boolean).join("/");
+
+        return location
+            ? t.duplicateItemRegistered(location)
+            : t.duplicateItemRegisteredFallback;
+    };
+
+    const isDuplicateInventoryItemResult = (
+        res: Response,
+        result: InventoryItemMutationResult
+    ) =>
+        res.status === 409 &&
+        result.error === "inventory_item_duplicate_name_vi";
+
+    const readInventoryItemMutationResult = async (
+        res: Response,
+        action: "save" | "edit"
+    ): Promise<InventoryItemMutationResult | null> => {
+        try {
+            return await res.json();
+        } catch (error) {
+            console.error(`inventory ${action} invalid json response`, {
+                status: res.status,
+                error,
+            });
+            alert(action === "edit" ? c.editFail : c.saveFail);
+            return null;
+        }
+    };
+
+    const handleInventoryItemMutationFailure = (
+        res: Response,
+        result: InventoryItemMutationResult,
+        action: "save" | "edit"
+    ) => {
+        if (isDuplicateInventoryItemResult(res, result)) {
+            alert(getDuplicateItemAlertMessage(result.duplicateItem));
+            return;
+        }
+
+        console.error(`inventory ${action} failed`, {
+            status: res.status,
+            result,
+        });
+        alert(result.message || (action === "edit" ? c.editFail : c.saveFail));
+    };
+
+    const closeEditReasonModal = () => {
+        if (isEditReasonSaving) return;
+        setEditFormPendingSave(null);
+    };
+
+    const handleEditReasonConfirm = async (reason: QuickReasonValue) => {
+        if (!editFormPendingSave || isEditReasonSaving) return;
+
+        setIsEditReasonSaving(true);
+
+        try {
+            const res = await fetch("/api/inventory/items", {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    id: editFormPendingSave.id,
+                    payload: editFormPendingSave.payload,
+                    actorName,
+                    actorUsername,
+                    source: "edit_form",
+                    reason,
+                }),
+            });
+
+            const result = await readInventoryItemMutationResult(res, "edit");
+            if (!result) return;
+
+            if (!res.ok || !result.ok) {
+                handleInventoryItemMutationFailure(res, result, "edit");
+                return;
+            }
+
+            alert(c.editSuccess);
+            setEditFormPendingSave(null);
+            await fetchInventory();
+            await fetchRecentLogs();
+            resetForm();
+            setIsFormOpen(false);
+            itemNameRef.current?.focus();
+        } finally {
+            setIsEditReasonSaving(false);
+        }
+    };
+
     const handleDelete = async (id: number) => {
         if (isDeletingId === id) return;
 
@@ -723,29 +892,140 @@ export default function InventoryPage() {
                 return;
             }
 
-            const res = await fetch("/api/inventory/items", {
-                method: "DELETE",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    id,
-                    actorName,
-                    actorUsername,
-                }),
-            });
+            const url = "/api/inventory/items";
 
-            const result = await res.json();
+            type DeleteInventoryResult = {
+                ok?: boolean;
+                error?: string;
+                message?: string;
+                warning?: string;
+                inventoryLogCount?: number;
+                inventoryPriceLogCount?: number;
+                inventorySnapshotItemCount?: number;
+                posMappingCount?: number;
+                failedDeductionCount?: number;
+                appliedDeductionCount?: number;
+            };
 
-            if (!res.ok || !result.ok) {
-                console.error(result);
+            const deleteInventoryItem = async (deleteRelatedHistory = false) => {
+                const res = await fetch(url, {
+                    method: "DELETE",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        id,
+                        actorName,
+                        actorUsername,
+                        ...(deleteRelatedHistory
+                            ? { deleteRelatedHistory: true, deletePosReferences: true }
+                            : {}),
+                    }),
+                });
+
+                let result: DeleteInventoryResult;
+
+                try {
+                    result = await res.json();
+                } catch (error) {
+                    console.error("delete inventory item invalid json response", {
+                        status: res.status,
+                        url,
+                        error,
+                    });
+                    return {
+                        res,
+                        result: {
+                            ok: false,
+                            message: c.deleteFail,
+                        },
+                    };
+                }
+
+                return { res, result };
+            };
+
+            const showDeleteFailure = (
+                res: Response,
+                result: DeleteInventoryResult
+            ) => {
+                console.error("delete inventory item failed", {
+                    status: res.status,
+                    url,
+                    result,
+                });
 
                 if (res.status === 403) {
                     alert(c.noPermission);
                     return;
                 }
 
-                alert(c.deleteFail);
+                if (result.error === "pos_item_mappings_delete_failed") {
+                    alert(result.message || t.deleteLinkedPosMappingFailed);
+                    return;
+                }
+
+                if (result.error === "pos_inventory_deductions_delete_failed") {
+                    alert(result.message || t.deleteLinkedPosReferenceFailed);
+                    return;
+                }
+
+                if (
+                    result.error === "inventory_logs_delete_failed" ||
+                    result.error === "inventory_price_logs_delete_failed" ||
+                    result.error === "inventory_snapshot_items_delete_failed"
+                ) {
+                    alert(result.message || c.deleteFail);
+                    return;
+                }
+
+                alert(result.message || c.deleteFail);
+            };
+
+            const getDeleteRelatedHistoryConfirmMessage = (
+                result: DeleteInventoryResult
+            ) => {
+                if ((result.appliedDeductionCount ?? 0) > 0) {
+                    return t.deleteLinkedAppliedPosDeductionConfirm;
+                }
+
+                if (
+                    (result.inventoryLogCount ?? 0) > 0 ||
+                    (result.inventoryPriceLogCount ?? 0) > 0 ||
+                    (result.inventorySnapshotItemCount ?? 0) > 0
+                ) {
+                    return t.deleteLinkedInventoryHistoryConfirm;
+                }
+
+                if ((result.failedDeductionCount ?? 0) > 0) {
+                    return t.deleteLinkedFailedPosDeductionConfirm;
+                }
+
+                return t.deleteLinkedPosMappingConfirm;
+            };
+
+            const firstDelete = await deleteInventoryItem();
+            const { res, result } = firstDelete;
+
+            if (
+                res.status === 409 &&
+                (result.error === "inventory_item_has_related_history" ||
+                    result.error === "inventory_item_has_pos_references" ||
+                    result.error === "inventory_item_has_pos_mappings")
+            ) {
+                const confirmed = confirm(
+                    getDeleteRelatedHistoryConfirmMessage(result)
+                );
+                if (!confirmed) return;
+
+                const forceDelete = await deleteInventoryItem(true);
+
+                if (!forceDelete.res.ok || !forceDelete.result.ok) {
+                    showDeleteFailure(forceDelete.res, forceDelete.result);
+                    return;
+                }
+            } else if (!res.ok || !result.ok) {
+                showDeleteFailure(res, result);
                 return;
             }
 
@@ -902,29 +1182,11 @@ export default function InventoryPage() {
                             updated_by_username: actorUsername,
                         };
 
-                const res = await fetch("/api/inventory/items", {
-                    method: "PATCH",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        id: editingId,
-                        payload,
-                        actorName,
-                        actorUsername,
-                        source: "edit_form",
-                    }),
+                setEditFormPendingSave({
+                    id: editingId,
+                    payload,
                 });
-
-                const result = await res.json();
-
-                if (!res.ok || !result.ok) {
-                    console.error(result);
-                    alert(c.editFail);
-                    return;
-                }
-
-                alert(c.editSuccess);
+                return;
             }
 
             // ===================== 생성 =====================
@@ -979,11 +1241,11 @@ export default function InventoryPage() {
                     }),
                 });
 
-                const result = await res.json();
+                const result = await readInventoryItemMutationResult(res, "save");
+                if (!result) return;
 
                 if (!res.ok || !result.ok) {
-                    console.error(result);
-                    alert(c.saveFail);
+                    handleInventoryItemMutationFailure(res, result, "save");
                     return;
                 }
 
@@ -1316,7 +1578,7 @@ export default function InventoryPage() {
                 )
             );
             setPhotoModalItem(null);
-            alert(t.photoSaved);
+            alert(t.photoDeletedSuccess);
         } finally {
             setPhotoBusyItemId(null);
         }
@@ -3287,6 +3549,99 @@ export default function InventoryPage() {
                 </div>
             )}
 
+            {editFormPendingSave && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        zIndex: 1000,
+                        padding: 20,
+                    }}
+                    onClick={closeEditReasonModal}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "100%",
+                            maxWidth: 360,
+                            background: "#fff",
+                            borderRadius: 14,
+                            padding: 18,
+                            boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 10,
+                        }}
+                    >
+                        <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
+                            {t.editReasonModalTitle}
+                        </div>
+
+                        <div style={{ ...ui.metaText, marginBottom: 4 }}>
+                            {t.editReasonModalDescription}
+                        </div>
+
+                        <div
+                            style={{
+                                display: "grid",
+                                gridTemplateColumns: "1fr 1fr",
+                                gap: 8,
+                            }}
+                        >
+                            {(["stock_check", "purchase", "service", "other"] as const).map(
+                                (reason) => (
+                                    <button
+                                        key={reason}
+                                        type="button"
+                                        onClick={() => handleEditReasonConfirm(reason)}
+                                        disabled={isEditReasonSaving}
+                                        style={{
+                                            ...ui.subButton,
+                                            opacity: isEditReasonSaving ? 0.6 : 1,
+                                            cursor: isEditReasonSaving
+                                                ? "not-allowed"
+                                                : "pointer",
+                                        }}
+                                    >
+                                        <span
+                                            style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                gap: 6,
+                                                whiteSpace: "nowrap",
+                                            }}
+                                        >
+                                            <span aria-hidden="true">
+                                                {INVENTORY_REASON_EMOJIS[reason]}
+                                            </span>
+                                            <span>{INVENTORY_REASON_LABELS[lang][reason]}</span>
+                                        </span>
+                                    </button>
+                                )
+                            )}
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={closeEditReasonModal}
+                            disabled={isEditReasonSaving}
+                            style={{
+                                ...ui.subButton,
+                                marginTop: 4,
+                                opacity: isEditReasonSaving ? 0.6 : 1,
+                            }}
+                        >
+                            {c.close}
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {quickSaveItem && (
                 <div
                     style={{
@@ -3647,6 +4002,7 @@ export default function InventoryPage() {
                                             isOpen={true}
                                             lang={lang}
                                             noteText={group.noteKey || "-"}
+                                            reasonBadgeText={getInventoryReasonBadgeText(log.reason)}
                                             partLabel={String(c[log.part as keyof typeof c] || log.part || "")}
                                             itemName={getDisplayLogItemName(log)}
                                             categoryName={getDisplayLogCategory(log)}

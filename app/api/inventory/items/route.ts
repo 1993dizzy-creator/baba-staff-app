@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { roundDecimal } from "@/lib/inventory/number";
+import {
+  normalizeInventoryCode,
+  normalizeInventoryName,
+} from "@/lib/inventory/normalize";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
 import {
@@ -16,6 +20,31 @@ const supabaseAdmin = createClient(
 );
 
 const INVENTORY_IMAGE_BUCKET = "inventory-images";
+const POS_ITEM_MAPPING_FK_CONSTRAINT =
+  "pos_item_mappings_inventory_item_id_fkey";
+const POS_INVENTORY_DEDUCTION_FK_CONSTRAINT =
+  "pos_inventory_deductions_inventory_item_id_fkey";
+const INVENTORY_RELATED_HISTORY_FK_TARGETS = [
+  "inventory_logs",
+  "inventory_price_logs",
+  "inventory_snapshot_items",
+];
+
+const jsonError = (
+  error: string,
+  message: string,
+  status = 500,
+  extra?: Record<string, unknown>
+) =>
+  NextResponse.json(
+    {
+      ok: false,
+      error,
+      message,
+      ...extra,
+    },
+    { status }
+  );
 
 const getActor = async (actorUsername?: string) => {
   if (!actorUsername) return null;
@@ -31,9 +60,101 @@ const getActor = async (actorUsername?: string) => {
 };
 
 const getErrorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : "Server error";
+  error instanceof Error ? error.message : String(error);
+
+const getSupabaseErrorField = (error: unknown, field: string) => {
+  if (!error || typeof error !== "object") return undefined;
+
+  const value = (error as Record<string, unknown>)[field];
+  return typeof value === "string" ? value : undefined;
+};
+
+const isPosReferenceFkError = (error: unknown) => {
+  const code = getSupabaseErrorField(error, "code");
+  const message = getErrorMessage(error);
+  const details = getSupabaseErrorField(error, "details") ?? "";
+  const constraint = getSupabaseErrorField(error, "constraint") ?? "";
+
+  return (
+    code === "23503" &&
+    (message.includes(POS_ITEM_MAPPING_FK_CONSTRAINT) ||
+      details.includes(POS_ITEM_MAPPING_FK_CONSTRAINT) ||
+      constraint.includes(POS_ITEM_MAPPING_FK_CONSTRAINT) ||
+      message.includes(POS_INVENTORY_DEDUCTION_FK_CONSTRAINT) ||
+      details.includes(POS_INVENTORY_DEDUCTION_FK_CONSTRAINT) ||
+      constraint.includes(POS_INVENTORY_DEDUCTION_FK_CONSTRAINT))
+  );
+};
+
+const isInventoryRelatedHistoryFkError = (error: unknown) => {
+  const code = getSupabaseErrorField(error, "code");
+  const message = getErrorMessage(error);
+  const details = getSupabaseErrorField(error, "details") ?? "";
+  const constraint = getSupabaseErrorField(error, "constraint") ?? "";
+
+  return (
+    code === "23503" &&
+    INVENTORY_RELATED_HISTORY_FK_TARGETS.some(
+      (target) =>
+        message.includes(target) ||
+        details.includes(target) ||
+        constraint.includes(target)
+    )
+  );
+};
 
 type InventoryLogPayload = Record<string, unknown>;
+
+type DuplicateInventoryItem = {
+  id: number;
+  item_name: string | null;
+  item_name_vi: string | null;
+  code: string | null;
+  part: string | null;
+  category: string | null;
+  category_vi: string | null;
+};
+
+const findDuplicateInventoryItem = async (
+  itemNameVi: unknown,
+  code: unknown,
+  excludeId?: number
+) => {
+  const normalizedName = normalizeInventoryName(itemNameVi);
+
+  if (!normalizedName) return null;
+
+  const normalizedCode = normalizeInventoryCode(code);
+  let query = supabaseAdmin
+    .from("inventory")
+    .select("id, item_name, item_name_vi, code, part, category, category_vi");
+
+  if (excludeId !== undefined) {
+    query = query.neq("id", excludeId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) throw error;
+
+  return ((data || []) as DuplicateInventoryItem[]).find((item) => {
+    return (
+      normalizeInventoryName(item.item_name_vi) === normalizedName &&
+      normalizeInventoryCode(item.code) === normalizedCode
+    );
+  }) ?? null;
+};
+
+const duplicateInventoryItemResponse = (duplicateItem: DuplicateInventoryItem) =>
+  NextResponse.json(
+    {
+      ok: false,
+      error: "inventory_item_duplicate_name_vi",
+      message: "Duplicate inventory item.",
+      duplicateItem,
+    },
+    { status: 409 }
+  );
 
 const insertInventoryLog = async (
   payload: InventoryLogPayload,
@@ -117,6 +238,15 @@ export async function POST(req: Request) {
         { ok: false, message: "Invalid user" },
         { status: 401 }
       );
+    }
+
+    const duplicateItem = await findDuplicateInventoryItem(
+      payload.item_name_vi,
+      payload.code
+    );
+
+    if (duplicateItem) {
+      return duplicateInventoryItemResponse(duplicateItem);
     }
 
     const { data: insertedData, error } = await supabaseAdmin
@@ -295,6 +425,27 @@ export async function PATCH(req: Request) {
       }
     }
 
+    if (mode !== "quick-save") {
+      const nextItemNameVi = Object.prototype.hasOwnProperty.call(
+        payload,
+        "item_name_vi"
+      )
+        ? payload.item_name_vi
+        : prevItem.item_name_vi;
+      const nextCode = Object.prototype.hasOwnProperty.call(payload, "code")
+        ? payload.code
+        : prevItem.code;
+      const duplicateItem = await findDuplicateInventoryItem(
+        nextItemNameVi,
+        nextCode,
+        Number(prevItem.id)
+      );
+
+      if (duplicateItem) {
+        return duplicateInventoryItemResponse(duplicateItem);
+      }
+    }
+
     const { data: updatedItem, error: updateError } = await supabaseAdmin
       .from("inventory")
       .update(payload)
@@ -322,12 +473,13 @@ export async function PATCH(req: Request) {
     const prevQuantity = roundDecimal(Number(prevItem.quantity ?? 0));
     const newQuantity = roundDecimal(Number(updatedItem.quantity ?? 0));
     const changeQuantity = roundDecimal(newQuantity - prevQuantity);
+    const fallbackLogReason = changeQuantity !== 0 ? "stock_check" : "other";
     const logReason =
       mode === "quick-save"
         ? normalizeInventoryReason(reason, "stock_check")
-        : changeQuantity !== 0
-          ? "stock_check"
-          : "other";
+        : Object.prototype.hasOwnProperty.call(body, "reason")
+          ? normalizeInventoryReason(reason, fallbackLogReason)
+          : fallbackLogReason;
     const logSource = mode === "quick-save" ? "quick_save" : "edit_form";
 
     const businessDate = getBusinessDate();
@@ -433,28 +585,36 @@ export async function PATCH(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const body = await req.json();
-    const { id, actorUsername } = body;
+    const {
+      id,
+      actorUsername,
+      deleteRelatedHistory,
+      deletePosMappings,
+      deletePosReferences,
+    } = body;
+    const itemId = Number(id);
+    const shouldDeleteRelatedHistory = deleteRelatedHistory === true;
+    const shouldDeletePosReferences =
+      shouldDeleteRelatedHistory ||
+      deletePosReferences === true ||
+      deletePosMappings === true;
 
     if (!id) {
-      return NextResponse.json(
-        { ok: false, message: "Missing id" },
-        { status: 400 }
-      );
+      return jsonError("missing_item_id", "Missing id", 400);
+    }
+
+    if (!Number.isFinite(itemId) || itemId <= 0) {
+      return jsonError("invalid_item_id", "Invalid id", 400);
     }
 
     const actor = await getActor(actorUsername);
 
     if (!actor) {
-      return NextResponse.json(
-        { ok: false, message: "Invalid user" },
-        { status: 401 }
-      );
+      return jsonError("missing_actor", "Invalid user", 401);
     }
 
-    const { data: deletedRows, error: deleteError } = await supabaseAdmin
+    const { data: targetItem, error: selectError } = await supabaseAdmin
       .from("inventory")
-      .delete()
-      .eq("id", Number(id))
       .select(`
         id,
         item_name,
@@ -470,18 +630,234 @@ export async function DELETE(req: Request) {
         supplier,
         low_stock_threshold,
         image_path
-      `);
+      `)
+      .eq("id", itemId)
+      .maybeSingle();
 
-    if (deleteError) throw deleteError;
-
-    if (!deletedRows || deletedRows.length === 0) {
-      return NextResponse.json(
-        { ok: false, message: "Target not found" },
-        { status: 404 }
+    if (selectError) {
+      return jsonError(
+        "inventory_item_select_failed",
+        selectError.message,
+        500
       );
     }
 
-    const deletedItem = deletedRows[0];
+    if (!targetItem) {
+      return jsonError("inventory_item_not_found", "Target not found", 404);
+    }
+
+    const deletedItem = targetItem;
+
+    const [
+      mappingCountResult,
+      appliedDeductionCountResult,
+      failedDeductionCountResult,
+      inventoryLogCountResult,
+      inventoryPriceLogCountResult,
+      inventorySnapshotItemCountResult,
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("pos_item_mappings")
+        .select("id", { count: "exact", head: true })
+        .eq("inventory_item_id", itemId),
+      supabaseAdmin
+        .from("pos_inventory_deductions")
+        .select("id", { count: "exact", head: true })
+        .eq("inventory_item_id", itemId)
+        .or(
+          "status.eq.applied,status.eq.success,applied_at.not.is.null,inventory_log_id.not.is.null"
+        ),
+      supabaseAdmin
+        .from("pos_inventory_deductions")
+        .select("id", { count: "exact", head: true })
+        .eq("inventory_item_id", itemId)
+        .eq("status", "failed")
+        .is("applied_at", null)
+        .is("inventory_log_id", null),
+      supabaseAdmin
+        .from("inventory_logs")
+        .select("id", { count: "exact", head: true })
+        .eq("item_id", itemId),
+      supabaseAdmin
+        .from("inventory_price_logs")
+        .select("id", { count: "exact", head: true })
+        .eq("item_id", itemId),
+      supabaseAdmin
+        .from("inventory_snapshot_items")
+        .select("id", { count: "exact", head: true })
+        .eq("item_id", itemId),
+    ]);
+
+    const relatedHistoryCountError =
+      mappingCountResult.error ||
+      appliedDeductionCountResult.error ||
+      failedDeductionCountResult.error ||
+      inventoryLogCountResult.error ||
+      inventoryPriceLogCountResult.error ||
+      inventorySnapshotItemCountResult.error;
+
+    if (relatedHistoryCountError) {
+      return jsonError(
+        "inventory_item_delete_failed",
+        relatedHistoryCountError.message,
+        500
+      );
+    }
+
+    const posMappingCount = mappingCountResult.count ?? 0;
+    const appliedDeductionCount = appliedDeductionCountResult.count ?? 0;
+    const failedDeductionCount = failedDeductionCountResult.count ?? 0;
+    const inventoryLogCount = inventoryLogCountResult.count ?? 0;
+    const inventoryPriceLogCount = inventoryPriceLogCountResult.count ?? 0;
+    const inventorySnapshotItemCount =
+      inventorySnapshotItemCountResult.count ?? 0;
+    const relatedHistoryCounts = {
+      inventoryLogCount,
+      inventoryPriceLogCount,
+      inventorySnapshotItemCount,
+      posMappingCount,
+      failedDeductionCount,
+      appliedDeductionCount,
+    };
+    const hasRelatedInventoryHistory =
+      inventoryLogCount > 0 ||
+      inventoryPriceLogCount > 0 ||
+      inventorySnapshotItemCount > 0;
+    const hasPosReferences =
+      posMappingCount > 0 ||
+      failedDeductionCount > 0 ||
+      appliedDeductionCount > 0;
+
+    if (!shouldDeleteRelatedHistory && hasRelatedInventoryHistory) {
+      return jsonError(
+        "inventory_item_has_related_history",
+        "This inventory item has related inventory history.",
+        409,
+        relatedHistoryCounts
+      );
+    }
+
+    if (!shouldDeletePosReferences && hasPosReferences) {
+      return jsonError(
+        "inventory_item_has_pos_references",
+        "This inventory item is linked to POS references.",
+        409,
+        relatedHistoryCounts
+      );
+    }
+
+    if (shouldDeletePosReferences) {
+      const { error: deductionDeleteError } = await supabaseAdmin
+        .from("pos_inventory_deductions")
+        .delete()
+        .eq("inventory_item_id", itemId);
+
+      if (deductionDeleteError) {
+        return jsonError(
+          "pos_inventory_deductions_delete_failed",
+          deductionDeleteError.message,
+          500,
+          relatedHistoryCounts
+        );
+      }
+    }
+
+    if (shouldDeletePosReferences) {
+      const { error: mappingDeleteError } = await supabaseAdmin
+        .from("pos_item_mappings")
+        .delete()
+        .eq("inventory_item_id", itemId);
+
+      if (mappingDeleteError) {
+        return jsonError(
+          "pos_item_mappings_delete_failed",
+          mappingDeleteError.message,
+          500,
+          relatedHistoryCounts
+        );
+      }
+    }
+
+    if (shouldDeleteRelatedHistory) {
+      const { error: inventoryLogDeleteError } = await supabaseAdmin
+        .from("inventory_logs")
+        .delete()
+        .eq("item_id", itemId);
+
+      if (inventoryLogDeleteError) {
+        return jsonError(
+          "inventory_logs_delete_failed",
+          inventoryLogDeleteError.message,
+          500,
+          relatedHistoryCounts
+        );
+      }
+    }
+
+    if (shouldDeleteRelatedHistory) {
+      const { error: priceLogDeleteError } = await supabaseAdmin
+        .from("inventory_price_logs")
+        .delete()
+        .eq("item_id", itemId);
+
+      if (priceLogDeleteError) {
+        return jsonError(
+          "inventory_price_logs_delete_failed",
+          priceLogDeleteError.message,
+          500,
+          relatedHistoryCounts
+        );
+      }
+    }
+
+    if (shouldDeleteRelatedHistory) {
+      const { error: snapshotItemDeleteError } = await supabaseAdmin
+        .from("inventory_snapshot_items")
+        .delete()
+        .eq("item_id", itemId);
+
+      if (snapshotItemDeleteError) {
+        return jsonError(
+          "inventory_snapshot_items_delete_failed",
+          snapshotItemDeleteError.message,
+          500,
+          relatedHistoryCounts
+        );
+      }
+    }
+
+    const { error: deleteError } = await supabaseAdmin
+      .from("inventory")
+      .delete()
+      .eq("id", itemId);
+
+    if (deleteError) {
+      if (isInventoryRelatedHistoryFkError(deleteError)) {
+        return jsonError(
+          "inventory_item_has_related_history",
+          "This inventory item has related inventory history.",
+          409,
+          relatedHistoryCounts
+        );
+      }
+
+      if (isPosReferenceFkError(deleteError)) {
+        return jsonError(
+          "inventory_item_has_pos_references",
+          "This inventory item is linked to POS references.",
+          409,
+          relatedHistoryCounts
+        );
+      }
+
+      return jsonError(
+        "inventory_item_delete_failed",
+        deleteError.message,
+        500
+      );
+    }
+
+    let photoCleanupWarning: string | undefined;
 
     if (deletedItem.image_path) {
       const { error: removeImageError } = await supabaseAdmin.storage
@@ -489,70 +865,25 @@ export async function DELETE(req: Request) {
         .remove([deletedItem.image_path]);
 
       if (removeImageError) {
-        console.warn("[INVENTORY_DELETE_IMAGE_CLEANUP_ERROR]", removeImageError);
+        photoCleanupWarning = "inventory_photo_cleanup_warning";
+        console.warn("[INVENTORY_DELETE_IMAGE_CLEANUP_ERROR]", {
+          itemId,
+          imagePath: deletedItem.image_path,
+          message: removeImageError.message,
+        });
       }
     }
 
-    await insertInventoryLog(
-      {
-        item_id: deletedItem.id,
-        item_name: deletedItem.item_name ?? null,
-        item_name_vi: deletedItem.item_name_vi ?? null,
-        action: "delete",
-
-        part: deletedItem.part ?? null,
-        category: deletedItem.category ?? null,
-        category_vi: deletedItem.category_vi ?? null,
-
-        prev_quantity: deletedItem.quantity ?? 0,
-        new_quantity: 0,
-        change_quantity: -Number(deletedItem.quantity ?? 0),
-
-        prev_purchase_price: deletedItem.purchase_price ?? null,
-        new_purchase_price: null,
-
-        prev_note: deletedItem.note ?? null,
-        new_note: null,
-
-        prev_supplier: deletedItem.supplier ?? null,
-        new_supplier: null,
-
-        prev_code: deletedItem.code ?? null,
-        new_code: null,
-
-        prev_unit: deletedItem.unit ?? null,
-        new_unit: null,
-
-        prev_category: deletedItem.category ?? null,
-        new_category: null,
-
-        prev_category_vi: deletedItem.category_vi ?? null,
-        new_category_vi: null,
-
-        prev_part: deletedItem.part ?? null,
-        new_part: null,
-
-        unit: deletedItem.unit ?? null,
-        code: deletedItem.code ?? null,
-
-        actor_name: actor.name || "",
-        actor_username: actor.username || "",
-
-        prev_low_stock_threshold: deletedItem.low_stock_threshold ?? 1,
-        new_low_stock_threshold: null,
-      },
-      {
-        reason: "other",
-        source: "delete",
-      }
-    );
-
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      warning: photoCleanupWarning,
+    });
   } catch (error) {
     console.error("[INVENTORY_DELETE_ERROR]", error);
-    return NextResponse.json(
-      { ok: false, message: getErrorMessage(error) },
-      { status: 500 }
+    return jsonError(
+      "inventory_item_delete_failed",
+      getErrorMessage(error),
+      500
     );
   }
 }

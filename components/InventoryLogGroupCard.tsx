@@ -9,11 +9,26 @@ type ChangeItem = {
     color?: string;
 };
 
+type InventoryLogCardLog = {
+    id: number;
+    action?: string | null;
+    code?: string | null;
+    created_at?: string | null;
+    actor_name?: string | null;
+    [key: string]: unknown;
+};
+
+type InventoryLogCardGroup = {
+    latest: InventoryLogCardLog;
+    logs: InventoryLogCardLog[];
+};
+
 type Props = {
-    group: any;
+    group: InventoryLogCardGroup;
     isOpen: boolean;
     lang: string;
     noteText?: string;
+    reasonBadgeText?: string;
     partLabel: string;
     itemName: string;
     categoryName: string;
@@ -26,7 +41,7 @@ type Props = {
     getActionBadge: (action: string) => string;
     getActionColor: (action: string) => string;
     formatDateTime: (value: string) => string;
-    getLogChanges: (log: any, lang: string) => ChangeItem[];
+    getLogChanges: (log: InventoryLogCardLog, lang: string) => ChangeItem[];
 };
 
 export default function InventoryLogGroupCard({
@@ -34,6 +49,7 @@ export default function InventoryLogGroupCard({
     isOpen,
     lang,
     noteText = "-",
+    reasonBadgeText = "",
     partLabel,
     itemName,
     categoryName,
@@ -55,7 +71,7 @@ export default function InventoryLogGroupCard({
             style={{
                 ...ui.card,
                 padding: "7px 10px",
-                borderLeft: `4px solid ${getActionColor(log.action)}`,
+                borderLeft: `4px solid ${getActionColor(log.action || "")}`,
                 background: "#fff",
             }}
         >
@@ -72,11 +88,25 @@ export default function InventoryLogGroupCard({
                         <span
                             style={{
                                 ...ui.badgeMini,
-                                background: getActionColor(log.action),
+                                background: getActionColor(log.action || ""),
                             }}
                         >
-                            {getActionBadge(log.action)}
+                            {getActionBadge(log.action || "")}
                         </span>
+
+                        {reasonBadgeText && (
+                            <span
+                                style={{
+                                    ...ui.badgeMini,
+                                    minWidth: "auto",
+                                    background: "#f3f4f6",
+                                    color: "#374151",
+                                    border: "1px solid #e5e7eb",
+                                }}
+                            >
+                                {reasonBadgeText}
+                            </span>
+                        )}
 
                         <span
                             style={{
@@ -142,7 +172,7 @@ export default function InventoryLogGroupCard({
                         gap: 8,
                     }}
                 >
-                    {group.logs.map((history: any) => {
+                    {group.logs.map((history) => {
                         const changes = getLogChanges(history, lang);
 
                         return (

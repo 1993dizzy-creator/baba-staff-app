@@ -79,10 +79,27 @@ export const inventoryText = {
     photoChangeButton: "사진 변경",
     photoDeleteButton: "사진 삭제",
     photoSaved: "사진이 저장되었습니다.",
+    photoDeletedSuccess: "사진이 삭제되었습니다.",
+    deleteLinkedAppliedPosDeductionConfirm:
+      "해당 품목은 실제 POS 재고 차감 이력과 연결되어 있습니다.\n정말 삭제하시겠습니까?\n삭제하면 POS 차감 이력도 함께 삭제됩니다.",
+    deleteLinkedInventoryHistoryConfirm:
+      "이 품목에는 재고 변경 이력이 있습니다.\n삭제하면 일자별재고와 월간현황 기록에서도 함께 삭제됩니다.\n정말 삭제하시겠습니까?",
+    deleteLinkedFailedPosDeductionConfirm:
+      "해당 품목은 POS 검수/실패 기록과 연결되어 있습니다.\n정말 삭제하시겠습니까?\n삭제하면 관련 실패 기록도 함께 정리됩니다.",
+    deleteLinkedPosMappingConfirm:
+      "해당 품목은 POS 상품과 연결되어 있습니다.\n정말 삭제하시겠습니까?\n삭제하면 POS 상품 매핑도 함께 삭제됩니다.",
+    deleteLinkedPosMappingFailed: "POS 상품 매핑 삭제 후 다시 시도해주세요.",
+    deleteLinkedPosReferenceFailed: "POS 참조 기록 삭제 후 다시 시도해주세요.",
+    duplicateItemRegistered: (location: string) =>
+      `해당 상품은 ${location}에 이미 등록되어 있습니다.`,
+    duplicateItemRegisteredFallback: "해당 상품은 이미 등록되어 있습니다.",
+    editReasonModalTitle: "수정 사유를 선택해주세요.",
+    editReasonModalDescription: "선택한 사유는 품목 로그에 표시됩니다.",
+    editInfoUpdatedNote: "품목정보 수정",
     noAdditionalChanges: "추가로 저장할 변경사항이 없습니다.",
     syncLog: "동기화",
     editItem: "수정",
-    syncCurrentItemHelp: "현재 품목정보를 이 로그에 반영합니다.",
+    syncCurrentItemHelp: "현재 품목명/카테고리/단위/구매처/단가를 이 기록에 반영합니다.",
     editItemHelp: "재고관리 페이지에서 이 품목을 수정합니다.",
   },
 
@@ -166,10 +183,29 @@ export const inventoryText = {
     photoChangeButton: "Thay đổi ảnh",
     photoDeleteButton: "Xóa ảnh",
     photoSaved: "Đã lưu ảnh.",
+    photoDeletedSuccess: "Đã xóa ảnh.",
+    deleteLinkedAppliedPosDeductionConfirm:
+      "Sản phẩm này đang được liên kết với lịch sử trừ kho POS thực tế.\nBạn có chắc chắn muốn xóa không?\nNếu xóa, lịch sử trừ kho POS cũng sẽ bị xóa.",
+    deleteLinkedInventoryHistoryConfirm:
+      "Sản phẩm này có lịch sử thay đổi kho.\nNếu xóa, dữ liệu trong tồn kho theo ngày và báo cáo tháng cũng sẽ bị xóa.\nBạn có chắc chắn muốn xóa không?",
+    deleteLinkedFailedPosDeductionConfirm:
+      "Sản phẩm này đang được liên kết với dữ liệu kiểm tra/thất bại của POS.\nBạn có chắc chắn muốn xóa không?\nNếu xóa, các dữ liệu thất bại liên quan cũng sẽ được dọn dẹp.",
+    deleteLinkedPosMappingConfirm:
+      "Sản phẩm này đang được liên kết với hàng POS.\nBạn có chắc chắn muốn xóa không?\nNếu xóa, liên kết POS cũng sẽ bị xóa.",
+    deleteLinkedPosMappingFailed: "Vui lòng xóa liên kết POS rồi thử lại.",
+    deleteLinkedPosReferenceFailed:
+      "Vui lòng xóa dữ liệu tham chiếu POS rồi thử lại.",
+    duplicateItemRegistered: (location: string) =>
+      `Sản phẩm này đã được đăng ký trong ${location}.`,
+    duplicateItemRegisteredFallback: "Sản phẩm này đã được đăng ký.",
+    editReasonModalTitle: "Vui lòng chọn lý do chỉnh sửa.",
+    editReasonModalDescription:
+      "Lý do đã chọn sẽ được hiển thị trong lịch sử sản phẩm.",
+    editInfoUpdatedNote: "Sửa thông tin sản phẩm",
     noAdditionalChanges: "Không có thay đổi nào khác để lưu.",
     syncLog: "Đồng bộ",
     editItem: "Sửa",
-    syncCurrentItemHelp: "Đồng bộ thông tin hiện tại của sản phẩm vào lịch sử này.",
+    syncCurrentItemHelp: "Đồng bộ tên hàng/danh mục/đơn vị/nơi mua/đơn giá hiện tại vào lịch sử này.",
     editItemHelp: "Sửa sản phẩm này trong trang quản lý kho.",
   },
 };

@@ -30,13 +30,57 @@ type Actor = {
 const isMaster = (user: Actor | null) => user?.role === "master";
 
 const getErrorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : "Server error";
+  error instanceof Error ? error.message : String(error);
+
+const getErrorCauseMessage = (error: unknown) => {
+  if (!error || typeof error !== "object" || !("cause" in error)) {
+    return null;
+  }
+
+  const cause = (error as { cause?: unknown }).cause;
+  return cause instanceof Error ? cause.message : cause ? String(cause) : null;
+};
 
 const toNullableNumber = (value: unknown) => {
   if (value === null || value === undefined || value === "") return null;
 
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
+};
+
+type CurrentInventoryItem = {
+  item_name: string | null;
+  item_name_vi: string | null;
+  category: string | null;
+  category_vi: string | null;
+  unit: string | null;
+  supplier: string | null;
+  purchase_price: string | number | null;
+};
+
+const normalizeText = (value: unknown) =>
+  String(value ?? "").replace(/\s+/g, " ").trim();
+
+const buildInventoryLogSyncPayload = (
+  currentItem: CurrentInventoryItem
+): Record<string, string | number | null> => {
+  const supplier = normalizeText(currentItem.supplier);
+
+  return {
+    item_name: currentItem.item_name ?? null,
+    item_name_vi: currentItem.item_name_vi ?? null,
+
+    category: currentItem.category ?? null,
+    category_vi: currentItem.category_vi ?? null,
+    new_category: currentItem.category ?? null,
+    new_category_vi: currentItem.category_vi ?? null,
+
+    unit: currentItem.unit ?? null,
+    new_unit: currentItem.unit ?? null,
+
+    new_supplier: supplier || null,
+    new_purchase_price: toNullableNumber(currentItem.purchase_price),
+  };
 };
 
 export async function GET(req: Request) {
@@ -62,12 +106,34 @@ export async function GET(req: Request) {
       }
 
       if (itemId) {
-        query = query.eq("item_id", Number(itemId));
+        const parsedItemId = Number(itemId);
+
+        if (!Number.isFinite(parsedItemId) || parsedItemId <= 0) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: "invalid_item_id",
+              message: "Invalid item id",
+            },
+            { status: 400 }
+          );
+        }
+
+        query = query.eq("item_id", parsedItemId);
       }
 
       const { data, error } = await query;
 
-      if (error) throw error;
+      if (error) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "inventory_logs_query_failed",
+            message: error.message,
+          },
+          { status: 500 }
+        );
+      }
 
       return NextResponse.json({ ok: true, data: data || [] });
     }
@@ -79,7 +145,16 @@ export async function GET(req: Request) {
         .order("created_at", { ascending: false })
         .limit(3);
 
-      if (error) throw error;
+      if (error) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "inventory_recent_logs_query_failed",
+            message: error.message,
+          },
+          { status: 500 }
+        );
+      }
 
       return NextResponse.json({ ok: true, data: data || [] });
     }
@@ -89,20 +164,42 @@ export async function GET(req: Request) {
         .from("inventory")
         .select("id, part, code, item_name, item_name_vi, note");
 
-      if (error) throw error;
+      if (error) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "inventory_notes_query_failed",
+            message: error.message,
+          },
+          { status: 500 }
+        );
+      }
 
       return NextResponse.json({ ok: true, data: data || [] });
     }
 
     return NextResponse.json(
-      { ok: false, message: "Invalid mode" },
+      { ok: false, error: "invalid_mode", message: "Invalid mode" },
       { status: 400 }
     );
   } catch (error) {
-    console.error("[INVENTORY_LOGS_GET_ERROR]", error);
+    console.error("[INVENTORY_LOGS_GET_ERROR]", {
+      mode,
+      businessDate,
+      reason,
+      itemId,
+      message: getErrorMessage(error),
+      cause: getErrorCauseMessage(error),
+      error,
+    });
 
     return NextResponse.json(
-      { ok: false, message: getErrorMessage(error) },
+      {
+        ok: false,
+        error: "inventory_logs_fetch_failed",
+        message: getErrorMessage(error),
+        cause: getErrorCauseMessage(error),
+      },
       { status: 500 }
     );
   }
@@ -112,7 +209,17 @@ export async function PATCH(req: Request) {
   try {
     const body = await req.json();
     const id = Number(body?.id);
+    const logIds: number[] = Array.isArray(body?.logIds)
+      ? Array.from(
+          new Set(
+            body.logIds
+              .map((value: unknown) => Number(value))
+              .filter((value: number) => Number.isFinite(value) && value > 0)
+          )
+        )
+      : [];
     const syncCurrentItem = body?.syncCurrentItem === true;
+    const targetLogIds = syncCurrentItem && logIds.length > 0 ? logIds : [id];
     const hasReason = Object.prototype.hasOwnProperty.call(body, "reason");
     const hasNewSupplier = Object.prototype.hasOwnProperty.call(body, "new_supplier");
     const hasNewPurchasePrice = Object.prototype.hasOwnProperty.call(
@@ -120,7 +227,7 @@ export async function PATCH(req: Request) {
       "new_purchase_price"
     );
 
-    if (!Number.isFinite(id) || id <= 0) {
+    if (targetLogIds.length === 0 || targetLogIds.some((logId) => !Number.isFinite(logId) || logId <= 0)) {
       return NextResponse.json(
         { ok: false, message: "Missing id" },
         { status: 400 }
@@ -134,20 +241,21 @@ export async function PATCH(req: Request) {
       );
     }
 
-    const { data: existing, error: findError } = await supabaseAdmin
+    const { data: existingRows, error: findError } = await supabaseAdmin
       .from("inventory_logs")
-      .select("id, item_id, reason, change_quantity")
-      .eq("id", id)
-      .maybeSingle();
+      .select("id, item_id, reason, change_quantity, business_date")
+      .in("id", targetLogIds);
 
     if (findError) throw findError;
 
-    if (!existing) {
+    if (!existingRows || existingRows.length !== targetLogIds.length) {
       return NextResponse.json(
         { ok: false, message: "Log not found" },
         { status: 404 }
       );
     }
+
+    const existing = existingRows[0];
 
     const updatePayload: Record<string, string | number | null> = {};
 
@@ -159,9 +267,29 @@ export async function PATCH(req: Request) {
         );
       }
 
+      const businessDate =
+        typeof body?.businessDate === "string" ? body.businessDate : null;
+      const invalidSyncTarget = existingRows.some((row) => {
+        return (
+          row.item_id !== existing.item_id ||
+          (businessDate !== null && row.business_date !== businessDate)
+        );
+      });
+
+      if (invalidSyncTarget) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "invalid_sync_log_scope",
+            message: "Invalid sync log scope",
+          },
+          { status: 400 }
+        );
+      }
+
       const { data: currentItem, error: currentItemError } = await supabaseAdmin
         .from("inventory")
-        .select("item_name, item_name_vi, supplier, purchase_price")
+        .select("item_name, item_name_vi, category, category_vi, unit, supplier, purchase_price")
         .eq("id", Number(existing.item_id))
         .maybeSingle();
 
@@ -174,11 +302,7 @@ export async function PATCH(req: Request) {
         );
       }
 
-      const supplier = String(currentItem.supplier ?? "").replace(/\s+/g, " ").trim();
-      updatePayload.item_name = currentItem.item_name ?? null;
-      updatePayload.item_name_vi = currentItem.item_name_vi ?? null;
-      updatePayload.new_supplier = supplier || null;
-      updatePayload.new_purchase_price = toNullableNumber(currentItem.purchase_price);
+      Object.assign(updatePayload, buildInventoryLogSyncPayload(currentItem));
     }
 
     if (hasReason) {
@@ -195,7 +319,7 @@ export async function PATCH(req: Request) {
     }
 
     if (hasNewSupplier) {
-      const supplier = String(body.new_supplier ?? "").replace(/\s+/g, " ").trim();
+      const supplier = normalizeText(body.new_supplier);
       updatePayload.new_supplier = supplier || null;
     }
 
@@ -219,11 +343,12 @@ export async function PATCH(req: Request) {
     const { data, error } = await supabaseAdmin
       .from("inventory_logs")
       .update(updatePayload)
-      .eq("id", id)
-      .select("id, item_id, item_name, item_name_vi, reason, business_date, change_quantity, new_supplier, new_purchase_price")
-      .single();
+      .in("id", targetLogIds)
+      .select("id, item_id, item_name, item_name_vi, category, category_vi, new_category, new_category_vi, unit, new_unit, reason, business_date, change_quantity, new_supplier, new_purchase_price")
+      .order("id", { ascending: true });
 
     if (error) throw error;
+    const updatedRows = data || [];
 
     const updatesPurchaseInfo = hasNewSupplier || hasNewPurchasePrice;
     const isPurchaseLog =
@@ -267,7 +392,10 @@ export async function PATCH(req: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true, data });
+    return NextResponse.json({
+      ok: true,
+      data: targetLogIds.length === 1 ? updatedRows[0] : updatedRows,
+    });
   } catch (error) {
     console.error("[INVENTORY_LOGS_PATCH_ERROR]", error);
 

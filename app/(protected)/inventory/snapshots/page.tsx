@@ -27,6 +27,7 @@ type SnapshotBatch = {
 
 type SnapshotItem = {
     id: number;
+    syncLogIds?: number[];
     batch_id: number | null;
     item_id: number | null;
     item_name: string | null;
@@ -40,6 +41,8 @@ type SnapshotItem = {
     prev_quantity: number | null;
     change_quantity: number | null;
     purchase_price: number | null;
+    prev_purchase_price?: number | null;
+    new_purchase_price?: number | null;
     supplier: string | null;
     total_purchase_price: number | null;
     reason?: InventoryReasonValue | null;
@@ -63,6 +66,7 @@ type InventoryLog = {
     unit: string | null;
     code: string | null;
     purchase_price?: number | null;
+    prev_purchase_price?: number | null;
     new_purchase_price?: number | null;
     supplier?: string | null;
     new_supplier?: string | null;
@@ -74,6 +78,8 @@ type InventoryLog = {
     new_note: string | null;
     prev_note: string | null;
 };
+
+type PriceTrend = "up" | "down" | null;
 
 export default function InventorySnapshotsPage() {
     const { lang } = useLanguage();
@@ -105,11 +111,6 @@ export default function InventorySnapshotsPage() {
     const [changingReasonLogId, setChangingReasonLogId] = useState<number | null>(null);
     const [syncingPurchaseLogId, setSyncingPurchaseLogId] = useState<number | null>(null);
 
-    const reasonChangeOptions = QUICK_REASON_VALUES.map((value) => ({
-        value,
-        label: INVENTORY_REASON_LABELS[lang][value],
-    }));
-
     const getSelectedBusinessDate = () => {
         if (viewMode === "snapshot") {
             const batch = batchList.find((item) => Number(item.id) === Number(selectedBatchId));
@@ -121,6 +122,52 @@ export default function InventorySnapshotsPage() {
 
     const getReasonEmoji = (reason?: InventoryReasonValue | null) => {
         return INVENTORY_REASON_EMOJIS[reason || "unclassified"];
+    };
+
+    const getPurchasePriceTrend = (item: SnapshotItem): PriceTrend => {
+        return getPriceTrend(item.prev_purchase_price, item.new_purchase_price ?? item.purchase_price);
+    };
+
+    const getPriceTrend = (
+        previousPrice?: string | number | null,
+        currentPrice?: string | number | null
+    ): PriceTrend => {
+        const prevPrice = Number(previousPrice ?? 0);
+        const newPrice = Number(currentPrice ?? 0);
+
+        if (!Number.isFinite(prevPrice) || !Number.isFinite(newPrice)) return null;
+        if (prevPrice <= 0 || newPrice <= 0) return null;
+        if (newPrice > prevPrice) return "up";
+        if (newPrice < prevPrice) return "down";
+        return null;
+    };
+
+    const getPurchasePriceTrendStyle = (trend: PriceTrend) => {
+        if (trend === "up") {
+            return { color: "#059669", fontWeight: 700 };
+        }
+
+        if (trend === "down") {
+            return { color: "#dc2626", fontWeight: 700 };
+        }
+
+        return undefined;
+    };
+
+    const getCompactReasonLabel = (reason?: InventoryReasonValue | null) => {
+        if (lang === "vi") {
+            if (reason === "purchase") return "Nhập";
+            if (reason === "stock_check") return "Kiểm";
+            if (reason === "service") return "Tặng";
+            if (reason === "other") return "Khác";
+            return "Khác";
+        }
+
+        if (reason === "purchase") return "입고";
+        if (reason === "stock_check") return "확인";
+        if (reason === "service") return "증정";
+        if (reason === "other") return "기타";
+        return "기타";
     };
 
     const formatReasonItemName = (item: SnapshotItem) => {
@@ -154,17 +201,16 @@ export default function InventorySnapshotsPage() {
             : log.item_name || log.item_name_vi || "-";
     };
 
-    const formatLogDateTime = (value?: string | null) => {
-        if (!value) return "-";
+    const formatCompactLogDateTime = (value?: string | null) => {
+        if (!value) return "";
 
         const date = new Date(value);
-        const yy = String(date.getFullYear()).slice(2);
         const mm = String(date.getMonth() + 1).padStart(2, "0");
         const dd = String(date.getDate()).padStart(2, "0");
         const hh = String(date.getHours()).padStart(2, "0");
         const min = String(date.getMinutes()).padStart(2, "0");
 
-        return `${yy}.${mm}.${dd} ${hh}:${min}`;
+        return `${mm}.${dd} ${hh}:${min}`;
     };
 
     const getActionBadge = (action?: string | null) => {
@@ -185,13 +231,19 @@ export default function InventorySnapshotsPage() {
 
         try {
             const res = await fetch("/api/inventory/snapshot/list");
-            const json = await res.json();
+            const json = await res.json().catch((error) => ({
+                ok: false,
+                error: "invalid_json_response",
+                message: error instanceof Error ? error.message : String(error),
+            }));
 
             if (!res.ok || !json.ok) {
-                console.error(json.message);
+                console.error("fetchBatches failed", {
+                    status: res.status,
+                    json,
+                });
                 setBatchList([]);
                 setSelectedBatchId(null);
-                setLoadingBatches(false);
                 return;
             }
 
@@ -205,7 +257,7 @@ export default function InventorySnapshotsPage() {
                 setCalendarMonth(nextBatches[0].snapshot_date.slice(0, 7));
             }
         } catch (error) {
-            console.error(error);
+            console.error("fetchBatches exception", error);
             setBatchList([]);
             setSelectedBatchId(null);
         } finally {
@@ -266,14 +318,37 @@ export default function InventorySnapshotsPage() {
         setIsItemLogsLoading(true);
 
         try {
-            const res = await fetch(`/api/inventory/items/${itemId}/logs`, {
+            const url = `/api/inventory/items/${itemId}/logs`;
+            const res = await fetch(url, {
                 cache: "no-store",
             });
 
-            const result = await res.json();
+            let result: {
+                ok?: boolean;
+                data?: InventoryLog[];
+                error?: string;
+                message?: string;
+            };
+
+            try {
+                result = await res.json();
+            } catch (error) {
+                console.error("fetchItemLogs invalid json response", {
+                    status: res.status,
+                    url,
+                    error,
+                });
+                setItemLogsError(c.loadFailed);
+                setItemLogs([]);
+                return;
+            }
 
             if (!res.ok || !result.ok) {
-                console.error(result);
+                console.error("fetchItemLogs failed", {
+                    status: res.status,
+                    url,
+                    result,
+                });
                 setItemLogsError(c.loadFailed);
                 setItemLogs([]);
                 return;
@@ -281,7 +356,7 @@ export default function InventorySnapshotsPage() {
 
             setItemLogs(result.data || []);
         } catch (error) {
-            console.error(error);
+            console.error("fetchItemLogs exception", error);
             setItemLogsError(c.loadFailed);
             setItemLogs([]);
         } finally {
@@ -308,6 +383,8 @@ export default function InventorySnapshotsPage() {
             unit: log.unit,
             code: log.code,
             purchase_price: purchasePrice,
+            prev_purchase_price: log.prev_purchase_price ?? null,
+            new_purchase_price: log.new_purchase_price ?? null,
             supplier: log.new_supplier ?? log.supplier ?? null,
             total_purchase_price: changeQuantity * Number(purchasePrice ?? 0),
             reason: log.reason ?? null,
@@ -322,21 +399,45 @@ export default function InventorySnapshotsPage() {
         setSupplierTab("all");
 
         try {
-            const res = await fetch(`/api/inventory/logs?mode=logs&businessDate=${businessDate}`, {
+            const url = `/api/inventory/logs?mode=logs&businessDate=${encodeURIComponent(businessDate)}`;
+            const res = await fetch(url, {
                 cache: "no-store",
             });
 
-            const json = await res.json();
+            let json: {
+                ok?: boolean;
+                data?: InventoryLog[];
+                error?: string;
+                message?: string;
+            };
+
+            try {
+                json = await res.json();
+            } catch (error) {
+                console.error("fetchMovementItems invalid json response", {
+                    status: res.status,
+                    url,
+                    error,
+                });
+                setMovementItems([]);
+                return;
+            }
 
             if (!res.ok || !json.ok) {
-                console.error(json.message);
+                console.error("fetchMovementItems failed", {
+                    status: res.status,
+                    url,
+                    error: json.error,
+                    message: json.message,
+                    json,
+                });
                 setMovementItems([]);
                 return;
             }
 
             setMovementItems((json.data || []).map(mapLogToSnapshotItem));
         } catch (error) {
-            console.error(error);
+            console.error("fetchMovementItems exception", error);
             setMovementItems([]);
         } finally {
             setLoadingMovements(false);
@@ -382,16 +483,29 @@ export default function InventorySnapshotsPage() {
         }
     };
 
-    const getLatestPurchaseItemForModal = (item: SnapshotItem) => {
-        const sameDayPurchaseItems = movementItems.filter(
+    const getPurchaseSyncLogIdsForCard = (item: SnapshotItem) => {
+        const sameCardPurchaseItems = movementItems.filter(
             (candidate) =>
                 candidate.reason === "purchase" &&
                 Number(candidate.change_quantity ?? 0) > 0 &&
                 candidate.item_id === item.item_id &&
-                candidate.business_date === item.business_date
+                candidate.business_date === item.business_date &&
+                (supplierTab === "all" ||
+                    (candidate.supplier || "-") === (item.supplier || "-"))
         );
 
-        return [...sameDayPurchaseItems].sort((a, b) => {
+        return sameCardPurchaseItems
+            .map((candidate) => Number(candidate.id))
+            .filter((logId) => Number.isFinite(logId) && logId > 0);
+    };
+
+    const getLatestPurchaseItemForModal = (item: SnapshotItem) => {
+        const syncLogIds = getPurchaseSyncLogIdsForCard(item);
+        const sameCardPurchaseItems = movementItems.filter((candidate) =>
+            syncLogIds.includes(Number(candidate.id))
+        );
+
+        const latestItem = [...sameCardPurchaseItems].sort((a, b) => {
             const createdCompare = String(b.created_at || "").localeCompare(
                 String(a.created_at || "")
             );
@@ -399,6 +513,11 @@ export default function InventorySnapshotsPage() {
 
             return Number(b.id) - Number(a.id);
         })[0] ?? item;
+
+        return {
+            ...latestItem,
+            syncLogIds: syncLogIds.length > 0 ? syncLogIds : [item.id],
+        };
     };
 
     const openPurchaseLogModal = async (item: SnapshotItem) => {
@@ -419,6 +538,10 @@ export default function InventorySnapshotsPage() {
     const syncPurchaseInfoFromCurrentItem = async (item: SnapshotItem) => {
         if (syncingPurchaseLogId) return;
         setSyncingPurchaseLogId(item.id);
+        const syncLogIds = (item.syncLogIds?.length ? item.syncLogIds : [item.id])
+            .map((logId) => Number(logId))
+            .filter((logId) => Number.isFinite(logId) && logId > 0);
+        const syncLogIdSet = new Set(syncLogIds);
 
         try {
             const res = await fetch("/api/inventory/logs", {
@@ -426,6 +549,8 @@ export default function InventorySnapshotsPage() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     id: item.id,
+                    logIds: syncLogIds,
+                    businessDate: item.business_date,
                     syncCurrentItem: true,
                 }),
             });
@@ -437,14 +562,29 @@ export default function InventorySnapshotsPage() {
                 return;
             }
 
+            const syncedLogs = Array.isArray(result.data) ? result.data : [result.data];
+            const syncedById = new Map<number, InventoryLog>(
+                syncedLogs.map((log: InventoryLog) => [Number(log.id), log])
+            );
+            const representativeLog = syncedById.get(item.id) ?? syncedLogs[0];
+
+            if (!representativeLog) {
+                alert(c.editFail);
+                return;
+            }
+
             setMovementItems((prev) =>
                 prev.map((movementItem) => {
-                    if (movementItem.id !== item.id) return movementItem;
+                    if (!syncLogIdSet.has(Number(movementItem.id))) return movementItem;
 
-                    const nextPurchasePrice = result.data.new_purchase_price ?? null;
-                    const nextSupplier = result.data.new_supplier ?? null;
-                    const nextItemName = result.data.item_name ?? movementItem.item_name;
-                    const nextItemNameVi = result.data.item_name_vi ?? movementItem.item_name_vi;
+                    const syncedLog = syncedById.get(Number(movementItem.id)) ?? representativeLog;
+                    const nextPurchasePrice = syncedLog.new_purchase_price ?? null;
+                    const nextSupplier = syncedLog.new_supplier ?? null;
+                    const nextItemName = syncedLog.item_name ?? movementItem.item_name;
+                    const nextItemNameVi = syncedLog.item_name_vi ?? movementItem.item_name_vi;
+                    const nextCategory = syncedLog.category ?? movementItem.category;
+                    const nextCategoryVi = syncedLog.category_vi ?? movementItem.category_vi;
+                    const nextUnit = syncedLog.unit ?? movementItem.unit;
                     const changeQuantity = Number(movementItem.change_quantity ?? 0);
                     const totalPurchasePrice =
                         nextPurchasePrice === null
@@ -455,20 +595,28 @@ export default function InventorySnapshotsPage() {
                         ...movementItem,
                         item_name: nextItemName,
                         item_name_vi: nextItemNameVi,
+                        category: nextCategory,
+                        category_vi: nextCategoryVi,
+                        unit: nextUnit,
                         supplier: nextSupplier,
                         purchase_price: nextPurchasePrice,
+                        new_purchase_price: nextPurchasePrice,
                         total_purchase_price: totalPurchasePrice,
                     };
                 })
             );
 
             setLogModalItem((prev) => {
-                if (!prev || prev.id !== item.id) return prev;
+                if (!prev || !syncLogIdSet.has(Number(prev.id))) return prev;
 
-                const nextPurchasePrice = result.data.new_purchase_price ?? null;
-                const nextSupplier = result.data.new_supplier ?? null;
-                const nextItemName = result.data.item_name ?? prev.item_name;
-                const nextItemNameVi = result.data.item_name_vi ?? prev.item_name_vi;
+                const syncedLog = syncedById.get(Number(prev.id)) ?? representativeLog;
+                const nextPurchasePrice = syncedLog.new_purchase_price ?? null;
+                const nextSupplier = syncedLog.new_supplier ?? null;
+                const nextItemName = syncedLog.item_name ?? prev.item_name;
+                const nextItemNameVi = syncedLog.item_name_vi ?? prev.item_name_vi;
+                const nextCategory = syncedLog.category ?? prev.category;
+                const nextCategoryVi = syncedLog.category_vi ?? prev.category_vi;
+                const nextUnit = syncedLog.unit ?? prev.unit;
                 const changeQuantity = Number(prev.change_quantity ?? 0);
                 const totalPurchasePrice =
                     nextPurchasePrice === null
@@ -479,22 +627,38 @@ export default function InventorySnapshotsPage() {
                     ...prev,
                     item_name: nextItemName,
                     item_name_vi: nextItemNameVi,
+                    category: nextCategory,
+                    category_vi: nextCategoryVi,
+                    unit: nextUnit,
                     supplier: nextSupplier,
                     purchase_price: nextPurchasePrice,
+                    new_purchase_price: nextPurchasePrice,
                     total_purchase_price: totalPurchasePrice,
                 };
             });
 
             setItemLogs((prev) =>
                 prev.map((log) =>
-                    log.id === item.id
+                    syncLogIdSet.has(Number(log.id))
                         ? {
                             ...log,
-                            item_name: result.data.item_name ?? log.item_name,
-                            item_name_vi: result.data.item_name_vi ?? log.item_name_vi,
-                            new_supplier: result.data.new_supplier ?? log.new_supplier,
+                            item_name:
+                                syncedById.get(Number(log.id))?.item_name ?? log.item_name,
+                            item_name_vi:
+                                syncedById.get(Number(log.id))?.item_name_vi ??
+                                log.item_name_vi,
+                            category:
+                                syncedById.get(Number(log.id))?.category ?? log.category,
+                            category_vi:
+                                syncedById.get(Number(log.id))?.category_vi ??
+                                log.category_vi,
+                            unit: syncedById.get(Number(log.id))?.unit ?? log.unit,
+                            new_supplier:
+                                syncedById.get(Number(log.id))?.new_supplier ??
+                                log.new_supplier,
                             new_purchase_price:
-                                result.data.new_purchase_price ?? log.new_purchase_price,
+                                syncedById.get(Number(log.id))?.new_purchase_price ??
+                                log.new_purchase_price,
                         }
                         : log
                 )
@@ -1285,6 +1449,8 @@ export default function InventorySnapshotsPage() {
                             const qty = Number(item.change_quantity ?? 0);
                             const price = item.purchase_price;
                             const total = item.total_purchase_price;
+                            const priceTrend = getPurchasePriceTrend(item);
+                            const priceTrendStyle = getPurchasePriceTrendStyle(priceTrend);
 
                             return (
                                 <div
@@ -1350,9 +1516,18 @@ export default function InventorySnapshotsPage() {
                                                 whiteSpace: "nowrap",
                                             }}
                                         >
-                                            {price === null || price === undefined
-                                                ? "-"
-                                                : `${Number(price).toLocaleString()} ₫`}
+                                            {price === null || price === undefined ? (
+                                                "-"
+                                            ) : (
+                                                <span style={priceTrendStyle}>
+                                                    {priceTrend === "up"
+                                                        ? "▲ "
+                                                        : priceTrend === "down"
+                                                            ? "▼ "
+                                                            : ""}
+                                                    {Number(price).toLocaleString()} ₫
+                                                </span>
+                                            )}
                                             <span
                                                 style={{
                                                     marginLeft: 3,
@@ -2123,13 +2298,41 @@ export default function InventorySnapshotsPage() {
                             ) : (
                                 recentQuantityLogs.map((log) => {
                                     const changeQuantity = Number(log.change_quantity ?? 0);
+                                    const changeText =
+                                        changeQuantity === 0
+                                            ? ""
+                                            : `${changeQuantity > 0 ? "+" : ""}${formatDecimalDisplay(changeQuantity)}`;
+                                    const quantityText = `${changeText || "0"} ${log.unit || ""}`.trim();
+                                    const noteText = log.new_note || log.prev_note || "";
+                                    const compactDate = formatCompactLogDateTime(log.created_at);
+                                    const metaLead = noteText || changeText;
+                                    const metaLine = [
+                                        metaLead,
+                                        compactDate,
+                                        log.actor_name || "-",
+                                    ].filter(Boolean).join(" · ");
+                                    const unitPrice = Number(log.new_purchase_price ?? 0);
+                                    const showPriceLine =
+                                        log.reason === "purchase" &&
+                                        Number.isFinite(unitPrice) &&
+                                        unitPrice > 0 &&
+                                        Math.abs(changeQuantity) > 0;
+                                    const logPriceTrend = getPriceTrend(
+                                        log.prev_purchase_price,
+                                        log.new_purchase_price
+                                    );
+                                    const logPriceTrendStyle =
+                                        getPurchasePriceTrendStyle(logPriceTrend);
+                                    const priceLabel = lang === "vi" ? "Đơn giá" : "단가";
+                                    const totalLabel = lang === "vi" ? "Tổng" : "합계";
+                                    const totalPrice = Math.abs(changeQuantity) * unitPrice;
 
                                     return (
                                         <div
                                             key={log.id}
                                             style={{
                                                 ...ui.card,
-                                                padding: "8px 10px",
+                                                padding: "7px 9px",
                                                 borderLeft: `4px solid ${getActionColor(log.action)}`,
                                                 background: "#fff",
                                             }}
@@ -2138,98 +2341,53 @@ export default function InventorySnapshotsPage() {
                                                 style={{
                                                     display: "flex",
                                                     justifyContent: "space-between",
-                                                    alignItems: "flex-start",
-                                                    gap: 10,
+                                                    alignItems: "center",
+                                                    gap: 8,
                                                 }}
                                             >
-                                                <div style={{ minWidth: 0, flex: 1 }}>
-                                                    <div
+                                                <div
+                                                    style={{
+                                                        minWidth: 0,
+                                                        flex: 1,
+                                                        display: "flex",
+                                                        alignItems: "center",
+                                                        gap: 5,
+                                                    }}
+                                                >
+                                                    <span
                                                         style={{
-                                                            display: "flex",
-                                                            alignItems: "center",
-                                                            gap: 6,
-                                                            flexWrap: "wrap",
+                                                            ...ui.badgeMini,
+                                                            flexShrink: 0,
+                                                            background: getActionColor(log.action),
                                                         }}
                                                     >
-                                                        <span
-                                                            style={{
-                                                                ...ui.badgeMini,
-                                                                background: getActionColor(log.action),
-                                                            }}
-                                                        >
-                                                            {getActionBadge(log.action)}
-                                                        </span>
-                                                        <span
-                                                            style={{
-                                                                ...ui.badgeMini,
-                                                                minWidth: "auto",
-                                                                background: "#f3f4f6",
-                                                                color: "#374151",
-                                                                border: "1px solid #e5e7eb",
-                                                            }}
-                                                        >
-                                                            {getReasonEmoji(log.reason)}{" "}
-                                                            {INVENTORY_REASON_LABELS[lang][log.reason || "unclassified"]}
-                                                        </span>
-                                                        <span
-                                                            style={{
-                                                                fontSize: 14,
-                                                                fontWeight: 800,
-                                                                color: "#111827",
-                                                                wordBreak: "break-word",
-                                                            }}
-                                                        >
-                                                            {getDisplayLogItemName(log)}
-                                                        </span>
-                                                    </div>
-                                                    <div style={ui.metaText}>
-                                                        {[formatLogDateTime(log.created_at), log.actor_name || "-"]
-                                                            .filter(Boolean)
-                                                            .join(" · ")}
-                                                    </div>
-                                                    {(log.new_note || log.prev_note) && (
-                                                        <div style={{ ...ui.metaText, marginTop: 4 }}>
-                                                            {log.new_note || log.prev_note}
-                                                        </div>
-                                                    )}
-                                                    <div
+                                                        {getActionBadge(log.action)}
+                                                    </span>
+                                                    <span
                                                         style={{
-                                                            display: "flex",
-                                                            flexWrap: "wrap",
-                                                            gap: 4,
-                                                            marginTop: 7,
+                                                            ...ui.badgeMini,
+                                                            flexShrink: 0,
+                                                            minWidth: "auto",
+                                                            background: "#f3f4f6",
+                                                            color: "#374151",
+                                                            border: "1px solid #e5e7eb",
                                                         }}
                                                     >
-                                                        {reasonChangeOptions.map((option) => {
-                                                            const active = log.reason === option.value;
-                                                            const disabled = changingReasonLogId === log.id;
-
-                                                            return (
-                                                                <button
-                                                                    key={option.value}
-                                                                    type="button"
-                                                                    disabled={disabled}
-                                                                    onClick={() => changeLogReason(log, option.value)}
-                                                                    style={{
-                                                                        padding: "3px 7px",
-                                                                        borderRadius: 999,
-                                                                        border: active
-                                                                            ? "1px solid #111827"
-                                                                            : "1px solid #d1d5db",
-                                                                        background: active ? "#111827" : "#ffffff",
-                                                                        color: active ? "#ffffff" : "#374151",
-                                                                        fontSize: 11,
-                                                                        fontWeight: 700,
-                                                                        lineHeight: 1.2,
-                                                                        cursor: disabled ? "default" : "pointer",
-                                                                        opacity: disabled && !active ? 0.55 : 1,
-                                                                    }}
-                                                                >
-                                                                    {getReasonEmoji(option.value)} {option.label}
-                                                                </button>
-                                                            );
-                                                        })}
-                                                    </div>
+                                                        {getReasonEmoji(log.reason)} {getCompactReasonLabel(log.reason)}
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            minWidth: 0,
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                            whiteSpace: "nowrap",
+                                                            fontSize: 14,
+                                                            fontWeight: 800,
+                                                            color: "#111827",
+                                                        }}
+                                                    >
+                                                        {getDisplayLogItemName(log)}
+                                                    </span>
                                                 </div>
 
                                                 <div
@@ -2247,9 +2405,90 @@ export default function InventorySnapshotsPage() {
                                                         whiteSpace: "nowrap",
                                                     }}
                                                 >
-                                                    {changeQuantity > 0 ? "+" : ""}
-                                                    {formatDecimalDisplay(changeQuantity)} {log.unit || ""}
+                                                    {quantityText}
                                                 </div>
+                                            </div>
+                                            {showPriceLine && (
+                                                <div
+                                                    style={{
+                                                        marginTop: 5,
+                                                        overflow: "hidden",
+                                                        textOverflow: "ellipsis",
+                                                        whiteSpace: "nowrap",
+                                                        color: "#111827",
+                                                        fontSize: 12,
+                                                        fontWeight: 500,
+                                                        lineHeight: 1.25,
+                                                    }}
+                                                >
+                                                    {priceLabel}{" "}
+                                                    <span style={logPriceTrendStyle}>
+                                                        {logPriceTrend === "up"
+                                                            ? "▲ "
+                                                            : logPriceTrend === "down"
+                                                                ? "▼ "
+                                                                : ""}
+                                                        {unitPrice.toLocaleString()} ₫
+                                                    </span>
+                                                    {" / "}
+                                                    {log.unit || "-"} · {totalLabel}{" "}
+                                                    {totalPrice.toLocaleString()} ₫
+                                                </div>
+                                            )}
+                                            {metaLine && (
+                                                <div
+                                                    style={{
+                                                        ...ui.metaText,
+                                                        marginTop: 3,
+                                                        overflow: "hidden",
+                                                        textOverflow: "ellipsis",
+                                                        whiteSpace: "nowrap",
+                                                    }}
+                                                >
+                                                    {metaLine}
+                                                </div>
+                                            )}
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    flexWrap: "nowrap",
+                                                    gap: 5,
+                                                    marginTop: 6,
+                                                    overflowX: "auto",
+                                                    WebkitOverflowScrolling: "touch",
+                                                }}
+                                            >
+                                                {QUICK_REASON_VALUES.map((reason) => {
+                                                    const active = log.reason === reason;
+                                                    const disabled = changingReasonLogId === log.id;
+
+                                                    return (
+                                                        <button
+                                                            key={reason}
+                                                            type="button"
+                                                            disabled={disabled}
+                                                            onClick={() => changeLogReason(log, reason)}
+                                                            style={{
+                                                                padding: "3px 7px",
+                                                                borderRadius: 999,
+                                                                border: active
+                                                                    ? "1px solid #111827"
+                                                                    : "1px solid #d1d5db",
+                                                                background: active ? "#111827" : "#ffffff",
+                                                                color: active ? "#ffffff" : "#374151",
+                                                                fontSize: 11,
+                                                                fontWeight: 700,
+                                                                lineHeight: 1.2,
+                                                                whiteSpace: "nowrap",
+                                                                flexShrink: 0,
+                                                                cursor: disabled ? "default" : "pointer",
+                                                                opacity: disabled && !active ? 0.55 : 1,
+                                                            }}
+                                                        >
+                                                            {getReasonEmoji(reason)} {getCompactReasonLabel(reason)}
+                                                        </button>
+                                                    );
+                                                })}
                                             </div>
                                         </div>
                                     );

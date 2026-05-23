@@ -74,11 +74,9 @@ function getStatusText(
 ) {
   if (!record) return t.workBefore;
 
-  if (record.status === ATTENDANCE_STATUS.WORKING) return t.working;
-  if (record.status === ATTENDANCE_STATUS.DONE) return t.workDone;
-  if (record.status === ATTENDANCE_STATUS.EARLY_LEAVE) return t.workEarlyLeave;
-  if (record.status === ATTENDANCE_STATUS.LATE) return t.workLate;
   if (isApprovedLeave(record)) return t.workLeave;
+  if (record.check_out_at) return t.workDone;
+  if (record.check_in_at) return t.working;
   if (record.status === ATTENDANCE_STATUS.LEAVE) return t.workBefore;
 
   return record.status;
@@ -86,11 +84,9 @@ function getStatusText(
 
 function getStatusColor(record?: AttendanceRecord) {
   if (!record) return "#6b7280";
-  if (record.status === ATTENDANCE_STATUS.WORKING) return "#10b981";
-  if (record.status === ATTENDANCE_STATUS.DONE) return "#2563eb";
-  if (record.status === ATTENDANCE_STATUS.EARLY_LEAVE) return "#ef4444";
-  if (record.status === ATTENDANCE_STATUS.LATE) return "#f59e0b";
   if (isApprovedLeave(record)) return "#6b7280";
+  if (record.check_out_at) return "#2563eb";
+  if (record.check_in_at) return "#10b981";
   if (record.status === ATTENDANCE_STATUS.LEAVE) return "#6b7280";
   return "#6b7280";
 }
