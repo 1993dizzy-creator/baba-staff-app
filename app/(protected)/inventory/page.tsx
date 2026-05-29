@@ -670,33 +670,109 @@ export default function InventoryPage() {
     };
 
     const fetchInventory = async () => {
-        const res = await fetch("/api/inventory/items", {
-            cache: "no-store",
-        });
+        const url = "/api/inventory/items";
 
-        const result = await res.json();
+        try {
+            const res = await fetch(url, {
+                cache: "no-store",
+            });
+            const contentType = res.headers.get("content-type") || "";
+            const bodyText = await res.text();
+            const bodyPreview = bodyText.slice(0, 1000);
+            let parseErrorMessage: string | null = null;
+            let parsedJson: unknown = {};
 
-        if (!res.ok || !result.ok) {
-            console.error(result);
-            return;
+            try {
+                parsedJson = bodyText ? JSON.parse(bodyText) : {};
+            } catch (error) {
+                parseErrorMessage = error instanceof Error ? error.message : String(error);
+            }
+
+            const result = parsedJson && typeof parsedJson === "object"
+                ? parsedJson as {
+                    ok?: boolean;
+                    data?: InventoryItem[];
+                    error?: string;
+                    message?: string;
+                }
+                : {};
+
+            if (!res.ok || !result.ok) {
+                console.warn("[inventory] fetchInventory failed", {
+                    status: res.status,
+                    statusText: res.statusText,
+                    url,
+                    contentType,
+                    error: result.error,
+                    message: result.message,
+                    json: result,
+                    bodyPreview,
+                    parseError: parseErrorMessage,
+                });
+                return;
+            }
+
+            setInventoryList(result.data || []);
+        } catch (error) {
+            console.warn("[inventory] fetchInventory exception", {
+                url,
+                error,
+                message: error instanceof Error ? error.message : String(error),
+            });
         }
-
-        setInventoryList(result.data || []);
     };
 
     const fetchRecentLogs = async () => {
-        const res = await fetch("/api/inventory/logs/recent", {
-            cache: "no-store",
-        });
+        const url = "/api/inventory/logs/recent";
 
-        const result = await res.json();
+        try {
+            const res = await fetch(url, {
+                cache: "no-store",
+            });
+            const contentType = res.headers.get("content-type") || "";
+            const bodyText = await res.text();
+            const bodyPreview = bodyText.slice(0, 1000);
+            let parseErrorMessage: string | null = null;
+            let parsedJson: unknown = {};
 
-        if (!res.ok || !result.ok) {
-            console.error(result);
-            return;
+            try {
+                parsedJson = bodyText ? JSON.parse(bodyText) : {};
+            } catch (error) {
+                parseErrorMessage = error instanceof Error ? error.message : String(error);
+            }
+
+            const result = parsedJson && typeof parsedJson === "object"
+                ? parsedJson as {
+                    ok?: boolean;
+                    data?: InventoryLog[];
+                    error?: string;
+                    message?: string;
+                }
+                : {};
+
+            if (!res.ok || !result.ok) {
+                console.warn("[inventory] fetchRecentLogs failed", {
+                    status: res.status,
+                    statusText: res.statusText,
+                    url,
+                    contentType,
+                    error: result.error,
+                    message: result.message,
+                    json: result,
+                    bodyPreview,
+                    parseError: parseErrorMessage,
+                });
+                return;
+            }
+
+            setRecentLogs(result.data || []);
+        } catch (error) {
+            console.warn("[inventory] fetchRecentLogs exception", {
+                url,
+                error,
+                message: error instanceof Error ? error.message : String(error),
+            });
         }
-
-        setRecentLogs(result.data || []);
     };
 
     const fetchItemLogs = async (item: InventoryItem) => {

@@ -228,19 +228,41 @@ export default function InventorySnapshotsPage() {
 
     const fetchBatches = async () => {
         setLoadingBatches(true);
+        const url = "/api/inventory/snapshot/list";
 
         try {
-            const res = await fetch("/api/inventory/snapshot/list");
-            const json = await res.json().catch((error) => ({
-                ok: false,
-                error: "invalid_json_response",
-                message: error instanceof Error ? error.message : String(error),
-            }));
+            const res = await fetch(url);
+            const contentType = res.headers.get("content-type") || "";
+            const bodyText = await res.text();
+            const bodyPreview = bodyText.slice(0, 1000);
+            let parseErrorMessage: string | null = null;
+            let parsedJson: unknown = {};
+
+            try {
+                parsedJson = bodyText ? JSON.parse(bodyText) : {};
+            } catch (error) {
+                parseErrorMessage = error instanceof Error ? error.message : String(error);
+            }
+
+            const json = parsedJson && typeof parsedJson === "object"
+                ? parsedJson as {
+                    ok?: boolean;
+                    batches?: SnapshotBatch[];
+                    purchaseBatchMap?: Record<number, boolean>;
+                    error?: string;
+                    message?: string;
+                }
+                : {};
 
             if (!res.ok || !json.ok) {
-                console.error("fetchBatches failed", {
+                console.warn("[inventory/snapshots] fetchBatches failed", {
                     status: res.status,
+                    statusText: res.statusText,
+                    url,
+                    contentType,
                     json,
+                    bodyPreview,
+                    parseError: parseErrorMessage,
                 });
                 setBatchList([]);
                 setSelectedBatchId(null);
@@ -257,7 +279,11 @@ export default function InventorySnapshotsPage() {
                 setCalendarMonth(nextBatches[0].snapshot_date.slice(0, 7));
             }
         } catch (error) {
-            console.error("fetchBatches exception", error);
+            console.warn("[inventory/snapshots] fetchBatches exception", {
+                url,
+                error,
+                message: error instanceof Error ? error.message : String(error),
+            });
             setBatchList([]);
             setSelectedBatchId(null);
         } finally {
@@ -278,17 +304,44 @@ export default function InventorySnapshotsPage() {
         setLoadingItems(true);
 
         try {
-            const res = await fetch(`/api/inventory/snapshot/${safeBatchId}`, {
+            const url = `/api/inventory/snapshot/${safeBatchId}`;
+            const res = await fetch(url, {
                 cache: "no-store",
             });
+            const contentType = res.headers.get("content-type") || "";
+            const bodyText = await res.text();
+            const bodyPreview = bodyText.slice(0, 1000);
+            let parseErrorMessage: string | null = null;
+            let parsedJson: unknown = {};
 
-            const json = await res.json();
+            try {
+                parsedJson = bodyText ? JSON.parse(bodyText) : {};
+            } catch (error) {
+                parseErrorMessage = error instanceof Error ? error.message : String(error);
+            }
+
+            const json = parsedJson && typeof parsedJson === "object"
+                ? parsedJson as {
+                    ok?: boolean;
+                    items?: SnapshotItem[];
+                    error?: string;
+                    message?: string;
+                }
+                : {};
 
             if (!res.ok || !json.ok) {
-                console.error("[SNAPSHOT_FETCH_ERROR]", {
+                console.warn("[inventory/snapshots] fetchSnapshotItems failed", {
+                    status: res.status,
+                    statusText: res.statusText,
+                    url,
+                    contentType,
                     batchId,
                     safeBatchId,
+                    error: json.error,
                     message: json.message,
+                    json,
+                    bodyPreview,
+                    parseError: parseErrorMessage,
                 });
                 setSnapshotItems([]);
                 return;
@@ -296,7 +349,13 @@ export default function InventorySnapshotsPage() {
 
             setSnapshotItems(json.items || []);
         } catch (error) {
-            console.error("[SNAPSHOT_FETCH_EXCEPTION]", error);
+            console.warn("[inventory/snapshots] fetchSnapshotItems exception", {
+                url: `/api/inventory/snapshot/${safeBatchId}`,
+                batchId,
+                safeBatchId,
+                error,
+                message: error instanceof Error ? error.message : String(error),
+            });
             setSnapshotItems([]);
         } finally {
             setLoadingItems(false);
@@ -403,33 +462,38 @@ export default function InventorySnapshotsPage() {
             const res = await fetch(url, {
                 cache: "no-store",
             });
-
-            let json: {
-                ok?: boolean;
-                data?: InventoryLog[];
-                error?: string;
-                message?: string;
-            };
+            const contentType = res.headers.get("content-type") || "";
+            const bodyText = await res.text();
+            const bodyPreview = bodyText.slice(0, 1000);
+            let parseErrorMessage: string | null = null;
+            let parsedJson: unknown = {};
 
             try {
-                json = await res.json();
+                parsedJson = bodyText ? JSON.parse(bodyText) : {};
             } catch (error) {
-                console.error("fetchMovementItems invalid json response", {
-                    status: res.status,
-                    url,
-                    error,
-                });
-                setMovementItems([]);
-                return;
+                parseErrorMessage = error instanceof Error ? error.message : String(error);
             }
 
+            const json = parsedJson && typeof parsedJson === "object"
+                ? parsedJson as {
+                    ok?: boolean;
+                    data?: InventoryLog[];
+                    error?: string;
+                    message?: string;
+                }
+                : {};
+
             if (!res.ok || !json.ok) {
-                console.error("fetchMovementItems failed", {
+                console.warn("[inventory/snapshots] fetchMovementItems failed", {
                     status: res.status,
+                    statusText: res.statusText,
                     url,
+                    contentType,
                     error: json.error,
                     message: json.message,
                     json,
+                    bodyPreview,
+                    parseError: parseErrorMessage,
                 });
                 setMovementItems([]);
                 return;
@@ -437,7 +501,11 @@ export default function InventorySnapshotsPage() {
 
             setMovementItems((json.data || []).map(mapLogToSnapshotItem));
         } catch (error) {
-            console.error("fetchMovementItems exception", error);
+            console.warn("[inventory/snapshots] fetchMovementItems exception", {
+                url: `/api/inventory/logs?mode=logs&businessDate=${encodeURIComponent(businessDate)}`,
+                error,
+                message: error instanceof Error ? error.message : String(error),
+            });
             setMovementItems([]);
         } finally {
             setLoadingMovements(false);
