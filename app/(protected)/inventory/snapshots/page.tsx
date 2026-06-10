@@ -567,30 +567,22 @@ export default function InventorySnapshotsPage() {
             .filter((logId) => Number.isFinite(logId) && logId > 0);
     };
 
-    const getLatestPurchaseItemForModal = (item: SnapshotItem) => {
-        const syncLogIds = getPurchaseSyncLogIdsForCard(item);
-        const sameCardPurchaseItems = movementItems.filter((candidate) =>
-            syncLogIds.includes(Number(candidate.id))
-        );
-
-        const latestItem = [...sameCardPurchaseItems].sort((a, b) => {
-            const createdCompare = String(b.created_at || "").localeCompare(
-                String(a.created_at || "")
-            );
-            if (createdCompare !== 0) return createdCompare;
-
-            return Number(b.id) - Number(a.id);
-        })[0] ?? item;
+    const getSelectedPurchaseItemForModal = (item: SnapshotItem) => {
+        const sameCardSyncLogIds = getPurchaseSyncLogIdsForCard(item);
+        const clickedLogId = Number(item.id);
+        const syncLogIds = sameCardSyncLogIds.includes(clickedLogId)
+            ? [clickedLogId]
+            : [item.id];
 
         return {
-            ...latestItem,
+            ...item,
             syncLogIds: syncLogIds.length > 0 ? syncLogIds : [item.id],
         };
     };
 
     const openPurchaseLogModal = async (item: SnapshotItem) => {
-        const latestPurchaseItem = getLatestPurchaseItemForModal(item);
-        await fetchItemLogs(latestPurchaseItem);
+        const selectedPurchaseItem = getSelectedPurchaseItemForModal(item);
+        await fetchItemLogs(selectedPurchaseItem);
     };
 
     const openInventoryEdit = (item: SnapshotItem) => {
@@ -606,7 +598,7 @@ export default function InventorySnapshotsPage() {
     const syncPurchaseInfoFromCurrentItem = async (item: SnapshotItem) => {
         if (syncingPurchaseLogId) return;
         setSyncingPurchaseLogId(item.id);
-        const syncLogIds = (item.syncLogIds?.length ? item.syncLogIds : [item.id])
+        const syncLogIds = [item.id]
             .map((logId) => Number(logId))
             .filter((logId) => Number.isFinite(logId) && logId > 0);
         const syncLogIdSet = new Set(syncLogIds);
@@ -922,15 +914,18 @@ export default function InventorySnapshotsPage() {
     }, [movementItems, movementReasonTab, lang]);
 
     const supplierTabs = useMemo(() => {
+        const supplierCounts = purchasedItems.reduce((counts, item) => {
+            const supplier = item.supplier || "-";
+            counts.set(supplier, (counts.get(supplier) ?? 0) + 1);
+            return counts;
+        }, new Map<string, number>());
+
         return [
-            { key: "all", label: c.all },
-            ...Array.from(
-                new Set(
-                    purchasedItems.map((item) => item.supplier || "-")
-                )
-            ).map((supplier) => ({
+            { key: "all", label: c.all, count: purchasedItems.length },
+            ...Array.from(supplierCounts.entries()).map(([supplier, count]) => ({
                 key: supplier,
                 label: supplier,
+                count,
             })),
         ];
     }, [purchasedItems, lang]);
@@ -948,12 +943,18 @@ export default function InventorySnapshotsPage() {
         }, 0);
     }, [filteredPurchasedItems]);
 
-    const recentQuantityLogs = useMemo(() => {
-        return [...itemLogs]
-            .filter((log) => {
-                const changeQuantity = Number(log.change_quantity);
-                return Number.isFinite(changeQuantity) && changeQuantity !== 0;
-            })
+    const selectedLog = useMemo(() => {
+        if (!logModalItem) return null;
+        return itemLogs.find((log) => Number(log.id) === Number(logModalItem.id)) ?? null;
+    }, [itemLogs, logModalItem]);
+
+    const visibleTimelineLogs = useMemo(() => {
+        const selectedReason = selectedLog?.reason ?? logModalItem?.reason;
+        const logs = selectedReason
+            ? itemLogs.filter((log) => log.reason === selectedReason)
+            : itemLogs;
+
+        return [...logs]
             .sort((a, b) => {
                 const createdCompare = String(b.created_at || "").localeCompare(
                     String(a.created_at || "")
@@ -961,9 +962,165 @@ export default function InventorySnapshotsPage() {
                 if (createdCompare !== 0) return createdCompare;
 
                 return Number(b.id) - Number(a.id);
-            })
-            .slice(0, 3);
-    }, [itemLogs]);
+            });
+    }, [itemLogs, logModalItem, selectedLog]);
+
+    const renderLogCard = (log: InventoryLog) => {
+        const changeQuantity = Number(log.change_quantity ?? 0);
+        const changeText =
+            changeQuantity === 0
+                ? ""
+                : `${changeQuantity > 0 ? "+" : ""}${formatDecimalDisplay(changeQuantity)}`;
+        const quantityText = `${changeText || "0"} ${log.unit || ""}`.trim();
+        const noteText = log.new_note || log.prev_note || "";
+        const compactDate = formatCompactLogDateTime(log.created_at);
+        const metaLead = noteText || changeText;
+        const metaLine = [
+            metaLead,
+            compactDate,
+            log.actor_name || "-",
+        ].filter(Boolean).join(" · ");
+        const unitPrice = Number(log.new_purchase_price ?? 0);
+        const showPriceLine =
+            log.reason === "purchase" &&
+            Number.isFinite(unitPrice) &&
+            unitPrice > 0 &&
+            Math.abs(changeQuantity) > 0;
+        const logPriceTrend = getPriceTrend(
+            log.prev_purchase_price,
+            log.new_purchase_price
+        );
+        const logPriceTrendStyle = getPurchasePriceTrendStyle(logPriceTrend);
+        const priceLabel = lang === "vi" ? "Đơn giá" : "단가";
+        const totalLabel = lang === "vi" ? "Tổng" : "합계";
+        const totalPrice = Math.abs(changeQuantity) * unitPrice;
+        return (
+            <div
+                key={`timeline-${log.id}`}
+                style={{
+                    ...ui.card,
+                    padding: "7px 9px",
+                    borderLeft: `4px solid ${getActionColor(log.action)}`,
+                    background: "#fff",
+                }}
+            >
+                <div
+                    style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 8,
+                    }}
+                >
+                    <div
+                        style={{
+                            minWidth: 0,
+                            flex: 1,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                        }}
+                    >
+                        <span
+                            style={{
+                                ...ui.badgeMini,
+                                flexShrink: 0,
+                                background: getActionColor(log.action),
+                            }}
+                        >
+                            {getActionBadge(log.action)}
+                        </span>
+                        <span
+                            style={{
+                                ...ui.badgeMini,
+                                flexShrink: 0,
+                                minWidth: "auto",
+                                background: "#f3f4f6",
+                                color: "#374151",
+                                border: "1px solid #e5e7eb",
+                            }}
+                        >
+                            {getReasonEmoji(log.reason)} {getCompactReasonLabel(log.reason)}
+                        </span>
+                        <span
+                            style={{
+                                minWidth: 0,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                fontSize: 14,
+                                fontWeight: 800,
+                                color: "#111827",
+                            }}
+                        >
+                            {getDisplayLogItemName(log)}
+                        </span>
+                    </div>
+
+                    <div
+                        style={{
+                            flexShrink: 0,
+                            textAlign: "right",
+                            fontSize: 14,
+                            fontWeight: 900,
+                            color:
+                                changeQuantity > 0
+                                    ? "seagreen"
+                                    : changeQuantity < 0
+                                        ? "crimson"
+                                        : "#111827",
+                            whiteSpace: "nowrap",
+                        }}
+                    >
+                        {quantityText}
+                    </div>
+                </div>
+
+                {showPriceLine && (
+                    <div
+                        style={{
+                            marginTop: 5,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            color: "#111827",
+                            fontSize: 12,
+                            fontWeight: 500,
+                            lineHeight: 1.25,
+                        }}
+                    >
+                        {priceLabel}{" "}
+                        <span style={logPriceTrendStyle}>
+                            {logPriceTrend === "up"
+                                ? "▲"
+                                : logPriceTrend === "down"
+                                    ? "▼"
+                                    : ""}
+                            {unitPrice.toLocaleString()} ₫
+                        </span>
+                        {" / "}
+                        {log.unit || "-"} · {totalLabel}{" "}
+                        {totalPrice.toLocaleString()} ₫
+                    </div>
+                )}
+
+                {metaLine && (
+                    <div
+                        style={{
+                            ...ui.metaText,
+                            marginTop: 3,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                        }}
+                    >
+                        {metaLine}
+                    </div>
+                )}
+
+            </div>
+        );
+    };
 
     const batchCalendar = useMemo(() => {
         const map = new Map<string, SnapshotBatch>();
@@ -1494,9 +1651,31 @@ export default function InventorySnapshotsPage() {
                                         whiteSpace: "nowrap",
                                         cursor: "pointer",
                                         flexShrink: 0,
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 5,
                                     }}
                                 >
                                     {tab.label}
+                                    <span
+                                        style={{
+                                            minWidth: 18,
+                                            height: 18,
+                                            padding: "0 5px",
+                                            borderRadius: 999,
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            background: active
+                                                ? "rgba(255,255,255,0.18)"
+                                                : "#e5e7eb",
+                                            color: active ? "#fff" : "#4b5563",
+                                            fontSize: 10,
+                                            lineHeight: 1,
+                                        }}
+                                    >
+                                        {tab.count}
+                                    </span>
                                 </button>
                             );
                         })}
@@ -2258,7 +2437,7 @@ export default function InventorySnapshotsPage() {
                             width: "100%",
                             maxWidth: 560,
                             maxHeight: "80vh",
-                            overflow: "hidden",
+                            overflowY: "auto",
                             background: "#fff",
                             borderRadius: 14,
                             padding: 18,
@@ -2288,33 +2467,47 @@ export default function InventorySnapshotsPage() {
                                     justifyContent: "flex-end",
                                 }}
                             >
-                                <button
-                                    type="button"
-                                    onClick={() => syncPurchaseInfoFromCurrentItem(logModalItem)}
-                                    disabled={syncingPurchaseLogId === logModalItem.id}
-                                    style={{
-                                        width: "auto",
-                                        minHeight: 30,
-                                        padding: "6px 10px",
-                                        borderRadius: 999,
-                                        border: "1px solid #d1d5db",
-                                        background: "#f9fafb",
-                                        color: "#111827",
-                                        fontSize: 12,
-                                        fontWeight: 800,
-                                        lineHeight: 1.2,
-                                        whiteSpace: "nowrap",
-                                        cursor:
-                                            syncingPurchaseLogId === logModalItem.id
-                                                ? "not-allowed"
-                                                : "pointer",
-                                        opacity: syncingPurchaseLogId === logModalItem.id ? 0.6 : 1,
-                                    }}
-                                >
-                                    {syncingPurchaseLogId === logModalItem.id
-                                        ? c.saving
-                                        : t.syncLog}
-                                </button>
+                                {selectedLog && (
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            syncPurchaseInfoFromCurrentItem({
+                                                ...logModalItem,
+                                                id: selectedLog.id,
+                                                business_date:
+                                                    selectedLog.business_date ??
+                                                    logModalItem.business_date,
+                                                syncLogIds: [selectedLog.id],
+                                            })
+                                        }
+                                        disabled={syncingPurchaseLogId === selectedLog.id}
+                                        style={{
+                                            width: "auto",
+                                            minHeight: 30,
+                                            padding: "6px 10px",
+                                            borderRadius: 999,
+                                            border: "1px solid #d1d5db",
+                                            background: "#f9fafb",
+                                            color: "#111827",
+                                            fontSize: 12,
+                                            fontWeight: 800,
+                                            lineHeight: 1.2,
+                                            whiteSpace: "nowrap",
+                                            cursor:
+                                                syncingPurchaseLogId === selectedLog.id
+                                                    ? "not-allowed"
+                                                    : "pointer",
+                                            opacity:
+                                                syncingPurchaseLogId === selectedLog.id
+                                                    ? 0.6
+                                                    : 1,
+                                        }}
+                                    >
+                                        {syncingPurchaseLogId === selectedLog.id
+                                            ? c.saving
+                                            : t.syncLog}
+                                    </button>
+                                )}
 
                                 <button
                                     type="button"
@@ -2353,18 +2546,30 @@ export default function InventorySnapshotsPage() {
                                 display: "flex",
                                 flexDirection: "column",
                                 gap: 8,
-                                overflowY: "auto",
                                 paddingRight: 4,
                             }}
                         >
+                            <div
+                                style={{
+                                    fontSize: 13,
+                                    fontWeight: 800,
+                                    color: "#111827",
+                                }}
+                            >
+                                {lang === "vi" ? "Nhật ký đã chọn" : "선택한 로그"}
+                            </div>
                             {isItemLogsLoading ? (
                                 <div>{c.loading}</div>
                             ) : itemLogsError ? (
                                 <div>{itemLogsError}</div>
-                            ) : recentQuantityLogs.length === 0 ? (
-                                <div>{c.noLogs}</div>
+                            ) : !selectedLog ? (
+                                <div style={ui.metaText}>
+                                    {lang === "vi"
+                                        ? "Không tìm thấy nhật ký đã chọn."
+                                        : "선택한 로그를 찾을 수 없습니다."}
+                                </div>
                             ) : (
-                                recentQuantityLogs.map((log) => {
+                                [selectedLog].map((log) => {
                                     const changeQuantity = Number(log.change_quantity ?? 0);
                                     const changeText =
                                         changeQuantity === 0
@@ -2563,6 +2768,38 @@ export default function InventorySnapshotsPage() {
                                 })
                             )}
                         </div>
+
+                        {!isItemLogsLoading && !itemLogsError && visibleTimelineLogs.length > 0 && (
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 8,
+                                    paddingTop: 10,
+                                    borderTop: "1px solid #e5e7eb",
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        fontSize: 13,
+                                        fontWeight: 800,
+                                        color: "#111827",
+                                    }}
+                                >
+                                    {lang === "vi" ? "Tất cả nhật ký" : "전체 로그"}
+                                </div>
+
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        gap: 8,
+                                    }}
+                                >
+                                    {visibleTimelineLogs.map((log) => renderLogCard(log))}
+                                </div>
+                            </div>
+                        )}
 
                         <button
                             type="button"

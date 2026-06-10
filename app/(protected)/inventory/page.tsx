@@ -5,7 +5,7 @@ import { useLanguage } from "@/lib/language-context";
 import { commonText, inventoryText } from "@/lib/text";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
-import { getUser } from "@/lib/supabase/auth";
+import { getUser, isAdmin } from "@/lib/supabase/auth";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import { usePathname, useSearchParams } from "next/navigation";
 import SubNav from "@/components/SubNav";
@@ -272,6 +272,7 @@ export default function InventoryPage() {
     const currentUser = getUser();
     const actorName = currentUser?.name || "";
     const actorUsername = currentUser?.username || "";
+    const canDeleteInventoryItem = isAdmin(currentUser);
 
     const defaultPart: PartValue =
         PART_VALUES.includes(currentUser?.part as PartValue)
@@ -1196,6 +1197,11 @@ export default function InventoryPage() {
 
             // ===================== 수정 =====================
             if (editingId) {
+                if (nextQuantity < 0) {
+                    alert(t.quantityCannotBeNegative);
+                    return;
+                }
+
                 const targetItem = inventoryList.find((item) => item.id === editingId);
 
                 if (!targetItem) {
@@ -1215,6 +1221,7 @@ export default function InventoryPage() {
                     normalizeText(targetItem.unit || "") !== normalizedUnit ||
                     normalizeText(targetItem.note || "") !== normalizedNote ||
                     (targetItem.part || "") !== part ||
+                    parseDecimal(targetItem.quantity ?? 0) !== nextQuantity ||
                     (targetItem.purchase_price ?? null) !== nextPurchasePrice ||
                     normalizeText(targetItem.supplier || "") !== normalizedSupplier ||
                     normalizeText(targetItem.code || "") !== normalizedCode ||
@@ -1233,6 +1240,7 @@ export default function InventoryPage() {
                             category_vi: normalizedCategoryVi,
                             purchase_price: nextPurchasePrice,
                             low_stock_threshold: nextLowStock,
+                            quantity: nextQuantity,
                             unit: normalizedUnit,
                             note: normalizedNote,
                             part,
@@ -1248,6 +1256,7 @@ export default function InventoryPage() {
                             category_vi: normalizedCategoryVi,
                             purchase_price: nextPurchasePrice,
                             low_stock_threshold: nextLowStock,
+                            quantity: nextQuantity,
                             unit: normalizedUnit,
                             note: normalizedNote,
                             part,
@@ -2728,27 +2737,29 @@ export default function InventoryPage() {
                                                             {c.edit}
                                                         </button>
 
-                                                        <button
-                                                            onClick={() => handleDelete(item.id)}
-                                                            disabled={isDeletingId === item.id}
-                                                            style={{
-                                                                ...ui.subButton,
-                                                                width: "auto",
-                                                                minWidth: 58,
-                                                                padding: "7px 12px",
-                                                                fontSize: 13,
-                                                                background: "crimson",
-                                                                color: "white",
-                                                                border: "1px solid crimson",
-                                                                fontWeight: 700,
-                                                                opacity: isDeletingId === item.id ? 0.6 : 1,
-                                                                cursor: isDeletingId === item.id ? "not-allowed" : "pointer",
-                                                            }}
-                                                        >
-                                                            {isDeletingId === item.id
-                                                                ? (c.deleting)
-                                                                : c.delete}
-                                                        </button>
+                                                        {canDeleteInventoryItem && (
+                                                            <button
+                                                                onClick={() => handleDelete(item.id)}
+                                                                disabled={isDeletingId === item.id}
+                                                                style={{
+                                                                    ...ui.subButton,
+                                                                    width: "auto",
+                                                                    minWidth: 58,
+                                                                    padding: "7px 12px",
+                                                                    fontSize: 13,
+                                                                    background: "crimson",
+                                                                    color: "white",
+                                                                    border: "1px solid crimson",
+                                                                    fontWeight: 700,
+                                                                    opacity: isDeletingId === item.id ? 0.6 : 1,
+                                                                    cursor: isDeletingId === item.id ? "not-allowed" : "pointer",
+                                                                }}
+                                                            >
+                                                                {isDeletingId === item.id
+                                                                    ? (c.deleting)
+                                                                    : c.delete}
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </div>
                                             )}
@@ -3280,16 +3291,10 @@ export default function InventoryPage() {
                                 placeholder={c.quantity}
                                 value={quantity}
                                 onChange={(e) => setQuantity(e.target.value)}
-                                readOnly={!!editingId}
                                 style={ui.input}
                                 ref={quantityRef}
                                 onKeyDown={(e) => handleKeyDown(e, lowStockThresholdRef)}
                             />
-                            {editingId && (
-                                <div style={{ ...ui.metaText, marginTop: -8, marginBottom: 10 }}>
-                                    {t.quantityEditQuickSaveOnly}
-                                </div>
-                            )}
                         </div>
 
                         {/* 부족기준 */}

@@ -613,6 +613,14 @@ export async function DELETE(req: Request) {
       return jsonError("missing_actor", "Invalid user", 401);
     }
 
+    if (actor.role !== "owner" && actor.role !== "master") {
+      return jsonError(
+        "inventory_item_delete_forbidden",
+        "Inventory item deletion requires admin permission.",
+        403
+      );
+    }
+
     const { data: targetItem, error: selectError } = await supabaseAdmin
       .from("inventory")
       .select(`
