@@ -84,6 +84,23 @@ type CategoryGroup = {
   items: MonthlyItem[];
 };
 
+type CategorySummary = {
+  key: string;
+  label: string;
+  totalAmount: number;
+  totalQuantity: number;
+  missingCount: number;
+};
+
+type PartSummary = {
+  key: string;
+  label: string;
+  totalAmount: number;
+  totalQuantity: number;
+  missingCount: number;
+  categories: CategorySummary[];
+};
+
 type MovementSignal = {
   key: string;
   emoji: string;
@@ -174,6 +191,13 @@ const monthlyText = {
     notClosingSnapshot: "마감 스냅샷 아님",
     snapshotSource: "스냅샷 기준",
     supplierSummary: "거래처별 요약",
+    supplierView: "거래처별",
+    partView: "파트별",
+    partSummary: "파트별 요약",
+    spendingShare: "지출 비중",
+    noPart: "파트 없음",
+    noCategory: "카테고리 없음",
+    missingUnitPrice: "단가 누락",
     itemSummary: "품목별 월간요약",
     noData: "표시할 데이터가 없습니다.",
     noSearchResults: "검색 결과가 없습니다.",
@@ -205,6 +229,8 @@ const monthlyText = {
     existing: "기존",
     new: "신규",
     missing: "누락/삭제 가능",
+    monthlyNew: "신규",
+    monthlyMissing: "누락",
   },
   vi: {
     month: "Thang",
@@ -244,6 +270,13 @@ const monthlyText = {
     notClosingSnapshot: "Khong phai snapshot chot",
     snapshotSource: "Theo snapshot",
     supplierSummary: "Tom tat theo noi mua",
+    supplierView: "Theo nơi mua",
+    partView: "Theo bộ phận",
+    partSummary: "Tổng hợp theo bộ phận",
+    spendingShare: "Tỷ trọng chi phí",
+    noPart: "Chưa có bộ phận",
+    noCategory: "Chưa có danh mục",
+    missingUnitPrice: "Thiếu đơn giá",
     itemSummary: "Tom tat theo mat hang",
     noData: "Khong co du lieu hien thi.",
     noSearchResults: "Khong co ket qua tim kiem.",
@@ -275,6 +308,8 @@ const monthlyText = {
     existing: "Co san",
     new: "Moi",
     missing: "Co the thieu/xoa",
+    monthlyNew: "mới",
+    monthlyMissing: "thiếu",
   },
 } as const;
 
@@ -388,12 +423,6 @@ const getSignedColor = (value: number) => {
   return "#374151";
 };
 
-const getStatusColor = (status: MonthlyItemStatus) => {
-  if (status === "new") return "seagreen";
-  if (status === "missing") return "crimson";
-  return "#4b5563";
-};
-
 const getSupplierKey = (supplier?: string | null) => supplier?.trim() || "__none__";
 
 const sortText = (value: string | null | undefined) => value?.trim().toLocaleLowerCase() || "";
@@ -465,7 +494,9 @@ export default function InventoryMonthlyPage() {
   const [data, setData] = useState<MonthlyInventoryResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [summaryView, setSummaryView] = useState<"supplier" | "part">("supplier");
   const [expandedSupplierKeys, setExpandedSupplierKeys] = useState<Record<string, boolean>>({});
+  const [expandedParts, setExpandedParts] = useState<Record<string, boolean>>({});
   const [expandedItemIds, setExpandedItemIds] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -492,6 +523,7 @@ export default function InventoryMonthlyPage() {
         if (!ignore) {
           setData(json);
           setExpandedSupplierKeys({});
+          setExpandedParts({});
           setExpandedItemIds({});
         }
       } catch (fetchError) {
@@ -544,11 +576,123 @@ export default function InventoryMonthlyPage() {
         }),
       }))
       .sort((a, b) => {
-        if (a.key === "__none__") return 1;
-        if (b.key === "__none__") return -1;
+        const amountDiff =
+          (b.summary?.purchaseAmountKnown ?? 0) -
+          (a.summary?.purchaseAmountKnown ?? 0);
+        if (amountDiff !== 0) return amountDiff;
+
+        const quantityDiff =
+          (b.summary?.purchaseQuantity ?? 0) -
+          (a.summary?.purchaseQuantity ?? 0);
+        if (quantityDiff !== 0) return quantityDiff;
+
         return sortText(a.supplierLabel).localeCompare(sortText(b.supplierLabel));
       });
   }, [data, labels.unregisteredSupplier]);
+
+  const supplierAmountStats = useMemo(
+    () =>
+      supplierGroups.reduce(
+        (stats, group) => {
+          const amount = group.summary?.purchaseAmountKnown ?? 0;
+          return {
+            total: stats.total + amount,
+            max: Math.max(stats.max, amount),
+          };
+        },
+        { total: 0, max: 0 }
+      ),
+    [supplierGroups]
+  );
+
+  const partGroups = useMemo<PartSummary[]>(() => {
+    type CategoryAccumulator = CategorySummary;
+    type PartAccumulator = Omit<PartSummary, "categories"> & {
+      categoryMap: Map<string, CategoryAccumulator>;
+    };
+
+    const partMap = new Map<string, PartAccumulator>();
+
+    for (const item of supplierGroups.flatMap((group) => group.items)) {
+      const rawPart = item.part?.trim() || "";
+      const partKey = rawPart || "__none__";
+      const partLabel =
+        rawPart === "kitchen" || rawPart === "hall" || rawPart === "bar"
+          ? String(c[rawPart as keyof typeof c])
+          : rawPart || labels.noPart;
+      const rawCategory = item.category?.trim() || item.categoryVi?.trim() || "";
+      const categoryKey = rawCategory || "__none__";
+      const categoryLabel =
+        (lang === "vi"
+          ? item.categoryVi || item.category
+          : item.category || item.categoryVi) || labels.noCategory;
+      const amount = item.purchaseAmount ?? 0;
+      const quantity = item.purchaseQuantity;
+      const missingCount = hasMissingPurchasePrice(item) ? 1 : 0;
+      const part =
+        partMap.get(partKey) ??
+        ({
+          key: partKey,
+          label: partLabel,
+          totalAmount: 0,
+          totalQuantity: 0,
+          missingCount: 0,
+          categoryMap: new Map<string, CategoryAccumulator>(),
+        } satisfies PartAccumulator);
+      const category =
+        part.categoryMap.get(categoryKey) ??
+        ({
+          key: categoryKey,
+          label: categoryLabel,
+          totalAmount: 0,
+          totalQuantity: 0,
+          missingCount: 0,
+        } satisfies CategoryAccumulator);
+
+      part.totalAmount += amount;
+      part.totalQuantity += quantity;
+      part.missingCount += missingCount;
+      category.totalAmount += amount;
+      category.totalQuantity += quantity;
+      category.missingCount += missingCount;
+      part.categoryMap.set(categoryKey, category);
+      partMap.set(partKey, part);
+    }
+
+    return [...partMap.values()]
+      .map((part) => ({
+        key: part.key,
+        label: part.label,
+        totalAmount: part.totalAmount,
+        totalQuantity: part.totalQuantity,
+        missingCount: part.missingCount,
+        categories: [...part.categoryMap.values()].sort((a, b) => {
+          const amountDiff = b.totalAmount - a.totalAmount;
+          if (amountDiff !== 0) return amountDiff;
+          const quantityDiff = b.totalQuantity - a.totalQuantity;
+          if (quantityDiff !== 0) return quantityDiff;
+          return sortText(a.label).localeCompare(sortText(b.label));
+        }),
+      }))
+      .sort((a, b) => {
+        const amountDiff = b.totalAmount - a.totalAmount;
+        if (amountDiff !== 0) return amountDiff;
+        const quantityDiff = b.totalQuantity - a.totalQuantity;
+        if (quantityDiff !== 0) return quantityDiff;
+        return sortText(a.label).localeCompare(sortText(b.label));
+      });
+  }, [supplierGroups, c, labels.noCategory, labels.noPart, lang]);
+  const partAmountStats = useMemo(
+    () =>
+      partGroups.reduce(
+        (stats, part) => ({
+          total: stats.total + part.totalAmount,
+          max: Math.max(stats.max, part.totalAmount),
+        }),
+        { total: 0, max: 0 }
+      ),
+    [partGroups]
+  );
 
   const getDisplayName = (item: MonthlyItem) =>
     lang === "vi" ? item.nameVi || item.name : item.name || item.nameVi || "-";
@@ -740,6 +884,46 @@ export default function InventoryMonthlyPage() {
             </div>
           </section>
 
+          <div
+            role="tablist"
+            aria-label={labels.summary}
+            style={{
+              ...ui.card,
+              padding: 4,
+              marginBottom: 12,
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 4,
+            }}
+          >
+            {(["supplier", "part"] as const).map((view) => {
+              const active = summaryView === view;
+              return (
+                <button
+                  key={view}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setSummaryView(view)}
+                  style={{
+                    border: active ? "1px solid #93c5fd" : "1px solid transparent",
+                    borderRadius: 8,
+                    background: active ? "#eff6ff" : "transparent",
+                    color: active ? "#1d4ed8" : "#6b7280",
+                    padding: "8px 10px",
+                    fontSize: 13,
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    boxShadow: active ? "0 1px 2px rgba(15, 23, 42, 0.08)" : "none",
+                  }}
+                >
+                  {view === "supplier" ? labels.supplierView : labels.partView}
+                </button>
+              );
+            })}
+          </div>
+
+          {summaryView === "supplier" && (
           <section style={{ ...ui.card, padding: 12, marginBottom: 12 }}>
             <div style={{ ...ui.cardRow, marginBottom: 10 }}>
               <span style={{ fontSize: 15, fontWeight: 800, color: "#111827" }}>
@@ -769,6 +953,15 @@ export default function InventoryMonthlyPage() {
                   const supplierServiceCount = group.items.filter(
                     (item) => item.serviceNetChange !== 0
                   ).length;
+                  const supplierAmount = supplier?.purchaseAmountKnown ?? 0;
+                  const supplierBarWidth =
+                    supplierAmountStats.max > 0
+                      ? (supplierAmount / supplierAmountStats.max) * 100
+                      : 0;
+                  const supplierShare =
+                    supplierAmountStats.total > 0
+                      ? (supplierAmount / supplierAmountStats.total) * 100
+                      : 0;
                   const supplierSignals = [
                     supplierMissingPriceCount > 0
                       ? `${MONTHLY_SIGNAL_EMOJIS.missingPrice} ${formatQuantity(supplierMissingPriceCount)}`
@@ -869,26 +1062,77 @@ export default function InventoryMonthlyPage() {
 	                        </span>
                       </button>
 
-                      {supplierSignals.length > 0 && (
-                        <div
+                      <div
+                        style={{
+                          padding: "0 10px 8px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                          <div
                           style={{
-                            padding: "0 10px 8px",
-                            display: "flex",
-                            flexWrap: "wrap",
-                            gap: "2px 7px",
-                            color: "#6b7280",
-                            fontSize: 12,
-                            fontWeight: 800,
+                            flex: 1,
+                            minWidth: 0,
+                            display: "grid",
+                            gridTemplateColumns: "minmax(0, 1fr) 38px",
+                            alignItems: "center",
+                            gap: 6,
                           }}
                         >
-                          {supplierSignals.map((signal, index) => (
-                            <span key={signal}>
-                              {index > 0 ? SEP : ""}
-                              {signal}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                          <div
+                            style={{
+                              height: 6,
+                              overflow: "hidden",
+                              borderRadius: 999,
+                              background: "#e5e7eb",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: `${supplierBarWidth}%`,
+                                height: "100%",
+                                borderRadius: 999,
+                                background: "#16a34a",
+                              }}
+                            />
+                          </div>
+                          <span
+                            style={{
+                              textAlign: "right",
+                              color: "#6b7280",
+                              fontSize: 10,
+                              fontWeight: 900,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {supplierShare.toFixed(1)}%
+                          </span>
+                          </div>
+
+                        {supplierSignals.length > 0 && (
+                          <div
+                            style={{
+                              flexShrink: 0,
+                              maxWidth: "32%",
+                              display: "flex",
+                              justifyContent: "flex-end",
+                              flexWrap: "wrap",
+                              gap: "2px 5px",
+                              color: "#6b7280",
+                              fontSize: 11,
+                              fontWeight: 800,
+                              textAlign: "right",
+                            }}
+                          >
+                            {supplierSignals.map((signal) => (
+                              <span key={signal} style={{ whiteSpace: "nowrap" }}>
+                                {signal}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
 
                       {expandedSupplier && (
                         <div
@@ -1161,7 +1405,7 @@ export default function InventoryMonthlyPage() {
                                   key={itemExpansionKey}
                                   style={{
                                     border: "1px solid #e5e7eb",
-                                    borderLeft: `4px solid ${getStatusColor(item.status)}`,
+                                    borderLeft: "4px solid #e5e7eb",
                                     borderRadius: 8,
                                     background: "#fff",
                                     padding: "7px 9px",
@@ -1233,6 +1477,30 @@ export default function InventoryMonthlyPage() {
                                           }}
                                         >
                                           {item.code}
+                                        </span>
+                                      )}
+                                      {item.status !== "existing" && (
+                                        <span
+                                          style={{
+                                            flexShrink: 0,
+                                            fontSize: 10,
+                                            fontWeight: 900,
+                                            color:
+                                              item.status === "new" ? "#166534" : "#991b1b",
+                                            background:
+                                              item.status === "new" ? "#f0fdf4" : "#fef2f2",
+                                            border: `1px solid ${
+                                              item.status === "new" ? "#bbf7d0" : "#fecaca"
+                                            }`,
+                                            borderRadius: 999,
+                                            padding: "1px 5px",
+                                            lineHeight: 1.35,
+                                            whiteSpace: "nowrap",
+                                          }}
+                                        >
+                                          {item.status === "new"
+                                            ? labels.monthlyNew
+                                            : labels.monthlyMissing}
                                         </span>
                                       )}
                                     </span>
@@ -1510,6 +1778,292 @@ export default function InventoryMonthlyPage() {
               </div>
             )}
           </section>
+          )}
+
+          {summaryView === "part" && (
+            <section style={{ ...ui.card, padding: 12, marginBottom: 12 }}>
+              <div style={{ ...ui.cardRow, marginBottom: 10 }}>
+                <span style={{ fontSize: 15, fontWeight: 800, color: "#111827" }}>
+                  {labels.partSummary}
+                </span>
+                <span style={{ ...ui.metaText, fontWeight: 800 }}>
+                  {partGroups.length}
+                </span>
+              </div>
+
+              {partGroups.length === 0 ? (
+                <div style={{ ...ui.metaText, padding: "8px 2px" }}>
+                  {labels.noData}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {partGroups.map((part) => {
+                    const partBarWidth =
+                      partAmountStats.max > 0
+                        ? (part.totalAmount / partAmountStats.max) * 100
+                        : 0;
+                    const partShare =
+                      partAmountStats.total > 0
+                        ? (part.totalAmount / partAmountStats.total) * 100
+                        : 0;
+                    const expandedPart = Boolean(expandedParts[part.key]);
+                    const maxCategoryAmount = part.categories.reduce(
+                      (max, category) => Math.max(max, category.totalAmount),
+                      0
+                    );
+
+                    return (
+                      <div
+                        key={part.key}
+                        style={{
+                          border: "1px solid #e5e7eb",
+                          borderRadius: 10,
+                          background: "#fff",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <button
+                          type="button"
+                          aria-expanded={expandedPart}
+                          onClick={() =>
+                            setExpandedParts((prev) => ({
+                              ...prev,
+                              [part.key]: !prev[part.key],
+                            }))
+                          }
+                          style={{
+                            width: "100%",
+                            border: "none",
+                            background: "transparent",
+                            padding: "9px 10px",
+                            textAlign: "left",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "minmax(0, 1fr) auto auto",
+                            alignItems: "baseline",
+                            gap: 8,
+                          }}
+                        >
+                          <span
+                            style={{
+                              minWidth: 0,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              fontSize: 14,
+                              fontWeight: 900,
+                              color: "#111827",
+                            }}
+                          >
+                            {part.label}
+                          </span>
+                          <span
+                            style={{
+                              flexShrink: 0,
+                              fontSize: 13,
+                              fontWeight: 900,
+                              color: "#111827",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {formatMoney(part.totalAmount, labels.priceNotSet)}
+                          </span>
+                          <span
+                            style={{
+                              color: "#6b7280",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: 18,
+                              height: 18,
+                            }}
+                          >
+                            <ChevronIcon open={expandedPart} />
+                          </span>
+                          </div>
+
+                          <div
+                          style={{
+                            marginTop: 4,
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 8,
+                            color: "#6b7280",
+                            fontSize: 11,
+                            fontWeight: 800,
+                          }}
+                        >
+                          <span>
+                            {labels.purchaseQuantity}{" "}
+                            <b>{formatQuantity(part.totalQuantity)}</b>
+                          </span>
+                          <span style={{ whiteSpace: "nowrap" }}>
+                            {labels.spendingShare} {partShare.toFixed(1)}%
+                          </span>
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 7,
+                            height: 7,
+                            overflow: "hidden",
+                            borderRadius: 999,
+                            background: "#e5e7eb",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: `${partBarWidth}%`,
+                              height: "100%",
+                              borderRadius: 999,
+                              background: "#2563eb",
+                            }}
+                          />
+                          </div>
+                        </button>
+
+                        {expandedPart && (
+                          <div
+                            style={{
+                              padding: "8px 10px 10px",
+                              borderTop: "1px solid #f1f5f9",
+                            }}
+                          >
+                            {part.missingCount > 0 && (
+                              <div
+                                style={{
+                                  color: "#92400e",
+                                  fontSize: 10,
+                                  fontWeight: 900,
+                                  whiteSpace: "nowrap",
+                                  marginBottom: 6,
+                                }}
+                              >
+                                {MONTHLY_SIGNAL_EMOJIS.missingPrice}{" "}
+                                {labels.missingUnitPrice}
+                              </div>
+                            )}
+
+                            <div
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 7,
+                              }}
+                            >
+                              {part.categories.map((category) => {
+                              const categoryBarWidth =
+                                maxCategoryAmount > 0
+                                  ? (category.totalAmount / maxCategoryAmount) * 100
+                                  : 0;
+                              const categoryShare =
+                                part.totalAmount > 0
+                                  ? (category.totalAmount / part.totalAmount) * 100
+                                  : 0;
+
+                              return (
+                                <div key={category.key} style={{ minWidth: 0 }}>
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      justifyContent: "space-between",
+                                      alignItems: "baseline",
+                                      gap: 8,
+                                      marginBottom: 3,
+                                    }}
+                                  >
+                                    <span
+                                      style={{
+                                        minWidth: 0,
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                        color: "#374151",
+                                        fontSize: 11,
+                                        fontWeight: 900,
+                                      }}
+                                    >
+                                      {category.label}
+                                      {category.missingCount > 0 && (
+                                        <span
+                                          style={{
+                                            marginLeft: 4,
+                                            color: "#92400e",
+                                            fontSize: 10,
+                                          }}
+                                        >
+                                          {MONTHLY_SIGNAL_EMOJIS.missingPrice}
+                                        </span>
+                                      )}
+                                    </span>
+                                    <span
+                                      style={{
+                                        flexShrink: 0,
+                                        color: "#111827",
+                                        fontSize: 11,
+                                        fontWeight: 900,
+                                        whiteSpace: "nowrap",
+                                      }}
+                                    >
+                                      {formatMoney(category.totalAmount, labels.priceNotSet)}
+                                    </span>
+                                  </div>
+
+                                  <div
+                                    style={{
+                                      display: "grid",
+                                      gridTemplateColumns: "minmax(0, 1fr) 38px",
+                                      alignItems: "center",
+                                      gap: 6,
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        height: 5,
+                                        overflow: "hidden",
+                                        borderRadius: 999,
+                                        background: "#e5e7eb",
+                                      }}
+                                    >
+                                      <div
+                                        style={{
+                                          width: `${categoryBarWidth}%`,
+                                          height: "100%",
+                                          borderRadius: 999,
+                                          background: "#60a5fa",
+                                        }}
+                                      />
+                                    </div>
+                                    <span
+                                      style={{
+                                        textAlign: "right",
+                                        color: "#6b7280",
+                                        fontSize: 10,
+                                        fontWeight: 900,
+                                        whiteSpace: "nowrap",
+                                      }}
+                                    >
+                                      {categoryShare.toFixed(1)}%
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
         </>
       ) : null}
     </Container>
