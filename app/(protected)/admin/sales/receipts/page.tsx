@@ -1674,9 +1674,6 @@ function ReceiptEditPanel({
             {text.amountDifference}:{" "}
             {formatVnd(amountDifferenceAmount)}
           </strong>
-          {isEditing ? (
-            <span style={mutedTextStyle}>{text.taxRecalculateNotice}</span>
-          ) : null}
         </div>
 
         {!isEditing ? (

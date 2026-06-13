@@ -2437,7 +2437,7 @@ export default function InventorySnapshotsPage() {
                             width: "100%",
                             maxWidth: 560,
                             maxHeight: "80vh",
-                            overflowY: "auto",
+                            overflow: "hidden",
                             background: "#fff",
                             borderRadius: 14,
                             padding: 18,
@@ -2774,9 +2774,11 @@ export default function InventorySnapshotsPage() {
                                 style={{
                                     display: "flex",
                                     flexDirection: "column",
+                                    flex: "1 1 auto",
                                     gap: 8,
                                     paddingTop: 10,
                                     borderTop: "1px solid #e5e7eb",
+                                    minHeight: 0,
                                 }}
                             >
                                 <div
@@ -2792,8 +2794,16 @@ export default function InventorySnapshotsPage() {
                                 <div
                                     style={{
                                         display: "flex",
+                                        flex: "1 1 auto",
                                         flexDirection: "column",
                                         gap: 8,
+                                        maxHeight: "min(42vh, 360px)",
+                                        minHeight: 0,
+                                        overflowY: "auto",
+                                        overflowX: "hidden",
+                                        overscrollBehavior: "contain",
+                                        paddingRight: 4,
+                                        WebkitOverflowScrolling: "touch",
                                     }}
                                 >
                                     {visibleTimelineLogs.map((log) => renderLogCard(log))}
@@ -2808,7 +2818,7 @@ export default function InventorySnapshotsPage() {
                                 setItemLogs([]);
                                 setItemLogsError("");
                             }}
-                            style={ui.subButton}
+                            style={{ ...ui.subButton, flexShrink: 0 }}
                         >
                             {c.close}
                         </button>
