@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { CukcukAuthError } from "@/lib/pos/cukcuk/auth";
+import { CukcukAuthError, loginCukcuk } from "@/lib/pos/cukcuk/auth";
 import { requirePosAdminSecret } from "@/lib/pos/api-guard";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   DEFAULT_CUKCUK_BRANCH_ID,
+  fetchCukcukProductDetail,
   fetchCukcukProductsPage,
   getPresentProductFields,
+  normalizeCukcukProduct,
   type CukcukProductRaw,
   type NormalizedCukcukProduct,
 } from "@/lib/pos/cukcuk/products";
@@ -21,6 +23,8 @@ type RequestBody = {
   maxPages?: unknown;
   includeInactive?: unknown;
   includeDebug?: unknown;
+  includeDetails?: unknown;
+  forceDetailRefresh?: unknown;
 };
 
 type ExistingProductRow = {
@@ -28,6 +32,11 @@ type ExistingProductRow = {
   branch_id: string | null;
   pos_item_id: string | null;
   item_code: string | null;
+  price_includes_vat: boolean | null;
+  tax_rate: number | string | null;
+  tax_name: string | null;
+  tax_amount: number | string | null;
+  raw_json: unknown;
 };
 
 async function getAdminActor(actorUsername: unknown) {
@@ -44,7 +53,13 @@ async function getAdminActor(actorUsername: unknown) {
     throw new Error(`Failed to verify admin actor: ${error.message}`);
   }
 
-  if (data?.role !== "owner" && data?.role !== "master") return null;
+  if (
+    data?.role !== "owner" &&
+    data?.role !== "master" &&
+    data?.role !== "manager"
+  ) {
+    return null;
+  }
   return data;
 }
 
@@ -54,7 +69,23 @@ function toPositiveInteger(value: unknown, fallback: number, max: number) {
   return Math.min(Math.max(Math.trunc(parsed), 1), max);
 }
 
-function buildProductPayload(product: NormalizedCukcukProduct, now: string) {
+function buildProductPayload(
+  product: NormalizedCukcukProduct,
+  now: string,
+  existing?: ExistingProductRow | null
+) {
+  const productRaw = product.rawJson;
+  const existingRaw =
+    existing?.raw_json &&
+    typeof existing.raw_json === "object" &&
+    !Array.isArray(existing.raw_json)
+      ? (existing.raw_json as CukcukProductRaw)
+      : null;
+  const hasDetailSnapshot =
+    Object.prototype.hasOwnProperty.call(productRaw, "Detail") ||
+    Object.prototype.hasOwnProperty.call(productRaw, "AdditionCategories") ||
+    Object.prototype.hasOwnProperty.call(productRaw, "Children");
+
   return {
     source: product.source,
     branch_id: product.branchId,
@@ -69,18 +100,57 @@ function buildProductPayload(product: NormalizedCukcukProduct, now: string) {
     unit_id: product.unitId,
     unit_name: product.unitName,
     unit_price: product.unitPrice,
-    price_includes_vat: product.priceIncludesVat,
-    tax_rate: product.taxRate,
-    tax_name: product.taxName,
-    tax_amount: product.taxAmount,
+    price_includes_vat:
+      product.priceIncludesVat ?? existing?.price_includes_vat ?? null,
+    tax_rate: product.taxRate ?? existing?.tax_rate ?? null,
+    tax_name: product.taxName ?? existing?.tax_name ?? null,
+    tax_amount: product.taxAmount ?? existing?.tax_amount ?? null,
     item_type: product.itemType,
     is_active: product.isActive,
     is_sold: product.isSold,
-    raw_json: product.rawJson,
+    raw_json:
+      !hasDetailSnapshot && existingRaw
+        ? { ...existingRaw, ...productRaw }
+        : productRaw,
     last_seen_at: now,
     synced_at: now,
     updated_at: now,
   };
+}
+
+function getObjectArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is CukcukProductRaw =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item)
+      )
+    : [];
+}
+
+function buildProductWithDetail(params: {
+  product: NormalizedCukcukProduct;
+  detail: CukcukProductRaw | null;
+}) {
+  const detail = params.detail;
+  const normalized = detail
+    ? normalizeCukcukProduct({
+        branchId: params.product.branchId,
+        item: {
+          ...params.product.rawJson,
+          ...detail,
+        },
+      }) || params.product
+    : params.product;
+
+  return {
+    ...normalized,
+    rawJson: {
+      ...params.product.rawJson,
+      Detail: detail,
+      AdditionCategories: getObjectArray(detail?.AdditionCategories),
+      Children: getObjectArray(detail?.Children),
+    },
+  } satisfies NormalizedCukcukProduct;
 }
 
 function getExistingMatch(params: {
@@ -104,7 +174,9 @@ function getExistingMatch(params: {
 async function fetchExistingProducts(branchId: string) {
   const { data, error } = await supabaseServer
     .from("pos_products")
-    .select("id, branch_id, pos_item_id, item_code")
+    .select(
+      "id, branch_id, pos_item_id, item_code, price_includes_vat, tax_rate, tax_name, tax_amount, raw_json"
+    )
     .eq("source", "cukcuk")
     .eq("branch_id", branchId);
 
@@ -152,7 +224,10 @@ export async function POST(req: Request) {
     const maxPages = toPositiveInteger(body.maxPages, syncAll ? 20 : 1, 100);
     const includeInactive = body.includeInactive === true;
     const includeDebug = body.includeDebug === true;
+    const includeDetails =
+      body.includeDetails === true || body.forceDetailRefresh === true;
     const now = new Date().toISOString();
+    const auth = await loginCukcuk();
 
     const existing = await fetchExistingProducts(branchId);
     const allProducts: NormalizedCukcukProduct[] = [];
@@ -167,6 +242,7 @@ export async function POST(req: Request) {
         page,
         limit,
         includeInactive,
+        auth,
       });
 
       totalFromApi = pageResult.total;
@@ -179,22 +255,63 @@ export async function POST(req: Request) {
       if (allProducts.length >= totalFromApi) break;
     }
 
+    const failedDetails: {
+      posItemId: string | null;
+      itemCode: string | null;
+      itemName: string;
+      error: string;
+    }[] = [];
+    const productsToSave: NormalizedCukcukProduct[] = [];
+
+    for (const product of allProducts) {
+      if (!includeDetails || !product.posItemId) {
+        productsToSave.push(product);
+        continue;
+      }
+
+      try {
+        const detailResult = await fetchCukcukProductDetail({
+          posItemId: product.posItemId,
+          auth,
+        });
+        productsToSave.push(
+          buildProductWithDetail({
+            product,
+            detail: detailResult.item,
+          })
+        );
+      } catch (error) {
+        failedDetails.push({
+          posItemId: product.posItemId,
+          itemCode: product.itemCode,
+          itemName: product.itemName,
+          error: error instanceof Error ? error.message : "Unknown detail error",
+        });
+        productsToSave.push(
+          buildProductWithDetail({
+            product,
+            detail: null,
+          })
+        );
+      }
+    }
+
     let insertedCount = 0;
     let updatedCount = 0;
     let skippedCount = 0;
 
-    for (const product of allProducts) {
+    for (const product of productsToSave) {
       if (!product.posItemId && !product.itemCode) {
         skippedCount += 1;
         continue;
       }
 
-      const payload = buildProductPayload(product, now);
       const match = getExistingMatch({
         product,
         byPosItemId: existing.byPosItemId,
         byItemCode: existing.byItemCode,
       });
+      const payload = buildProductPayload(product, now, match);
 
       if (match) {
         const { error } = await supabaseServer
@@ -213,7 +330,9 @@ export async function POST(req: Request) {
       const { data, error } = await supabaseServer
         .from("pos_products")
         .insert(payload)
-        .select("id, branch_id, pos_item_id, item_code")
+        .select(
+          "id, branch_id, pos_item_id, item_code, price_includes_vat, tax_rate, tax_name, tax_amount, raw_json"
+        )
         .single();
 
       if (error) {
@@ -243,20 +362,26 @@ export async function POST(req: Request) {
         syncAll,
         maxPages,
         includeInactive,
+        includeDetails,
         actorUsername: actor.username,
       },
       result: {
         totalFromApi,
-        fetchedCount: allProducts.length,
+        fetchedCount: productsToSave.length,
+        detailRequestedCount: includeDetails
+          ? allProducts.filter((product) => Boolean(product.posItemId)).length
+          : 0,
+        detailFailedCount: failedDetails.length,
+        failedDetails,
         insertedCount,
         updatedCount,
         upsertedCount: insertedCount + updatedCount,
         skippedCount,
-        sample: allProducts.slice(0, 5),
+        sample: productsToSave.slice(0, 5),
         fieldMap: includeDebug ? getPresentProductFields(rawSamples) : undefined,
         rawSample: includeDebug ? rawSamples : undefined,
         taxInfoStatus:
-          allProducts.some(
+          productsToSave.some(
             (product) =>
               product.taxRate !== null ||
               product.taxName !== null ||

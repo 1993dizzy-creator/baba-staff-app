@@ -8,6 +8,7 @@ import SubNav from "@/components/SubNav";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
+import { getUser } from "@/lib/supabase/auth";
 import { commonText, salesText } from "@/lib/text";
 
 const salesTabs = [
@@ -38,6 +39,7 @@ const SALES_UI_EMOJIS = {
   paymentSummary: "\u{1F4B3}",
   taxSummary: "\u{1F9FE}",
   dailySales: "\u{1F4CA}",
+  menuSales: "\u{1F37D}\u{FE0F}",
   taxSaving: "\u{1F4B8}",
   amountDifference: "\u2194\uFE0F",
 } as const;
@@ -80,6 +82,57 @@ type MonthlyDay = {
   amountDifferenceAmount: number;
 };
 
+type MenuSalesOption = {
+  key: string;
+  optionName: string;
+  quantity: number;
+  amount: number;
+};
+
+type CategoryGroupType = "food" | "drink" | "uncategorized";
+type MenuSalesGroupKey = "all" | CategoryGroupType;
+
+type MenuSalesItem = {
+  key: string;
+  itemId: string | null;
+  itemCode: string | null;
+  itemName: string;
+  categoryName: string | null;
+  groupType: CategoryGroupType;
+  quantity: number;
+  amount: number;
+  receiptCount: number;
+  optionAmount: number;
+  options: MenuSalesOption[];
+};
+
+type MenuSalesCategory = {
+  key: string;
+  name: string | null;
+  groupType: CategoryGroupType;
+  quantity: number;
+  amount: number;
+  itemCount: number;
+};
+
+type MenuSalesGroup = {
+  key: MenuSalesGroupKey;
+  name: string;
+  quantity: number;
+  amount: number;
+  itemCount: number;
+};
+
+type MenuSales = {
+  sortDefault: "quantity";
+  totalItemAmount: number;
+  unlinkedOptionAmount: number;
+  unlinkedOptionCount: number;
+  groups: MenuSalesGroup[];
+  categories: MenuSalesCategory[];
+  items: MenuSalesItem[];
+};
+
 type SalesMonthlyResponse = {
   ok: boolean;
   month?: string;
@@ -93,8 +146,13 @@ type SalesMonthlyResponse = {
   };
   paymentSummary?: PaymentSummary;
   taxSummary?: TaxSummary;
+  menuSales?: MenuSales;
   days?: MonthlyDay[];
 };
+
+type DetailTab = "daily" | "menu";
+type MenuSalesSort = "quantity" | "amount";
+type MenuSalesDirection = "desc" | "asc";
 
 function formatVnd(value?: number) {
   return new Intl.NumberFormat("vi-VN", {
@@ -201,7 +259,23 @@ export default function SalesMonthlyPage() {
   const [monthlyData, setMonthlyData] = useState<SalesMonthlyResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [activeDetailTab, setActiveDetailTab] = useState<DetailTab>("daily");
+  const [menuSalesSort, setMenuSalesSort] =
+    useState<MenuSalesSort>("quantity");
+  const [menuSalesDirection, setMenuSalesDirection] =
+    useState<MenuSalesDirection>("desc");
+  const [menuSalesGroup, setMenuSalesGroup] =
+    useState<MenuSalesGroupKey>("all");
+  const [currentUser, setCurrentUser] =
+    useState<ReturnType<typeof getUser>>(null);
+  const [savingCategoryName, setSavingCategoryName] = useState("");
+  const [categoryGroupMessage, setCategoryGroupMessage] = useState("");
+  const [categoryGroupError, setCategoryGroupError] = useState("");
   const sharedBusinessDate = getMonthStartDate(month);
+  const canManageCategoryGroups =
+    currentUser?.role === "owner" ||
+    currentUser?.role === "master" ||
+    currentUser?.role === "manager";
 
   const tabs = salesTabs.map((tab) => ({
     label: t.tabs[tab.key],
@@ -251,6 +325,10 @@ export default function SalesMonthlyPage() {
   );
 
   useEffect(() => {
+    setCurrentUser(getUser());
+  }, []);
+
+  useEffect(() => {
     const controller = new AbortController();
 
     fetchMonthlySales(controller.signal);
@@ -260,6 +338,8 @@ export default function SalesMonthlyPage() {
 
   function handleMonthChange(nextMonth: string) {
     setMonth(nextMonth);
+    setMenuSalesDirection("desc");
+    setMenuSalesGroup("all");
     router.replace(
       `${pathname}?month=${encodeURIComponent(nextMonth)}&businessDate=${encodeURIComponent(getMonthStartDate(nextMonth))}`,
       {
@@ -268,9 +348,61 @@ export default function SalesMonthlyPage() {
     );
   }
 
+  async function handleCategoryGroupUpdate(
+    categoryName: string,
+    groupType: CategoryGroupType
+  ) {
+    if (!currentUser?.username || !canManageCategoryGroups) {
+      setCategoryGroupError(monthlyText.noPermission);
+      setCategoryGroupMessage("");
+      return;
+    }
+
+    setSavingCategoryName(categoryName);
+    setCategoryGroupMessage("");
+    setCategoryGroupError("");
+
+    try {
+      const res = await fetch("/api/admin/sales/category-groups", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          actorUsername: currentUser.username,
+          categoryName,
+          groupType,
+        }),
+      });
+      const result = (await res.json().catch(() => null)) as
+        | { ok?: boolean; error?: string }
+        | null;
+
+      if (!res.ok || !result?.ok) {
+        throw new Error(
+          res.status === 403
+            ? monthlyText.noPermission
+            : monthlyText.categoryGroupSaveFailed
+        );
+      }
+
+      setCategoryGroupMessage(monthlyText.categoryGroupSaved);
+      await fetchMonthlySales();
+    } catch (error) {
+      setCategoryGroupError(
+        error instanceof Error
+          ? error.message
+          : monthlyText.categoryGroupSaveFailed
+      );
+    } finally {
+      setSavingCategoryName("");
+    }
+  }
+
   const summary = monthlyData?.summary;
   const paymentSummary = monthlyData?.paymentSummary;
   const taxSummary = monthlyData?.taxSummary;
+  const menuSales = monthlyData?.menuSales;
   const days = monthlyData?.days || [];
   const salesDays = days.filter(
     (day) => getDailyFinalAmount(day) > 0 || day.receiptCount > 0
@@ -422,24 +554,146 @@ export default function SalesMonthlyPage() {
           />
         </section>
 
-        <section style={cardStyle}>
-          <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>
-              {withEmoji(SALES_UI_EMOJIS.dailySales, monthlyText.dailySales)}
-            </h2>
-            <span style={sectionMetaStyle}>
-              {monthlyText.dailyAverageSales} {formatVnd(averageDailyFinalAmount)}
-            </span>
-          </div>
+        <div style={detailTabListStyle}>
+          <button
+            type="button"
+            onClick={() => setActiveDetailTab("daily")}
+            style={{
+              ...detailTabButtonStyle,
+              ...(activeDetailTab === "daily"
+                ? detailTabButtonActiveStyle
+                : null),
+            }}
+          >
+            {monthlyText.dailySales}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveDetailTab("menu")}
+            style={{
+              ...detailTabButtonStyle,
+              ...(activeDetailTab === "menu"
+                ? detailTabButtonActiveStyle
+                : null),
+            }}
+          >
+            {monthlyText.menuSales}
+          </button>
+        </div>
 
-          <DailySalesList
-            isLoading={isLoading}
-            hasError={hasError}
-            text={monthlyText}
-            totalFinalSales={totalDailyFinalAmount}
-            days={days}
-          />
-        </section>
+        {activeDetailTab === "daily" ? (
+          <section style={cardStyle}>
+            <div style={sectionHeaderStyle}>
+              <h2 style={sectionTitleStyle}>
+                {withEmoji(SALES_UI_EMOJIS.dailySales, monthlyText.dailySales)}
+              </h2>
+              <span style={sectionMetaStyle}>
+                {monthlyText.dailyAverageSales}{" "}
+                {formatVnd(averageDailyFinalAmount)}
+              </span>
+            </div>
+
+            <DailySalesList
+              isLoading={isLoading}
+              hasError={hasError}
+              text={monthlyText}
+              totalFinalSales={totalDailyFinalAmount}
+              days={days}
+            />
+          </section>
+        ) : (
+          <section style={cardStyle}>
+            <div style={menuGroupTabListStyle}>
+              {(menuSales?.groups || []).map((group) => (
+                <button
+                  type="button"
+                  key={group.key}
+                  onClick={() => setMenuSalesGroup(group.key)}
+                  style={{
+                    ...menuGroupTabButtonStyle,
+                    ...(menuSalesGroup === group.key
+                      ? menuGroupTabButtonActiveStyle
+                      : null),
+                    ...(group.key === "uncategorized" && group.itemCount > 0
+                      ? menuGroupTabWarningStyle
+                      : null),
+                  }}
+                >
+                  {group.key === "all"
+                    ? monthlyText.all
+                    : group.key === "food"
+                      ? monthlyText.food
+                      : group.key === "drink"
+                        ? monthlyText.drink
+                        : monthlyText.uncategorized}
+                  <span style={menuGroupCountStyle}>{group.itemCount}</span>
+                </button>
+              ))}
+            </div>
+            <div style={menuSortControlRowStyle}>
+              <span style={menuSortButtonsStyle}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMenuSalesSort((current) =>
+                      current === "quantity" ? "amount" : "quantity"
+                    )
+                  }
+                  style={{
+                    ...menuSortButtonStyle,
+                    ...(menuSalesSort === "quantity"
+                      ? menuSortButtonQuantityStyle
+                      : menuSortButtonAmountStyle),
+                  }}
+                >
+                  {menuSalesSort === "quantity"
+                    ? monthlyText.salesQuantity
+                    : monthlyText.itemSalesAmount}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMenuSalesDirection((current) =>
+                      current === "desc" ? "asc" : "desc"
+                    )
+                  }
+                  style={{
+                    ...menuSortButtonStyle,
+                    ...(menuSalesDirection === "desc"
+                      ? menuSortButtonDescStyle
+                      : menuSortButtonAscStyle),
+                  }}
+                >
+                  {menuSalesDirection === "desc"
+                    ? monthlyText.sortHighToLow
+                    : monthlyText.sortLowToHigh}
+                </button>
+              </span>
+            </div>
+            {categoryGroupMessage ? (
+              <span style={categoryGroupSuccessStyle}>
+                {categoryGroupMessage}
+              </span>
+            ) : null}
+            {categoryGroupError ? (
+              <span style={categoryGroupErrorStyle}>{categoryGroupError}</span>
+            ) : null}
+
+            <MenuSalesList
+              key={`${month}:${menuSalesGroup}`}
+              isLoading={isLoading}
+              hasError={hasError}
+              text={monthlyText}
+              menuSales={menuSales}
+              sort={menuSalesSort}
+              direction={menuSalesDirection}
+              group={menuSalesGroup}
+              canManageCategoryGroups={canManageCategoryGroups}
+              savingCategoryName={savingCategoryName}
+              onCategoryGroupUpdate={handleCategoryGroupUpdate}
+            />
+          </section>
+        )}
       </div>
     </Container>
   );
@@ -523,6 +777,303 @@ function TaxSummaryList({
         </strong>
         <span style={taxLineCountStyle}>{text.adjustedReceiptBase}</span>
       </div>
+    </div>
+  );
+}
+
+function MenuSalesList({
+  isLoading,
+  hasError,
+  text,
+  menuSales,
+  sort,
+  direction,
+  group,
+  canManageCategoryGroups,
+  savingCategoryName,
+  onCategoryGroupUpdate,
+}: {
+  isLoading: boolean;
+  hasError: boolean;
+  text: SalesMonthlyViewText;
+  menuSales: MenuSales | undefined;
+  sort: MenuSalesSort;
+  direction: MenuSalesDirection;
+  group: MenuSalesGroupKey;
+  canManageCategoryGroups: boolean;
+  savingCategoryName: string;
+  onCategoryGroupUpdate: (
+    categoryName: string,
+    groupType: CategoryGroupType
+  ) => Promise<void>;
+}) {
+  const [selectedCategory, setSelectedCategory] = useState("all");
+
+  if (isLoading) {
+    return <EmptyState title={text.loading} text={text.menuSalesDataLoading} />;
+  }
+
+  if (hasError) {
+    return (
+      <EmptyState title={text.error} text={text.menuSalesDataLoadFailed} />
+    );
+  }
+
+  const groupItems = (menuSales?.items || []).filter(
+    (item) => group === "all" || item.groupType === group
+  );
+  const categories = (menuSales?.categories || []).filter(
+    (category) => group === "all" || category.groupType === group
+  );
+  const availableCategoryKeys = new Set(categories.map((item) => item.key));
+  const activeCategory =
+    selectedCategory === "all" || availableCategoryKeys.has(selectedCategory)
+      ? selectedCategory
+      : "all";
+  const filteredItems = groupItems.filter(
+    (item) =>
+      activeCategory === "all" ||
+      (item.categoryName
+        ? `category:${item.categoryName}` === activeCategory
+        : activeCategory === "__uncategorized__")
+  );
+  const items = [...filteredItems]
+    .sort((a, b) => {
+      if (sort === "amount") {
+        if (a.amount !== b.amount) {
+          return direction === "desc"
+            ? b.amount - a.amount
+            : a.amount - b.amount;
+        }
+        if (a.quantity !== b.quantity) {
+          return direction === "desc"
+            ? b.quantity - a.quantity
+            : a.quantity - b.quantity;
+        }
+      } else {
+        if (a.quantity !== b.quantity) {
+          return direction === "desc"
+            ? b.quantity - a.quantity
+            : a.quantity - b.quantity;
+        }
+        if (a.amount !== b.amount) {
+          return direction === "desc"
+            ? b.amount - a.amount
+            : a.amount - b.amount;
+        }
+      }
+
+      return a.itemName.localeCompare(b.itemName);
+    });
+
+  if (items.length === 0) {
+    return <EmptyState title={text.noData} text={text.noMenuSalesData} />;
+  }
+
+  const maxMenuValue = Math.max(
+    ...items.map((item) => (sort === "quantity" ? item.quantity : item.amount)),
+    0
+  );
+  const maxCategoryAmount = Math.max(
+    ...categories.map((category) => category.amount),
+    0
+  );
+
+  return (
+    <div style={menuSalesContentStyle}>
+      {group === "uncategorized" && categories.some((item) => item.name) ? (
+        <div style={categoryManagementStyle}>
+          <strong style={categoryManagementTitleStyle}>
+            {text.categoryManagement}
+          </strong>
+          <span style={categoryManagementNoticeStyle}>
+            {text.unclassifiedCategoriesNotice}
+          </span>
+          <span style={categoryManagementHelpStyle}>
+            {text.sameCategoryMovesTogether}
+          </span>
+          {canManageCategoryGroups ? (
+            <div style={categoryManagementListStyle}>
+              {categories
+                .filter((category) => category.name)
+                .map((category) => (
+                  <div key={category.key} style={categoryManagementRowStyle}>
+                    <strong style={categoryManagementNameStyle}>
+                      {category.name}
+                    </strong>
+                    <div style={categoryManagementActionsStyle}>
+                      <button
+                        type="button"
+                        disabled={Boolean(savingCategoryName)}
+                        onClick={() =>
+                          onCategoryGroupUpdate(category.name as string, "food")
+                        }
+                        style={categoryManagementButtonStyle}
+                      >
+                        {text.assignToFood}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={Boolean(savingCategoryName)}
+                        onClick={() =>
+                          onCategoryGroupUpdate(category.name as string, "drink")
+                        }
+                        style={categoryManagementButtonStyle}
+                      >
+                        {text.assignToDrink}
+                      </button>
+                      <button
+                        type="button"
+                        disabled
+                        style={categoryManagementButtonDisabledStyle}
+                      >
+                        {text.keepUncategorized}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {categories.length > 1 ? (
+        <div style={categoryTabListStyle}>
+          <button
+            type="button"
+            onClick={() => setSelectedCategory("all")}
+            style={{
+              ...categoryTabButtonStyle,
+              ...(activeCategory === "all"
+                ? categoryTabButtonActiveStyle
+                : null),
+            }}
+          >
+            {text.all} · {groupItems.length}
+          </button>
+          {categories.map((category) => (
+            <button
+              type="button"
+              key={category.key}
+              onClick={() => setSelectedCategory(category.key)}
+              style={{
+                ...categoryTabButtonStyle,
+                ...(activeCategory === category.key
+                  ? categoryTabButtonActiveStyle
+                  : null),
+              }}
+            >
+              {category.name || text.uncategorized} · {category.itemCount}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <div style={categoryChartStyle}>
+        {categories.map((category) => {
+          const ratio =
+            maxCategoryAmount > 0
+              ? Math.min((category.amount / maxCategoryAmount) * 100, 100)
+              : 0;
+
+          return (
+            <button
+              type="button"
+              key={category.key}
+              onClick={() => setSelectedCategory(category.key)}
+              style={{
+                ...categoryChartItemStyle,
+                ...(activeCategory === category.key
+                  ? categoryChartItemActiveStyle
+                  : null),
+              }}
+            >
+              <span style={categoryChartLabelStyle}>
+                {category.name || text.uncategorized}
+              </span>
+              <span style={categoryChartValueStyle}>
+                {formatVnd(category.amount)}
+              </span>
+              <span style={categoryChartTrackStyle}>
+                <span
+                  style={{
+                    ...categoryChartFillStyle,
+                    width: `${ratio}%`,
+                  }}
+                />
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <span style={menuSalesScrollNoticeStyle}>
+        {text.menuSalesScrollNotice}
+      </span>
+
+      <div style={menuSalesScrollStyle}>
+        <div style={menuSalesListStyle}>
+          {items.map((item, index) => {
+            const value = sort === "quantity" ? item.quantity : item.amount;
+            const ratio =
+              maxMenuValue > 0
+                ? Math.min((value / maxMenuValue) * 100, 100)
+                : 0;
+
+            return (
+              <div key={item.key} style={menuSalesRowStyle}>
+                <span
+                  style={{
+                    ...menuSalesBarStyle,
+                    width: `${ratio}%`,
+                  }}
+                />
+                <div style={menuSalesMainRowStyle}>
+                  <span style={menuSalesRankStyle}>{index + 1}</span>
+                  <span style={menuSalesNameBlockStyle}>
+                    <strong style={menuSalesNameStyle}>{item.itemName}</strong>
+                    <span style={menuSalesMetricStyle}>
+                      {text.salesQuantity} {formatNumber(item.quantity)} ·{" "}
+                      {text.salesReceiptCount}{" "}
+                      {formatNumber(item.receiptCount)}
+                    </span>
+                  </span>
+                  <strong style={menuSalesAmountStyle}>
+                    {formatVnd(item.amount)}
+                  </strong>
+                </div>
+                {item.options.length > 0 ? (
+                  <div style={menuOptionListStyle}>
+                    {item.options.map((option) => (
+                      <div key={option.key} style={menuOptionRowStyle}>
+                        <span style={menuOptionNameStyle}>
+                          {text.option} · {option.optionName}
+                        </span>
+                        <span style={menuOptionMetricStyle}>
+                          {text.selection} {formatNumber(option.quantity)}
+                        </span>
+                        <strong style={menuOptionAmountStyle}>
+                          {formatVnd(option.amount)}
+                        </strong>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {(menuSales?.unlinkedOptionCount || 0) > 0 ? (
+        <div style={unlinkedOptionWarningStyle}>
+          <strong>
+            {text.unlinkedOptions}{" "}
+            {formatNumber(menuSales?.unlinkedOptionCount)}
+          </strong>
+          <span>{text.unlinkedOptionsWarning}</span>
+          <span>{formatVnd(menuSales?.unlinkedOptionAmount)}</span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -729,6 +1280,33 @@ const cardStyle: CSSProperties = {
   padding: 14,
 };
 
+const detailTabListStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: 4,
+  padding: 4,
+  borderRadius: 10,
+  background: "#e5e7eb",
+};
+
+const detailTabButtonStyle: CSSProperties = {
+  border: 0,
+  borderRadius: 8,
+  padding: "8px 10px",
+  background: "transparent",
+  color: "#6b7280",
+  fontSize: 12,
+  lineHeight: 1.3,
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const detailTabButtonActiveStyle: CSSProperties = {
+  background: "#ffffff",
+  color: "#111827",
+  boxShadow: "0 1px 2px rgba(15, 23, 42, 0.12)",
+};
+
 const sectionHeaderStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -812,6 +1390,463 @@ const itemListStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: 6,
+};
+
+const menuGroupTabListStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  gap: 4,
+  marginBottom: 8,
+  minWidth: 0,
+};
+
+const menuGroupTabButtonStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 4,
+  minWidth: 0,
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: "#d1d5db",
+  borderRadius: 8,
+  padding: "8px 4px",
+  background: "#ffffff",
+  color: "#4b5563",
+  fontSize: 10,
+  lineHeight: 1.2,
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const menuGroupTabButtonActiveStyle: CSSProperties = {
+  borderColor: "#111827",
+  background: "#111827",
+  color: "#ffffff",
+};
+
+const menuGroupTabWarningStyle: CSSProperties = {
+  boxShadow: "inset 0 0 0 1px #f59e0b",
+};
+
+const menuGroupCountStyle: CSSProperties = {
+  flexShrink: 0,
+  padding: "1px 4px",
+  borderRadius: 999,
+  background: "rgba(148, 163, 184, 0.2)",
+  fontSize: 9,
+};
+
+const menuSortControlRowStyle: CSSProperties = {
+  display: "flex",
+  width: "100%",
+  marginBottom: 8,
+  minWidth: 0,
+};
+
+const menuSortButtonsStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  width: "100%",
+  gap: 4,
+  padding: 3,
+  borderRadius: 8,
+  background: "#f3f4f6",
+};
+
+const menuSortButtonStyle: CSSProperties = {
+  width: "100%",
+  border: 0,
+  borderRadius: 6,
+  padding: "8px 10px",
+  background: "transparent",
+  color: "#6b7280",
+  fontSize: 11,
+  lineHeight: 1.2,
+  fontWeight: 900,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
+
+// const menuSortButtonActiveStyle: CSSProperties = {
+//   background: "#111827",
+//   color: "#ffffff",
+// };
+
+const menuSortButtonQuantityStyle: CSSProperties = {
+  background: "#111827",
+  color: "#ffffff",
+};
+
+const menuSortButtonAmountStyle: CSSProperties = {
+  background: "#ffffff",
+  color: "#111827",
+  boxShadow: "inset 0 0 0 1px #d1d5db",
+};
+
+const menuSortButtonDescStyle: CSSProperties = {
+  background: "#065f46",
+  color: "#ffffff",
+};
+
+const menuSortButtonAscStyle: CSSProperties = {
+  background: "#991b1b",
+  color: "#ffffff",
+};
+
+const menuSalesContentStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+  minWidth: 0,
+};
+
+const categoryManagementStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+  padding: 9,
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: "#f59e0b",
+  borderRadius: 10,
+  background: "#fffbeb",
+};
+
+const categoryManagementTitleStyle: CSSProperties = {
+  fontSize: 12,
+  color: "#92400e",
+};
+
+const categoryManagementNoticeStyle: CSSProperties = {
+  fontSize: 11,
+  fontWeight: 800,
+  color: "#92400e",
+};
+
+const categoryManagementHelpStyle: CSSProperties = {
+  fontSize: 10,
+  lineHeight: 1.35,
+  color: "#a16207",
+};
+
+const categoryManagementListStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+};
+
+const categoryManagementRowStyle: CSSProperties = {
+  display: "grid",
+  gap: 5,
+  padding: 7,
+  borderRadius: 8,
+  background: "#ffffff",
+  minWidth: 0,
+};
+
+const categoryManagementNameStyle: CSSProperties = {
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 11,
+  color: "#374151",
+};
+
+const categoryManagementActionsStyle: CSSProperties = {
+  display: "flex",
+  gap: 4,
+  minWidth: 0,
+  overflowX: "auto",
+};
+
+const categoryManagementButtonStyle: CSSProperties = {
+  flexShrink: 0,
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: "#d1d5db",
+  borderRadius: 6,
+  padding: "5px 7px",
+  background: "#ffffff",
+  color: "#374151",
+  fontSize: 9,
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const categoryManagementButtonDisabledStyle: CSSProperties = {
+  ...categoryManagementButtonStyle,
+  background: "#f3f4f6",
+  color: "#9ca3af",
+  cursor: "default",
+};
+
+const categoryGroupSuccessStyle: CSSProperties = {
+  display: "block",
+  marginBottom: 8,
+  fontSize: 11,
+  fontWeight: 800,
+  color: "#047857",
+};
+
+const categoryGroupErrorStyle: CSSProperties = {
+  display: "block",
+  marginBottom: 8,
+  fontSize: 11,
+  fontWeight: 800,
+  color: "#b91c1c",
+};
+
+const categoryTabListStyle: CSSProperties = {
+  display: "flex",
+  gap: 5,
+  minWidth: 0,
+  overflowX: "auto",
+  overflowY: "hidden",
+  paddingBottom: 2,
+};
+
+const categoryTabButtonStyle: CSSProperties = {
+  flexShrink: 0,
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: "#d1d5db",
+  borderRadius: 999,
+  padding: "6px 9px",
+  background: "#ffffff",
+  color: "#4b5563",
+  fontSize: 10,
+  lineHeight: 1.2,
+  fontWeight: 900,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
+
+const categoryTabButtonActiveStyle: CSSProperties = {
+  borderColor: "#111827",
+  background: "#111827",
+  color: "#ffffff",
+};
+
+const categoryChartStyle: CSSProperties = {
+  display: "flex",
+  gap: 6,
+  minWidth: 0,
+  overflowX: "auto",
+  overflowY: "hidden",
+  paddingBottom: 2,
+};
+
+const categoryChartItemStyle: CSSProperties = {
+  flex: "0 0 132px",
+  display: "grid",
+  gap: 4,
+  minWidth: 0,
+  padding: "7px 8px",
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: "#e5e7eb",
+  borderRadius: 8,
+  background: "#f9fafb",
+  textAlign: "left",
+  cursor: "pointer",
+};
+
+const categoryChartItemActiveStyle: CSSProperties = {
+  borderColor: "#6366f1",
+  background: "#eef2ff",
+};
+
+const categoryChartLabelStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 10,
+  lineHeight: 1.2,
+  fontWeight: 900,
+  color: "#374151",
+};
+
+const categoryChartValueStyle: CSSProperties = {
+  fontSize: 10,
+  lineHeight: 1.2,
+  fontWeight: 800,
+  color: "#6b7280",
+  whiteSpace: "nowrap",
+};
+
+const categoryChartTrackStyle: CSSProperties = {
+  display: "block",
+  height: 4,
+  overflow: "hidden",
+  borderRadius: 999,
+  background: "#e5e7eb",
+};
+
+const categoryChartFillStyle: CSSProperties = {
+  display: "block",
+  height: "100%",
+  borderRadius: 999,
+  background: "#6366f1",
+};
+
+const menuSalesScrollNoticeStyle: CSSProperties = {
+  fontSize: 10,
+  lineHeight: 1.35,
+  fontWeight: 700,
+  color: "#6b7280",
+};
+
+const menuSalesScrollStyle: CSSProperties = {
+  maxHeight: "min(55vh, 440px)",
+  minWidth: 0,
+  overflowY: "auto",
+  overflowX: "hidden",
+  overscrollBehavior: "contain",
+  paddingRight: 2,
+};
+
+const menuSalesListStyle: CSSProperties = {
+  display: "grid",
+  gap: 7,
+  minWidth: 0,
+};
+
+const menuSalesRowStyle: CSSProperties = {
+  position: "relative",
+  display: "grid",
+  gap: 5,
+  padding: "9px 10px",
+  border: "1px solid #eef0f3",
+  borderRadius: 10,
+  background: "#f9fafb",
+  minWidth: 0,
+  overflow: "hidden",
+};
+
+const menuSalesBarStyle: CSSProperties = {
+  position: "absolute",
+  inset: "0 auto 0 0",
+  background: "rgba(99, 102, 241, 0.09)",
+  pointerEvents: "none",
+};
+
+const menuSalesMainRowStyle: CSSProperties = {
+  position: "relative",
+  zIndex: 1,
+  display: "grid",
+  gridTemplateColumns: "24px minmax(0, 1fr) auto",
+  alignItems: "center",
+  gap: 8,
+  minWidth: 0,
+};
+
+const menuSalesRankStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 24,
+  height: 24,
+  borderRadius: 999,
+  background: "#111827",
+  color: "#ffffff",
+  fontSize: 11,
+  lineHeight: 1,
+  fontWeight: 900,
+};
+
+const menuSalesNameBlockStyle: CSSProperties = {
+  display: "grid",
+  gap: 2,
+  minWidth: 0,
+};
+
+const menuSalesNameStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 12,
+  lineHeight: 1.3,
+  fontWeight: 900,
+  color: "#111827",
+};
+
+const menuSalesMetricStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 10,
+  lineHeight: 1.3,
+  fontWeight: 700,
+  color: "#6b7280",
+};
+
+const menuSalesAmountStyle: CSSProperties = {
+  fontSize: 12,
+  lineHeight: 1.3,
+  fontWeight: 900,
+  color: "#111827",
+  whiteSpace: "nowrap",
+};
+
+const menuOptionListStyle: CSSProperties = {
+  position: "relative",
+  zIndex: 1,
+  display: "grid",
+  gap: 3,
+  marginLeft: 32,
+  minWidth: 0,
+};
+
+const menuOptionRowStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto auto",
+  alignItems: "center",
+  gap: 6,
+  minWidth: 0,
+  padding: "5px 7px",
+  borderRadius: 7,
+  border: "1px dashed #cbd5e1",
+  background: "#ffffff",
+};
+
+const menuOptionNameStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 10,
+  lineHeight: 1.3,
+  fontWeight: 800,
+  color: "#475569",
+};
+
+const menuOptionMetricStyle: CSSProperties = {
+  fontSize: 10,
+  lineHeight: 1.3,
+  fontWeight: 700,
+  color: "#64748b",
+  whiteSpace: "nowrap",
+};
+
+const menuOptionAmountStyle: CSSProperties = {
+  fontSize: 10,
+  lineHeight: 1.3,
+  fontWeight: 900,
+  color: "#334155",
+  whiteSpace: "nowrap",
+};
+
+const unlinkedOptionWarningStyle: CSSProperties = {
+  display: "grid",
+  gap: 3,
+  padding: "8px 9px",
+  borderRadius: 8,
+  border: "1px solid #fde68a",
+  background: "#fffbeb",
+  color: "#92400e",
+  fontSize: 11,
+  lineHeight: 1.4,
 };
 
 const statusValueStyle: CSSProperties = {

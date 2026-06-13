@@ -1,5 +1,8 @@
 import "server-only";
-import { loginCukcuk } from "@/lib/pos/cukcuk/auth";
+import {
+  loginCukcuk,
+  type CukcukLoginResult,
+} from "@/lib/pos/cukcuk/auth";
 
 export const DEFAULT_CUKCUK_BRANCH_ID = "c39228ba-a452-4cf9-bf34-424ffb151fb8";
 export const INVENTORY_ITEMS_PAGING_ENDPOINT = "/api/v1/inventoryitems/paging";
@@ -66,7 +69,7 @@ const PRODUCT_FIELD_CANDIDATES = {
   taxName: ["TaxName", "VATName", "VatName", "TaxGroupName"],
   taxAmount: ["TaxAmount", "VATAmount", "VatAmount"],
   itemType: ["ItemType", "InventoryItemType"],
-  inactive: ["Inactive", "IsInactive"],
+  inactive: ["Inactive", "InActive", "IsInactive"],
   isActive: ["IsActive", "Active"],
   isSold: ["IsSold", "IsSale", "IsSaleItem", "IsForSale"],
 } as const;
@@ -254,8 +257,9 @@ export async function fetchCukcukProductsPage(params: {
   limit: number;
   includeInactive: boolean;
   keySearch?: string;
+  auth?: CukcukLoginResult;
 }) {
-  const auth = await loginCukcuk();
+  const auth = params.auth ?? (await loginCukcuk());
   const body: JsonObject = {
     Page: params.page,
     Limit: params.limit,
@@ -307,8 +311,11 @@ export async function fetchCukcukProductsPage(params: {
   };
 }
 
-export async function fetchCukcukProductDetail(params: { posItemId: string }) {
-  const auth = await loginCukcuk();
+export async function fetchCukcukProductDetail(params: {
+  posItemId: string;
+  auth?: CukcukLoginResult;
+}) {
+  const auth = params.auth ?? (await loginCukcuk());
   const endpoint = `${INVENTORY_ITEM_DETAIL_ENDPOINT}/${encodeURIComponent(
     params.posItemId
   )}`;

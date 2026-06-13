@@ -18,11 +18,24 @@ type ReceiptRow = {
 type LineRow = {
   id: number;
   receipt_id: number | null;
+  ref_detail_id: string | null;
+  parent_ref_detail_id: string | null;
   business_date: string;
   payment_status: number | null;
   is_canceled: boolean | null;
+  item_id: string | null;
+  item_code: string | null;
+  item_name: string | null;
+  quantity: number | string | null;
+  amount: number | string | null;
+  final_amount: number | string | null;
   tax_rate: number | string | null;
   tax_amount: number | string | null;
+  is_option: boolean | null;
+  ref_detail_type: number | null;
+  mapping_status: string | null;
+  is_excluded: boolean | null;
+  raw_json: unknown;
 };
 
 type PaymentRow = {
@@ -32,6 +45,22 @@ type PaymentRow = {
   payment_name: string | null;
   card_name: string | null;
   amount: number | string | null;
+};
+
+type ProductCategoryRow = {
+  id: number;
+  source: string;
+  pos_item_id: string | null;
+  item_id: string | null;
+  item_code: string | null;
+  category_name: string | null;
+};
+
+type CategoryGroupType = "food" | "drink" | "uncategorized";
+
+type CategoryGroupMappingRow = {
+  category_name: string;
+  group_type: CategoryGroupType;
 };
 
 type TaxBucket = {
@@ -60,8 +89,48 @@ type PaymentSummary = {
   paymentTotalAmount: number;
 };
 
+type MenuSalesOption = {
+  key: string;
+  optionName: string;
+  quantity: number;
+  amount: number;
+};
+
+type MenuSalesItem = {
+  key: string;
+  itemId: string | null;
+  itemCode: string | null;
+  itemName: string;
+  categoryName: string | null;
+  groupType: CategoryGroupType;
+  quantity: number;
+  amount: number;
+  receiptCount: number;
+  optionAmount: number;
+  options: MenuSalesOption[];
+};
+
+type MenuSalesCategory = {
+  key: string;
+  name: string | null;
+  groupType: CategoryGroupType;
+  quantity: number;
+  amount: number;
+  itemCount: number;
+};
+
+type MenuSalesGroup = {
+  key: "all" | CategoryGroupType;
+  name: string;
+  quantity: number;
+  amount: number;
+  itemCount: number;
+};
+
 const PAID_PAYMENT_STATUS = 3;
 const CANCELED_PAYMENT_STATUSES = new Set([4, 5]);
+const LINE_PAGE_SIZE = 1000;
+const UNCATEGORIZED_KEY = "__uncategorized__";
 
 function isValidMonth(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}$/.test(value);
@@ -113,6 +182,100 @@ function isCanceled(row: Pick<ReceiptRow | LineRow, "payment_status" | "is_cance
     row.is_canceled === true ||
     CANCELED_PAYMENT_STATUSES.has(Number(row.payment_status))
   );
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function getRawString(value: unknown, key: string) {
+  const raw = asObject(value);
+  const rawValue = raw?.[key];
+
+  if (typeof rawValue === "string" && rawValue.trim()) {
+    return rawValue.trim();
+  }
+
+  if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+    return String(rawValue);
+  }
+
+  return null;
+}
+
+function getParentRefDetailId(line: LineRow) {
+  return line.parent_ref_detail_id || getRawString(line.raw_json, "ParentID");
+}
+
+function isOptionLine(line: LineRow) {
+  const raw = asObject(line.raw_json);
+
+  return (
+    line.is_option === true ||
+    Boolean(line.parent_ref_detail_id) ||
+    line.ref_detail_type !== 1 ||
+    line.mapping_status === "option" ||
+    Boolean(raw?.ParentID) ||
+    Boolean(raw?.InventoryItemAdditionID)
+  );
+}
+
+function getReceiptLineKey(receiptId: number, refDetailId: string) {
+  return `${receiptId}::${refDetailId}`;
+}
+
+function getMenuItemKey(line: LineRow) {
+  if (line.item_id) return `item:${line.item_id}`;
+  if (line.item_code) {
+    return `code:${line.item_code}::${line.item_name || ""}`;
+  }
+  if (line.item_name) return `name:${line.item_name}`;
+  return `line:${line.id}`;
+}
+
+function getOptionKey(line: LineRow) {
+  return (
+    getRawString(line.raw_json, "InventoryItemAdditionID") ||
+    line.item_id ||
+    line.item_code ||
+    line.item_name ||
+    `line:${line.id}`
+  );
+}
+
+function getCategoryKey(categoryName: string | null) {
+  return categoryName ? `category:${categoryName}` : UNCATEGORIZED_KEY;
+}
+
+function getCategoryGroupType(
+  categoryName: string | null,
+  categoryGroupByName: Map<string, CategoryGroupType>
+): CategoryGroupType {
+  if (!categoryName) return "uncategorized";
+  return categoryGroupByName.get(categoryName) || "uncategorized";
+}
+
+function getLineCategoryName(
+  line: LineRow,
+  productCategoryByItemId: Map<string, string>,
+  productCategoryByItemCode: Map<string, string>
+) {
+  const rawCategoryName = getRawString(line.raw_json, "CategoryName");
+  if (rawCategoryName) return rawCategoryName;
+
+  if (line.item_id) {
+    const categoryName = productCategoryByItemId.get(line.item_id);
+    if (categoryName) return categoryName;
+  }
+
+  if (line.item_code) {
+    const categoryName = productCategoryByItemCode.get(line.item_code);
+    if (categoryName) return categoryName;
+  }
+
+  return null;
 }
 
 function normalizePaymentName(value: string | null | undefined) {
@@ -403,6 +566,231 @@ function filterPaidPayments(receipts: ReceiptRow[], payments: PaymentRow[]) {
   );
 }
 
+function buildMenuSales(
+  receipts: ReceiptRow[],
+  lines: LineRow[],
+  productCategories: ProductCategoryRow[],
+  categoryGroupMappings: CategoryGroupMappingRow[]
+) {
+  type MenuSalesBucket = Omit<MenuSalesItem, "receiptCount" | "options"> & {
+    categoryFromReceipt: boolean;
+    receiptIds: Set<number>;
+    options: Map<string, MenuSalesOption>;
+  };
+
+  const paidReceiptIds = new Set(
+    receipts
+      .filter(
+        (receipt) =>
+          isPaid(receipt.payment_status) && !isCanceled(receipt)
+      )
+      .map((receipt) => receipt.id)
+  );
+  const eligibleLines = lines.filter(
+    (line) =>
+      line.receipt_id !== null &&
+      paidReceiptIds.has(line.receipt_id) &&
+      isPaid(line.payment_status) &&
+      !isCanceled(line) &&
+      line.is_excluded !== true
+  );
+  const itemBuckets = new Map<string, MenuSalesBucket>();
+  const parentBucketByLineKey = new Map<string, MenuSalesBucket>();
+  const productCategoryByItemId = new Map<string, string>();
+  const productCategoryByItemCode = new Map<string, string>();
+  const categoryGroupByName = new Map(
+    categoryGroupMappings.map((mapping) => [
+      mapping.category_name.trim(),
+      mapping.group_type,
+    ])
+  );
+
+  productCategories
+    .sort((a, b) => Number(b.source === "cukcuk") - Number(a.source === "cukcuk"))
+    .forEach((product) => {
+      const categoryName = product.category_name?.trim();
+      if (!categoryName) return;
+
+      if (product.pos_item_id && !productCategoryByItemId.has(product.pos_item_id)) {
+        productCategoryByItemId.set(product.pos_item_id, categoryName);
+      }
+      if (product.item_id && !productCategoryByItemId.has(product.item_id)) {
+        productCategoryByItemId.set(product.item_id, categoryName);
+      }
+      if (product.item_code && !productCategoryByItemCode.has(product.item_code)) {
+        productCategoryByItemCode.set(product.item_code, categoryName);
+      }
+    });
+
+  eligibleLines
+    .filter((line) => !isOptionLine(line))
+    .forEach((line) => {
+      const receiptId = line.receipt_id as number;
+      const key = getMenuItemKey(line);
+      const receiptCategoryName = getRawString(line.raw_json, "CategoryName");
+      const categoryName =
+        receiptCategoryName ||
+        getLineCategoryName(
+          line,
+          productCategoryByItemId,
+          productCategoryByItemCode
+        );
+      const current =
+        itemBuckets.get(key) ||
+        ({
+          key,
+          itemId: line.item_id,
+          itemCode: line.item_code,
+          itemName: line.item_name || line.item_code || "-",
+          categoryName,
+          groupType: getCategoryGroupType(categoryName, categoryGroupByName),
+          categoryFromReceipt: Boolean(receiptCategoryName),
+          quantity: 0,
+          amount: 0,
+          optionAmount: 0,
+          receiptIds: new Set<number>(),
+          options: new Map<string, MenuSalesOption>(),
+        } satisfies MenuSalesBucket);
+
+      if (receiptCategoryName && !current.categoryFromReceipt) {
+        current.categoryName = receiptCategoryName;
+        current.groupType = getCategoryGroupType(
+          receiptCategoryName,
+          categoryGroupByName
+        );
+        current.categoryFromReceipt = true;
+      } else if (!current.categoryName && categoryName) {
+        current.categoryName = categoryName;
+        current.groupType = getCategoryGroupType(
+          categoryName,
+          categoryGroupByName
+        );
+      }
+      current.quantity += toNumber(line.quantity);
+      current.amount += toNumber(line.final_amount);
+      current.receiptIds.add(receiptId);
+      itemBuckets.set(key, current);
+
+      if (line.ref_detail_id) {
+        parentBucketByLineKey.set(
+          getReceiptLineKey(receiptId, line.ref_detail_id),
+          current
+        );
+      }
+    });
+
+  let unlinkedOptionAmount = 0;
+  let unlinkedOptionCount = 0;
+
+  eligibleLines
+    .filter(isOptionLine)
+    .forEach((line) => {
+      const receiptId = line.receipt_id as number;
+      const parentRefDetailId = getParentRefDetailId(line);
+      const parentBucket = parentRefDetailId
+        ? parentBucketByLineKey.get(
+            getReceiptLineKey(receiptId, parentRefDetailId)
+          )
+        : null;
+      const amount = toNumber(line.final_amount);
+
+      if (!parentBucket) {
+        unlinkedOptionAmount += amount;
+        unlinkedOptionCount += 1;
+        return;
+      }
+
+      const optionKey = getOptionKey(line);
+      const option =
+        parentBucket.options.get(optionKey) ||
+        ({
+          key: optionKey,
+          optionName: line.item_name || line.item_code || "-",
+          quantity: 0,
+          amount: 0,
+        } satisfies MenuSalesOption);
+
+      option.quantity += toNumber(line.quantity);
+      option.amount += amount;
+      parentBucket.options.set(optionKey, option);
+      parentBucket.optionAmount += amount;
+      parentBucket.amount += amount;
+    });
+
+  const items = Array.from(itemBuckets.values()).map(
+    (item): MenuSalesItem => ({
+      key: item.key,
+      itemId: item.itemId,
+      itemCode: item.itemCode,
+      itemName: item.itemName,
+      categoryName: item.categoryName,
+      groupType: item.groupType,
+      quantity: item.quantity,
+      amount: item.amount,
+      receiptCount: item.receiptIds.size,
+      optionAmount: item.optionAmount,
+      options: Array.from(item.options.values()).sort((a, b) => {
+        if (b.quantity !== a.quantity) return b.quantity - a.quantity;
+        if (b.amount !== a.amount) return b.amount - a.amount;
+        return a.optionName.localeCompare(b.optionName);
+      }),
+    })
+  );
+  const categoryMap = new Map<string, MenuSalesCategory>();
+
+  items.forEach((item) => {
+    const key = getCategoryKey(item.categoryName);
+    const category =
+      categoryMap.get(key) ||
+      ({
+        key,
+        name: item.categoryName,
+        groupType: item.groupType,
+        quantity: 0,
+        amount: 0,
+        itemCount: 0,
+      } satisfies MenuSalesCategory);
+
+    category.quantity += item.quantity;
+    category.amount += item.amount;
+    category.itemCount += 1;
+    categoryMap.set(key, category);
+  });
+  const groupLabels: Record<MenuSalesGroup["key"], string> = {
+    all: "전체",
+    food: "음식",
+    drink: "주류·음료",
+    uncategorized: "미분류",
+  };
+  const groups: MenuSalesGroup[] = (
+    ["all", "food", "drink", "uncategorized"] as const
+  ).map((key) => {
+    const groupItems =
+      key === "all" ? items : items.filter((item) => item.groupType === key);
+
+    return {
+      key,
+      name: groupLabels[key],
+      quantity: groupItems.reduce((sum, item) => sum + item.quantity, 0),
+      amount: groupItems.reduce((sum, item) => sum + item.amount, 0),
+      itemCount: groupItems.length,
+    };
+  });
+
+  return {
+    sortDefault: "quantity" as const,
+    totalItemAmount: items.reduce((sum, item) => sum + item.amount, 0),
+    unlinkedOptionAmount,
+    unlinkedOptionCount,
+    groups,
+    categories: Array.from(categoryMap.values()).sort((a, b) => {
+      if (b.amount !== a.amount) return b.amount - a.amount;
+      return (a.name || "").localeCompare(b.name || "");
+    }),
+    items,
+  };
+}
+
 function buildDays(params: {
   month: string;
   receipts: ReceiptRow[];
@@ -445,6 +833,79 @@ function buildDays(params: {
   });
 }
 
+async function fetchMonthlyLines(fromDate: string, toDate: string) {
+  const lines: LineRow[] = [];
+
+  for (let offset = 0; ; offset += LINE_PAGE_SIZE) {
+    const { data, error } = await supabaseServer
+      .from("pos_sales_receipt_lines")
+      .select(
+        "id, receipt_id, ref_detail_id, parent_ref_detail_id, business_date, payment_status, is_canceled, item_id, item_code, item_name, quantity, amount, final_amount, tax_rate, tax_amount, is_option, ref_detail_type, mapping_status, is_excluded, raw_json"
+      )
+      .gte("business_date", fromDate)
+      .lte("business_date", toDate)
+      .order("id", { ascending: true })
+      .range(offset, offset + LINE_PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(`Failed to fetch monthly sales lines: ${error.message}`);
+    }
+
+    const page = (data || []) as LineRow[];
+    lines.push(...page);
+
+    if (page.length < LINE_PAGE_SIZE) break;
+  }
+
+  return lines;
+}
+
+async function fetchProductCategories() {
+  const products: ProductCategoryRow[] = [];
+
+  for (let offset = 0; ; offset += LINE_PAGE_SIZE) {
+    const { data, error } = await supabaseServer
+      .from("pos_products")
+      .select("id, source, pos_item_id, item_id, item_code, category_name")
+      .not("category_name", "is", null)
+      .order("id", { ascending: true })
+      .range(offset, offset + LINE_PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(`Failed to fetch POS product categories: ${error.message}`);
+    }
+
+    const page = (data || []) as ProductCategoryRow[];
+    products.push(...page);
+
+    if (page.length < LINE_PAGE_SIZE) break;
+  }
+
+  return products;
+}
+
+async function fetchCategoryGroupMappings() {
+  const { data, error } = await supabaseServer
+    .from("pos_category_group_mappings")
+    .select("category_name, group_type")
+    .order("category_name", { ascending: true });
+
+  if (error) {
+    console.warn(
+      "Failed to fetch category group mappings; using uncategorized fallback.",
+      {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      }
+    );
+    return [];
+  }
+
+  return (data || []) as CategoryGroupMappingRow[];
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -475,17 +936,11 @@ export async function GET(req: Request) {
       throw new Error(`Failed to fetch monthly sales receipts: ${receiptsError.message}`);
     }
 
-    const { data: lines, error: linesError } = await supabaseServer
-      .from("pos_sales_receipt_lines")
-      .select(
-        "id, receipt_id, business_date, payment_status, is_canceled, tax_rate, tax_amount"
-      )
-      .gte("business_date", fromDate)
-      .lte("business_date", toDate);
-
-    if (linesError) {
-      throw new Error(`Failed to fetch monthly sales lines: ${linesError.message}`);
-    }
+    const [lines, productCategories, categoryGroupMappings] = await Promise.all([
+      fetchMonthlyLines(fromDate, toDate),
+      fetchProductCategories(),
+      fetchCategoryGroupMappings(),
+    ]);
 
     const { data: payments, error: paymentsError } = await supabaseServer
       .from("pos_sales_receipt_payments")
@@ -498,7 +953,7 @@ export async function GET(req: Request) {
     }
 
     const receiptRows = (receipts || []) as ReceiptRow[];
-    const lineRows = (lines || []) as LineRow[];
+    const lineRows = lines;
     const paymentRows = (payments || []) as PaymentRow[];
 
     return NextResponse.json({
@@ -511,6 +966,12 @@ export async function GET(req: Request) {
       summary: buildMonthlySummary(receiptRows),
       paymentSummary: buildPaymentSummary(filterPaidPayments(receiptRows, paymentRows)),
       taxSummary: buildTaxSummary(receiptRows, lineRows),
+      menuSales: buildMenuSales(
+        receiptRows,
+        lineRows,
+        productCategories,
+        categoryGroupMappings
+      ),
       days: buildDays({
         month,
         receipts: receiptRows,

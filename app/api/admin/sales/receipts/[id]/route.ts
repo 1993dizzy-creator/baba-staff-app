@@ -50,6 +50,7 @@ type LineRow = {
   mapping_status: string | null;
   is_excluded: boolean | null;
   admin_note: string | null;
+  raw_json: unknown;
 };
 
 type PaymentRow = {
@@ -70,6 +71,8 @@ type ProductRow = {
   unit_price: number | string | null;
   tax_rate: number | string | null;
   tax_amount: number | string | null;
+  item_type: number | null;
+  raw_json: unknown;
 };
 
 type TaxBucket = {
@@ -95,6 +98,15 @@ type EditableLineInput = {
   unitName?: unknown;
   quantity?: unknown;
   unitPrice?: unknown;
+  taxRate?: unknown;
+  clientId?: unknown;
+  parentClientId?: unknown;
+  isOption?: unknown;
+  refDetailType?: unknown;
+  inventoryItemType?: unknown;
+  additionId?: unknown;
+  optionGroupName?: unknown;
+  rawJson?: unknown;
 };
 
 type NormalizedLineInput =
@@ -109,12 +121,21 @@ type NormalizedLineInput =
   }
   | {
     mode: "create";
+    clientId: string;
+    parentClientId: string | null;
     productId: number | null;
     itemCode: string | null;
     itemName: string;
     unitName: string | null;
     unitPrice: number;
     quantity: number;
+    taxRate: number | null;
+    isOption: boolean;
+    refDetailType: number;
+    inventoryItemType: number | null;
+    additionId: string | null;
+    optionGroupName: string | null;
+    rawJson: Record<string, unknown> | null;
   };
 
 type CalculatedLine = {
@@ -342,23 +363,69 @@ function normalizeEditableLines(value: unknown): NormalizedLineInput[] | null {
         ? item.unitName.trim()
         : null;
     const unitPrice = Number(item.unitPrice);
+    const clientId =
+      typeof item.clientId === "string" ? item.clientId.trim() : "";
+    const parentClientId =
+      typeof item.parentClientId === "string" && item.parentClientId.trim()
+        ? item.parentClientId.trim()
+        : null;
+    const isOption = item.isOption === true;
+    const refDetailType = Number(item.refDetailType);
+    const inventoryItemType = Number(item.inventoryItemType);
+    const additionId =
+      typeof item.additionId === "string" && item.additionId.trim()
+        ? item.additionId.trim()
+        : null;
+    const optionGroupName =
+      typeof item.optionGroupName === "string" && item.optionGroupName.trim()
+        ? item.optionGroupName.trim()
+        : null;
+    const rawJson =
+      item.rawJson &&
+      typeof item.rawJson === "object" &&
+      !Array.isArray(item.rawJson)
+        ? (item.rawJson as Record<string, unknown>)
+        : null;
+    const taxRateValue = Number(item.taxRate);
 
     if (!Number.isFinite(quantity) || quantity <= 0) return null;
+    if (!clientId) return null;
+    if (isOption && (!parentClientId || !additionId)) return null;
+    if (!isOption && parentClientId) return null;
     if (
       (!Number.isInteger(productId) || productId <= 0) &&
-      (!itemCode || !itemName || !Number.isFinite(unitPrice) || unitPrice < 0)
+      ((!isOption && !itemCode) ||
+        !itemName ||
+        !Number.isFinite(unitPrice) ||
+        unitPrice < 0)
     ) {
       return null;
     }
 
     normalized.push({
       mode,
+      clientId,
+      parentClientId,
       productId: Number.isInteger(productId) && productId > 0 ? productId : null,
       itemCode,
       itemName,
       unitName,
       unitPrice: Number.isFinite(unitPrice) ? unitPrice : 0,
       quantity,
+      taxRate: Number.isFinite(taxRateValue) ? taxRateValue : null,
+      isOption,
+      refDetailType:
+        Number.isInteger(refDetailType) && refDetailType > 0
+          ? refDetailType
+          : isOption
+            ? 2
+            : 1,
+      inventoryItemType: Number.isInteger(inventoryItemType)
+        ? inventoryItemType
+        : null,
+      additionId,
+      optionGroupName,
+      rawJson,
     });
   }
 
@@ -370,12 +437,48 @@ function normalizePaymentMethod(value: unknown): PaymentMethod | null {
   return null;
 }
 
-function isOptionLine(line: Pick<LineRow, "is_option" | "parent_ref_detail_id" | "mapping_status">) {
+function getRawParentRefDetailId(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+
+  const parentId = (value as Record<string, unknown>).ParentID;
+  if (typeof parentId === "string" && parentId.trim()) return parentId.trim();
+  if (typeof parentId === "number" && Number.isFinite(parentId)) {
+    return String(parentId);
+  }
+
+  return null;
+}
+
+function getParentRefDetailId(
+  line: Pick<LineRow, "parent_ref_detail_id" | "raw_json">
+) {
+  return line.parent_ref_detail_id || getRawParentRefDetailId(line.raw_json);
+}
+
+function isOptionLine(
+  line: Pick<
+    LineRow,
+    | "is_option"
+    | "parent_ref_detail_id"
+    | "ref_detail_type"
+    | "mapping_status"
+    | "raw_json"
+  >
+) {
   return (
     line.is_option === true ||
     Boolean(line.parent_ref_detail_id) ||
+    line.ref_detail_type !== 1 ||
+    hasRawOptionReference(line.raw_json) ||
     line.mapping_status === "option"
   );
+}
+
+function hasRawOptionReference(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const raw = value as Record<string, unknown>;
+  return Boolean(raw.ParentID || raw.InventoryItemAdditionID);
 }
 
 async function getProductsById(productIds: number[]) {
@@ -383,7 +486,7 @@ async function getProductsById(productIds: number[]) {
 
   const { data, error } = await supabaseServer
     .from("pos_products")
-    .select("id, pos_item_id, item_id, item_code, item_name, unit_name, unit_price, tax_rate, tax_amount")
+    .select("id, pos_item_id, item_id, item_code, item_name, unit_name, unit_price, tax_rate, tax_amount, item_type, raw_json")
     .eq("is_active", true)
     .in("id", productIds);
 
@@ -392,6 +495,52 @@ async function getProductsById(productIds: number[]) {
   }
 
   return new Map(((data || []) as ProductRow[]).map((product) => [product.id, product]));
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asObjectArray(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map(asObject)
+        .filter((item): item is Record<string, unknown> => Boolean(item))
+    : [];
+}
+
+function findProductAddition(product: ProductRow, additionId: string) {
+  const raw = asObject(product.raw_json);
+  const detail = asObject(raw?.Detail);
+  const categories = asObjectArray(
+    raw?.AdditionCategories ?? detail?.AdditionCategories
+  );
+
+  for (const category of categories) {
+    const option = asObjectArray(category.Additions).find(
+      (candidate) => String(candidate.Id || "") === additionId
+    );
+
+    if (!option) continue;
+    if (option.InActive === true || option.Inactive === true) return null;
+
+    return {
+      name:
+        (typeof option.Description === "string" && option.Description.trim()) ||
+        (typeof option.Name === "string" && option.Name.trim()) ||
+        "Option",
+      code:
+        typeof option.Code === "string" && option.Code.trim()
+          ? option.Code.trim()
+          : null,
+      unitPrice: toNumber(option.Price ?? option.UnitPrice),
+      raw: option,
+    };
+  }
+
+  return null;
 }
 
 export async function GET(
@@ -431,7 +580,7 @@ export async function GET(
     const { data: lines, error: linesError } = await supabaseServer
       .from("pos_sales_receipt_lines")
       .select(
-        "id, ref_detail_id, parent_ref_detail_id, sort_order, item_code, item_name, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, pre_tax_amount, tax_reduction_amount, ref_detail_type, inventory_item_type, is_option, mapping_status, is_excluded, admin_note"
+        "id, ref_detail_id, parent_ref_detail_id, sort_order, item_code, item_name, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, pre_tax_amount, tax_reduction_amount, ref_detail_type, inventory_item_type, is_option, mapping_status, is_excluded, admin_note, raw_json"
       )
       .eq("receipt_id", receiptId)
       .order("sort_order", { ascending: true })
@@ -517,10 +666,11 @@ export async function GET(
       })),
       taxSummary,
       adjustedTaxSummary,
+      hasOptionLines: lineRows.some(isOptionLine),
       lines: lineRows.map((line) => ({
         id: line.id,
         refDetailId: line.ref_detail_id,
-        parentRefDetailId: line.parent_ref_detail_id,
+        parentRefDetailId: getParentRefDetailId(line),
         sortOrder: line.sort_order,
         itemCode: line.item_code,
         itemName: line.item_name,
@@ -659,7 +809,7 @@ export async function PATCH(
     const { data: currentLines, error: currentLinesError } = await supabaseServer
       .from("pos_sales_receipt_lines")
       .select(
-        "id, ref_detail_id, parent_ref_detail_id, sort_order, item_code, item_name, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, pre_tax_amount, tax_reduction_amount, ref_detail_type, inventory_item_type, is_option, mapping_status"
+        "id, ref_detail_id, parent_ref_detail_id, sort_order, item_code, item_name, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, pre_tax_amount, tax_reduction_amount, ref_detail_type, inventory_item_type, is_option, mapping_status, raw_json"
       )
       .eq("receipt_id", receiptId)
       .order("sort_order", { ascending: true })
@@ -672,8 +822,14 @@ export async function PATCH(
     }
 
     const currentLineRows = (currentLines || []) as LineRow[];
+
     const currentLineById = new Map(
       currentLineRows.map((line) => [line.id, line])
+    );
+    const currentLineByRefDetailId = new Map(
+      currentLineRows
+        .filter((line) => Boolean(line.ref_detail_id))
+        .map((line) => [line.ref_detail_id as string, line])
     );
     const existingOriginalTaxSummary = normalizeTaxSummary(
       receiptRow.original_tax_summary
@@ -751,6 +907,56 @@ export async function PATCH(
         .map((line) => line.productId)
         .filter((id): id is number => typeof id === "number")
     );
+    const createLineByClientId = new Map(
+      createLines.map((line) => [line.clientId, line])
+    );
+
+    if (createLineByClientId.size !== createLines.length) {
+      return NextResponse.json(
+        { ok: false, error: "Duplicate create line clientId." },
+        { status: 400 }
+      );
+    }
+
+    const resolvedOptions = new Map<
+      string,
+      ReturnType<typeof findProductAddition>
+    >();
+
+    for (const line of createLines) {
+      if (!line.isOption) {
+        if (!line.productId || !productMap.has(line.productId)) {
+          return NextResponse.json(
+            { ok: false, error: "Selected POS product was not found." },
+            { status: 400 }
+          );
+        }
+        continue;
+      }
+
+      const parentLine = line.parentClientId
+        ? createLineByClientId.get(line.parentClientId)
+        : null;
+      const parentProduct =
+        parentLine?.productId ? productMap.get(parentLine.productId) : null;
+      const option =
+        parentProduct && line.additionId
+          ? findProductAddition(parentProduct, line.additionId)
+          : null;
+
+      if (!parentLine || parentLine.isOption || !parentProduct || !option) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Selected POS product option was not found. Refresh the product catalog.",
+          },
+          { status: 400 }
+        );
+      }
+
+      resolvedOptions.set(line.clientId, option);
+    }
 
     const deletedIds = new Set(
       nextLines
@@ -758,19 +964,30 @@ export async function PATCH(
         .map((line) => line.id)
     );
 
-    const deleteIds = new Set<number>();
-    currentLineRows.forEach((line) => {
-      if (deletedIds.has(line.id)) {
-        deleteIds.add(line.id);
-        if (line.ref_detail_id) {
-          currentLineRows.forEach((candidate) => {
-            if (candidate.parent_ref_detail_id === line.ref_detail_id) {
-              deleteIds.add(candidate.id);
-            }
-          });
+    const deleteIds = new Set<number>(deletedIds);
+    const deletedRefDetailIds = new Set(
+      currentLineRows
+        .filter((line) => deletedIds.has(line.id) && line.ref_detail_id)
+        .map((line) => line.ref_detail_id as string)
+    );
+
+    let foundLinkedOption = true;
+    while (foundLinkedOption) {
+      foundLinkedOption = false;
+
+      currentLineRows.forEach((line) => {
+        const parentRefDetailId = getParentRefDetailId(line);
+        if (
+          !deleteIds.has(line.id) &&
+          parentRefDetailId &&
+          deletedRefDetailIds.has(parentRefDetailId)
+        ) {
+          deleteIds.add(line.id);
+          if (line.ref_detail_id) deletedRefDetailIds.add(line.ref_detail_id);
+          foundLinkedOption = true;
         }
-      }
-    });
+      });
+    }
 
     if (deleteIds.size > 0) {
       const { error: deleteError } = await supabaseServer
@@ -837,24 +1054,119 @@ export async function PATCH(
       nextSortOrder += 1;
     }
 
-    for (const line of createLines) {
-      const product = line.productId ? productMap.get(line.productId) : null;
+    const requestedQuantityByLineId = new Map(
+      nextLines
+        .filter(
+          (
+            line
+          ): line is Extract<NormalizedLineInput, { mode: "update" }> =>
+            line.mode === "update"
+        )
+        .map((line) => [line.id, line.quantity])
+    );
 
-      if (line.productId && !product) {
-        return NextResponse.json(
-          { ok: false, error: "Selected POS product was not found." },
-          { status: 400 }
+    for (const optionLine of currentLineRows.filter(isOptionLine)) {
+      if (deleteIds.has(optionLine.id) || updatedLineIds.has(optionLine.id)) {
+        continue;
+      }
+
+      const parentRefDetailId = getParentRefDetailId(optionLine);
+      const parentLine = parentRefDetailId
+        ? currentLineByRefDetailId.get(parentRefDetailId)
+        : null;
+      const quantity = parentLine
+        ? requestedQuantityByLineId.get(parentLine.id) ??
+          toNumber(parentLine.quantity)
+        : toNumber(optionLine.quantity);
+      const unitPrice = toNumber(optionLine.unit_price);
+      const discountAmount = toNumber(optionLine.discount_amount);
+      const taxRate = toNumber(optionLine.tax_rate);
+      const amount = quantity * unitPrice;
+      const finalAmount = amount - discountAmount;
+      const taxAmount = calculateTaxAmount(finalAmount, taxRate);
+      const preTaxAmount = calculatePreTaxAmount(finalAmount, taxAmount);
+
+      const { error: updateOptionLineError } = await supabaseServer
+        .from("pos_sales_receipt_lines")
+        .update({
+          quantity,
+          amount,
+          final_amount: finalAmount,
+          tax_amount: taxAmount,
+          pre_tax_amount: preTaxAmount,
+          updated_at: now,
+        })
+        .eq("id", optionLine.id)
+        .eq("receipt_id", receiptId);
+
+      if (updateOptionLineError) {
+        throw new Error(
+          `Failed to update sales receipt option line ${optionLine.id}: ${updateOptionLineError.message}`
         );
       }
 
-      const itemName = product?.item_name || line.itemName;
-      const itemCode = product?.item_code || line.itemCode;
-      const unitName = product?.unit_name || line.unitName;
-      const unitPrice = product ? toNumber(product.unit_price) : line.unitPrice;
-      const taxRate = product ? toNumber(product.tax_rate) : 0;
-      const amount = line.quantity * unitPrice;
+      updatedLineIds.add(optionLine.id);
+      calculatedLines.push({
+        id: optionLine.id,
+        itemName: optionLine.item_name || "",
+        unitName: optionLine.unit_name,
+        quantity,
+        unitPrice,
+        amount,
+        discountAmount,
+        finalAmount,
+        taxAmount,
+      });
+    }
+
+    const createdRefDetailIds = new Map(
+      createLines.map((line, index) => [
+        line.clientId,
+        `manual-${receiptId}-${Date.now()}-${index + 1}`,
+      ])
+    );
+    const orderedCreateLines = createLines
+      .filter((line) => !line.isOption)
+      .flatMap((parentLine) => [
+        parentLine,
+        ...createLines.filter(
+          (line) => line.parentClientId === parentLine.clientId
+        ),
+      ]);
+
+    for (const line of orderedCreateLines) {
+      const product = line.productId ? productMap.get(line.productId) : null;
+      const parentLine = line.parentClientId
+        ? createLineByClientId.get(line.parentClientId)
+        : null;
+      const parentProduct =
+        parentLine?.productId ? productMap.get(parentLine.productId) : null;
+      const option = line.isOption
+        ? resolvedOptions.get(line.clientId) || null
+        : null;
+      const itemName = option?.name || product?.item_name || line.itemName;
+      const itemCode = option?.code || product?.item_code || line.itemCode;
+      const unitName =
+        product?.unit_name || parentProduct?.unit_name || line.unitName;
+      const unitPrice = option
+        ? option.unitPrice
+        : product
+          ? toNumber(product.unit_price)
+          : line.unitPrice;
+      const quantity =
+        line.isOption && parentLine ? parentLine.quantity : line.quantity;
+      const taxRate = product
+        ? toNumber(product.tax_rate)
+        : parentProduct
+          ? toNumber(parentProduct.tax_rate)
+          : toNumber(line.taxRate);
+      const amount = quantity * unitPrice;
       const taxAmount = calculateTaxAmount(amount, taxRate);
       const preTaxAmount = calculatePreTaxAmount(amount, taxAmount);
+      const refDetailId = createdRefDetailIds.get(line.clientId) as string;
+      const parentRefDetailId = line.parentClientId
+        ? createdRefDetailIds.get(line.parentClientId) || null
+        : null;
 
       const { data: insertedLine, error: insertLineError } = await supabaseServer
         .from("pos_sales_receipt_lines")
@@ -862,17 +1174,19 @@ export async function PATCH(
           source: "manual",
           receipt_id: receiptId,
           receipt_ref_id: receiptRow.ref_id,
-          ref_detail_id: `manual-${receiptId}-${Date.now()}-${nextSortOrder}`,
-          parent_ref_detail_id: null,
+          ref_detail_id: refDetailId,
+          parent_ref_detail_id: parentRefDetailId,
           business_date: receiptRow.business_date,
           ref_date: receiptRow.ref_date,
           sort_order: nextSortOrder,
-          item_id: product?.pos_item_id || product?.item_id || null,
+          item_id: line.isOption
+            ? null
+            : product?.pos_item_id || product?.item_id || null,
           item_code: itemCode,
           item_name: itemName,
           unit_id: null,
           unit_name: unitName,
-          quantity: line.quantity,
+          quantity,
           unit_price: unitPrice,
           amount,
           discount_amount: 0,
@@ -881,16 +1195,34 @@ export async function PATCH(
           tax_amount: taxAmount,
           pre_tax_amount: preTaxAmount,
           tax_reduction_amount: 0,
-          ref_detail_type: 1,
-          inventory_item_type: null,
-          is_option: false,
+          ref_detail_type: line.isOption ? 2 : 1,
+          inventory_item_type: line.isOption
+            ? line.inventoryItemType ?? 6
+            : product?.item_type ?? line.inventoryItemType,
+          is_option: line.isOption,
           is_excluded: false,
-          mapping_status: "manual",
+          mapping_status: line.isOption ? "option" : "manual",
           payment_status: receiptRow.payment_status,
           is_canceled: false,
           raw_json: {
             source: "manual-receipt-edit",
             productId: product?.id ?? null,
+            ID: refDetailId,
+            ClientID: line.clientId,
+            ParentID: parentRefDetailId,
+            InventoryItemID:
+              product?.pos_item_id ||
+              product?.item_id ||
+              parentProduct?.pos_item_id ||
+              parentProduct?.item_id ||
+              null,
+            InventoryItemAdditionID: line.additionId,
+            OptionGroupName: line.optionGroupName,
+            RefDetailType: line.isOption ? 2 : 1,
+            InventoryItemType: line.isOption
+              ? line.inventoryItemType ?? 6
+              : product?.item_type ?? line.inventoryItemType,
+            CukcukOption: option?.raw ?? line.rawJson,
           },
           synced_at: now,
           updated_at: now,
@@ -906,7 +1238,7 @@ export async function PATCH(
         id: Number(insertedLine.id),
         itemName,
         unitName,
-        quantity: line.quantity,
+        quantity,
         unitPrice,
         amount,
         discountAmount: 0,
@@ -917,7 +1249,7 @@ export async function PATCH(
     }
 
     currentLineRows.forEach((line) => {
-      if (isOptionLine(line) || deleteIds.has(line.id) || updatedLineIds.has(line.id)) {
+      if (deleteIds.has(line.id) || updatedLineIds.has(line.id)) {
         return;
       }
 

@@ -112,6 +112,7 @@ type ReceiptPayment = {
 type ReceiptDetailResponse = {
   ok: boolean;
   error?: string;
+  hasOptionLines?: boolean;
   receipt?: ReceiptDetail;
   payments?: PaymentDetail[];
   taxSummary?: TaxSummary;
@@ -197,6 +198,8 @@ type LineDetail = {
 
 type ReceiptPatchResponse = {
   ok: boolean;
+  code?: string;
+  message?: string;
   error?: string;
   receipt?: {
     id: number;
@@ -229,7 +232,9 @@ type ReceiptEditLine =
   }
   | {
     mode: "create";
-    productId: number;
+    clientId: string;
+    parentClientId: string | null;
+    productId: number | null;
     itemCode: string | null;
     itemName: string;
     unitName: string | null;
@@ -237,10 +242,17 @@ type ReceiptEditLine =
     quantity: number;
     taxRate: number | null;
     taxRateSource: string | null;
+    isOption: boolean;
+    refDetailType: number;
+    inventoryItemType: number | null;
+    additionId: string | null;
+    optionGroupName: string | null;
+    rawJson: Record<string, unknown> | null;
   };
 
 type ReceiptDraftLine = {
   id: number;
+  refDetailId: string | null;
   itemName: string;
   unitName: string | null;
   quantity: number;
@@ -253,7 +265,9 @@ type ReceiptDraftLine = {
 
 type NewDraftLine = {
   mode: "create";
-  productId: number;
+  clientId: string;
+  parentClientId: string | null;
+  productId: number | null;
   itemCode: string | null;
   itemName: string;
   unitName: string | null;
@@ -261,6 +275,28 @@ type NewDraftLine = {
   quantity: number;
   taxRate: number | null;
   taxRateSource: string | null;
+  isOption: boolean;
+  refDetailType: number;
+  inventoryItemType: number | null;
+  additionId: string | null;
+  optionGroupName: string | null;
+  rawJson: Record<string, unknown> | null;
+};
+
+type PosProductOption = {
+  id: string;
+  name: string;
+  code: string | null;
+  unitPrice: number;
+  taxRate: number | null;
+  raw: Record<string, unknown>;
+};
+
+type PosProductOptionGroup = {
+  id: string;
+  name: string;
+  type: "addition" | "child";
+  options: PosProductOption[];
 };
 
 type PosProduct = {
@@ -282,12 +318,39 @@ type PosProduct = {
   taxRateUpdatedAt?: string | null;
   itemType?: number | null;
   isActive: boolean;
+  optionGroups?: PosProductOptionGroup[];
 };
 
 type PosProductsResponse = {
   ok: boolean;
   error?: string;
   products?: PosProduct[];
+};
+
+function isExistingOptionLine(line: LineDetail) {
+  return (
+    line.isOption ||
+    Boolean(line.parentRefDetailId) ||
+    line.refDetailType !== 1 ||
+    line.mappingStatus === "option"
+  );
+}
+
+type PosProductsSyncResponse = {
+  ok: boolean;
+  error?: string;
+  result?: {
+    totalFromApi?: number;
+    fetchedCount?: number;
+    detailRequestedCount?: number;
+    detailFailedCount?: number;
+    failedDetails?: unknown[];
+    insertedCount?: number;
+    updatedCount?: number;
+    upsertedCount?: number;
+    skippedCount?: number;
+    taxInfoStatus?: string;
+  };
 };
 
 function formatVnd(value?: number) {
@@ -592,6 +655,17 @@ export default function SalesReceiptsPage() {
   const [editErrorByReceiptId, setEditErrorByReceiptId] = useState<
     Record<number, string>
   >({});
+  const [currentUser, setCurrentUser] =
+    useState<ReturnType<typeof getUser>>(null);
+  const [isMenuSyncing, setIsMenuSyncing] = useState(false);
+  const [menuSyncMessage, setMenuSyncMessage] = useState("");
+  const [menuSyncWarning, setMenuSyncWarning] = useState("");
+  const [menuSyncErrorMessage, setMenuSyncErrorMessage] = useState("");
+
+  const canSyncMenu =
+    currentUser?.role === "owner" ||
+    currentUser?.role === "master" ||
+    currentUser?.role === "manager";
 
   const tabs = useMemo(
     () =>
@@ -605,6 +679,10 @@ export default function SalesReceiptsPage() {
       })),
     [businessDate, pathname, t.tabs]
   );
+
+  useEffect(() => {
+    setCurrentUser(getUser());
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -727,7 +805,11 @@ export default function SalesReceiptsPage() {
       const result = (await res.json()) as ReceiptPatchResponse;
 
       if (!res.ok || !result.ok || !result.receipt) {
-        throw new Error(result.error || receiptsEditText.saveFailed);
+        throw new Error(
+          result.code === "receipt_has_option_lines"
+            ? receiptsEditText.optionEditProtected
+            : result.message || result.error || receiptsEditText.saveFailed
+        );
       }
 
       const updatedReceipt = result.receipt;
@@ -793,10 +875,10 @@ export default function SalesReceiptsPage() {
                   amount: payment.amount,
                 })),
                 lineCount: (refreshedDetail.lines || []).filter(
-                  (line) => !line.isOption && !line.parentRefDetailId
+                  (line) => !isExistingOptionLine(line)
                 ).length,
                 optionLineCount: (refreshedDetail.lines || []).filter(
-                  (line) => line.isOption || Boolean(line.parentRefDetailId)
+                  isExistingOptionLine
                 ).length,
               }
               : receipt
@@ -823,6 +905,59 @@ export default function SalesReceiptsPage() {
     });
   }
 
+  async function handleSyncMenu() {
+    if (!currentUser?.username || !canSyncMenu) {
+      setMenuSyncErrorMessage(receiptsText.noPermission);
+      setMenuSyncMessage("");
+      setMenuSyncWarning("");
+      return;
+    }
+
+    setIsMenuSyncing(true);
+    setMenuSyncMessage("");
+    setMenuSyncWarning("");
+    setMenuSyncErrorMessage("");
+
+    try {
+      const res = await fetch("/api/admin/pos/products/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          actorUsername: currentUser.username,
+        }),
+      });
+      const result = (await res.json().catch(() => null)) as
+        | PosProductsSyncResponse
+        | null;
+
+      if (!res.ok || !result?.ok) {
+        throw new Error(
+          res.status === 403
+            ? receiptsText.noPermission
+            : receiptsText.menuSyncFailed
+        );
+      }
+
+      const upsertedCount = result.result?.upsertedCount || 0;
+      const detailFailedCount = result.result?.detailFailedCount || 0;
+
+      setMenuSyncMessage(
+        `${receiptsText.menuSyncSuccess}: ${receiptsText.menuSyncApplied} ${formatNumber(upsertedCount)}${receiptsText.menuSyncCountSuffix}, ${receiptsText.menuSyncDetailFailed} ${formatNumber(detailFailedCount)}${receiptsText.menuSyncCountSuffix}`
+      );
+      setMenuSyncWarning(
+        detailFailedCount > 0 ? receiptsText.menuSyncDetailWarning : ""
+      );
+    } catch (error) {
+      setMenuSyncErrorMessage(
+        error instanceof Error ? error.message : receiptsText.menuSyncFailed
+      );
+    } finally {
+      setIsMenuSyncing(false);
+    }
+  }
+
   return (
     <Container noPaddingTop>
       <SubNav tabs={tabs} />
@@ -842,7 +977,36 @@ export default function SalesReceiptsPage() {
                 style={dateInputStyle}
               />
             </label>
+            {canSyncMenu ? (
+              <div style={menuSyncWrapStyle}>
+                <span style={menuSyncDescriptionStyle}>
+                  {receiptsText.menuSyncDescription}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSyncMenu}
+                  disabled={isMenuSyncing}
+                  style={{
+                    ...menuSyncButtonStyle,
+                    ...(isMenuSyncing ? menuSyncButtonDisabledStyle : null),
+                  }}
+                >
+                  {isMenuSyncing
+                    ? receiptsText.menuSyncing
+                    : receiptsText.menuSyncButton}
+                </button>
+              </div>
+            ) : null}
           </div>
+          {menuSyncMessage ? (
+            <p style={successTextStyle}>{menuSyncMessage}</p>
+          ) : null}
+          {menuSyncWarning ? (
+            <p style={warningTextStyle}>{menuSyncWarning}</p>
+          ) : null}
+          {menuSyncErrorMessage ? (
+            <p style={errorTextStyle}>{menuSyncErrorMessage}</p>
+          ) : null}
           {errorMessage ? <p style={errorTextStyle}>{errorMessage}</p> : null}
         </section>
 
@@ -1051,6 +1215,9 @@ function ReceiptDropdown({
   }
   const receipt = detail.receipt;
   const payments = detail.payments || [];
+  const hasOptionLines =
+    detail.hasOptionLines === true ||
+    (detail.lines || []).some(isExistingOptionLine);
 
   // ?먮낯 ?멸툑 ?쒖떆?? API??taxSummary??original_tax_summary / vat_amount 湲곗?
   const taxRows = detail.taxSummary?.taxByRate || [];
@@ -1072,7 +1239,7 @@ function ReceiptDropdown({
       <DetailSection title={text.salesItems}>
         <div style={lineListStyle}>
           {(detail.lines || []).map((line) => {
-            const isOption = line.isOption || Boolean(line.parentRefDetailId);
+            const isOption = isExistingOptionLine(line);
             const lineTotalAmount = line.finalAmount || line.amount;
 
             return (
@@ -1184,6 +1351,7 @@ function ReceiptDropdown({
         payments={payments}
         taxSavingAmount={taxSavingAmount}
         amountDifferenceAmount={amountDifferenceAmount}
+        hasOptionLines={hasOptionLines}
         isSaving={isEditSaving}
         errorMessage={editErrorMessage}
         onSave={(values) =>
@@ -1204,6 +1372,7 @@ function ReceiptEditPanel({
   payments,
   taxSavingAmount,
   amountDifferenceAmount,
+  hasOptionLines,
   isSaving,
   errorMessage,
   onSave,
@@ -1214,6 +1383,7 @@ function ReceiptEditPanel({
   payments: PaymentDetail[];
   taxSavingAmount: number;
   amountDifferenceAmount: number;
+  hasOptionLines: boolean;
   isSaving: boolean;
   errorMessage: string;
   onSave: (values: Omit<SaveReceiptEditInput, "receiptId">) => void;
@@ -1221,9 +1391,10 @@ function ReceiptEditPanel({
   const [isEditing, setIsEditing] = useState(false);
   const [draftLines, setDraftLines] = useState<ReceiptDraftLine[]>(() =>
     lines
-      .filter((line) => !line.isOption && !line.parentRefDetailId)
+      .filter((line) => !isExistingOptionLine(line))
       .map((line) => ({
         id: line.id,
+        refDetailId: line.refDetailId,
         itemName: line.itemName || "",
         unitName: line.unitName,
         quantity: line.quantity,
@@ -1234,6 +1405,7 @@ function ReceiptEditPanel({
         mode: "update" as const,
       }))
   );
+  const existingOptionLines = lines.filter(isExistingOptionLine);
   const [newLines, setNewLines] = useState<NewDraftLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
     hasCashPayment(payments) ? "cash" : "other"
@@ -1246,6 +1418,9 @@ function ReceiptEditPanel({
   const [productResults, setProductResults] = useState<PosProduct[]>([]);
   const [productSearchError, setProductSearchError] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<PosProduct | null>(null);
+  const [selectedOptions, setSelectedOptions] = useState<
+    Record<string, PosProductOption>
+  >({});
   const [newProductQuantity, setNewProductQuantity] = useState(1);
 
   useEffect(() => {
@@ -1261,7 +1436,7 @@ function ReceiptEditPanel({
     async function fetchProducts() {
       try {
         const res = await fetch(
-          `/api/pos/products?query=${encodeURIComponent(query)}`,
+          `/api/pos/products?query=${encodeURIComponent(query)}&includeOptions=1`,
           {
             cache: "no-store",
             signal: controller.signal,
@@ -1298,6 +1473,26 @@ function ReceiptEditPanel({
       }),
       taxRate: line.taxRate,
     }));
+  const existingOptionLineTotals = existingOptionLines.flatMap((line) => {
+    const parentLine = line.parentRefDetailId
+      ? draftLines.find(
+          (candidate) => candidate.refDetailId === line.parentRefDetailId
+        )
+      : null;
+
+    if (parentLine?.mode === "delete") return [];
+
+    return [
+      {
+        finalAmount: calculateLineFinalAmount({
+          quantity: parentLine?.quantity ?? line.quantity,
+          unitPrice: line.unitPrice,
+          discountAmount: line.discountAmount,
+        }),
+        taxRate: line.taxRate,
+      },
+    ];
+  });
   const newDraftLineTotals = newLines.map((line) => ({
     finalAmount: calculateLineFinalAmount({
       quantity: line.quantity,
@@ -1305,7 +1500,11 @@ function ReceiptEditPanel({
     }),
     taxRate: line.taxRate,
   }));
-  const draftLineTotals = [...activeDraftLineTotals, ...newDraftLineTotals];
+  const draftLineTotals = [
+    ...activeDraftLineTotals,
+    ...existingOptionLineTotals,
+    ...newDraftLineTotals,
+  ];
   const draftSalesSubtotal = draftLineTotals.reduce(
     (sum, line) => sum + line.finalAmount,
     0
@@ -1348,10 +1547,40 @@ function ReceiptEditPanel({
   function addSelectedProduct() {
     if (!selectedProduct || newProductQuantity <= 0) return;
 
+    const clientId = `manual-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const optionLines = Object.entries(selectedOptions).map(
+      ([optionGroupId, option], optionIndex): NewDraftLine => ({
+        mode: "create",
+        clientId: `${clientId}-option-${optionIndex + 1}`,
+        parentClientId: clientId,
+        productId: null,
+        itemCode: option.code,
+        itemName: option.name,
+        unitName: selectedProduct.unitName,
+        unitPrice: option.unitPrice,
+        quantity: newProductQuantity,
+        taxRate: option.taxRate ?? selectedProduct.taxRate ?? null,
+        taxRateSource: selectedProduct.taxRateSource ?? null,
+        isOption: true,
+        refDetailType: 2,
+        inventoryItemType: 6,
+        additionId: option.id,
+        optionGroupName:
+          selectedProduct.optionGroups?.find(
+            (group) => group.id === optionGroupId
+          )?.name ?? optionGroupId,
+        rawJson: option.raw,
+      })
+    );
+
     setNewLines((current) => [
       ...current,
       {
         mode: "create",
+        clientId,
+        parentClientId: null,
         productId: selectedProduct.id,
         itemCode: selectedProduct.itemCode,
         itemName: selectedProduct.itemName,
@@ -1360,9 +1589,17 @@ function ReceiptEditPanel({
         quantity: newProductQuantity,
         taxRate: selectedProduct.taxRate ?? null,
         taxRateSource: selectedProduct.taxRateSource ?? null,
+        isOption: false,
+        refDetailType: 1,
+        inventoryItemType: selectedProduct.itemType ?? null,
+        additionId: null,
+        optionGroupName: null,
+        rawJson: null,
       },
+      ...optionLines,
     ]);
     setSelectedProduct(null);
+    setSelectedOptions({});
     setProductQuery("");
     setProductResults([]);
     setNewProductQuantity(1);
@@ -1371,9 +1608,10 @@ function ReceiptEditPanel({
   function resetDraft() {
     setDraftLines(
       lines
-        .filter((line) => !line.isOption && !line.parentRefDetailId)
+        .filter((line) => !isExistingOptionLine(line))
         .map((line) => ({
           id: line.id,
+          refDetailId: line.refDetailId,
           itemName: line.itemName || "",
           unitName: line.unitName,
           quantity: line.quantity,
@@ -1389,6 +1627,7 @@ function ReceiptEditPanel({
     setCashReceivedAmount(receipt.receiveAmount ?? receipt.finalAmount);
     setNote(receipt.modificationNote || "");
     setSelectedProduct(null);
+    setSelectedOptions({});
     setProductQuery("");
     setProductResults([]);
     setIsEditing(false);
@@ -1441,55 +1680,119 @@ function ReceiptEditPanel({
         </div>
 
         {!isEditing ? (
-          <button type="button" onClick={() => setIsEditing(true)} style={editButtonStyle}>
-            {text.title}
-          </button>
+          <>
+            {hasOptionLines ? (
+              <p style={mutedTextStyle}>{text.existingOptionReadOnlyNotice}</p>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setIsEditing(true)}
+              style={editButtonStyle}
+            >
+              {text.title}
+            </button>
+          </>
         ) : (
           <>
+            {hasOptionLines ? (
+              <p style={existingOptionNoticeStyle}>
+                {text.existingOptionReadOnlyNotice}
+              </p>
+            ) : null}
             <div style={editLineListStyle}>
-              {draftLines.map((line, index) => (
-                <div
-                  key={line.id}
-                  style={{
-                    ...editLineRowStyle,
-                    ...(line.mode === "delete" ? deletedEditLineRowStyle : null),
-                  }}
-                >
-                  <span style={editLineNameStyle}>{line.itemName}</span>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={line.quantity}
-                    onChange={(event) =>
-                      updateLine(index, {
-                        quantity: Math.max(0, Number(event.target.value)),
-                      })
-                    }
-                    style={editNumberInputStyle}
-                    disabled={isSaving || line.mode === "delete"}
-                  />
-                  <strong style={miniValueStyle}>
-                    {formatVnd(
-                      calculateLineFinalAmount({
-                        quantity: line.quantity,
-                        unitPrice: line.unitPrice,
-                        discountAmount: line.discountAmount,
-                      })
-                    )}
-                  </strong>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      line.mode === "delete" ? restoreLine(index) : removeLine(index)
-                    }
-                    disabled={isSaving}
-                    style={deleteLineButtonStyle}
-                  >
-                    {line.mode === "delete" ? text.restore : text.delete}
-                  </button>
-                </div>
-              ))}
+              {draftLines.map((line, index) => {
+                const linkedOptions = line.refDetailId
+                  ? existingOptionLines.filter(
+                      (option) =>
+                        option.parentRefDetailId === line.refDetailId
+                    )
+                  : [];
+
+                return (
+                  <div key={line.id} style={existingLineGroupStyle}>
+                    <div
+                      style={{
+                        ...editLineRowStyle,
+                        ...(line.mode === "delete"
+                          ? deletedEditLineRowStyle
+                          : null),
+                      }}
+                    >
+                      <span style={editLineNameStyle}>{line.itemName}</span>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={line.quantity}
+                        onChange={(event) =>
+                          updateLine(index, {
+                            quantity: Math.max(
+                              0,
+                              Number(event.target.value)
+                            ),
+                          })
+                        }
+                        style={editNumberInputStyle}
+                        disabled={isSaving || line.mode === "delete"}
+                      />
+                      <strong style={miniValueStyle}>
+                        {formatVnd(
+                          calculateLineFinalAmount({
+                            quantity: line.quantity,
+                            unitPrice: line.unitPrice,
+                            discountAmount: line.discountAmount,
+                          })
+                        )}
+                      </strong>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          line.mode === "delete"
+                            ? restoreLine(index)
+                            : removeLine(index)
+                        }
+                        disabled={isSaving}
+                        style={deleteLineButtonStyle}
+                      >
+                        {line.mode === "delete" ? text.restore : text.delete}
+                      </button>
+                    </div>
+                    {linkedOptions.map((option) => {
+                      const optionQuantity = line.quantity;
+                      const optionFinalAmount = calculateLineFinalAmount({
+                        quantity: optionQuantity,
+                        unitPrice: option.unitPrice,
+                        discountAmount: option.discountAmount,
+                      });
+
+                      return (
+                        <div
+                          key={option.id}
+                          style={{
+                            ...existingOptionReadOnlyRowStyle,
+                            ...(line.mode === "delete"
+                              ? deletedEditLineRowStyle
+                              : null),
+                          }}
+                        >
+                          <span style={editLineNameStyle}>
+                            {text.optionItems} · {option.itemName}
+                          </span>
+                          <span style={existingOptionMetaStyle}>
+                            {formatNumber(optionQuantity)}
+                          </span>
+                          <span style={existingOptionMetaStyle}>
+                            {formatVnd(option.unitPrice)}
+                          </span>
+                          <strong style={miniValueStyle}>
+                            {formatVnd(optionFinalAmount)}
+                          </strong>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
             </div>
 
             <div style={productSearchStyle}>
@@ -1507,14 +1810,30 @@ function ReceiptEditPanel({
                     <button
                       type="button"
                       key={product.id}
-                      onClick={() => setSelectedProduct(product)}
-                      style={productResultButtonStyle}
+                      onClick={() => {
+                        setSelectedProduct(product);
+                        setSelectedOptions({});
+                      }}
+                      style={{
+                        ...productResultButtonStyle,
+                        ...(selectedProduct?.id === product.id
+                          ? productResultButtonSelectedStyle
+                          : null),
+                      }}
+                      onMouseEnter={(event) => {
+                        event.currentTarget.style.background = "#111827";
+                      }}
+                      onMouseLeave={(event) => {
+                        event.currentTarget.style.background =
+                          selectedProduct?.id === product.id
+                            ? "#111827"
+                            : "#1f2937";
+                      }}
                     >
-                      <span style={lineNameStyle}>
-                        {product.itemCode ? `${product.itemCode} · ` : ""}
-                        {product.itemName}
-                      </span>
-                      <strong style={miniValueStyle}>{formatVnd(product.unitPrice)}</strong>
+                      <span style={productResultNameStyle}>{product.itemName}</span>
+                      <strong style={productResultPriceStyle}>
+                        {formatVnd(product.unitPrice)}
+                      </strong>
                     </button>
                   ))}
                 </div>
@@ -1524,36 +1843,104 @@ function ReceiptEditPanel({
               ) : null}
               {selectedProduct ? (
                 <div style={selectedProductStyle}>
-                  <span style={editLineNameStyle}>
-                    {selectedProduct.itemCode ? `${selectedProduct.itemCode} · ` : ""}
-                    {selectedProduct.itemName} · {formatVnd(selectedProduct.unitPrice)}
-                  </span>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={newProductQuantity}
-                    onChange={(event) =>
-                      setNewProductQuantity(Math.max(0, Number(event.target.value)))
-                    }
-                    style={editNumberInputStyle}
-                    disabled={isSaving}
-                  />
-                  <button
-                    type="button"
-                    onClick={addSelectedProduct}
-                    disabled={isSaving || newProductQuantity <= 0}
-                    style={secondaryButtonStyle}
-                  >
-                    {text.add}
-                  </button>
+                  <div style={selectedProductHeaderStyle}>
+                    <span style={editLineNameStyle}>
+                      {selectedProduct.itemCode ? `${selectedProduct.itemCode} · ` : ""}
+                      {selectedProduct.itemName} · {formatVnd(selectedProduct.unitPrice)}
+                    </span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={newProductQuantity}
+                      onChange={(event) =>
+                        setNewProductQuantity(Math.max(0, Number(event.target.value)))
+                      }
+                      style={editNumberInputStyle}
+                      disabled={isSaving}
+                    />
+                    <button
+                      type="button"
+                      onClick={addSelectedProduct}
+                      disabled={isSaving || newProductQuantity <= 0}
+                      style={secondaryButtonStyle}
+                    >
+                      {text.add}
+                    </button>
+                  </div>
+                  {(selectedProduct.optionGroups || []).filter(
+                    (group) => group.type === "addition"
+                  ).length > 0 ? (
+                    <div style={optionSelectionStyle}>
+                      <span style={reviewCurrentStatusStyle}>
+                        {text.selectOptions}
+                      </span>
+                      <span style={mutedTextStyle}>{text.optionsAvailable}</span>
+                      {(selectedProduct.optionGroups || [])
+                        .filter((group) => group.type === "addition")
+                        .map((group) => (
+                          <div key={group.id} style={optionGroupStyle}>
+                            <strong style={miniValueStyle}>{group.name}</strong>
+                            <div style={optionButtonListStyle}>
+                              {group.options.map((option) => {
+                                const selected =
+                                  selectedOptions[group.id]?.id === option.id;
+
+                                return (
+                                  <button
+                                    type="button"
+                                    key={option.id}
+                                    onClick={() =>
+                                      setSelectedOptions((current) => {
+                                        if (current[group.id]?.id === option.id) {
+                                          const next = { ...current };
+                                          delete next[group.id];
+                                          return next;
+                                        }
+
+                                        return {
+                                          ...current,
+                                          [group.id]: option,
+                                        };
+                                      })
+                                    }
+                                    disabled={isSaving}
+                                    style={{
+                                      ...secondaryButtonStyle,
+                                      ...optionButtonStyle,
+                                      ...(selected ? activeSegmentStyle : null),
+                                    }}
+                                  >
+                                    <span style={optionButtonNameStyle}>
+                                      {option.name}
+                                    </span>
+                                    <span style={optionButtonPriceStyle}>
+                                      {text.surcharge} {formatVnd(option.unitPrice)}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {newLines.length > 0 ? (
                 <div style={editLineListStyle}>
                   {newLines.map((line, index) => (
-                    <div key={`${line.productId}-${index}`} style={newLineRowStyle}>
-                      <span style={editLineNameStyle}>{line.itemName}</span>
+                    <div
+                      key={line.clientId}
+                      style={{
+                        ...newLineRowStyle,
+                        ...(line.isOption ? newOptionLineRowStyle : null),
+                      }}
+                    >
+                      <span style={editLineNameStyle}>
+                        {line.isOption ? `${text.optionItems} · ` : ""}
+                        {line.itemName}
+                      </span>
                       <span style={reviewCurrentStatusStyle}>{formatNumber(line.quantity)}</span>
                       <strong style={miniValueStyle}>
                         {formatVnd(
@@ -1567,7 +1954,11 @@ function ReceiptEditPanel({
                         type="button"
                         onClick={() =>
                           setNewLines((current) =>
-                            current.filter((_, lineIndex) => lineIndex !== index)
+                            current.filter(
+                              (candidate, lineIndex) =>
+                                lineIndex !== index &&
+                                candidate.parentClientId !== line.clientId
+                            )
                           )
                         }
                         style={deleteLineButtonStyle}
@@ -1750,6 +2141,8 @@ const errorTextStyle: CSSProperties = {
 
 const dateFilterStyle: CSSProperties = {
   marginTop: 8,
+  display: "grid",
+  gap: 8,
 };
 
 const dateInputWrapStyle: CSSProperties = {
@@ -1763,6 +2156,47 @@ const dateInputStyle: CSSProperties = {
   padding: "9px 10px",
   fontSize: 13,
   borderRadius: 10,
+};
+
+const menuSyncWrapStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+};
+
+const menuSyncDescriptionStyle: CSSProperties = {
+  fontSize: 12,
+  lineHeight: 1.45,
+  color: "#6b7280",
+  fontWeight: 700,
+};
+
+const menuSyncButtonStyle: CSSProperties = {
+  ...ui.button,
+  padding: "10px 12px",
+  fontSize: 13,
+  borderRadius: 10,
+  fontWeight: 800,
+};
+
+const menuSyncButtonDisabledStyle: CSSProperties = {
+  opacity: 0.65,
+  cursor: "not-allowed",
+};
+
+const successTextStyle: CSSProperties = {
+  margin: "7px 0 0",
+  fontSize: 12,
+  lineHeight: 1.45,
+  color: "#047857",
+  fontWeight: 800,
+};
+
+const warningTextStyle: CSSProperties = {
+  margin: "6px 0 0",
+  fontSize: 12,
+  lineHeight: 1.45,
+  color: "#b45309",
+  fontWeight: 800,
 };
 
 const sectionHeaderStyle: CSSProperties = {
@@ -2085,6 +2519,22 @@ const editButtonStyle: CSSProperties = {
 const editLineListStyle: CSSProperties = {
   display: "grid",
   gap: 6,
+  minWidth: 0,
+};
+
+const existingOptionNoticeStyle: CSSProperties = {
+  ...mutedTextStyle,
+  padding: "7px 8px",
+  borderRadius: 8,
+  background: "#f3f4f6",
+  color: "#374151",
+};
+
+const existingLineGroupStyle: CSSProperties = {
+  display: "grid",
+  gap: 4,
+  minWidth: 0,
+  width: "100%",
 };
 
 const editLineRowStyle: CSSProperties = {
@@ -2092,6 +2542,34 @@ const editLineRowStyle: CSSProperties = {
   gridTemplateColumns: "minmax(0, 1fr) 48px 98px auto",
   gap: 6,
   alignItems: "center",
+  minWidth: 0,
+  width: "100%",
+};
+
+const existingOptionReadOnlyRowStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) 42px 86px 98px",
+  gap: 6,
+  alignItems: "center",
+  marginLeft: 12,
+  padding: "6px 8px",
+  width: "calc(100% - 12px)",
+  maxWidth: "calc(100% - 12px)",
+  minWidth: 0,
+  boxSizing: "border-box",
+  borderRadius: 8,
+  background: "#f8fafc",
+  border: "1px dashed #cbd5e1",
+};
+
+const existingOptionMetaStyle: CSSProperties = {
+  minWidth: 0,
+  fontSize: 11,
+  lineHeight: 1.35,
+  fontWeight: 800,
+  color: "#475569",
+  textAlign: "right",
+  whiteSpace: "nowrap",
 };
 
 const newLineRowStyle: CSSProperties = {
@@ -2100,6 +2578,10 @@ const newLineRowStyle: CSSProperties = {
   background: "#f0fdf4",
   borderRadius: 8,
   padding: 6,
+  minWidth: 0,
+  width: "100%",
+  maxWidth: "100%",
+  boxSizing: "border-box",
 };
 
 const deletedEditLineRowStyle: CSSProperties = {
@@ -2179,16 +2661,45 @@ const productResultListStyle: CSSProperties = {
 };
 
 const productResultButtonStyle: CSSProperties = {
-  border: "1px solid #e5e7eb",
+  border: "1px solid #374151",
   borderRadius: 8,
   padding: "7px 8px",
-  background: "#ffffff",
+  background: "#1f2937",
+  color: "#ffffff",
   display: "grid",
   gridTemplateColumns: "minmax(0, 1fr) auto",
   alignItems: "center",
   gap: 8,
   textAlign: "left",
   cursor: "pointer",
+  minWidth: 0,
+  width: "100%",
+  transition: "background-color 120ms ease, border-color 120ms ease",
+};
+
+const productResultButtonSelectedStyle: CSSProperties = {
+  background: "#111827",
+  borderColor: "#9ca3af",
+};
+
+const productResultNameStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 12,
+  lineHeight: 1.35,
+  fontWeight: 900,
+  color: "#ffffff",
+};
+
+const productResultPriceStyle: CSSProperties = {
+  flexShrink: 0,
+  fontSize: 12,
+  lineHeight: 1.35,
+  fontWeight: 900,
+  color: "#e5e7eb",
+  whiteSpace: "nowrap",
 };
 
 const productResultMainStyle: CSSProperties = {
@@ -2199,12 +2710,73 @@ const productResultMainStyle: CSSProperties = {
 
 const selectedProductStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1fr) 48px auto",
   gap: 6,
-  alignItems: "center",
   padding: 6,
   borderRadius: 8,
   background: "#f9fafb",
+  minWidth: 0,
+  maxWidth: "100%",
+  overflow: "hidden",
+};
+
+const selectedProductHeaderStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) 48px auto",
+  gap: 6,
+  alignItems: "center",
+};
+
+const optionSelectionStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+  paddingTop: 6,
+  borderTop: "1px solid #e5e7eb",
+  minWidth: 0,
+  maxWidth: "100%",
+};
+
+const optionGroupStyle: CSSProperties = {
+  display: "grid",
+  gap: 5,
+  minWidth: 0,
+  maxWidth: "100%",
+};
+
+const optionButtonListStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 5,
+  minWidth: 0,
+  maxWidth: "100%",
+};
+
+const optionButtonStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 4,
+  minWidth: 0,
+  maxWidth: "100%",
+  overflow: "hidden",
+};
+
+const optionButtonNameStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const optionButtonPriceStyle: CSSProperties = {
+  flexShrink: 0,
+  whiteSpace: "nowrap",
+};
+
+const newOptionLineRowStyle: CSSProperties = {
+  marginLeft: 12,
+  background: "#f8fafc",
+  border: "1px dashed #cbd5e1",
+  width: "calc(100% - 12px)",
+  maxWidth: "calc(100% - 12px)",
 };
 
 const paymentEditBlockStyle: CSSProperties = {
