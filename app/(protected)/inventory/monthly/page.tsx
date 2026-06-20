@@ -41,7 +41,13 @@ type MonthlyItem = {
   stockCheckNetChange: number;
   serviceNetChange: number;
   otherNetChange: number;
+  saleDeductionNetChange: number;
   totalLogNetChange: number;
+  saleDeductionDeduction: number;
+  stockCheckDeduction: number;
+  serviceDeduction: number;
+  otherDeduction: number;
+  estimatedDeductionAmount: number | null;
   status: MonthlyItemStatus;
 };
 
@@ -66,6 +72,7 @@ type SupplierSummary = {
   stockCheckNetChange: number;
   serviceNetChange: number;
   otherNetChange: number;
+  saleDeductionNetChange: number;
   totalLogNetChange: number;
   items: MonthlyItem[];
 };
@@ -141,7 +148,15 @@ type MonthlyInventoryResponse = {
     stockCheckNetChange: number;
     serviceNetChange: number;
     otherNetChange: number;
+    saleDeductionNetChange: number;
     unclassifiedLogCount: number;
+  };
+  deductionReasonSummary: {
+    saleDeduction: number;
+    stockCheck: number;
+    service: number;
+    other: number;
+    total: number;
   };
   supplierSummary: SupplierSummary[];
   items: MonthlyItem[];
@@ -182,6 +197,7 @@ const monthlyText = {
     serviceNetChange: "서비스/증정",
     serviceShort: "서비스",
     otherNetChange: "기타",
+    saleShort: "판매",
     previousMonthChange: "전월대비",
     itemCountUnit: "품목",
     logCountUnit: "건",
@@ -231,6 +247,14 @@ const monthlyText = {
     missing: "누락/삭제 가능",
     monthlyNew: "신규",
     monthlyMissing: "누락",
+    deductionSection: "차감 현황",
+    deductionLabel: "차감",
+    deductionNotice: "차감은 월간 입고금액 대비 추정 차감금액 기준입니다.",
+    deductionEmpty: "이번 달 차감 기록이 없습니다.",
+    deductionSaleDeduction: "판매차감",
+    deductionStockCheck: "재고확인",
+    deductionService: "서비스&증정",
+    deductionOther: "기타",
   },
   vi: {
     month: "Thang",
@@ -261,6 +285,7 @@ const monthlyText = {
     serviceNetChange: "Tang/Service",
     serviceShort: "Service",
     otherNetChange: "Khac",
+    saleShort: "Bán",
     previousMonthChange: "So thang truoc",
     itemCountUnit: "mat hang",
     logCountUnit: "luot",
@@ -310,6 +335,14 @@ const monthlyText = {
     missing: "Co the thieu/xoa",
     monthlyNew: "mới",
     monthlyMissing: "thiếu",
+    deductionSection: "Biến động trừ kho",
+    deductionLabel: "Trừ",
+    deductionNotice: "Trừ kho là giá trị trừ ước tính so với tổng giá trị nhập trong tháng.",
+    deductionEmpty: "Không có dữ liệu trừ kho trong tháng này.",
+    deductionSaleDeduction: "Trừ bán hàng",
+    deductionStockCheck: "Kiểm tra kho",
+    deductionService: "Dịch vụ/tặng",
+    deductionOther: "Khác",
   },
 } as const;
 
@@ -350,7 +383,12 @@ const MONTHLY_REASON_EMOJIS = {
   stock_check: getSafeEmoji(INVENTORY_REASON_EMOJIS.stock_check, "\u2705"),
   service: getSafeEmoji(INVENTORY_REASON_EMOJIS.service, "\u{1F381}"),
   other: getSafeEmoji(INVENTORY_REASON_EMOJIS.other, "\u{1F4DD}"),
+  sale_deduction: "🔴",
 } as const;
+
+const getSalesDeductionLabel = (lang: "ko" | "vi") =>
+  lang === "vi" ? "Trừ kho bán hàng" : "판매차감";
+
 
 function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -682,6 +720,77 @@ export default function InventoryMonthlyPage() {
         return sortText(a.label).localeCompare(sortText(b.label));
       });
   }, [supplierGroups, c, labels.noCategory, labels.noPart, lang]);
+
+  type DeductionAmtData = { sale: number; check: number; service: number; other: number; total: number };
+
+  const deductionByItem = useMemo(() => {
+    const map = new Map<number, DeductionAmtData>();
+    for (const item of data?.items ?? []) {
+      const totalQty = item.saleDeductionDeduction + item.stockCheckDeduction + item.serviceDeduction + item.otherDeduction;
+      const amt = item.estimatedDeductionAmount ?? 0;
+      if (totalQty === 0) continue;
+      map.set(item.itemId, {
+        sale: amt * (item.saleDeductionDeduction / totalQty),
+        check: amt * (item.stockCheckDeduction / totalQty),
+        service: amt * (item.serviceDeduction / totalQty),
+        other: amt * (item.otherDeduction / totalQty),
+        total: amt,
+      });
+    }
+    return map;
+  }, [data]);
+
+  const partDeductionData = useMemo(() => {
+    const map = new Map<string, DeductionAmtData>();
+    for (const item of data?.items ?? []) {
+      const partKey = item.part?.trim() || "__none__";
+      const d = deductionByItem.get(item.itemId);
+      if (!d) continue;
+      const existing = map.get(partKey) ?? { sale: 0, check: 0, service: 0, other: 0, total: 0 };
+      existing.sale += d.sale; existing.check += d.check; existing.service += d.service; existing.other += d.other; existing.total += d.total;
+      map.set(partKey, existing);
+    }
+    return map;
+  }, [data, deductionByItem]);
+
+  const categoryDeductionData = useMemo(() => {
+    const map = new Map<string, DeductionAmtData>();
+    for (const item of data?.items ?? []) {
+      const partKey = item.part?.trim() || "__none__";
+      const rawCategory = item.category?.trim() || item.categoryVi?.trim() || "";
+      const categoryKey = rawCategory || "__none__";
+      const d = deductionByItem.get(item.itemId);
+      if (!d) continue;
+      const key = `${partKey}:${categoryKey}`;
+      const existing = map.get(key) ?? { sale: 0, check: 0, service: 0, other: 0, total: 0 };
+      existing.sale += d.sale; existing.check += d.check; existing.service += d.service; existing.other += d.other; existing.total += d.total;
+      map.set(key, existing);
+    }
+    return map;
+  }, [data, deductionByItem]);
+
+  const supplierDeductionData = useMemo(() => {
+    const itemTotalPurchase = new Map<number, number>();
+    for (const group of supplierGroups)
+      for (const item of group.items)
+        itemTotalPurchase.set(item.itemId, (itemTotalPurchase.get(item.itemId) ?? 0) + (item.purchaseAmount ?? 0));
+
+    const map = new Map<string, DeductionAmtData>();
+    for (const group of supplierGroups) {
+      const acc: DeductionAmtData = { sale: 0, check: 0, service: 0, other: 0, total: 0 };
+      for (const item of group.items) {
+        const d = deductionByItem.get(item.itemId);
+        if (!d || d.total === 0) continue;
+        const totalPurchase = itemTotalPurchase.get(item.itemId) ?? 0;
+        const share = totalPurchase > 0 ? (item.purchaseAmount ?? 0) / totalPurchase : 1;
+        acc.sale += d.sale * share; acc.check += d.check * share;
+        acc.service += d.service * share; acc.other += d.other * share; acc.total += d.total * share;
+      }
+      map.set(group.key, acc);
+    }
+    return map;
+  }, [supplierGroups, deductionByItem]);
+
   const partAmountStats = useMemo(
     () =>
       partGroups.reduce(
@@ -723,10 +832,16 @@ export default function InventoryMonthlyPage() {
 
   const serviceChangedItemCount =
     data?.items.filter((item) => item.serviceNetChange !== 0).length ?? 0;
-  const stockCheckChangedItemCount =
-    data?.items.filter((item) => item.stockCheckNetChange !== 0).length ?? 0;
-  const otherChangedItemCount =
-    data?.items.filter((item) => item.otherNetChange !== 0).length ?? 0;
+  const salesDeductionChangedItemCount =
+    data?.items.filter((item) => item.saleDeductionNetChange !== 0).length ?? 0;
+  const stockCheckIncreaseCount =
+    data?.items.filter((item) => item.stockCheckNetChange > 0).length ?? 0;
+  const stockCheckDecreaseCount =
+    data?.items.filter((item) => item.stockCheckNetChange < 0).length ?? 0;
+  const otherIncreaseCount =
+    data?.items.filter((item) => item.otherNetChange > 0).length ?? 0;
+  const otherDecreaseCount =
+    data?.items.filter((item) => item.otherNetChange < 0).length ?? 0;
   const missingPriceItemCount =
     data?.summary.purchaseAmountMissingCount ??
     data?.items.filter(hasMissingPurchasePrice).length ??
@@ -832,56 +947,26 @@ export default function InventoryMonthlyPage() {
               </span>
             </div>
 
-            <div
-              style={{
-                marginTop: 8,
-                padding: "7px 10px",
-                borderRadius: 8,
-                background: "#f9fafb",
-                border: "1px solid #e5e7eb",
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                fontSize: 12,
-                fontWeight: 800,
-                color: "#374151",
-              }}
-            >
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 8px" }}>
-                <span>
-                  {MONTHLY_REASON_EMOJIS.purchase} {labels.purchase}{" "}
-                  <b>{formatQuantity(data.summary.purchaseItemCount)}</b>
-                </span>
-                <span>{SEP.trim()}</span>
-                <span>
-                  {MONTHLY_SIGNAL_EMOJIS.missingPrice} {labels.purchaseAmountMissing}{" "}
-                  <b>{formatQuantity(missingPriceItemCount)}</b>
-                </span>
-                <span>{SEP.trim()}</span>
-                <span>
-                  {MONTHLY_SIGNAL_EMOJIS.priceChange && (
-                    <>{MONTHLY_SIGNAL_EMOJIS.priceChange} </>
+            {(() => {
+              const chipStyle: React.CSSProperties = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 3, whiteSpace: "nowrap", padding: "4px 8px", borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb", minHeight: 28 };
+              return (
+                <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#374151" }}>
+                  <span style={chipStyle}><span>{MONTHLY_REASON_EMOJIS.purchase}</span><span>{labels.purchase}</span><b style={{ color: data.summary.purchaseItemCount > 0 ? "#2563eb" : "#9ca3af" }}>{data.summary.purchaseItemCount > 0 ? `+${formatQuantity(data.summary.purchaseItemCount)}` : "0"}</b></span>
+                  {missingPriceItemCount > 0 && <span style={chipStyle}><span>{MONTHLY_SIGNAL_EMOJIS.missingPrice}</span><span>{labels.purchaseAmountMissing}</span><b>{formatQuantity(missingPriceItemCount)}</b></span>}
+                  <span style={chipStyle}><span>{MONTHLY_SIGNAL_EMOJIS.priceChange}</span><span>{labels.priceChanged}</span><b>{formatQuantity(priceChangedItemCount)}</b></span>
+                  <span style={chipStyle}><span>{MONTHLY_REASON_EMOJIS.sale_deduction}</span><span>{labels.saleShort}</span><b style={{ color: salesDeductionChangedItemCount > 0 ? "#ef4444" : "#9ca3af" }}>{salesDeductionChangedItemCount > 0 ? `-${formatQuantity(salesDeductionChangedItemCount)}` : "0"}</b></span>
+                  {(stockCheckIncreaseCount > 0 || stockCheckDecreaseCount > 0) && (
+                    <span style={chipStyle}><span>{MONTHLY_REASON_EMOJIS.stock_check}</span><span>{labels.stockCheckShort}</span>{stockCheckIncreaseCount > 0 && <b style={{ color: "seagreen" }}>+{formatQuantity(stockCheckIncreaseCount)}</b>}{stockCheckIncreaseCount > 0 && stockCheckDecreaseCount > 0 && <span style={{ color: "#9ca3af" }}>/</span>}{stockCheckDecreaseCount > 0 && <b style={{ color: "#ef4444" }}>-{formatQuantity(stockCheckDecreaseCount)}</b>}</span>
                   )}
-                  {labels.priceChanged} <b>{formatQuantity(priceChangedItemCount)}</b>
-                </span>
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 8px" }}>
-                <span>
-                  {MONTHLY_REASON_EMOJIS.stock_check} {labels.stockCheckShort}{" "}
-                  <b>{formatQuantity(stockCheckChangedItemCount)}</b>
-                </span>
-                <span>{SEP.trim()}</span>
-                <span>
-                  {MONTHLY_REASON_EMOJIS.service} {labels.serviceShort}{" "}
-                  <b>{formatQuantity(serviceChangedItemCount)}</b>
-                </span>
-                <span>{SEP.trim()}</span>
-                <span>
-                  {MONTHLY_REASON_EMOJIS.other} {labels.otherNetChange}{" "}
-                  <b>{formatQuantity(otherChangedItemCount)}</b>
-                </span>
-              </div>
-            </div>
+                  {serviceChangedItemCount > 0 && (
+                    <span style={chipStyle}><span>{MONTHLY_REASON_EMOJIS.service}</span><span>{labels.serviceShort}</span><b style={{ color: "#ef4444" }}>-{formatQuantity(serviceChangedItemCount)}</b></span>
+                  )}
+                  {(otherIncreaseCount > 0 || otherDecreaseCount > 0) && (
+                    <span style={chipStyle}><span>{MONTHLY_REASON_EMOJIS.other}</span><span>{labels.otherNetChange}</span>{otherIncreaseCount > 0 && <b style={{ color: "seagreen" }}>+{formatQuantity(otherIncreaseCount)}</b>}{otherIncreaseCount > 0 && otherDecreaseCount > 0 && <span style={{ color: "#9ca3af" }}>/</span>}{otherDecreaseCount > 0 && <b style={{ color: "#ef4444" }}>-{formatQuantity(otherDecreaseCount)}</b>}</span>
+                  )}
+                </div>
+              );
+            })()}
           </section>
 
           <div
@@ -925,13 +1010,19 @@ export default function InventoryMonthlyPage() {
 
           {summaryView === "supplier" && (
           <section style={{ ...ui.card, padding: 12, marginBottom: 12 }}>
-            <div style={{ ...ui.cardRow, marginBottom: 10 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: "2px 8px", marginBottom: 4 }}>
               <span style={{ fontSize: 15, fontWeight: 800, color: "#111827" }}>
-                {labels.supplierSummary}
+                {labels.supplierSummary} ({supplierGroups.length})
               </span>
-              <span style={{ ...ui.metaText, fontWeight: 800 }}>
-                {supplierGroups.length}
+              <span style={{ fontSize: 10, color: "#6b7280", whiteSpace: "nowrap" }}>
+                <span style={{ display: "inline-block", width: 10, height: 4, background: "#2563eb", borderRadius: 2, marginRight: 3, verticalAlign: "middle" }} />{labels.purchase}
               </span>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 10px", fontSize: 10, color: "#6b7280", marginBottom: 10 }}>
+              <span><span style={{ color: "#ef4444" }}>●</span> {labels.deductionSaleDeduction}</span>
+              <span><span style={{ color: "seagreen" }}>●</span> {labels.deductionStockCheck}</span>
+              <span><span style={{ color: "#8b5cf6" }}>●</span> {labels.deductionService}</span>
+              <span><span style={{ color: "#9ca3af" }}>●</span> {labels.deductionOther}</span>
             </div>
 
             {supplierGroups.length === 0 ? (
@@ -1066,72 +1157,88 @@ export default function InventoryMonthlyPage() {
                         style={{
                           padding: "0 10px 8px",
                           display: "flex",
-                          alignItems: "center",
-                          gap: 8,
+                          flexDirection: "column",
+                          gap: 4,
                         }}
                       >
-                          <div
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            display: "grid",
-                            gridTemplateColumns: "minmax(0, 1fr) 38px",
-                            alignItems: "center",
-                            gap: 6,
-                          }}
-                        >
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <div
                             style={{
-                              height: 6,
-                              overflow: "hidden",
-                              borderRadius: 999,
-                              background: "#e5e7eb",
+                              flex: 1,
+                              minWidth: 0,
+                              display: "grid",
+                              gridTemplateColumns: "minmax(0, 1fr) 38px",
+                              alignItems: "center",
+                              gap: 6,
                             }}
                           >
                             <div
                               style={{
-                                width: `${supplierBarWidth}%`,
-                                height: "100%",
+                                height: 6,
+                                overflow: "hidden",
                                 borderRadius: 999,
-                                background: "#16a34a",
+                                background: "#e5e7eb",
                               }}
-                            />
+                            >
+                              <div
+                                style={{
+                                  width: `${supplierBarWidth}%`,
+                                  height: "100%",
+                                  borderRadius: 999,
+                                  background: "#2563eb",
+                                }}
+                              />
+                            </div>
+                            <span
+                              style={{
+                                textAlign: "right",
+                                color: "#6b7280",
+                                fontSize: 10,
+                                fontWeight: 900,
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {supplierShare.toFixed(1)}%
+                            </span>
                           </div>
-                          <span
-                            style={{
-                              textAlign: "right",
-                              color: "#6b7280",
-                              fontSize: 10,
-                              fontWeight: 900,
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {supplierShare.toFixed(1)}%
-                          </span>
-                          </div>
-
-                        {supplierSignals.length > 0 && (
-                          <div
-                            style={{
-                              flexShrink: 0,
-                              maxWidth: "32%",
-                              display: "flex",
-                              justifyContent: "flex-end",
-                              flexWrap: "wrap",
-                              gap: "2px 5px",
-                              color: "#6b7280",
-                              fontSize: 11,
-                              fontWeight: 800,
-                              textAlign: "right",
-                            }}
-                          >
-                            {supplierSignals.map((signal) => (
-                              <span key={signal} style={{ whiteSpace: "nowrap" }}>
-                                {signal}
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                          {supplierSignals.length > 0 && (
+                            <div
+                              style={{
+                                flexShrink: 0,
+                                maxWidth: "32%",
+                                display: "flex",
+                                justifyContent: "flex-end",
+                                flexWrap: "wrap",
+                                gap: "2px 5px",
+                                color: "#6b7280",
+                                fontSize: 11,
+                                fontWeight: 800,
+                                textAlign: "right",
+                              }}
+                            >
+                              {supplierSignals.map((signal) => (
+                                <span key={signal} style={{ whiteSpace: "nowrap" }}>
+                                  {signal}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {(() => {
+                          const d = supplierDeductionData.get(group.key) ?? { sale: 0, check: 0, service: 0, other: 0, total: 0 };
+                          const barWidth = supplierAmountStats.total > 0 ? (d.total / supplierAmountStats.total) * 100 : 0;
+                          const shareStr = supplierAmountStats.total > 0 ? ((d.total / supplierAmountStats.total) * 100).toFixed(1) : "0.0";
+                          return (
+                            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 38px", alignItems: "center", gap: 6 }}>
+                              <div style={{ height: 5, borderRadius: 999, overflow: "hidden", background: "#e5e7eb" }}>
+                                <div style={{ width: `${barWidth}%`, height: "100%", display: "flex" }}>
+                                  {d.total > 0 && <><div style={{ flex: d.sale, background: "#ef4444" }} /><div style={{ flex: d.check, background: "seagreen" }} /><div style={{ flex: d.service, background: "#8b5cf6" }} /><div style={{ flex: d.other, background: "#9ca3af" }} /></>}
+                                </div>
+                              </div>
+                              <span style={{ textAlign: "right", color: "#6b7280", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}>{shareStr}%</span>
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {expandedSupplier && (
@@ -1200,23 +1307,6 @@ export default function InventoryMonthlyPage() {
                                       label: labels.otherNetChange,
                                       value: formatSignedQuantity(item.otherNetChange),
                                       valueColor: getSignedColor(item.otherNetChange),
-                                    }
-                                  : null,
-                                hasPurchasePriceChange(item)
-                                  ? {
-                                      key: "price",
-                                      emoji: MONTHLY_SIGNAL_EMOJIS.priceChange,
-                                      label: labels.priceChanged,
-                                      value:
-                                        item.priceChangeEvents.length > 0
-                                          ? `${formatQuantity(
-                                              item.priceChangeEvents.length
-                                            )}${labels.times}`
-                                          : formatSignedMoney(
-                                              item.purchasePriceDiff,
-                                              labels.priceNotSet
-                                            ),
-                                      valueColor: "#92400e",
                                     }
                                   : null,
                                 hasMissingPurchasePrice(item)
@@ -1364,6 +1454,16 @@ export default function InventoryMonthlyPage() {
                                         item.unit
                                       ),
                                       color: getSignedColor(item.otherNetChange),
+                                    }
+                                  : null,
+                                item.saleDeductionNetChange !== 0
+                                  ? {
+                                      label: getSalesDeductionLabel(lang),
+                                      value: formatSignedQuantityWithUnit(
+                                        item.saleDeductionNetChange,
+                                        item.unit
+                                      ),
+                                      color: getSignedColor(item.saleDeductionNetChange),
                                     }
                                   : null,
                               ];
@@ -1538,39 +1638,47 @@ export default function InventoryMonthlyPage() {
                                         display: "flex",
                                         justifyContent: "space-between",
                                         alignItems: "center",
-                                        gap: 10,
+                                        gap: 6,
                                         minWidth: 0,
                                         cursor: "default",
                                       }}
                                     >
-                                      <span
-                                        style={{
-                                          fontSize: 12,
-                                          fontWeight: 900,
-                                          color: "#111827",
-                                          whiteSpace: "nowrap",
-                                        }}
-                                      >
+                                      <span style={{ fontSize: 12, fontWeight: 900, color: "#111827", whiteSpace: "nowrap" }}>
                                         {MONTHLY_REASON_EMOJIS.purchase} {labels.purchase}{" "}
-                                        <span style={{ color: "seagreen" }}>
-                                          {formatSignedQuantity(item.purchaseQuantity)}
-                                        </span>
+                                        <span style={{ color: "#2563eb" }}>{formatSignedQuantity(item.purchaseQuantity)}</span>
                                       </span>
-                                      <span
-                                        style={{
-                                          minWidth: 0,
-                                          fontSize: 12,
-                                          fontWeight: 900,
-                                          color:
-                                            item.purchaseAmount === null ? "#92400e" : "#111827",
-                                          textAlign: "right",
-                                          whiteSpace: "nowrap",
-                                          overflow: "hidden",
-                                          textOverflow: "ellipsis",
-                                        }}
-                                      >
+                                      <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 900, whiteSpace: "nowrap", color: item.purchaseAmount === null ? "#92400e" : "#6b7280" }}>
                                         {itemAmountText}
                                       </span>
+                                    </div>
+                                  )}
+
+                                  {(item.saleDeductionDeduction > 0 || item.stockCheckDeduction > 0 || item.serviceDeduction > 0 || item.otherDeduction > 0 || hasPurchasePriceChange(item)) && (
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        minWidth: 0,
+                                        fontSize: 12,
+                                        fontWeight: 900,
+                                        cursor: "default",
+                                      }}
+                                    >
+                                      <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "2px 5px", minWidth: 0 }}>
+                                        {(item.saleDeductionDeduction > 0 || item.stockCheckDeduction > 0 || item.serviceDeduction > 0 || item.otherDeduction > 0) && <span style={{ color: "#9ca3af", fontSize: 11, fontWeight: 800, marginRight: 1 }}>{labels.deductionLabel}</span>}
+                                        {item.saleDeductionDeduction > 0 && <span style={{ color: "#ef4444", whiteSpace: "nowrap" }} title={labels.deductionSaleDeduction}>🔴 -{formatQuantity(item.saleDeductionDeduction)}</span>}
+                                        {item.stockCheckDeduction > 0 && <span style={{ color: "seagreen", whiteSpace: "nowrap" }} title={labels.deductionStockCheck}>✅ -{formatQuantity(item.stockCheckDeduction)}</span>}
+                                        {item.serviceDeduction > 0 && <span style={{ color: "#8b5cf6", whiteSpace: "nowrap" }} title={labels.deductionService}>🎁 -{formatQuantity(item.serviceDeduction)}</span>}
+                                        {item.otherDeduction > 0 && <span style={{ color: "#9ca3af", whiteSpace: "nowrap" }} title={labels.deductionOther}>✏️ -{formatQuantity(item.otherDeduction)}</span>}
+                                      </span>
+                                      {hasPurchasePriceChange(item) && (
+                                        <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 900, whiteSpace: "nowrap", color: "#92400e" }}>
+                                          {MONTHLY_SIGNAL_EMOJIS.priceChange}{" "}
+                                          {item.priceChangeEvents.length > 0 ? `${item.priceChangeEvents.length}${labels.times}` : labels.priceChanged}
+                                        </span>
+                                      )}
                                     </div>
                                   )}
 
@@ -1782,13 +1890,19 @@ export default function InventoryMonthlyPage() {
 
           {summaryView === "part" && (
             <section style={{ ...ui.card, padding: 12, marginBottom: 12 }}>
-              <div style={{ ...ui.cardRow, marginBottom: 10 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: "2px 8px", marginBottom: 4 }}>
                 <span style={{ fontSize: 15, fontWeight: 800, color: "#111827" }}>
-                  {labels.partSummary}
+                  {labels.partSummary} ({partGroups.length})
                 </span>
-                <span style={{ ...ui.metaText, fontWeight: 800 }}>
-                  {partGroups.length}
+                <span style={{ fontSize: 10, color: "#6b7280", whiteSpace: "nowrap" }}>
+                  <span style={{ display: "inline-block", width: 10, height: 4, background: "#2563eb", borderRadius: 2, marginRight: 3, verticalAlign: "middle" }} />{labels.purchase}
                 </span>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 10px", fontSize: 10, color: "#6b7280", marginBottom: 10 }}>
+                <span><span style={{ color: "#ef4444" }}>●</span> {labels.deductionSaleDeduction}</span>
+                <span><span style={{ color: "seagreen" }}>●</span> {labels.deductionStockCheck}</span>
+                <span><span style={{ color: "#8b5cf6" }}>●</span> {labels.deductionService}</span>
+                <span><span style={{ color: "#9ca3af" }}>●</span> {labels.deductionOther}</span>
               </div>
 
               {partGroups.length === 0 ? (
@@ -1925,6 +2039,21 @@ export default function InventoryMonthlyPage() {
                             }}
                           />
                           </div>
+                          {(() => {
+                            const d = partDeductionData.get(part.key) ?? { sale: 0, check: 0, service: 0, other: 0, total: 0 };
+                            const barWidth = partAmountStats.total > 0 ? (d.total / partAmountStats.total) * 100 : 0;
+                            const deductPct = partAmountStats.total > 0 ? ((d.total / partAmountStats.total) * 100).toFixed(1) : "0.0";
+                            return (
+                              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 38px", alignItems: "center", gap: 6, marginTop: 4 }}>
+                                <div style={{ height: 5, borderRadius: 999, overflow: "hidden", background: "#e5e7eb" }}>
+                                  <div style={{ width: `${barWidth}%`, height: "100%", display: "flex" }}>
+                                    {d.total > 0 && <><div style={{ flex: d.sale, background: "#ef4444" }} /><div style={{ flex: d.check, background: "seagreen" }} /><div style={{ flex: d.service, background: "#8b5cf6" }} /><div style={{ flex: d.other, background: "#9ca3af" }} /></>}
+                                  </div>
+                                </div>
+                                <span style={{ textAlign: "right", color: "#6b7280", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}>{deductPct}%</span>
+                              </div>
+                            );
+                          })()}
                         </button>
 
                         {expandedPart && (
@@ -2035,7 +2164,7 @@ export default function InventoryMonthlyPage() {
                                           width: `${categoryBarWidth}%`,
                                           height: "100%",
                                           borderRadius: 999,
-                                          background: "#60a5fa",
+                                          background: "#2563eb",
                                         }}
                                       />
                                     </div>
@@ -2051,6 +2180,17 @@ export default function InventoryMonthlyPage() {
                                       {categoryShare.toFixed(1)}%
                                     </span>
                                   </div>
+                                  {(() => {
+                                    const cd = categoryDeductionData.get(`${part.key}:${category.key}`) ?? { sale: 0, check: 0, service: 0, other: 0, total: 0 };
+                                    const barWidth = part.totalAmount > 0 ? (cd.total / part.totalAmount) * 100 : 0;
+                                    return (
+                                      <div style={{ height: 4, borderRadius: 999, overflow: "hidden", background: "#e5e7eb", marginTop: 3 }}>
+                                        <div style={{ width: `${barWidth}%`, height: "100%", display: "flex" }}>
+                                          {cd.total > 0 && <><div style={{ flex: cd.sale, background: "#ef4444" }} /><div style={{ flex: cd.check, background: "seagreen" }} /><div style={{ flex: cd.service, background: "#8b5cf6" }} /><div style={{ flex: cd.other, background: "#9ca3af" }} /></>}
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               );
                               })}

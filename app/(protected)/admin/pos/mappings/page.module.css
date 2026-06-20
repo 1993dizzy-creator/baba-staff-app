@@ -1,0 +1,1361 @@
+.page {
+  min-height: 100vh;
+  background: #f4f5f7;
+  color: #18202b;
+  padding: 20px 16px 80px;
+}
+
+.shell {
+  width: min(1320px, 100%);
+  margin: 0 auto;
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 8px 0 18px;
+  border-bottom: 1px solid #d8dde5;
+}
+
+.header h1 {
+  margin: 8px 0 4px;
+  font-size: 25px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.header p {
+  margin: 0;
+  color: #667085;
+  font-size: 13px;
+}
+
+.backLink {
+  color: #245f78;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.summaryBand {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(100px, 1fr));
+  margin-top: 16px;
+  border: 1px solid #d8dde5;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.summaryBand > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 13px 14px;
+  border-right: 1px solid #e6e9ee;
+}
+
+.summaryBand > div:last-child {
+  border-right: 0;
+}
+
+.summaryBand span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.summaryBand strong {
+  font-size: 19px;
+}
+
+.reconcileResult {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-left: 3px solid #2f6f61;
+  background: #edf7f3;
+  color: #315b52;
+  font-size: 12px;
+}
+
+.reconcileResult strong {
+  color: #173f36;
+}
+
+.alertError,
+.alertSuccess {
+  margin-top: 12px;
+  padding: 11px 13px;
+  border: 1px solid;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.alertError {
+  border-color: #e6b8b8;
+  background: #fff2f2;
+  color: #8a2424;
+}
+
+.alertSuccess {
+  border-color: #b6d7ca;
+  background: #eff8f4;
+  color: #24584b;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+  align-items: end;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.searchField,
+.editor label,
+.recipeManager label,
+.optionEditor label {
+  display: grid;
+  gap: 6px;
+  color: #475467;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.searchField input,
+.editor input,
+.editor select,
+.recipeManager input,
+.recipeManager select,
+.optionEditor input,
+.optionEditor select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #c9d0da;
+  border-radius: 6px;
+  background: #fff;
+  color: #18202b;
+  padding: 7px 10px;
+  font: inherit;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filters button,
+.secondaryButton,
+.validationButton,
+.editButton,
+.editorActions button,
+.recipeActions button,
+.recipeAddForm button {
+  min-height: 36px;
+  border: 1px solid #c9d0da;
+  border-radius: 6px;
+  background: #fff;
+  color: #344054;
+  padding: 7px 11px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.filters button:hover,
+.secondaryButton:hover,
+.validationButton:hover,
+.editButton:hover,
+.editorActions button:hover,
+.recipeActions button:hover,
+.recipeAddForm button:hover {
+  border-color: #788493;
+}
+
+.filters .filterActive {
+  border-color: #285f78;
+  background: #e9f2f6;
+  color: #174b63;
+}
+
+.filterDescription {
+  grid-column: 2;
+  margin: -4px 0 0;
+  border-left: 3px solid #8eb6c8;
+  background: #eef5f8;
+  color: #36576a;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.secondaryButton {
+  flex: 0 0 auto;
+  border-color: #2f6f61;
+  color: #24584b;
+}
+
+.validationButton {
+  min-height: 36px;
+  border: 1px solid #245f78;
+  border-radius: 6px;
+  background: #245f78;
+  color: #fff;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.secondaryButton:disabled,
+.validationButton:disabled,
+.editorActions button:disabled,
+.recipeActions button:disabled,
+.recipeAddForm button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.validationPanel {
+  margin-top: 12px;
+  border: 1px solid #cfd6df;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.validationHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 14px;
+  border-bottom: 1px solid #e2e6eb;
+}
+
+.validationHeader > div {
+  display: grid;
+  gap: 3px;
+}
+
+.validationHeader > div > span {
+  color: #667085;
+  font-size: 11px;
+}
+
+.validationHeader strong {
+  font-size: 15px;
+}
+
+.validationReady,
+.validationBlocked {
+  border: 1px solid;
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.validationReady {
+  border-color: #9fcbbd;
+  background: #edf8f4;
+  color: #246052;
+}
+
+.validationBlocked {
+  border-color: #e0abab;
+  background: #fff1f1;
+  color: #8a2f2f;
+}
+
+.validationSummary {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(86px, 1fr));
+  border-bottom: 1px solid #e2e6eb;
+}
+
+.validationSummary > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 11px;
+  border-right: 1px solid #e7eaee;
+}
+
+.validationSummary > div:last-child {
+  border-right: 0;
+}
+
+.validationSummary span {
+  color: #667085;
+  font-size: 10px;
+}
+
+.validationSummary strong {
+  font-size: 16px;
+}
+
+.validationErrorCount strong {
+  color: #a23333;
+}
+
+.validationWarningCount strong {
+  color: #916618;
+}
+
+.validationIssues {
+  display: grid;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.validationIssues > button {
+  display: grid;
+  grid-template-columns: 62px minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #eceff2;
+  background: #fff;
+  padding: 10px 14px;
+  color: #344054;
+  text-align: left;
+  cursor: pointer;
+}
+
+.validationIssues > button:last-child {
+  border-bottom: 0;
+}
+
+.validationIssues > button:hover {
+  background: #f8fafb;
+}
+
+.validationIssues > button > span {
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 3px 5px;
+  font-size: 9px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.validationIssues > button > div {
+  min-width: 0;
+}
+
+.validationIssues strong {
+  display: block;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.validationIssues p {
+  margin: 3px 0 0;
+  color: #667085;
+  font-size: 11px;
+}
+
+.validationIssues code {
+  color: #667085;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.validation_error > span {
+  border-color: #e0abab !important;
+  background: #fff1f1;
+  color: #8a2f2f;
+}
+
+.validation_warning > span {
+  border-color: #e5ca8e !important;
+  background: #fff8e8;
+  color: #805d16;
+}
+
+.validation_info > span {
+  border-color: #b7cbd7 !important;
+  background: #edf5f8;
+  color: #315f73;
+}
+
+.validationEmpty {
+  margin: 0;
+  padding: 16px 14px;
+  color: #246052;
+  font-size: 12px;
+}
+
+.listHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 20px;
+  padding: 0 2px 8px;
+  color: #667085;
+  font-size: 12px;
+}
+
+.listHeader strong {
+  color: #344054;
+}
+
+.productList {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  max-height: max(360px, calc(100dvh - 320px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.productRow {
+  border: 1px solid #d8dde5;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.productMain {
+  display: grid;
+  grid-template-columns:
+    minmax(260px, 1.2fr) minmax(330px, 1.5fr) auto
+    auto;
+  align-items: center;
+  gap: 18px;
+  padding: 14px;
+}
+
+.productIdentity,
+.mappingInfo > div {
+  min-width: 0;
+}
+
+.titleLine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.titleLine h2 {
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.statusBadge,
+.inactiveBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border: 1px solid;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.status_mapped,
+.status_recipe_mapped {
+  border-color: #a9cfc2;
+  background: #edf8f4;
+  color: #246052;
+}
+
+.status_ignored,
+.status_manual {
+  border-color: #c9d0da;
+  background: #f6f7f8;
+  color: #4b5565;
+}
+
+.status_unmapped {
+  border-color: #e5ca8e;
+  background: #fff8e8;
+  color: #805d16;
+}
+
+.status_needs_review,
+.status_orphaned,
+.status_inactive_product,
+.inactiveBadge {
+  border-color: #e3b4b4;
+  background: #fff2f2;
+  color: #8a2f2f;
+}
+
+.status_archived {
+  border-color: #b8bec8;
+  background: #f1f3f5;
+  color: #4b5565;
+}
+
+.typeBadge {
+  border-color: #9eb9c6;
+  background: #eef6f9;
+  color: #245f78;
+}
+
+.validation_normal {
+  border-color: #a9cfc2;
+  background: #edf8f4;
+  color: #246052;
+}
+
+.validation_needs_review,
+.validation_incomplete {
+  border-color: #e5ca8e;
+  background: #fff8e8;
+  color: #805d16;
+}
+
+.validation_error {
+  border-color: #e3b4b4;
+  background: #fff2f2;
+  color: #8a2f2f;
+}
+
+.metaLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin-top: 7px;
+  color: #667085;
+  font-size: 11px;
+}
+
+.blockedReason {
+  margin: 7px 0 0;
+  color: #9a4a2f;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.optionBasedNotice {
+  margin: 7px 0 0;
+  border-left: 3px solid #2f6f61;
+  background: #edf8f4;
+  color: #24584b;
+  padding: 7px 9px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.relinkWarning {
+  margin: 7px 0 0;
+  color: #805d16;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.archiveDetails {
+  display: grid;
+  gap: 3px;
+  margin: 7px 0 0;
+  color: #596273;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.archiveDetails span {
+  color: #7a8493;
+}
+
+.mappingInfo {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.6fr) minmax(160px, 1.4fr) minmax(
+      70px,
+      0.5fr
+    );
+  gap: 12px;
+}
+
+.mappingInfo > div {
+  display: grid;
+  gap: 4px;
+}
+
+.mappingInfo span {
+  color: #7a8493;
+  font-size: 10px;
+}
+
+.mappingInfo strong {
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.editButton {
+  min-width: 70px;
+}
+
+.editButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.relinkButton,
+.archiveButton {
+  min-height: 36px;
+  border: 1px solid #9eb9c6;
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #f2f8fa;
+  color: #245f78;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.archiveButton {
+  border-color: #d4bd8d;
+  background: #fff8e8;
+  color: #805d16;
+}
+
+.relinkButton:disabled,
+.archiveButton:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.editor {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(260px, 1.6fr) minmax(
+      110px,
+      0.6fr
+    ) auto auto;
+  align-items: end;
+  gap: 12px;
+  padding: 14px;
+  border-top: 1px solid #e2e6eb;
+  background: #f8fafb;
+}
+
+.checkboxField {
+  display: flex !important;
+  align-items: center;
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.checkboxField input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+}
+
+.editorActions {
+  display: flex;
+  gap: 6px;
+}
+
+.editorActions .primaryButton {
+  border-color: #245f78;
+  background: #245f78;
+  color: #fff;
+}
+
+.primaryButton {
+  border-color: #245f78 !important;
+  background: #245f78 !important;
+  color: #fff !important;
+}
+
+.dangerButton {
+  border-color: #d5a6a6 !important;
+  color: #8a2f2f !important;
+}
+
+.editorNotice {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #805d16;
+  font-size: 11px;
+}
+
+.inventoryCombobox {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.comboInputRow {
+  position: relative;
+  min-width: 0;
+}
+
+.comboInputRow input {
+  padding-right: 34px;
+}
+
+.comboClearButton {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  width: 28px;
+  height: 28px;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #667085;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.comboClearButton:hover {
+  background: #eef1f4;
+  color: #18202b;
+}
+
+.comboListbox {
+  display: grid;
+  max-height: 260px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid #c9d0da;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgb(24 32 43 / 10%);
+  scrollbar-gutter: stable;
+}
+
+.comboOption {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-bottom: 1px solid #edf0f3;
+  background: #fff;
+  color: #344054;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.comboOption:last-child {
+  border-bottom: 0;
+}
+
+.comboOption strong,
+.comboOption span {
+  overflow-wrap: anywhere;
+}
+
+.comboOption strong {
+  padding-right: 54px;
+  font-size: 12px;
+}
+
+.comboOption span {
+  color: #667085;
+  font-size: 10px;
+}
+
+.comboOption em {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  color: #246052;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.comboOptionActive {
+  background: #f2f7f9;
+}
+
+.comboOptionSelected {
+  box-shadow: inset 3px 0 #2f6f61;
+}
+
+.comboMessage {
+  padding: 12px;
+  color: #667085;
+  font-size: 11px;
+  text-align: center;
+}
+
+.recipeManager {
+  border-top: 1px solid #e2e6eb;
+  background: #f8fbfa;
+}
+
+.recipeManagerPending {
+  border-color: #d4bd8d;
+  box-shadow: 0 0 0 2px rgba(212, 189, 141, 0.2);
+}
+
+.recipeManager > summary,
+.options summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  color: #46566a;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.recipeManager > summary strong {
+  border: 1px solid #e5ca8e;
+  border-radius: 5px;
+  background: #fff8e8;
+  color: #805d16;
+  padding: 2px 7px;
+  font-size: 10px;
+}
+
+.recipeManager > summary em {
+  color: #2f6f61;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.recipeBody {
+  border-top: 1px solid #dfe7e3;
+}
+
+.comboChildren {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #e1e7ee;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.comboChildren header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.comboChildren header strong {
+  display: block;
+  font-size: 13px;
+}
+
+.comboChildren header span {
+  display: block;
+  margin-top: 3px;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.comboChildren header p {
+  margin: 0;
+  color: #475467;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: right;
+}
+
+.comboChildren header p span {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.comboChildRows {
+  display: grid;
+  gap: 8px;
+}
+
+.comboChildRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(170px, auto) auto;
+  gap: 10px 16px;
+  align-items: center;
+  min-height: 58px;
+  padding: 12px 14px;
+  border: 1px solid #e6ebf1;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.comboChildName,
+.comboChildState {
+  min-width: 0;
+}
+
+.comboChildName strong,
+.comboChildName span,
+.comboChildState strong,
+.comboChildState span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.comboChildName strong,
+.comboChildState strong {
+  color: #18202b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.comboChildName span,
+.comboChildState span {
+  margin-top: 4px;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.comboChildAction {
+  border: 1px solid #cfd6df;
+  border-radius: 6px;
+  background: #fff;
+  color: #344054;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.comboChildAction:hover {
+  border-color: #9aa8b8;
+  background: #f8fafb;
+}
+
+.recipeRows {
+  display: grid;
+  gap: 1px;
+  background: #e2e8e5;
+}
+
+.recipeRow {
+  display: grid;
+  grid-template-columns: minmax(230px, 1.5fr) minmax(125px, 0.65fr) auto auto auto;
+  align-items: end;
+  gap: 12px;
+  background: #fff;
+  padding: 11px 14px;
+}
+
+.recipeRowInactive {
+  background: #f5f6f7;
+  opacity: 0.72;
+}
+
+.recipeInventory {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.recipeInventory span {
+  color: #7a8493;
+  font-size: 10px;
+}
+
+.recipeInventory strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.recipeActions {
+  display: flex;
+  gap: 6px;
+}
+
+.recipeAddForm {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.5fr) minmax(125px, 0.65fr) auto auto;
+  align-items: end;
+  gap: 12px;
+  padding: 13px 14px;
+  background: #eef5f2;
+}
+
+.inlineEmpty {
+  margin: 0;
+  padding: 12px 14px 0;
+  color: #667085;
+  font-size: 12px;
+}
+
+.options {
+  border-top: 1px solid #e2e6eb;
+  background: #fbfcfd;
+}
+
+.optionList {
+  display: grid;
+  gap: 1px;
+  border-top: 1px solid #e6e9ee;
+  background: #e6e9ee;
+}
+
+.optionRow {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.3fr) minmax(260px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  background: #fff;
+  padding: 9px 14px;
+  font-size: 11px;
+}
+
+.optionIdentity {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.6fr) minmax(120px, 1fr) minmax(80px, 0.7fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.optionIdentity span,
+.optionIdentity code,
+.optionMappingSummary em {
+  color: #667085;
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+.optionIdentity strong,
+.optionMappingSummary strong {
+  overflow-wrap: anywhere;
+}
+
+.optionMappingSummary {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.optionDeferred {
+  color: #805d16;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.optionWarning {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #9a4a2f;
+  font-size: 11px;
+}
+
+.optionEditor {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(260px, 1.6fr) minmax(
+      110px,
+      0.6fr
+    ) auto auto;
+  align-items: end;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #dbe2e8;
+  border-radius: 6px;
+  background: #f7f9fb;
+}
+
+.optionRow > .recipeManager {
+  grid-column: 1 / -1;
+  border: 1px solid #dbe6e1;
+  border-radius: 6px;
+}
+
+.emptyState {
+  border: 1px dashed #c9d0da;
+  border-radius: 8px;
+  background: #fff;
+  padding: 44px 20px;
+  color: #667085;
+  text-align: center;
+  font-size: 13px;
+}
+
+@media (max-width: 980px) {
+  .summaryBand {
+    grid-template-columns: repeat(4, minmax(100px, 1fr));
+  }
+
+  .summaryBand > div:nth-child(4) {
+    border-right: 0;
+  }
+
+  .summaryBand > div:nth-child(-n + 4) {
+    border-bottom: 1px solid #e6e9ee;
+  }
+
+  .validationSummary {
+    grid-template-columns: repeat(4, minmax(86px, 1fr));
+  }
+
+  .validationSummary > div:nth-child(4n) {
+    border-right: 0;
+  }
+
+  .validationSummary > div:nth-child(-n + 4) {
+    border-bottom: 1px solid #e7eaee;
+  }
+
+  .productMain {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .mappingInfo {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .editButton {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .editor {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .recipeRow {
+    grid-template-columns: minmax(220px, 1fr) minmax(120px, 0.6fr) auto auto;
+  }
+
+  .recipeActions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
+  .recipeAddForm,
+  .optionEditor {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .editorActions {
+    justify-content: flex-end;
+  }
+
+  .optionRow {
+    grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+  }
+}
+
+@media (max-width: 680px) {
+  .page {
+    padding: 12px 10px 64px;
+  }
+
+  .header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .headerActions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+
+  .secondaryButton {
+    width: 100%;
+  }
+
+  .validationButton {
+    width: 100%;
+  }
+
+  .summaryBand {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .summaryBand > div {
+    border-right: 1px solid #e6e9ee;
+    border-bottom: 1px solid #e6e9ee;
+  }
+
+  .summaryBand > div:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .summaryBand > div:last-child {
+    border-bottom: 0;
+  }
+
+  .controls {
+    grid-template-columns: 1fr;
+  }
+
+  .filterDescription {
+    grid-column: 1;
+    margin-top: 0;
+  }
+
+  .validationSummary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .validationSummary > div {
+    border-right: 1px solid #e7eaee;
+    border-bottom: 1px solid #e7eaee;
+  }
+
+  .validationSummary > div:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .validationSummary > div:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
+  .validationIssues > button {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .validationIssues code {
+    grid-column: 2;
+  }
+
+  .filters {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .filters button {
+    padding-inline: 4px;
+  }
+
+  .listHeader {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .productList {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+    scrollbar-gutter: auto;
+  }
+
+  .productMain {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .editButton {
+    grid-column: 1;
+    grid-row: auto;
+    width: 100%;
+  }
+
+  .mappingInfo {
+    grid-column: 1;
+    grid-row: auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mappingInfo > div:nth-child(2) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .editor {
+    grid-template-columns: 1fr;
+  }
+
+  .recipeRow,
+  .recipeAddForm,
+  .optionEditor {
+    grid-template-columns: 1fr;
+  }
+
+  .comboChildren header {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .comboChildren header p {
+    text-align: left;
+  }
+
+  .comboChildRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .comboChildState {
+    grid-column: 1;
+  }
+
+  .comboChildAction {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .recipeActions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .editorActions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .optionRow {
+    grid-template-columns: 1fr;
+  }
+
+  .optionIdentity {
+    grid-template-columns: minmax(80px, 0.8fr) minmax(120px, 1.2fr);
+  }
+
+  .optionMappingSummary {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .optionMappingSummary em {
+    grid-column: 2;
+  }
+
+  .optionRow > .editButton {
+    width: 100%;
+  }
+}

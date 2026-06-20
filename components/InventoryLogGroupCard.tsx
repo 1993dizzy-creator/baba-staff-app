@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { ui } from "@/lib/styles/ui";
 
 type ChangeItem = {
@@ -29,6 +30,8 @@ type Props = {
     lang: string;
     noteText?: string;
     reasonBadgeText?: string;
+    reasonBadgeStyle?: CSSProperties;
+    readOnlyText?: string;
     partLabel: string;
     itemName: string;
     categoryName: string;
@@ -50,6 +53,8 @@ export default function InventoryLogGroupCard({
     lang,
     noteText = "-",
     reasonBadgeText = "",
+    reasonBadgeStyle,
+    readOnlyText = "",
     partLabel,
     itemName,
     categoryName,
@@ -102,6 +107,7 @@ export default function InventoryLogGroupCard({
                                     background: "#f3f4f6",
                                     color: "#374151",
                                     border: "1px solid #e5e7eb",
+                                    ...reasonBadgeStyle,
                                 }}
                             >
                                 {reasonBadgeText}
@@ -276,8 +282,20 @@ export default function InventoryLogGroupCard({
                                     </div>
                                     <div>{history.actor_name || "-"}</div>
 
-                                    {isMaster && onDeleteSingleLog && (
-                                        <button
+                    {readOnlyText && (
+                        <div
+                            style={{
+                                color: "#6b7280",
+                                fontSize: 11,
+                                fontWeight: 800,
+                            }}
+                        >
+                            {readOnlyText}
+                        </div>
+                    )}
+
+                    {isMaster && onDeleteSingleLog && !readOnlyText && (
+                        <button
                                             type="button"
                                             onClick={() =>
                                                 onDeleteSingleLog(history.id)

@@ -55,7 +55,10 @@ type CukcukInvoice = {
   RefNo?: string;
   RefDate?: string;
   PostedDate?: string;
-  [key: string]: any;
+  refId?: string;
+  refID?: string;
+  refNo?: string;
+  refDate?: string;
 };
 
 type CukcukInvoiceDetail = {
@@ -70,7 +73,18 @@ type CukcukInvoiceDetail = {
   Quantity?: number;
   UnitName?: string | null;
   Amount?: number;
-  [key: string]: any;
+  refDetailId?: string;
+  refDetailID?: string;
+  orderDetailID?: string;
+  orderDetailId?: string;
+  parentID?: string;
+  parentId?: string;
+  refDetailType?: number;
+  itemCode?: string | null;
+  itemName?: string | null;
+  quantity?: number;
+  unitName?: string | null;
+  amount?: number;
 };
 
 function buildJsonString(value: Record<string, unknown>) {
@@ -262,14 +276,20 @@ function getCukcukBusinessDateRange(businessDate: string) {
   };
 }
 
-function getDetailsFromInvoiceDetailPayload(payload: any): CukcukInvoiceDetail[] {
+function getDetailsFromInvoiceDetailPayload(
+  payload: unknown
+): CukcukInvoiceDetail[] {
+  const record =
+    payload && typeof payload === "object"
+      ? (payload as Record<string, unknown>)
+      : {};
   const candidates = [
-    payload?.SAInvoiceDetails,
-    payload?.saInvoiceDetails,
-    payload?.Details,
-    payload?.details,
-    payload?.InvoiceDetails,
-    payload?.invoiceDetails,
+    record.SAInvoiceDetails,
+    record.saInvoiceDetails,
+    record.Details,
+    record.details,
+    record.InvoiceDetails,
+    record.invoiceDetails,
   ];
 
   const found = candidates.find((item) => Array.isArray(item));
@@ -328,7 +348,8 @@ async function getMappingsByItemCodes(itemCodes: string[]) {
       "id, pos_item_code, pos_item_name, pos_unit_name, mapping_type, inventory_item_id, quantity_multiplier, is_active"
     )
     .in("pos_item_code", itemCodes)
-    .eq("is_active", true);
+    .eq("is_active", true)
+    .is("archived_at", null);
 
   if (error) {
     throw new Error(`Failed to fetch mappings: ${error.message}`);
@@ -680,7 +701,9 @@ export async function POST(req: Request) {
           processed_at: new Date().toISOString(),
         };
       })
-      .filter(Boolean) as any[];
+      .filter(
+        (row): row is Exclude<typeof row, null> => row !== null
+      );
 
     const appliedKeys = await getAppliedLineKeys(
       rawRows.map((row) => ({
@@ -842,13 +865,13 @@ export async function POST(req: Request) {
           : {}),
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error(error);
 
     return NextResponse.json(
       {
         ok: false,
-        error: error?.message || "Unknown error",
+        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 }
     );

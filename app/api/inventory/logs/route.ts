@@ -243,7 +243,7 @@ export async function PATCH(req: Request) {
 
     const { data: existingRows, error: findError } = await supabaseAdmin
       .from("inventory_logs")
-      .select("id, item_id, reason, change_quantity, business_date")
+      .select("id, item_id, reason, source, change_quantity, business_date")
       .in("id", targetLogIds);
 
     if (findError) throw findError;
@@ -252,6 +252,23 @@ export async function PATCH(req: Request) {
       return NextResponse.json(
         { ok: false, message: "Log not found" },
         { status: 404 }
+      );
+    }
+
+    if (
+      existingRows.some(
+        (row) =>
+          row.reason === "sale_deduction" || row.source === "pos_sales"
+      )
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "protected_sales_inventory_log",
+          message:
+            "Sales inventory deduction logs can only be changed from the sales deduction flow.",
+        },
+        { status: 409 }
       );
     }
 
@@ -431,6 +448,34 @@ export async function DELETE(req: Request) {
       return NextResponse.json(
         { ok: false, message: "No permission" },
         { status: 403 }
+      );
+    }
+
+    const { data: existingLog, error: findError } = await supabaseAdmin
+      .from("inventory_logs")
+      .select("id, reason, source")
+      .eq("id", Number(logId))
+      .maybeSingle();
+
+    if (findError) throw findError;
+    if (!existingLog) {
+      return NextResponse.json(
+        { ok: false, message: "Log not found" },
+        { status: 404 }
+      );
+    }
+    if (
+      existingLog.reason === "sale_deduction" ||
+      existingLog.source === "pos_sales"
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "protected_sales_inventory_log",
+          message:
+            "Sales inventory deduction logs cannot be deleted from inventory.",
+        },
+        { status: 409 }
       );
     }
 

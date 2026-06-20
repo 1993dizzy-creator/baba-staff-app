@@ -11,9 +11,39 @@ import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import SubNav from "@/components/SubNav";
 import { usePathname } from "next/navigation";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
+import {
+    INVENTORY_REASON_EMOJIS,
+    INVENTORY_REASON_LABELS,
+    type InventoryReasonValue,
+} from "@/lib/inventory/reasons";
+
+type InventoryLog = {
+    id: number;
+    item_id?: number | null;
+    item_name?: string | null;
+    item_name_vi?: string | null;
+    category?: string | null;
+    category_vi?: string | null;
+    part?: string | null;
+    code?: string | null;
+    action?: string | null;
+    reason?: string | null;
+    source?: string | null;
+    created_at?: string | null;
+    [key: string]: unknown;
+};
+
+type InventoryNote = {
+    id?: number | null;
+    part?: string | null;
+    code?: string | null;
+    item_name?: string | null;
+    item_name_vi?: string | null;
+    note?: string | null;
+};
 
 export default function InventoryLogsPage() {
-    const [logs, setLogs] = useState<any[]>([]);
+    const [logs, setLogs] = useState<InventoryLog[]>([]);
     const [filterType, setFilterType] = useState<"all" | "create" | "update" | "delete">("all");
     const [search, setSearch] = useState("");
     const [partFilter, setPartFilter] = useState("all");
@@ -85,7 +115,7 @@ export default function InventoryLogsPage() {
 
         const nextMap: Record<string, string> = {};
 
-        (result.data || []).forEach((item: any) => {
+        (result.data || []).forEach((item: InventoryNote) => {
             const keyById =
                 item.id !== null && item.id !== undefined ? `item-${item.id}` : null;
 
@@ -106,7 +136,9 @@ export default function InventoryLogsPage() {
         setInventoryNoteMap(nextMap);
     };
 
+    // Fetch initial log data once when the page mounts.
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         fetchLogs();
         fetchInventoryNotes();
     }, []);
@@ -134,17 +166,58 @@ export default function InventoryLogsPage() {
         };
     };
 
-    const getDisplayLogItemName = (log: any) => {
+    const getDisplayLogItemName = (log: InventoryLog) => {
         return lang === "vi"
             ? log.item_name_vi || log.item_name || "-"
             : log.item_name || log.item_name_vi || "-";
     };
 
-    const getDisplayLogCategory = (log: any) => {
+    const getDisplayLogCategory = (log: InventoryLog) => {
         return lang === "vi"
             ? log.category_vi || log.category || "-"
             : log.category || log.category_vi || "-";
     };
+
+    const getInventoryReasonLabel = (reason?: string | null) => {
+        if (
+            reason === "purchase" ||
+            reason === "stock_check" ||
+            reason === "service" ||
+            reason === "other" ||
+            reason === "sale_deduction" ||
+            reason === "unclassified"
+        ) {
+            return INVENTORY_REASON_LABELS[lang][reason];
+        }
+
+        return INVENTORY_REASON_LABELS[lang].unclassified;
+    };
+
+    const getInventoryReasonBadgeText = (reason?: string | null) => {
+        const safeReason =
+            reason === "purchase" ||
+            reason === "stock_check" ||
+            reason === "service" ||
+            reason === "other" ||
+            reason === "sale_deduction" ||
+            reason === "unclassified"
+                ? (reason as InventoryReasonValue)
+                : "unclassified";
+
+        return `${INVENTORY_REASON_EMOJIS[safeReason]} ${getInventoryReasonLabel(safeReason)}`;
+    };
+
+    const getInventoryReasonBadgeStyle = (reason?: string | null) =>
+        reason === "sale_deduction"
+            ? {
+                background: "#fff1f2",
+                color: "#9f1239",
+                border: "1px solid #fecdd3",
+            }
+            : undefined;
+
+    const isSalesInventoryLog = (log?: InventoryLog | null) =>
+        log?.reason === "sale_deduction" || log?.source === "pos_sales";
 
     const formatDateTime = (value: string) => {
         const date = new Date(value);
@@ -158,7 +231,10 @@ export default function InventoryLogsPage() {
         return `${yy}.${mm}.${dd} ${hh}:${min}`;
     };
 
-    const getGroupKey = (log: any) => {
+    const getTime = (value?: string | null) =>
+        value ? new Date(value).getTime() : 0;
+
+    const getGroupKey = (log: InventoryLog) => {
         if (log.item_id !== null && log.item_id !== undefined) {
             return `item-${log.item_id}`;
         }
@@ -195,11 +271,11 @@ export default function InventoryLogsPage() {
         })
         .sort(
             (a, b) =>
-                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                getTime(b.created_at) - getTime(a.created_at)
         );
 
-    const groupedLogsMap: Record<string, any[]> = filteredLogs.reduce(
-        (acc: Record<string, any[]>, log) => {
+    const groupedLogsMap: Record<string, InventoryLog[]> = filteredLogs.reduce(
+        (acc: Record<string, InventoryLog[]>, log) => {
             const key = getGroupKey(log);
 
             if (!acc[key]) {
@@ -213,11 +289,10 @@ export default function InventoryLogsPage() {
     );
 
     const groupedLogs = Object.entries(groupedLogsMap).map(
-        ([groupKey, items]: [string, any[]]) => {
+        ([groupKey, items]: [string, InventoryLog[]]) => {
             const sortedItems = [...items].sort(
                 (a, b) =>
-                    new Date(b.created_at).getTime() -
-                    new Date(a.created_at).getTime()
+                    getTime(b.created_at) - getTime(a.created_at)
             );
 
             const latest = sortedItems[0];
@@ -278,7 +353,7 @@ export default function InventoryLogsPage() {
         },
     } satisfies Record<string, ChangeFieldConfig>;
 
-    function getLogChanges(log: any, lang: string) {
+    function getLogChanges(log: InventoryLog) {
         const changes: Array<{
             label: string;
             before?: string;
@@ -600,7 +675,16 @@ export default function InventoryLogsPage() {
                                     isOpen={isOpen}
                                     lang={lang}
                                     noteText={inventoryNoteMap[group.groupKey] || "-"}
-                                    partLabel={c[log.part as keyof typeof c] || log.part}
+                                    reasonBadgeText={getInventoryReasonBadgeText(log.reason)}
+                                    reasonBadgeStyle={getInventoryReasonBadgeStyle(log.reason)}
+                                    readOnlyText={
+                                        isSalesInventoryLog(log)
+                                            ? lang === "vi"
+                                                ? "Nhật ký trừ kho bán hàng chỉ xem."
+                                                : "판매차감 로그는 읽기 전용입니다."
+                                            : ""
+                                    }
+                                    partLabel={String(c[log.part as keyof typeof c] || log.part || "")}
                                     itemName={getDisplayLogItemName(log)}
                                     categoryName={getDisplayLogCategory(log)}
                                     detailLabel={c.detail}

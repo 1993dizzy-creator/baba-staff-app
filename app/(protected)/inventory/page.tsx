@@ -438,6 +438,7 @@ export default function InventoryPage() {
             reason === "stock_check" ||
             reason === "service" ||
             reason === "other" ||
+            reason === "sale_deduction" ||
             reason === "unclassified"
         ) {
             return INVENTORY_REASON_LABELS[lang][reason];
@@ -452,6 +453,7 @@ export default function InventoryPage() {
             reason !== "stock_check" &&
             reason !== "service" &&
             reason !== "other" &&
+            reason !== "sale_deduction" &&
             reason !== "unclassified"
         ) {
             return "";
@@ -459,6 +461,18 @@ export default function InventoryPage() {
 
         return `${INVENTORY_REASON_EMOJIS[reason]} ${getInventoryReasonLabel(reason)}`;
     };
+
+    const isSalesInventoryLog = (log?: InventoryLog | null) =>
+        log?.reason === "sale_deduction" || log?.source === "pos_sales";
+
+    const getInventoryReasonBadgeStyle = (reason?: string | null) =>
+        reason === "sale_deduction"
+            ? {
+                background: "#fff1f2",
+                color: "#9f1239",
+                border: "1px solid #fecdd3",
+            }
+            : undefined;
 
     const getActionBadge = (action: string) => {
         if (action === "create") return "NEW";
@@ -4084,6 +4098,14 @@ export default function InventoryPage() {
                                             lang={lang}
                                             noteText={group.noteKey || "-"}
                                             reasonBadgeText={getInventoryReasonBadgeText(log.reason)}
+                                            reasonBadgeStyle={getInventoryReasonBadgeStyle(log.reason)}
+                                            readOnlyText={
+                                                isSalesInventoryLog(log)
+                                                    ? lang === "vi"
+                                                        ? "Nhật ký trừ kho bán hàng chỉ xem."
+                                                        : "판매차감 로그는 읽기 전용입니다."
+                                                    : ""
+                                            }
                                             partLabel={String(c[log.part as keyof typeof c] || log.part || "")}
                                             itemName={getDisplayLogItemName(log)}
                                             categoryName={getDisplayLogCategory(log)}

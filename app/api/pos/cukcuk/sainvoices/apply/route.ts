@@ -61,6 +61,73 @@ export async function POST(req: Request) {
       );
     }
 
+    const { data: archivedMappings, error: archivedMappingsError } =
+      await supabaseAdmin
+        .from("pos_item_mappings")
+        .select("id")
+        .not("archived_at", "is", null);
+
+    if (archivedMappingsError) {
+      throw new Error(archivedMappingsError.message);
+    }
+
+    const archivedMappingIds = (archivedMappings || []).map((row) =>
+      Number(row.id)
+    );
+    if (archivedMappingIds.length > 0) {
+      const [directDeductionResult, processedLineResult] = await Promise.all([
+        supabaseAdmin
+          .from("pos_inventory_deductions")
+          .select("id", { count: "exact", head: true })
+          .in("mapping_id", archivedMappingIds)
+          .in("status", ["pending", "dry_run", "previewed", "selected"]),
+        supabaseAdmin
+          .from("pos_processed_invoice_lines")
+          .select("id")
+          .in("mapping_id", archivedMappingIds),
+      ]);
+
+      if (directDeductionResult.error) {
+        throw new Error(directDeductionResult.error.message);
+      }
+      if (processedLineResult.error) {
+        throw new Error(processedLineResult.error.message);
+      }
+      if ((directDeductionResult.count || 0) > 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Archived POS mappings have pending legacy deductions. Legacy apply was blocked.",
+          },
+          { status: 409 }
+        );
+      }
+
+      const processedLineIds = (processedLineResult.data || []).map((row) =>
+        Number(row.id)
+      );
+      if (processedLineIds.length > 0) {
+        const { count, error: deductionError } = await supabaseAdmin
+          .from("pos_inventory_deductions")
+          .select("id", { count: "exact", head: true })
+          .in("processed_line_id", processedLineIds)
+          .in("status", ["pending", "dry_run", "previewed", "selected"]);
+
+        if (deductionError) throw new Error(deductionError.message);
+        if ((count || 0) > 0) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error:
+                "Archived POS mappings have pending legacy deductions. Legacy apply was blocked.",
+            },
+            { status: 409 }
+          );
+        }
+      }
+    }
+
     const { data, error } = await supabaseAdmin.rpc(
       "apply_pos_direct_inventory_deductions",
       {
@@ -92,13 +159,14 @@ export async function POST(req: Request) {
       },
       result: data,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error(error);
 
     return NextResponse.json(
       {
         ok: false,
-        error: error?.message || "Unknown POS apply error",
+        error:
+          error instanceof Error ? error.message : "Unknown POS apply error",
       },
       { status: 500 }
     );

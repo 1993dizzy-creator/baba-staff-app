@@ -353,6 +353,515 @@ type PosProductsSyncResponse = {
   };
 };
 
+type InventoryPreviewStatus =
+  | "ready"
+  | "skipped"
+  | "missing_mapping"
+  | "manual_review"
+  | "invalid_mapping"
+  | "incomplete_recipe"
+  | "insufficient_stock"
+  | "already_applied"
+  | "applied_after_modified"
+  | "review_required";
+
+type InventoryDeductionPreview = {
+  generatedAt: string;
+  validationSummary: {
+    readyForPreview: boolean;
+    errorCount: number;
+    warningCount: number;
+  };
+  summary: {
+    totalReceiptCount: number;
+    readyCount: number;
+    partialReadyCount?: number;
+    blockedCount: number;
+    skippedCount: number;
+    missingMappingCount: number;
+    manualReviewCount: number;
+    invalidMappingCount: number;
+    incompleteRecipeCount: number;
+    incompleteRecipeLineCount?: number;
+    insufficientStockCount: number;
+    alreadyAppliedCount: number;
+    appliedAfterModifiedCount?: number;
+    reviewRequiredCount: number;
+    canApply: boolean;
+  };
+  inventoryTotals: Array<{
+    inventoryItemId: number;
+    inventoryItemName: string;
+    inventoryCode: string | null;
+    inventoryUnit: string | null;
+    currentQuantity: number;
+    deductQuantity: number;
+    afterQuantity: number;
+    receiptCount: number;
+    lineCount: number;
+    status: "ok" | "insufficient_stock";
+  }>;
+  receipts: Array<{
+    receiptId: number;
+    refNo: string | null;
+    refDate: string | null;
+    status: InventoryPreviewStatus;
+    blocked: boolean;
+    blockedReasons: string[];
+    inventoryAffectingHash: string;
+    amountHash: string;
+    lines: Array<{
+      receiptLineId: number;
+      parentRefDetailId: string | null;
+      isOption: boolean;
+      lineType: string;
+      itemName: string | null;
+      quantitySold: number;
+      mappingSnapshot?: Record<string, unknown> | null;
+      status: string;
+      blockedReason: string | null;
+      deductions: Array<{
+        inventoryItemId: number;
+        inventoryItemName: string;
+        deductQuantity: number;
+        currentQuantity: number;
+        afterQuantity: number;
+        status: "ok" | "insufficient_stock";
+      }>;
+    }>;
+  }>;
+};
+
+type InventoryPreviewResponse = {
+  ok: boolean;
+  error?: string;
+  preview?: InventoryDeductionPreview;
+  batch?: {
+    batchId: number;
+    savedReceiptCount: number;
+    savedCandidateCount: number;
+  } | null;
+};
+
+type BatchValidationStatus =
+  | "valid"
+  | "hash_changed"
+  | "amount_changed"
+  | "mapping_changed"
+  | "recipe_changed"
+  | "inventory_insufficient"
+  | "already_applied"
+  | "no_longer_ready"
+  | "missing_receipt"
+  | "missing_lines"
+  | "invalid_mapping"
+  | "manual_review"
+  | "skipped";
+
+type BatchValidationResult = {
+  batchId: number;
+  applyReady: boolean;
+  validatedAt: string;
+  summary: {
+    selectedReceiptCount: number;
+    validReceiptCount: number;
+    blockedReceiptCount: number;
+    warningReceiptCount: number;
+    inventoryIssueCount: number;
+    hashChangedCount: number;
+    mappingChangedCount: number;
+    recipeChangedCount: number;
+    alreadyAppliedCount: number;
+  };
+  receipts: Array<{
+    receiptId: number;
+    receiptRefNo: string | null;
+    status: BatchValidationStatus;
+    applyAllowed: boolean;
+    warnings: string[];
+    errors: string[];
+  }>;
+};
+
+type BatchApplyResult = {
+  batchId: number;
+  status: "applied" | "partially_applied";
+  summary: {
+    appliedReceiptCount: number;
+    appliedDeductionCount: number;
+    inventoryLogCount: number;
+  };
+  inventoryTotals: Array<{
+    inventoryItemId: number;
+    itemName: string | null;
+    previousQuantity: number;
+    deductQuantity: number;
+    newQuantity: number;
+  }>;
+  receipts: Array<{
+    receiptId: number;
+    receiptRefNo: string | null;
+    status: "applied";
+  }>;
+};
+
+type AppLanguage = keyof typeof salesText;
+
+const inventoryPreviewText = {
+  ko: {
+    previewButton: "재고 차감 미리보기",
+    previewLoading: "미리보기 계산 중...",
+    previewFailed: "재고 차감 미리보기를 생성하지 못했습니다.",
+    title: "판매 재고차감 미리보기",
+    description:
+      "아직 재고는 차감되지 않았습니다. 선택한 영수증은 차감 확정 시 최신 기준으로 다시 계산됩니다.",
+    mappingReady: "매핑 확인 완료",
+    mappingNeedsCheck: "매핑 확인 필요",
+    mappingTooltip:
+      "Direct/Recipe/Manual/Ignore 설정과 Recipe 재료 상태를 확인합니다. 미완성 Recipe는 차감 대상에서 제외되고, Direct 상품은 차감 가능합니다.",
+    applyTitle: "선택 영수증 차감 확정",
+    selected: "선택",
+    expectedItems: "예상 차감 품목",
+    applyProcessing: "차감 처리 중...",
+    applyDone: "차감 확정 완료",
+    applyButton: "차감 확정",
+    ownerMasterOnly: "Owner/Master 전용",
+    applyConfirm:
+      "선택한 영수증의 재고를 실제로 차감합니다. 계속하시겠습니까?",
+    applyFailed: "판매 재고차감을 확정하지 못했습니다.",
+    receipt: "영수증",
+    deduction: "차감",
+    log: "로그",
+    countSuffix: "건",
+    itemSuffix: "개",
+    total: "전체",
+    canApply: "차감가능",
+    needsCheck: "확인필요",
+    details: "상세보기",
+    needsCheckDetails: "확인필요 상세",
+    inventoryTotals: "재고품목별 예상합계",
+    current: "현재",
+    expectedDeduction: "예상 차감",
+    afterDeduction: "차감 후",
+    line: "라인",
+    noDeductionItems: "차감 대상 품목이 없습니다.",
+    receiptResults: "영수증별 결과",
+    availableCount: "차감가능",
+    checkCount: "확인필요",
+    saleQuantity: "판매",
+    option: "옵션",
+    configureRecipe: "재료 설정 후 자동 차감 가능",
+    configureMapping: "POS 상품 매핑을 먼저 설정해주세요",
+    manualReviewHelp: "운영 기준 확인 후 매핑 방식을 결정해주세요",
+    invalidMappingHelp: "POS 상품 연결 상태를 확인해주세요",
+    insufficientStockHelp: "재고 수량을 확인한 뒤 다시 진행해주세요",
+    ignoredHelp: "차감 대상에서 제외된 항목입니다",
+    combo: "Combo / 묶음상품",
+    comboItems: "구성 상품",
+    comboDeduction: "구성 상품 기준 차감",
+    comboMappingNeedsCheck: "구성 상품 매핑 확인 필요",
+    comboNestedUnsupported: "Combo 안에 Combo는 지원하지 않습니다",
+    alreadyAppliedHelp: "이미 재고 차감이 완료된 영수증입니다",
+    modifiedAfterApplyHelp: "차감 후 수정되어 별도 확인이 필요합니다",
+    genericCheckHelp: "내용 확인 후 처리해주세요",
+    partialNotice:
+      "Recipe 미완성 라인은 차감 대상에서 제외됩니다. Direct 매핑 상품과 완성 Recipe 상품은 계속 차감 가능합니다.",
+    status: {
+      ready: "차감가능",
+      partial: "일부 가능",
+      needsCheck: "확인필요",
+      skipped: "차감 불필요",
+      alreadyApplied: "이미 차감",
+      modified: "수정됨",
+    },
+    lineType: {
+      direct: "직접 차감",
+      recipe: "Recipe 차감",
+      option_direct: "옵션 기준 차감",
+      option_recipe: "옵션 Recipe 차감",
+      combo_direct: "Combo 구성 직접 차감",
+      combo_recipe: "Combo 구성 Recipe 차감",
+      combo_ignore: "Combo 구성 제외",
+      combo_incomplete_recipe: "Recipe 미완성 제외",
+      combo_missing_mapping: "구성 상품 매핑 확인 필요",
+      combo_invalid_mapping: "구성 상품 매핑 확인 필요",
+      incomplete_recipe: "Recipe 미완성 제외",
+      manual: "확인 필요",
+      manual_review: "확인 필요",
+      ignore: "차감 제외",
+      missing_mapping: "매핑 확인 필요",
+      invalid_mapping: "매핑 확인 필요",
+      insufficient_stock: "재고 부족",
+    },
+    detailStatus: {
+      missingMapping: "매핑 확인 필요",
+      incompleteRecipe: "Recipe 미완성 제외",
+      modified: "차감 후 수정됨",
+      insufficientStock: "재고 부족",
+      manualReview: "운영 확인 필요",
+      alreadyApplied: "이미 차감",
+      skipped: "차감 불필요",
+      invalidMapping: "매핑 확인 필요",
+      reviewRequired: "영수증 확인 필요",
+    },
+  },
+  vi: {
+    previewButton: "Xem trước trừ kho",
+    previewLoading: "Đang tính xem trước...",
+    previewFailed: "Không tạo được bản xem trước trừ kho.",
+    title: "Xem trước trừ kho bán hàng",
+    description:
+      "Kho chưa bị trừ. Các hóa đơn đã chọn sẽ được tính lại theo dữ liệu mới nhất khi xác nhận.",
+    mappingReady: "Đã kiểm tra liên kết",
+    mappingNeedsCheck: "Cần kiểm tra liên kết",
+    mappingTooltip:
+      "Kiểm tra thiết lập Direct/Recipe/Manual/Ignore và nguyên liệu Recipe. Recipe chưa hoàn thiện sẽ bị loại, món Direct vẫn có thể trừ kho.",
+    applyTitle: "Xác nhận trừ kho hóa đơn đã chọn",
+    selected: "Đã chọn",
+    expectedItems: "Mặt hàng dự kiến trừ",
+    applyProcessing: "Đang trừ kho...",
+    applyDone: "Đã xác nhận trừ kho",
+    applyButton: "Xác nhận trừ kho",
+    ownerMasterOnly: "Chỉ Owner/Master",
+    applyConfirm: "Sẽ trừ kho thực tế cho hóa đơn đã chọn. Tiếp tục?",
+    applyFailed: "Không xác nhận được trừ kho bán hàng.",
+    receipt: "Hóa đơn",
+    deduction: "Trừ kho",
+    log: "Nhật ký",
+    countSuffix: " mục",
+    itemSuffix: " món",
+    total: "Tổng",
+    canApply: "Có thể trừ kho",
+    needsCheck: "Cần kiểm tra",
+    details: "Chi tiết",
+    needsCheckDetails: "Chi tiết cần kiểm tra",
+    inventoryTotals: "Tổng dự kiến theo hàng tồn",
+    current: "Hiện tại",
+    expectedDeduction: "Dự kiến trừ",
+    afterDeduction: "Sau khi trừ",
+    line: "Dòng",
+    noDeductionItems: "Không có mặt hàng cần trừ kho.",
+    receiptResults: "Kết quả theo hóa đơn",
+    availableCount: "Có thể trừ",
+    checkCount: "Cần kiểm tra",
+    saleQuantity: "Bán",
+    option: "Tùy chọn",
+    configureRecipe: "Có thể tự động trừ sau khi thiết lập nguyên liệu",
+    configureMapping: "Vui lòng thiết lập liên kết POS trước",
+    manualReviewHelp: "Kiểm tra nghiệp vụ rồi chọn cách liên kết",
+    invalidMappingHelp: "Vui lòng kiểm tra liên kết sản phẩm POS",
+    insufficientStockHelp: "Kiểm tra số lượng tồn rồi thử lại",
+    ignoredHelp: "Mục này được loại khỏi danh sách trừ kho",
+    combo: "Combo / Món combo",
+    comboItems: "Món trong combo",
+    comboDeduction: "Trừ kho theo món trong combo",
+    comboMappingNeedsCheck: "Cần kiểm tra liên kết món trong combo",
+    comboNestedUnsupported: "Chưa hỗ trợ combo trong combo",
+    alreadyAppliedHelp: "Hóa đơn này đã được trừ kho",
+    modifiedAfterApplyHelp: "Hóa đơn đã sửa sau khi trừ kho, cần kiểm tra riêng",
+    genericCheckHelp: "Vui lòng kiểm tra nội dung trước khi xử lý",
+    partialNotice:
+      "Dòng Recipe chưa hoàn thiện sẽ bị loại khỏi trừ kho. Món Direct và Recipe hoàn chỉnh vẫn có thể trừ kho.",
+    status: {
+      ready: "Có thể trừ kho",
+      partial: "Có thể trừ một phần",
+      needsCheck: "Cần kiểm tra",
+      skipped: "Không cần trừ",
+      alreadyApplied: "Đã trừ kho",
+      modified: "Đã sửa",
+    },
+    lineType: {
+      direct: "Trừ trực tiếp",
+      recipe: "Trừ theo Recipe",
+      option_direct: "Trừ theo tuỳ chọn",
+      option_recipe: "Trừ Recipe theo tuỳ chọn",
+      combo_direct: "Trừ trực tiếp món trong combo",
+      combo_recipe: "Trừ Recipe món trong combo",
+      combo_ignore: "Bỏ qua món trong combo",
+      combo_incomplete_recipe: "Bỏ qua vì công thức chưa hoàn thiện",
+      combo_missing_mapping: "Cần kiểm tra liên kết món trong combo",
+      combo_invalid_mapping: "Cần kiểm tra liên kết món trong combo",
+      incomplete_recipe: "Bỏ qua vì công thức chưa hoàn thiện",
+      manual: "Cần kiểm tra",
+      manual_review: "Cần kiểm tra",
+      ignore: "Bỏ qua trừ kho",
+      missing_mapping: "Cần kiểm tra liên kết",
+      invalid_mapping: "Cần kiểm tra liên kết",
+      insufficient_stock: "Không đủ tồn kho",
+    },
+    detailStatus: {
+      missingMapping: "Cần kiểm tra liên kết",
+      incompleteRecipe: "Bỏ qua vì công thức chưa hoàn thiện",
+      modified: "Đã sửa sau khi trừ kho",
+      insufficientStock: "Không đủ tồn kho",
+      manualReview: "Cần kiểm tra vận hành",
+      alreadyApplied: "Đã trừ kho",
+      skipped: "Không cần trừ",
+      invalidMapping: "Cần kiểm tra liên kết",
+      reviewRequired: "Cần kiểm tra hóa đơn",
+    },
+  },
+} satisfies Record<AppLanguage, unknown>;
+
+type InventoryPreviewCopy = (typeof inventoryPreviewText)[AppLanguage];
+
+function getPreviewLineTypeLabel(lineType: string, text: InventoryPreviewCopy) {
+  return text.lineType[lineType as keyof typeof text.lineType] || text.needsCheck;
+}
+
+function getInventoryTotalName(total: {
+  inventoryItemName: string;
+  inventoryCode: string | null;
+}) {
+  return total.inventoryCode
+    ? `[${total.inventoryCode}] ${total.inventoryItemName}`
+    : total.inventoryItemName;
+}
+
+function hasIncompleteRecipeExclusions(
+  receipt: InventoryDeductionPreview["receipts"][number]
+) {
+  return receipt.lines.some((line) => line.status === "incomplete_recipe");
+}
+
+function hasDeductionCandidates(
+  receipt: InventoryDeductionPreview["receipts"][number]
+) {
+  return receipt.lines.some((line) => line.deductions.length > 0);
+}
+
+function isPartialDeductionReceipt(
+  receipt: InventoryDeductionPreview["receipts"][number]
+) {
+  return (
+    receipt.status === "ready" &&
+    hasDeductionCandidates(receipt) &&
+    hasIncompleteRecipeExclusions(receipt)
+  );
+}
+
+function getInventoryPreviewStatusLabel(
+  receipt: InventoryDeductionPreview["receipts"][number],
+  text: InventoryPreviewCopy
+) {
+  if (isPartialDeductionReceipt(receipt)) return text.status.partial;
+  if (receipt.status === "ready") return text.status.ready;
+  if (receipt.status === "skipped") return text.status.skipped;
+  if (receipt.status === "already_applied") return text.status.alreadyApplied;
+  if (receipt.status === "applied_after_modified") return text.status.modified;
+  return text.status.needsCheck;
+}
+
+function isPreviewLineCheckNeeded(
+  line: InventoryDeductionPreview["receipts"][number]["lines"][number]
+) {
+  return (
+    line.status === "missing_mapping" ||
+    line.status === "manual_review" ||
+    line.status === "invalid_mapping" ||
+    line.status === "incomplete_recipe" ||
+    line.deductions.some((deduction) => deduction.status === "insufficient_stock")
+  );
+}
+
+function getReceiptLineCounts(
+  receipt: InventoryDeductionPreview["receipts"][number]
+) {
+  const applicableCount = receipt.lines.filter(
+    (line) => line.deductions.length > 0
+  ).length;
+  const checkCount = receipt.lines.filter(isPreviewLineCheckNeeded).length;
+
+  return {
+    applicableCount,
+    checkCount:
+      checkCount > 0 ||
+      receipt.status === "ready" ||
+      receipt.status === "skipped"
+        ? checkCount
+        : Math.max(1, receipt.blockedReasons.length),
+  };
+}
+
+function getLineHelpText(
+  line: InventoryDeductionPreview["receipts"][number]["lines"][number],
+  receipt: InventoryDeductionPreview["receipts"][number],
+  text: InventoryPreviewCopy
+) {
+  if (line.lineType === "combo_invalid_mapping") {
+    const reason = line.blockedReason || "";
+    return reason.includes("Combo 안에 Combo") ||
+      reason.includes("combo trong combo")
+      ? text.comboNestedUnsupported
+      : text.comboMappingNeedsCheck;
+  }
+  if (line.lineType === "combo_missing_mapping") {
+    return text.comboMappingNeedsCheck;
+  }
+  if (line.status === "incomplete_recipe") return text.configureRecipe;
+  if (line.status === "missing_mapping") return text.configureMapping;
+  if (line.status === "manual_review") return text.manualReviewHelp;
+  if (line.status === "invalid_mapping") return text.invalidMappingHelp;
+  if (line.deductions.some((deduction) => deduction.status === "insufficient_stock")) {
+    return text.insufficientStockHelp;
+  }
+  if (receipt.status === "already_applied") return text.alreadyAppliedHelp;
+  if (receipt.status === "applied_after_modified") {
+    return text.modifiedAfterApplyHelp;
+  }
+  if (line.status === "ignored") return text.ignoredHelp;
+  return line.deductions.length > 0 ? "" : text.genericCheckHelp;
+}
+
+function getLineDisplayType(
+  line: InventoryDeductionPreview["receipts"][number]["lines"][number],
+  text: InventoryPreviewCopy
+) {
+  if (line.lineType.startsWith("combo_")) {
+    return getPreviewLineTypeLabel(line.lineType, text);
+  }
+  if (line.status === "incomplete_recipe") {
+    return text.lineType.incomplete_recipe;
+  }
+  if (line.status === "missing_mapping") return text.lineType.missing_mapping;
+  if (line.status === "manual_review") return text.lineType.manual_review;
+  if (line.status === "invalid_mapping") return text.lineType.invalid_mapping;
+  if (line.deductions.some((deduction) => deduction.status === "insufficient_stock")) {
+    return text.lineType.insufficient_stock;
+  }
+  return getPreviewLineTypeLabel(line.lineType, text);
+}
+
+function getNeedsCheckDetails(
+  preview: InventoryDeductionPreview,
+  text: InventoryPreviewCopy
+) {
+  const incompleteRecipeLineCount =
+    preview.summary.incompleteRecipeLineCount ??
+    preview.receipts.reduce(
+      (count, receipt) =>
+        count +
+        receipt.lines.filter((line) => line.status === "incomplete_recipe")
+          .length,
+      0
+    );
+
+  return [
+    [text.detailStatus.missingMapping, preview.summary.missingMappingCount],
+    [text.detailStatus.incompleteRecipe, incompleteRecipeLineCount],
+    [
+      text.detailStatus.modified,
+      preview.summary.appliedAfterModifiedCount ?? 0,
+    ],
+    [text.detailStatus.insufficientStock, preview.summary.insufficientStockCount],
+    [text.detailStatus.manualReview, preview.summary.manualReviewCount],
+    [text.detailStatus.alreadyApplied, preview.summary.alreadyAppliedCount],
+    [text.detailStatus.skipped, preview.summary.skippedCount],
+    [text.detailStatus.invalidMapping, preview.summary.invalidMappingCount],
+    [text.detailStatus.reviewRequired, preview.summary.reviewRequiredCount],
+  ] as const;
+}
+
 function formatVnd(value?: number) {
   return new Intl.NumberFormat("vi-VN", {
     style: "currency",
@@ -588,6 +1097,7 @@ export default function SalesReceiptsPage() {
   const t = salesText[lang];
   const c = commonText[lang];
   const s = t.common;
+  const inventoryText = inventoryPreviewText[lang];
   const receiptsText = {
     ...s,
     ...t.receipts,
@@ -661,11 +1171,24 @@ export default function SalesReceiptsPage() {
   const [menuSyncMessage, setMenuSyncMessage] = useState("");
   const [menuSyncWarning, setMenuSyncWarning] = useState("");
   const [menuSyncErrorMessage, setMenuSyncErrorMessage] = useState("");
+  const [inventoryPreview, setInventoryPreview] =
+    useState<InventoryDeductionPreview | null>(null);
+  const [isInventoryPreviewLoading, setIsInventoryPreviewLoading] =
+    useState(false);
+  const [inventoryPreviewError, setInventoryPreviewError] = useState("");
+  const [selectedPreviewReceipts, setSelectedPreviewReceipts] = useState<
+    Record<number, boolean>
+  >({});
+  const [batchApplyResult, setBatchApplyResult] =
+    useState<BatchApplyResult | null>(null);
+  const [isBatchApplying, setIsBatchApplying] = useState(false);
 
   const canSyncMenu =
     currentUser?.role === "owner" ||
     currentUser?.role === "master" ||
     currentUser?.role === "manager";
+  const canApplyInventory =
+    currentUser?.role === "owner" || currentUser?.role === "master";
 
   const tabs = useMemo(
     () =>
@@ -719,6 +1242,10 @@ export default function SalesReceiptsPage() {
 
     setExpandedReceiptId(null);
     setDetailErrorByReceiptId({});
+    setInventoryPreview(null);
+    setInventoryPreviewError("");
+    setSelectedPreviewReceipts({});
+    setBatchApplyResult(null);
     fetchReceipts();
 
     return () => controller.abort();
@@ -813,6 +1340,9 @@ export default function SalesReceiptsPage() {
       }
 
       const updatedReceipt = result.receipt;
+      setInventoryPreview(null);
+      setSelectedPreviewReceipts({});
+      setBatchApplyResult(null);
 
       setReceipts((current) =>
         current.map((receipt) =>
@@ -958,6 +1488,153 @@ export default function SalesReceiptsPage() {
     }
   }
 
+  async function handleInventoryPreview() {
+    if (!currentUser?.username || !canSyncMenu) {
+      setInventoryPreviewError(receiptsText.noPermission);
+      return;
+    }
+
+    setIsInventoryPreviewLoading(true);
+    setInventoryPreviewError("");
+    setInventoryPreview(null);
+    try {
+      const res = await fetch(
+        "/api/admin/sales/inventory-deductions/preview",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            businessDateFrom: businessDate,
+            businessDateTo: businessDate,
+            actorUsername: currentUser.username,
+          }),
+        }
+      );
+      const result = (await res.json().catch(() => null)) as
+        | InventoryPreviewResponse
+        | null;
+
+      if (!res.ok || !result?.ok || !result.preview) {
+        throw new Error(result?.error || inventoryText.previewFailed);
+      }
+
+      setInventoryPreview(result.preview);
+      setBatchApplyResult(null);
+      setSelectedPreviewReceipts(
+        Object.fromEntries(
+          result.preview.receipts.map((receipt) => [
+            receipt.receiptId,
+            receipt.status === "ready",
+          ])
+        )
+      );
+    } catch (error) {
+      setInventoryPreviewError(
+        error instanceof Error
+          ? error.message
+          : inventoryText.previewFailed
+      );
+    } finally {
+      setIsInventoryPreviewLoading(false);
+    }
+  }
+
+  function handlePreviewReceiptSelection(
+    receiptId: number,
+    selectedForApply: boolean
+  ) {
+    setSelectedPreviewReceipts((current) => ({
+      ...current,
+      [receiptId]: selectedForApply,
+    }));
+    setBatchApplyResult(null);
+  }
+
+  async function handleApplyPreviewBatch() {
+    const receiptIds = inventoryPreview
+      ? inventoryPreview.receipts
+          .filter((receipt) => selectedPreviewReceipts[receipt.receiptId])
+          .map((receipt) => receipt.receiptId)
+      : [];
+    if (
+      !currentUser?.username ||
+      !canApplyInventory ||
+      receiptIds.length === 0
+    ) {
+      return;
+    }
+    if (
+      !window.confirm(
+        inventoryText.applyConfirm
+      )
+    ) {
+      return;
+    }
+
+    setIsBatchApplying(true);
+    setInventoryPreviewError("");
+    try {
+      const res = await fetch(
+        "/api/admin/sales/inventory-deductions/apply",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            actorUsername: currentUser.username,
+            receiptIds,
+          }),
+        }
+      );
+      const result = (await res.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            error?: string;
+            validation?: BatchValidationResult;
+            preview?: InventoryDeductionPreview;
+            batchId?: number;
+            status?: "applied" | "partially_applied";
+            summary?: BatchApplyResult["summary"];
+            inventoryTotals?: BatchApplyResult["inventoryTotals"];
+            receipts?: BatchApplyResult["receipts"];
+          }
+        | null;
+
+      if (result?.preview) {
+        setInventoryPreview(result.preview);
+      }
+      if (
+        !res.ok ||
+        !result?.ok ||
+        !result.batchId ||
+        !result.status ||
+        !result.summary
+      ) {
+        throw new Error(result?.error || inventoryText.applyFailed);
+      }
+
+      setBatchApplyResult({
+        batchId: result.batchId,
+        status: result.status,
+        summary: result.summary,
+        inventoryTotals: result.inventoryTotals || [],
+        receipts: result.receipts || [],
+      });
+      setSelectedPreviewReceipts((current) =>
+        Object.fromEntries(
+          Object.keys(current).map((receiptId) => [Number(receiptId), false])
+        )
+      );
+    } catch (error) {
+      setInventoryPreviewError(
+        error instanceof Error
+          ? error.message
+          : inventoryText.applyFailed
+      );
+    } finally {
+      setIsBatchApplying(false);
+    }
+  }
+
   return (
     <Container noPaddingTop>
       <SubNav tabs={tabs} />
@@ -995,6 +1672,21 @@ export default function SalesReceiptsPage() {
                     ? receiptsText.menuSyncing
                     : receiptsText.menuSyncButton}
                 </button>
+                <button
+                  type="button"
+                  onClick={handleInventoryPreview}
+                  disabled={isInventoryPreviewLoading || isLoading}
+                  style={{
+                    ...inventoryPreviewButtonStyle,
+                    ...(isInventoryPreviewLoading
+                      ? menuSyncButtonDisabledStyle
+                      : null),
+                  }}
+                >
+                  {isInventoryPreviewLoading
+                    ? inventoryText.previewLoading
+                    : inventoryText.previewButton}
+                </button>
               </div>
             ) : null}
           </div>
@@ -1007,8 +1699,24 @@ export default function SalesReceiptsPage() {
           {menuSyncErrorMessage ? (
             <p style={errorTextStyle}>{menuSyncErrorMessage}</p>
           ) : null}
+          {inventoryPreviewError ? (
+            <p style={errorTextStyle}>{inventoryPreviewError}</p>
+          ) : null}
           {errorMessage ? <p style={errorTextStyle}>{errorMessage}</p> : null}
         </section>
+
+        {inventoryPreview ? (
+          <InventoryPreviewPanel
+            preview={inventoryPreview}
+            selectedReceipts={selectedPreviewReceipts}
+            batchApplyResult={batchApplyResult}
+            isBatchApplying={isBatchApplying}
+            canApplyInventory={canApplyInventory}
+            text={inventoryText}
+            onApplyBatch={handleApplyPreviewBatch}
+            onSelectionChange={handlePreviewReceiptSelection}
+          />
+        ) : null}
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
@@ -1035,6 +1743,366 @@ export default function SalesReceiptsPage() {
         </section>
       </div>
     </Container>
+  );
+}
+
+function InventoryPreviewPanel({
+  preview,
+  selectedReceipts,
+  batchApplyResult,
+  isBatchApplying,
+  canApplyInventory,
+  text,
+  onApplyBatch,
+  onSelectionChange,
+}: {
+  preview: InventoryDeductionPreview;
+  selectedReceipts: Record<number, boolean>;
+  batchApplyResult: BatchApplyResult | null;
+  isBatchApplying: boolean;
+  canApplyInventory: boolean;
+  text: InventoryPreviewCopy;
+  onApplyBatch: () => void;
+  onSelectionChange: (
+    receiptId: number,
+    selectedForApply: boolean
+  ) => void;
+}) {
+  const [expandedReceiptIds, setExpandedReceiptIds] = useState<
+    Record<number, boolean>
+  >({});
+  const needsCheckDetails = getNeedsCheckDetails(preview, text);
+  const needsCheckCount = Math.max(
+    0,
+    preview.summary.totalReceiptCount - preview.summary.readyCount
+  );
+  const summaryItems = [
+    [text.total, preview.summary.totalReceiptCount],
+    [text.canApply, preview.summary.readyCount],
+    [text.needsCheck, needsCheckCount],
+  ] as const;
+  const selectedReceiptCount = preview.receipts.filter(
+    (receipt) => selectedReceipts[receipt.receiptId] === true
+  ).length;
+  const selectedApplyDisabled =
+    selectedReceiptCount === 0 ||
+    !canApplyInventory ||
+    isBatchApplying ||
+    Boolean(batchApplyResult);
+
+  return (
+    <section style={inventoryPreviewPanelStyle}>
+      <div style={inventoryPreviewHeaderStyle}>
+        <div>
+          <h2 style={inventoryPreviewTitleStyle}>{text.title}</h2>
+          <p style={inventoryPreviewDescriptionStyle}>
+            {text.description}
+          </p>
+        </div>
+        <span
+          style={{
+            ...inventoryPreviewReadinessStyle,
+            ...(preview.validationSummary.errorCount === 0
+              ? inventoryPreviewReadyStyle
+              : batchValidationWarningStyle),
+          }}
+          title={text.mappingTooltip}
+        >
+          {preview.validationSummary.errorCount === 0
+            ? text.mappingReady
+            : `${text.mappingNeedsCheck} ${formatNumber(
+                preview.validationSummary.errorCount
+              )}${text.countSuffix}`}
+        </span>
+      </div>
+
+      <div style={inventoryBatchActionStyle}>
+        <div>
+          <strong>{text.applyTitle}</strong>
+          <span style={inventoryBatchActionMetaStyle}>
+            {text.selected} {selectedReceiptCount}
+            {text.countSuffix} · {text.expectedItems}{" "}
+            {preview.inventoryTotals.length}
+            {text.itemSuffix}
+          </span>
+        </div>
+        <div style={inventoryBatchButtonsStyle}>
+          <button
+            type="button"
+            style={{
+              ...inventoryApplyButtonStyle,
+              ...(selectedApplyDisabled ? inventoryApplyDisabledButtonStyle : null),
+            }}
+            disabled={selectedApplyDisabled}
+            onClick={onApplyBatch}
+          >
+            {isBatchApplying
+              ? text.applyProcessing
+              : batchApplyResult
+                ? text.applyDone
+                : canApplyInventory
+                  ? text.applyButton
+                  : text.ownerMasterOnly}
+          </button>
+        </div>
+      </div>
+
+      {batchApplyResult ? (
+        <div style={batchApplyResultStyle}>
+          <div>
+            <strong>{text.applyDone}</strong>
+            <span style={batchValidationMetaStyle}>
+              {text.receipt} {batchApplyResult.summary.appliedReceiptCount}
+              {text.countSuffix} ·{" "}
+              {text.deduction}{" "}
+              {batchApplyResult.summary.appliedDeductionCount}
+              {text.countSuffix} · {text.log}{" "}
+              {batchApplyResult.summary.inventoryLogCount}
+              {text.countSuffix}
+            </span>
+          </div>
+          <div style={batchApplyInventoryListStyle}>
+            {batchApplyResult.inventoryTotals.map((total) => (
+              <span key={total.inventoryItemId}>
+                {total.itemName || `#${total.inventoryItemId}`}:{" "}
+                {formatNumber(total.previousQuantity)} →{" "}
+                {formatNumber(total.newQuantity)}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div style={inventoryPreviewSummaryStyle}>
+        {summaryItems.map(([label, value]) => (
+          <div key={label} style={inventoryPreviewSummaryItemStyle}>
+            <span>{label}</span>
+            <strong>{formatNumber(value)}</strong>
+          </div>
+        ))}
+      </div>
+
+      <details style={inventoryPreviewDetailsStyle}>
+        <summary style={inventoryPreviewSummaryTitleStyle}>
+          {text.needsCheckDetails} · {text.details}
+        </summary>
+        <div style={inventoryCheckDetailListStyle}>
+          {needsCheckDetails
+            .filter(([, value]) => value > 0)
+            .map(([label, value]) => (
+              <div key={label} style={inventoryCheckDetailItemStyle}>
+                <span>{label}</span>
+                <strong>
+                  {formatNumber(value)}
+                  {text.countSuffix}
+                </strong>
+              </div>
+            ))}
+          {needsCheckDetails.every(([, value]) => value === 0) ? (
+            <p style={inventoryPreviewEmptyStyle}>
+              {text.needsCheck} 0{text.countSuffix}
+            </p>
+          ) : null}
+        </div>
+      </details>
+
+      <details style={inventoryPreviewDetailsStyle} open>
+        <summary style={inventoryPreviewSummaryTitleStyle}>
+          {text.inventoryTotals} {preview.inventoryTotals.length}
+          {text.itemSuffix}
+        </summary>
+        {preview.inventoryTotals.length > 0 ? (
+          <div style={inventoryTotalListStyle}>
+            {preview.inventoryTotals.map((total) => (
+              <div
+                key={total.inventoryItemId}
+                style={{
+                  ...inventoryTotalRowStyle,
+                  ...(total.status === "insufficient_stock"
+                    ? inventoryTotalInsufficientStyle
+                    : null),
+                }}
+              >
+                <strong style={inventoryTotalNameStyle}>
+                  {getInventoryTotalName(total)}
+                </strong>
+                <span>{text.current} {formatNumber(total.currentQuantity)}</span>
+                <span>
+                  {text.expectedDeduction} {formatNumber(total.deductQuantity)}
+                </span>
+                <span>{text.afterDeduction} {formatNumber(total.afterQuantity)}</span>
+                <span>
+                  {text.receipt} {total.receiptCount} / {text.line}{" "}
+                  {total.lineCount}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p style={inventoryPreviewEmptyStyle}>{text.noDeductionItems}</p>
+        )}
+      </details>
+
+      <details style={inventoryPreviewDetailsStyle} open>
+        <summary style={inventoryPreviewSummaryTitleStyle}>
+          {text.receiptResults} {preview.receipts.length}
+          {text.countSuffix}
+        </summary>
+        <div style={previewReceiptListStyle}>
+          {preview.receipts.map((receipt) => {
+            const partialDeduction = isPartialDeductionReceipt(receipt);
+            const isExpanded = expandedReceiptIds[receipt.receiptId] === true;
+            const { applicableCount, checkCount } = getReceiptLineCounts(receipt);
+            return (
+            <div key={receipt.receiptId} style={previewReceiptStyle}>
+              <div style={previewReceiptHeaderRowStyle}>
+                <input
+                  type="checkbox"
+                  aria-label={`${receipt.refNo || receipt.receiptId} ${text.applyButton}`}
+                  checked={selectedReceipts[receipt.receiptId] === true}
+                  disabled={
+                    receipt.status !== "ready" ||
+                    Boolean(batchApplyResult)
+                  }
+                  onChange={(event) =>
+                    onSelectionChange(
+                      receipt.receiptId,
+                      event.target.checked
+                    )
+                  }
+                  style={previewReceiptCheckboxStyle}
+                />
+                <button
+                  type="button"
+                  style={previewReceiptHeaderButtonStyle}
+                  aria-expanded={isExpanded}
+                  onClick={() =>
+                    setExpandedReceiptIds((current) => ({
+                      ...current,
+                      [receipt.receiptId]: !current[receipt.receiptId],
+                    }))
+                  }
+                >
+                  <div>
+                    <strong>{receipt.refNo || `#${receipt.receiptId}`}</strong>
+                    <span style={previewReceiptMetaStyle}>
+                      {text.availableCount} {formatNumber(applicableCount)} ·{" "}
+                      {text.checkCount} {formatNumber(checkCount)}
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      ...previewStatusStyle,
+                      ...(partialDeduction
+                        ? batchValidationWarningStyle
+                        : receipt.status === "ready"
+                        ? previewStatusReadyStyle
+                        : receipt.status === "skipped"
+                          ? previewStatusSkippedStyle
+                        : previewStatusBlockedStyle),
+                    }}
+                  >
+                    {getInventoryPreviewStatusLabel(receipt, text)}
+                  </span>
+                </button>
+              </div>
+
+              {isExpanded ? (
+                <>
+                  {partialDeduction ? (
+                    <div style={previewPartialNoticeStyle}>
+                      <p style={previewPartialNoticeTextStyle}>
+                        {text.partialNotice}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  <div style={previewLineListStyle}>
+                    {receipt.lines.map((line, lineIndex) => {
+                      const helpText = getLineHelpText(line, receipt, text);
+                      const comboParentCode =
+                        typeof line.mappingSnapshot?.comboParentCode ===
+                        "string"
+                          ? line.mappingSnapshot.comboParentCode
+                          : null;
+                      const comboParentName =
+                        typeof line.mappingSnapshot?.comboParentName ===
+                        "string"
+                          ? line.mappingSnapshot.comboParentName
+                          : null;
+                      const comboChildIndex =
+                        typeof line.mappingSnapshot?.comboChildIndex ===
+                        "number"
+                          ? line.mappingSnapshot.comboChildIndex
+                          : lineIndex;
+                      const isComboLine = line.lineType.startsWith("combo_");
+                      return (
+                        <div
+                          key={`${line.receiptLineId}-${comboChildIndex}-${line.lineType}`}
+                          style={{
+                            ...previewLineStyle,
+                            ...(line.isOption ? previewOptionLineStyle : null),
+                          }}
+                        >
+                          <div style={previewLineTitleStyle}>
+                            <strong>
+                              [{getLineDisplayType(line, text)}]{" "}
+                              {line.itemName || `#${line.receiptLineId}`}
+                            </strong>
+                            <span>
+                              {isComboLine
+                                ? `${text.comboDeduction} · `
+                                : line.isOption
+                                  ? `${text.option} · `
+                                  : ""}
+                              {text.saleQuantity}{" "}
+                              {formatNumber(line.quantitySold)}
+                            </span>
+                          </div>
+                          {isComboLine &&
+                          (comboParentCode || comboParentName) ? (
+                            <p style={previewLineErrorStyle}>
+                              {text.combo}:{" "}
+                              {comboParentCode ? `[${comboParentCode}] ` : ""}
+                              {comboParentName || ""}
+                            </p>
+                          ) : null}
+                          {helpText ? (
+                            <p style={previewLineErrorStyle}>{helpText}</p>
+                          ) : null}
+                          {line.deductions.map((deduction) => {
+                            const lineAfterQuantity =
+                              deduction.currentQuantity -
+                              deduction.deductQuantity;
+                            return (
+                              <div
+                                key={`${line.receiptLineId}-${deduction.inventoryItemId}`}
+                                style={previewDeductionStyle}
+                              >
+                                <span>{deduction.inventoryItemName}</span>
+                                <strong>
+                                  -{formatNumber(deduction.deductQuantity)}
+                                </strong>
+                                <span>
+                                  {formatNumber(deduction.currentQuantity)} →{" "}
+                                  {formatNumber(lineAfterQuantity)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : null}
+            </div>
+            );
+          })}
+        </div>
+      </details>
+
+    </section>
   );
 }
 
@@ -2178,6 +3246,355 @@ const menuSyncButtonStyle: CSSProperties = {
 const menuSyncButtonDisabledStyle: CSSProperties = {
   opacity: 0.65,
   cursor: "not-allowed",
+};
+
+const inventoryPreviewButtonStyle: CSSProperties = {
+  ...ui.button,
+  padding: "10px 12px",
+  borderRadius: 8,
+  background: "#245f78",
+  color: "#ffffff",
+  border: "1px solid #245f78",
+  fontSize: 13,
+  fontWeight: 800,
+};
+
+const inventoryPreviewPanelStyle: CSSProperties = {
+  border: "1px solid #d5dbe3",
+  borderRadius: 8,
+  background: "#ffffff",
+  overflow: "hidden",
+};
+
+const inventoryPreviewHeaderStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 14,
+  padding: 14,
+  borderBottom: "1px solid #e5e7eb",
+};
+
+const inventoryPreviewTitleStyle: CSSProperties = {
+  margin: "4px 0 2px",
+  color: "#18202b",
+  fontSize: 16,
+  letterSpacing: 0,
+};
+
+const inventoryPreviewDescriptionStyle: CSSProperties = {
+  margin: 0,
+  color: "#667085",
+  fontSize: 11,
+  lineHeight: 1.45,
+};
+
+const inventoryPreviewReadinessStyle: CSSProperties = {
+  flexShrink: 0,
+  border: "1px solid",
+  borderRadius: 5,
+  padding: "4px 7px",
+  fontSize: 10,
+  fontWeight: 900,
+};
+
+const inventoryPreviewReadyStyle: CSSProperties = {
+  borderColor: "#9fcbbd",
+  background: "#edf8f4",
+  color: "#246052",
+};
+
+const inventoryPreviewSummaryStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))",
+  borderBottom: "1px solid #e5e7eb",
+};
+
+const inventoryBatchActionStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  padding: "11px 14px",
+  borderBottom: "1px solid #e5e7eb",
+  background: "#f8fafb",
+  fontSize: 12,
+};
+
+const inventoryBatchActionMetaStyle: CSSProperties = {
+  display: "block",
+  marginTop: 3,
+  color: "#667085",
+  fontSize: 10,
+};
+
+const inventoryBatchButtonsStyle: CSSProperties = {
+  display: "flex",
+  gap: 7,
+  flexWrap: "wrap",
+  justifyContent: "flex-end",
+};
+
+const inventoryApplyButtonStyle: CSSProperties = {
+  border: "1px solid #8b2f2f",
+  borderRadius: 6,
+  background: "#8b2f2f",
+  color: "#ffffff",
+  padding: "8px 10px",
+  fontSize: 11,
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const inventoryApplyDisabledButtonStyle: CSSProperties = {
+  border: "1px solid #c9d0da",
+  borderRadius: 6,
+  background: "#eef0f3",
+  color: "#7a8493",
+  padding: "8px 10px",
+  fontSize: 11,
+  fontWeight: 800,
+  cursor: "not-allowed",
+};
+
+const batchApplyResultStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: 14,
+  padding: "11px 14px",
+  borderBottom: "1px solid #b9d8cc",
+  background: "#eef8f4",
+  color: "#24584b",
+  fontSize: 11,
+};
+
+const batchApplyInventoryListStyle: CSSProperties = {
+  display: "grid",
+  gap: 3,
+  color: "#3d645a",
+  fontSize: 10,
+  textAlign: "right",
+};
+
+const batchValidationMetaStyle: CSSProperties = {
+  display: "block",
+  marginTop: 3,
+  color: "#667085",
+  fontSize: 10,
+};
+
+const batchValidationWarningStyle: CSSProperties = {
+  borderColor: "#e5ca8e",
+  background: "#fff8e8",
+  color: "#805d16",
+};
+
+const inventoryPreviewSummaryItemStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "baseline",
+  justifyContent: "space-between",
+  gap: 8,
+  padding: "10px 11px",
+  borderRight: "1px solid #edf0f3",
+  color: "#667085",
+  fontSize: 10,
+};
+
+const inventoryPreviewDetailsStyle: CSSProperties = {
+  borderBottom: "1px solid #e5e7eb",
+};
+
+const inventoryPreviewSummaryTitleStyle: CSSProperties = {
+  padding: "11px 14px",
+  color: "#344054",
+  fontSize: 12,
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const inventoryCheckDetailListStyle: CSSProperties = {
+  display: "grid",
+  gap: 0,
+  borderTop: "1px solid #edf0f3",
+};
+
+const inventoryCheckDetailItemStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  padding: "8px 14px",
+  color: "#596273",
+  fontSize: 11,
+  borderBottom: "1px solid #edf0f3",
+};
+
+const inventoryTotalListStyle: CSSProperties = {
+  display: "grid",
+  borderTop: "1px solid #edf0f3",
+};
+
+const inventoryTotalRowStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  gap: "5px 14px",
+  padding: "9px 14px",
+  borderBottom: "1px solid #edf0f3",
+  color: "#667085",
+  fontSize: 11,
+};
+
+const inventoryTotalInsufficientStyle: CSSProperties = {
+  background: "#fff3f3",
+  color: "#8a2f2f",
+};
+
+const inventoryTotalNameStyle: CSSProperties = {
+  minWidth: 0,
+  color: "#18202b",
+  overflowWrap: "anywhere",
+};
+
+const inventoryPreviewEmptyStyle: CSSProperties = {
+  margin: 0,
+  padding: "12px 14px",
+  color: "#667085",
+  fontSize: 11,
+};
+
+const previewReceiptListStyle: CSSProperties = {
+  display: "grid",
+  gap: 1,
+  borderTop: "1px solid #edf0f3",
+  background: "#e7eaee",
+};
+
+const previewReceiptStyle: CSSProperties = {
+  background: "#ffffff",
+  padding: "11px 14px",
+};
+
+const previewReceiptHeaderRowStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "auto minmax(0, 1fr)",
+  alignItems: "center",
+  gap: 8,
+};
+
+const previewReceiptHeaderButtonStyle: CSSProperties = {
+  width: "100%",
+  border: 0,
+  background: "transparent",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  padding: 0,
+  color: "#18202b",
+  textAlign: "left",
+  cursor: "pointer",
+};
+
+const previewReceiptCheckboxStyle: CSSProperties = {
+  width: 16,
+  height: 16,
+  margin: 0,
+  verticalAlign: "middle",
+};
+
+const previewReceiptMetaStyle: CSSProperties = {
+  display: "block",
+  marginTop: 3,
+  color: "#667085",
+  fontSize: 10,
+  lineHeight: 1.35,
+};
+
+const previewStatusStyle: CSSProperties = {
+  border: "1px solid",
+  borderRadius: 5,
+  padding: "3px 7px",
+  fontSize: 10,
+  fontWeight: 900,
+};
+
+const previewStatusReadyStyle: CSSProperties = {
+  borderColor: "#9fcbbd",
+  background: "#edf8f4",
+  color: "#246052",
+};
+
+const previewStatusSkippedStyle: CSSProperties = {
+  borderColor: "#c9d0da",
+  background: "#f5f6f7",
+  color: "#596273",
+};
+
+const previewStatusBlockedStyle: CSSProperties = {
+  borderColor: "#e0abab",
+  background: "#fff1f1",
+  color: "#8a2f2f",
+};
+
+const previewPartialNoticeStyle: CSSProperties = {
+  display: "grid",
+  gap: 3,
+  marginTop: 8,
+  padding: "8px 10px",
+  border: "1px solid #ead39c",
+  borderRadius: 6,
+  background: "#fff9eb",
+  color: "#77591b",
+  fontSize: 10,
+};
+
+const previewPartialNoticeTextStyle: CSSProperties = {
+  margin: 0,
+};
+
+const previewLineListStyle: CSSProperties = {
+  display: "grid",
+  gap: 5,
+  marginTop: 9,
+};
+
+const previewLineStyle: CSSProperties = {
+  borderLeft: "3px solid #cbd5e1",
+  background: "#f8fafb",
+  padding: "8px 10px",
+};
+
+const previewOptionLineStyle: CSSProperties = {
+  marginLeft: 18,
+  borderLeftColor: "#7aa4b5",
+};
+
+const previewLineTitleStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+  color: "#667085",
+  fontSize: 10,
+};
+
+const previewLineErrorStyle: CSSProperties = {
+  margin: "5px 0 0",
+  color: "#9a4a2f",
+  fontSize: 10,
+};
+
+const previewDeductionStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto auto",
+  gap: 10,
+  marginTop: 6,
+  color: "#475467",
+  fontSize: 10,
+  overflowWrap: "anywhere",
 };
 
 const successTextStyle: CSSProperties = {

@@ -344,7 +344,8 @@ async function buildDirectPreviewItems(payload: Dict) {
   const { data: mappingRows, error: mappingError } = await supabaseAdmin
     .from("pos_item_mappings")
     .select("*")
-    .in("pos_item_code", posCodes);
+    .in("pos_item_code", posCodes)
+    .is("archived_at", null);
 
   if (mappingError) {
     throw new Error(`pos_item_mappings 조회 실패: ${mappingError.message}`);

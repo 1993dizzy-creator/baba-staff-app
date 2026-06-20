@@ -496,7 +496,7 @@ export default function AdminPosItemsPage() {
               </p>
             </div>
 
-            <Link href="/admin/pos" style={styles.backLink}>
+            <Link href="/admin/pos/mappings" style={styles.backLink}>
               POS 관리
             </Link>
           </div>

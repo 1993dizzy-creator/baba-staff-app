@@ -79,7 +79,7 @@ type InventoryPriceLog = {
 type ItemStatus = "existing" | "new" | "missing";
 type MovementReason = Extract<
   InventoryReasonValue,
-  "purchase" | "stock_check" | "service" | "other"
+  "purchase" | "stock_check" | "service" | "other" | "sale_deduction"
 >;
 
 type ItemAccumulator = {
@@ -91,7 +91,12 @@ type ItemAccumulator = {
   stockCheckNetChange: number;
   serviceNetChange: number;
   otherNetChange: number;
+  saleDeductionNetChange: number;
   totalLogNetChange: number;
+  saleDeductionDeduction: number;
+  stockCheckDeduction: number;
+  serviceDeduction: number;
+  otherDeduction: number;
 };
 
 type DayAccumulator = {
@@ -101,6 +106,7 @@ type DayAccumulator = {
   stockCheckNetChange: number;
   serviceNetChange: number;
   otherNetChange: number;
+  saleDeductionNetChange: number;
   totalLogNetChange: number;
 };
 
@@ -132,7 +138,13 @@ type MonthlyItemResult = {
   stockCheckNetChange: number;
   serviceNetChange: number;
   otherNetChange: number;
+  saleDeductionNetChange: number;
   totalLogNetChange: number;
+  saleDeductionDeduction: number;
+  stockCheckDeduction: number;
+  serviceDeduction: number;
+  otherDeduction: number;
+  estimatedDeductionAmount: number | null;
   status: ItemStatus;
 };
 
@@ -157,6 +169,7 @@ type SupplierSummary = {
   stockCheckNetChange: number;
   serviceNetChange: number;
   otherNetChange: number;
+  saleDeductionNetChange: number;
   totalLogNetChange: number;
   items: MonthlyItemResult[];
 };
@@ -228,7 +241,12 @@ const createItemAccumulator = (): ItemAccumulator => ({
   stockCheckNetChange: 0,
   serviceNetChange: 0,
   otherNetChange: 0,
+  saleDeductionNetChange: 0,
   totalLogNetChange: 0,
+  saleDeductionDeduction: 0,
+  stockCheckDeduction: 0,
+  serviceDeduction: 0,
+  otherDeduction: 0,
 });
 
 const getDayAccumulator = (
@@ -246,6 +264,7 @@ const getDayAccumulator = (
     stockCheckNetChange: 0,
     serviceNetChange: 0,
     otherNetChange: 0,
+    saleDeductionNetChange: 0,
     totalLogNetChange: 0,
   };
 
@@ -293,6 +312,13 @@ const addMovement = (
 
   if (reason === "service") {
     target.serviceNetChange = roundDecimal(target.serviceNetChange + changeQuantity);
+    return;
+  }
+
+  if (reason === "sale_deduction") {
+    target.saleDeductionNetChange = roundDecimal(
+      target.saleDeductionNetChange + changeQuantity
+    );
     return;
   }
 
@@ -428,7 +454,13 @@ const createSupplierPurchaseItem = (
   stockCheckNetChange: 0,
   serviceNetChange: 0,
   otherNetChange: 0,
+  saleDeductionNetChange: 0,
   totalLogNetChange: 0,
+  saleDeductionDeduction: baseItem?.saleDeductionDeduction ?? 0,
+  stockCheckDeduction: baseItem?.stockCheckDeduction ?? 0,
+  serviceDeduction: baseItem?.serviceDeduction ?? 0,
+  otherDeduction: baseItem?.otherDeduction ?? 0,
+  estimatedDeductionAmount: baseItem?.estimatedDeductionAmount ?? null,
   status: baseItem?.status ?? "existing",
 });
 
@@ -460,6 +492,7 @@ const buildSupplierSummary = (
         stockCheckNetChange: 0,
         serviceNetChange: 0,
         otherNetChange: 0,
+        saleDeductionNetChange: 0,
         totalLogNetChange: 0,
         items: [],
         itemMap: new Map<string, MonthlyItemResult>(),
@@ -532,6 +565,7 @@ const buildSupplierSummary = (
       stockCheckNetChange: supplier.stockCheckNetChange,
       serviceNetChange: supplier.serviceNetChange,
       otherNetChange: supplier.otherNetChange,
+      saleDeductionNetChange: supplier.saleDeductionNetChange,
       totalLogNetChange: supplier.totalLogNetChange,
       items,
     } satisfies SupplierSummary;
@@ -675,6 +709,13 @@ export async function GET(request: Request) {
     const registeredPriceMap = new Map<number, number>();
     const dayMap = new Map<string, DayAccumulator>();
     let unclassifiedLogCount = 0;
+    const deductionReasonSummary = {
+      saleDeduction: 0,
+      stockCheck: 0,
+      service: 0,
+      other: 0,
+      total: 0,
+    };
 
     const safeItemIds = [...itemIds];
 
@@ -738,7 +779,8 @@ export async function GET(request: Request) {
         normalizedReason !== "purchase" &&
         normalizedReason !== "stock_check" &&
         normalizedReason !== "service" &&
-        normalizedReason !== "other"
+        normalizedReason !== "other" &&
+        normalizedReason !== "sale_deduction"
       ) {
         unclassifiedLogCount += 1;
         continue;
@@ -758,11 +800,29 @@ export async function GET(request: Request) {
           changeQuantity,
           logPurchasePrice
         );
+
+        if (changeQuantity < 0 && normalizedReason !== "purchase") {
+          const abs = roundDecimal(Math.abs(changeQuantity));
+          if (normalizedReason === "sale_deduction") itemAccumulator.saleDeductionDeduction = roundDecimal(itemAccumulator.saleDeductionDeduction + abs);
+          else if (normalizedReason === "stock_check") itemAccumulator.stockCheckDeduction = roundDecimal(itemAccumulator.stockCheckDeduction + abs);
+          else if (normalizedReason === "service") itemAccumulator.serviceDeduction = roundDecimal(itemAccumulator.serviceDeduction + abs);
+          else itemAccumulator.otherDeduction = roundDecimal(itemAccumulator.otherDeduction + abs);
+        }
+
         itemMovementMap.set(safeItemId, itemAccumulator);
       }
 
       const dayAccumulator = getDayAccumulator(dayMap, businessDate);
       addMovement(dayAccumulator, normalizedReason, changeQuantity);
+
+      if (changeQuantity < 0 && normalizedReason !== "purchase") {
+        const abs = roundDecimal(Math.abs(changeQuantity));
+        if (normalizedReason === "sale_deduction") deductionReasonSummary.saleDeduction = roundDecimal(deductionReasonSummary.saleDeduction + abs);
+        else if (normalizedReason === "stock_check") deductionReasonSummary.stockCheck = roundDecimal(deductionReasonSummary.stockCheck + abs);
+        else if (normalizedReason === "service") deductionReasonSummary.service = roundDecimal(deductionReasonSummary.service + abs);
+        else deductionReasonSummary.other = roundDecimal(deductionReasonSummary.other + abs);
+        deductionReasonSummary.total = roundDecimal(deductionReasonSummary.total + abs);
+      }
     }
 
     const items: MonthlyItemResult[] = [...itemIds].map((itemId) => {
@@ -840,7 +900,19 @@ export async function GET(request: Request) {
         stockCheckNetChange: movement.stockCheckNetChange,
         serviceNetChange: movement.serviceNetChange,
         otherNetChange: movement.otherNetChange,
+        saleDeductionNetChange: movement.saleDeductionNetChange,
         totalLogNetChange: movement.totalLogNetChange,
+
+        saleDeductionDeduction: movement.saleDeductionDeduction,
+        stockCheckDeduction: movement.stockCheckDeduction,
+        serviceDeduction: movement.serviceDeduction,
+        otherDeduction: movement.otherDeduction,
+        estimatedDeductionAmount: (() => {
+          const totalDeductionQty = movement.saleDeductionDeduction + movement.stockCheckDeduction + movement.serviceDeduction + movement.otherDeduction;
+          return purchasePriceUsed !== null && totalDeductionQty > 0
+            ? roundDecimal(totalDeductionQty * purchasePriceUsed)
+            : null;
+        })(),
 
         status,
       };
@@ -925,9 +997,13 @@ export async function GET(request: Request) {
         otherNetChange: roundDecimal(
           items.reduce((sum, item) => sum + item.otherNetChange, 0)
         ),
+        saleDeductionNetChange: roundDecimal(
+          items.reduce((sum, item) => sum + item.saleDeductionNetChange, 0)
+        ),
 
         unclassifiedLogCount,
       },
+      deductionReasonSummary,
       supplierSummary,
       days,
       items,

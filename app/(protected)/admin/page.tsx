@@ -62,7 +62,7 @@ const adminMenus = [
       ko: "CUKCUK POS 연동, 상품 매핑, 재고 차감 설정을 관리합니다.",
       vi: "Quản lý liên kết POS, ánh xạ món và trừ kho.",
     },
-    href: "/admin/pos",
+    href: "/admin/pos/mappings",
     badge: "POS",
     emoji: "⚙️",
     access: "admin" as AdminMenuAccess,

@@ -102,7 +102,7 @@ export default function InventorySnapshotsPage() {
     const [supplierTab, setSupplierTab] = useState("all");
     const [movementItems, setMovementItems] = useState<SnapshotItem[]>([]);
     const [movementReasonTab, setMovementReasonTab] =
-        useState<"stock_check" | "service" | "other">("stock_check");
+        useState<"stock_check" | "service" | "other" | "sale_deduction">("stock_check");
     const [loadingMovements, setLoadingMovements] = useState(false);
     const [logModalItem, setLogModalItem] = useState<SnapshotItem | null>(null);
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
@@ -160,6 +160,7 @@ export default function InventorySnapshotsPage() {
             if (reason === "stock_check") return "Kiểm";
             if (reason === "service") return "Tặng";
             if (reason === "other") return "Khác";
+            if (reason === "sale_deduction") return "Trừ bán";
             return "Khác";
         }
 
@@ -167,8 +168,12 @@ export default function InventorySnapshotsPage() {
         if (reason === "stock_check") return "확인";
         if (reason === "service") return "증정";
         if (reason === "other") return "기타";
+        if (reason === "sale_deduction") return "판매차감";
         return "기타";
     };
+
+    const isSalesInventoryLog = (log?: InventoryLog | SnapshotItem | null) =>
+        log?.reason === "sale_deduction" || log?.source === "pos_sales";
 
     const formatReasonItemName = (item: SnapshotItem) => {
         return [
@@ -1879,12 +1884,13 @@ export default function InventorySnapshotsPage() {
                     <div
                         style={{
                             display: "grid",
-                            gridTemplateColumns: "repeat(3, 1fr)",
+                            gridTemplateColumns: "repeat(2, 1fr)",
                             gap: 6,
                             marginBottom: 10,
                         }}
                     >
                         {[
+                            { value: "sale_deduction" as const, label: INVENTORY_REASON_LABELS[lang].sale_deduction },
                             { value: "stock_check" as const, label: INVENTORY_REASON_LABELS[lang].stock_check },
                             { value: "service" as const, label: INVENTORY_REASON_LABELS[lang].service },
                             { value: "other" as const, label: INVENTORY_REASON_LABELS[lang].other },
@@ -2467,7 +2473,7 @@ export default function InventorySnapshotsPage() {
                                     justifyContent: "flex-end",
                                 }}
                             >
-                                {selectedLog && (
+                                {selectedLog && !isSalesInventoryLog(selectedLog) && (
                                     <button
                                         type="button"
                                         onClick={() =>
@@ -2530,15 +2536,6 @@ export default function InventorySnapshotsPage() {
                                     {t.editItem}
                                 </button>
                             </div>
-                        </div>
-
-                        <div style={{ ...ui.metaText }}>
-                            {[logModalItem.code ? `[${logModalItem.code}]` : "", getDisplayItemName(logModalItem)]
-                                .filter(Boolean)
-                                .join(" ")}
-                        </div>
-                        <div style={{ ...ui.metaText, marginTop: -6 }}>
-                            {t.syncCurrentItemHelp} {t.editItemHelp}
                         </div>
 
                         <div
@@ -2721,6 +2718,14 @@ export default function InventorySnapshotsPage() {
                                                     {metaLine}
                                                 </div>
                                             )}
+                                            {isSalesInventoryLog(log) && (
+                                                <div style={{ ...ui.metaText, marginTop: 3, fontWeight: 800 }}>
+                                                    {lang === "vi"
+                                                        ? "Nhật ký trừ kho bán hàng chỉ xem."
+                                                        : "판매차감 로그는 읽기 전용입니다."}
+                                                </div>
+                                            )}
+                                            {!isSalesInventoryLog(log) && (
                                             <div
                                                 style={{
                                                     display: "flex",
@@ -2763,6 +2768,7 @@ export default function InventorySnapshotsPage() {
                                                     );
                                                 })}
                                             </div>
+                                            )}
                                         </div>
                                     );
                                 })
