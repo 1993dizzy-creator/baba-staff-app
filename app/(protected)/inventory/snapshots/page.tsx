@@ -81,6 +81,107 @@ type InventoryLog = {
 
 type PriceTrend = "up" | "down" | null;
 
+const getPurchaseGroupKey = (item: SnapshotItem) => {
+    const itemId = Number(item.item_id);
+    if (Number.isFinite(itemId) && itemId > 0) {
+        return `item:${itemId}`;
+    }
+
+    return [
+        "fallback",
+        item.item_name || "",
+        item.item_name_vi || "",
+        item.unit || "",
+        item.code || "",
+    ].join(":");
+};
+
+const getSnapshotItemTime = (item: SnapshotItem) => {
+    const time = item.created_at ? new Date(item.created_at).getTime() : NaN;
+    return Number.isFinite(time) ? time : 0;
+};
+
+const buildDailyNetPurchasedItems = (items: SnapshotItem[]) => {
+    const groups = new Map<
+        string,
+        {
+            representative: SnapshotItem;
+            quantity: number;
+            totalPurchasePrice: number;
+            hasPurchaseAmount: boolean;
+            logIds: number[];
+        }
+    >();
+
+    for (const item of items) {
+        if (item.reason !== "purchase") continue;
+
+        const changeQuantity = Number(item.change_quantity ?? 0);
+        if (!Number.isFinite(changeQuantity) || changeQuantity === 0) continue;
+
+        const key = getPurchaseGroupKey(item);
+        const current = groups.get(key);
+        const itemLogId = Number(item.id);
+        const rawTotalPurchasePrice = item.total_purchase_price;
+        const rawPurchasePrice = item.purchase_price;
+        const purchasePrice = Number(rawPurchasePrice);
+        const hasPurchaseAmount = rawTotalPurchasePrice !== null &&
+            rawTotalPurchasePrice !== undefined &&
+            Number.isFinite(Number(rawTotalPurchasePrice));
+        const hasPurchasePrice = rawPurchasePrice !== null &&
+            rawPurchasePrice !== undefined &&
+            Number.isFinite(purchasePrice);
+        const signedAmount = hasPurchaseAmount
+            ? Number(item.total_purchase_price)
+            : hasPurchasePrice
+                ? changeQuantity * purchasePrice
+                : 0;
+
+        if (!current) {
+            groups.set(key, {
+                representative: item,
+                quantity: changeQuantity,
+                totalPurchasePrice: signedAmount,
+                hasPurchaseAmount: hasPurchaseAmount || hasPurchasePrice,
+                logIds: Number.isFinite(itemLogId) && itemLogId > 0 ? [itemLogId] : [],
+            });
+            continue;
+        }
+
+        const representative =
+            getSnapshotItemTime(item) > getSnapshotItemTime(current.representative) ||
+            (
+                getSnapshotItemTime(item) === getSnapshotItemTime(current.representative) &&
+                Number(item.id) > Number(current.representative.id)
+            )
+                ? item
+                : current.representative;
+
+        current.representative = representative;
+        current.quantity += changeQuantity;
+        current.totalPurchasePrice += signedAmount;
+        current.hasPurchaseAmount = current.hasPurchaseAmount || hasPurchaseAmount || hasPurchasePrice;
+        if (Number.isFinite(itemLogId) && itemLogId > 0) {
+            current.logIds.push(itemLogId);
+        }
+    }
+
+    return Array.from(groups.values())
+        .map((group) => {
+            const netQuantity = Number(group.quantity.toFixed(6));
+            const netTotalPurchasePrice = Number(group.totalPurchasePrice.toFixed(2));
+
+            return {
+                ...group.representative,
+                syncLogIds: group.logIds,
+                change_quantity: netQuantity,
+                total_purchase_price: group.hasPurchaseAmount ? netTotalPurchasePrice : null,
+                reason: "purchase" as const,
+            };
+        })
+        .filter((item) => Number(item.change_quantity ?? 0) > 0);
+};
+
 export default function InventorySnapshotsPage() {
     const { lang } = useLanguage();
     const t = inventoryText[lang];
@@ -557,10 +658,13 @@ export default function InventorySnapshotsPage() {
     };
 
     const getPurchaseSyncLogIdsForCard = (item: SnapshotItem) => {
+        if (item.syncLogIds && item.syncLogIds.length > 0) {
+            return item.syncLogIds;
+        }
+
         const sameCardPurchaseItems = movementItems.filter(
             (candidate) =>
                 candidate.reason === "purchase" &&
-                Number(candidate.change_quantity ?? 0) > 0 &&
                 candidate.item_id === item.item_id &&
                 candidate.business_date === item.business_date &&
                 (supplierTab === "all" ||
@@ -575,9 +679,9 @@ export default function InventorySnapshotsPage() {
     const getSelectedPurchaseItemForModal = (item: SnapshotItem) => {
         const sameCardSyncLogIds = getPurchaseSyncLogIdsForCard(item);
         const clickedLogId = Number(item.id);
-        const syncLogIds = sameCardSyncLogIds.includes(clickedLogId)
-            ? [clickedLogId]
-            : [item.id];
+        const syncLogIds = sameCardSyncLogIds.length > 0
+            ? sameCardSyncLogIds
+            : [clickedLogId];
 
         return {
             ...item,
@@ -882,11 +986,7 @@ export default function InventorySnapshotsPage() {
         batchList.find((batch) => Number(batch.id) === Number(selectedBatchId)) || null;
 
     const purchasedItems = useMemo(() => {
-        const baseItems = movementItems.filter(
-            (item) =>
-                item.reason === "purchase" &&
-                Number(item.change_quantity ?? 0) > 0
-        );
+        const baseItems = buildDailyNetPurchasedItems(movementItems);
 
         return baseItems.sort((a, b) => {
             const supplierA = (a.supplier || "").toLowerCase();
@@ -979,6 +1079,11 @@ export default function InventorySnapshotsPage() {
                 return Number(b.id) - Number(a.id);
             });
     }, [itemLogs, logModalItem, selectedLog]);
+
+    const selectedPurchaseAggregate =
+        logModalItem?.reason === "purchase" && (logModalItem.syncLogIds?.length ?? 0) > 1
+            ? logModalItem
+            : null;
 
     const renderLogCard = (log: InventoryLog) => {
         const changeQuantity = Number(log.change_quantity ?? 0);
@@ -2492,7 +2597,7 @@ export default function InventorySnapshotsPage() {
                                     justifyContent: "flex-end",
                                 }}
                             >
-                                {selectedLog && !isSalesInventoryLog(selectedLog) && (
+                                {selectedLog && !selectedPurchaseAggregate && !isSalesInventoryLog(selectedLog) && (
                                     <button
                                         type="button"
                                         onClick={() =>
@@ -2572,12 +2677,123 @@ export default function InventorySnapshotsPage() {
                                     color: "#111827",
                                 }}
                             >
-                                {lang === "vi" ? "Nhật ký đã chọn" : "선택한 로그"}
+                                {selectedPurchaseAggregate
+                                    ? lang === "vi" ? "Tổng hợp nhập đã chọn" : "선택한 입고 집계"
+                                    : lang === "vi" ? "Nhật ký đã chọn" : "선택한 로그"}
                             </div>
                             {isItemLogsLoading ? (
                                 <div>{c.loading}</div>
                             ) : itemLogsError ? (
                                 <div>{itemLogsError}</div>
+                            ) : selectedPurchaseAggregate ? (
+                                (() => {
+                                    const changeQuantity = Number(selectedPurchaseAggregate.change_quantity ?? 0);
+                                    const changeText =
+                                        changeQuantity === 0
+                                            ? "0"
+                                            : `${changeQuantity > 0 ? "+" : ""}${formatDecimalDisplay(changeQuantity)}`;
+                                    const quantityText = `${changeText} ${selectedPurchaseAggregate.unit || ""}`.trim();
+                                    const total = selectedPurchaseAggregate.total_purchase_price;
+                                    const unitPrice = selectedPurchaseAggregate.purchase_price;
+                                    const priceTrend = getPurchasePriceTrend(selectedPurchaseAggregate);
+                                    const priceTrendStyle = getPurchasePriceTrendStyle(priceTrend);
+
+                                    return (
+                                        <div
+                                            style={{
+                                                ...ui.card,
+                                                padding: "7px 9px",
+                                                borderLeft: `4px solid ${PART_META[(selectedPurchaseAggregate.part || "etc") as keyof typeof PART_META]?.color || "#9ca3af"}`,
+                                                background: "#fff",
+                                            }}
+                                        >
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    justifyContent: "space-between",
+                                                    alignItems: "center",
+                                                    gap: 8,
+                                                }}
+                                            >
+                                                <div
+                                                    style={{
+                                                        minWidth: 0,
+                                                        flex: 1,
+                                                        display: "flex",
+                                                        alignItems: "center",
+                                                        gap: 5,
+                                                    }}
+                                                >
+                                                    <span
+                                                        style={{
+                                                            ...ui.badgeMini,
+                                                            flexShrink: 0,
+                                                            minWidth: "auto",
+                                                            background: "#f3f4f6",
+                                                            color: "#374151",
+                                                            border: "1px solid #e5e7eb",
+                                                        }}
+                                                    >
+                                                        {getReasonEmoji("purchase")} {getCompactReasonLabel("purchase")}
+                                                    </span>
+                                                    <span
+                                                        style={{
+                                                            minWidth: 0,
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                            whiteSpace: "nowrap",
+                                                            fontSize: 14,
+                                                            fontWeight: 800,
+                                                            color: "#111827",
+                                                        }}
+                                                    >
+                                                        {getDisplayItemName(selectedPurchaseAggregate)}
+                                                    </span>
+                                                </div>
+
+                                                <div
+                                                    style={{
+                                                        flexShrink: 0,
+                                                        textAlign: "right",
+                                                        fontSize: 14,
+                                                        fontWeight: 900,
+                                                        color: "seagreen",
+                                                        whiteSpace: "nowrap",
+                                                    }}
+                                                >
+                                                    {quantityText}
+                                                </div>
+                                            </div>
+                                            <div
+                                                style={{
+                                                    ...ui.metaText,
+                                                    marginTop: 5,
+                                                    overflow: "hidden",
+                                                    textOverflow: "ellipsis",
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                            >
+                                                {lang === "vi" ? "Số nhật ký" : "포함 로그"}{" "}
+                                                {selectedPurchaseAggregate.syncLogIds?.length ?? 0}
+                                                {" / "}
+                                                {unitPrice === null || unitPrice === undefined ? "-" : (
+                                                    <span style={priceTrendStyle}>
+                                                        {priceTrend === "up"
+                                                            ? "↑"
+                                                            : priceTrend === "down"
+                                                                ? "↓"
+                                                                : ""}
+                                                        {Number(unitPrice).toLocaleString()} ₫
+                                                    </span>
+                                                )}
+                                                {" / "}
+                                                {total === null || total === undefined
+                                                    ? "-"
+                                                    : `${Number(total).toLocaleString()} ₫`}
+                                            </div>
+                                        </div>
+                                    );
+                                })()
                             ) : !selectedLog ? (
                                 <div style={ui.metaText}>
                                     {lang === "vi"
