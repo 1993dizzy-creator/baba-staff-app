@@ -47,6 +47,8 @@ type MonthlyItem = {
   stockCheckDeduction: number;
   serviceDeduction: number;
   otherDeduction: number;
+  saleDeductionAmount?: number | null;
+  saleDeductionAmountMissing?: boolean;
   estimatedDeductionAmount: number | null;
   status: MonthlyItemStatus;
 };
@@ -83,6 +85,7 @@ type SupplierGroup = {
   supplierLabel: string;
   summary: SupplierSummary | null;
   items: MonthlyItem[];
+  deductionOnlyItems: MonthlyItem[];
 };
 
 type CategoryGroup = {
@@ -106,14 +109,6 @@ type PartSummary = {
   totalQuantity: number;
   missingCount: number;
   categories: CategorySummary[];
-};
-
-type MovementSignal = {
-  key: string;
-  emoji: string;
-  label: string;
-  value: string;
-  valueColor: string;
 };
 
 type DetailRow = {
@@ -198,9 +193,13 @@ const monthlyText = {
     serviceShort: "서비스",
     otherNetChange: "기타",
     saleShort: "판매",
+    saleDeductionKindUnit: "종",
+    deductionOnlyBadge: "당월 입고 없음",
+    deductionOnlyNoSupplierSection: "당월 입고 없는 판매차감 · 거래처 미지정",
     previousMonthChange: "전월대비",
     itemCountUnit: "품목",
     logCountUnit: "건",
+    chipHint: "품목 종류 기준",
     baseRange: "기준",
     noSnapshot: "스냅샷 없음",
     currentInventory: "현재 재고 기준",
@@ -286,9 +285,13 @@ const monthlyText = {
     serviceShort: "Service",
     otherNetChange: "Khac",
     saleShort: "Bán",
+    saleDeductionKindUnit: " loại",
+    deductionOnlyBadge: "Không nhập T.này",
+    deductionOnlyNoSupplierSection: "Trừ bán không nhập trong tháng · Chưa có nơi mua",
     previousMonthChange: "So thang truoc",
-    itemCountUnit: "mat hang",
+    itemCountUnit: " mat hang",
     logCountUnit: "luot",
+    chipHint: "Theo số loại",
     baseRange: "Chuan",
     noSnapshot: "Khong co snapshot",
     currentInventory: "Theo kho hien tai",
@@ -597,21 +600,51 @@ export default function InventoryMonthlyPage() {
         supplierLabel: supplier.supplierLabel || labels.unregisteredSupplier,
         summary: supplier,
         items: supplier.items ?? [],
+        deductionOnlyItems: [],
       });
     }
+
+    const purchaseItemIds = new Set<number>();
+    for (const group of map.values())
+      for (const item of group.items)
+        purchaseItemIds.add(item.itemId);
+
+    for (const item of data.items) {
+      if (purchaseItemIds.has(item.itemId)) continue;
+      if (item.saleDeductionDeduction <= 0) continue;
+      const supplier = item.supplier?.trim() || null;
+      if (!supplier) continue;
+      const key = getSupplierKey(supplier);
+      const existing = map.get(key);
+      if (existing) {
+        existing.deductionOnlyItems.push(item);
+      } else {
+        map.set(key, {
+          key,
+          supplier,
+          supplierLabel: item.supplierLabel || labels.unregisteredSupplier,
+          summary: null,
+          items: [],
+          deductionOnlyItems: [item],
+        });
+      }
+    }
+
+    const sortItems = (a: MonthlyItem, b: MonthlyItem) => {
+      const aCode = sortText(a.code);
+      const bCode = sortText(b.code);
+      if (aCode && !bCode) return -1;
+      if (!aCode && bCode) return 1;
+      const codeCompare = sortText(a.code).localeCompare(sortText(b.code));
+      if (codeCompare !== 0) return codeCompare;
+      return sortText(a.name || a.nameVi).localeCompare(sortText(b.name || b.nameVi));
+    };
 
     return [...map.values()]
       .map((group) => ({
         ...group,
-        items: [...group.items].sort((a, b) => {
-          const aCode = sortText(a.code);
-          const bCode = sortText(b.code);
-          if (aCode && !bCode) return -1;
-          if (!aCode && bCode) return 1;
-          const codeCompare = sortText(a.code).localeCompare(sortText(b.code));
-          if (codeCompare !== 0) return codeCompare;
-          return sortText(a.name || a.nameVi).localeCompare(sortText(b.name || b.nameVi));
-        }),
+        items: [...group.items].sort(sortItems),
+        deductionOnlyItems: [...group.deductionOnlyItems].sort(sortItems),
       }))
       .sort((a, b) => {
         const amountDiff =
@@ -727,14 +760,17 @@ export default function InventoryMonthlyPage() {
     const map = new Map<number, DeductionAmtData>();
     for (const item of data?.items ?? []) {
       const totalQty = item.saleDeductionDeduction + item.stockCheckDeduction + item.serviceDeduction + item.otherDeduction;
-      const amt = item.estimatedDeductionAmount ?? 0;
       if (totalQty === 0) continue;
+      const saleAmt = item.saleDeductionAmount ?? 0;
+      const totalAmt = item.estimatedDeductionAmount ?? 0;
+      const otherAmt = Math.max(0, totalAmt - saleAmt);
+      const otherQty = item.stockCheckDeduction + item.serviceDeduction + item.otherDeduction;
       map.set(item.itemId, {
-        sale: amt * (item.saleDeductionDeduction / totalQty),
-        check: amt * (item.stockCheckDeduction / totalQty),
-        service: amt * (item.serviceDeduction / totalQty),
-        other: amt * (item.otherDeduction / totalQty),
-        total: amt,
+        sale: saleAmt,
+        check: otherQty > 0 ? otherAmt * (item.stockCheckDeduction / otherQty) : 0,
+        service: otherQty > 0 ? otherAmt * (item.serviceDeduction / otherQty) : 0,
+        other: otherQty > 0 ? otherAmt * (item.otherDeduction / otherQty) : 0,
+        total: totalAmt,
       });
     }
     return map;
@@ -778,7 +814,7 @@ export default function InventoryMonthlyPage() {
     const map = new Map<string, DeductionAmtData>();
     for (const group of supplierGroups) {
       const acc: DeductionAmtData = { sale: 0, check: 0, service: 0, other: 0, total: 0 };
-      for (const item of group.items) {
+      for (const item of [...group.items, ...group.deductionOnlyItems]) {
         const d = deductionByItem.get(item.itemId);
         if (!d || d.total === 0) continue;
         const totalPurchase = itemTotalPurchase.get(item.itemId) ?? 0;
@@ -834,6 +870,18 @@ export default function InventoryMonthlyPage() {
     data?.items.filter((item) => item.serviceNetChange !== 0).length ?? 0;
   const salesDeductionChangedItemCount =
     data?.items.filter((item) => item.saleDeductionNetChange !== 0).length ?? 0;
+  const deductionNoSupplierItems = useMemo<MonthlyItem[]>(() => {
+    if (!data) return [];
+    const coveredIds = new Set<number>(
+      supplierGroups.flatMap((g) => [
+        ...g.items.map((i) => i.itemId),
+        ...g.deductionOnlyItems.map((i) => i.itemId),
+      ])
+    );
+    return data.items.filter(
+      (item) => item.saleDeductionDeduction > 0 && !coveredIds.has(item.itemId)
+    );
+  }, [data, supplierGroups]);
   const stockCheckIncreaseCount =
     data?.items.filter((item) => item.stockCheckNetChange > 0).length ?? 0;
   const stockCheckDecreaseCount =
@@ -950,10 +998,14 @@ export default function InventoryMonthlyPage() {
             {(() => {
               const chipStyle: React.CSSProperties = { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 3, whiteSpace: "nowrap", padding: "4px 8px", borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb", minHeight: 28 };
               return (
-                <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#374151" }}>
+                <>
+                <div style={{ marginTop: 6, fontSize: 10, color: "#9ca3af", fontWeight: 600, textAlign: "center" }}>
+                  {labels.chipHint}
+                </div>
+                <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#374151" }}>
+                  <span style={chipStyle}><span>{MONTHLY_SIGNAL_EMOJIS.priceChange}</span><span>{labels.priceChanged}</span>{priceChangedItemCount > 0 ? <b>{formatQuantity(priceChangedItemCount)}{labels.itemCountUnit}</b> : <b style={{ color: "#9ca3af" }}>0{labels.itemCountUnit}</b>}</span>
                   <span style={chipStyle}><span>{MONTHLY_REASON_EMOJIS.purchase}</span><span>{labels.purchase}</span><b style={{ color: data.summary.purchaseItemCount > 0 ? "#2563eb" : "#9ca3af" }}>{data.summary.purchaseItemCount > 0 ? `+${formatQuantity(data.summary.purchaseItemCount)}` : "0"}</b></span>
                   {missingPriceItemCount > 0 && <span style={chipStyle}><span>{MONTHLY_SIGNAL_EMOJIS.missingPrice}</span><span>{labels.purchaseAmountMissing}</span><b>{formatQuantity(missingPriceItemCount)}</b></span>}
-                  <span style={chipStyle}><span>{MONTHLY_SIGNAL_EMOJIS.priceChange}</span><span>{labels.priceChanged}</span><b>{formatQuantity(priceChangedItemCount)}</b></span>
                   <span style={chipStyle}><span>{MONTHLY_REASON_EMOJIS.sale_deduction}</span><span>{labels.saleShort}</span><b style={{ color: salesDeductionChangedItemCount > 0 ? "#ef4444" : "#9ca3af" }}>{salesDeductionChangedItemCount > 0 ? `-${formatQuantity(salesDeductionChangedItemCount)}` : "0"}</b></span>
                   {(stockCheckIncreaseCount > 0 || stockCheckDecreaseCount > 0) && (
                     <span style={chipStyle}><span>{MONTHLY_REASON_EMOJIS.stock_check}</span><span>{labels.stockCheckShort}</span>{stockCheckIncreaseCount > 0 && <b style={{ color: "seagreen" }}>+{formatQuantity(stockCheckIncreaseCount)}</b>}{stockCheckIncreaseCount > 0 && stockCheckDecreaseCount > 0 && <span style={{ color: "#9ca3af" }}>/</span>}{stockCheckDecreaseCount > 0 && <b style={{ color: "#ef4444" }}>-{formatQuantity(stockCheckDecreaseCount)}</b>}</span>
@@ -965,6 +1017,7 @@ export default function InventoryMonthlyPage() {
                     <span style={chipStyle}><span>{MONTHLY_REASON_EMOJIS.other}</span><span>{labels.otherNetChange}</span>{otherIncreaseCount > 0 && <b style={{ color: "seagreen" }}>+{formatQuantity(otherIncreaseCount)}</b>}{otherIncreaseCount > 0 && otherDecreaseCount > 0 && <span style={{ color: "#9ca3af" }}>/</span>}{otherDecreaseCount > 0 && <b style={{ color: "#ef4444" }}>-{formatQuantity(otherDecreaseCount)}</b>}</span>
                   )}
                 </div>
+                </>
               );
             })()}
           </section>
@@ -1034,7 +1087,7 @@ export default function InventoryMonthlyPage() {
                 {supplierGroups.map((group) => {
                   const expandedSupplier = Boolean(expandedSupplierKeys[group.key]);
                   const supplier = group.summary;
-                  const itemCount = supplier?.itemCount ?? group.items.length;
+                  const itemCount = (supplier?.itemCount ?? group.items.length) + group.deductionOnlyItems.length;
                   const supplierMissingPriceCount = group.items.filter(
                     hasMissingPurchasePrice
                   ).length;
@@ -1251,12 +1304,14 @@ export default function InventoryMonthlyPage() {
                             gap: 7,
                           }}
                         >
-                          {group.items.length === 0 ? (
+                          {group.items.length === 0 && group.deductionOnlyItems.length === 0 ? (
                             <div style={{ ...ui.metaText, padding: "2px 2px" }}>
                               {labels.noData}
                             </div>
-                          ) : (
-                            getCategoryGroups(group.items).map((categoryGroup) => (
+                          ) : (() => {
+                            const deductionOnlyIds = new Set(group.deductionOnlyItems.map((i) => i.itemId));
+                            const allGroupItems = [...group.items, ...group.deductionOnlyItems];
+                            return getCategoryGroups(allGroupItems).map((categoryGroup) => (
                               <div
                                 key={categoryGroup.key}
                                 style={{
@@ -1277,51 +1332,13 @@ export default function InventoryMonthlyPage() {
                                 </div>
 
                                 {categoryGroup.items.map((item) => {
+                              const isDeductionOnly = deductionOnlyIds.has(item.itemId);
                               const itemExpansionKey = `${group.key}:${item.itemId}`;
                               const expanded = Boolean(expandedItemIds[itemExpansionKey]);
                               const displayName = getDisplayName(item);
                               const itemAmountText = getItemAmountText(item);
-                              const movementSignalCandidates: Array<MovementSignal | null> = [
-                                item.stockCheckNetChange !== 0
-                                  ? {
-                                      key: "stock_check",
-                                      emoji: MONTHLY_REASON_EMOJIS.stock_check,
-                                      label: labels.stockCheckShort,
-                                      value: formatSignedQuantity(item.stockCheckNetChange),
-                                      valueColor: getSignedColor(item.stockCheckNetChange),
-                                    }
-                                  : null,
-                                item.serviceNetChange !== 0
-                                  ? {
-                                      key: "service",
-                                      emoji: MONTHLY_REASON_EMOJIS.service,
-                                      label: labels.serviceShort,
-                                      value: formatSignedQuantity(item.serviceNetChange),
-                                      valueColor: getSignedColor(item.serviceNetChange),
-                                    }
-                                  : null,
-                                item.otherNetChange !== 0
-                                  ? {
-                                      key: "other",
-                                      emoji: MONTHLY_REASON_EMOJIS.other,
-                                      label: labels.otherNetChange,
-                                      value: formatSignedQuantity(item.otherNetChange),
-                                      valueColor: getSignedColor(item.otherNetChange),
-                                    }
-                                  : null,
-                                hasMissingPurchasePrice(item)
-                                  ? {
-                                      key: "missing_price",
-                                      emoji: MONTHLY_SIGNAL_EMOJIS.missingPrice,
-                                      label: labels.purchaseAmountMissing,
-                                      value: "",
-                                      valueColor: "#92400e",
-                                    }
-                                  : null,
-                              ];
-                              const movementSignals = movementSignalCandidates.filter(
-                                (signal): signal is MovementSignal => signal !== null
-                              );
+                              const stockCheckIncreaseQty = Math.max(0, item.stockCheckNetChange + item.stockCheckDeduction);
+                              const otherIncreaseQty = Math.max(0, item.otherNetChange + item.otherDeduction);
                               const quantityRows: DetailRow[] = [
                                 {
                                   label: detailLabels.baselineShort,
@@ -1603,6 +1620,24 @@ export default function InventoryMonthlyPage() {
                                             : labels.monthlyMissing}
                                         </span>
                                       )}
+                                      {isDeductionOnly && (
+                                        <span
+                                          style={{
+                                            flexShrink: 0,
+                                            fontSize: 10,
+                                            fontWeight: 800,
+                                            color: "#9ca3af",
+                                            background: "#f9fafb",
+                                            border: "1px solid #e5e7eb",
+                                            borderRadius: 6,
+                                            padding: "1px 4px",
+                                            lineHeight: 1.35,
+                                            whiteSpace: "nowrap",
+                                          }}
+                                        >
+                                          {labels.deductionOnlyBadge}
+                                        </span>
+                                      )}
                                     </span>
                                     <span
                                       style={{
@@ -1643,13 +1678,24 @@ export default function InventoryMonthlyPage() {
                                         cursor: "default",
                                       }}
                                     >
-                                      <span style={{ fontSize: 12, fontWeight: 900, color: "#111827", whiteSpace: "nowrap" }}>
-                                        {MONTHLY_REASON_EMOJIS.purchase} {labels.purchase}{" "}
-                                        <span style={{ color: "#2563eb" }}>{formatSignedQuantity(item.purchaseQuantity)}</span>
+                                      <span style={{ fontSize: 12, fontWeight: 900, color: "#111827", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "2px 5px", minWidth: 0 }}>
+                                        <span style={{ whiteSpace: "nowrap" }}>
+                                          {MONTHLY_REASON_EMOJIS.purchase} {labels.purchase}{" "}
+                                          <span style={{ color: "#2563eb" }}>{formatSignedQuantity(item.purchaseQuantity)}</span>
+                                        </span>
+                                        {stockCheckIncreaseQty > 0 && <span style={{ color: "seagreen", whiteSpace: "nowrap" }}>✅ +{formatQuantity(stockCheckIncreaseQty)}</span>}
+                                        {otherIncreaseQty > 0 && <span style={{ color: "seagreen", whiteSpace: "nowrap" }}>✏️ +{formatQuantity(otherIncreaseQty)}</span>}
                                       </span>
                                       <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 900, whiteSpace: "nowrap", color: item.purchaseAmount === null ? "#92400e" : "#6b7280" }}>
                                         {itemAmountText}
                                       </span>
+                                    </div>
+                                  )}
+
+                                  {item.purchaseQuantity === 0 && (stockCheckIncreaseQty > 0 || otherIncreaseQty > 0) && (
+                                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "2px 5px", fontSize: 12, fontWeight: 900, cursor: "default" }}>
+                                      {stockCheckIncreaseQty > 0 && <span style={{ color: "seagreen", whiteSpace: "nowrap" }}>✅ +{formatQuantity(stockCheckIncreaseQty)}</span>}
+                                      {otherIncreaseQty > 0 && <span style={{ color: "seagreen", whiteSpace: "nowrap" }}>✏️ +{formatQuantity(otherIncreaseQty)}</span>}
                                     </div>
                                   )}
 
@@ -1682,41 +1728,6 @@ export default function InventoryMonthlyPage() {
                                     </div>
                                   )}
 
-                                  {movementSignals.length > 0 && (
-                                    <div
-                                      style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        flexWrap: "wrap",
-                                        gap: "2px 7px",
-                                        minWidth: 0,
-                                        fontSize: 12,
-                                        fontWeight: 800,
-                                        color: "#6b7280",
-                                        cursor: "default",
-                                      }}
-                                    >
-                                      {movementSignals.map((signal, index) => (
-                                        <span
-                                          key={signal.key}
-                                          style={{
-                                            whiteSpace: "nowrap",
-                                          }}
-                                        >
-                                          {index > 0 ? SEP : ""}
-                                          {signal.emoji} {signal.label}
-                                          {signal.value && (
-                                            <>
-                                              {" "}
-                                              <span style={{ color: signal.valueColor }}>
-                                                {signal.value}
-                                              </span>
-                                            </>
-                                          )}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )}
                                 </button>
 
                                 {expanded && (
@@ -1877,7 +1888,7 @@ export default function InventoryMonthlyPage() {
                                 })}
                               </div>
                             ))
-                          )}
+                          })()}
                         </div>
                       )}
                     </div>
@@ -1886,6 +1897,41 @@ export default function InventoryMonthlyPage() {
               </div>
             )}
           </section>
+          )}
+
+          {summaryView === "supplier" && deductionNoSupplierItems.length > 0 && (
+            <section style={{ ...ui.card, padding: 12, marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#6b7280", marginBottom: 8 }}>
+                {labels.deductionOnlyNoSupplierSection}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {deductionNoSupplierItems.map((item) => (
+                  <div
+                    key={item.itemId}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "5px 8px",
+                      borderRadius: 8,
+                      background: "#fff",
+                      border: "1px solid #fecdd3",
+                      fontSize: 12,
+                      fontWeight: 800,
+                    }}
+                  >
+                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#374151" }}>
+                      {item.code && <span style={{ color: "#9ca3af", marginRight: 4 }}>[{item.code}]</span>}
+                      {getDisplayName(item) ?? item.name}
+                    </span>
+                    <span style={{ flexShrink: 0, color: "#ef4444", whiteSpace: "nowrap" }}>
+                      🔴 -{formatQuantity(item.saleDeductionDeduction)}{item.unit ? ` ${item.unit}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
 
           {summaryView === "part" && (

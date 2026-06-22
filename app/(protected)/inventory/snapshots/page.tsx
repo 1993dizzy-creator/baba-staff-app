@@ -430,7 +430,7 @@ export default function InventorySnapshotsPage() {
 
     const mapLogToSnapshotItem = (log: InventoryLog): SnapshotItem => {
         const changeQuantity = Number(log.change_quantity ?? 0);
-        const purchasePrice = log.new_purchase_price ?? log.purchase_price ?? null;
+        const purchasePrice = log.new_purchase_price ?? log.prev_purchase_price ?? log.purchase_price ?? null;
 
         return {
             id: log.id,
@@ -450,7 +450,7 @@ export default function InventorySnapshotsPage() {
             prev_purchase_price: log.prev_purchase_price ?? null,
             new_purchase_price: log.new_purchase_price ?? null,
             supplier: log.new_supplier ?? log.supplier ?? null,
-            total_purchase_price: changeQuantity * Number(purchasePrice ?? 0),
+            total_purchase_price: purchasePrice !== null ? changeQuantity * Number(purchasePrice) : null,
             reason: log.reason ?? null,
             source: log.source ?? null,
             business_date: log.business_date ?? null,
@@ -941,6 +941,16 @@ export default function InventorySnapshotsPage() {
             return supplierTab === "all" || supplier === supplierTab;
         });
     }, [purchasedItems, supplierTab]);
+
+    const snapshotItemPriceMap = useMemo(() => {
+        const map = new Map<number, number | null>();
+        for (const item of snapshotItems) {
+            if (item.item_id !== null && item.item_id !== undefined) {
+                map.set(Number(item.item_id), item.purchase_price);
+            }
+        }
+        return map;
+    }, [snapshotItems]);
 
     const purchaseTotalAmount = useMemo(() => {
         return filteredPurchasedItems.reduce((sum, item) => {
@@ -1937,9 +1947,18 @@ export default function InventorySnapshotsPage() {
                         >
                             {otherMovementItems.map((item) => {
                                 const qty = Number(item.change_quantity ?? 0);
-                                const price = item.purchase_price;
-                                const total = item.total_purchase_price;
                                 const qtyColor = qty > 0 ? "seagreen" : "crimson";
+                                const isSaleDeduction = item.reason === "sale_deduction";
+                                let displayPrice = item.purchase_price;
+                                let isApproxPrice = false;
+                                if (displayPrice === null && isSaleDeduction && item.item_id !== null) {
+                                    const fallback = snapshotItemPriceMap.get(Number(item.item_id)) ?? null;
+                                    if (fallback !== null) {
+                                        displayPrice = fallback;
+                                        isApproxPrice = true;
+                                    }
+                                }
+                                const total = displayPrice !== null ? qty * Number(displayPrice) : null;
 
                                 return (
                                     <div
@@ -2005,9 +2024,9 @@ export default function InventorySnapshotsPage() {
                                                     whiteSpace: "nowrap",
                                                 }}
                                             >
-                                                {price === null || price === undefined
+                                                {displayPrice === null || displayPrice === undefined
                                                     ? "-"
-                                                    : `${Number(price).toLocaleString()} ₫`}
+                                                    : `${isApproxPrice ? "≈ " : ""}${Number(displayPrice).toLocaleString()} ₫`}
                                                 <span style={{ marginLeft: 3 }}>
                                                     / {item.unit || "-"}
                                                 </span>
@@ -2042,7 +2061,7 @@ export default function InventorySnapshotsPage() {
                                             >
                                                 {total === null || total === undefined
                                                     ? "-"
-                                                    : `${Number(total).toLocaleString()} ₫`}
+                                                    : `${isApproxPrice ? "≈ " : ""}${Number(total).toLocaleString()} ₫`}
                                             </div>
                                         </div>
                                     </div>

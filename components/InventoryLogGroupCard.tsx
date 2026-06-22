@@ -24,6 +24,8 @@ type InventoryLogCardGroup = {
     logs: InventoryLogCardLog[];
 };
 
+type ReasonBadgeMeta = { text: string; style?: CSSProperties };
+
 type Props = {
     group: InventoryLogCardGroup;
     isOpen: boolean;
@@ -31,6 +33,7 @@ type Props = {
     noteText?: string;
     reasonBadgeText?: string;
     reasonBadgeStyle?: CSSProperties;
+    showHeaderReasonBadge?: boolean;
     readOnlyText?: string;
     partLabel: string;
     itemName: string;
@@ -45,6 +48,7 @@ type Props = {
     getActionColor: (action: string) => string;
     formatDateTime: (value: string) => string;
     getLogChanges: (log: InventoryLogCardLog, lang: string) => ChangeItem[];
+    getReasonBadge?: (log: InventoryLogCardLog) => ReasonBadgeMeta | null;
 };
 
 export default function InventoryLogGroupCard({
@@ -54,6 +58,7 @@ export default function InventoryLogGroupCard({
     noteText = "-",
     reasonBadgeText = "",
     reasonBadgeStyle,
+    showHeaderReasonBadge = true,
     readOnlyText = "",
     partLabel,
     itemName,
@@ -68,6 +73,7 @@ export default function InventoryLogGroupCard({
     getActionColor,
     formatDateTime,
     getLogChanges,
+    getReasonBadge,
 }: Props) {
     const log = group.latest;
 
@@ -99,7 +105,7 @@ export default function InventoryLogGroupCard({
                             {getActionBadge(log.action || "")}
                         </span>
 
-                        {reasonBadgeText && (
+                        {showHeaderReasonBadge && reasonBadgeText && (
                             <span
                                 style={{
                                     ...ui.badgeMini,
@@ -201,6 +207,22 @@ export default function InventoryLogGroupCard({
                                         gap: 6,
                                     }}
                                 >
+                                    {(() => {
+                                        const meta = getReasonBadge?.(history) ?? null;
+                                        if (!meta) return null;
+                                        return (
+                                            <span
+                                                style={{
+                                                    ...ui.badgeMini,
+                                                    minWidth: "auto",
+                                                    alignSelf: "flex-start",
+                                                    ...meta.style,
+                                                }}
+                                            >
+                                                {meta.text}
+                                            </span>
+                                        );
+                                    })()}
                                     {changes.map((change, index) => (
                                         <div
                                             key={`${history.id}-${index}`}

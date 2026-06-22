@@ -95,6 +95,7 @@ export const inventoryText = {
     duplicateItemRegisteredFallback: "해당 상품은 이미 등록되어 있습니다.",
     editReasonModalTitle: "수정 사유를 선택해주세요.",
     editReasonModalDescription: "선택한 사유는 품목 로그에 표시됩니다.",
+    quantityChange: "변화",
     editInfoUpdatedNote: "품목정보 수정",
     noAdditionalChanges: "추가로 저장할 변경사항이 없습니다.",
     syncLog: "동기화",
@@ -201,6 +202,7 @@ export const inventoryText = {
     editReasonModalTitle: "Vui lòng chọn lý do chỉnh sửa.",
     editReasonModalDescription:
       "Lý do đã chọn sẽ được hiển thị trong lịch sử sản phẩm.",
+    quantityChange: "Biến",
     editInfoUpdatedNote: "Sửa thông tin sản phẩm",
     noAdditionalChanges: "Không có thay đổi nào khác để lưu.",
     syncLog: "Đồng bộ",
