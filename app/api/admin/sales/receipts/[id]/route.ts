@@ -602,9 +602,10 @@ export async function GET(
 
     const receiptRow = receipt as ReceiptRow;
     const lineRows = (lines || []) as LineRow[];
+    const activeLineRows = lineRows.filter((line) => line.is_excluded !== true);
     const paymentRows = (payments || []) as PaymentRow[];
 
-    const adjustedTaxSummary = buildTaxSummary(lineRows);
+    const adjustedTaxSummary = buildTaxSummary(activeLineRows);
     const savedOriginalTaxSummary = normalizeTaxSummary(
       receiptRow.original_tax_summary
     );
@@ -666,8 +667,8 @@ export async function GET(
       })),
       taxSummary,
       adjustedTaxSummary,
-      hasOptionLines: lineRows.some(isOptionLine),
-      lines: lineRows.map((line) => ({
+      hasOptionLines: activeLineRows.some(isOptionLine),
+      lines: activeLineRows.map((line) => ({
         id: line.id,
         refDetailId: line.ref_detail_id,
         parentRefDetailId: getParentRefDetailId(line),
@@ -809,7 +810,7 @@ export async function PATCH(
     const { data: currentLines, error: currentLinesError } = await supabaseServer
       .from("pos_sales_receipt_lines")
       .select(
-        "id, ref_detail_id, parent_ref_detail_id, sort_order, item_code, item_name, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, pre_tax_amount, tax_reduction_amount, ref_detail_type, inventory_item_type, is_option, mapping_status, raw_json"
+        "id, ref_detail_id, parent_ref_detail_id, sort_order, item_code, item_name, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, pre_tax_amount, tax_reduction_amount, ref_detail_type, inventory_item_type, is_option, is_excluded, mapping_status, raw_json"
       )
       .eq("receipt_id", receiptId)
       .order("sort_order", { ascending: true })
@@ -822,12 +823,15 @@ export async function PATCH(
     }
 
     const currentLineRows = (currentLines || []) as LineRow[];
+    const activeCurrentLineRows = currentLineRows.filter(
+      (line) => line.is_excluded !== true
+    );
 
     const currentLineById = new Map(
-      currentLineRows.map((line) => [line.id, line])
+      activeCurrentLineRows.map((line) => [line.id, line])
     );
     const currentLineByRefDetailId = new Map(
-      currentLineRows
+      activeCurrentLineRows
         .filter((line) => Boolean(line.ref_detail_id))
         .map((line) => [line.ref_detail_id as string, line])
     );
@@ -841,7 +845,7 @@ export async function PATCH(
     const originalTaxSummaryForSave =
       existingOriginalTaxSummary || {
         totalTaxAmount: toNumber(receiptRow.vat_amount),
-        taxByRate: buildTaxSummary(currentLineRows).taxByRate,
+        taxByRate: buildTaxSummary(activeCurrentLineRows).taxByRate,
       };
     const { data: currentPayments, error: currentPaymentsError } =
       await supabaseServer
@@ -966,7 +970,7 @@ export async function PATCH(
 
     const deleteIds = new Set<number>(deletedIds);
     const deletedRefDetailIds = new Set(
-      currentLineRows
+      activeCurrentLineRows
         .filter((line) => deletedIds.has(line.id) && line.ref_detail_id)
         .map((line) => line.ref_detail_id as string)
     );
@@ -975,7 +979,7 @@ export async function PATCH(
     while (foundLinkedOption) {
       foundLinkedOption = false;
 
-      currentLineRows.forEach((line) => {
+      activeCurrentLineRows.forEach((line) => {
         const parentRefDetailId = getParentRefDetailId(line);
         if (
           !deleteIds.has(line.id) &&
@@ -1065,7 +1069,7 @@ export async function PATCH(
         .map((line) => [line.id, line.quantity])
     );
 
-    for (const optionLine of currentLineRows.filter(isOptionLine)) {
+    for (const optionLine of activeCurrentLineRows.filter(isOptionLine)) {
       if (deleteIds.has(optionLine.id) || updatedLineIds.has(optionLine.id)) {
         continue;
       }
@@ -1248,7 +1252,7 @@ export async function PATCH(
       nextSortOrder += 1;
     }
 
-    currentLineRows.forEach((line) => {
+    activeCurrentLineRows.forEach((line) => {
       if (deleteIds.has(line.id) || updatedLineIds.has(line.id)) {
         return;
       }

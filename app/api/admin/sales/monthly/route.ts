@@ -4,7 +4,9 @@ import { supabaseServer } from "@/lib/supabase/server";
 
 type ReceiptRow = {
   id: number;
+  ref_no: string | null;
   business_date: string;
+  ref_date: string | null;
   payment_status: number | null;
   is_canceled: boolean | null;
   total_amount: number | string | null;
@@ -94,6 +96,37 @@ type MenuSalesOption = {
   optionName: string;
   quantity: number;
   amount: number;
+};
+
+type UnlinkedOptionFailureReason =
+  | "missing_parent_id"
+  | "parent_not_found"
+  | "parent_not_sales_line"
+  | "parent_excluded_or_not_eligible"
+  | "parent_missing_ref_detail_id"
+  | "unknown";
+
+type UnlinkedOptionReceipt = {
+  lineId: number;
+  receiptId: number;
+  receiptRefNo: string | null;
+  businessDate: string;
+  refDate: string | null;
+  optionName: string;
+  quantity: number;
+  amount: number;
+  parentRefDetailId: string | null;
+  rawParentId: string | null;
+  failureReason: UnlinkedOptionFailureReason;
+};
+
+type UnlinkedOptionGroup = {
+  key: string;
+  optionName: string;
+  lineCount: number;
+  quantity: number;
+  amount: number;
+  receipts: UnlinkedOptionReceipt[];
 };
 
 type MenuSalesItem = {
@@ -243,6 +276,30 @@ function getOptionKey(line: LineRow) {
     line.item_name ||
     `line:${line.id}`
   );
+}
+
+function getUnlinkedOptionFailureReason(
+  line: LineRow,
+  parentLine: LineRow | null,
+  paidReceiptIds: Set<number>
+): UnlinkedOptionFailureReason {
+  const parentRefDetailId = getParentRefDetailId(line);
+
+  if (!parentRefDetailId) return "missing_parent_id";
+  if (!parentLine) return "parent_not_found";
+  if (!parentLine.ref_detail_id) return "parent_missing_ref_detail_id";
+  if (isOptionLine(parentLine)) return "parent_not_sales_line";
+  if (
+    parentLine.receipt_id === null ||
+    !paidReceiptIds.has(parentLine.receipt_id) ||
+    !isPaid(parentLine.payment_status) ||
+    isCanceled(parentLine) ||
+    parentLine.is_excluded === true
+  ) {
+    return "parent_excluded_or_not_eligible";
+  }
+
+  return "unknown";
 }
 
 function getCategoryKey(categoryName: string | null) {
@@ -460,7 +517,13 @@ function buildLinesByReceiptId(receipts: ReceiptRow[], lines: LineRow[]) {
   const linesByReceiptId = new Map<number, LineRow[]>();
 
   lines.forEach((line) => {
-    if (line.receipt_id === null || !paidReceiptIds.has(line.receipt_id)) return;
+    if (
+      line.receipt_id === null ||
+      !paidReceiptIds.has(line.receipt_id) ||
+      line.is_excluded === true
+    ) {
+      return;
+    }
 
     const current = linesByReceiptId.get(line.receipt_id) || [];
     current.push(line);
@@ -596,6 +659,9 @@ function buildMenuSales(
   );
   const itemBuckets = new Map<string, MenuSalesBucket>();
   const parentBucketByLineKey = new Map<string, MenuSalesBucket>();
+  const lineByReceiptRefDetailKey = new Map<string, LineRow>();
+  const receiptById = new Map(receipts.map((receipt) => [receipt.id, receipt]));
+  const unlinkedOptionGroups = new Map<string, UnlinkedOptionGroup>();
   const productCategoryByItemId = new Map<string, string>();
   const productCategoryByItemCode = new Map<string, string>();
   const categoryGroupByName = new Map(
@@ -604,6 +670,14 @@ function buildMenuSales(
       mapping.group_type,
     ])
   );
+
+  lines.forEach((line) => {
+    if (line.receipt_id === null || !line.ref_detail_id) return;
+    lineByReceiptRefDetailKey.set(
+      getReceiptLineKey(line.receipt_id, line.ref_detail_id),
+      line
+    );
+  });
 
   productCategories
     .sort((a, b) => Number(b.source === "cukcuk") - Number(a.source === "cukcuk"))
@@ -695,8 +769,49 @@ function buildMenuSales(
       const amount = toNumber(line.final_amount);
 
       if (!parentBucket) {
+        const optionKey = getOptionKey(line);
+        const optionName = line.item_name || line.item_code || "-";
+        const rawParentId = getRawString(line.raw_json, "ParentID");
+        const parentLine = parentRefDetailId
+          ? lineByReceiptRefDetailKey.get(
+              getReceiptLineKey(receiptId, parentRefDetailId)
+            ) || null
+          : null;
+        const receipt = receiptById.get(receiptId);
+        const group =
+          unlinkedOptionGroups.get(optionKey) ||
+          ({
+            key: optionKey,
+            optionName,
+            lineCount: 0,
+            quantity: 0,
+            amount: 0,
+            receipts: [],
+          } satisfies UnlinkedOptionGroup);
+
         unlinkedOptionAmount += amount;
         unlinkedOptionCount += 1;
+        group.lineCount += 1;
+        group.quantity += toNumber(line.quantity);
+        group.amount += amount;
+        group.receipts.push({
+          lineId: line.id,
+          receiptId,
+          receiptRefNo: receipt?.ref_no ?? null,
+          businessDate: line.business_date,
+          refDate: receipt?.ref_date ?? null,
+          optionName,
+          quantity: toNumber(line.quantity),
+          amount,
+          parentRefDetailId,
+          rawParentId,
+          failureReason: getUnlinkedOptionFailureReason(
+            line,
+            parentLine,
+            paidReceiptIds
+          ),
+        });
+        unlinkedOptionGroups.set(optionKey, group);
         return;
       }
 
@@ -782,6 +897,11 @@ function buildMenuSales(
     totalItemAmount: items.reduce((sum, item) => sum + item.amount, 0),
     unlinkedOptionAmount,
     unlinkedOptionCount,
+    unlinkedOptions: Array.from(unlinkedOptionGroups.values()).sort((a, b) => {
+      if (b.amount !== a.amount) return b.amount - a.amount;
+      if (b.lineCount !== a.lineCount) return b.lineCount - a.lineCount;
+      return a.optionName.localeCompare(b.optionName);
+    }),
     groups,
     categories: Array.from(categoryMap.values()).sort((a, b) => {
       if (b.amount !== a.amount) return b.amount - a.amount;
@@ -927,7 +1047,7 @@ export async function GET(req: Request) {
     const { data: receipts, error: receiptsError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, business_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary"
+        "id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary"
       )
       .gte("business_date", fromDate)
       .lte("business_date", toDate);

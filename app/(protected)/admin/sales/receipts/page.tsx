@@ -1405,10 +1405,10 @@ export default function SalesReceiptsPage() {
                   amount: payment.amount,
                 })),
                 lineCount: (refreshedDetail.lines || []).filter(
-                  (line) => !isExistingOptionLine(line)
+                  (line) => line.isExcluded !== true && !isExistingOptionLine(line)
                 ).length,
                 optionLineCount: (refreshedDetail.lines || []).filter(
-                  isExistingOptionLine
+                  (line) => line.isExcluded !== true && isExistingOptionLine(line)
                 ).length,
               }
               : receipt
@@ -2283,9 +2283,12 @@ function ReceiptDropdown({
   }
   const receipt = detail.receipt;
   const payments = detail.payments || [];
+  const activeLines = (detail.lines || []).filter(
+    (line) => line.isExcluded !== true
+  );
   const hasOptionLines =
     detail.hasOptionLines === true ||
-    (detail.lines || []).some(isExistingOptionLine);
+    activeLines.some(isExistingOptionLine);
 
   // ?먮낯 ?멸툑 ?쒖떆?? API??taxSummary??original_tax_summary / vat_amount 湲곗?
   const taxRows = detail.taxSummary?.taxByRate || [];
@@ -2306,7 +2309,7 @@ function ReceiptDropdown({
     <div style={dropdownStyle}>
       <DetailSection title={text.salesItems}>
         <div style={lineListStyle}>
-          {(detail.lines || []).map((line) => {
+          {activeLines.map((line) => {
             const isOption = isExistingOptionLine(line);
             const lineTotalAmount = line.finalAmount || line.amount;
 
@@ -2415,7 +2418,7 @@ function ReceiptDropdown({
         key={`${receipt.id}-${receipt.modifiedAt || "original"}`}
         text={editText}
         receipt={receipt}
-        lines={detail.lines || []}
+        lines={activeLines}
         payments={payments}
         taxSavingAmount={taxSavingAmount}
         amountDifferenceAmount={amountDifferenceAmount}
@@ -2459,7 +2462,7 @@ function ReceiptEditPanel({
   const [isEditing, setIsEditing] = useState(false);
   const [draftLines, setDraftLines] = useState<ReceiptDraftLine[]>(() =>
     lines
-      .filter((line) => !isExistingOptionLine(line))
+      .filter((line) => line.isExcluded !== true && !isExistingOptionLine(line))
       .map((line) => ({
         id: line.id,
         refDetailId: line.refDetailId,
@@ -2473,7 +2476,9 @@ function ReceiptEditPanel({
         mode: "update" as const,
       }))
   );
-  const existingOptionLines = lines.filter(isExistingOptionLine);
+  const existingOptionLines = lines.filter(
+    (line) => line.isExcluded !== true && isExistingOptionLine(line)
+  );
   const [newLines, setNewLines] = useState<NewDraftLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
     hasCashPayment(payments) ? "cash" : "other"
@@ -2676,7 +2681,7 @@ function ReceiptEditPanel({
   function resetDraft() {
     setDraftLines(
       lines
-        .filter((line) => !isExistingOptionLine(line))
+        .filter((line) => line.isExcluded !== true && !isExistingOptionLine(line))
         .map((line) => ({
           id: line.id,
           refDetailId: line.refDetailId,

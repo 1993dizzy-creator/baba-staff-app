@@ -14,6 +14,7 @@ const CUKCUK_BASE_URL =
 
 const DEFAULT_BRANCH_ID = "c39228ba-a452-4cf9-bf34-424ffb151fb8";
 const SOURCE = "cukcuk";
+const SYNC_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
 const CUKCUK_LIMIT_REACHED_WARNING =
   "CUKCUK 응답이 limit에 도달했습니다. 해당 businessDate 데이터가 일부 누락됐을 수 있으니 POS 원본 매출과 검산하세요.";
 
@@ -88,6 +89,13 @@ type ExistingReceiptRow = ReceiptRow & {
 
 type ExistingLineRow = LineRow & {
   id: number;
+  is_excluded: boolean | null;
+};
+
+type ExistingLineLookup = {
+  rows: ExistingLineRow[];
+  byRefDetailKey: Map<string, ExistingLineRow>;
+  byFallbackKey: Map<string, ExistingLineRow[]>;
 };
 
 type PaymentRow = {
@@ -116,6 +124,29 @@ type SyncContext = {
   branchId: string;
   requestParams: JsonObject;
 };
+
+type RunningSyncRun = {
+  id: number;
+  started_at: string | null;
+};
+
+class SyncAlreadyRunningError extends Error {
+  businessDate: string;
+  runningSyncRunId: number | null;
+  startedAt: string | null;
+
+  constructor(params: {
+    businessDate: string;
+    runningSyncRunId: number | null;
+    startedAt: string | null;
+  }) {
+    super("해당 날짜 동기화가 이미 진행 중입니다.");
+    this.name = "SyncAlreadyRunningError";
+    this.businessDate = params.businessDate;
+    this.runningSyncRunId = params.runningSyncRunId;
+    this.startedAt = params.startedAt;
+  }
+}
 
 function isValidBusinessDate(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -671,6 +702,40 @@ function hasLineChanged(existing: ExistingLineRow, next: LineRow) {
   return compareKeys.some((key) => !isEqualValue(existing[key], next[key]));
 }
 
+function getLineRefDetailKey(
+  row: Pick<LineRow, "receipt_ref_id" | "ref_detail_id">
+) {
+  return `${row.receipt_ref_id}::${row.ref_detail_id}`;
+}
+
+function getLineFallbackKey(
+  row: Pick<
+    LineRow,
+    | "receipt_ref_id"
+    | "sort_order"
+    | "item_id"
+    | "item_code"
+    | "item_name"
+    | "quantity"
+    | "unit_price"
+    | "final_amount"
+    | "is_option"
+    | "parent_ref_detail_id"
+  >
+) {
+  return [
+    row.receipt_ref_id,
+    row.sort_order,
+    row.item_id || row.item_code || "",
+    row.item_name || "",
+    row.quantity,
+    row.unit_price,
+    row.final_amount,
+    row.is_option ? "option" : "normal",
+    row.parent_ref_detail_id || "",
+  ].join("\u001f");
+}
+
 function getPaymentKey(row: Pick<PaymentRow, "receipt_ref_id" | "payment_type" | "payment_name" | "card_name">) {
   return [
     row.receipt_ref_id,
@@ -727,6 +792,88 @@ async function createSyncRun(params: {
   }
 
   return Number(data.id);
+}
+
+async function expireStaleSyncRuns(params: {
+  businessDate: string;
+  branchId: string;
+}) {
+  const now = new Date();
+  const expiresBefore = new Date(
+    now.getTime() - SYNC_LOCK_TIMEOUT_MS
+  ).toISOString();
+
+  const { error } = await supabaseServer
+    .from("pos_sales_sync_runs")
+    .update({
+      status: "failed",
+      finished_at: now.toISOString(),
+      error_message: "Sync lock expired before this request started.",
+    })
+    .eq("source", SOURCE)
+    .eq("business_date", params.businessDate)
+    .eq("branch_id", params.branchId)
+    .eq("status", "running")
+    .lt("started_at", expiresBefore);
+
+  if (error) {
+    throw new Error(`Failed to expire stale sales sync runs: ${error.message}`);
+  }
+}
+
+async function getRunningSyncRun(params: {
+  businessDate: string;
+  branchId: string;
+}) {
+  const { data, error } = await supabaseServer
+    .from("pos_sales_sync_runs")
+    .select("id, started_at")
+    .eq("source", SOURCE)
+    .eq("business_date", params.businessDate)
+    .eq("branch_id", params.branchId)
+    .eq("status", "running")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to fetch running sales sync run: ${error.message}`);
+  }
+
+  if (!data) return null;
+
+  return {
+    id: Number((data as RunningSyncRun).id),
+    started_at: (data as RunningSyncRun).started_at,
+  };
+}
+
+async function acquireSyncRun(params: {
+  businessDate: string;
+  branchId: string;
+  requestParams: JsonObject;
+}) {
+  await expireStaleSyncRuns(params);
+
+  try {
+    return await createSyncRun(params);
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "message" in error &&
+      String(error.message).includes("duplicate key")
+    ) {
+      const running = await getRunningSyncRun(params);
+      throw new SyncAlreadyRunningError({
+        businessDate: params.businessDate,
+        runningSyncRunId: running?.id ?? null,
+        startedAt: running?.started_at ?? null,
+      });
+    }
+
+    throw error;
+  }
 }
 
 async function finishSyncRun(params: {
@@ -802,13 +949,19 @@ async function getModifiedReceiptRefIds(receiptRefIds: string[]) {
   return new Set(((data || []) as { ref_id: string }[]).map((row) => row.ref_id));
 }
 
-async function getExistingLines(receiptRefIds: string[]) {
-  if (receiptRefIds.length === 0) return new Map<string, ExistingLineRow>();
+async function getExistingLines(receiptRefIds: string[]): Promise<ExistingLineLookup> {
+  if (receiptRefIds.length === 0) {
+    return {
+      rows: [],
+      byRefDetailKey: new Map<string, ExistingLineRow>(),
+      byFallbackKey: new Map<string, ExistingLineRow[]>(),
+    };
+  }
 
   const { data, error } = await supabaseServer
     .from("pos_sales_receipt_lines")
     .select(
-      "id, source, receipt_id, receipt_ref_id, ref_detail_id, parent_ref_detail_id, business_date, ref_date, sort_order, item_id, item_code, item_name, unit_id, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, pre_tax_amount, tax_reduction_amount, ref_detail_type, inventory_item_type, is_option, payment_status, is_canceled, raw_json, synced_at, updated_at"
+      "id, source, receipt_id, receipt_ref_id, ref_detail_id, parent_ref_detail_id, business_date, ref_date, sort_order, item_id, item_code, item_name, unit_id, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, pre_tax_amount, tax_reduction_amount, ref_detail_type, inventory_item_type, is_option, is_excluded, payment_status, is_canceled, raw_json, synced_at, updated_at"
     )
     .eq("source", SOURCE)
     .in("receipt_ref_id", receiptRefIds);
@@ -817,19 +970,286 @@ async function getExistingLines(receiptRefIds: string[]) {
     throw new Error(`Failed to fetch existing sales lines: ${error.message}`);
   }
 
-  const map = new Map<string, ExistingLineRow>();
+  const byRefDetailKey = new Map<string, ExistingLineRow>();
+  const byFallbackKey = new Map<string, ExistingLineRow[]>();
 
-  ((data || []) as ExistingLineRow[]).forEach(
-    (row) => {
-      if (!row.ref_detail_id) return;
-      map.set(`${row.receipt_ref_id}::${row.ref_detail_id}`, {
-        ...row,
-        id: Number(row.id),
-      });
-    }
+  const rows = ((data || []) as ExistingLineRow[]).map((row) => ({
+    ...row,
+    id: Number(row.id),
+  }));
+
+  rows
+    .filter((line) => line.is_excluded !== true)
+    .forEach((line) => {
+      const fallbackKey = getLineFallbackKey(line);
+      const fallbackRows = byFallbackKey.get(fallbackKey) || [];
+
+      fallbackRows.push(line);
+      byFallbackKey.set(fallbackKey, fallbackRows);
+
+      if (!line.ref_detail_id) return;
+      byRefDetailKey.set(getLineRefDetailKey(line), line);
+    });
+
+  return {
+    rows,
+    byRefDetailKey,
+    byFallbackKey,
+  };
+}
+
+async function getReceiptsWithAppliedDeductions(receiptIds: number[]) {
+  const safeReceiptIds = receiptIds.filter(
+    (id) => Number.isInteger(id) && id > 0
   );
+  if (safeReceiptIds.length === 0) return new Set<number>();
+
+  const [deductions, deductionReceipts] = await Promise.all([
+    supabaseServer
+      .from("pos_inventory_deductions")
+      .select("receipt_id")
+      .in("receipt_id", safeReceiptIds),
+    supabaseServer
+      .from("pos_inventory_deduction_receipts")
+      .select("receipt_id")
+      .in("receipt_id", safeReceiptIds),
+  ]);
+
+  if (deductions.error) {
+    throw new Error(
+      `Failed to fetch sales inventory deductions: ${deductions.error.message}`
+    );
+  }
+  if (deductionReceipts.error) {
+    throw new Error(
+      `Failed to fetch sales inventory deduction receipts: ${deductionReceipts.error.message}`
+    );
+  }
+
+  return new Set(
+    [
+      ...((deductions.data || []) as { receipt_id: number | null }[]).map(
+        (row) => Number(row.receipt_id)
+      ),
+      ...((deductionReceipts.data || []) as { receipt_id: number | null }[]).map(
+        (row) => Number(row.receipt_id)
+      ),
+    ].filter((id) => Number.isInteger(id) && id > 0)
+  );
+}
+
+function isOptionOrLinkedLine(
+  row: Pick<
+    LineRow,
+    "is_option" | "parent_ref_detail_id" | "ref_detail_type"
+  >
+) {
+  return (
+    row.is_option === true ||
+    Boolean(row.parent_ref_detail_id) ||
+    (row.ref_detail_type !== null && row.ref_detail_type !== 1)
+  );
+}
+
+function sumLineFinalAmount(
+  rows: Pick<LineRow, "final_amount">[]
+) {
+  return rows.reduce((sum, row) => sum + Number(row.final_amount || 0), 0);
+}
+
+function isSameAmount(left: number, right: number) {
+  return Math.abs(left - right) < 0.01;
+}
+
+function groupLinesByReceiptRefId<T extends Pick<LineRow, "receipt_ref_id">>(
+  rows: T[]
+) {
+  const map = new Map<string, T[]>();
+
+  rows.forEach((row) => {
+    const current = map.get(row.receipt_ref_id) || [];
+    current.push(row);
+    map.set(row.receipt_ref_id, current);
+  });
 
   return map;
+}
+
+function getMatchedActiveLineIds(params: {
+  payloadRows: LineRow[];
+  activeLines: ExistingLineRow[];
+}) {
+  const byRefDetailKey = new Map<string, ExistingLineRow>();
+  const byFallbackKey = new Map<string, ExistingLineRow[]>();
+
+  params.activeLines.forEach((line) => {
+    const fallbackKey = getLineFallbackKey(line);
+    const fallbackRows = byFallbackKey.get(fallbackKey) || [];
+
+    fallbackRows.push(line);
+    byFallbackKey.set(fallbackKey, fallbackRows);
+
+    if (line.ref_detail_id) {
+      byRefDetailKey.set(getLineRefDetailKey(line), line);
+    }
+  });
+
+  const matchedIds = new Set<number>();
+  let ambiguousCount = 0;
+
+  params.payloadRows.forEach((row) => {
+    if (!row.ref_detail_id) return;
+
+    const primaryExisting = byRefDetailKey.get(getLineRefDetailKey(row));
+    if (primaryExisting) {
+      matchedIds.add(primaryExisting.id);
+      return;
+    }
+
+    const fallbackRows = (byFallbackKey.get(getLineFallbackKey(row)) || []).filter(
+      (line) => !matchedIds.has(line.id)
+    );
+
+    if (fallbackRows.length === 1) {
+      matchedIds.add(fallbackRows[0].id);
+      return;
+    }
+
+    if (fallbackRows.length > 1) {
+      ambiguousCount += 1;
+    }
+  });
+
+  return {
+    matchedIds,
+    ambiguousCount,
+  };
+}
+
+async function excludeStaleLines(params: {
+  rows: LineRow[];
+  receiptRows: Map<string, ExistingReceiptRow>;
+  skippedFallbackReceiptRefIds: Set<string>;
+}) {
+  const receiptRefIds = Array.from(
+    new Set(params.rows.map((row) => row.receipt_ref_id))
+  );
+
+  if (receiptRefIds.length === 0) {
+    return {
+      candidateCount: 0,
+      excludedCount: 0,
+      skippedCount: 0,
+    };
+  }
+
+  const latestLines = await getExistingLines(receiptRefIds);
+  const rowsByReceiptRefId = groupLinesByReceiptRefId(params.rows);
+  const activeLinesByReceiptRefId = groupLinesByReceiptRefId(
+    latestLines.rows.filter((line) => line.is_excluded !== true)
+  );
+  const receiptIds = Array.from(params.receiptRows.values()).map((row) => row.id);
+  const receiptsWithDeductions = await getReceiptsWithAppliedDeductions(receiptIds);
+  let candidateCount = 0;
+  let excludedCount = 0;
+  let skippedCount = 0;
+
+  for (const receiptRefId of receiptRefIds) {
+    const receipt = params.receiptRows.get(receiptRefId);
+    const payloadRows = rowsByReceiptRefId.get(receiptRefId) || [];
+    const activeLines = activeLinesByReceiptRefId.get(receiptRefId) || [];
+
+    if (!receipt || payloadRows.length === 0 || activeLines.length === 0) {
+      continue;
+    }
+
+    const { matchedIds, ambiguousCount } = getMatchedActiveLineIds({
+      payloadRows,
+      activeLines,
+    });
+    const staleCandidates = activeLines.filter((line) => !matchedIds.has(line.id));
+
+    if (staleCandidates.length === 0) {
+      continue;
+    }
+
+    candidateCount += staleCandidates.length;
+
+    const payloadSum = sumLineFinalAmount(payloadRows);
+    const activeLineSum = sumLineFinalAmount(activeLines);
+    const staleCandidateSum = sumLineFinalAmount(staleCandidates);
+    const overageAmount = activeLineSum - receipt.total_amount;
+    const skipReason = (() => {
+      if (receipt.is_modified === true) return "receipt_modified";
+      if (receipt.is_canceled === true) return "receipt_canceled";
+      if (receiptsWithDeductions.has(receipt.id)) return "deduction_linked";
+      if (ambiguousCount > 0) return "ambiguous_payload_match";
+      if (params.skippedFallbackReceiptRefIds.has(receiptRefId)) {
+        return "fallback_match_skipped";
+      }
+      if (
+        payloadRows.some(isOptionOrLinkedLine) ||
+        activeLines.some(isOptionOrLinkedLine)
+      ) {
+        return "option_or_parent_lines_present";
+      }
+      if (!isSameAmount(payloadSum, receipt.total_amount)) {
+        return "payload_sum_mismatch";
+      }
+      if (overageAmount <= 0 || !isSameAmount(staleCandidateSum, overageAmount)) {
+        return "stale_sum_mismatch";
+      }
+      return null;
+    })();
+
+    if (skipReason) {
+      skippedCount += staleCandidates.length;
+      console.warn("[SALES_SYNC_STALE_LINES_SKIPPED]", {
+        receiptRefId,
+        receiptId: receipt.id,
+        reason: skipReason,
+        staleCandidateLineIds: staleCandidates.map((line) => line.id),
+        payloadSum,
+        receiptTotalAmount: receipt.total_amount,
+        activeLineSum,
+        overageAmount,
+        staleCandidateSum,
+      });
+      continue;
+    }
+
+    const staleLineIds = staleCandidates.map((line) => line.id);
+    const { error } = await supabaseServer
+      .from("pos_sales_receipt_lines")
+      .update({
+        is_excluded: true,
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", staleLineIds);
+
+    if (error) {
+      throw new Error(
+        `Failed to exclude stale sales lines for ${receiptRefId}: ${error.message}`
+      );
+    }
+
+    excludedCount += staleLineIds.length;
+    console.warn("[SALES_SYNC_STALE_LINES_EXCLUDED]", {
+      receiptRefId,
+      receiptId: receipt.id,
+      staleLineIds,
+      payloadSum,
+      receiptTotalAmount: receipt.total_amount,
+      activeLineSum,
+      staleCandidateSum,
+    });
+  }
+
+  return {
+    candidateCount,
+    excludedCount,
+    skippedCount,
+  };
 }
 
 function buildReceiptIdMap(existingMap: Map<string, ExistingReceiptRow>) {
@@ -963,39 +1383,83 @@ async function saveLines(rows: LineRow[]) {
       updatedCount: 0,
       statusChangedCount: 0,
       taxLineChangedCount: 0,
+      fallbackMatchedCount: 0,
+      fallbackSkippedCount: 0,
+      staleCandidateCount: 0,
+      staleExcludedCount: 0,
+      staleSkippedCount: 0,
     };
   }
 
   const receiptRefIds = Array.from(
     new Set(rows.map((row) => row.receipt_ref_id))
   );
-  const existingMap = await getExistingLines(receiptRefIds);
+  const existingLines = await getExistingLines(receiptRefIds);
+  const receiptRows = await getExistingReceipts(receiptRefIds);
   const modifiedReceiptRefIds = await getModifiedReceiptRefIds(receiptRefIds);
   const editableRows = rows.filter(
     (row) => !modifiedReceiptRefIds.has(row.receipt_ref_id)
   );
 
-  const inserts = editableRows.filter((row) => {
-    if (!row.ref_detail_id) return false;
-    return !existingMap.has(`${row.receipt_ref_id}::${row.ref_detail_id}`);
-  });
-  const updates = editableRows.filter((row) => {
-    if (!row.ref_detail_id) return false;
-    const existing = existingMap.get(`${row.receipt_ref_id}::${row.ref_detail_id}`);
-    return existing ? hasLineChanged(existing, row) : false;
+  const inserts: LineRow[] = [];
+  const updates: { row: LineRow; existing: ExistingLineRow }[] = [];
+  const usedExistingLineIds = new Set<number>();
+  const skippedFallbackReceiptRefIds = new Set<string>();
+  let fallbackMatchedCount = 0;
+  let fallbackSkippedCount = 0;
+
+  editableRows.forEach((row) => {
+    if (!row.ref_detail_id) return;
+    const primaryKey = getLineRefDetailKey(row);
+    const primaryExisting = existingLines.byRefDetailKey.get(primaryKey);
+
+    if (primaryExisting) {
+      usedExistingLineIds.add(primaryExisting.id);
+      if (hasLineChanged(primaryExisting, row)) {
+        updates.push({ row, existing: primaryExisting });
+      }
+      return;
+    }
+
+    const fallbackRows = (
+      existingLines.byFallbackKey.get(getLineFallbackKey(row)) || []
+    ).filter((line) => !usedExistingLineIds.has(line.id));
+
+    if (fallbackRows.length === 1) {
+      const fallbackExisting = fallbackRows[0];
+      usedExistingLineIds.add(fallbackExisting.id);
+      fallbackMatchedCount += 1;
+
+      if (hasLineChanged(fallbackExisting, row)) {
+        updates.push({ row, existing: fallbackExisting });
+      }
+      return;
+    }
+
+    if (fallbackRows.length > 1) {
+      fallbackSkippedCount += 1;
+      skippedFallbackReceiptRefIds.add(row.receipt_ref_id);
+      console.warn(
+        `[SALES_SYNC_LINE_FALLBACK_AMBIGUOUS] ${row.receipt_ref_id}/${row.ref_detail_id}: ${fallbackRows.length} candidate lines`
+      );
+      return;
+    }
+
+    inserts.push(row);
   });
   const statusChangedCount =
     inserts.filter((row) => row.is_canceled).length +
-    updates.filter((row) => {
-      if (!row.ref_detail_id) return false;
-      const existing = existingMap.get(`${row.receipt_ref_id}::${row.ref_detail_id}`);
+    updates.filter(({ row, existing }) => {
       return (
         existing &&
         (existing.payment_status !== row.payment_status ||
           existing.is_canceled !== row.is_canceled)
       );
     }).length;
-  const taxLineChangedCount = [...inserts, ...updates].filter(
+  const taxLineChangedCount = [
+    ...inserts,
+    ...updates.map(({ row }) => row),
+  ].filter(
     (row) =>
       row.tax_rate !== null ||
       row.tax_amount !== 0 ||
@@ -1013,12 +1477,11 @@ async function saveLines(rows: LineRow[]) {
     }
   }
 
-  for (const row of updates) {
-    const id = existingMap.get(`${row.receipt_ref_id}::${row.ref_detail_id}`)?.id;
+  for (const { row, existing } of updates) {
     const { error } = await supabaseServer
       .from("pos_sales_receipt_lines")
       .update(row)
-      .eq("id", id);
+      .eq("id", existing.id);
 
     if (error) {
       throw new Error(
@@ -1027,11 +1490,22 @@ async function saveLines(rows: LineRow[]) {
     }
   }
 
+  const staleLineResult = await excludeStaleLines({
+    rows: editableRows,
+    receiptRows,
+    skippedFallbackReceiptRefIds,
+  });
+
   return {
     createdCount: inserts.length,
     updatedCount: updates.length,
     statusChangedCount,
     taxLineChangedCount,
+    fallbackMatchedCount,
+    fallbackSkippedCount,
+    staleCandidateCount: staleLineResult.candidateCount,
+    staleExcludedCount: staleLineResult.excludedCount,
+    staleSkippedCount: staleLineResult.skippedCount,
   };
 }
 
@@ -1152,6 +1626,7 @@ export async function POST(req: Request) {
       branchId,
       requestParams,
     };
+    syncRunId = await acquireSyncRun(syncContext);
 
     const login = await loginCukcuk();
 
@@ -1289,6 +1764,7 @@ export async function POST(req: Request) {
       receiptSaveResult.updatedCount +
       lineSaveResult.createdCount +
       lineSaveResult.updatedCount +
+      lineSaveResult.staleExcludedCount +
       paymentSaveResult.createdCount +
       paymentSaveResult.updatedCount;
     const statusChangedCount =
@@ -1297,29 +1773,26 @@ export async function POST(req: Request) {
     const noChange =
       changedCount === 0 && statusChangedCount === 0 && failedDetails.length === 0;
 
-    if (!noChange) {
-      syncRunId = await createSyncRun(syncContext);
-
-      await finishSyncRun({
-        runId: syncRunId,
-        status: "success",
-        receiptCount: receiptRows.length,
-        lineCount: lineRows.length,
-        createdCount:
-          receiptSaveResult.createdCount +
-          lineSaveResult.createdCount +
-          paymentSaveResult.createdCount,
-        updatedCount:
-          receiptSaveResult.updatedCount +
-          lineSaveResult.updatedCount +
-          paymentSaveResult.updatedCount,
-        canceledCount,
-        errorMessage:
-          failedDetails.length > 0
-            ? `${failedDetails.length} invoice detail payload(s) skipped.`
-            : undefined,
-      });
-    }
+    await finishSyncRun({
+      runId: syncRunId,
+      status: "success",
+      receiptCount: receiptRows.length,
+      lineCount: lineRows.length,
+      createdCount:
+        receiptSaveResult.createdCount +
+        lineSaveResult.createdCount +
+        paymentSaveResult.createdCount,
+      updatedCount:
+        receiptSaveResult.updatedCount +
+        lineSaveResult.updatedCount +
+        lineSaveResult.staleExcludedCount +
+        paymentSaveResult.updatedCount,
+      canceledCount,
+      errorMessage:
+        failedDetails.length > 0
+          ? `${failedDetails.length} invoice detail payload(s) skipped.`
+          : undefined,
+    });
 
     return NextResponse.json({
       ok: true,
@@ -1337,6 +1810,11 @@ export async function POST(req: Request) {
         receiptUpdatedCount: receiptSaveResult.updatedCount,
         lineCreatedCount: lineSaveResult.createdCount,
         lineUpdatedCount: lineSaveResult.updatedCount,
+        lineFallbackMatchedCount: lineSaveResult.fallbackMatchedCount,
+        lineFallbackSkippedCount: lineSaveResult.fallbackSkippedCount,
+        lineStaleCandidateCount: lineSaveResult.staleCandidateCount,
+        lineStaleExcludedCount: lineSaveResult.staleExcludedCount,
+        lineStaleSkippedCount: lineSaveResult.staleSkippedCount,
         paymentSourceReceiptCount: receiptPaymentSources.size,
         paymentRowsFromDetailPayloadCount: detailPaymentRows.length,
         paymentRowsFromStoredReceiptCount: storedReceiptPaymentRows.length,
@@ -1357,13 +1835,24 @@ export async function POST(req: Request) {
     const message =
       error instanceof Error ? error.message : "Unknown sales sync error";
 
+    if (error instanceof SyncAlreadyRunningError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "sync_already_running",
+          message: error.message,
+          error: error.message,
+          businessDate: error.businessDate,
+          runningSyncRunId: error.runningSyncRunId,
+          startedAt: error.startedAt,
+        },
+        { status: 409 }
+      );
+    }
+
     console.error(error);
 
     try {
-      if (!syncRunId && syncContext) {
-        syncRunId = await createSyncRun(syncContext);
-      }
-
       if (syncRunId) {
         await finishSyncRun({
           runId: syncRunId,

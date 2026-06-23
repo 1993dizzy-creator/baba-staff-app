@@ -89,6 +89,37 @@ type MenuSalesOption = {
   amount: number;
 };
 
+type UnlinkedOptionFailureReason =
+  | "missing_parent_id"
+  | "parent_not_found"
+  | "parent_not_sales_line"
+  | "parent_excluded_or_not_eligible"
+  | "parent_missing_ref_detail_id"
+  | "unknown";
+
+type UnlinkedOptionReceipt = {
+  lineId: number;
+  receiptId: number;
+  receiptRefNo: string | null;
+  businessDate: string;
+  refDate: string | null;
+  optionName: string;
+  quantity: number;
+  amount: number;
+  parentRefDetailId: string | null;
+  rawParentId: string | null;
+  failureReason: UnlinkedOptionFailureReason;
+};
+
+type UnlinkedOptionGroup = {
+  key: string;
+  optionName: string;
+  lineCount: number;
+  quantity: number;
+  amount: number;
+  receipts: UnlinkedOptionReceipt[];
+};
+
 type CategoryGroupType = "food" | "drink" | "uncategorized";
 type MenuSalesGroupKey = "all" | CategoryGroupType;
 
@@ -128,6 +159,7 @@ type MenuSales = {
   totalItemAmount: number;
   unlinkedOptionAmount: number;
   unlinkedOptionCount: number;
+  unlinkedOptions?: UnlinkedOptionGroup[];
   groups: MenuSalesGroup[];
   categories: MenuSalesCategory[];
   items: MenuSalesItem[];
@@ -166,6 +198,26 @@ function formatNumber(value?: number) {
   return new Intl.NumberFormat("ko-KR", {
     maximumFractionDigits: 2,
   }).format(value || 0);
+}
+
+function formatSaleDateTime(value: string | null, fallbackDate: string) {
+  if (!value) return fallbackDate;
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return fallbackDate;
+
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${mm}.${dd} ${hh}:${min}`;
+}
+
+function getFailureReasonLabel(
+  reason: UnlinkedOptionFailureReason,
+  text: SalesMonthlyViewText
+) {
+  return text.failureReasons[reason] || text.failureReasons.unknown;
 }
 
 function getWeekdayInfo(
@@ -878,6 +930,11 @@ function MenuSalesList({
     ...categories.map((category) => category.amount),
     0
   );
+  const unlinkedOptions = [...(menuSales?.unlinkedOptions || [])].sort((a, b) => {
+    if (b.amount !== a.amount) return b.amount - a.amount;
+    if (b.lineCount !== a.lineCount) return b.lineCount - a.lineCount;
+    return a.optionName.localeCompare(b.optionName);
+  });
 
   return (
     <div style={menuSalesContentStyle}>
@@ -1072,6 +1129,40 @@ function MenuSalesList({
           </strong>
           <span>{text.unlinkedOptionsWarning}</span>
           <span>{formatVnd(menuSales?.unlinkedOptionAmount)}</span>
+          {unlinkedOptions.length > 0 ? (
+            <details style={unlinkedOptionDetailsStyle}>
+              <summary style={unlinkedOptionDetailsSummaryStyle}>
+                {text.unlinkedOptionDetails}
+              </summary>
+              <div style={unlinkedOptionDetailListStyle}>
+                {unlinkedOptions.flatMap((option) =>
+                  option.receipts.map((receipt) => (
+                    <div
+                      key={`${option.key}-${receipt.lineId}`}
+                      style={unlinkedOptionDetailRowStyle}
+                    >
+                      <span style={unlinkedOptionNameStyle}>
+                        {receipt.receiptRefNo || `#${receipt.receiptId}`} ·{" "}
+                        {receipt.optionName}
+                      </span>
+                      <span style={unlinkedOptionMetaStyle}>
+                        {text.saleDate}{" "}
+                        {formatSaleDateTime(receipt.refDate, receipt.businessDate)}
+                      </span>
+                      <span style={unlinkedOptionMetaStyle}>
+                        {text.selection} {formatNumber(receipt.quantity)} ·{" "}
+                        {formatVnd(receipt.amount)}
+                      </span>
+                      <span style={unlinkedOptionMetaStyle}>
+                        {text.failureReason}:{" "}
+                        {getFailureReasonLabel(receipt.failureReason, text)}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </details>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -1847,6 +1938,52 @@ const unlinkedOptionWarningStyle: CSSProperties = {
   color: "#92400e",
   fontSize: 11,
   lineHeight: 1.4,
+};
+
+const unlinkedOptionNameStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 11,
+  lineHeight: 1.3,
+  fontWeight: 800,
+  color: "#78350f",
+};
+
+const unlinkedOptionMetaStyle: CSSProperties = {
+  minWidth: 0,
+  fontSize: 10,
+  lineHeight: 1.3,
+  fontWeight: 700,
+  color: "#92400e",
+};
+
+const unlinkedOptionDetailsStyle: CSSProperties = {
+  marginTop: 4,
+};
+
+const unlinkedOptionDetailsSummaryStyle: CSSProperties = {
+  cursor: "pointer",
+  fontSize: 11,
+  lineHeight: 1.3,
+  fontWeight: 900,
+  color: "#78350f",
+};
+
+const unlinkedOptionDetailListStyle: CSSProperties = {
+  display: "grid",
+  gap: 4,
+  marginTop: 5,
+};
+
+const unlinkedOptionDetailRowStyle: CSSProperties = {
+  display: "grid",
+  gap: 2,
+  padding: "6px 7px",
+  borderRadius: 7,
+  background: "#ffffff",
+  border: "1px dashed #f59e0b",
 };
 
 const statusValueStyle: CSSProperties = {

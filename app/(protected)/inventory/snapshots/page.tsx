@@ -2597,7 +2597,7 @@ export default function InventorySnapshotsPage() {
                                     justifyContent: "flex-end",
                                 }}
                             >
-                                {selectedLog && !selectedPurchaseAggregate && !isSalesInventoryLog(selectedLog) && (
+                                {selectedLog && !isSalesInventoryLog(selectedLog) && (
                                     <button
                                         type="button"
                                         onClick={() =>

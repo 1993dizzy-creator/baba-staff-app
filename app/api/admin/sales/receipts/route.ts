@@ -20,6 +20,7 @@ type ReceiptRow = {
 type LineRow = {
   receipt_ref_id: string;
   is_option: boolean | null;
+  is_excluded: boolean | null;
   mapping_status: string | null;
 };
 
@@ -91,7 +92,7 @@ export async function GET(req: Request) {
     if (receiptRefIds.length > 0) {
       const { data: lines, error: linesError } = await supabaseServer
         .from("pos_sales_receipt_lines")
-        .select("receipt_ref_id, is_option, mapping_status")
+        .select("receipt_ref_id, is_option, is_excluded, mapping_status")
         .eq("business_date", businessDate)
         .in("receipt_ref_id", receiptRefIds);
 
@@ -100,6 +101,8 @@ export async function GET(req: Request) {
       }
 
       ((lines || []) as LineRow[]).forEach((line) => {
+        if (line.is_excluded === true) return;
+
         const current =
           lineCountsByReceiptRefId.get(line.receipt_ref_id) || {
             lineCount: 0,

@@ -119,7 +119,11 @@ type SalesTodayResponse = {
 
 type SalesSyncResponse = {
   ok: boolean;
+  code?: string;
+  message?: string;
   error?: string;
+  businessDate?: string;
+  runningSyncRunId?: number | null;
   result?: {
     invoiceCount?: number;
     lineCount?: number;
@@ -307,6 +311,14 @@ export default function SalesPage() {
       const result = (await res.json().catch(() => null)) as
         | SalesSyncResponse
         | null;
+
+      if (res.status === 409 && result?.code === "sync_already_running") {
+        setSyncMessage(
+          result.message ||
+            "이미 해당 날짜 동기화가 진행 중입니다. 잠시 후 다시 시도해주세요."
+        );
+        return;
+      }
 
       if (!res.ok || !result?.ok) {
         throw new Error(

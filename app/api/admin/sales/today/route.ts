@@ -428,7 +428,13 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
   const linesByReceiptId = new Map<number, LineRow[]>();
 
   lines.forEach((line) => {
-    if (line.receipt_id === null || !paidReceiptIds.has(line.receipt_id)) return;
+    if (
+      line.receipt_id === null ||
+      !paidReceiptIds.has(line.receipt_id) ||
+      line.is_excluded === true
+    ) {
+      return;
+    }
 
     const current = linesByReceiptId.get(line.receipt_id) || [];
     current.push(line);
