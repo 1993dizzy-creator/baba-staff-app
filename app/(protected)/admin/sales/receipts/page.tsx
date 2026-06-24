@@ -17,6 +17,11 @@ const salesTabs = [
   { href: "/admin/sales/monthly", key: "monthly" },
 ] as const;
 
+const manualReceiptTableNameOptions = [
+  ...Array.from({ length: 18 }, (_, index) => String(index + 1)),
+  ...Array.from({ length: 11 }, (_, index) => `BAR${index + 1}`),
+];
+
 type SalesReceiptsText =
   (typeof salesText)[keyof typeof salesText]["receipts"];
 type SalesReceiptsEditText =
@@ -41,6 +46,7 @@ type SalesReceiptsViewText = SalesCommonText &
     | "receivedAmount"
     | "changeAmount"
     | "paid"
+    | "paymentPending"
     | "canceled"
     | "status"
     | "modified"
@@ -353,6 +359,43 @@ type PosProductsSyncResponse = {
   };
 };
 
+type ManualDraftLine = {
+  clientId: string;
+  parentClientId?: string | null;
+  productId: number | null;
+  itemCode: string | null;
+  itemName: string;
+  unitName: string | null;
+  quantity: number;
+  unitPrice: number;
+  discountAmount: number;
+  taxRate: number | null;
+  isOption?: boolean;
+  refDetailType?: number;
+  inventoryItemType?: number | null;
+  additionId?: string | null;
+  optionGroupName?: string | null;
+  rawJson?: Record<string, unknown> | null;
+};
+
+type CreateManualReceiptInput = {
+  businessDate: string;
+  saleTime: string;
+  tableName: string;
+  note: string;
+  vatEnabled: boolean;
+  paymentMethod: "cash" | "other";
+  cashReceivedAmount: number;
+  manualFinalAmount?: number;
+  lines: ManualDraftLine[];
+};
+
+type ManualReceiptCreateResponse = {
+  ok: boolean;
+  error?: string;
+  receipt?: { id: number; refId: string; refNo: string; businessDate: string; finalAmount: number };
+};
+
 type InventoryPreviewStatus =
   | "ready"
   | "skipped"
@@ -416,6 +459,7 @@ type InventoryDeductionPreview = {
       isOption: boolean;
       lineType: string;
       itemName: string | null;
+      posItemCode?: string | null;
       quantitySold: number;
       mappingSnapshot?: Record<string, unknown> | null;
       status: string;
@@ -528,6 +572,8 @@ const inventoryPreviewText = {
     ownerMasterOnly: "Owner/Master 전용",
     applyConfirm:
       "선택한 영수증의 재고를 실제로 차감합니다. 계속하시겠습니까?",
+    applyConfirmDetailed:
+      "선택된 영수증 {receiptCount}건의 차감 가능한 항목 {itemCount}개를 재고에서 차감합니다. 확인필요/차감불가/이미차감 항목은 제외됩니다. 계속하시겠습니까?",
     applyFailed: "판매 재고차감을 확정하지 못했습니다.",
     receipt: "영수증",
     deduction: "차감",
@@ -564,15 +610,46 @@ const inventoryPreviewText = {
     alreadyAppliedHelp: "이미 재고 차감이 완료된 영수증입니다",
     modifiedAfterApplyHelp: "차감 후 수정되어 별도 확인이 필요합니다",
     genericCheckHelp: "내용 확인 후 처리해주세요",
+    lineStatusGroup: {
+      ready: "차감가능",
+      mappingRequired: "매핑 필요",
+      operationReview: "운영 확인 필요",
+      incompleteRecipe: "레시피 미완성",
+      excluded: "차감 제외",
+      insufficientStock: "재고 부족",
+      alreadyApplied: "이미 차감됨",
+    },
+    lineStatusHelp: {
+      ready: "재고 차감 대상입니다.",
+      mappingRequired: "재고 품목과 연결이 필요합니다.",
+      operationReview: "운영 기준 확인 후 매핑 방식을 결정해주세요.",
+      incompleteRecipe: "레시피 재료 설정 후 자동 차감할 수 있습니다.",
+      excluded: "차감 제외로 설정된 상품입니다.",
+      insufficientStock: "현재 재고가 부족합니다.",
+      alreadyApplied: "이미 판매차감이 적용된 항목입니다.",
+    },
     partialNotice:
       "Recipe 미완성 라인은 차감 대상에서 제외됩니다. Direct 매핑 상품과 완성 Recipe 상품은 계속 차감 가능합니다.",
+    selectionNoticeReady:
+      "선택된 영수증의 차감 가능한 항목만 재고에서 차감됩니다.",
+    selectionNoticeEmpty: "차감할 영수증을 선택해주세요.",
+    selectionNoticeNeedsCheck:
+      "확인필요 항목은 매핑/운영 기준 정리 후 차감할 수 있습니다.",
+    selectionNoticeAlreadyApplied:
+      "이미 차감된 영수증은 중복 차감되지 않습니다.",
+    selectionNoticeApplicableOnly: "차감 가능한 항목만 확정됩니다.",
+    selectionNoticeExcluded: "는 차감 확정 대상에서 제외됩니다.",
+    selectionStatusSelectable: "선택 가능",
+    selectionStatusNeedsCheck: "확인필요",
+    selectionStatusAlreadyApplied: "이미 차감됨",
+    selectionStatusBlocked: "차감 불가",
     status: {
       ready: "차감가능",
       partial: "일부 가능",
       needsCheck: "확인필요",
       skipped: "차감 불필요",
       alreadyApplied: "이미 차감",
-      modified: "수정됨",
+      modified: "차감 후 수정",
     },
     lineType: {
       direct: "직접 차감",
@@ -624,6 +701,8 @@ const inventoryPreviewText = {
     applyButton: "Xác nhận trừ kho",
     ownerMasterOnly: "Chỉ Owner/Master",
     applyConfirm: "Sẽ trừ kho thực tế cho hóa đơn đã chọn. Tiếp tục?",
+    applyConfirmDetailed:
+      "Sẽ trừ {itemCount} mục có thể trừ kho trong {receiptCount} hóa đơn đã chọn. Mục cần kiểm tra/không thể trừ/đã trừ sẽ bị loại. Tiếp tục?",
     applyFailed: "Không xác nhận được trừ kho bán hàng.",
     receipt: "Hóa đơn",
     deduction: "Trừ kho",
@@ -660,15 +739,46 @@ const inventoryPreviewText = {
     alreadyAppliedHelp: "Hóa đơn này đã được trừ kho",
     modifiedAfterApplyHelp: "Hóa đơn đã sửa sau khi trừ kho, cần kiểm tra riêng",
     genericCheckHelp: "Vui lòng kiểm tra nội dung trước khi xử lý",
+    lineStatusGroup: {
+      ready: "Có thể trừ",
+      mappingRequired: "Cần liên kết",
+      operationReview: "Cần kiểm tra",
+      incompleteRecipe: "Thiếu Recipe",
+      excluded: "Loại khỏi trừ",
+      insufficientStock: "Thiếu tồn kho",
+      alreadyApplied: "Đã trừ",
+    },
+    lineStatusHelp: {
+      ready: "Mục này có thể trừ kho.",
+      mappingRequired: "Cần liên kết với hàng tồn kho.",
+      operationReview: "Kiểm tra nghiệp vụ rồi chọn cách liên kết.",
+      incompleteRecipe: "Có thể tự động trừ sau khi thiết lập nguyên liệu Recipe.",
+      excluded: "Mục này được thiết lập loại khỏi trừ kho.",
+      insufficientStock: "Số lượng tồn kho hiện không đủ.",
+      alreadyApplied: "Mục này đã được áp dụng trừ kho.",
+    },
     partialNotice:
       "Dòng Recipe chưa hoàn thiện sẽ bị loại khỏi trừ kho. Món Direct và Recipe hoàn chỉnh vẫn có thể trừ kho.",
+    selectionNoticeReady:
+      "Chỉ các mục có thể trừ trong hóa đơn đã chọn sẽ bị trừ kho.",
+    selectionNoticeEmpty: "Vui lòng chọn hóa đơn cần trừ kho.",
+    selectionNoticeNeedsCheck:
+      "Mục cần kiểm tra có thể trừ sau khi hoàn tất liên kết/quy tắc vận hành.",
+    selectionNoticeAlreadyApplied:
+      "Hóa đơn đã trừ kho sẽ không bị trừ lặp lại.",
+    selectionNoticeApplicableOnly: "Chỉ các mục có thể trừ kho sẽ được xác nhận.",
+    selectionNoticeExcluded: " sẽ bị loại khỏi xác nhận trừ kho.",
+    selectionStatusSelectable: "Có thể chọn",
+    selectionStatusNeedsCheck: "Cần kiểm tra",
+    selectionStatusAlreadyApplied: "Đã trừ",
+    selectionStatusBlocked: "Không thể trừ",
     status: {
       ready: "Có thể trừ kho",
       partial: "Có thể trừ một phần",
       needsCheck: "Cần kiểm tra",
       skipped: "Không cần trừ",
       alreadyApplied: "Đã trừ kho",
-      modified: "Đã sửa",
+      modified: "Đã sửa sau khi trừ kho",
     },
     lineType: {
       direct: "Trừ trực tiếp",
@@ -704,10 +814,6 @@ const inventoryPreviewText = {
 } satisfies Record<AppLanguage, unknown>;
 
 type InventoryPreviewCopy = (typeof inventoryPreviewText)[AppLanguage];
-
-function getPreviewLineTypeLabel(lineType: string, text: InventoryPreviewCopy) {
-  return text.lineType[lineType as keyof typeof text.lineType] || text.needsCheck;
-}
 
 function getInventoryTotalName(total: {
   inventoryItemName: string;
@@ -783,6 +889,56 @@ function getReceiptLineCounts(
   };
 }
 
+function getSelectedPreviewSummary(params: {
+  preview: InventoryDeductionPreview | null;
+  selectedReceipts: Record<number, boolean>;
+}) {
+  const selectedReceipts = params.preview
+    ? params.preview.receipts.filter(
+        (receipt) => params.selectedReceipts[receipt.receiptId] === true
+      )
+    : [];
+
+  return {
+    receiptCount: selectedReceipts.length,
+    deductionLineCount: selectedReceipts.reduce(
+      (sum, receipt) =>
+        sum + receipt.lines.filter((line) => line.deductions.length > 0).length,
+      0
+    ),
+    needsCheckLineCount: selectedReceipts.reduce(
+      (sum, receipt) => sum + receipt.lines.filter(isPreviewLineCheckNeeded).length,
+      0
+    ),
+    alreadyAppliedReceiptCount: selectedReceipts.filter(
+      (receipt) => receipt.status === "already_applied"
+    ).length,
+    blockedReceiptCount: selectedReceipts.filter((receipt) => receipt.blocked)
+      .length,
+  };
+}
+
+function formatInventoryApplyConfirm(
+  text: InventoryPreviewCopy,
+  summary: ReturnType<typeof getSelectedPreviewSummary>
+) {
+  return text.applyConfirmDetailed
+    .replace("{receiptCount}", formatNumber(summary.receiptCount))
+    .replace("{itemCount}", formatNumber(summary.deductionLineCount));
+}
+
+function getPreviewReceiptSelectionLabel(
+  receipt: InventoryDeductionPreview["receipts"][number],
+  text: InventoryPreviewCopy
+) {
+  if (receipt.status === "ready") return text.selectionStatusSelectable;
+  if (receipt.status === "already_applied") {
+    return text.selectionStatusAlreadyApplied;
+  }
+  if (receipt.blocked) return text.selectionStatusBlocked;
+  return text.selectionStatusNeedsCheck;
+}
+
 function getLineHelpText(
   line: InventoryDeductionPreview["receipts"][number]["lines"][number],
   receipt: InventoryDeductionPreview["receipts"][number],
@@ -813,23 +969,113 @@ function getLineHelpText(
   return line.deductions.length > 0 ? "" : text.genericCheckHelp;
 }
 
-function getLineDisplayType(
+type PreviewLineStatusTone =
+  | "ready"
+  | "warning"
+  | "danger"
+  | "neutral";
+
+function getPreviewLineStatusInfo(
   line: InventoryDeductionPreview["receipts"][number]["lines"][number],
+  receipt: InventoryDeductionPreview["receipts"][number],
   text: InventoryPreviewCopy
 ) {
-  if (line.lineType.startsWith("combo_")) {
-    return getPreviewLineTypeLabel(line.lineType, text);
+  const hasInsufficientStock = line.deductions.some(
+    (deduction) => deduction.status === "insufficient_stock"
+  );
+  const isMappingRequired =
+    line.status === "missing_mapping" ||
+    line.status === "invalid_mapping" ||
+    line.lineType === "combo_missing_mapping" ||
+    line.lineType === "combo_invalid_mapping";
+  const isOperationReview =
+    line.status === "manual_review" ||
+    line.status === "review_required" ||
+    line.lineType === "manual" ||
+    line.lineType === "manual_review" ||
+    receipt.status === "applied_after_modified";
+  const isIncompleteRecipe =
+    line.status === "incomplete_recipe" ||
+    line.lineType === "combo_incomplete_recipe";
+  const isExcluded =
+    line.status === "ignored" ||
+    line.status === "skipped" ||
+    line.lineType === "ignore" ||
+    line.lineType === "combo_ignore" ||
+    receipt.status === "skipped";
+  const isAlreadyApplied = receipt.status === "already_applied";
+
+  if (hasInsufficientStock) {
+    return {
+      label: text.lineStatusGroup.insufficientStock,
+      message: text.lineStatusHelp.insufficientStock,
+      tone: "danger" as const,
+    };
   }
-  if (line.status === "incomplete_recipe") {
-    return text.lineType.incomplete_recipe;
+
+  if (isAlreadyApplied) {
+    return {
+      label: text.lineStatusGroup.alreadyApplied,
+      message: text.lineStatusHelp.alreadyApplied,
+      tone: "neutral" as const,
+    };
   }
-  if (line.status === "missing_mapping") return text.lineType.missing_mapping;
-  if (line.status === "manual_review") return text.lineType.manual_review;
-  if (line.status === "invalid_mapping") return text.lineType.invalid_mapping;
-  if (line.deductions.some((deduction) => deduction.status === "insufficient_stock")) {
-    return text.lineType.insufficient_stock;
+
+  if (isMappingRequired) {
+    return {
+      label: text.lineStatusGroup.mappingRequired,
+      message: getLineHelpText(line, receipt, text),
+      tone: "warning" as const,
+    };
   }
-  return getPreviewLineTypeLabel(line.lineType, text);
+
+  if (isOperationReview) {
+    return {
+      label: text.lineStatusGroup.operationReview,
+      message:
+        receipt.status === "applied_after_modified"
+          ? text.modifiedAfterApplyHelp
+          : getLineHelpText(line, receipt, text),
+      tone: "warning" as const,
+    };
+  }
+
+  if (isIncompleteRecipe) {
+    return {
+      label: text.lineStatusGroup.incompleteRecipe,
+      message: text.lineStatusHelp.incompleteRecipe,
+      tone: "warning" as const,
+    };
+  }
+
+  if (isExcluded) {
+    return {
+      label: text.lineStatusGroup.excluded,
+      message: text.lineStatusHelp.excluded,
+      tone: "neutral" as const,
+    };
+  }
+
+  if (line.deductions.length > 0) {
+    return {
+      label: text.lineStatusGroup.ready,
+      message: text.lineStatusHelp.ready,
+      tone: "ready" as const,
+    };
+  }
+
+  return {
+    label: text.lineStatusGroup.operationReview,
+    message: getLineHelpText(line, receipt, text),
+    tone: "warning" as const,
+  };
+}
+
+function getPreviewLineBadgeStyle(tone: PreviewLineStatusTone) {
+  if (tone === "ready") return previewLineBadgeReadyStyle;
+  if (tone === "danger") return previewLineBadgeDangerStyle;
+  if (tone === "neutral") return previewLineBadgeNeutralStyle;
+  return previewLineBadgeWarningStyle;
 }
 
 function getNeedsCheckDetails(
@@ -912,16 +1158,20 @@ function formatTime(value: string | null) {
 }
 
 function getPaymentStatusLabel(
-  receipt: Pick<ReceiptItem, "isCanceled" | "paymentStatus" | "isModified">,
+  receipt: Pick<ReceiptItem, "isCanceled" | "paymentStatus">,
   text: SalesReceiptsViewText
 ) {
   if (receipt.isCanceled) return text.canceled;
-  if (receipt.isModified) return text.modified;
+  if (receipt.paymentStatus === 1) return text.paymentPending;
   if (receipt.paymentStatus === 3) return text.paid;
   if (receipt.paymentStatus === 4 || receipt.paymentStatus === 5) {
     return text.canceled;
   }
   return `${text.status} ${receipt.paymentStatus ?? "-"}`;
+}
+
+function getReceiptLineCountLabel(text: SalesReceiptsViewText) {
+  return text.salesItems === "판매상품" ? "판매라인" : text.salesItems;
 }
 
 function normalizePaymentText(value: unknown) {
@@ -1116,6 +1366,7 @@ export default function SalesReceiptsPage() {
     receivedAmount: c.receivedAmount,
     changeAmount: c.changeAmount,
     paid: c.paid,
+    paymentPending: c.paymentPending,
     canceled: c.canceled,
     status: c.status,
     modified: c.modified,
@@ -1182,6 +1433,10 @@ export default function SalesReceiptsPage() {
   const [batchApplyResult, setBatchApplyResult] =
     useState<BatchApplyResult | null>(null);
   const [isBatchApplying, setIsBatchApplying] = useState(false);
+  const [isManualReceiptModalOpen, setIsManualReceiptModalOpen] = useState(false);
+  const [isManualReceiptSaving, setIsManualReceiptSaving] = useState(false);
+  const [manualReceiptSaveError, setManualReceiptSaveError] = useState("");
+  const [manualReceiptDateNotice, setManualReceiptDateNotice] = useState("");
 
   const canSyncMenu =
     currentUser?.role === "owner" ||
@@ -1563,9 +1818,13 @@ export default function SalesReceiptsPage() {
     ) {
       return;
     }
+    const applySummary = getSelectedPreviewSummary({
+      preview: inventoryPreview,
+      selectedReceipts: selectedPreviewReceipts,
+    });
     if (
       !window.confirm(
-        inventoryText.applyConfirm
+        formatInventoryApplyConfirm(inventoryText, applySummary)
       )
     ) {
       return;
@@ -1635,6 +1894,59 @@ export default function SalesReceiptsPage() {
     }
   }
 
+  async function handleCreateManualReceipt(input: CreateManualReceiptInput) {
+    const user = getUser();
+    if (!user?.username) {
+      setManualReceiptSaveError(c.loginAgain);
+      return;
+    }
+
+    setIsManualReceiptSaving(true);
+    setManualReceiptSaveError("");
+
+    try {
+      const res = await fetch("/api/admin/sales/receipts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...input, actorUsername: user.username }),
+      });
+      const result = (await res.json().catch(() => null)) as ManualReceiptCreateResponse | null;
+
+      if (!res.ok || !result?.ok) {
+        throw new Error(result?.error || receiptsText.manualReceiptFailed);
+      }
+
+      setIsManualReceiptModalOpen(false);
+      setManualReceiptSaveError("");
+
+      if (input.businessDate !== businessDate) {
+        setManualReceiptDateNotice(
+          `자체영수증이 ${input.businessDate}에 생성되었습니다. 해당 날짜로 이동하면 확인할 수 있습니다.`
+        );
+      } else {
+        setManualReceiptDateNotice("");
+        const query = `?businessDate=${encodeURIComponent(businessDate)}`;
+        const refreshRes = await fetch(`/api/admin/sales/receipts${query}`, {
+          cache: "no-store",
+        });
+        const refreshResult = (await refreshRes.json().catch(
+          () => null
+        )) as SalesReceiptsResponse | null;
+        if (refreshResult?.ok) {
+          setReceipts(refreshResult.receipts || []);
+          setDetailByReceiptId({});
+          setExpandedReceiptId(null);
+        }
+      }
+    } catch (error) {
+      setManualReceiptSaveError(
+        error instanceof Error ? error.message : receiptsText.manualReceiptFailed
+      );
+    } finally {
+      setIsManualReceiptSaving(false);
+    }
+  }
+
   return (
     <Container noPaddingTop>
       <SubNav tabs={tabs} />
@@ -1656,21 +1968,15 @@ export default function SalesReceiptsPage() {
             </label>
             {canSyncMenu ? (
               <div style={menuSyncWrapStyle}>
-                <span style={menuSyncDescriptionStyle}>
-                  {receiptsText.menuSyncDescription}
-                </span>
                 <button
                   type="button"
-                  onClick={handleSyncMenu}
-                  disabled={isMenuSyncing}
-                  style={{
-                    ...menuSyncButtonStyle,
-                    ...(isMenuSyncing ? menuSyncButtonDisabledStyle : null),
+                  onClick={() => {
+                    setManualReceiptSaveError("");
+                    setIsManualReceiptModalOpen(true);
                   }}
+                  style={createManualReceiptButtonStyle}
                 >
-                  {isMenuSyncing
-                    ? receiptsText.menuSyncing
-                    : receiptsText.menuSyncButton}
+                  {receiptsText.createManualReceiptButton}
                 </button>
                 <button
                   type="button"
@@ -1690,14 +1996,8 @@ export default function SalesReceiptsPage() {
               </div>
             ) : null}
           </div>
-          {menuSyncMessage ? (
-            <p style={successTextStyle}>{menuSyncMessage}</p>
-          ) : null}
-          {menuSyncWarning ? (
-            <p style={warningTextStyle}>{menuSyncWarning}</p>
-          ) : null}
-          {menuSyncErrorMessage ? (
-            <p style={errorTextStyle}>{menuSyncErrorMessage}</p>
+          {manualReceiptDateNotice ? (
+            <p style={warningTextStyle}>{manualReceiptDateNotice}</p>
           ) : null}
           {inventoryPreviewError ? (
             <p style={errorTextStyle}>{inventoryPreviewError}</p>
@@ -1708,11 +2008,13 @@ export default function SalesReceiptsPage() {
         {inventoryPreview ? (
           <InventoryPreviewPanel
             preview={inventoryPreview}
+            receipts={receipts}
             selectedReceipts={selectedPreviewReceipts}
             batchApplyResult={batchApplyResult}
             isBatchApplying={isBatchApplying}
             canApplyInventory={canApplyInventory}
             text={inventoryText}
+            receiptText={receiptsText}
             onApplyBatch={handleApplyPreviewBatch}
             onSelectionChange={handlePreviewReceiptSelection}
           />
@@ -1740,28 +2042,77 @@ export default function SalesReceiptsPage() {
             onToggleReceipt={handleToggleReceipt}
             onSaveEdit={handleSaveReceiptEdit}
           />
+
+          {canSyncMenu ? (
+            <div style={menuSyncBottomWrapStyle}>
+              <span style={menuSyncDescriptionStyle}>
+                {receiptsText.menuSyncDescription}
+              </span>
+              <button
+                type="button"
+                onClick={handleSyncMenu}
+                disabled={isMenuSyncing}
+                style={{
+                  ...menuSyncButtonStyle,
+                  ...(isMenuSyncing ? menuSyncButtonDisabledStyle : null),
+                }}
+              >
+                {isMenuSyncing
+                  ? receiptsText.menuSyncing
+                  : receiptsText.menuSyncButton}
+              </button>
+              {menuSyncMessage ? (
+                <p style={successTextStyle}>{menuSyncMessage}</p>
+              ) : null}
+              {menuSyncWarning ? (
+                <p style={warningTextStyle}>{menuSyncWarning}</p>
+              ) : null}
+              {menuSyncErrorMessage ? (
+                <p style={errorTextStyle}>{menuSyncErrorMessage}</p>
+              ) : null}
+            </div>
+          ) : null}
         </section>
       </div>
+
+      {isManualReceiptModalOpen ? (
+        <ManualReceiptCreateModal
+          businessDate={businessDate}
+          isSaving={isManualReceiptSaving}
+          saveError={manualReceiptSaveError}
+          text={receiptsText}
+          editText={receiptsEditText}
+          onClose={() => {
+            setIsManualReceiptModalOpen(false);
+            setManualReceiptSaveError("");
+          }}
+          onSubmit={handleCreateManualReceipt}
+        />
+      ) : null}
     </Container>
   );
 }
 
 function InventoryPreviewPanel({
   preview,
+  receipts,
   selectedReceipts,
   batchApplyResult,
   isBatchApplying,
   canApplyInventory,
   text,
+  receiptText,
   onApplyBatch,
   onSelectionChange,
 }: {
   preview: InventoryDeductionPreview;
+  receipts: ReceiptItem[];
   selectedReceipts: Record<number, boolean>;
   batchApplyResult: BatchApplyResult | null;
   isBatchApplying: boolean;
   canApplyInventory: boolean;
   text: InventoryPreviewCopy;
+  receiptText: SalesReceiptsViewText;
   onApplyBatch: () => void;
   onSelectionChange: (
     receiptId: number,
@@ -1772,6 +2123,14 @@ function InventoryPreviewPanel({
     Record<number, boolean>
   >({});
   const needsCheckDetails = getNeedsCheckDetails(preview, text);
+  const incompleteRecipeLineCount =
+    needsCheckDetails.find(
+      ([label]) => label === text.detailStatus.incompleteRecipe
+    )?.[1] ?? 0;
+  const visibleNeedsCheckDetails = needsCheckDetails.filter(
+    ([label, value]) =>
+      value > 0 && label !== text.detailStatus.incompleteRecipe
+  );
   const needsCheckCount = Math.max(
     0,
     preview.summary.totalReceiptCount - preview.summary.readyCount
@@ -1789,6 +2148,19 @@ function InventoryPreviewPanel({
     !canApplyInventory ||
     isBatchApplying ||
     Boolean(batchApplyResult);
+  const receiptById = useMemo(
+    () => new Map(receipts.map((receipt) => [receipt.id, receipt])),
+    [receipts]
+  );
+  const receiptByRefNo = useMemo(
+    () =>
+      new Map(
+        receipts
+          .filter((receipt) => receipt.refNo)
+          .map((receipt) => [receipt.refNo as string, receipt])
+      ),
+    [receipts]
+  );
 
   return (
     <section style={inventoryPreviewPanelStyle}>
@@ -1799,6 +2171,8 @@ function InventoryPreviewPanel({
             {text.description}
           </p>
         </div>
+      </div>
+      <div style={inventoryPreviewReadinessRowStyle}>
         <span
           style={{
             ...inventoryPreviewReadinessStyle,
@@ -1817,15 +2191,10 @@ function InventoryPreviewPanel({
       </div>
 
       <div style={inventoryBatchActionStyle}>
-        <div>
-          <strong>{text.applyTitle}</strong>
-          <span style={inventoryBatchActionMetaStyle}>
-            {text.selected} {selectedReceiptCount}
-            {text.countSuffix} · {text.expectedItems}{" "}
-            {preview.inventoryTotals.length}
-            {text.itemSuffix}
-          </span>
-        </div>
+        <span style={inventoryExclusionBadgeStyle}>
+          {text.detailStatus.incompleteRecipe} {formatNumber(incompleteRecipeLineCount)}
+          {text.countSuffix}
+        </span>
         <div style={inventoryBatchButtonsStyle}>
           <button
             type="button"
@@ -1840,7 +2209,7 @@ function InventoryPreviewPanel({
               ? text.applyProcessing
               : batchApplyResult
                 ? text.applyDone
-                : canApplyInventory
+              : canApplyInventory
                   ? text.applyButton
                   : text.ownerMasterOnly}
           </button>
@@ -1882,14 +2251,13 @@ function InventoryPreviewPanel({
         ))}
       </div>
 
-      <details style={inventoryPreviewDetailsStyle}>
-        <summary style={inventoryPreviewSummaryTitleStyle}>
-          {text.needsCheckDetails} · {text.details}
-        </summary>
-        <div style={inventoryCheckDetailListStyle}>
-          {needsCheckDetails
-            .filter(([, value]) => value > 0)
-            .map(([label, value]) => (
+      {visibleNeedsCheckDetails.length > 0 ? (
+        <details style={inventoryPreviewDetailsStyle}>
+          <summary style={inventoryPreviewSummaryTitleStyle}>
+            {text.needsCheckDetails} · {text.details}
+          </summary>
+          <div style={inventoryCheckDetailListStyle}>
+            {visibleNeedsCheckDetails.map(([label, value]) => (
               <div key={label} style={inventoryCheckDetailItemStyle}>
                 <span>{label}</span>
                 <strong>
@@ -1898,13 +2266,9 @@ function InventoryPreviewPanel({
                 </strong>
               </div>
             ))}
-          {needsCheckDetails.every(([, value]) => value === 0) ? (
-            <p style={inventoryPreviewEmptyStyle}>
-              {text.needsCheck} 0{text.countSuffix}
-            </p>
-          ) : null}
-        </div>
-      </details>
+          </div>
+        </details>
+      ) : null}
 
       <details style={inventoryPreviewDetailsStyle} open>
         <summary style={inventoryPreviewSummaryTitleStyle}>
@@ -1927,10 +2291,12 @@ function InventoryPreviewPanel({
                   {getInventoryTotalName(total)}
                 </strong>
                 <span>{text.current} {formatNumber(total.currentQuantity)}</span>
-                <span>
+                <span style={inventoryExpectedDeductionStyle}>
                   {text.expectedDeduction} {formatNumber(total.deductQuantity)}
                 </span>
-                <span>{text.afterDeduction} {formatNumber(total.afterQuantity)}</span>
+                <span style={inventoryAfterDeductionStyle}>
+                  {text.afterDeduction} {formatNumber(total.afterQuantity)}
+                </span>
                 <span>
                   {text.receipt} {total.receiptCount} / {text.line}{" "}
                   {total.lineCount}
@@ -1943,7 +2309,7 @@ function InventoryPreviewPanel({
         )}
       </details>
 
-      <details style={inventoryPreviewDetailsStyle} open>
+      <details style={inventoryPreviewDetailsStyle}>
         <summary style={inventoryPreviewSummaryTitleStyle}>
           {text.receiptResults} {preview.receipts.length}
           {text.countSuffix}
@@ -1953,73 +2319,115 @@ function InventoryPreviewPanel({
             const partialDeduction = isPartialDeductionReceipt(receipt);
             const isExpanded = expandedReceiptIds[receipt.receiptId] === true;
             const { applicableCount, checkCount } = getReceiptLineCounts(receipt);
+            const matchedReceipt =
+              receiptById.get(receipt.receiptId) ||
+              (receipt.refNo ? receiptByRefNo.get(receipt.refNo) : undefined);
+            const paymentSummaryText = matchedReceipt
+              ? getPaymentSummaryText(matchedReceipt.payments, receiptText)
+              : "";
+            const amount = matchedReceipt?.finalAmount ?? 0;
+            const refDate = matchedReceipt?.refDate ?? receipt.refDate;
+            const refNo =
+              matchedReceipt?.refNo || receipt.refNo || `#${receipt.receiptId}`;
+            const tableLabel = matchedReceipt?.tableName
+              ? `${receiptText.table}: ${matchedReceipt.tableName}`
+              : text.receipt;
+            const selectionLabel = getPreviewReceiptSelectionLabel(
+              receipt,
+              text
+            );
             return (
-            <div key={receipt.receiptId} style={previewReceiptStyle}>
-              <div style={previewReceiptHeaderRowStyle}>
-                <input
-                  type="checkbox"
-                  aria-label={`${receipt.refNo || receipt.receiptId} ${text.applyButton}`}
-                  checked={selectedReceipts[receipt.receiptId] === true}
-                  disabled={
-                    receipt.status !== "ready" ||
-                    Boolean(batchApplyResult)
-                  }
-                  onChange={(event) =>
-                    onSelectionChange(
-                      receipt.receiptId,
-                      event.target.checked
-                    )
-                  }
-                  style={previewReceiptCheckboxStyle}
-                />
-                <button
-                  type="button"
-                  style={previewReceiptHeaderButtonStyle}
-                  aria-expanded={isExpanded}
-                  onClick={() =>
-                    setExpandedReceiptIds((current) => ({
-                      ...current,
-                      [receipt.receiptId]: !current[receipt.receiptId],
-                    }))
-                  }
-                >
-                  <div>
-                    <strong>{receipt.refNo || `#${receipt.receiptId}`}</strong>
-                    <span style={previewReceiptMetaStyle}>
-                      {text.availableCount} {formatNumber(applicableCount)} ·{" "}
-                      {text.checkCount} {formatNumber(checkCount)}
+              <div key={receipt.receiptId} style={previewReceiptStyle}>
+                <div style={previewReceiptHeaderRowStyle}>
+                  <label style={previewReceiptSelectionStyle}>
+                    <input
+                      type="checkbox"
+                      aria-label={`${receipt.refNo || receipt.receiptId} ${text.applyButton}`}
+                      checked={selectedReceipts[receipt.receiptId] === true}
+                      disabled={
+                        receipt.status !== "ready" ||
+                        Boolean(batchApplyResult)
+                      }
+                      onChange={(event) =>
+                        onSelectionChange(
+                          receipt.receiptId,
+                          event.target.checked
+                        )
+                      }
+                      style={previewReceiptCheckboxStyle}
+                    />
+                    <span
+                      style={{
+                        ...previewSelectionLabelStyle,
+                        ...(receipt.status === "ready"
+                          ? previewSelectionReadyStyle
+                          : receipt.status === "already_applied"
+                            ? previewSelectionNeutralStyle
+                            : previewSelectionWarningStyle),
+                      }}
+                    >
+                      {selectionLabel}
                     </span>
-                  </div>
-                  <span
-                    style={{
-                      ...previewStatusStyle,
-                      ...(partialDeduction
-                        ? batchValidationWarningStyle
-                        : receipt.status === "ready"
-                        ? previewStatusReadyStyle
-                        : receipt.status === "skipped"
-                          ? previewStatusSkippedStyle
-                        : previewStatusBlockedStyle),
-                    }}
+                  </label>
+                  <button
+                    type="button"
+                    style={previewReceiptHeaderButtonStyle}
+                    aria-expanded={isExpanded}
+                    onClick={() =>
+                      setExpandedReceiptIds((current) => ({
+                        ...current,
+                        [receipt.receiptId]: !current[receipt.receiptId],
+                      }))
+                    }
                   >
-                    {getInventoryPreviewStatusLabel(receipt, text)}
-                  </span>
-                </button>
-              </div>
+                    <span style={previewReceiptMainStyle}>
+                      <span style={receiptTopLineStyle}>
+                        <strong style={receiptNoStyle}>{tableLabel}</strong>
+                        <span
+                          style={{
+                            ...previewStatusStyle,
+                            ...(partialDeduction
+                              ? batchValidationWarningStyle
+                              : receipt.status === "ready"
+                                ? previewStatusReadyStyle
+                                : receipt.status === "skipped"
+                                  ? previewStatusSkippedStyle
+                                  : receipt.status === "already_applied"
+                                    ? previewStatusAlreadyAppliedStyle
+                                    : previewStatusBlockedStyle),
+                          }}
+                        >
+                          {getInventoryPreviewStatusLabel(receipt, text)}
+                        </span>
+                      </span>
+                      <span style={receiptMetaLineStyle}>
+                        {refNo}
+                        {paymentSummaryText ? ` · ${paymentSummaryText}` : ""}
+                      </span>
+                      <span style={previewReceiptMetaStyle}>
+                        {text.availableCount} {formatNumber(applicableCount)} ·{" "}
+                        {text.checkCount} {formatNumber(checkCount)}
+                      </span>
+                    </span>
+                    <span style={previewReceiptAmountWrapStyle}>
+                      <span style={receiptTimeStyle}>{formatTime(refDate)}</span>
+                      <strong style={amountStyle}>
+                        {matchedReceipt ? formatVnd(amount) : "-"}
+                      </strong>
+                      <span style={chevronStyle}>{isExpanded ? "⌃" : "⌄"}</span>
+                    </span>
+                  </button>
+                </div>
 
-              {isExpanded ? (
-                <>
-                  {partialDeduction ? (
-                    <div style={previewPartialNoticeStyle}>
-                      <p style={previewPartialNoticeTextStyle}>
-                        {text.partialNotice}
-                      </p>
-                    </div>
-                  ) : null}
-
-                  <div style={previewLineListStyle}>
+                {isExpanded ? (
+                  <>
+                    <div style={previewLineListStyle}>
                     {receipt.lines.map((line, lineIndex) => {
-                      const helpText = getLineHelpText(line, receipt, text);
+                      const statusInfo = getPreviewLineStatusInfo(
+                        line,
+                        receipt,
+                        text
+                      );
                       const comboParentCode =
                         typeof line.mappingSnapshot?.comboParentCode ===
                         "string"
@@ -2036,6 +2444,15 @@ function InventoryPreviewPanel({
                           ? line.mappingSnapshot.comboChildIndex
                           : lineIndex;
                       const isComboLine = line.lineType.startsWith("combo_");
+                      const quantityLabel = `${
+                        isComboLine
+                          ? `${text.comboDeduction} · `
+                          : line.isOption
+                            ? `${text.option} · `
+                            : ""
+                      }${text.saleQuantity} ${formatNumber(
+                        line.quantitySold
+                      )}`;
                       return (
                         <div
                           key={`${line.receiptLineId}-${comboChildIndex}-${line.lineType}`}
@@ -2045,18 +2462,21 @@ function InventoryPreviewPanel({
                           }}
                         >
                           <div style={previewLineTitleStyle}>
-                            <strong>
-                              [{getLineDisplayType(line, text)}]{" "}
-                              {line.itemName || `#${line.receiptLineId}`}
-                            </strong>
-                            <span>
-                              {isComboLine
-                                ? `${text.comboDeduction} · `
-                                : line.isOption
-                                  ? `${text.option} · `
-                                  : ""}
-                              {text.saleQuantity}{" "}
-                              {formatNumber(line.quantitySold)}
+                            <div style={previewLineMainStyle}>
+                              <span
+                                style={{
+                                  ...previewLineBadgeStyle,
+                                  ...getPreviewLineBadgeStyle(statusInfo.tone),
+                                }}
+                              >
+                                {statusInfo.label}
+                              </span>
+                              <strong style={previewLineNameStyle}>
+                                {line.itemName || `#${line.receiptLineId}`}
+                              </strong>
+                            </div>
+                            <span style={previewLineQuantityStyle}>
+                              {quantityLabel}
                             </span>
                           </div>
                           {isComboLine &&
@@ -2066,9 +2486,6 @@ function InventoryPreviewPanel({
                               {comboParentCode ? `[${comboParentCode}] ` : ""}
                               {comboParentName || ""}
                             </p>
-                          ) : null}
-                          {helpText ? (
-                            <p style={previewLineErrorStyle}>{helpText}</p>
                           ) : null}
                           {line.deductions.map((deduction) => {
                             const lineAfterQuantity =
@@ -2093,10 +2510,10 @@ function InventoryPreviewPanel({
                         </div>
                       );
                     })}
-                  </div>
-                </>
-              ) : null}
-            </div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
             );
           })}
         </div>
@@ -2203,6 +2620,11 @@ function ReceiptRow({
 }) {
   const statusLabel = getPaymentStatusLabel(receipt, text);
   const paymentSummaryText = getPaymentSummaryText(receipt.payments, text);
+  const isCanceled =
+    receipt.isCanceled ||
+    receipt.paymentStatus === 4 ||
+    receipt.paymentStatus === 5;
+  const lineCountLabel = getReceiptLineCountLabel(text);
 
   return (
     <button type="button" onClick={onToggle} style={receiptRowButtonStyle}>
@@ -2211,17 +2633,25 @@ function ReceiptRow({
           <strong style={receiptNoStyle}>
             {text.table}: {receipt.tableName || "-"}
           </strong>
-          <span
-            style={{
-              ...statusBadgeStyle,
-              ...(receipt.isCanceled
-                ? canceledBadgeStyle
-                : receipt.isModified
-                  ? modifiedBadgeStyle
-                  : paidBadgeStyle),
-            }}
-          >
-            {statusLabel}
+          <span style={receiptStatusGroupStyle}>
+            <span
+              style={{
+                ...statusBadgeStyle,
+                ...(isCanceled ? canceledBadgeStyle : paidBadgeStyle),
+              }}
+            >
+              {statusLabel}
+            </span>
+            {receipt.isModified && !isCanceled ? (
+              <span style={{ ...statusBadgeStyle, ...modifiedBadgeStyle }}>
+                {text.modified}
+              </span>
+            ) : null}
+            {receipt.refId.startsWith("manual-") ? (
+              <span style={{ ...statusBadgeStyle, ...manualBadgeStyle }}>
+                {text.manualReceiptBadge}
+              </span>
+            ) : null}
           </span>
         </span>
         <span style={receiptMetaLineStyle}>
@@ -2229,7 +2659,7 @@ function ReceiptRow({
           {paymentSummaryText ? ` · ${paymentSummaryText}` : ""}
         </span>
         <span style={receiptMetaLineStyle}>
-          {text.salesItems} {formatNumber(receipt.lineCount)}{text.productCountSuffix} · {text.optionItems}{" "}
+          {lineCountLabel} {formatNumber(receipt.lineCount)}{text.productCountSuffix} · {text.optionItems}{" "}
           {formatNumber(receipt.optionLineCount)}{text.optionCountSuffix}
         </span>
       </span>
@@ -3165,6 +3595,649 @@ function EmptyState({ title, text }: { title: string; text: string }) {
   );
 }
 
+function ManualReceiptCreateModal({
+  businessDate,
+  isSaving,
+  saveError,
+  text,
+  editText,
+  onClose,
+  onSubmit,
+}: {
+  businessDate: string;
+  isSaving: boolean;
+  saveError: string;
+  text: SalesReceiptsViewText;
+  editText: SalesReceiptsEditViewText;
+  onClose: () => void;
+  onSubmit: (input: CreateManualReceiptInput) => void;
+}) {
+  const nowLocalTime = () => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const [vatEnabled, setVatEnabled] = useState(true);
+  const [manualFinalAmountInput, setManualFinalAmountInput] = useState("");
+  const [manualFinalAmountTouched, setManualFinalAmountTouched] = useState(false);
+  const [saleTime, setSaleTime] = useState(() => nowLocalTime());
+  const [tableName, setTableName] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "other">("cash");
+  const [lines, setLines] = useState<ManualDraftLine[]>([]);
+
+  const [productQuery, setProductQuery] = useState("");
+  const [productResults, setProductResults] = useState<PosProduct[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<PosProduct | null>(null);
+  const [selectedOptions, setSelectedOptions] = useState<
+    Record<string, PosProductOption>
+  >({});
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [productQty, setProductQty] = useState("1");
+
+  const [formError, setFormError] = useState("");
+
+  const totalSubtotal = lines.reduce((s, l) => {
+    return s + Math.max(0, Math.round(l.unitPrice * l.quantity) - l.discountAmount);
+  }, 0);
+  const totalTax = lines.reduce((s, l) => {
+    if (!vatEnabled) return s;
+    const amt = Math.max(0, Math.round(l.unitPrice * l.quantity) - l.discountAmount);
+    const rate = l.taxRate || 0;
+    return s + (rate > 0 ? Math.round((amt * rate) / 100) : 0);
+  }, 0);
+  const taxRowsByRate = lines.reduce((rows, line) => {
+    if (!vatEnabled) return rows;
+    const rate = line.taxRate || 0;
+    if (rate <= 0) return rows;
+    const amount = Math.max(
+      0,
+      Math.round(line.unitPrice * line.quantity) - line.discountAmount
+    );
+    const taxAmount = Math.round((amount * rate) / 100);
+    rows.set(rate, (rows.get(rate) || 0) + taxAmount);
+    return rows;
+  }, new Map<number, number>());
+  const taxRows = Array.from(taxRowsByRate.entries())
+    .map(([taxRate, taxAmount]) => ({ taxRate, taxAmount }))
+    .sort((a, b) => a.taxRate - b.taxRate);
+  const parsedManualFinalAmount = Number(manualFinalAmountInput);
+  const manualFinalAmount =
+    !vatEnabled && Number.isFinite(parsedManualFinalAmount)
+      ? Math.round(parsedManualFinalAmount)
+      : totalSubtotal;
+  const manualAdjustmentAmount = !vatEnabled
+    ? manualFinalAmount - totalSubtotal
+    : 0;
+  const totalPayable = vatEnabled ? totalSubtotal + totalTax : manualFinalAmount;
+  const tableListId = "manual-receipt-table-options";
+  const parentLines = lines.filter((line) => line.isOption !== true);
+
+  useEffect(() => {
+    if (vatEnabled) {
+      setManualFinalAmountTouched(false);
+      return;
+    }
+    if (!manualFinalAmountTouched) {
+      setManualFinalAmountInput(String(totalSubtotal));
+    }
+  }, [manualFinalAmountTouched, totalSubtotal, vatEnabled]);
+
+  useEffect(() => {
+    const query = productQuery.trim();
+    const controller = new AbortController();
+
+    if (query.length < 1) {
+      setProductResults([]);
+      setSearchError("");
+      setIsSearching(false);
+      return () => controller.abort();
+    }
+
+    async function fetchProducts() {
+      setIsSearching(true);
+      try {
+        const res = await fetch(
+          `/api/pos/products?query=${encodeURIComponent(query)}&includeOptions=1`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          }
+        );
+        const result = (await res.json()) as PosProductsResponse;
+
+        if (!res.ok || !result.ok) {
+          throw new Error(result.error || editText.productSearchFailed);
+        }
+
+        setProductResults(result.products || []);
+        setSearchError("");
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setSearchError(
+          error instanceof Error ? error.message : editText.productSearchFailed
+        );
+        setProductResults([]);
+      } finally {
+        if (!controller.signal.aborted) setIsSearching(false);
+      }
+    }
+
+    fetchProducts();
+    return () => controller.abort();
+  }, [productQuery, editText.productSearchFailed]);
+
+  function addProductLine(product: PosProduct) {
+    const qty = Number(productQty);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setFormError("수량을 입력해주세요.");
+      return;
+    }
+    const parentClientId = crypto.randomUUID();
+    setLines((prev) => [
+      ...prev,
+      {
+        clientId: parentClientId,
+        parentClientId: null,
+        productId: product.id,
+        itemCode: product.itemCode,
+        itemName: product.itemName,
+        unitName: product.unitName,
+        quantity: qty,
+        unitPrice: product.unitPrice,
+        discountAmount: 0,
+        taxRate: product.taxRate ?? null,
+        isOption: false,
+        refDetailType: 1,
+        inventoryItemType: product.itemType ?? null,
+        additionId: null,
+        optionGroupName: null,
+        rawJson: null,
+      },
+      ...Object.values(selectedOptions).map((option) => ({
+        clientId: crypto.randomUUID(),
+        parentClientId,
+        productId: null,
+        itemCode: option.code,
+        itemName: option.name,
+        unitName: product.unitName,
+        quantity: qty,
+        unitPrice: option.unitPrice,
+        discountAmount: 0,
+        taxRate: option.taxRate ?? product.taxRate ?? null,
+        isOption: true,
+        refDetailType: 2,
+        inventoryItemType: 6,
+        additionId: option.id,
+        optionGroupName:
+          product.optionGroups?.find((group) =>
+            group.options.some((candidate) => candidate.id === option.id)
+          )?.name ?? null,
+        rawJson: option.raw,
+      })),
+    ]);
+    setProductQuery("");
+    setProductResults([]);
+    setSelectedProduct(null);
+    setSelectedOptions({});
+    setProductQty("1");
+    setFormError("");
+  }
+
+  function handleSubmit() {
+    if (lines.length === 0) { setFormError(text.manualReceiptNoLines); return; }
+    if (!/^\d{2}:\d{2}$/.test(saleTime)) {
+      setFormError(`${text.manualReceiptSaleTime}을 선택해주세요.`);
+      return;
+    }
+    if (!vatEnabled && (!Number.isFinite(manualFinalAmount) || manualFinalAmount < 0)) {
+      setFormError("최종 결제금액은 0 이상이어야 합니다.");
+      return;
+    }
+    setFormError("");
+    onSubmit({
+      businessDate,
+      saleTime: `${businessDate}T${saleTime}:00`,
+      tableName,
+      note: "",
+      vatEnabled,
+      paymentMethod,
+      cashReceivedAmount: totalPayable,
+      manualFinalAmount: vatEnabled ? undefined : manualFinalAmount,
+      lines,
+    });
+  }
+
+  return (
+    <div style={modalOverlayStyle} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={modalCardStyle}>
+        <div style={modalHeaderStyle}>
+          <div style={modalHeaderTitleWrapStyle}>
+            <strong style={modalTitleStyle}>{text.manualReceiptModalTitle}</strong>
+            <span style={modalHeaderDateStyle}>영업일 {businessDate}</span>
+          </div>
+          <button type="button" onClick={onClose} disabled={isSaving} style={modalCloseButtonStyle}>✕</button>
+        </div>
+
+        <div style={modalBodyStyle}>
+          <div style={modalCompactRowStyle}>
+            <label style={modalTimeFieldStyle}>
+              <span style={modalSectionTitleStyle}>{text.manualReceiptSaleTime}</span>
+              <input
+                type="time"
+                value={saleTime}
+                onChange={(e) => setSaleTime(e.target.value)}
+                style={modalTimeInputStyle}
+                disabled={isSaving}
+              />
+            </label>
+
+            <div style={modalSectionStyle}>
+              <div style={modalSectionTitleStyle}>{text.vat}</div>
+              <div style={modalChipGroupStyle} role="radiogroup" aria-label={text.vat}>
+                <label style={{ ...modalRadioChipStyle, ...(vatEnabled ? modalRadioChipActiveStyle : null) }}>
+                  <input
+                    type="radio"
+                    name="manual-receipt-vat"
+                    checked={vatEnabled}
+                    onChange={() => setVatEnabled(true)}
+                    style={modalRadioInputStyle}
+                    disabled={isSaving}
+                  />
+                  <span style={modalRadioIndicatorStyle}>
+                    {vatEnabled ? <span style={modalRadioIndicatorDotStyle} /> : null}
+                  </span>
+                  <span>{text.manualReceiptVatEnabled}</span>
+                </label>
+                <label style={{ ...modalRadioChipStyle, ...(!vatEnabled ? modalRadioChipActiveStyle : null) }}>
+                  <input
+                    type="radio"
+                    name="manual-receipt-vat"
+                    checked={!vatEnabled}
+                    onChange={() => {
+                      setVatEnabled(false);
+                      setManualFinalAmountTouched(false);
+                      setManualFinalAmountInput(String(totalSubtotal));
+                    }}
+                    style={modalRadioInputStyle}
+                    disabled={isSaving}
+                  />
+                  <span style={modalRadioIndicatorStyle}>
+                    {!vatEnabled ? <span style={modalRadioIndicatorDotStyle} /> : null}
+                  </span>
+                  <span>{text.manualReceiptVatDisabled}</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div style={modalCompactRowStyle}>
+            <div style={modalSectionStyle}>
+              <div style={modalSectionTitleStyle}>{text.table}</div>
+              <input
+                type="text"
+                value={tableName}
+                onChange={(e) => setTableName(e.target.value)}
+                list={tableListId}
+                style={modalInputStyle}
+                disabled={isSaving}
+              />
+              <datalist id={tableListId}>
+                {manualReceiptTableNameOptions.map((option) => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
+            </div>
+
+            <div style={modalSectionStyle}>
+              <div style={modalSectionTitleStyle}>{text.paymentMethod}</div>
+              <div style={modalChipGroupStyle} role="radiogroup" aria-label={text.paymentMethod}>
+                <label style={{ ...modalRadioChipStyle, ...(paymentMethod === "cash" ? modalRadioChipActiveStyle : null) }}>
+                  <input
+                    type="radio"
+                    name="manual-receipt-payment"
+                    checked={paymentMethod === "cash"}
+                    onChange={() => setPaymentMethod("cash")}
+                    style={modalRadioInputStyle}
+                    disabled={isSaving}
+                  />
+                  <span style={modalRadioIndicatorStyle}>
+                    {paymentMethod === "cash" ? <span style={modalRadioIndicatorDotStyle} /> : null}
+                  </span>
+                  <span>{text.cash}</span>
+                </label>
+                <label style={{ ...modalRadioChipStyle, ...(paymentMethod === "other" ? modalRadioChipActiveStyle : null) }}>
+                  <input
+                    type="radio"
+                    name="manual-receipt-payment"
+                    checked={paymentMethod === "other"}
+                    onChange={() => setPaymentMethod("other")}
+                    style={modalRadioInputStyle}
+                    disabled={isSaving}
+                  />
+                  <span style={modalRadioIndicatorStyle}>
+                    {paymentMethod === "other" ? <span style={modalRadioIndicatorDotStyle} /> : null}
+                  </span>
+                  <span>{text.other}</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div style={modalSectionStyle}>
+            <div style={modalSectionTitleStyle}>품목 추가</div>
+            <div style={modalFieldGroupStyle}>
+              <input
+                type="text"
+                value={productQuery}
+                onChange={(e) => {
+                  setProductQuery(e.target.value);
+                  setSelectedProduct(null);
+                  setSelectedOptions({});
+                }}
+                placeholder={editText.searchProductPlaceholder}
+                style={modalInputStyle}
+                disabled={isSaving}
+              />
+              {isSearching ? <p style={modalMutedTextStyle}>{text.loading}</p> : null}
+              {searchError ? <p style={errorTextStyle}>{searchError}</p> : null}
+              {productResults.length > 0 ? (
+                <div style={modalProductResultsStyle}>
+                  {productResults.slice(0, 10).map((product) => (
+                    <button
+                      key={product.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedProduct(product);
+                        setSelectedOptions({});
+                      }}
+                      style={{
+                        ...modalProductResultItemStyle,
+                        ...(selectedProduct?.id === product.id
+                          ? modalProductResultSelectedStyle
+                          : null),
+                      }}
+                      disabled={isSaving}
+                    >
+                      <span style={modalProductResultNameStyle}>{product.itemName}</span>
+                      <span style={modalProductResultPriceStyle}>{formatVnd(product.unitPrice)}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {selectedProduct ? (
+                <div style={modalSelectedProductStyle}>
+                  <span style={modalLineNameStyle}>{selectedProduct.itemName}</span>
+                  <span style={modalSelectedProductPriceStyle}>
+                    {formatVnd(selectedProduct.unitPrice)}
+                  </span>
+                  {(selectedProduct.optionGroups || []).filter(
+                    (group) => group.type === "addition" && group.options.length > 0
+                  ).length > 0 ? (
+                    <div style={modalOptionSelectionStyle}>
+                      {(selectedProduct.optionGroups || [])
+                        .filter(
+                          (group) =>
+                            group.type === "addition" && group.options.length > 0
+                        )
+                        .map((group) => (
+                          <div key={group.id} style={modalOptionGroupStyle}>
+                            <span style={modalFieldLabelStyle}>{group.name}</span>
+                            <div style={modalOptionButtonListStyle}>
+                              {group.options.map((option) => {
+                                const selected =
+                                  selectedOptions[group.id]?.id === option.id;
+
+                                return (
+                                  <button
+                                    type="button"
+                                    key={option.id}
+                                    onClick={() =>
+                                      setSelectedOptions((current) => {
+                                        if (current[group.id]?.id === option.id) {
+                                          const next = { ...current };
+                                          delete next[group.id];
+                                          return next;
+                                        }
+
+                                        return {
+                                          ...current,
+                                          [group.id]: option,
+                                        };
+                                      })
+                                    }
+                                    disabled={isSaving}
+                                    style={{
+                                      ...modalOptionButtonStyle,
+                                      ...(selected ? modalOptionButtonSelectedStyle : null),
+                                    }}
+                                  >
+                                    <span style={modalOptionButtonNameStyle}>
+                                      {option.name}
+                                    </span>
+                                    <span style={modalOptionButtonPriceStyle}>
+                                      {formatVnd(option.unitPrice)}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  ) : null}
+                  {(selectedProduct.optionGroups || []).filter(
+                    (group) => group.type === "child" && group.options.length > 0
+                  ).length > 0 ? (
+                    <div style={modalComboChildrenStyle}>
+                      <span style={modalFieldLabelStyle}>구성</span>
+                      {(selectedProduct.optionGroups || [])
+                        .filter(
+                          (group) => group.type === "child" && group.options.length > 0
+                        )
+                        .flatMap((group) => group.options)
+                        .map((child) => (
+                          <div key={child.id} style={modalComboChildRowStyle}>
+                            <span style={modalComboChildNameStyle}>
+                              {child.name}
+                            </span>
+                            {child.unitPrice > 0 ? (
+                              <span style={modalComboChildPriceStyle}>
+                                {formatVnd(child.unitPrice)}
+                              </span>
+                            ) : null}
+                          </div>
+                        ))}
+                    </div>
+                  ) : null}
+                  <div style={modalProductResultActionsStyle}>
+                    <input
+                      type="number"
+                      value={productQty}
+                      onChange={(e) => setProductQty(e.target.value)}
+                      min={0.01}
+                      step={0.01}
+                      style={modalQtyInputStyle}
+                      disabled={isSaving}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => addProductLine(selectedProduct)}
+                      style={modalAddLineButtonStyle}
+                      disabled={isSaving}
+                    >
+                      {editText.add}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div style={modalSectionStyle}>
+            <div style={modalSectionTitleStyle}>선택된 품목</div>
+            {lines.length > 0 ? (
+              <div style={modalLineListStyle}>
+                {parentLines.map((line) => {
+                  const optionLines = lines.filter(
+                    (candidate) => candidate.parentClientId === line.clientId
+                  );
+                  const amt = Math.max(0, Math.round(line.unitPrice * line.quantity) - line.discountAmount);
+                  return (
+                    <div key={line.clientId} style={modalLineItemStyle}>
+                      <div style={modalLineHeaderStyle}>
+                        <div style={modalLineContentStyle}>
+                          <span style={modalLineNameStyle}>{line.itemName}</span>
+                          <span style={modalLineMetaStyle}>
+                            {formatNumber(line.quantity)} × {formatVnd(line.unitPrice)} = {formatVnd(amt)}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setLines((prev) =>
+                              prev.filter(
+                                (l) =>
+                                  l.clientId !== line.clientId &&
+                                  l.parentClientId !== line.clientId
+                              )
+                            )
+                          }
+                          style={modalLineRemoveButtonStyle}
+                          disabled={isSaving}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      {optionLines.length > 0 ? (
+                        <div style={modalOptionLineListStyle}>
+                          {optionLines.map((optionLine) => {
+                            const optionAmount = Math.max(
+                              0,
+                              Math.round(optionLine.unitPrice * optionLine.quantity) -
+                                optionLine.discountAmount
+                            );
+
+                            return (
+                              <div key={optionLine.clientId} style={modalOptionLineStyle}>
+                                <span style={modalOptionLineNameStyle}>
+                                  + {optionLine.itemName}
+                                </span>
+                                <span style={modalLineMetaStyle}>
+                                  {formatVnd(optionAmount)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p style={modalEmptyTextStyle}>{text.manualReceiptNoLines}</p>
+            )}
+          </div>
+
+          {!vatEnabled && lines.length > 0 ? (
+            <div style={modalAdjustmentBoxStyle}>
+              <div style={modalSectionTitleStyle}>예외 금액 조정</div>
+              <p style={modalMutedTextStyle}>
+                상품 가격과 재고차감 기준은 유지하고, 최종 결제금액만 조정합니다.
+              </p>
+              <div style={modalTotalRowStyle}>
+                <span style={modalTotalLabelStyle}>상품 정상가 합계</span>
+                <span style={modalTotalValueStyle}>{formatVnd(totalSubtotal)}</span>
+              </div>
+              <label style={modalAdjustmentInputRowStyle}>
+                <span style={modalTotalLabelStyle}>최종 결제금액</span>
+                <input
+                  type="number"
+                  value={manualFinalAmountInput}
+                  onChange={(event) => {
+                    setManualFinalAmountTouched(true);
+                    setManualFinalAmountInput(event.target.value);
+                  }}
+                  min={0}
+                  step={1000}
+                  style={modalAdjustmentInputStyle}
+                  disabled={isSaving}
+                />
+              </label>
+              <div style={modalTotalRowStyle}>
+                <span style={modalTotalLabelStyle}>수동 조정금액</span>
+                <strong
+                  style={{
+                    ...modalTotalValueStyle,
+                    ...(manualAdjustmentAmount < 0
+                      ? modalNegativeAdjustmentStyle
+                      : manualAdjustmentAmount > 0
+                        ? modalPositiveAdjustmentStyle
+                        : null),
+                  }}
+                >
+                  {formatVnd(manualAdjustmentAmount)}
+                </strong>
+              </div>
+            </div>
+          ) : null}
+
+          {lines.length > 0 ? (
+            <div style={modalSectionStyle}>
+              <div style={modalSectionTitleStyle}>{text.total}</div>
+              <div style={modalTotalRowStyle}>
+                <span style={modalTotalLabelStyle}>{text.salesAmount}</span>
+                <span style={modalTotalValueStyle}>{formatVnd(totalSubtotal)}</span>
+              </div>
+              {vatEnabled && totalTax > 0 ? (
+                taxRows.map((tax) => (
+                  <div key={tax.taxRate} style={modalTotalRowStyle}>
+                    <span style={modalTotalLabelStyle}>
+                      {text.vat} {formatNumber(tax.taxRate)}%
+                    </span>
+                    <span style={modalTotalValueStyle}>{formatVnd(tax.taxAmount)}</span>
+                  </div>
+                ))
+              ) : (
+                <div style={modalTotalRowStyle}>
+                  <span style={modalTotalLabelStyle}>
+                    {vatEnabled ? text.vat : text.manualReceiptVatDisabled}
+                  </span>
+                  <span style={modalTotalValueStyle}>{formatVnd(0)}</span>
+                </div>
+              )}
+              <div style={{ ...modalTotalRowStyle, ...modalTotalFinalStyle }}>
+                <span style={modalTotalLabelStyle}>{text.total}</span>
+                <strong style={modalTotalFinalValueStyle}>{formatVnd(totalPayable)}</strong>
+              </div>
+            </div>
+          ) : null}
+
+          {(formError || saveError) ? (
+            <p style={errorTextStyle}>{formError || saveError}</p>
+          ) : null}
+        </div>
+
+        <div style={modalFooterStyle}>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={isSaving || lines.length === 0}
+            style={{
+              ...modalPrimarySubmitButtonStyle,
+              ...(isSaving || lines.length === 0 ? reviewSaveButtonDisabledStyle : null),
+            }}
+          >
+            {isSaving ? text.manualReceiptCreating : text.manualReceiptModalTitle}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const sectionStyle: CSSProperties = {
   display: "grid",
   gap: 12,
@@ -3276,12 +4349,18 @@ const inventoryPreviewHeaderStyle: CSSProperties = {
   alignItems: "center",
   justifyContent: "space-between",
   gap: 14,
-  padding: 14,
+  padding: "11px 14px 8px",
+};
+
+const inventoryPreviewReadinessRowStyle: CSSProperties = {
+  display: "flex",
+  justifyContent: "flex-start",
+  padding: "0 14px 10px",
   borderBottom: "1px solid #e5e7eb",
 };
 
 const inventoryPreviewTitleStyle: CSSProperties = {
-  margin: "4px 0 2px",
+  margin: "0 0 2px",
   color: "#18202b",
   fontSize: 16,
   letterSpacing: 0,
@@ -3312,7 +4391,10 @@ const inventoryPreviewReadyStyle: CSSProperties = {
 const inventoryPreviewSummaryStyle: CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))",
+  gap: 6,
+  padding: "8px 10px",
   borderBottom: "1px solid #e5e7eb",
+  background: "#fbfcfd",
 };
 
 const inventoryBatchActionStyle: CSSProperties = {
@@ -3320,24 +4402,31 @@ const inventoryBatchActionStyle: CSSProperties = {
   alignItems: "center",
   justifyContent: "space-between",
   gap: 12,
-  padding: "11px 14px",
+  flexWrap: "wrap",
+  padding: "10px 14px",
   borderBottom: "1px solid #e5e7eb",
   background: "#f8fafb",
   fontSize: 12,
 };
 
-const inventoryBatchActionMetaStyle: CSSProperties = {
-  display: "block",
-  marginTop: 3,
-  color: "#667085",
-  fontSize: 10,
-};
-
 const inventoryBatchButtonsStyle: CSSProperties = {
   display: "flex",
+  flexDirection: "row",
+  alignItems: "flex-end",
   gap: 7,
   flexWrap: "wrap",
   justifyContent: "flex-end",
+};
+
+const inventoryExclusionBadgeStyle: CSSProperties = {
+  border: "1px solid #e5ca8e",
+  borderRadius: 7,
+  padding: "7px 11px",
+  background: "#fff8e8",
+  color: "#805d16",
+  fontSize: 12,
+  lineHeight: 1.35,
+  fontWeight: 800,
 };
 
 const inventoryApplyButtonStyle: CSSProperties = {
@@ -3345,9 +4434,9 @@ const inventoryApplyButtonStyle: CSSProperties = {
   borderRadius: 6,
   background: "#8b2f2f",
   color: "#ffffff",
-  padding: "8px 10px",
-  fontSize: 11,
-  fontWeight: 800,
+  padding: "9px 14px",
+  fontSize: 12,
+  fontWeight: 900,
   cursor: "pointer",
 };
 
@@ -3400,10 +4489,13 @@ const inventoryPreviewSummaryItemStyle: CSSProperties = {
   alignItems: "baseline",
   justifyContent: "space-between",
   gap: 8,
-  padding: "10px 11px",
-  borderRight: "1px solid #edf0f3",
+  padding: "9px 10px",
+  border: "1px solid #e2e8f0",
+  borderRadius: 7,
+  background: "#ffffff",
   color: "#667085",
   fontSize: 10,
+  textAlign: "left",
 };
 
 const inventoryPreviewDetailsStyle: CSSProperties = {
@@ -3462,6 +4554,16 @@ const inventoryTotalNameStyle: CSSProperties = {
   overflowWrap: "anywhere",
 };
 
+const inventoryExpectedDeductionStyle: CSSProperties = {
+  color: "#dc2626",
+  fontWeight: 900,
+};
+
+const inventoryAfterDeductionStyle: CSSProperties = {
+  color: "#18202b",
+  fontWeight: 900,
+};
+
 const inventoryPreviewEmptyStyle: CSSProperties = {
   margin: 0,
   padding: "12px 14px",
@@ -3470,32 +4572,35 @@ const inventoryPreviewEmptyStyle: CSSProperties = {
 };
 
 const previewReceiptListStyle: CSSProperties = {
-  display: "grid",
-  gap: 1,
-  borderTop: "1px solid #edf0f3",
-  background: "#e7eaee",
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  paddingTop: 8,
 };
 
 const previewReceiptStyle: CSSProperties = {
   background: "#ffffff",
-  padding: "11px 14px",
+  border: "1px solid #eef0f3",
+  borderRadius: 10,
+  overflow: "hidden",
 };
 
 const previewReceiptHeaderRowStyle: CSSProperties = {
   display: "grid",
   gridTemplateColumns: "auto minmax(0, 1fr)",
-  alignItems: "center",
+  alignItems: "start",
   gap: 8,
+  padding: "9px 10px",
 };
 
 const previewReceiptHeaderButtonStyle: CSSProperties = {
   width: "100%",
   border: 0,
   background: "transparent",
-  display: "flex",
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto",
   alignItems: "center",
-  justifyContent: "space-between",
-  gap: 12,
+  gap: 10,
   padding: 0,
   color: "#18202b",
   textAlign: "left",
@@ -3509,12 +4614,62 @@ const previewReceiptCheckboxStyle: CSSProperties = {
   verticalAlign: "middle",
 };
 
+const previewReceiptSelectionStyle: CSSProperties = {
+  display: "grid",
+  justifyItems: "center",
+  gap: 3,
+};
+
+const previewSelectionLabelStyle: CSSProperties = {
+  border: "1px solid",
+  borderRadius: 5,
+  padding: "1px 4px",
+  fontSize: 9,
+  lineHeight: 1.2,
+  fontWeight: 900,
+  whiteSpace: "nowrap",
+};
+
+const previewSelectionReadyStyle: CSSProperties = {
+  borderColor: "#9fcbbd",
+  background: "#edf8f4",
+  color: "#246052",
+};
+
+const previewSelectionWarningStyle: CSSProperties = {
+  borderColor: "#ead39c",
+  background: "#fff9eb",
+  color: "#77591b",
+};
+
+const previewSelectionNeutralStyle: CSSProperties = {
+  borderColor: "#c9d0da",
+  background: "#f5f6f7",
+  color: "#596273",
+};
+
 const previewReceiptMetaStyle: CSSProperties = {
   display: "block",
   marginTop: 3,
   color: "#667085",
   fontSize: 10,
   lineHeight: 1.35,
+};
+
+const previewReceiptMainStyle: CSSProperties = {
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column",
+  gap: 3,
+};
+
+const previewReceiptAmountWrapStyle: CSSProperties = {
+  flexShrink: 0,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-end",
+  gap: 3,
+  minWidth: 82,
 };
 
 const previewStatusStyle: CSSProperties = {
@@ -3543,32 +4698,22 @@ const previewStatusBlockedStyle: CSSProperties = {
   color: "#8a2f2f",
 };
 
-const previewPartialNoticeStyle: CSSProperties = {
-  display: "grid",
-  gap: 3,
-  marginTop: 8,
-  padding: "8px 10px",
-  border: "1px solid #ead39c",
-  borderRadius: 6,
-  background: "#fff9eb",
-  color: "#77591b",
-  fontSize: 10,
-};
-
-const previewPartialNoticeTextStyle: CSSProperties = {
-  margin: 0,
+const previewStatusAlreadyAppliedStyle: CSSProperties = {
+  borderColor: "#2d3748",
+  background: "#2d3748",
+  color: "#ffffff",
 };
 
 const previewLineListStyle: CSSProperties = {
   display: "grid",
-  gap: 5,
-  marginTop: 9,
+  gap: 6,
+  padding: "0 10px 10px 36px",
 };
 
 const previewLineStyle: CSSProperties = {
   borderLeft: "3px solid #cbd5e1",
   background: "#f8fafb",
-  padding: "8px 10px",
+  padding: "9px 10px",
 };
 
 const previewOptionLineStyle: CSSProperties = {
@@ -3579,11 +4724,66 @@ const previewOptionLineStyle: CSSProperties = {
 const previewLineTitleStyle: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
-  alignItems: "center",
+  alignItems: "flex-start",
   justifyContent: "space-between",
   gap: 10,
   color: "#667085",
   fontSize: 10,
+};
+
+const previewLineMainStyle: CSSProperties = {
+  minWidth: 0,
+  display: "grid",
+  gap: 5,
+};
+
+const previewLineNameStyle: CSSProperties = {
+  color: "#111827",
+  fontSize: 11,
+  lineHeight: 1.35,
+  overflowWrap: "anywhere",
+};
+
+const previewLineQuantityStyle: CSSProperties = {
+  color: "#475467",
+  fontSize: 10,
+  lineHeight: 1.35,
+  fontWeight: 900,
+  whiteSpace: "nowrap",
+};
+
+const previewLineBadgeStyle: CSSProperties = {
+  width: "fit-content",
+  border: "1px solid",
+  borderRadius: 5,
+  padding: "2px 6px",
+  fontSize: 10,
+  lineHeight: 1.25,
+  fontWeight: 900,
+};
+
+const previewLineBadgeReadyStyle: CSSProperties = {
+  borderColor: "#9fcbbd",
+  background: "#edf8f4",
+  color: "#246052",
+};
+
+const previewLineBadgeWarningStyle: CSSProperties = {
+  borderColor: "#ead39c",
+  background: "#fff9eb",
+  color: "#77591b",
+};
+
+const previewLineBadgeDangerStyle: CSSProperties = {
+  borderColor: "#e0abab",
+  background: "#fff1f1",
+  color: "#8a2f2f",
+};
+
+const previewLineBadgeNeutralStyle: CSSProperties = {
+  borderColor: "#c9d0da",
+  background: "#f5f6f7",
+  color: "#596273",
 };
 
 const previewLineErrorStyle: CSSProperties = {
@@ -3596,7 +4796,7 @@ const previewDeductionStyle: CSSProperties = {
   display: "grid",
   gridTemplateColumns: "minmax(0, 1fr) auto auto",
   gap: 10,
-  marginTop: 6,
+  marginTop: 7,
   color: "#475467",
   fontSize: 10,
   overflowWrap: "anywhere",
@@ -3671,13 +4871,15 @@ const receiptRowButtonStyle: CSSProperties = {
   padding: "9px 10px",
   display: "flex",
   justifyContent: "space-between",
-  alignItems: "center",
+  alignItems: "flex-start",
+  flexWrap: "wrap",
   gap: 10,
   textAlign: "left",
   cursor: "pointer",
 };
 
 const receiptMainStyle: CSSProperties = {
+  flex: "1 1 180px",
   minWidth: 0,
   display: "flex",
   flexDirection: "column",
@@ -3686,7 +4888,8 @@ const receiptMainStyle: CSSProperties = {
 
 const receiptTopLineStyle: CSSProperties = {
   display: "flex",
-  alignItems: "center",
+  alignItems: "flex-start",
+  flexWrap: "wrap",
   gap: 7,
   minWidth: 0,
 };
@@ -3702,6 +4905,14 @@ const receiptNoStyle: CSSProperties = {
 const receiptMetaLineStyle: CSSProperties = {
   ...ui.metaText,
   fontWeight: 700,
+  overflowWrap: "anywhere",
+};
+
+const receiptStatusGroupStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  flexWrap: "wrap",
+  gap: 5,
 };
 
 const statusBadgeStyle: CSSProperties = {
@@ -3725,6 +4936,8 @@ const modifiedBadgeStyle: CSSProperties = {
 };
 
 const receiptAmountWrapStyle: CSSProperties = {
+  marginLeft: "auto",
+  minWidth: 92,
   flexShrink: 0,
   display: "flex",
   flexDirection: "column",
@@ -3737,6 +4950,7 @@ const amountStyle: CSSProperties = {
   lineHeight: 1.25,
   fontWeight: 900,
   color: "#111827",
+  whiteSpace: "nowrap",
 };
 
 const receiptTimeStyle: CSSProperties = {
@@ -3850,15 +5064,18 @@ const lineRowStyle: CSSProperties = {
 };
 
 const optionLineRowStyle: CSSProperties = {
-  marginLeft: 12,
+  marginLeft: 16,
+  paddingLeft: 10,
   background: "#ffffff",
   borderStyle: "dashed",
+  borderLeft: "3px solid #cbd5e1",
 };
 
 const lineTitleRowStyle: CSSProperties = {
   minWidth: 0,
   display: "flex",
-  alignItems: "center",
+  alignItems: "flex-start",
+  flexWrap: "wrap",
   gap: 6,
 };
 
@@ -3882,7 +5099,7 @@ const optionBadgeStyle: CSSProperties = {
   ...ui.badgeMini,
   width: "fit-content",
   minWidth: 0,
-  height: 18,
+  height: 17,
   background: "#6b7280",
 };
 
@@ -4298,4 +5515,560 @@ const emptyTextStyle: CSSProperties = {
   lineHeight: 1.45,
   color: "#6b7280",
   fontWeight: 700,
+};
+
+const menuSyncBottomWrapStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+  paddingTop: 12,
+  marginTop: 8,
+  borderTop: "1px solid #f3f4f6",
+};
+
+const createManualReceiptButtonStyle: CSSProperties = {
+  ...ui.button,
+  padding: "10px 12px",
+  fontSize: 13,
+  borderRadius: 10,
+  fontWeight: 800,
+  background: "#1a3a5c",
+  color: "#ffffff",
+  border: "1px solid #1a3a5c",
+};
+
+const manualBadgeStyle: CSSProperties = {
+  background: "#4b5563",
+  color: "#ffffff",
+};
+
+const modalOverlayStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,0.5)",
+  zIndex: 5000,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "24px 12px",
+  boxSizing: "border-box",
+};
+
+const modalCardStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  background: "#ffffff",
+  borderRadius: 12,
+  width: "100%",
+  maxWidth: 480,
+  maxHeight: "calc(100dvh - 48px)",
+  boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+  overflow: "hidden",
+};
+
+const modalHeaderStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: 10,
+  padding: "14px 16px",
+  borderBottom: "1px solid #e5e7eb",
+};
+
+const modalHeaderTitleWrapStyle: CSSProperties = {
+  display: "grid",
+  gap: 2,
+  minWidth: 0,
+};
+
+const modalTitleStyle: CSSProperties = {
+  fontSize: 15,
+  fontWeight: 900,
+  color: "#111827",
+};
+
+const modalHeaderDateStyle: CSSProperties = {
+  fontSize: 11,
+  lineHeight: 1.35,
+  fontWeight: 800,
+  color: "#6b7280",
+};
+
+const modalCloseButtonStyle: CSSProperties = {
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  fontSize: 15,
+  color: "#6b7280",
+  padding: "2px 6px",
+  lineHeight: 1,
+};
+
+const modalBodyStyle: CSSProperties = {
+  padding: "10px 14px",
+  display: "grid",
+  gap: 8,
+  overflowY: "auto",
+  minHeight: 0,
+  flex: 1,
+};
+
+const modalSectionStyle: CSSProperties = {
+  display: "grid",
+  gap: 5,
+};
+
+const modalSectionTitleStyle: CSSProperties = {
+  fontSize: 11,
+  fontWeight: 900,
+  color: "#374151",
+};
+
+const modalCompactRowStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+  gap: 8,
+  alignItems: "start",
+};
+
+const modalTimeFieldStyle: CSSProperties = {
+  display: "grid",
+  gap: 4,
+};
+
+const modalTimeInputStyle: CSSProperties = {
+  ...ui.input,
+  padding: "7px 9px",
+  fontSize: 13,
+  borderRadius: 8,
+};
+
+const modalChipGroupStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 6,
+};
+
+const modalRadioChipStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  minHeight: 30,
+  padding: "0 10px",
+  border: "1px solid #d1d5db",
+  borderRadius: 999,
+  background: "#ffffff",
+  color: "#374151",
+  fontSize: 12,
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const modalRadioChipActiveStyle: CSSProperties = {
+  border: "1px solid #9ca3af",
+  background: "#f3f4f6",
+  color: "#111827",
+};
+
+const modalRadioInputStyle: CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  margin: 0,
+  opacity: 0,
+  pointerEvents: "none",
+};
+
+const modalRadioIndicatorStyle: CSSProperties = {
+  width: 12,
+  height: 12,
+  border: "1px solid currentColor",
+  borderRadius: 999,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+};
+
+const modalRadioIndicatorDotStyle: CSSProperties = {
+  width: 6,
+  height: 6,
+  borderRadius: 999,
+  background: "#dc2626",
+};
+
+const modalFieldGroupStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+};
+
+const modalFieldLabelStyle: CSSProperties = {
+  fontSize: 11,
+  fontWeight: 800,
+  color: "#6b7280",
+};
+
+const modalInputStyle: CSSProperties = {
+  ...ui.input,
+  padding: "8px 10px",
+  fontSize: 13,
+  borderRadius: 9,
+};
+
+const modalLineListStyle: CSSProperties = {
+  display: "grid",
+  gap: 4,
+};
+
+const modalLineItemStyle: CSSProperties = {
+  display: "grid",
+  gap: 4,
+  padding: "5px 7px",
+  borderRadius: 7,
+  background: "#f9fafb",
+  border: "1px solid #e5e7eb",
+};
+
+const modalLineHeaderStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+  alignItems: "center",
+  gap: 6,
+};
+
+const modalLineContentStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+  alignItems: "center",
+  gap: 8,
+  minWidth: 0,
+  flex: 1,
+};
+
+const modalLineNameStyle: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 800,
+  color: "#111827",
+  lineHeight: 1.35,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const modalLineMetaStyle: CSSProperties = {
+  fontSize: 11,
+  color: "#6b7280",
+  fontWeight: 700,
+  marginTop: 1,
+};
+
+const modalLineRemoveButtonStyle: CSSProperties = {
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  color: "#9ca3af",
+  fontSize: 12,
+  padding: "1px 3px",
+  lineHeight: 1,
+  flexShrink: 0,
+};
+
+const modalProductResultsStyle: CSSProperties = {
+  display: "grid",
+  gap: 4,
+  maxHeight: 200,
+  overflowY: "auto",
+};
+
+const modalProductResultItemStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+  gap: 8,
+  alignItems: "center",
+  padding: "7px 8px",
+  borderRadius: 8,
+  background: "#1f2937",
+  border: "1px solid #374151",
+  color: "#ffffff",
+  textAlign: "left",
+  cursor: "pointer",
+  minWidth: 0,
+  width: "100%",
+  transition: "background-color 120ms ease, border-color 120ms ease",
+};
+
+const modalProductResultSelectedStyle: CSSProperties = {
+  border: "1px solid #9ca3af",
+  background: "#111827",
+};
+
+const modalProductResultNameStyle: CSSProperties = {
+  fontSize: 12,
+  lineHeight: 1.35,
+  fontWeight: 900,
+  color: "#ffffff",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const modalProductResultPriceStyle: CSSProperties = {
+  fontSize: 12,
+  lineHeight: 1.35,
+  fontWeight: 900,
+  color: "#e5e7eb",
+  whiteSpace: "nowrap",
+};
+
+const modalSelectedProductPriceStyle: CSSProperties = {
+  fontSize: 12,
+  lineHeight: 1.35,
+  fontWeight: 900,
+  color: "#6b7280",
+  whiteSpace: "nowrap",
+};
+
+const modalProductResultActionsStyle: CSSProperties = {
+  display: "flex",
+  gap: 4,
+  alignItems: "center",
+};
+
+const modalMutedTextStyle: CSSProperties = {
+  margin: 0,
+  fontSize: 11,
+  lineHeight: 1.4,
+  color: "#6b7280",
+  fontWeight: 700,
+};
+
+const modalSelectedProductStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+  padding: 6,
+  borderRadius: 8,
+  background: "#f9fafb",
+  minWidth: 0,
+  maxWidth: "100%",
+  overflow: "hidden",
+};
+
+const modalOptionSelectionStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+  paddingTop: 2,
+};
+
+const modalOptionGroupStyle: CSSProperties = {
+  display: "grid",
+  gap: 5,
+};
+
+const modalOptionButtonListStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 5,
+};
+
+const modalOptionButtonStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 5,
+  maxWidth: "100%",
+  padding: "5px 8px",
+  border: "1px solid #d1d5db",
+  borderRadius: 7,
+  background: "#ffffff",
+  color: "#374151",
+  fontSize: 11,
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const modalOptionButtonSelectedStyle: CSSProperties = {
+  border: "1px solid #111827",
+  background: "#111827",
+  color: "#ffffff",
+};
+
+const modalOptionButtonNameStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const modalOptionButtonPriceStyle: CSSProperties = {
+  flexShrink: 0,
+  whiteSpace: "nowrap",
+};
+
+const modalComboChildrenStyle: CSSProperties = {
+  display: "grid",
+  gap: 4,
+  paddingTop: 4,
+  borderTop: "1px solid #e5e7eb",
+};
+
+const modalComboChildRowStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+  gap: 8,
+  alignItems: "center",
+  paddingLeft: 8,
+  color: "#4b5563",
+};
+
+const modalComboChildNameStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 11,
+  lineHeight: 1.35,
+  fontWeight: 800,
+};
+
+const modalComboChildPriceStyle: CSSProperties = {
+  flexShrink: 0,
+  fontSize: 11,
+  lineHeight: 1.35,
+  fontWeight: 800,
+  color: "#6b7280",
+  whiteSpace: "nowrap",
+};
+
+const modalQtyInputStyle: CSSProperties = {
+  ...ui.input,
+  width: 48,
+  padding: "5px 7px",
+  fontSize: 12,
+  borderRadius: 7,
+  textAlign: "center",
+};
+
+const modalAddLineButtonStyle: CSSProperties = {
+  ...ui.button,
+  padding: "6px 10px",
+  fontSize: 12,
+  borderRadius: 8,
+  fontWeight: 800,
+  background: "#111827",
+  color: "#ffffff",
+  border: "1px solid #111827",
+};
+
+const modalEmptyTextStyle: CSSProperties = {
+  margin: 0,
+  padding: "8px 9px",
+  border: "1px dashed #d1d5db",
+  borderRadius: 8,
+  background: "#f9fafb",
+  fontSize: 12,
+  lineHeight: 1.4,
+  color: "#6b7280",
+  fontWeight: 700,
+};
+
+const modalAdjustmentBoxStyle: CSSProperties = {
+  display: "grid",
+  gap: 7,
+  padding: 9,
+  border: "1px solid #e5e7eb",
+  borderRadius: 9,
+  background: "#fbfcfd",
+};
+
+const modalAdjustmentInputRowStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) minmax(140px, 180px)",
+  alignItems: "center",
+  gap: 8,
+};
+
+const modalAdjustmentInputStyle: CSSProperties = {
+  ...ui.input,
+  padding: "7px 9px",
+  fontSize: 13,
+  borderRadius: 8,
+  textAlign: "right",
+};
+
+const modalNegativeAdjustmentStyle: CSSProperties = {
+  color: "#dc2626",
+};
+
+const modalPositiveAdjustmentStyle: CSSProperties = {
+  color: "#047857",
+};
+
+const modalTotalRowStyle: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 8,
+};
+
+const modalTotalLabelStyle: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 700,
+  color: "#6b7280",
+};
+
+const modalTotalValueStyle: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 700,
+  color: "#374151",
+};
+
+const modalTotalFinalStyle: CSSProperties = {
+  paddingTop: 6,
+  marginTop: 2,
+  borderTop: "1px solid #e5e7eb",
+};
+
+const modalTotalFinalValueStyle: CSSProperties = {
+  fontSize: 15,
+  fontWeight: 900,
+  color: "#111827",
+};
+
+const modalFooterStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+  padding: "10px 16px 12px",
+  borderTop: "1px solid #e5e7eb",
+  background: "#ffffff",
+  flexShrink: 0,
+};
+
+const modalOptionLineListStyle: CSSProperties = {
+  display: "grid",
+  gap: 2,
+  paddingLeft: 12,
+  borderLeft: "2px solid #cbd5e1",
+};
+
+const modalOptionLineStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+  alignItems: "center",
+  gap: 8,
+  padding: "2px 0",
+};
+
+const modalOptionLineNameStyle: CSSProperties = {
+  fontSize: 11,
+  fontWeight: 800,
+  color: "#374151",
+  lineHeight: 1.35,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const modalPrimarySubmitButtonStyle: CSSProperties = {
+  ...reviewSaveButtonStyle,
+  width: "100%",
+  minHeight: 40,
+  justifyContent: "center",
 };

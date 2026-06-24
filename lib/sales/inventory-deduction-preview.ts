@@ -237,6 +237,8 @@ function addBlockedReason(receipt: WorkingReceipt, reason: string) {
 }
 
 function resolveBlockedStatus(lines: PreviewLine[]) {
+  const hasDeductionLines = lines.some((line) => line.deductions.length > 0);
+  if (hasDeductionLines) return null;
   const statuses = new Set(lines.map((line) => line.status));
   if (statuses.has("missing_mapping")) return "missing_mapping" as const;
   if (statuses.has("manual_review")) return "manual_review" as const;
@@ -1002,6 +1004,13 @@ export async function buildInventoryDeductionPreview(input: {
           ? "재고 차감 후 영수증이 수정되어 별도 보정 검토가 필요합니다."
           : "이미 재고 차감이 적용된 영수증입니다."
       );
+      // TODO(sales-inventory-adjustment):
+      // applied_after_modified receipts are intentionally blocked from standard apply.
+      // Future delta apply must compare per-line applied deductions (pos_inventory_deductions
+      // WHERE receipt_id = ? AND status = 'applied') with current preview lines, keyed by
+      // (receipt_line_id, inventory_item_id, mapping_id, recipe_id), and allow only
+      // new/increased-quantity lines through a separate adjustment flow.
+      // See docs/sales-inventory-deduction-adjustment.md.
     } else if (
       previewLines.length === 0 ||
       previewLines.every((line) => line.lineType === "ignore")

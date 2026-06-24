@@ -68,6 +68,13 @@ export async function POST(req: Request) {
       (receipt) => receipt.status === "ready"
     );
 
+    // TODO(sales-inventory-adjustment):
+    // applied_after_modified receipts are intentionally excluded from standard apply here.
+    // Do NOT relax the status === "ready" check without a separate delta adjustment flow.
+    // The RPC also enforces applied.receipt_id = candidate.receipt_id duplicate prevention.
+    // Future adjustment path must use a dedicated delta batch + separate RPC that checks
+    // only (receipt_line_id, inventory_item_id, mapping_id, recipe_id) for duplicates.
+    // See docs/sales-inventory-deduction-adjustment.md.
     if (readyReceipts.length !== receiptIds.length) {
       return NextResponse.json(
         {
