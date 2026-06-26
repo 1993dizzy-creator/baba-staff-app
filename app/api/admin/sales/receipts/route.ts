@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { getBusinessDate } from "@/lib/common/business-time";
+import {
+  BUSINESS_DAY_END_HOUR,
+  getBusinessDate,
+} from "@/lib/common/business-time";
 import { supabaseServer } from "@/lib/supabase/server";
 
 type ReceiptRow = {
@@ -116,6 +119,12 @@ function getManualRefNo(prefix: string, sequence: number) {
   return `${prefix}${String(sequence).padStart(3, "0")}`;
 }
 
+function addDaysToDateKey(dateKey: string, days: number) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return date.toISOString().slice(0, 10);
+}
+
 function parseManualSaleTime(value: unknown, businessDate: string) {
   if (typeof value !== "string" || !value.trim()) return null;
 
@@ -141,8 +150,12 @@ function parseManualSaleTime(value: unknown, businessDate: string) {
     return null;
   }
 
+  const actualDate =
+    hour < BUSINESS_DAY_END_HOUR
+      ? addDaysToDateKey(businessDate, 1)
+      : businessDate;
   const localDateTime = [
-    `${businessDate}T${String(hour).padStart(2, "0")}`,
+    `${actualDate}T${String(hour).padStart(2, "0")}`,
     `${String(minute).padStart(2, "0")}:00${VIETNAM_TIMEZONE_OFFSET}`,
   ].join(":");
   const date = new Date(localDateTime);
@@ -275,7 +288,8 @@ export async function GET(req: Request) {
         "id, ref_id, ref_no, table_name, ref_date, payment_status, is_canceled, total_amount, final_amount, is_modified, review_status, admin_note"
       )
       .eq("business_date", businessDate)
-      .order("ref_date", { ascending: false });
+      .order("ref_date", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false });
 
     if (receiptsError) {
       throw new Error(`Failed to fetch sales receipts: ${receiptsError.message}`);

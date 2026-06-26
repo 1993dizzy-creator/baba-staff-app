@@ -1167,6 +1167,19 @@ function getReceiptLineCountLabel(text: SalesReceiptsViewText) {
   return text.salesItems === "판매상품" ? "판매라인" : text.salesItems;
 }
 
+function getReceiptSortTime(receipt: ReceiptItem) {
+  const parsed = Date.parse(receipt.refDate || "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortReceiptsByRefDateDesc(receipts: ReceiptItem[]) {
+  return [...receipts].sort((a, b) => {
+    const timeDiff = getReceiptSortTime(b) - getReceiptSortTime(a);
+    if (timeDiff !== 0) return timeDiff;
+    return b.id - a.id;
+  });
+}
+
 function normalizePaymentText(value: unknown) {
   return String(value ?? "")
     .trim()
@@ -1474,7 +1487,7 @@ export default function SalesReceiptsPage() {
           throw new Error(result.error || receiptsText.loadFailed);
         }
 
-        setReceipts(result.receipts || []);
+        setReceipts(sortReceiptsByRefDateDesc(result.receipts || []));
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         setErrorMessage(
@@ -1926,7 +1939,7 @@ export default function SalesReceiptsPage() {
           () => null
         )) as SalesReceiptsResponse | null;
         if (refreshResult?.ok) {
-          setReceipts(refreshResult.receipts || []);
+          setReceipts(sortReceiptsByRefDateDesc(refreshResult.receipts || []));
           setDetailByReceiptId({});
           setExpandedReceiptId(null);
         }
