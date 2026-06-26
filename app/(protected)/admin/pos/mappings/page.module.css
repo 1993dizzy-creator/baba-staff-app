@@ -659,6 +659,28 @@
   background: #f8fafb;
 }
 
+.recipeEditor {
+  grid-template-columns: minmax(180px, 45%) auto auto;
+  justify-content: space-between;
+}
+
+.recipeEditor .checkboxField {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.recipeEditor .editorActions {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.recipeEditor .editorNotice {
+  grid-column: 1 / -1;
+  order: 4;
+}
+
 .checkboxField {
   display: flex !important;
   align-items: center;
@@ -714,6 +736,9 @@
 
 .comboInputRow input {
   padding-right: 34px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .comboClearButton {
@@ -751,15 +776,16 @@
 
 .comboOption {
   position: relative;
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   min-width: 0;
   border: 0;
   border-bottom: 1px solid #edf0f3;
   background: #fff;
   color: #344054;
-  padding: 8px 10px;
+  padding: 6px 10px;
   text-align: left;
   cursor: pointer;
 }
@@ -770,23 +796,26 @@
 
 .comboOption strong,
 .comboOption span {
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .comboOption strong {
-  padding-right: 54px;
+  flex: 1 1 auto;
+  padding-right: 0;
   font-size: 12px;
 }
 
 .comboOption span {
+  flex: 0 1 auto;
   color: #667085;
   font-size: 10px;
 }
 
 .comboOption em {
-  position: absolute;
-  top: 8px;
-  right: 9px;
+  flex: 0 0 auto;
   color: #246052;
   font-size: 9px;
   font-style: normal;
@@ -816,6 +845,70 @@
 .recipeManagerPending {
   border-color: #d4bd8d;
   box-shadow: 0 0 0 2px rgba(212, 189, 141, 0.2);
+}
+
+.recipeManagerExpanded {
+  border-top: 1px solid #dfe7e3;
+}
+
+.recipePanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #dfe7e3;
+  background: #f2f7f5;
+}
+
+.recipePanelHeader div {
+  min-width: 0;
+}
+
+.recipePanelHeader strong {
+  display: block;
+  color: #263f39;
+  font-size: 13px;
+}
+
+.recipePanelHeader p {
+  margin: 3px 0 0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.recipeStatusBadge {
+  flex: 0 0 auto;
+  border: 1px solid;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.recipeStatusNeeded {
+  border-color: #e5ca8e;
+  background: #fff8e8;
+  color: #805d16;
+}
+
+.recipeStatusReady {
+  border-color: #b6d7ca;
+  background: #eff8f4;
+  color: #24584b;
+}
+
+.recipeStatusError {
+  border-color: #e6b8b8;
+  background: #fff2f2;
+  color: #8a2424;
+}
+
+.recipeSummaryStatus {
+  display: flex;
+  margin-top: 6px;
 }
 
 .recipeManager > summary,
@@ -998,6 +1091,34 @@
   gap: 6px;
 }
 
+.recipeQuantityField {
+  min-width: 0;
+}
+
+.recipeQuantityInputRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.recipeUnit {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  max-width: 88px;
+  border: 1px solid #c9d0da;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #475467;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .recipeAddForm {
   display: grid;
   grid-template-columns: minmax(260px, 1.5fr) minmax(125px, 0.65fr) auto auto;
@@ -1153,6 +1274,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .recipeEditor {
+    grid-template-columns: minmax(180px, 45%) auto auto;
+  }
+
   .recipeRow {
     grid-template-columns: minmax(220px, 1fr) minmax(120px, 0.6fr) auto auto;
   }
@@ -1297,6 +1422,10 @@
   }
 
   .editor {
+    grid-template-columns: 1fr;
+  }
+
+  .recipeEditor {
     grid-template-columns: 1fr;
   }
 

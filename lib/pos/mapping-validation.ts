@@ -178,7 +178,7 @@ function validateRecipe(params: {
   const activeRecipes = params.recipes.filter(
     (recipe) => recipe.is_active === true
   );
-  const requiredRecipes = params.recipes.filter(
+  const activeRequiredRecipes = activeRecipes.filter(
     (recipe) => recipe.is_required !== false
   );
   let invalid = false;
@@ -196,7 +196,7 @@ function validateRecipe(params: {
     );
   }
 
-  if (requiredRecipes.length === 0) {
+  if (activeRequiredRecipes.length === 0) {
     invalid = true;
     issue(
       params.issues,
@@ -209,10 +209,7 @@ function validateRecipe(params: {
     );
   }
 
-  if (
-    requiredRecipes.length > 0 &&
-    !requiredRecipes.some((recipe) => recipe.is_active === true)
-  ) {
+  if (activeRequiredRecipes.some((recipe) => recipe.is_active !== true)) {
     invalid = true;
     issue(
       params.issues,
@@ -226,7 +223,7 @@ function validateRecipe(params: {
   }
 
   const inventoryCounts = new Map<number, number>();
-  for (const recipe of params.recipes) {
+  for (const recipe of activeRecipes) {
     const inventoryItemId = Number(recipe.inventory_item_id);
     if (
       !Number.isInteger(inventoryItemId) ||
@@ -246,7 +243,8 @@ function validateRecipe(params: {
       );
     }
 
-    if (Number(recipe.quantity_per_pos_unit) <= 0) {
+    const quantityPerPosUnit = Number(recipe.quantity_per_pos_unit);
+    if (!Number.isFinite(quantityPerPosUnit) || quantityPerPosUnit <= 0) {
       invalid = true;
       issue(
         params.issues,

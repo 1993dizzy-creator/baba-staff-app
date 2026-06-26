@@ -463,6 +463,7 @@ type InventoryDeductionPreview = {
       quantitySold: number;
       mappingSnapshot?: Record<string, unknown> | null;
       status: string;
+      isApplied?: boolean;
       blockedReason: string | null;
       deductions: Array<{
         inventoryItemId: number;
@@ -941,7 +942,6 @@ function getPreviewReceiptSelectionLabel(
 
 function getLineHelpText(
   line: InventoryDeductionPreview["receipts"][number]["lines"][number],
-  receipt: InventoryDeductionPreview["receipts"][number],
   text: InventoryPreviewCopy
 ) {
   if (line.lineType === "combo_invalid_mapping") {
@@ -961,10 +961,7 @@ function getLineHelpText(
   if (line.deductions.some((deduction) => deduction.status === "insufficient_stock")) {
     return text.insufficientStockHelp;
   }
-  if (receipt.status === "already_applied") return text.alreadyAppliedHelp;
-  if (receipt.status === "applied_after_modified") {
-    return text.modifiedAfterApplyHelp;
-  }
+  if (line.isApplied === true) return text.alreadyAppliedHelp;
   if (line.status === "ignored") return text.ignoredHelp;
   return line.deductions.length > 0 ? "" : text.genericCheckHelp;
 }
@@ -992,8 +989,7 @@ function getPreviewLineStatusInfo(
     line.status === "manual_review" ||
     line.status === "review_required" ||
     line.lineType === "manual" ||
-    line.lineType === "manual_review" ||
-    receipt.status === "applied_after_modified";
+    line.lineType === "manual_review";
   const isIncompleteRecipe =
     line.status === "incomplete_recipe" ||
     line.lineType === "combo_incomplete_recipe";
@@ -1003,7 +999,7 @@ function getPreviewLineStatusInfo(
     line.lineType === "ignore" ||
     line.lineType === "combo_ignore" ||
     receipt.status === "skipped";
-  const isAlreadyApplied = receipt.status === "already_applied";
+  const isAlreadyApplied = line.isApplied === true;
 
   if (hasInsufficientStock) {
     return {
@@ -1024,7 +1020,7 @@ function getPreviewLineStatusInfo(
   if (isMappingRequired) {
     return {
       label: text.lineStatusGroup.mappingRequired,
-      message: getLineHelpText(line, receipt, text),
+      message: getLineHelpText(line, text),
       tone: "warning" as const,
     };
   }
@@ -1032,10 +1028,7 @@ function getPreviewLineStatusInfo(
   if (isOperationReview) {
     return {
       label: text.lineStatusGroup.operationReview,
-      message:
-        receipt.status === "applied_after_modified"
-          ? text.modifiedAfterApplyHelp
-          : getLineHelpText(line, receipt, text),
+      message: getLineHelpText(line, text),
       tone: "warning" as const,
     };
   }
@@ -1066,7 +1059,7 @@ function getPreviewLineStatusInfo(
 
   return {
     label: text.lineStatusGroup.operationReview,
-    message: getLineHelpText(line, receipt, text),
+    message: getLineHelpText(line, text),
     tone: "warning" as const,
   };
 }
@@ -2625,6 +2618,12 @@ function ReceiptRow({
     receipt.paymentStatus === 4 ||
     receipt.paymentStatus === 5;
   const lineCountLabel = getReceiptLineCountLabel(text);
+  const statusBadgeToneStyle =
+    receipt.paymentStatus === 1
+      ? paymentPendingBadgeStyle
+      : isCanceled
+        ? canceledBadgeStyle
+        : paidBadgeStyle;
 
   return (
     <button type="button" onClick={onToggle} style={receiptRowButtonStyle}>
@@ -2637,7 +2636,7 @@ function ReceiptRow({
             <span
               style={{
                 ...statusBadgeStyle,
-                ...(isCanceled ? canceledBadgeStyle : paidBadgeStyle),
+                ...statusBadgeToneStyle,
               }}
             >
               {statusLabel}
@@ -3798,7 +3797,7 @@ function ManualReceiptCreateModal({
     setFormError("");
     onSubmit({
       businessDate,
-      saleTime: `${businessDate}T${saleTime}:00`,
+      saleTime,
       tableName,
       note: "",
       vatEnabled,
@@ -4924,6 +4923,10 @@ const statusBadgeStyle: CSSProperties = {
 
 const paidBadgeStyle: CSSProperties = {
   background: "#111827",
+};
+
+const paymentPendingBadgeStyle: CSSProperties = {
+  background: "#6b7280",
 };
 
 const canceledBadgeStyle: CSSProperties = {

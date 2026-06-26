@@ -92,6 +92,16 @@ type PaymentRow = {
   amount: number | string | null;
 };
 
+type AppliedDeductionRow = {
+  invoice_ref_id: string | null;
+  receipt_line_id: number | string | null;
+  inventory_item_id: number | string | null;
+  mapping_id: number | string | null;
+  recipe_id: number | string | null;
+  applied_at: string | null;
+  updated_at: string | null;
+};
+
 export type PreviewReceiptStatus =
   | "ready"
   | "skipped"
@@ -254,6 +264,20 @@ function hasIncompleteRecipeLines(lines: PreviewLine[]) {
   return lines.some((line) => line.status === "incomplete_recipe");
 }
 
+function getAppliedDeductionKey(row: {
+  receiptLineId: number;
+  inventoryItemId: number;
+  mappingId: number | null;
+  recipeId: number | null;
+}) {
+  return [
+    row.receiptLineId,
+    row.inventoryItemId,
+    row.mappingId ?? "",
+    row.recipeId ?? "",
+  ].join(":");
+}
+
 export async function buildInventoryDeductionPreview(input: {
   businessDateFrom: string;
   businessDateTo: string;
@@ -337,7 +361,9 @@ export async function buildInventoryDeductionPreview(input: {
     receiptRefIds.length
       ? supabaseServer
           .from("pos_inventory_deductions")
-          .select("invoice_ref_id, applied_at, updated_at")
+          .select(
+            "invoice_ref_id, receipt_line_id, inventory_item_id, mapping_id, recipe_id, applied_at, updated_at"
+          )
           .in("invoice_ref_id", receiptRefIds)
           .or(
             "status.eq.applied,status.eq.success,applied_at.not.is.null,inventory_log_id.not.is.null"
@@ -420,12 +446,26 @@ export async function buildInventoryDeductionPreview(input: {
     string,
     { appliedAt: string | null }
   >();
-  for (const row of appliedDeductions.data || []) {
+  const appliedDeductionKeys = new Set<string>();
+  for (const row of ((appliedDeductions.data || []) as AppliedDeductionRow[])) {
     const refId = String(row.invoice_ref_id);
     const appliedAt = row.applied_at || row.updated_at || null;
     const current = appliedReceiptByRefId.get(refId);
     if (!current || isAfter(appliedAt, current.appliedAt)) {
       appliedReceiptByRefId.set(refId, { appliedAt });
+    }
+
+    const receiptLineId = Number(row.receipt_line_id);
+    const inventoryItemId = Number(row.inventory_item_id);
+    if (Number.isInteger(receiptLineId) && Number.isInteger(inventoryItemId)) {
+      appliedDeductionKeys.add(
+        getAppliedDeductionKey({
+          receiptLineId,
+          inventoryItemId,
+          mappingId: row.mapping_id === null ? null : Number(row.mapping_id),
+          recipeId: row.recipe_id === null ? null : Number(row.recipe_id),
+        })
+      );
     }
   }
 
@@ -723,18 +763,24 @@ export async function buildInventoryDeductionPreview(input: {
             const activeRecipes = mappingRecipes.filter(
               (recipe) => recipe.is_active === true
             );
+            const activeRecipeInventoryIds = activeRecipes.map((recipe) =>
+              Number(recipe.inventory_item_id)
+            );
             const invalidRecipes =
               activeRecipes.length === 0 ||
-              !mappingRecipes.some((recipe) => recipe.is_required !== false) ||
-              mappingRecipes.some(
-                (recipe) =>
+              !activeRecipes.some((recipe) => recipe.is_required !== false) ||
+              activeRecipes.some((recipe) => {
+                const quantityPerPosUnit = Number(
+                  recipe.quantity_per_pos_unit
+                );
+                return (
                   !inventoryById.has(Number(recipe.inventory_item_id)) ||
-                  Number(recipe.quantity_per_pos_unit) <= 0 ||
-                  (recipe.is_required !== false && recipe.is_active !== true)
-              ) ||
-              new Set(
-                mappingRecipes.map((recipe) => Number(recipe.inventory_item_id))
-              ).size !== mappingRecipes.length;
+                  !Number.isFinite(quantityPerPosUnit) ||
+                  quantityPerPosUnit <= 0
+                );
+              }) ||
+              new Set(activeRecipeInventoryIds).size !==
+                activeRecipeInventoryIds.length;
 
             if (invalidRecipes) {
               return {
@@ -827,31 +873,26 @@ export async function buildInventoryDeductionPreview(input: {
         const activeRecipes = mappingRecipes.filter(
           (recipe) => recipe.is_active === true
         );
-        const allRecipeInventoryIds = mappingRecipes.map((recipe) =>
+        const activeRecipeInventoryIds = activeRecipes.map((recipe) =>
           Number(recipe.inventory_item_id)
         );
         const hasDuplicateInventory =
-          new Set(allRecipeInventoryIds).size !==
-          allRecipeInventoryIds.length;
-        const hasRequiredRecipe = mappingRecipes.some(
+          new Set(activeRecipeInventoryIds).size !==
+          activeRecipeInventoryIds.length;
+        const hasRequiredRecipe = activeRecipes.some(
           (recipe) => recipe.is_required !== false
         );
-        const invalidRequired = mappingRecipes.some(
-          (recipe) =>
-            recipe.is_required !== false &&
-            (recipe.is_active !== true ||
-              !inventoryById.has(Number(recipe.inventory_item_id)) ||
-              Number(recipe.quantity_per_pos_unit) <= 0)
-        );
-        const invalidRecipeRows = mappingRecipes.some(
-          (recipe) =>
+        const invalidRecipeRows = activeRecipes.some((recipe) => {
+          const quantityPerPosUnit = Number(recipe.quantity_per_pos_unit);
+          return (
             !inventoryById.has(Number(recipe.inventory_item_id)) ||
-            Number(recipe.quantity_per_pos_unit) <= 0
-        );
+            !Number.isFinite(quantityPerPosUnit) ||
+            quantityPerPosUnit <= 0
+          );
+        });
         if (
           activeRecipes.length === 0 ||
           !hasRequiredRecipe ||
-          invalidRequired ||
           invalidRecipeRows ||
           hasDuplicateInventory
         ) {
@@ -1145,6 +1186,16 @@ export async function buildInventoryDeductionPreview(input: {
           : null;
       return {
         ...line,
+        isApplied: line.deductions.some((deduction) =>
+          appliedDeductionKeys.has(
+            getAppliedDeductionKey({
+              receiptLineId: line.receiptLineId,
+              inventoryItemId: deduction.inventoryItemId,
+              mappingId: line.mappingId,
+              recipeId: deduction.recipeId,
+            })
+          )
+        ),
         inventoryItemId: directDeduction?.inventoryItemId ?? null,
         inventoryItemName: directDeduction?.inventoryItemName ?? null,
         deductQuantity: directDeduction?.deductQuantity ?? null,

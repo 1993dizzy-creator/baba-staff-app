@@ -101,8 +101,85 @@ type ResolvedManualLine = {
   isAdjustment: boolean;
 };
 
+const VIETNAM_TIMEZONE_OFFSET = "+07:00";
+const MANUAL_REF_NO_RETRY_COUNT = 5;
+
 function isValidBusinessDate(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function getManualRefNoPrefix(businessDate: string) {
+  return `M-${businessDate.slice(2).replace(/-/g, "")}-`;
+}
+
+function getManualRefNo(prefix: string, sequence: number) {
+  return `${prefix}${String(sequence).padStart(3, "0")}`;
+}
+
+function parseManualSaleTime(value: unknown, businessDate: string) {
+  if (typeof value !== "string" || !value.trim()) return null;
+
+  const rawValue = value.trim();
+  const timeOnlyMatch = rawValue.match(/^(\d{2}):(\d{2})$/);
+  const localDateTimeMatch = rawValue.match(
+    /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::\d{2})?$/
+  );
+
+  if (!timeOnlyMatch && !localDateTimeMatch) return null;
+
+  const datePart = localDateTimeMatch?.[1] || businessDate;
+  const hour = Number(localDateTimeMatch?.[2] || timeOnlyMatch?.[1]);
+  const minute = Number(localDateTimeMatch?.[3] || timeOnlyMatch?.[2]);
+
+  if (
+    datePart !== businessDate ||
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    hour > 23 ||
+    minute > 59
+  ) {
+    return null;
+  }
+
+  const localDateTime = [
+    `${businessDate}T${String(hour).padStart(2, "0")}`,
+    `${String(minute).padStart(2, "0")}:00${VIETNAM_TIMEZONE_OFFSET}`,
+  ].join(":");
+  const date = new Date(localDateTime);
+  if (!Number.isFinite(date.getTime())) return null;
+
+  return date.toISOString();
+}
+
+function isUniqueViolation(
+  error: { code?: string; message?: string } | null | undefined
+) {
+  return error?.code === "23505" || /duplicate key/i.test(error?.message || "");
+}
+
+async function getNextManualRefNoSequence(businessDate: string, prefix: string) {
+  const { data, error } = await supabaseServer
+    .from("pos_sales_receipts")
+    .select("ref_no")
+    .eq("source", "manual")
+    .eq("business_date", businessDate)
+    .like("ref_no", `${prefix}%`);
+
+  if (error) {
+    throw new Error(`Failed to fetch manual receipt numbers: ${error.message}`);
+  }
+
+  const maxSequence = ((data || []) as { ref_no: string | null }[]).reduce(
+    (max, row) => {
+      const suffix = row.ref_no?.slice(prefix.length);
+      return /^\d+$/.test(suffix || "")
+        ? Math.max(max, Number(suffix))
+        : max;
+    },
+    0
+  );
+
+  return maxSequence + 1;
 }
 
 function canManageManualReceipt(role: unknown) {
@@ -613,14 +690,15 @@ export async function POST(req: Request) {
     const now = new Date().toISOString();
     const YYYYMMDD = businessDate.replace(/-/g, "");
     const refId = `manual-${YYYYMMDD}-${crypto.randomUUID()}`;
-    const rand4 = Math.random().toString(36).slice(2, 6).toUpperCase().padEnd(4, "0");
-    const timeCompact = now.slice(11, 19).replace(/:/g, "");
-    const refNo = `M-${YYYYMMDD}${timeCompact}-${rand4}`;
+    const refNoPrefix = getManualRefNoPrefix(businessDate);
 
-    const refDate =
-      typeof body.saleTime === "string" && body.saleTime.trim()
-        ? body.saleTime.trim()
-        : now;
+    const refDate = parseManualSaleTime(body.saleTime, businessDate);
+    if (!refDate) {
+      return NextResponse.json(
+        { ok: false, error: "saleTime must use HH:mm for the selected businessDate." },
+        { status: 400 }
+      );
+    }
     const tableName =
       typeof body.tableName === "string" && body.tableName.trim()
         ? body.tableName.trim()
@@ -628,40 +706,57 @@ export async function POST(req: Request) {
     const note =
       typeof body.note === "string" && body.note.trim() ? body.note.trim() : null;
 
-    const { data: insertedReceipt, error: insertReceiptError } = await supabaseServer
-      .from("pos_sales_receipts")
-      .insert({
-        source: "manual",
-        ref_id: refId,
-        ref_no: refNo,
-        business_date: businessDate,
-        ref_date: refDate,
-        payment_status: 3,
-        is_canceled: false,
-        total_amount: receiptTotalAmount,
-        discount_amount: 0,
-        vat_amount: receiptVatAmount,
-        final_amount: receiptFinalAmount,
-        receive_amount: paymentMethod === "cash" ? cashReceivedAmount : receiptFinalAmount,
-        return_amount: returnAmount,
-        table_name: tableName,
-        is_modified: false,
-        modification_note: note,
-        admin_note: `created_by:${actor.username}`,
-        raw_json: { source: "manual-receipt-create", createdBy: actor.username, vatEnabled },
-        synced_at: now,
-        updated_at: now,
-      })
-      .select("id")
-      .single();
+    let receiptId: number | null = null;
+    let refNo = "";
+    let nextRefNoSequence = await getNextManualRefNoSequence(businessDate, refNoPrefix);
 
-    if (insertReceiptError || !insertedReceipt) {
-      throw new Error(
-        `Failed to insert receipt: ${insertReceiptError?.message ?? "no data returned"}`
-      );
+    for (let attempt = 0; attempt < MANUAL_REF_NO_RETRY_COUNT; attempt += 1) {
+      refNo = getManualRefNo(refNoPrefix, nextRefNoSequence + attempt);
+
+      const { data: insertedReceipt, error: insertReceiptError } = await supabaseServer
+        .from("pos_sales_receipts")
+        .insert({
+          source: "manual",
+          ref_id: refId,
+          ref_no: refNo,
+          business_date: businessDate,
+          ref_date: refDate,
+          payment_status: 3,
+          is_canceled: false,
+          total_amount: receiptTotalAmount,
+          discount_amount: 0,
+          vat_amount: receiptVatAmount,
+          final_amount: receiptFinalAmount,
+          receive_amount: paymentMethod === "cash" ? cashReceivedAmount : receiptFinalAmount,
+          return_amount: returnAmount,
+          table_name: tableName,
+          is_modified: false,
+          modification_note: note,
+          admin_note: `created_by:${actor.username}`,
+          raw_json: { source: "manual-receipt-create", createdBy: actor.username, vatEnabled },
+          synced_at: now,
+          updated_at: now,
+        })
+        .select("id")
+        .single();
+
+      if (!insertReceiptError && insertedReceipt) {
+        receiptId = Number(insertedReceipt.id);
+        break;
+      }
+
+      if (!isUniqueViolation(insertReceiptError) || attempt === MANUAL_REF_NO_RETRY_COUNT - 1) {
+        throw new Error(
+          `Failed to insert receipt: ${insertReceiptError?.message ?? "no data returned"}`
+        );
+      }
+
+      nextRefNoSequence = await getNextManualRefNoSequence(businessDate, refNoPrefix);
     }
 
-    const receiptId = Number(insertedReceipt.id);
+    if (!receiptId) {
+      throw new Error("Failed to insert receipt: no data returned");
+    }
 
     const orderedResolvedLines = resolvedLines
       .filter((line) => !line.isOption)

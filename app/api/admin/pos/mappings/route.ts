@@ -358,14 +358,17 @@ function getRuleStatus(params: {
   }
 
   if (params.mapping.mapping_type === "recipe") {
-    if (params.recipes.length === 0) {
+    const activeRecipes = params.recipes.filter(
+      (recipe) => recipe.is_active === true
+    );
+    if (activeRecipes.length === 0) {
       return {
         status: "recipe_mapped" as const,
         validationStatus: "incomplete" as ValidationStatus,
         blockedReason: "Recipe ingredients have not been configured.",
       };
     }
-    if (!params.recipes.some((recipe) => recipe.is_required !== false)) {
+    if (!activeRecipes.some((recipe) => recipe.is_required !== false)) {
       return {
         status: "recipe_mapped" as const,
         validationStatus: "incomplete" as ValidationStatus,
@@ -373,7 +376,7 @@ function getRuleStatus(params: {
       };
     }
     if (
-      params.recipes.some(
+      activeRecipes.some(
         (recipe) =>
           !params.inventoryById.has(Number(recipe.inventory_item_id))
       )
@@ -385,9 +388,12 @@ function getRuleStatus(params: {
       };
     }
     if (
-      params.recipes.some(
-        (recipe) => Number(recipe.quantity_per_pos_unit ?? 0) <= 0
-      )
+      activeRecipes.some((recipe) => {
+        const quantityPerPosUnit = Number(recipe.quantity_per_pos_unit);
+        return (
+          !Number.isFinite(quantityPerPosUnit) || quantityPerPosUnit <= 0
+        );
+      })
     ) {
       return {
         status: "recipe_mapped" as const,
@@ -395,7 +401,7 @@ function getRuleStatus(params: {
         blockedReason: "Recipe contains an invalid deduction quantity.",
       };
     }
-    const inventoryIds = params.recipes.map((recipe) =>
+    const inventoryIds = activeRecipes.map((recipe) =>
       Number(recipe.inventory_item_id)
     );
     if (new Set(inventoryIds).size !== inventoryIds.length) {
@@ -403,18 +409,6 @@ function getRuleStatus(params: {
         status: "recipe_mapped" as const,
         validationStatus: "error" as ValidationStatus,
         blockedReason: "Recipe contains duplicate inventory ingredients.",
-      };
-    }
-    if (
-      params.recipes.some(
-        (recipe) =>
-          recipe.is_required !== false && recipe.is_active !== true
-      )
-    ) {
-      return {
-        status: "recipe_mapped" as const,
-        validationStatus: "incomplete" as ValidationStatus,
-        blockedReason: "A required recipe ingredient is inactive.",
       };
     }
     return {
