@@ -38,6 +38,8 @@ type InventoryItem = {
     supplier?: string | null;
     code?: string | null;
     low_stock_threshold?: string | number | null;
+    package_content_quantity?: string | number | null;
+    package_content_unit?: string | null;
     image_path?: string | null;
     updated_at?: string | null;
     updated_by_name?: string | null;
@@ -299,6 +301,8 @@ export default function InventoryPage() {
     const [purchasePrice, setPurchasePrice] = useState("");
     const [supplier, setSupplier] = useState("");
     const [lowStockThreshold, setLowStockThreshold] = useState("");
+    const [packageContentQuantity, setPackageContentQuantity] = useState("");
+    const [packageContentUnit, setPackageContentUnit] = useState("");
     const [code, setCode] = useState("");
     const [formPhotoFile, setFormPhotoFile] = useState<File | null>(null);
     const [formPhotoPreviewUrl, setFormPhotoPreviewUrl] = useState("");
@@ -348,6 +352,7 @@ export default function InventoryPage() {
     const supplierRef = useRef<HTMLInputElement>(null);
     const priceRef = useRef<HTMLInputElement>(null);
     const unitRef = useRef<HTMLInputElement>(null);
+    const packageContentQuantityRef = useRef<HTMLInputElement>(null);
     const quantityRef = useRef<HTMLInputElement>(null);
     const noteRef = useRef<HTMLInputElement>(null);
     const formRef = useRef<HTMLDivElement>(null);
@@ -408,6 +413,29 @@ export default function InventoryPage() {
         lang === "vi"
             ? item.item_name_vi || item.item_name || "-"
             : item.item_name || item.item_name_vi || "-";
+
+    const getPackageContentText = (item: InventoryItem) => {
+        const contentQuantity = parseDecimal(item.package_content_quantity);
+        const contentUnit = (item.package_content_unit || "").trim();
+
+        if (!contentQuantity || contentQuantity <= 0 || !contentUnit) {
+            return "";
+        }
+
+        const inventoryUnit = (item.unit || "").trim() || "-";
+        return `1 ${inventoryUnit} = ${formatDecimalDisplay(contentQuantity)}${contentUnit}`;
+    };
+
+    const getPackageContentCompactText = (item: InventoryItem) => {
+        const contentQuantity = parseDecimal(item.package_content_quantity);
+        const contentUnit = (item.package_content_unit || "").trim();
+
+        if (!contentQuantity || contentQuantity <= 0 || !contentUnit) {
+            return "";
+        }
+
+        return `${formatDecimalDisplay(contentQuantity)}${contentUnit}`;
+    };
 
     const getDisplayCategory = (item: InventoryItem) =>
         lang === "vi"
@@ -819,6 +847,8 @@ export default function InventoryPage() {
         setSupplier("");
         setCode("");
         setLowStockThreshold("");
+        setPackageContentQuantity("");
+        setPackageContentUnit("");
         setEditingId(null);
         setRegistrationType(null);
         setIsCustomCategory(false);
@@ -1139,6 +1169,12 @@ export default function InventoryPage() {
         );
         setCode(item.code || "");
         setLowStockThreshold(String(item.low_stock_threshold ?? 1));
+        setPackageContentQuantity(
+            item.package_content_quantity === null || item.package_content_quantity === undefined
+                ? ""
+                : String(item.package_content_quantity)
+        );
+        setPackageContentUnit(item.package_content_unit || "");
 
         setTimeout(() => {
             formRef.current?.scrollIntoView({
@@ -1167,9 +1203,42 @@ export default function InventoryPage() {
             }
 
             const nextLowStock = lowStockThreshold ? parseDecimal(lowStockThreshold) : 1;
+            const normalizedPackageContentUnit = packageContentUnit.trim().toLowerCase();
+            const nextPackageContentQuantity =
+                packageContentQuantity.trim() === ""
+                    ? null
+                    : parseDecimal(packageContentQuantity);
+            const nextPackageContentUnit =
+                normalizedPackageContentUnit === ""
+                    ? null
+                    : normalizedPackageContentUnit;
 
             if (nextLowStock < 0) {
                 alert(t.quantityCannotBeNegative);
+                return;
+            }
+
+            if (
+                nextPackageContentQuantity !== null &&
+                nextPackageContentQuantity <= 0
+            ) {
+                alert(t.packageContentQuantityMustBePositive);
+                return;
+            }
+
+            if (
+                (nextPackageContentQuantity === null) !==
+                (nextPackageContentUnit === null)
+            ) {
+                alert(t.packageContentPairRequired);
+                return;
+            }
+
+            if (
+                nextPackageContentUnit !== null &&
+                !["ml", "g"].includes(nextPackageContentUnit)
+            ) {
+                alert(t.packageContentUnitInvalid);
                 return;
             }
 
@@ -1207,6 +1276,13 @@ export default function InventoryPage() {
                     (targetItem.purchase_price ?? null) !== nextPurchasePrice ||
                     normalizeText(targetItem.supplier || "") !== normalizedSupplier ||
                     normalizeText(targetItem.code || "") !== normalizedCode ||
+                    (targetItem.package_content_quantity === null ||
+                    targetItem.package_content_quantity === undefined
+                        ? null
+                        : parseDecimal(targetItem.package_content_quantity)) !==
+                        nextPackageContentQuantity ||
+                    (targetItem.package_content_unit || "").toLowerCase() !==
+                        (nextPackageContentUnit || "") ||
                     parseDecimal(targetItem.low_stock_threshold ?? 1) !== nextLowStock;
 
                 if (!hasChanges) {
@@ -1222,6 +1298,8 @@ export default function InventoryPage() {
                             category_vi: normalizedCategoryVi,
                             purchase_price: nextPurchasePrice,
                             low_stock_threshold: nextLowStock,
+                            package_content_quantity: nextPackageContentQuantity,
+                            package_content_unit: nextPackageContentUnit,
                             quantity: nextQuantity,
                             unit: normalizedUnit,
                             note: normalizedNote,
@@ -1238,6 +1316,8 @@ export default function InventoryPage() {
                             category_vi: normalizedCategoryVi,
                             purchase_price: nextPurchasePrice,
                             low_stock_threshold: nextLowStock,
+                            package_content_quantity: nextPackageContentQuantity,
+                            package_content_unit: nextPackageContentUnit,
                             quantity: nextQuantity,
                             unit: normalizedUnit,
                             note: normalizedNote,
@@ -1273,6 +1353,8 @@ export default function InventoryPage() {
                             supplier: normalizedSupplier,
                             code: normalizedCode,
                             low_stock_threshold: nextLowStock,
+                            package_content_quantity: nextPackageContentQuantity,
+                            package_content_unit: nextPackageContentUnit,
                             updated_at: new Date().toISOString(),
                             updated_by_name: actorName,
                             updated_by_username: actorUsername,
@@ -1290,6 +1372,8 @@ export default function InventoryPage() {
                             supplier: normalizedSupplier,
                             code: normalizedCode,
                             low_stock_threshold: nextLowStock,
+                            package_content_quantity: nextPackageContentQuantity,
+                            package_content_unit: nextPackageContentUnit,
                             updated_at: new Date().toISOString(),
                             updated_by_name: actorName,
                             updated_by_username: actorUsername,
@@ -2215,6 +2299,9 @@ export default function InventoryPage() {
                                     const diffQty = hasSnapshot
                                         ? roundDecimal(Number(item.quantity ?? 0) - Number(snapshotQty))
                                         : null;
+                                    const packageContentText = getPackageContentText(item);
+                                    const packageContentCompactText =
+                                        getPackageContentCompactText(item);
 
                                     return (
                                         <div
@@ -2315,7 +2402,15 @@ export default function InventoryPage() {
                                                             whiteSpace: "nowrap",
                                                         }}
                                                     >
-                                                        <div>
+                                                        <div
+                                                            style={{
+                                                                display: "flex",
+                                                                justifyContent: "flex-end",
+                                                                alignItems: "baseline",
+                                                                gap: 4,
+                                                                flexWrap: "wrap",
+                                                            }}
+                                                        >
                                                             <span
                                                                 style={{
                                                                     fontSize: 14,
@@ -2337,6 +2432,22 @@ export default function InventoryPage() {
                                                             >
                                                                 {item.unit}
                                                             </span>
+                                                            {packageContentCompactText ? (
+                                                                <span
+                                                                    style={{
+                                                                        maxWidth: 120,
+                                                                        color: "#6b7280",
+                                                                        fontSize: 11,
+                                                                        fontWeight: 600,
+                                                                        overflow: "hidden",
+                                                                        textOverflow: "ellipsis",
+                                                                        whiteSpace: "nowrap",
+                                                                    }}
+                                                                    title={packageContentText}
+                                                                >
+                                                                    ({packageContentCompactText})
+                                                                </span>
+                                                            ) : null}
                                                         </div>
 
                                                         <div
@@ -2638,6 +2749,13 @@ export default function InventoryPage() {
                                                     </div>
 
                                                     <div style={ui.detailGrid}>
+                                                        {packageContentText ? (
+                                                            <>
+                                                                <div style={ui.detailLabel}>{t.packageContentLabel}</div>
+                                                                <div style={ui.detailValue}>{packageContentText}</div>
+                                                            </>
+                                                        ) : null}
+
                                                         <div style={ui.detailLabel}>{t.lowStockThreshold}</div>
                                                         <div style={ui.detailValue}>{item.low_stock_threshold ?? 1}</div>
 
@@ -3229,7 +3347,9 @@ export default function InventoryPage() {
                                 onChange={(e) => setUnit(e.target.value)}
                                 style={ui.input}
                                 ref={unitRef}
-                                onKeyDown={(e) => handleKeyDown(e, quantityRef)}
+                                onKeyDown={(e) =>
+                                    handleKeyDown(e, packageContentQuantityRef)
+                                }
                             />
                         </div>
 
@@ -3255,6 +3375,49 @@ export default function InventoryPage() {
                                     </button>
                                 );
                             })}
+                        </div>
+
+                        {/* 1단위 내용량 */}
+                        <div>
+                            <div style={labelStyle}>
+                                {t.packageContentLabel}
+                            </div>
+                            <div style={{ display: "flex", gap: 8 }}>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    min="0.0001"
+                                    placeholder="320, 700, 1000"
+                                    value={packageContentQuantity}
+                                    onChange={(e) =>
+                                        setPackageContentQuantity(e.target.value)
+                                    }
+                                    style={{ ...ui.input, flex: 1 }}
+                                    ref={packageContentQuantityRef}
+                                    onKeyDown={(e) => handleKeyDown(e, quantityRef)}
+                                />
+                                <select
+                                    value={packageContentUnit}
+                                    onChange={(e) =>
+                                        setPackageContentUnit(e.target.value)
+                                    }
+                                    style={{ ...ui.input, width: 92 }}
+                                >
+                                    <option value="">-</option>
+                                    <option value="ml">ml</option>
+                                    <option value="g">g</option>
+                                </select>
+                            </div>
+                            <div
+                                style={{
+                                    marginTop: 6,
+                                    color: "#6b7280",
+                                    fontSize: 12,
+                                    lineHeight: 1.4,
+                                }}
+                            >
+                                {t.packageContentHelp}
+                            </div>
                         </div>
 
                         {/* 수량 */}

@@ -44,6 +44,10 @@ export type PosItemMappingRecipeRow = {
   mapping_id: number;
   inventory_item_id: number;
   quantity_per_pos_unit: number | string | null;
+  source_quantity?: number | string | null;
+  source_unit?: string | null;
+  source_package_content_quantity?: number | string | null;
+  source_package_content_unit?: string | null;
   is_active: boolean | null;
   is_required: boolean | null;
   version: number | null;

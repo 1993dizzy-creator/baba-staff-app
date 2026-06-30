@@ -660,8 +660,7 @@
 }
 
 .recipeEditor {
-  grid-template-columns: minmax(180px, 45%) auto auto;
-  justify-content: space-between;
+  grid-template-columns: minmax(160px, 320px) minmax(0, 1fr) auto;
 }
 
 .recipeEditor .checkboxField {
@@ -906,11 +905,6 @@
   color: #8a2424;
 }
 
-.recipeSummaryStatus {
-  display: flex;
-  margin-top: 6px;
-}
-
 .recipeManager > summary,
 .options summary {
   display: flex;
@@ -1102,6 +1096,15 @@
   gap: 6px;
 }
 
+.recipeQuantityHint {
+  display: block;
+  margin-top: 4px;
+  color: #667085;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .recipeUnit {
   display: inline-flex;
   align-items: center;
@@ -1122,17 +1125,14 @@
 .recipeAddForm {
   display: grid;
   grid-template-columns: minmax(260px, 1.5fr) minmax(125px, 0.65fr) auto auto;
-  align-items: end;
+  align-items: center;
   gap: 12px;
   padding: 13px 14px;
   background: #eef5f2;
 }
 
-.inlineEmpty {
-  margin: 0;
-  padding: 12px 14px 0;
-  color: #667085;
-  font-size: 12px;
+.recipeAddForm label {
+  gap: 4px;
 }
 
 .options {
@@ -1275,7 +1275,7 @@
   }
 
   .recipeEditor {
-    grid-template-columns: minmax(180px, 45%) auto auto;
+    grid-template-columns: minmax(160px, 300px) minmax(0, 1fr) auto;
   }
 
   .recipeRow {
@@ -1427,6 +1427,14 @@
 
   .recipeEditor {
     grid-template-columns: 1fr;
+  }
+
+  .recipeEditor .checkboxField,
+  .recipeEditor .editorActions,
+  .recipeEditor .editorNotice {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: stretch;
   }
 
   .recipeRow,

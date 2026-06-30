@@ -47,6 +47,8 @@ type InventoryItem = {
   item_name_vi?: string | null;
   code?: string | null;
   unit?: string | null;
+  package_content_quantity?: string | number | null;
+  package_content_unit?: string | null;
   category_name?: string | null;
   supplier_name?: string | null;
 };
@@ -75,6 +77,10 @@ type RecipeRow = {
   inventoryItemId: number;
   inventoryItem?: InventoryItem | null;
   quantityPerPosUnit: number;
+  sourceQuantity?: number | null;
+  sourceUnit?: string | null;
+  sourcePackageContentQuantity?: number | null;
+  sourcePackageContentUnit?: string | null;
   isActive: boolean;
   isRequired: boolean;
   version?: number;
@@ -323,6 +329,10 @@ const mappingPageText = {
     recipeDeductionNotice:
       '레시피 차감은 아래 재료별 "판매 1개당 차감 수량"으로 계산됩니다.',
     recipeQuantityLabel: "판매 1개당 차감 수량",
+    recipeUsageLabel: "판매 1개당 사용량",
+    recipeAutoConversionLabel: "자동 환산",
+    recipeDirectQuantityHelp:
+      "1단위 내용량이 없어 재고 단위로 직접 입력합니다.",
     recipeUnitFallback: "단위",
     recipeDisableConfirm: "이 재료를 비활성화할까요?",
     recipeDisableRequiredConfirm:
@@ -404,6 +414,10 @@ const mappingPageText = {
     recipeDeductionNotice:
       "Trừ kho theo công thức bên dưới: số lượng trừ cho mỗi 1 món bán ra.",
     recipeQuantityLabel: "Số lượng trừ cho mỗi 1 món bán ra",
+    recipeUsageLabel: "Lượng dùng cho mỗi món bán ra",
+    recipeAutoConversionLabel: "Tự quy đổi",
+    recipeDirectQuantityHelp:
+      "Chưa có lượng quy đổi, nhập trực tiếp theo đơn vị tồn kho.",
     recipeUnitFallback: "Đơn vị",
     recipeDisableConfirm: "Tắt nguyên liệu này?",
     recipeDisableRequiredConfirm:
@@ -723,6 +737,145 @@ function getInventorySearchText(item: InventoryItem) {
   );
 }
 
+function toPositiveNumber(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeContentUnit(value: unknown) {
+  if (typeof value !== "string") return null;
+  const unit = value.trim().toLowerCase();
+  return unit === "ml" || unit === "g" ? unit : null;
+}
+
+function getPackageContent(item?: InventoryItem | null) {
+  const quantity = toPositiveNumber(item?.package_content_quantity);
+  const unit = normalizeContentUnit(item?.package_content_unit);
+  if (!quantity || !unit) return null;
+  return { quantity, unit };
+}
+
+function normalizeRecipeQuantity(value: number) {
+  return Number(value.toFixed(6));
+}
+
+function formatRecipeNumber(value: unknown, digits = 6) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "";
+  return parsed.toFixed(digits).replace(/\.?0+$/, "");
+}
+
+function getRecipeSourceInitialValue(
+  recipe: RecipeRow | undefined,
+  packageContent: { quantity: number; unit: string }
+) {
+  const sourceQuantity = toPositiveNumber(recipe?.sourceQuantity);
+  const sourceUnit = normalizeContentUnit(recipe?.sourceUnit);
+  if (sourceQuantity && sourceUnit === packageContent.unit) {
+    return formatRecipeNumber(sourceQuantity);
+  }
+
+  const quantityPerPosUnit = toPositiveNumber(recipe?.quantityPerPosUnit);
+  if (quantityPerPosUnit) {
+    return formatRecipeNumber(quantityPerPosUnit * packageContent.quantity);
+  }
+
+  return "";
+}
+
+function RecipeQuantityControls({
+  inventoryItem,
+  recipe,
+  text,
+}: {
+  inventoryItem?: InventoryItem | null;
+  recipe?: RecipeRow;
+  text: (typeof mappingPageText)[AppLanguage];
+}) {
+  const packageContent = getPackageContent(inventoryItem);
+  const inventoryUnit = inventoryItem?.unit || text.recipeUnitFallback;
+  const [sourceQuantity, setSourceQuantity] = useState(() =>
+    packageContent ? getRecipeSourceInitialValue(recipe, packageContent) : ""
+  );
+  const [directQuantity, setDirectQuantity] = useState(() =>
+    formatRecipeNumber(recipe?.quantityPerPosUnit ?? 1)
+  );
+
+  if (!packageContent) {
+    return (
+      <label className={styles.recipeQuantityField}>
+        <span>{text.recipeQuantityLabel}</span>
+        <div className={styles.recipeQuantityInputRow}>
+          <input
+            name="quantityPerPosUnit"
+            type="number"
+            min="0.0001"
+            step="any"
+            value={directQuantity}
+            onChange={(event) => setDirectQuantity(event.target.value)}
+            required
+          />
+          <span className={styles.recipeUnit}>{inventoryUnit}</span>
+        </div>
+        <input name="recipeQuantityMode" type="hidden" value="direct" />
+        <input name="sourceQuantity" type="hidden" value="" />
+        <input name="sourceUnit" type="hidden" value="" />
+        <input name="sourcePackageContentQuantity" type="hidden" value="" />
+        <input name="sourcePackageContentUnit" type="hidden" value="" />
+        <span className={styles.recipeQuantityHint}>
+          {text.recipeDirectQuantityHelp}
+        </span>
+      </label>
+    );
+  }
+
+  const parsedSourceQuantity = Number(sourceQuantity);
+  const quantityPerPosUnit =
+    Number.isFinite(parsedSourceQuantity) && parsedSourceQuantity > 0
+      ? normalizeRecipeQuantity(parsedSourceQuantity / packageContent.quantity)
+      : null;
+  const conversionText =
+    quantityPerPosUnit === null
+      ? `1 ${inventoryUnit} = ${formatRecipeNumber(packageContent.quantity)}${packageContent.unit}`
+      : `1 ${inventoryUnit} = ${formatRecipeNumber(packageContent.quantity)}${packageContent.unit} · ${text.recipeAutoConversionLabel}: ${formatRecipeNumber(quantityPerPosUnit)} ${inventoryUnit}`;
+
+  return (
+    <label className={styles.recipeQuantityField}>
+      <span>{text.recipeUsageLabel}</span>
+      <div className={styles.recipeQuantityInputRow}>
+        <input
+          name="sourceQuantity"
+          type="number"
+          min="0.0001"
+          step="any"
+          value={sourceQuantity}
+          onChange={(event) => setSourceQuantity(event.target.value)}
+          required
+        />
+        <span className={styles.recipeUnit}>{packageContent.unit}</span>
+      </div>
+      <input name="recipeQuantityMode" type="hidden" value="auto" />
+      <input
+        name="quantityPerPosUnit"
+        type="hidden"
+        value={quantityPerPosUnit ?? ""}
+      />
+      <input name="sourceUnit" type="hidden" value={packageContent.unit} />
+      <input
+        name="sourcePackageContentQuantity"
+        type="hidden"
+        value={packageContent.quantity}
+      />
+      <input
+        name="sourcePackageContentUnit"
+        type="hidden"
+        value={packageContent.unit}
+      />
+      <span className={styles.recipeQuantityHint}>{conversionText}</span>
+    </label>
+  );
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -771,7 +924,20 @@ function getComboSummary(children: ComboChild[]) {
   );
 }
 
+function isRecipeSetupBlockedReason(reason: string | null) {
+  return (
+    reason === "Recipe ingredients have not been configured." ||
+    reason === "Recipe has no required ingredients."
+  );
+}
+
 function getDisplayBlockedReason(item: CatalogItem, lang: AppLanguage) {
+  if (
+    item.mapping?.mappingType === "recipe" &&
+    isRecipeSetupBlockedReason(item.blockedReason)
+  ) {
+    return null;
+  }
   if (item.mapping?.mappingType !== "combo") return item.blockedReason;
   if (!item.blockedReason) return COMBO_TEXT[lang].deduction;
   return (item.comboChildren || []).some(
@@ -1178,46 +1344,6 @@ export default function AdminPosMappingsPage() {
     )
     .reduce((total, [, count]) => total + count, 0);
 
-  function getRecipeUnitLabel(inventoryItem?: InventoryItem | null) {
-    return inventoryItem?.unit || pageText.recipeUnitFallback;
-  }
-
-  function getRecipeUiStatus(mapping: CatalogMapping) {
-    const activeRecipes = mapping.recipes.filter((recipe) => recipe.isActive);
-    const activeRequiredRecipes = activeRecipes.filter(
-      (recipe) => recipe.isRequired
-    );
-    const activeInventoryIds = activeRecipes.map(
-      (recipe) => recipe.inventoryItemId
-    );
-    const hasDuplicateInventory =
-      new Set(activeInventoryIds).size !== activeInventoryIds.length;
-    const hasInvalidRecipe = activeRecipes.some((recipe) => {
-      const quantityPerPosUnit = Number(recipe.quantityPerPosUnit);
-      const inventoryItem =
-        recipe.inventoryItem || inventoryById.get(recipe.inventoryItemId);
-      return (
-        !inventoryItem ||
-        !Number.isFinite(quantityPerPosUnit) ||
-        quantityPerPosUnit <= 0
-      );
-    });
-
-    if (activeRecipes.length === 0 || activeRequiredRecipes.length === 0) {
-      return "needed" as const;
-    }
-    if (hasDuplicateInventory || hasInvalidRecipe) {
-      return "error" as const;
-    }
-    return "ready" as const;
-  }
-
-  function getRecipeUiStatusLabel(status: "needed" | "error" | "ready") {
-    if (status === "ready") return pageText.recipeIngredientReady;
-    if (status === "error") return pageText.recipeIngredientError;
-    return pageText.recipeIngredientNeeded;
-  }
-
   function beginEdit(item: CatalogItem) {
     setNotice("");
     setError("");
@@ -1394,6 +1520,15 @@ export default function AdminPosMappingsPage() {
     const form = new FormData(formElement);
     const inventoryItemId = Number(form.get("inventoryItemId"));
     const quantityPerPosUnit = Number(form.get("quantityPerPosUnit"));
+    const recipeQuantityMode = form.get("recipeQuantityMode");
+    const sourceQuantity = Number(form.get("sourceQuantity"));
+    const sourceUnit = String(form.get("sourceUnit") || "").trim();
+    const sourcePackageContentQuantity = Number(
+      form.get("sourcePackageContentQuantity")
+    );
+    const sourcePackageContentUnit = String(
+      form.get("sourcePackageContentUnit") || ""
+    ).trim();
     const isRequired = form.get("isRequired") === "on";
     const isActive = recipeId ? form.get("isActive") === "on" : true;
     const savingKey = recipeId
@@ -1403,6 +1538,29 @@ export default function AdminPosMappingsPage() {
     if (!recipeId && (!Number.isInteger(inventoryItemId) || inventoryItemId <= 0)) {
       setError(pageText.recipeNeedsInventory);
       return;
+    }
+
+    const isAutoQuantityMode = recipeQuantityMode === "auto";
+    if (
+      !Number.isFinite(quantityPerPosUnit) ||
+      quantityPerPosUnit <= 0
+    ) {
+      setError(pageText.recipeQuantityLabel);
+      return;
+    }
+
+    if (isAutoQuantityMode) {
+      if (
+        !Number.isFinite(sourceQuantity) ||
+        sourceQuantity <= 0 ||
+        !Number.isFinite(sourcePackageContentQuantity) ||
+        sourcePackageContentQuantity <= 0 ||
+        sourceUnit !== sourcePackageContentUnit ||
+        (sourceUnit !== "ml" && sourceUnit !== "g")
+      ) {
+        setError(pageText.recipeUsageLabel);
+        return;
+      }
     }
 
     setRecipeSavingKey(savingKey);
@@ -1420,6 +1578,14 @@ export default function AdminPosMappingsPage() {
             actorUsername,
             ...(recipeId ? {} : { inventoryItemId }),
             quantityPerPosUnit,
+            sourceQuantity: isAutoQuantityMode ? sourceQuantity : null,
+            sourceUnit: isAutoQuantityMode ? sourceUnit : null,
+            sourcePackageContentQuantity: isAutoQuantityMode
+              ? sourcePackageContentQuantity
+              : null,
+            sourcePackageContentUnit: isAutoQuantityMode
+              ? sourcePackageContentUnit
+              : null,
             isRequired,
             isActive,
           }),
@@ -1665,17 +1831,12 @@ export default function AdminPosMappingsPage() {
 
     const recipeBody = (
       <div className={styles.recipeBody}>
-        {mapping.recipes.length === 0 ? (
-          <p className={styles.inlineEmpty}>
-            등록된 레시피 재료가 없습니다.
-          </p>
-        ) : (
+        {mapping.recipes.length > 0 ? (
           <div className={styles.recipeRows}>
             {mapping.recipes.map((recipe) => {
               const recipeInventory =
                 recipe.inventoryItem ||
                 inventoryById.get(recipe.inventoryItemId);
-              const recipeUnit = getRecipeUnitLabel(recipeInventory);
               const recipeSaving =
                 recipeSavingKey === `recipe-${recipe.id}`;
 
@@ -1697,20 +1858,11 @@ export default function AdminPosMappingsPage() {
                         : `품목 #${recipe.inventoryItemId}`}
                     </strong>
                   </div>
-                  <label className={styles.recipeQuantityField}>
-                    <span>{pageText.recipeQuantityLabel}</span>
-                    <div className={styles.recipeQuantityInputRow}>
-                      <input
-                        name="quantityPerPosUnit"
-                        type="number"
-                        min="0.0001"
-                        step="any"
-                        defaultValue={recipe.quantityPerPosUnit}
-                        required
-                      />
-                      <span className={styles.recipeUnit}>{recipeUnit}</span>
-                    </div>
-                  </label>
+                  <RecipeQuantityControls
+                    inventoryItem={recipeInventory}
+                    recipe={recipe}
+                    text={pageText}
+                  />
                   <label className={styles.checkboxField}>
                     <input
                       name="isRequired"
@@ -1746,7 +1898,7 @@ export default function AdminPosMappingsPage() {
               );
             })}
           </div>
-        )}
+        ) : null}
 
         <form
           className={styles.recipeAddForm}
@@ -1769,22 +1921,11 @@ export default function AdminPosMappingsPage() {
               }
             />
           </label>
-          <label className={styles.recipeQuantityField}>
-            <span>{pageText.recipeQuantityLabel}</span>
-            <div className={styles.recipeQuantityInputRow}>
-              <input
-                name="quantityPerPosUnit"
-                type="number"
-                min="0.0001"
-                step="any"
-                defaultValue="1"
-                required
-              />
-              <span className={styles.recipeUnit}>
-                {getRecipeUnitLabel(selectedRecipeInventory)}
-              </span>
-            </div>
-          </label>
+          <RecipeQuantityControls
+            key={`new-${mapping.id}-${selectedRecipeInventory?.id ?? "none"}`}
+            inventoryItem={selectedRecipeInventory}
+            text={pageText}
+          />
           <label className={styles.checkboxField}>
             <input name="isRequired" type="checkbox" defaultChecked />
             <span>필수 재료</span>
@@ -2342,23 +2483,6 @@ export default function AdminPosMappingsPage() {
                           <span className={styles.inactiveBadge}>POS 비활성</span>
                         ) : null}
                       </div>
-                      {item.mapping?.mappingType === "recipe" ? (
-                        <div className={styles.recipeSummaryStatus}>
-                          <span
-                            className={`${styles.recipeStatusBadge} ${
-                              getRecipeUiStatus(item.mapping) === "ready"
-                                ? styles.recipeStatusReady
-                                : getRecipeUiStatus(item.mapping) === "error"
-                                  ? styles.recipeStatusError
-                                  : styles.recipeStatusNeeded
-                            }`}
-                          >
-                            {getRecipeUiStatusLabel(
-                              getRecipeUiStatus(item.mapping)
-                            )}
-                          </span>
-                        </div>
-                      ) : null}
                       <div className={styles.metaLine}>
                         <span>코드 {productCode}</span>
                         <span>
@@ -2618,13 +2742,6 @@ export default function AdminPosMappingsPage() {
                           {pageText.recipeSaveFirstNotice}
                         </p>
                       ) : null}
-                      {false ? (
-                        <p className={styles.editorNotice}>
-                          Recipe 유형 저장은 가능하지만 세부 재료 설정은 다음
-                          단계에서 관리합니다. 재료가 없으면 검토 필요 상태로
-                          표시됩니다.
-                        </p>
-                      ) : null}
                     </form>
                   ) : null}
 
@@ -2695,18 +2812,12 @@ export default function AdminPosMappingsPage() {
                         })()}
                       </header>
                       <div className={styles.recipeBody}>
-                        {item.mapping.recipes.length === 0 ? (
-                          <p className={styles.inlineEmpty}>
-                            등록된 레시피 재료가 없습니다.
-                          </p>
-                        ) : (
+                        {item.mapping.recipes.length > 0 ? (
                           <div className={styles.recipeRows}>
                             {item.mapping.recipes.map((recipe) => {
                               const recipeInventory =
                                 recipe.inventoryItem ||
                                 inventoryById.get(recipe.inventoryItemId);
-                              const recipeUnit =
-                                getRecipeUnitLabel(recipeInventory);
                               const recipeSaving =
                                 recipeSavingKey === `recipe-${recipe.id}`;
 
@@ -2734,26 +2845,11 @@ export default function AdminPosMappingsPage() {
                                         : `품목 #${recipe.inventoryItemId}`}
                                     </strong>
                                   </div>
-                                  <label className={styles.recipeQuantityField}>
-                                    <span>{pageText.recipeQuantityLabel}</span>
-                                    <div
-                                      className={
-                                        styles.recipeQuantityInputRow
-                                      }
-                                    >
-                                      <input
-                                        name="quantityPerPosUnit"
-                                        type="number"
-                                        min="0.0001"
-                                        step="any"
-                                        defaultValue={recipe.quantityPerPosUnit}
-                                        required
-                                      />
-                                      <span className={styles.recipeUnit}>
-                                        {recipeUnit}
-                                      </span>
-                                    </div>
-                                  </label>
+                                  <RecipeQuantityControls
+                                    inventoryItem={recipeInventory}
+                                    recipe={recipe}
+                                    text={pageText}
+                                  />
                                   <label className={styles.checkboxField}>
                                     <input
                                       name="isRequired"
@@ -2797,7 +2893,7 @@ export default function AdminPosMappingsPage() {
                               );
                             })}
                           </div>
-                        )}
+                        ) : null}
 
                         <form
                           className={styles.recipeAddForm}
@@ -2824,30 +2920,18 @@ export default function AdminPosMappingsPage() {
                               }
                             />
                           </label>
-                          <label className={styles.recipeQuantityField}>
-                            <span>{pageText.recipeQuantityLabel}</span>
-                            <div className={styles.recipeQuantityInputRow}>
-                              <input
-                                name="quantityPerPosUnit"
-                                type="number"
-                                min="0.0001"
-                                step="any"
-                                defaultValue="1"
-                                required
-                              />
-                              <span className={styles.recipeUnit}>
-                                {getRecipeUnitLabel(
-                                  inventoryById.get(
-                                    Number(
-                                      recipeInventorySelections[
-                                        item.mapping.id
-                                      ]
-                                    )
-                                  )
-                                )}
-                              </span>
-                            </div>
-                          </label>
+                          <RecipeQuantityControls
+                            key={`new-${item.mapping.id}-${
+                              recipeInventorySelections[item.mapping.id] ||
+                              "none"
+                            }`}
+                            inventoryItem={inventoryById.get(
+                              Number(
+                                recipeInventorySelections[item.mapping.id]
+                              )
+                            )}
+                            text={pageText}
+                          />
                           <label className={styles.checkboxField}>
                             <input
                               name="isRequired"
@@ -2935,7 +3019,11 @@ export default function AdminPosMappingsPage() {
                                     : "설정"}
                               </button>
 
-                              {option.blockedReason ? (
+                              {option.blockedReason &&
+                              !(
+                                option.mappingType === "recipe" &&
+                                isRecipeSetupBlockedReason(option.blockedReason)
+                              ) ? (
                                 <p className={styles.optionWarning}>
                                   {option.blockedReason}
                                 </p>
@@ -3049,13 +3137,6 @@ export default function AdminPosMappingsPage() {
                                   {optionEditor.mappingType === "recipe" ? (
                                     <p className={styles.editorNotice}>
                                       {pageText.optionRecipeNotice}
-                                    </p>
-                                  ) : null}
-                                  {false ? (
-                                    <p className={styles.editorNotice}>
-                                      Recipe 옵션은 저장 후 아래 재료 관리에서
-                                      구성합니다. 재료가 없으면 검토 필요로
-                                      남습니다.
                                     </p>
                                   ) : null}
                                 </form>

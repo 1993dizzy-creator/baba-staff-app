@@ -20,6 +20,12 @@ export const inventoryText = {
 
     categoryPlaceholder: "카테고리 (육류 / 소모품 등)",
     unitPlaceholder: "단위 (예: 병, 개, kg)",
+    packageContentLabel: "1단위 내용량",
+    packageContentHelp:
+      "레시피 환산용 기준값입니다. 예: 1병=700ml, 1캔=320ml, 1봉=1000g",
+    packageContentQuantityMustBePositive: "1단위 내용량은 0보다 커야 합니다.",
+    packageContentPairRequired: "1단위 내용량과 단위를 함께 입력하세요.",
+    packageContentUnitInvalid: "1단위 내용량 단위는 ml 또는 g만 사용할 수 있습니다.",
     requiredFields: "품목명, 수량, 단위 입력하세요",
 
     newCategory: "새 카테고리",
@@ -125,6 +131,14 @@ export const inventoryText = {
 
     categoryPlaceholder: "Danh mục (thịt / vật tư...)",
     unitPlaceholder: "Đơn vị (VD: chai, cái, kg)",
+    packageContentLabel: "Dung lượng mỗi đơn vị",
+    packageContentHelp:
+      "Dùng để quy đổi công thức. Ví dụ: 1 chai=700ml, 1 lon=320ml, 1 gói=1000g",
+    packageContentQuantityMustBePositive:
+      "Dung lượng mỗi đơn vị phải lớn hơn 0.",
+    packageContentPairRequired:
+      "Vui lòng nhập cả dung lượng và đơn vị.",
+    packageContentUnitInvalid: "Đơn vị chỉ có thể là ml hoặc g.",
     requiredFields: "Vui lòng nhập tên hàng, số lượng, đơn vị",
 
     newCategory: "Danh mục mới",

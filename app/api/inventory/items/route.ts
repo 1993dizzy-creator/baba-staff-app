@@ -69,6 +69,58 @@ const getSupabaseErrorField = (error: unknown, field: string) => {
   return typeof value === "string" ? value : undefined;
 };
 
+const PACKAGE_CONTENT_UNITS = new Set(["ml", "g"]);
+
+const normalizeOptionalPositiveNumber = (value: unknown) => {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+};
+
+const normalizePackageContentPayload = (payload: Record<string, unknown>) => {
+  const hasQuantity = Object.prototype.hasOwnProperty.call(
+    payload,
+    "package_content_quantity"
+  );
+  const hasUnit = Object.prototype.hasOwnProperty.call(
+    payload,
+    "package_content_unit"
+  );
+
+  if (!hasQuantity && !hasUnit) {
+    return true;
+  }
+
+  const quantity = normalizeOptionalPositiveNumber(
+    payload.package_content_quantity
+  );
+  const unit =
+    typeof payload.package_content_unit === "string"
+      ? payload.package_content_unit.trim().toLowerCase()
+      : payload.package_content_unit === undefined ||
+          payload.package_content_unit === null
+        ? ""
+        : undefined;
+
+  if (quantity === undefined || unit === undefined) {
+    return false;
+  }
+
+  if (quantity === null && unit === "") {
+    payload.package_content_quantity = null;
+    payload.package_content_unit = null;
+    return true;
+  }
+
+  if (quantity === null || unit === "" || !PACKAGE_CONTENT_UNITS.has(unit)) {
+    return false;
+  }
+
+  payload.package_content_quantity = quantity;
+  payload.package_content_unit = unit;
+  return true;
+};
+
 const isPosReferenceFkError = (error: unknown) => {
   const code = getSupabaseErrorField(error, "code");
   const message = getErrorMessage(error);
@@ -231,6 +283,17 @@ export async function POST(req: Request) {
       );
     }
 
+    if (!normalizePackageContentPayload(payload)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "package_content_quantity and package_content_unit must both be valid when provided.",
+        },
+        { status: 400 }
+      );
+    }
+
     const actor = await getActor(actorUsername);
 
     if (!actor) {
@@ -361,6 +424,17 @@ export async function PATCH(req: Request) {
       );
     }
 
+    if (!normalizePackageContentPayload(payload)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "package_content_quantity and package_content_unit must both be valid when provided.",
+        },
+        { status: 400 }
+      );
+    }
+
     const actor = await getActor(actorUsername);
 
     if (!actor) {
@@ -386,6 +460,8 @@ export async function PATCH(req: Request) {
     code,
     supplier,
     low_stock_threshold,
+    package_content_quantity,
+    package_content_unit,
     image_path
   `)
       .eq("id", Number(id))
@@ -464,6 +540,8 @@ export async function PATCH(req: Request) {
     code,
     supplier,
     low_stock_threshold,
+    package_content_quantity,
+    package_content_unit,
     image_path
   `)
       .single();
@@ -637,6 +715,8 @@ export async function DELETE(req: Request) {
         code,
         supplier,
         low_stock_threshold,
+        package_content_quantity,
+        package_content_unit,
         image_path
       `)
       .eq("id", itemId)

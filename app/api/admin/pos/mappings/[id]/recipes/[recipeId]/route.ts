@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const RECIPE_SELECT =
-  "id, mapping_id, inventory_item_id, quantity_per_pos_unit, is_active, is_required, version, updated_at, updated_by";
+  "id, mapping_id, inventory_item_id, quantity_per_pos_unit, source_quantity, source_unit, source_package_content_quantity, source_package_content_unit, is_active, is_required, version, updated_at, updated_by";
 
 type JsonObject = Record<string, unknown>;
 
@@ -88,6 +88,49 @@ function hasOwn(body: JsonObject, key: string) {
   return Object.prototype.hasOwnProperty.call(body, key);
 }
 
+function getOptionalPositiveNumber(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function getOptionalText(value: unknown) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function isValidSourceRecipeInput(params: {
+  sourceQuantity: number | string | null;
+  sourceUnit: string | null;
+  sourcePackageContentQuantity: number | string | null;
+  sourcePackageContentUnit: string | null;
+}) {
+  const sourceQuantity =
+    params.sourceQuantity === null ? null : Number(params.sourceQuantity);
+  const sourcePackageContentQuantity =
+    params.sourcePackageContentQuantity === null
+      ? null
+      : Number(params.sourcePackageContentQuantity);
+  const values = [
+    sourceQuantity,
+    params.sourceUnit,
+    sourcePackageContentQuantity,
+    params.sourcePackageContentUnit,
+  ];
+  if (values.every((value) => value === null)) return true;
+  if (values.some((value) => value === null)) return false;
+  return (
+    Number.isFinite(sourceQuantity) &&
+    Number(sourceQuantity) > 0 &&
+    Number.isFinite(sourcePackageContentQuantity) &&
+    Number(sourcePackageContentQuantity) > 0 &&
+    params.sourceUnit === params.sourcePackageContentUnit &&
+    (params.sourceUnit === "ml" || params.sourceUnit === "g")
+  );
+}
+
 export async function PATCH(
   req: Request,
   context: { params: Promise<{ id: string; recipeId: string }> }
@@ -113,6 +156,24 @@ export async function PATCH(
     const isActive = hasOwn(body, "isActive")
       ? body.isActive === true
       : authorization.recipe.is_active === true;
+    const sourceQuantity = hasOwn(body, "sourceQuantity")
+      ? getOptionalPositiveNumber(body.sourceQuantity)
+      : authorization.recipe.source_quantity ?? null;
+    const sourceUnit = hasOwn(body, "sourceUnit")
+      ? getOptionalText(body.sourceUnit)
+      : authorization.recipe.source_unit ?? null;
+    const sourcePackageContentQuantity = hasOwn(
+      body,
+      "sourcePackageContentQuantity"
+    )
+      ? getOptionalPositiveNumber(body.sourcePackageContentQuantity)
+      : authorization.recipe.source_package_content_quantity ?? null;
+    const sourcePackageContentUnit = hasOwn(
+      body,
+      "sourcePackageContentUnit"
+    )
+      ? getOptionalText(body.sourcePackageContentUnit)
+      : authorization.recipe.source_package_content_unit ?? null;
 
     if (!quantityPerPosUnit) {
       return NextResponse.json(
@@ -124,11 +185,37 @@ export async function PATCH(
       );
     }
 
+    if (
+      sourceQuantity === undefined ||
+      sourceUnit === undefined ||
+      sourcePackageContentQuantity === undefined ||
+      sourcePackageContentUnit === undefined ||
+      !isValidSourceRecipeInput({
+        sourceQuantity,
+        sourceUnit,
+        sourcePackageContentQuantity,
+        sourcePackageContentUnit,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "sourceQuantity and sourcePackageContentQuantity must be greater than zero when provided.",
+        },
+        { status: 400 }
+      );
+    }
+
     const currentVersion = Number(authorization.recipe.version ?? 1);
     const { data, error } = await supabaseServer
       .from("pos_item_mapping_recipes")
       .update({
         quantity_per_pos_unit: quantityPerPosUnit,
+        source_quantity: sourceQuantity,
+        source_unit: sourceUnit,
+        source_package_content_quantity: sourcePackageContentQuantity,
+        source_package_content_unit: sourcePackageContentUnit,
         is_required: isRequired,
         is_active: isActive,
         version: currentVersion + 1,

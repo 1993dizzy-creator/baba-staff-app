@@ -14,9 +14,46 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const RECIPE_SELECT =
-  "id, mapping_id, inventory_item_id, quantity_per_pos_unit, is_active, is_required, version, updated_at, updated_by";
+  "id, mapping_id, inventory_item_id, quantity_per_pos_unit, source_quantity, source_unit, source_package_content_quantity, source_package_content_unit, is_active, is_required, version, updated_at, updated_by";
 
 type JsonObject = Record<string, unknown>;
+
+function hasOwn(body: JsonObject, key: string) {
+  return Object.prototype.hasOwnProperty.call(body, key);
+}
+
+function getOptionalPositiveNumber(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function getOptionalText(value: unknown) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function isValidSourceRecipeInput(params: {
+  sourceQuantity: number | null;
+  sourceUnit: string | null;
+  sourcePackageContentQuantity: number | null;
+  sourcePackageContentUnit: string | null;
+}) {
+  const values = [
+    params.sourceQuantity,
+    params.sourceUnit,
+    params.sourcePackageContentQuantity,
+    params.sourcePackageContentUnit,
+  ];
+  if (values.every((value) => value === null)) return true;
+  if (values.some((value) => value === null)) return false;
+  return (
+    params.sourceUnit === params.sourcePackageContentUnit &&
+    (params.sourceUnit === "ml" || params.sourceUnit === "g")
+  );
+}
 
 async function getAuthorizedMapping(
   mappingIdValue: string,
@@ -92,13 +129,15 @@ async function serializeRecipes(mappingId: number) {
       item_name_vi: string | null;
       code: string | null;
       unit: string | null;
+      package_content_quantity: number | string | null;
+      package_content_unit: string | null;
     }
   >();
 
   if (inventoryIds.length > 0) {
     const { data: inventoryItems, error: inventoryError } = await supabaseServer
       .from("inventory")
-      .select("id, item_name, item_name_vi, code, unit")
+      .select("id, item_name, item_name_vi, code, unit, package_content_quantity, package_content_unit")
       .in("id", inventoryIds);
 
     if (inventoryError) throw inventoryError;
@@ -112,6 +151,17 @@ async function serializeRecipes(mappingId: number) {
     mappingId: Number(recipe.mapping_id),
     inventoryItemId: Number(recipe.inventory_item_id),
     quantityPerPosUnit: Number(recipe.quantity_per_pos_unit),
+    sourceQuantity:
+      recipe.source_quantity === null || recipe.source_quantity === undefined
+        ? null
+        : Number(recipe.source_quantity),
+    sourceUnit: recipe.source_unit ?? null,
+    sourcePackageContentQuantity:
+      recipe.source_package_content_quantity === null ||
+      recipe.source_package_content_quantity === undefined
+        ? null
+        : Number(recipe.source_package_content_quantity),
+    sourcePackageContentUnit: recipe.source_package_content_unit ?? null,
     isActive: recipe.is_active === true,
     isRequired: recipe.is_required !== false,
     version: Number(recipe.version ?? 1),
@@ -172,6 +222,14 @@ export async function POST(
 
     const inventoryItemId = getPositiveInteger(body.inventoryItemId);
     const quantityPerPosUnit = getPositiveNumber(body.quantityPerPosUnit);
+    const sourceQuantity = getOptionalPositiveNumber(body.sourceQuantity);
+    const sourceUnit = getOptionalText(body.sourceUnit);
+    const sourcePackageContentQuantity = getOptionalPositiveNumber(
+      body.sourcePackageContentQuantity
+    );
+    const sourcePackageContentUnit = getOptionalText(
+      body.sourcePackageContentUnit
+    );
     const isRequired = body.isRequired !== false;
     const isActive = body.isActive !== false;
 
@@ -181,6 +239,28 @@ export async function POST(
           ok: false,
           error:
             "inventoryItemId and a quantityPerPosUnit greater than zero are required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      sourceQuantity === undefined ||
+      sourceUnit === undefined ||
+      sourcePackageContentQuantity === undefined ||
+      sourcePackageContentUnit === undefined ||
+      !isValidSourceRecipeInput({
+        sourceQuantity,
+        sourceUnit,
+        sourcePackageContentQuantity,
+        sourcePackageContentUnit,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "sourceQuantity and sourcePackageContentQuantity must be greater than zero when provided.",
         },
         { status: 400 }
       );
@@ -229,6 +309,24 @@ export async function POST(
         .from("pos_item_mapping_recipes")
         .update({
           quantity_per_pos_unit: quantityPerPosUnit,
+          source_quantity: hasOwn(body, "sourceQuantity")
+            ? sourceQuantity
+            : existing.source_quantity ?? null,
+          source_unit: hasOwn(body, "sourceUnit")
+            ? sourceUnit
+            : existing.source_unit ?? null,
+          source_package_content_quantity: hasOwn(
+            body,
+            "sourcePackageContentQuantity"
+          )
+            ? sourcePackageContentQuantity
+            : existing.source_package_content_quantity ?? null,
+          source_package_content_unit: hasOwn(
+            body,
+            "sourcePackageContentUnit"
+          )
+            ? sourcePackageContentUnit
+            : existing.source_package_content_unit ?? null,
           is_required: isRequired,
           is_active: isActive,
           version: Number(existing.version ?? 1) + 1,
@@ -245,6 +343,10 @@ export async function POST(
           mapping_id: authorization.mappingId,
           inventory_item_id: inventoryItemId,
           quantity_per_pos_unit: quantityPerPosUnit,
+          source_quantity: sourceQuantity,
+          source_unit: sourceUnit,
+          source_package_content_quantity: sourcePackageContentQuantity,
+          source_package_content_unit: sourcePackageContentUnit,
           is_required: isRequired,
           is_active: isActive,
           version: 1,

@@ -21,7 +21,7 @@ const PRODUCT_SELECT =
 const MAPPING_SELECT =
   "id, pos_item_code, pos_item_name, pos_unit_name, mapping_type, inventory_item_id, quantity_multiplier, is_active, pos_product_id, target_type, pos_option_id, pos_product_code_snapshot, pos_product_name_snapshot, pos_option_name_snapshot, mapping_version, last_reconciled_at, updated_at, updated_by, archived_at, archived_by, archive_reason";
 const RECIPE_SELECT =
-  "id, mapping_id, inventory_item_id, quantity_per_pos_unit, is_active, is_required, version";
+  "id, mapping_id, inventory_item_id, quantity_per_pos_unit, source_quantity, source_unit, source_package_content_quantity, source_package_content_unit, is_active, is_required, version";
 const PAGE_SIZE = 1000;
 
 type MappingStatus =
@@ -50,6 +50,8 @@ type InventorySummary = {
   item_name_vi: string | null;
   code: string | null;
   unit: string | null;
+  package_content_quantity: number | string | null;
+  package_content_unit: string | null;
 };
 type ComboChildSummary = {
   childId: string;
@@ -195,7 +197,7 @@ async function fetchInventorySummaries(inventoryIds: number[]) {
 
   const { data, error } = await supabaseServer
     .from("inventory")
-    .select("id, item_name, item_name_vi, code, unit")
+    .select("id, item_name, item_name_vi, code, unit, package_content_quantity, package_content_unit")
     .in("id", inventoryIds);
 
   if (error) throw error;
@@ -287,6 +289,17 @@ function serializeMapping(
       inventoryItem:
         inventoryById.get(Number(recipe.inventory_item_id)) ?? null,
       quantityPerPosUnit: Number(recipe.quantity_per_pos_unit ?? 0),
+      sourceQuantity:
+        recipe.source_quantity === null || recipe.source_quantity === undefined
+          ? null
+          : Number(recipe.source_quantity),
+      sourceUnit: recipe.source_unit ?? null,
+      sourcePackageContentQuantity:
+        recipe.source_package_content_quantity === null ||
+        recipe.source_package_content_quantity === undefined
+          ? null
+          : Number(recipe.source_package_content_quantity),
+      sourcePackageContentUnit: recipe.source_package_content_unit ?? null,
       isActive: recipe.is_active === true,
       isRequired: recipe.is_required !== false,
       version: Number(recipe.version ?? 1),
