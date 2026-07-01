@@ -44,7 +44,8 @@ async function getAdminActor(actorUsername: string) {
     !data ||
     (data.role !== "owner" &&
       data.role !== "master" &&
-      data.role !== "manager")
+      data.role !== "manager" &&
+      data.role !== "leader")
   ) {
     return null;
   }

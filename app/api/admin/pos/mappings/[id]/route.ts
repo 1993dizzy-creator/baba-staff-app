@@ -44,7 +44,8 @@ async function getAdminActor(actorUsername: string) {
     !data ||
     (data.role !== "owner" &&
       data.role !== "master" &&
-      data.role !== "manager")
+      data.role !== "manager" &&
+      data.role !== "leader")
   ) {
     return null;
   }
@@ -174,9 +175,14 @@ export async function POST(
     const action = getText(body.action);
     const actor = await getAdminActor(actorUsername);
 
-    if (!actor || (actor.role !== "owner" && actor.role !== "master")) {
+    if (
+      !actor ||
+      (actor.role !== "owner" &&
+        actor.role !== "master" &&
+        actor.role !== "leader")
+    ) {
       return NextResponse.json(
-        { ok: false, error: "Only owner or master can perform this action." },
+        { ok: false, error: "No permission" },
         { status: 403 }
       );
     }
@@ -854,9 +860,14 @@ export async function DELETE(
       typeof body.actorUsername === "string" ? body.actorUsername.trim() : "";
     const actor = await getAdminActor(actorUsername);
 
-    if (!actor || (actor.role !== "owner" && actor.role !== "master")) {
+    if (
+      !actor ||
+      (actor.role !== "owner" &&
+        actor.role !== "master" &&
+        actor.role !== "leader")
+    ) {
       return NextResponse.json(
-        { ok: false, error: "매핑 삭제는 owner 또는 master만 가능합니다." },
+        { ok: false, error: "No permission" },
         { status: 403 }
       );
     }

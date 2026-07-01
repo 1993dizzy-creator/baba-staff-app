@@ -1561,7 +1561,7 @@ export default function AdminPosMappingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [actorUsername, statusFilter]);
+  }, [actorUsername, lang, statusFilter]);
 
   useEffect(() => {
     if (!actorUsername) return;
@@ -1575,7 +1575,7 @@ export default function AdminPosMappingsPage() {
         );
       }
     );
-  }, [actorUsername, loadInventory, loadMappings]);
+  }, [actorUsername, lang, loadInventory, loadMappings]);
 
   const inventoryById = useMemo(
     () =>
@@ -1635,6 +1635,8 @@ export default function AdminPosMappingsPage() {
         key !== "option_based"
     )
     .reduce((total, [, count]) => total + count, 0);
+  const canRunMappingAdminActions =
+    actorRole === "owner" || actorRole === "master" || actorRole === "leader";
 
   function beginEdit(item: CatalogItem) {
     setNotice("");
@@ -2340,7 +2342,7 @@ export default function AdminPosMappingsPage() {
       !actorUsername ||
       !item.mapping ||
       item.status !== "orphaned" ||
-      (actorRole !== "owner" && actorRole !== "master")
+      !canRunMappingAdminActions
     ) {
       return;
     }
@@ -2383,7 +2385,7 @@ export default function AdminPosMappingsPage() {
     if (
       !actorUsername ||
       !item.mapping ||
-      (actorRole !== "owner" && actorRole !== "master")
+      !canRunMappingAdminActions
     ) {
       return;
     }
@@ -2538,16 +2540,14 @@ export default function AdminPosMappingsPage() {
             >
               {validating ? pageText.validatingButton : pageText.validateButton}
             </button>
-            {actorRole !== "leader" && (
-              <button
-                type="button"
-                className={styles.secondaryButton}
-                onClick={() => void reconcileMappings()}
-                disabled={reconciling || loading}
-              >
-                {reconciling ? pageText.reconcilingButton : pageText.reconcileButton}
-              </button>
-            )}
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={() => void reconcileMappings()}
+              disabled={reconciling || loading}
+            >
+              {reconciling ? pageText.reconcilingButton : pageText.reconcileButton}
+            </button>
           </div>
         </header>
 
@@ -2762,9 +2762,8 @@ export default function AdminPosMappingsPage() {
                 item.status === "orphaned" &&
                 Boolean(item.mapping) &&
                 item.canHardDelete === true &&
-                (actorRole === "owner" || actorRole === "master");
-              const canManageMapping =
-                actorRole === "owner" || actorRole === "master";
+                canRunMappingAdminActions;
+              const canManageMapping = canRunMappingAdminActions;
               const hasLegacyCandidate =
                 (item.legacyCandidates?.length || 0) > 0;
               const canArchiveOrphaned =

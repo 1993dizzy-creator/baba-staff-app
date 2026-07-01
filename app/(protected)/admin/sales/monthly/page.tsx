@@ -320,16 +320,21 @@ export default function SalesMonthlyPage() {
     useState<MenuSalesGroupKey>("all");
   const [currentUser, setCurrentUser] =
     useState<ReturnType<typeof getUser>>(null);
+  const [currentUserLoaded, setCurrentUserLoaded] = useState(false);
   const [savingCategoryName, setSavingCategoryName] = useState("");
   const [categoryGroupMessage, setCategoryGroupMessage] = useState("");
   const [categoryGroupError, setCategoryGroupError] = useState("");
   const sharedBusinessDate = getMonthStartDate(month);
+  const currentRole =
+    typeof currentUser?.role === "string"
+      ? currentUser.role.trim().toLowerCase()
+      : "";
   const canManageCategoryGroups =
-    currentUser?.role === "owner" ||
-    currentUser?.role === "master" ||
-    currentUser?.role === "manager";
+    currentRole === "owner" ||
+    currentRole === "master" ||
+    currentRole === "manager";
 
-  const isLeader = currentUser?.role === "leader";
+  const isLeader = currentRole === "leader";
   const tabs = salesTabs.filter((tab) => !isLeader || tab.key === "monthly").map((tab) => ({
     label: t.tabs[tab.key],
     href:
@@ -378,8 +383,19 @@ export default function SalesMonthlyPage() {
   );
 
   useEffect(() => {
-    setCurrentUser(getUser());
+    const user = getUser();
+    setCurrentUser(user);
+    setCurrentUserLoaded(true);
+    if (user?.role === "leader") {
+      setActiveDetailTab("menu");
+    }
   }, []);
+
+  useEffect(() => {
+    if (isLeader && activeDetailTab !== "menu") {
+      setActiveDetailTab("menu");
+    }
+  }, [activeDetailTab, isLeader]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -456,7 +472,7 @@ export default function SalesMonthlyPage() {
   const paymentSummary = monthlyData?.paymentSummary;
   const taxSummary = monthlyData?.taxSummary;
   const menuSales = monthlyData?.menuSales;
-  const days = monthlyData?.days || [];
+  const days = isLeader ? [] : monthlyData?.days || [];
   const salesDays = days.filter(
     (day) => getDailyFinalAmount(day) > 0 || day.receiptCount > 0
   );
@@ -510,9 +526,16 @@ export default function SalesMonthlyPage() {
 
   return (
     <Container noPaddingTop>
-      <SubNav tabs={tabs} />
+      {currentUserLoaded ? <SubNav tabs={tabs} /> : null}
 
       <div style={sectionStyle}>
+        {!currentUserLoaded ? (
+          <section style={noticeCardStyle}>
+            <span style={noticeTitleStyle}>{monthlyText.loading}</span>
+          </section>
+        ) : null}
+
+        {currentUserLoaded ? (
         <section style={noticeCardStyle}>
           <div style={noticeHeaderStyle}>
             <span style={noticeBadgeStyle}>{monthlyText.badge}</span>
@@ -544,7 +567,9 @@ export default function SalesMonthlyPage() {
           </div>
           {errorMessage ? <p style={errorTextStyle}>{errorMessage}</p> : null}
         </section>
+        ) : null}
 
+        {!isLeader && currentUserLoaded ? (
         <section style={summaryGridStyle}>
           {summaryCards.map((card) => (
             <SummaryCard
@@ -555,7 +580,9 @@ export default function SalesMonthlyPage() {
             />
           ))}
         </section>
+        ) : null}
 
+        {!isLeader && currentUserLoaded ? (
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
             <h2 style={sectionTitleStyle}>
@@ -586,7 +613,9 @@ export default function SalesMonthlyPage() {
             </strong>
           </div>
         </section>
+        ) : null}
 
+        {!isLeader && currentUserLoaded ? (
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
             <h2 style={sectionTitleStyle}>
@@ -606,7 +635,9 @@ export default function SalesMonthlyPage() {
             amountDifferenceAmount={taxSummary?.amountDifferenceAmount || 0}
           />
         </section>
+        ) : null}
 
+        {!isLeader && currentUserLoaded ? (
         <div style={detailTabListStyle}>
           <button
             type="button"
@@ -633,8 +664,98 @@ export default function SalesMonthlyPage() {
             {monthlyText.menuSales}
           </button>
         </div>
+        ) : null}
 
-        {activeDetailTab === "daily" ? (
+        {currentUserLoaded && isLeader ? (
+          <section style={cardStyle}>
+            <div style={sectionHeaderStyle}>
+              <h2 style={sectionTitleStyle}>
+                {withEmoji(SALES_UI_EMOJIS.menuSales, monthlyText.menuSales)}
+              </h2>
+            </div>
+            <div style={menuGroupTabListStyle}>
+              {(menuSales?.groups || []).map((group) => (
+                <button
+                  type="button"
+                  key={group.key}
+                  onClick={() => setMenuSalesGroup(group.key)}
+                  style={{
+                    ...menuGroupTabButtonStyle,
+                    ...(menuSalesGroup === group.key
+                      ? menuGroupTabButtonActiveStyle
+                      : null),
+                    ...(group.key === "uncategorized" && group.itemCount > 0
+                      ? menuGroupTabWarningStyle
+                      : null),
+                  }}
+                >
+                  {group.key === "all"
+                    ? monthlyText.all
+                    : group.key === "food"
+                      ? monthlyText.food
+                      : group.key === "drink"
+                        ? monthlyText.drink
+                        : monthlyText.uncategorized}
+                  <span style={menuGroupCountStyle}>{group.itemCount}</span>
+                </button>
+              ))}
+            </div>
+            <div style={menuSortControlRowStyle}>
+              <span style={menuSortButtonsStyle}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMenuSalesSort((current) =>
+                      current === "quantity" ? "amount" : "quantity"
+                    )
+                  }
+                  style={{
+                    ...menuSortButtonStyle,
+                    ...(menuSalesSort === "quantity"
+                      ? menuSortButtonQuantityStyle
+                      : menuSortButtonAmountStyle),
+                  }}
+                >
+                  {menuSalesSort === "quantity"
+                    ? monthlyText.salesQuantity
+                    : monthlyText.itemSalesAmount}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMenuSalesDirection((current) =>
+                      current === "desc" ? "asc" : "desc"
+                    )
+                  }
+                  style={{
+                    ...menuSortButtonStyle,
+                    ...(menuSalesDirection === "desc"
+                      ? menuSortButtonDescStyle
+                      : menuSortButtonAscStyle),
+                  }}
+                >
+                  {menuSalesDirection === "desc"
+                    ? monthlyText.sortHighToLow
+                    : monthlyText.sortLowToHigh}
+                </button>
+              </span>
+            </div>
+            <MenuSalesList
+              key={`${month}:${menuSalesGroup}:leader`}
+              isLoading={isLoading}
+              hasError={hasError}
+              text={monthlyText}
+              menuSales={menuSales}
+              sort={menuSalesSort}
+              direction={menuSalesDirection}
+              group={menuSalesGroup}
+              canManageCategoryGroups={false}
+              savingCategoryName=""
+              showUnlinkedOptionDetails={false}
+              onCategoryGroupUpdate={handleCategoryGroupUpdate}
+            />
+          </section>
+        ) : activeDetailTab === "daily" && currentUserLoaded ? (
           <section style={cardStyle}>
             <div style={sectionHeaderStyle}>
               <h2 style={sectionTitleStyle}>
@@ -654,7 +775,7 @@ export default function SalesMonthlyPage() {
               days={days}
             />
           </section>
-        ) : (
+        ) : activeDetailTab === "menu" && currentUserLoaded ? (
           <section style={cardStyle}>
             <div style={menuGroupTabListStyle}>
               {(menuSales?.groups || []).map((group) => (
@@ -744,9 +865,10 @@ export default function SalesMonthlyPage() {
               canManageCategoryGroups={canManageCategoryGroups}
               savingCategoryName={savingCategoryName}
               onCategoryGroupUpdate={handleCategoryGroupUpdate}
+              showUnlinkedOptionDetails
             />
           </section>
-        )}
+        ) : null}
       </div>
     </Container>
   );
@@ -844,6 +966,7 @@ function MenuSalesList({
   group,
   canManageCategoryGroups,
   savingCategoryName,
+  showUnlinkedOptionDetails,
   onCategoryGroupUpdate,
 }: {
   isLoading: boolean;
@@ -855,6 +978,7 @@ function MenuSalesList({
   group: MenuSalesGroupKey;
   canManageCategoryGroups: boolean;
   savingCategoryName: string;
+  showUnlinkedOptionDetails: boolean;
   onCategoryGroupUpdate: (
     categoryName: string,
     groupType: CategoryGroupType
@@ -1122,7 +1246,7 @@ function MenuSalesList({
           })}
         </div>
       </div>
-      {(menuSales?.unlinkedOptionCount || 0) > 0 ? (
+      {showUnlinkedOptionDetails && (menuSales?.unlinkedOptionCount || 0) > 0 ? (
         <div style={unlinkedOptionWarningStyle}>
           <strong>
             {text.unlinkedOptions}{" "}

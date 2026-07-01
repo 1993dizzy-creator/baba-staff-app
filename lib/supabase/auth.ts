@@ -62,4 +62,4 @@ export const canManageUsers = (user = getUser()) =>
   ["owner", "master"].includes(getRole(user));
 
 export const canManageMappingDangerousActions = (user = getUser()) =>
-  ["owner", "master", "manager"].includes(getRole(user));
+  ["owner", "master", "manager", "leader"].includes(getRole(user));
