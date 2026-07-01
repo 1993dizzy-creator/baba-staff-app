@@ -257,9 +257,44 @@ export async function GET() {
 
     if (error) throw error;
 
+    const items = data || [];
+    const kegCandidateIds = items
+      .filter((item) => {
+        const unit = String(item.unit || "").trim().toLowerCase();
+        const packageUnit = String(item.package_content_unit || "")
+          .trim()
+          .toLowerCase();
+        const packageQuantity = Number(item.package_content_quantity ?? 0);
+
+        return unit === "keg" && packageUnit === "ml" && packageQuantity > 0;
+      })
+      .map((item) => Number(item.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    const activeKegTrackingIds = new Set<number>();
+
+    if (kegCandidateIds.length > 0) {
+      const { data: mappings, error: mappingError } = await supabaseAdmin
+        .from("inventory_keg_tracking_mappings")
+        .select("inventory_item_id")
+        .in("inventory_item_id", kegCandidateIds)
+        .eq("is_active", true);
+
+      if (mappingError) throw mappingError;
+
+      (mappings || []).forEach((mapping) => {
+        const id = Number(mapping.inventory_item_id);
+        if (Number.isFinite(id) && id > 0) {
+          activeKegTrackingIds.add(id);
+        }
+      });
+    }
+
     return NextResponse.json({
       ok: true,
-      data: data || [],
+      data: items.map((item) => ({
+        ...item,
+        has_active_keg_tracking: activeKegTrackingIds.has(Number(item.id)),
+      })),
     });
   } catch (error) {
     console.error("[INVENTORY_ITEMS_GET_ERROR]", error);

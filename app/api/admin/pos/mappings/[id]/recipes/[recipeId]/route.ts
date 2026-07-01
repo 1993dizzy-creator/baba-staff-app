@@ -279,6 +279,41 @@ export async function DELETE(
     });
     if ("response" in authorization) return authorization.response;
 
+    if (body.hardDelete === true) {
+      if (authorization.recipe.is_active === true) {
+        return NextResponse.json(
+          { ok: false, error: "Active recipe rows cannot be deleted." },
+          { status: 409 }
+        );
+      }
+
+      const { data, error } = await supabaseServer
+        .from("pos_item_mapping_recipes")
+        .delete()
+        .eq("id", authorization.recipe.id)
+        .eq("mapping_id", authorization.mappingId)
+        .eq("is_active", false)
+        .select("id")
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Recipe row changed while it was being deleted. Reload and retry.",
+          },
+          { status: 409 }
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+        deletedRecipeId: authorization.recipe.id,
+      });
+    }
+
     if (authorization.recipe.is_active !== true) {
       return NextResponse.json({ ok: true, recipe: authorization.recipe });
     }

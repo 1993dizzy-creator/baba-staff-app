@@ -16,6 +16,7 @@ export const INVENTORY_SOURCE_VALUES = [
   "delete",
   "photo",
   "pos_sales",
+  "keg_replace",
   "system",
 ] as const;
 

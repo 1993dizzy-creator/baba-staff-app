@@ -432,10 +432,44 @@
 }
 
 .productRow {
+  position: relative;
   border: 1px solid #d8dde5;
   border-radius: 8px;
   background: #fff;
   overflow: hidden;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.16s ease;
+}
+
+.productRowActive {
+  border-color: #245f78;
+  background: #fbfdfe;
+  box-shadow: 0 8px 22px rgb(24 32 43 / 10%);
+}
+
+.productRowActive::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: #245f78;
+  content: "";
+  pointer-events: none;
+}
+
+.editingBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border: 1px solid #9eb9c6;
+  border-radius: 5px;
+  background: #e9f2f6;
+  color: #174b63;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
 }
 
 .productMain {
@@ -1084,6 +1118,7 @@
 
 .recipeActions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 

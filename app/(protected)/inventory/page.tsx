@@ -40,6 +40,7 @@ type InventoryItem = {
     low_stock_threshold?: string | number | null;
     package_content_quantity?: string | number | null;
     package_content_unit?: string | null;
+    has_active_keg_tracking?: boolean | null;
     image_path?: string | null;
     updated_at?: string | null;
     updated_by_name?: string | null;
@@ -343,6 +344,7 @@ export default function InventoryPage() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDeletingId, setIsDeletingId] = useState<number | null>(null);
     const [isQuickSaving, setIsQuickSaving] = useState(false);
+    const [isKegReplacing, setIsKegReplacing] = useState(false);
     const [photoBusyItemId, setPhotoBusyItemId] = useState<number | null>(null);
     const [photoModalItem, setPhotoModalItem] = useState<InventoryItem | null>(null);
     const [handledDeepLinkKey, setHandledDeepLinkKey] = useState("");
@@ -1464,6 +1466,86 @@ export default function InventoryPage() {
         setQuickPurchaseSupplier("");
         setQuickPurchasePrice("");
         setIsQuickPurchaseCustomSupplier(false);
+        setIsKegReplacing(false);
+    };
+
+    const canReplaceKeg = (item?: InventoryItem | null) => {
+        if (!item) return false;
+
+        const unit = String(item.unit || "").trim().toLowerCase();
+        const packageUnit = String(item.package_content_unit || "").trim().toLowerCase();
+        const packageQuantity = Number(item.package_content_quantity ?? 0);
+
+        return (
+            unit === "keg" &&
+            packageUnit === "ml" &&
+            Number.isFinite(packageQuantity) &&
+            packageQuantity > 0 &&
+            item.has_active_keg_tracking === true
+        );
+    };
+
+    const handleKegReplace = async () => {
+        if (!quickSaveItem || isKegReplacing || isQuickSaving) return;
+        if (!window.confirm(t.kegReplaceConfirm)) return;
+
+        setIsKegReplacing(true);
+
+        try {
+            const currentQty = roundDecimal(Number(quickSaveItem.quantity ?? 0));
+            const res = await fetch("/api/inventory/keg-sessions/replace", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    itemId: quickSaveItem.id,
+                    actorUsername,
+                    expectedQuantity: currentQty,
+                }),
+            });
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                console.error(result);
+
+                if (res.status === 409) {
+                    alert(
+                        lang === "vi"
+                            ? "Tồn kho đã được người khác thay đổi. Vui lòng tải lại rồi thử lại."
+                            : "현재 재고가 다른 사용자에 의해 변경되었습니다. 새로고침 후 다시 시도해주세요."
+                    );
+                    await fetchInventory();
+                    return;
+                }
+
+                alert(result.message || c.editFail);
+                return;
+            }
+
+            const nextQuantity = Number(result.quantity);
+            if (Number.isFinite(nextQuantity)) {
+                setQuantityDrafts((prev) => ({
+                    ...prev,
+                    [quickSaveItem.id]: String(nextQuantity),
+                }));
+            }
+
+            closeQuickSaveModal();
+
+            const refreshResults = await Promise.allSettled([
+                fetchInventory(),
+                fetchRecentLogs(),
+            ]);
+
+            refreshResults.forEach((result) => {
+                if (result.status === "rejected") {
+                    console.error(result.reason);
+                }
+            });
+        } finally {
+            setIsKegReplacing(false);
+        }
     };
 
     const openQuickPurchaseConfirm = () => {
@@ -3875,7 +3957,11 @@ export default function InventoryPage() {
                         zIndex: 1000,
                         padding: 20,
                     }}
-                    onClick={closeQuickSaveModal}
+                    onClick={() => {
+                        if (!isKegReplacing) {
+                            closeQuickSaveModal();
+                        }
+                    }}
                 >
                     <div
                         onClick={(e) => e.stopPropagation()}
@@ -3900,6 +3986,29 @@ export default function InventoryPage() {
                                 .filter(Boolean)
                                 .join(" ")}
                         </div>
+
+                        {canReplaceKeg(quickSaveItem) && (
+                            <button
+                                type="button"
+                                onClick={handleKegReplace}
+                                disabled={isKegReplacing || isQuickSaving}
+                                style={{
+                                    ...ui.subButton,
+                                    width: "100%",
+                                    border: "1px solid #0f766e",
+                                    background: "#ecfdf5",
+                                    color: "#0f766e",
+                                    fontWeight: 900,
+                                    opacity: isKegReplacing || isQuickSaving ? 0.6 : 1,
+                                    cursor:
+                                        isKegReplacing || isQuickSaving
+                                            ? "not-allowed"
+                                            : "pointer",
+                                }}
+                            >
+                                {isKegReplacing ? c.saving : t.kegReplace}
+                            </button>
+                        )}
 
                         <div
                             style={{
@@ -4145,9 +4254,12 @@ export default function InventoryPage() {
                         <button
                             type="button"
                             onClick={closeQuickSaveModal}
+                            disabled={isKegReplacing}
                             style={{
                                 ...ui.subButton,
                                 marginTop: 4,
+                                opacity: isKegReplacing ? 0.6 : 1,
+                                cursor: isKegReplacing ? "not-allowed" : "pointer",
                             }}
                         >
                             {c.close}

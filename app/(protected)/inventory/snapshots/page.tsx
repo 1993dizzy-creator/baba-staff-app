@@ -49,6 +49,7 @@ type SnapshotItem = {
     source?: string | null;
     business_date?: string | null;
     created_at?: string | null;
+    actor_name?: string | null;
 };
 
 type InventoryLog = {
@@ -80,6 +81,17 @@ type InventoryLog = {
 };
 
 type PriceTrend = "up" | "down" | null;
+type MovementReasonTab = "stock_check" | "service" | "other" | "sale_deduction";
+
+type MovementItemGroup = {
+    key: string;
+    representative: SnapshotItem;
+    count: number;
+    totalQuantity: number;
+    totalAmount: number | null;
+    latestTime: number;
+    isApproxPrice: boolean;
+};
 
 const getPurchaseGroupKey = (item: SnapshotItem) => {
     const itemId = Number(item.item_id);
@@ -182,6 +194,19 @@ const buildDailyNetPurchasedItems = (items: SnapshotItem[]) => {
         .filter((item) => Number(item.change_quantity ?? 0) > 0);
 };
 
+function formatLocalDateKey(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+}
+
+function formatLocalMonthKey(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    return `${year}-${month}`;
+}
+
 export default function InventorySnapshotsPage() {
     const { lang } = useLanguage();
     const t = inventoryText[lang];
@@ -198,12 +223,12 @@ export default function InventorySnapshotsPage() {
     const [loadingItems, setLoadingItems] = useState(false);
     const [categoryFilter, setCategoryFilter] = useState("all");
     const [showChangedOnly, setShowChangedOnly] = useState(false);
-    const [calendarMonth, setCalendarMonth] = useState("");
+    const [calendarMonth, setCalendarMonth] = useState(() => formatLocalMonthKey());
     const [purchaseBatchMap, setPurchaseBatchMap] = useState<Record<number, boolean>>({});
     const [supplierTab, setSupplierTab] = useState("all");
     const [movementItems, setMovementItems] = useState<SnapshotItem[]>([]);
     const [movementReasonTab, setMovementReasonTab] =
-        useState<"stock_check" | "service" | "other" | "sale_deduction">("stock_check");
+        useState<MovementReasonTab>("stock_check");
     const [loadingMovements, setLoadingMovements] = useState(false);
     const [logModalItem, setLogModalItem] = useState<SnapshotItem | null>(null);
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
@@ -381,7 +406,7 @@ export default function InventorySnapshotsPage() {
             setSelectedBatchId(null);
             setPurchaseBatchMap(json.purchaseBatchMap || {});
 
-            if (nextBatches[0]?.snapshot_date) {
+            if (!calendarMonth && nextBatches[0]?.snapshot_date) {
                 setCalendarMonth(nextBatches[0].snapshot_date.slice(0, 7));
             }
         } catch (error) {
@@ -556,6 +581,7 @@ export default function InventorySnapshotsPage() {
             source: log.source ?? null,
             business_date: log.business_date ?? null,
             created_at: log.created_at ?? null,
+            actor_name: log.actor_name ?? null,
         };
     };
 
@@ -885,6 +911,7 @@ export default function InventorySnapshotsPage() {
     }, [batchList, selectedBatchId, viewMode]);
 
     useEffect(() => {
+        if (calendarMonth) return;
         if (batchList.length === 0) return;
 
         const latest = [...batchList]
@@ -895,7 +922,7 @@ export default function InventorySnapshotsPage() {
         if (latest) {
             setCalendarMonth(latest.slice(0, 7)); // YYYY-MM
         }
-    }, [batchList]);
+    }, [batchList, calendarMonth]);
 
     const categoryTabs = useMemo(() => {
         return [
@@ -1003,20 +1030,110 @@ export default function InventorySnapshotsPage() {
         });
     }, [movementItems, lang]);
 
-    const otherMovementItems = useMemo(() => {
-        return movementItems
+    const snapshotItemPriceMap = useMemo(() => {
+        const map = new Map<number, number | null>();
+        for (const item of snapshotItems) {
+            if (item.item_id !== null && item.item_id !== undefined) {
+                map.set(Number(item.item_id), item.purchase_price);
+            }
+        }
+        return map;
+    }, [snapshotItems]);
+
+    const movementReasonCounts = useMemo(() => {
+        const counts: Record<MovementReasonTab, number> = {
+            sale_deduction: 0,
+            stock_check: 0,
+            service: 0,
+            other: 0,
+        };
+
+        movementItems.forEach((item) => {
+            const reason = item.reason as MovementReasonTab;
+            if (!(reason in counts)) return;
+            if (Number(item.change_quantity ?? 0) === 0) return;
+
+            counts[reason] += 1;
+        });
+
+        return counts;
+    }, [movementItems]);
+
+    const otherMovementGroups = useMemo(() => {
+        const groups = new Map<string, MovementItemGroup>();
+
+        movementItems
             .filter(
                 (item) =>
                     item.reason === movementReasonTab &&
                     Number(item.change_quantity ?? 0) !== 0
             )
-            .sort((a, b) =>
-                getDisplayItemName(a).localeCompare(getDisplayItemName(b), undefined, {
-                    numeric: true,
-                    sensitivity: "base",
-                })
-            );
-    }, [movementItems, movementReasonTab, lang]);
+            .forEach((item) => {
+                const itemId = Number(item.item_id);
+                const unit = item.unit || "";
+                const key = Number.isFinite(itemId) && itemId > 0
+                    ? `item:${itemId}:${item.reason}:${unit}`
+                    : [
+                        "fallback",
+                        item.reason || "",
+                        item.code || "",
+                        item.item_name || "",
+                        item.item_name_vi || "",
+                        unit,
+                    ].join(":");
+                const quantity = Number(item.change_quantity ?? 0);
+                const latestTime = item.created_at ? new Date(item.created_at).getTime() : 0;
+                const safeLatestTime = Number.isFinite(latestTime) ? latestTime : 0;
+                const isSaleDeduction = item.reason === "sale_deduction";
+                let displayPrice = item.purchase_price;
+                let isApproxPrice = false;
+
+                if (displayPrice === null && isSaleDeduction && item.item_id !== null) {
+                    const fallback = snapshotItemPriceMap.get(Number(item.item_id)) ?? null;
+                    if (fallback !== null) {
+                        displayPrice = fallback;
+                        isApproxPrice = true;
+                    }
+                }
+
+                const numericPrice = Number(displayPrice);
+                const amount = displayPrice === null ||
+                    displayPrice === undefined ||
+                    !Number.isFinite(numericPrice)
+                    ? null
+                    : quantity * numericPrice;
+                const current = groups.get(key);
+
+                if (!current) {
+                    groups.set(key, {
+                        key,
+                        representative: item,
+                        count: 1,
+                        totalQuantity: quantity,
+                        totalAmount: amount,
+                        latestTime: safeLatestTime,
+                        isApproxPrice,
+                    });
+                    return;
+                }
+
+                current.count += 1;
+                current.totalQuantity += quantity;
+                current.isApproxPrice = current.isApproxPrice || isApproxPrice;
+                if (amount !== null) {
+                    current.totalAmount = (current.totalAmount ?? 0) + amount;
+                }
+                if (safeLatestTime > current.latestTime) {
+                    current.latestTime = safeLatestTime;
+                    current.representative = item;
+                }
+            });
+
+        return Array.from(groups.values()).sort((a, b) => {
+            if (b.latestTime !== a.latestTime) return b.latestTime - a.latestTime;
+            return Number(b.representative.id) - Number(a.representative.id);
+        });
+    }, [movementItems, movementReasonTab, snapshotItemPriceMap]);
 
     const supplierTabs = useMemo(() => {
         const supplierCounts = purchasedItems.reduce((counts, item) => {
@@ -1041,16 +1158,6 @@ export default function InventorySnapshotsPage() {
             return supplierTab === "all" || supplier === supplierTab;
         });
     }, [purchasedItems, supplierTab]);
-
-    const snapshotItemPriceMap = useMemo(() => {
-        const map = new Map<number, number | null>();
-        for (const item of snapshotItems) {
-            if (item.item_id !== null && item.item_id !== undefined) {
-                map.set(Number(item.item_id), item.purchase_price);
-            }
-        }
-        return map;
-    }, [snapshotItems]);
 
     const purchaseTotalAmount = useMemo(() => {
         return filteredPurchasedItems.reduce((sum, item) => {
@@ -1312,11 +1419,7 @@ export default function InventorySnapshotsPage() {
         };
     }, [batchList, calendarMonth]);
 
-    const todayDateKey = new Date(
-        new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
-    )
-        .toISOString()
-        .slice(0, 10);
+    const todayDateKey = formatLocalDateKey();
 
     const getPartMeta = (value?: string | null) => {
         const safePart: PartValue =
@@ -2011,6 +2114,7 @@ export default function InventorySnapshotsPage() {
                             { value: "other" as const, label: INVENTORY_REASON_LABELS[lang].other },
                         ].map((option) => {
                             const active = movementReasonTab === option.value;
+                            const count = movementReasonCounts[option.value];
 
                             return (
                                 <button
@@ -2018,6 +2122,10 @@ export default function InventorySnapshotsPage() {
                                     type="button"
                                     onClick={() => setMovementReasonTab(option.value)}
                                     style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        gap: 6,
                                         padding: "7px 10px",
                                         borderRadius: 8,
                                         border: active ? "1px solid #111827" : "1px solid #d1d5db",
@@ -2028,7 +2136,30 @@ export default function InventorySnapshotsPage() {
                                         cursor: "pointer",
                                     }}
                                 >
-                                    {option.label}
+                                    <span
+                                        style={{
+                                            minWidth: 0,
+                                            overflow: "hidden",
+                                            textOverflow: "ellipsis",
+                                            whiteSpace: "nowrap",
+                                        }}
+                                    >
+                                        {option.label}
+                                    </span>
+                                    <span
+                                        style={{
+                                            minWidth: 22,
+                                            padding: "1px 6px",
+                                            borderRadius: 999,
+                                            background: active ? "rgba(255,255,255,0.18)" : "#eef2f7",
+                                            color: active ? "#fff" : "#4b5563",
+                                            fontSize: 11,
+                                            fontWeight: 800,
+                                            lineHeight: 1.4,
+                                        }}
+                                    >
+                                        {count}
+                                    </span>
                                 </button>
                             );
                         })}
@@ -2036,7 +2167,7 @@ export default function InventorySnapshotsPage() {
 
                     {loadingMovements ? (
                         <div>{c.loading}</div>
-                    ) : otherMovementItems.length === 0 ? (
+                    ) : otherMovementGroups.length === 0 ? (
                         <div style={ui.metaText}>{c.noData}</div>
                     ) : (
                         <div
@@ -2050,24 +2181,18 @@ export default function InventorySnapshotsPage() {
                                 WebkitOverflowScrolling: "touch",
                             }}
                         >
-                            {otherMovementItems.map((item) => {
-                                const qty = Number(item.change_quantity ?? 0);
+                            {otherMovementGroups.map((group) => {
+                                const item = group.representative;
+                                const qty = group.totalQuantity;
                                 const qtyColor = qty > 0 ? "seagreen" : "crimson";
-                                const isSaleDeduction = item.reason === "sale_deduction";
-                                let displayPrice = item.purchase_price;
-                                let isApproxPrice = false;
-                                if (displayPrice === null && isSaleDeduction && item.item_id !== null) {
-                                    const fallback = snapshotItemPriceMap.get(Number(item.item_id)) ?? null;
-                                    if (fallback !== null) {
-                                        displayPrice = fallback;
-                                        isApproxPrice = true;
-                                    }
-                                }
-                                const total = displayPrice !== null ? qty * Number(displayPrice) : null;
+                                const total = group.totalAmount;
+                                const countLabel = lang === "vi"
+                                    ? `${group.count} lượt`
+                                    : `${group.count}건`;
 
                                 return (
                                     <div
-                                        key={item.id}
+                                        key={group.key}
                                         role="button"
                                         tabIndex={0}
                                         onClick={() => fetchItemLogs(item)}
@@ -2081,9 +2206,10 @@ export default function InventorySnapshotsPage() {
                                             border: "1px solid #e5e7eb",
                                             borderLeft: `4px solid ${PART_META[(item.part || "etc") as keyof typeof PART_META]?.color || "#9ca3af"}`,
                                             borderRadius: 8,
-                                            padding: "7px 9px",
+                                            padding: "9px 10px",
                                             background: "#ffffff",
                                             cursor: "pointer",
+                                            boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
                                         }}
                                     >
                                         <div
@@ -2118,24 +2244,21 @@ export default function InventorySnapshotsPage() {
                                                 </span>
                                             </div>
 
-                                            <div
+                                            <span
                                                 style={{
                                                     flexShrink: 0,
-                                                    textAlign: "right",
-                                                    fontSize: 12,
-                                                    fontWeight: 600,
-                                                    color: "#6b7280",
-                                                    lineHeight: 1.2,
+                                                    padding: "2px 7px",
+                                                    borderRadius: 999,
+                                                    background: "#f3f4f6",
+                                                    border: "1px solid #e5e7eb",
+                                                    color: "#374151",
+                                                    fontSize: 11,
+                                                    fontWeight: 800,
                                                     whiteSpace: "nowrap",
                                                 }}
                                             >
-                                                {displayPrice === null || displayPrice === undefined
-                                                    ? "-"
-                                                    : `${isApproxPrice ? "≈ " : ""}${Number(displayPrice).toLocaleString()} ₫`}
-                                                <span style={{ marginLeft: 3 }}>
-                                                    / {item.unit || "-"}
-                                                </span>
-                                            </div>
+                                                {countLabel}
+                                            </span>
                                         </div>
 
                                         <div
@@ -2166,7 +2289,7 @@ export default function InventorySnapshotsPage() {
                                             >
                                                 {total === null || total === undefined
                                                     ? "-"
-                                                    : `${isApproxPrice ? "≈ " : ""}${Number(total).toLocaleString()} ₫`}
+                                                    : `${group.isApproxPrice ? "≈ " : ""}${Number(total).toLocaleString()} ₫`}
                                             </div>
                                         </div>
                                     </div>

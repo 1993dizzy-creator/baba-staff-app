@@ -278,6 +278,7 @@ const mappingPageText = {
       "POS 상품이 아닌 구형 매핑 기록만 삭제됩니다. Inventory 품목과 재고는 삭제되지 않습니다.",
     deleteSuccess: "구형 Orphaned 매핑을 삭제했습니다.",
     deleteFailed: "Orphaned 매핑을 삭제하지 못했습니다.",
+    editingBadge: "수정 중",
     relinkCandidate: "삭제 전 재연결 후보를 확인하세요",
     relinkMapping: "재연결",
     relinkConfirm: "선택한 POS 상품으로 이 매핑을 재연결하시겠습니까?",
@@ -346,6 +347,7 @@ const mappingPageText = {
     recipeDisableConfirm: "이 재료를 비활성화할까요?",
     recipeDisableLastActiveConfirm:
       "마지막 active 재료를 비활성화하면 레시피가 미완성되어 판매차감에서 제외될 수 있습니다. 계속할까요?",
+    recipeDeleteInactiveConfirm: "이 비활성 재료를 삭제할까요?",
     recipeIngredientTitle: "레시피 재료 설정",
     recipeIngredientDescription: "판매 1개당 차감되는 재료를 등록하세요.",
     recipeIngredientNeeded: "재료 필요",
@@ -375,6 +377,7 @@ const mappingPageText = {
     mappingInactiveSuffix: " (비활성)",
     recipeActiveLabel: "활성",
     recipeDisableButton: "비활성화",
+    recipeDeleteButton: "삭제",
     recipeAddButton: "재료 추가",
     recipeAddingButton: "추가 중...",
     recipeActiveIngredients: (n: number): string => `활성 재료 ${n}개`,
@@ -388,6 +391,8 @@ const mappingPageText = {
     recipeSaveError: "레시피 재료를 저장하지 못했습니다.",
     recipeDisabledSuccess: "레시피 재료를 비활성화했습니다.",
     recipeDisabledError: "레시피 재료를 비활성화하지 못했습니다.",
+    recipeDeletedSuccess: "비활성 레시피 재료를 삭제했습니다.",
+    recipeDeletedError: "비활성 레시피 재료를 삭제하지 못했습니다.",
     reconcileSuccessNotice: "매핑 상태 재검사를 완료했습니다.",
     reconcileErrorNotice: "매핑 상태 재검사에 실패했습니다.",
     mappingValidateSuccess: "매핑 완전성 검증을 완료했습니다.",
@@ -437,6 +442,7 @@ const mappingPageText = {
       "Chỉ bản ghi mapping cũ không phải sản phẩm POS bị xóa. Mặt hàng Inventory và tồn kho không bị xóa.",
     deleteSuccess: "Đã xóa mapping Orphaned cũ.",
     deleteFailed: "Không thể xóa mapping Orphaned.",
+    editingBadge: "Đang sửa",
     relinkCandidate: "Kiểm tra ứng viên liên kết lại trước khi xóa",
     relinkMapping: "Liên kết lại",
     relinkConfirm: "Liên kết lại mapping này với sản phẩm POS đã chọn?",
@@ -507,6 +513,7 @@ const mappingPageText = {
     recipeDisableConfirm: "Tắt nguyên liệu này?",
     recipeDisableLastActiveConfirm:
       "Nếu tắt nguyên liệu active cuối cùng, công thức sẽ chưa hoàn chỉnh và có thể bị loại khỏi trừ kho bán hàng. Tiếp tục?",
+    recipeDeleteInactiveConfirm: "Xóa nguyên liệu đã tắt này?",
     recipeIngredientTitle: "Thiết lập nguyên liệu công thức",
     recipeIngredientDescription:
       "Đăng ký nguyên liệu bị trừ cho mỗi 1 món bán ra.",
@@ -538,6 +545,7 @@ const mappingPageText = {
     mappingInactiveSuffix: " (tắt)",
     recipeActiveLabel: "Bật",
     recipeDisableButton: "Tắt",
+    recipeDeleteButton: "Xóa",
     recipeAddButton: "Thêm nguyên liệu",
     recipeAddingButton: "Đang thêm...",
     recipeActiveIngredients: (n: number): string => `${n} nguyên liệu bật`,
@@ -551,6 +559,8 @@ const mappingPageText = {
     recipeSaveError: "Không thể lưu nguyên liệu.",
     recipeDisabledSuccess: "Đã tắt nguyên liệu.",
     recipeDisabledError: "Không thể tắt nguyên liệu.",
+    recipeDeletedSuccess: "Đã xóa nguyên liệu đã tắt.",
+    recipeDeletedError: "Không thể xóa nguyên liệu đã tắt.",
     reconcileSuccessNotice: "Đã kiểm tra lại trạng thái mapping.",
     reconcileErrorNotice: "Không thể kiểm tra lại trạng thái mapping.",
     mappingValidateSuccess: "Đã xác thực tính hoàn chỉnh của mapping.",
@@ -1638,6 +1648,139 @@ export default function AdminPosMappingsPage() {
   const canRunMappingAdminActions =
     actorRole === "owner" || actorRole === "master" || actorRole === "leader";
 
+  function normalizeRecipeRow(
+    recipe: Partial<RecipeRow> & Record<string, unknown>,
+    previous?: RecipeRow
+  ): RecipeRow {
+    const inventoryItemId = Number(
+      recipe.inventoryItemId ?? recipe.inventory_item_id
+    );
+    const inventoryItem =
+      (recipe.inventoryItem as InventoryItem | null | undefined) ??
+      previous?.inventoryItem ??
+      inventoryById.get(inventoryItemId) ??
+      null;
+
+    return {
+      id: Number(recipe.id),
+      inventoryItemId,
+      inventoryItem,
+      quantityPerPosUnit: Number(
+        recipe.quantityPerPosUnit ?? recipe.quantity_per_pos_unit ?? 0
+      ),
+      sourceQuantity:
+        recipe.sourceQuantity === null || recipe.source_quantity === null
+          ? null
+          : recipe.sourceQuantity !== undefined
+            ? Number(recipe.sourceQuantity)
+            : recipe.source_quantity !== undefined
+              ? Number(recipe.source_quantity)
+              : previous?.sourceQuantity ?? null,
+      sourceUnit:
+        (recipe.sourceUnit as string | null | undefined) ??
+        (recipe.source_unit as string | null | undefined) ??
+        previous?.sourceUnit ??
+        null,
+      sourcePackageContentQuantity:
+        recipe.sourcePackageContentQuantity === null ||
+        recipe.source_package_content_quantity === null
+          ? null
+          : recipe.sourcePackageContentQuantity !== undefined
+            ? Number(recipe.sourcePackageContentQuantity)
+            : recipe.source_package_content_quantity !== undefined
+              ? Number(recipe.source_package_content_quantity)
+              : previous?.sourcePackageContentQuantity ?? null,
+      sourcePackageContentUnit:
+        (recipe.sourcePackageContentUnit as string | null | undefined) ??
+        (recipe.source_package_content_unit as string | null | undefined) ??
+        previous?.sourcePackageContentUnit ??
+        null,
+      isActive:
+        recipe.isActive !== undefined
+          ? Boolean(recipe.isActive)
+          : recipe.is_active !== undefined
+            ? Boolean(recipe.is_active)
+            : previous?.isActive ?? true,
+      isRequired:
+        recipe.isRequired !== undefined
+          ? Boolean(recipe.isRequired)
+          : recipe.is_required !== undefined
+            ? Boolean(recipe.is_required)
+            : previous?.isRequired ?? true,
+      version:
+        recipe.version !== undefined ? Number(recipe.version) : previous?.version,
+    };
+  }
+
+  function withPatchedRecipes(
+    item: CatalogItem,
+    mappingId: number,
+    patchRecipes: (recipes: RecipeRow[]) => RecipeRow[]
+  ): CatalogItem {
+    if (item.mapping?.id === mappingId) {
+      return {
+        ...item,
+        mapping: {
+          ...item.mapping,
+          recipes: patchRecipes(item.mapping.recipes),
+        },
+      };
+    }
+
+    if (!item.options?.length) return item;
+
+    let changed = false;
+    const options = item.options.map((option) => {
+      if (option.mapping?.id !== mappingId) return option;
+      changed = true;
+      return {
+        ...option,
+        mapping: {
+          ...option.mapping,
+          recipes: patchRecipes(option.mapping.recipes),
+        },
+      };
+    });
+
+    return changed ? { ...item, options } : item;
+  }
+
+  function replaceMappingRecipes(mappingId: number, recipes: RecipeRow[]) {
+    setItems((current) =>
+      current.map((item) => withPatchedRecipes(item, mappingId, () => recipes))
+    );
+  }
+
+  function patchMappingRecipe(mappingId: number, recipe: RecipeRow) {
+    setItems((current) =>
+      current.map((item) =>
+        withPatchedRecipes(item, mappingId, (recipes) => {
+          const existingIndex = recipes.findIndex(
+            (candidate) => candidate.id === recipe.id
+          );
+
+          if (existingIndex === -1) return [...recipes, recipe];
+
+          return recipes.map((candidate, index) =>
+            index === existingIndex
+              ? normalizeRecipeRow(recipe, candidate)
+              : candidate
+          );
+        })
+      )
+    );
+  }
+
+  function removeMappingRecipe(mappingId: number, recipeId: number) {
+    setItems((current) =>
+      current.map((item) =>
+        withPatchedRecipes(item, mappingId, (recipes) =>
+          recipes.filter((recipe) => recipe.id !== recipeId)
+        )
+      )
+    );
+  }
+
   function beginEdit(item: CatalogItem) {
     setNotice("");
     setError("");
@@ -1944,7 +2087,10 @@ export default function AdminPosMappingsPage() {
           }),
         }
       );
-      await getJson(response);
+      const payload = (await getJson(response)) as {
+        recipe?: Record<string, unknown>;
+        recipes?: Array<Partial<RecipeRow> & Record<string, unknown>>;
+      };
       if (!recipeId) {
         formElement.reset();
         setRecipeInventorySelections((current) => ({
@@ -1954,7 +2100,14 @@ export default function AdminPosMappingsPage() {
       }
       setValidationResult(null);
       setNotice(recipeId ? pageText.recipeUpdateSuccess : pageText.recipeAddSuccess);
-      await loadMappings();
+      if (payload.recipes) {
+        replaceMappingRecipes(
+          mappingId,
+          payload.recipes.map((recipe) => normalizeRecipeRow(recipe))
+        );
+      } else if (payload.recipe) {
+        patchMappingRecipe(mappingId, normalizeRecipeRow(payload.recipe));
+      }
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -1993,15 +2146,57 @@ export default function AdminPosMappingsPage() {
           body: JSON.stringify({ actorUsername }),
         }
       );
-      await getJson(response);
+      const payload = (await getJson(response)) as {
+        recipe?: Record<string, unknown>;
+      };
       setValidationResult(null);
       setNotice(pageText.recipeDisabledSuccess);
-      await loadMappings();
+      if (payload.recipe) {
+        patchMappingRecipe(mapping.id, normalizeRecipeRow(payload.recipe, recipe));
+      }
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
           ? deleteError.message
           : pageText.recipeDisabledError
+      );
+    } finally {
+      setRecipeSavingKey("");
+    }
+  }
+
+  async function deleteInactiveRecipe(
+    mapping: CatalogMapping,
+    recipe: RecipeRow
+  ) {
+    if (!actorUsername || recipe.isActive) return;
+    if (!window.confirm(pageText.recipeDeleteInactiveConfirm)) return;
+
+    const savingKey = `recipe-${recipe.id}`;
+    setRecipeSavingKey(savingKey);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/admin/pos/mappings/${mapping.id}/recipes/${recipe.id}`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ actorUsername, hardDelete: true }),
+        }
+      );
+      const payload = (await getJson(response)) as {
+        deletedRecipeId?: number;
+      };
+      const deletedRecipeId = Number(payload.deletedRecipeId || recipe.id);
+      setValidationResult(null);
+      setNotice(pageText.recipeDeletedSuccess);
+      removeMappingRecipe(mapping.id, deletedRecipeId);
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : pageText.recipeDeletedError
       );
     } finally {
       setRecipeSavingKey("");
@@ -2233,7 +2428,18 @@ export default function AdminPosMappingsPage() {
                       >
                         {pageText.recipeDisableButton}
                       </button>
-                    ) : null}
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.dangerButton}
+                        disabled={recipeSaving}
+                        onClick={() =>
+                          void deleteInactiveRecipe(mapping, recipe)
+                        }
+                      >
+                        {pageText.recipeDeleteButton}
+                      </button>
+                    )}
                   </div>
                 </form>
               );
@@ -2747,6 +2953,12 @@ export default function AdminPosMappingsPage() {
             {visibleItems.map((item) => {
               const itemKey = getItemKey(item);
               const isEditing = editor?.itemKey === itemKey;
+              const itemHasOptionEditor = (item.options || []).some(
+                (option) =>
+                  optionEditor?.optionKey ===
+                  `${item.posProduct?.id}:${option.optionId}`
+              );
+              const isCardActive = isEditing || itemHasOptionEditor;
               const productName =
                 item.posProduct?.itemName ||
                 item.mapping?.posItemName ||
@@ -2784,11 +2996,21 @@ export default function AdminPosMappingsPage() {
                   : null;
 
               return (
-                <article key={itemKey} className={styles.productRow}>
+                <article
+                  key={itemKey}
+                  className={`${styles.productRow} ${
+                    isCardActive ? styles.productRowActive : ""
+                  }`}
+                >
                   <div className={styles.productMain}>
                     <div className={styles.productIdentity}>
                       <div className={styles.titleLine}>
                         <h2>{productName}</h2>
+                        {isCardActive ? (
+                          <span className={styles.editingBadge}>
+                            {pageText.editingBadge}
+                          </span>
+                        ) : null}
                         {mappingTypeLabel ? (
                           <span
                             className={`${styles.statusBadge} ${styles.typeBadge}`}
@@ -3231,7 +3453,21 @@ export default function AdminPosMappingsPage() {
                                       >
                                         {pageText.recipeDisableButton}
                                       </button>
-                                    ) : null}
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className={styles.dangerButton}
+                                        disabled={recipeSaving}
+                                        onClick={() =>
+                                          void deleteInactiveRecipe(
+                                            item.mapping!,
+                                            recipe
+                                          )
+                                        }
+                                      >
+                                        {pageText.recipeDeleteButton}
+                                      </button>
+                                    )}
                                   </div>
                                 </form>
                               );
