@@ -8,6 +8,7 @@ import SubNav from "@/components/SubNav";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
+import { getUser } from "@/lib/supabase/auth";
 import { commonText, salesText } from "@/lib/text";
 
 const salesTabs = [
@@ -257,6 +258,13 @@ export default function SalesPage() {
     },
     [businessDate, dailyText.loadFailed]
   );
+
+  useEffect(() => {
+    const user = getUser();
+    if (user?.role === "leader") {
+      router.replace("/admin/sales/monthly");
+    }
+  }, [router]);
 
   useEffect(() => {
     const controller = new AbortController();

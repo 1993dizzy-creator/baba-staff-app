@@ -19,7 +19,7 @@ export const runtime = "nodejs";
 const PRODUCT_SELECT =
   "id, source, branch_id, pos_item_id, item_code, item_name, item_name_vi, category_name, unit_name, is_active, is_sold, raw_json";
 const MAPPING_SELECT =
-  "id, pos_item_code, pos_item_name, pos_unit_name, mapping_type, inventory_item_id, quantity_multiplier, is_active, pos_product_id, target_type, pos_option_id, pos_product_code_snapshot, pos_product_name_snapshot, pos_option_name_snapshot, mapping_version, last_reconciled_at, updated_at, updated_by, archived_at, archived_by, archive_reason";
+  "id, pos_item_code, pos_item_name, pos_unit_name, mapping_type, inventory_item_id, quantity_multiplier, source_quantity, source_unit, source_package_content_quantity, source_package_content_unit, is_active, pos_product_id, target_type, pos_option_id, pos_product_code_snapshot, pos_product_name_snapshot, pos_option_name_snapshot, mapping_version, last_reconciled_at, updated_at, updated_by, archived_at, archived_by, archive_reason";
 const RECIPE_SELECT =
   "id, mapping_id, inventory_item_id, quantity_per_pos_unit, source_quantity, source_unit, source_package_content_quantity, source_package_content_unit, is_active, is_required, version";
 const PAGE_SIZE = 1000;
@@ -105,6 +105,97 @@ function getPositiveNumber(value: unknown, fallback: number) {
 function getPositiveInteger(value: unknown) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function hasOwn(body: JsonObject, key: string) {
+  return Object.prototype.hasOwnProperty.call(body, key);
+}
+
+function normalizeSourceUnit(value: unknown) {
+  if (typeof value !== "string") return null;
+  const unit = value.trim().toLowerCase();
+  return unit === "ml" || unit === "g" ? unit : null;
+}
+
+function getDirectSourceFields(body: JsonObject) {
+  const keys = [
+    "sourceQuantity",
+    "sourceUnit",
+    "sourcePackageContentQuantity",
+    "sourcePackageContentUnit",
+  ];
+  const presentKeys = keys.filter((key) => hasOwn(body, key));
+  const hasAnySourceField = presentKeys.length > 0;
+  const sourceFieldsAreEmpty = keys.every(
+    (key) => body[key] === undefined || body[key] === null || body[key] === ""
+  );
+
+  if (!hasAnySourceField || sourceFieldsAreEmpty) {
+    return {
+      ok: true as const,
+      hasSource: false,
+      values: {
+        source_quantity: null,
+        source_unit: null,
+        source_package_content_quantity: null,
+        source_package_content_unit: null,
+      },
+    };
+  }
+
+  const sourceQuantity = getPositiveNumber(body.sourceQuantity, 0);
+  const sourceUnit = normalizeSourceUnit(body.sourceUnit);
+  const sourcePackageContentQuantity = getPositiveNumber(
+    body.sourcePackageContentQuantity,
+    0
+  );
+  const sourcePackageContentUnit = normalizeSourceUnit(
+    body.sourcePackageContentUnit
+  );
+
+  if (
+    presentKeys.length !== keys.length ||
+    !sourceQuantity ||
+    !sourcePackageContentQuantity ||
+    !sourceUnit ||
+    !sourcePackageContentUnit ||
+    sourceUnit !== sourcePackageContentUnit
+  ) {
+    return {
+      ok: false as const,
+      error:
+        "Direct source fields require positive source quantity, matching ml/g unit, and positive package content quantity.",
+    };
+  }
+
+  return {
+    ok: true as const,
+    hasSource: true,
+    values: {
+      source_quantity: sourceQuantity,
+      source_unit: sourceUnit,
+      source_package_content_quantity: sourcePackageContentQuantity,
+      source_package_content_unit: sourcePackageContentUnit,
+    },
+  };
+}
+
+function normalizeDirectSourceMultiplier(sourceFields: {
+  source_quantity: number | null;
+  source_package_content_quantity: number | null;
+}) {
+  if (
+    !sourceFields.source_quantity ||
+    !sourceFields.source_package_content_quantity
+  ) {
+    return null;
+  }
+  const multiplier =
+    sourceFields.source_quantity /
+    sourceFields.source_package_content_quantity;
+  return Number.isFinite(multiplier) && multiplier > 0
+    ? Number(multiplier.toFixed(6))
+    : null;
 }
 
 function getSupabaseErrorCode(error: unknown) {
@@ -271,6 +362,17 @@ function serializeMapping(
       ? inventoryById.get(Number(mapping.inventory_item_id)) ?? null
       : null,
     quantityMultiplier: Number(mapping.quantity_multiplier ?? 1),
+    sourceQuantity:
+      mapping.source_quantity === null || mapping.source_quantity === undefined
+        ? null
+        : Number(mapping.source_quantity),
+    sourceUnit: mapping.source_unit ?? null,
+    sourcePackageContentQuantity:
+      mapping.source_package_content_quantity === null ||
+      mapping.source_package_content_quantity === undefined
+        ? null
+        : Number(mapping.source_package_content_quantity),
+    sourcePackageContentUnit: mapping.source_package_content_unit ?? null,
     isActive: mapping.is_active === true,
     targetType: mapping.target_type,
     posOptionId: mapping.pos_option_id,
@@ -379,13 +481,6 @@ function getRuleStatus(params: {
         status: "recipe_mapped" as const,
         validationStatus: "incomplete" as ValidationStatus,
         blockedReason: "Recipe ingredients have not been configured.",
-      };
-    }
-    if (!activeRecipes.some((recipe) => recipe.is_required !== false)) {
-      return {
-        status: "recipe_mapped" as const,
-        validationStatus: "incomplete" as ValidationStatus,
-        blockedReason: "Recipe has no required ingredients.",
       };
     }
     if (
@@ -986,6 +1081,7 @@ export async function POST(req: Request) {
         ? body.posOptionId.trim()
         : null;
     const quantityMultiplier = getPositiveNumber(body.quantityMultiplier, 1);
+    const directSourceFields = getDirectSourceFields(body);
     const inventoryItemId =
       body.inventoryItemId === undefined ||
       body.inventoryItemId === null ||
@@ -1004,6 +1100,13 @@ export async function POST(req: Request) {
     if (!quantityMultiplier) {
       return NextResponse.json(
         { ok: false, error: "quantityMultiplier must be greater than zero." },
+        { status: 400 }
+      );
+    }
+
+    if (!directSourceFields.ok) {
+      return NextResponse.json(
+        { ok: false, error: directSourceFields.error },
         { status: 400 }
       );
     }
@@ -1087,6 +1190,26 @@ export async function POST(req: Request) {
     const now = new Date().toISOString();
     const storedInventoryItemId =
       mappingType === "direct" ? inventoryItemId : null;
+    const storedSourceFields =
+      mappingType === "direct"
+        ? directSourceFields.values
+        : {
+            source_quantity: null,
+            source_unit: null,
+            source_package_content_quantity: null,
+            source_package_content_unit: null,
+          };
+    const storedQuantityMultiplier =
+      mappingType === "direct" && directSourceFields.hasSource
+        ? normalizeDirectSourceMultiplier(storedSourceFields)
+        : quantityMultiplier;
+
+    if (!storedQuantityMultiplier) {
+      return NextResponse.json(
+        { ok: false, error: "quantityMultiplier must be greater than zero." },
+        { status: 400 }
+      );
+    }
     const legacyCode =
       targetType === "option"
         ? `${productCode}::option::${posOptionId}`
@@ -1103,7 +1226,8 @@ export async function POST(req: Request) {
         pos_unit_name: typedProduct.unit_name,
         mapping_type: mappingType,
         inventory_item_id: storedInventoryItemId,
-        quantity_multiplier: quantityMultiplier,
+        quantity_multiplier: storedQuantityMultiplier,
+        ...storedSourceFields,
         is_active: isActive,
         pos_product_id: typedProduct.id,
         target_type: targetType,

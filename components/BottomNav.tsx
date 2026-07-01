@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import type { CSSProperties } from "react";
 import { useLanguage } from "@/lib/language-context";
 import { layoutText } from "@/lib/text/layout";
-import { getUser, isManage } from "@/lib/supabase/auth";
+import { canAccessAdmin, getUser } from "@/lib/supabase/auth";
 
 const navWrapStyle: CSSProperties = {
   position: "fixed",
@@ -158,30 +158,34 @@ function AdminIcon() {
   );
 }
 
+function subscribeToUserPermissionChange(onStoreChange: () => void) {
+  window.addEventListener("baba_user_updated", onStoreChange);
+  window.addEventListener("storage", onStoreChange);
+
+  return () => {
+    window.removeEventListener("baba_user_updated", onStoreChange);
+    window.removeEventListener("storage", onStoreChange);
+  };
+}
+
+function getAdminPermissionSnapshot() {
+  return canAccessAdmin(getUser());
+}
+
+function getServerAdminPermissionSnapshot() {
+  return false;
+}
+
 export default function BottomNav() {
   const pathname = usePathname();
   const { lang } = useLanguage();
   const t = layoutText[lang];
 
-  const [canUseAdmin, setCanUseAdmin] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    function refreshUserPermission() {
-      if (cancelled) return;
-      const user = getUser();
-      setCanUseAdmin(isManage(user));
-    }
-
-    queueMicrotask(refreshUserPermission);
-    window.addEventListener("baba_user_updated", refreshUserPermission);
-
-    return () => {
-      cancelled = true;
-      window.removeEventListener("baba_user_updated", refreshUserPermission);
-    };
-  }, []);
+  const canUseAdmin = useSyncExternalStore(
+    subscribeToUserPermissionChange,
+    getAdminPermissionSnapshot,
+    getServerAdminPermissionSnapshot
+  );
 
   const isAttendance = pathname.startsWith("/attendance");
 

@@ -15,7 +15,7 @@ export const runtime = "nodejs";
 const PRODUCT_SELECT =
   "id, source, branch_id, pos_item_id, item_code, item_name, item_name_vi, category_name, unit_name, is_active, is_sold, raw_json";
 const MAPPING_SELECT =
-  "id, pos_item_code, pos_item_name, pos_unit_name, mapping_type, inventory_item_id, quantity_multiplier, is_active, pos_product_id, target_type, pos_option_id, pos_product_code_snapshot, pos_product_name_snapshot, pos_option_name_snapshot, mapping_version, last_reconciled_at, updated_at, updated_by, archived_at, archived_by, archive_reason";
+  "id, pos_item_code, pos_item_name, pos_unit_name, mapping_type, inventory_item_id, quantity_multiplier, source_quantity, source_unit, source_package_content_quantity, source_package_content_unit, is_active, pos_product_id, target_type, pos_option_id, pos_product_code_snapshot, pos_product_name_snapshot, pos_option_name_snapshot, mapping_version, last_reconciled_at, updated_at, updated_by, archived_at, archived_by, archive_reason";
 
 type JsonObject = Record<string, unknown>;
 type MappingType = "direct" | "recipe" | "combo" | "manual" | "ignore";
@@ -74,6 +74,92 @@ function getSupabaseErrorCode(error: unknown) {
 
 function getText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeSourceUnit(value: unknown) {
+  if (typeof value !== "string") return null;
+  const unit = value.trim().toLowerCase();
+  return unit === "ml" || unit === "g" ? unit : null;
+}
+
+function getDirectSourceFields(body: JsonObject) {
+  const keys = [
+    "sourceQuantity",
+    "sourceUnit",
+    "sourcePackageContentQuantity",
+    "sourcePackageContentUnit",
+  ];
+  const presentKeys = keys.filter((key) => hasOwn(body, key));
+  const hasAnySourceField = presentKeys.length > 0;
+  const sourceFieldsAreEmpty = keys.every(
+    (key) => body[key] === undefined || body[key] === null || body[key] === ""
+  );
+
+  if (!hasAnySourceField || sourceFieldsAreEmpty) {
+    return {
+      ok: true as const,
+      hasSource: false,
+      values: {
+        source_quantity: null,
+        source_unit: null,
+        source_package_content_quantity: null,
+        source_package_content_unit: null,
+      },
+    };
+  }
+
+  const sourceQuantity = getPositiveNumber(body.sourceQuantity);
+  const sourceUnit = normalizeSourceUnit(body.sourceUnit);
+  const sourcePackageContentQuantity = getPositiveNumber(
+    body.sourcePackageContentQuantity
+  );
+  const sourcePackageContentUnit = normalizeSourceUnit(
+    body.sourcePackageContentUnit
+  );
+
+  if (
+    presentKeys.length !== keys.length ||
+    !sourceQuantity ||
+    !sourcePackageContentQuantity ||
+    !sourceUnit ||
+    !sourcePackageContentUnit ||
+    sourceUnit !== sourcePackageContentUnit
+  ) {
+    return {
+      ok: false as const,
+      error:
+        "Direct source fields require positive source quantity, matching ml/g unit, and positive package content quantity.",
+    };
+  }
+
+  return {
+    ok: true as const,
+    hasSource: true,
+    values: {
+      source_quantity: sourceQuantity,
+      source_unit: sourceUnit,
+      source_package_content_quantity: sourcePackageContentQuantity,
+      source_package_content_unit: sourcePackageContentUnit,
+    },
+  };
+}
+
+function normalizeDirectSourceMultiplier(sourceFields: {
+  source_quantity: number | null;
+  source_package_content_quantity: number | null;
+}) {
+  if (
+    !sourceFields.source_quantity ||
+    !sourceFields.source_package_content_quantity
+  ) {
+    return null;
+  }
+  const multiplier =
+    sourceFields.source_quantity /
+    sourceFields.source_package_content_quantity;
+  return Number.isFinite(multiplier) && multiplier > 0
+    ? Number(multiplier.toFixed(6))
+    : null;
 }
 
 export async function POST(
@@ -509,6 +595,7 @@ export async function PATCH(
     const quantityMultiplier = hasOwn(body, "quantityMultiplier")
       ? getPositiveNumber(body.quantityMultiplier)
       : getPositiveNumber(current.quantity_multiplier);
+    const directSourceFields = getDirectSourceFields(body);
     const isActive = hasOwn(body, "isActive")
       ? body.isActive === true
       : current.is_active === true;
@@ -549,6 +636,13 @@ export async function PATCH(
     if (!quantityMultiplier) {
       return NextResponse.json(
         { ok: false, error: "quantityMultiplier must be greater than zero." },
+        { status: 400 }
+      );
+    }
+
+    if (!directSourceFields.ok) {
+      return NextResponse.json(
+        { ok: false, error: directSourceFields.error },
         { status: 400 }
       );
     }
@@ -629,12 +723,33 @@ export async function PATCH(
     const now = new Date().toISOString();
     const storedInventoryItemId =
       mappingType === "direct" ? inventoryItemId : null;
+    const storedSourceFields =
+      mappingType === "direct"
+        ? directSourceFields.values
+        : {
+            source_quantity: null,
+            source_unit: null,
+            source_package_content_quantity: null,
+            source_package_content_unit: null,
+          };
+    const storedQuantityMultiplier =
+      mappingType === "direct" && directSourceFields.hasSource
+        ? normalizeDirectSourceMultiplier(storedSourceFields)
+        : quantityMultiplier;
+
+    if (!storedQuantityMultiplier) {
+      return NextResponse.json(
+        { ok: false, error: "quantityMultiplier must be greater than zero." },
+        { status: 400 }
+      );
+    }
     let updateQuery = supabaseServer
       .from("pos_item_mappings")
       .update({
         mapping_type: mappingType,
         inventory_item_id: storedInventoryItemId,
-        quantity_multiplier: quantityMultiplier,
+        quantity_multiplier: storedQuantityMultiplier,
+        ...storedSourceFields,
         is_active: isActive,
         pos_product_id: posProductId,
         target_type: targetType,

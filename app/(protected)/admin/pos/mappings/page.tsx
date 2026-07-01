@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import {
@@ -32,6 +32,7 @@ type MappingStatus =
 type MappingType = "direct" | "recipe" | "combo" | "manual" | "ignore";
 type ValidationStatus = "normal" | "needs_review" | "incomplete" | "error";
 type OptionMappingType = Exclude<MappingType, "combo">;
+type DirectQuantityMode = "inventory" | "content";
 type OptionMappingStatus =
   | "unmapped"
   | "mapped"
@@ -92,6 +93,10 @@ type CatalogMapping = {
   inventoryItemId: number | null;
   inventoryItem?: InventoryItem | null;
   quantityMultiplier: number;
+  sourceQuantity?: number | null;
+  sourceUnit?: string | null;
+  sourcePackageContentQuantity?: number | null;
+  sourcePackageContentUnit?: string | null;
   isActive: boolean;
   targetType: "product" | "option";
   posOptionId: string | null;
@@ -160,6 +165,8 @@ type EditorState = {
   mappingType: MappingType;
   inventoryItemId: string;
   quantityMultiplier: string;
+  directQuantityMode: DirectQuantityMode;
+  sourceQuantity: string;
   isActive: boolean;
 };
 
@@ -168,6 +175,8 @@ type OptionEditorState = {
   mappingType: OptionMappingType;
   inventoryItemId: string;
   quantityMultiplier: string;
+  directQuantityMode: DirectQuantityMode;
+  sourceQuantity: string;
   isActive: boolean;
 };
 
@@ -335,8 +344,8 @@ const mappingPageText = {
       "1단위 내용량이 없어 재고 단위로 직접 입력합니다.",
     recipeUnitFallback: "단위",
     recipeDisableConfirm: "이 재료를 비활성화할까요?",
-    recipeDisableRequiredConfirm:
-      "마지막 active 필수 재료를 비활성화하면 레시피가 미완성되어 판매차감에서 제외될 수 있습니다. 계속할까요?",
+    recipeDisableLastActiveConfirm:
+      "마지막 active 재료를 비활성화하면 레시피가 미완성되어 판매차감에서 제외될 수 있습니다. 계속할까요?",
     recipeIngredientTitle: "레시피 재료 설정",
     recipeIngredientDescription: "판매 1개당 차감되는 재료를 등록하세요.",
     recipeIngredientNeeded: "재료 필요",
@@ -344,6 +353,82 @@ const mappingPageText = {
     recipeIngredientError: "오류",
     recipeSaveFirstNotice: "레시피는 먼저 저장한 뒤 재료를 등록할 수 있습니다.",
     filterAriaLabel: "상태 필터",
+    directInputBasisLabel: "입력 기준",
+    directModeInventory: "재고",
+    directModeContent: "내용량",
+    directModeInventoryTitle: "재고 단위로 직접 입력",
+    directModeContentTitle: "내용량(ml/g) 기준으로 자동 환산",
+    directUsageLabel: "사용량",
+    directDeductionLabel: "차감량",
+    mappingTypeLabel: "매핑 유형",
+    inventoryItemLabel: "Inventory 품목",
+    addInventoryLabel: "추가할 Inventory 품목",
+    mappingActiveLabel: "매핑 활성",
+    cancelButton: "취소",
+    saveButton: "저장",
+    savingButton: "저장 중...",
+    closeButton: "닫기",
+    editButton: "수정",
+    setMappingButton: "매핑 설정",
+    setButton: "설정",
+    quantityMultiplierLabel: "차감 배수",
+    mappingInactiveSuffix: " (비활성)",
+    recipeActiveLabel: "활성",
+    recipeDisableButton: "비활성화",
+    recipeAddButton: "재료 추가",
+    recipeAddingButton: "추가 중...",
+    recipeActiveIngredients: (n: number): string => `활성 재료 ${n}개`,
+    mappingSaveSuccess: "매핑 설정을 저장했습니다.",
+    mappingSaveError: "매핑 설정을 저장하지 못했습니다.",
+    optionMappingSaveSuccess: (name: string): string =>
+      `옵션 '${name}' 매핑을 저장했습니다.`,
+    optionMappingSaveError: "옵션 매핑을 저장하지 못했습니다.",
+    recipeUpdateSuccess: "레시피 재료를 수정했습니다.",
+    recipeAddSuccess: "레시피 재료를 추가했습니다.",
+    recipeSaveError: "레시피 재료를 저장하지 못했습니다.",
+    recipeDisabledSuccess: "레시피 재료를 비활성화했습니다.",
+    recipeDisabledError: "레시피 재료를 비활성화하지 못했습니다.",
+    reconcileSuccessNotice: "매핑 상태 재검사를 완료했습니다.",
+    reconcileErrorNotice: "매핑 상태 재검사에 실패했습니다.",
+    mappingValidateSuccess: "매핑 완전성 검증을 완료했습니다.",
+    mappingValidateError: "매핑 완전성 검증에 실패했습니다.",
+    validateButton: "매핑 검증",
+    validatingButton: "검증 중...",
+    reconcileButton: "매핑 상태 재검사",
+    reconcilingButton: "재검사 중...",
+    noProductName: "이름 없는 POS 상품",
+    noCategoryName: "카테고리 없음",
+    noUnitName: "단위 없음",
+    optionRecipeManagerTitle: "옵션 레시피 관리",
+    comboMappingNeeded: "매핑 확인 필요",
+    comboApplicable: "차감가능",
+    comboNeedsReview: "확인필요",
+    recentValidationLabel: "최근 매핑 검증",
+    previewReady: "Preview 준비 완료",
+    previewNeeded: "Preview 전 매핑 보완 필요",
+    summarySectionLabel: "매핑 상태 요약",
+    summaryPosProduct: "POS 상품",
+    loadMappingsError: "매핑 목록을 불러오지 못했습니다.",
+    loadAdminError: "관리 화면 데이터를 불러오지 못했습니다.",
+    requestError: "요청에 실패했습니다.",
+    loadingList: "매핑 목록을 불러오는 중입니다.",
+    emptyList: "조건에 맞는 상품이 없습니다.",
+    loginCheckError: "로그인 사용자 정보를 확인할 수 없습니다.",
+    adminMenuLink: "관리자 메뉴",
+    pageTitle: "POS 상품 재고 매핑",
+    pageDescription:
+      "최신 POS 카탈로그를 기준으로 재고 차감 규칙을 관리합니다.",
+    summaryActiveProducts: "활성 상품",
+    summaryUnmappedProducts: "미매핑 상품",
+    summaryUnmappedOptions: "미매핑 옵션",
+    summaryErrors: "오류",
+    summaryWarnings: "경고",
+    summaryInfo: "정보",
+    validationNoIssues: "해결해야 할 매핑 문제가 없습니다.",
+    productCodePrefix: "코드",
+    productPosInactive: "POS 비활성",
+    optionCountLabel: (n: number): string => `POS 옵션 ${n}개`,
+    multiplierDisplay: (n: number): string => `배수 ${n}`,
   },
   vi: {
     deleteMapping: "Xóa mapping",
@@ -420,8 +505,8 @@ const mappingPageText = {
       "Chưa có lượng quy đổi, nhập trực tiếp theo đơn vị tồn kho.",
     recipeUnitFallback: "Đơn vị",
     recipeDisableConfirm: "Tắt nguyên liệu này?",
-    recipeDisableRequiredConfirm:
-      "Nếu tắt nguyên liệu bắt buộc active cuối cùng, công thức sẽ chưa hoàn chỉnh và có thể bị loại khỏi trừ kho bán hàng. Tiếp tục?",
+    recipeDisableLastActiveConfirm:
+      "Nếu tắt nguyên liệu active cuối cùng, công thức sẽ chưa hoàn chỉnh và có thể bị loại khỏi trừ kho bán hàng. Tiếp tục?",
     recipeIngredientTitle: "Thiết lập nguyên liệu công thức",
     recipeIngredientDescription:
       "Đăng ký nguyên liệu bị trừ cho mỗi 1 món bán ra.",
@@ -431,6 +516,82 @@ const mappingPageText = {
     recipeSaveFirstNotice:
       "Cần lưu công thức trước, sau đó mới đăng ký nguyên liệu.",
     filterAriaLabel: "Bộ lọc trạng thái",
+    directInputBasisLabel: "Kiểu nhập",
+    directModeInventory: "Tồn kho",
+    directModeContent: "Dung lượng",
+    directModeInventoryTitle: "Nhập trực tiếp theo đơn vị tồn kho",
+    directModeContentTitle: "Tự quy đổi theo dung lượng (ml/g)",
+    directUsageLabel: "Lượng dùng",
+    directDeductionLabel: "Lượng trừ",
+    mappingTypeLabel: "Loại liên kết",
+    inventoryItemLabel: "Mặt hàng Inventory",
+    addInventoryLabel: "Mặt hàng để thêm",
+    mappingActiveLabel: "Bật mapping",
+    cancelButton: "Hủy",
+    saveButton: "Lưu",
+    savingButton: "Đang lưu...",
+    closeButton: "Đóng",
+    editButton: "Sửa",
+    setMappingButton: "Cài liên kết",
+    setButton: "Cài",
+    quantityMultiplierLabel: "Hệ số trừ",
+    mappingInactiveSuffix: " (tắt)",
+    recipeActiveLabel: "Bật",
+    recipeDisableButton: "Tắt",
+    recipeAddButton: "Thêm nguyên liệu",
+    recipeAddingButton: "Đang thêm...",
+    recipeActiveIngredients: (n: number): string => `${n} nguyên liệu bật`,
+    mappingSaveSuccess: "Đã lưu cài đặt mapping.",
+    mappingSaveError: "Không thể lưu cài đặt mapping.",
+    optionMappingSaveSuccess: (name: string): string =>
+      `Đã lưu mapping tùy chọn '${name}'.`,
+    optionMappingSaveError: "Không thể lưu mapping tùy chọn.",
+    recipeUpdateSuccess: "Đã cập nhật nguyên liệu.",
+    recipeAddSuccess: "Đã thêm nguyên liệu.",
+    recipeSaveError: "Không thể lưu nguyên liệu.",
+    recipeDisabledSuccess: "Đã tắt nguyên liệu.",
+    recipeDisabledError: "Không thể tắt nguyên liệu.",
+    reconcileSuccessNotice: "Đã kiểm tra lại trạng thái mapping.",
+    reconcileErrorNotice: "Không thể kiểm tra lại trạng thái mapping.",
+    mappingValidateSuccess: "Đã xác thực tính hoàn chỉnh của mapping.",
+    mappingValidateError: "Không thể xác thực tính hoàn chỉnh của mapping.",
+    validateButton: "Kiểm tra mapping",
+    validatingButton: "Đang kiểm tra...",
+    reconcileButton: "Kiểm tra lại trạng thái",
+    reconcilingButton: "Đang kiểm tra lại...",
+    noProductName: "Sản phẩm POS không có tên",
+    noCategoryName: "Không có danh mục",
+    noUnitName: "Không có đơn vị",
+    optionRecipeManagerTitle: "Quản lý công thức tùy chọn",
+    comboMappingNeeded: "Cần kiểm tra mapping",
+    comboApplicable: "Có thể trừ",
+    comboNeedsReview: "Cần kiểm tra",
+    recentValidationLabel: "Kiểm tra mapping gần đây",
+    previewReady: "Sẵn sàng xem trước",
+    previewNeeded: "Cần bổ sung mapping trước khi xem",
+    summarySectionLabel: "Tóm tắt trạng thái mapping",
+    summaryPosProduct: "Sản phẩm POS",
+    loadMappingsError: "Không thể tải danh sách mapping.",
+    loadAdminError: "Không thể tải dữ liệu quản lý.",
+    requestError: "Yêu cầu thất bại.",
+    loadingList: "Đang tải danh sách mapping...",
+    emptyList: "Không có sản phẩm nào phù hợp với điều kiện.",
+    loginCheckError: "Không thể xác nhận thông tin người dùng đăng nhập.",
+    adminMenuLink: "Menu quản lý",
+    pageTitle: "Liên kết kho POS",
+    pageDescription:
+      "Quản lý quy tắc trừ kho dựa trên danh mục POS mới nhất.",
+    summaryActiveProducts: "Sản phẩm hoạt động",
+    summaryUnmappedProducts: "Chưa liên kết",
+    summaryUnmappedOptions: "Tùy chọn chưa liên kết",
+    summaryErrors: "Lỗi",
+    summaryWarnings: "Cảnh báo",
+    summaryInfo: "Thông tin",
+    validationNoIssues: "Không có vấn đề mapping cần giải quyết.",
+    productCodePrefix: "Mã",
+    productPosInactive: "POS không hoạt động",
+    optionCountLabel: (n: number): string => `${n} tùy chọn POS`,
+    multiplierDisplay: (n: number): string => `x${n}`,
   },
 } as const;
 
@@ -716,7 +877,7 @@ function compareCatalogItems(left: CatalogItem, right: CatalogItem) {
 }
 
 function getInventoryLabel(item: InventoryItem) {
-  const name = item.item_name_vi || item.item_name || `품목 #${item.id}`;
+  const name = item.item_name_vi || item.item_name || `#${item.id}`;
   const code = item.code ? ` [${item.code}]` : "";
   const unit = item.unit ? ` / ${item.unit}` : "";
   return `${name}${code}${unit}`;
@@ -781,6 +942,140 @@ function getRecipeSourceInitialValue(
   }
 
   return "";
+}
+
+function hasDirectSourceFields(mapping?: CatalogMapping | null) {
+  const sourceQuantity = toPositiveNumber(mapping?.sourceQuantity);
+  const sourceUnit = normalizeContentUnit(mapping?.sourceUnit);
+  const packageQuantity = toPositiveNumber(
+    mapping?.sourcePackageContentQuantity
+  );
+  const packageUnit = normalizeContentUnit(
+    mapping?.sourcePackageContentUnit
+  );
+  return Boolean(
+    sourceQuantity &&
+      packageQuantity &&
+      sourceUnit &&
+      packageUnit &&
+      sourceUnit === packageUnit
+  );
+}
+
+function getDirectSourceInitialValue(mapping?: CatalogMapping | null) {
+  const sourceQuantity = toPositiveNumber(mapping?.sourceQuantity);
+  return sourceQuantity ? formatRecipeNumber(sourceQuantity) : "";
+}
+
+function normalizeDirectQuantity(value: number) {
+  return normalizeRecipeQuantity(value);
+}
+
+function DirectQuantityControls({
+  inventoryItem,
+  quantityMultiplier,
+  sourceQuantity,
+  mode,
+  onQuantityMultiplierChange,
+  onSourceQuantityChange,
+  onModeChange,
+  text,
+}: {
+  inventoryItem?: InventoryItem | null;
+  quantityMultiplier: string;
+  sourceQuantity: string;
+  mode: DirectQuantityMode;
+  onQuantityMultiplierChange: (value: string) => void;
+  onSourceQuantityChange: (value: string) => void;
+  onModeChange: (value: DirectQuantityMode) => void;
+  text: (typeof mappingPageText)[AppLanguage];
+}) {
+  const packageContent = getPackageContent(inventoryItem);
+  const inventoryUnit = inventoryItem?.unit || text.recipeUnitFallback;
+  const effectiveMode = packageContent ? mode : "inventory";
+  const parsedSourceQuantity = Number(sourceQuantity);
+  const convertedQuantity =
+    packageContent &&
+    Number.isFinite(parsedSourceQuantity) &&
+    parsedSourceQuantity > 0
+      ? normalizeDirectQuantity(parsedSourceQuantity / packageContent.quantity)
+      : null;
+  const conversionText =
+    packageContent && convertedQuantity !== null
+      ? `1 ${inventoryUnit} = ${formatRecipeNumber(packageContent.quantity)}${packageContent.unit} · ${text.recipeAutoConversionLabel}: ${formatRecipeNumber(convertedQuantity)} ${inventoryUnit}`
+      : packageContent
+        ? `1 ${inventoryUnit} = ${formatRecipeNumber(packageContent.quantity)}${packageContent.unit}`
+        : "";
+
+  return (
+    <div className={styles.directQuantityField}>
+      {packageContent ? (
+        <div className={styles.directModeGroup}>
+          <span className={styles.directModeGroupLabel}>{text.directInputBasisLabel}</span>
+          <div className={styles.directModeSegment}>
+            <button
+              type="button"
+              title={text.directModeInventoryTitle}
+              className={
+                effectiveMode === "inventory"
+                  ? styles.directModeSegmentActive
+                  : ""
+              }
+              onClick={() => onModeChange("inventory")}
+            >
+              {text.directModeInventory}
+            </button>
+            <button
+              type="button"
+              title={text.directModeContentTitle}
+              className={
+                effectiveMode === "content"
+                  ? styles.directModeSegmentActive
+                  : ""
+              }
+              onClick={() => onModeChange("content")}
+            >
+              {text.directModeContent}
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {effectiveMode === "content" && packageContent ? (
+        <label className={styles.directQuantityInputField}>
+          <span>{text.directUsageLabel}</span>
+          <div className={styles.recipeQuantityInputRow}>
+            <input
+              type="number"
+              min="0.0001"
+              step="any"
+              value={sourceQuantity}
+              onChange={(event) => onSourceQuantityChange(event.target.value)}
+              required
+            />
+            <span className={styles.recipeUnit}>{packageContent.unit}</span>
+          </div>
+          <span className={styles.recipeQuantityHint}>{conversionText}</span>
+        </label>
+      ) : (
+        <label className={styles.directQuantityInputField}>
+          <span>{text.directDeductionLabel}</span>
+          <div className={styles.recipeQuantityInputRow}>
+            <input
+              type="number"
+              min="0.0001"
+              step="any"
+              value={quantityMultiplier}
+              onChange={(event) =>
+                onQuantityMultiplierChange(event.target.value)
+              }
+              required
+            />
+            <span className={styles.recipeUnit}>{inventoryUnit}</span>
+          </div>
+        </label>
+      )}
+    </div>
+  );
 }
 
 function RecipeQuantityControls({
@@ -925,10 +1220,7 @@ function getComboSummary(children: ComboChild[]) {
 }
 
 function isRecipeSetupBlockedReason(reason: string | null) {
-  return (
-    reason === "Recipe ingredients have not been configured." ||
-    reason === "Recipe has no required ingredients."
-  );
+  return reason === "Recipe ingredients have not been configured.";
 }
 
 function getDisplayBlockedReason(item: CatalogItem, lang: AppLanguage) {
@@ -1174,7 +1466,7 @@ async function getJson(response: Response) {
   };
 
   if (!response.ok || !payload.ok) {
-    throw new Error(payload.error || payload.message || "요청에 실패했습니다.");
+    throw new Error(payload.error || payload.message || `HTTP ${response.status}`);
   }
 
   return payload;
@@ -1264,7 +1556,7 @@ export default function AdminPosMappingsPage() {
       setError(
         loadError instanceof Error
           ? loadError.message
-          : "매핑 목록을 불러오지 못했습니다."
+          : mappingPageText[lang].loadMappingsError
       );
     } finally {
       setLoading(false);
@@ -1279,7 +1571,7 @@ export default function AdminPosMappingsPage() {
         setError(
           loadError instanceof Error
             ? loadError.message
-            : "관리 화면 데이터를 불러오지 못했습니다."
+            : mappingPageText[lang].loadAdminError
         );
       }
     );
@@ -1348,6 +1640,7 @@ export default function AdminPosMappingsPage() {
     setNotice("");
     setError("");
     setOptionEditor(null);
+    const usesContentSource = hasDirectSourceFields(item.mapping);
     setEditor({
       itemKey: getItemKey(item),
       mappingType: item.mapping?.mappingType || "direct",
@@ -1355,6 +1648,8 @@ export default function AdminPosMappingsPage() {
         ? String(item.mapping.inventoryItemId)
         : "",
       quantityMultiplier: String(item.mapping?.quantityMultiplier || 1),
+      directQuantityMode: usesContentSource ? "content" : "inventory",
+      sourceQuantity: getDirectSourceInitialValue(item.mapping),
       isActive: item.mapping?.isActive ?? true,
     });
   }
@@ -1365,6 +1660,7 @@ export default function AdminPosMappingsPage() {
     setNotice("");
     setError("");
     setEditor(null);
+    const usesContentSource = hasDirectSourceFields(option.mapping);
     setOptionEditor({
       optionKey: `${item.posProduct.id}:${option.optionId}`,
       mappingType:
@@ -1378,8 +1674,61 @@ export default function AdminPosMappingsPage() {
         ? String(option.inventoryItemId)
         : "",
       quantityMultiplier: String(option.quantityMultiplier || 1),
+      directQuantityMode: usesContentSource ? "content" : "inventory",
+      sourceQuantity: getDirectSourceInitialValue(option.mapping),
       isActive: option.mapping?.isActive ?? true,
     });
+  }
+
+  function getDirectQuantityPayload(state: {
+    mappingType: MappingType | OptionMappingType;
+    inventoryItemId: string;
+    quantityMultiplier: string;
+    directQuantityMode: DirectQuantityMode;
+    sourceQuantity: string;
+  }) {
+    if (state.mappingType !== "direct") {
+      return {
+        quantityMultiplier: Number(state.quantityMultiplier),
+      };
+    }
+
+    const inventoryItem = inventoryById.get(Number(state.inventoryItemId));
+    const packageContent = getPackageContent(inventoryItem);
+    if (state.directQuantityMode === "content" && packageContent) {
+      const sourceQuantity = Number(state.sourceQuantity);
+      if (!Number.isFinite(sourceQuantity) || sourceQuantity <= 0) {
+        setError(pageText.recipeUsageLabel);
+        return null;
+      }
+      const quantityMultiplier = normalizeDirectQuantity(
+        sourceQuantity / packageContent.quantity
+      );
+      if (!Number.isFinite(quantityMultiplier) || quantityMultiplier <= 0) {
+        setError(pageText.recipeUsageLabel);
+        return null;
+      }
+      return {
+        quantityMultiplier,
+        sourceQuantity,
+        sourceUnit: packageContent.unit,
+        sourcePackageContentQuantity: packageContent.quantity,
+        sourcePackageContentUnit: packageContent.unit,
+      };
+    }
+
+    const quantityMultiplier = Number(state.quantityMultiplier);
+    if (!Number.isFinite(quantityMultiplier) || quantityMultiplier <= 0) {
+      setError("quantityMultiplier must be greater than zero.");
+      return null;
+    }
+    return {
+      quantityMultiplier,
+      sourceQuantity: null,
+      sourceUnit: null,
+      sourcePackageContentQuantity: null,
+      sourcePackageContentUnit: null,
+    };
   }
 
   async function saveMapping(event: FormEvent, item: CatalogItem) {
@@ -1390,6 +1739,8 @@ export default function AdminPosMappingsPage() {
       setError(pageText.directNeedsInventory);
       return;
     }
+    const directQuantityPayload = getDirectQuantityPayload(editor);
+    if (!directQuantityPayload) return;
 
     setSaving(true);
     setError("");
@@ -1402,7 +1753,7 @@ export default function AdminPosMappingsPage() {
           editor.mappingType === "direct"
             ? Number(editor.inventoryItemId)
             : null,
-        quantityMultiplier: Number(editor.quantityMultiplier),
+        ...directQuantityPayload,
         isActive: editor.isActive,
         targetType: item.mapping?.targetType || "product",
         posProductId: item.posProduct?.id ?? undefined,
@@ -1422,7 +1773,7 @@ export default function AdminPosMappingsPage() {
       };
       setEditor(null);
       setValidationResult(null);
-      setNotice("매핑 설정을 저장했습니다.");
+      setNotice(pageText.mappingSaveSuccess);
       if (
         editor.mappingType === "recipe" &&
         Number(payload.mapping?.id) > 0
@@ -1434,7 +1785,7 @@ export default function AdminPosMappingsPage() {
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "매핑 설정을 저장하지 못했습니다."
+          : pageText.mappingSaveError
       );
     } finally {
       setSaving(false);
@@ -1456,6 +1807,8 @@ export default function AdminPosMappingsPage() {
       setError(pageText.optionDirectNeedsInventory);
       return;
     }
+    const directQuantityPayload = getDirectQuantityPayload(optionEditor);
+    if (!directQuantityPayload) return;
 
     setOptionSaving(true);
     setError("");
@@ -1468,7 +1821,7 @@ export default function AdminPosMappingsPage() {
           optionEditor.mappingType === "direct"
             ? Number(optionEditor.inventoryItemId)
             : null,
-        quantityMultiplier: Number(optionEditor.quantityMultiplier),
+        ...directQuantityPayload,
         isActive: optionEditor.isActive,
         targetType: "option",
         posProductId: item.posProduct.id,
@@ -1489,7 +1842,7 @@ export default function AdminPosMappingsPage() {
       };
       setOptionEditor(null);
       setValidationResult(null);
-      setNotice(`옵션 '${option.optionName}' 매핑을 저장했습니다.`);
+      setNotice(pageText.optionMappingSaveSuccess(option.optionName));
       if (
         optionEditor.mappingType === "recipe" &&
         Number(payload.mapping?.id) > 0
@@ -1501,7 +1854,7 @@ export default function AdminPosMappingsPage() {
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "옵션 매핑을 저장하지 못했습니다."
+          : pageText.optionMappingSaveError
       );
     } finally {
       setOptionSaving(false);
@@ -1529,7 +1882,6 @@ export default function AdminPosMappingsPage() {
     const sourcePackageContentUnit = String(
       form.get("sourcePackageContentUnit") || ""
     ).trim();
-    const isRequired = form.get("isRequired") === "on";
     const isActive = recipeId ? form.get("isActive") === "on" : true;
     const savingKey = recipeId
       ? `recipe-${recipeId}`
@@ -1586,7 +1938,6 @@ export default function AdminPosMappingsPage() {
             sourcePackageContentUnit: isAutoQuantityMode
               ? sourcePackageContentUnit
               : null,
-            isRequired,
             isActive,
           }),
         }
@@ -1600,13 +1951,13 @@ export default function AdminPosMappingsPage() {
         }));
       }
       setValidationResult(null);
-      setNotice(recipeId ? "레시피 재료를 수정했습니다." : "레시피 재료를 추가했습니다.");
+      setNotice(recipeId ? pageText.recipeUpdateSuccess : pageText.recipeAddSuccess);
       await loadMappings();
     } catch (saveError) {
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "레시피 재료를 저장하지 못했습니다."
+          : pageText.recipeSaveError
       );
     } finally {
       setRecipeSavingKey("");
@@ -1615,16 +1966,15 @@ export default function AdminPosMappingsPage() {
 
   async function disableRecipe(mapping: CatalogMapping, recipe: RecipeRow) {
     if (!actorUsername) return;
-    const activeRequiredRecipes = mapping.recipes.filter(
-      (candidate) => candidate.isActive && candidate.isRequired
+    const activeRecipes = mapping.recipes.filter(
+      (candidate) => candidate.isActive
     );
-    const isLastActiveRequiredRecipe =
+    const isLastActiveRecipe =
       recipe.isActive &&
-      recipe.isRequired &&
-      activeRequiredRecipes.length === 1 &&
-      activeRequiredRecipes[0]?.id === recipe.id;
-    const confirmMessage = isLastActiveRequiredRecipe
-      ? pageText.recipeDisableRequiredConfirm
+      activeRecipes.length === 1 &&
+      activeRecipes[0]?.id === recipe.id;
+    const confirmMessage = isLastActiveRecipe
+      ? pageText.recipeDisableLastActiveConfirm
       : pageText.recipeDisableConfirm;
     if (!window.confirm(confirmMessage)) return;
 
@@ -1643,13 +1993,13 @@ export default function AdminPosMappingsPage() {
       );
       await getJson(response);
       setValidationResult(null);
-      setNotice("레시피 재료를 비활성화했습니다.");
+      setNotice(pageText.recipeDisabledSuccess);
       await loadMappings();
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
           ? deleteError.message
-          : "레시피 재료를 비활성화하지 못했습니다."
+          : pageText.recipeDisabledError
       );
     } finally {
       setRecipeSavingKey("");
@@ -1688,7 +2038,7 @@ export default function AdminPosMappingsPage() {
                     x {child.quantity} ·{" "}
                     {child.mappingType
                       ? MAPPING_TYPE_LABELS[child.mappingType]
-                      : "매핑 확인 필요"}
+                      : pageText.comboMappingNeeded}
                   </span>
                 </div>
                 <span
@@ -1699,8 +2049,8 @@ export default function AdminPosMappingsPage() {
                   }`}
                 >
                   {child.validationStatus === "normal"
-                    ? "차감가능"
-                    : "확인필요"}
+                    ? pageText.comboApplicable
+                    : pageText.comboNeedsReview}
                 </span>
                 {child.blockedReason ? (
                   <p>{child.blockedReason}</p>
@@ -1795,9 +2145,6 @@ export default function AdminPosMappingsPage() {
   ) {
     const activeRecipes = mapping.recipes.filter((recipe) => recipe.isActive);
     const activeRecipeCount = activeRecipes.length;
-    const activeRequiredRecipeCount = activeRecipes.filter(
-      (recipe) => recipe.isRequired
-    ).length;
     const activeInventoryIds = activeRecipes.map(
       (recipe) => recipe.inventoryItemId
     );
@@ -1814,7 +2161,7 @@ export default function AdminPosMappingsPage() {
       );
     });
     const recipeStatus =
-      activeRecipeCount === 0 || activeRequiredRecipeCount === 0
+      activeRecipeCount === 0
         ? "needed"
         : hasDuplicateInventory || hasInvalidRecipe
           ? "error"
@@ -1851,11 +2198,11 @@ export default function AdminPosMappingsPage() {
                   }
                 >
                   <div className={styles.recipeInventory}>
-                    <span>Inventory 품목</span>
+                    <span>{pageText.inventoryItemLabel}</span>
                     <strong>
                       {recipeInventory
                         ? getInventoryLabel(recipeInventory)
-                        : `품목 #${recipe.inventoryItemId}`}
+                        : `#${recipe.inventoryItemId}`}
                     </strong>
                   </div>
                   <RecipeQuantityControls
@@ -1865,23 +2212,15 @@ export default function AdminPosMappingsPage() {
                   />
                   <label className={styles.checkboxField}>
                     <input
-                      name="isRequired"
-                      type="checkbox"
-                      defaultChecked={recipe.isRequired}
-                    />
-                    <span>필수</span>
-                  </label>
-                  <label className={styles.checkboxField}>
-                    <input
                       name="isActive"
                       type="checkbox"
                       defaultChecked={recipe.isActive}
                     />
-                    <span>활성</span>
+                    <span>{pageText.recipeActiveLabel}</span>
                   </label>
                   <div className={styles.recipeActions}>
                     <button type="submit" disabled={recipeSaving}>
-                      {recipeSaving ? "저장 중..." : "저장"}
+                      {recipeSaving ? pageText.savingButton : pageText.saveButton}
                     </button>
                     {recipe.isActive ? (
                       <button
@@ -1890,7 +2229,7 @@ export default function AdminPosMappingsPage() {
                         disabled={recipeSaving}
                         onClick={() => void disableRecipe(mapping, recipe)}
                       >
-                        비활성화
+                        {pageText.recipeDisableButton}
                       </button>
                     ) : null}
                   </div>
@@ -1905,7 +2244,7 @@ export default function AdminPosMappingsPage() {
           onSubmit={(event) => void saveRecipe(event, mapping.id)}
         >
           <label className={styles.inventoryField}>
-            <span>추가할 Inventory 품목</span>
+            <span>{pageText.addInventoryLabel}</span>
             <InventoryCombobox
               items={inventoryItems}
               value={recipeInventorySelections[mapping.id] || ""}
@@ -1926,18 +2265,14 @@ export default function AdminPosMappingsPage() {
             inventoryItem={selectedRecipeInventory}
             text={pageText}
           />
-          <label className={styles.checkboxField}>
-            <input name="isRequired" type="checkbox" defaultChecked />
-            <span>필수 재료</span>
-          </label>
           <button
             type="submit"
             className={styles.primaryButton}
             disabled={recipeSavingKey === `recipe-new-${mapping.id}`}
           >
             {recipeSavingKey === `recipe-new-${mapping.id}`
-              ? "추가 중..."
-              : "재료 추가"}
+              ? pageText.recipeAddingButton
+              : pageText.recipeAddButton}
           </button>
         </form>
       </div>
@@ -1992,7 +2327,7 @@ export default function AdminPosMappingsPage() {
           {activeRecipeCount === 0 ? (
             <strong>{pageText.recipeIngredientNeeded}</strong>
           ) : (
-            <em>활성 재료 {activeRecipeCount}개</em>
+            <em>{pageText.recipeActiveIngredients(activeRecipeCount)}</em>
           )}
         </summary>
         {recipeBody}
@@ -2113,13 +2448,13 @@ export default function AdminPosMappingsPage() {
       const payload = (await getJson(response)) as ReconcileSummary;
       setReconcileSummary(payload);
       setValidationResult(null);
-      setNotice("매핑 상태 재검사를 완료했습니다.");
+      setNotice(pageText.reconcileSuccessNotice);
       await loadMappings();
     } catch (reconcileError) {
       setError(
         reconcileError instanceof Error
           ? reconcileError.message
-          : "매핑 상태 재검사에 실패했습니다."
+          : pageText.reconcileErrorNotice
       );
     } finally {
       setReconciling(false);
@@ -2140,12 +2475,12 @@ export default function AdminPosMappingsPage() {
       );
       const payload = (await getJson(response)) as unknown as ValidationResult;
       setValidationResult(payload);
-      setNotice("매핑 완전성 검증을 완료했습니다.");
+      setNotice(pageText.mappingValidateSuccess);
     } catch (validationError) {
       setError(
         validationError instanceof Error
           ? validationError.message
-          : "매핑 완전성 검증에 실패했습니다."
+          : pageText.mappingValidateError
       );
     } finally {
       setValidating(false);
@@ -2176,7 +2511,7 @@ export default function AdminPosMappingsPage() {
       <main className={styles.page}>
         <div className={styles.shell}>
           <div className={styles.alertError}>
-            로그인 사용자 정보를 확인할 수 없습니다.
+            {pageText.loginCheckError}
           </div>
         </div>
       </main>
@@ -2189,12 +2524,10 @@ export default function AdminPosMappingsPage() {
         <header className={styles.header}>
           <div>
             <Link href="/admin" className={styles.backLink}>
-              관리자 메뉴
+              {pageText.adminMenuLink}
             </Link>
-            <h1>POS 상품 재고 매핑</h1>
-            <p>
-              최신 POS 카탈로그를 기준으로 재고 차감 규칙을 관리합니다.
-            </p>
+            <h1>{pageText.pageTitle}</h1>
+            <p>{pageText.pageDescription}</p>
           </div>
           <div className={styles.headerActions}>
             <button
@@ -2203,22 +2536,24 @@ export default function AdminPosMappingsPage() {
               onClick={() => void validateMappings()}
               disabled={validating || loading}
             >
-              {validating ? "검증 중..." : "매핑 검증"}
+              {validating ? pageText.validatingButton : pageText.validateButton}
             </button>
-            <button
-              type="button"
-              className={styles.secondaryButton}
-              onClick={() => void reconcileMappings()}
-              disabled={reconciling || loading}
-            >
-              {reconciling ? "재검사 중..." : "매핑 상태 재검사"}
-            </button>
+            {actorRole !== "leader" && (
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={() => void reconcileMappings()}
+                disabled={reconciling || loading}
+              >
+                {reconciling ? pageText.reconcilingButton : pageText.reconcileButton}
+              </button>
+            )}
           </div>
         </header>
 
-        <section className={styles.summaryBand} aria-label="매핑 상태 요약">
+        <section className={styles.summaryBand} aria-label={pageText.summarySectionLabel}>
           <div>
-            <span>POS 상품</span>
+            <span>{pageText.summaryPosProduct}</span>
             <strong>{totalCatalogCount}</strong>
           </div>
           <div>
@@ -2267,11 +2602,11 @@ export default function AdminPosMappingsPage() {
           <section className={styles.validationPanel}>
             <div className={styles.validationHeader}>
               <div>
-                <span>최근 매핑 검증</span>
+                <span>{pageText.recentValidationLabel}</span>
                 <strong>
                   {validationResult.summary.readyForPreview
-                    ? "Preview 준비 완료"
-                    : "Preview 전 매핑 보완 필요"}
+                    ? pageText.previewReady
+                    : pageText.previewNeeded}
                 </strong>
               </div>
               <span
@@ -2287,7 +2622,7 @@ export default function AdminPosMappingsPage() {
 
             <div className={styles.validationSummary}>
               <div>
-                <span>활성 상품</span>
+                <span>{pageText.summaryActiveProducts}</span>
                 <strong>{validationResult.summary.activeProducts}</strong>
               </div>
               <div>
@@ -2299,23 +2634,23 @@ export default function AdminPosMappingsPage() {
                 <strong>{validationResult.summary.recipeMappedCount}</strong>
               </div>
               <div>
-                <span>미매핑 상품</span>
+                <span>{pageText.summaryUnmappedProducts}</span>
                 <strong>{validationResult.summary.unmappedCount}</strong>
               </div>
               <div>
-                <span>미매핑 옵션</span>
+                <span>{pageText.summaryUnmappedOptions}</span>
                 <strong>{validationResult.summary.optionUnmappedCount}</strong>
               </div>
               <div className={styles.validationErrorCount}>
-                <span>오류</span>
+                <span>{pageText.summaryErrors}</span>
                 <strong>{validationResult.summary.errorCount}</strong>
               </div>
               <div className={styles.validationWarningCount}>
-                <span>경고</span>
+                <span>{pageText.summaryWarnings}</span>
                 <strong>{validationResult.summary.warningCount}</strong>
               </div>
               <div>
-                <span>정보</span>
+                <span>{pageText.summaryInfo}</span>
                 <strong>{validationResult.summary.infoCount}</strong>
               </div>
             </div>
@@ -2352,7 +2687,7 @@ export default function AdminPosMappingsPage() {
               </div>
             ) : (
               <p className={styles.validationEmpty}>
-                해결해야 할 매핑 문제가 없습니다.
+                {pageText.validationNoIssues}
               </p>
             )}
           </section>
@@ -2404,9 +2739,9 @@ export default function AdminPosMappingsPage() {
         </div>
 
         {loading ? (
-          <div className={styles.emptyState}>매핑 목록을 불러오는 중입니다.</div>
+          <div className={styles.emptyState}>{pageText.loadingList}</div>
         ) : visibleItems.length === 0 ? (
-          <div className={styles.emptyState}>조건에 맞는 상품이 없습니다.</div>
+          <div className={styles.emptyState}>{pageText.emptyList}</div>
         ) : (
           <section ref={productListRef} className={styles.productList}>
             {visibleItems.map((item) => {
@@ -2415,7 +2750,7 @@ export default function AdminPosMappingsPage() {
               const productName =
                 item.posProduct?.itemName ||
                 item.mapping?.posItemName ||
-                "이름 없는 POS 상품";
+                pageText.noProductName;
               const productCode =
                 item.posProduct?.itemCode ||
                 item.mapping?.posItemCode ||
@@ -2480,15 +2815,15 @@ export default function AdminPosMappingsPage() {
                               ]}
                         </span>
                         {item.posProduct && !item.posProduct.isActive ? (
-                          <span className={styles.inactiveBadge}>POS 비활성</span>
+                          <span className={styles.inactiveBadge}>{pageText.productPosInactive}</span>
                         ) : null}
                       </div>
                       <div className={styles.metaLine}>
-                        <span>코드 {productCode}</span>
+                        <span>{pageText.productCodePrefix} {productCode}</span>
                         <span>
-                          {item.posProduct?.categoryName || "카테고리 없음"}
+                          {item.posProduct?.categoryName || pageText.noCategoryName}
                         </span>
-                        <span>{item.posProduct?.unitName || "단위 없음"}</span>
+                        <span>{item.posProduct?.unitName || pageText.noUnitName}</span>
                       </div>
                       {getDisplayBlockedReason(item, lang) ? (
                         <p className={styles.blockedReason}>
@@ -2532,7 +2867,7 @@ export default function AdminPosMappingsPage() {
 
                     <div className={styles.mappingInfo}>
                       <div>
-                        <span>매핑 유형</span>
+                        <span>{pageText.mappingTypeLabel}</span>
                         <strong>
                           {optionBasedDeduction
                             ? DISPLAY_FILTER_LABELS[lang].option_based
@@ -2542,22 +2877,22 @@ export default function AdminPosMappingsPage() {
                                 ]
                               : DISPLAY_STATUS_LABELS[lang].unmapped}
                           {item.mapping && !item.mapping.isActive
-                            ? " (비활성)"
+                            ? pageText.mappingInactiveSuffix
                             : ""}
                         </strong>
                       </div>
                       <div>
-                        <span>Inventory 품목</span>
+                        <span>{pageText.inventoryItemLabel}</span>
                         <strong>
                           {inventoryItem
                             ? getInventoryLabel(inventoryItem)
                             : item.mapping?.inventoryItemId
-                              ? `품목 #${item.mapping.inventoryItemId}`
+                              ? `#${item.mapping.inventoryItemId}`
                               : "-"}
                         </strong>
                       </div>
                       <div>
-                        <span>차감 배수</span>
+                        <span>{pageText.quantityMultiplierLabel}</span>
                         <strong>
                           {item.mapping?.mappingType === "recipe"
                             ? 1
@@ -2574,7 +2909,11 @@ export default function AdminPosMappingsPage() {
                         isEditing ? setEditor(null) : beginEdit(item)
                       }
                     >
-                      {isEditing ? "닫기" : item.mapping ? "수정" : "매핑 설정"}
+                      {isEditing
+                        ? pageText.closeButton
+                        : item.mapping
+                          ? pageText.editButton
+                          : pageText.setMappingButton}
                     </button>
                     {item.status === "orphaned" &&
                     hasLegacyCandidate &&
@@ -2649,7 +2988,7 @@ export default function AdminPosMappingsPage() {
                       onSubmit={(event) => void saveMapping(event, item)}
                     >
                       <label>
-                        <span>매핑 유형</span>
+                        <span>{pageText.mappingTypeLabel}</span>
                         <select
                           value={editor.mappingType}
                           onChange={(event) =>
@@ -2668,7 +3007,7 @@ export default function AdminPosMappingsPage() {
                       </label>
                       {editor.mappingType === "recipe" ? null : (
                         <label className={styles.inventoryField}>
-                          <span>Inventory 품목</span>
+                          <span>{pageText.inventoryItemLabel}</span>
                           <InventoryCombobox
                             items={inventoryItems}
                             value={editor.inventoryItemId}
@@ -2676,12 +3015,19 @@ export default function AdminPosMappingsPage() {
                             required={editor.mappingType === "direct"}
                             loading={loading && inventoryItems.length === 0}
                             text={pageText}
-                            onChange={(inventoryItemId) =>
+                            onChange={(inventoryItemId) => {
+                              const nextInventory =
+                                inventoryById.get(Number(inventoryItemId));
                               setEditor({
                                 ...editor,
                                 inventoryItemId,
-                              })
-                            }
+                                directQuantityMode: getPackageContent(
+                                  nextInventory
+                                )
+                                  ? editor.directQuantityMode
+                                  : "inventory",
+                              });
+                            }}
                           />
                         </label>
                       )}
@@ -2690,22 +3036,33 @@ export default function AdminPosMappingsPage() {
                           {pageText.recipeDeductionNotice}
                         </p>
                       ) : (
-                        <label>
-                          <span>차감 배수</span>
-                          <input
-                            type="number"
-                            min="0.0001"
-                            step="any"
-                            value={editor.quantityMultiplier}
-                            onChange={(event) =>
-                              setEditor({
-                                ...editor,
-                                quantityMultiplier: event.target.value,
-                              })
-                            }
-                            required
-                          />
-                        </label>
+                        <DirectQuantityControls
+                          inventoryItem={inventoryById.get(
+                            Number(editor.inventoryItemId)
+                          )}
+                          quantityMultiplier={editor.quantityMultiplier}
+                          sourceQuantity={editor.sourceQuantity}
+                          mode={editor.directQuantityMode}
+                          text={pageText}
+                          onQuantityMultiplierChange={(quantityMultiplier) =>
+                            setEditor({
+                              ...editor,
+                              quantityMultiplier,
+                            })
+                          }
+                          onSourceQuantityChange={(sourceQuantity) =>
+                            setEditor({
+                              ...editor,
+                              sourceQuantity,
+                            })
+                          }
+                          onModeChange={(directQuantityMode) =>
+                            setEditor({
+                              ...editor,
+                              directQuantityMode,
+                            })
+                          }
+                        />
                       )}
                       <label className={styles.checkboxField}>
                         <input
@@ -2718,7 +3075,7 @@ export default function AdminPosMappingsPage() {
                             })
                           }
                         />
-                        <span>매핑 활성</span>
+                        <span>{pageText.mappingActiveLabel}</span>
                       </label>
                       <div className={styles.editorActions}>
                         <button
@@ -2726,14 +3083,14 @@ export default function AdminPosMappingsPage() {
                           onClick={() => setEditor(null)}
                           disabled={saving}
                         >
-                          취소
+                          {pageText.cancelButton}
                         </button>
                         <button
                           type="submit"
                           className={styles.primaryButton}
                           disabled={saving}
                         >
-                          {saving ? "저장 중..." : "저장"}
+                          {saving ? pageText.savingButton : pageText.saveButton}
                         </button>
                       </div>
                       {editor.mappingType === "recipe" &&
@@ -2760,9 +3117,6 @@ export default function AdminPosMappingsPage() {
                           const activeRecipes = item.mapping.recipes.filter(
                             (recipe) => recipe.isActive
                           );
-                          const activeRequiredRecipes = activeRecipes.filter(
-                            (recipe) => recipe.isRequired
-                          );
                           const activeInventoryIds = activeRecipes.map(
                             (recipe) => recipe.inventoryItemId
                           );
@@ -2785,8 +3139,7 @@ export default function AdminPosMappingsPage() {
                             }
                           );
                           const recipeStatus =
-                            activeRecipes.length === 0 ||
-                            activeRequiredRecipes.length === 0
+                            activeRecipes.length === 0
                               ? "needed"
                               : hasDuplicateInventory || hasInvalidRecipe
                                 ? "error"
@@ -2838,11 +3191,11 @@ export default function AdminPosMappingsPage() {
                                   }
                                 >
                                   <div className={styles.recipeInventory}>
-                                    <span>Inventory 품목</span>
+                                    <span>{pageText.inventoryItemLabel}</span>
                                     <strong>
                                       {recipeInventory
                                         ? getInventoryLabel(recipeInventory)
-                                        : `품목 #${recipe.inventoryItemId}`}
+                                        : `#${recipe.inventoryItemId}`}
                                     </strong>
                                   </div>
                                   <RecipeQuantityControls
@@ -2852,26 +3205,18 @@ export default function AdminPosMappingsPage() {
                                   />
                                   <label className={styles.checkboxField}>
                                     <input
-                                      name="isRequired"
-                                      type="checkbox"
-                                      defaultChecked={recipe.isRequired}
-                                    />
-                                    <span>필수</span>
-                                  </label>
-                                  <label className={styles.checkboxField}>
-                                    <input
                                       name="isActive"
                                       type="checkbox"
                                       defaultChecked={recipe.isActive}
                                     />
-                                    <span>활성</span>
+                                    <span>{pageText.recipeActiveLabel}</span>
                                   </label>
                                   <div className={styles.recipeActions}>
                                     <button
                                       type="submit"
                                       disabled={recipeSaving}
                                     >
-                                      {recipeSaving ? "저장 중..." : "저장"}
+                                      {recipeSaving ? pageText.savingButton : pageText.saveButton}
                                     </button>
                                     {recipe.isActive ? (
                                       <button
@@ -2885,7 +3230,7 @@ export default function AdminPosMappingsPage() {
                                           )
                                         }
                                       >
-                                        비활성화
+                                        {pageText.recipeDisableButton}
                                       </button>
                                     ) : null}
                                   </div>
@@ -2902,7 +3247,7 @@ export default function AdminPosMappingsPage() {
                           }
                         >
                           <label className={styles.inventoryField}>
-                            <span>추가할 Inventory 품목</span>
+                            <span>{pageText.addInventoryLabel}</span>
                             <InventoryCombobox
                               items={inventoryItems}
                               value={
@@ -2932,14 +3277,6 @@ export default function AdminPosMappingsPage() {
                             )}
                             text={pageText}
                           />
-                          <label className={styles.checkboxField}>
-                            <input
-                              name="isRequired"
-                              type="checkbox"
-                              defaultChecked
-                            />
-                            <span>필수 재료</span>
-                          </label>
                           <button
                             type="submit"
                             className={styles.primaryButton}
@@ -2950,8 +3287,8 @@ export default function AdminPosMappingsPage() {
                           >
                             {recipeSavingKey ===
                             `recipe-new-${item.mapping.id}`
-                              ? "추가 중..."
-                              : "재료 추가"}
+                              ? pageText.recipeAddingButton
+                              : pageText.recipeAddButton}
                           </button>
                         </form>
                       </div>
@@ -2962,7 +3299,7 @@ export default function AdminPosMappingsPage() {
 
                   {item.options && item.options.length > 0 ? (
                     <details className={styles.options}>
-                      <summary>POS 옵션 {item.options.length}개</summary>
+                      <summary>{pageText.optionCountLabel(item.options.length)}</summary>
                       <div className={styles.optionList}>
                         {item.options.map((option) => {
                           const optionKey = `${item.posProduct?.id}:${option.optionId}`;
@@ -2999,7 +3336,7 @@ export default function AdminPosMappingsPage() {
                                 </strong>
                                 <em>
                                   {option.quantityMultiplier
-                                    ? `배수 ${option.quantityMultiplier}`
+                                    ? pageText.multiplierDisplay(option.quantityMultiplier)
                                     : ""}
                                 </em>
                               </div>
@@ -3013,10 +3350,10 @@ export default function AdminPosMappingsPage() {
                                 }
                               >
                                 {isOptionEditing
-                                  ? "닫기"
+                                  ? pageText.closeButton
                                   : option.mapping
-                                    ? "수정"
-                                    : "설정"}
+                                    ? pageText.editButton
+                                    : pageText.setButton}
                               </button>
 
                               {option.blockedReason &&
@@ -3037,7 +3374,7 @@ export default function AdminPosMappingsPage() {
                                   }
                                 >
                                   <label>
-                                    <span>매핑 유형</span>
+                                    <span>{pageText.mappingTypeLabel}</span>
                                     <select
                                       value={optionEditor.mappingType}
                                       onChange={(event) =>
@@ -3057,7 +3394,7 @@ export default function AdminPosMappingsPage() {
                                   {optionEditor.mappingType ===
                                   "recipe" ? null : (
                                     <label className={styles.inventoryField}>
-                                      <span>Inventory 품목</span>
+                                      <span>{pageText.inventoryItemLabel}</span>
                                       <InventoryCombobox
                                         items={inventoryItems}
                                         value={optionEditor.inventoryItemId}
@@ -3071,12 +3408,20 @@ export default function AdminPosMappingsPage() {
                                           loading && inventoryItems.length === 0
                                         }
                                         text={pageText}
-                                        onChange={(inventoryItemId) =>
+                                        onChange={(inventoryItemId) => {
+                                          const nextInventory =
+                                            inventoryById.get(
+                                              Number(inventoryItemId)
+                                            );
                                           setOptionEditor({
                                             ...optionEditor,
                                             inventoryItemId,
-                                          })
-                                        }
+                                            directQuantityMode:
+                                              getPackageContent(nextInventory)
+                                                ? optionEditor.directQuantityMode
+                                                : "inventory",
+                                          });
+                                        }}
                                       />
                                     </label>
                                   )}
@@ -3085,25 +3430,41 @@ export default function AdminPosMappingsPage() {
                                       {pageText.recipeDeductionNotice}
                                     </p>
                                   ) : (
-                                    <label>
-                                      <span>차감 배수</span>
-                                      <input
-                                        type="number"
-                                        min="0.0001"
-                                        step="any"
-                                        value={
-                                          optionEditor.quantityMultiplier
-                                        }
-                                        onChange={(event) =>
-                                          setOptionEditor({
-                                            ...optionEditor,
-                                            quantityMultiplier:
-                                              event.target.value,
-                                          })
-                                        }
-                                        required
-                                      />
-                                    </label>
+                                    <DirectQuantityControls
+                                      inventoryItem={inventoryById.get(
+                                        Number(optionEditor.inventoryItemId)
+                                      )}
+                                      quantityMultiplier={
+                                        optionEditor.quantityMultiplier
+                                      }
+                                      sourceQuantity={
+                                        optionEditor.sourceQuantity
+                                      }
+                                      mode={optionEditor.directQuantityMode}
+                                      text={pageText}
+                                      onQuantityMultiplierChange={(
+                                        quantityMultiplier
+                                      ) =>
+                                        setOptionEditor({
+                                          ...optionEditor,
+                                          quantityMultiplier,
+                                        })
+                                      }
+                                      onSourceQuantityChange={(
+                                        sourceQuantity
+                                      ) =>
+                                        setOptionEditor({
+                                          ...optionEditor,
+                                          sourceQuantity,
+                                        })
+                                      }
+                                      onModeChange={(directQuantityMode) =>
+                                        setOptionEditor({
+                                          ...optionEditor,
+                                          directQuantityMode,
+                                        })
+                                      }
+                                    />
                                   )}
                                   <label className={styles.checkboxField}>
                                     <input
@@ -3116,7 +3477,7 @@ export default function AdminPosMappingsPage() {
                                         })
                                       }
                                     />
-                                    <span>매핑 활성</span>
+                                    <span>{pageText.mappingActiveLabel}</span>
                                   </label>
                                   <div className={styles.editorActions}>
                                     <button
@@ -3124,14 +3485,14 @@ export default function AdminPosMappingsPage() {
                                       onClick={() => setOptionEditor(null)}
                                       disabled={optionSaving}
                                     >
-                                      취소
+                                      {pageText.cancelButton}
                                     </button>
                                     <button
                                       type="submit"
                                       className={styles.primaryButton}
                                       disabled={optionSaving}
                                     >
-                                      {optionSaving ? "저장 중..." : "저장"}
+                                      {optionSaving ? pageText.savingButton : pageText.saveButton}
                                     </button>
                                   </div>
                                   {optionEditor.mappingType === "recipe" ? (
@@ -3144,7 +3505,7 @@ export default function AdminPosMappingsPage() {
                               {option.mapping?.mappingType === "recipe"
                                 ? renderRecipeManager(
                                     option.mapping,
-                                    "옵션 레시피 관리"
+                                    pageText.optionRecipeManagerTitle
                                   )
                                 : null}
                             </div>

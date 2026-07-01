@@ -8,7 +8,7 @@ import { useLanguage } from "@/lib/language-context";
 import { getUser, isAdmin, isManage } from "@/lib/supabase/auth";
 import { ui } from "@/lib/styles/ui";
 
-type AdminMenuAccess = "manage" | "admin";
+type AdminMenuAccess = "manage" | "admin" | "leader" | "leader-or-admin";
 
 const adminMenus = [
   {
@@ -24,6 +24,20 @@ const adminMenus = [
     badge: "SALES",
     emoji: "💰",
     access: "manage" as AdminMenuAccess,
+  },
+  {
+    title: {
+      ko: "매출확인",
+      vi: "Kiểm tra doanh thu",
+    },
+    description: {
+      ko: "월간 매출 현황을 확인합니다.",
+      vi: "Kiểm tra tình hình doanh thu hàng tháng.",
+    },
+    href: "/admin/sales/monthly",
+    badge: "SALES",
+    emoji: "💰",
+    access: "leader" as AdminMenuAccess,
   },
   {
     title: {
@@ -65,7 +79,7 @@ const adminMenus = [
     href: "/admin/pos/mappings",
     badge: "POS",
     emoji: "⚙️",
-    access: "admin" as AdminMenuAccess,
+    access: "leader-or-admin" as AdminMenuAccess,
   },
 ];
 
@@ -108,9 +122,16 @@ export default function AdminPage() {
 
   const visibleMenus =
     permissionChecked && currentUser
-      ? adminMenus.filter((menu) =>
-        menu.access === "manage" ? isManage(currentUser) : isAdmin(currentUser)
-      )
+      ? adminMenus.filter((menu) => {
+          const role = currentUser.role;
+          switch (menu.access) {
+            case "manage": return isManage(currentUser);
+            case "admin": return isAdmin(currentUser);
+            case "leader": return role === "leader";
+            case "leader-or-admin": return role === "leader" || isAdmin(currentUser);
+            default: return false;
+          }
+        })
       : [];
 
   return (

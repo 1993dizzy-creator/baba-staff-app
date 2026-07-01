@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CSSProperties, ReactNode } from "react";
-import { getUser, isManage } from "@/lib/supabase/auth";
+import { canAccessAdmin, getUser } from "@/lib/supabase/auth";
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -18,7 +18,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
       const user = getUser();
 
-      if (!user || !isManage(user)) {
+      if (!user || !canAccessAdmin(user)) {
         setAllowed(false);
         setChecked(true);
         router.replace("/");

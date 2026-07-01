@@ -329,7 +329,8 @@ export default function SalesMonthlyPage() {
     currentUser?.role === "master" ||
     currentUser?.role === "manager";
 
-  const tabs = salesTabs.map((tab) => ({
+  const isLeader = currentUser?.role === "leader";
+  const tabs = salesTabs.filter((tab) => !isLeader || tab.key === "monthly").map((tab) => ({
     label: t.tabs[tab.key],
     href:
       tab.href === "/admin/sales/monthly"

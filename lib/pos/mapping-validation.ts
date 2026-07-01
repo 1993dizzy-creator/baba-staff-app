@@ -178,9 +178,6 @@ function validateRecipe(params: {
   const activeRecipes = params.recipes.filter(
     (recipe) => recipe.is_active === true
   );
-  const activeRequiredRecipes = activeRecipes.filter(
-    (recipe) => recipe.is_required !== false
-  );
   let invalid = false;
 
   if (activeRecipes.length === 0) {
@@ -191,32 +188,6 @@ function validateRecipe(params: {
         severity: "error",
         type: "invalid_recipe",
         message: "Recipe mapping에 활성 재료가 없습니다.",
-        ...params,
-      })
-    );
-  }
-
-  if (activeRequiredRecipes.length === 0) {
-    invalid = true;
-    issue(
-      params.issues,
-      issueFor({
-        severity: "error",
-        type: "invalid_recipe",
-        message: "Recipe mapping has no required ingredients.",
-        ...params,
-      })
-    );
-  }
-
-  if (activeRequiredRecipes.some((recipe) => recipe.is_active !== true)) {
-    invalid = true;
-    issue(
-      params.issues,
-      issueFor({
-        severity: "error",
-        type: "invalid_recipe",
-        message: "필수 recipe 재료가 모두 비활성 상태입니다.",
         ...params,
       })
     );

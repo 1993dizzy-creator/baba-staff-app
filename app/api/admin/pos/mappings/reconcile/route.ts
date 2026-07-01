@@ -137,9 +137,6 @@ function hasValidInventoryRule(params: {
     const activeRecipes = params.recipes.filter(
       (recipe) => recipe.is_active === true
     );
-    const requiredRecipes = params.recipes.filter(
-      (recipe) => recipe.is_required !== false
-    );
     const activeInventoryIds = activeRecipes.map((recipe) =>
       Number(recipe.inventory_item_id)
     );
@@ -149,12 +146,6 @@ function hasValidInventoryRule(params: {
       new Set(activeInventoryIds).size === activeInventoryIds.length &&
       activeRecipes.every(
         (recipe) =>
-          params.inventoryIds.has(Number(recipe.inventory_item_id)) &&
-          Number(recipe.quantity_per_pos_unit) > 0
-      ) &&
-      requiredRecipes.every(
-        (recipe) =>
-          recipe.is_active === true &&
           params.inventoryIds.has(Number(recipe.inventory_item_id)) &&
           Number(recipe.quantity_per_pos_unit) > 0
       )

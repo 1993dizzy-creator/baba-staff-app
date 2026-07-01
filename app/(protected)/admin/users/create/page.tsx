@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
@@ -31,7 +31,7 @@ type FormState = {
   is_active: boolean;
 };
 
-const roleOptions = ["owner", "manager", "staff"] as const;
+const roleOptions = ["owner", "manager", "leader", "staff"] as const;
 const partOptions = ["owner", "kitchen", "hall", "bar"] as const;
 const positionOptions = ["owner", "manager", "leader", "staff"] as const;
 const genders = ["", "male", "female", "other"];
@@ -57,6 +57,7 @@ type AdminUsersPageText = (typeof adminUsersText)[keyof typeof adminUsersText];
 function getRoleLabel(role: string, text: AdminUsersPageText) {
   if (role === "owner") return text.ownerGroup;
   if (role === "manager") return text.managerRole;
+  if (role === "leader") return text.leaderRole;
   if (role === "staff") return text.staffRole;
   return role;
 }
@@ -144,6 +145,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export default function AdminUserCreatePage() {
   const { lang } = useLanguage();
   const text = adminUsersText[lang];
+  const router = useRouter();
   const [checked, setChecked] = useState(false);
   const [canAccess, setCanAccess] = useState(false);
   const [actorUsername, setActorUsername] = useState("");
@@ -158,10 +160,14 @@ export default function AdminUserCreatePage() {
 
   useEffect(() => {
     const user = getUser();
+    if (user?.role === "leader") {
+      router.replace("/admin");
+      return;
+    }
     setCanAccess(isAdmin(user));
     setActorUsername(user?.username || "");
     setChecked(true);
-  }, []);
+  }, [router]);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));

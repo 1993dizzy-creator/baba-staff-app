@@ -46,7 +46,7 @@ const POSITION_ORDER = new Map([
   ["staff", 4],
 ]);
 
-const ALLOWED_ROLES = new Set(["owner", "manager", "staff"]);
+const ALLOWED_ROLES = new Set(["owner", "manager", "leader", "staff"]);
 const BLOCKED_FORM_ROLES = new Set(["master", "admin"]);
 const ALLOWED_POSITIONS = new Set(["owner", "manager", "leader", "staff"]);
 const ALLOWED_UPDATE_KEYS = new Set([

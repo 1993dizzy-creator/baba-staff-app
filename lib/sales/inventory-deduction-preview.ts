@@ -768,7 +768,6 @@ export async function buildInventoryDeductionPreview(input: {
             );
             const invalidRecipes =
               activeRecipes.length === 0 ||
-              !activeRecipes.some((recipe) => recipe.is_required !== false) ||
               activeRecipes.some((recipe) => {
                 const quantityPerPosUnit = Number(
                   recipe.quantity_per_pos_unit
@@ -879,9 +878,6 @@ export async function buildInventoryDeductionPreview(input: {
         const hasDuplicateInventory =
           new Set(activeRecipeInventoryIds).size !==
           activeRecipeInventoryIds.length;
-        const hasRequiredRecipe = activeRecipes.some(
-          (recipe) => recipe.is_required !== false
-        );
         const invalidRecipeRows = activeRecipes.some((recipe) => {
           const quantityPerPosUnit = Number(recipe.quantity_per_pos_unit);
           return (
@@ -892,7 +888,6 @@ export async function buildInventoryDeductionPreview(input: {
         });
         if (
           activeRecipes.length === 0 ||
-          !hasRequiredRecipe ||
           invalidRecipeRows ||
           hasDuplicateInventory
         ) {

@@ -24,7 +24,8 @@ export async function getMappingAdminActor(actorUsername: string) {
     !data ||
     (data.role !== "owner" &&
       data.role !== "master" &&
-      data.role !== "manager")
+      data.role !== "manager" &&
+      data.role !== "leader")
   ) {
     return null;
   }

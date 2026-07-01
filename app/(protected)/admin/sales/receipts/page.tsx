@@ -1465,8 +1465,12 @@ export default function SalesReceiptsPage() {
   );
 
   useEffect(() => {
-    setCurrentUser(getUser());
-  }, []);
+    const user = getUser();
+    setCurrentUser(user);
+    if (user?.role === "leader") {
+      router.replace("/admin/sales/monthly");
+    }
+  }, [router]);
 
   useEffect(() => {
     const controller = new AbortController();

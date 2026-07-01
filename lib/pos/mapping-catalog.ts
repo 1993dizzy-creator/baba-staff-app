@@ -23,6 +23,10 @@ export type PosItemMappingRow = {
   mapping_type: string | null;
   inventory_item_id: number | null;
   quantity_multiplier: number | string | null;
+  source_quantity?: number | string | null;
+  source_unit?: string | null;
+  source_package_content_quantity?: number | string | null;
+  source_package_content_unit?: string | null;
   is_active: boolean | null;
   pos_product_id: number | null;
   target_type: "product" | "option";

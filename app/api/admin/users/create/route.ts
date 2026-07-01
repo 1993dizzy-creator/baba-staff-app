@@ -19,7 +19,7 @@ const USER_SELECT = `
   is_active
 `;
 
-const ALLOWED_ROLES = new Set(["owner", "manager", "staff"]);
+const ALLOWED_ROLES = new Set(["owner", "manager", "leader", "staff"]);
 const BLOCKED_FORM_ROLES = new Set(["master", "admin"]);
 const ALLOWED_POSITIONS = new Set(["owner", "manager", "leader", "staff"]);
 
