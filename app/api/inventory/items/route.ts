@@ -277,7 +277,8 @@ export async function GET() {
         .from("inventory_keg_tracking_mappings")
         .select("inventory_item_id")
         .in("inventory_item_id", kegCandidateIds)
-        .eq("is_active", true);
+        .eq("is_active", true)
+        .eq("target_type", "product");
 
       if (mappingError) throw mappingError;
 

@@ -1279,9 +1279,7 @@ function isRecipeSetupBlockedReason(reason: string | null) {
 
 function getDisplayBlockedReason(item: CatalogItem, lang: AppLanguage) {
   if (
-    item.mappingType === "manual" &&
-    item.kegTracking?.isActive === true &&
-    item.blockedReason === MANUAL_REVIEW_BLOCKED_REASON
+    isManualKegTrackingReviewComplete(item, item.kegTracking)
   ) {
     return null;
   }
@@ -1299,6 +1297,17 @@ function getDisplayBlockedReason(item: CatalogItem, lang: AppLanguage) {
   )
     ? COMBO_TEXT[lang].needsCheck
     : COMBO_TEXT[lang].deduction;
+}
+
+function isManualKegTrackingReviewComplete(
+  item: CatalogItem,
+  kegTracking: KegTrackingMapping | null | undefined
+) {
+  return (
+    item.mappingType === "manual" &&
+    kegTracking?.isActive === true &&
+    item.blockedReason === MANUAL_REVIEW_BLOCKED_REASON
+  );
 }
 
 function isOptionBasedDeductionItem(item: CatalogItem) {
@@ -2030,15 +2039,32 @@ export default function AdminPosMappingsPage() {
     }
   }
 
-  function patchKegTracking(
-    posProductId: number,
-    mapping: KegTrackingMapping | null
-  ) {
+  function patchKegTracking(item: CatalogItem, mapping: KegTrackingMapping | null) {
+    const posProductId = item.posProduct?.id;
+    const wasManualReviewComplete = isManualKegTrackingReviewComplete(
+      item,
+      item.kegTracking
+    );
+    const isManualReviewComplete = isManualKegTrackingReviewComplete(
+      item,
+      mapping
+    );
+
+    if (wasManualReviewComplete !== isManualReviewComplete) {
+      setSummary((current) => ({
+        ...current,
+        needs_review: Math.max(
+          0,
+          current.needs_review + (isManualReviewComplete ? -1 : 1)
+        ),
+      }));
+    }
+
     setItems((current) =>
-      current.map((item) =>
-        item.posProduct?.id === posProductId
-          ? { ...item, kegTracking: mapping }
-          : item
+      current.map((currentItem) =>
+        currentItem.posProduct?.id === posProductId
+          ? { ...currentItem, kegTracking: mapping }
+          : currentItem
       )
     );
   }
@@ -2081,7 +2107,7 @@ export default function AdminPosMappingsPage() {
         mapping?: KegTrackingMapping;
       };
       if (payload.mapping) {
-        patchKegTracking(item.posProduct.id, payload.mapping);
+        patchKegTracking(item, payload.mapping);
         setKegTrackingEditor({
           itemKey: getItemKey(item),
           inventoryItemId: String(payload.mapping.inventoryItemId),
@@ -2117,7 +2143,7 @@ export default function AdminPosMappingsPage() {
         }
       );
       await getJson(response);
-      patchKegTracking(item.posProduct.id, null);
+      patchKegTracking(item, null);
       setKegTrackingEditor({
         itemKey: getItemKey(item),
         inventoryItemId: "",

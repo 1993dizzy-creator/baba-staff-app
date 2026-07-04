@@ -1549,7 +1549,7 @@ export default function InventoryPage() {
     };
 
     const openQuickPurchaseConfirm = () => {
-        if (!quickSaveItem) return;
+        if (!quickSaveItem || isKegReplacing) return;
 
         setQuickSaveReason("purchase");
         setQuickPurchaseSupplier(quickSaveItem.supplier || "");
@@ -1567,7 +1567,7 @@ export default function InventoryPage() {
     const handleQuickSaveConfirm = async (
         reason: QuickReasonValue
     ) => {
-        if (isQuickSaving) return;
+        if (isQuickSaving || isKegReplacing) return;
         setIsQuickSaving(true);
 
         try {
@@ -4020,11 +4020,14 @@ export default function InventoryPage() {
                             <button
                                 type="button"
                                 onClick={() => handleQuickSaveConfirm("stock_check")}
-                                disabled={isQuickSaving}
+                                disabled={isQuickSaving || isKegReplacing}
                                 style={{
                                     ...ui.subButton,
-                                    opacity: isQuickSaving ? 0.6 : 1,
-                                    cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                    opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
+                                    cursor:
+                                        isQuickSaving || isKegReplacing
+                                            ? "not-allowed"
+                                            : "pointer",
                                 }}
                             >
                                 <span
@@ -4044,11 +4047,14 @@ export default function InventoryPage() {
                             <button
                                 type="button"
                                 onClick={openQuickPurchaseConfirm}
-                                disabled={isQuickSaving}
+                                disabled={isQuickSaving || isKegReplacing}
                                 style={{
                                     ...ui.subButton,
-                                    opacity: isQuickSaving ? 0.6 : 1,
-                                    cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                    opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
+                                    cursor:
+                                        isQuickSaving || isKegReplacing
+                                            ? "not-allowed"
+                                            : "pointer",
                                 }}
                             >
                                 <span
@@ -4068,11 +4074,14 @@ export default function InventoryPage() {
                             <button
                                 type="button"
                                 onClick={() => handleQuickSaveConfirm("service")}
-                                disabled={isQuickSaving}
+                                disabled={isQuickSaving || isKegReplacing}
                                 style={{
                                     ...ui.subButton,
-                                    opacity: isQuickSaving ? 0.6 : 1,
-                                    cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                    opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
+                                    cursor:
+                                        isQuickSaving || isKegReplacing
+                                            ? "not-allowed"
+                                            : "pointer",
                                 }}
                             >
                                 <span
@@ -4092,11 +4101,14 @@ export default function InventoryPage() {
                             <button
                                 type="button"
                                 onClick={() => setQuickSaveReason("other")}
-                                disabled={isQuickSaving}
+                                disabled={isQuickSaving || isKegReplacing}
                                 style={{
                                     ...ui.subButton,
-                                    opacity: isQuickSaving ? 0.6 : 1,
-                                    cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                    opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
+                                    cursor:
+                                        isQuickSaving || isKegReplacing
+                                            ? "not-allowed"
+                                            : "pointer",
                                 }}
                             >
                                 <span
@@ -4126,11 +4138,14 @@ export default function InventoryPage() {
                                 <button
                                     type="button"
                                     onClick={() => handleQuickSaveConfirm("other")}
-                                    disabled={isQuickSaving}
+                                    disabled={isQuickSaving || isKegReplacing}
                                     style={{
                                         ...ui.button,
-                                        opacity: isQuickSaving ? 0.6 : 1,
-                                        cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                        opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
+                                        cursor:
+                                            isQuickSaving || isKegReplacing
+                                                ? "not-allowed"
+                                                : "pointer",
                                     }}
                                 >
                                     {isQuickSaving
@@ -4237,11 +4252,14 @@ export default function InventoryPage() {
                                 <button
                                     type="button"
                                     onClick={() => handleQuickSaveConfirm("purchase")}
-                                    disabled={isQuickSaving}
+                                    disabled={isQuickSaving || isKegReplacing}
                                     style={{
                                         ...ui.button,
-                                        opacity: isQuickSaving ? 0.6 : 1,
-                                        cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                        opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
+                                        cursor:
+                                            isQuickSaving || isKegReplacing
+                                                ? "not-allowed"
+                                                : "pointer",
                                     }}
                                 >
                                     {isQuickSaving
