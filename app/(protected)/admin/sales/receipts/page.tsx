@@ -444,6 +444,30 @@ type InventoryDeductionPreview = {
     lineCount: number;
     status: "ok" | "insufficient_stock";
   }>;
+  kegTrackingSummary?: {
+    products: Array<{
+      posProductId: number;
+      posItemCode: string | null;
+      posItemName: string | null;
+      inventoryItemId: number;
+      inventoryItemName: string;
+      inventoryCode: string | null;
+      quantitySold: number;
+      quantityPerPosUnit: number;
+      expectedUsageMl: number;
+      receiptCount: number;
+      lineCount: number;
+    }>;
+    inventoryTotals: Array<{
+      inventoryItemId: number;
+      inventoryItemName: string;
+      inventoryCode: string | null;
+      expectedUsageMl: number;
+      productCount: number;
+      receiptCount: number;
+      lineCount: number;
+    }>;
+  };
   receipts: Array<{
     receiptId: number;
     refNo: string | null;
@@ -587,6 +611,11 @@ const inventoryPreviewText = {
     details: "상세보기",
     needsCheckDetails: "확인필요 상세",
     inventoryTotals: "재고품목별 예상합계",
+    kegTrackingItems: "Keg 추적 품목",
+    expectedUsage: "예상 사용량",
+    actualDeductionExcluded: "실제 차감 제외",
+    kegTrackingOnly: "Keg 잔량 추적만",
+    kegTrackingTotal: "합계",
     current: "현재",
     expectedDeduction: "예상 차감",
     afterDeduction: "차감 후",
@@ -716,6 +745,11 @@ const inventoryPreviewText = {
     details: "Chi tiết",
     needsCheckDetails: "Chi tiết cần kiểm tra",
     inventoryTotals: "Tổng dự kiến theo hàng tồn",
+    kegTrackingItems: "Mục theo dõi Keg",
+    expectedUsage: "Lượng dùng dự kiến",
+    actualDeductionExcluded: "Không trừ tồn",
+    kegTrackingOnly: "Chỉ theo dõi Keg",
+    kegTrackingTotal: "Tổng",
     current: "Hiện tại",
     expectedDeduction: "Dự kiến trừ",
     afterDeduction: "Sau khi trừ",
@@ -823,6 +857,24 @@ function getInventoryTotalName(total: {
   return total.inventoryCode
     ? `[${total.inventoryCode}] ${total.inventoryItemName}`
     : total.inventoryItemName;
+}
+
+function getKegTrackingProductName(product: {
+  posItemCode: string | null;
+  posItemName: string | null;
+}) {
+  if (product.posItemCode && product.posItemName) {
+    return `[${product.posItemCode}] ${product.posItemName}`;
+  }
+  return product.posItemName || product.posItemCode || "-";
+}
+
+function formatKegUsageMl(value: number) {
+  if (Math.abs(value) >= 1000) {
+    const liters = value / 1000;
+    return `${formatNumber(Number(liters.toFixed(2)))}L`;
+  }
+  return `${formatNumber(value)}ml`;
 }
 
 function hasIncompleteRecipeExclusions(
@@ -2153,6 +2205,9 @@ function InventoryPreviewPanel({
   const selectedReceiptCount = preview.receipts.filter(
     (receipt) => selectedReceipts[receipt.receiptId] === true
   ).length;
+  const kegTrackingProducts = preview.kegTrackingSummary?.products ?? [];
+  const kegTrackingInventoryTotals =
+    preview.kegTrackingSummary?.inventoryTotals ?? [];
   const selectedApplyDisabled =
     selectedReceiptCount === 0 ||
     !canApplyInventory ||
@@ -2318,6 +2373,51 @@ function InventoryPreviewPanel({
           <p style={inventoryPreviewEmptyStyle}>{text.noDeductionItems}</p>
         )}
       </details>
+
+      {kegTrackingProducts.length > 0 ? (
+        <details style={inventoryPreviewDetailsStyle} open>
+          <summary style={inventoryPreviewSummaryTitleStyle}>
+            {text.kegTrackingItems} {kegTrackingProducts.length}
+            {text.countSuffix}
+          </summary>
+          <div style={kegTrackingPreviewListStyle}>
+            {kegTrackingProducts.map((product) => (
+              <div
+                key={`${product.posProductId}:${product.inventoryItemId}`}
+                style={kegTrackingPreviewItemStyle}
+              >
+                <strong style={kegTrackingPreviewNameStyle}>
+                  {getKegTrackingProductName(product)}
+                </strong>
+                <span style={kegTrackingPreviewMetaStyle}>
+                  {text.saleQuantity} {formatNumber(product.quantitySold)}
+                </span>
+                <span style={kegTrackingPreviewMetaStyle}>
+                  {text.expectedUsage} {formatKegUsageMl(product.expectedUsageMl)}
+                </span>
+                <span style={kegTrackingPreviewBadgeStyle}>
+                  {text.actualDeductionExcluded} · {text.kegTrackingOnly}
+                </span>
+              </div>
+            ))}
+            {kegTrackingInventoryTotals.length > 0 ? (
+              <div style={kegTrackingPreviewTotalListStyle}>
+                {kegTrackingInventoryTotals.map((total) => (
+                  <div
+                    key={total.inventoryItemId}
+                    style={kegTrackingPreviewTotalStyle}
+                  >
+                    <strong>
+                      {getInventoryTotalName(total)} {text.kegTrackingTotal}
+                    </strong>
+                    <span>{formatKegUsageMl(total.expectedUsageMl)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
 
       <details style={inventoryPreviewDetailsStyle}>
         <summary style={inventoryPreviewSummaryTitleStyle}>
@@ -4585,6 +4685,77 @@ const inventoryPreviewEmptyStyle: CSSProperties = {
   padding: "12px 14px",
   color: "#667085",
   fontSize: 11,
+};
+
+const kegTrackingPreviewListStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+  paddingTop: 8,
+};
+
+const kegTrackingPreviewItemStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  alignItems: "center",
+  border: "1px solid #d7e7dd",
+  background: "#f4fbf7",
+  borderRadius: 7,
+  padding: "7px 9px",
+};
+
+const kegTrackingPreviewNameStyle: CSSProperties = {
+  minWidth: 0,
+  flex: "1 1 220px",
+  color: "#18202b",
+  fontSize: 11,
+  lineHeight: 1.3,
+  overflow: "hidden",
+  display: "-webkit-box",
+  WebkitBoxOrient: "vertical",
+  WebkitLineClamp: 2,
+  overflowWrap: "anywhere",
+};
+
+const kegTrackingPreviewMetaStyle: CSSProperties = {
+  flex: "0 0 auto",
+  color: "#475467",
+  fontSize: 10,
+  lineHeight: 1.25,
+  fontWeight: 800,
+  whiteSpace: "nowrap",
+};
+
+const kegTrackingPreviewBadgeStyle: CSSProperties = {
+  flex: "0 0 auto",
+  color: "#276052",
+  background: "#e4f4ec",
+  border: "1px solid #a9d3bf",
+  borderRadius: 5,
+  padding: "2px 6px",
+  fontSize: 9,
+  lineHeight: 1.25,
+  fontWeight: 900,
+  textAlign: "right",
+  whiteSpace: "nowrap",
+};
+
+const kegTrackingPreviewTotalListStyle: CSSProperties = {
+  display: "grid",
+  gap: 4,
+  padding: "2px 1px 0",
+};
+
+const kegTrackingPreviewTotalStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  justifyContent: "space-between",
+  gap: 8,
+  color: "#344054",
+  fontSize: 10,
+  lineHeight: 1.25,
+  fontWeight: 800,
+  padding: "0 2px",
 };
 
 const previewReceiptListStyle: CSSProperties = {

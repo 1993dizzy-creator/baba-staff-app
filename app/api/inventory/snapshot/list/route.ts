@@ -4,6 +4,19 @@ import { createClient } from "@supabase/supabase-js";
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
+const isValidMonthKey = (value: string | null) =>
+  Boolean(value && /^\d{4}-\d{2}$/.test(value));
+
+const getMonthRange = (month: string) => {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const lastDay = new Date(year, monthNumber, 0).getDate();
+
+  return {
+    fromDate: `${month}-01`,
+    toDate: `${month}-${String(lastDay).padStart(2, "0")}`,
+  };
+};
+
 const createSupabaseAdmin = () => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -26,8 +39,22 @@ const createSupabaseAdmin = () => {
   });
 };
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const { searchParams } = new URL(req.url);
+    const month = searchParams.get("month");
+
+    if (month && !isValidMonthKey(month)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "invalid_month",
+          message: "Invalid month format. Use YYYY-MM.",
+        },
+        { status: 400 }
+      );
+    }
+
     const supabase = createSupabaseAdmin();
 
     const { data: batches, error: batchError } = await supabase
@@ -70,10 +97,41 @@ export async function GET() {
       }
     });
 
+    const purchaseDateMap: Record<string, boolean> = {};
+
+    if (month) {
+      const { fromDate, toDate } = getMonthRange(month);
+      const { data: purchaseLogs, error: purchaseLogError } = await supabase
+        .from("inventory_logs")
+        .select("business_date")
+        .eq("reason", "purchase")
+        .gt("change_quantity", 0)
+        .gte("business_date", fromDate)
+        .lte("business_date", toDate);
+
+      if (purchaseLogError) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "snapshot_purchase_logs_query_failed",
+            message: purchaseLogError.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      (purchaseLogs || []).forEach((row) => {
+        if (row.business_date) {
+          purchaseDateMap[String(row.business_date)] = true;
+        }
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       batches: batches ?? [],
       purchaseBatchMap,
+      purchaseDateMap,
     });
   } catch (error) {
     const errorCode =

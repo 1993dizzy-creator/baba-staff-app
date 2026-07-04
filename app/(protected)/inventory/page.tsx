@@ -54,6 +54,11 @@ type InventoryItem = {
     updated_by_name?: string | null;
 };
 
+type KegTimeModalState = {
+    mode: "replace" | "edit-start";
+    item: InventoryItem;
+};
+
 type DuplicateInventoryItem = Pick<
     InventoryItem,
     "id" | "item_name" | "item_name_vi" | "code" | "part" | "category" | "category_vi"
@@ -343,6 +348,9 @@ export default function InventoryPage() {
     const [quickPurchasePrice, setQuickPurchasePrice] = useState("");
     const [isQuickPurchaseCustomSupplier, setIsQuickPurchaseCustomSupplier] =
         useState(false);
+    const [kegTimeModal, setKegTimeModal] = useState<KegTimeModalState | null>(null);
+    const [kegTimeValue, setKegTimeValue] = useState("");
+    const [isKegTimeSaving, setIsKegTimeSaving] = useState(false);
     const [editFormPendingSave, setEditFormPendingSave] =
         useState<EditFormPendingSave | null>(null);
     const [isEditReasonSaving, setIsEditReasonSaving] = useState(false);
@@ -1495,9 +1503,62 @@ export default function InventoryPage() {
         );
     };
 
+    const getVietnamDateParts = (value: Date) => {
+        const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone: "Asia/Ho_Chi_Minh",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+            hourCycle: "h23",
+        }).formatToParts(value);
+        const map = new Map(parts.map((part) => [part.type, part.value]));
+
+        return {
+            year: Number(map.get("year")),
+            month: Number(map.get("month")),
+            day: Number(map.get("day")),
+            hour: Number(map.get("hour")),
+            minute: Number(map.get("minute")),
+        };
+    };
+
+    const formatVietnamDateTimeInput = (value: Date | string = new Date()) => {
+        const date = value instanceof Date ? value : new Date(value);
+        const parts = getVietnamDateParts(date);
+        return [
+            String(parts.year).padStart(4, "0"),
+            String(parts.month).padStart(2, "0"),
+            String(parts.day).padStart(2, "0"),
+        ].join("-") + `T${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
+    };
+
+    const parseVietnamDateTimeInput = (value: string) => {
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
+        const date = new Date(`${value}:00+07:00`);
+        return Number.isFinite(date.getTime()) ? date : null;
+    };
+
+    const getVietnamDateOrdinal = (value: Date | string) => {
+        const date = value instanceof Date ? value : new Date(value);
+        const parts = getVietnamDateParts(date);
+        return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / 86400000);
+    };
+
+    const getKegElapsedDays = (item: InventoryItem) => {
+        if (!item.kegProgress?.startedAt) return null;
+        const elapsedDays =
+            getVietnamDateOrdinal(new Date()) -
+            getVietnamDateOrdinal(item.kegProgress.startedAt);
+        return Math.max(0, elapsedDays);
+    };
+
     const getKegRemainingLabel = (item: InventoryItem) => {
         if (!item.kegProgress) return t.kegNotStarted;
-        return `${t.kegRemaining} ${Math.round(getKegRemainingPercent(item))}%`;
+        const elapsedDays = getKegElapsedDays(item) ?? 0;
+        return `${t.kegRemaining} ${Math.round(getKegRemainingPercent(item))}% (${t.kegElapsedDays(elapsedDays)})`;
     };
 
     const getKegUsageLabel = (item: InventoryItem) => {
@@ -1514,13 +1575,76 @@ export default function InventoryPage() {
         return Math.min(100, Math.max(0, remainingPercent));
     };
 
-    const handleKegReplace = async (item: InventoryItem) => {
-        if (isKegReplacing || isQuickSaving) return;
-        if (!window.confirm(t.kegReplaceConfirm)) return;
+    const openKegReplaceModal = (item: InventoryItem) => {
+        if (isKegReplacing || isQuickSaving || isKegTimeSaving) return;
+        setKegTimeModal({ mode: "replace", item });
+        setKegTimeValue(formatVietnamDateTimeInput());
+    };
 
-        setIsKegReplacing(true);
+    const openKegStartTimeModal = (item: InventoryItem) => {
+        if (!item.kegProgress || isKegReplacing || isQuickSaving || isKegTimeSaving) {
+            return;
+        }
+
+        setKegTimeModal({ mode: "edit-start", item });
+        setKegTimeValue(formatVietnamDateTimeInput(item.kegProgress.startedAt));
+    };
+
+    const closeKegTimeModal = () => {
+        if (isKegReplacing || isKegTimeSaving) return;
+        setKegTimeModal(null);
+        setKegTimeValue("");
+    };
+
+    const submitKegTimeModal = async () => {
+        if (!kegTimeModal || isKegReplacing || isQuickSaving || isKegTimeSaving) return;
+        const selectedTime = parseVietnamDateTimeInput(kegTimeValue);
+
+        if (!selectedTime) {
+            alert(t.kegTimeLabel);
+            return;
+        }
+
+        if (selectedTime.getTime() > Date.now()) {
+            alert(lang === "vi" ? "Không thể chọn thời gian tương lai." : "미래 시간은 선택할 수 없습니다.");
+            return;
+        }
+
+        const { item, mode } = kegTimeModal;
+        setIsKegTimeSaving(true);
+
+        if (mode === "replace") {
+            setIsKegReplacing(true);
+        }
 
         try {
+            if (mode === "edit-start") {
+                const sessionId = item.kegProgress?.activeSessionId;
+                if (!sessionId) return;
+
+                const res = await fetch(`/api/inventory/keg-sessions/${sessionId}`, {
+                    method: "PATCH",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        actorUsername,
+                        startedLocalDateTime: kegTimeValue,
+                    }),
+                });
+                const result = await res.json();
+
+                if (!res.ok || !result.ok) {
+                    alert(result.message || c.editFail);
+                    return;
+                }
+
+                setKegTimeModal(null);
+                setKegTimeValue("");
+                await fetchInventory();
+                return;
+            }
+
             const currentQty = roundDecimal(Number(item.quantity ?? 0));
             const res = await fetch("/api/inventory/keg-sessions/replace", {
                 method: "POST",
@@ -1531,6 +1655,7 @@ export default function InventoryPage() {
                     itemId: item.id,
                     actorUsername,
                     expectedQuantity: currentQty,
+                    replacementLocalDateTime: kegTimeValue,
                 }),
             });
             const result = await res.json();
@@ -1560,6 +1685,9 @@ export default function InventoryPage() {
                 }));
             }
 
+            setKegTimeModal(null);
+            setKegTimeValue("");
+
             const refreshResults = await Promise.allSettled([
                 fetchInventory(),
                 fetchRecentLogs(),
@@ -1572,6 +1700,7 @@ export default function InventoryPage() {
             });
         } finally {
             setIsKegReplacing(false);
+            setIsKegTimeSaving(false);
         }
     };
 
@@ -2630,6 +2759,16 @@ export default function InventoryPage() {
                                                             }}
                                                         >
                                                             <div
+                                                                role={item.kegProgress ? "button" : undefined}
+                                                                tabIndex={item.kegProgress ? 0 : undefined}
+                                                                onClick={() => openKegStartTimeModal(item)}
+                                                                onKeyDown={(event) => {
+                                                                    if (!item.kegProgress) return;
+                                                                    if (event.key === "Enter" || event.key === " ") {
+                                                                        event.preventDefault();
+                                                                        openKegStartTimeModal(item);
+                                                                    }
+                                                                }}
                                                                 style={{
                                                                     minWidth: 0,
                                                                     border: item.kegProgress
@@ -2640,6 +2779,7 @@ export default function InventoryPage() {
                                                                         ? "#f0fdf4"
                                                                         : "#f9fafb",
                                                                     padding: "6px 8px",
+                                                                    cursor: item.kegProgress ? "pointer" : "default",
                                                                 }}
                                                             >
                                                                 <div
@@ -2688,8 +2828,8 @@ export default function InventoryPage() {
                                                             </div>
                                                             <button
                                                                 type="button"
-                                                                onClick={() => handleKegReplace(item)}
-                                                                disabled={isKegReplacing || isQuickSaving}
+                                                                onClick={() => openKegReplaceModal(item)}
+                                                                disabled={isKegReplacing || isQuickSaving || isKegTimeSaving}
                                                                 style={{
                                                                     ...ui.subButton,
                                                                     width: "auto",
@@ -2703,9 +2843,9 @@ export default function InventoryPage() {
                                                                     fontSize: 13,
                                                                     fontWeight: 900,
                                                                     opacity:
-                                                                        isKegReplacing || isQuickSaving ? 0.6 : 1,
+                                                                        isKegReplacing || isQuickSaving || isKegTimeSaving ? 0.6 : 1,
                                                                     cursor:
-                                                                        isKegReplacing || isQuickSaving
+                                                                        isKegReplacing || isQuickSaving || isKegTimeSaving
                                                                             ? "not-allowed"
                                                                             : "pointer",
                                                                 }}
@@ -4067,6 +4207,116 @@ export default function InventoryPage() {
                             {c.close}
                         </button>
                     </div>
+                </div>
+            )}
+
+            {kegTimeModal && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.45)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        zIndex: 1200,
+                        padding: 20,
+                    }}
+                    onClick={closeKegTimeModal}
+                >
+                    <form
+                        onClick={(event) => event.stopPropagation()}
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            void submitKegTimeModal();
+                        }}
+                        style={{
+                            width: "100%",
+                            maxWidth: 360,
+                            background: "#fff",
+                            borderRadius: 14,
+                            padding: 18,
+                            boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 10,
+                        }}
+                    >
+                        <div style={{ fontSize: 18, fontWeight: 900, color: "#111827" }}>
+                            {kegTimeModal.mode === "replace"
+                                ? t.kegReplacementTimeTitle
+                                : t.kegStartTimeTitle}
+                        </div>
+                        <div style={{ ...ui.metaText, marginBottom: 2 }}>
+                            {[
+                                kegTimeModal.item.code ? `[${kegTimeModal.item.code}]` : "",
+                                getDisplayItemName(kegTimeModal.item),
+                            ]
+                                .filter(Boolean)
+                                .join(" ")}
+                        </div>
+                        <label
+                            style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 5,
+                                fontSize: 12,
+                                fontWeight: 800,
+                                color: "#374151",
+                            }}
+                        >
+                            <span>{t.kegTimeLabel}</span>
+                            <input
+                                type="datetime-local"
+                                value={kegTimeValue}
+                                max={formatVietnamDateTimeInput()}
+                                onChange={(event) => setKegTimeValue(event.target.value)}
+                                style={ui.input}
+                                required
+                            />
+                        </label>
+                        <div
+                            style={{
+                                display: "grid",
+                                gridTemplateColumns: "1fr 1fr",
+                                gap: 8,
+                            }}
+                        >
+                            <button
+                                type="button"
+                                onClick={closeKegTimeModal}
+                                disabled={isKegReplacing || isKegTimeSaving}
+                                style={{
+                                    ...ui.subButton,
+                                    opacity: isKegReplacing || isKegTimeSaving ? 0.6 : 1,
+                                    cursor:
+                                        isKegReplacing || isKegTimeSaving
+                                            ? "not-allowed"
+                                            : "pointer",
+                                }}
+                            >
+                                {c.cancel}
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={isKegReplacing || isKegTimeSaving}
+                                style={{
+                                    ...ui.button,
+                                    opacity: isKegReplacing || isKegTimeSaving ? 0.6 : 1,
+                                    cursor:
+                                        isKegReplacing || isKegTimeSaving
+                                            ? "not-allowed"
+                                            : "pointer",
+                                }}
+                            >
+                                {isKegReplacing || isKegTimeSaving
+                                    ? c.saving
+                                    : kegTimeModal.mode === "replace"
+                                        ? t.kegReplaceSubmit
+                                        : t.kegStartTimeSubmit}
+                            </button>
+                        </div>
+                    </form>
                 </div>
             )}
 

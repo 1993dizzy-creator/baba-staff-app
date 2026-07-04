@@ -18,7 +18,7 @@ const PAGE_SIZE = 1000;
 const RECEIPT_SELECT =
   "id, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, is_modified, review_status, updated_at";
 const LINE_SELECT =
-  "id, receipt_id, receipt_ref_id, ref_detail_id, parent_ref_detail_id, sort_order, item_id, item_code, item_name, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, ref_detail_type, inventory_item_type, is_option, is_excluded, mapping_status, raw_json";
+  "id, receipt_id, receipt_ref_id, ref_detail_id, parent_ref_detail_id, sort_order, item_id, item_code, item_name, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, ref_detail_type, inventory_item_type, is_option, is_excluded, mapping_status, raw_json, ref_date, synced_at, updated_at";
 const PRODUCT_SELECT =
   "id, source, branch_id, pos_item_id, item_id, item_code, item_name, item_name_vi, category_name, unit_name, is_active, is_sold, raw_json";
 const MAPPING_SELECT =
@@ -69,10 +69,30 @@ type LineRow = {
   is_excluded: boolean | null;
   mapping_status: string | null;
   raw_json: unknown;
+  ref_date: string | null;
+  synced_at: string | null;
+  updated_at: string | null;
 };
 
 type ProductRow = PosProductRow & {
   item_id: string | null;
+};
+
+type KegTrackingMappingRow = {
+  id: number;
+  inventory_item_id: number | string | null;
+  target_type: string | null;
+  pos_product_id: number | string | null;
+  quantity_per_pos_unit: number | string | null;
+  unit: string | null;
+  is_active: boolean | null;
+};
+
+type ActiveKegSessionRow = {
+  id: number | string;
+  inventory_item_id: number | string | null;
+  started_at: string | null;
+  status: string | null;
 };
 
 type InventoryRow = {
@@ -175,6 +195,30 @@ type WorkingReceipt = {
   canContributeStock: boolean;
 };
 
+type KegTrackingSummaryProduct = {
+  posProductId: number;
+  posItemCode: string | null;
+  posItemName: string | null;
+  inventoryItemId: number;
+  inventoryItemName: string;
+  inventoryCode: string | null;
+  quantitySold: number;
+  quantityPerPosUnit: number;
+  expectedUsageMl: number;
+  receiptCount: number;
+  lineCount: number;
+};
+
+type KegTrackingSummaryInventoryTotal = {
+  inventoryItemId: number;
+  inventoryItemName: string;
+  inventoryCode: string | null;
+  expectedUsageMl: number;
+  productCount: number;
+  receiptCount: number;
+  lineCount: number;
+};
+
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -223,6 +267,24 @@ function inventoryName(item: InventoryRow | undefined, id: number) {
 function isAfter(left: string | null, right: string | null) {
   if (!left || !right) return false;
   return new Date(left).getTime() > new Date(right).getTime();
+}
+
+function getKegLineReferenceTime(line: LineRow, receipt: ReceiptRow | undefined) {
+  const candidates = [
+    line.ref_date,
+    receipt?.ref_date,
+    line.synced_at,
+    line.updated_at,
+    receipt?.updated_at,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const time = Date.parse(candidate);
+    if (Number.isFinite(time)) return time;
+  }
+
+  return null;
 }
 
 async function fetchAll<T>(
@@ -306,7 +368,7 @@ export async function buildInventoryDeductionPreview(input: {
   const receiptIds = receipts.map((receipt) => Number(receipt.id));
   const receiptRefIds = receipts.map((receipt) => receipt.ref_id);
 
-  const [lines, products, mappings] = await Promise.all([
+  const [lines, products, mappings, kegTrackingMappings] = await Promise.all([
     receiptIds.length
       ? fetchAll<LineRow>((from, to) =>
           supabaseServer
@@ -331,6 +393,16 @@ export async function buildInventoryDeductionPreview(input: {
         .select(MAPPING_SELECT)
         .eq("is_active", true)
         .is("archived_at", null)
+        .range(from, to)
+    ),
+    fetchAll<KegTrackingMappingRow>((from, to) =>
+      supabaseServer
+        .from("inventory_keg_tracking_mappings")
+        .select(
+          "id, inventory_item_id, target_type, pos_product_id, quantity_per_pos_unit, unit, is_active"
+        )
+        .eq("is_active", true)
+        .eq("target_type", "product")
         .range(from, to)
     ),
   ]);
@@ -375,11 +447,44 @@ export async function buildInventoryDeductionPreview(input: {
     throw new Error(appliedDeductions.error.message);
   }
 
+  const kegTrackingInventoryIds = Array.from(
+    new Set(
+      kegTrackingMappings
+        .map((mapping) => Number(mapping.inventory_item_id))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    )
+  );
+  const activeKegSessions = kegTrackingInventoryIds.length
+    ? await fetchAll<ActiveKegSessionRow>((from, to) =>
+        supabaseServer
+          .from("inventory_keg_sessions")
+          .select("id, inventory_item_id, started_at, status")
+          .in("inventory_item_id", kegTrackingInventoryIds)
+          .eq("status", "active")
+          .range(from, to)
+      )
+    : [];
+  const activeKegSessionByItemId = new Map<number, ActiveKegSessionRow>();
+  for (const session of activeKegSessions) {
+    const inventoryItemId = Number(session.inventory_item_id);
+    const startedAt = session.started_at ? Date.parse(session.started_at) : NaN;
+    if (
+      Number.isInteger(inventoryItemId) &&
+      inventoryItemId > 0 &&
+      Number.isFinite(startedAt)
+    ) {
+      activeKegSessionByItemId.set(inventoryItemId, session);
+    }
+  }
+
   const inventoryIds = Array.from(
     new Set(
       [
         ...mappings.map((mapping) => Number(mapping.inventory_item_id)),
         ...recipes.map((recipe) => Number(recipe.inventory_item_id)),
+        ...kegTrackingMappings.map((mapping) =>
+          Number(mapping.inventory_item_id)
+        ),
       ].filter((id) => Number.isInteger(id) && id > 0)
     )
   );
@@ -442,6 +547,178 @@ export async function buildInventoryDeductionPreview(input: {
     rows.push(payment);
     paymentsByReceiptId.set(Number(payment.receipt_id), rows);
   }
+  const receiptById = new Map(
+    receipts.map((receipt) => [Number(receipt.id), receipt])
+  );
+
+  const kegMappingsByProductId = new Map<number, KegTrackingMappingRow[]>();
+  for (const mapping of kegTrackingMappings) {
+    const productId = Number(mapping.pos_product_id);
+    const inventoryItemId = Number(mapping.inventory_item_id);
+    const quantityPerPosUnit = normalizeNumber(mapping.quantity_per_pos_unit);
+    if (
+      !Number.isInteger(productId) ||
+      productId <= 0 ||
+      !Number.isInteger(inventoryItemId) ||
+      inventoryItemId <= 0 ||
+      !activeKegSessionByItemId.has(inventoryItemId) ||
+      quantityPerPosUnit <= 0 ||
+      mapping.unit !== "ml"
+    ) {
+      continue;
+    }
+
+    const rows = kegMappingsByProductId.get(productId) ?? [];
+    rows.push(mapping);
+    kegMappingsByProductId.set(productId, rows);
+  }
+
+  const kegProductTotalsMap = new Map<
+    number,
+    KegTrackingSummaryProduct & {
+      receiptIds: Set<number>;
+      lineIds: Set<number>;
+    }
+  >();
+
+  for (const line of lines) {
+    if (line.is_excluded === true || isOptionLine(line)) continue;
+
+    const productCandidates =
+      (line.item_id &&
+        (productsByPosItemId.get(line.item_id) ||
+          productsByItemId.get(line.item_id))) ||
+      productsByCode.get(getCatalogCode(line.item_code)) ||
+      [];
+    const product =
+      productCandidates.length === 1 && productCandidates[0].is_active === true
+        ? productCandidates[0]
+        : null;
+    if (!product) continue;
+
+    const kegMappingCandidates = kegMappingsByProductId.get(Number(product.id)) ?? [];
+    if (kegMappingCandidates.length !== 1) continue;
+
+    const kegMapping = kegMappingCandidates[0];
+    const inventoryItemId = Number(kegMapping.inventory_item_id);
+    const activeSession = activeKegSessionByItemId.get(inventoryItemId);
+    const receipt = receiptById.get(Number(line.receipt_id));
+    const lineReferenceTime = getKegLineReferenceTime(line, receipt);
+    const sessionStartedAt = activeSession?.started_at
+      ? Date.parse(activeSession.started_at)
+      : NaN;
+    if (
+      lineReferenceTime === null ||
+      !Number.isFinite(sessionStartedAt) ||
+      lineReferenceTime < sessionStartedAt
+    ) {
+      continue;
+    }
+
+    const quantitySold = normalizeNumber(line.quantity);
+    const quantityPerPosUnit = normalizeNumber(
+      kegMapping.quantity_per_pos_unit
+    );
+    const expectedUsageMl = normalizeNumber(quantitySold * quantityPerPosUnit);
+    if (quantitySold <= 0 || expectedUsageMl <= 0) continue;
+
+    const inventory = inventoryById.get(inventoryItemId);
+    const current = kegProductTotalsMap.get(Number(product.id)) ?? {
+      posProductId: Number(product.id),
+      posItemCode: product.item_code ?? line.item_code,
+      posItemName: product.item_name || line.item_name,
+      inventoryItemId,
+      inventoryItemName: inventoryName(inventory, inventoryItemId),
+      inventoryCode: inventory?.code ?? null,
+      quantitySold: 0,
+      quantityPerPosUnit,
+      expectedUsageMl: 0,
+      receiptCount: 0,
+      lineCount: 0,
+      receiptIds: new Set<number>(),
+      lineIds: new Set<number>(),
+    };
+
+    current.quantitySold = normalizeNumber(current.quantitySold + quantitySold);
+    current.expectedUsageMl = normalizeNumber(
+      current.expectedUsageMl + expectedUsageMl
+    );
+    current.receiptIds.add(Number(line.receipt_id));
+    current.lineIds.add(Number(line.id));
+    current.receiptCount = current.receiptIds.size;
+    current.lineCount = current.lineIds.size;
+    kegProductTotalsMap.set(Number(product.id), current);
+  }
+
+  const kegTrackingProducts = Array.from(kegProductTotalsMap.values())
+    .map((product) => ({
+      posProductId: product.posProductId,
+      posItemCode: product.posItemCode,
+      posItemName: product.posItemName,
+      inventoryItemId: product.inventoryItemId,
+      inventoryItemName: product.inventoryItemName,
+      inventoryCode: product.inventoryCode,
+      quantitySold: product.quantitySold,
+      quantityPerPosUnit: product.quantityPerPosUnit,
+      expectedUsageMl: product.expectedUsageMl,
+      receiptCount: product.receiptCount,
+      lineCount: product.lineCount,
+    }))
+    .sort((left, right) =>
+      `${left.inventoryItemName}:${left.posItemCode ?? ""}:${left.posItemName ?? ""}`.localeCompare(
+        `${right.inventoryItemName}:${right.posItemCode ?? ""}:${right.posItemName ?? ""}`,
+        "ko"
+      )
+    );
+
+  const kegInventoryTotalsMap = new Map<
+    number,
+    KegTrackingSummaryInventoryTotal & {
+      productIds: Set<number>;
+      receiptIds: Set<number>;
+      lineIds: Set<number>;
+    }
+  >();
+  for (const product of kegProductTotalsMap.values()) {
+    const current = kegInventoryTotalsMap.get(product.inventoryItemId) ?? {
+      inventoryItemId: product.inventoryItemId,
+      inventoryItemName: product.inventoryItemName,
+      inventoryCode: product.inventoryCode,
+      expectedUsageMl: 0,
+      productCount: 0,
+      receiptCount: 0,
+      lineCount: 0,
+      productIds: new Set<number>(),
+      receiptIds: new Set<number>(),
+      lineIds: new Set<number>(),
+    };
+
+    current.expectedUsageMl = normalizeNumber(
+      current.expectedUsageMl + product.expectedUsageMl
+    );
+    current.productIds.add(product.posProductId);
+    for (const receiptId of product.receiptIds) current.receiptIds.add(receiptId);
+    for (const lineId of product.lineIds) current.lineIds.add(lineId);
+    current.productCount = current.productIds.size;
+    current.receiptCount = current.receiptIds.size;
+    current.lineCount = current.lineIds.size;
+    kegInventoryTotalsMap.set(product.inventoryItemId, current);
+  }
+
+  const kegTrackingInventoryTotals = Array.from(kegInventoryTotalsMap.values())
+    .map((total) => ({
+      inventoryItemId: total.inventoryItemId,
+      inventoryItemName: total.inventoryItemName,
+      inventoryCode: total.inventoryCode,
+      expectedUsageMl: total.expectedUsageMl,
+      productCount: total.productCount,
+      receiptCount: total.receiptCount,
+      lineCount: total.lineCount,
+    }))
+    .sort((left, right) =>
+      left.inventoryItemName.localeCompare(right.inventoryItemName, "ko")
+    );
+
   const appliedReceiptByRefId = new Map<
     string,
     { appliedAt: string | null }
@@ -1245,6 +1522,10 @@ export async function buildInventoryDeductionPreview(input: {
       canApply: false,
     },
     inventoryTotals,
+    kegTrackingSummary: {
+      products: kegTrackingProducts,
+      inventoryTotals: kegTrackingInventoryTotals,
+    },
     receipts: resultReceipts,
   };
 }

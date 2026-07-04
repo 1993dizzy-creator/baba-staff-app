@@ -9,7 +9,6 @@ import SubNav from "@/components/SubNav";
 import { usePathname, useRouter } from "next/navigation";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import {PART_VALUES,PART_META,type PartValue,} from "@/lib/common/parts";
-import { getBusinessDate } from "@/lib/inventory/business-day";
 import { formatDecimalDisplay } from "@/lib/inventory/number";
 import {
     INVENTORY_REASON_EMOJIS,
@@ -201,16 +200,26 @@ function formatLocalDateKey(date = new Date()) {
     return `${year}-${month}-${day}`;
 }
 
-function formatLocalMonthKey(date = new Date()) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    return `${year}-${month}`;
+function getInventoryBusinessDateKey(date = new Date(), cutoffHour = 3) {
+    const businessDate = new Date(date);
+    if (businessDate.getHours() < cutoffHour) {
+        businessDate.setDate(businessDate.getDate() - 1);
+    }
+
+    return formatLocalDateKey(businessDate);
+}
+
+function getInventoryBusinessMonthKey(date = new Date(), cutoffHour = 3) {
+    return getInventoryBusinessDateKey(date, cutoffHour).slice(0, 7);
 }
 
 export default function InventorySnapshotsPage() {
     const { lang } = useLanguage();
     const t = inventoryText[lang];
     const c = commonText[lang];
+    const currentBusinessDateLabel =
+        lang === "vi" ? "Ngày kinh doanh hiện tại" : "현재 영업일";
+    const activeBusinessDateKey = getInventoryBusinessDateKey();
     const router = useRouter();
 
     const [batchList, setBatchList] = useState<SnapshotBatch[]>([]);
@@ -223,8 +232,8 @@ export default function InventorySnapshotsPage() {
     const [loadingItems, setLoadingItems] = useState(false);
     const [categoryFilter, setCategoryFilter] = useState("all");
     const [showChangedOnly, setShowChangedOnly] = useState(false);
-    const [calendarMonth, setCalendarMonth] = useState(() => formatLocalMonthKey());
-    const [purchaseBatchMap, setPurchaseBatchMap] = useState<Record<number, boolean>>({});
+    const [calendarMonth, setCalendarMonth] = useState(() => getInventoryBusinessMonthKey());
+    const [purchaseDateMap, setPurchaseDateMap] = useState<Record<string, boolean>>({});
     const [supplierTab, setSupplierTab] = useState("all");
     const [movementItems, setMovementItems] = useState<SnapshotItem[]>([]);
     const [movementReasonTab, setMovementReasonTab] =
@@ -243,7 +252,7 @@ export default function InventorySnapshotsPage() {
             if (batch?.snapshot_date) return batch.snapshot_date;
         }
 
-        return getBusinessDate();
+        return activeBusinessDateKey;
     };
 
     const getReasonEmoji = (reason?: InventoryReasonValue | null) => {
@@ -357,9 +366,11 @@ export default function InventorySnapshotsPage() {
     };
 
 
-    const fetchBatches = async () => {
+    const fetchBatches = async (month = calendarMonth) => {
         setLoadingBatches(true);
-        const url = "/api/inventory/snapshot/list";
+        const url = `/api/inventory/snapshot/list${
+            month ? `?month=${encodeURIComponent(month)}` : ""
+        }`;
 
         try {
             const res = await fetch(url);
@@ -379,7 +390,7 @@ export default function InventorySnapshotsPage() {
                 ? parsedJson as {
                     ok?: boolean;
                     batches?: SnapshotBatch[];
-                    purchaseBatchMap?: Record<number, boolean>;
+                    purchaseDateMap?: Record<string, boolean>;
                     error?: string;
                     message?: string;
                 }
@@ -397,6 +408,7 @@ export default function InventorySnapshotsPage() {
                 });
                 setBatchList([]);
                 setSelectedBatchId(null);
+                setPurchaseDateMap({});
                 return;
             }
 
@@ -404,7 +416,7 @@ export default function InventorySnapshotsPage() {
 
             setBatchList(nextBatches);
             setSelectedBatchId(null);
-            setPurchaseBatchMap(json.purchaseBatchMap || {});
+            setPurchaseDateMap(json.purchaseDateMap || {});
 
             if (!calendarMonth && nextBatches[0]?.snapshot_date) {
                 setCalendarMonth(nextBatches[0].snapshot_date.slice(0, 7));
@@ -417,6 +429,7 @@ export default function InventorySnapshotsPage() {
             });
             setBatchList([]);
             setSelectedBatchId(null);
+            setPurchaseDateMap({});
         } finally {
             setLoadingBatches(false);
         }
@@ -880,9 +893,13 @@ export default function InventorySnapshotsPage() {
     };
 
     useEffect(() => {
-        fetchBatches();
-        fetchMovementItems(getBusinessDate());
-    }, []);
+        fetchMovementItems(activeBusinessDateKey);
+    }, [activeBusinessDateKey]);
+
+    useEffect(() => {
+        if (!calendarMonth) return;
+        fetchBatches(calendarMonth);
+    }, [calendarMonth]);
 
     useEffect(() => {
         setCategoryFilter("all");
@@ -900,7 +917,7 @@ export default function InventorySnapshotsPage() {
 
     useEffect(() => {
         if (viewMode === "current") {
-            fetchMovementItems(getBusinessDate());
+            fetchMovementItems(activeBusinessDateKey);
             return;
         }
 
@@ -908,7 +925,7 @@ export default function InventorySnapshotsPage() {
         if (batch?.snapshot_date) {
             fetchMovementItems(batch.snapshot_date);
         }
-    }, [batchList, selectedBatchId, viewMode]);
+    }, [activeBusinessDateKey, batchList, selectedBatchId, viewMode]);
 
     useEffect(() => {
         if (calendarMonth) return;
@@ -1419,8 +1436,6 @@ export default function InventorySnapshotsPage() {
         };
     }, [batchList, calendarMonth]);
 
-    const todayDateKey = formatLocalDateKey();
-
     const getPartMeta = (value?: string | null) => {
         const safePart: PartValue =
             value && PART_VALUES.includes(value as PartValue)
@@ -1696,19 +1711,22 @@ export default function InventorySnapshotsPage() {
                             }}
                         >
                             {batchCalendar.cells.map((cell, index) => {
-                                const isToday = cell.date === todayDateKey;
+                                const isCurrentBusinessDate = cell.date === activeBusinessDateKey;
                                 const active =
                                     viewMode === "snapshot"
                                         ? cell.batch?.id === selectedBatchId
-                                        : isToday;
+                                        : isCurrentBusinessDate;
                                 const hasBatch = !!cell.batch;
+                                const hasPurchase = Boolean(
+                                    cell.date && purchaseDateMap[cell.date]
+                                );
                                 const dayOfWeek = index % 7;
 
                                 return (
                                     <button
                                         key={cell.key}
                                         type="button"
-                                        disabled={!hasBatch && !isToday}
+                                        disabled={!hasBatch && !isCurrentBusinessDate}
                                         onClick={() => {
                                             if (cell.batch?.id) {
                                                 setViewMode("snapshot");
@@ -1716,13 +1734,13 @@ export default function InventorySnapshotsPage() {
                                                 return;
                                             }
 
-                                            if (isToday) {
+                                            if (isCurrentBusinessDate) {
                                                 setViewMode("current");
                                                 setSelectedBatchId(null);
-                                                fetchMovementItems(getBusinessDate());
+                                                fetchMovementItems(activeBusinessDateKey);
                                             }
                                         }}
-                                        style={getCalendarCellStyle(active, hasBatch || isToday, dayOfWeek)}
+                                        style={getCalendarCellStyle(active, hasBatch || isCurrentBusinessDate, dayOfWeek)}
                                     >
                                         <>
                                             <span>{cell.day ?? ""}</span>
@@ -1736,7 +1754,7 @@ export default function InventorySnapshotsPage() {
                                                     minHeight: 5,
                                                 }}
                                             >
-                                                {hasBatch && purchaseBatchMap[cell.batch!.id] && (
+                                                {hasPurchase && (
                                                     <span
                                                         style={{
                                                             width: 5,
@@ -1748,7 +1766,7 @@ export default function InventorySnapshotsPage() {
                                                     />
                                                 )}
 
-                                                {isToday && (
+                                                {isCurrentBusinessDate && (
                                                     <span
                                                         style={{
                                                             width: 5,
@@ -1799,7 +1817,7 @@ export default function InventorySnapshotsPage() {
                                         display: "inline-block",
                                     }}
                                 />
-                                {c.today}
+                                {currentBusinessDateLabel}
                             </span>
                         </div>
                     </>
@@ -1842,7 +1860,7 @@ export default function InventorySnapshotsPage() {
                         >
                             {viewMode === "snapshot" && selectedBatch
                                 ? selectedBatch.snapshot_date
-                                : c.today}
+                                : activeBusinessDateKey}
                         </span>
                     </div>
 
@@ -2095,7 +2113,7 @@ export default function InventorySnapshotsPage() {
                         <span style={{ ...ui.metaText, fontWeight: 700 }}>
                             {viewMode === "snapshot" && selectedBatch
                                 ? selectedBatch.snapshot_date
-                                : c.today}
+                                : activeBusinessDateKey}
                         </span>
                     </div>
 
