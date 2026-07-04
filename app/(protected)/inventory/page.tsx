@@ -41,6 +41,14 @@ type InventoryItem = {
     package_content_quantity?: string | number | null;
     package_content_unit?: string | null;
     has_active_keg_tracking?: boolean | null;
+    kegProgress?: {
+        activeSessionId: number;
+        startedAt: string;
+        capacityMl: number;
+        soldMl: number;
+        usagePercent: number;
+        remainingPercent: number;
+    } | null;
     image_path?: string | null;
     updated_at?: string | null;
     updated_by_name?: string | null;
@@ -1437,6 +1445,8 @@ export default function InventoryPage() {
     };
 
     const handleQuantitySave = (item: InventoryItem) => {
+        if (isKegReplacing) return;
+
         const draft = quantityDrafts[item.id];
 
         if (draft === undefined || String(draft).trim() === "") {
@@ -1485,21 +1495,40 @@ export default function InventoryPage() {
         );
     };
 
-    const handleKegReplace = async () => {
-        if (!quickSaveItem || isKegReplacing || isQuickSaving) return;
+    const getKegRemainingLabel = (item: InventoryItem) => {
+        if (!item.kegProgress) return t.kegNotStarted;
+        return `${t.kegRemaining} ${Math.round(getKegRemainingPercent(item))}%`;
+    };
+
+    const getKegUsageLabel = (item: InventoryItem) => {
+        const progress = item.kegProgress;
+        if (!progress) return "";
+        const soldLiters = progress.soldMl / 1000;
+        const capacityLiters = progress.capacityMl / 1000;
+        return `${formatDecimalDisplay(soldLiters)}L / ${formatDecimalDisplay(capacityLiters)}L`;
+    };
+
+    const getKegRemainingPercent = (item: InventoryItem) => {
+        const remainingPercent = Number(item.kegProgress?.remainingPercent ?? 0);
+        if (!Number.isFinite(remainingPercent)) return 0;
+        return Math.min(100, Math.max(0, remainingPercent));
+    };
+
+    const handleKegReplace = async (item: InventoryItem) => {
+        if (isKegReplacing || isQuickSaving) return;
         if (!window.confirm(t.kegReplaceConfirm)) return;
 
         setIsKegReplacing(true);
 
         try {
-            const currentQty = roundDecimal(Number(quickSaveItem.quantity ?? 0));
+            const currentQty = roundDecimal(Number(item.quantity ?? 0));
             const res = await fetch("/api/inventory/keg-sessions/replace", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                    itemId: quickSaveItem.id,
+                    itemId: item.id,
                     actorUsername,
                     expectedQuantity: currentQty,
                 }),
@@ -1527,11 +1556,9 @@ export default function InventoryPage() {
             if (Number.isFinite(nextQuantity)) {
                 setQuantityDrafts((prev) => ({
                     ...prev,
-                    [quickSaveItem.id]: String(nextQuantity),
+                    [item.id]: String(nextQuantity),
                 }));
             }
-
-            closeQuickSaveModal();
 
             const refreshResults = await Promise.allSettled([
                 fetchInventory(),
@@ -2592,6 +2619,101 @@ export default function InventoryPage() {
                                                         marginTop: 5,
                                                     }}
                                                 >
+                                                    {canReplaceKeg(item) && (
+                                                        <div
+                                                            style={{
+                                                                display: "grid",
+                                                                gridTemplateColumns: "minmax(0, 1fr) auto",
+                                                                gap: 8,
+                                                                alignItems: "stretch",
+                                                                marginBottom: 8,
+                                                            }}
+                                                        >
+                                                            <div
+                                                                style={{
+                                                                    minWidth: 0,
+                                                                    border: item.kegProgress
+                                                                        ? "1px solid #d1fae5"
+                                                                        : "1px solid #e5e7eb",
+                                                                    borderRadius: 8,
+                                                                    background: item.kegProgress
+                                                                        ? "#f0fdf4"
+                                                                        : "#f9fafb",
+                                                                    padding: "6px 8px",
+                                                                }}
+                                                            >
+                                                                <div
+                                                                    style={{
+                                                                        display: "flex",
+                                                                        justifyContent: "space-between",
+                                                                        gap: 8,
+                                                                        marginBottom: 4,
+                                                                        color: item.kegProgress ? "#065f46" : "#6b7280",
+                                                                        fontSize: 12,
+                                                                        fontWeight: 800,
+                                                                        lineHeight: 1,
+                                                                    }}
+                                                                >
+                                                                    <span>{getKegRemainingLabel(item)}</span>
+                                                                    <span
+                                                                        style={{
+                                                                            color: "#047857",
+                                                                            fontWeight: 700,
+                                                                            whiteSpace: "nowrap",
+                                                                        }}
+                                                                    >
+                                                                        {getKegUsageLabel(item)}
+                                                                    </span>
+                                                                </div>
+                                                                <div
+                                                                    aria-hidden="true"
+                                                                    style={{
+                                                                        height: 7,
+                                                                        overflow: "hidden",
+                                                                        borderRadius: 999,
+                                                                        background: "#d1d5db",
+                                                                    }}
+                                                                >
+                                                                    <div
+                                                                        style={{
+                                                                            width: `${getKegRemainingPercent(item)}%`,
+                                                                            height: "100%",
+                                                                            borderRadius: 999,
+                                                                            background: item.kegProgress
+                                                                                ? "#10b981"
+                                                                                : "#9ca3af",
+                                                                        }}
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleKegReplace(item)}
+                                                                disabled={isKegReplacing || isQuickSaving}
+                                                                style={{
+                                                                    ...ui.subButton,
+                                                                    width: "auto",
+                                                                    minWidth: 68,
+                                                                    height: "100%",
+                                                                    minHeight: 36,
+                                                                    padding: "0 10px",
+                                                                    border: "1px solid #0f766e",
+                                                                    background: "#ecfdf5",
+                                                                    color: "#0f766e",
+                                                                    fontSize: 13,
+                                                                    fontWeight: 900,
+                                                                    opacity:
+                                                                        isKegReplacing || isQuickSaving ? 0.6 : 1,
+                                                                    cursor:
+                                                                        isKegReplacing || isQuickSaving
+                                                                            ? "not-allowed"
+                                                                            : "pointer",
+                                                                }}
+                                                            >
+                                                                {isKegReplacing ? c.saving : t.kegReplaceShort}
+                                                            </button>
+                                                        </div>
+                                                    )}
                                                     <div
                                                         style={{
                                                             display: "grid",
@@ -2719,7 +2841,7 @@ export default function InventoryPage() {
                                                         <button
                                                             type="button"
                                                             onClick={() => handleQuantitySave(item)}
-                                                            disabled={isQuickSaving}
+                                                            disabled={isQuickSaving || isKegReplacing}
                                                             style={{
                                                                 ...ui.button,
                                                                 width: "100%",
@@ -2732,8 +2854,11 @@ export default function InventoryPage() {
                                                                 lineHeight: 1.2,
                                                                 whiteSpace: "normal",
                                                                 wordBreak: "keep-all",
-                                                                opacity: isQuickSaving ? 0.6 : 1,
-                                                                cursor: isQuickSaving ? "not-allowed" : "pointer",
+                                                                opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
+                                                                cursor:
+                                                                    isQuickSaving || isKegReplacing
+                                                                        ? "not-allowed"
+                                                                        : "pointer",
                                                             }}
                                                         >
                                                             {t.quickSave}
@@ -3986,29 +4111,6 @@ export default function InventoryPage() {
                                 .filter(Boolean)
                                 .join(" ")}
                         </div>
-
-                        {canReplaceKeg(quickSaveItem) && (
-                            <button
-                                type="button"
-                                onClick={handleKegReplace}
-                                disabled={isKegReplacing || isQuickSaving}
-                                style={{
-                                    ...ui.subButton,
-                                    width: "100%",
-                                    border: "1px solid #0f766e",
-                                    background: "#ecfdf5",
-                                    color: "#0f766e",
-                                    fontWeight: 900,
-                                    opacity: isKegReplacing || isQuickSaving ? 0.6 : 1,
-                                    cursor:
-                                        isKegReplacing || isQuickSaving
-                                            ? "not-allowed"
-                                            : "pointer",
-                                }}
-                            >
-                                {isKegReplacing ? c.saving : t.kegReplace}
-                            </button>
-                        )}
 
                         <div
                             style={{

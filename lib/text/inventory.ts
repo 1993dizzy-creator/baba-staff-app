@@ -39,6 +39,9 @@ export const inventoryText = {
 
     quickSave: "빠른저장",
     kegReplace: "🍺 케그 교체",
+    kegReplaceShort: "🍺 교체",
+    kegRemaining: "잔량",
+    kegNotStarted: "교체 전",
     kegReplaceConfirm: "이 케그를 교체하고 재고를 -1 Keg 차감할까요?",
     quickGuide: "새 수량 입력 또는 +/- 버튼 조정 후 빠른저장.",
     quantityNoChange: "수량 변화 없음",
@@ -154,6 +157,9 @@ export const inventoryText = {
 
     quickSave: "Lưu nhanh",
     kegReplace: "🍺 Đổi keg",
+    kegReplaceShort: "🍺 Đổi",
+    kegRemaining: "Còn",
+    kegNotStarted: "Chưa đổi",
     kegReplaceConfirm: "Đổi keg này và trừ tồn kho -1 Keg?",
     quickGuide: "Nhập số lượng mới hoặc chỉnh bằng nút +/- rồi lưu nhanh.",
     quantityNoChange: "Số lượng không thay đổi",
