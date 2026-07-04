@@ -126,6 +126,7 @@
 
 .searchField,
 .editor label,
+.kegTrackingSection label,
 .recipeManager label,
 .optionEditor label {
   display: grid;
@@ -138,6 +139,8 @@
 .searchField input,
 .editor input,
 .editor select,
+.kegTrackingSection input,
+.kegTrackingSection select,
 .recipeManager input,
 .recipeManager select,
 .optionEditor input,
@@ -163,6 +166,7 @@
 .validationButton,
 .editButton,
 .editorActions button,
+.kegTrackingActions button,
 .recipeActions button,
 .recipeAddForm button {
   min-height: 36px;
@@ -181,6 +185,7 @@
 .validationButton:hover,
 .editButton:hover,
 .editorActions button:hover,
+.kegTrackingActions button:hover,
 .recipeActions button:hover,
 .recipeAddForm button:hover {
   border-color: #788493;
@@ -224,6 +229,7 @@
 .secondaryButton:disabled,
 .validationButton:disabled,
 .editorActions button:disabled,
+.kegTrackingActions button:disabled,
 .recipeActions button:disabled,
 .recipeAddForm button:disabled {
   cursor: wait;
@@ -556,6 +562,12 @@
   color: #245f78;
 }
 
+.kegTrackingBadge {
+  border-color: #8fb8a1;
+  background: #edf8f1;
+  color: #27613f;
+}
+
 .validation_normal {
   border-color: #a9cfc2;
   background: #edf8f4;
@@ -756,6 +768,65 @@
   margin: 0;
   color: #805d16;
   font-size: 11px;
+}
+
+.kegTrackingSection {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(240px, 1.4fr) minmax(
+      180px,
+      0.8fr
+    ) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 14px;
+  border-top: 1px solid #dfe8e3;
+  background: #f7fbf8;
+}
+
+.kegTrackingHeader {
+  display: grid;
+  gap: 4px;
+  align-self: center;
+}
+
+.kegTrackingHeader strong {
+  color: #1f5134;
+  font-size: 13px;
+}
+
+.kegTrackingHeader p {
+  margin: 0;
+  color: #667085;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.kegUsageInputRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.kegUsageInputRow span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.kegTrackingActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-self: center;
+  gap: 6px;
+}
+
+.kegTrackingHelper {
+  grid-column: 2 / -1;
+  margin: 0;
+  color: #27613f;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .inventoryCombobox {
@@ -1369,6 +1440,16 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .kegTrackingSection {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .kegTrackingHeader,
+  .kegTrackingActions,
+  .kegTrackingHelper {
+    grid-column: 1 / -1;
+  }
+
   .recipeEditor {
     grid-template-columns: minmax(160px, 300px) minmax(0, 1fr) auto;
   }
@@ -1518,6 +1599,16 @@
 
   .editor {
     grid-template-columns: 1fr;
+  }
+
+  .kegTrackingSection {
+    grid-template-columns: 1fr;
+  }
+
+  .kegTrackingHeader,
+  .kegTrackingActions,
+  .kegTrackingHelper {
+    grid-column: 1;
   }
 
   .recipeEditor {

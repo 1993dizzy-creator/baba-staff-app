@@ -53,6 +53,24 @@ type InventorySummary = {
   package_content_quantity: number | string | null;
   package_content_unit: string | null;
 };
+type KegTrackingMappingRow = {
+  id: number;
+  inventory_item_id: number;
+  target_type: "product" | "option";
+  pos_product_id: number;
+  pos_option_id: string | null;
+  quantity_per_pos_unit: number | string;
+  unit: string;
+  is_active: boolean;
+};
+type SerializedKegTrackingMapping = {
+  id: number;
+  inventoryItemId: number;
+  inventoryItemName: string | null;
+  quantityPerPosUnit: number;
+  unit: string;
+  isActive: boolean;
+};
 type ComboChildSummary = {
   childId: string;
   childCode: string | null;
@@ -73,6 +91,8 @@ const MAPPING_TYPES = new Set<MappingType>([
   "ignore",
 ]);
 const TARGET_TYPES = new Set<TargetType>(["product", "option"]);
+const MANUAL_REVIEW_BLOCKED_REASON =
+  "Manual mapping requires administrator review.";
 
 async function getAdminActor(actorUsername: string) {
   if (!actorUsername) return null;
@@ -249,6 +269,19 @@ async function fetchAllProducts() {
   }
 }
 
+async function fetchActiveKegTrackingMappings() {
+  const { data, error } = await supabaseServer
+    .from("inventory_keg_tracking_mappings")
+    .select(
+      "id, inventory_item_id, target_type, pos_product_id, pos_option_id, quantity_per_pos_unit, unit, is_active"
+    )
+    .eq("target_type", "product")
+    .eq("is_active", true);
+
+  if (error) throw error;
+  return (data || []) as KegTrackingMappingRow[];
+}
+
 async function fetchAllMappings() {
   const rows: PosItemMappingRow[] = [];
 
@@ -410,6 +443,23 @@ function serializeMapping(
   };
 }
 
+function serializeKegTrackingMapping(
+  mapping: KegTrackingMappingRow | null | undefined,
+  inventoryById: Map<number, InventorySummary>
+): SerializedKegTrackingMapping | null {
+  if (!mapping) return null;
+  const inventoryItem = inventoryById.get(Number(mapping.inventory_item_id));
+  return {
+    id: Number(mapping.id),
+    inventoryItemId: Number(mapping.inventory_item_id),
+    inventoryItemName:
+      inventoryItem?.item_name_vi || inventoryItem?.item_name || null,
+    quantityPerPosUnit: Number(mapping.quantity_per_pos_unit),
+    unit: mapping.unit || "ml",
+    isActive: mapping.is_active === true,
+  };
+}
+
 function getRuleStatus(params: {
   mapping: PosItemMappingRow | null;
   candidates: PosItemMappingRow[];
@@ -559,7 +609,7 @@ function getRuleStatus(params: {
     return {
       status: "manual" as const,
       validationStatus: "needs_review" as ValidationStatus,
-      blockedReason: "Manual mapping requires administrator review.",
+      blockedReason: MANUAL_REVIEW_BLOCKED_REASON,
     };
   }
 
@@ -633,9 +683,10 @@ export async function GET(req: Request) {
       );
     }
 
-    const [products, mappings] = await Promise.all([
+    const [products, mappings, kegTrackingMappings] = await Promise.all([
       fetchAllProducts(),
       fetchAllMappings(),
+      fetchActiveKegTrackingMappings(),
     ]);
     const recipes = await fetchRecipes(mappings.map((mapping) => mapping.id));
     const inventoryById = await fetchInventorySummaries(
@@ -644,6 +695,7 @@ export async function GET(req: Request) {
           [
             ...mappings.map((mapping) => mapping.inventory_item_id),
             ...recipes.map((recipe) => recipe.inventory_item_id),
+            ...kegTrackingMappings.map((mapping) => mapping.inventory_item_id),
           ]
             .map(Number)
             .filter((id) => Number.isInteger(id) && id > 0)
@@ -673,6 +725,11 @@ export async function GET(req: Request) {
     const mappingsByProductId = new Map<number, PosItemMappingRow[]>();
     const unlinkedMappingsByCode = new Map<string, PosItemMappingRow[]>();
     const mappingsByOptionKey = new Map<string, PosItemMappingRow[]>();
+    const kegTrackingByProductId = new Map<number, KegTrackingMappingRow>();
+
+    for (const mapping of kegTrackingMappings) {
+      kegTrackingByProductId.set(Number(mapping.pos_product_id), mapping);
+    }
 
     for (const mapping of productMappings) {
       if (
@@ -854,6 +911,10 @@ export async function GET(req: Request) {
           isActive: product.is_active === true,
           isSold: product.is_sold,
         },
+        kegTracking: serializeKegTrackingMapping(
+          kegTrackingByProductId.get(Number(product.id)),
+          inventoryById
+        ),
         mapping: serializeMapping(mapping, mappingRecipes, inventoryById),
         comboChildren,
         options,
@@ -935,7 +996,12 @@ export async function GET(req: Request) {
           option.mappingType === "recipe"
       );
     const itemNeedsReview = (item: (typeof productItems)[number]) =>
-      item.validationStatus !== "normal" ||
+      (item.validationStatus !== "normal" &&
+        !(
+          item.mappingType === "manual" &&
+          item.kegTracking?.isActive === true &&
+          item.blockedReason === MANUAL_REVIEW_BLOCKED_REASON
+        )) ||
       (item.options || []).some(
         (option) => option.validationStatus !== "normal"
       );

@@ -87,6 +87,15 @@ type RecipeRow = {
   version?: number;
 };
 
+type KegTrackingMapping = {
+  id: number;
+  inventoryItemId: number;
+  inventoryItemName?: string | null;
+  quantityPerPosUnit: number;
+  unit: string;
+  isActive: boolean;
+};
+
 type CatalogMapping = {
   id: number;
   mappingType: MappingType;
@@ -155,6 +164,7 @@ type CatalogItem = {
   canHardDelete?: boolean;
   comboChildren?: ComboChild[];
   options?: PosOption[];
+  kegTracking?: KegTrackingMapping | null;
 };
 
 type OptionBasedStatus = "option_based";
@@ -168,6 +178,12 @@ type EditorState = {
   directQuantityMode: DirectQuantityMode;
   sourceQuantity: string;
   isActive: boolean;
+};
+
+type KegTrackingEditorState = {
+  itemKey: string;
+  inventoryItemId: string;
+  quantityPerPosUnit: string;
 };
 
 type OptionEditorState = {
@@ -365,6 +381,19 @@ const mappingPageText = {
     mappingTypeLabel: "매핑 유형",
     inventoryItemLabel: "Inventory 품목",
     addInventoryLabel: "추가할 Inventory 품목",
+    kegTrackingBadge: "케그추적",
+    kegTrackingTitle: "케그 추적 설정",
+    kegTrackingDescription:
+      "케그 잔량 추정용 설정입니다. 판매차감에는 반영되지 않습니다.",
+    kegInventoryItemLabel: "Keg 재고품목",
+    kegUsagePerSaleLabel: "1개 판매당 사용량",
+    kegTrackingSaveButton: "추적 저장",
+    kegTrackingDisableButton: "추적 해제",
+    kegTrackingSaveSuccess: "케그 추적을 저장했습니다.",
+    kegTrackingSaveError: "케그 추적 저장에 실패했습니다.",
+    kegTrackingDisableConfirm: "이 상품의 케그 추적을 해제할까요?",
+    kegTrackingSelectRequired: "Keg 재고품목을 선택해주세요.",
+    kegTrackingPerSaleSuffix: "/개",
     mappingActiveLabel: "매핑 활성",
     cancelButton: "취소",
     saveButton: "저장",
@@ -533,6 +562,19 @@ const mappingPageText = {
     mappingTypeLabel: "Loại liên kết",
     inventoryItemLabel: "Mặt hàng Inventory",
     addInventoryLabel: "Mặt hàng để thêm",
+    kegTrackingBadge: "Theo dõi keg",
+    kegTrackingTitle: "Cài đặt theo dõi keg",
+    kegTrackingDescription:
+      "Cài đặt này chỉ dùng để ước tính lượng keg còn lại, không trừ tồn kho theo bán hàng.",
+    kegInventoryItemLabel: "Mặt hàng tồn kho keg",
+    kegUsagePerSaleLabel: "Lượng dùng mỗi món",
+    kegTrackingSaveButton: "Lưu theo dõi",
+    kegTrackingDisableButton: "Tắt theo dõi",
+    kegTrackingSaveSuccess: "Đã lưu theo dõi keg.",
+    kegTrackingSaveError: "Lưu theo dõi keg thất bại.",
+    kegTrackingDisableConfirm: "Tắt theo dõi keg cho món này?",
+    kegTrackingSelectRequired: "Vui lòng chọn mặt hàng tồn kho keg.",
+    kegTrackingPerSaleSuffix: "/món",
     mappingActiveLabel: "Bật mapping",
     cancelButton: "Hủy",
     saveButton: "Lưu",
@@ -842,6 +884,8 @@ const COMBO_TEXT = {
     available: "Có thể trừ kho",
   },
 } as const;
+const MANUAL_REVIEW_BLOCKED_REASON =
+  "Manual mapping requires administrator review.";
 
 
 function getItemKey(item: CatalogItem) {
@@ -1235,6 +1279,13 @@ function isRecipeSetupBlockedReason(reason: string | null) {
 
 function getDisplayBlockedReason(item: CatalogItem, lang: AppLanguage) {
   if (
+    item.mappingType === "manual" &&
+    item.kegTracking?.isActive === true &&
+    item.blockedReason === MANUAL_REVIEW_BLOCKED_REASON
+  ) {
+    return null;
+  }
+  if (
     item.mapping?.mappingType === "recipe" &&
     isRecipeSetupBlockedReason(item.blockedReason)
   ) {
@@ -1258,6 +1309,31 @@ function isOptionBasedDeductionItem(item: CatalogItem) {
         option.mappingType === "direct" || option.mappingType === "recipe"
     )
   );
+}
+
+function getKegCapacity(item: InventoryItem | null | undefined) {
+  const unit = String(item?.unit || "").trim().toLowerCase();
+  const packageUnit = String(item?.package_content_unit || "")
+    .trim()
+    .toLowerCase();
+  const packageQuantity = Number(item?.package_content_quantity ?? 0);
+
+  if (unit !== "keg" || packageUnit !== "ml" || packageQuantity <= 0) {
+    return null;
+  }
+
+  return packageQuantity;
+}
+
+function formatKegTrackingHelper(
+  item: InventoryItem | null | undefined,
+  quantityPerPosUnit: string
+) {
+  const capacity = getKegCapacity(item);
+  const quantity = Number(quantityPerPosUnit);
+  if (!capacity || !Number.isFinite(quantity) || quantity <= 0) return "";
+  const percent = (quantity / capacity) * 100;
+  return `1 Keg = ${capacity}ml · ${quantity}ml = ${percent.toFixed(2)}%`;
 }
 
 function InventoryCombobox({
@@ -1512,6 +1588,11 @@ export default function AdminPosMappingsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editor, setEditor] = useState<EditorState | null>(null);
+  const [kegTrackingEditor, setKegTrackingEditor] =
+    useState<KegTrackingEditorState | null>(null);
+  const [kegTrackingSavingId, setKegTrackingSavingId] = useState<number | null>(
+    null
+  );
   const [optionEditor, setOptionEditor] =
     useState<OptionEditorState | null>(null);
   const [reconcileSummary, setReconcileSummary] =
@@ -1595,6 +1676,10 @@ export default function AdminPosMappingsPage() {
           inventoryItem,
         ])
       ),
+    [inventoryItems]
+  );
+  const kegInventoryItems = useMemo(
+    () => inventoryItems.filter((inventoryItem) => Boolean(getKegCapacity(inventoryItem))),
     [inventoryItems]
   );
 
@@ -1786,6 +1871,13 @@ export default function AdminPosMappingsPage() {
     setError("");
     setOptionEditor(null);
     const usesContentSource = hasDirectSourceFields(item.mapping);
+    setKegTrackingEditor({
+      itemKey: getItemKey(item),
+      inventoryItemId: item.kegTracking?.inventoryItemId
+        ? String(item.kegTracking.inventoryItemId)
+        : "",
+      quantityPerPosUnit: String(item.kegTracking?.quantityPerPosUnit || 330),
+    });
     setEditor({
       itemKey: getItemKey(item),
       mappingType: item.mapping?.mappingType || "direct",
@@ -1805,6 +1897,7 @@ export default function AdminPosMappingsPage() {
     setNotice("");
     setError("");
     setEditor(null);
+    setKegTrackingEditor(null);
     const usesContentSource = hasDirectSourceFields(option.mapping);
     setOptionEditor({
       optionKey: `${item.posProduct.id}:${option.optionId}`,
@@ -1934,6 +2027,111 @@ export default function AdminPosMappingsPage() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  function patchKegTracking(
+    posProductId: number,
+    mapping: KegTrackingMapping | null
+  ) {
+    setItems((current) =>
+      current.map((item) =>
+        item.posProduct?.id === posProductId
+          ? { ...item, kegTracking: mapping }
+          : item
+      )
+    );
+  }
+
+  async function saveKegTracking(event: FormEvent, item: CatalogItem) {
+    event.preventDefault();
+    if (!actorUsername || !item.posProduct || !kegTrackingEditor) return;
+
+    const inventoryItemId = Number(kegTrackingEditor.inventoryItemId);
+    const quantityPerPosUnit = Number(kegTrackingEditor.quantityPerPosUnit);
+
+    if (!inventoryItemId) {
+      setError(pageText.kegTrackingSelectRequired);
+      return;
+    }
+
+    if (!Number.isFinite(quantityPerPosUnit) || quantityPerPosUnit <= 0) {
+      setError(pageText.recipeUsageLabel);
+      return;
+    }
+
+    setKegTrackingSavingId(item.posProduct.id);
+    setError("");
+    setNotice("");
+    try {
+      const url = item.kegTracking
+        ? `/api/admin/inventory/keg-tracking-mappings/${item.kegTracking.id}`
+        : "/api/admin/inventory/keg-tracking-mappings";
+      const response = await fetch(url, {
+        method: item.kegTracking ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorUsername,
+          posProductId: item.posProduct.id,
+          inventoryItemId,
+          quantityPerPosUnit,
+        }),
+      });
+      const payload = (await getJson(response)) as {
+        mapping?: KegTrackingMapping;
+      };
+      if (payload.mapping) {
+        patchKegTracking(item.posProduct.id, payload.mapping);
+        setKegTrackingEditor({
+          itemKey: getItemKey(item),
+          inventoryItemId: String(payload.mapping.inventoryItemId),
+          quantityPerPosUnit: String(payload.mapping.quantityPerPosUnit),
+        });
+      }
+      setNotice(pageText.kegTrackingSaveSuccess);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : pageText.kegTrackingSaveError
+      );
+    } finally {
+      setKegTrackingSavingId(null);
+    }
+  }
+
+  async function disableKegTracking(item: CatalogItem) {
+    if (!actorUsername || !item.posProduct || !item.kegTracking) return;
+    if (!window.confirm(pageText.kegTrackingDisableConfirm)) return;
+
+    setKegTrackingSavingId(item.posProduct.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/admin/inventory/keg-tracking-mappings/${item.kegTracking.id}`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ actorUsername }),
+        }
+      );
+      await getJson(response);
+      patchKegTracking(item.posProduct.id, null);
+      setKegTrackingEditor({
+        itemKey: getItemKey(item),
+        inventoryItemId: "",
+        quantityPerPosUnit: "330",
+      });
+      setNotice(pageText.kegTrackingSaveSuccess);
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : pageText.kegTrackingSaveError
+      );
+    } finally {
+      setKegTrackingSavingId(null);
     }
   }
 
@@ -2922,6 +3120,7 @@ export default function AdminPosMappingsPage() {
                 }
                 onClick={() => {
                   setEditor(null);
+                  setKegTrackingEditor(null);
                   setOptionEditor(null);
                   setStatusFilter(filter.value);
                 }}
@@ -2994,6 +3193,21 @@ export default function AdminPosMappingsPage() {
                 : item.mappingType
                   ? DISPLAY_MAPPING_TYPE_LABELS[lang][item.mappingType]
                   : null;
+              const activeKegTracking =
+                item.kegTracking?.isActive === true ? item.kegTracking : null;
+              const isManualKegTrackingComplete =
+                item.mappingType === "manual" &&
+                activeKegTracking !== null &&
+                item.blockedReason === MANUAL_REVIEW_BLOCKED_REASON;
+              const showKegTrackingEditor =
+                Boolean(item.posProduct) && item.mappingType === "manual";
+              const selectedKegInventoryItem = kegTrackingEditor?.inventoryItemId
+                ? inventoryById.get(Number(kegTrackingEditor.inventoryItemId))
+                : null;
+              const kegHelperText = formatKegTrackingHelper(
+                selectedKegInventoryItem,
+                kegTrackingEditor?.quantityPerPosUnit || ""
+              );
 
               return (
                 <article
@@ -3018,25 +3232,39 @@ export default function AdminPosMappingsPage() {
                             {mappingTypeLabel}
                           </span>
                         ) : null}
-                        <span
-                          className={`${styles.statusBadge} ${
-                            item.status === "orphaned" ||
+                        {isManualKegTrackingComplete ? null : (
+                          <span
+                            className={`${styles.statusBadge} ${
+                              item.status === "orphaned" ||
+                              item.status === "archived"
+                                ? styles[`status_${item.status}`]
+                                : styles[
+                                    `validation_${item.validationStatus}`
+                                  ]
+                            }`}
+                          >
+                            {item.status === "orphaned" ||
                             item.status === "archived"
-                              ? styles[`status_${item.status}`]
-                              : styles[
-                                  `validation_${item.validationStatus}`
-                                ]
-                          }`}
-                        >
-                          {item.status === "orphaned" ||
-                          item.status === "archived"
-                            ? DISPLAY_STATUS_LABELS[lang][item.status]
-                            : DISPLAY_VALIDATION_STATUS_LABELS[lang][
-                                item.validationStatus
-                              ]}
-                        </span>
+                              ? DISPLAY_STATUS_LABELS[lang][item.status]
+                              : DISPLAY_VALIDATION_STATUS_LABELS[lang][
+                                  item.validationStatus
+                                ]}
+                          </span>
+                        )}
                         {item.posProduct && !item.posProduct.isActive ? (
                           <span className={styles.inactiveBadge}>{pageText.productPosInactive}</span>
+                        ) : null}
+                        {activeKegTracking ? (
+                          <span
+                            className={`${styles.statusBadge} ${styles.kegTrackingBadge}`}
+                          >
+                            {pageText.kegTrackingBadge} ·{" "}
+                            {activeKegTracking.quantityPerPosUnit}ml
+                            {pageText.kegTrackingPerSaleSuffix}
+                            {activeKegTracking.inventoryItemName
+                              ? ` · ${activeKegTracking.inventoryItemName}`
+                              : ""}
+                          </span>
                         ) : null}
                       </div>
                       <div className={styles.metaLine}>
@@ -3126,9 +3354,14 @@ export default function AdminPosMappingsPage() {
                       type="button"
                       className={styles.editButton}
                       disabled={item.status === "archived"}
-                      onClick={() =>
-                        isEditing ? setEditor(null) : beginEdit(item)
-                      }
+                      onClick={() => {
+                        if (isEditing) {
+                          setEditor(null);
+                          setKegTrackingEditor(null);
+                        } else {
+                          beginEdit(item);
+                        }
+                      }}
                     >
                       {isEditing
                         ? pageText.closeButton
@@ -3318,6 +3551,84 @@ export default function AdminPosMappingsPage() {
                       item.mapping?.mappingType !== "recipe" ? (
                         <p className={styles.editorNotice}>
                           {pageText.recipeSaveFirstNotice}
+                        </p>
+                      ) : null}
+                    </form>
+                  ) : null}
+
+                  {isEditing &&
+                  showKegTrackingEditor &&
+                  kegTrackingEditor ? (
+                    <form
+                      className={styles.kegTrackingSection}
+                      onSubmit={(event) => void saveKegTracking(event, item)}
+                    >
+                      <div className={styles.kegTrackingHeader}>
+                        <div>
+                          <strong>{pageText.kegTrackingTitle}</strong>
+                          <p>{pageText.kegTrackingDescription}</p>
+                        </div>
+                      </div>
+                      <label>
+                        <span>{pageText.kegInventoryItemLabel}</span>
+                        <InventoryCombobox
+                          items={kegInventoryItems}
+                          value={kegTrackingEditor.inventoryItemId}
+                          required
+                          loading={loading && kegInventoryItems.length === 0}
+                          text={pageText}
+                          onChange={(inventoryItemId) =>
+                            setKegTrackingEditor({
+                              ...kegTrackingEditor,
+                              inventoryItemId,
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>{pageText.kegUsagePerSaleLabel}</span>
+                        <div className={styles.kegUsageInputRow}>
+                          <input
+                            type="number"
+                            min="0.001"
+                            step="0.001"
+                            value={kegTrackingEditor.quantityPerPosUnit}
+                            onChange={(event) =>
+                              setKegTrackingEditor({
+                                ...kegTrackingEditor,
+                                quantityPerPosUnit: event.target.value,
+                              })
+                            }
+                          />
+                          <span>ml</span>
+                        </div>
+                      </label>
+                      <div className={styles.kegTrackingActions}>
+                        <button
+                          type="submit"
+                          className={styles.primaryButton}
+                          disabled={
+                            kegTrackingSavingId === item.posProduct?.id
+                          }
+                        >
+                          {pageText.kegTrackingSaveButton}
+                        </button>
+                        {activeKegTracking ? (
+                          <button
+                            type="button"
+                            className={styles.dangerButton}
+                            disabled={
+                              kegTrackingSavingId === item.posProduct?.id
+                            }
+                            onClick={() => void disableKegTracking(item)}
+                          >
+                            {pageText.kegTrackingDisableButton}
+                          </button>
+                        ) : null}
+                      </div>
+                      {kegHelperText ? (
+                        <p className={styles.kegTrackingHelper}>
+                          {kegHelperText}
                         </p>
                       ) : null}
                     </form>

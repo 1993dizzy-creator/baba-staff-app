@@ -38,7 +38,7 @@ export const inventoryText = {
     otherReason: "기타 사유 입력",
 
     quickSave: "빠른저장",
-    kegReplace: "케그 교체",
+    kegReplace: "🍺 케그 교체",
     kegReplaceConfirm: "이 케그를 교체하고 재고를 -1 Keg 차감할까요?",
     quickGuide: "새 수량 입력 또는 +/- 버튼 조정 후 빠른저장.",
     quantityNoChange: "수량 변화 없음",
@@ -153,7 +153,7 @@ export const inventoryText = {
     otherReason: "Nhập lý do khác",
 
     quickSave: "Lưu nhanh",
-    kegReplace: "Đổi keg",
+    kegReplace: "🍺 Đổi keg",
     kegReplaceConfirm: "Đổi keg này và trừ tồn kho -1 Keg?",
     quickGuide: "Nhập số lượng mới hoặc chỉnh bằng nút +/- rồi lưu nhanh.",
     quantityNoChange: "Số lượng không thay đổi",
