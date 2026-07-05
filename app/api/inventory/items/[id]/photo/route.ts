@@ -119,6 +119,13 @@ const getExtension = (contentType: string) => {
   return "webp";
 };
 
+const createImagePath = (itemId: number, contentType: string) => {
+  const extension = getExtension(contentType);
+  const random = Math.random().toString(36).slice(2, 10);
+
+  return `inventory-items/${itemId}/${Date.now()}-${random}.${extension}`;
+};
+
 const insertPhotoLog = async ({
   supabaseAdmin,
   item,
@@ -245,15 +252,14 @@ export async function POST(req: Request, context: RouteParams) {
       return jsonError("item_not_found", "Target not found", 404);
     }
 
-    const extension = getExtension(file.type);
-    const imagePath = `inventory-items/${itemId}/main.${extension}`;
+    const imagePath = createImagePath(itemId, file.type);
     const bytes = await file.arrayBuffer();
     const { error: uploadError } = await supabaseAdmin.storage
       .from(INVENTORY_IMAGE_BUCKET)
       .upload(imagePath, bytes, {
         contentType: file.type,
         cacheControl: "3600",
-        upsert: true,
+        upsert: false,
       });
 
     if (uploadError) {
@@ -265,16 +271,6 @@ export async function POST(req: Request, context: RouteParams) {
         uploadError.message,
         500
       );
-    }
-
-    if (item.image_path && item.image_path !== imagePath) {
-      const { error: removeOldError } = await supabaseAdmin.storage
-        .from(INVENTORY_IMAGE_BUCKET)
-        .remove([item.image_path]);
-
-      if (removeOldError) {
-        console.warn("[INVENTORY_PHOTO_REMOVE_OLD_WARNING]", removeOldError);
-      }
     }
 
     const { data: updatedItem, error: updateError } = await supabaseAdmin
@@ -291,11 +287,29 @@ export async function POST(req: Request, context: RouteParams) {
 
     if (updateError || !updatedItem) {
       console.error("[INVENTORY_PHOTO_DB_UPDATE_ERROR]", updateError);
+      const { error: removeNewError } = await supabaseAdmin.storage
+        .from(INVENTORY_IMAGE_BUCKET)
+        .remove([imagePath]);
+
+      if (removeNewError) {
+        console.warn("[INVENTORY_PHOTO_REMOVE_NEW_WARNING]", removeNewError);
+      }
+
       return jsonError(
         "database_update_failed",
         updateError?.message || "Image path update failed",
         500
       );
+    }
+
+    if (item.image_path && item.image_path !== imagePath) {
+      const { error: removeOldError } = await supabaseAdmin.storage
+        .from(INVENTORY_IMAGE_BUCKET)
+        .remove([item.image_path]);
+
+      if (removeOldError) {
+        console.warn("[INVENTORY_PHOTO_REMOVE_OLD_WARNING]", removeOldError);
+      }
     }
 
     const logError = await insertPhotoLog({
@@ -311,7 +325,14 @@ export async function POST(req: Request, context: RouteParams) {
 
     return NextResponse.json({
       ok: true,
-      data: updatedItem,
+      data: {
+        ...updatedItem,
+        image_url: supabaseAdmin.storage
+          .from(INVENTORY_IMAGE_BUCKET)
+          .getPublicUrl(imagePath).data.publicUrl,
+        image_updated_at: updatedItem.updated_at,
+        version: updatedItem.updated_at || imagePath,
+      },
       logWarning: logError ? "photo_log_insert_failed" : null,
     });
   } catch (error) {

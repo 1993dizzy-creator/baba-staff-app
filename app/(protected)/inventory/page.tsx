@@ -201,13 +201,17 @@ const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "Server error";
 
 const INVENTORY_IMAGE_BUCKET = "inventory-images";
-const INVENTORY_PHOTO_ACCEPT = "image/jpeg,image/png,image/webp,image/heic,image/heif";
+const INVENTORY_PHOTO_CAMERA_ACCEPT = "image/*";
+const INVENTORY_PHOTO_LIBRARY_ACCEPT = "image/*,image/heic,image/heif";
 const UNSUPPORTED_IMAGE_MESSAGE =
     "이 사진 형식은 브라우저에서 처리할 수 없습니다. 카메라 설정을 JPG로 변경하거나 다른 사진을 선택해주세요.";
 const COMPRESSED_IMAGE_TOO_LARGE_MESSAGE =
     "사진을 100KB 이하로 줄일 수 없습니다. 조금 더 단순한 배경에서 다시 찍어주세요.";
 
-const getInventoryImageUrl = (imagePath?: string | null) => {
+const getInventoryImageUrl = (
+    imagePath?: string | null,
+    version?: string | null
+) => {
     if (!imagePath) return "";
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -218,7 +222,10 @@ const getInventoryImageUrl = (imagePath?: string | null) => {
         .map((part) => encodeURIComponent(part))
         .join("/");
 
-    return `${supabaseUrl}/storage/v1/object/public/${INVENTORY_IMAGE_BUCKET}/${encodedPath}`;
+    const url = `${supabaseUrl}/storage/v1/object/public/${INVENTORY_IMAGE_BUCKET}/${encodedPath}`;
+    const cacheVersion = version || imagePath;
+
+    return cacheVersion ? `${url}?v=${encodeURIComponent(cacheVersion)}` : url;
 };
 
 const getPhotoUploadErrorMessage = (error?: string, message?: string) => {
@@ -3292,7 +3299,10 @@ export default function InventoryPage() {
                                                             >
                                                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                                                 <img
-                                                                    src={getInventoryImageUrl(item.image_path)}
+                                                                    src={getInventoryImageUrl(
+                                                                        item.image_path,
+                                                                        item.updated_at
+                                                                    )}
                                                                     alt={getDisplayItemName(item)}
                                                                     style={{
                                                                         width: "100%",
@@ -3309,19 +3319,28 @@ export default function InventoryPage() {
                                                                 <div
                                                                 style={{
                                                                     display: "flex",
+                                                                    gap: 6,
                                                                     justifyContent: "center",
                                                                     width: "100%",
                                                                 }}
                                                             >
                                                                 <input
-                                                                    id={`inventory-photo-${item.id}`}
+                                                                    id={`inventory-photo-camera-${item.id}`}
                                                                     type="file"
-                                                                    accept={INVENTORY_PHOTO_ACCEPT}
+                                                                    accept={INVENTORY_PHOTO_CAMERA_ACCEPT}
+                                                                    capture="environment"
+                                                                    onChange={(e) => handleInventoryPhotoChange(e, item.id)}
+                                                                    style={{ display: "none" }}
+                                                                />
+                                                                <input
+                                                                    id={`inventory-photo-library-${item.id}`}
+                                                                    type="file"
+                                                                    accept={INVENTORY_PHOTO_LIBRARY_ACCEPT}
                                                                     onChange={(e) => handleInventoryPhotoChange(e, item.id)}
                                                                     style={{ display: "none" }}
                                                                 />
                                                                 <label
-                                                                    htmlFor={`inventory-photo-${item.id}`}
+                                                                    htmlFor={`inventory-photo-camera-${item.id}`}
                                                                 style={{
                                                                     ...ui.subButton,
                                                                     width: "100%",
@@ -3344,7 +3363,33 @@ export default function InventoryPage() {
                                                                 >
                                                                     {photoBusyItemId === item.id
                                                                         ? c.saving
-                                                                        : `📷 ${t.photoAddButton}`}
+                                                                        : `📷 ${t.photoCameraButton}`}
+                                                                    </label>
+                                                                <label
+                                                                    htmlFor={`inventory-photo-library-${item.id}`}
+                                                                    style={{
+                                                                        ...ui.subButton,
+                                                                        width: "100%",
+                                                                        minWidth: 94,
+                                                                        padding: "7px 12px",
+                                                                        fontSize: 13,
+                                                                        fontWeight: 700,
+                                                                        display: "flex",
+                                                                        alignItems: "center",
+                                                                        justifyContent: "center",
+                                                                        textAlign: "center",
+                                                                        cursor:
+                                                                            photoBusyItemId === item.id
+                                                                                ? "not-allowed"
+                                                                                : "pointer",
+                                                                        opacity: photoBusyItemId === item.id ? 0.6 : 1,
+                                                                        pointerEvents:
+                                                                            photoBusyItemId === item.id ? "none" : "auto",
+                                                                    }}
+                                                                >
+                                                                    {photoBusyItemId === item.id
+                                                                        ? c.saving
+                                                                        : `🖼️ ${t.photoLibraryButton}`}
                                                                     </label>
                                                                 </div>
                                                             {photoCompressionMessage &&
@@ -3807,7 +3852,10 @@ export default function InventoryPage() {
                                 <img
                                     src={
                                         formPhotoPreviewUrl ||
-                                        getInventoryImageUrl(editingItem?.image_path)
+                                        getInventoryImageUrl(
+                                            editingItem?.image_path,
+                                            editingItem?.updated_at
+                                        )
                                     }
                                     alt={itemName || c.itemName}
                                     style={{
@@ -3830,14 +3878,22 @@ export default function InventoryPage() {
                                 }}
                             >
                                 <input
-                                    id="inventory-form-photo"
+                                    id="inventory-form-photo-camera"
                                     type="file"
-                                    accept={INVENTORY_PHOTO_ACCEPT}
+                                    accept={INVENTORY_PHOTO_CAMERA_ACCEPT}
+                                    capture="environment"
+                                    onChange={handleFormPhotoChange}
+                                    style={{ display: "none" }}
+                                />
+                                <input
+                                    id="inventory-form-photo-library"
+                                    type="file"
+                                    accept={INVENTORY_PHOTO_LIBRARY_ACCEPT}
                                     onChange={handleFormPhotoChange}
                                     style={{ display: "none" }}
                                 />
                                 <label
-                                    htmlFor="inventory-form-photo"
+                                    htmlFor="inventory-form-photo-camera"
                                     style={{
                                         ...ui.subButton,
                                         width: "auto",
@@ -3860,9 +3916,33 @@ export default function InventoryPage() {
                                     {isFormPhotoProcessing ||
                                     (editingId && photoBusyItemId === editingId)
                                         ? c.saving
-                                        : formPhotoPreviewUrl || editingItem?.image_path
-                                            ? t.photoChangeButton
-                                            : t.photoAddButton}
+                                        : t.photoCameraButton}
+                                </label>
+                                <label
+                                    htmlFor="inventory-form-photo-library"
+                                    style={{
+                                        ...ui.subButton,
+                                        width: "auto",
+                                        minWidth: 84,
+                                        padding: "8px 12px",
+                                        fontSize: 13,
+                                        fontWeight: 700,
+                                        cursor:
+                                            isFormPhotoProcessing ||
+                                            (editingId && photoBusyItemId === editingId)
+                                                ? "not-allowed"
+                                                : "pointer",
+                                        opacity:
+                                            isFormPhotoProcessing ||
+                                            (editingId && photoBusyItemId === editingId)
+                                                ? 0.6
+                                                : 1,
+                                    }}
+                                >
+                                    {isFormPhotoProcessing ||
+                                    (editingId && photoBusyItemId === editingId)
+                                        ? c.saving
+                                        : t.photoLibraryButton}
                                 </label>
 
                                 {formPhotoPreviewUrl && !editingId && (
@@ -4341,7 +4421,10 @@ export default function InventoryPage() {
 
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                            src={getInventoryImageUrl(photoModalItem.image_path)}
+                            src={getInventoryImageUrl(
+                                photoModalItem.image_path,
+                                photoModalItem.updated_at
+                            )}
                             alt={getDisplayItemName(photoModalItem)}
                             style={{
                                 width: "100%",
@@ -4356,21 +4439,31 @@ export default function InventoryPage() {
                         <div
                             style={{
                                 display: "grid",
-                                gridTemplateColumns: "1fr 1fr",
+                                gridTemplateColumns: "1fr 1fr 1fr",
                                 gap: 8,
                             }}
                         >
                             <input
-                                id={`inventory-photo-modal-${photoModalItem.id}`}
+                                id={`inventory-photo-modal-camera-${photoModalItem.id}`}
                                 type="file"
-                                accept={INVENTORY_PHOTO_ACCEPT}
+                                accept={INVENTORY_PHOTO_CAMERA_ACCEPT}
+                                capture="environment"
+                                onChange={(e) =>
+                                    handleInventoryPhotoChange(e, photoModalItem.id)
+                                }
+                                style={{ display: "none" }}
+                            />
+                            <input
+                                id={`inventory-photo-modal-library-${photoModalItem.id}`}
+                                type="file"
+                                accept={INVENTORY_PHOTO_LIBRARY_ACCEPT}
                                 onChange={(e) =>
                                     handleInventoryPhotoChange(e, photoModalItem.id)
                                 }
                                 style={{ display: "none" }}
                             />
                             <label
-                                htmlFor={`inventory-photo-modal-${photoModalItem.id}`}
+                                htmlFor={`inventory-photo-modal-camera-${photoModalItem.id}`}
                                 style={{
                                     ...ui.subButton,
                                     width: "100%",
@@ -4391,7 +4484,31 @@ export default function InventoryPage() {
                             >
                                 {photoBusyItemId === photoModalItem.id
                                     ? c.saving
-                                    : `📷 ${t.photoChangeButton}`}
+                                    : `📷 ${t.photoCameraButton}`}
+                            </label>
+                            <label
+                                htmlFor={`inventory-photo-modal-library-${photoModalItem.id}`}
+                                style={{
+                                    ...ui.subButton,
+                                    width: "100%",
+                                    minWidth: 0,
+                                    padding: "9px 10px",
+                                    fontSize: 13,
+                                    fontWeight: 800,
+                                    textAlign: "center",
+                                    cursor:
+                                        photoBusyItemId === photoModalItem.id
+                                            ? "not-allowed"
+                                            : "pointer",
+                                    opacity:
+                                        photoBusyItemId === photoModalItem.id ? 0.6 : 1,
+                                    pointerEvents:
+                                        photoBusyItemId === photoModalItem.id ? "none" : "auto",
+                                }}
+                            >
+                                {photoBusyItemId === photoModalItem.id
+                                    ? c.saving
+                                    : `🖼️ ${t.photoLibraryButton}`}
                             </label>
 
                             <button
