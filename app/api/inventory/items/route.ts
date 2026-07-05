@@ -85,6 +85,16 @@ type KegProgress = {
   remainingPercent: number;
 };
 
+type StockCheckLogRow = {
+  item_id: number | string | null;
+  business_date: string | null;
+  created_at: string | null;
+};
+
+type SaleDeductionLogRow = {
+  item_id: number | string | null;
+};
+
 const jsonError = (
   error: string,
   message: string,
@@ -114,8 +124,14 @@ const getActor = async (actorUsername?: string) => {
   return data;
 };
 
-const canManageInventoryItemLifecycle = (role: unknown) =>
+const canDeleteInventoryItem = (role: unknown) =>
   role === "owner" || role === "master";
+
+const canToggleInventoryItemActiveStatus = (role: unknown) =>
+  role === "owner" ||
+  role === "master" ||
+  role === "manager" ||
+  role === "leader";
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -158,6 +174,154 @@ const chunkArray = <T,>(values: T[], size: number) => {
     chunks.push(values.slice(index, index + size));
   }
   return chunks;
+};
+
+const STOCK_CHECK_STALE_DAYS = 7;
+const SALE_DEDUCTION_ACTIVE_LOOKBACK_DAYS = 60;
+
+const getBusinessDateTime = (dateKey: string) =>
+  new Date(`${dateKey}T12:00:00+07:00`).getTime();
+
+const getDaysBetweenBusinessDates = (fromDateKey: string, toDateKey: string) => {
+  const fromTime = getBusinessDateTime(fromDateKey);
+  const toTime = getBusinessDateTime(toDateKey);
+
+  if (!Number.isFinite(fromTime) || !Number.isFinite(toTime)) return null;
+
+  return Math.max(0, Math.floor((toTime - fromTime) / 86_400_000));
+};
+
+const addDaysToBusinessDateKey = (dateKey: string, days: number) => {
+  const date = new Date(`${dateKey}T12:00:00+07:00`);
+  date.setUTCDate(date.getUTCDate() + days);
+
+  return getBusinessDate(date);
+};
+
+const getStockCheckDateKey = (log: StockCheckLogRow) => {
+  if (log.business_date) return String(log.business_date);
+  if (!log.created_at) return null;
+
+  const createdAt = new Date(log.created_at);
+  if (Number.isNaN(createdAt.getTime())) return null;
+
+  return getBusinessDate(createdAt);
+};
+
+const fetchStockCheckStatusByItemId = async (
+  itemIds: number[],
+  currentBusinessDate: string,
+  saleDeductionActiveItemIds: Set<number>
+) => {
+  const statusByItemId = new Map<
+    number,
+    {
+      lastStockCheckDate: string | null;
+      daysSinceStockCheck: number | null;
+      needsStockCheck: boolean;
+    }
+  >();
+
+  itemIds.forEach((itemId) => {
+    statusByItemId.set(itemId, {
+      lastStockCheckDate: null,
+      daysSinceStockCheck: null,
+      needsStockCheck: true,
+    });
+  });
+
+  if (itemIds.length === 0) return statusByItemId;
+
+  const latestByItemId = new Map<number, string>();
+
+  for (const itemIdChunk of chunkArray(itemIds, 500)) {
+    const { data, error } = await supabaseAdmin
+      .from("inventory_logs")
+      .select("item_id, business_date, created_at")
+      .in("item_id", itemIdChunk)
+      .eq("reason", "stock_check")
+      .order("business_date", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    for (const log of (data || []) as StockCheckLogRow[]) {
+      const itemId = Number(log.item_id);
+      if (!Number.isFinite(itemId) || itemId <= 0) continue;
+
+      const dateKey = getStockCheckDateKey(log);
+      if (!dateKey) continue;
+
+      const currentLatest = latestByItemId.get(itemId);
+      if (!currentLatest || dateKey > currentLatest) {
+        latestByItemId.set(itemId, dateKey);
+      }
+    }
+  }
+
+  latestByItemId.forEach((lastStockCheckDate, itemId) => {
+    const daysSinceStockCheck = getDaysBetweenBusinessDates(
+      lastStockCheckDate,
+      currentBusinessDate
+    );
+    const hasRecentSaleDeduction = saleDeductionActiveItemIds.has(itemId);
+
+    statusByItemId.set(itemId, {
+      lastStockCheckDate,
+      daysSinceStockCheck,
+      needsStockCheck:
+        !hasRecentSaleDeduction &&
+        (daysSinceStockCheck === null ||
+          daysSinceStockCheck >= STOCK_CHECK_STALE_DAYS),
+    });
+  });
+
+  saleDeductionActiveItemIds.forEach((itemId) => {
+    const existing = statusByItemId.get(itemId);
+    if (!existing) return;
+
+    statusByItemId.set(itemId, {
+      ...existing,
+      needsStockCheck: false,
+    });
+  });
+
+  return statusByItemId;
+};
+
+const fetchRecentSaleDeductionItemIds = async (
+  itemIds: number[],
+  currentBusinessDate: string
+) => {
+  const activeItemIds = new Set<number>();
+  if (itemIds.length === 0) return activeItemIds;
+
+  const fromBusinessDate = addDaysToBusinessDateKey(
+    currentBusinessDate,
+    -SALE_DEDUCTION_ACTIVE_LOOKBACK_DAYS
+  );
+
+  for (const itemIdChunk of chunkArray(itemIds, 500)) {
+    const { data, error } = await supabaseAdmin
+      .from("inventory_logs")
+      .select("item_id")
+      .in("item_id", itemIdChunk)
+      .eq("reason", "sale_deduction")
+      .eq("source", "pos_sales")
+      .gte("business_date", fromBusinessDate)
+      .lte("business_date", currentBusinessDate);
+
+    if (error) throw error;
+
+    for (const log of (data || []) as SaleDeductionLogRow[]) {
+      const itemId = Number(log.item_id);
+      if (Number.isFinite(itemId) && itemId > 0) {
+        activeItemIds.add(itemId);
+      }
+    }
+  }
+
+  return activeItemIds;
 };
 
 const buildKegProgress = (params: {
@@ -639,7 +803,7 @@ export async function GET(req: Request) {
     const actorUsername = searchParams.get("actorUsername") || "";
     const actor = includeInactive ? await getActor(actorUsername) : null;
     const canIncludeInactive =
-      includeInactive && canManageInventoryItemLifecycle(actor?.role);
+      includeInactive && canToggleInventoryItemActiveStatus(actor?.role);
 
     let query = supabaseAdmin
       .from("inventory")
@@ -655,6 +819,20 @@ export async function GET(req: Request) {
     if (error) throw error;
 
     const items = data || [];
+    const currentBusinessDate = getBusinessDate();
+    const stockCheckTargetItemIds = items
+      .filter((item) => item.is_active !== false)
+      .map((item) => Number(item.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    const saleDeductionActiveItemIds = await fetchRecentSaleDeductionItemIds(
+      stockCheckTargetItemIds,
+      currentBusinessDate
+    );
+    const stockCheckStatusByItemId = await fetchStockCheckStatusByItemId(
+      stockCheckTargetItemIds,
+      currentBusinessDate,
+      saleDeductionActiveItemIds
+    );
     const kegCandidateIds = items
       .filter((item) => {
         const unit = String(item.unit || "").trim().toLowerCase();
@@ -696,6 +874,15 @@ export async function GET(req: Request) {
         ...item,
         has_active_keg_tracking: activeKegTrackingIds.has(Number(item.id)),
         kegProgress: kegProgressByItemId.get(Number(item.id)) ?? null,
+        lastStockCheckDate:
+          stockCheckStatusByItemId.get(Number(item.id))?.lastStockCheckDate ??
+          null,
+        daysSinceStockCheck:
+          stockCheckStatusByItemId.get(Number(item.id))?.daysSinceStockCheck ??
+          null,
+        needsStockCheck:
+          stockCheckStatusByItemId.get(Number(item.id))?.needsStockCheck ??
+          false,
       })),
     });
   } catch (error) {
@@ -882,10 +1069,10 @@ export async function PATCH(req: Request) {
     }
 
     if (mode === "active-status") {
-      if (!canManageInventoryItemLifecycle(actor.role)) {
+      if (!canToggleInventoryItemActiveStatus(actor.role)) {
         return jsonError(
           "inventory_item_active_status_forbidden",
-          "Inventory item active status update requires admin permission.",
+          "Inventory item active status update requires leader permission.",
           403
         );
       }
@@ -950,6 +1137,7 @@ export async function PATCH(req: Request) {
     code,
     supplier,
     low_stock_threshold,
+    low_stock_enabled,
     package_content_quantity,
     package_content_unit,
     image_path
@@ -1030,6 +1218,7 @@ export async function PATCH(req: Request) {
     code,
     supplier,
     low_stock_threshold,
+    low_stock_enabled,
     package_content_quantity,
     package_content_unit,
     image_path
@@ -1181,7 +1370,7 @@ export async function DELETE(req: Request) {
       return jsonError("missing_actor", "Invalid user", 401);
     }
 
-    if (!canManageInventoryItemLifecycle(actor.role)) {
+    if (!canDeleteInventoryItem(actor.role)) {
       return jsonError(
         "inventory_item_delete_forbidden",
         "Inventory item deletion requires admin permission.",
@@ -1205,6 +1394,7 @@ export async function DELETE(req: Request) {
         code,
         supplier,
         low_stock_threshold,
+        low_stock_enabled,
         package_content_quantity,
         package_content_unit,
         image_path

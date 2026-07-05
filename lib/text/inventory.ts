@@ -6,8 +6,10 @@ export const inventoryText = {
     searchPlaceholder: "품목명 / 카테고리 / 코드 검색",
 
     lowStockThreshold: "부족 기준값",
-    filterLowStock: "부족 품목만 보기",
-    filterToday: "오늘 변경만",
+    lowStockEnabled: "재고부족 알림 사용",
+    lowStockEnabledHelp: "재고부족 알림을 사용하는 품목만 부족품목에 표시됩니다.",
+    filterLowStock: "부족품목",
+    filterToday: "오늘변경",
 
     low: "부족",
     stockLow: "재고 부족",
@@ -131,8 +133,13 @@ export const inventoryText = {
     editItemHelp: "재고관리 페이지에서 이 품목을 수정합니다.",
     deactivateItem: "비활성",
     activateItem: "활성화",
-    includeInactiveItems: "비활성 포함",
+    includeInactiveItems: "비활성",
     inactiveItem: "비활성 품목",
+    stockCheckNeeded: "확인필요",
+    stockCheckDaysOverdue: (days: number) => `${days}일 미확인`,
+    stockCheckNoHistory: "확인 이력 없음",
+    stockCheckNeededFilterCount: (count: number) => `확인필요 ${count}개`,
+    stockCheckNeededOnly: "확인필요만 보기",
     deactivateItemConfirmTitle: "이 품목을 비활성화할까요?",
     deactivateItemConfirmDescription:
       "기본 재고 목록에서 숨겨지지만, 과거 로그와 집계 기록은 유지됩니다.",
@@ -149,9 +156,12 @@ export const inventoryText = {
 
     searchPlaceholder: "Tìm theo tên hàng / danh mục / mã",
 
-    lowStockThreshold: "Ngưỡng thiếu hàng",
-    filterLowStock: "Chỉ xem hàng thiếu",
-    filterToday: "Chỉ thay đổi hôm nay",
+    lowStockThreshold: "Mức cảnh báo thiếu",
+    lowStockEnabled: "Bật cảnh báo thiếu hàng",
+    lowStockEnabledHelp:
+      "Chỉ những mục bật cảnh báo mới hiển thị trong danh sách thiếu hàng.",
+    filterLowStock: "Thiếu",
+    filterToday: "Đổi hôm nay",
 
     low: "Thiếu",
     stockLow: "Thiếu hàng",
@@ -279,8 +289,13 @@ export const inventoryText = {
     editItemHelp: "Sửa sản phẩm này trong trang quản lý kho.",
     deactivateItem: "Tắt",
     activateItem: "Bật lại",
-    includeInactiveItems: "Bao gồm mục đã tắt",
+    includeInactiveItems: "Đã tắt",
     inactiveItem: "Mục đã tắt",
+    stockCheckNeeded: "Cần kiểm",
+    stockCheckDaysOverdue: (days: number) => `${days} ngày chưa kiểm`,
+    stockCheckNoHistory: "Chưa có lịch kiểm",
+    stockCheckNeededFilterCount: (count: number) => `Cần kiểm ${count} mục`,
+    stockCheckNeededOnly: "Chỉ xem mục cần kiểm",
     deactivateItemConfirmTitle: "Bạn muốn tắt mục này không?",
     deactivateItemConfirmDescription:
       "Mục này sẽ bị ẩn khỏi danh sách tồn kho mặc định, nhưng lịch sử và báo cáo cũ vẫn được giữ lại.",

@@ -43,10 +43,14 @@ type InventoryItem = {
     supplier?: string | null;
     code?: string | null;
     low_stock_threshold?: string | number | null;
+    low_stock_enabled?: boolean | null;
     package_content_quantity?: string | number | null;
     package_content_unit?: string | null;
     is_active?: boolean | null;
     has_active_keg_tracking?: boolean | null;
+    lastStockCheckDate?: string | null;
+    daysSinceStockCheck?: number | null;
+    needsStockCheck?: boolean | null;
     kegProgress?: {
         activeSessionId: number;
         startedAt: string;
@@ -258,6 +262,11 @@ export default function InventoryPage() {
     const actorName = currentUser?.name || "";
     const actorUsername = currentUser?.username || "";
     const canDeleteInventoryItem = isAdmin(currentUser);
+    const canToggleInventoryActive =
+        currentUser?.role === "owner" ||
+        currentUser?.role === "master" ||
+        currentUser?.role === "manager" ||
+        currentUser?.role === "leader";
 
     const defaultPart: PartValue =
         PART_VALUES.includes(currentUser?.part as PartValue)
@@ -282,6 +291,7 @@ export default function InventoryPage() {
     const [purchasePrice, setPurchasePrice] = useState("");
     const [supplier, setSupplier] = useState("");
     const [lowStockThreshold, setLowStockThreshold] = useState("");
+    const [lowStockEnabled, setLowStockEnabled] = useState(false);
     const [packageContentQuantity, setPackageContentQuantity] = useState("");
     const [packageContentUnit, setPackageContentUnit] = useState("");
     const [code, setCode] = useState("");
@@ -305,6 +315,7 @@ export default function InventoryPage() {
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
     const [showTodayUpdatedOnly, setShowTodayUpdatedOnly] = useState(false);
     const [showInactiveItems, setShowInactiveItems] = useState(false);
+    const [showStockCheckNeededOnly, setShowStockCheckNeededOnly] = useState(false);
     const [kegProgressLoadingIds, setKegProgressLoadingIds] = useState<Record<number, boolean>>({});
     const [quantityDrafts, setQuantityDrafts] = useState<Record<number, string>>({});
     const [latestSnapshotMap, setLatestSnapshotMap] = useState<Record<number, number>>({});
@@ -770,7 +781,7 @@ export default function InventoryPage() {
         const params = new URLSearchParams();
         params.set("includeKegProgress", "false");
 
-        if (canDeleteInventoryItem && showInactiveItems) {
+        if (canToggleInventoryActive && showInactiveItems) {
             params.set("includeInactive", "true");
             params.set("actorUsername", actorUsername);
         }
@@ -778,7 +789,7 @@ export default function InventoryPage() {
         const url = params.size
             ? `/api/inventory/items?${params.toString()}`
             : "/api/inventory/items";
-        const requestKey = `items:includeInactive=${showInactiveItems && canDeleteInventoryItem}`;
+        const requestKey = `items:includeInactive=${showInactiveItems && canToggleInventoryActive}`;
 
         try {
             const nextItems = await runDedupeRequest<InventoryItem[]>(requestKey, async () => {
@@ -974,6 +985,7 @@ export default function InventoryPage() {
         setSupplier("");
         setCode("");
         setLowStockThreshold("");
+        setLowStockEnabled(false);
         setPackageContentQuantity("");
         setPackageContentUnit("");
         setEditingId(null);
@@ -1351,6 +1363,7 @@ export default function InventoryPage() {
         );
         setCode(item.code || "");
         setLowStockThreshold(String(item.low_stock_threshold ?? 1));
+        setLowStockEnabled(item.low_stock_enabled === true);
         setPackageContentQuantity(
             item.package_content_quantity === null || item.package_content_quantity === undefined
                 ? ""
@@ -1385,6 +1398,7 @@ export default function InventoryPage() {
             }
 
             const nextLowStock = lowStockThreshold ? parseDecimal(lowStockThreshold) : 1;
+            const nextLowStockEnabled = lowStockEnabled === true;
             const normalizedPackageContentUnit = packageContentUnit.trim().toLowerCase();
             const nextPackageContentQuantity =
                 packageContentQuantity.trim() === ""
@@ -1465,7 +1479,8 @@ export default function InventoryPage() {
                         nextPackageContentQuantity ||
                     (targetItem.package_content_unit || "").toLowerCase() !==
                         (nextPackageContentUnit || "") ||
-                    parseDecimal(targetItem.low_stock_threshold ?? 1) !== nextLowStock;
+                    parseDecimal(targetItem.low_stock_threshold ?? 1) !== nextLowStock ||
+                    (targetItem.low_stock_enabled === true) !== nextLowStockEnabled;
 
                 if (!hasChanges) {
                     alert(t.noAdditionalChanges);
@@ -1480,6 +1495,7 @@ export default function InventoryPage() {
                             category_vi: normalizedCategoryVi,
                             purchase_price: nextPurchasePrice,
                             low_stock_threshold: nextLowStock,
+                            low_stock_enabled: nextLowStockEnabled,
                             package_content_quantity: nextPackageContentQuantity,
                             package_content_unit: nextPackageContentUnit,
                             quantity: nextQuantity,
@@ -1498,6 +1514,7 @@ export default function InventoryPage() {
                             category_vi: normalizedCategoryVi,
                             purchase_price: nextPurchasePrice,
                             low_stock_threshold: nextLowStock,
+                            low_stock_enabled: nextLowStockEnabled,
                             package_content_quantity: nextPackageContentQuantity,
                             package_content_unit: nextPackageContentUnit,
                             quantity: nextQuantity,
@@ -1535,6 +1552,7 @@ export default function InventoryPage() {
                             supplier: normalizedSupplier,
                             code: normalizedCode,
                             low_stock_threshold: nextLowStock,
+                            low_stock_enabled: nextLowStockEnabled,
                             package_content_quantity: nextPackageContentQuantity,
                             package_content_unit: nextPackageContentUnit,
                             updated_at: new Date().toISOString(),
@@ -1554,6 +1572,7 @@ export default function InventoryPage() {
                             supplier: normalizedSupplier,
                             code: normalizedCode,
                             low_stock_threshold: nextLowStock,
+                            low_stock_enabled: nextLowStockEnabled,
                             package_content_quantity: nextPackageContentQuantity,
                             package_content_unit: nextPackageContentUnit,
                             updated_at: new Date().toISOString(),
@@ -2206,7 +2225,7 @@ export default function InventoryPage() {
     }, []);
 
     useEffect(() => {
-        if (!canDeleteInventoryItem && showInactiveItems) {
+        if (!canToggleInventoryActive && showInactiveItems) {
             setShowInactiveItems(false);
             return;
         }
@@ -2218,7 +2237,7 @@ export default function InventoryPage() {
 
         fetchInventory({ force: true });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [showInactiveItems, canDeleteInventoryItem]);
+    }, [showInactiveItems, canToggleInventoryActive]);
 
     useEffect(() => {
         const savedPartFilter = localStorage.getItem("inventory_part_filter");
@@ -2301,12 +2320,15 @@ export default function InventoryPage() {
         }, 180);
     }, [isFormOpen]);
 
-    const lowStockItems = inventoryList.filter(
-        (item) =>
-            item.is_active !== false &&
-            Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
-    );
+    const isLowStockItem = (item: InventoryItem) =>
+        item.low_stock_enabled === true &&
+        item.low_stock_threshold !== null &&
+        item.low_stock_threshold !== undefined &&
+        Number(item.quantity) <= Number(item.low_stock_threshold);
 
+    const lowStockItems = inventoryList.filter(
+        (item) => item.is_active !== false && isLowStockItem(item)
+    );
     const categoryTabs = useMemo(() => {
         return [
             { key: "all", label: c.all },
@@ -2416,18 +2438,21 @@ export default function InventoryPage() {
             const matchCategory =
                 categoryFilter === "all" || categoryKey === categoryFilter;
             const matchLowStock =
-                !showLowStockOnly ||
-                Number(item.quantity) <= Number(item.low_stock_threshold ?? 1);
+                !showLowStockOnly || isLowStockItem(item);
 
             const matchTodayUpdated =
                 !showTodayUpdatedOnly || isInCurrentBusinessDay(item.updated_at);
+            const matchStockCheckNeeded =
+                !showStockCheckNeededOnly ||
+                (item.is_active !== false && item.needsStockCheck === true);
 
             return (
                 matchSearch &&
                 matchPart &&
                 matchCategory &&
                 matchLowStock &&
-                matchTodayUpdated
+                matchTodayUpdated &&
+                matchStockCheckNeeded
             );
         })
         .sort((a, b) => {
@@ -2703,22 +2728,35 @@ export default function InventoryPage() {
                             onClick={() => setShowLowStockOnly(!showLowStockOnly)}
                             style={getFilterToggleButtonStyle(showLowStockOnly, "crimson")}
                         >
-                            {showLowStockOnly ? c.all : t.filterLowStock}
+                            {t.filterLowStock}
                         </button>
 
                         <button
                             onClick={() => setShowTodayUpdatedOnly(!showTodayUpdatedOnly)}
                             style={getFilterToggleButtonStyle(showTodayUpdatedOnly, "royalblue")}
                         >
-                            {showTodayUpdatedOnly ? c.all : t.filterToday}
+                            {t.filterToday}
                         </button>
 
-                        {canDeleteInventoryItem && (
+                        <button
+                            onClick={() =>
+                                setShowStockCheckNeededOnly(!showStockCheckNeededOnly)
+                            }
+                            title={t.stockCheckNeededOnly}
+                            style={getFilterToggleButtonStyle(
+                                showStockCheckNeededOnly,
+                                "#d97706"
+                            )}
+                        >
+                            {t.stockCheckNeeded}
+                        </button>
+
+                        {canToggleInventoryActive && (
                             <button
                                 onClick={() => setShowInactiveItems(!showInactiveItems)}
                                 style={getFilterToggleButtonStyle(showInactiveItems, "#4b5563")}
                             >
-                                {showInactiveItems ? c.all : t.includeInactiveItems}
+                                {t.includeInactiveItems}
                             </button>
                         )}
                     </div>
@@ -2785,8 +2823,17 @@ export default function InventoryPage() {
                                     const packageContentCompactText =
                                         getPackageContentCompactText(item);
                                     const isInactive = item.is_active === false;
+                                    const isLowStock = isLowStockItem(item);
                                     const isKegProgressLoading =
                                         kegProgressLoadingIds[item.id] === true;
+                                    const stockCheckBadgeText =
+                                        item.needsStockCheck === true && !isInactive
+                                            ? item.daysSinceStockCheck == null
+                                                ? t.stockCheckNoHistory
+                                                : t.stockCheckDaysOverdue(
+                                                    item.daysSinceStockCheck
+                                                )
+                                            : "";
 
                                     return (
                                         <div
@@ -2797,7 +2844,7 @@ export default function InventoryPage() {
                                                 borderLeft:
                                                     isInactive
                                                         ? "4px solid #9ca3af"
-                                                        : Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
+                                                        : isLowStock
                                                         ? "4px solid crimson"
                                                         : `4px solid ${getPartMeta(item.part).color}`,
                                                 background: isInactive ? "#f9fafb" : "#fff",
@@ -2837,7 +2884,7 @@ export default function InventoryPage() {
                                                                 .join(" ")}
                                                         </span>
 
-                                                        {Number(item.quantity) <= Number(item.low_stock_threshold ?? 1) && (
+                                                        {isLowStock && (
                                                             <span
                                                                 style={{
                                                                     ...ui.badgeMini,
@@ -2915,7 +2962,7 @@ export default function InventoryPage() {
                                                                     fontSize: 14,
                                                                     fontWeight: 700,
                                                                     color:
-                                                                        Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
+                                                                        isLowStock
                                                                             ? "crimson"
                                                                             : "#111827",
                                                                 }}
@@ -2949,25 +2996,47 @@ export default function InventoryPage() {
                                                             ) : null}
                                                         </div>
 
-                                                        <div
-                                                            style={{
-                                                                marginTop: 2,
-                                                                fontSize: 12,
-                                                                fontWeight: 700,
-                                                                color:
-                                                                    diffQty === null
-                                                                        ? "#9ca3af"
-                                                                        : diffQty > 0
-                                                                            ? "seagreen"
-                                                                            : diffQty < 0
-                                                                                ? "crimson"
-                                                                                : "#6b7280",
-                                                            }}
-                                                        >
-                                                            {diffQty === null
-                                                                ? "-"
-                                                                : `${t.snapshotDiff} ${diffQty > 0 ? "+" : ""}${formatDecimalDisplay(diffQty)}`}
-                                                        </div>
+                                                        {stockCheckBadgeText ? (
+                                                            <div
+                                                                title={t.stockCheckNeeded}
+                                                                style={{
+                                                                    display: "inline-flex",
+                                                                    alignItems: "center",
+                                                                    justifyContent: "center",
+                                                                    marginTop: 2,
+                                                                    padding: "2px 6px",
+                                                                    borderRadius: 999,
+                                                                    background: "#fef3c7",
+                                                                    border: "1px solid #f59e0b",
+                                                                    color: "#92400e",
+                                                                    fontSize: 11,
+                                                                    fontWeight: 800,
+                                                                    whiteSpace: "nowrap",
+                                                                }}
+                                                            >
+                                                                {stockCheckBadgeText}
+                                                            </div>
+                                                        ) : (
+                                                            <div
+                                                                style={{
+                                                                    marginTop: 2,
+                                                                    fontSize: 12,
+                                                                    fontWeight: 700,
+                                                                    color:
+                                                                        diffQty === null
+                                                                            ? "#9ca3af"
+                                                                            : diffQty > 0
+                                                                                ? "seagreen"
+                                                                                : diffQty < 0
+                                                                                    ? "crimson"
+                                                                                    : "#6b7280",
+                                                                }}
+                                                            >
+                                                                {diffQty === null
+                                                                    ? "-"
+                                                                    : `${t.snapshotDiff} ${diffQty > 0 ? "+" : ""}${formatDecimalDisplay(diffQty)}`}
+                                                            </div>
+                                                        )}
                                                     </div>
 
                                                     <button
@@ -3418,7 +3487,11 @@ export default function InventoryPage() {
                                                         ) : null}
 
                                                         <div style={ui.detailLabel}>{t.lowStockThreshold}</div>
-                                                        <div style={ui.detailValue}>{item.low_stock_threshold ?? 1}</div>
+                                                        <div style={ui.detailValue}>
+                                                            {item.low_stock_enabled === true
+                                                                ? item.low_stock_threshold ?? 1
+                                                                : "-"}
+                                                        </div>
 
                                                         <div style={ui.detailLabel}>{c.update}</div>
                                                         <div style={ui.detailValue}>
@@ -3439,7 +3512,7 @@ export default function InventoryPage() {
                                                         <div style={ui.detailValue}>{item.note || "-"}</div>
                                                     </div>
 
-                                                    {Number(item.quantity) <= Number(item.low_stock_threshold ?? 1) && (
+                                                    {isLowStock && (
                                                         <div
                                                             style={{
                                                                 marginTop: 10,
@@ -3493,7 +3566,7 @@ export default function InventoryPage() {
                                                             {c.edit}
                                                         </button>
 
-                                                        {canDeleteInventoryItem && (
+                                                        {canToggleInventoryActive && (
                                                             <button
                                                                 onClick={() =>
                                                                     handleActiveStatusChange(item, isInactive)
@@ -4170,25 +4243,65 @@ export default function InventoryPage() {
                                 onChange={(e) => setQuantity(e.target.value)}
                                 style={ui.input}
                                 ref={quantityRef}
-                                onKeyDown={(e) => handleKeyDown(e, lowStockThresholdRef)}
+                                onKeyDown={(e) =>
+                                    handleKeyDown(
+                                        e,
+                                        lowStockEnabled ? lowStockThresholdRef : noteRef
+                                    )
+                                }
                             />
                         </div>
 
                         {/* 부족기준 */}
                         <div>
-                            <div style={labelStyle}>
-                                {t.lowStockThreshold}
+                            <label
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    fontSize: 13,
+                                    fontWeight: 800,
+                                    color: "#374151",
+                                    marginBottom: 6,
+                                }}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={lowStockEnabled}
+                                    onChange={(e) => setLowStockEnabled(e.target.checked)}
+                                    style={{ width: 16, height: 16 }}
+                                />
+                                {t.lowStockEnabled}
+                            </label>
+
+                            <div
+                                style={{
+                                    marginBottom: lowStockEnabled ? 8 : 0,
+                                    color: "#6b7280",
+                                    fontSize: 12,
+                                    lineHeight: 1.4,
+                                }}
+                            >
+                                {t.lowStockEnabledHelp}
                             </div>
-                            <input
-                                type="number"
-                                step="0.1"
-                                placeholder={t.lowStockThreshold}
-                                value={lowStockThreshold}
-                                onChange={(e) => setLowStockThreshold(e.target.value)}
-                                style={ui.input}
-                                ref={lowStockThresholdRef}
-                                onKeyDown={(e) => handleKeyDown(e, noteRef)}
-                            />
+
+                            {lowStockEnabled && (
+                                <>
+                                    <div style={labelStyle}>
+                                        {t.lowStockThreshold}
+                                    </div>
+                                    <input
+                                        type="number"
+                                        step="0.1"
+                                        placeholder={t.lowStockThreshold}
+                                        value={lowStockThreshold}
+                                        onChange={(e) => setLowStockThreshold(e.target.value)}
+                                        style={ui.input}
+                                        ref={lowStockThresholdRef}
+                                        onKeyDown={(e) => handleKeyDown(e, noteRef)}
+                                    />
+                                </>
+                            )}
                         </div>
 
                         {/* 비고 */}
