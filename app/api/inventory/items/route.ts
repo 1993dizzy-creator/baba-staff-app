@@ -114,6 +114,9 @@ const getActor = async (actorUsername?: string) => {
   return data;
 };
 
+const canManageInventoryItemLifecycle = (role: unknown) =>
+  role === "owner" || role === "master";
+
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -626,12 +629,25 @@ const insertInventoryLog = async (
   return data;
 };
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const { data, error } = await supabaseAdmin
+    const { searchParams } = new URL(req.url);
+    const includeInactive = searchParams.get("includeInactive") === "true";
+    const actorUsername = searchParams.get("actorUsername") || "";
+    const actor = includeInactive ? await getActor(actorUsername) : null;
+    const canIncludeInactive =
+      includeInactive && canManageInventoryItemLifecycle(actor?.role);
+
+    let query = supabaseAdmin
       .from("inventory")
       .select("*")
       .order("updated_at", { ascending: false });
+
+    if (!canIncludeInactive) {
+      query = query.eq("is_active", true);
+    }
+
+    const { data, error } = await query;
 
     if (error) throw error;
 
@@ -861,6 +877,59 @@ export async function PATCH(req: Request) {
         { ok: false, message: "Invalid user" },
         { status: 401 }
       );
+    }
+
+    if (mode === "active-status") {
+      if (!canManageInventoryItemLifecycle(actor.role)) {
+        return jsonError(
+          "inventory_item_active_status_forbidden",
+          "Inventory item active status update requires admin permission.",
+          403
+        );
+      }
+
+      const nextIsActive = payload.is_active;
+
+      if (typeof nextIsActive !== "boolean") {
+        return jsonError(
+          "invalid_active_status",
+          "is_active must be boolean.",
+          400
+        );
+      }
+
+      if (nextIsActive === false) {
+        const { count, error: activeSessionError } = await supabaseAdmin
+          .from("inventory_keg_sessions")
+          .select("id", { count: "exact", head: true })
+          .eq("inventory_item_id", Number(id))
+          .eq("status", "active");
+
+        if (activeSessionError) throw activeSessionError;
+
+        if ((count ?? 0) > 0) {
+          return jsonError(
+            "inventory_item_has_active_keg_session",
+            "This inventory item has an active keg tracking session.",
+            409
+          );
+        }
+      }
+
+      const { data: updatedItem, error: activeUpdateError } =
+        await supabaseAdmin
+          .from("inventory")
+          .update({
+            is_active: nextIsActive,
+            updated_by_name: actor.name || "",
+          })
+          .eq("id", Number(id))
+          .select("*")
+          .single();
+
+      if (activeUpdateError || !updatedItem) throw activeUpdateError;
+
+      return NextResponse.json({ ok: true, data: updatedItem });
     }
 
     const { data: prevItem, error: prevError } = await supabaseAdmin
@@ -1110,7 +1179,7 @@ export async function DELETE(req: Request) {
       return jsonError("missing_actor", "Invalid user", 401);
     }
 
-    if (actor.role !== "owner" && actor.role !== "master") {
+    if (!canManageInventoryItemLifecycle(actor.role)) {
       return jsonError(
         "inventory_item_delete_forbidden",
         "Inventory item deletion requires admin permission.",

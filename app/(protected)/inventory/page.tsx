@@ -40,6 +40,7 @@ type InventoryItem = {
     low_stock_threshold?: string | number | null;
     package_content_quantity?: string | number | null;
     package_content_unit?: string | null;
+    is_active?: boolean | null;
     has_active_keg_tracking?: boolean | null;
     kegProgress?: {
         activeSessionId: number;
@@ -336,6 +337,7 @@ export default function InventoryPage() {
     const [categoryFilter, setCategoryFilter] = useState("all");
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
     const [showTodayUpdatedOnly, setShowTodayUpdatedOnly] = useState(false);
+    const [showInactiveItems, setShowInactiveItems] = useState(false);
     const [quantityDrafts, setQuantityDrafts] = useState<Record<number, string>>({});
     const [latestSnapshotMap, setLatestSnapshotMap] = useState<Record<number, number>>({});
     const [latestSnapshotDate, setLatestSnapshotDate] = useState<string>("");
@@ -359,6 +361,7 @@ export default function InventoryPage() {
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDeletingId, setIsDeletingId] = useState<number | null>(null);
+    const [activeStatusBusyId, setActiveStatusBusyId] = useState<number | null>(null);
     const [isQuickSaving, setIsQuickSaving] = useState(false);
     const [isKegReplacing, setIsKegReplacing] = useState(false);
     const [photoBusyItemId, setPhotoBusyItemId] = useState<number | null>(null);
@@ -699,7 +702,16 @@ export default function InventoryPage() {
     };
 
     const fetchInventory = async () => {
-        const url = "/api/inventory/items";
+        const params = new URLSearchParams();
+
+        if (canDeleteInventoryItem && showInactiveItems) {
+            params.set("includeInactive", "true");
+            params.set("actorUsername", actorUsername);
+        }
+
+        const url = params.size
+            ? `/api/inventory/items?${params.toString()}`
+            : "/api/inventory/items";
 
         try {
             const res = await fetch(url, {
@@ -1140,6 +1152,61 @@ export default function InventoryPage() {
             await fetchRecentLogs();
         } finally {
             setIsDeletingId(null);
+        }
+    };
+
+    const handleActiveStatusChange = async (item: InventoryItem, nextIsActive: boolean) => {
+        if (activeStatusBusyId === item.id) return;
+
+        const confirmMessage = nextIsActive
+            ? t.activateItemConfirm
+            : [
+                t.deactivateItemConfirmTitle,
+                t.deactivateItemConfirmDescription,
+            ].join("\n");
+
+        if (!confirm(confirmMessage)) return;
+
+        setActiveStatusBusyId(item.id);
+
+        try {
+            const res = await fetch("/api/inventory/items", {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    mode: "active-status",
+                    id: item.id,
+                    payload: {
+                        is_active: nextIsActive,
+                    },
+                    actorUsername,
+                }),
+            });
+
+            const result = await readInventoryItemMutationResult(res, "edit");
+            if (!result) return;
+
+            if (!res.ok || !result.ok) {
+                if (res.status === 403) {
+                    alert(c.noPermission);
+                    return;
+                }
+
+                if (res.status === 409 && result.error === "inventory_item_has_active_keg_session") {
+                    alert(result.message || t.deactivateFail);
+                    return;
+                }
+
+                alert(result.message || (nextIsActive ? t.activateFail : t.deactivateFail));
+                return;
+            }
+
+            alert(nextIsActive ? t.activateDone : t.deactivateDone);
+            await fetchInventory();
+        } finally {
+            setActiveStatusBusyId(null);
         }
     };
 
@@ -1987,7 +2054,18 @@ export default function InventoryPage() {
         fetchInventory();
         fetchRecentLogs();
         fetchLatestSnapshot();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    useEffect(() => {
+        if (!canDeleteInventoryItem && showInactiveItems) {
+            setShowInactiveItems(false);
+            return;
+        }
+
+        fetchInventory();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showInactiveItems, canDeleteInventoryItem]);
 
     useEffect(() => {
         const savedPartFilter = localStorage.getItem("inventory_part_filter");
@@ -2071,7 +2149,9 @@ export default function InventoryPage() {
     }, [isFormOpen]);
 
     const lowStockItems = inventoryList.filter(
-        (item) => Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
+        (item) =>
+            item.is_active !== false &&
+            Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
     );
 
     const categoryTabs = useMemo(() => {
@@ -2155,6 +2235,8 @@ export default function InventoryPage() {
     // (로그 / 스냅샷 페이지는 최신순 기준 유지 가능)
     const filteredInventory = inventoryList
         .filter((item) => {
+            if (!showInactiveItems && item.is_active === false) return false;
+
             const keyword = normalizeSearchText(search);
             const displayItemName = getDisplayItemName(item);
             const displayCategory = getDisplayCategory(item);
@@ -2477,6 +2559,15 @@ export default function InventoryPage() {
                         >
                             {showTodayUpdatedOnly ? c.all : t.filterToday}
                         </button>
+
+                        {canDeleteInventoryItem && (
+                            <button
+                                onClick={() => setShowInactiveItems(!showInactiveItems)}
+                                style={getFilterToggleButtonStyle(showInactiveItems, "#4b5563")}
+                            >
+                                {showInactiveItems ? c.all : t.includeInactiveItems}
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -2540,6 +2631,7 @@ export default function InventoryPage() {
                                     const packageContentText = getPackageContentText(item);
                                     const packageContentCompactText =
                                         getPackageContentCompactText(item);
+                                    const isInactive = item.is_active === false;
 
                                     return (
                                         <div
@@ -2548,10 +2640,13 @@ export default function InventoryPage() {
                                                 ...ui.card,
                                                 padding: "5px 8px",
                                                 borderLeft:
-                                                    Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
+                                                    isInactive
+                                                        ? "4px solid #9ca3af"
+                                                        : Number(item.quantity) <= Number(item.low_stock_threshold ?? 1)
                                                         ? "4px solid crimson"
                                                         : `4px solid ${getPartMeta(item.part).color}`,
-                                                background: "#fff",
+                                                background: isInactive ? "#f9fafb" : "#fff",
+                                                opacity: isInactive ? 0.72 : 1,
                                             }}
                                         >
                                             <div
@@ -2595,6 +2690,17 @@ export default function InventoryPage() {
                                                                 }}
                                                             >
                                                                 {t.low}
+                                                            </span>
+                                                        )}
+
+                                                        {isInactive && (
+                                                            <span
+                                                                style={{
+                                                                    ...ui.badgeMini,
+                                                                    background: "#6b7280",
+                                                                }}
+                                                            >
+                                                                {t.inactiveItem}
                                                             </span>
                                                         )}
                                                     </div>
@@ -3178,6 +3284,35 @@ export default function InventoryPage() {
                                                         >
                                                             {c.edit}
                                                         </button>
+
+                                                        {canDeleteInventoryItem && (
+                                                            <button
+                                                                onClick={() =>
+                                                                    handleActiveStatusChange(item, isInactive)
+                                                                }
+                                                                disabled={activeStatusBusyId === item.id}
+                                                                style={{
+                                                                    ...ui.subButton,
+                                                                    width: "auto",
+                                                                    minWidth: 58,
+                                                                    padding: "7px 12px",
+                                                                    fontSize: 13,
+                                                                    background: isInactive ? "seagreen" : "#4b5563",
+                                                                    color: "white",
+                                                                    border: isInactive
+                                                                        ? "1px solid seagreen"
+                                                                        : "1px solid #4b5563",
+                                                                    fontWeight: 700,
+                                                                    opacity: activeStatusBusyId === item.id ? 0.6 : 1,
+                                                                    cursor:
+                                                                        activeStatusBusyId === item.id
+                                                                            ? "not-allowed"
+                                                                            : "pointer",
+                                                                }}
+                                                            >
+                                                                {isInactive ? t.activateItem : t.deactivateItem}
+                                                            </button>
+                                                        )}
 
                                                         {canDeleteInventoryItem && (
                                                             <button

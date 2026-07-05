@@ -119,6 +119,18 @@ export const inventoryText = {
     editItem: "수정",
     syncCurrentItemHelp: "현재 품목명/카테고리/단위/구매처/단가를 이 기록에 반영합니다.",
     editItemHelp: "재고관리 페이지에서 이 품목을 수정합니다.",
+    deactivateItem: "비활성",
+    activateItem: "활성화",
+    includeInactiveItems: "비활성 포함",
+    inactiveItem: "비활성 품목",
+    deactivateItemConfirmTitle: "이 품목을 비활성화할까요?",
+    deactivateItemConfirmDescription:
+      "기본 재고 목록에서 숨겨지지만, 과거 로그와 집계 기록은 유지됩니다.",
+    activateItemConfirm: "이 품목을 다시 활성화할까요?",
+    deactivateDone: "비활성 처리되었습니다.",
+    activateDone: "다시 활성화되었습니다.",
+    deactivateFail: "비활성 처리 실패",
+    activateFail: "활성화 실패",
   },
 
   vi: {
@@ -245,5 +257,17 @@ export const inventoryText = {
     editItem: "Sửa",
     syncCurrentItemHelp: "Đồng bộ tên hàng/danh mục/đơn vị/nơi mua/đơn giá hiện tại vào lịch sử này.",
     editItemHelp: "Sửa sản phẩm này trong trang quản lý kho.",
+    deactivateItem: "Tắt",
+    activateItem: "Bật lại",
+    includeInactiveItems: "Bao gồm mục đã tắt",
+    inactiveItem: "Mục đã tắt",
+    deactivateItemConfirmTitle: "Bạn muốn tắt mục này không?",
+    deactivateItemConfirmDescription:
+      "Mục này sẽ bị ẩn khỏi danh sách tồn kho mặc định, nhưng lịch sử và báo cáo cũ vẫn được giữ lại.",
+    activateItemConfirm: "Bạn muốn bật lại mục này không?",
+    deactivateDone: "Đã tắt mục này.",
+    activateDone: "Đã bật lại mục này.",
+    deactivateFail: "Không thể tắt mục này.",
+    activateFail: "Không thể bật lại mục này.",
   },
 };
