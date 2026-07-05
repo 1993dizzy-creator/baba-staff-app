@@ -1929,7 +1929,7 @@ export default function InventoryPage() {
                 return;
             }
 
-            if (nextQty === currentQty) {
+            if (nextQty === currentQty && reason !== "stock_check") {
                 alert(t.quantityNoChange);
                 return;
             }

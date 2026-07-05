@@ -1200,6 +1200,31 @@ export async function PATCH(req: Request) {
       }
     }
 
+    const quickSaveLogReason =
+      mode === "quick-save"
+        ? normalizeInventoryReason(reason, "stock_check")
+        : null;
+    const quickSaveNextQuantity =
+      mode === "quick-save" && Object.prototype.hasOwnProperty.call(payload, "quantity")
+        ? roundDecimal(Number(payload.quantity ?? 0))
+        : null;
+
+    if (
+      mode === "quick-save" &&
+      quickSaveLogReason !== "stock_check" &&
+      quickSaveNextQuantity !== null &&
+      quickSaveNextQuantity === roundDecimal(Number(prevItem.quantity ?? 0))
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "quantity_no_change",
+          message: "Quantity was not changed.",
+        },
+        { status: 400 }
+      );
+    }
+
     const { data: updatedItem, error: updateError } = await supabaseAdmin
       .from("inventory")
       .update(payload)
@@ -1233,7 +1258,7 @@ export async function PATCH(req: Request) {
     const fallbackLogReason = changeQuantity !== 0 ? "stock_check" : "other";
     const logReason =
       mode === "quick-save"
-        ? normalizeInventoryReason(reason, "stock_check")
+        ? quickSaveLogReason ?? "stock_check"
         : Object.prototype.hasOwnProperty.call(body, "reason")
           ? normalizeInventoryReason(reason, fallbackLogReason)
           : fallbackLogReason;
