@@ -55,6 +55,8 @@ type InventoryItem = {
     updated_by_name?: string | null;
 };
 
+type KegProgress = NonNullable<InventoryItem["kegProgress"]>;
+
 type KegTimeModalState = {
     mode: "replace" | "edit-start";
     item: InventoryItem;
@@ -123,6 +125,62 @@ type InventoryLogGroup = {
     groupKey: string;
     latest: InventoryLog;
     logs: InventoryLog[];
+};
+
+type LatestSnapshotData = {
+    snapshotMap: Record<number, number>;
+    snapshotDate: string;
+};
+
+type RequestCacheEntry<T> = {
+    promise?: Promise<T>;
+    data?: T;
+    timestamp?: number;
+};
+
+const REQUEST_CACHE_TTL_MS = 5000;
+const requestCache = new Map<string, RequestCacheEntry<unknown>>();
+
+const runDedupeRequest = async <T,>(
+    key: string,
+    request: () => Promise<T>,
+    options: { force?: boolean; cacheTtlMs?: number } = {}
+) => {
+    const force = options.force === true;
+    const cacheTtlMs = options.cacheTtlMs ?? REQUEST_CACHE_TTL_MS;
+
+    if (force) {
+        requestCache.delete(key);
+    } else {
+        const cached = requestCache.get(key) as RequestCacheEntry<T> | undefined;
+        const now = Date.now();
+
+        if (cached?.promise) return cached.promise;
+        if (
+            cached &&
+            Object.prototype.hasOwnProperty.call(cached, "data") &&
+            cached.timestamp &&
+            now - cached.timestamp < cacheTtlMs
+        ) {
+            return cached.data as T;
+        }
+    }
+
+    const entry: RequestCacheEntry<T> = {};
+    entry.promise = request()
+        .then((data) => {
+            entry.data = data;
+            entry.timestamp = Date.now();
+            entry.promise = undefined;
+            return data;
+        })
+        .catch((error) => {
+            requestCache.delete(key);
+            throw error;
+        });
+
+    requestCache.set(key, entry as RequestCacheEntry<unknown>);
+    return entry.promise;
 };
 
 const normalizeSearchText = (value: unknown) =>
@@ -338,6 +396,7 @@ export default function InventoryPage() {
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
     const [showTodayUpdatedOnly, setShowTodayUpdatedOnly] = useState(false);
     const [showInactiveItems, setShowInactiveItems] = useState(false);
+    const [kegProgressLoadingIds, setKegProgressLoadingIds] = useState<Record<number, boolean>>({});
     const [quantityDrafts, setQuantityDrafts] = useState<Record<number, string>>({});
     const [latestSnapshotMap, setLatestSnapshotMap] = useState<Record<number, number>>({});
     const [latestSnapshotDate, setLatestSnapshotDate] = useState<string>("");
@@ -379,6 +438,7 @@ export default function InventoryPage() {
     const formRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
     const lowStockThresholdRef = useRef<HTMLInputElement>(null);
+    const hasMountedInventoryFetchRef = useRef(false);
 
     const categoryOptions =
         CATEGORY_OPTIONS_BY_PART[part as keyof typeof CATEGORY_OPTIONS_BY_PART] ?? [];
@@ -701,8 +761,105 @@ export default function InventoryPage() {
         return changes;
     };
 
-    const fetchInventory = async () => {
+    const getKegProgressCandidateIds = (items: InventoryItem[]) =>
+        items
+            .filter((item) => {
+                const unit = String(item.unit || "").trim().toLowerCase();
+                const packageUnit = String(item.package_content_unit || "")
+                    .trim()
+                    .toLowerCase();
+                const packageQuantity = Number(item.package_content_quantity ?? 0);
+
+                return (
+                    item.has_active_keg_tracking === true &&
+                    unit === "keg" &&
+                    packageUnit === "ml" &&
+                    Number.isFinite(packageQuantity) &&
+                    packageQuantity > 0
+                );
+            })
+            .map((item) => item.id);
+
+    const getKegProgressKey = (itemIds: number[]) =>
+        `keg-progress:${[...itemIds].sort((a, b) => a - b).join(",")}`;
+
+    const applyKegProgress = (
+        itemIds: number[],
+        progressMap: Record<string, KegProgress>
+    ) => {
+        setInventoryList((prev) =>
+            prev.map((item) =>
+                itemIds.includes(item.id)
+                    ? {
+                        ...item,
+                        kegProgress: progressMap[String(item.id)] ?? null,
+                    }
+                    : item
+            )
+        );
+    };
+
+    const fetchKegProgress = async (
+        items: InventoryItem[],
+        options: { force?: boolean } = {}
+    ) => {
+        const itemIds = getKegProgressCandidateIds(items);
+        if (itemIds.length === 0) return;
+        const sortedItemIds = [...itemIds].sort((a, b) => a - b);
+        const requestKey = getKegProgressKey(sortedItemIds);
+
+        setKegProgressLoadingIds((prev) => {
+            const next = { ...prev };
+            sortedItemIds.forEach((id) => {
+                next[id] = true;
+            });
+            return next;
+        });
+
+        try {
+            const progressMap = await runDedupeRequest<Record<string, KegProgress>>(requestKey, async () => {
+                const params = new URLSearchParams({
+                    itemIds: sortedItemIds.join(","),
+                });
+                const res = await fetch(`/api/inventory/keg-progress?${params.toString()}`, {
+                    cache: "no-store",
+                });
+                const result = await res.json() as {
+                    ok?: boolean;
+                    progressMap?: Record<string, KegProgress>;
+                    message?: string;
+                };
+
+                if (!res.ok || !result.ok) {
+                    throw new Error(result.message || "Failed to fetch keg progress");
+                }
+
+                return result.progressMap || {};
+            }, {
+                force: options.force ?? true,
+                cacheTtlMs: Number.POSITIVE_INFINITY,
+            });
+
+            applyKegProgress(sortedItemIds, progressMap);
+        } catch (error) {
+            console.warn("[inventory] fetchKegProgress exception", {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+            });
+        } finally {
+            setKegProgressLoadingIds((prev) => {
+                const next = { ...prev };
+                sortedItemIds.forEach((id) => {
+                    delete next[id];
+                });
+                return next;
+            });
+        }
+    };
+
+    const fetchInventory = async (options: { force?: boolean } = {}) => {
         const params = new URLSearchParams();
+        params.set("includeKegProgress", "false");
 
         if (canDeleteInventoryItem && showInactiveItems) {
             params.set("includeInactive", "true");
@@ -712,48 +869,56 @@ export default function InventoryPage() {
         const url = params.size
             ? `/api/inventory/items?${params.toString()}`
             : "/api/inventory/items";
+        const requestKey = `items:includeInactive=${showInactiveItems && canDeleteInventoryItem}`;
 
         try {
-            const res = await fetch(url, {
-                cache: "no-store",
-            });
-            const contentType = res.headers.get("content-type") || "";
-            const bodyText = await res.text();
-            const bodyPreview = bodyText.slice(0, 1000);
-            let parseErrorMessage: string | null = null;
-            let parsedJson: unknown = {};
-
-            try {
-                parsedJson = bodyText ? JSON.parse(bodyText) : {};
-            } catch (error) {
-                parseErrorMessage = error instanceof Error ? error.message : String(error);
-            }
-
-            const result = parsedJson && typeof parsedJson === "object"
-                ? parsedJson as {
-                    ok?: boolean;
-                    data?: InventoryItem[];
-                    error?: string;
-                    message?: string;
-                }
-                : {};
-
-            if (!res.ok || !result.ok) {
-                console.warn("[inventory] fetchInventory failed", {
-                    status: res.status,
-                    statusText: res.statusText,
-                    url,
-                    contentType,
-                    error: result.error,
-                    message: result.message,
-                    json: result,
-                    bodyPreview,
-                    parseError: parseErrorMessage,
+            const nextItems = await runDedupeRequest<InventoryItem[]>(requestKey, async () => {
+                const res = await fetch(url, {
+                    cache: "no-store",
                 });
-                return;
-            }
+                const contentType = res.headers.get("content-type") || "";
+                const bodyText = await res.text();
+                const bodyPreview = bodyText.slice(0, 1000);
+                let parseErrorMessage: string | null = null;
+                let parsedJson: unknown = {};
 
-            setInventoryList(result.data || []);
+                try {
+                    parsedJson = bodyText ? JSON.parse(bodyText) : {};
+                } catch (error) {
+                    parseErrorMessage = error instanceof Error ? error.message : String(error);
+                }
+
+                const result = parsedJson && typeof parsedJson === "object"
+                    ? parsedJson as {
+                        ok?: boolean;
+                        data?: InventoryItem[];
+                        error?: string;
+                        message?: string;
+                    }
+                    : {};
+
+                if (!res.ok || !result.ok) {
+                    console.warn("[inventory] fetchInventory failed", {
+                        status: res.status,
+                        statusText: res.statusText,
+                        url,
+                        contentType,
+                        error: result.error,
+                        message: result.message,
+                        json: result,
+                        bodyPreview,
+                        parseError: parseErrorMessage,
+                    });
+                    throw new Error(result.message || "Failed to fetch inventory");
+                }
+
+                return result.data || [];
+            }, {
+                force: options.force ?? true,
+            });
+
+            setInventoryList(nextItems);
+            void fetchKegProgress(nextItems, { force: options.force ?? true });
         } catch (error) {
             console.warn("[inventory] fetchInventory exception", {
                 url,
@@ -763,50 +928,56 @@ export default function InventoryPage() {
         }
     };
 
-    const fetchRecentLogs = async () => {
+    const fetchRecentLogs = async (options: { force?: boolean } = {}) => {
         const url = "/api/inventory/logs/recent";
 
         try {
-            const res = await fetch(url, {
-                cache: "no-store",
-            });
-            const contentType = res.headers.get("content-type") || "";
-            const bodyText = await res.text();
-            const bodyPreview = bodyText.slice(0, 1000);
-            let parseErrorMessage: string | null = null;
-            let parsedJson: unknown = {};
-
-            try {
-                parsedJson = bodyText ? JSON.parse(bodyText) : {};
-            } catch (error) {
-                parseErrorMessage = error instanceof Error ? error.message : String(error);
-            }
-
-            const result = parsedJson && typeof parsedJson === "object"
-                ? parsedJson as {
-                    ok?: boolean;
-                    data?: InventoryLog[];
-                    error?: string;
-                    message?: string;
-                }
-                : {};
-
-            if (!res.ok || !result.ok) {
-                console.warn("[inventory] fetchRecentLogs failed", {
-                    status: res.status,
-                    statusText: res.statusText,
-                    url,
-                    contentType,
-                    error: result.error,
-                    message: result.message,
-                    json: result,
-                    bodyPreview,
-                    parseError: parseErrorMessage,
+            const logs = await runDedupeRequest<InventoryLog[]>("recent-logs", async () => {
+                const res = await fetch(url, {
+                    cache: "no-store",
                 });
-                return;
-            }
+                const contentType = res.headers.get("content-type") || "";
+                const bodyText = await res.text();
+                const bodyPreview = bodyText.slice(0, 1000);
+                let parseErrorMessage: string | null = null;
+                let parsedJson: unknown = {};
 
-            setRecentLogs(result.data || []);
+                try {
+                    parsedJson = bodyText ? JSON.parse(bodyText) : {};
+                } catch (error) {
+                    parseErrorMessage = error instanceof Error ? error.message : String(error);
+                }
+
+                const result = parsedJson && typeof parsedJson === "object"
+                    ? parsedJson as {
+                        ok?: boolean;
+                        data?: InventoryLog[];
+                        error?: string;
+                        message?: string;
+                    }
+                    : {};
+
+                if (!res.ok || !result.ok) {
+                    console.warn("[inventory] fetchRecentLogs failed", {
+                        status: res.status,
+                        statusText: res.statusText,
+                        url,
+                        contentType,
+                        error: result.error,
+                        message: result.message,
+                        json: result,
+                        bodyPreview,
+                        parseError: parseErrorMessage,
+                    });
+                    throw new Error(result.message || "Failed to fetch recent logs");
+                }
+
+                return result.data || [];
+            }, {
+                force: options.force ?? true,
+            });
+
+            setRecentLogs(logs);
         } catch (error) {
             console.warn("[inventory] fetchRecentLogs exception", {
                 url,
@@ -839,20 +1010,36 @@ export default function InventoryPage() {
         }
     };
 
-    const fetchLatestSnapshot = async () => {
-        const res = await fetch("/api/inventory/snapshot/latest", {
-            cache: "no-store",
-        });
+    const fetchLatestSnapshot = async (options: { force?: boolean } = {}) => {
+        try {
+            const snapshot = await runDedupeRequest<LatestSnapshotData>("latest-snapshot", async () => {
+                const res = await fetch("/api/inventory/snapshot/latest", {
+                    cache: "no-store",
+                });
 
-        const result = await res.json();
+                const result = await res.json() as {
+                    ok?: boolean;
+                    data?: Partial<LatestSnapshotData>;
+                    message?: string;
+                };
 
-        if (!res.ok || !result.ok) {
-            console.error(result);
-            return;
+                if (!res.ok || !result.ok) {
+                    throw new Error(result.message || "Failed to fetch latest snapshot");
+                }
+
+                return {
+                    snapshotMap: result.data?.snapshotMap || {},
+                    snapshotDate: result.data?.snapshotDate || "",
+                };
+            }, {
+                force: options.force ?? true,
+            });
+
+            setLatestSnapshotMap(snapshot.snapshotMap);
+            setLatestSnapshotDate(snapshot.snapshotDate);
+        } catch (error) {
+            console.error(error);
         }
-
-        setLatestSnapshotMap(result.data?.snapshotMap || {});
-        setLatestSnapshotDate(result.data?.snapshotDate || "");
     };
 
     const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -1622,13 +1809,15 @@ export default function InventoryPage() {
         return Math.max(0, elapsedDays);
     };
 
-    const getKegRemainingLabel = (item: InventoryItem) => {
+    const getKegRemainingLabel = (item: InventoryItem, isLoading = false) => {
+        if (isLoading) return t.kegProgressLoading;
         if (!item.kegProgress) return t.kegNotStarted;
         const elapsedDays = getKegElapsedDays(item) ?? 0;
         return `${t.kegRemaining} ${Math.round(getKegRemainingPercent(item))}% (${t.kegElapsedDays(elapsedDays)})`;
     };
 
-    const getKegUsageLabel = (item: InventoryItem) => {
+    const getKegUsageLabel = (item: InventoryItem, isLoading = false) => {
+        if (isLoading) return "";
         const progress = item.kegProgress;
         if (!progress) return "";
         const soldLiters = progress.soldMl / 1000;
@@ -1636,7 +1825,8 @@ export default function InventoryPage() {
         return `${formatDecimalDisplay(soldLiters)}L / ${formatDecimalDisplay(capacityLiters)}L`;
     };
 
-    const getKegRemainingPercent = (item: InventoryItem) => {
+    const getKegRemainingPercent = (item: InventoryItem, isLoading = false) => {
+        if (isLoading) return 0;
         const remainingPercent = Number(item.kegProgress?.remainingPercent ?? 0);
         if (!Number.isFinite(remainingPercent)) return 0;
         return Math.min(100, Math.max(0, remainingPercent));
@@ -2051,9 +2241,11 @@ export default function InventoryPage() {
     };
 
     useEffect(() => {
-        fetchInventory();
-        fetchRecentLogs();
-        fetchLatestSnapshot();
+        void Promise.all([
+            fetchInventory({ force: false }),
+            fetchRecentLogs({ force: false }),
+            fetchLatestSnapshot({ force: false }),
+        ]);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -2063,7 +2255,12 @@ export default function InventoryPage() {
             return;
         }
 
-        fetchInventory();
+        if (!hasMountedInventoryFetchRef.current) {
+            hasMountedInventoryFetchRef.current = true;
+            return;
+        }
+
+        fetchInventory({ force: true });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [showInactiveItems, canDeleteInventoryItem]);
 
@@ -2632,6 +2829,8 @@ export default function InventoryPage() {
                                     const packageContentCompactText =
                                         getPackageContentCompactText(item);
                                     const isInactive = item.is_active === false;
+                                    const isKegProgressLoading =
+                                        kegProgressLoadingIds[item.id] === true;
 
                                     return (
                                         <div
@@ -2900,7 +3099,7 @@ export default function InventoryPage() {
                                                                         lineHeight: 1,
                                                                     }}
                                                                 >
-                                                                    <span>{getKegRemainingLabel(item)}</span>
+                                                                    <span>{getKegRemainingLabel(item, isKegProgressLoading)}</span>
                                                                     <span
                                                                         style={{
                                                                             color: "#047857",
@@ -2908,7 +3107,7 @@ export default function InventoryPage() {
                                                                             whiteSpace: "nowrap",
                                                                         }}
                                                                     >
-                                                                        {getKegUsageLabel(item)}
+                                                                        {getKegUsageLabel(item, isKegProgressLoading)}
                                                                     </span>
                                                                 </div>
                                                                 <div
@@ -2922,7 +3121,7 @@ export default function InventoryPage() {
                                                                 >
                                                                     <div
                                                                         style={{
-                                                                            width: `${getKegRemainingPercent(item)}%`,
+                                                                            width: `${getKegRemainingPercent(item, isKegProgressLoading)}%`,
                                                                             height: "100%",
                                                                             borderRadius: 999,
                                                                             background: item.kegProgress

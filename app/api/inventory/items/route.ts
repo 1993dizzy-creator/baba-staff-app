@@ -191,7 +191,8 @@ async function fetchKegProgressByItemId(
     .select("inventory_item_id, pos_product_id, quantity_per_pos_unit")
     .in("inventory_item_id", kegCandidateIds)
     .eq("is_active", true)
-    .eq("target_type", "product");
+    .eq("target_type", "product")
+    .eq("unit", "ml");
 
   if (mappingError) throw mappingError;
 
@@ -633,6 +634,8 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const includeInactive = searchParams.get("includeInactive") === "true";
+    const includeKegProgress =
+      searchParams.get("includeKegProgress") !== "false";
     const actorUsername = searchParams.get("actorUsername") || "";
     const actor = includeInactive ? await getActor(actorUsername) : null;
     const canIncludeInactive =
@@ -665,10 +668,9 @@ export async function GET(req: Request) {
       .map((item) => Number(item.id))
       .filter((id) => Number.isFinite(id) && id > 0);
     const activeKegTrackingIds = new Set<number>();
-    const kegProgressByItemId = await fetchKegProgressByItemId(
-      items,
-      kegCandidateIds
-    );
+    const kegProgressByItemId = includeKegProgress
+      ? await fetchKegProgressByItemId(items, kegCandidateIds)
+      : new Map<number, KegProgress>();
 
     if (kegCandidateIds.length > 0) {
       const { data: mappings, error: mappingError } = await supabaseAdmin
