@@ -23,6 +23,11 @@ import { CATEGORY_OPTIONS_BY_PART } from "@/lib/inventory/categories";
 import { parseDecimal,formatDecimalDisplay,roundDecimal,} from "@/lib/inventory/number";
 import { formatNumber,parsePrice,formatMoneyDisplay,} from "@/lib/inventory/money";
 import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
+import {
+    InventoryImageCompressionError,
+    compressInventoryImage,
+    formatFileSize,
+} from "@/lib/inventory/image-compression";
 
 type InventoryItem = {
     id: number;
@@ -196,17 +201,11 @@ const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "Server error";
 
 const INVENTORY_IMAGE_BUCKET = "inventory-images";
-const MAX_ORIGINAL_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_COMPRESSED_IMAGE_BYTES = 1024 * 1024;
-const MAX_IMAGE_SIDE = 900;
-const IMAGE_QUALITY = 0.72;
-const JPEG_FALLBACK_QUALITY = 0.78;
-const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const UNSUPPORTED_MOBILE_IMAGE_TYPES = new Set(["image/heic", "image/heif"]);
+const INVENTORY_PHOTO_ACCEPT = "image/jpeg,image/png,image/webp,image/heic,image/heif";
 const UNSUPPORTED_IMAGE_MESSAGE =
-    "이 사진 형식은 업로드할 수 없습니다. 카메라 설정에서 JPG로 촬영하거나, 갤러리에서 JPG/PNG로 변환 후 다시 시도해주세요.";
+    "이 사진 형식은 브라우저에서 처리할 수 없습니다. 카메라 설정을 JPG로 변경하거나 다른 사진을 선택해주세요.";
 const COMPRESSED_IMAGE_TOO_LARGE_MESSAGE =
-    "압축 후 이미지가 1MB를 초과했습니다. 조금 더 작은 사진으로 다시 시도해주세요.";
+    "사진을 100KB 이하로 줄일 수 없습니다. 조금 더 단순한 배경에서 다시 찍어주세요.";
 
 const getInventoryImageUrl = (imagePath?: string | null) => {
     if (!imagePath) return "";
@@ -221,32 +220,6 @@ const getInventoryImageUrl = (imagePath?: string | null) => {
 
     return `${supabaseUrl}/storage/v1/object/public/${INVENTORY_IMAGE_BUCKET}/${encodedPath}`;
 };
-
-const getFileExtension = (fileName: string) => {
-    const extension = fileName.split(".").pop()?.toLowerCase() || "";
-    return extension;
-};
-
-const getImageType = (file: File) => {
-    if (file.type) return file.type;
-
-    const extension = getFileExtension(file.name);
-    if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
-    if (extension === "png") return "image/png";
-    if (extension === "webp") return "image/webp";
-    if (extension === "heic") return "image/heic";
-    if (extension === "heif") return "image/heif";
-    return "";
-};
-
-const canvasToBlob = (
-    canvas: HTMLCanvasElement,
-    type: "image/webp" | "image/jpeg",
-    quality: number
-) =>
-    new Promise<Blob | null>((resolve) => {
-        canvas.toBlob(resolve, type, quality);
-    });
 
 const getPhotoUploadErrorMessage = (error?: string, message?: string) => {
     if (error === "file_too_large") return COMPRESSED_IMAGE_TOO_LARGE_MESSAGE;
@@ -271,78 +244,6 @@ const getPhotoUploadErrorMessage = (error?: string, message?: string) => {
 
     return message || "사진 업로드에 실패했습니다.";
 };
-
-const compressInventoryImage = async (file: File) => {
-    const imageType = getImageType(file);
-
-    console.info("[INVENTORY_PHOTO_SELECTED_FILE]", {
-        name: file.name,
-        type: file.type || "(empty)",
-        inferredType: imageType || "(unknown)",
-        size: file.size,
-    });
-
-    if (UNSUPPORTED_MOBILE_IMAGE_TYPES.has(imageType)) {
-        throw new Error(UNSUPPORTED_IMAGE_MESSAGE);
-    }
-
-    if (!ALLOWED_IMAGE_TYPES.has(imageType)) {
-        throw new Error(UNSUPPORTED_IMAGE_MESSAGE);
-    }
-
-    if (file.size > MAX_ORIGINAL_IMAGE_BYTES) {
-        throw new Error("원본 이미지가 5MB를 초과했습니다. 조금 더 작은 사진으로 다시 시도해주세요.");
-    }
-
-    const objectUrl = URL.createObjectURL(file);
-
-    try {
-        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-            const img = new Image();
-            img.onload = () => resolve(img);
-            img.onerror = () => reject(new Error("Failed to load image"));
-            img.src = objectUrl;
-        });
-
-        const ratio = Math.min(
-            1,
-            MAX_IMAGE_SIDE / Math.max(image.naturalWidth, image.naturalHeight)
-        );
-        const width = Math.max(1, Math.round(image.naturalWidth * ratio));
-        const height = Math.max(1, Math.round(image.naturalHeight * ratio));
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("Failed to prepare image");
-
-        context.drawImage(image, 0, 0, width, height);
-
-        const webpBlob = await canvasToBlob(canvas, "image/webp", IMAGE_QUALITY);
-        const blob =
-            webpBlob && webpBlob.size > 0
-                ? webpBlob
-                : await canvasToBlob(canvas, "image/jpeg", JPEG_FALLBACK_QUALITY);
-        const compressedType =
-            webpBlob && webpBlob.size > 0 ? "image/webp" : "image/jpeg";
-
-        if (!blob) throw new Error("Failed to compress image");
-
-        if (blob.size > MAX_COMPRESSED_IMAGE_BYTES) {
-            throw new Error(COMPRESSED_IMAGE_TOO_LARGE_MESSAGE);
-        }
-
-        return new File(
-            [blob],
-            compressedType === "image/webp" ? "main.webp" : "main.jpg",
-            { type: compressedType }
-        );
-    } finally {
-        URL.revokeObjectURL(objectUrl);
-    }
-};
-
 
 export default function InventoryPage() {
 
@@ -380,6 +281,7 @@ export default function InventoryPage() {
     const [formPhotoFile, setFormPhotoFile] = useState<File | null>(null);
     const [formPhotoPreviewUrl, setFormPhotoPreviewUrl] = useState("");
     const [isFormPhotoProcessing, setIsFormPhotoProcessing] = useState(false);
+    const [photoCompressionMessage, setPhotoCompressionMessage] = useState("");
 
     const [inventoryList, setInventoryList] = useState<InventoryItem[]>([]);
     const [recentLogs, setRecentLogs] = useState<InventoryLog[]>([]);
@@ -1051,6 +953,7 @@ export default function InventoryPage() {
 
         setFormPhotoFile(null);
         setFormPhotoPreviewUrl("");
+        setPhotoCompressionMessage("");
     };
 
     const resetForm = () => {
@@ -2137,16 +2040,39 @@ export default function InventoryPage() {
 
         if (!file) return;
 
+        setPhotoBusyItemId(itemId);
+        setPhotoCompressionMessage(t.photoCompressing);
+
         try {
-            const compressedFile = await compressInventoryImage(file);
-            const uploaded = await uploadInventoryPhoto(itemId, compressedFile);
+            const compressed = await compressInventoryImage(file);
+            setPhotoCompressionMessage(
+                t.photoCompressed(
+                    formatFileSize(compressed.originalBytes),
+                    formatFileSize(compressed.compressedBytes)
+                )
+            );
+            const uploaded = await uploadInventoryPhoto(itemId, compressed.file);
 
             if (uploaded) {
                 setPhotoModalItem(null);
+            } else {
+                setPhotoCompressionMessage("");
             }
         } catch (error) {
             console.error(error);
+            setPhotoCompressionMessage("");
+            if (error instanceof InventoryImageCompressionError) {
+                alert(
+                    error.code === "unsupported_format"
+                        ? t.photoUnsupportedFormat
+                        : t.photoCompressionFailed
+                );
+                return;
+            }
+
             alert(getErrorMessage(error));
+        } finally {
+            setPhotoBusyItemId(null);
         }
     };
 
@@ -2157,13 +2083,25 @@ export default function InventoryPage() {
         if (!file) return;
 
         setIsFormPhotoProcessing(true);
+        setPhotoCompressionMessage(t.photoCompressing);
 
         try {
-            const compressedFile = await compressInventoryImage(file);
+            const compressed = await compressInventoryImage(file);
+            const compressedFile = compressed.file;
+            setPhotoCompressionMessage(
+                t.photoCompressed(
+                    formatFileSize(compressed.originalBytes),
+                    formatFileSize(compressed.compressedBytes)
+                )
+            );
 
             if (editingId) {
-                await uploadInventoryPhoto(editingId, compressedFile);
-                clearFormPhotoDraft();
+                const uploaded = await uploadInventoryPhoto(editingId, compressedFile);
+                if (uploaded) {
+                    clearFormPhotoDraft();
+                } else {
+                    setPhotoCompressionMessage("");
+                }
                 return;
             }
 
@@ -2175,6 +2113,16 @@ export default function InventoryPage() {
             setFormPhotoPreviewUrl(URL.createObjectURL(compressedFile));
         } catch (error) {
             console.error(error);
+            setPhotoCompressionMessage("");
+            if (error instanceof InventoryImageCompressionError) {
+                alert(
+                    error.code === "unsupported_format"
+                        ? t.photoUnsupportedFormat
+                        : t.photoCompressionFailed
+                );
+                return;
+            }
+
             alert(getErrorMessage(error));
         } finally {
             setIsFormPhotoProcessing(false);
@@ -2185,6 +2133,7 @@ export default function InventoryPage() {
         if (photoBusyItemId === itemId) return;
 
         setPhotoBusyItemId(itemId);
+        setPhotoCompressionMessage("");
 
         try {
             const res = await fetch(`/api/inventory/items/${itemId}/photo`, {
@@ -3356,7 +3305,8 @@ export default function InventoryPage() {
                                                                 />
                                                             </button>
                                                         ) : (
-                                                            <div
+                                                            <>
+                                                                <div
                                                                 style={{
                                                                     display: "flex",
                                                                     justifyContent: "center",
@@ -3366,7 +3316,7 @@ export default function InventoryPage() {
                                                                 <input
                                                                     id={`inventory-photo-${item.id}`}
                                                                     type="file"
-                                                                    accept="image/jpeg,image/png,image/webp"
+                                                                    accept={INVENTORY_PHOTO_ACCEPT}
                                                                     onChange={(e) => handleInventoryPhotoChange(e, item.id)}
                                                                     style={{ display: "none" }}
                                                                 />
@@ -3395,8 +3345,22 @@ export default function InventoryPage() {
                                                                     {photoBusyItemId === item.id
                                                                         ? c.saving
                                                                         : `📷 ${t.photoAddButton}`}
-                                                                </label>
-                                                            </div>
+                                                                    </label>
+                                                                </div>
+                                                            {photoCompressionMessage &&
+                                                                photoBusyItemId === item.id && (
+                                                                    <div
+                                                                        style={{
+                                                                            fontSize: 12,
+                                                                            color: "#6b7280",
+                                                                            lineHeight: 1.35,
+                                                                            textAlign: "center",
+                                                                        }}
+                                                                    >
+                                                                        {photoCompressionMessage}
+                                                                    </div>
+                                                                )}
+                                                            </>
                                                         )}
                                                     </div>
 
@@ -3868,7 +3832,7 @@ export default function InventoryPage() {
                                 <input
                                     id="inventory-form-photo"
                                     type="file"
-                                    accept="image/jpeg,image/png,image/webp"
+                                    accept={INVENTORY_PHOTO_ACCEPT}
                                     onChange={handleFormPhotoChange}
                                     style={{ display: "none" }}
                                 />
@@ -3943,6 +3907,18 @@ export default function InventoryPage() {
                                     </button>
                                 )}
                             </div>
+                            {photoCompressionMessage && (
+                                <div
+                                    style={{
+                                        fontSize: 12,
+                                        color: "#6b7280",
+                                        lineHeight: 1.35,
+                                        marginTop: 6,
+                                    }}
+                                >
+                                    {photoCompressionMessage}
+                                </div>
+                            )}
                         </div>
 
                         {/* 거래처 */}
@@ -4387,7 +4363,7 @@ export default function InventoryPage() {
                             <input
                                 id={`inventory-photo-modal-${photoModalItem.id}`}
                                 type="file"
-                                accept="image/jpeg,image/png,image/webp"
+                                accept={INVENTORY_PHOTO_ACCEPT}
                                 onChange={(e) =>
                                     handleInventoryPhotoChange(e, photoModalItem.id)
                                 }
@@ -4439,6 +4415,19 @@ export default function InventoryPage() {
                                 {`🗑️ ${t.photoDeleteButton}`}
                             </button>
                         </div>
+                        {photoCompressionMessage &&
+                            photoBusyItemId === photoModalItem.id && (
+                                <div
+                                    style={{
+                                        fontSize: 12,
+                                        color: "#6b7280",
+                                        lineHeight: 1.35,
+                                        textAlign: "center",
+                                    }}
+                                >
+                                    {photoCompressionMessage}
+                                </div>
+                            )}
 
                         <button
                             type="button"

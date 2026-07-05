@@ -98,6 +98,13 @@ export const inventoryText = {
     photoDeleteButton: "사진 삭제",
     photoSaved: "사진이 저장되었습니다.",
     photoDeletedSuccess: "사진이 삭제되었습니다.",
+    photoCompressing: "사진 압축 중...",
+    photoCompressed: (before: string, after: string) =>
+      `사진을 업로드용으로 압축했습니다. ${before} → ${after}`,
+    photoCompressionFailed:
+      "사진을 100KB 이하로 줄일 수 없습니다. 조금 더 단순한 배경에서 다시 찍어주세요.",
+    photoUnsupportedFormat:
+      "이 사진 형식은 브라우저에서 처리할 수 없습니다. 카메라 설정을 JPG로 변경하거나 다른 사진을 선택해주세요.",
     deleteLinkedAppliedPosDeductionConfirm:
       "해당 품목은 실제 POS 재고 차감 이력과 연결되어 있습니다.\n정말 삭제하시겠습니까?\n삭제하면 POS 차감 이력도 함께 삭제됩니다.",
     deleteLinkedInventoryHistoryConfirm:
@@ -235,6 +242,13 @@ export const inventoryText = {
     photoDeleteButton: "Xóa ảnh",
     photoSaved: "Đã lưu ảnh.",
     photoDeletedSuccess: "Đã xóa ảnh.",
+    photoCompressing: "Đang nén ảnh...",
+    photoCompressed: (before: string, after: string) =>
+      `Đã nén ảnh để tải lên. ${before} → ${after}`,
+    photoCompressionFailed:
+      "Không thể giảm ảnh xuống dưới 100KB. Vui lòng chụp lại với nền đơn giản hơn.",
+    photoUnsupportedFormat:
+      "Trình duyệt không xử lý được định dạng ảnh này. Vui lòng chọn ảnh JPG hoặc ảnh khác.",
     deleteLinkedAppliedPosDeductionConfirm:
       "Sản phẩm này đang được liên kết với lịch sử trừ kho POS thực tế.\nBạn có chắc chắn muốn xóa không?\nNếu xóa, lịch sử trừ kho POS cũng sẽ bị xóa.",
     deleteLinkedInventoryHistoryConfirm:

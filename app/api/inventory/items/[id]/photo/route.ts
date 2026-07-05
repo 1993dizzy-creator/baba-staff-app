@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { getBusinessDate } from "@/lib/common/business-time";
 
 const INVENTORY_IMAGE_BUCKET = "inventory-images";
-const MAX_UPLOAD_BYTES = 1024 * 1024;
+const MAX_UPLOAD_BYTES = 120 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 type RouteParams = {
