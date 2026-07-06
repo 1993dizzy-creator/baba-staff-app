@@ -9,6 +9,7 @@ import { useLanguage } from "@/lib/language-context";
 import { commonText } from "@/lib/text";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import { INVENTORY_REASON_EMOJIS } from "@/lib/inventory/reasons";
+import { getBusinessDate } from "@/lib/common/business-time";
 
 type MonthlyItemStatus = "existing" | "new" | "missing";
 type LatestSource = "snapshot" | "current_inventory" | null;
@@ -20,7 +21,7 @@ type MonthlyItem = {
   nameVi: string | null;
   unit: string | null;
   supplier: string | null;
-  supplierLabel: string;
+  supplierLabel: string | null;
   part: string | null;
   category: string | null;
   categoryVi: string | null;
@@ -65,7 +66,7 @@ type PriceChangeEvent = {
 
 type SupplierSummary = {
   supplier: string | null;
-  supplierLabel: string;
+  supplierLabel: string | null;
   itemCount: number;
   purchaseQuantity: number;
   purchaseAmountKnown: number;
@@ -349,16 +350,7 @@ const monthlyText = {
   },
 } as const;
 
-const getVietnamMonth = () => {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric",
-    month: "2-digit",
-  }).formatToParts(new Date());
-  const year = parts.find((part) => part.type === "year")?.value || "";
-  const month = parts.find((part) => part.type === "month")?.value || "";
-  return `${year}-${month}`;
-};
+const getVietnamMonth = () => getBusinessDate().slice(0, 7);
 
 const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 3,

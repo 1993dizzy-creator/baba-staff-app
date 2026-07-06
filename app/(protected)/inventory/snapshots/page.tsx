@@ -10,6 +10,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import {PART_VALUES,PART_META,type PartValue,} from "@/lib/common/parts";
 import { formatDecimalDisplay } from "@/lib/inventory/number";
+import { getBusinessDate } from "@/lib/common/business-time";
 import {
     INVENTORY_REASON_EMOJIS,
     INVENTORY_REASON_LABELS,
@@ -224,24 +225,12 @@ const buildDailyNetPurchasedItems = (items: SnapshotItem[]) => {
         .filter((item) => Number(item.change_quantity ?? 0) > 0);
 };
 
-function formatLocalDateKey(date = new Date()) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
+function getInventoryBusinessDateKey(date = new Date()) {
+    return getBusinessDate(date);
 }
 
-function getInventoryBusinessDateKey(date = new Date(), cutoffHour = 3) {
-    const businessDate = new Date(date);
-    if (businessDate.getHours() < cutoffHour) {
-        businessDate.setDate(businessDate.getDate() - 1);
-    }
-
-    return formatLocalDateKey(businessDate);
-}
-
-function getInventoryBusinessMonthKey(date = new Date(), cutoffHour = 3) {
-    return getInventoryBusinessDateKey(date, cutoffHour).slice(0, 7);
+function getInventoryBusinessMonthKey(date = new Date()) {
+    return getInventoryBusinessDateKey(date).slice(0, 7);
 }
 
 export default function InventorySnapshotsPage() {
@@ -357,17 +346,17 @@ export default function InventorySnapshotsPage() {
             .join(" ");
     };
 
-    const getDisplayItemName = (item: SnapshotItem) => {
+    const getDisplayItemName = useCallback((item: SnapshotItem) => {
         return lang === "vi"
             ? item.item_name_vi || item.item_name || "-"
             : item.item_name || item.item_name_vi || "-";
-    };
+    }, [lang]);
 
-    const getDisplayCategory = (item: SnapshotItem) => {
+    const getDisplayCategory = useCallback((item: SnapshotItem) => {
         return lang === "vi"
             ? item.category_vi || item.category || "-"
             : item.category || item.category_vi || "-";
-    };
+    }, [lang]);
 
     const getCategoryKey = (item: SnapshotItem) =>
         item.category || item.category_vi || "-";
@@ -403,7 +392,7 @@ export default function InventorySnapshotsPage() {
     };
 
 
-    const fetchBatches = async (month = calendarMonth) => {
+    const fetchBatches = useCallback(async (month: string) => {
         setLoadingBatches(true);
         const url = `/api/inventory/snapshot/list${
             month ? `?month=${encodeURIComponent(month)}` : ""
@@ -470,7 +459,7 @@ export default function InventorySnapshotsPage() {
         } finally {
             setLoadingBatches(false);
         }
-    };
+    }, [calendarMonth]);
 
     const fetchSnapshotItems = async (
         batchId: number | string | null | undefined
@@ -605,7 +594,7 @@ export default function InventorySnapshotsPage() {
         }
     };
 
-    const mapLogToSnapshotItem = (log: InventoryLog): SnapshotItem => {
+    const mapLogToSnapshotItem = useCallback((log: InventoryLog): SnapshotItem => {
         const changeQuantity = Number(log.change_quantity ?? 0);
         const purchasePrice = log.new_purchase_price ?? log.prev_purchase_price ?? log.purchase_price ?? null;
 
@@ -636,9 +625,9 @@ export default function InventorySnapshotsPage() {
             new_note: log.new_note ?? null,
             prev_note: log.prev_note ?? null,
         };
-    };
+    }, []);
 
-    const fetchMovementItems = async (businessDate: string) => {
+    const fetchMovementItems = useCallback(async (businessDate: string) => {
         setLoadingMovements(true);
         setSupplierTab("all");
 
@@ -695,7 +684,7 @@ export default function InventorySnapshotsPage() {
         } finally {
             setLoadingMovements(false);
         }
-    };
+    }, [mapLogToSnapshotItem]);
 
     const changeLogReason = async (log: InventoryLog, reason: QuickReasonValue) => {
         if (changingReasonLogId || log.reason === reason) return;
@@ -933,13 +922,9 @@ export default function InventorySnapshotsPage() {
     };
 
     useEffect(() => {
-        fetchMovementItems(activeBusinessDateKey);
-    }, [activeBusinessDateKey]);
-
-    useEffect(() => {
         if (!calendarMonth) return;
         fetchBatches(calendarMonth);
-    }, [calendarMonth]);
+    }, [calendarMonth, fetchBatches]);
 
     useEffect(() => {
         setCategoryFilter("all");
@@ -965,7 +950,7 @@ export default function InventorySnapshotsPage() {
         if (batch?.snapshot_date) {
             fetchMovementItems(batch.snapshot_date);
         }
-    }, [activeBusinessDateKey, batchList, selectedBatchId, viewMode]);
+    }, [activeBusinessDateKey, batchList, selectedBatchId, viewMode, fetchMovementItems]);
 
     useEffect(() => {
         if (calendarMonth) return;
@@ -981,9 +966,11 @@ export default function InventorySnapshotsPage() {
         }
     }, [batchList, calendarMonth]);
 
+    const allLabel = c.all;
+
     const categoryTabs = useMemo(() => {
         return [
-            { key: "all", label: c.all },
+            { key: "all", label: allLabel },
             ...Array.from(
                 new Map(
                     snapshotItems
@@ -999,7 +986,7 @@ export default function InventorySnapshotsPage() {
                 ).values()
             ),
         ];
-    }, [snapshotItems, partFilter, lang]);
+    }, [snapshotItems, partFilter, allLabel, getDisplayCategory]);
 
     const filteredItems = useMemo(() => {
         return snapshotItems
@@ -1050,7 +1037,7 @@ export default function InventorySnapshotsPage() {
                     sensitivity: "base",
                 });
             });
-    }, [snapshotItems, search, partFilter, categoryFilter, showChangedOnly, lang]);
+    }, [snapshotItems, search, partFilter, categoryFilter, showChangedOnly, getDisplayCategory, getDisplayItemName]);
 
     const groupedItems: Record<string, SnapshotItem[]> = filteredItems.reduce(
         (acc: Record<string, SnapshotItem[]>, item) => {
@@ -1085,7 +1072,7 @@ export default function InventorySnapshotsPage() {
                 sensitivity: "base",
             });
         });
-    }, [movementItems, lang]);
+    }, [movementItems, getDisplayItemName]);
 
     const snapshotItemPriceMap = useMemo(() => {
         const map = new Map<number, number | null>();
@@ -1205,14 +1192,14 @@ export default function InventorySnapshotsPage() {
         }, new Map<string, number>());
 
         return [
-            { key: "all", label: c.all, count: purchasedItems.length },
+            { key: "all", label: allLabel, count: purchasedItems.length },
             ...Array.from(supplierCounts.entries()).map(([supplier, count]) => ({
                 key: supplier,
                 label: supplier,
                 count,
             })),
         ];
-    }, [purchasedItems, lang]);
+    }, [purchasedItems, allLabel]);
 
     const filteredPurchasedItems = useMemo(() => {
         return purchasedItems.filter((item) => {

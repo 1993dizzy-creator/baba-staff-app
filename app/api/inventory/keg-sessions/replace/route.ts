@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
   BUSINESS_TIMEZONE_OFFSET,
-  getVietnamDateParts,
+  getBusinessDate,
 } from "@/lib/common/business-time";
 
 const supabaseAdmin = createClient(
@@ -18,11 +18,6 @@ const supabaseAdmin = createClient(
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
-
-const formatVietnamDateKey = (date: Date) => {
-  const parts = getVietnamDateParts(date);
-  return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
-};
 
 const parseReplacementAt = (value: unknown) => {
   if (typeof value !== "string" || !value.trim()) return new Date();
@@ -98,7 +93,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const businessDate = formatVietnamDateKey(replacementAt);
+    const businessDate = getBusinessDate(replacementAt);
     const { data, error } = await supabaseAdmin.rpc("replace_inventory_keg", {
       p_item_id: itemId,
       p_actor_username: actorUsername,

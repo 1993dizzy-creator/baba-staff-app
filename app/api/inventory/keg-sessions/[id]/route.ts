@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
   BUSINESS_TIMEZONE_OFFSET,
-  getVietnamDateParts,
+  getBusinessDate,
 } from "@/lib/common/business-time";
 
 const supabaseAdmin = createClient(
@@ -18,11 +18,6 @@ const supabaseAdmin = createClient(
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
-
-const formatVietnamDateKey = (date: Date) => {
-  const parts = getVietnamDateParts(date);
-  return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
-};
 
 const parseSessionStartedAt = (value: unknown) => {
   if (typeof value !== "string" || !value.trim()) return null;
@@ -120,7 +115,7 @@ export async function PATCH(
       );
     }
 
-    const businessDate = formatVietnamDateKey(startedAt);
+    const businessDate = getBusinessDate(startedAt);
     const startedAtIso = startedAt.toISOString();
 
     const { error: updateError } = await supabaseAdmin

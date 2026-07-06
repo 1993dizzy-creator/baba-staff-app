@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { getBusinessDate, getVietnamDateParts } from "@/lib/common/business-time";
+import { getBusinessDate } from "@/lib/common/business-time";
 import {
   type InventoryReasonValue,
   normalizeInventoryReason,
@@ -121,7 +121,7 @@ type MonthlyItemResult = {
   nameVi: string | null;
   unit: string | null;
   supplier: string | null;
-  supplierLabel: string;
+  supplierLabel: string | null;
   part: string | null;
   category: string | null;
   categoryVi: string | null;
@@ -166,7 +166,7 @@ type PriceChangeEvent = {
 
 type SupplierSummary = {
   supplier: string | null;
-  supplierLabel: string;
+  supplierLabel: string | null;
   itemCount: number;
   purchaseQuantity: number;
   purchaseAmountKnown: number;
@@ -203,25 +203,18 @@ const roundDecimal = (value: number) => Math.round(value * 1000) / 1000;
 
 const getSupplierLabel = (supplier?: string | null) => {
   const trimmed = supplier?.trim();
-  return trimmed || "거래처 미등록";
+  return trimmed || null;
 };
 
-const formatDateKey = (date: Date) => date.toISOString().slice(0, 10);
-
-const getDefaultMonth = () => {
-  const parts = getVietnamDateParts();
-  return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(
-    2,
-    "0"
-  )}`;
-};
+const getDefaultMonth = () => getBusinessDate().slice(0, 7);
 
 const isValidMonth = (value: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
 
 const getMonthRange = (month: string) => {
   const [year, monthNumber] = month.split("-").map(Number);
   const monthStart = `${month}-01`;
-  const monthEnd = formatDateKey(new Date(Date.UTC(year, monthNumber, 0)));
+  const lastDay = new Date(year, monthNumber, 0).getDate();
+  const monthEnd = `${month}-${String(lastDay).padStart(2, "0")}`;
 
   return { monthStart, monthEnd };
 };
@@ -434,7 +427,7 @@ const createSupplierPurchaseItem = (
   log: InventoryLog,
   baseItem: MonthlyItemResult | undefined,
   supplier: string | null,
-  supplierLabel: string
+  supplierLabel: string | null
 ): MonthlyItemResult => ({
   itemId: log.item_id ?? log.id * -1,
   code: baseItem?.code ?? log.code ?? null,
@@ -594,7 +587,7 @@ const buildSupplierSummary = (
     const quantityDiff = b.purchaseQuantity - a.purchaseQuantity;
     if (quantityDiff !== 0) return quantityDiff;
 
-    return a.supplierLabel.localeCompare(b.supplierLabel, undefined, {
+    return (a.supplierLabel ?? "").localeCompare(b.supplierLabel ?? "", undefined, {
       numeric: true,
       sensitivity: "base",
     });

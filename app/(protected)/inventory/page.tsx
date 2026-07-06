@@ -409,10 +409,13 @@ export default function InventoryPage() {
         a.localeCompare(b, "vi")
     );
 
-    const getDisplayItemName = (item: InventoryItem) =>
-        lang === "vi"
-            ? item.item_name_vi || item.item_name || "-"
-            : item.item_name || item.item_name_vi || "-";
+    const getDisplayItemName = useCallback(
+        (item: InventoryItem) =>
+            lang === "vi"
+                ? item.item_name_vi || item.item_name || "-"
+                : item.item_name || item.item_name_vi || "-",
+        [lang]
+    );
 
     const getPackageContentText = (item: InventoryItem) => {
         const contentQuantity = parseDecimal(item.package_content_quantity);
@@ -437,10 +440,13 @@ export default function InventoryPage() {
         return `${formatDecimalDisplay(contentQuantity)}${contentUnit}`;
     };
 
-    const getDisplayCategory = (item: InventoryItem) =>
-        lang === "vi"
-            ? item.category_vi || item.category || "-"
-            : item.category || item.category_vi || "-";
+    const getDisplayCategory = useCallback(
+        (item: InventoryItem) =>
+            lang === "vi"
+                ? item.category_vi || item.category || "-"
+                : item.category || item.category_vi || "-",
+        [lang]
+    );
 
     const getCategoryKey = useCallback(
         (item: InventoryItem) => item.category || item.category_vi || "-",
@@ -1095,8 +1101,7 @@ export default function InventoryPage() {
 
             alert(c.editSuccess);
             setEditFormPendingSave(null);
-            await fetchInventory();
-            await fetchRecentLogs();
+            await Promise.all([fetchInventory(), fetchRecentLogs()]);
             resetForm();
             setIsFormOpen(false);
             itemNameRef.current?.focus();
@@ -1258,8 +1263,7 @@ export default function InventoryPage() {
                 return;
             }
 
-            await fetchInventory();
-            await fetchRecentLogs();
+            await Promise.all([fetchInventory(), fetchRecentLogs()]);
         } finally {
             setIsDeletingId(null);
         }
@@ -1613,8 +1617,7 @@ export default function InventoryPage() {
                 alert(c.saveSuccess);
             }
 
-            await fetchInventory();
-            await fetchRecentLogs();
+            await Promise.all([fetchInventory(), fetchRecentLogs()]);
 
             resetForm();
             setIsFormOpen(false);
@@ -2445,92 +2448,109 @@ export default function InventoryPage() {
 
     // 재고 메인 목록은 운영 편의상 최신 수정순이 아니라 코드 > 이름순으로 고정한다.
     // (로그 / 스냅샷 페이지는 최신순 기준 유지 가능)
-    const filteredInventory = inventoryList
-        .filter((item) => {
-            if (!showInactiveItems && item.is_active === false) return false;
+    const filteredInventory = useMemo(() => {
+        return inventoryList
+            .filter((item) => {
+                if (!showInactiveItems && item.is_active === false) return false;
 
-            const keyword = normalizeSearchText(search);
-            const displayItemName = getDisplayItemName(item);
-            const displayCategory = getDisplayCategory(item);
-            const categoryKey = getCategoryKey(item);
-            const searchTargets = [
-                displayItemName,
-                item.item_name,
-                item.item_name_vi,
-                item.code,
-                displayCategory,
-                item.category,
-                item.category_vi,
-                item.supplier,
-                item.unit,
-            ];
+                const keyword = normalizeSearchText(search);
+                const displayItemName = getDisplayItemName(item);
+                const displayCategory = getDisplayCategory(item);
+                const categoryKey = getCategoryKey(item);
+                const searchTargets = [
+                    displayItemName,
+                    item.item_name,
+                    item.item_name_vi,
+                    item.code,
+                    displayCategory,
+                    item.category,
+                    item.category_vi,
+                    item.supplier,
+                    item.unit,
+                ];
 
-            const matchSearch =
-                !keyword ||
-                searchTargets.some((target) =>
-                    normalizeSearchText(target).includes(keyword)
+                const matchSearch =
+                    !keyword ||
+                    searchTargets.some((target) =>
+                        normalizeSearchText(target).includes(keyword)
+                    );
+
+                const matchPart = item.part === partFilter;
+                const matchCategory =
+                    categoryFilter === "all" || categoryKey === categoryFilter;
+                const matchLowStock =
+                    !showLowStockOnly || isLowStockItem(item);
+
+                const matchTodayUpdated =
+                    !showTodayUpdatedOnly || isInCurrentBusinessDay(item.updated_at);
+                const matchStockCheckNeeded =
+                    !showStockCheckNeededOnly ||
+                    (item.is_active !== false && item.needsStockCheck === true);
+
+                return (
+                    matchSearch &&
+                    matchPart &&
+                    matchCategory &&
+                    matchLowStock &&
+                    matchTodayUpdated &&
+                    matchStockCheckNeeded
                 );
+            })
+            .sort((a, b) => {
+                const codeA = (a.code || "").toLowerCase();
+                const codeB = (b.code || "").toLowerCase();
 
-            const matchPart = item.part === partFilter;
-            const matchCategory =
-                categoryFilter === "all" || categoryKey === categoryFilter;
-            const matchLowStock =
-                !showLowStockOnly || isLowStockItem(item);
+                // 1. 코드 있는 것 우선
+                if (codeA && !codeB) return -1;
+                if (!codeA && codeB) return 1;
 
-            const matchTodayUpdated =
-                !showTodayUpdatedOnly || isInCurrentBusinessDay(item.updated_at);
-            const matchStockCheckNeeded =
-                !showStockCheckNeededOnly ||
-                (item.is_active !== false && item.needsStockCheck === true);
+                // 2. 코드 비교
+                const codeCompare = codeA.localeCompare(codeB, undefined, {
+                    numeric: true,
+                    sensitivity: "base",
+                });
 
-            return (
-                matchSearch &&
-                matchPart &&
-                matchCategory &&
-                matchLowStock &&
-                matchTodayUpdated &&
-                matchStockCheckNeeded
-            );
-        })
-        .sort((a, b) => {
-            const codeA = (a.code || "").toLowerCase();
-            const codeB = (b.code || "").toLowerCase();
+                if (codeCompare !== 0) return codeCompare;
 
-            // 1. 코드 있는 것 우선
-            if (codeA && !codeB) return -1;
-            if (!codeA && codeB) return 1;
+                // 3. 이름 비교
+                const nameA = getDisplayItemName(a).toLowerCase();
+                const nameB = getDisplayItemName(b).toLowerCase();
 
-            // 2. 코드 비교
-            const codeCompare = codeA.localeCompare(codeB, undefined, {
-                numeric: true,
-                sensitivity: "base",
+                return nameA.localeCompare(nameB, undefined, {
+                    numeric: true,
+                    sensitivity: "base",
+                });
             });
+    }, [
+        inventoryList,
+        showInactiveItems,
+        search,
+        partFilter,
+        categoryFilter,
+        showLowStockOnly,
+        showTodayUpdatedOnly,
+        showStockCheckNeededOnly,
+        getDisplayItemName,
+        getDisplayCategory,
+        getCategoryKey,
+        isLowStockItem,
+    ]);
 
-            if (codeCompare !== 0) return codeCompare;
+    const groupedInventory: Record<string, InventoryItem[]> = useMemo(() => {
+        return filteredInventory.reduce(
+            (acc: Record<string, InventoryItem[]>, item) => {
+                const categoryKey = getDisplayCategory(item) || "-";
 
-            // 3. 이름 비교
-            const nameA = getDisplayItemName(a).toLowerCase();
-            const nameB = getDisplayItemName(b).toLowerCase();
+                if (!acc[categoryKey]) {
+                    acc[categoryKey] = [];
+                }
 
-            return nameA.localeCompare(nameB, undefined, {
-                numeric: true,
-                sensitivity: "base",
-            });
-        });
-
-    const groupedInventory: Record<string, InventoryItem[]> = filteredInventory.reduce(
-        (acc: Record<string, InventoryItem[]>, item) => {
-            const categoryKey = getDisplayCategory(item) || "-";
-
-            if (!acc[categoryKey]) {
-                acc[categoryKey] = [];
-            }
-
-            acc[categoryKey].push(item);
-            return acc;
-        },
-        {}
-    );
+                acc[categoryKey].push(item);
+                return acc;
+            },
+            {} as Record<string, InventoryItem[]>
+        );
+    }, [filteredInventory, getDisplayCategory]);
 
     const itemLogGroups: InventoryLogGroup[] = logModalItem
         ? [
