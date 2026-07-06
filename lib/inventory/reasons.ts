@@ -157,8 +157,18 @@ export function getInventoryReasonBadgeMeta(
 
   if (effectiveReason === "unclassified") return null;
 
+  const sourceLabel =
+    source === "keg_replace"
+      ? lang === "vi"
+        ? "Đổi keg"
+        : "케그 교체"
+      : "";
+
   return {
-    text: `${INVENTORY_REASON_EMOJIS[effectiveReason]} ${getCompactReasonLabel(effectiveReason, lang)}`,
+    text: [
+      `${INVENTORY_REASON_EMOJIS[effectiveReason]} ${getCompactReasonLabel(effectiveReason, lang)}`,
+      sourceLabel,
+    ].filter(Boolean).join(" · "),
     style: REASON_BADGE_STYLE,
   };
 }

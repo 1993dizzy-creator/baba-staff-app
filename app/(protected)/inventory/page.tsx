@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import { commonText, inventoryText } from "@/lib/text";
 import Container from "@/components/Container";
@@ -346,7 +346,6 @@ export default function InventoryPage() {
     const [photoBusyItemId, setPhotoBusyItemId] = useState<number | null>(null);
     const [photoModalItem, setPhotoModalItem] = useState<InventoryItem | null>(null);
     const [handledDeepLinkKey, setHandledDeepLinkKey] = useState("");
-    const [showLowStockBanner, setShowLowStockBanner] = useState(true);
 
     const itemNameRef = useRef<HTMLInputElement>(null);
     const supplierRef = useRef<HTMLInputElement>(null);
@@ -443,8 +442,10 @@ export default function InventoryPage() {
             ? item.category_vi || item.category || "-"
             : item.category || item.category_vi || "-";
 
-    const getCategoryKey = (item: InventoryItem) =>
-        item.category || item.category_vi || "-";
+    const getCategoryKey = useCallback(
+        (item: InventoryItem) => item.category || item.category_vi || "-",
+        []
+    );
 
     const getDisplayLogItemName = (log: InventoryLog) =>
         lang === "vi"
@@ -2320,37 +2321,70 @@ export default function InventoryPage() {
         }, 180);
     }, [isFormOpen]);
 
-    const isLowStockItem = (item: InventoryItem) =>
+    const isLowStockItem = useCallback((item: InventoryItem) =>
         item.low_stock_enabled === true &&
         item.low_stock_threshold !== null &&
         item.low_stock_threshold !== undefined &&
-        Number(item.quantity) <= Number(item.low_stock_threshold);
+        Number(item.quantity) <= Number(item.low_stock_threshold), []);
 
-    const lowStockItems = inventoryList.filter(
-        (item) => item.is_active !== false && isLowStockItem(item)
-    );
+    const partLowStockCounts = useMemo(() => {
+        const counts = PART_VALUES.reduce(
+            (acc, partValue) => {
+                acc[partValue] = 0;
+                return acc;
+            },
+            {} as Record<PartValue, number>
+        );
+
+        inventoryList.forEach((item) => {
+            if (item.is_active === false || !isLowStockItem(item)) return;
+            if (!PART_VALUES.includes(item.part as PartValue)) return;
+
+            counts[item.part as PartValue] += 1;
+        });
+
+        return counts;
+    }, [inventoryList, isLowStockItem]);
+
     const categoryTabs = useMemo(() => {
+        const partItems = inventoryList.filter(
+            (item) =>
+                item.part === partFilter &&
+                (showInactiveItems || item.is_active !== false)
+        );
+        const categoryCounts = new Map<string, number>();
+
+        partItems.forEach((item) => {
+            const key = getCategoryKey(item);
+            if (!key || key === "-") return;
+
+            categoryCounts.set(key, (categoryCounts.get(key) ?? 0) + 1);
+        });
+
+        const categoryEntries = partItems
+            .map((item) => {
+                const key = getCategoryKey(item);
+                if (!key || key === "-") return null;
+
+                return [
+                    key,
+                    {
+                        key,
+                        label:
+                            lang === "vi"
+                                ? item.category_vi || item.category || "-"
+                                : item.category || item.category_vi || "-",
+                        count: categoryCounts.get(key) ?? 0,
+                    },
+                ] as const;
+            })
+            .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
         return [
-            { key: "all", label: c.all },
-            ...Array.from(
-                new Map(
-                    inventoryList
-                        .filter((item) => item.part === partFilter)
-                        .filter((item) => getCategoryKey(item) && getCategoryKey(item) !== "-")
-                        .map((item) => [
-                            getCategoryKey(item),
-                            {
-                                key: getCategoryKey(item),
-                                label:
-                                    lang === "vi"
-                                        ? item.category_vi || item.category || "-"
-                                        : item.category || item.category_vi || "-",
-                            },
-                        ])
-                ).values()
-            ),
+            { key: "all", label: c.all, count: partItems.length },
+            ...Array.from(new Map(categoryEntries).values()),
         ];
-    }, [inventoryList, partFilter, lang, c.all]);
+    }, [inventoryList, partFilter, showInactiveItems, getCategoryKey, lang, c.all]);
 
     const getPartMeta = (value?: string | null) => {
         const safePart: PartValue =
@@ -2393,6 +2427,9 @@ export default function InventoryPage() {
 
     const getCategoryTabButtonStyle = (active: boolean) => {
         return {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
             padding: "7px 10px",
             borderRadius: 999,
             border: active ? "1px solid #111827" : "1px solid #d1d5db",
@@ -2559,66 +2596,6 @@ export default function InventoryPage() {
                 />
             </div>
 
-            {lowStockItems.length > 0 && showLowStockBanner && (
-                <div
-                    style={{
-                        marginBottom: 12,
-                        padding: "10px 12px",
-                        borderRadius: 10,
-                        background: "#fff5f5",
-                        border: "1px solid #f3caca",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: 10,
-                    }}
-                >
-                    {/* 좌측 (기존 기능 유지) */}
-                    <div
-                        onClick={() => {
-                            setSearch("");
-                            setPartFilter(defaultPart);
-                            setCategoryFilter("all");
-                            setShowLowStockOnly(true);
-                            setShowTodayUpdatedOnly(false);
-
-                            setTimeout(() => {
-                                listRef.current?.scrollIntoView({
-                                    behavior: "smooth",
-                                    block: "start",
-                                });
-                            }, 0);
-                        }}
-                        style={{
-                            color: "crimson",
-                            fontWeight: 600,
-                            fontSize: 13,
-                            cursor: "pointer",
-                            flex: 1,
-                        }}
-                    >
-                        {t.lowStockBanner(lowStockItems.length)}
-                    </div>
-
-                    {/* 우측 닫기 버튼 */}
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation(); // 🔥 핵심 (부모 클릭 막기)
-                            setShowLowStockBanner(false);
-                        }}
-                        style={{
-                            border: "none",
-                            background: "transparent",
-                            fontSize: 16,
-                            cursor: "pointer",
-                            color: "#9ca3af",
-                        }}
-                    >
-                        ✕
-                    </button>
-                </div>
-            )}
-
             {/* 재고목록 */}
             <div
                 ref={listRef}
@@ -2666,6 +2643,7 @@ export default function InventoryPage() {
                             gridTemplateColumns: "repeat(4, 1fr)",
                             gap: 6,
                             marginBottom: 10,
+                            overflow: "visible",
                         }}
                     >
                         {[
@@ -2677,16 +2655,57 @@ export default function InventoryPage() {
                             const partValue = partOption.value as PartValue;
                             const active = partFilter === partValue;
                             const meta = PART_META[partValue];
+                            const lowStockCount = partLowStockCounts[partValue] ?? 0;
 
                             return (
-                                <button
+                                <div
                                     key={partOption.value}
-                                    type="button"
-                                    onClick={() => setPartFilter(partValue)}
-                                    style={getPartButtonStyle(partValue, active)}
+                                    style={{
+                                        position: "relative",
+                                        minWidth: 0,
+                                        overflow: "visible",
+                                    }}
                                 >
-                                    {meta.emoji} {partOption.label}
-                                </button>
+                                    {lowStockCount > 0 && (
+                                        <span
+                                            style={{
+                                                position: "absolute",
+                                                top: -12,
+                                                left: "50%",
+                                                transform: "translateX(-50%)",
+                                                zIndex: 2,
+                                                pointerEvents: "none",
+                                                whiteSpace: "nowrap",
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                gap: 2,
+                                                minWidth: 24,
+                                                minHeight: 19,
+                                                padding: "2px 7px",
+                                                borderRadius: 999,
+                                                background: "crimson",
+                                                color: "#fff",
+                                                boxShadow: "0 2px 6px rgba(220,20,60,0.2)",
+                                                fontSize: 11,
+                                                fontWeight: 800,
+                                                lineHeight: 1,
+                                            }}
+                                        >
+                                            ⚠ {lowStockCount}
+                                        </span>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => setPartFilter(partValue)}
+                                        style={{
+                                            ...getPartButtonStyle(partValue, active),
+                                            width: "100%",
+                                        }}
+                                    >
+                                        {meta.emoji} {partOption.label}
+                                    </button>
+                                </div>
                             );
                         })}
                     </div>
@@ -2711,6 +2730,26 @@ export default function InventoryPage() {
                                     style={getCategoryTabButtonStyle(active)}
                                 >
                                     {cat.label}
+                                    <span
+                                        style={{
+                                            minWidth: 18,
+                                            height: 18,
+                                            padding: "0 5px",
+                                            borderRadius: 999,
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            background: active
+                                                ? "rgba(255,255,255,0.18)"
+                                                : "#e5e7eb",
+                                            color: active ? "#fff" : "#4b5563",
+                                            fontSize: 10,
+                                            fontWeight: 800,
+                                            lineHeight: 1,
+                                        }}
+                                    >
+                                        {cat.count}
+                                    </span>
                                 </button>
                             );
                         })}

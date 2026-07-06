@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
@@ -49,6 +49,8 @@ type SnapshotItem = {
     business_date?: string | null;
     created_at?: string | null;
     actor_name?: string | null;
+    new_note?: string | null;
+    prev_note?: string | null;
 };
 
 type InventoryLog = {
@@ -90,16 +92,42 @@ type MovementItemGroup = {
     totalAmount: number | null;
     latestTime: number;
     isApproxPrice: boolean;
+    notes: string[];
+};
+
+const PURCHASE_GROUP_NO_SUPPLIER = "__no_supplier__";
+const PURCHASE_GROUP_NO_PRICE = "__no_price__";
+
+const getPurchaseSupplierGroupKey = (supplier?: string | null) =>
+    supplier?.trim() || PURCHASE_GROUP_NO_SUPPLIER;
+
+const getPurchasePriceGroupKey = (price?: string | number | null) => {
+    if (price === null || price === undefined || price === "") {
+        return PURCHASE_GROUP_NO_PRICE;
+    }
+
+    const numericPrice = Number(price);
+
+    if (!Number.isFinite(numericPrice)) {
+        return String(price).trim() || PURCHASE_GROUP_NO_PRICE;
+    }
+
+    return String(numericPrice);
 };
 
 const getPurchaseGroupKey = (item: SnapshotItem) => {
+    const supplierKey = getPurchaseSupplierGroupKey(item.supplier);
+    const priceKey = getPurchasePriceGroupKey(item.purchase_price);
     const itemId = Number(item.item_id);
+
     if (Number.isFinite(itemId) && itemId > 0) {
-        return `item:${itemId}`;
+        return `item:${itemId}:supplier:${supplierKey}:price:${priceKey}`;
     }
 
     return [
         "fallback",
+        `supplier:${supplierKey}`,
+        `price:${priceKey}`,
         item.item_name || "",
         item.item_name_vi || "",
         item.unit || "",
@@ -111,6 +139,9 @@ const getSnapshotItemTime = (item: SnapshotItem) => {
     const time = item.created_at ? new Date(item.created_at).getTime() : NaN;
     return Number.isFinite(time) ? time : 0;
 };
+
+const getMovementNoteText = (item: SnapshotItem) =>
+    String(item.new_note || item.prev_note || "").trim();
 
 const buildDailyNetPurchasedItems = (items: SnapshotItem[]) => {
     const groups = new Map<
@@ -245,6 +276,7 @@ export default function InventorySnapshotsPage() {
     const [itemLogsError, setItemLogsError] = useState("");
     const [changingReasonLogId, setChangingReasonLogId] = useState<number | null>(null);
     const [syncingPurchaseLogId, setSyncingPurchaseLogId] = useState<number | null>(null);
+    const [purchaseLogGroupFilter, setPurchaseLogGroupFilter] = useState("all");
 
     const getSelectedBusinessDate = () => {
         if (viewMode === "snapshot") {
@@ -309,6 +341,11 @@ export default function InventorySnapshotsPage() {
 
     const isSalesInventoryLog = (log?: InventoryLog | SnapshotItem | null) =>
         log?.reason === "sale_deduction" || log?.source === "pos_sales";
+
+    const isKegReplaceInventoryLog = (log?: InventoryLog | SnapshotItem | null) =>
+        log?.source === "keg_replace";
+
+    const kegReplaceBadgeLabel = lang === "vi" ? "Đổi keg" : "케그 교체";
 
     const formatReasonItemName = (item: SnapshotItem) => {
         return [
@@ -512,6 +549,7 @@ export default function InventorySnapshotsPage() {
         setLogModalItem(item);
         setItemLogs([]);
         setItemLogsError("");
+        setPurchaseLogGroupFilter("all");
 
         if (!Number.isFinite(itemId) || itemId <= 0) {
             setItemLogsError(c.noData);
@@ -595,6 +633,8 @@ export default function InventorySnapshotsPage() {
             business_date: log.business_date ?? null,
             created_at: log.created_at ?? null,
             actor_name: log.actor_name ?? null,
+            new_note: log.new_note ?? null,
+            prev_note: log.prev_note ?? null,
         };
     };
 
@@ -1102,6 +1142,7 @@ export default function InventorySnapshotsPage() {
                 const latestTime = item.created_at ? new Date(item.created_at).getTime() : 0;
                 const safeLatestTime = Number.isFinite(latestTime) ? latestTime : 0;
                 const isSaleDeduction = item.reason === "sale_deduction";
+                const noteText = item.reason === "other" ? getMovementNoteText(item) : "";
                 let displayPrice = item.purchase_price;
                 let isApproxPrice = false;
 
@@ -1130,6 +1171,7 @@ export default function InventorySnapshotsPage() {
                         totalAmount: amount,
                         latestTime: safeLatestTime,
                         isApproxPrice,
+                        notes: noteText ? [noteText] : [],
                     });
                     return;
                 }
@@ -1137,6 +1179,9 @@ export default function InventorySnapshotsPage() {
                 current.count += 1;
                 current.totalQuantity += quantity;
                 current.isApproxPrice = current.isApproxPrice || isApproxPrice;
+                if (noteText && !current.notes.includes(noteText)) {
+                    current.notes.push(noteText);
+                }
                 if (amount !== null) {
                     current.totalAmount = (current.totalAmount ?? 0) + amount;
                 }
@@ -1186,12 +1231,100 @@ export default function InventorySnapshotsPage() {
         if (!logModalItem) return null;
         return itemLogs.find((log) => Number(log.id) === Number(logModalItem.id)) ?? null;
     }, [itemLogs, logModalItem]);
+    const selectedTimelineReason = selectedLog?.reason ?? logModalItem?.reason ?? null;
+
+    const noSupplierLabel = lang === "vi" ? "Không có nơi mua" : "거래처 없음";
+    const allLogsLabel = lang === "vi" ? "Tất cả" : c.all;
+    const priceChangeLabel = lang === "vi" ? "Đổi giá" : "가격변동";
+
+    const getPurchaseLogSupplierKey = (log: InventoryLog) =>
+        getPurchaseSupplierGroupKey(log.new_supplier ?? log.supplier ?? null);
+
+    const getPurchaseLogSupplierLabel = useCallback(
+        (log: InventoryLog) =>
+            (log.new_supplier ?? log.supplier ?? "").trim() || noSupplierLabel,
+        [noSupplierLabel]
+    );
+
+    const purchaseLogSupplierTabs = useMemo(() => {
+        const map = new Map<
+            string,
+            {
+                key: string;
+                supplierLabel: string;
+                count: number;
+            }
+        >();
+
+        itemLogs.forEach((log) => {
+            if (log.reason !== "purchase") return;
+
+            const key = getPurchaseLogSupplierKey(log);
+            const current = map.get(key);
+
+            if (current) {
+                current.count += 1;
+                return;
+            }
+
+            map.set(key, {
+                key,
+                supplierLabel: getPurchaseLogSupplierLabel(log),
+                count: 1,
+            });
+        });
+
+        return Array.from(map.values());
+    }, [itemLogs, getPurchaseLogSupplierLabel]);
+
+    const purchasePriceChangeLogIds = useMemo(() => {
+        const sortedPurchaseLogs = itemLogs
+            .filter((log) => log.reason === "purchase")
+            .sort((a, b) => {
+                const createdCompare = String(a.created_at || "").localeCompare(
+                    String(b.created_at || "")
+                );
+                if (createdCompare !== 0) return createdCompare;
+
+                return Number(a.id) - Number(b.id);
+            });
+        const changedLogIds = new Set<number>();
+        let previousPriceKey: string | null = null;
+
+        sortedPurchaseLogs.forEach((log) => {
+            const priceKey = getPurchasePriceGroupKey(log.new_purchase_price);
+            if (priceKey === PURCHASE_GROUP_NO_PRICE) return;
+
+            if (previousPriceKey !== null && priceKey !== previousPriceKey) {
+                changedLogIds.add(Number(log.id));
+            }
+
+            previousPriceKey = priceKey;
+        });
+
+        return changedLogIds;
+    }, [itemLogs]);
 
     const visibleTimelineLogs = useMemo(() => {
-        const selectedReason = selectedLog?.reason ?? logModalItem?.reason;
-        const logs = selectedReason
-            ? itemLogs.filter((log) => log.reason === selectedReason)
+        let logs = selectedTimelineReason
+            ? itemLogs.filter((log) => log.reason === selectedTimelineReason)
             : itemLogs;
+
+        if (selectedTimelineReason === "purchase" && purchaseLogGroupFilter !== "all") {
+            if (purchaseLogGroupFilter === "price_change") {
+                logs = logs.filter(
+                    (log) =>
+                        log.reason === "purchase" &&
+                        purchasePriceChangeLogIds.has(Number(log.id))
+                );
+            } else {
+                logs = logs.filter(
+                    (log) =>
+                        log.reason === "purchase" &&
+                        getPurchaseLogSupplierKey(log) === purchaseLogGroupFilter
+                );
+            }
+        }
 
         return [...logs]
             .sort((a, b) => {
@@ -1202,7 +1335,7 @@ export default function InventorySnapshotsPage() {
 
                 return Number(b.id) - Number(a.id);
             });
-    }, [itemLogs, logModalItem, selectedLog]);
+    }, [itemLogs, selectedTimelineReason, purchaseLogGroupFilter, purchasePriceChangeLogIds]);
 
     const selectedPurchaseAggregate =
         logModalItem?.reason === "purchase" && (logModalItem.syncLogIds?.length ?? 0) > 1
@@ -1286,6 +1419,20 @@ export default function InventorySnapshotsPage() {
                         >
                             {getReasonEmoji(log.reason)} {getCompactReasonLabel(log.reason)}
                         </span>
+                        {isKegReplaceInventoryLog(log) && (
+                            <span
+                                style={{
+                                    ...ui.badgeMini,
+                                    flexShrink: 0,
+                                    minWidth: "auto",
+                                    background: "#fff7ed",
+                                    color: "#9a3412",
+                                    border: "1px solid #fed7aa",
+                                }}
+                            >
+                                {kegReplaceBadgeLabel}
+                            </span>
+                        )}
                         <span
                             style={{
                                 minWidth: 0,
@@ -1331,8 +1478,9 @@ export default function InventorySnapshotsPage() {
                             fontSize: 12,
                             fontWeight: 500,
                             lineHeight: 1.25,
-                        }}
-                    >
+                    }}
+                >
+                        {getPurchaseLogSupplierLabel(log)} ·{" "}
                         {priceLabel}{" "}
                         <span style={logPriceTrendStyle}>
                             {logPriceTrend === "up"
@@ -2204,6 +2352,11 @@ export default function InventorySnapshotsPage() {
                                 const qty = group.totalQuantity;
                                 const qtyColor = qty > 0 ? "seagreen" : "crimson";
                                 const total = group.totalAmount;
+                                const noteSummary = group.notes.length === 0
+                                    ? ""
+                                    : group.notes.length === 1
+                                        ? group.notes[0]
+                                        : `${group.notes[0]} 외 ${group.notes.length - 1}개`;
                                 const countLabel = lang === "vi"
                                     ? `${group.count} lượt`
                                     : `${group.count}건`;
@@ -2260,6 +2413,23 @@ export default function InventorySnapshotsPage() {
                                                 >
                                                     / {getDisplayCategory(item)}
                                                 </span>
+                                                {isKegReplaceInventoryLog(item) && (
+                                                    <span
+                                                        style={{
+                                                            marginLeft: 4,
+                                                            padding: "2px 6px",
+                                                            borderRadius: 999,
+                                                            background: "#fff7ed",
+                                                            border: "1px solid #fed7aa",
+                                                            color: "#9a3412",
+                                                            fontSize: 11,
+                                                            fontWeight: 800,
+                                                            whiteSpace: "nowrap",
+                                                        }}
+                                                    >
+                                                        {kegReplaceBadgeLabel}
+                                                    </span>
+                                                )}
                                             </div>
 
                                             <span
@@ -2291,9 +2461,36 @@ export default function InventorySnapshotsPage() {
                                                 lineHeight: 1.2,
                                             }}
                                         >
-                                            <div style={{ color: qtyColor }}>
-                                                {qty > 0 ? "+" : ""}
-                                                {formatDecimalDisplay(qty)} {item.unit || ""}
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 4,
+                                                    minWidth: 0,
+                                                    color: qtyColor,
+                                                }}
+                                            >
+                                                <span style={{ flexShrink: 0 }}>
+                                                    {qty > 0 ? "+" : ""}
+                                                    {formatDecimalDisplay(qty)} {item.unit || ""}
+                                                </span>
+                                                {noteSummary ? (
+                                                    <span
+                                                        title={noteSummary}
+                                                        style={{
+                                                            minWidth: 0,
+                                                            maxWidth: 180,
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                            whiteSpace: "nowrap",
+                                                            color: "#6b7280",
+                                                            fontSize: 12,
+                                                            fontWeight: 600,
+                                                        }}
+                                                    >
+                                                        ({noteSummary})
+                                                    </span>
+                                                ) : null}
                                             </div>
 
                                             <div
@@ -2917,6 +3114,8 @@ export default function InventorySnapshotsPage() {
                                                 {lang === "vi" ? "Số nhật ký" : "포함 로그"}{" "}
                                                 {selectedPurchaseAggregate.syncLogIds?.length ?? 0}
                                                 {" / "}
+                                                {(selectedPurchaseAggregate.supplier || "").trim() || noSupplierLabel}
+                                                {" / "}
                                                 {unitPrice === null || unitPrice === undefined ? "-" : (
                                                     <span style={priceTrendStyle}>
                                                         {priceTrend === "up"
@@ -3021,6 +3220,20 @@ export default function InventorySnapshotsPage() {
                                                     >
                                                         {getReasonEmoji(log.reason)} {getCompactReasonLabel(log.reason)}
                                                     </span>
+                                                    {isKegReplaceInventoryLog(log) && (
+                                                        <span
+                                                            style={{
+                                                                ...ui.badgeMini,
+                                                                flexShrink: 0,
+                                                                minWidth: "auto",
+                                                                background: "#fff7ed",
+                                                                color: "#9a3412",
+                                                                border: "1px solid #fed7aa",
+                                                            }}
+                                                        >
+                                                            {kegReplaceBadgeLabel}
+                                                        </span>
+                                                    )}
                                                     <span
                                                         style={{
                                                             minWidth: 0,
@@ -3067,6 +3280,7 @@ export default function InventorySnapshotsPage() {
                                                         lineHeight: 1.25,
                                                     }}
                                                 >
+                                                    {getPurchaseLogSupplierLabel(log)} ·{" "}
                                                     {priceLabel}{" "}
                                                     <span style={logPriceTrendStyle}>
                                                         {logPriceTrend === "up"
@@ -3172,6 +3386,73 @@ export default function InventorySnapshotsPage() {
                                 >
                                     {lang === "vi" ? "Tất cả nhật ký" : "전체 로그"}
                                 </div>
+
+                                {selectedTimelineReason === "purchase" &&
+                                    (purchaseLogSupplierTabs.length >= 2 ||
+                                        purchasePriceChangeLogIds.size > 0) && (
+                                        <div
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 5,
+                                                overflowX: "auto",
+                                                paddingBottom: 2,
+                                                WebkitOverflowScrolling: "touch",
+                                            }}
+                                        >
+                                            {[
+                                                {
+                                                    key: "all",
+                                                    label: `${allLogsLabel} ${purchaseLogSupplierTabs.reduce(
+                                                        (sum, tab) => sum + tab.count,
+                                                        0
+                                                    )}`,
+                                                },
+                                                ...purchaseLogSupplierTabs.map((tab) => ({
+                                                    key: tab.key,
+                                                    label: `${tab.supplierLabel} ${tab.count}`,
+                                                })),
+                                                ...(purchasePriceChangeLogIds.size > 0
+                                                    ? [
+                                                        {
+                                                            key: "price_change",
+                                                            label: `${priceChangeLabel} ${purchasePriceChangeLogIds.size}`,
+                                                        },
+                                                    ]
+                                                    : []),
+                                            ].map((tab) => {
+                                                const active = purchaseLogGroupFilter === tab.key;
+
+                                                return (
+                                                    <button
+                                                        key={tab.key}
+                                                        type="button"
+                                                        onClick={() => setPurchaseLogGroupFilter(tab.key)}
+                                                        style={{
+                                                            flexShrink: 0,
+                                                            maxWidth: 220,
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                            whiteSpace: "nowrap",
+                                                            padding: "4px 8px",
+                                                            borderRadius: 999,
+                                                            border: active
+                                                                ? "1px solid #111827"
+                                                                : "1px solid #d1d5db",
+                                                            background: active ? "#111827" : "#ffffff",
+                                                            color: active ? "#ffffff" : "#374151",
+                                                            fontSize: 11,
+                                                            fontWeight: 800,
+                                                            cursor: "pointer",
+                                                        }}
+                                                        title={tab.label}
+                                                    >
+                                                        {tab.label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
 
                                 <div
                                     style={{
