@@ -141,6 +141,11 @@ type LatestSnapshotData = {
     snapshotDate: string;
 };
 
+type InventoryStatus = Pick<
+    InventoryItem,
+    "lastStockCheckDate" | "daysSinceStockCheck" | "needsStockCheck"
+>;
+
 type RequestCacheEntry<T> = {
     promise?: Promise<T>;
     data?: T;
@@ -148,6 +153,7 @@ type RequestCacheEntry<T> = {
 };
 
 const REQUEST_CACHE_TTL_MS = 5000;
+const INVENTORY_RENDER_CHUNK_SIZE = 30;
 const requestCache = new Map<string, RequestCacheEntry<unknown>>();
 
 const runDedupeRequest = async <T,>(
@@ -316,6 +322,8 @@ export default function InventoryPage() {
     const [showTodayUpdatedOnly, setShowTodayUpdatedOnly] = useState(false);
     const [showInactiveItems, setShowInactiveItems] = useState(false);
     const [showStockCheckNeededOnly, setShowStockCheckNeededOnly] = useState(false);
+    const [isStockStatusHydrating, setIsStockStatusHydrating] = useState(false);
+    const [hasStockStatusHydrated, setHasStockStatusHydrated] = useState(false);
     const [kegProgressLoadingIds, setKegProgressLoadingIds] = useState<Record<number, boolean>>({});
     const [quantityDrafts, setQuantityDrafts] = useState<Record<number, string>>({});
     const [latestSnapshotMap, setLatestSnapshotMap] = useState<Record<number, number>>({});
@@ -346,6 +354,7 @@ export default function InventoryPage() {
     const [photoBusyItemId, setPhotoBusyItemId] = useState<number | null>(null);
     const [photoModalItem, setPhotoModalItem] = useState<InventoryItem | null>(null);
     const [handledDeepLinkKey, setHandledDeepLinkKey] = useState("");
+    const [visibleCount, setVisibleCount] = useState(INVENTORY_RENDER_CHUNK_SIZE);
 
     const itemNameRef = useRef<HTMLInputElement>(null);
     const supplierRef = useRef<HTMLInputElement>(null);
@@ -356,8 +365,10 @@ export default function InventoryPage() {
     const noteRef = useRef<HTMLInputElement>(null);
     const formRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
+    const inventoryListScrollRef = useRef<HTMLDivElement>(null);
     const lowStockThresholdRef = useRef<HTMLInputElement>(null);
     const hasMountedInventoryFetchRef = useRef(false);
+    const stockStatusRequestIdRef = useRef(0);
 
     const categoryOptions =
         CATEGORY_OPTIONS_BY_PART[part as keyof typeof CATEGORY_OPTIONS_BY_PART] ?? [];
@@ -784,6 +795,73 @@ export default function InventoryPage() {
         }
     };
 
+    const fetchInventoryStatus = async (items: InventoryItem[]) => {
+        const itemIds = items
+            .filter((item) => item.is_active !== false)
+            .map((item) => item.id)
+            .filter((id) => Number.isInteger(id) && id > 0);
+        const requestId = stockStatusRequestIdRef.current + 1;
+        stockStatusRequestIdRef.current = requestId;
+        setIsStockStatusHydrating(true);
+        setHasStockStatusHydrated(false);
+
+        if (itemIds.length === 0) {
+            setIsStockStatusHydrating(false);
+            setHasStockStatusHydrated(true);
+            return;
+        }
+
+        try {
+            const res = await fetch("/api/inventory/items/status", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ itemIds }),
+                cache: "no-store",
+            });
+            const result = await res.json() as {
+                ok?: boolean;
+                statusMap?: Record<string, InventoryStatus>;
+                message?: string;
+            };
+
+            if (!res.ok || !result.ok) {
+                throw new Error(result.message || "Failed to fetch inventory status");
+            }
+
+            if (stockStatusRequestIdRef.current !== requestId) return;
+
+            const statusMap = result.statusMap || {};
+            setInventoryList((prev) =>
+                prev.map((item) => {
+                    const status = statusMap[String(item.id)];
+                    if (!status) return item;
+
+                    return {
+                        ...item,
+                        lastStockCheckDate: status.lastStockCheckDate ?? null,
+                        daysSinceStockCheck: status.daysSinceStockCheck ?? null,
+                        needsStockCheck: status.needsStockCheck === true,
+                    };
+                })
+            );
+            setHasStockStatusHydrated(true);
+        } catch (error) {
+            if (stockStatusRequestIdRef.current !== requestId) return;
+
+            console.error("[inventory] fetchInventoryStatus exception", {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+            });
+            setHasStockStatusHydrated(false);
+        } finally {
+            if (stockStatusRequestIdRef.current === requestId) {
+                setIsStockStatusHydrating(false);
+            }
+        }
+    };
+
     const fetchInventory = async (options: { force?: boolean } = {}) => {
         const params = new URLSearchParams();
         params.set("includeKegProgress", "false");
@@ -845,6 +923,7 @@ export default function InventoryPage() {
             });
 
             setInventoryList(nextItems);
+            void fetchInventoryStatus(nextItems);
             void fetchKegProgress(nextItems, { force: options.force ?? true });
         } catch (error) {
             console.warn("[inventory] fetchInventory exception", {
@@ -2324,6 +2403,21 @@ export default function InventoryPage() {
         }, 180);
     }, [isFormOpen]);
 
+    useEffect(() => {
+        setVisibleCount(INVENTORY_RENDER_CHUNK_SIZE);
+        inventoryListScrollRef.current?.scrollTo({ top: 0 });
+    }, [
+        search,
+        partFilter,
+        categoryFilter,
+        showInactiveItems,
+        showLowStockOnly,
+        showTodayUpdatedOnly,
+        showStockCheckNeededOnly,
+        lang,
+        inventoryList,
+    ]);
+
     const isLowStockItem = useCallback((item: InventoryItem) =>
         item.low_stock_enabled === true &&
         item.low_stock_threshold !== null &&
@@ -2428,6 +2522,9 @@ export default function InventoryPage() {
         };
     };
 
+    const isStockCheckFilterPending =
+        showStockCheckNeededOnly && !hasStockStatusHydrated;
+
     const getCategoryTabButtonStyle = (active: boolean) => {
         return {
             display: "inline-flex",
@@ -2485,6 +2582,7 @@ export default function InventoryPage() {
                     !showTodayUpdatedOnly || isInCurrentBusinessDay(item.updated_at);
                 const matchStockCheckNeeded =
                     !showStockCheckNeededOnly ||
+                    isStockCheckFilterPending ||
                     (item.is_active !== false && item.needsStockCheck === true);
 
                 return (
@@ -2530,14 +2628,41 @@ export default function InventoryPage() {
         showLowStockOnly,
         showTodayUpdatedOnly,
         showStockCheckNeededOnly,
+        isStockCheckFilterPending,
         getDisplayItemName,
         getDisplayCategory,
         getCategoryKey,
         isLowStockItem,
     ]);
 
+    const clampedVisibleCount = Math.min(visibleCount, filteredInventory.length);
+    const visibleInventory = useMemo(
+        () => filteredInventory.slice(0, clampedVisibleCount),
+        [filteredInventory, clampedVisibleCount]
+    );
+
+    const handleInventoryListScroll = useCallback(() => {
+        const listElement = inventoryListScrollRef.current;
+        if (!listElement) return;
+
+        const distanceFromBottom =
+            listElement.scrollHeight -
+            listElement.scrollTop -
+            listElement.clientHeight;
+
+        if (distanceFromBottom > 96) return;
+
+        setVisibleCount((current) => {
+            if (current >= filteredInventory.length) return current;
+            return Math.min(
+                current + INVENTORY_RENDER_CHUNK_SIZE,
+                filteredInventory.length
+            );
+        });
+    }, [filteredInventory.length]);
+
     const groupedInventory: Record<string, InventoryItem[]> = useMemo(() => {
-        return filteredInventory.reduce(
+        return visibleInventory.reduce(
             (acc: Record<string, InventoryItem[]>, item) => {
                 const categoryKey = getDisplayCategory(item) || "-";
 
@@ -2550,7 +2675,7 @@ export default function InventoryPage() {
             },
             {} as Record<string, InventoryItem[]>
         );
-    }, [filteredInventory, getDisplayCategory]);
+    }, [visibleInventory, getDisplayCategory]);
 
     const itemLogGroups: InventoryLogGroup[] = logModalItem
         ? [
@@ -2798,16 +2923,30 @@ export default function InventoryPage() {
                         </button>
 
                         <button
-                            onClick={() =>
-                                setShowStockCheckNeededOnly(!showStockCheckNeededOnly)
-                            }
+                            onClick={() => {
+                                if (isStockStatusHydrating || !hasStockStatusHydrated) return;
+                                setShowStockCheckNeededOnly(!showStockCheckNeededOnly);
+                            }}
+                            disabled={isStockStatusHydrating || !hasStockStatusHydrated}
                             title={t.stockCheckNeededOnly}
-                            style={getFilterToggleButtonStyle(
-                                showStockCheckNeededOnly,
-                                "#d97706"
-                            )}
+                            style={{
+                                ...getFilterToggleButtonStyle(
+                                    showStockCheckNeededOnly,
+                                    "#d97706"
+                                ),
+                                opacity:
+                                    isStockStatusHydrating || !hasStockStatusHydrated
+                                        ? 0.55
+                                        : 1,
+                                cursor:
+                                    isStockStatusHydrating || !hasStockStatusHydrated
+                                        ? "not-allowed"
+                                        : "pointer",
+                            }}
                         >
-                            {t.stockCheckNeeded}
+                            {isStockStatusHydrating
+                                ? `${t.stockCheckNeeded}...`
+                                : t.stockCheckNeeded}
                         </button>
 
                         {canToggleInventoryActive && (
@@ -2839,6 +2978,8 @@ export default function InventoryPage() {
                     </div>
                 ) : (
                     <div
+                        ref={inventoryListScrollRef}
+                        onScroll={handleInventoryListScroll}
                         style={{
                             display: "flex",
                             flexDirection: "column",
@@ -3686,6 +3827,19 @@ export default function InventoryPage() {
                             </div>
                         ))}
 
+                        {clampedVisibleCount < filteredInventory.length && (
+                            <div
+                                style={{
+                                    padding: "4px 0 2px",
+                                    textAlign: "center",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    color: "#9ca3af",
+                                }}
+                            >
+                                {clampedVisibleCount} / {filteredInventory.length}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

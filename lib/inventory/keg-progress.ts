@@ -166,9 +166,13 @@ export async function fetchKegProgressByItemId(params: {
 
   if (activeSessionByItemId.size === 0) return progressByItemId;
 
+  const activeSessionItemIds = Array.from(activeSessionByItemId.keys());
+  const activeSessionMappings = mappings.filter((mapping) =>
+    activeSessionByItemId.has(Number(mapping.inventory_item_id))
+  );
   const productIds = Array.from(
     new Set(
-      mappings
+      activeSessionMappings
         .map((mapping) => Number(mapping.pos_product_id))
         .filter((id) => Number.isFinite(id) && id > 0)
     )
@@ -177,7 +181,7 @@ export async function fetchKegProgressByItemId(params: {
     inventoryItems.map((item) => [Number(item.id), item])
   );
 
-  for (const itemId of activeTrackingItemIds) {
+  for (const itemId of activeSessionItemIds) {
     const session = activeSessionByItemId.get(itemId);
     const inventoryItem = inventoryById.get(itemId);
     if (!session || !inventoryItem) continue;
@@ -342,7 +346,7 @@ export async function fetchKegProgressByItemId(params: {
     if (!Number.isFinite(sessionStartTime) || capacityMl <= 0) continue;
 
     let soldMl = 0;
-    const itemMappings = mappings.filter(
+    const itemMappings = activeSessionMappings.filter(
       (mapping) => Number(mapping.inventory_item_id) === itemId
     );
 
