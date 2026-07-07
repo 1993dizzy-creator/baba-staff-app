@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { fetchPreviousKegSummariesByLogId } from "@/lib/inventory/keg-replacement-summary";
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -65,9 +66,24 @@ export async function GET(
       );
     }
 
+    const logs = data || [];
+    const kegReplaceLogIds = logs
+      .filter((log) => log.source === "keg_replace")
+      .map((log) => log.id);
+    const previousKegSummaryByLogId = await fetchPreviousKegSummariesByLogId(
+      supabaseAdmin,
+      kegReplaceLogIds
+    );
+
+    const enrichedLogs = logs.map((log) =>
+      previousKegSummaryByLogId.has(log.id)
+        ? { ...log, previousKegSummary: previousKegSummaryByLogId.get(log.id) }
+        : log
+    );
+
     return NextResponse.json({
       ok: true,
-      data: data || [],
+      data: enrichedLogs,
     });
   } catch (error) {
     const errorCode =

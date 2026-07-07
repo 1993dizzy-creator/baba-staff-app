@@ -15,14 +15,27 @@ import {
     INVENTORY_REASON_EMOJIS,
     INVENTORY_REASON_LABELS,
     QUICK_REASON_VALUES,
+    getKegReplaceLabel,
     type InventoryReasonValue,
     type QuickReasonValue,
 } from "@/lib/inventory/reasons";
+import { formatKegSessionDuration } from "@/lib/inventory/keg-duration";
 
 
 type SnapshotBatch = {
     id: number;
     snapshot_date: string;
+};
+
+type PreviousKegSummary = {
+    sessionId: number;
+    startedAt: string | null;
+    endedAt: string | null;
+    capacityMl: number;
+    soldMl: number;
+    lossMl: number;
+    usagePercent: number;
+    lossPercent: number;
 };
 
 type SnapshotItem = {
@@ -52,6 +65,7 @@ type SnapshotItem = {
     actor_name?: string | null;
     new_note?: string | null;
     prev_note?: string | null;
+    previousKegSummary?: PreviousKegSummary | null;
 };
 
 type InventoryLog = {
@@ -80,6 +94,7 @@ type InventoryLog = {
     actor_name: string | null;
     new_note: string | null;
     prev_note: string | null;
+    previousKegSummary?: PreviousKegSummary | null;
 };
 
 type PriceTrend = "up" | "down" | null;
@@ -334,7 +349,7 @@ export default function InventorySnapshotsPage() {
     const isKegReplaceInventoryLog = (log?: InventoryLog | SnapshotItem | null) =>
         log?.source === "keg_replace";
 
-    const kegReplaceBadgeLabel = lang === "vi" ? "Đổi keg" : "케그 교체";
+    const kegReplaceBadgeLabel = getKegReplaceLabel(lang);
 
     const formatReasonItemName = (item: SnapshotItem) => {
         return [
@@ -377,6 +392,45 @@ export default function InventorySnapshotsPage() {
         const min = String(date.getMinutes()).padStart(2, "0");
 
         return `${mm}.${dd} ${hh}:${min}`;
+    };
+
+    const renderPreviousKegSummaryLines = (summary: PreviousKegSummary) => {
+        const soldLiters = summary.soldMl / 1000;
+        const capacityLiters = summary.capacityMl / 1000;
+        const remainingLiters = summary.lossMl / 1000;
+        const usagePeriod = formatKegSessionDuration(
+            summary.startedAt,
+            summary.endedAt,
+            lang
+        );
+
+        return (
+            <div
+                style={{
+                    marginTop: 4,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 2,
+                    fontSize: 11,
+                    color: "#6b7280",
+                }}
+            >
+                <div>
+                    {t.kegPreviousSold}: {formatDecimalDisplay(soldLiters)}L / {formatDecimalDisplay(capacityLiters)}L
+                    {" "}({Math.round(summary.usagePercent)}%)
+                </div>
+                <div>
+                    {t.kegPreviousRemaining}: {formatDecimalDisplay(remainingLiters)}L
+                    {" · "}
+                    {t.kegPreviousLossRate}: {Math.round(summary.lossPercent)}%
+                </div>
+                {usagePeriod && (
+                    <div>
+                        {t.kegUsagePeriod}: {usagePeriod}
+                    </div>
+                )}
+            </div>
+        );
     };
 
     const getActionBadge = (action?: string | null) => {
@@ -624,6 +678,7 @@ export default function InventorySnapshotsPage() {
             actor_name: log.actor_name ?? null,
             new_note: log.new_note ?? null,
             prev_note: log.prev_note ?? null,
+            previousKegSummary: log.previousKegSummary ?? null,
         };
     }, []);
 
@@ -1341,7 +1396,9 @@ export default function InventorySnapshotsPage() {
                 ? ""
                 : `${changeQuantity > 0 ? "+" : ""}${formatDecimalDisplay(changeQuantity)}`;
         const quantityText = `${changeText || "0"} ${log.unit || ""}`.trim();
-        const noteText = log.new_note || log.prev_note || "";
+        const noteText = isKegReplaceInventoryLog(log)
+            ? kegReplaceBadgeLabel
+            : log.new_note || log.prev_note || "";
         const compactDate = formatCompactLogDateTime(log.created_at);
         const metaLead = noteText || changeText;
         const metaLine = [
@@ -1501,6 +1558,9 @@ export default function InventorySnapshotsPage() {
                         {metaLine}
                     </div>
                 )}
+
+                {isKegReplaceInventoryLog(log) && log.previousKegSummary &&
+                    renderPreviousKegSummaryLines(log.previousKegSummary)}
 
             </div>
         );
@@ -2498,6 +2558,10 @@ export default function InventorySnapshotsPage() {
                                                     : `${group.isApproxPrice ? "≈ " : ""}${Number(total).toLocaleString()} ₫`}
                                             </div>
                                         </div>
+
+                                        {isKegReplaceInventoryLog(group.representative) &&
+                                            group.representative.previousKegSummary &&
+                                            renderPreviousKegSummaryLines(group.representative.previousKegSummary)}
                                     </div>
                                 );
                             })}
@@ -3139,7 +3203,9 @@ export default function InventorySnapshotsPage() {
                                             ? ""
                                             : `${changeQuantity > 0 ? "+" : ""}${formatDecimalDisplay(changeQuantity)}`;
                                     const quantityText = `${changeText || "0"} ${log.unit || ""}`.trim();
-                                    const noteText = log.new_note || log.prev_note || "";
+                                    const noteText = isKegReplaceInventoryLog(log)
+                                        ? kegReplaceBadgeLabel
+                                        : log.new_note || log.prev_note || "";
                                     const compactDate = formatCompactLogDateTime(log.created_at);
                                     const metaLead = noteText || changeText;
                                     const metaLine = [
@@ -3299,6 +3365,8 @@ export default function InventorySnapshotsPage() {
                                                     {metaLine}
                                                 </div>
                                             )}
+                                            {isKegReplaceInventoryLog(log) && log.previousKegSummary &&
+                                                renderPreviousKegSummaryLines(log.previousKegSummary)}
                                             {isSalesInventoryLog(log) && (
                                                 <div style={{ ...ui.metaText, marginTop: 3, fontWeight: 800 }}>
                                                     {lang === "vi"

@@ -4,6 +4,7 @@ import {
   QUICK_REASON_VALUES,
   normalizeInventoryReason,
 } from "@/lib/inventory/reasons";
+import { fetchPreviousKegSummariesByLogId } from "@/lib/inventory/keg-replacement-summary";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -135,7 +136,22 @@ export async function GET(req: Request) {
         );
       }
 
-      return NextResponse.json({ ok: true, data: data || [] });
+      const logs = data || [];
+      const kegReplaceLogIds = logs
+        .filter((log) => log.source === "keg_replace")
+        .map((log) => log.id);
+      const previousKegSummaryByLogId = await fetchPreviousKegSummariesByLogId(
+        supabaseAdmin,
+        kegReplaceLogIds
+      );
+
+      const enrichedLogs = logs.map((log) =>
+        previousKegSummaryByLogId.has(log.id)
+          ? { ...log, previousKegSummary: previousKegSummaryByLogId.get(log.id) }
+          : log
+      );
+
+      return NextResponse.json({ ok: true, data: enrichedLogs });
     }
 
     if (mode === "recent") {

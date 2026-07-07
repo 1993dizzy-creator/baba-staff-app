@@ -143,6 +143,10 @@ const REASON_BADGE_STYLE = {
   border: "1px solid #e5e7eb",
 } as const;
 
+export function getKegReplaceLabel(lang: "ko" | "vi"): string {
+  return lang === "vi" ? "Đổi keg" : "케그 교체";
+}
+
 export function getInventoryReasonBadgeMeta(
   reason: string | null | undefined,
   source: string | null | undefined,
@@ -157,12 +161,7 @@ export function getInventoryReasonBadgeMeta(
 
   if (effectiveReason === "unclassified") return null;
 
-  const sourceLabel =
-    source === "keg_replace"
-      ? lang === "vi"
-        ? "Đổi keg"
-        : "케그 교체"
-      : "";
+  const sourceLabel = source === "keg_replace" ? getKegReplaceLabel(lang) : "";
 
   return {
     text: [
