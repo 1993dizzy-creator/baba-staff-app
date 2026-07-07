@@ -125,6 +125,15 @@ type SalesSyncResponse = {
   error?: string;
   businessDate?: string;
   runningSyncRunId?: number | null;
+  skipped?: boolean;
+  reason?: string;
+  lastSyncRunId?: number;
+  lastSyncedAt?: string;
+  receiptCount?: number;
+  lineCount?: number;
+  createdCount?: number;
+  updatedCount?: number;
+  canceledCount?: number;
   result?: {
     invoiceCount?: number;
     lineCount?: number;
@@ -282,7 +291,7 @@ export default function SalesPage() {
     });
   }
 
-  async function handleSyncSales() {
+  async function handleSyncSales(force: boolean = false) {
     const actor = getStoredActor();
 
     if (!actor.actorUsername) {
@@ -300,6 +309,7 @@ export default function SalesPage() {
         businessDate?: string;
         limit: number;
         actorUsername: string;
+        force?: boolean;
       } = {
         limit: 100,
         actorUsername: actor.actorUsername,
@@ -307,6 +317,10 @@ export default function SalesPage() {
 
       if (businessDate.trim()) {
         body.businessDate = businessDate.trim();
+      }
+
+      if (force) {
+        body.force = true;
       }
 
       const res = await fetch("/api/admin/sales/sync", {
@@ -332,6 +346,13 @@ export default function SalesPage() {
         throw new Error(
           result?.error || dailyText.syncFailed
         );
+      }
+
+      if (result.skipped) {
+        setSyncMessage(
+          `${dailyText.syncSkipped}: ${dailyText.receipts} ${formatNumber(result.receiptCount)}${dailyText.receiptCountSuffix}, ${dailyText.soldItems} ${formatNumber(result.lineCount)}${dailyText.itemCountSuffix}`
+        );
+        return;
       }
 
       const receiptCount = result.result?.invoiceCount || 0;
@@ -446,7 +467,7 @@ export default function SalesPage() {
             </label>
             <button
               type="button"
-              onClick={handleSyncSales}
+              onClick={() => handleSyncSales(false)}
               disabled={isSyncing}
               style={{
                 ...syncButtonStyle,
@@ -454,6 +475,17 @@ export default function SalesPage() {
               }}
             >
               {isSyncing ? `${dailyText.syncing}...` : dailyText.syncButton}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSyncSales(true)}
+              disabled={isSyncing}
+              style={{
+                ...forceSyncButtonStyle,
+                ...(isSyncing ? syncButtonDisabledStyle : null),
+              }}
+            >
+              {dailyText.forceSyncButton}
             </button>
           </div>
           {syncMessage ? <p style={successTextStyle}>{syncMessage}</p> : null}
@@ -794,6 +826,17 @@ const syncButtonStyle: CSSProperties = {
 const syncButtonDisabledStyle: CSSProperties = {
   opacity: 0.65,
   cursor: "not-allowed",
+};
+
+const forceSyncButtonStyle: CSSProperties = {
+  ...ui.button,
+  padding: "10px 12px",
+  fontSize: 13,
+  borderRadius: 10,
+  fontWeight: 800,
+  background: "#fff",
+  color: "#374151",
+  border: "1px solid #d1d5db",
 };
 
 const successTextStyle: CSSProperties = {

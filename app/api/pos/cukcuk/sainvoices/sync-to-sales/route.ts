@@ -15,6 +15,7 @@ const CUKCUK_BASE_URL =
 const DEFAULT_BRANCH_ID = "c39228ba-a452-4cf9-bf34-424ffb151fb8";
 const SOURCE = "cukcuk";
 const SYNC_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
+const RECENT_SUCCESS_SKIP_WINDOW_MS = 3 * 60 * 1000;
 const CUKCUK_LIMIT_REACHED_WARNING =
   "CUKCUK 응답이 limit에 도달했습니다. 해당 businessDate 데이터가 일부 누락됐을 수 있으니 POS 원본 매출과 검산하세요.";
 
@@ -848,15 +849,73 @@ async function getRunningSyncRun(params: {
   };
 }
 
+// Step 1 perf improvement: if the same source/businessDate/branchId synced
+// successfully within RECENT_SUCCESS_SKIP_WINDOW_MS, a plain (non-force)
+// sync request can skip CUKCUK entirely and just report that prior result.
+// Read-only — does not touch acquireSyncRun's running-lock behavior.
+async function getRecentSuccessfulSyncRun(params: {
+  businessDate: string;
+  branchId: string;
+}) {
+  const sinceIso = new Date(
+    Date.now() - RECENT_SUCCESS_SKIP_WINDOW_MS
+  ).toISOString();
+
+  const { data, error } = await supabaseServer
+    .from("pos_sales_sync_runs")
+    .select(
+      "id, finished_at, receipt_count, line_count, created_count, updated_count, canceled_count"
+    )
+    .eq("source", SOURCE)
+    .eq("business_date", params.businessDate)
+    .eq("branch_id", params.branchId)
+    .eq("status", "success")
+    .gte("finished_at", sinceIso)
+    .order("finished_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to fetch recent successful sales sync run: ${error.message}`
+    );
+  }
+
+  return data as {
+    id: number;
+    finished_at: string;
+    receipt_count: number | null;
+    line_count: number | null;
+    created_count: number | null;
+    updated_count: number | null;
+    canceled_count: number | null;
+  } | null;
+}
+
 async function acquireSyncRun(params: {
   businessDate: string;
   branchId: string;
   requestParams: JsonObject;
 }) {
+  const acquireStartedAt = Date.now();
+
+  const cleanupStartedAt = Date.now();
   await expireStaleSyncRuns(params);
+  const cleanupMs = Date.now() - cleanupStartedAt;
 
   try {
-    return await createSyncRun(params);
+    const insertStartedAt = Date.now();
+    const syncRunId = await createSyncRun(params);
+    const insertMs = Date.now() - insertStartedAt;
+
+    return {
+      syncRunId,
+      timing: {
+        totalMs: Date.now() - acquireStartedAt,
+        cleanupMs,
+        insertMs,
+      },
+    };
   } catch (error) {
     if (
       typeof error === "object" &&
@@ -864,7 +923,17 @@ async function acquireSyncRun(params: {
       "message" in error &&
       String(error.message).includes("duplicate key")
     ) {
+      const conflictLookupStartedAt = Date.now();
       const running = await getRunningSyncRun(params);
+      const conflictLookupMs = Date.now() - conflictLookupStartedAt;
+
+      console.warn("[SALES_SYNC_CONFLICT]", {
+        businessDate: params.businessDate,
+        branchId: params.branchId,
+        cleanupMs,
+        conflictLookupMs,
+      });
+
       throw new SyncAlreadyRunningError({
         businessDate: params.businessDate,
         runningSyncRunId: running?.id ?? null,
@@ -1140,26 +1209,48 @@ async function excludeStaleLines(params: {
       candidateCount: 0,
       excludedCount: 0,
       skippedCount: 0,
+      timing: {
+        initialQueriesMs: 0,
+        staleCandidateBuildMs: 0,
+        staleUpdateMs: 0,
+      },
     };
   }
 
-  const latestLines = await getExistingLines(receiptRefIds);
+  // Note: this MUST be a fresh read, not the `existingLines` saveLines
+  // already fetched earlier — saveLines' insert/update writes happen
+  // between that fetch and this one, and the stale-line sum checks below
+  // depend on seeing each line's just-written final_amount. Reusing the
+  // pre-write snapshot here would silently change stale-line outcomes,
+  // which is explicitly out of scope for this change.
+  //
+  // Perf: this read and the deduction-lookup below are independent of each
+  // other, so they can run concurrently.
+  const initialQueriesStartedAt = Date.now();
+  const receiptIds = Array.from(params.receiptRows.values()).map((row) => row.id);
+  const [latestLines, receiptsWithDeductions] = await Promise.all([
+    getExistingLines(receiptRefIds),
+    getReceiptsWithAppliedDeductions(receiptIds),
+  ]);
+  const initialQueriesMs = Date.now() - initialQueriesStartedAt;
   const rowsByReceiptRefId = groupLinesByReceiptRefId(params.rows);
   const activeLinesByReceiptRefId = groupLinesByReceiptRefId(
     latestLines.rows.filter((line) => line.is_excluded !== true)
   );
-  const receiptIds = Array.from(params.receiptRows.values()).map((row) => row.id);
-  const receiptsWithDeductions = await getReceiptsWithAppliedDeductions(receiptIds);
   let candidateCount = 0;
   let excludedCount = 0;
   let skippedCount = 0;
+  let staleCandidateBuildMs = 0;
+  let staleUpdateMs = 0;
 
   for (const receiptRefId of receiptRefIds) {
+    const buildStepStartedAt = Date.now();
     const receipt = params.receiptRows.get(receiptRefId);
     const payloadRows = rowsByReceiptRefId.get(receiptRefId) || [];
     const activeLines = activeLinesByReceiptRefId.get(receiptRefId) || [];
 
     if (!receipt || payloadRows.length === 0 || activeLines.length === 0) {
+      staleCandidateBuildMs += Date.now() - buildStepStartedAt;
       continue;
     }
 
@@ -1170,6 +1261,7 @@ async function excludeStaleLines(params: {
     const staleCandidates = activeLines.filter((line) => !matchedIds.has(line.id));
 
     if (staleCandidates.length === 0) {
+      staleCandidateBuildMs += Date.now() - buildStepStartedAt;
       continue;
     }
 
@@ -1215,9 +1307,12 @@ async function excludeStaleLines(params: {
         overageAmount,
         staleCandidateSum,
       });
+      staleCandidateBuildMs += Date.now() - buildStepStartedAt;
       continue;
     }
+    staleCandidateBuildMs += Date.now() - buildStepStartedAt;
 
+    const updateStepStartedAt = Date.now();
     const staleLineIds = staleCandidates.map((line) => line.id);
     const { error } = await supabaseServer
       .from("pos_sales_receipt_lines")
@@ -1243,12 +1338,18 @@ async function excludeStaleLines(params: {
       activeLineSum,
       staleCandidateSum,
     });
+    staleUpdateMs += Date.now() - updateStepStartedAt;
   }
 
   return {
     candidateCount,
     excludedCount,
     skippedCount,
+    timing: {
+      initialQueriesMs,
+      staleCandidateBuildMs,
+      staleUpdateMs,
+    },
   };
 }
 
@@ -1317,16 +1418,29 @@ async function getExistingPayments(receiptRefIds: string[]) {
 }
 
 async function saveReceipts(rows: ReceiptRow[]) {
+  const emptyTiming = {
+    getExistingReceiptsMs: 0,
+    compareReceiptsMs: 0,
+    insertReceiptsMs: 0,
+    updateReceiptsMs: 0,
+    buildReceiptIdMapMs: 0,
+  };
+
   if (rows.length === 0) {
     return {
       receiptIdMap: new Map<string, number>(),
       createdCount: 0,
       updatedCount: 0,
       statusChangedCount: 0,
+      timing: emptyTiming,
     };
   }
 
+  const getExistingStartedAt = Date.now();
   const existingMap = await getExistingReceipts(rows.map((row) => row.ref_id));
+  const getExistingReceiptsMs = Date.now() - getExistingStartedAt;
+
+  const compareStartedAt = Date.now();
   const inserts = rows.filter((row) => !existingMap.has(row.ref_id));
   const updates = rows.filter((row) => {
     const existing = existingMap.get(row.ref_id);
@@ -1342,41 +1456,82 @@ async function saveReceipts(rows: ReceiptRow[]) {
           existing.is_canceled !== row.is_canceled)
       );
     }).length;
+  const compareReceiptsMs = Date.now() - compareStartedAt;
 
+  // Perf: the receipt ID for every ref_id we already had (whether updated or
+  // left unchanged) is already known from existingMap — no need to re-fetch
+  // it. Only brand-new inserts need their DB-generated id, which we get
+  // straight from the insert's own response instead of a follow-up SELECT.
+  const buildMapStartedAt = Date.now();
+  const finalReceiptIdMap = buildReceiptIdMap(existingMap);
+  let buildReceiptIdMapMs = Date.now() - buildMapStartedAt;
+
+  let insertReceiptsMs = 0;
   if (inserts.length > 0) {
-    const { error } = await supabaseServer
+    const insertStartedAt = Date.now();
+    const { data: insertedRows, error } = await supabaseServer
       .from("pos_sales_receipts")
-      .insert(inserts);
+      .insert(inserts)
+      .select("id, ref_id");
+    insertReceiptsMs = Date.now() - insertStartedAt;
 
     if (error) {
       throw new Error(`Failed to insert sales receipts: ${error.message}`);
     }
+
+    const mapMergeStartedAt = Date.now();
+    (insertedRows || []).forEach((row) => {
+      finalReceiptIdMap.set(row.ref_id, Number(row.id));
+    });
+    buildReceiptIdMapMs += Date.now() - mapMergeStartedAt;
   }
 
-  for (const row of updates) {
-    const id = existingMap.get(row.ref_id)?.id;
-    const { error } = await supabaseServer
-      .from("pos_sales_receipts")
-      .update(row)
-      .eq("id", id);
+  let updateReceiptsMs = 0;
+  if (updates.length > 0) {
+    const updateStartedAt = Date.now();
+    for (const row of updates) {
+      const id = existingMap.get(row.ref_id)?.id;
+      const { error } = await supabaseServer
+        .from("pos_sales_receipts")
+        .update(row)
+        .eq("id", id);
 
-    if (error) {
-      throw new Error(`Failed to update sales receipt ${row.ref_id}: ${error.message}`);
+      if (error) {
+        throw new Error(`Failed to update sales receipt ${row.ref_id}: ${error.message}`);
+      }
     }
+    updateReceiptsMs = Date.now() - updateStartedAt;
   }
-
-  const receiptIdMap = await getExistingReceipts(rows.map((row) => row.ref_id));
-  const finalReceiptIdMap = buildReceiptIdMap(receiptIdMap);
 
   return {
     receiptIdMap: finalReceiptIdMap,
     createdCount: inserts.length,
     updatedCount: updates.length,
     statusChangedCount,
+    timing: {
+      getExistingReceiptsMs,
+      compareReceiptsMs,
+      insertReceiptsMs,
+      updateReceiptsMs,
+      buildReceiptIdMapMs,
+    },
   };
 }
 
 async function saveLines(rows: LineRow[]) {
+  const emptyTiming = {
+    initialQueriesMs: 0,
+    compareLinesMs: 0,
+    insertLinesMs: 0,
+    updateLinesMs: 0,
+    excludeStaleLinesMs: 0,
+    excludeStaleLinesDetail: {
+      initialQueriesMs: 0,
+      staleCandidateBuildMs: 0,
+      staleUpdateMs: 0,
+    },
+  };
+
   if (rows.length === 0) {
     return {
       createdCount: 0,
@@ -1388,15 +1543,26 @@ async function saveLines(rows: LineRow[]) {
       staleCandidateCount: 0,
       staleExcludedCount: 0,
       staleSkippedCount: 0,
+      timing: emptyTiming,
     };
   }
 
   const receiptRefIds = Array.from(
     new Set(rows.map((row) => row.receipt_ref_id))
   );
-  const existingLines = await getExistingLines(receiptRefIds);
-  const receiptRows = await getExistingReceipts(receiptRefIds);
-  const modifiedReceiptRefIds = await getModifiedReceiptRefIds(receiptRefIds);
+  // Perf: these three reads are independent of each other (different
+  // tables/conditions, none depends on another's result) — running them
+  // concurrently instead of sequentially doesn't change what any of them
+  // return.
+  const initialQueriesStartedAt = Date.now();
+  const [existingLines, receiptRows, modifiedReceiptRefIds] = await Promise.all([
+    getExistingLines(receiptRefIds),
+    getExistingReceipts(receiptRefIds),
+    getModifiedReceiptRefIds(receiptRefIds),
+  ]);
+  const initialQueriesMs = Date.now() - initialQueriesStartedAt;
+
+  const compareStartedAt = Date.now();
   const editableRows = rows.filter(
     (row) => !modifiedReceiptRefIds.has(row.receipt_ref_id)
   );
@@ -1466,35 +1632,46 @@ async function saveLines(rows: LineRow[]) {
       row.pre_tax_amount !== 0 ||
       row.tax_reduction_amount !== 0
   ).length;
+  const compareLinesMs = Date.now() - compareStartedAt;
 
+  let insertLinesMs = 0;
   if (inserts.length > 0) {
+    const insertStartedAt = Date.now();
     const { error } = await supabaseServer
       .from("pos_sales_receipt_lines")
       .insert(inserts);
+    insertLinesMs = Date.now() - insertStartedAt;
 
     if (error) {
       throw new Error(`Failed to insert sales lines: ${error.message}`);
     }
   }
 
-  for (const { row, existing } of updates) {
-    const { error } = await supabaseServer
-      .from("pos_sales_receipt_lines")
-      .update(row)
-      .eq("id", existing.id);
+  let updateLinesMs = 0;
+  if (updates.length > 0) {
+    const updateStartedAt = Date.now();
+    for (const { row, existing } of updates) {
+      const { error } = await supabaseServer
+        .from("pos_sales_receipt_lines")
+        .update(row)
+        .eq("id", existing.id);
 
-    if (error) {
-      throw new Error(
-        `Failed to update sales line ${row.receipt_ref_id}/${row.ref_detail_id}: ${error.message}`
-      );
+      if (error) {
+        throw new Error(
+          `Failed to update sales line ${row.receipt_ref_id}/${row.ref_detail_id}: ${error.message}`
+        );
+      }
     }
+    updateLinesMs = Date.now() - updateStartedAt;
   }
 
+  const excludeStaleLinesStartedAt = Date.now();
   const staleLineResult = await excludeStaleLines({
     rows: editableRows,
     receiptRows,
     skippedFallbackReceiptRefIds,
   });
+  const excludeStaleLinesMs = Date.now() - excludeStaleLinesStartedAt;
 
   return {
     createdCount: inserts.length,
@@ -1506,22 +1683,42 @@ async function saveLines(rows: LineRow[]) {
     staleCandidateCount: staleLineResult.candidateCount,
     staleExcludedCount: staleLineResult.excludedCount,
     staleSkippedCount: staleLineResult.skippedCount,
+    timing: {
+      initialQueriesMs,
+      compareLinesMs,
+      insertLinesMs,
+      updateLinesMs,
+      excludeStaleLinesMs,
+      excludeStaleLinesDetail: staleLineResult.timing,
+    },
   };
 }
 
 async function savePayments(rows: PaymentRow[]) {
+  const emptyTiming = {
+    initialQueriesMs: 0,
+    insertPaymentsMs: 0,
+    updatePaymentsMs: 0,
+  };
+
   if (rows.length === 0) {
     return {
       createdCount: 0,
       updatedCount: 0,
+      timing: emptyTiming,
     };
   }
 
   const receiptRefIds = Array.from(
     new Set(rows.map((row) => row.receipt_ref_id))
   );
-  const existingMap = await getExistingPayments(receiptRefIds);
-  const modifiedReceiptRefIds = await getModifiedReceiptRefIds(receiptRefIds);
+  // Perf: independent reads, safe to run concurrently (see saveLines above).
+  const initialQueriesStartedAt = Date.now();
+  const [existingMap, modifiedReceiptRefIds] = await Promise.all([
+    getExistingPayments(receiptRefIds),
+    getModifiedReceiptRefIds(receiptRefIds),
+  ]);
+  const initialQueriesMs = Date.now() - initialQueriesStartedAt;
   const editableRows = rows.filter(
     (row) => !modifiedReceiptRefIds.has(row.receipt_ref_id)
   );
@@ -1531,33 +1728,46 @@ async function savePayments(rows: PaymentRow[]) {
     return existing ? hasPaymentChanged(existing, row) : false;
   });
 
+  let insertPaymentsMs = 0;
   if (inserts.length > 0) {
+    const insertStartedAt = Date.now();
     const { error } = await supabaseServer
       .from("pos_sales_receipt_payments")
       .insert(inserts);
+    insertPaymentsMs = Date.now() - insertStartedAt;
 
     if (error) {
       throw new Error(`Failed to insert sales payments: ${error.message}`);
     }
   }
 
-  for (const row of updates) {
-    const id = existingMap.get(getPaymentKey(row))?.id;
-    const { error } = await supabaseServer
-      .from("pos_sales_receipt_payments")
-      .update(row)
-      .eq("id", id);
+  let updatePaymentsMs = 0;
+  if (updates.length > 0) {
+    const updateStartedAt = Date.now();
+    for (const row of updates) {
+      const id = existingMap.get(getPaymentKey(row))?.id;
+      const { error } = await supabaseServer
+        .from("pos_sales_receipt_payments")
+        .update(row)
+        .eq("id", id);
 
-    if (error) {
-      throw new Error(
-        `Failed to update sales payment ${row.receipt_ref_id}: ${error.message}`
-      );
+      if (error) {
+        throw new Error(
+          `Failed to update sales payment ${row.receipt_ref_id}: ${error.message}`
+        );
+      }
     }
+    updatePaymentsMs = Date.now() - updateStartedAt;
   }
 
   return {
     createdCount: inserts.length,
     updatedCount: updates.length,
+    timing: {
+      initialQueriesMs,
+      insertPaymentsMs,
+      updatePaymentsMs,
+    },
   };
 }
 
@@ -1590,6 +1800,7 @@ export async function POST(req: Request) {
     const limit = Math.min(Math.max(Number(body.limit || 100), 1), 100);
     const includeReceipts = body.includeReceipts === true;
     const includeLines = body.includeLines === true;
+    const force = body.force === true || body.force === "true";
 
     if (!isValidBusinessDate(businessDate)) {
       return NextResponse.json(
@@ -1621,14 +1832,53 @@ export async function POST(req: Request) {
       filterToDate,
     };
 
+    if (!force) {
+      const recentSuccess = await getRecentSuccessfulSyncRun({
+        businessDate,
+        branchId,
+      });
+
+      if (recentSuccess) {
+        return NextResponse.json({
+          ok: true,
+          skipped: true,
+          reason: "recent_success",
+          businessDate,
+          branchId,
+          lastSyncRunId: Number(recentSuccess.id),
+          lastSyncedAt: recentSuccess.finished_at,
+          receiptCount: recentSuccess.receipt_count ?? 0,
+          lineCount: recentSuccess.line_count ?? 0,
+          createdCount: recentSuccess.created_count ?? 0,
+          updatedCount: recentSuccess.updated_count ?? 0,
+          canceledCount: recentSuccess.canceled_count ?? 0,
+        });
+      }
+    }
+
     syncContext = {
       businessDate,
       branchId,
       requestParams,
     };
-    syncRunId = await acquireSyncRun(syncContext);
+    const syncStartedAt = Date.now();
+    const acquireResult = await acquireSyncRun(syncContext);
+    syncRunId = acquireResult.syncRunId;
+    const acquireTiming = acquireResult.timing;
+
+    // Step 2/2.5 perf instrumentation: one summary log line per full sync
+    // (never logged on the skipped-early-return path above), split into the
+    // phases that matter for diagnosing where sync time actually goes.
+    let phaseStartedAt = Date.now();
+    const timingsMs: Record<string, number> = {};
+    const markPhase = (label: string) => {
+      const now = Date.now();
+      timingsMs[label] = now - phaseStartedAt;
+      phaseStartedAt = now;
+    };
 
     const login = await loginCukcuk();
+    markPhase("loginMs");
 
     const invoices = await fetchSaInvoicesPaging({
       accessToken: login.accessToken,
@@ -1637,6 +1887,7 @@ export async function POST(req: Request) {
       fromDate: requestRange.fromDate,
       limit,
     });
+    markPhase("invoiceListMs");
     const warning =
       invoices.length >= limit ? CUKCUK_LIMIT_REACHED_WARNING : undefined;
 
@@ -1673,6 +1924,7 @@ export async function POST(req: Request) {
         };
       })
     );
+    markPhase("invoiceDetailMs");
 
     const failedDetails = detailPayloads.filter((item) => item.error);
     const validDetails = detailPayloads.filter(
@@ -1697,6 +1949,7 @@ export async function POST(req: Request) {
     );
 
     const receiptSaveResult = await saveReceipts(receiptRows);
+    markPhase("saveReceiptsMs");
 
     const lineRows = validDetails.flatMap((item) => {
       const receiptId = receiptSaveResult.receiptIdMap.get(item.refId) ?? null;
@@ -1719,6 +1972,8 @@ export async function POST(req: Request) {
     });
 
     const lineSaveResult = await saveLines(lineRows);
+    markPhase("saveLinesMs");
+    const buildPaymentRowsStartedAt = Date.now();
     const detailPaymentRows = validDetails.flatMap((item) => {
       const receiptId = receiptSaveResult.receiptIdMap.get(item.refId) ?? null;
       const receiptRow = receiptRows.find((row) => row.ref_id === item.refId);
@@ -1735,9 +1990,15 @@ export async function POST(req: Request) {
         })
       );
     });
+    let buildPaymentRowsMs = Date.now() - buildPaymentRowsStartedAt;
+
+    const getReceiptPaymentSourcesStartedAt = Date.now();
     const receiptPaymentSources = await getReceiptPaymentSources(
       receiptRows.map((row) => row.ref_id)
     );
+    const getReceiptPaymentSourcesMs = Date.now() - getReceiptPaymentSourcesStartedAt;
+
+    const buildPaymentRowsStartedAt2 = Date.now();
     const storedReceiptPaymentRows = Array.from(receiptPaymentSources.values()).flatMap(
       (receipt) => {
         const payments = getPaymentsFromInvoicePayload(receipt.raw_json);
@@ -1758,7 +2019,10 @@ export async function POST(req: Request) {
       ...storedReceiptPaymentRows,
       ...detailPaymentRows,
     ]);
+    buildPaymentRowsMs += Date.now() - buildPaymentRowsStartedAt2;
+
     const paymentSaveResult = await savePayments(paymentRows);
+    markPhase("savePaymentsMs");
     const changedCount =
       receiptSaveResult.createdCount +
       receiptSaveResult.updatedCount +
@@ -1773,6 +2037,7 @@ export async function POST(req: Request) {
     const noChange =
       changedCount === 0 && statusChangedCount === 0 && failedDetails.length === 0;
 
+    const finishStartedAt = Date.now();
     await finishSyncRun({
       runId: syncRunId,
       status: "success",
@@ -1792,6 +2057,35 @@ export async function POST(req: Request) {
         failedDetails.length > 0
           ? `${failedDetails.length} invoice detail payload(s) skipped.`
           : undefined,
+    });
+    const finishMs = Date.now() - finishStartedAt;
+
+    console.log("[SALES_SYNC_TIMING]", {
+      syncRunId,
+      businessDate,
+      branchId,
+      invoiceCount: receiptRows.length,
+      lineCount: lineRows.length,
+      totalMs: Date.now() - syncStartedAt,
+      acquireMs: acquireTiming.totalMs,
+      acquireDetail: {
+        cleanupMs: acquireTiming.cleanupMs,
+        insertMs: acquireTiming.insertMs,
+      },
+      loginMs: timingsMs.loginMs,
+      invoiceListMs: timingsMs.invoiceListMs,
+      invoiceDetailMs: timingsMs.invoiceDetailMs,
+      saveReceiptsMs: timingsMs.saveReceiptsMs,
+      saveReceiptsDetail: receiptSaveResult.timing,
+      saveLinesMs: timingsMs.saveLinesMs,
+      saveLinesDetail: lineSaveResult.timing,
+      savePaymentsMs: timingsMs.savePaymentsMs,
+      savePaymentsDetail: {
+        getReceiptPaymentSourcesMs,
+        buildPaymentRowsMs,
+        ...paymentSaveResult.timing,
+      },
+      finishMs,
     });
 
     return NextResponse.json({
@@ -1854,10 +2148,15 @@ export async function POST(req: Request) {
 
     try {
       if (syncRunId) {
+        const finishFailedStartedAt = Date.now();
         await finishSyncRun({
           runId: syncRunId,
           status: "failed",
           errorMessage: message,
+        });
+        console.warn("[SALES_SYNC_TIMING_FAILED]", {
+          syncRunId,
+          finishMs: Date.now() - finishFailedStartedAt,
         });
       }
     } catch (syncRunError) {

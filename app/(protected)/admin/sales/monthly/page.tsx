@@ -248,10 +248,6 @@ function isValidBusinessDate(value: string | null): value is string {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
 }
 
-function getMonthStartDate(month: string) {
-  return `${month}-01`;
-}
-
 function getInitialMonth(searchParams: ReturnType<typeof useSearchParams>) {
   const queryMonth = searchParams.get("month");
   if (queryMonth) return queryMonth;
@@ -262,6 +258,20 @@ function getInitialMonth(searchParams: ReturnType<typeof useSearchParams>) {
   }
 
   return getCurrentMonth();
+}
+
+// businessDate is the shared "기준일자" that /admin/sales (daily) and
+// /admin/sales/receipts read/write. Monthly only ever forwards whatever
+// value it received (or today, if none) — it must never overwrite this with
+// a derived month-start date, or daily/receipts would lose the user's
+// actual selected date whenever they visit monthly.
+function getInitialSharedBusinessDate(
+  searchParams: ReturnType<typeof useSearchParams>
+) {
+  const queryBusinessDate = searchParams.get("businessDate");
+  if (isValidBusinessDate(queryBusinessDate)) return queryBusinessDate;
+
+  return getBusinessDate();
 }
 
 function shiftMonth(month: string, diff: number) {
@@ -308,6 +318,8 @@ export default function SalesMonthlyPage() {
   );
   const initialMonth = getInitialMonth(searchParams);
   const [month, setMonth] = useState(initialMonth);
+  const initialSharedBusinessDate = getInitialSharedBusinessDate(searchParams);
+  const [sharedBusinessDate] = useState(initialSharedBusinessDate);
   const [monthlyData, setMonthlyData] = useState<SalesMonthlyResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -324,7 +336,6 @@ export default function SalesMonthlyPage() {
   const [savingCategoryName, setSavingCategoryName] = useState("");
   const [categoryGroupMessage, setCategoryGroupMessage] = useState("");
   const [categoryGroupError, setCategoryGroupError] = useState("");
-  const sharedBusinessDate = getMonthStartDate(month);
   const currentRole =
     typeof currentUser?.role === "string"
       ? currentUser.role.trim().toLowerCase()
@@ -410,7 +421,7 @@ export default function SalesMonthlyPage() {
     setMenuSalesDirection("desc");
     setMenuSalesGroup("all");
     router.replace(
-      `${pathname}?month=${encodeURIComponent(nextMonth)}&businessDate=${encodeURIComponent(getMonthStartDate(nextMonth))}`,
+      `${pathname}?month=${encodeURIComponent(nextMonth)}&businessDate=${encodeURIComponent(sharedBusinessDate)}`,
       {
         scroll: false,
       }

@@ -66,6 +66,7 @@ export async function POST(req: Request) {
       typeof body.businessDate === "string" ? body.businessDate.trim() : "";
     const actorUsername =
       typeof body.actorUsername === "string" ? body.actorUsername.trim() : "";
+    const force = body.force === true || body.force === "true";
 
     if (businessDate && !isValidBusinessDate(businessDate)) {
       return NextResponse.json(
@@ -86,6 +87,7 @@ export async function POST(req: Request) {
     const origin = new URL(req.url).origin;
     const syncBody: JsonObject = {
       limit: Math.min(Math.max(getLimit(body.limit), 1), 100),
+      force,
     };
 
     if (businessDate) {
