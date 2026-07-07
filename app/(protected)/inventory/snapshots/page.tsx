@@ -27,6 +27,14 @@ type SnapshotBatch = {
     snapshot_date: string;
 };
 
+type KegSalesBreakdown = {
+    totalUnits: number;
+    regularUnits: number;
+    towerUnits: number;
+    otherUnits: number;
+    averageCapacityMlPerUnit: number;
+};
+
 type PreviousKegSummary = {
     sessionId: number;
     startedAt: string | null;
@@ -36,6 +44,7 @@ type PreviousKegSummary = {
     lossMl: number;
     usagePercent: number;
     lossPercent: number;
+    salesBreakdown?: KegSalesBreakdown;
 };
 
 type SnapshotItem = {
@@ -403,6 +412,27 @@ export default function InventorySnapshotsPage() {
             summary.endedAt,
             lang
         );
+        const breakdown = summary.salesBreakdown;
+        const regularUnitSuffix = lang === "vi" ? "" : "잔";
+        const towerUnitSuffix = lang === "vi" ? "" : "개";
+        const genericUnitSuffix = lang === "vi" ? "" : "개";
+        const hasRegular = (breakdown?.regularUnits ?? 0) > 0;
+        const hasTower = (breakdown?.towerUnits ?? 0) > 0;
+        const isClassified = breakdown
+            ? breakdown.otherUnits === 0 && (hasRegular || hasTower)
+            : false;
+        const quantityText = !breakdown || breakdown.totalUnits <= 0
+            ? null
+            : !isClassified
+                ? `${formatDecimalDisplay(breakdown.totalUnits)}${genericUnitSuffix}`
+                : [
+                    hasRegular
+                        ? `${t.kegSalesRegular} ${formatDecimalDisplay(breakdown.regularUnits)}${regularUnitSuffix}`
+                        : "",
+                    hasTower
+                        ? `${t.kegSalesTower} ${formatDecimalDisplay(breakdown.towerUnits)}${towerUnitSuffix}`
+                        : "",
+                ].filter(Boolean).join(" · ");
 
         return (
             <div
@@ -420,10 +450,19 @@ export default function InventorySnapshotsPage() {
                     {" "}({Math.round(summary.usagePercent)}%)
                 </div>
                 <div>
-                    {t.kegPreviousRemaining}: {formatDecimalDisplay(remainingLiters)}L
-                    {" · "}
-                    {t.kegPreviousLossRate}: {Math.round(summary.lossPercent)}%
+                    {t.kegPreviousRemaining} {formatDecimalDisplay(remainingLiters)}L
+                    {" "}({t.kegPreviousLossRate} {Math.round(summary.lossPercent)}%)
                 </div>
+                {quantityText && (
+                    <div>
+                        {t.kegSalesQuantity} {quantityText}
+                    </div>
+                )}
+                {breakdown && breakdown.totalUnits > 0 && breakdown.averageCapacityMlPerUnit > 0 && (
+                    <div>
+                        {t.kegAverage} {breakdown.averageCapacityMlPerUnit}ml / {t.kegAverageUnit}
+                    </div>
+                )}
                 {usagePeriod && (
                     <div>
                         {t.kegUsagePeriod}: {usagePeriod}

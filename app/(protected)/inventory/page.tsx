@@ -91,6 +91,14 @@ type EditFormPendingSave = {
     payload: Record<string, unknown>;
 };
 
+type KegSalesBreakdown = {
+    totalUnits: number;
+    regularUnits: number;
+    towerUnits: number;
+    otherUnits: number;
+    averageCapacityMlPerUnit: number;
+};
+
 type PreviousKegSummary = {
     sessionId: number;
     startedAt: string | null;
@@ -100,6 +108,7 @@ type PreviousKegSummary = {
     lossMl: number;
     usagePercent: number;
     lossPercent: number;
+    salesBreakdown?: KegSalesBreakdown;
 };
 
 type InventoryLog = {
@@ -648,6 +657,7 @@ export default function InventoryPage() {
             const soldLiters = summary.soldMl / 1000;
             const capacityLiters = summary.capacityMl / 1000;
             const remainingLiters = summary.lossMl / 1000;
+            const breakdown = summary.salesBreakdown;
 
             changes.push({
                 label: t.kegPreviousSold,
@@ -655,13 +665,42 @@ export default function InventoryPage() {
             });
             changes.push({
                 label: t.kegPreviousRemaining,
-                after: `${formatDecimalDisplay(remainingLiters)}L`,
-            });
-            changes.push({
-                label: t.kegPreviousLossRate,
-                after: `${Math.round(summary.lossPercent)}%`,
+                after: `${formatDecimalDisplay(remainingLiters)}L (${t.kegPreviousLossRate} ${Math.round(summary.lossPercent)}%)`,
                 color: summary.lossPercent > 0 ? "crimson" : undefined,
             });
+
+            if (breakdown && breakdown.totalUnits > 0) {
+                const regularUnitSuffix = lang === "vi" ? "" : "잔";
+                const towerUnitSuffix = lang === "vi" ? "" : "개";
+                const genericUnitSuffix = lang === "vi" ? "" : "개";
+                const hasRegular = breakdown.regularUnits > 0;
+                const hasTower = breakdown.towerUnits > 0;
+                const isClassified = breakdown.otherUnits === 0 && (hasRegular || hasTower);
+
+                const quantityText = !isClassified
+                    ? `${formatDecimalDisplay(breakdown.totalUnits)}${genericUnitSuffix}`
+                    : [
+                        hasRegular
+                            ? `${t.kegSalesRegular} ${formatDecimalDisplay(breakdown.regularUnits)}${regularUnitSuffix}`
+                            : "",
+                        hasTower
+                            ? `${t.kegSalesTower} ${formatDecimalDisplay(breakdown.towerUnits)}${towerUnitSuffix}`
+                            : "",
+                    ].filter(Boolean).join(" · ");
+
+                changes.push({
+                    label: t.kegSalesQuantity,
+                    after: quantityText,
+                });
+
+                if (breakdown.averageCapacityMlPerUnit > 0) {
+                    changes.push({
+                        label: t.kegAverage,
+                        after: `${breakdown.averageCapacityMlPerUnit}ml / ${t.kegAverageUnit}`,
+                    });
+                }
+            }
+
             const usagePeriod = formatKegSessionDuration(
                 summary.startedAt,
                 summary.endedAt,
