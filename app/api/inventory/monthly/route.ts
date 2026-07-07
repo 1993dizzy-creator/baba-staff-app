@@ -93,7 +93,6 @@ type ItemAccumulator = {
   serviceNetChange: number;
   otherNetChange: number;
   saleDeductionNetChange: number;
-  totalLogNetChange: number;
   saleDeductionDeduction: number;
   stockCheckDeduction: number;
   serviceDeduction: number;
@@ -101,17 +100,6 @@ type ItemAccumulator = {
   saleDeductionAmountFromLogs: number;
   saleDeductionDeductionWithPrice: number;
   saleDeductionHasMissingLogPrice: boolean;
-};
-
-type DayAccumulator = {
-  businessDate: string;
-  purchaseQuantity: number;
-  purchaseLogCount: number;
-  stockCheckNetChange: number;
-  serviceNetChange: number;
-  otherNetChange: number;
-  saleDeductionNetChange: number;
-  totalLogNetChange: number;
 };
 
 type MonthlyItemResult = {
@@ -131,7 +119,6 @@ type MonthlyItemResult = {
   baselinePurchasePrice: number | null;
   latestPurchasePrice: number | null;
   registeredPrice: number | null;
-  purchasePriceUsed: number | null;
   purchasePriceDiff: number | null;
   priceChangedDate: string | null;
   priceChangeEvents: PriceChangeEvent[];
@@ -143,7 +130,6 @@ type MonthlyItemResult = {
   serviceNetChange: number;
   otherNetChange: number;
   saleDeductionNetChange: number;
-  totalLogNetChange: number;
   saleDeductionDeduction: number;
   stockCheckDeduction: number;
   serviceDeduction: number;
@@ -171,12 +157,6 @@ type SupplierSummary = {
   purchaseQuantity: number;
   purchaseAmountKnown: number;
   purchaseAmountMissingCount: number;
-  stockNetChange: number;
-  stockCheckNetChange: number;
-  serviceNetChange: number;
-  otherNetChange: number;
-  saleDeductionNetChange: number;
-  totalLogNetChange: number;
   items: MonthlyItemResult[];
 };
 
@@ -241,7 +221,6 @@ const createItemAccumulator = (): ItemAccumulator => ({
   serviceNetChange: 0,
   otherNetChange: 0,
   saleDeductionNetChange: 0,
-  totalLogNetChange: 0,
   saleDeductionDeduction: 0,
   stockCheckDeduction: 0,
   serviceDeduction: 0,
@@ -251,31 +230,8 @@ const createItemAccumulator = (): ItemAccumulator => ({
   saleDeductionHasMissingLogPrice: false,
 });
 
-const getDayAccumulator = (
-  dayMap: Map<string, DayAccumulator>,
-  businessDate: string
-) => {
-  const existing = dayMap.get(businessDate);
-
-  if (existing) return existing;
-
-  const next: DayAccumulator = {
-    businessDate,
-    purchaseQuantity: 0,
-    purchaseLogCount: 0,
-    stockCheckNetChange: 0,
-    serviceNetChange: 0,
-    otherNetChange: 0,
-    saleDeductionNetChange: 0,
-    totalLogNetChange: 0,
-  };
-
-  dayMap.set(businessDate, next);
-  return next;
-};
-
 const addMovement = (
-  target: ItemAccumulator | DayAccumulator,
+  target: ItemAccumulator,
   reason: MovementReason,
   changeQuantity: number,
   purchasePrice?: number | null
@@ -287,23 +243,19 @@ const addMovement = (
       );
       target.purchaseLogCount += 1;
 
-      if ("purchaseAmountKnown" in target) {
-        if (purchasePrice !== null && purchasePrice !== undefined) {
-          target.purchaseAmountKnown = roundDecimal(
-            target.purchaseAmountKnown + changeQuantity * purchasePrice
-          );
-          target.purchaseHasKnownPrice = true;
-        } else {
-          target.purchaseHasMissingPrice = true;
-        }
+      if (purchasePrice !== null && purchasePrice !== undefined) {
+        target.purchaseAmountKnown = roundDecimal(
+          target.purchaseAmountKnown + changeQuantity * purchasePrice
+        );
+        target.purchaseHasKnownPrice = true;
+      } else {
+        target.purchaseHasMissingPrice = true;
       }
     }
     return;
   }
 
   if (changeQuantity === 0) return;
-
-  target.totalLogNetChange = roundDecimal(target.totalLogNetChange + changeQuantity);
 
   if (reason === "stock_check") {
     target.stockCheckNetChange = roundDecimal(
@@ -452,7 +404,6 @@ const createSupplierPurchaseItem = (
   baselinePurchasePrice: baseItem?.baselinePurchasePrice ?? null,
   latestPurchasePrice: baseItem?.latestPurchasePrice ?? null,
   registeredPrice: baseItem?.registeredPrice ?? null,
-  purchasePriceUsed: toNullableNumber(log.new_purchase_price),
   purchasePriceDiff: baseItem?.purchasePriceDiff ?? null,
   priceChangedDate: baseItem?.priceChangedDate ?? null,
   priceChangeEvents: baseItem?.priceChangeEvents ?? [],
@@ -464,7 +415,6 @@ const createSupplierPurchaseItem = (
   serviceNetChange: baseItem?.serviceNetChange ?? 0,
   otherNetChange: baseItem?.otherNetChange ?? 0,
   saleDeductionNetChange: baseItem?.saleDeductionNetChange ?? 0,
-  totalLogNetChange: baseItem?.totalLogNetChange ?? 0,
   saleDeductionDeduction: baseItem?.saleDeductionDeduction ?? 0,
   stockCheckDeduction: baseItem?.stockCheckDeduction ?? 0,
   serviceDeduction: baseItem?.serviceDeduction ?? 0,
@@ -499,12 +449,6 @@ const buildSupplierSummary = (
         purchaseQuantity: 0,
         purchaseAmountKnown: 0,
         purchaseAmountMissingCount: 0,
-        stockNetChange: 0,
-        stockCheckNetChange: 0,
-        serviceNetChange: 0,
-        otherNetChange: 0,
-        saleDeductionNetChange: 0,
-        totalLogNetChange: 0,
         items: [],
         itemMap: new Map<string, MonthlyItemResult>(),
       } satisfies SupplierSummaryAccumulator);
@@ -572,12 +516,6 @@ const buildSupplierSummary = (
       purchaseQuantity: supplier.purchaseQuantity,
       purchaseAmountKnown: supplier.purchaseAmountKnown,
       purchaseAmountMissingCount: supplier.purchaseAmountMissingCount,
-      stockNetChange: supplier.stockNetChange,
-      stockCheckNetChange: supplier.stockCheckNetChange,
-      serviceNetChange: supplier.serviceNetChange,
-      otherNetChange: supplier.otherNetChange,
-      saleDeductionNetChange: supplier.saleDeductionNetChange,
-      totalLogNetChange: supplier.totalLogNetChange,
       items,
     } satisfies SupplierSummary;
   }).sort((a, b) => {
@@ -663,7 +601,7 @@ export async function GET(request: Request) {
     const currentBusinessDate = getBusinessDate();
     const toDate = isCurrentMonth ? currentBusinessDate : monthEnd;
 
-    const { data: baselineBatch, error: baselineError } = await supabaseAdmin
+    const baselineBatchQuery = supabaseAdmin
       .from("inventory_snapshot_batches")
       .select("id, snapshot_date")
       .lt("snapshot_date", monthStart)
@@ -671,11 +609,9 @@ export async function GET(request: Request) {
       .limit(1)
       .maybeSingle();
 
-    if (baselineError) throw baselineError;
-
-    const latestBatchResult = isCurrentMonth
-      ? { data: null, error: null }
-      : await supabaseAdmin
+    const latestBatchQuery = isCurrentMonth
+      ? Promise.resolve({ data: null, error: null })
+      : supabaseAdmin
           .from("inventory_snapshot_batches")
           .select("id, snapshot_date")
           .gte("snapshot_date", monthStart)
@@ -684,18 +620,16 @@ export async function GET(request: Request) {
           .limit(1)
           .maybeSingle();
 
+    const [
+      { data: baselineBatch, error: baselineError },
+      latestBatchResult,
+    ] = await Promise.all([baselineBatchQuery, latestBatchQuery]);
+
+    if (baselineError) throw baselineError;
     if (latestBatchResult.error) throw latestBatchResult.error;
 
     const baseline = (baselineBatch ?? null) as SnapshotBatch | null;
     const latest = (latestBatchResult.data ?? null) as SnapshotBatch | null;
-    const latestSnapshotDate = isCurrentMonth
-      ? currentBusinessDate
-      : latest?.snapshot_date ?? null;
-    const latestSource = isCurrentMonth
-      ? "current_inventory"
-      : latest
-        ? "snapshot"
-        : null;
 
     const [baselineItems, latestItems] = await Promise.all([
       getSnapshotItems(baseline?.id ?? null),
@@ -704,26 +638,28 @@ export async function GET(request: Request) {
         : getSnapshotItems(latest?.id ?? null),
     ]);
 
-    const allLogs = await fetchMonthlyInventoryLogs(monthStart, toDate);
-
-    const { data: priceLogs, error: priceLogsError } = await supabaseAdmin
-      .from("inventory_price_logs")
-      .select(
-        `
-          id,
-          item_id,
-          old_price,
-          new_price,
-          diff,
-          business_date,
-          source,
-          reason
-        `
-      )
-      .gte("business_date", monthStart)
-      .lte("business_date", toDate)
-      .order("business_date", { ascending: true })
-      .order("id", { ascending: true });
+    const [allLogs, { data: priceLogs, error: priceLogsError }] =
+      await Promise.all([
+        fetchMonthlyInventoryLogs(monthStart, toDate),
+        supabaseAdmin
+          .from("inventory_price_logs")
+          .select(
+            `
+              id,
+              item_id,
+              old_price,
+              new_price,
+              diff,
+              business_date,
+              source,
+              reason
+            `
+          )
+          .gte("business_date", monthStart)
+          .lte("business_date", toDate)
+          .order("business_date", { ascending: true })
+          .order("id", { ascending: true }),
+      ]);
 
     if (priceLogsError) throw priceLogsError;
 
@@ -743,15 +679,7 @@ export async function GET(request: Request) {
     const itemMovementMap = new Map<number, ItemAccumulator>();
     const itemPriceLogMap = new Map<number, InventoryPriceLog[]>();
     const registeredPriceMap = new Map<number, number>();
-    const dayMap = new Map<string, DayAccumulator>();
     let unclassifiedLogCount = 0;
-    const deductionReasonSummary = {
-      saleDeduction: 0,
-      stockCheck: 0,
-      service: 0,
-      other: 0,
-      total: 0,
-    };
 
     const safeItemIds = [...itemIds];
 
@@ -863,18 +791,6 @@ export async function GET(request: Request) {
 
         itemMovementMap.set(safeItemId, itemAccumulator);
       }
-
-      const dayAccumulator = getDayAccumulator(dayMap, businessDate);
-      addMovement(dayAccumulator, normalizedReason, changeQuantity);
-
-      if (changeQuantity < 0 && normalizedReason !== "purchase") {
-        const abs = roundDecimal(Math.abs(changeQuantity));
-        if (normalizedReason === "sale_deduction") deductionReasonSummary.saleDeduction = roundDecimal(deductionReasonSummary.saleDeduction + abs);
-        else if (normalizedReason === "stock_check") deductionReasonSummary.stockCheck = roundDecimal(deductionReasonSummary.stockCheck + abs);
-        else if (normalizedReason === "service") deductionReasonSummary.service = roundDecimal(deductionReasonSummary.service + abs);
-        else deductionReasonSummary.other = roundDecimal(deductionReasonSummary.other + abs);
-        deductionReasonSummary.total = roundDecimal(deductionReasonSummary.total + abs);
-      }
     }
 
     const items: MonthlyItemResult[] = [...itemIds].map((itemId) => {
@@ -939,7 +855,6 @@ export async function GET(request: Request) {
         baselinePurchasePrice,
         latestPurchasePrice,
         registeredPrice,
-        purchasePriceUsed,
         purchasePriceDiff,
         priceChangedDate,
         priceChangeEvents,
@@ -953,7 +868,6 @@ export async function GET(request: Request) {
         serviceNetChange: movement.serviceNetChange,
         otherNetChange: movement.otherNetChange,
         saleDeductionNetChange: movement.saleDeductionNetChange,
-        totalLogNetChange: movement.totalLogNetChange,
 
         saleDeductionDeduction: movement.saleDeductionDeduction,
         stockCheckDeduction: movement.stockCheckDeduction,
@@ -1016,22 +930,40 @@ export async function GET(request: Request) {
       });
     });
 
-    const purchaseItems = items.filter((item) => item.purchaseQuantity > 0);
     const purchaseAmountKnown = [...itemMovementMap.values()].reduce(
       (sum, movement) => sum + movement.purchaseAmountKnown,
       0
     );
-    const purchaseAmountMissingCount = items.filter(
-      (item) => item.purchaseAmountMissing
-    ).length;
-    const itemResultMap = new Map(items.map((item) => [item.itemId, item]));
+
+    let purchaseItemCount = 0;
+    let purchaseAmountMissingCount = 0;
+    let stockNetChangeSum = 0;
+    let purchaseQuantitySum = 0;
+    let purchaseLogCountSum = 0;
+    let stockCheckNetChangeSum = 0;
+    let serviceNetChangeSum = 0;
+    let otherNetChangeSum = 0;
+    let saleDeductionNetChangeSum = 0;
+    const itemResultMap = new Map<number, MonthlyItemResult>();
+
+    for (const item of items) {
+      if (item.purchaseQuantity > 0) purchaseItemCount += 1;
+      if (item.purchaseAmountMissing) purchaseAmountMissingCount += 1;
+
+      stockNetChangeSum += item.stockNetChange;
+      purchaseQuantitySum += item.purchaseQuantity;
+      purchaseLogCountSum += item.purchaseLogCount;
+      stockCheckNetChangeSum += item.stockCheckNetChange;
+      serviceNetChangeSum += item.serviceNetChange;
+      otherNetChangeSum += item.otherNetChange;
+      saleDeductionNetChangeSum += item.saleDeductionNetChange;
+
+      itemResultMap.set(item.itemId, item);
+    }
+
     const supplierSummary = buildSupplierSummary(
       allLogs,
       itemResultMap
-    );
-
-    const days = [...dayMap.values()].sort((a, b) =>
-      a.businessDate.localeCompare(b.businessDate)
     );
 
     return NextResponse.json({
@@ -1041,49 +973,23 @@ export async function GET(request: Request) {
         fromDate: monthStart,
         toDate,
       },
-      baseline: {
-        snapshotId: baseline?.id ?? null,
-        snapshotDate: baseline?.snapshot_date ?? null,
-      },
-      latest: {
-        snapshotId: isCurrentMonth ? null : latest?.id ?? null,
-        snapshotDate: latestSnapshotDate,
-        source: latestSource,
-      },
       summary: {
-        stockNetChange: roundDecimal(
-          items.reduce((sum, item) => sum + item.stockNetChange, 0)
-        ),
+        stockNetChange: roundDecimal(stockNetChangeSum),
 
-        purchaseQuantity: roundDecimal(
-          items.reduce((sum, item) => sum + item.purchaseQuantity, 0)
-        ),
-        purchaseLogCount: items.reduce(
-          (sum, item) => sum + item.purchaseLogCount,
-          0
-        ),
-        purchaseItemCount: purchaseItems.length,
+        purchaseQuantity: roundDecimal(purchaseQuantitySum),
+        purchaseLogCount: purchaseLogCountSum,
+        purchaseItemCount,
         purchaseAmountKnown: roundDecimal(purchaseAmountKnown),
         purchaseAmountMissingCount,
 
-        stockCheckNetChange: roundDecimal(
-          items.reduce((sum, item) => sum + item.stockCheckNetChange, 0)
-        ),
-        serviceNetChange: roundDecimal(
-          items.reduce((sum, item) => sum + item.serviceNetChange, 0)
-        ),
-        otherNetChange: roundDecimal(
-          items.reduce((sum, item) => sum + item.otherNetChange, 0)
-        ),
-        saleDeductionNetChange: roundDecimal(
-          items.reduce((sum, item) => sum + item.saleDeductionNetChange, 0)
-        ),
+        stockCheckNetChange: roundDecimal(stockCheckNetChangeSum),
+        serviceNetChange: roundDecimal(serviceNetChangeSum),
+        otherNetChange: roundDecimal(otherNetChangeSum),
+        saleDeductionNetChange: roundDecimal(saleDeductionNetChangeSum),
 
         unclassifiedLogCount,
       },
-      deductionReasonSummary,
       supplierSummary,
-      days,
       items,
     });
   } catch (error) {

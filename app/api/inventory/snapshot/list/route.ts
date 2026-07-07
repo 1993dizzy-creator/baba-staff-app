@@ -73,30 +73,6 @@ export async function GET(req: Request) {
       );
     }
 
-    const { data: purchaseRows, error: purchaseError } = await supabase
-      .from("inventory_snapshot_items")
-      .select("batch_id")
-      .gt("change_quantity", 0);
-
-    if (purchaseError) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "snapshot_purchase_rows_query_failed",
-          message: purchaseError.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    const purchaseBatchMap: Record<number, boolean> = {};
-
-    (purchaseRows || []).forEach((row) => {
-      if (row.batch_id !== null && row.batch_id !== undefined) {
-        purchaseBatchMap[Number(row.batch_id)] = true;
-      }
-    });
-
     const purchaseDateMap: Record<string, boolean> = {};
 
     if (month) {
@@ -130,7 +106,6 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       batches: batches ?? [],
-      purchaseBatchMap,
       purchaseDateMap,
     });
   } catch (error) {

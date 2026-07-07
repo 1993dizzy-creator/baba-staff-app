@@ -370,54 +370,69 @@ export default function InventoryPage() {
     const hasMountedInventoryFetchRef = useRef(false);
     const stockStatusRequestIdRef = useRef(0);
 
-    const categoryOptions =
-        CATEGORY_OPTIONS_BY_PART[part as keyof typeof CATEGORY_OPTIONS_BY_PART] ?? [];
+    const categoryOptions = useMemo(
+        () =>
+            CATEGORY_OPTIONS_BY_PART[part as keyof typeof CATEGORY_OPTIONS_BY_PART] ?? [],
+        [part]
+    );
 
-    const customCategoryOptions = Array.from(
-        new Set(
-            inventoryList
-                .filter((item) => item.part === part)
-                .map((item) =>
-                    lang === "vi"
-                        ? item.category_vi || item.category || ""
-                        : item.category || item.category_vi || ""
+    const customCategoryOptions = useMemo(
+        () =>
+            Array.from(
+                new Set(
+                    inventoryList
+                        .filter((item) => item.part === part)
+                        .map((item) =>
+                            lang === "vi"
+                                ? item.category_vi || item.category || ""
+                                : item.category || item.category_vi || ""
+                        )
+                        .map((value) => value.trim())
+                        .filter(Boolean)
                 )
-                .map((value) => value.trim())
-                .filter(Boolean)
-        )
+            ),
+        [inventoryList, part, lang]
     );
 
-    const mergedCategoryOptions = [
-        ...categoryOptions.map((option) => ({
-            label: lang === "vi" ? option.vi : option.ko,
-            ko: option.ko,
-            vi: option.vi,
-        })),
-        ...customCategoryOptions
-            .filter(
-                (value) =>
-                    !categoryOptions.some((option) => {
-                        const label = lang === "vi" ? option.vi : option.ko;
-                        return label.trim().toLowerCase() === value.trim().toLowerCase();
-                    })
-            )
-            .map((value) => ({
-                label: value,
-                ko: lang === "ko" ? value : "",
-                vi: lang === "vi" ? value : "",
+    const mergedCategoryOptions = useMemo(
+        () => [
+            ...categoryOptions.map((option) => ({
+                label: lang === "vi" ? option.vi : option.ko,
+                ko: option.ko,
+                vi: option.vi,
             })),
-    ];
-
-    const customSupplierOptions = Array.from(
-        new Set(
-            inventoryList
-                .map((item) => (item.supplier || "").trim())
-                .filter(Boolean)
-        )
+            ...customCategoryOptions
+                .filter(
+                    (value) =>
+                        !categoryOptions.some((option) => {
+                            const label = lang === "vi" ? option.vi : option.ko;
+                            return label.trim().toLowerCase() === value.trim().toLowerCase();
+                        })
+                )
+                .map((value) => ({
+                    label: value,
+                    ko: lang === "ko" ? value : "",
+                    vi: lang === "vi" ? value : "",
+                })),
+        ],
+        [categoryOptions, customCategoryOptions, lang]
     );
 
-    const mergedSupplierOptions = customSupplierOptions.sort((a, b) =>
-        a.localeCompare(b, "vi")
+    const customSupplierOptions = useMemo(
+        () =>
+            Array.from(
+                new Set(
+                    inventoryList
+                        .map((item) => (item.supplier || "").trim())
+                        .filter(Boolean)
+                )
+            ),
+        [inventoryList]
+    );
+
+    const mergedSupplierOptions = useMemo(
+        () => [...customSupplierOptions].sort((a, b) => a.localeCompare(b, "vi")),
+        [customSupplierOptions]
     );
 
     const getDisplayItemName = useCallback(
@@ -2689,9 +2704,13 @@ export default function InventoryPage() {
         ].filter((group): group is InventoryLogGroup => Boolean(group.latest))
         : [];
 
-    const editingItem = editingId
-        ? inventoryList.find((item) => item.id === editingId) || null
-        : null;
+    const editingItem = useMemo(
+        () =>
+            editingId
+                ? inventoryList.find((item) => item.id === editingId) || null
+                : null,
+        [inventoryList, editingId]
+    );
 
 
     const labelStyle = {

@@ -12,7 +12,6 @@ import { INVENTORY_REASON_EMOJIS } from "@/lib/inventory/reasons";
 import { getBusinessDate } from "@/lib/common/business-time";
 
 type MonthlyItemStatus = "existing" | "new" | "missing";
-type LatestSource = "snapshot" | "current_inventory" | null;
 
 type MonthlyItem = {
   itemId: number;
@@ -31,7 +30,6 @@ type MonthlyItem = {
   baselinePurchasePrice: number | null;
   latestPurchasePrice: number | null;
   registeredPrice: number | null;
-  purchasePriceUsed: number | null;
   purchasePriceDiff: number | null;
   priceChangedDate: string | null;
   priceChangeEvents: PriceChangeEvent[];
@@ -43,7 +41,6 @@ type MonthlyItem = {
   serviceNetChange: number;
   otherNetChange: number;
   saleDeductionNetChange: number;
-  totalLogNetChange: number;
   saleDeductionDeduction: number;
   stockCheckDeduction: number;
   serviceDeduction: number;
@@ -71,12 +68,6 @@ type SupplierSummary = {
   purchaseQuantity: number;
   purchaseAmountKnown: number;
   purchaseAmountMissingCount: number;
-  stockNetChange: number;
-  stockCheckNetChange: number;
-  serviceNetChange: number;
-  otherNetChange: number;
-  saleDeductionNetChange: number;
-  totalLogNetChange: number;
   items: MonthlyItem[];
 };
 
@@ -125,15 +116,6 @@ type MonthlyInventoryResponse = {
     fromDate: string;
     toDate: string;
   };
-  baseline: {
-    snapshotId: number | null;
-    snapshotDate: string | null;
-  };
-  latest: {
-    snapshotId: number | null;
-    snapshotDate: string | null;
-    source: LatestSource;
-  };
   summary: {
     stockNetChange: number;
     purchaseQuantity: number;
@@ -146,13 +128,6 @@ type MonthlyInventoryResponse = {
     otherNetChange: number;
     saleDeductionNetChange: number;
     unclassifiedLogCount: number;
-  };
-  deductionReasonSummary: {
-    saleDeduction: number;
-    stockCheck: number;
-    service: number;
-    other: number;
-    total: number;
   };
   supplierSummary: SupplierSummary[];
   items: MonthlyItem[];
@@ -858,10 +833,6 @@ export default function InventoryMonthlyPage() {
     return [...map.values()];
   };
 
-  const serviceChangedItemCount =
-    data?.items.filter((item) => item.serviceNetChange !== 0).length ?? 0;
-  const salesDeductionChangedItemCount =
-    data?.items.filter((item) => item.saleDeductionNetChange !== 0).length ?? 0;
   const deductionNoSupplierItems = useMemo<MonthlyItem[]>(() => {
     if (!data) return [];
     const coveredIds = new Set<number>(
@@ -874,19 +845,49 @@ export default function InventoryMonthlyPage() {
       (item) => item.saleDeductionDeduction > 0 && !coveredIds.has(item.itemId)
     );
   }, [data, supplierGroups]);
-  const stockCheckIncreaseCount =
-    data?.items.filter((item) => item.stockCheckNetChange > 0).length ?? 0;
-  const stockCheckDecreaseCount =
-    data?.items.filter((item) => item.stockCheckNetChange < 0).length ?? 0;
-  const otherIncreaseCount =
-    data?.items.filter((item) => item.otherNetChange > 0).length ?? 0;
-  const otherDecreaseCount =
-    data?.items.filter((item) => item.otherNetChange < 0).length ?? 0;
-  const missingPriceItemCount =
-    data?.summary.purchaseAmountMissingCount ??
-    data?.items.filter(hasMissingPurchasePrice).length ??
-    0;
-  const priceChangedItemCount = data?.items.filter(hasPurchasePriceChange).length ?? 0;
+
+  const {
+    serviceChangedItemCount,
+    salesDeductionChangedItemCount,
+    stockCheckIncreaseCount,
+    stockCheckDecreaseCount,
+    otherIncreaseCount,
+    otherDecreaseCount,
+    missingPriceItemCount,
+    priceChangedItemCount,
+  } = useMemo(() => {
+    let serviceChangedItemCount = 0;
+    let salesDeductionChangedItemCount = 0;
+    let stockCheckIncreaseCount = 0;
+    let stockCheckDecreaseCount = 0;
+    let otherIncreaseCount = 0;
+    let otherDecreaseCount = 0;
+    let missingPriceItemCountFallback = 0;
+    let priceChangedItemCount = 0;
+
+    for (const item of data?.items ?? []) {
+      if (item.serviceNetChange !== 0) serviceChangedItemCount += 1;
+      if (item.saleDeductionNetChange !== 0) salesDeductionChangedItemCount += 1;
+      if (item.stockCheckNetChange > 0) stockCheckIncreaseCount += 1;
+      if (item.stockCheckNetChange < 0) stockCheckDecreaseCount += 1;
+      if (item.otherNetChange > 0) otherIncreaseCount += 1;
+      if (item.otherNetChange < 0) otherDecreaseCount += 1;
+      if (hasMissingPurchasePrice(item)) missingPriceItemCountFallback += 1;
+      if (hasPurchasePriceChange(item)) priceChangedItemCount += 1;
+    }
+
+    return {
+      serviceChangedItemCount,
+      salesDeductionChangedItemCount,
+      stockCheckIncreaseCount,
+      stockCheckDecreaseCount,
+      otherIncreaseCount,
+      otherDecreaseCount,
+      missingPriceItemCount:
+        data?.summary.purchaseAmountMissingCount ?? missingPriceItemCountFallback,
+      priceChangedItemCount,
+    };
+  }, [data]);
 
   const getItemAmountText = (item: MonthlyItem) => {
     if (item.purchaseAmount !== null) return formatMoney(item.purchaseAmount, labels.priceNotSet);

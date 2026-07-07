@@ -940,17 +940,22 @@ export default function InventorySnapshotsPage() {
         fetchSnapshotItems(selectedBatchId);
     }, [selectedBatchId, viewMode]);
 
-    useEffect(() => {
-        if (viewMode === "current") {
-            fetchMovementItems(activeBusinessDateKey);
-            return;
-        }
+    const selectedSnapshotDate = useMemo(() => {
+        if (viewMode !== "snapshot") return null;
 
         const batch = batchList.find((item) => Number(item.id) === Number(selectedBatchId));
-        if (batch?.snapshot_date) {
-            fetchMovementItems(batch.snapshot_date);
-        }
-    }, [activeBusinessDateKey, batchList, selectedBatchId, viewMode, fetchMovementItems]);
+        return batch?.snapshot_date ?? null;
+    }, [viewMode, batchList, selectedBatchId]);
+
+    useEffect(() => {
+        if (viewMode !== "current") return;
+        fetchMovementItems(activeBusinessDateKey);
+    }, [viewMode, activeBusinessDateKey, fetchMovementItems]);
+
+    useEffect(() => {
+        if (viewMode !== "snapshot" || !selectedSnapshotDate) return;
+        fetchMovementItems(selectedSnapshotDate);
+    }, [viewMode, selectedSnapshotDate, fetchMovementItems]);
 
     useEffect(() => {
         if (calendarMonth) return;
@@ -1872,7 +1877,6 @@ export default function InventorySnapshotsPage() {
                                             if (isCurrentBusinessDate) {
                                                 setViewMode("current");
                                                 setSelectedBatchId(null);
-                                                fetchMovementItems(activeBusinessDateKey);
                                             }
                                         }}
                                         style={getCalendarCellStyle(active, hasBatch || isCurrentBusinessDate, dayOfWeek)}
