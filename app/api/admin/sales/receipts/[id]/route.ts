@@ -1366,18 +1366,6 @@ export async function PATCH(
       receiptUpdate.original_amount_summary = originalAmountSummaryForSave;
     }
 
-    console.log("[RECEIPT_EDIT_PATCH_DEBUG]", {
-      receiptId,
-      paymentMethod,
-      rawCashReceivedAmount: body.cashReceivedAmount,
-      nextReceiptSalesSubtotal,
-      nextReceiptAdjustedTaxAmount,
-      nextReceiptFinal,
-      cashReceivedAmount,
-      returnAmount,
-      receiptUpdate,
-    });
-
     const { error } = await supabaseServer
       .from("pos_sales_receipts")
       .update(receiptUpdate)

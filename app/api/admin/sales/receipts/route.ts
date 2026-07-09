@@ -305,11 +305,21 @@ export async function GET(req: Request) {
     const paymentsByReceiptId = new Map<number, PaymentRow[]>();
 
     if (receiptRefIds.length > 0) {
-      const { data: lines, error: linesError } = await supabaseServer
-        .from("pos_sales_receipt_lines")
-        .select("receipt_ref_id, is_option, is_excluded, mapping_status")
-        .eq("business_date", businessDate)
-        .in("receipt_ref_id", receiptRefIds);
+      const [linesResult, paymentsResult] = await Promise.all([
+        supabaseServer
+          .from("pos_sales_receipt_lines")
+          .select("receipt_ref_id, is_option, is_excluded, mapping_status")
+          .eq("business_date", businessDate)
+          .in("receipt_ref_id", receiptRefIds),
+        supabaseServer
+          .from("pos_sales_receipt_payments")
+          .select("receipt_id, payment_name, card_name, amount")
+          .eq("business_date", businessDate)
+          .in("receipt_id", receiptIds)
+          .order("id", { ascending: true }),
+      ]);
+      const { data: lines, error: linesError } = linesResult;
+      const { data: payments, error: paymentsError } = paymentsResult;
 
       if (linesError) {
         throw new Error(`Failed to fetch sales receipt lines: ${linesError.message}`);
@@ -332,13 +342,6 @@ export async function GET(req: Request) {
 
         lineCountsByReceiptRefId.set(line.receipt_ref_id, current);
       });
-
-      const { data: payments, error: paymentsError } = await supabaseServer
-        .from("pos_sales_receipt_payments")
-        .select("receipt_id, payment_name, card_name, amount")
-        .eq("business_date", businessDate)
-        .in("receipt_id", receiptIds)
-        .order("id", { ascending: true });
 
       if (paymentsError) {
         throw new Error(`Failed to fetch sales receipt payments: ${paymentsError.message}`);
@@ -657,7 +660,7 @@ export async function POST(req: Request) {
           productId: null,
           itemId: null,
           itemCode: null,
-          itemName: "수동 금액 조정",
+          itemName: "Manual adjustment",
           unitName: null,
           quantity: 1,
           unitPrice: adjustmentAmount,
@@ -822,7 +825,7 @@ export async function POST(req: Request) {
       payment_status: 3,
       is_canceled: false,
       mapping_status: line.isAdjustment
-        ? "unmapped"
+        ? "manual_adjustment"
         : line.isOption
           ? "option"
           : line.productId !== null

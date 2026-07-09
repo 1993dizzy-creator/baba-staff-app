@@ -37,6 +37,7 @@ type SalesReceiptsViewText = SalesCommonText &
     | "loading"
     | "error"
     | "loadFailed"
+    | "noSearchResult"
     | "cash"
     | "transfer"
     | "card"
@@ -340,6 +341,16 @@ function isExistingOptionLine(line: LineDetail) {
     line.refDetailType !== 1 ||
     line.mappingStatus === "option"
   );
+}
+
+function getLineDisplayName(
+  line: Pick<LineDetail, "itemName" | "mappingStatus">,
+  text: Pick<SalesReceiptsViewText, "manualAdjustmentLineName">
+) {
+  if (line.mappingStatus === "manual_adjustment") {
+    return text.manualAdjustmentLineName;
+  }
+  return line.itemName || "-";
 }
 
 type PosProductsSyncResponse = {
@@ -863,6 +874,13 @@ function getKegTrackingProductName(product: {
   posItemCode: string | null;
   posItemName: string | null;
 }) {
+  if (
+    product.posItemCode &&
+    product.posItemName?.startsWith(`[${product.posItemCode}]`)
+  ) {
+    return product.posItemName;
+  }
+
   if (product.posItemCode && product.posItemName) {
     return `[${product.posItemCode}] ${product.posItemName}`;
   }
@@ -1216,7 +1234,7 @@ function getPaymentStatusLabel(
 }
 
 function getReceiptLineCountLabel(text: SalesReceiptsViewText) {
-  return text.salesItems === "판매상품" ? "판매라인" : text.salesItems;
+  return text.salesLineLabel;
 }
 
 function getReceiptSortTime(receipt: ReceiptItem) {
@@ -1256,6 +1274,7 @@ function getPaymentLabel(
     other?: string;
   }
 ) {
+  const fallbackPaymentLabel = text.other || "";
   const rawName =
     payment.paymentName ??
     payment.payment_name ??
@@ -1271,7 +1290,7 @@ function getPaymentLabel(
     normalized.includes("cash") ||
     paymentType === "1"
   ) {
-    return text.cash ?? "현금";
+    return text.cash || fallbackPaymentLabel;
   }
 
   if (
@@ -1279,7 +1298,7 @@ function getPaymentLabel(
     normalized.includes("transfer") ||
     normalized.includes("bank")
   ) {
-    return text.transfer ?? "이체";
+    return text.transfer || fallbackPaymentLabel;
   }
 
   if (
@@ -1288,17 +1307,17 @@ function getPaymentLabel(
     normalized.includes("visa") ||
     normalized.includes("master")
   ) {
-    return text.card ?? "카드";
+    return text.card || fallbackPaymentLabel;
   }
 
   if (
     normalized.includes("khac") ||
     normalized.includes("other")
   ) {
-    return text.other ?? "기타";
+    return fallbackPaymentLabel;
   }
 
-  return String(rawName || text.other || "기타");
+  return String(rawName || fallbackPaymentLabel);
 }
 
 function isCashPayment(payment: Pick<ReceiptPayment, "paymentName" | "cardName">) {
@@ -1414,6 +1433,7 @@ export default function SalesReceiptsPage() {
     loading: c.loading,
     error: c.error,
     loadFailed: c.loadFailed,
+    noSearchResult: c.noSearchResult,
     cash: c.cash,
     transfer: c.transfer,
     card: c.card,
@@ -1983,7 +2003,10 @@ export default function SalesReceiptsPage() {
 
       if (input.businessDate !== businessDate) {
         setManualReceiptDateNotice(
-          `자체영수증이 ${input.businessDate}에 생성되었습니다. 해당 날짜로 이동하면 확인할 수 있습니다.`
+          receiptsText.manualReceiptCreatedOtherDateNotice.replace(
+            "{businessDate}",
+            input.businessDate
+          )
         );
       } else {
         setManualReceiptDateNotice("");
@@ -2206,8 +2229,6 @@ function InventoryPreviewPanel({
     (receipt) => selectedReceipts[receipt.receiptId] === true
   ).length;
   const kegTrackingProducts = preview.kegTrackingSummary?.products ?? [];
-  const kegTrackingInventoryTotals =
-    preview.kegTrackingSummary?.inventoryTotals ?? [];
   const selectedApplyDisabled =
     selectedReceiptCount === 0 ||
     !canApplyInventory ||
@@ -2400,21 +2421,6 @@ function InventoryPreviewPanel({
                 </span>
               </div>
             ))}
-            {kegTrackingInventoryTotals.length > 0 ? (
-              <div style={kegTrackingPreviewTotalListStyle}>
-                {kegTrackingInventoryTotals.map((total) => (
-                  <div
-                    key={total.inventoryItemId}
-                    style={kegTrackingPreviewTotalStyle}
-                  >
-                    <strong>
-                      {getInventoryTotalName(total)} {text.kegTrackingTotal}
-                    </strong>
-                    <span>{formatKegUsageMl(total.expectedUsageMl)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
           </div>
         </details>
       ) : null}
@@ -2836,7 +2842,7 @@ function ReceiptDropdown({
     detail.hasOptionLines === true ||
     activeLines.some(isExistingOptionLine);
 
-  // ?먮낯 ?멸툑 ?쒖떆?? API??taxSummary??original_tax_summary / vat_amount 湲곗?
+  // 원본 세금 표시: taxSummary는 API의 original_tax_summary/vat_amount 기준
   const taxRows = detail.taxSummary?.taxByRate || [];
   const originalTotalTaxAmount = toFiniteNumber(
     detail.taxSummary?.totalTaxAmount ?? receipt.vatAmount
@@ -2874,7 +2880,7 @@ function ReceiptDropdown({
                       ...(isOption ? optionLineNameStyle : null),
                     }}
                   >
-                    {line.itemName || "-"}
+                    {getLineDisplayName(line, text)}
                   </span>
                   {isOption ? <span style={optionBadgeStyle}>{text.optionItems}</span> : null}
                 </div>
@@ -3035,6 +3041,7 @@ function ReceiptEditPanel({
   const [note, setNote] = useState(receipt.modificationNote || "");
   const [productQuery, setProductQuery] = useState("");
   const [productResults, setProductResults] = useState<PosProduct[]>([]);
+  const [isProductSearching, setIsProductSearching] = useState(false);
   const [productSearchError, setProductSearchError] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<PosProduct | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<
@@ -3049,10 +3056,12 @@ function ReceiptEditPanel({
     if (!isEditing || query.length < 1) {
       setProductResults([]);
       setProductSearchError("");
+      setIsProductSearching(false);
       return () => controller.abort();
     }
 
     async function fetchProducts() {
+      setIsProductSearching(true);
       try {
         const res = await fetch(
           `/api/pos/products?query=${encodeURIComponent(query)}&includeOptions=1`,
@@ -3075,6 +3084,8 @@ function ReceiptEditPanel({
           error instanceof Error ? error.message : text.productSearchFailed
         );
         setProductResults([]);
+      } finally {
+        if (!controller.signal.aborted) setIsProductSearching(false);
       }
     }
 
@@ -3453,6 +3464,12 @@ function ReceiptEditPanel({
                     </button>
                   ))}
                 </div>
+              ) : null}
+              {productQuery.trim().length > 0 &&
+              !isProductSearching &&
+              productResults.length === 0 &&
+              !productSearchError ? (
+                <p style={mutedTextStyle}>{text.noSearchResult}</p>
               ) : null}
               {productSearchError ? (
                 <p style={reviewErrorTextStyle}>{productSearchError}</p>
@@ -3847,7 +3864,7 @@ function ManualReceiptCreateModal({
   function addProductLine(product: PosProduct) {
     const qty = Number(productQty);
     if (!Number.isFinite(qty) || qty <= 0) {
-      setFormError("수량을 입력해주세요.");
+      setFormError(text.manualReceiptQuantityRequired);
       return;
     }
     const parentClientId = crypto.randomUUID();
@@ -3904,11 +3921,11 @@ function ManualReceiptCreateModal({
   function handleSubmit() {
     if (lines.length === 0) { setFormError(text.manualReceiptNoLines); return; }
     if (!/^\d{2}:\d{2}$/.test(saleTime)) {
-      setFormError(`${text.manualReceiptSaleTime}을 선택해주세요.`);
+      setFormError(text.manualReceiptSaleTimeRequired);
       return;
     }
     if (!vatEnabled && (!Number.isFinite(manualFinalAmount) || manualFinalAmount < 0)) {
-      setFormError("최종 결제금액은 0 이상이어야 합니다.");
+      setFormError(text.manualReceiptFinalAmountInvalid);
       return;
     }
     setFormError("");
@@ -3931,7 +3948,9 @@ function ManualReceiptCreateModal({
         <div style={modalHeaderStyle}>
           <div style={modalHeaderTitleWrapStyle}>
             <strong style={modalTitleStyle}>{text.manualReceiptModalTitle}</strong>
-            <span style={modalHeaderDateStyle}>영업일 {businessDate}</span>
+            <span style={modalHeaderDateStyle}>
+              {text.manualReceiptBusinessDateLabel} {businessDate}
+            </span>
           </div>
           <button type="button" onClick={onClose} disabled={isSaving} style={modalCloseButtonStyle}>✕</button>
         </div>
@@ -4042,7 +4061,7 @@ function ManualReceiptCreateModal({
           </div>
 
           <div style={modalSectionStyle}>
-            <div style={modalSectionTitleStyle}>품목 추가</div>
+            <div style={modalSectionTitleStyle}>{text.manualReceiptAddItems}</div>
             <div style={modalFieldGroupStyle}>
               <input
                 type="text"
@@ -4081,6 +4100,12 @@ function ManualReceiptCreateModal({
                     </button>
                   ))}
                 </div>
+              ) : null}
+              {productQuery.trim().length > 0 &&
+              !isSearching &&
+              productResults.length === 0 &&
+              !searchError ? (
+                <p style={modalMutedTextStyle}>{text.noSearchResult}</p>
               ) : null}
               {selectedProduct ? (
                 <div style={modalSelectedProductStyle}>
@@ -4147,7 +4172,9 @@ function ManualReceiptCreateModal({
                     (group) => group.type === "child" && group.options.length > 0
                   ).length > 0 ? (
                     <div style={modalComboChildrenStyle}>
-                      <span style={modalFieldLabelStyle}>구성</span>
+                      <span style={modalFieldLabelStyle}>
+                        {text.manualReceiptComboItems}
+                      </span>
                       {(selectedProduct.optionGroups || [])
                         .filter(
                           (group) => group.type === "child" && group.options.length > 0
@@ -4192,7 +4219,9 @@ function ManualReceiptCreateModal({
           </div>
 
           <div style={modalSectionStyle}>
-            <div style={modalSectionTitleStyle}>선택된 품목</div>
+            <div style={modalSectionTitleStyle}>
+              {text.manualReceiptSelectedItems}
+            </div>
             {lines.length > 0 ? (
               <div style={modalLineListStyle}>
                 {parentLines.map((line) => {
@@ -4259,16 +4288,22 @@ function ManualReceiptCreateModal({
 
           {!vatEnabled && lines.length > 0 ? (
             <div style={modalAdjustmentBoxStyle}>
-              <div style={modalSectionTitleStyle}>예외 금액 조정</div>
+              <div style={modalSectionTitleStyle}>
+                {text.manualReceiptAdjustmentTitle}
+              </div>
               <p style={modalMutedTextStyle}>
-                상품 가격과 재고차감 기준은 유지하고, 최종 결제금액만 조정합니다.
+                {text.manualReceiptAdjustmentHelp}
               </p>
               <div style={modalTotalRowStyle}>
-                <span style={modalTotalLabelStyle}>상품 정상가 합계</span>
+                <span style={modalTotalLabelStyle}>
+                  {text.manualReceiptProductSubtotal}
+                </span>
                 <span style={modalTotalValueStyle}>{formatVnd(totalSubtotal)}</span>
               </div>
               <label style={modalAdjustmentInputRowStyle}>
-                <span style={modalTotalLabelStyle}>최종 결제금액</span>
+                <span style={modalTotalLabelStyle}>
+                  {text.manualReceiptFinalAmountLabel}
+                </span>
                 <input
                   type="number"
                   value={manualFinalAmountInput}
@@ -4283,7 +4318,9 @@ function ManualReceiptCreateModal({
                 />
               </label>
               <div style={modalTotalRowStyle}>
-                <span style={modalTotalLabelStyle}>수동 조정금액</span>
+                <span style={modalTotalLabelStyle}>
+                  {text.manualReceiptAdjustmentAmountLabel}
+                </span>
                 <strong
                   style={{
                     ...modalTotalValueStyle,
@@ -4738,24 +4775,6 @@ const kegTrackingPreviewBadgeStyle: CSSProperties = {
   fontWeight: 900,
   textAlign: "right",
   whiteSpace: "nowrap",
-};
-
-const kegTrackingPreviewTotalListStyle: CSSProperties = {
-  display: "grid",
-  gap: 4,
-  padding: "2px 1px 0",
-};
-
-const kegTrackingPreviewTotalStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  justifyContent: "space-between",
-  gap: 8,
-  color: "#344054",
-  fontSize: 10,
-  lineHeight: 1.25,
-  fontWeight: 800,
-  padding: "0 2px",
 };
 
 const previewReceiptListStyle: CSSProperties = {

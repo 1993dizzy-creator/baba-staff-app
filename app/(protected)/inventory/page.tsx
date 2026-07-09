@@ -60,6 +60,7 @@ type InventoryItem = {
         soldMl: number;
         usagePercent: number;
         remainingPercent: number;
+        salesBreakdown?: KegSalesBreakdown;
     } | null;
     image_path?: string | null;
     updated_at?: string | null;
@@ -93,10 +94,19 @@ type EditFormPendingSave = {
 
 type KegSalesBreakdown = {
     totalUnits: number;
+    expectedTotalMl?: number;
     regularUnits: number;
+    regularSoldMl: number;
+    regularAllocatedMl?: number;
+    regularAverageMl: number | null;
     towerUnits: number;
+    towerSoldMl: number;
+    towerAllocatedMl?: number;
+    towerAverageMl: number | null;
     otherUnits: number;
-    averageCapacityMlPerUnit: number;
+    otherSoldMl: number;
+    otherAllocatedMl?: number;
+    averageCapacityMlPerUnit?: number;
 };
 
 type PreviousKegSummary = {
@@ -563,6 +573,82 @@ export default function InventoryPage() {
         return `${yy}.${mm}.${dd} ${hh}:${min}`;
     };
 
+    const formatKegVolume = (
+        valueMl: number,
+        options: {
+            fixedLiters?: boolean;
+            forceMl?: boolean;
+            preferLiters?: boolean;
+        } = {}
+    ) => {
+        if (options.forceMl) return `${Math.round(valueMl)}ml`;
+        if (options.preferLiters || Math.abs(valueMl) >= 1000) {
+            if (options.fixedLiters && valueMl !== 0) {
+                return `${(valueMl / 1000).toFixed(2)}L`;
+            }
+            return `${formatDecimalDisplay(valueMl / 1000)}L`;
+        }
+        return `${Math.round(valueMl)}ml`;
+    };
+
+    const getKegSalesQuantityText = (breakdown?: KegSalesBreakdown | null) => {
+        if (!breakdown || breakdown.totalUnits <= 0) return "";
+        const regularUnitSuffix = lang === "vi" ? "" : "잔";
+        const towerUnitSuffix = lang === "vi" ? "" : "개";
+        const genericUnitSuffix = lang === "vi" ? "" : "개";
+        const hasRegular = breakdown.regularUnits > 0;
+        const hasTower = breakdown.towerUnits > 0;
+        const isClassified = breakdown.otherUnits === 0 && (hasRegular || hasTower);
+
+        if (!isClassified) {
+            return `${formatDecimalDisplay(breakdown.totalUnits)}${genericUnitSuffix}`;
+        }
+
+        return [
+            hasRegular
+                ? `${t.kegSalesRegular} ${formatDecimalDisplay(breakdown.regularUnits)}${regularUnitSuffix}`
+                : "",
+            hasTower
+                ? `${t.kegSalesTower} ${formatDecimalDisplay(breakdown.towerUnits)}${towerUnitSuffix}`
+                : "",
+        ].filter(Boolean).join(" · ");
+    };
+
+    const getKegAverageText = (breakdown?: KegSalesBreakdown | null) => {
+        if (!breakdown) return "";
+        return [
+            breakdown.regularAverageMl && breakdown.regularAverageMl > 0
+                ? `${t.kegRegularAverageLabel} ${formatKegVolume(
+                    breakdown.regularAverageMl
+                )}`
+                : "",
+            breakdown.towerAverageMl && breakdown.towerAverageMl > 0
+                ? `${t.kegTowerAverageLabel} ${formatKegVolume(
+                    breakdown.towerAverageMl,
+                    { fixedLiters: true, preferLiters: true }
+                )}`
+                : "",
+        ].filter(Boolean).join(" · ");
+    };
+
+    const getKegStandardText = (breakdown?: KegSalesBreakdown | null) => {
+        if (!breakdown) return "";
+        return [
+            breakdown.regularUnits > 0 && breakdown.regularSoldMl > 0
+                ? `${t.kegRegularAverageLabel} ${formatKegVolume(
+                    breakdown.regularSoldMl / breakdown.regularUnits,
+                    { forceMl: true }
+                )}`
+                : "",
+            breakdown.towerUnits > 0 && breakdown.towerSoldMl > 0
+                ? `${t.kegTowerAverageLabel} ${formatKegVolume(
+                    breakdown.towerSoldMl / breakdown.towerUnits,
+                    { forceMl: true }
+                )}`
+                : "",
+        ].filter(Boolean).join(" · ");
+    };
+
     const getLogChanges = (log: InventoryLog, lang: string) => {
         const changes: {
             label: string;
@@ -670,33 +756,18 @@ export default function InventoryPage() {
             });
 
             if (breakdown && breakdown.totalUnits > 0) {
-                const regularUnitSuffix = lang === "vi" ? "" : "잔";
-                const towerUnitSuffix = lang === "vi" ? "" : "개";
-                const genericUnitSuffix = lang === "vi" ? "" : "개";
-                const hasRegular = breakdown.regularUnits > 0;
-                const hasTower = breakdown.towerUnits > 0;
-                const isClassified = breakdown.otherUnits === 0 && (hasRegular || hasTower);
-
-                const quantityText = !isClassified
-                    ? `${formatDecimalDisplay(breakdown.totalUnits)}${genericUnitSuffix}`
-                    : [
-                        hasRegular
-                            ? `${t.kegSalesRegular} ${formatDecimalDisplay(breakdown.regularUnits)}${regularUnitSuffix}`
-                            : "",
-                        hasTower
-                            ? `${t.kegSalesTower} ${formatDecimalDisplay(breakdown.towerUnits)}${towerUnitSuffix}`
-                            : "",
-                    ].filter(Boolean).join(" · ");
+                const quantityText = getKegSalesQuantityText(breakdown);
+                const averageText = getKegAverageText(breakdown);
 
                 changes.push({
                     label: t.kegSalesQuantity,
                     after: quantityText,
                 });
 
-                if (breakdown.averageCapacityMlPerUnit > 0) {
+                if (averageText) {
                     changes.push({
                         label: t.kegAverage,
-                        after: `${breakdown.averageCapacityMlPerUnit}ml / ${t.kegAverageUnit}`,
+                        after: averageText,
                     });
                 }
             }
@@ -1940,6 +2011,80 @@ export default function InventoryPage() {
         const soldLiters = progress.soldMl / 1000;
         const capacityLiters = progress.capacityMl / 1000;
         return `${formatDecimalDisplay(soldLiters)}L / ${formatDecimalDisplay(capacityLiters)}L`;
+    };
+
+    const getKegInfoSummaryRows = (item: InventoryItem) => {
+        const progress = item.kegProgress;
+        if (!progress) return [];
+
+        const remainingMl = Math.max(0, progress.capacityMl - progress.soldMl);
+        const usagePeriod = formatKegSessionDuration(
+            progress.startedAt,
+            new Date().toISOString(),
+            lang === "vi" ? "vi" : "ko"
+        );
+        const standardText = getKegStandardText(progress.salesBreakdown);
+        const breakdown = progress.salesBreakdown;
+        const regularSalesText = breakdown
+            ? `${formatDecimalDisplay(breakdown.regularUnits)}${
+                lang === "vi" ? "" : "잔"
+            } / ${formatKegVolume(breakdown.regularSoldMl, {
+                fixedLiters: true,
+                preferLiters: true,
+            })}`
+            : "";
+        const towerSalesText = breakdown
+            ? `${formatDecimalDisplay(breakdown.towerUnits)}${
+                lang === "vi" ? "" : "개"
+            } / ${formatKegVolume(breakdown.towerSoldMl, {
+                fixedLiters: true,
+                preferLiters: true,
+            })}`
+            : "";
+
+        return [
+            {
+                label: t.kegSoldAmountLabel,
+                value: `${formatKegVolume(progress.soldMl, {
+                    preferLiters: true,
+                })} / ${formatKegVolume(progress.capacityMl, {
+                    preferLiters: true,
+                })}`,
+            },
+            {
+                label: t.kegRemainingAmountLabel,
+                value: `${formatKegVolume(remainingMl, {
+                    fixedLiters: true,
+                    preferLiters: true,
+                })} / ${Math.round(progress.remainingPercent)}%`,
+            },
+            regularSalesText
+                ? {
+                    label: t.kegRegularSoldAmountLabel,
+                    value: regularSalesText,
+                }
+                : null,
+            towerSalesText
+                ? {
+                    label: t.kegTowerSoldAmountLabel,
+                    value: towerSalesText,
+                }
+                : null,
+            standardText
+                ? {
+                    label: t.kegStandard,
+                    value: standardText,
+                }
+                : null,
+            usagePeriod
+                ? {
+                    label: t.kegUsagePeriod,
+                    value: usagePeriod,
+                }
+                : null,
+        ].filter(
+            (row): row is { label: string; value: string } => row !== null
+        );
     };
 
     const getKegRemainingPercent = (item: InventoryItem, isLoading = false) => {
@@ -5010,7 +5155,7 @@ export default function InventoryPage() {
                         onClick={(e) => e.stopPropagation()}
                         style={{
                             width: "100%",
-                            maxWidth: 360,
+                            maxWidth: 420,
                             background: "#fff",
                             borderRadius: 14,
                             padding: 18,
@@ -5120,7 +5265,7 @@ export default function InventoryPage() {
                         <div style={{ fontSize: 18, fontWeight: 900, color: "#111827" }}>
                             {kegTimeModal.mode === "replace"
                                 ? t.kegReplacementTimeTitle
-                                : t.kegStartTimeTitle}
+                                : t.kegInfoSummaryTitle}
                         </div>
                         <div style={{ ...ui.metaText, marginBottom: 2 }}>
                             {[
@@ -5130,6 +5275,56 @@ export default function InventoryPage() {
                                 .filter(Boolean)
                                 .join(" ")}
                         </div>
+                        {kegTimeModal.mode === "edit-start" &&
+                        kegTimeModal.item.kegProgress ? (
+                            <div
+                                style={{
+                                    display: "grid",
+                                    gap: 6,
+                                    padding: "10px 12px",
+                                    border: "1px solid #d1fae5",
+                                    borderRadius: 10,
+                                    background: "#f0fdf4",
+                                }}
+                            >
+                                {getKegInfoSummaryRows(kegTimeModal.item).map(
+                                    (row) => (
+                                        <div
+                                            key={row.label}
+                                            style={{
+                                                display: "grid",
+                                                gridTemplateColumns:
+                                                    "minmax(96px, auto) minmax(0, 1fr)",
+                                                gap: 8,
+                                                alignItems: "baseline",
+                                            }}
+                                        >
+                                            <span
+                                                style={{
+                                                    color: "#047857",
+                                                    fontSize: 12,
+                                                    fontWeight: 800,
+                                                }}
+                                            >
+                                                {row.label}
+                                            </span>
+                                            <strong
+                                                style={{
+                                                    minWidth: 0,
+                                                    color: "#064e3b",
+                                                    fontSize: 12,
+                                                    lineHeight: 1.35,
+                                                    fontWeight: 900,
+                                                    overflowWrap: "anywhere",
+                                                }}
+                                            >
+                                                {row.value}
+                                            </strong>
+                                        </div>
+                                    )
+                                )}
+                            </div>
+                        ) : null}
                         <label
                             style={{
                                 display: "flex",
@@ -5188,7 +5383,7 @@ export default function InventoryPage() {
                                     ? c.saving
                                     : kegTimeModal.mode === "replace"
                                         ? t.kegReplaceSubmit
-                                        : t.kegStartTimeSubmit}
+                                        : t.kegChangeTimeSubmit}
                             </button>
                         </div>
                     </form>

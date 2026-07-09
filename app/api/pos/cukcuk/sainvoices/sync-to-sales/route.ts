@@ -892,16 +892,21 @@ async function getRecentSuccessfulSyncRun(params: {
   } | null;
 }
 
+function isDuplicateKeyError(error: unknown) {
+  if (typeof error !== "object" || error === null || !("message" in error)) {
+    return false;
+  }
+
+  return String(error.message).includes("duplicate key");
+}
+
 async function acquireSyncRun(params: {
   businessDate: string;
   branchId: string;
   requestParams: JsonObject;
 }) {
   const acquireStartedAt = Date.now();
-
-  const cleanupStartedAt = Date.now();
-  await expireStaleSyncRuns(params);
-  const cleanupMs = Date.now() - cleanupStartedAt;
+  let cleanupMs = 0;
 
   try {
     const insertStartedAt = Date.now();
@@ -917,12 +922,30 @@ async function acquireSyncRun(params: {
       },
     };
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "message" in error &&
-      String(error.message).includes("duplicate key")
-    ) {
+    if (isDuplicateKeyError(error)) {
+      const cleanupStartedAt = Date.now();
+      await expireStaleSyncRuns(params);
+      cleanupMs = Date.now() - cleanupStartedAt;
+
+      try {
+        const retryInsertStartedAt = Date.now();
+        const syncRunId = await createSyncRun(params);
+        const insertMs = Date.now() - retryInsertStartedAt;
+
+        return {
+          syncRunId,
+          timing: {
+            totalMs: Date.now() - acquireStartedAt,
+            cleanupMs,
+            insertMs,
+          },
+        };
+      } catch (retryError) {
+        if (!isDuplicateKeyError(retryError)) {
+          throw retryError;
+        }
+      }
+
       const conflictLookupStartedAt = Date.now();
       const running = await getRunningSyncRun(params);
       const conflictLookupMs = Date.now() - conflictLookupStartedAt;
@@ -2060,33 +2083,36 @@ export async function POST(req: Request) {
     });
     const finishMs = Date.now() - finishStartedAt;
 
-    console.log("[SALES_SYNC_TIMING]", {
-      syncRunId,
-      businessDate,
-      branchId,
-      invoiceCount: receiptRows.length,
-      lineCount: lineRows.length,
-      totalMs: Date.now() - syncStartedAt,
-      acquireMs: acquireTiming.totalMs,
-      acquireDetail: {
-        cleanupMs: acquireTiming.cleanupMs,
-        insertMs: acquireTiming.insertMs,
-      },
-      loginMs: timingsMs.loginMs,
-      invoiceListMs: timingsMs.invoiceListMs,
-      invoiceDetailMs: timingsMs.invoiceDetailMs,
-      saveReceiptsMs: timingsMs.saveReceiptsMs,
-      saveReceiptsDetail: receiptSaveResult.timing,
-      saveLinesMs: timingsMs.saveLinesMs,
-      saveLinesDetail: lineSaveResult.timing,
-      savePaymentsMs: timingsMs.savePaymentsMs,
-      savePaymentsDetail: {
-        getReceiptPaymentSourcesMs,
-        buildPaymentRowsMs,
-        ...paymentSaveResult.timing,
-      },
-      finishMs,
-    });
+    console.log(
+      "[SALES_SYNC_TIMING]",
+      JSON.stringify({
+        syncRunId,
+        businessDate,
+        branchId,
+        invoiceCount: receiptRows.length,
+        lineCount: lineRows.length,
+        totalMs: Date.now() - syncStartedAt,
+        acquireMs: acquireTiming.totalMs,
+        acquireDetail: {
+          cleanupMs: acquireTiming.cleanupMs,
+          insertMs: acquireTiming.insertMs,
+        },
+        loginMs: timingsMs.loginMs,
+        invoiceListMs: timingsMs.invoiceListMs,
+        invoiceDetailMs: timingsMs.invoiceDetailMs,
+        saveReceiptsMs: timingsMs.saveReceiptsMs,
+        saveReceiptsDetail: receiptSaveResult.timing,
+        saveLinesMs: timingsMs.saveLinesMs,
+        saveLinesDetail: lineSaveResult.timing,
+        savePaymentsMs: timingsMs.savePaymentsMs,
+        savePaymentsDetail: {
+          getReceiptPaymentSourcesMs,
+          buildPaymentRowsMs,
+          ...paymentSaveResult.timing,
+        },
+        finishMs,
+      })
+    );
 
     return NextResponse.json({
       ok: true,

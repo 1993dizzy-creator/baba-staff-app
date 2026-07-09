@@ -6,10 +6,19 @@ type SupabaseClientLike = Pick<SupabaseClient, "from">;
 export type KegSalesBreakdown = {
   /** Sum of POS receipt-line quantities matched to this keg's mapped products (not a stock/ml unit — a count of sold POS lines/units). */
   totalUnits: number;
+  expectedTotalMl?: number;
   regularUnits: number;
+  regularSoldMl: number;
+  regularAllocatedMl?: number;
+  regularAverageMl: number | null;
   towerUnits: number;
+  towerSoldMl: number;
+  towerAllocatedMl?: number;
+  towerAverageMl: number | null;
   otherUnits: number;
-  /** capacityMl / totalUnits — average keg volume per sold unit, not soldMl / totalUnits (see classifyMappingCategory doc). */
+  otherSoldMl: number;
+  otherAllocatedMl?: number;
+  /** Legacy field kept for old clients; prefer regularAverageMl/towerAverageMl for display. */
   averageCapacityMlPerUnit: number;
 };
 
@@ -123,19 +132,28 @@ const getLineReferenceTime = (
  * item_name only when unit_name is missing, and to "other" when neither is
  * available (so unknown data is never silently mislabeled as "regular").
  */
-const TOWER_KEYWORDS = ["tháp", "thap", "tower", "타워"];
+const normalizeClassifyText = (value: unknown) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "d");
+
+const TOWER_KEYWORDS = ["thap", "tower", "타워"];
 
 const classifyMappingCategory = (
   product: PosProductRow | undefined
 ): "regular" | "tower" | "other" => {
-  const unitName = (product?.unit_name || "").trim().toLowerCase();
+  const unitName = normalizeClassifyText(product?.unit_name);
   if (unitName) {
     return TOWER_KEYWORDS.some((keyword) => unitName.includes(keyword))
       ? "tower"
       : "regular";
   }
 
-  const itemName = (product?.item_name || "").trim().toLowerCase();
+  const itemName = normalizeClassifyText(product?.item_name);
   if (itemName) {
     return TOWER_KEYWORDS.some((keyword) => itemName.includes(keyword))
       ? "tower"
@@ -219,9 +237,18 @@ const computeSalesBreakdown = async (
 
     const emptyBreakdown: KegSalesBreakdown = {
       totalUnits: 0,
+      expectedTotalMl: 0,
       regularUnits: 0,
+      regularSoldMl: 0,
+      regularAllocatedMl: 0,
+      regularAverageMl: null,
       towerUnits: 0,
+      towerSoldMl: 0,
+      towerAllocatedMl: 0,
+      towerAverageMl: null,
       otherUnits: 0,
+      otherSoldMl: 0,
+      otherAllocatedMl: 0,
       averageCapacityMlPerUnit: 0,
     };
 
@@ -245,8 +272,11 @@ const computeSalesBreakdown = async (
     const endMs = Date.parse(params.endedAt);
 
     let regularUnits = 0;
+    let regularSoldMl = 0;
     let towerUnits = 0;
+    let towerSoldMl = 0;
     let otherUnits = 0;
+    let otherSoldMl = 0;
 
     for (const mapping of mappings) {
       const product = productById.get(Number(mapping.pos_product_id));
@@ -254,6 +284,8 @@ const computeSalesBreakdown = async (
       const itemIdKey = asOptionalKey(product?.item_id);
       const itemCode = asOptionalKey(product?.item_code);
       const category = classifyMappingCategory(product);
+      const quantityPerPosUnit = asNumber(mapping.quantity_per_pos_unit);
+      if (quantityPerPosUnit <= 0) continue;
 
       for (const line of lines) {
         if (
@@ -293,19 +325,63 @@ const computeSalesBreakdown = async (
         }
 
         const quantity = asNumber(line.quantity);
-        if (category === "tower") towerUnits += quantity;
-        else if (category === "other") otherUnits += quantity;
-        else regularUnits += quantity;
+        const lineSoldMl = quantity * quantityPerPosUnit;
+        if (category === "tower") {
+          towerUnits += quantity;
+          towerSoldMl += lineSoldMl;
+        } else if (category === "other") {
+          otherUnits += quantity;
+          otherSoldMl += lineSoldMl;
+        } else {
+          regularUnits += quantity;
+          regularSoldMl += lineSoldMl;
+        }
       }
     }
 
     const totalUnits = roundDecimal(regularUnits + towerUnits + otherUnits);
+    const roundedRegularUnits = roundDecimal(regularUnits);
+    const roundedTowerUnits = roundDecimal(towerUnits);
+    const roundedOtherUnits = roundDecimal(otherUnits);
+    const roundedRegularSoldMl = roundDecimal(regularSoldMl);
+    const roundedTowerSoldMl = roundDecimal(towerSoldMl);
+    const roundedOtherSoldMl = roundDecimal(otherSoldMl);
+    const expectedTotalMl = roundDecimal(
+      roundedRegularSoldMl + roundedTowerSoldMl + roundedOtherSoldMl
+    );
+    const regularAllocatedMl =
+      expectedTotalMl > 0
+        ? roundDecimal(params.capacityMl * (roundedRegularSoldMl / expectedTotalMl))
+        : 0;
+    const towerAllocatedMl =
+      expectedTotalMl > 0
+        ? roundDecimal(params.capacityMl * (roundedTowerSoldMl / expectedTotalMl))
+        : 0;
+    const otherAllocatedMl =
+      expectedTotalMl > 0
+        ? roundDecimal(params.capacityMl * (roundedOtherSoldMl / expectedTotalMl))
+        : 0;
 
     return {
       totalUnits,
-      regularUnits: roundDecimal(regularUnits),
-      towerUnits: roundDecimal(towerUnits),
-      otherUnits: roundDecimal(otherUnits),
+      expectedTotalMl,
+      regularUnits: roundedRegularUnits,
+      regularSoldMl: roundedRegularSoldMl,
+      regularAllocatedMl,
+      regularAverageMl:
+        roundedRegularUnits > 0 && expectedTotalMl > 0
+          ? Math.round(regularAllocatedMl / roundedRegularUnits)
+          : null,
+      towerUnits: roundedTowerUnits,
+      towerSoldMl: roundedTowerSoldMl,
+      towerAllocatedMl,
+      towerAverageMl:
+        roundedTowerUnits > 0 && expectedTotalMl > 0
+          ? Math.round(towerAllocatedMl / roundedTowerUnits)
+          : null,
+      otherUnits: roundedOtherUnits,
+      otherSoldMl: roundedOtherSoldMl,
+      otherAllocatedMl,
       averageCapacityMlPerUnit:
         totalUnits > 0 ? Math.round(params.capacityMl / totalUnits) : 0,
     };

@@ -24,6 +24,8 @@ type PosProductRow = {
   pos_item_id: string | null;
   item_id: string | null;
   item_code: string | null;
+  item_name: string | null;
+  unit_name: string | null;
 };
 
 type PosReceiptLineRow = {
@@ -57,6 +59,19 @@ export type KegProgress = {
   soldMl: number;
   usagePercent: number;
   remainingPercent: number;
+  salesBreakdown?: KegSalesBreakdown;
+};
+
+export type KegSalesBreakdown = {
+  totalUnits: number;
+  regularUnits: number;
+  regularSoldMl: number;
+  regularAverageMl: number | null;
+  towerUnits: number;
+  towerSoldMl: number;
+  towerAverageMl: number | null;
+  otherUnits: number;
+  otherSoldMl: number;
 };
 
 const asPositiveNumber = (value: unknown) => {
@@ -67,6 +82,39 @@ const asPositiveNumber = (value: unknown) => {
 const asOptionalKey = (value: unknown) => {
   const text = String(value ?? "").trim();
   return text ? text : null;
+};
+
+const normalizeClassifyText = (value: unknown) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "d");
+
+const classifyKegProduct = (
+  product: PosProductRow | undefined
+): "regular" | "tower" | "other" => {
+  const unitName = normalizeClassifyText(product?.unit_name);
+  if (unitName) {
+    return unitName.includes("thap") ||
+      unitName.includes("tower") ||
+      unitName.includes("타워")
+      ? "tower"
+      : "regular";
+  }
+
+  const itemName = normalizeClassifyText(product?.item_name);
+  if (itemName) {
+    return itemName.includes("thap") ||
+      itemName.includes("tower") ||
+      itemName.includes("타워")
+      ? "tower"
+      : "regular";
+  }
+
+  return "other";
 };
 
 const getLineReferenceTime = (
@@ -103,6 +151,7 @@ const buildKegProgress = (params: {
   session: ActiveKegSessionRow;
   capacityMl: number;
   soldMl: number;
+  salesBreakdown?: KegSalesBreakdown;
 }) => {
   const soldMl = roundDecimal(params.soldMl);
   const usagePercent = roundDecimal((soldMl / params.capacityMl) * 100);
@@ -115,6 +164,7 @@ const buildKegProgress = (params: {
     soldMl,
     usagePercent,
     remainingPercent,
+    salesBreakdown: params.salesBreakdown,
   } satisfies KegProgress;
 };
 
@@ -204,7 +254,7 @@ export async function fetchKegProgressByItemId(params: {
   for (const ids of chunkArray(productIds, 500)) {
     const { data, error } = await supabase
       .from("pos_products")
-      .select("id, pos_item_id, item_id, item_code")
+      .select("id, pos_item_id, item_id, item_code, item_name, unit_name")
       .in("id", ids);
 
     if (error) throw error;
@@ -346,12 +396,19 @@ export async function fetchKegProgressByItemId(params: {
     if (!Number.isFinite(sessionStartTime) || capacityMl <= 0) continue;
 
     let soldMl = 0;
+    let regularUnits = 0;
+    let regularSoldMl = 0;
+    let towerUnits = 0;
+    let towerSoldMl = 0;
+    let otherUnits = 0;
+    let otherSoldMl = 0;
     const itemMappings = activeSessionMappings.filter(
       (mapping) => Number(mapping.inventory_item_id) === itemId
     );
 
     for (const mapping of itemMappings) {
       const product = productById.get(Number(mapping.pos_product_id));
+      const category = classifyKegProduct(product);
       const quantityPerPosUnit = asPositiveNumber(
         mapping.quantity_per_pos_unit
       );
@@ -378,12 +435,56 @@ export async function fetchKegProgressByItemId(params: {
           }
 
           countedLineIds.add(lineId);
-          soldMl += asPositiveNumber(line.quantity) * quantityPerPosUnit;
+          const quantity = asPositiveNumber(line.quantity);
+          const lineSoldMl = quantity * quantityPerPosUnit;
+          soldMl += lineSoldMl;
+          if (category === "tower") {
+            towerUnits += quantity;
+            towerSoldMl += lineSoldMl;
+          } else if (category === "other") {
+            otherUnits += quantity;
+            otherSoldMl += lineSoldMl;
+          } else {
+            regularUnits += quantity;
+            regularSoldMl += lineSoldMl;
+          }
         }
       }
     }
 
-    progressByItemId.set(itemId, buildKegProgress({ session, capacityMl, soldMl }));
+    const roundedRegularUnits = roundDecimal(regularUnits);
+    const roundedTowerUnits = roundDecimal(towerUnits);
+    const roundedOtherUnits = roundDecimal(otherUnits);
+    const roundedRegularSoldMl = roundDecimal(regularSoldMl);
+    const roundedTowerSoldMl = roundDecimal(towerSoldMl);
+    const roundedOtherSoldMl = roundDecimal(otherSoldMl);
+    progressByItemId.set(
+      itemId,
+      buildKegProgress({
+        session,
+        capacityMl,
+        soldMl,
+        salesBreakdown: {
+          totalUnits: roundDecimal(
+            roundedRegularUnits + roundedTowerUnits + roundedOtherUnits
+          ),
+          regularUnits: roundedRegularUnits,
+          regularSoldMl: roundedRegularSoldMl,
+          regularAverageMl:
+            roundedRegularUnits > 0
+              ? Math.round(roundedRegularSoldMl / roundedRegularUnits)
+              : null,
+          towerUnits: roundedTowerUnits,
+          towerSoldMl: roundedTowerSoldMl,
+          towerAverageMl:
+            roundedTowerUnits > 0
+              ? Math.round(roundedTowerSoldMl / roundedTowerUnits)
+              : null,
+          otherUnits: roundedOtherUnits,
+          otherSoldMl: roundedOtherSoldMl,
+        },
+      })
+    );
   }
 
   return progressByItemId;

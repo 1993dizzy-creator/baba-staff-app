@@ -117,6 +117,7 @@ export const salesText = {
       listTitle: "영수증 목록",
       noReceipts: "영수증 데이터 없음",
       selectedBusinessDateNoReceipts: "선택한 영업일의 영수증이 없습니다.",
+      salesLineLabel: "판매라인",
       menuSyncButton: "영수증 수정용 메뉴 동기화",
       menuSyncDescription:
         "POS의 최신 메뉴/가격/옵션 정보를 다시 불러옵니다.",
@@ -143,6 +144,22 @@ export const salesText = {
       manualReceiptVatDisabled: "VAT 미적용",
       manualReceiptDirectInput: "직접 입력",
       manualReceiptPosSearch: "POS 상품 검색",
+      manualReceiptQuantityRequired: "수량을 입력해주세요.",
+      manualReceiptFinalAmountInvalid: "최종 결제금액은 0 이상이어야 합니다.",
+      manualReceiptSaleTimeRequired: "판매시간을 선택해주세요.",
+      manualReceiptBusinessDateLabel: "영업일",
+      manualReceiptAddItems: "품목 추가",
+      manualReceiptSelectedItems: "선택된 품목",
+      manualReceiptComboItems: "구성",
+      manualReceiptAdjustmentTitle: "예외 금액 조정",
+      manualReceiptAdjustmentHelp:
+        "상품 가격과 재고차감 기준은 유지하고, 최종 결제금액만 조정합니다.",
+      manualReceiptProductSubtotal: "상품 정상가 합계",
+      manualReceiptFinalAmountLabel: "최종 결제금액",
+      manualReceiptAdjustmentAmountLabel: "수동 조정금액",
+      manualReceiptCreatedOtherDateNotice:
+        "자체영수증이 {businessDate}에 생성되었습니다. 해당 날짜로 이동하면 확인할 수 있습니다.",
+      manualAdjustmentLineName: "수동 금액 조정",
     },
     receiptsEdit: {
       title: "영수증 수정",
@@ -284,6 +301,7 @@ export const salesText = {
       listTitle: "Danh sách hóa đơn",
       noReceipts: "Không có hóa đơn",
       selectedBusinessDateNoReceipts: "Không có hóa đơn cho ngày đã chọn.",
+      salesLineLabel: "Dòng bán",
       menuSyncButton: "Đồng bộ menu chỉnh sửa hóa đơn",
       menuSyncDescription:
         "Tải lại thông tin món, giá và tùy chọn mới nhất từ POS.",
@@ -310,6 +328,23 @@ export const salesText = {
       manualReceiptVatDisabled: "Không VAT",
       manualReceiptDirectInput: "Nhập tay",
       manualReceiptPosSearch: "Tìm món POS",
+      manualReceiptQuantityRequired: "Vui lòng nhập số lượng.",
+      manualReceiptFinalAmountInvalid:
+        "Tổng thanh toán cuối cùng phải từ 0 trở lên.",
+      manualReceiptSaleTimeRequired: "Vui lòng chọn thời gian bán.",
+      manualReceiptBusinessDateLabel: "Ngày kinh doanh",
+      manualReceiptAddItems: "Thêm món",
+      manualReceiptSelectedItems: "Món đã chọn",
+      manualReceiptComboItems: "Món trong combo",
+      manualReceiptAdjustmentTitle: "Điều chỉnh số tiền ngoại lệ",
+      manualReceiptAdjustmentHelp:
+        "Giữ nguyên giá món và quy tắc trừ kho, chỉ điều chỉnh tổng thanh toán cuối cùng.",
+      manualReceiptProductSubtotal: "Tổng giá món",
+      manualReceiptFinalAmountLabel: "Tổng thanh toán cuối cùng",
+      manualReceiptAdjustmentAmountLabel: "Số tiền điều chỉnh thủ công",
+      manualReceiptCreatedOtherDateNotice:
+        "Hóa đơn thủ công đã được tạo cho ngày {businessDate}. Chuyển sang ngày đó để kiểm tra.",
+      manualAdjustmentLineName: "Điều chỉnh số tiền thủ công",
     },
     receiptsEdit: {
       title: "Sửa hóa đơn",
