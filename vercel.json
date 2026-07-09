@@ -12,6 +12,14 @@
     {
       "path": "/api/cron/sales-sync",
       "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/cron/sales-deductions",
+      "schedule": "*/15 10-18 * * *"
+    },
+    {
+      "path": "/api/cron/sales-deductions",
+      "schedule": "5 20 * * *"
     }
   ]
 }
