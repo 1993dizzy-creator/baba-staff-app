@@ -102,7 +102,6 @@ async function getDeductionCandidateReceiptIds(businessDate: string) {
     .eq("business_date", businessDate)
     .eq("payment_status", 3)
     .or("is_canceled.is.null,is_canceled.eq.false")
-    .or("is_modified.is.null,is_modified.eq.false")
     .or("source.is.null,source.neq.manual")
     .order("id", { ascending: true });
 

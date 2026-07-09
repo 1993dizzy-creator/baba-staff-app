@@ -929,6 +929,37 @@ function getInventoryPreviewStatusLabel(
   return text.status.needsCheck;
 }
 
+function isKegOnlyManualReceipt(
+  receipt: InventoryDeductionPreview["receipts"][number]
+) {
+  if (hasDeductionCandidates(receipt)) return false;
+
+  const nonReadyLines = receipt.lines.filter((line) => line.status !== "ready");
+  if (nonReadyLines.length === 0) return false;
+
+  return nonReadyLines.every((line) => line.lineType === "manual");
+}
+
+function getReceiptListDeductionBadge(
+  receipt: InventoryDeductionPreview["receipts"][number] | undefined,
+  text: InventoryPreviewCopy
+) {
+  if (!receipt) return null;
+  if (receipt.status === "skipped") return null;
+  if (isKegOnlyManualReceipt(receipt)) return null;
+
+  return {
+    label: getInventoryPreviewStatusLabel(receipt, text),
+    toneStyle: isPartialDeductionReceipt(receipt)
+      ? batchValidationWarningStyle
+      : receipt.status === "ready"
+        ? previewStatusReadyStyle
+        : receipt.status === "already_applied"
+          ? previewStatusAlreadyAppliedStyle
+          : previewStatusBlockedStyle,
+  };
+}
+
 function isPreviewLineCheckNeeded(
   line: InventoryDeductionPreview["receipts"][number]["lines"][number]
 ) {
@@ -1515,6 +1546,9 @@ export default function SalesReceiptsPage() {
   const [isManualReceiptSaving, setIsManualReceiptSaving] = useState(false);
   const [manualReceiptSaveError, setManualReceiptSaveError] = useState("");
   const [manualReceiptDateNotice, setManualReceiptDateNotice] = useState("");
+  const [receiptDeductionPreview, setReceiptDeductionPreview] = useState<
+    InventoryDeductionPreview["receipts"] | null
+  >(null);
 
   const canSyncMenu =
     currentUser?.role === "owner" ||
@@ -1535,6 +1569,21 @@ export default function SalesReceiptsPage() {
       })),
     [businessDate, pathname, t.tabs]
   );
+
+  const receiptIdsKey = useMemo(
+    () => receipts.map((receipt) => receipt.id).join(","),
+    [receipts]
+  );
+  const receiptDeductionPreviewByReceiptId = useMemo(() => {
+    const map = new Map<
+      number,
+      InventoryDeductionPreview["receipts"][number]
+    >();
+    (receiptDeductionPreview || []).forEach((receipt) => {
+      map.set(receipt.receiptId, receipt);
+    });
+    return map;
+  }, [receiptDeductionPreview]);
 
   useEffect(() => {
     const user = getUser();
@@ -1583,10 +1632,52 @@ export default function SalesReceiptsPage() {
     setInventoryPreviewError("");
     setSelectedPreviewReceipts({});
     setBatchApplyResult(null);
+    setReceiptDeductionPreview(null);
     fetchReceipts();
 
     return () => controller.abort();
   }, [businessDate, receiptsText.loadFailed]);
+
+  useEffect(() => {
+    if (!canSyncMenu || !currentUser?.username || !receiptIdsKey) {
+      setReceiptDeductionPreview(null);
+      return;
+    }
+
+    const receiptIds = receiptIdsKey.split(",").map(Number);
+    const controller = new AbortController();
+
+    async function fetchReceiptDeductionPreview() {
+      try {
+        const res = await fetch("/api/admin/sales/inventory-deductions/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            actorUsername: currentUser?.username,
+            receiptIds,
+          }),
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        const result = (await res.json().catch(() => null)) as
+          | InventoryPreviewResponse
+          | null;
+
+        if (!res.ok || !result?.ok || !result.preview) {
+          if (!controller.signal.aborted) setReceiptDeductionPreview(null);
+          return;
+        }
+
+        setReceiptDeductionPreview(result.preview.receipts);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setReceiptDeductionPreview(null);
+      }
+    }
+
+    fetchReceiptDeductionPreview();
+    return () => controller.abort();
+  }, [canSyncMenu, currentUser?.username, receiptIdsKey]);
 
   async function handleToggleReceipt(receiptId: number) {
     if (expandedReceiptId === receiptId) {
@@ -2124,6 +2215,8 @@ export default function SalesReceiptsPage() {
             detailErrorByReceiptId={detailErrorByReceiptId}
             editSavingId={editSavingId}
             editErrorByReceiptId={editErrorByReceiptId}
+            deductionText={inventoryText}
+            deductionPreviewByReceiptId={receiptDeductionPreviewByReceiptId}
             onToggleReceipt={handleToggleReceipt}
             onSaveEdit={handleSaveReceiptEdit}
           />
@@ -2650,6 +2743,8 @@ function ReceiptList({
   detailErrorByReceiptId,
   editSavingId,
   editErrorByReceiptId,
+  deductionText,
+  deductionPreviewByReceiptId,
   onToggleReceipt,
   onSaveEdit,
 }: {
@@ -2663,6 +2758,11 @@ function ReceiptList({
   detailErrorByReceiptId: Record<number, string>;
   editSavingId: number | null;
   editErrorByReceiptId: Record<number, string>;
+  deductionText: InventoryPreviewCopy;
+  deductionPreviewByReceiptId: Map<
+    number,
+    InventoryDeductionPreview["receipts"][number]
+  >;
   onToggleReceipt: (receiptId: number) => void;
   onSaveEdit: (input: SaveReceiptEditInput) => void;
 }) {
@@ -2702,6 +2802,8 @@ function ReceiptList({
               text={text}
               receipt={receipt}
               isExpanded={isExpanded}
+              deductionText={deductionText}
+              deductionPreview={deductionPreviewByReceiptId.get(receipt.id)}
               onToggle={() => onToggleReceipt(receipt.id)}
             />
             {isExpanded ? (
@@ -2727,11 +2829,15 @@ function ReceiptRow({
   text,
   receipt,
   isExpanded,
+  deductionText,
+  deductionPreview,
   onToggle,
 }: {
   text: SalesReceiptsViewText;
   receipt: ReceiptItem;
   isExpanded: boolean;
+  deductionText: InventoryPreviewCopy;
+  deductionPreview?: InventoryDeductionPreview["receipts"][number];
   onToggle: () => void;
 }) {
   const statusLabel = getPaymentStatusLabel(receipt, text);
@@ -2747,6 +2853,10 @@ function ReceiptRow({
       : isCanceled
         ? canceledBadgeStyle
         : paidBadgeStyle;
+  const deductionBadge = getReceiptListDeductionBadge(
+    deductionPreview,
+    deductionText
+  );
 
   return (
     <button type="button" onClick={onToggle} style={receiptRowButtonStyle}>
@@ -2789,6 +2899,13 @@ function ReceiptRow({
       <span style={receiptAmountWrapStyle}>
         <span style={receiptTimeStyle}>{formatTime(receipt.refDate)}</span>
         <strong style={amountStyle}>{formatVnd(receipt.finalAmount)}</strong>
+        {deductionBadge ? (
+          <span
+            style={{ ...previewStatusStyle, ...deductionBadge.toneStyle }}
+          >
+            {deductionBadge.label}
+          </span>
+        ) : null}
         <span style={chevronStyle}>{isExpanded ? "⌃" : "⌄"}</span>
       </span>
     </button>
