@@ -32,8 +32,14 @@ export async function saveInventoryDeductionPreviewBatch(params: {
   preview: InventoryDeductionPreview;
   actorUsername: string;
   note?: string | null;
+  workflowType?: "initial_apply" | "reprocess_modified" | null;
+  receiptContentFingerprintByReceiptId?: Map<number, string> | null;
+  executionId?: string | null;
 }) {
   const now = new Date().toISOString();
+  const workflowType = params.workflowType ?? null;
+  const receiptContentFingerprintByReceiptId =
+    params.receiptContentFingerprintByReceiptId ?? null;
   const { data: batch, error: batchError } = await supabaseServer
     .from("pos_inventory_deduction_batches")
     .insert({
@@ -52,6 +58,8 @@ export async function saveInventoryDeductionPreviewBatch(params: {
         inventoryTotals: params.preview.inventoryTotals,
         generatedAt: params.preview.generatedAt,
         hashVersion: params.preview.receipts[0]?.hashVersion ?? 1,
+        ...(workflowType ? { workflowType } : {}),
+        ...(params.executionId ? { executionId: params.executionId } : {}),
       },
       updated_at: now,
     })
@@ -67,32 +75,44 @@ export async function saveInventoryDeductionPreviewBatch(params: {
   const batchId = Number(batch.id);
 
   try {
-    const receiptRows = params.preview.receipts.map((receipt) => ({
-      batch_id: batchId,
-      receipt_id: receipt.receiptId,
-      receipt_ref_no: receipt.refNo,
-      business_date: receipt.businessDate,
-      status: receipt.status,
-      inventory_affecting_hash: receipt.inventoryAffectingHash,
-      amount_hash: receipt.amountHash,
-      previewed_receipt_updated_at: receipt.previewedReceiptUpdatedAt,
-      blocked_reasons: receipt.blockedReasons,
-      line_summary: {
-        refId: receipt.refId,
-        refDate: receipt.refDate,
-        hashVersion: receipt.hashVersion,
-        lines: receipt.lines,
-      },
-      selected_for_apply: receipt.status === "ready",
-      review_required_at:
-        receipt.status === "review_required" ? now : null,
-      review_reason:
-        receipt.status === "review_required"
-          ? receipt.blockedReasons.join(" ")
-          : null,
-      created_at: now,
-      updated_at: now,
-    }));
+    const receiptRows = params.preview.receipts.map((receipt) => {
+      const receiptContentFingerprint =
+        receiptContentFingerprintByReceiptId?.get(receipt.receiptId) ?? null;
+
+      return {
+        batch_id: batchId,
+        receipt_id: receipt.receiptId,
+        receipt_ref_no: receipt.refNo,
+        business_date: receipt.businessDate,
+        status: receipt.status,
+        inventory_affecting_hash: receipt.inventoryAffectingHash,
+        amount_hash: receipt.amountHash,
+        previewed_receipt_updated_at: receipt.previewedReceiptUpdatedAt,
+        blocked_reasons: receipt.blockedReasons,
+        line_summary: {
+          refId: receipt.refId,
+          refDate: receipt.refDate,
+          hashVersion: receipt.hashVersion,
+          ...(workflowType ? { workflowType } : {}),
+          ...(receiptContentFingerprint
+            ? { receiptContentFingerprint }
+            : {}),
+          lines: receipt.lines,
+        },
+        selected_for_apply: receipt.status === "ready",
+        review_required_at:
+          receipt.status === "review_required" ? now : null,
+        review_reason:
+          receipt.status === "review_required"
+            ? receipt.blockedReasons.join(" ")
+            : null,
+        workflow_type: workflowType,
+        receipt_content_fingerprint: receiptContentFingerprint,
+        supersedes_deduction_receipt_id: null,
+        created_at: now,
+        updated_at: now,
+      };
+    });
 
     const savedReceipts =
       receiptRows.length > 0

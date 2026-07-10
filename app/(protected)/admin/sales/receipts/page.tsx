@@ -490,6 +490,7 @@ type InventoryDeductionPreview = {
     amountHash: string;
     lines: Array<{
       receiptLineId: number;
+      refDetailId: string | null;
       parentRefDetailId: string | null;
       isOption: boolean;
       lineType: string;
@@ -497,6 +498,7 @@ type InventoryDeductionPreview = {
       posItemCode?: string | null;
       quantitySold: number;
       mappingSnapshot?: Record<string, unknown> | null;
+      isKegTracked?: boolean;
       status: string;
       isApplied?: boolean;
       blockedReason: string | null;
@@ -523,46 +525,6 @@ type InventoryPreviewResponse = {
   } | null;
 };
 
-type BatchValidationStatus =
-  | "valid"
-  | "hash_changed"
-  | "amount_changed"
-  | "mapping_changed"
-  | "recipe_changed"
-  | "inventory_insufficient"
-  | "already_applied"
-  | "no_longer_ready"
-  | "missing_receipt"
-  | "missing_lines"
-  | "invalid_mapping"
-  | "manual_review"
-  | "skipped";
-
-type BatchValidationResult = {
-  batchId: number;
-  applyReady: boolean;
-  validatedAt: string;
-  summary: {
-    selectedReceiptCount: number;
-    validReceiptCount: number;
-    blockedReceiptCount: number;
-    warningReceiptCount: number;
-    inventoryIssueCount: number;
-    hashChangedCount: number;
-    mappingChangedCount: number;
-    recipeChangedCount: number;
-    alreadyAppliedCount: number;
-  };
-  receipts: Array<{
-    receiptId: number;
-    receiptRefNo: string | null;
-    status: BatchValidationStatus;
-    applyAllowed: boolean;
-    warnings: string[];
-    errors: string[];
-  }>;
-};
-
 type BatchApplyResult = {
   batchId: number;
   status: "applied" | "partially_applied";
@@ -585,11 +547,105 @@ type BatchApplyResult = {
   }>;
 };
 
+type UnifiedOperationType =
+  | "initial_apply"
+  | "reprocess_modified"
+  | "needs_check"
+  | "no_op";
+
+type UnifiedExecuteResultCode =
+  | "applied"
+  | "already_processed"
+  | "stale_preview"
+  | "needs_check"
+  | "no_op"
+  | "failed"
+  | "not_supported";
+
+type UnifiedPreviewReceipt = {
+  operationType: UnifiedOperationType;
+  receiptId: number;
+  source: string | null;
+  refNo: string | null;
+  currentFingerprint: string;
+  lastProcessedFingerprint: string | null;
+  activeDeductionCount: number;
+  activeDeductionIds?: number[];
+  actionableLineCount: number;
+  neutralLineCount: number;
+  blockingReasons: string[];
+  rawPreviewStatus: string | null;
+  canExecute: boolean;
+  isLegacyApplied: boolean;
+  inventoryAffectingHash: string | null;
+  updatedAt: string | null;
+};
+
+type UnifiedPreview = {
+  generatedAt: string;
+  businessDateFrom: string;
+  businessDateTo: string;
+  summary: {
+    totalReceiptCount: number;
+    initialApplyCount: number;
+    reprocessModifiedCount: number;
+    needsCheckCount: number;
+    noOpCount: number;
+    executableCount: number;
+  };
+  receipts: UnifiedPreviewReceipt[];
+};
+
+type UnifiedPreviewResponse = {
+  ok: boolean;
+  error?: string;
+  preview?: UnifiedPreview;
+};
+
+type UnifiedExecuteResult = {
+  receiptId: number;
+  expectedOperationType: UnifiedOperationType;
+  actualOperationType: UnifiedOperationType | null;
+  result: UnifiedExecuteResultCode;
+  fingerprint: string | null;
+  batchId: number | null;
+  deductionReceiptId: number | null;
+  reversedDeductionCount: number;
+  appliedDeductionCount: number;
+  rollbackOnly: boolean;
+  failureReason: string | null;
+  durationMs: number;
+};
+
+type UnifiedExecuteResponse = {
+  success: boolean;
+  error?: string;
+  executionId?: string;
+  summary?: {
+    requestedCount: number;
+    appliedCount: number;
+    initialAppliedCount: number;
+    reprocessedCount: number;
+    rollbackOnlyCount: number;
+    alreadyProcessedCount: number;
+    staleCount: number;
+    needsCheckCount: number;
+    noOpCount: number;
+    failedCount: number;
+    notSupportedCount: number;
+  };
+  results?: UnifiedExecuteResult[];
+  processedReceiptIds?: number[];
+  staleReceiptIds?: number[];
+  needsCheckReceiptIds?: number[];
+  shouldRefreshPreview?: boolean;
+};
+
 type AppLanguage = keyof typeof salesText;
 
 const inventoryPreviewText = {
   ko: {
-    previewButton: "재고 차감 미리보기",
+    previewButton: "재고차감 처리",
     previewLoading: "미리보기 계산 중...",
     previewFailed: "재고 차감 미리보기를 생성하지 못했습니다.",
     title: "판매 재고차감 미리보기",
@@ -609,12 +665,61 @@ const inventoryPreviewText = {
     applyConfirm:
       "선택한 영수증의 재고를 실제로 차감합니다. 계속하시겠습니까?",
     applyConfirmDetailed:
-      "선택된 영수증 {receiptCount}건의 차감 가능한 항목 {itemCount}개를 재고에서 차감합니다. 확인필요/차감불가/이미차감 항목은 제외됩니다. 계속하시겠습니까?",
+      "선택된 영수증 {receiptCount}건의 차감 가능한 항목 {itemCount}개를 재고에서 차감합니다. 확인필요/차감불가/차감완료 항목은 제외됩니다. 계속하시겠습니까?",
     applyFailed: "판매 재고차감을 확정하지 못했습니다.",
     receipt: "영수증",
     deduction: "차감",
     log: "로그",
     countSuffix: "건",
+    unified: {
+      executeButton: "처리 가능한 {count}건 실행",
+      processing: "처리 중...",
+      resultTitle: "재고차감 처리 결과",
+      executable: "처리 가능",
+      initialApply: "신규 차감",
+      reprocessModified: "수정 재처리",
+      needsCheck: "확인 필요",
+      noOp: "처리 대상 없음",
+      restoreAndReapply: "복구 후 재차감",
+      restoreOnly: "기존 차감 복구",
+      reapplyOnly: "현재 내용 재차감",
+      activeDeduction: "기존 차감",
+      actionableLine: "처리 라인",
+      neutralLine: "제외 라인",
+      resultApplied: "처리 완료",
+      resultAlreadyProcessed: "이미 처리됨",
+      resultStale: "정보가 변경됨",
+      resultNeedsCheck: "확인 필요",
+      resultNoOp: "처리 대상 없음",
+      resultNotSupported: "현재 처리 불가",
+      resultFailed: "처리 실패",
+      initialAppliedDone: "신규 차감 완료",
+      reprocessedDone: "수정 재처리 완료",
+      alreadyProcessedDone: "이미 처리됨",
+      staleDone: "다시 확인 필요",
+      failedDone: "실패",
+      noExecutable: "처리 가능한 영수증이 없습니다.",
+      limitExceeded: "처리 가능 영수증이 30건을 초과했습니다.",
+      retryPreview: "다시 조회",
+      details: "상세",
+      failureReasons: {
+        fingerprint_changed: "영수증 내용이 변경되었습니다",
+        inventory_plan_changed: "재고차감 계획이 변경되었습니다",
+        inventory_affecting_hash_changed: "재고차감 계획이 변경되었습니다",
+        receipt_updated: "영수증이 다시 수정되었습니다",
+        receipt_updated_at_changed: "영수증이 다시 수정되었습니다",
+        operation_changed: "처리 유형이 변경되었습니다",
+        blocking_status: "확인이 필요한 품목이 있습니다",
+        insufficient_stock_after_reversal: "재처리 후 재고가 부족합니다",
+        legacy_metadata_missing: "과거 차감 정보가 부족합니다",
+        canceled_after_applied_not_supported:
+          "차감 후 취소된 영수증은 아직 자동 처리할 수 없습니다",
+        no_inventory_movement: "변경할 재고가 없습니다",
+        apply_failed: "신규 차감 처리에 실패했습니다",
+        reprocess_failed: "수정 영수증 재처리에 실패했습니다",
+        automatic_cron_candidate: "자동 차감 대상입니다",
+      },
+    },
     itemSuffix: "개",
     total: "전체",
     canApply: "차감가능",
@@ -648,7 +753,7 @@ const inventoryPreviewText = {
     comboDeduction: "구성 상품 기준 차감",
     comboMappingNeedsCheck: "구성 상품 매핑 확인 필요",
     comboNestedUnsupported: "Combo 안에 Combo는 지원하지 않습니다",
-    alreadyAppliedHelp: "이미 재고 차감이 완료된 영수증입니다",
+    alreadyAppliedHelp: "재고 차감이 완료된 영수증입니다",
     modifiedAfterApplyHelp: "차감 후 수정되어 별도 확인이 필요합니다",
     genericCheckHelp: "내용 확인 후 처리해주세요",
     lineStatusGroup: {
@@ -658,7 +763,8 @@ const inventoryPreviewText = {
       incompleteRecipe: "레시피 미완성",
       excluded: "차감 제외",
       insufficientStock: "재고 부족",
-      alreadyApplied: "이미 차감됨",
+      alreadyApplied: "차감완료",
+      kegTracked: "케그 집계완료",
     },
     lineStatusHelp: {
       ready: "재고 차감 대상입니다.",
@@ -667,7 +773,8 @@ const inventoryPreviewText = {
       incompleteRecipe: "레시피 재료 설정 후 자동 차감할 수 있습니다.",
       excluded: "차감 제외로 설정된 상품입니다.",
       insufficientStock: "현재 재고가 부족합니다.",
-      alreadyApplied: "이미 판매차감이 적용된 항목입니다.",
+      alreadyApplied: "판매차감이 완료된 항목입니다.",
+      kegTracked: "Keg 판매량과 잔량 집계에 반영되는 항목입니다.",
     },
     partialNotice:
       "Recipe 미완성 라인은 차감 대상에서 제외됩니다. Direct 매핑 상품과 완성 Recipe 상품은 계속 차감 가능합니다.",
@@ -677,20 +784,20 @@ const inventoryPreviewText = {
     selectionNoticeNeedsCheck:
       "확인필요 항목은 매핑/운영 기준 정리 후 차감할 수 있습니다.",
     selectionNoticeAlreadyApplied:
-      "이미 차감된 영수증은 중복 차감되지 않습니다.",
+      "차감완료 영수증은 중복 차감되지 않습니다.",
     selectionNoticeApplicableOnly: "차감 가능한 항목만 확정됩니다.",
     selectionNoticeExcluded: "는 차감 확정 대상에서 제외됩니다.",
     selectionStatusSelectable: "선택 가능",
     selectionStatusNeedsCheck: "확인필요",
-    selectionStatusAlreadyApplied: "이미 차감됨",
+    selectionStatusAlreadyApplied: "차감완료",
     selectionStatusBlocked: "차감 불가",
     status: {
       ready: "차감가능",
       partial: "일부 가능",
       needsCheck: "확인필요",
       skipped: "차감 불필요",
-      alreadyApplied: "이미 차감",
-      modified: "차감 후 수정",
+      alreadyApplied: "차감완료",
+      modified: "재처리 필요",
     },
     lineType: {
       direct: "직접 차감",
@@ -717,14 +824,14 @@ const inventoryPreviewText = {
       modified: "차감 후 수정됨",
       insufficientStock: "재고 부족",
       manualReview: "운영 확인 필요",
-      alreadyApplied: "이미 차감",
+      alreadyApplied: "차감완료",
       skipped: "차감 불필요",
       invalidMapping: "매핑 확인 필요",
       reviewRequired: "영수증 확인 필요",
     },
   },
   vi: {
-    previewButton: "Xem trước trừ kho",
+    previewButton: "Xử lý trừ tồn kho",
     previewLoading: "Đang tính xem trước...",
     previewFailed: "Không tạo được bản xem trước trừ kho.",
     title: "Xem trước trừ kho bán hàng",
@@ -749,6 +856,55 @@ const inventoryPreviewText = {
     deduction: "Trừ kho",
     log: "Nhật ký",
     countSuffix: " mục",
+    unified: {
+      executeButton: "Chạy {count} mục có thể xử lý",
+      processing: "Đang xử lý...",
+      resultTitle: "Kết quả xử lý trừ tồn kho",
+      executable: "Có thể xử lý",
+      initialApply: "Trừ tồn kho mới",
+      reprocessModified: "Xử lý lại sau chỉnh sửa",
+      needsCheck: "Cần kiểm tra",
+      noOp: "Không cần xử lý",
+      restoreAndReapply: "Hoàn lại rồi trừ lại",
+      restoreOnly: "Hoàn lại lần trừ cũ",
+      reapplyOnly: "Trừ lại theo nội dung hiện tại",
+      activeDeduction: "Đã trừ trước",
+      actionableLine: "Dòng xử lý",
+      neutralLine: "Dòng bỏ qua",
+      resultApplied: "Đã xử lý",
+      resultAlreadyProcessed: "Đã xử lý trước đó",
+      resultStale: "Thông tin đã thay đổi",
+      resultNeedsCheck: "Cần kiểm tra",
+      resultNoOp: "Không cần xử lý",
+      resultNotSupported: "Chưa hỗ trợ xử lý",
+      resultFailed: "Xử lý thất bại",
+      initialAppliedDone: "Đã trừ mới",
+      reprocessedDone: "Đã xử lý lại",
+      alreadyProcessedDone: "Đã xử lý trước đó",
+      staleDone: "Cần kiểm tra lại",
+      failedDone: "Thất bại",
+      noExecutable: "Không có hóa đơn có thể xử lý.",
+      limitExceeded: "Số hóa đơn có thể xử lý vượt quá 30 mục.",
+      retryPreview: "Tải lại",
+      details: "Chi tiết",
+      failureReasons: {
+        fingerprint_changed: "Nội dung hóa đơn đã thay đổi",
+        inventory_plan_changed: "Kế hoạch trừ kho đã thay đổi",
+        inventory_affecting_hash_changed: "Kế hoạch trừ kho đã thay đổi",
+        receipt_updated: "Hóa đơn đã được chỉnh sửa lại",
+        receipt_updated_at_changed: "Hóa đơn đã được chỉnh sửa lại",
+        operation_changed: "Loại xử lý đã thay đổi",
+        blocking_status: "Có món cần kiểm tra",
+        insufficient_stock_after_reversal: "Không đủ tồn kho sau khi xử lý lại",
+        legacy_metadata_missing: "Thiếu dữ liệu trừ kho cũ",
+        canceled_after_applied_not_supported:
+          "Hóa đơn đã hủy sau khi trừ kho chưa thể xử lý tự động",
+        no_inventory_movement: "Không có tồn kho cần thay đổi",
+        apply_failed: "Xử lý trừ mới thất bại",
+        reprocess_failed: "Xử lý lại hóa đơn đã chỉnh sửa thất bại",
+        automatic_cron_candidate: "Hóa đơn do hệ thống tự động xử lý",
+      },
+    },
     itemSuffix: " món",
     total: "Tổng",
     canApply: "Có thể trừ kho",
@@ -792,7 +948,8 @@ const inventoryPreviewText = {
       incompleteRecipe: "Thiếu Recipe",
       excluded: "Loại khỏi trừ",
       insufficientStock: "Thiếu tồn kho",
-      alreadyApplied: "Đã trừ",
+      alreadyApplied: "Đã trừ kho",
+      kegTracked: "Đã ghi nhận Keg",
     },
     lineStatusHelp: {
       ready: "Mục này có thể trừ kho.",
@@ -802,6 +959,7 @@ const inventoryPreviewText = {
       excluded: "Mục này được thiết lập loại khỏi trừ kho.",
       insufficientStock: "Số lượng tồn kho hiện không đủ.",
       alreadyApplied: "Mục này đã được áp dụng trừ kho.",
+      kegTracked: "Mục này được ghi nhận vào theo dõi doanh số và tồn Keg.",
     },
     partialNotice:
       "Dòng Recipe chưa hoàn thiện sẽ bị loại khỏi trừ kho. Món Direct và Recipe hoàn chỉnh vẫn có thể trừ kho.",
@@ -816,7 +974,7 @@ const inventoryPreviewText = {
     selectionNoticeExcluded: " sẽ bị loại khỏi xác nhận trừ kho.",
     selectionStatusSelectable: "Có thể chọn",
     selectionStatusNeedsCheck: "Cần kiểm tra",
-    selectionStatusAlreadyApplied: "Đã trừ",
+    selectionStatusAlreadyApplied: "Đã trừ kho",
     selectionStatusBlocked: "Không thể trừ",
     status: {
       ready: "Có thể trừ kho",
@@ -824,7 +982,7 @@ const inventoryPreviewText = {
       needsCheck: "Cần kiểm tra",
       skipped: "Không cần trừ",
       alreadyApplied: "Đã trừ kho",
-      modified: "Đã sửa sau khi trừ kho",
+      modified: "Cần xử lý lại",
     },
     lineType: {
       direct: "Trừ trực tiếp",
@@ -917,6 +1075,18 @@ function isPartialDeductionReceipt(
   );
 }
 
+function getIncompleteRecipeLineCount(
+  receipts: InventoryDeductionPreview["receipts"] | null | undefined
+) {
+  return (receipts ?? []).reduce(
+    (count, receipt) =>
+      count +
+      receipt.lines.filter((line) => line.status === "incomplete_recipe")
+        .length,
+    0
+  );
+}
+
 function getInventoryPreviewStatusLabel(
   receipt: InventoryDeductionPreview["receipts"][number],
   text: InventoryPreviewCopy
@@ -929,15 +1099,88 @@ function getInventoryPreviewStatusLabel(
   return text.status.needsCheck;
 }
 
-function isKegOnlyManualReceipt(
-  receipt: InventoryDeductionPreview["receipts"][number]
+function isNeutralReceiptDisplayLine(
+  line: InventoryDeductionPreview["receipts"][number]["lines"][number]
 ) {
-  if (hasDeductionCandidates(receipt)) return false;
+  return (
+    line.isKegTracked === true ||
+    line.status === "keg_tracked" ||
+    line.status === "incomplete_recipe" ||
+    line.status === "ignored" ||
+    line.status === "skipped" ||
+    line.lineType === "ignore" ||
+    line.lineType === "combo_ignore" ||
+    line.lineType === "combo_incomplete_recipe"
+  );
+}
 
-  const nonReadyLines = receipt.lines.filter((line) => line.status !== "ready");
-  if (nonReadyLines.length === 0) return false;
+function isIncompleteRecipeDisplayLine(
+  line: InventoryDeductionPreview["receipts"][number]["lines"][number]
+) {
+  return (
+    line.status === "incomplete_recipe" ||
+    line.lineType === "incomplete_recipe" ||
+    line.lineType === "combo_incomplete_recipe"
+  );
+}
 
-  return nonReadyLines.every((line) => line.lineType === "manual");
+function hasIncompleteRecipeAncestor(params: {
+  line: InventoryDeductionPreview["receipts"][number]["lines"][number];
+  lineByRefDetailId: Map<
+    string,
+    InventoryDeductionPreview["receipts"][number]["lines"][number]
+  >;
+}) {
+  let parentRefDetailId = params.line.parentRefDetailId;
+  const visited = new Set<string>();
+
+  while (parentRefDetailId) {
+    if (visited.has(parentRefDetailId)) return false;
+    visited.add(parentRefDetailId);
+
+    const parent = params.lineByRefDetailId.get(parentRefDetailId);
+    if (!parent) return false;
+    if (isIncompleteRecipeDisplayLine(parent)) return true;
+
+    parentRefDetailId = parent.parentRefDetailId;
+  }
+
+  return false;
+}
+
+function isActionableDeductionLine(
+  line: InventoryDeductionPreview["receipts"][number]["lines"][number]
+) {
+  return line.deductions.length > 0;
+}
+
+function isReceiptDisplayProblemLine(
+  line: InventoryDeductionPreview["receipts"][number]["lines"][number],
+  lineByRefDetailId: Map<
+    string,
+    InventoryDeductionPreview["receipts"][number]["lines"][number]
+  >
+) {
+  if (isNeutralReceiptDisplayLine(line)) return false;
+  if (hasIncompleteRecipeAncestor({ line, lineByRefDetailId })) return false;
+  if (
+    line.deductions.some(
+      (deduction) => deduction.status === "insufficient_stock"
+    )
+  ) {
+    return true;
+  }
+
+  return (
+    line.status === "missing_mapping" ||
+    line.status === "invalid_mapping" ||
+    line.status === "manual_review" ||
+    line.status === "review_required" ||
+    line.lineType === "combo_missing_mapping" ||
+    line.lineType === "combo_invalid_mapping" ||
+    line.lineType === "manual" ||
+    line.lineType === "manual_review"
+  );
 }
 
 function getReceiptListDeductionBadge(
@@ -945,18 +1188,61 @@ function getReceiptListDeductionBadge(
   text: InventoryPreviewCopy
 ) {
   if (!receipt) return null;
-  if (receipt.status === "skipped") return null;
-  if (isKegOnlyManualReceipt(receipt)) return null;
+
+  if (receipt.status === "applied_after_modified") {
+    return {
+      label: text.status.modified,
+      toneStyle: previewStatusBlockedStyle,
+    };
+  }
+
+  const lineByRefDetailId = new Map<
+    string,
+    InventoryDeductionPreview["receipts"][number]["lines"][number]
+  >();
+  for (const line of receipt.lines) {
+    if (line.refDetailId) lineByRefDetailId.set(line.refDetailId, line);
+  }
+
+  if (
+    receipt.lines.some((line) =>
+      isReceiptDisplayProblemLine(line, lineByRefDetailId)
+    )
+  ) {
+    return {
+      label: text.status.needsCheck,
+      toneStyle: previewStatusBlockedStyle,
+    };
+  }
+
+  const actionableLines = receipt.lines.filter(isActionableDeductionLine);
+  if (actionableLines.length === 0) return null;
+
+  const appliedActionableCount = actionableLines.filter(
+    (line) => line.isApplied === true
+  ).length;
+
+  if (appliedActionableCount === actionableLines.length) {
+    return {
+      label: text.status.alreadyApplied,
+      toneStyle: previewStatusAlreadyAppliedStyle,
+    };
+  }
+
+  if (appliedActionableCount > 0) {
+    return {
+      label: text.status.partial,
+      toneStyle: batchValidationWarningStyle,
+    };
+  }
 
   return {
-    label: getInventoryPreviewStatusLabel(receipt, text),
+    label: isPartialDeductionReceipt(receipt)
+      ? text.status.partial
+      : text.status.ready,
     toneStyle: isPartialDeductionReceipt(receipt)
       ? batchValidationWarningStyle
-      : receipt.status === "ready"
-        ? previewStatusReadyStyle
-        : receipt.status === "already_applied"
-          ? previewStatusAlreadyAppliedStyle
-          : previewStatusBlockedStyle,
+      : previewStatusReadyStyle,
   };
 }
 
@@ -989,44 +1275,6 @@ function getReceiptLineCounts(
         ? checkCount
         : Math.max(1, receipt.blockedReasons.length),
   };
-}
-
-function getSelectedPreviewSummary(params: {
-  preview: InventoryDeductionPreview | null;
-  selectedReceipts: Record<number, boolean>;
-}) {
-  const selectedReceipts = params.preview
-    ? params.preview.receipts.filter(
-        (receipt) => params.selectedReceipts[receipt.receiptId] === true
-      )
-    : [];
-
-  return {
-    receiptCount: selectedReceipts.length,
-    deductionLineCount: selectedReceipts.reduce(
-      (sum, receipt) =>
-        sum + receipt.lines.filter((line) => line.deductions.length > 0).length,
-      0
-    ),
-    needsCheckLineCount: selectedReceipts.reduce(
-      (sum, receipt) => sum + receipt.lines.filter(isPreviewLineCheckNeeded).length,
-      0
-    ),
-    alreadyAppliedReceiptCount: selectedReceipts.filter(
-      (receipt) => receipt.status === "already_applied"
-    ).length,
-    blockedReceiptCount: selectedReceipts.filter((receipt) => receipt.blocked)
-      .length,
-  };
-}
-
-function formatInventoryApplyConfirm(
-  text: InventoryPreviewCopy,
-  summary: ReturnType<typeof getSelectedPreviewSummary>
-) {
-  return text.applyConfirmDetailed
-    .replace("{receiptCount}", formatNumber(summary.receiptCount))
-    .replace("{itemCount}", formatNumber(summary.deductionLineCount));
 }
 
 function getPreviewReceiptSelectionLabel(
@@ -1101,6 +1349,8 @@ function getPreviewLineStatusInfo(
     line.lineType === "combo_ignore" ||
     receipt.status === "skipped";
   const isAlreadyApplied = line.isApplied === true;
+  const isKegTracked =
+    line.isKegTracked === true || line.status === "keg_tracked";
 
   if (hasInsufficientStock) {
     return {
@@ -1114,6 +1364,14 @@ function getPreviewLineStatusInfo(
     return {
       label: text.lineStatusGroup.alreadyApplied,
       message: text.lineStatusHelp.alreadyApplied,
+      tone: "neutral" as const,
+    };
+  }
+
+  if (isKegTracked) {
+    return {
+      label: text.lineStatusGroup.kegTracked,
+      message: text.lineStatusHelp.kegTracked,
       tone: "neutral" as const,
     };
   }
@@ -1163,6 +1421,39 @@ function getPreviewLineStatusInfo(
     message: getLineHelpText(line, text),
     tone: "warning" as const,
   };
+}
+
+function getReceiptDetailLineStatusInfo(
+  previewLines: InventoryDeductionPreview["receipts"][number]["lines"],
+  receipt: InventoryDeductionPreview["receipts"][number],
+  text: InventoryPreviewCopy
+) {
+  if (previewLines.length === 0) return null;
+
+  const ranked = previewLines
+    .map((line) => ({
+      info: getPreviewLineStatusInfo(line, receipt, text),
+      rank:
+        line.deductions.some(
+          (deduction) => deduction.status === "insufficient_stock"
+        )
+          ? 0
+          : line.status === "missing_mapping" ||
+              line.status === "invalid_mapping" ||
+              line.status === "manual_review" ||
+              line.status === "incomplete_recipe"
+            ? 1
+            : line.isKegTracked === true || line.status === "keg_tracked"
+              ? 2
+              : line.isApplied === true
+                ? 3
+                : line.deductions.length > 0
+                  ? 4
+                  : 5,
+    }))
+    .sort((left, right) => left.rank - right.rank);
+
+  return ranked[0]?.info ?? null;
 }
 
 function getPreviewLineBadgeStyle(tone: PreviewLineStatusTone) {
@@ -1249,6 +1540,67 @@ function formatTime(value: string | null) {
     minute: "2-digit",
     hour12: false,
   });
+}
+
+function formatUnifiedExecuteButton(text: InventoryPreviewCopy, count: number) {
+  return text.unified.executeButton.replace("{count}", formatNumber(count));
+}
+
+function getUnifiedOperationLabel(
+  operationType: UnifiedOperationType | null,
+  text: InventoryPreviewCopy
+) {
+  if (operationType === "initial_apply") return text.unified.initialApply;
+  if (operationType === "reprocess_modified") {
+    return text.unified.reprocessModified;
+  }
+  if (operationType === "needs_check") return text.unified.needsCheck;
+  return text.unified.noOp;
+}
+
+function getUnifiedOperationStyle(operationType: UnifiedOperationType | null) {
+  if (operationType === "initial_apply") return previewStatusReadyStyle;
+  if (operationType === "reprocess_modified") return previewStatusAlreadyAppliedStyle;
+  if (operationType === "needs_check") return previewStatusBlockedStyle;
+  return previewStatusSkippedStyle;
+}
+
+function getUnifiedReprocessMode(
+  receipt: UnifiedPreviewReceipt,
+  text: InventoryPreviewCopy
+) {
+  if (receipt.operationType !== "reprocess_modified") return "";
+  if (receipt.activeDeductionCount > 0 && receipt.actionableLineCount > 0) {
+    return text.unified.restoreAndReapply;
+  }
+  if (receipt.activeDeductionCount > 0) return text.unified.restoreOnly;
+  if (receipt.actionableLineCount > 0) return text.unified.reapplyOnly;
+  return "";
+}
+
+function getUnifiedResultLabel(
+  result: UnifiedExecuteResultCode,
+  text: InventoryPreviewCopy
+) {
+  if (result === "applied") return text.unified.resultApplied;
+  if (result === "already_processed") return text.unified.resultAlreadyProcessed;
+  if (result === "stale_preview") return text.unified.resultStale;
+  if (result === "needs_check") return text.unified.resultNeedsCheck;
+  if (result === "no_op") return text.unified.resultNoOp;
+  if (result === "not_supported") return text.unified.resultNotSupported;
+  return text.unified.resultFailed;
+}
+
+function getUnifiedFailureReasonLabel(
+  reason: string | null,
+  text: InventoryPreviewCopy
+) {
+  if (!reason) return "";
+  const mapped =
+    text.unified.failureReasons[
+      reason as keyof typeof text.unified.failureReasons
+    ];
+  return mapped || text.unified.failureReasons.blocking_status;
 }
 
 function getPaymentStatusLabel(
@@ -1531,17 +1883,6 @@ export default function SalesReceiptsPage() {
   const [menuSyncMessage, setMenuSyncMessage] = useState("");
   const [menuSyncWarning, setMenuSyncWarning] = useState("");
   const [menuSyncErrorMessage, setMenuSyncErrorMessage] = useState("");
-  const [inventoryPreview, setInventoryPreview] =
-    useState<InventoryDeductionPreview | null>(null);
-  const [isInventoryPreviewLoading, setIsInventoryPreviewLoading] =
-    useState(false);
-  const [inventoryPreviewError, setInventoryPreviewError] = useState("");
-  const [selectedPreviewReceipts, setSelectedPreviewReceipts] = useState<
-    Record<number, boolean>
-  >({});
-  const [batchApplyResult, setBatchApplyResult] =
-    useState<BatchApplyResult | null>(null);
-  const [isBatchApplying, setIsBatchApplying] = useState(false);
   const [isManualReceiptModalOpen, setIsManualReceiptModalOpen] = useState(false);
   const [isManualReceiptSaving, setIsManualReceiptSaving] = useState(false);
   const [manualReceiptSaveError, setManualReceiptSaveError] = useState("");
@@ -1549,14 +1890,21 @@ export default function SalesReceiptsPage() {
   const [receiptDeductionPreview, setReceiptDeductionPreview] = useState<
     InventoryDeductionPreview["receipts"] | null
   >(null);
+  const [receiptDeductionPreviewRefreshToken, setReceiptDeductionPreviewRefreshToken] =
+    useState(0);
+  const [unifiedPreview, setUnifiedPreview] = useState<UnifiedPreview | null>(
+    null
+  );
+  const [isUnifiedPreviewLoading, setIsUnifiedPreviewLoading] = useState(false);
+  const [unifiedPreviewError, setUnifiedPreviewError] = useState("");
+  const [isUnifiedExecuting, setIsUnifiedExecuting] = useState(false);
+  const [unifiedExecuteResult, setUnifiedExecuteResult] =
+    useState<UnifiedExecuteResponse | null>(null);
 
   const canSyncMenu =
     currentUser?.role === "owner" ||
     currentUser?.role === "master" ||
     currentUser?.role === "manager";
-  const canApplyInventory =
-    currentUser?.role === "owner" || currentUser?.role === "master";
-
   const tabs = useMemo(
     () =>
       salesTabs.map((tab) => ({
@@ -1584,6 +1932,10 @@ export default function SalesReceiptsPage() {
     });
     return map;
   }, [receiptDeductionPreview]);
+  const receiptListIncompleteRecipeLineCount = useMemo(
+    () => getIncompleteRecipeLineCount(receiptDeductionPreview),
+    [receiptDeductionPreview]
+  );
 
   useEffect(() => {
     const user = getUser();
@@ -1628,11 +1980,10 @@ export default function SalesReceiptsPage() {
 
     setExpandedReceiptId(null);
     setDetailErrorByReceiptId({});
-    setInventoryPreview(null);
-    setInventoryPreviewError("");
-    setSelectedPreviewReceipts({});
-    setBatchApplyResult(null);
     setReceiptDeductionPreview(null);
+    setUnifiedPreview(null);
+    setUnifiedPreviewError("");
+    setUnifiedExecuteResult(null);
     fetchReceipts();
 
     return () => controller.abort();
@@ -1677,7 +2028,12 @@ export default function SalesReceiptsPage() {
 
     fetchReceiptDeductionPreview();
     return () => controller.abort();
-  }, [canSyncMenu, currentUser?.username, receiptIdsKey]);
+  }, [
+    canSyncMenu,
+    currentUser?.username,
+    receiptIdsKey,
+    receiptDeductionPreviewRefreshToken,
+  ]);
 
   async function handleToggleReceipt(receiptId: number) {
     if (expandedReceiptId === receiptId) {
@@ -1768,10 +2124,6 @@ export default function SalesReceiptsPage() {
       }
 
       const updatedReceipt = result.receipt;
-      setInventoryPreview(null);
-      setSelectedPreviewReceipts({});
-      setBatchApplyResult(null);
-
       setReceipts((current) =>
         current.map((receipt) =>
           receipt.id === receiptId
@@ -1916,154 +2268,130 @@ export default function SalesReceiptsPage() {
     }
   }
 
+  async function refreshReceiptsAndDeductionPreview() {
+    const query = `?businessDate=${encodeURIComponent(businessDate)}`;
+    const refreshRes = await fetch(`/api/admin/sales/receipts${query}`, {
+      cache: "no-store",
+    });
+    const refreshResult = (await refreshRes.json().catch(
+      () => null
+    )) as SalesReceiptsResponse | null;
+
+    if (refreshResult?.ok) {
+      setReceipts(sortReceiptsByRefDateDesc(refreshResult.receipts || []));
+    }
+    setReceiptDeductionPreviewRefreshToken((current) => current + 1);
+  }
+
   async function handleInventoryPreview() {
     if (!currentUser?.username || !canSyncMenu) {
-      setInventoryPreviewError(receiptsText.noPermission);
+      setUnifiedPreviewError(receiptsText.noPermission);
       return;
     }
 
-    setIsInventoryPreviewLoading(true);
-    setInventoryPreviewError("");
-    setInventoryPreview(null);
+    setIsUnifiedPreviewLoading(true);
+    setUnifiedPreviewError("");
+    setUnifiedPreview(null);
+    setUnifiedExecuteResult(null);
     try {
       const res = await fetch(
-        "/api/admin/sales/inventory-deductions/preview",
+        "/api/admin/sales/inventory-deductions/unified-preview",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            businessDateFrom: businessDate,
-            businessDateTo: businessDate,
+            businessDate,
             actorUsername: currentUser.username,
           }),
         }
       );
       const result = (await res.json().catch(() => null)) as
-        | InventoryPreviewResponse
+        | UnifiedPreviewResponse
         | null;
 
       if (!res.ok || !result?.ok || !result.preview) {
         throw new Error(result?.error || inventoryText.previewFailed);
       }
 
-      setInventoryPreview(result.preview);
-      setBatchApplyResult(null);
-      setSelectedPreviewReceipts(
-        Object.fromEntries(
-          result.preview.receipts.map((receipt) => [
-            receipt.receiptId,
-            receipt.status === "ready",
-          ])
-        )
-      );
+      setUnifiedPreview(result.preview);
     } catch (error) {
-      setInventoryPreviewError(
+      setUnifiedPreviewError(
         error instanceof Error
           ? error.message
           : inventoryText.previewFailed
       );
     } finally {
-      setIsInventoryPreviewLoading(false);
+      setIsUnifiedPreviewLoading(false);
     }
   }
 
-  function handlePreviewReceiptSelection(
-    receiptId: number,
-    selectedForApply: boolean
-  ) {
-    setSelectedPreviewReceipts((current) => ({
-      ...current,
-      [receiptId]: selectedForApply,
-    }));
-    setBatchApplyResult(null);
-  }
+  async function handleUnifiedExecute() {
+    if (!currentUser?.username || !canSyncMenu || !unifiedPreview) return;
 
-  async function handleApplyPreviewBatch() {
-    const receiptIds = inventoryPreview
-      ? inventoryPreview.receipts
-          .filter((receipt) => selectedPreviewReceipts[receipt.receiptId])
-          .map((receipt) => receipt.receiptId)
-      : [];
+    const executableReceipts = unifiedPreview.receipts.filter(
+      (receipt) => receipt.canExecute
+    );
     if (
-      !currentUser?.username ||
-      !canApplyInventory ||
-      receiptIds.length === 0
-    ) {
-      return;
-    }
-    const applySummary = getSelectedPreviewSummary({
-      preview: inventoryPreview,
-      selectedReceipts: selectedPreviewReceipts,
-    });
-    if (
-      !window.confirm(
-        formatInventoryApplyConfirm(inventoryText, applySummary)
-      )
+      executableReceipts.length === 0 ||
+      executableReceipts.length > 30 ||
+      isUnifiedExecuting
     ) {
       return;
     }
 
-    setIsBatchApplying(true);
-    setInventoryPreviewError("");
+    setIsUnifiedExecuting(true);
+    setUnifiedPreviewError("");
     try {
       const res = await fetch(
-        "/api/admin/sales/inventory-deductions/apply",
+        "/api/admin/sales/inventory-deductions/unified-execute",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             actorUsername: currentUser.username,
-            receiptIds,
+            items: executableReceipts.map((receipt) => ({
+              receiptId: receipt.receiptId,
+              expectedOperationType: receipt.operationType,
+              expectedFingerprint: receipt.currentFingerprint,
+              expectedInventoryAffectingHash: receipt.inventoryAffectingHash,
+              expectedReceiptUpdatedAt: receipt.updatedAt,
+            })),
           }),
         }
       );
       const result = (await res.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            error?: string;
-            validation?: BatchValidationResult;
-            preview?: InventoryDeductionPreview;
-            batchId?: number;
-            status?: "applied" | "partially_applied";
-            summary?: BatchApplyResult["summary"];
-            inventoryTotals?: BatchApplyResult["inventoryTotals"];
-            receipts?: BatchApplyResult["receipts"];
-          }
+        | UnifiedExecuteResponse
         | null;
 
-      if (result?.preview) {
-        setInventoryPreview(result.preview);
-      }
-      if (
-        !res.ok ||
-        !result?.ok ||
-        !result.batchId ||
-        !result.status ||
-        !result.summary
-      ) {
+      if (!res.ok || !result?.success) {
         throw new Error(result?.error || inventoryText.applyFailed);
       }
 
-      setBatchApplyResult({
-        batchId: result.batchId,
-        status: result.status,
-        summary: result.summary,
-        inventoryTotals: result.inventoryTotals || [],
-        receipts: result.receipts || [],
-      });
-      setSelectedPreviewReceipts((current) =>
-        Object.fromEntries(
-          Object.keys(current).map((receiptId) => [Number(receiptId), false])
-        )
+      setUnifiedExecuteResult(result);
+      await refreshReceiptsAndDeductionPreview();
+      const previewRes = await fetch(
+        "/api/admin/sales/inventory-deductions/unified-preview",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            businessDate,
+            actorUsername: currentUser.username,
+          }),
+        }
       );
+      const previewResult = (await previewRes.json().catch(() => null)) as
+        | UnifiedPreviewResponse
+        | null;
+      if (previewRes.ok && previewResult?.ok && previewResult.preview) {
+        setUnifiedPreview(previewResult.preview);
+      }
     } catch (error) {
-      setInventoryPreviewError(
-        error instanceof Error
-          ? error.message
-          : inventoryText.applyFailed
+      setUnifiedPreviewError(
+        error instanceof Error ? error.message : inventoryText.applyFailed
       );
     } finally {
-      setIsBatchApplying(false);
+      setIsUnifiedExecuting(false);
     }
   }
 
@@ -2157,15 +2485,15 @@ export default function SalesReceiptsPage() {
                 <button
                   type="button"
                   onClick={handleInventoryPreview}
-                  disabled={isInventoryPreviewLoading || isLoading}
+                  disabled={isUnifiedPreviewLoading || isUnifiedExecuting || isLoading}
                   style={{
                     ...inventoryPreviewButtonStyle,
-                    ...(isInventoryPreviewLoading
+                    ...(isUnifiedPreviewLoading || isUnifiedExecuting
                       ? menuSyncButtonDisabledStyle
                       : null),
                   }}
                 >
-                  {isInventoryPreviewLoading
+                  {isUnifiedPreviewLoading
                     ? inventoryText.previewLoading
                     : inventoryText.previewButton}
                 </button>
@@ -2175,30 +2503,38 @@ export default function SalesReceiptsPage() {
           {manualReceiptDateNotice ? (
             <p style={warningTextStyle}>{manualReceiptDateNotice}</p>
           ) : null}
-          {inventoryPreviewError ? (
-            <p style={errorTextStyle}>{inventoryPreviewError}</p>
+          {unifiedPreviewError ? (
+            <p style={errorTextStyle}>{unifiedPreviewError}</p>
           ) : null}
           {errorMessage ? <p style={errorTextStyle}>{errorMessage}</p> : null}
         </section>
 
-        {inventoryPreview ? (
-          <InventoryPreviewPanel
-            preview={inventoryPreview}
+        {unifiedPreview ? (
+          <UnifiedInventoryDeductionPanel
+            preview={unifiedPreview}
             receipts={receipts}
-            selectedReceipts={selectedPreviewReceipts}
-            batchApplyResult={batchApplyResult}
-            isBatchApplying={isBatchApplying}
-            canApplyInventory={canApplyInventory}
+            executeResult={unifiedExecuteResult}
+            isExecuting={isUnifiedExecuting}
+            canExecute={canSyncMenu}
             text={inventoryText}
             receiptText={receiptsText}
-            onApplyBatch={handleApplyPreviewBatch}
-            onSelectionChange={handlePreviewReceiptSelection}
+            onExecute={handleUnifiedExecute}
+            onRetryPreview={handleInventoryPreview}
           />
         ) : null}
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>{receiptsText.listTitle}</h2>
+            <div style={sectionTitleRowStyle}>
+              <h2 style={sectionTitleStyle}>{receiptsText.listTitle}</h2>
+              {receiptListIncompleteRecipeLineCount > 0 ? (
+                <span style={receiptListExclusionBadgeStyle}>
+                  {inventoryText.detailStatus.incompleteRecipe}{" "}
+                  {formatNumber(receiptListIncompleteRecipeLineCount)}
+                  {inventoryText.countSuffix}
+                </span>
+              ) : null}
+            </div>
             <span style={sectionMetaStyle}>
               {receipts.length}{receiptsText.receiptCountSuffix}
             </span>
@@ -2271,6 +2607,302 @@ export default function SalesReceiptsPage() {
   );
 }
 
+function UnifiedInventoryDeductionPanel({
+  preview,
+  receipts,
+  executeResult,
+  isExecuting,
+  canExecute,
+  text,
+  receiptText,
+  onExecute,
+  onRetryPreview,
+}: {
+  preview: UnifiedPreview;
+  receipts: ReceiptItem[];
+  executeResult: UnifiedExecuteResponse | null;
+  isExecuting: boolean;
+  canExecute: boolean;
+  text: InventoryPreviewCopy;
+  receiptText: SalesReceiptsViewText;
+  onExecute: () => void;
+  onRetryPreview: () => void;
+}) {
+  const receiptById = new Map(receipts.map((receipt) => [receipt.id, receipt]));
+  const executableReceipts = preview.receipts.filter(
+    (receipt) => receipt.canExecute
+  );
+  const needsCheckReceipts = preview.receipts.filter(
+    (receipt) => receipt.operationType === "needs_check"
+  );
+  const noOpReceipts = preview.receipts.filter(
+    (receipt) => receipt.operationType === "no_op"
+  );
+  const executeLimitExceeded = executableReceipts.length > 30;
+  const executeDisabled =
+    !canExecute ||
+    isExecuting ||
+    executableReceipts.length === 0 ||
+    executeLimitExceeded;
+  const summaryItems = [
+    [text.unified.executable, executableReceipts.length],
+    [text.unified.initialApply, preview.summary.initialApplyCount],
+    [text.unified.reprocessModified, preview.summary.reprocessModifiedCount],
+    [text.unified.needsCheck, preview.summary.needsCheckCount],
+    [text.unified.noOp, preview.summary.noOpCount],
+  ] as const;
+
+  return (
+    <section style={inventoryPreviewPanelStyle}>
+      <div style={inventoryPreviewHeaderStyle}>
+        <div>
+          <h2 style={inventoryPreviewTitleStyle}>{text.previewButton}</h2>
+          <p style={inventoryPreviewDescriptionStyle}>
+            {text.unified.executable} {formatNumber(executableReceipts.length)}
+            {text.countSuffix}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRetryPreview}
+          disabled={isExecuting}
+          style={{
+            ...inventoryApplyDisabledButtonStyle,
+            cursor: isExecuting ? "not-allowed" : "pointer",
+          }}
+        >
+          {text.unified.retryPreview}
+        </button>
+      </div>
+
+      <div style={inventoryPreviewSummaryStyle}>
+        {summaryItems.map(([label, value]) => (
+          <div key={label} style={inventoryPreviewSummaryItemStyle}>
+            <span>{label}</span>
+            <strong>{formatNumber(value)}</strong>
+          </div>
+        ))}
+      </div>
+
+      <div style={inventoryBatchActionStyle}>
+        <div>
+          {executeLimitExceeded ? (
+            <strong style={errorTextStyle}>{text.unified.limitExceeded}</strong>
+          ) : executableReceipts.length === 0 ? (
+            <span style={mutedTextStyle}>{text.unified.noExecutable}</span>
+          ) : (
+            <span style={mutedTextStyle}>
+              {formatUnifiedExecuteButton(text, executableReceipts.length)}
+            </span>
+          )}
+        </div>
+        <div style={inventoryBatchButtonsStyle}>
+          <button
+            type="button"
+            onClick={onExecute}
+            disabled={executeDisabled}
+            style={{
+              ...(executeDisabled
+                ? inventoryApplyDisabledButtonStyle
+                : inventoryApplyButtonStyle),
+            }}
+          >
+            {isExecuting
+              ? text.unified.processing
+              : formatUnifiedExecuteButton(text, executableReceipts.length)}
+          </button>
+        </div>
+      </div>
+
+      {executeResult?.summary ? (
+        <div style={batchApplyResultStyle}>
+          <div>
+            <strong>{text.unified.resultTitle}</strong>
+            <div style={batchValidationMetaStyle}>
+              {text.unified.initialAppliedDone}{" "}
+              {formatNumber(executeResult.summary.initialAppliedCount)}
+              {text.countSuffix} · {text.unified.reprocessedDone}{" "}
+              {formatNumber(executeResult.summary.reprocessedCount)}
+              {text.countSuffix} · {text.unified.alreadyProcessedDone}{" "}
+              {formatNumber(executeResult.summary.alreadyProcessedCount)}
+              {text.countSuffix} · {text.unified.staleDone}{" "}
+              {formatNumber(
+                executeResult.summary.staleCount +
+                  executeResult.summary.needsCheckCount +
+                  executeResult.summary.notSupportedCount
+              )}
+              {text.countSuffix} · {text.unified.failedDone}{" "}
+              {formatNumber(executeResult.summary.failedCount)}
+              {text.countSuffix}
+            </div>
+            {executeResult.executionId ? (
+              <span style={batchValidationMetaStyle}>
+                {executeResult.executionId}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {executeResult?.results?.length ? (
+        <details style={inventoryPreviewDetailsStyle} open>
+          <summary style={inventoryPreviewSummaryTitleStyle}>
+            {text.unified.resultTitle} {executeResult.results.length}
+            {text.countSuffix}
+          </summary>
+          <div style={previewReceiptListStyle}>
+            {executeResult.results.map((result) => {
+              const receipt = receiptById.get(result.receiptId);
+              const failureReason = getUnifiedFailureReasonLabel(
+                result.failureReason,
+                text
+              );
+
+              return (
+                <div key={result.receiptId} style={previewReceiptStyle}>
+                  <div style={previewReceiptHeaderRowStyle}>
+                    <span style={previewReceiptMainStyle}>
+                      <strong>
+                        {receipt?.tableName
+                          ? `${receiptText.table}: ${receipt.tableName}`
+                          : result.receiptId}
+                      </strong>
+                      <span style={previewReceiptMetaStyle}>
+                        {receipt?.refNo || result.receiptId} ·{" "}
+                        {getUnifiedResultLabel(result.result, text)}
+                      </span>
+                    </span>
+                    <span
+                      style={{
+                        ...previewStatusStyle,
+                        ...getUnifiedOperationStyle(result.actualOperationType),
+                      }}
+                    >
+                      {getUnifiedOperationLabel(result.actualOperationType, text)}
+                    </span>
+                  </div>
+                  {failureReason ? (
+                    <p style={previewLineErrorStyle}>{failureReason}</p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      ) : null}
+
+      <details style={inventoryPreviewDetailsStyle} open>
+        <summary style={inventoryPreviewSummaryTitleStyle}>
+          {text.unified.executable} {executableReceipts.length}
+          {text.countSuffix}
+        </summary>
+        <div style={previewReceiptListStyle}>
+          {executableReceipts.map((receipt) => (
+            <UnifiedReceiptPreviewRow
+              key={receipt.receiptId}
+              receipt={receipt}
+              salesReceipt={receiptById.get(receipt.receiptId)}
+              text={text}
+              receiptText={receiptText}
+            />
+          ))}
+        </div>
+      </details>
+
+      {needsCheckReceipts.length > 0 ? (
+        <details style={inventoryPreviewDetailsStyle}>
+          <summary style={inventoryPreviewSummaryTitleStyle}>
+            {text.unified.needsCheck} {needsCheckReceipts.length}
+            {text.countSuffix}
+          </summary>
+          <div style={previewReceiptListStyle}>
+            {needsCheckReceipts.map((receipt) => (
+              <UnifiedReceiptPreviewRow
+                key={receipt.receiptId}
+                receipt={receipt}
+                salesReceipt={receiptById.get(receipt.receiptId)}
+                text={text}
+                receiptText={receiptText}
+              />
+            ))}
+          </div>
+        </details>
+      ) : null}
+
+      {noOpReceipts.length > 0 ? (
+        <details style={inventoryPreviewDetailsStyle}>
+          <summary style={inventoryPreviewSummaryTitleStyle}>
+            {text.unified.noOp} {noOpReceipts.length}
+            {text.countSuffix}
+          </summary>
+          <div style={previewReceiptListStyle}>
+            {noOpReceipts.map((receipt) => (
+              <UnifiedReceiptPreviewRow
+                key={receipt.receiptId}
+                receipt={receipt}
+                salesReceipt={receiptById.get(receipt.receiptId)}
+                text={text}
+                receiptText={receiptText}
+              />
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+function UnifiedReceiptPreviewRow({
+  receipt,
+  salesReceipt,
+  text,
+  receiptText,
+}: {
+  receipt: UnifiedPreviewReceipt;
+  salesReceipt?: ReceiptItem;
+  text: InventoryPreviewCopy;
+  receiptText: SalesReceiptsViewText;
+}) {
+  const reprocessMode = getUnifiedReprocessMode(receipt, text);
+  const reason = receipt.blockingReasons[0] || "";
+
+  return (
+    <div style={previewReceiptStyle}>
+      <div style={previewReceiptHeaderRowStyle}>
+        <span style={previewReceiptMainStyle}>
+          <strong>
+            {salesReceipt?.tableName
+              ? `${receiptText.table}: ${salesReceipt.tableName}`
+              : receipt.refNo || salesReceipt?.refNo || receipt.receiptId}
+          </strong>
+          <span style={previewReceiptMetaStyle}>
+            {salesReceipt?.refNo || receipt.refNo || receipt.receiptId} ·{" "}
+            {formatTime(salesReceipt?.refDate ?? null)} ·{" "}
+            {salesReceipt ? formatVnd(salesReceipt.finalAmount) : "-"}
+          </span>
+          <span style={previewReceiptMetaStyle}>
+            {text.unified.actionableLine}{" "}
+            {formatNumber(receipt.actionableLineCount)}
+            {text.countSuffix} · {text.unified.activeDeduction}{" "}
+            {formatNumber(receipt.activeDeductionCount)}
+            {text.countSuffix}
+            {reprocessMode ? ` · ${reprocessMode}` : ""}
+          </span>
+        </span>
+        <span
+          style={{
+            ...previewStatusStyle,
+            ...getUnifiedOperationStyle(receipt.operationType),
+          }}
+        >
+          {getUnifiedOperationLabel(receipt.operationType, text)}
+        </span>
+      </div>
+      {reason ? <p style={previewLineErrorStyle}>{reason}</p> : null}
+    </div>
+  );
+}
+
 function InventoryPreviewPanel({
   preview,
   receipts,
@@ -2301,10 +2933,6 @@ function InventoryPreviewPanel({
     Record<number, boolean>
   >({});
   const needsCheckDetails = getNeedsCheckDetails(preview, text);
-  const incompleteRecipeLineCount =
-    needsCheckDetails.find(
-      ([label]) => label === text.detailStatus.incompleteRecipe
-    )?.[1] ?? 0;
   const visibleNeedsCheckDetails = needsCheckDetails.filter(
     ([label, value]) =>
       value > 0 && label !== text.detailStatus.incompleteRecipe
@@ -2370,10 +2998,6 @@ function InventoryPreviewPanel({
       </div>
 
       <div style={inventoryBatchActionStyle}>
-        <span style={inventoryExclusionBadgeStyle}>
-          {text.detailStatus.incompleteRecipe} {formatNumber(incompleteRecipeLineCount)}
-          {text.countSuffix}
-        </span>
         <div style={inventoryBatchButtonsStyle}>
           <button
             type="button"
@@ -2732,6 +3356,8 @@ function InventoryPreviewPanel({
   );
 }
 
+void InventoryPreviewPanel;
+
 function ReceiptList({
   isLoading,
   text,
@@ -2815,6 +3441,8 @@ function ReceiptList({
                 errorMessage={detailErrorByReceiptId[receipt.id] || ""}
                 isEditSaving={editSavingId === receipt.id}
                 editErrorMessage={editErrorByReceiptId[receipt.id] || ""}
+                deductionText={deductionText}
+                deductionPreview={deductionPreviewByReceiptId.get(receipt.id)}
                 onSaveEdit={onSaveEdit}
               />
             ) : null}
@@ -2898,15 +3526,22 @@ function ReceiptRow({
 
       <span style={receiptAmountWrapStyle}>
         <span style={receiptTimeStyle}>{formatTime(receipt.refDate)}</span>
-        <strong style={amountStyle}>{formatVnd(receipt.finalAmount)}</strong>
-        {deductionBadge ? (
-          <span
-            style={{ ...previewStatusStyle, ...deductionBadge.toneStyle }}
-          >
-            {deductionBadge.label}
-          </span>
-        ) : null}
-        <span style={chevronStyle}>{isExpanded ? "⌃" : "⌄"}</span>
+        <strong style={receiptListAmountStyle}>
+          {formatVnd(receipt.finalAmount)}
+        </strong>
+        <span style={receiptAmountLineStyle}>
+          {deductionBadge ? (
+            <span
+              style={{
+                ...receiptDeductionBadgeStyle,
+                ...deductionBadge.toneStyle,
+              }}
+            >
+              {deductionBadge.label}
+            </span>
+          ) : null}
+          <span style={chevronStyle}>{isExpanded ? "⌃" : "⌄"}</span>
+        </span>
       </span>
     </button>
   );
@@ -2920,6 +3555,8 @@ function ReceiptDropdown({
   errorMessage,
   isEditSaving,
   editErrorMessage,
+  deductionText,
+  deductionPreview,
   onSaveEdit,
 }: {
   text: SalesReceiptsViewText;
@@ -2929,6 +3566,8 @@ function ReceiptDropdown({
   errorMessage: string;
   isEditSaving: boolean;
   editErrorMessage: string;
+  deductionText: InventoryPreviewCopy;
+  deductionPreview?: InventoryDeductionPreview["receipts"][number];
   onSaveEdit: (input: SaveReceiptEditInput) => void;
 }) {
   if (isLoading) {
@@ -2958,6 +3597,15 @@ function ReceiptDropdown({
   const hasOptionLines =
     detail.hasOptionLines === true ||
     activeLines.some(isExistingOptionLine);
+  const previewLinesByReceiptLineId = new Map<
+    number,
+    InventoryDeductionPreview["receipts"][number]["lines"]
+  >();
+  for (const previewLine of deductionPreview?.lines ?? []) {
+    const rows = previewLinesByReceiptLineId.get(previewLine.receiptLineId) ?? [];
+    rows.push(previewLine);
+    previewLinesByReceiptLineId.set(previewLine.receiptLineId, rows);
+  }
 
   // 원본 세금 표시: taxSummary는 API의 original_tax_summary/vat_amount 기준
   const taxRows = detail.taxSummary?.taxByRate || [];
@@ -2981,6 +3629,13 @@ function ReceiptDropdown({
           {activeLines.map((line) => {
             const isOption = isExistingOptionLine(line);
             const lineTotalAmount = line.finalAmount || line.amount;
+            const lineStatusInfo = deductionPreview
+              ? getReceiptDetailLineStatusInfo(
+                  previewLinesByReceiptLineId.get(line.id) ?? [],
+                  deductionPreview,
+                  deductionText
+                )
+              : null;
 
             return (
               <div
@@ -3007,7 +3662,19 @@ function ReceiptDropdown({
                     ...(isOption ? optionLineSummaryStyle : null),
                   }}
                 >
-                  <span>{text.quantity} {formatNumber(line.quantity)}</span>
+                  <span style={lineSummaryLeftStyle}>
+                    <span>{text.quantity} {formatNumber(line.quantity)}</span>
+                    {lineStatusInfo ? (
+                      <span
+                        style={{
+                          ...receiptLineDeductionBadgeStyle,
+                          ...getPreviewLineBadgeStyle(lineStatusInfo.tone),
+                        }}
+                      >
+                        {lineStatusInfo.label}
+                      </span>
+                    ) : null}
+                  </span>
                   <strong style={lineSummaryAmountStyle}>
                     {formatVnd(lineTotalAmount)}
                   </strong>
@@ -4680,23 +5347,13 @@ const inventoryBatchActionStyle: CSSProperties = {
 };
 
 const inventoryBatchButtonsStyle: CSSProperties = {
+  marginLeft: "auto",
   display: "flex",
   flexDirection: "row",
   alignItems: "flex-end",
   gap: 7,
   flexWrap: "wrap",
   justifyContent: "flex-end",
-};
-
-const inventoryExclusionBadgeStyle: CSSProperties = {
-  border: "1px solid #e5ca8e",
-  borderRadius: 7,
-  padding: "7px 11px",
-  background: "#fff8e8",
-  color: "#805d16",
-  fontSize: 12,
-  lineHeight: 1.35,
-  fontWeight: 800,
 };
 
 const inventoryApplyButtonStyle: CSSProperties = {
@@ -5155,6 +5812,26 @@ const sectionTitleStyle: CSSProperties = {
   margin: 0,
 };
 
+const sectionTitleRowStyle: CSSProperties = {
+  minWidth: 0,
+  display: "flex",
+  alignItems: "center",
+  gap: 7,
+  flexWrap: "wrap",
+};
+
+const receiptListExclusionBadgeStyle: CSSProperties = {
+  border: "1px solid #e5ca8e",
+  borderRadius: 6,
+  padding: "3px 7px",
+  background: "#fff8e8",
+  color: "#805d16",
+  fontSize: 11,
+  lineHeight: 1.2,
+  fontWeight: 900,
+  whiteSpace: "nowrap",
+};
+
 const sectionMetaStyle: CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
@@ -5264,12 +5941,23 @@ const modifiedBadgeStyle: CSSProperties = {
 
 const receiptAmountWrapStyle: CSSProperties = {
   marginLeft: "auto",
-  minWidth: 92,
-  flexShrink: 0,
+  minWidth: 0,
+  flex: "0 1 auto",
   display: "flex",
   flexDirection: "column",
   alignItems: "flex-end",
   gap: 3,
+};
+
+const receiptAmountLineStyle: CSSProperties = {
+  maxWidth: "100%",
+  minHeight: 17,
+  minWidth: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "flex-end",
+  gap: 5,
+  flexWrap: "nowrap",
 };
 
 const amountStyle: CSSProperties = {
@@ -5280,6 +5968,22 @@ const amountStyle: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
+const receiptListAmountStyle: CSSProperties = {
+  ...amountStyle,
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
+
+const receiptDeductionBadgeStyle: CSSProperties = {
+  ...previewStatusStyle,
+  flexShrink: 0,
+  padding: "1px 5px",
+  fontSize: 9,
+  lineHeight: 1.2,
+  whiteSpace: "nowrap",
+};
+
 const receiptTimeStyle: CSSProperties = {
   ...ui.metaText,
   fontWeight: 800,
@@ -5287,6 +5991,7 @@ const receiptTimeStyle: CSSProperties = {
 
 const chevronStyle: CSSProperties = {
   ...ui.metaText,
+  flexShrink: 0,
   fontWeight: 800,
 };
 
@@ -5440,6 +6145,24 @@ const lineSummaryStyle: CSSProperties = {
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",
+};
+
+const lineSummaryLeftStyle: CSSProperties = {
+  minWidth: 0,
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  flexWrap: "nowrap",
+  overflow: "hidden",
+};
+
+const receiptLineDeductionBadgeStyle: CSSProperties = {
+  ...previewLineBadgeStyle,
+  flexShrink: 0,
+  padding: "1px 5px",
+  fontSize: 9,
+  lineHeight: 1.2,
+  whiteSpace: "nowrap",
 };
 
 const lineSummaryAmountStyle: CSSProperties = {

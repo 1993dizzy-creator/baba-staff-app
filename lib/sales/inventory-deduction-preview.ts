@@ -180,6 +180,7 @@ type PreviewLine = {
   mappingType: string | null;
   mappingVersion: number | null;
   mappingSnapshot: Record<string, unknown> | null;
+  isKegTracked?: boolean;
   status: string;
   blockedReason: string | null;
   deductions: DeductionComponent[];
@@ -552,6 +553,7 @@ export async function buildInventoryDeductionPreview(input: {
   );
 
   const kegMappingsByProductId = new Map<number, KegTrackingMappingRow[]>();
+  const validKegTrackingProductIds = new Set<number>();
   for (const mapping of kegTrackingMappings) {
     const productId = Number(mapping.pos_product_id);
     const inventoryItemId = Number(mapping.inventory_item_id);
@@ -561,10 +563,14 @@ export async function buildInventoryDeductionPreview(input: {
       productId <= 0 ||
       !Number.isInteger(inventoryItemId) ||
       inventoryItemId <= 0 ||
-      !activeKegSessionByItemId.has(inventoryItemId) ||
       quantityPerPosUnit <= 0 ||
       mapping.unit !== "ml"
     ) {
+      continue;
+    }
+
+    validKegTrackingProductIds.add(productId);
+    if (!activeKegSessionByItemId.has(inventoryItemId)) {
       continue;
     }
 
@@ -853,11 +859,16 @@ export async function buildInventoryDeductionPreview(input: {
         };
       }
       if (mapping.mapping_type === "manual") {
+        const isKegTracked =
+          product !== null && validKegTrackingProductIds.has(Number(product.id));
         return {
           ...base,
           lineType: "manual" as const,
-          status: "manual_review",
-          blockedReason: "Manual mapping은 관리자 검토가 필요합니다.",
+          status: isKegTracked ? "keg_tracked" : "manual_review",
+          isKegTracked,
+          blockedReason: isKegTracked
+            ? null
+            : "Manual mapping은 관리자 검토가 필요합니다.",
           deductions: [],
         };
       }
@@ -985,11 +996,17 @@ export async function buildInventoryDeductionPreview(input: {
           }
 
           if (childMapping.mapping_type === "manual") {
+            const isKegTracked =
+              childProduct !== null &&
+              validKegTrackingProductIds.has(Number(childProduct.id));
             return {
               ...childBase,
               lineType: "manual" as const,
-              status: "manual_review",
-              blockedReason: "Combo 구성 상품은 수동 확인이 필요합니다.",
+              status: isKegTracked ? "keg_tracked" : "manual_review",
+              isKegTracked,
+              blockedReason: isKegTracked
+                ? null
+                : "Combo 구성 상품은 수동 확인이 필요합니다.",
               deductions: [],
             };
           }
