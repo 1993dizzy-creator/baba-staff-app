@@ -63,6 +63,13 @@ export const attendanceText = {
     leaveCancel: "휴무취소",
     leaveCancelConfirm: "이 휴무 신청을 취소할까요?",
     leaveReasonRequired: "금/토요일 휴무는 사유를 입력해주세요.",
+    leaveBlockedByWork:
+      "이미 출근 또는 근무 기록이 있는 날짜에는 휴무를 신청할 수 없습니다. 관리자에게 근태 보정을 요청해주세요.",
+    checkInBlockedByLeave:
+      "해당 날짜에 휴무 기록이 있습니다. 휴무 신청을 취소하거나 관리자에게 확인해주세요.",
+    checkOrderInvalid:
+      "출근 시간은 퇴근 시간보다 늦을 수 없습니다. 출퇴근 시간을 다시 확인해주세요.",
+    processing: "처리 중...",
     selectedDate: "선택 날짜",
     attendanceDetail: "근태 상세",
     noRecord: "근태 기록 없음",
@@ -139,7 +146,14 @@ export const attendanceText = {
     leaveRequest: "Đăng ký nghỉ",
     leaveCancel: "Hủy ngày nghỉ",
     leaveCancelConfirm: "Hủy yêu cầu nghỉ này?",
-    leaveReasonRequired: "Vui lòng nhập lý do nghỉ.",
+    leaveReasonRequired: "Vui lòng nhập lý do khi đăng ký nghỉ vào thứ Sáu hoặc thứ Bảy.",
+    leaveBlockedByWork:
+      "Không thể đăng ký nghỉ vào ngày đã có dữ liệu chấm công hoặc đang làm việc. Vui lòng liên hệ quản lý để điều chỉnh chấm công.",
+    checkInBlockedByLeave:
+      "Ngày này đã có yêu cầu nghỉ. Vui lòng hủy yêu cầu nghỉ hoặc liên hệ quản lý để xác nhận.",
+    checkOrderInvalid:
+      "Giờ vào không được muộn hơn giờ ra. Vui lòng kiểm tra lại giờ chấm công.",
+    processing: "Đang xử lý...",
     selectedDate: "Ngày đã chọn",
     attendanceDetail: "Chi tiết chấm công",
     noRecord: "Không có dữ liệu chấm công",

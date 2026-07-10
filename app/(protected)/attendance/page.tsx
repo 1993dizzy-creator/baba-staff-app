@@ -281,6 +281,7 @@ function MyAttendance() {
   const [attendance, setAttendance] =
     useState<AttendanceState>(initialAttendanceState);
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
+  const [hasPendingLeaveToday, setHasPendingLeaveToday] = useState(false);
 
   useEffect(() => {
     fetchTodayAttendance();
@@ -311,14 +312,17 @@ function MyAttendance() {
 
       if (!data) {
         setAttendance(initialAttendanceState);
+        setHasPendingLeaveToday(false);
         return;
       }
 
       if (data.status === ATTENDANCE_STATUS.LEAVE && !isApprovedLeave(data)) {
         setAttendance(initialAttendanceState);
+        setHasPendingLeaveToday(true);
         return;
       }
 
+      setHasPendingLeaveToday(false);
       setAttendance((prev) => ({
         ...prev,
         status: data.status || "before",
@@ -376,6 +380,7 @@ function MyAttendance() {
     if (isLoadingToday) return;
     if (attendance.status !== "before") return;
     if (attendance.checkInTime !== "-") return;
+    if (hasPendingLeaveToday) return;
 
     setIsSubmittingAttendance(true);
 
@@ -544,7 +549,8 @@ function MyAttendance() {
     isLoadingToday ||
     isSubmittingAttendance ||
     attendance.status !== "before" ||
-    attendance.checkInTime !== "-";
+    attendance.checkInTime !== "-" ||
+    hasPendingLeaveToday;
 
   const checkOutDisabled =
     isLoadingToday ||

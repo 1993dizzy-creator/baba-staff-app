@@ -4,6 +4,9 @@ export const ATTENDANCE_BUSINESS_START_HOUR = 16;
 export const ATTENDANCE_BUSINESS_END_HOUR = 3;
 export const EARLY_LEAVE_STATUS_THRESHOLD_MINUTES = 90;
 export const TIMEZONE_OFFSET = "+07:00";
+// 손님이 없어 정규 영업 종료(01:00)보다 일찍 마감하는 날, 이 시각 이후 퇴근은
+// 개인 예정 퇴근시간과 무관하게 조퇴로 처리하지 않는다.
+export const NORMAL_EARLY_CLOSE_TIME = "23:30";
 
 export function normalizeTime(time?: string | null) {
   if (!time) return null;
@@ -45,13 +48,13 @@ export function makeCheckOutIso(
 
 export function getLateMinutes(
   checkInIso: string,
-  workStartTime?: string | null
+  workStartTime: string | null | undefined,
+  workDate: string
 ) {
   const safeWorkStartTime = normalizeTime(workStartTime);
   if (!safeWorkStartTime) return 0;
 
   const checkIn = new Date(checkInIso);
-  const workDate = checkInIso.slice(0, 10);
   const standardStart = new Date(
     `${workDate}T${safeWorkStartTime}:00${TIMEZONE_OFFSET}`
   );
@@ -66,14 +69,22 @@ export function getLateMinutes(
 export function getEarlyLeaveMinutes(
   checkInIso: string,
   checkOutIso: string,
-  workEndTime?: string | null
+  workEndTime: string | null | undefined,
+  workDate: string
 ) {
   const safeWorkEndTime = normalizeTime(workEndTime);
   if (!safeWorkEndTime) return 0;
 
   const checkIn = new Date(checkInIso);
   const checkOut = new Date(checkOutIso);
-  const workDate = checkInIso.slice(0, 10);
+
+  const normalCloseFloor = new Date(
+    `${workDate}T${NORMAL_EARLY_CLOSE_TIME}:00${TIMEZONE_OFFSET}`
+  );
+
+  if (checkOut.getTime() >= normalCloseFloor.getTime()) {
+    return 0;
+  }
 
   const standardEnd = new Date(
     `${workDate}T${safeWorkEndTime}:00${TIMEZONE_OFFSET}`

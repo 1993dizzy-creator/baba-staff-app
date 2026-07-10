@@ -134,6 +134,7 @@ export default function AttendanceLeavePage() {
   const [leaveRecords, setLeaveRecords] = useState<AttendanceRecord[]>([]);
   const [selectedDate, setSelectedDate] = useState(initialSelectedDate);
   const [isLoading, setIsLoading] = useState(true);
+  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
 
   useEffect(() => {
     fetchLeaveData();
@@ -178,6 +179,8 @@ export default function AttendanceLeavePage() {
   };
 
   const handleLeaveRequest = async () => {
+    if (pendingActionKey) return;
+
     if (!currentUser?.id) {
       alert(c.loginAgain);
       return;
@@ -193,26 +196,31 @@ export default function AttendanceLeavePage() {
       const ok = confirm(t.leaveCancelConfirm);
       if (!ok) return;
 
-      const res = await fetch("/api/attendance/leave", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: LEAVE_ACTION.CANCEL,
-          record_id: alreadyRequested.id,
-          language: lang,
-        }),
-      });
+      setPendingActionKey("request");
+      try {
+        const res = await fetch("/api/attendance/leave", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: LEAVE_ACTION.CANCEL,
+            record_id: alreadyRequested.id,
+            language: lang,
+          }),
+        });
 
-      const result = await res.json();
+        const result = await res.json();
 
-      if (!res.ok || !result.ok) {
-        alert(result.message || c.errorDefault);
-        return;
+        if (!res.ok || !result.ok) {
+          alert(result.message || c.errorDefault);
+          return;
+        }
+
+        await fetchLeaveData();
+      } finally {
+        setPendingActionKey(null);
       }
-
-      await fetchLeaveData();
       return;
     }
 
@@ -228,107 +236,136 @@ export default function AttendanceLeavePage() {
       reason = input.trim();
     }
 
-    const res = await fetch("/api/attendance/leave", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        action: LEAVE_ACTION.REQUEST,
-        user_id: currentUser.id,
-        work_date: selectedDate,
-        note: reason,
-        language: lang,
-      }),
-    });
+    setPendingActionKey("request");
+    try {
+      const res = await fetch("/api/attendance/leave", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: LEAVE_ACTION.REQUEST,
+          user_id: currentUser.id,
+          work_date: selectedDate,
+          note: reason,
+          language: lang,
+        }),
+      });
 
-    const result = await res.json();
+      const result = await res.json();
 
-    if (!res.ok || !result.ok) {
-      alert(result.message || c.errorDefault);
-      return;
+      if (!res.ok || !result.ok) {
+        alert(result.message || c.errorDefault);
+        return;
+      }
+
+      await fetchLeaveData();
+    } finally {
+      setPendingActionKey(null);
     }
-
-    await fetchLeaveData();
   };
 
   const handleApproveLeave = async (recordId: number) => {
     if (!canManageLeave) return;
 
-    const res = await fetch("/api/attendance/leave-admin", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        action: LEAVE_ACTION.APPROVE,
-        record_id: recordId,
-        admin_name: currentUser?.name || currentUser?.username || null,
-        admin_id: currentUser?.id,
-        language: lang,
-      }),
-    });
+    const actionKey = `leave-${recordId}`;
+    if (pendingActionKey === actionKey) return;
 
-    const result = await res.json();
+    setPendingActionKey(actionKey);
+    try {
+      const res = await fetch("/api/attendance/leave-admin", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: LEAVE_ACTION.APPROVE,
+          record_id: recordId,
+          admin_name: currentUser?.name || currentUser?.username || null,
+          admin_id: currentUser?.id,
+          language: lang,
+        }),
+      });
 
-    if (!res.ok || !result.ok) {
-      alert(result.message || c.errorDefault);
-      return;
+      const result = await res.json();
+
+      if (!res.ok || !result.ok) {
+        alert(result.message || c.errorDefault);
+        return;
+      }
+
+      await fetchLeaveData();
+    } finally {
+      setPendingActionKey(null);
     }
-
-    await fetchLeaveData();
   };
 
   const handleCancelApproval = async (recordId: number) => {
     if (!canManageLeave) return;
 
-    const res = await fetch("/api/attendance/leave-admin", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        action: LEAVE_ACTION.CANCEL_APPROVAL,
-        record_id: recordId,
-        admin_id: currentUser?.id,
-        language: lang,
-      }),
-    });
+    const actionKey = `leave-${recordId}`;
+    if (pendingActionKey === actionKey) return;
 
-    const result = await res.json();
+    setPendingActionKey(actionKey);
+    try {
+      const res = await fetch("/api/attendance/leave-admin", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: LEAVE_ACTION.CANCEL_APPROVAL,
+          record_id: recordId,
+          admin_id: currentUser?.id,
+          language: lang,
+        }),
+      });
 
-    if (!res.ok || !result.ok) {
-      alert(result.message || c.errorDefault);
-      return;
+      const result = await res.json();
+
+      if (!res.ok || !result.ok) {
+        alert(result.message || c.errorDefault);
+        return;
+      }
+
+      await fetchLeaveData();
+    } finally {
+      setPendingActionKey(null);
     }
-
-    await fetchLeaveData();
   };
 
   const handleCancelPendingLeave = async (recordId: number) => {
+    const actionKey = `leave-${recordId}`;
+    if (pendingActionKey === actionKey) return;
+
     const ok = confirm(t.leaveCancelConfirm);
     if (!ok) return;
 
-    const res = await fetch("/api/attendance/leave", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        action: LEAVE_ACTION.CANCEL,
-        record_id: recordId,
-        language: lang,
-      }),
-    });
+    setPendingActionKey(actionKey);
+    try {
+      const res = await fetch("/api/attendance/leave", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: LEAVE_ACTION.CANCEL,
+          record_id: recordId,
+          language: lang,
+        }),
+      });
 
-    const result = await res.json();
+      const result = await res.json();
 
-    if (!res.ok || !result.ok) {
-      alert(result.message || c.errorDefault);
-      return;
+      if (!res.ok || !result.ok) {
+        alert(result.message || c.errorDefault);
+        return;
+      }
+
+      await fetchLeaveData();
+    } finally {
+      setPendingActionKey(null);
     }
-
-    await fetchLeaveData();
   };
 
   const userMap = useMemo(() => {
@@ -573,6 +610,8 @@ export default function AttendanceLeavePage() {
                 const meta = getPartMeta(user.part);
                 const isApproved = getApprovalStatus(record) === APPROVAL_STATUS.APPROVED;
 
+                const isRecordBusy = pendingActionKey === `leave-${record.id}`;
+
                 return (
                   <div
                     key={record.id}
@@ -617,28 +656,43 @@ export default function AttendanceLeavePage() {
                             {!isApproved && (
                               <button
                                 type="button"
-                                style={approveButtonStyle}
+                                style={{
+                                  ...approveButtonStyle,
+                                  opacity: isRecordBusy ? 0.45 : 1,
+                                  cursor: isRecordBusy ? "not-allowed" : "pointer",
+                                }}
+                                disabled={isRecordBusy}
                                 onClick={() => handleApproveLeave(record.id)}
                               >
-                                {t.approve}
+                                {isRecordBusy ? t.processing : t.approve}
                               </button>
                             )}
 
                             {isApproved ? (
                               <button
                                 type="button"
-                                style={cancelApprovalButtonStyle}
+                                style={{
+                                  ...cancelApprovalButtonStyle,
+                                  opacity: isRecordBusy ? 0.45 : 1,
+                                  cursor: isRecordBusy ? "not-allowed" : "pointer",
+                                }}
+                                disabled={isRecordBusy}
                                 onClick={() => handleCancelApproval(record.id)}
                               >
-                                {t.cancelApproval}
+                                {isRecordBusy ? t.processing : t.cancelApproval}
                               </button>
                             ) : (
                               <button
                                 type="button"
-                                style={cancelApprovalButtonStyle}
+                                style={{
+                                  ...cancelApprovalButtonStyle,
+                                  opacity: isRecordBusy ? 0.45 : 1,
+                                  cursor: isRecordBusy ? "not-allowed" : "pointer",
+                                }}
+                                disabled={isRecordBusy}
                                 onClick={() => handleCancelPendingLeave(record.id)}
                               >
-                                {t.cancelRequest}
+                                {isRecordBusy ? t.processing : t.cancelRequest}
                               </button>
                             )}
                           </div>
@@ -657,14 +711,19 @@ export default function AttendanceLeavePage() {
             {!canManageLeave && (
               <button
                 type="button"
-                style={
-                  hasMySelectedLeave
+                style={{
+                  ...(hasMySelectedLeave
                     ? leaveCancelRequestButtonStyle
-                    : requestButtonStyle
-                }
+                    : requestButtonStyle),
+                  opacity: pendingActionKey === "request" ? 0.45 : 1,
+                  cursor: pendingActionKey === "request" ? "not-allowed" : "pointer",
+                }}
+                disabled={pendingActionKey === "request"}
                 onClick={handleLeaveRequest}
               >
-                {leaveRequestButtonLabel}
+                {pendingActionKey === "request"
+                  ? t.processing
+                  : leaveRequestButtonLabel}
               </button>
             )}
           </div>

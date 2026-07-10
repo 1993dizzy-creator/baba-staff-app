@@ -13,6 +13,8 @@ const messages = {
     missingDate: "휴무 날짜가 없습니다.",
     existingError: "휴무 신청 확인 중 오류가 발생했습니다.",
     alreadyRequested: "이미 휴무 신청이 있습니다.",
+    blockedByWork:
+      "이미 출근 또는 근무 기록이 있는 날짜에는 휴무를 신청할 수 없습니다. 관리자에게 근태 보정을 요청해주세요.",
     createError: "휴무 신청 저장 중 오류가 발생했습니다.",
     cancelError: "휴무 신청 취소 중 오류가 발생했습니다.",
     noCancelTarget: "취소할 휴무 신청이 없습니다.",
@@ -26,6 +28,8 @@ const messages = {
     missingDate: "Không có ngày nghỉ.",
     existingError: "Đã xảy ra lỗi khi kiểm tra yêu cầu nghỉ.",
     alreadyRequested: "Đã có yêu cầu nghỉ cho ngày này.",
+    blockedByWork:
+      "Không thể đăng ký nghỉ vào ngày đã có dữ liệu chấm công hoặc đang làm việc. Vui lòng liên hệ quản lý để điều chỉnh chấm công.",
     createError: "Đã xảy ra lỗi khi lưu yêu cầu nghỉ.",
     cancelError: "Đã xảy ra lỗi khi hủy yêu cầu nghỉ.",
     noCancelTarget: "Không có yêu cầu nghỉ để hủy.",
@@ -74,10 +78,9 @@ export async function POST(req: Request) {
 
       const { data: existing, error: existingError } = await supabaseServer
         .from("attendance_records")
-        .select("id")
+        .select("id, status, check_in_at")
         .eq("user_id", user_id)
         .eq("work_date", work_date)
-        .eq("status", ATTENDANCE_STATUS.LEAVE)
         .maybeSingle();
 
       if (existingError) {
@@ -88,9 +91,27 @@ export async function POST(req: Request) {
         );
       }
 
-      if (existing) {
+      if (existing?.status === ATTENDANCE_STATUS.LEAVE) {
         return NextResponse.json(
           { ok: false, message: messages[lang].alreadyRequested },
+          { status: 409 }
+        );
+      }
+
+      const workInProgressStatuses: string[] = [
+        ATTENDANCE_STATUS.WORKING,
+        ATTENDANCE_STATUS.DONE,
+        ATTENDANCE_STATUS.LATE,
+        ATTENDANCE_STATUS.EARLY_LEAVE,
+      ];
+
+      if (
+        existing &&
+        (Boolean(existing.check_in_at) ||
+          workInProgressStatuses.includes(existing.status))
+      ) {
+        return NextResponse.json(
+          { ok: false, message: messages[lang].blockedByWork },
           { status: 409 }
         );
       }

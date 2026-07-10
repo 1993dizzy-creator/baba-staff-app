@@ -17,6 +17,8 @@ const messages = {
     inactiveUser: "활성화된 사용자가 아닙니다.",
     existingError: "출근 기록 확인 중 오류가 발생했습니다.",
     alreadyCheckedIn: "이미 출근 처리되었습니다.",
+    blockedByLeave:
+      "해당 날짜에 휴무 기록이 있습니다. 휴무 신청을 취소하거나 관리자에게 확인해주세요.",
     saveError: "출근 저장 중 오류가 발생했습니다.",
     success: "출근 처리되었습니다.",
     exception: "출근 처리 중 오류가 발생했습니다.",
@@ -28,6 +30,8 @@ const messages = {
     inactiveUser: "Tài khoản này không hoạt động.",
     existingError: "Đã xảy ra lỗi khi kiểm tra lịch sử chấm công.",
     alreadyCheckedIn: "Bạn đã chấm công vào rồi.",
+    blockedByLeave:
+      "Ngày này đã có yêu cầu nghỉ. Vui lòng hủy yêu cầu nghỉ hoặc liên hệ quản lý để xác nhận.",
     saveError: "Đã xảy ra lỗi khi lưu chấm công vào.",
     success: "Đã chấm công vào thành công.",
     exception: "Đã xảy ra lỗi khi xử lý chấm công vào.",
@@ -123,7 +127,14 @@ export async function POST(req: Request) {
       );
     }
 
-    const lateMinutes = getLateMinutes(nowIso, user.work_start_time);
+    if (existing?.status === ATTENDANCE_STATUS.LEAVE) {
+      return NextResponse.json(
+        { ok: false, message: getMessage(lang, "blockedByLeave") },
+        { status: 409 }
+      );
+    }
+
+    const lateMinutes = getLateMinutes(nowIso, user.work_start_time, workDate);
 
     const status = ATTENDANCE_STATUS.WORKING;
 

@@ -240,12 +240,27 @@ export async function POST(req: Request) {
         }
 
         nextCheckOutIso = makeCheckOutIso(work_date, time, checkInIso);
+
+        if (new Date(nextCheckOutIso).getTime() <= new Date(checkInIso).getTime()) {
+          return NextResponse.json(
+            {
+              ok: false,
+              message:
+                lang === "vi"
+                  ? "Giờ vào không được muộn hơn giờ ra. Vui lòng kiểm tra lại giờ chấm công."
+                  : "출근 시간은 퇴근 시간보다 늦을 수 없습니다. 출퇴근 시간을 다시 확인해주세요.",
+            },
+            { status: 400 }
+          );
+        }
+
         nextWorkMinutes = getMinutesDiff(checkInIso, nextCheckOutIso);
 
         const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
           checkInIso,
           nextCheckOutIso,
-          user.work_end_time
+          user.work_end_time,
+          work_date
         );
 
         nextStatus = getStatusByMinutes(nextLateMinutes, rawEarlyLeaveMinutes);
@@ -310,9 +325,26 @@ export async function POST(req: Request) {
       const checkInIso = makeCheckInIso(work_date, time);
       const checkOutIso = existing?.check_out_at ?? null;
 
+      if (
+        checkOutIso &&
+        new Date(checkInIso).getTime() >= new Date(checkOutIso).getTime()
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Giờ vào không được muộn hơn giờ ra. Vui lòng kiểm tra lại giờ chấm công."
+                : "출근 시간은 퇴근 시간보다 늦을 수 없습니다. 출퇴근 시간을 다시 확인해주세요.",
+          },
+          { status: 400 }
+        );
+      }
+
       const lateMinutes = getLateMinutes(
         checkInIso,
-        user.work_start_time
+        user.work_start_time,
+        work_date
       );
 
       const workMinutes = checkOutIso
@@ -327,7 +359,8 @@ export async function POST(req: Request) {
         const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
           checkInIso,
           checkOutIso,
-          user.work_end_time
+          user.work_end_time,
+          work_date
         );
 
         status = getStatusByMinutes(lateMinutes, rawEarlyLeaveMinutes);
@@ -397,10 +430,24 @@ export async function POST(req: Request) {
 
       const checkOutIso = makeCheckOutIso(work_date, time, checkInIso);
 
+      if (new Date(checkOutIso).getTime() <= new Date(checkInIso).getTime()) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Giờ vào không được muộn hơn giờ ra. Vui lòng kiểm tra lại giờ chấm công."
+                : "출근 시간은 퇴근 시간보다 늦을 수 없습니다. 출퇴근 시간을 다시 확인해주세요.",
+          },
+          { status: 400 }
+        );
+      }
+
       const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
         checkInIso,
         checkOutIso,
-        user.work_end_time
+        user.work_end_time,
+        work_date
       );
 
       const workMinutes = getMinutesDiff(checkInIso, checkOutIso);

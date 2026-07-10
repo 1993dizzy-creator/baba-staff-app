@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import { commonText, inventoryText } from "@/lib/text";
 import Container from "@/components/Container";
@@ -402,6 +402,8 @@ export default function InventoryPage() {
     const lowStockThresholdRef = useRef<HTMLInputElement>(null);
     const hasMountedInventoryFetchRef = useRef(false);
     const stockStatusRequestIdRef = useRef(0);
+    const itemCardRefs = useRef<Record<number, HTMLDivElement | null>>({});
+    const pendingCardRestoreRef = useRef<{ itemId: number; cardTop: number } | null>(null);
 
     const categoryOptions = useMemo(
         () =>
@@ -2239,6 +2241,19 @@ export default function InventoryPage() {
         );
     };
 
+    const refreshInventoryPreservingCardPosition = async (
+        itemId: number,
+        refresh: () => Promise<unknown>
+    ) => {
+        const cardEl = itemCardRefs.current[itemId] ?? null;
+
+        pendingCardRestoreRef.current = cardEl
+            ? { itemId, cardTop: cardEl.getBoundingClientRect().top }
+            : null;
+
+        await refresh();
+    };
+
     const handleQuickSaveConfirm = async (
         reason: QuickReasonValue
     ) => {
@@ -2318,7 +2333,10 @@ export default function InventoryPage() {
 
                 if (res.status === 409) {
                     alert("현재 재고가 다른 사용자에 의해 변경되었습니다. 새로고침 후 다시 저장해주세요.");
-                    await fetchInventory();
+                    await refreshInventoryPreservingCardPosition(
+                        quickSaveItem.id,
+                        fetchInventory
+                    );
                     return;
                 }
 
@@ -2333,16 +2351,17 @@ export default function InventoryPage() {
 
             closeQuickSaveModal();
 
-            const refreshResults = await Promise.allSettled([
-                fetchInventory(),
-                fetchRecentLogs(),
-            ]);
-
-            refreshResults.forEach((result) => {
-                if (result.status === "rejected") {
-                    console.error(result.reason);
-                }
-            });
+            await refreshInventoryPreservingCardPosition(savedItemId, () =>
+                Promise.allSettled([fetchInventory(), fetchRecentLogs()]).then(
+                    (refreshResults) => {
+                        refreshResults.forEach((result) => {
+                            if (result.status === "rejected") {
+                                console.error(result.reason);
+                            }
+                        });
+                    }
+                )
+            );
         } finally {
             setIsQuickSaving(false);
         }
@@ -2653,6 +2672,8 @@ export default function InventoryPage() {
         }, 180);
     }, [isFormOpen]);
 
+    // 화면 조건(검색/필터/언어)이 바뀐 경우에만 목록을 맨 위로 초기화한다.
+    // inventoryList 자체의 갱신(빠른저장, 상태/keg 진행률 재조회 등)은 여기 포함하지 않는다.
     useEffect(() => {
         setVisibleCount(INVENTORY_RENDER_CHUNK_SIZE);
         inventoryListScrollRef.current?.scrollTo({ top: 0 });
@@ -2665,8 +2686,28 @@ export default function InventoryPage() {
         showTodayUpdatedOnly,
         showStockCheckNeededOnly,
         lang,
-        inventoryList,
     ]);
+
+    // inventoryList 데이터 갱신 후, 대상 카드의 화면 내 위치가 저장 전과 동일하도록 보정한다.
+    // pendingCardRestoreRef가 없으면(화면 조건 변경 등 일반 갱신) 아무 것도 하지 않는다.
+    useLayoutEffect(() => {
+        const pending = pendingCardRestoreRef.current;
+        if (!pending) return;
+
+        pendingCardRestoreRef.current = null;
+
+        const scrollEl = inventoryListScrollRef.current;
+        const cardEl = itemCardRefs.current[pending.itemId];
+
+        if (!scrollEl || !cardEl) return;
+
+        const nextCardTop = cardEl.getBoundingClientRect().top;
+        const delta = nextCardTop - pending.cardTop;
+
+        if (delta !== 0) {
+            scrollEl.scrollTop += delta;
+        }
+    }, [inventoryList]);
 
     const isLowStockItem = useCallback((item: InventoryItem) =>
         item.low_stock_enabled === true &&
@@ -3292,6 +3333,13 @@ export default function InventoryPage() {
                                     return (
                                         <div
                                             key={item.id}
+                                            ref={(el) => {
+                                                if (el) {
+                                                    itemCardRefs.current[item.id] = el;
+                                                } else {
+                                                    delete itemCardRefs.current[item.id];
+                                                }
+                                            }}
                                             style={{
                                                 ...ui.card,
                                                 padding: "5px 8px",

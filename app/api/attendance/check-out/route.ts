@@ -140,7 +140,8 @@ export async function POST(req: Request) {
     const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
       existing.check_in_at,
       nowIso,
-      user.work_end_time
+      user.work_end_time,
+      existing.work_date
     );
 
     const status = getStatusByMinutes(
