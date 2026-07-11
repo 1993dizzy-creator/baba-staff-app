@@ -12,6 +12,7 @@ import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
 import { getBusinessDate } from "@/lib/common/business-time";
+import { isLongShiftRecord } from "@/lib/attendance/time";
 
 
 type UserRow = {
@@ -395,6 +396,18 @@ export default function AttendanceStaffPage() {
                                 }}
                               >
                                 {t.workLate}
+                              </span>
+                            )}
+
+                            {isLongShiftRecord(record?.check_in_at, record?.check_out_at) && (
+                              <span
+                                style={{
+                                  ...miniBadgeStyle,
+                                  borderColor: "#f59e0b",
+                                  color: "#f59e0b",
+                                }}
+                              >
+                                {t.longShiftWarning}
                               </span>
                             )}
                           </div>

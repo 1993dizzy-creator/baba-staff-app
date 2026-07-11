@@ -19,6 +19,8 @@ const messages = {
     alreadyCheckedIn: "이미 출근 처리되었습니다.",
     blockedByLeave:
       "해당 날짜에 휴무 기록이 있습니다. 휴무 신청을 취소하거나 관리자에게 확인해주세요.",
+    unresolvedPreviousShift:
+      "이전 근무일의 퇴근 기록이 완료되지 않았습니다. 관리자에게 퇴근시간 보정을 요청해주세요.",
     saveError: "출근 저장 중 오류가 발생했습니다.",
     success: "출근 처리되었습니다.",
     exception: "출근 처리 중 오류가 발생했습니다.",
@@ -32,6 +34,8 @@ const messages = {
     alreadyCheckedIn: "Bạn đã chấm công vào rồi.",
     blockedByLeave:
       "Ngày này đã có yêu cầu nghỉ. Vui lòng hủy yêu cầu nghỉ hoặc liên hệ quản lý để xác nhận.",
+    unresolvedPreviousShift:
+      "Ca làm việc trước vẫn chưa có giờ tan ca. Vui lòng yêu cầu quản lý chỉnh lại giờ tan ca.",
     saveError: "Đã xảy ra lỗi khi lưu chấm công vào.",
     success: "Đã chấm công vào thành công.",
     exception: "Đã xảy ra lỗi khi xử lý chấm công vào.",
@@ -102,6 +106,37 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { ok: false, message: getMessage(lang, "inactiveUser") },
         { status: 403 }
+      );
+    }
+
+    const { data: openRecord, error: openRecordError } = await supabaseServer
+      .from("attendance_records")
+      .select("id, work_date, check_in_at")
+      .eq("user_id", user_id)
+      .not("check_in_at", "is", null)
+      .is("check_out_at", null)
+      .order("check_in_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (openRecordError) {
+      console.error("check-in open record error:", openRecordError);
+      return NextResponse.json(
+        { ok: false, message: getMessage(lang, "existingError") },
+        { status: 500 }
+      );
+    }
+
+    // 같은 영업일의 미퇴근 기록은 기존 중복 출근 방지 로직(아래 existing 체크)이 처리한다.
+    // 그 외(이전 영업일 또는 비정상적인 미래 날짜)의 미퇴근 기록은 신규 출근을 차단한다.
+    if (openRecord && openRecord.work_date !== workDate) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: getMessage(lang, "unresolvedPreviousShift"),
+          code: "UNRESOLVED_PREVIOUS_SHIFT",
+        },
+        { status: 409 }
       );
     }
 

@@ -78,9 +78,48 @@ export const attendanceText = {
     markNormal: "지각 정상처리",
     correctionReason: "보정 사유",
     checkoutCorrection: "퇴근시간 보정",
-    saveCorrection: "보정 저장",
+    saveCorrection: "수정 저장",
     correctionDone: "보정되었습니다.",
     correctionFailed: "근태 보정에 실패했습니다.",
+
+    noRecordHint: "해당 날짜의 근태 기록이 없습니다. 근무 기록을 추가하거나 휴무로 처리할 수 있습니다.",
+    createRecordTab: "근무 기록 추가",
+    createLeaveTab: "휴무 처리",
+    createRecordSave: "근무 기록 저장",
+    createLeaveSave: "휴무 저장",
+    leaveReasonLabel: "휴무 사유",
+    checkInRequired: "출근 일시를 입력해주세요.",
+    scheduleCheckInMissingNotice: "직원의 예정 출근시간이 설정되어 있지 않습니다. 출근 일시를 직접 입력해주세요.",
+    scheduleCheckOutMissingNotice: "직원의 예정 퇴근시간이 설정되어 있지 않습니다. 필요하면 퇴근 일시를 직접 입력해주세요.",
+
+    unresolvedOpenRecordsBanner: "퇴근 미처리 기록 {count}건",
+    unresolvedOpenRecordBadge: "⚠ 퇴근 미처리",
+    unresolvedOpenRecordElapsed: "경과 {duration}",
+    unresolvedOpenRecordGoCorrect: "보정하기",
+    unresolvedOpenRecordDetailButton: "상세확인",
+    unresolvedOpenRecordAutoButton: "자동보정",
+    unresolvedOpenRecordAutoProcessing: "자동보정 중...",
+    unresolvedOpenRecordAutoConfirm:
+      "이 기록의 퇴근시간을 다음 날 01:00으로 자동 보정하시겠습니까?",
+    unresolvedOpenRecordAutoFailed: "자동보정에 실패했습니다.",
+
+    inactiveUserSuffix: "비활성",
+    orphanRecordLabel: "삭제된 사용자 #{id}",
+    orphanRecordNoLinkInfo: "연결 정보 없음",
+    orphanRecordDeleteButton: "기록 삭제",
+    orphanRecordDeleteConfirm:
+      "연결된 직원 정보가 없는 근태 기록입니다. 이 기록을 영구 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+    orphanRecordDeleting: "삭제 중...",
+    orphanRecordDeleteFailed: "기록 삭제에 실패했습니다.",
+
+    checkInDateTimeLabel: "출근 일시",
+    checkOutDateTimeLabel: "퇴근 일시",
+    markUnresolved: "퇴근 미처리로 표시",
+    workDateConflict: "해당 날짜에 이미 근태 기록이 있습니다.",
+    invalidDateTime: "날짜와 시간을 다시 확인해주세요.",
+
+    longShiftWarning: "장시간 근무",
+    longShiftWarningWithDuration: "⚠ 장시간 근무 {duration}",
   },
 
   vi: {
@@ -165,5 +204,44 @@ export const attendanceText = {
     saveCorrection: "Lưu chỉnh sửa",
     correctionDone: "Đã chỉnh sửa.",
     correctionFailed: "Không thể chỉnh sửa chấm công.",
+
+    noRecordHint: "Ngày này chưa có dữ liệu chấm công. Có thể thêm ca làm việc hoặc xử lý nghỉ phép.",
+    createRecordTab: "Thêm ca làm việc",
+    createLeaveTab: "Xử lý nghỉ phép",
+    createRecordSave: "Lưu ca làm việc",
+    createLeaveSave: "Lưu nghỉ phép",
+    leaveReasonLabel: "Lý do nghỉ",
+    checkInRequired: "Vui lòng nhập giờ vào.",
+    scheduleCheckInMissingNotice: "Chưa thiết lập giờ vào dự kiến cho nhân viên này. Vui lòng nhập giờ vào trực tiếp.",
+    scheduleCheckOutMissingNotice: "Chưa thiết lập giờ ra dự kiến cho nhân viên này. Vui lòng nhập giờ ra nếu cần.",
+
+    unresolvedOpenRecordsBanner: "{count} ca chưa ghi nhận giờ tan ca",
+    unresolvedOpenRecordBadge: "⚠ Chưa ghi nhận giờ tan ca",
+    unresolvedOpenRecordElapsed: "Đã qua {duration}",
+    unresolvedOpenRecordGoCorrect: "Chỉnh sửa",
+    unresolvedOpenRecordDetailButton: "Xem chi tiết",
+    unresolvedOpenRecordAutoButton: "Tự động điều chỉnh",
+    unresolvedOpenRecordAutoProcessing: "Đang điều chỉnh...",
+    unresolvedOpenRecordAutoConfirm:
+      "Bạn có muốn tự động điều chỉnh giờ tan ca của bản ghi này thành 01:00 ngày hôm sau không?",
+    unresolvedOpenRecordAutoFailed: "Tự động điều chỉnh thất bại.",
+
+    inactiveUserSuffix: "Đã ngừng hoạt động",
+    orphanRecordLabel: "Người dùng đã bị xóa #{id}",
+    orphanRecordNoLinkInfo: "Không có thông tin liên kết",
+    orphanRecordDeleteButton: "Xóa bản ghi",
+    orphanRecordDeleteConfirm:
+      "Bản ghi chấm công này không còn thông tin nhân viên liên kết. Bạn có muốn xóa vĩnh viễn bản ghi này không? Thao tác này không thể hoàn tác.",
+    orphanRecordDeleting: "Đang xóa...",
+    orphanRecordDeleteFailed: "Xóa bản ghi thất bại.",
+
+    checkInDateTimeLabel: "Ngày giờ vào",
+    checkOutDateTimeLabel: "Ngày giờ ra",
+    markUnresolved: "Đánh dấu chưa tan ca",
+    workDateConflict: "Ngày này đã có dữ liệu chấm công.",
+    invalidDateTime: "Vui lòng kiểm tra lại ngày giờ.",
+
+    longShiftWarning: "Ca làm việc quá dài",
+    longShiftWarningWithDuration: "⚠ Ca làm việc quá dài: {duration}",
   },
 } as const;

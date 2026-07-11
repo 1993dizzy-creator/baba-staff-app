@@ -37,6 +37,21 @@ type AttendanceRecord = {
     approval_status: "pending" | "approved" | null;
 };
 
+type UnresolvedOpenRecordUser = {
+    id: number;
+    username: string | null;
+    name: string | null;
+    is_active: boolean | null;
+};
+
+type UnresolvedOpenRecord = {
+    id: number;
+    user_id: number;
+    work_date: string;
+    check_in_at: string;
+    user: UnresolvedOpenRecordUser | null;
+};
+
 function getMonthRange(month: Date) {
     const year = month.getFullYear();
     const monthIndex = month.getMonth();
@@ -88,6 +103,48 @@ function formatMinutes(
     return `${h}${c.hour} ${m}${c.minute}`;
 }
 
+function formatCheckInTime(isoTime: string) {
+    return new Date(isoTime).toLocaleTimeString("vi-VN", {
+        timeZone: "Asia/Ho_Chi_Minh",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+}
+
+function getUnresolvedDisplayName(
+    record: UnresolvedOpenRecord,
+    t: (typeof attendanceText)["ko"] | (typeof attendanceText)["vi"]
+) {
+    if (!record.user) {
+        return t.orphanRecordLabel.replace("{id}", String(record.user_id));
+    }
+
+    const baseName = record.user.name || record.user.username || `#${record.user_id}`;
+
+    if (record.user.is_active === false) {
+        return `${baseName} · ${t.inactiveUserSuffix}`;
+    }
+
+    return baseName;
+}
+
+function formatElapsedSince(
+    isoTime: string,
+    c: { days: string; hour: string; minute: string }
+) {
+    const minutes = Math.max(
+        0,
+        Math.floor((Date.now() - new Date(isoTime).getTime()) / 60000)
+    );
+
+    const days = Math.floor(minutes / (60 * 24));
+    const hours = Math.floor((minutes % (60 * 24)) / 60);
+
+    if (days > 0) return `${days}${c.days} ${hours}${c.hour}`;
+    return formatMinutes(minutes, c);
+}
+
 export default function AttendanceOverviewPage() {
     const router = useRouter();
     const { lang } = useLanguage();
@@ -101,6 +158,10 @@ export default function AttendanceOverviewPage() {
     const [records, setRecords] = useState<AttendanceRecord[]>([]);
     const [expandedUserId, setExpandedUserId] = useState<number | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [unresolvedOpenRecords, setUnresolvedOpenRecords] = useState<UnresolvedOpenRecord[]>([]);
+    const [isUnresolvedOpen, setIsUnresolvedOpen] = useState(false);
+    const [processingRecordId, setProcessingRecordId] = useState<number | null>(null);
+    const [processingAction, setProcessingAction] = useState<"auto" | "delete" | null>(null);
 
     useEffect(() => {
         const loginUser = getUser();
@@ -111,7 +172,114 @@ export default function AttendanceOverviewPage() {
         }
 
         fetchMonthlyOverview();
+        fetchUnresolvedOpenRecords();
     }, [currentMonth]);
+
+    const fetchUnresolvedOpenRecords = async () => {
+        try {
+            const loginUser = getUser();
+
+            const res = await fetch(
+                `/api/attendance/admin?actorUsername=${encodeURIComponent(loginUser?.username || "")}&lang=${lang}`
+            );
+
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                console.log("fetch unresolved open records error:", result);
+                return;
+            }
+
+            setUnresolvedOpenRecords((result.unresolvedOpenRecords || []) as UnresolvedOpenRecord[]);
+        } catch (err) {
+            console.log("fetch unresolved open records exception:", err);
+        }
+    };
+
+    const handleAutoCorrect = async (record: UnresolvedOpenRecord) => {
+        if (processingRecordId) return;
+        if (!window.confirm(t.unresolvedOpenRecordAutoConfirm)) return;
+
+        setProcessingRecordId(record.id);
+        setProcessingAction("auto");
+
+        try {
+            const loginUser = getUser();
+
+            const res = await fetch("/api/attendance/admin", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    action: "auto_close_at_01",
+                    attendance_id: record.id,
+                    user_id: record.user_id,
+                    work_date: record.work_date,
+                    actorUsername: loginUser?.username || "",
+                    lang,
+                }),
+            });
+
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                alert(result.message || t.unresolvedOpenRecordAutoFailed);
+                return;
+            }
+
+            setUnresolvedOpenRecords((prev) => prev.filter((item) => item.id !== record.id));
+            await fetchMonthlyOverview();
+        } catch (err) {
+            console.error(err);
+            alert(t.unresolvedOpenRecordAutoFailed);
+        } finally {
+            setProcessingRecordId(null);
+            setProcessingAction(null);
+        }
+    };
+
+    const handleDeleteOrphan = async (record: UnresolvedOpenRecord) => {
+        if (processingRecordId) return;
+        if (!window.confirm(t.orphanRecordDeleteConfirm)) return;
+
+        setProcessingRecordId(record.id);
+        setProcessingAction("delete");
+
+        try {
+            const loginUser = getUser();
+
+            const res = await fetch("/api/attendance/admin", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    action: "delete_orphan_record",
+                    attendance_id: record.id,
+                    user_id: record.user_id,
+                    work_date: record.work_date,
+                    actorUsername: loginUser?.username || "",
+                    lang,
+                }),
+            });
+
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                alert(result.message || t.orphanRecordDeleteFailed);
+                return;
+            }
+
+            setUnresolvedOpenRecords((prev) => prev.filter((item) => item.id !== record.id));
+        } catch (err) {
+            console.error(err);
+            alert(t.orphanRecordDeleteFailed);
+        } finally {
+            setProcessingRecordId(null);
+            setProcessingAction(null);
+        }
+    };
 
     const fetchMonthlyOverview = async () => {
         setIsLoading(true);
@@ -273,6 +441,12 @@ export default function AttendanceOverviewPage() {
         router.push(`/attendance/overview/${userId}?month=${year}-${month}`);
     };
 
+    const goDetailForDate = (userId: number, workDate: string) => {
+        const month = workDate.slice(0, 7);
+
+        router.push(`/attendance/overview/${userId}?month=${month}&date=${workDate}`);
+    };
+
     return (
         <Container noPaddingTop>
             <SubNav tabs={tabs} />
@@ -288,6 +462,118 @@ export default function AttendanceOverviewPage() {
                     ›
                 </button>
             </div>
+
+            {unresolvedOpenRecords.length > 0 && (
+                <div style={unresolvedBannerStyle}>
+                    <button
+                        type="button"
+                        style={unresolvedBannerHeaderStyle}
+                        onClick={() => setIsUnresolvedOpen((prev) => !prev)}
+                    >
+                        <span style={unresolvedBannerTitleStyle}>
+                            ⚠ {t.unresolvedOpenRecordsBanner.replace(
+                                "{count}",
+                                String(unresolvedOpenRecords.length)
+                            )}
+                        </span>
+                        <span style={unresolvedBannerChevronStyle}>
+                            {isUnresolvedOpen ? "⌃" : "⌄"}
+                        </span>
+                    </button>
+
+                    {isUnresolvedOpen && (
+                        <div style={unresolvedListStyle}>
+                            {unresolvedOpenRecords.map((record) => {
+                                const isOrphan = record.user === null;
+                                const isInactive = record.user?.is_active === false;
+                                const isAutoProcessing =
+                                    processingRecordId === record.id && processingAction === "auto";
+                                const isDeleteProcessing =
+                                    processingRecordId === record.id && processingAction === "delete";
+                                const isAnyProcessing = processingRecordId === record.id;
+
+                                return (
+                                    <div key={record.id} style={unresolvedItemStyle}>
+                                        <div style={unresolvedItemTopRowStyle}>
+                                            <span
+                                                style={{
+                                                    ...unresolvedItemNameStyle,
+                                                    color: isOrphan || isInactive ? "#9ca3af" : unresolvedItemNameStyle.color,
+                                                }}
+                                            >
+                                                {getUnresolvedDisplayName(record, t)}
+                                            </span>
+                                            <span style={unresolvedItemDateStyle}>{record.work_date}</span>
+                                        </div>
+
+                                        <div style={unresolvedItemBottomRowStyle}>
+                                            <span style={unresolvedItemMetaStyle}>
+                                                {formatCheckInTime(record.check_in_at)}
+                                                {" · "}
+                                                {isOrphan
+                                                    ? t.orphanRecordNoLinkInfo
+                                                    : t.unresolvedOpenRecordElapsed.replace(
+                                                        "{duration}",
+                                                        formatElapsedSince(record.check_in_at, c)
+                                                    )}
+                                            </span>
+
+                                            <div style={unresolvedItemButtonsRowStyle}>
+                                                {isOrphan ? (
+                                                    <button
+                                                        type="button"
+                                                        style={{
+                                                            ...unresolvedDeleteButtonStyle,
+                                                            opacity: isAnyProcessing ? 0.6 : 1,
+                                                            cursor: isAnyProcessing ? "not-allowed" : "pointer",
+                                                        }}
+                                                        disabled={isAnyProcessing}
+                                                        onClick={() => handleDeleteOrphan(record)}
+                                                    >
+                                                        {isDeleteProcessing
+                                                            ? t.orphanRecordDeleting
+                                                            : t.orphanRecordDeleteButton}
+                                                    </button>
+                                                ) : (
+                                                    <>
+                                                        <button
+                                                            type="button"
+                                                            style={{
+                                                                ...unresolvedDetailButtonStyle,
+                                                                opacity: isAnyProcessing ? 0.6 : 1,
+                                                                cursor: isAnyProcessing ? "not-allowed" : "pointer",
+                                                            }}
+                                                            disabled={isAnyProcessing}
+                                                            onClick={() => goDetailForDate(record.user_id, record.work_date)}
+                                                        >
+                                                            {t.unresolvedOpenRecordDetailButton}
+                                                        </button>
+
+                                                        <button
+                                                            type="button"
+                                                            style={{
+                                                                ...unresolvedAutoButtonStyle,
+                                                                opacity: isAnyProcessing ? 0.6 : 1,
+                                                                cursor: isAnyProcessing ? "not-allowed" : "pointer",
+                                                            }}
+                                                            disabled={isAnyProcessing}
+                                                            onClick={() => handleAutoCorrect(record)}
+                                                        >
+                                                            {isAutoProcessing
+                                                                ? t.unresolvedOpenRecordAutoProcessing
+                                                                : t.unresolvedOpenRecordAutoButton}
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
 
             <div style={sectionStyle}>
                 {isLoading ? (
@@ -441,6 +727,143 @@ const monthTitleStyle: CSSProperties = {
 const sectionStyle: CSSProperties = {
     display: "grid",
     gap: 12,
+};
+
+const unresolvedBannerStyle: CSSProperties = {
+    background: "#fef2f2",
+    border: "1px solid #fecaca",
+    borderRadius: 14,
+    padding: "10px 12px",
+    marginBottom: 12,
+    display: "grid",
+    gap: 8,
+};
+
+const unresolvedBannerHeaderStyle: CSSProperties = {
+    width: "100%",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    cursor: "pointer",
+    textAlign: "left",
+};
+
+const unresolvedBannerTitleStyle: CSSProperties = {
+    fontSize: 13,
+    fontWeight: 900,
+    color: "#991b1b",
+};
+
+const unresolvedBannerChevronStyle: CSSProperties = {
+    fontSize: 14,
+    fontWeight: 900,
+    color: "#991b1b",
+    flexShrink: 0,
+};
+
+const unresolvedListStyle: CSSProperties = {
+    display: "grid",
+    gap: 5,
+};
+
+const unresolvedItemStyle: CSSProperties = {
+    width: "100%",
+    display: "flex",
+    flexDirection: "column",
+    gap: 3,
+    border: "1px solid #f3d2d2",
+    background: "#ffffff",
+    borderRadius: 10,
+    padding: "7px 9px",
+};
+
+const unresolvedItemTopRowStyle: CSSProperties = {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    gap: 6,
+    minWidth: 0,
+};
+
+const unresolvedItemNameStyle: CSSProperties = {
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#111827",
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+};
+
+const unresolvedItemDateStyle: CSSProperties = {
+    fontSize: 11,
+    fontWeight: 700,
+    color: "#6b7280",
+    flexShrink: 0,
+    whiteSpace: "nowrap",
+};
+
+const unresolvedItemBottomRowStyle: CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 6,
+};
+
+const unresolvedItemMetaStyle: CSSProperties = {
+    fontSize: 11,
+    color: "#6b7280",
+    minWidth: 0,
+};
+
+const unresolvedItemButtonsRowStyle: CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    justifyContent: "flex-end",
+    marginLeft: "auto",
+};
+
+const unresolvedDetailButtonStyle: CSSProperties = {
+    padding: "6px 10px",
+    minHeight: 28,
+    borderRadius: 8,
+    border: "1px solid #93c5fd",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+    fontSize: 11,
+    fontWeight: 800,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+};
+
+const unresolvedAutoButtonStyle: CSSProperties = {
+    padding: "6px 10px",
+    minHeight: 28,
+    borderRadius: 8,
+    border: "1px solid #111827",
+    background: "#111827",
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: 800,
+    whiteSpace: "nowrap",
+};
+
+const unresolvedDeleteButtonStyle: CSSProperties = {
+    padding: "6px 10px",
+    minHeight: 28,
+    borderRadius: 8,
+    border: "1px solid #ef4444",
+    background: "#fef2f2",
+    color: "#b91c1c",
+    fontSize: 11,
+    fontWeight: 800,
+    whiteSpace: "nowrap",
 };
 
 const partGroupStyle: CSSProperties = {

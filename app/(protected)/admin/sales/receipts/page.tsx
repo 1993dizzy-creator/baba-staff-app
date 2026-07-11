@@ -1877,6 +1877,15 @@ export default function SalesReceiptsPage() {
   const [editErrorByReceiptId, setEditErrorByReceiptId] = useState<
     Record<number, string>
   >({});
+  const [posCheckingIds, setPosCheckingIds] = useState<Set<number>>(
+    () => new Set()
+  );
+  const [posCheckErrorByReceiptId, setPosCheckErrorByReceiptId] = useState<
+    Record<number, string>
+  >({});
+  const [autoOpenEditReceiptId, setAutoOpenEditReceiptId] = useState<
+    number | null
+  >(null);
   const [currentUser, setCurrentUser] =
     useState<ReturnType<typeof getUser>>(null);
   const [isMenuSyncing, setIsMenuSyncing] = useState(false);
@@ -2036,6 +2045,8 @@ export default function SalesReceiptsPage() {
   ]);
 
   async function handleToggleReceipt(receiptId: number) {
+    setAutoOpenEditReceiptId(null);
+
     if (expandedReceiptId === receiptId) {
       setExpandedReceiptId(null);
       return;
@@ -2203,6 +2214,147 @@ export default function SalesReceiptsPage() {
       }));
     } finally {
       setEditSavingId(null);
+    }
+  }
+
+  async function handleRequestEdit(receipt: ReceiptItem) {
+    // 결제완료 + 미취소 영수증은 ReceiptEditPanel이 이 함수를 호출하지 않고
+    // 즉시 수정 화면을 연다(불필요한 POS 재조회 방지). 여기서는 방어적으로만 확인한다.
+    const isAlreadyPaid = receipt.paymentStatus === 3 && !receipt.isCanceled;
+    if (isAlreadyPaid) return;
+
+    if (posCheckingIds.has(receipt.id)) return;
+
+    setAutoOpenEditReceiptId(null);
+    setPosCheckErrorByReceiptId((current) => ({
+      ...current,
+      [receipt.id]: "",
+    }));
+
+    const user = getUser();
+    if (!user?.username) {
+      setPosCheckErrorByReceiptId((current) => ({
+        ...current,
+        [receipt.id]: c.loginAgain,
+      }));
+      return;
+    }
+
+    setPosCheckingIds((current) => {
+      const next = new Set(current);
+      next.add(receipt.id);
+      return next;
+    });
+
+    try {
+      const res = await fetch(
+        `/api/admin/sales/receipts/${receipt.id}/refresh-pos`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ actorUsername: user.username }),
+        }
+      );
+      const result = (await res.json()) as {
+        ok: boolean;
+        paymentStatus: number | null;
+        isCanceled: boolean;
+        editable: boolean;
+        blockReason: "pending" | "canceled" | "pos_lookup_failed" | null;
+        error?: string;
+      };
+
+      if (typeof result.paymentStatus === "number") {
+        setReceipts((current) =>
+          current.map((item) =>
+            item.id === receipt.id
+              ? {
+                ...item,
+                paymentStatus: result.paymentStatus,
+                isCanceled: result.isCanceled === true,
+              }
+              : item
+          )
+        );
+      }
+
+      if (!res.ok || !result.ok) {
+        setPosCheckErrorByReceiptId((current) => ({
+          ...current,
+          [receipt.id]: receiptsEditText.posCheckLookupFailed,
+        }));
+        return;
+      }
+
+      if (!result.editable) {
+        const message =
+          result.blockReason === "canceled"
+            ? receiptsEditText.posCheckCanceled
+            : result.blockReason === "pos_lookup_failed"
+              ? receiptsEditText.posCheckLookupFailed
+              : receiptsEditText.posCheckPaymentPending;
+
+        setPosCheckErrorByReceiptId((current) => ({
+          ...current,
+          [receipt.id]: message,
+        }));
+        return;
+      }
+
+      const detailRes = await fetch(
+        `/api/admin/sales/receipts/${receipt.id}`,
+        { cache: "no-store" }
+      );
+      const detailResult = (await detailRes.json()) as ReceiptDetailResponse;
+
+      if (!detailRes.ok || !detailResult.ok || !detailResult.receipt) {
+        setPosCheckErrorByReceiptId((current) => ({
+          ...current,
+          [receipt.id]: receiptsEditText.posCheckRefreshFailed,
+        }));
+        return;
+      }
+
+      setDetailByReceiptId((current) => ({
+        ...current,
+        [receipt.id]: detailResult,
+      }));
+      setReceipts((current) =>
+        current.map((item) =>
+          item.id === receipt.id && detailResult.receipt
+            ? {
+              ...item,
+              paymentStatus: detailResult.receipt.paymentStatus,
+              isCanceled: detailResult.receipt.isCanceled,
+              totalAmount: detailResult.receipt.totalAmount,
+              finalAmount: detailResult.receipt.finalAmount,
+              payments: (detailResult.payments || []).map((payment) => ({
+                paymentName: payment.paymentName,
+                cardName: payment.cardName,
+                amount: payment.amount,
+              })),
+              lineCount: (detailResult.lines || []).filter(
+                (line) => line.isExcluded !== true && !isExistingOptionLine(line)
+              ).length,
+              optionLineCount: (detailResult.lines || []).filter(
+                (line) => line.isExcluded !== true && isExistingOptionLine(line)
+              ).length,
+            }
+            : item
+        )
+      );
+      setAutoOpenEditReceiptId(receipt.id);
+    } catch {
+      setPosCheckErrorByReceiptId((current) => ({
+        ...current,
+        [receipt.id]: receiptsEditText.posCheckLookupFailed,
+      }));
+    } finally {
+      setPosCheckingIds((current) => {
+        const next = new Set(current);
+        next.delete(receipt.id);
+        return next;
+      });
     }
   }
 
@@ -2551,10 +2703,14 @@ export default function SalesReceiptsPage() {
             detailErrorByReceiptId={detailErrorByReceiptId}
             editSavingId={editSavingId}
             editErrorByReceiptId={editErrorByReceiptId}
+            posCheckingIds={posCheckingIds}
+            posCheckErrorByReceiptId={posCheckErrorByReceiptId}
+            autoOpenEditReceiptId={autoOpenEditReceiptId}
             deductionText={inventoryText}
             deductionPreviewByReceiptId={receiptDeductionPreviewByReceiptId}
             onToggleReceipt={handleToggleReceipt}
             onSaveEdit={handleSaveReceiptEdit}
+            onRequestEdit={handleRequestEdit}
           />
 
           {canSyncMenu ? (
@@ -3369,10 +3525,14 @@ function ReceiptList({
   detailErrorByReceiptId,
   editSavingId,
   editErrorByReceiptId,
+  posCheckingIds,
+  posCheckErrorByReceiptId,
+  autoOpenEditReceiptId,
   deductionText,
   deductionPreviewByReceiptId,
   onToggleReceipt,
   onSaveEdit,
+  onRequestEdit,
 }: {
   isLoading: boolean;
   text: SalesReceiptsViewText;
@@ -3384,6 +3544,9 @@ function ReceiptList({
   detailErrorByReceiptId: Record<number, string>;
   editSavingId: number | null;
   editErrorByReceiptId: Record<number, string>;
+  posCheckingIds: Set<number>;
+  posCheckErrorByReceiptId: Record<number, string>;
+  autoOpenEditReceiptId: number | null;
   deductionText: InventoryPreviewCopy;
   deductionPreviewByReceiptId: Map<
     number,
@@ -3391,6 +3554,7 @@ function ReceiptList({
   >;
   onToggleReceipt: (receiptId: number) => void;
   onSaveEdit: (input: SaveReceiptEditInput) => void;
+  onRequestEdit: (receipt: ReceiptItem) => void;
 }) {
   if (isLoading) {
     return (
@@ -3441,9 +3605,13 @@ function ReceiptList({
                 errorMessage={detailErrorByReceiptId[receipt.id] || ""}
                 isEditSaving={editSavingId === receipt.id}
                 editErrorMessage={editErrorByReceiptId[receipt.id] || ""}
+                isPosChecking={posCheckingIds.has(receipt.id)}
+                posCheckError={posCheckErrorByReceiptId[receipt.id] || ""}
+                autoOpenEdit={autoOpenEditReceiptId === receipt.id}
                 deductionText={deductionText}
                 deductionPreview={deductionPreviewByReceiptId.get(receipt.id)}
                 onSaveEdit={onSaveEdit}
+                onRequestEdit={() => onRequestEdit(receipt)}
               />
             ) : null}
           </div>
@@ -3555,9 +3723,13 @@ function ReceiptDropdown({
   errorMessage,
   isEditSaving,
   editErrorMessage,
+  isPosChecking,
+  posCheckError,
+  autoOpenEdit,
   deductionText,
   deductionPreview,
   onSaveEdit,
+  onRequestEdit,
 }: {
   text: SalesReceiptsViewText;
   editText: SalesReceiptsEditViewText;
@@ -3566,9 +3738,13 @@ function ReceiptDropdown({
   errorMessage: string;
   isEditSaving: boolean;
   editErrorMessage: string;
+  isPosChecking: boolean;
+  posCheckError: string;
+  autoOpenEdit: boolean;
   deductionText: InventoryPreviewCopy;
   deductionPreview?: InventoryDeductionPreview["receipts"][number];
   onSaveEdit: (input: SaveReceiptEditInput) => void;
+  onRequestEdit: () => void;
 }) {
   if (isLoading) {
     return (
@@ -3751,7 +3927,7 @@ function ReceiptDropdown({
       </DetailSection>
 
       <ReceiptEditPanel
-        key={`${receipt.id}-${receipt.modifiedAt || "original"}`}
+        key={`${receipt.id}-${receipt.modifiedAt || "original"}-${receipt.paymentStatus}-${receipt.isCanceled}`}
         text={editText}
         receipt={receipt}
         lines={activeLines}
@@ -3761,6 +3937,10 @@ function ReceiptDropdown({
         hasOptionLines={hasOptionLines}
         isSaving={isEditSaving}
         errorMessage={editErrorMessage}
+        isPosChecking={isPosChecking}
+        posCheckError={posCheckError}
+        initialEditing={autoOpenEdit}
+        onRequestEdit={onRequestEdit}
         onSave={(values) =>
           onSaveEdit({
             receiptId: receipt.id,
@@ -3782,6 +3962,10 @@ function ReceiptEditPanel({
   hasOptionLines,
   isSaving,
   errorMessage,
+  isPosChecking,
+  posCheckError,
+  initialEditing,
+  onRequestEdit,
   onSave,
 }: {
   text: SalesReceiptsEditViewText;
@@ -3793,9 +3977,26 @@ function ReceiptEditPanel({
   hasOptionLines: boolean;
   isSaving: boolean;
   errorMessage: string;
+  isPosChecking: boolean;
+  posCheckError: string;
+  initialEditing: boolean;
+  onRequestEdit: () => void;
   onSave: (values: Omit<SaveReceiptEditInput, "receiptId">) => void;
 }) {
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(initialEditing === true);
+  const isReceiptCanceled =
+    receipt.isCanceled ||
+    receipt.paymentStatus === 4 ||
+    receipt.paymentStatus === 5;
+
+  function handleEditClick() {
+    if (receipt.paymentStatus === 3 && !isReceiptCanceled) {
+      setIsEditing(true);
+      return;
+    }
+
+    onRequestEdit();
+  }
   const [draftLines, setDraftLines] = useState<ReceiptDraftLine[]>(() =>
     lines
       .filter((line) => line.isExcluded !== true && !isExistingOptionLine(line))
@@ -4095,12 +4296,16 @@ function ReceiptEditPanel({
             {hasOptionLines ? (
               <p style={mutedTextStyle}>{text.existingOptionReadOnlyNotice}</p>
             ) : null}
+            {posCheckError ? (
+              <p style={errorTextStyle}>{posCheckError}</p>
+            ) : null}
             <button
               type="button"
-              onClick={() => setIsEditing(true)}
+              onClick={handleEditClick}
+              disabled={isPosChecking}
               style={editButtonStyle}
             >
-              {text.title}
+              {isPosChecking ? text.posChecking : text.title}
             </button>
           </>
         ) : (

@@ -181,6 +181,14 @@ export const salesText = {
       optionsAvailable: "이 상품에는 선택 가능한 옵션이 있습니다.",
       optionsNotSynced:
         "옵션 정보가 아직 동기화되지 않았습니다. 상품 카탈로그를 최신화해주세요.",
+      posChecking: "최신 POS 정보를 확인하고 있습니다...",
+      posCheckPaymentPending:
+        "아직 결제가 완료되지 않은 영수증입니다. 결제 완료 후 다시 시도해주세요.",
+      posCheckCanceled: "취소된 영수증은 수정할 수 없습니다.",
+      posCheckLookupFailed:
+        "최신 POS 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.",
+      posCheckRefreshFailed:
+        "영수증 정보를 갱신하지 못했습니다. 잠시 후 다시 시도해주세요.",
     },
   },
   vi: {
@@ -366,6 +374,14 @@ export const salesText = {
       optionsAvailable: "Món này có tùy chọn có thể chọn.",
       optionsNotSynced:
         "Chưa đồng bộ thông tin tùy chọn. Vui lòng cập nhật danh mục món.",
+      posChecking: "Đang kiểm tra thông tin POS mới nhất...",
+      posCheckPaymentPending:
+        "Hóa đơn chưa hoàn tất thanh toán. Vui lòng thử lại sau khi thanh toán hoàn tất.",
+      posCheckCanceled: "Không thể chỉnh sửa hóa đơn đã hủy.",
+      posCheckLookupFailed:
+        "Không thể kiểm tra thông tin POS mới nhất. Vui lòng thử lại sau.",
+      posCheckRefreshFailed:
+        "Không thể cập nhật thông tin hóa đơn. Vui lòng thử lại sau.",
     },
   },
 } as const;

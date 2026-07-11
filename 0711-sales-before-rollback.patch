@@ -1,0 +1,921 @@
+diff --git a/app/(protected)/admin/sales/monthly/page.tsx b/app/(protected)/admin/sales/monthly/page.tsx
+index 33dc3c0..a00a315 100644
+--- a/app/(protected)/admin/sales/monthly/page.tsx
++++ b/app/(protected)/admin/sales/monthly/page.tsx
+@@ -60,6 +60,7 @@ type TaxSummary = {
+   totalTaxAmount: number;
+   taxSavingAmount: number;
+   amountDifferenceAmount: number;
++  hasIncompleteOriginalData?: boolean;
+   taxByRate: {
+     taxRate: number;
+     taxAmount: number;
+@@ -645,6 +646,10 @@ export default function SalesMonthlyPage() {
+             taxSavingAmount={taxSummary?.taxSavingAmount || 0}
+             amountDifferenceAmount={taxSummary?.amountDifferenceAmount || 0}
+           />
++
++          {!isLoading && taxSummary?.hasIncompleteOriginalData ? (
++            <p style={taxWarningTextStyle}>{monthlyText.originalTaxSnapshotMissing}</p>
++          ) : null}
+         </section>
+         ) : null}
+ 
+@@ -1555,6 +1560,14 @@ const sectionMetaStyle: CSSProperties = {
+   whiteSpace: "nowrap",
+ };
+ 
++const taxWarningTextStyle: CSSProperties = {
++  margin: "6px 0 0",
++  fontSize: 12,
++  lineHeight: 1.45,
++  color: "#b45309",
++  fontWeight: 800,
++};
++
+ const paymentMethodGridStyle: CSSProperties = {
+   display: "grid",
+   gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+diff --git a/app/(protected)/admin/sales/page.tsx b/app/(protected)/admin/sales/page.tsx
+index 2edf1be..ff80bc0 100644
+--- a/app/(protected)/admin/sales/page.tsx
++++ b/app/(protected)/admin/sales/page.tsx
+@@ -99,6 +99,7 @@ type SalesTodayResponse = {
+     totalTaxAmount: number;
+     taxSavingAmount: number;
+     amountDifferenceAmount: number;
++    hasIncompleteOriginalData?: boolean;
+     taxByRate: {
+       taxRate: number;
+       taxAmount: number;
+@@ -552,6 +553,10 @@ export default function SalesPage() {
+             taxSavingAmount={taxSummary?.taxSavingAmount || 0}
+             amountDifferenceAmount={taxSummary?.amountDifferenceAmount || 0}
+           />
++
++          {!isLoading && taxSummary?.hasIncompleteOriginalData ? (
++            <p style={taxWarningTextStyle}>{dailyText.originalTaxSnapshotMissing}</p>
++          ) : null}
+         </section>
+ 
+         <section style={cardStyle}>
+@@ -959,6 +964,14 @@ const sectionMetaStyle: CSSProperties = {
+   whiteSpace: "nowrap",
+ };
+ 
++const taxWarningTextStyle: CSSProperties = {
++  margin: "6px 0 0",
++  fontSize: 12,
++  lineHeight: 1.45,
++  color: "#b45309",
++  fontWeight: 800,
++};
++
+ const statusValueStyle: CSSProperties = {
+   fontSize: 13,
+   fontWeight: 900,
+diff --git a/app/(protected)/admin/sales/receipts/page.tsx b/app/(protected)/admin/sales/receipts/page.tsx
+index 1ff205e..0ff51f9 100644
+--- a/app/(protected)/admin/sales/receipts/page.tsx
++++ b/app/(protected)/admin/sales/receipts/page.tsx
+@@ -171,10 +171,12 @@ type TaxSummary = {
+   totalTaxAmount: number;
+   taxSavingAmount?: number;
+   amountDifferenceAmount?: number;
++  hasOriginalSnapshot?: boolean;
+   taxByRate: {
+     taxRate: number;
+     taxAmount: number;
+-    lineCount: number;
++    // 원본 라인 목록이 없어 개수를 확정할 수 없는 경우 null(미확정)이다.
++    lineCount: number | null;
+   }[];
+ };
+ 
+@@ -3699,11 +3701,16 @@ function ReceiptDropdown({
+             <div key={tax.taxRate} style={miniRowStyle}>
+               <span style={miniLabelStyle}>{text.vat} {formatNumber(tax.taxRate)}%</span>
+               <strong style={miniValueStyle}>{formatVnd(tax.taxAmount)}</strong>
+-              <span style={lineCountStyle}>
+-                {formatNumber(tax.lineCount)}{text.productCountSuffix}
+-              </span>
++              {tax.lineCount !== null ? (
++                <span style={lineCountStyle}>
++                  {formatNumber(tax.lineCount)}{text.productCountSuffix}
++                </span>
++              ) : null}
+             </div>
+           ))}
++          {detail.receipt.isModified && detail.taxSummary?.hasOriginalSnapshot === false ? (
++            <p style={warningTextStyle}>{text.originalTaxSnapshotMissing}</p>
++          ) : null}
+           <div style={miniRowStyle}>
+             <span style={miniLabelStyle}>{text.totalPaymentAmount}</span>
+             <strong style={miniValueStyle}>{formatVnd(detail.receipt.finalAmount)}</strong>
+diff --git a/app/api/admin/sales/monthly/route.ts b/app/api/admin/sales/monthly/route.ts
+index cd08270..f81aeda 100644
+--- a/app/api/admin/sales/monthly/route.ts
++++ b/app/api/admin/sales/monthly/route.ts
+@@ -71,9 +71,20 @@ type TaxBucket = {
+   lineCount: number;
+ };
+ 
++type OriginalTaxBucket = {
++  taxRate: number;
++  taxAmount: number;
++  // 원본 스냅샷의 세율별 lineCount는 원본 라인 목록이 없으면 확정할 수 없으므로 null(미확정)을
++  // 허용한다. 집계용 TaxBucket(항상 실수)과는 별도 타입을 사용한다.
++  lineCount: number | null;
++};
++
+ type TaxSummarySnapshot = {
+   totalTaxAmount: number;
+-  taxByRate: TaxBucket[];
++  taxByRate: OriginalTaxBucket[];
++  // CUKCUK ModifiedDate가 CreatedDate보다 뚜렷하게 늦은 채로 최초 수신된 영수증의 스냅샷은
++  // "진짜 원본"이라고 확정할 수 없으므로 이 플래그로 구분한다.
++  isUncertain?: boolean;
+ };
+ 
+ type AmountSummarySnapshot = {
+@@ -81,6 +92,7 @@ type AmountSummarySnapshot = {
+   vatAmount: number;
+   finalAmount: number;
+   paymentTotalAmount: number;
++  isUncertain?: boolean;
+ };
+ 
+ type PaymentSummary = {
+@@ -410,12 +422,14 @@ function normalizeTaxSummary(value: unknown): TaxSummarySnapshot | null {
+   const summary = value as {
+     totalTaxAmount?: unknown;
+     taxByRate?: unknown;
++    isUncertain?: unknown;
+   };
+ 
+   if (!Array.isArray(summary.taxByRate)) return null;
+ 
+   return {
+     totalTaxAmount: toNumber(summary.totalTaxAmount as number | string | null),
++    isUncertain: summary.isUncertain === true,
+     taxByRate: summary.taxByRate.map((item) => {
+       const row = item as {
+         taxRate?: unknown;
+@@ -426,7 +440,10 @@ function normalizeTaxSummary(value: unknown): TaxSummarySnapshot | null {
+       return {
+         taxRate: toNumber(row.taxRate as number | string | null),
+         taxAmount: toNumber(row.taxAmount as number | string | null),
+-        lineCount: toNumber(row.lineCount as number | string | null),
++        lineCount:
++          row.lineCount === null || row.lineCount === undefined
++            ? null
++            : toNumber(row.lineCount as number | string | null),
+       };
+     }),
+   };
+@@ -440,6 +457,7 @@ function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
+     vatAmount?: unknown;
+     finalAmount?: unknown;
+     paymentTotalAmount?: unknown;
++    isUncertain?: unknown;
+   };
+ 
+   return {
+@@ -449,13 +467,20 @@ function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
+     paymentTotalAmount: toNumber(
+       summary.paymentTotalAmount as number | string | null
+     ),
++    isUncertain: summary.isUncertain === true,
+   };
+ }
+ 
++// original_tax_summary는 최초 동기화 시점부터 모든 영수증에 저장되므로, 수정된(is_modified)
++// 영수증이면서 원본 여부가 확실한(isUncertain이 아닌) 스냅샷일 때만 원본으로 신뢰한다.
+ function getReceiptTaxAmount(receipt: ReceiptRow) {
+   const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
+ 
+-  if (receipt.is_modified && originalTaxSummary) {
++  if (
++    receipt.is_modified &&
++    originalTaxSummary &&
++    originalTaxSummary.isUncertain !== true
++  ) {
+     return originalTaxSummary.totalTaxAmount;
+   }
+ 
+@@ -467,10 +492,12 @@ function getOriginalFinalAmount(receipt: ReceiptRow) {
+     receipt.original_amount_summary
+   );
+ 
+-  if (originalAmountSummary) {
++  if (originalAmountSummary && originalAmountSummary.isUncertain !== true) {
++    // finalAmount가 정상적으로 0인 경우도 있으므로(예: 전액 할인) ||가 아니라 ??로
++    // null/undefined일 때만 다음 값으로 넘어가도록 한다.
+     return (
+-      originalAmountSummary.finalAmount ||
+-      originalAmountSummary.paymentTotalAmount ||
++      originalAmountSummary.finalAmount ??
++      originalAmountSummary.paymentTotalAmount ??
+       0
+     );
+   }
+@@ -480,7 +507,13 @@ function getOriginalFinalAmount(receipt: ReceiptRow) {
+ 
+ function getOriginalTaxAmount(receipt: ReceiptRow) {
+   const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
+-  return originalTaxSummary?.totalTaxAmount || toNumber(receipt.vat_amount);
++
++  if (originalTaxSummary && originalTaxSummary.isUncertain !== true) {
++    // 스냅샷이 존재하는데 totalTaxAmount가 0이면(VAT 면제 등) 그대로 0을 사용해야 하므로 ??.
++    return originalTaxSummary.totalTaxAmount ?? toNumber(receipt.vat_amount);
++  }
++
++  return toNumber(receipt.vat_amount);
+ }
+ 
+ function getAdjustedTaxAmount(lines: LineRow[]) {
+@@ -491,7 +524,10 @@ function addTaxBucket(
+   map: Map<number, TaxBucket>,
+   taxRate: number,
+   taxAmount: number,
+-  lineCount: number
++  // 원본 스냅샷에서 온 lineCount는 미확정(null)일 수 있다. 집계에서는 미확정분을 0으로 더해
++  // 최소값으로 취급한다(실제보다 적게 표시될 수 있음 — lineCount 자체가 불확실한 원본 데이터의
++  // 근본적 한계이며, 세액 합계에는 영향을 주지 않는다).
++  lineCount: number | null
+ ) {
+   if (taxRate === 0 && taxAmount === 0) return;
+ 
+@@ -504,7 +540,7 @@ function addTaxBucket(
+     } satisfies TaxBucket);
+ 
+   current.taxAmount += taxAmount;
+-  current.lineCount += lineCount;
++  current.lineCount += lineCount ?? 0;
+   map.set(taxRate, current);
+ }
+ 
+@@ -569,7 +605,7 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
+       const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
+ 
+       if (receipt.is_modified) {
+-        if (originalTaxSummary) {
++        if (originalTaxSummary && originalTaxSummary.isUncertain !== true) {
+           originalTaxSummary.taxByRate.forEach((tax) => {
+             addTaxBucket(map, tax.taxRate, tax.taxAmount, tax.lineCount);
+           });
+@@ -587,6 +623,18 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
+       });
+     });
+ 
++  // 결제완료 + 수정됨 영수증인데 신뢰 가능한(원본 여부가 확실한) 수정 전 VAT 스냅샷이 없는
++  // 건이 하나라도 있으면, 위 합계 중 일부는 수정 후 값으로 대체되었거나 taxByRate 집계에서
++  // 누락된 것이므로 화면에서 "정확한 합계"로 조용히 표시하지 않도록 표시해준다.
++  const hasIncompleteOriginalData = receipts.some((receipt) => {
++    if (!isPaid(receipt.payment_status) || receipt.is_modified !== true) {
++      return false;
++    }
++
++    const snapshot = normalizeTaxSummary(receipt.original_tax_summary);
++    return !snapshot || snapshot.isUncertain === true;
++  });
++
+   return {
+     totalTaxAmount: receipts.reduce(
+       (sum, receipt) =>
+@@ -594,6 +642,7 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
+       0
+     ),
+     taxByRate: Array.from(map.values()).sort((a, b) => a.taxRate - b.taxRate),
++    hasIncompleteOriginalData,
+     taxSavingAmount: buildTaxSavingAmount(receipts, linesByReceiptId),
+     amountDifferenceAmount: buildAmountDifferenceAmount(receipts),
+   };
+diff --git a/app/api/admin/sales/receipts/[id]/route.ts b/app/api/admin/sales/receipts/[id]/route.ts
+index 69fe4c5..986b71e 100644
+--- a/app/api/admin/sales/receipts/[id]/route.ts
++++ b/app/api/admin/sales/receipts/[id]/route.ts
+@@ -78,7 +78,9 @@ type ProductRow = {
+ type TaxBucket = {
+   taxRate: number;
+   taxAmount: number;
+-  lineCount: number;
++  // 원본 스냅샷의 세율별 lineCount는 실제 원본 라인 목록이 없으면 확정할 수 없으므로
++  // null(미확정)을 허용한다. 라인 데이터로 즉석 계산하는 adjustedTaxSummary는 항상 실수를 채운다.
++  lineCount: number | null;
+ };
+ 
+ type UpdateReceiptBody = {
+@@ -199,7 +201,10 @@ function buildTaxSummary(lines: LineRow[]) {
+       } satisfies TaxBucket);
+ 
+     current.taxAmount += taxAmount;
+-    current.lineCount += 1;
++    // 이 함수(buildTaxSummary)는 항상 실제 라인에서 즉석 계산하므로 lineCount는 항상 확정된
++    // 정수다. 원본 스냅샷(TaxBucket.lineCount: number | null)과 타입을 공유하기 위해 ?? 0으로
++    // null 케이스를 방어적으로 처리한다.
++    current.lineCount = (current.lineCount ?? 0) + 1;
+     map.set(taxRate, current);
+   });
+ 
+@@ -216,6 +221,9 @@ function buildTaxSummary(lines: LineRow[]) {
+ type TaxSummary = {
+   totalTaxAmount: number;
+   taxByRate: TaxBucket[];
++  // CUKCUK ModifiedDate가 CreatedDate보다 뚜렷하게 늦은 채로 최초 수신된 영수증의 스냅샷은
++  // "진짜 원본"이라고 확정할 수 없으므로 이 플래그로 구분한다.
++  isUncertain?: boolean;
+   taxSavingAmount?: number;
+   amountDifferenceAmount?: number;
+ };
+@@ -225,6 +233,7 @@ type AmountSummarySnapshot = {
+   vatAmount: number;
+   finalAmount: number;
+   paymentTotalAmount: number;
++  isUncertain?: boolean;
+ };
+ 
+ function normalizeTaxSummary(value: unknown): TaxSummary | null {
+@@ -233,12 +242,14 @@ function normalizeTaxSummary(value: unknown): TaxSummary | null {
+   const summary = value as {
+     totalTaxAmount?: unknown;
+     taxByRate?: unknown;
++    isUncertain?: unknown;
+   };
+ 
+   if (!Array.isArray(summary.taxByRate)) return null;
+ 
+   return {
+     totalTaxAmount: toNumber(summary.totalTaxAmount),
++    isUncertain: summary.isUncertain === true,
+     taxByRate: summary.taxByRate
+       .map((item) => {
+         const row = item as {
+@@ -250,10 +261,15 @@ function normalizeTaxSummary(value: unknown): TaxSummary | null {
+         return {
+           taxRate: toNumber(row.taxRate),
+           taxAmount: toNumber(row.taxAmount),
+-          lineCount: toNumber(row.lineCount),
++          // 원본 라인 목록이 없어 개수를 확정할 수 없는 스냅샷은 null로 저장/유지한다
++          // (0개로 잘못 표시되지 않도록 toNumber로 강제 변환하지 않음).
++          lineCount:
++            row.lineCount === null || row.lineCount === undefined
++              ? null
++              : toNumber(row.lineCount),
+         };
+       })
+-      .filter((item) => item.taxAmount > 0 || item.lineCount > 0),
++      .filter((item) => item.taxAmount > 0 || (item.lineCount ?? 0) > 0),
+   };
+ }
+ 
+@@ -265,6 +281,7 @@ function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
+     vatAmount?: unknown;
+     finalAmount?: unknown;
+     paymentTotalAmount?: unknown;
++    isUncertain?: unknown;
+   };
+ 
+   return {
+@@ -272,6 +289,7 @@ function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
+     vatAmount: toNumber(summary.vatAmount),
+     finalAmount: toNumber(summary.finalAmount),
+     paymentTotalAmount: toNumber(summary.paymentTotalAmount),
++    isUncertain: summary.isUncertain === true,
+   };
+ }
+ 
+@@ -282,10 +300,13 @@ function getOriginalFinalAmount(
+     receipt.original_amount_summary
+   );
+ 
+-  if (originalAmountSummary) {
++  // 원본 여부가 불확실한(isUncertain) 스냅샷은 원본으로 확정하지 않고 현재 값으로 대체한다.
++  if (originalAmountSummary && originalAmountSummary.isUncertain !== true) {
++    // finalAmount가 정상적으로 0인 경우도 있으므로(예: 전액 할인) ||가 아니라 ??로
++    // null/undefined일 때만 다음 값으로 넘어가도록 한다.
+     return (
+-      originalAmountSummary.finalAmount ||
+-      originalAmountSummary.paymentTotalAmount ||
++      originalAmountSummary.finalAmount ??
++      originalAmountSummary.paymentTotalAmount ??
+       0
+     );
+   }
+@@ -610,16 +631,35 @@ export async function GET(
+       receiptRow.original_tax_summary
+     );
+ 
++    // original_tax_summary는 이제 최초 동기화 시점부터 모든 영수증에 저장되므로(수정 여부와
++    // 무관), 수정되지 않은 영수증까지 이 스냅샷을 "원본"으로 표시해버리면 이후 CUKCUK가 정당하게
++    // 값을 정정해도 화면이 최초 수신 시점의 값에 영구히 고정되는 문제가 생긴다. 따라서
++    // is_modified === true인 영수증에 한해서만, 그리고 isUncertain이 아닌 스냅샷만 "신뢰 가능한
++    // 원본"으로 취급한다. 수정되지 않은 영수증은 항상 현재 라인/금액을 그대로 보여준다.
++    const reliableOriginalTaxSummary =
++      receiptRow.is_modified === true &&
++      savedOriginalTaxSummary &&
++      savedOriginalTaxSummary.isUncertain !== true
++        ? savedOriginalTaxSummary
++        : null;
++
++    // 수정된 영수증인데 신뢰 가능한 수정 전 VAT 스냅샷이 없으면(스냅샷 자체가 없거나 원본 여부가
++    // 불확실) 아래 totalTaxAmount/taxByRate는 부득이 현재(수정 후) 값으로 대체된다. 이 경우
++    // 화면에서 "원본"처럼 조용히 표시하지 않도록 hasOriginalSnapshot=false를 함께 내려준다.
++    const hasOriginalSnapshot =
++      receiptRow.is_modified !== true || reliableOriginalTaxSummary !== null;
++
+     const taxSummary = {
+       totalTaxAmount:
+-        savedOriginalTaxSummary?.totalTaxAmount || toNumber(receiptRow.vat_amount),
+-      taxByRate: savedOriginalTaxSummary?.taxByRate || adjustedTaxSummary.taxByRate,
++        reliableOriginalTaxSummary?.totalTaxAmount ?? toNumber(receiptRow.vat_amount),
++      taxByRate: reliableOriginalTaxSummary?.taxByRate ?? adjustedTaxSummary.taxByRate,
++      hasOriginalSnapshot,
+       taxSavingAmount:
+         receiptRow.is_modified === true
+           ? Math.max(
+               0,
+               adjustedTaxSummary.totalTaxAmount -
+-                (savedOriginalTaxSummary?.totalTaxAmount ||
++                (reliableOriginalTaxSummary?.totalTaxAmount ??
+                   toNumber(receiptRow.vat_amount))
+             )
+           : 0,
+@@ -1351,6 +1391,10 @@ export async function PATCH(
+       final_amount: nextReceiptFinal,
+       receive_amount: paymentMethod === "cash" ? cashReceivedAmount : nextReceiptFinal,
+       return_amount: returnAmount,
++      // 이 액션은 항상 최종 금액 전액에 해당하는 결제(payment) 행을 새로 기록하므로,
++      // 결제상태도 함께 결제완료(3)로 확정한다. is_modified와는 독립적으로 저장되어야 하며,
++      // 이후 CUKCUK 재동기화에서도 이 값이 되돌아가지 않도록 saveReceipts에서 별도 보호한다.
++      payment_status: 3,
+       is_modified: true,
+       modified_at: now,
+       modified_by: actor.username,
+diff --git a/app/api/admin/sales/today/route.ts b/app/api/admin/sales/today/route.ts
+index 130724c..f78d5f2 100644
+--- a/app/api/admin/sales/today/route.ts
++++ b/app/api/admin/sales/today/route.ts
+@@ -62,9 +62,20 @@ type TaxBucket = {
+   lineCount: number;
+ };
+ 
++type OriginalTaxBucket = {
++  taxRate: number;
++  taxAmount: number;
++  // 원본 스냅샷의 세율별 lineCount는 원본 라인 목록이 없으면 확정할 수 없으므로 null(미확정)을
++  // 허용한다. 집계용 TaxBucket(항상 실수)과는 별도 타입을 사용한다.
++  lineCount: number | null;
++};
++
+ type TaxSummarySnapshot = {
+   totalTaxAmount: number;
+-  taxByRate: TaxBucket[];
++  taxByRate: OriginalTaxBucket[];
++  // CUKCUK ModifiedDate가 CreatedDate보다 뚜렷하게 늦은 채로 최초 수신된 영수증의 스냅샷은
++  // "진짜 원본"이라고 확정할 수 없으므로 이 플래그로 구분한다.
++  isUncertain?: boolean;
+ };
+ 
+ type AmountSummarySnapshot = {
+@@ -72,6 +83,7 @@ type AmountSummarySnapshot = {
+   vatAmount: number;
+   finalAmount: number;
+   paymentTotalAmount: number;
++  isUncertain?: boolean;
+ };
+ 
+ const PAID_PAYMENT_STATUS = 3;
+@@ -320,12 +332,14 @@ function normalizeTaxSummary(value: unknown): TaxSummarySnapshot | null {
+   const summary = value as {
+     totalTaxAmount?: unknown;
+     taxByRate?: unknown;
++    isUncertain?: unknown;
+   };
+ 
+   if (!Array.isArray(summary.taxByRate)) return null;
+ 
+   return {
+     totalTaxAmount: toNumber(summary.totalTaxAmount as number | string | null),
++    isUncertain: summary.isUncertain === true,
+     taxByRate: summary.taxByRate.map((item) => {
+       const row = item as {
+         taxRate?: unknown;
+@@ -336,7 +350,10 @@ function normalizeTaxSummary(value: unknown): TaxSummarySnapshot | null {
+       return {
+         taxRate: toNumber(row.taxRate as number | string | null),
+         taxAmount: toNumber(row.taxAmount as number | string | null),
+-        lineCount: toNumber(row.lineCount as number | string | null),
++        lineCount:
++          row.lineCount === null || row.lineCount === undefined
++            ? null
++            : toNumber(row.lineCount as number | string | null),
+       };
+     }),
+   };
+@@ -350,6 +367,7 @@ function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
+     vatAmount?: unknown;
+     finalAmount?: unknown;
+     paymentTotalAmount?: unknown;
++    isUncertain?: unknown;
+   };
+ 
+   return {
+@@ -359,13 +377,20 @@ function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
+     paymentTotalAmount: toNumber(
+       summary.paymentTotalAmount as number | string | null
+     ),
++    isUncertain: summary.isUncertain === true,
+   };
+ }
+ 
++// original_tax_summary는 최초 동기화 시점부터 모든 영수증에 저장되므로, 수정된(is_modified)
++// 영수증이면서 원본 여부가 확실한(isUncertain이 아닌) 스냅샷일 때만 원본으로 신뢰한다.
+ function getReceiptTaxAmount(receipt: ReceiptRow) {
+   const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
+ 
+-  if (receipt.is_modified && originalTaxSummary) {
++  if (
++    receipt.is_modified &&
++    originalTaxSummary &&
++    originalTaxSummary.isUncertain !== true
++  ) {
+     return originalTaxSummary.totalTaxAmount;
+   }
+ 
+@@ -377,10 +402,12 @@ function getOriginalFinalAmount(receipt: ReceiptRow) {
+     receipt.original_amount_summary
+   );
+ 
+-  if (originalAmountSummary) {
++  if (originalAmountSummary && originalAmountSummary.isUncertain !== true) {
++    // finalAmount가 정상적으로 0인 경우도 있으므로(예: 전액 할인) ||가 아니라 ??로
++    // null/undefined일 때만 다음 값으로 넘어가도록 한다.
+     return (
+-      originalAmountSummary.finalAmount ||
+-      originalAmountSummary.paymentTotalAmount ||
++      originalAmountSummary.finalAmount ??
++      originalAmountSummary.paymentTotalAmount ??
+       0
+     );
+   }
+@@ -390,7 +417,13 @@ function getOriginalFinalAmount(receipt: ReceiptRow) {
+ 
+ function getOriginalTaxAmount(receipt: ReceiptRow) {
+   const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
+-  return originalTaxSummary?.totalTaxAmount || toNumber(receipt.vat_amount);
++
++  if (originalTaxSummary && originalTaxSummary.isUncertain !== true) {
++    // 스냅샷이 존재하는데 totalTaxAmount가 0이면(VAT 면제 등) 그대로 0을 사용해야 하므로 ??.
++    return originalTaxSummary.totalTaxAmount ?? toNumber(receipt.vat_amount);
++  }
++
++  return toNumber(receipt.vat_amount);
+ }
+ 
+ function getAdjustedTaxAmount(lines: LineRow[]) {
+@@ -401,7 +434,10 @@ function addTaxBucket(
+   map: Map<number, TaxBucket>,
+   taxRate: number,
+   taxAmount: number,
+-  lineCount: number
++  // 원본 스냅샷에서 온 lineCount는 미확정(null)일 수 있다. 집계에서는 미확정분을 0으로 더해
++  // 최소값으로 취급한다(실제보다 적게 표시될 수 있음 — lineCount 자체가 불확실한 원본 데이터의
++  // 근본적 한계이며, 세액 합계에는 영향을 주지 않는다).
++  lineCount: number | null
+ ) {
+   if (taxRate === 0 && taxAmount === 0) return;
+ 
+@@ -414,7 +450,7 @@ function addTaxBucket(
+     } satisfies TaxBucket);
+ 
+   current.taxAmount += taxAmount;
+-  current.lineCount += lineCount;
++  current.lineCount += lineCount ?? 0;
+   map.set(taxRate, current);
+ }
+ 
+@@ -447,7 +483,7 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
+       const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
+ 
+       if (receipt.is_modified) {
+-        if (originalTaxSummary) {
++        if (originalTaxSummary && originalTaxSummary.isUncertain !== true) {
+           originalTaxSummary.taxByRate.forEach((tax) => {
+             addTaxBucket(map, tax.taxRate, tax.taxAmount, tax.lineCount);
+           });
+@@ -469,6 +505,18 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
+     (a, b) => a.taxRate - b.taxRate
+   );
+ 
++  // 결제완료 + 수정됨 영수증인데 신뢰 가능한(원본 여부가 확실한) 수정 전 VAT 스냅샷이 없는
++  // 건이 하나라도 있으면, 위 합계 중 일부는 수정 후 값으로 대체되었거나 taxByRate 집계에서
++  // 누락된 것이므로 화면에서 "정확한 합계"로 조용히 표시하지 않도록 표시해준다.
++  const hasIncompleteOriginalData = receipts.some((receipt) => {
++    if (!isPaid(receipt.payment_status) || receipt.is_modified !== true) {
++      return false;
++    }
++
++    const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
++    return !originalTaxSummary || originalTaxSummary.isUncertain === true;
++  });
++
+   return {
+     totalTaxAmount: receipts.reduce(
+       (sum, receipt) =>
+@@ -476,6 +524,7 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
+       0
+     ),
+     taxByRate,
++    hasIncompleteOriginalData,
+     taxSavingAmount: buildTaxSavingAmount(receipts, linesByReceiptId),
+     amountDifferenceAmount: buildAmountDifferenceAmount(receipts),
+   };
+diff --git a/app/api/pos/cukcuk/sainvoices/sync-to-sales/route.ts b/app/api/pos/cukcuk/sainvoices/sync-to-sales/route.ts
+index 2aeb372..4e08b39 100644
+--- a/app/api/pos/cukcuk/sainvoices/sync-to-sales/route.ts
++++ b/app/api/pos/cukcuk/sainvoices/sync-to-sales/route.ts
+@@ -1446,12 +1446,14 @@ async function saveReceipts(rows: ReceiptRow[]) {
+     compareReceiptsMs: 0,
+     insertReceiptsMs: 0,
+     updateReceiptsMs: 0,
++    statusUpdateReceiptsMs: 0,
+     buildReceiptIdMapMs: 0,
+   };
+ 
+   if (rows.length === 0) {
+     return {
+       receiptIdMap: new Map<string, number>(),
++      insertedRefIds: [] as string[],
+       createdCount: 0,
+       updatedCount: 0,
+       statusChangedCount: 0,
+@@ -1465,20 +1467,33 @@ async function saveReceipts(rows: ReceiptRow[]) {
+ 
+   const compareStartedAt = Date.now();
+   const inserts = rows.filter((row) => !existingMap.has(row.ref_id));
+-  const updates = rows.filter((row) => {
++  // 관리자가 수정(is_modified)한 영수증은 금액/라인 관련 필드를 보호해야 하므로 전체 UPDATE
++  // 대상에서 제외한다. 다만 결제상태(payment_status)/취소여부(is_canceled)는 "수정됨" 여부와
++  // 별개로 POS의 최신 상태를 계속 반영해야 하므로 아래에서 별도의 제한적 UPDATE로 처리한다.
++  const fullUpdates = rows.filter((row) => {
+     const existing = existingMap.get(row.ref_id);
+     return existing && !existing.is_modified ? hasReceiptChanged(existing, row) : false;
+   });
++  const statusOnlyUpdates = rows.filter((row) => {
++    const existing = existingMap.get(row.ref_id);
++    if (!existing || !existing.is_modified) return false;
++
++    return (
++      existing.payment_status !== row.payment_status ||
++      existing.is_canceled !== row.is_canceled
++    );
++  });
+   const statusChangedCount =
+     inserts.filter((row) => row.is_canceled).length +
+-    updates.filter((row) => {
++    fullUpdates.filter((row) => {
+       const existing = existingMap.get(row.ref_id);
+       return (
+         existing &&
+         (existing.payment_status !== row.payment_status ||
+           existing.is_canceled !== row.is_canceled)
+       );
+-    }).length;
++    }).length +
++    statusOnlyUpdates.length;
+   const compareReceiptsMs = Date.now() - compareStartedAt;
+ 
+   // Perf: the receipt ID for every ref_id we already had (whether updated or
+@@ -1510,9 +1525,9 @@ async function saveReceipts(rows: ReceiptRow[]) {
+   }
+ 
+   let updateReceiptsMs = 0;
+-  if (updates.length > 0) {
++  if (fullUpdates.length > 0) {
+     const updateStartedAt = Date.now();
+-    for (const row of updates) {
++    for (const row of fullUpdates) {
+       const id = existingMap.get(row.ref_id)?.id;
+       const { error } = await supabaseServer
+         .from("pos_sales_receipts")
+@@ -1526,21 +1541,155 @@ async function saveReceipts(rows: ReceiptRow[]) {
+     updateReceiptsMs = Date.now() - updateStartedAt;
+   }
+ 
++  let statusUpdateReceiptsMs = 0;
++  if (statusOnlyUpdates.length > 0) {
++    const statusUpdateStartedAt = Date.now();
++    for (const row of statusOnlyUpdates) {
++      const id = existingMap.get(row.ref_id)?.id;
++      const { error } = await supabaseServer
++        .from("pos_sales_receipts")
++        .update({
++          payment_status: row.payment_status,
++          is_canceled: row.is_canceled,
++          updated_at: row.updated_at,
++        })
++        .eq("id", id);
++
++      if (error) {
++        throw new Error(
++          `Failed to update sales receipt status ${row.ref_id}: ${error.message}`
++        );
++      }
++    }
++    statusUpdateReceiptsMs = Date.now() - statusUpdateStartedAt;
++  }
++
+   return {
+     receiptIdMap: finalReceiptIdMap,
++    insertedRefIds: inserts.map((row) => row.ref_id),
+     createdCount: inserts.length,
+-    updatedCount: updates.length,
++    updatedCount: fullUpdates.length + statusOnlyUpdates.length,
+     statusChangedCount,
+     timing: {
+       getExistingReceiptsMs,
+       compareReceiptsMs,
+       insertReceiptsMs,
+       updateReceiptsMs,
++      statusUpdateReceiptsMs,
+       buildReceiptIdMapMs,
+     },
+   };
+ }
+ 
++// CUKCUK 응답에 CreatedDate/ModifiedDate가 있고 ModifiedDate가 CreatedDate보다 뚜렷하게(1분 이상)
++// 늦으면, BABA가 이 영수증을 처음 수신하는 시점에 이미 POS 쪽에서 수정된 상태였을 가능성이 있다.
++// 이 경우 "최초 수신 = 원본"이라고 확정할 수 없으므로 스냅샷에 isUncertain 표시를 남긴다.
++// CUKCUK 응답에 해당 필드가 없으면(현재까지 확인된 실제 응답 필드가 아님) 판단 재료가 없으므로
++// 조용히 false로 처리한다(과잉 경고를 만들지 않음).
++function isLikelyModifiedBeforeFirstSync(
++  invoice: CukcukInvoice,
++  detailPayload: JsonObject
++) {
++  const createdRaw =
++    getString(detailPayload, ["CreatedDate", "createdDate"]) ??
++    getString(invoice, ["CreatedDate", "createdDate"]);
++  const modifiedRaw =
++    getString(detailPayload, ["ModifiedDate", "modifiedDate"]) ??
++    getString(invoice, ["ModifiedDate", "modifiedDate"]);
++
++  if (!createdRaw || !modifiedRaw) return false;
++
++  const createdTime = toTimestamp(createdRaw);
++  const modifiedTime = toTimestamp(modifiedRaw);
++
++  if (createdTime === null || modifiedTime === null) return false;
++
++  return modifiedTime - createdTime > 60000;
++}
++
++// 최초 동기화(=신규 INSERT) 시점의 실제 라인 데이터로 세율별 세액/개수를 계산한다.
++// 이 시점의 라인은 관리자 수정이 아직 없었던 진짜 원본이므로 lineCount도 확정할 수 있다.
++function buildOriginalTaxByRate(lines: LineRow[]) {
++  const map = new Map<number, { taxRate: number; taxAmount: number; lineCount: number }>();
++
++  lines.forEach((line) => {
++    if (isOptionOrLinkedLine(line)) return;
++
++    const taxRate = line.tax_rate ?? 0;
++    const taxAmount = line.tax_amount || 0;
++
++    if (taxRate === 0 && taxAmount === 0) return;
++
++    const current = map.get(taxRate) || { taxRate, taxAmount: 0, lineCount: 0 };
++    current.taxAmount += taxAmount;
++    current.lineCount += 1;
++    map.set(taxRate, current);
++  });
++
++  return Array.from(map.values()).sort((a, b) => a.taxRate - b.taxRate);
++}
++
++// 신규 INSERT된 영수증에 한해 original_tax_summary/original_amount_summary를 최초 수신 데이터
++// 그대로 저장한다. is_modified 여부와 무관하게 "이 영수증을 BABA가 최초로 알게 된 시점의 값"을
++// 영구 보존해, 이후 관리자가 처음 수정할 때까지 스냅샷이 비어 있는 공백을 없앤다.
++// .is("original_tax_summary", null) 조건으로 이미 스냅샷이 있는 행은 절대 덮어쓰지 않는다.
++async function backfillOriginalSnapshotsForNewReceipts(params: {
++  insertedRefIds: string[];
++  receiptRows: ReceiptRow[];
++  lineRows: LineRow[];
++  uncertainRefIds: Set<string>;
++  receiptIdMap: Map<string, number>;
++}) {
++  if (params.insertedRefIds.length === 0) {
++    return { backfilledCount: 0 };
++  }
++
++  const receiptByRefId = new Map(params.receiptRows.map((row) => [row.ref_id, row]));
++  const linesByRefId = groupLinesByReceiptRefId(params.lineRows);
++
++  let backfilledCount = 0;
++
++  for (const refId of params.insertedRefIds) {
++    const receipt = receiptByRefId.get(refId);
++    const receiptId = params.receiptIdMap.get(refId);
++
++    if (!receipt || !receiptId) continue;
++
++    const isUncertain = params.uncertainRefIds.has(refId);
++    const originalTaxSummary = {
++      totalTaxAmount: receipt.vat_amount,
++      taxByRate: buildOriginalTaxByRate(linesByRefId.get(refId) || []),
++      ...(isUncertain ? { isUncertain: true } : {}),
++    };
++    const originalAmountSummary = {
++      totalAmount: receipt.total_amount,
++      vatAmount: receipt.vat_amount,
++      finalAmount: receipt.final_amount,
++      paymentTotalAmount: receipt.final_amount,
++      ...(isUncertain ? { isUncertain: true } : {}),
++    };
++
++    const { error } = await supabaseServer
++      .from("pos_sales_receipts")
++      .update({
++        original_tax_summary: originalTaxSummary,
++        original_amount_summary: originalAmountSummary,
++      })
++      .eq("id", receiptId)
++      .is("original_tax_summary", null);
++
++    if (error) {
++      throw new Error(
++        `Failed to backfill original snapshot for ${refId}: ${error.message}`
++      );
++    }
++
++    backfilledCount += 1;
++  }
++
++  return { backfilledCount };
++}
++
+ async function saveLines(rows: LineRow[]) {
+   const emptyTiming = {
+     initialQueriesMs: 0,
+@@ -1970,6 +2119,13 @@ export async function POST(req: Request) {
+         syncedAt,
+       })
+     );
++    const uncertainOriginRefIds = new Set(
++      validDetails
++        .filter((item) =>
++          isLikelyModifiedBeforeFirstSync(item.invoice, item.detailPayload)
++        )
++        .map((item) => item.refId)
++    );
+ 
+     const receiptSaveResult = await saveReceipts(receiptRows);
+     markPhase("saveReceiptsMs");
+@@ -1996,6 +2152,18 @@ export async function POST(req: Request) {
+ 
+     const lineSaveResult = await saveLines(lineRows);
+     markPhase("saveLinesMs");
++
++    // 이번 동기화에서 신규 INSERT된 영수증에 한해, 최초 수신 시점의 값을 원본 스냅샷으로
++    // 영구 저장한다(이미 스냅샷이 있는 행은 backfillOriginalSnapshotsForNewReceipts 내부의
++    // .is("original_tax_summary", null) 조건으로 절대 덮어쓰지 않는다).
++    const originalSnapshotBackfillResult = await backfillOriginalSnapshotsForNewReceipts({
++      insertedRefIds: receiptSaveResult.insertedRefIds,
++      receiptRows,
++      lineRows,
++      uncertainRefIds: uncertainOriginRefIds,
++      receiptIdMap: receiptSaveResult.receiptIdMap,
++    });
++    markPhase("originalSnapshotBackfillMs");
+     const buildPaymentRowsStartedAt = Date.now();
+     const detailPaymentRows = validDetails.flatMap((item) => {
+       const receiptId = receiptSaveResult.receiptIdMap.get(item.refId) ?? null;
+@@ -2128,6 +2296,7 @@ export async function POST(req: Request) {
+         skippedDetailCount: failedDetails.length,
+         receiptCreatedCount: receiptSaveResult.createdCount,
+         receiptUpdatedCount: receiptSaveResult.updatedCount,
++        originalSnapshotBackfillCount: originalSnapshotBackfillResult.backfilledCount,
+         lineCreatedCount: lineSaveResult.createdCount,
+         lineUpdatedCount: lineSaveResult.updatedCount,
+         lineFallbackMatchedCount: lineSaveResult.fallbackMatchedCount,
+diff --git a/lib/text/sales.ts b/lib/text/sales.ts
+index fe14b01..3ecec9f 100644
+--- a/lib/text/sales.ts
++++ b/lib/text/sales.ts
+@@ -23,6 +23,8 @@ export const salesText = {
+       taxSummary: "세금 요약",
+       taxSaving: "절세",
+       amountDifference: "차액",
++      originalTaxSnapshotMissing:
++        "⚠ 수정 전 세금 정보가 없어 현재 값으로 표시됩니다. 실제 원본 세액과 다를 수 있습니다.",
+       adjustedReceiptBase: "수정 영수증 기준",
+       businessDayBase: "영업일 기준",
+       soldItemBase: "판매상품 기준",
+@@ -207,6 +209,8 @@ export const salesText = {
+       taxSummary: "Thuế",
+       taxSaving: "Giảm thuế",
+       amountDifference: "Chênh lệch",
++      originalTaxSnapshotMissing:
++        "⚠ Không có dữ liệu thuế trước khi sửa nên đang hiển thị giá trị hiện tại. Có thể khác với số thuế gốc thực tế.",
+       adjustedReceiptBase: "HĐ đã sửa",
+       businessDayBase: "Theo ngày kinh doanh",
+       soldItemBase: "Theo món bán",

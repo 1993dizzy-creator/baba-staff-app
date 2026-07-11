@@ -10,6 +10,11 @@ import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { ui } from "@/lib/styles/ui";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { commonText, attendanceText } from "@/lib/text";
+import {
+    getDefaultShiftDateTimeValue,
+    isLongShiftRecord,
+    isOpenRecordUnresolved,
+} from "@/lib/attendance/time";
 
 
 type UserRow = {
@@ -102,9 +107,30 @@ function formatTime(value: string | null) {
     });
 }
 
-function formatTimeInput(value: string | null) {
-    const text = formatTime(value);
-    return text === "-" ? "" : text;
+const dateTimeInputFormatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+});
+
+function toDateTimeInputValue(value: string | null) {
+    if (!value) return "";
+
+    const parts = dateTimeInputFormatter.formatToParts(new Date(value));
+    const map = new Map(parts.map((part) => [part.type, part.value]));
+
+    return `${map.get("year")}-${map.get("month")}-${map.get("day")}T${map.get("hour")}:${map.get("minute")}`;
+}
+
+// 직원의 예정 출근/퇴근시간이 비어 있으면 매장 영업시간(16:00/01:00)으로 자동 대체하지 않는다.
+// 예정시간이 설정된 경우에만 기본값을 만들고, 없으면 관리자가 직접 입력하도록 공란으로 둔다.
+function getOptionalDefaultShiftDateTimeValue(workDate: string, timeHHMM: string | null) {
+    if (!timeHHMM) return "";
+    return getDefaultShiftDateTimeValue(workDate, timeHHMM);
 }
 
 function getCalendarCells(baseDate: Date) {
@@ -172,7 +198,9 @@ export default function AttendanceUserDetailPage() {
     const initialMonth = getMonthFromParam(searchParams.get("month"));
 
     const [currentMonth, setCurrentMonth] = useState(initialMonth);
-    const [selectedDate, setSelectedDate] = useState(getInitialSelectedDate(initialMonth));
+    const [selectedDate, setSelectedDate] = useState(
+        searchParams.get("date") || getInitialSelectedDate(initialMonth)
+    );
     const [user, setUser] = useState<UserRow | null>(null);
     const [records, setRecords] = useState<AttendanceRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -208,9 +236,11 @@ export default function AttendanceUserDetailPage() {
                 (item) => Number(item.id) === Number(userId)
             );
 
+            // /api/attendance/users는 활성 직원만 반환한다. 비활성 직원의 과거 기록도
+            // 관리자가 확인·보정할 수 있어야 하므로, 목록에 없다는 이유로 근태 조회 자체를
+            // 막지 않는다(헤더의 이름 표시만 "-"로 대체된다).
             if (!userData) {
-                console.log("user not found:", userId);
-                return;
+                console.log("user not found in active list, loading records anyway:", userId);
             }
 
             const recordRes = await fetch(
@@ -226,7 +256,7 @@ export default function AttendanceUserDetailPage() {
 
             const recordData = recordResult.records || [];
 
-            setUser(userData);
+            setUser(userData || null);
             setRecords(recordData || []);
         } finally {
             setIsLoading(false);
@@ -245,13 +275,21 @@ export default function AttendanceUserDetailPage() {
     };
 
     const handleSaveRecord = async ({
+        id,
         note,
-        checkOutTime,
+        checkInDateTime,
+        checkOutDateTime,
+        clearCheckOut,
         markNormal,
+        isNew,
     }: {
+        id?: number;
         note: string;
-        checkOutTime?: string;
+        checkInDateTime?: string;
+        checkOutDateTime?: string;
+        clearCheckOut?: boolean;
         markNormal?: boolean;
+        isNew?: boolean;
     }) => {
         if (!user) return;
 
@@ -267,11 +305,15 @@ export default function AttendanceUserDetailPage() {
                 },
                 body: JSON.stringify({
                     action: "update_record",
+                    attendance_id: id,
                     user_id: user.id,
                     work_date: selectedDate,
-                    time: checkOutTime || undefined,
+                    check_in_datetime: checkInDateTime || undefined,
+                    check_out_datetime: clearCheckOut ? undefined : checkOutDateTime || undefined,
+                    clear_check_out: clearCheckOut === true,
                     note,
                     mark_normal: markNormal === true,
+                    is_new: isNew === true,
                     actorUsername: loginUser?.username || "",
                     lang,
                 }),
@@ -283,11 +325,71 @@ export default function AttendanceUserDetailPage() {
                 throw new Error(result.message || t.correctionFailed);
             }
 
-            setRecords((current) =>
-                current.map((record) =>
-                    record.id === result.record.id ? result.record : record
-                )
-            );
+            // 공란 날짜에 신규 생성한 경우 records에 해당 id가 아직 없으므로 추가하고,
+            // 기존 기록을 수정한 경우에만 교체한다.
+            setRecords((current) => {
+                const exists = current.some((record) => record.id === result.record.id);
+                return exists
+                    ? current.map((record) =>
+                        record.id === result.record.id ? result.record : record
+                    )
+                    : [...current, result.record];
+            });
+
+            // 출근일시를 바꾸면 서버가 work_date를 자동 재계산하므로,
+            // 선택된 날짜가 더 이상 이 기록과 일치하지 않으면 새 날짜로 따라간다.
+            if (result.record.work_date && result.record.work_date !== selectedDate) {
+                setSelectedDate(result.record.work_date);
+            }
+
+            setMessage(t.correctionDone);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : t.correctionFailed);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleSaveLeave = async ({ note, isNew }: { note: string; isNew?: boolean }) => {
+        if (!user) return;
+
+        const loginUser = getUser();
+        setIsSaving(true);
+        setMessage("");
+
+        try {
+            const res = await fetch("/api/attendance/admin", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    action: "set_leave",
+                    user_id: user.id,
+                    work_date: selectedDate,
+                    note: note || undefined,
+                    is_new: isNew === true,
+                    admin_name: loginUser?.name || "",
+                    actorUsername: loginUser?.username || "",
+                    lang,
+                }),
+            });
+
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                throw new Error(result.message || t.correctionFailed);
+            }
+
+            setRecords((current) => {
+                const exists = current.some((record) => record.id === result.record.id);
+                return exists
+                    ? current.map((record) =>
+                        record.id === result.record.id ? result.record : record
+                    )
+                    : [...current, result.record];
+            });
+
             setMessage(t.correctionDone);
         } catch (error) {
             setMessage(error instanceof Error ? error.message : t.correctionFailed);
@@ -343,33 +445,41 @@ export default function AttendanceUserDetailPage() {
         <Container noPaddingTop>
             <SubNav tabs={tabs} />
 
-            <div style={topStyle}>
-
-                <div style={userTitleStyle}>
-                    <div style={userNameStyle}>{user?.name || "-"}</div>
-                    <div style={userMetaStyle}>
-                        {user?.position
-                            ? t.positions?.[user.position as keyof typeof t.positions] || user.position
-                            : user?.username || "-"}
+            <div style={headerCardStyle}>
+                <div style={headerTopRowStyle}>
+                    <div style={headerIdentityStyle}>
+                        <div style={userNameStyle}>{user?.name || "-"}</div>
+                        <div style={userMetaStyle}>
+                            {user?.position
+                                ? t.positions?.[user.position as keyof typeof t.positions] || user.position
+                                : user?.username || "-"}
+                        </div>
                     </div>
-                </div>
-            </div>
 
+                    {!isLoading && (
+                        <div style={totalWorkSummaryStyle}>
+                            <span style={totalWorkSummaryLabelStyle}>⏳ {t.summaryTotalWorkTime}</span>
+                            <strong style={totalWorkSummaryValueStyle}>
+                                {formatMinutes(summary.totalWorkMinutes, c)}
+                            </strong>
+                        </div>
+                    )}
+                </div>
+
+                {!isLoading && (
+                    <div style={statStripStyle}>
+                        <StatChip icon="📅" label={t.summaryWorkDays} value={`${summary.workDays}`} />
+                        <StatChip icon="🌴" label={t.workLeave} value={`${summary.leaveDays}`} />
+                        <StatChip icon="⏰" label={t.workLate} value={`${summary.lateCount}`} />
+                        <StatChip icon="🏃" label={t.workEarlyLeave} value={`${summary.earlyLeaveCount}`} />
+                    </div>
+                )}
+            </div>
 
             {isLoading ? (
                 <div style={emptyStyle}>{c.loading}</div>
             ) : (
                 <>
-                    <div style={summaryGridStyle}>
-
-                        <InfoBox label={t.summaryWorkDays} value={`${summary.workDays}`} />
-                        <InfoBox label={t.workLeave} value={`${summary.leaveDays}`} />
-                        <InfoBox label={t.workLate} value={`${summary.lateCount}`} />
-                        <InfoBox label={t.workEarlyLeave} value={`${summary.earlyLeaveCount}`} />
-                        <InfoBox label={t.summaryTotalWorkTime} value={formatMinutes(summary.totalWorkMinutes, c)} />
-
-                    </div>
-
                     <Calendar
                         calendarDate={currentMonth}
                         setCalendarDate={handleMonthChange}
@@ -382,9 +492,12 @@ export default function AttendanceUserDetailPage() {
                         key={`${selectedDate}-${selectedRecord?.id || "none"}-${selectedRecord?.updated_at || ""}`}
                         selectedDate={selectedDate}
                         record={selectedRecord}
+                        workStartTime={user?.work_start_time || null}
+                        workEndTime={user?.work_end_time || null}
                         isSaving={isSaving}
                         message={message}
                         onSave={handleSaveRecord}
+                        onSaveLeave={handleSaveLeave}
                     />
 
                 </>
@@ -393,11 +506,14 @@ export default function AttendanceUserDetailPage() {
     );
 }
 
-function InfoBox({ label, value }: { label: string; value: string }) {
+function StatChip({ icon, label, value }: { icon: string; label: string; value: string }) {
     return (
-        <div style={infoBoxStyle}>
-            <div style={infoLabelStyle}>{label}</div>
-            <div style={infoValueStyle}>{value}</div>
+        <div style={statChipStyle}>
+            <span style={statChipTopRowStyle}>
+                <span aria-hidden="true">{icon}</span>
+                <span style={statChipValueStyle}>{value}</span>
+            </span>
+            <span style={statChipLabelStyle}>{label}</span>
         </div>
     );
 }
@@ -549,6 +665,18 @@ function Calendar({
                                                 <div>{record.check_out_at ? formatTime(record.check_out_at) : "-"}</div>
                                             </div>
                                         )}
+
+                                        {isLongShiftRecord(record.check_in_at, record.check_out_at) && (
+                                            <div style={calendarWarningIconStyle} title={t.longShiftWarning}>
+                                                ⚠
+                                            </div>
+                                        )}
+
+                                        {isOpenRecordUnresolved(record) && (
+                                            <div style={calendarWarningIconStyle} title={t.unresolvedOpenRecordBadge}>
+                                                ⚠
+                                            </div>
+                                        )}
                                     </>
                                 )}
 
@@ -562,35 +690,84 @@ function Calendar({
     );
 }
 
+type SaveRecordInput = {
+    id?: number;
+    note: string;
+    checkInDateTime?: string;
+    checkOutDateTime?: string;
+    clearCheckOut?: boolean;
+    markNormal?: boolean;
+    isNew?: boolean;
+};
+
 function RecordDetailPanel({
     selectedDate,
     record,
+    workStartTime,
+    workEndTime,
     isSaving,
     message,
     onSave,
+    onSaveLeave,
 }: {
     selectedDate: string;
     record: AttendanceRecord | null;
+    workStartTime: string | null;
+    workEndTime: string | null;
     isSaving: boolean;
     message: string;
-    onSave: (input: {
-        note: string;
-        checkOutTime?: string;
-        markNormal?: boolean;
-    }) => void;
+    onSave: (input: SaveRecordInput) => void;
+    onSaveLeave: (input: { note: string; isNew?: boolean }) => void;
 }) {
     const { lang } = useLanguage();
     const c = commonText[lang];
     const t = attendanceText[lang];
     const [note, setNote] = useState(record?.note || "");
-    const [checkOutTime, setCheckOutTime] = useState(formatTimeInput(record?.check_out_at || null));
+    const [blankMode, setBlankMode] = useState<"work" | "leave">("work");
 
-    const canEditCheckOut = !!record?.check_in_at && record.status !== "leave";
-    const checkOutChanged = checkOutTime !== formatTimeInput(record?.check_out_at || null);
-    const savePayload = {
+    const baseWorkDate = record?.work_date || selectedDate;
+    // 빈 출근/퇴근 입력의 기본값은 브라우저의 "오늘 날짜"가 아니라
+    // 관리자가 보고 있는 근무일(work_date) 기준으로 만든다.
+    const defaultCheckInValue = getOptionalDefaultShiftDateTimeValue(baseWorkDate, workStartTime);
+    const defaultCheckOutValue = getOptionalDefaultShiftDateTimeValue(baseWorkDate, workEndTime);
+
+    const baselineCheckInValue = record?.check_in_at
+        ? toDateTimeInputValue(record.check_in_at)
+        : defaultCheckInValue;
+    const baselineCheckOutValue = record?.check_out_at
+        ? toDateTimeInputValue(record.check_out_at)
+        : defaultCheckOutValue;
+
+    const [checkInDateTime, setCheckInDateTime] = useState(baselineCheckInValue);
+    const [checkOutDateTime, setCheckOutDateTime] = useState(baselineCheckOutValue);
+
+    const canEdit = !!record && record.status !== "leave";
+    const isUnresolved = record ? isOpenRecordUnresolved(record) : false;
+    const isCurrentlyWorking = !!record?.check_in_at && !record?.check_out_at && !isUnresolved;
+    const isLongShift = record ? isLongShiftRecord(record.check_in_at, record.check_out_at) : false;
+
+    // DB 값이 null인 필드는 화면에 기본값(예: 다음 날 01:00)이 채워져 있어도
+    // "변경 여부"를 그 기본값 자체와 비교하면 항상 false가 되어 저장되지 않는다.
+    // DB가 null이면 입력값이 비어 있지 않은 한 항상 저장 대상으로 취급한다.
+    // 휴무 기록(canEdit=false)은 입력 필드 자체가 보이지 않으므로, 남아있는 기본값이
+    // 실수로 전송되지 않도록 canEdit일 때만 변경으로 취급한다.
+    const checkInChanged =
+        canEdit &&
+        (record?.check_in_at
+            ? checkInDateTime !== toDateTimeInputValue(record.check_in_at)
+            : Boolean(checkInDateTime));
+    const checkOutChanged =
+        canEdit &&
+        (record?.check_out_at
+            ? checkOutDateTime !== toDateTimeInputValue(record.check_out_at)
+            : Boolean(checkOutDateTime));
+
+    const buildSavePayload = (): SaveRecordInput => ({
+        id: record?.id,
         note,
-        checkOutTime: checkOutChanged ? checkOutTime : undefined,
-    };
+        checkInDateTime: checkInChanged ? checkInDateTime : undefined,
+        checkOutDateTime: checkOutChanged ? checkOutDateTime : undefined,
+    });
 
     function getStatusLabel(status?: string | null) {
         if (status === "working") return t.working;
@@ -609,27 +786,80 @@ function RecordDetailPanel({
             </div>
 
             {!record ? (
-                <div style={emptyInlineStyle}>{t.noRecord}</div>
+                <div style={emptyStateWrapStyle}>
+                    <div style={emptyInlineStyle}>{t.noRecordHint}</div>
+
+                    <div style={blankModeToggleRowStyle}>
+                        <button
+                            type="button"
+                            style={blankMode === "work" ? blankModeActiveButtonStyle : blankModeInactiveButtonStyle}
+                            onClick={() => setBlankMode("work")}
+                        >
+                            {t.createRecordTab}
+                        </button>
+                        <button
+                            type="button"
+                            style={blankMode === "leave" ? blankModeActiveButtonStyle : blankModeInactiveButtonStyle}
+                            onClick={() => setBlankMode("leave")}
+                        >
+                            {t.createLeaveTab}
+                        </button>
+                    </div>
+
+                    {blankMode === "work" ? (
+                        <CreateWorkForm
+                            selectedDate={selectedDate}
+                            workStartTime={workStartTime}
+                            workEndTime={workEndTime}
+                            isSaving={isSaving}
+                            message={message}
+                            onCreate={onSave}
+                        />
+                    ) : (
+                        <CreateLeaveForm isSaving={isSaving} message={message} onCreate={onSaveLeave} />
+                    )}
+                </div>
             ) : (
                 <>
                     <div style={detailGridStyle}>
-                        <DetailItem label={t.selectedDate} value={record.work_date} />
-                        <DetailItem label={c.status} value={getStatusLabel(record.status)} />
-                        <DetailItem label={t.checkInTimeLabel} value={formatTime(record.check_in_at)} />
-                        <DetailItem label={t.checkOutTimeLabel} value={formatTime(record.check_out_at)} />
                         <DetailItem
+                            icon="📍"
+                            label={c.status}
+                            value={
+                                isUnresolved
+                                    ? t.unresolvedOpenRecordBadge
+                                    : isCurrentlyWorking
+                                        ? t.working
+                                        : getStatusLabel(record.status)
+                            }
+                        />
+                        <DetailItem
+                            icon="⏳"
+                            label={t.workDurationLabel}
+                            value={formatMinutes(Number(record.work_minutes || 0), c)}
+                        />
+                        <DetailItem icon="🟢" label={t.checkInTimeLabel} value={formatTime(record.check_in_at)} />
+                        <DetailItem icon="🔴" label={t.checkOutTimeLabel} value={formatTime(record.check_out_at)} />
+                        <DetailItem
+                            icon="⏰"
                             label={t.workLate}
                             value={`${Number(record.late_minutes || 0)}${c.minute}`}
                         />
                         <DetailItem
+                            icon="🏃"
                             label={t.workEarlyLeave}
                             value={`${Number(record.early_leave_minutes || 0)}${c.minute}`}
                         />
-                        <DetailItem
-                            label={t.workDurationLabel}
-                            value={formatMinutes(Number(record.work_minutes || 0), c)}
-                        />
                     </div>
+
+                    {isLongShift ? (
+                        <div style={longShiftWarningStyle}>
+                            {t.longShiftWarningWithDuration.replace(
+                                "{duration}",
+                                formatMinutes(Number(record.work_minutes || 0), c)
+                            )}
+                        </div>
+                    ) : null}
 
                     <div style={editBlockStyle}>
                         <label style={fieldStyle}>
@@ -642,16 +872,34 @@ function RecordDetailPanel({
                             />
                         </label>
 
-                        {canEditCheckOut ? (
-                            <label style={fieldStyle}>
-                                <span style={fieldLabelStyle}>{t.checkoutCorrection}</span>
-                                <input
-                                    type="time"
-                                    value={checkOutTime}
-                                    onChange={(event) => setCheckOutTime(event.target.value)}
-                                    style={inputStyle}
-                                />
-                            </label>
+                        {canEdit ? (
+                            <>
+                                <label style={fieldStyle}>
+                                    <span style={fieldLabelStyle}>{t.checkInDateTimeLabel}</span>
+                                    <input
+                                        type="datetime-local"
+                                        value={checkInDateTime}
+                                        onChange={(event) => setCheckInDateTime(event.target.value)}
+                                        style={inputStyle}
+                                    />
+                                    {!workStartTime ? (
+                                        <span style={scheduleNoticeStyle}>{t.scheduleCheckInMissingNotice}</span>
+                                    ) : null}
+                                </label>
+
+                                <label style={fieldStyle}>
+                                    <span style={fieldLabelStyle}>{t.checkOutDateTimeLabel}</span>
+                                    <input
+                                        type="datetime-local"
+                                        value={checkOutDateTime}
+                                        onChange={(event) => setCheckOutDateTime(event.target.value)}
+                                        style={inputStyle}
+                                    />
+                                    {!workEndTime ? (
+                                        <span style={scheduleNoticeStyle}>{t.scheduleCheckOutMissingNotice}</span>
+                                    ) : null}
+                                </label>
+                            </>
                         ) : null}
 
                         <div style={actionRowStyle}>
@@ -659,10 +907,26 @@ function RecordDetailPanel({
                                 type="button"
                                 style={secondaryActionButtonStyle}
                                 disabled={isSaving}
-                                onClick={() => onSave(savePayload)}
+                                onClick={() => onSave(buildSavePayload())}
                             >
                                 {isSaving ? c.saving : t.saveCorrection}
                             </button>
+
+                            {canEdit && !!record.check_out_at ? (
+                                <button
+                                    type="button"
+                                    style={secondaryActionButtonStyle}
+                                    disabled={isSaving}
+                                    onClick={() =>
+                                        onSave({
+                                            ...buildSavePayload(),
+                                            clearCheckOut: true,
+                                        })
+                                    }
+                                >
+                                    {t.markUnresolved}
+                                </button>
+                            ) : null}
 
                             {record.status !== "leave" && Number(record.late_minutes || 0) > 0 ? (
                                 <button
@@ -671,7 +935,7 @@ function RecordDetailPanel({
                                     disabled={isSaving}
                                     onClick={() =>
                                         onSave({
-                                            ...savePayload,
+                                            ...buildSavePayload(),
                                             markNormal: true,
                                         })
                                     }
@@ -689,10 +953,151 @@ function RecordDetailPanel({
     );
 }
 
-function DetailItem({ label, value }: { label: string; value: string }) {
+function CreateWorkForm({
+    selectedDate,
+    workStartTime,
+    workEndTime,
+    isSaving,
+    message,
+    onCreate,
+}: {
+    selectedDate: string;
+    workStartTime: string | null;
+    workEndTime: string | null;
+    isSaving: boolean;
+    message: string;
+    onCreate: (input: SaveRecordInput) => void;
+}) {
+    const { lang } = useLanguage();
+    const c = commonText[lang];
+    const t = attendanceText[lang];
+
+    const [checkInDateTime, setCheckInDateTime] = useState(
+        getOptionalDefaultShiftDateTimeValue(selectedDate, workStartTime)
+    );
+    const [checkOutDateTime, setCheckOutDateTime] = useState(
+        getOptionalDefaultShiftDateTimeValue(selectedDate, workEndTime)
+    );
+    const [note, setNote] = useState("");
+
+    return (
+        <div style={editBlockStyle}>
+            <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>{t.checkInDateTimeLabel}</span>
+                <input
+                    type="datetime-local"
+                    value={checkInDateTime}
+                    onChange={(event) => setCheckInDateTime(event.target.value)}
+                    style={inputStyle}
+                />
+                {!workStartTime ? (
+                    <span style={scheduleNoticeStyle}>{t.scheduleCheckInMissingNotice}</span>
+                ) : null}
+            </label>
+
+            <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>{t.checkOutDateTimeLabel}</span>
+                <input
+                    type="datetime-local"
+                    value={checkOutDateTime}
+                    onChange={(event) => setCheckOutDateTime(event.target.value)}
+                    style={inputStyle}
+                />
+                {!workEndTime ? (
+                    <span style={scheduleNoticeStyle}>{t.scheduleCheckOutMissingNotice}</span>
+                ) : null}
+            </label>
+
+            <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>{t.note}</span>
+                <textarea
+                    value={note}
+                    onChange={(event) => setNote(event.target.value)}
+                    style={textareaStyle}
+                    rows={2}
+                />
+            </label>
+
+            <div style={actionRowStyle}>
+                <button
+                    type="button"
+                    style={primaryActionButtonStyle}
+                    disabled={isSaving || !checkInDateTime}
+                    onClick={() =>
+                        onCreate({
+                            note,
+                            checkInDateTime,
+                            checkOutDateTime: checkOutDateTime || undefined,
+                            isNew: true,
+                        })
+                    }
+                >
+                    {isSaving ? c.saving : t.createRecordSave}
+                </button>
+            </div>
+
+            {message ? <div style={messageStyle}>{message}</div> : null}
+        </div>
+    );
+}
+
+function CreateLeaveForm({
+    isSaving,
+    message,
+    onCreate,
+}: {
+    isSaving: boolean;
+    message: string;
+    onCreate: (input: { note: string; isNew?: boolean }) => void;
+}) {
+    const { lang } = useLanguage();
+    const c = commonText[lang];
+    const t = attendanceText[lang];
+    const [reason, setReason] = useState("");
+
+    return (
+        <div style={editBlockStyle}>
+            <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>{t.leaveReasonLabel}</span>
+                <input
+                    type="text"
+                    value={reason}
+                    onChange={(event) => setReason(event.target.value)}
+                    style={inputStyle}
+                />
+            </label>
+
+            <div style={actionRowStyle}>
+                <button
+                    type="button"
+                    style={primaryActionButtonStyle}
+                    disabled={isSaving}
+                    onClick={() => onCreate({ note: reason, isNew: true })}
+                >
+                    {isSaving ? c.saving : t.createLeaveSave}
+                </button>
+            </div>
+
+            {message ? <div style={messageStyle}>{message}</div> : null}
+        </div>
+    );
+}
+
+function DetailItem({
+    icon,
+    label,
+    value,
+}: {
+    icon?: string;
+    label: string;
+    value: string;
+}) {
     return (
         <div style={detailItemStyle}>
-            <span style={detailItemLabelStyle}>{label}</span>
+            <span style={detailItemLabelStyle}>
+                {icon ? <span aria-hidden="true">{icon} </span> : null}
+                {label}
+            </span>
             <strong style={detailItemValueStyle}>{value}</strong>
         </div>
     );
@@ -712,19 +1117,24 @@ function LegendItem({ label, color }: { label: string; color: string }) {
     );
 }
 
-const topStyle: CSSProperties = {
-    display: "grid",
-    gap: 8,
-    marginBottom: 12,
-};
-
-
-
-const userTitleStyle: CSSProperties = {
+const headerCardStyle: CSSProperties = {
     background: "#ffffff",
     border: "1px solid #e5e7eb",
     borderRadius: 14,
-    padding: "12px 14px",
+    padding: "10px 12px",
+    marginBottom: 12,
+};
+
+const headerTopRowStyle: CSSProperties = {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+};
+
+const headerIdentityStyle: CSSProperties = {
+    minWidth: 0,
+    flex: 1,
 };
 
 const userNameStyle: CSSProperties = {
@@ -739,32 +1149,72 @@ const userMetaStyle: CSSProperties = {
     color: "#6b7280",
 };
 
-
-const summaryGridStyle: CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: "repeat(5, 1fr)",
-    gap: 6,
-    marginBottom: 12,
+const totalWorkSummaryStyle: CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: 2,
+    flexShrink: 0,
+    textAlign: "right",
 };
 
-const infoBoxStyle: CSSProperties = {
-    background: "#ffffff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 12,
-    padding: "9px 6px",
-    textAlign: "center",
-};
-
-const infoLabelStyle: CSSProperties = {
-    fontSize: 10,
+const totalWorkSummaryLabelStyle: CSSProperties = {
+    fontSize: 11,
+    fontWeight: 700,
     color: "#6b7280",
-    marginBottom: 3,
+    whiteSpace: "nowrap",
 };
 
-const infoValueStyle: CSSProperties = {
-    fontSize: 13,
+const totalWorkSummaryValueStyle: CSSProperties = {
+    fontSize: 16,
     fontWeight: 900,
     color: "#111827",
+    lineHeight: 1.2,
+};
+
+const statStripStyle: CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(60px, 1fr))",
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTop: "1px dashed #e5e7eb",
+};
+
+const statChipStyle: CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    padding: "6px 4px",
+    borderRadius: 10,
+    background: "#f9fafb",
+    border: "1px solid #e5e7eb",
+    minWidth: 0,
+};
+
+const statChipTopRowStyle: CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 3,
+    fontSize: 12,
+    whiteSpace: "nowrap",
+};
+
+const statChipValueStyle: CSSProperties = {
+    fontWeight: 900,
+    color: "#111827",
+};
+
+const statChipLabelStyle: CSSProperties = {
+    fontSize: 10,
+    color: "#6b7280",
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    maxWidth: "100%",
 };
 
 const cardStyle: CSSProperties = {
@@ -922,12 +1372,19 @@ const calendarTimeTextStyle: CSSProperties = {
     whiteSpace: "nowrap",
 };
 
+const calendarWarningIconStyle: CSSProperties = {
+    fontSize: 9,
+    lineHeight: 1,
+    color: "#f59e0b",
+    marginTop: 1,
+};
+
 const detailPanelStyle: CSSProperties = {
     ...ui.card,
     marginTop: 12,
-    padding: 12,
+    padding: 11,
     display: "grid",
-    gap: 10,
+    gap: 8,
 };
 
 const detailHeaderStyle: CSSProperties = {
@@ -948,14 +1405,14 @@ const detailDateStyle: CSSProperties = {
 
 const detailGridStyle: CSSProperties = {
     display: "grid",
-    gridTemplateColumns: "repeat(2, 1fr)",
-    gap: 6,
+    gridTemplateColumns: "repeat(3, 1fr)",
+    gap: 5,
 };
 
 const detailItemStyle: CSSProperties = {
     border: "1px solid #e5e7eb",
     borderRadius: 10,
-    padding: "7px 8px",
+    padding: "6px 7px",
     background: "#ffffff",
 };
 
@@ -990,6 +1447,12 @@ const fieldLabelStyle: CSSProperties = {
     fontSize: 11,
     fontWeight: 900,
     color: "#374151",
+};
+
+const scheduleNoticeStyle: CSSProperties = {
+    fontSize: 10,
+    fontWeight: 700,
+    color: "#b45309",
 };
 
 const inputStyle: CSSProperties = {
@@ -1040,14 +1503,59 @@ const messageStyle: CSSProperties = {
     color: "#111827",
 };
 
+const longShiftWarningStyle: CSSProperties = {
+    border: "1px solid #f59e0b",
+    background: "#fffbeb",
+    color: "#92400e",
+    borderRadius: 10,
+    padding: "7px 10px",
+    fontSize: 12,
+    fontWeight: 800,
+};
+
 const emptyInlineStyle: CSSProperties = {
     border: "1px solid #e5e7eb",
     borderRadius: 10,
     padding: 10,
     fontSize: 12,
-    fontWeight: 800,
+    fontWeight: 700,
+    lineHeight: 1.5,
     color: "#6b7280",
     background: "#ffffff",
+};
+
+const emptyStateWrapStyle: CSSProperties = {
+    display: "grid",
+    gap: 8,
+};
+
+const blankModeToggleRowStyle: CSSProperties = {
+    display: "flex",
+    gap: 6,
+};
+
+const blankModeButtonBaseStyle: CSSProperties = {
+    flex: 1,
+    textAlign: "center",
+    padding: "8px 10px",
+    borderRadius: 10,
+    fontSize: 12,
+    fontWeight: 900,
+    cursor: "pointer",
+};
+
+const blankModeActiveButtonStyle: CSSProperties = {
+    ...blankModeButtonBaseStyle,
+    border: "1px solid #111827",
+    background: "#111827",
+    color: "#ffffff",
+};
+
+const blankModeInactiveButtonStyle: CSSProperties = {
+    ...blankModeButtonBaseStyle,
+    border: "1px solid #d1d5db",
+    background: "#ffffff",
+    color: "#374151",
 };
 
 const emptyStyle: CSSProperties = {
