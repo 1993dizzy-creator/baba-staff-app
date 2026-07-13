@@ -12,11 +12,12 @@ import {
   type PosProductRow,
 } from "@/lib/pos/mapping-catalog";
 import { validatePosMappings } from "@/lib/pos/mapping-validation";
+import { shouldBlockIncompleteRecipe } from "@/lib/sales/inventory-deduction-recipe-policy";
 
 const HASH_VERSION = 1;
 const PAGE_SIZE = 1000;
 const RECEIPT_SELECT =
-  "id, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, is_modified, review_status, updated_at";
+  "id, ref_id, ref_no, business_date, ref_date, source, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, is_modified, review_status, updated_at";
 const LINE_SELECT =
   "id, receipt_id, receipt_ref_id, ref_detail_id, parent_ref_detail_id, sort_order, item_id, item_code, item_name, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, ref_detail_type, inventory_item_type, is_option, is_excluded, is_canceled, mapping_status, raw_json, ref_date, synced_at, updated_at";
 const PRODUCT_SELECT =
@@ -32,6 +33,7 @@ type ReceiptRow = {
   ref_no: string | null;
   business_date: string;
   ref_date: string | null;
+  source: string | null;
   payment_status: number | null;
   is_canceled: boolean | null;
   total_amount: number | string | null;
@@ -310,7 +312,7 @@ function addBlockedReason(receipt: WorkingReceipt, reason: string) {
   }
 }
 
-function resolveBlockedStatus(lines: PreviewLine[]) {
+function resolveBlockedStatus(lines: PreviewLine[], receipt: ReceiptRow) {
   const hasDeductionLines = lines.some((line) => line.deductions.length > 0);
   const statuses = new Set(lines.map((line) => line.status));
   if (statuses.has("missing_mapping")) return "missing_mapping" as const;
@@ -319,8 +321,16 @@ function resolveBlockedStatus(lines: PreviewLine[]) {
   }
   if (statuses.has("invalid_mapping")) return "invalid_mapping" as const;
   if (
-    statuses.has("incomplete_recipe") ||
-    statuses.has("combo_incomplete_recipe")
+    lines.some(
+      (line) =>
+        (line.status === "incomplete_recipe" ||
+          line.status === "combo_incomplete_recipe") &&
+        shouldBlockIncompleteRecipe({
+          source: receipt.source,
+          isModified: receipt.is_modified,
+          isOption: line.isOption,
+        })
+    )
   ) {
     return "incomplete_recipe" as const;
   }
@@ -329,14 +339,6 @@ function resolveBlockedStatus(lines: PreviewLine[]) {
 
 function hasDeductionCandidates(lines: PreviewLine[]) {
   return lines.some((line) => line.deductions.length > 0);
-}
-
-function hasIncompleteRecipeLines(lines: PreviewLine[]) {
-  return lines.some(
-    (line) =>
-      line.status === "incomplete_recipe" ||
-      line.status === "combo_incomplete_recipe"
-  );
 }
 
 function getAppliedDeductionKey(row: {
@@ -1328,9 +1330,8 @@ export async function buildInventoryDeductionPreview(input: {
           )
         ),
     };
-    const blockedStatus = resolveBlockedStatus(previewLines);
+    const blockedStatus = resolveBlockedStatus(previewLines, receipt);
     const hasCandidates = hasDeductionCandidates(previewLines);
-    const hasIncompleteRecipes = hasIncompleteRecipeLines(previewLines);
     let status: PreviewReceiptStatus =
       blockedStatus || (hasCandidates ? "ready" : "skipped");
     const blockedReasons = previewLines
@@ -1361,8 +1362,6 @@ export async function buildInventoryDeductionPreview(input: {
       previewLines.every((line) => line.lineType === "ignore")
     ) {
       status = "skipped";
-    } else if (!hasCandidates && hasIncompleteRecipes) {
-      status = "incomplete_recipe";
     }
 
     return {

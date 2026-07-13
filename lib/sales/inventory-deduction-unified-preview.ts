@@ -10,6 +10,7 @@ import {
   classifyInventoryDeductionWorkflow,
   type InventoryDeductionWorkflowOperation,
 } from "@/lib/sales/inventory-deduction-workflow-policy";
+import { shouldBlockIncompleteRecipe } from "@/lib/sales/inventory-deduction-recipe-policy";
 
 type InventoryDeductionPreview = Awaited<
   ReturnType<typeof buildInventoryDeductionPreview>
@@ -126,27 +127,27 @@ const NEUTRAL_STATUSES = new Set([
   "ignored",
   "skipped",
   "manual_review",
+  "incomplete_recipe",
+  "combo_incomplete_recipe",
 ]);
 const NEUTRAL_LINE_TYPES = new Set([
   "combo_ignore",
   "ignore",
   "manual",
+  "incomplete_recipe",
+  "combo_incomplete_recipe",
 ]);
 const BLOCKING_STATUSES = new Set([
   "missing_mapping",
   "invalid_mapping",
   "review_required",
   "insufficient_stock",
-  "incomplete_recipe",
-  "combo_incomplete_recipe",
 ]);
 const BLOCKING_LINE_TYPES = new Set([
   "combo_missing_mapping",
   "combo_invalid_mapping",
   "missing_mapping",
   "invalid_mapping",
-  "incomplete_recipe",
-  "combo_incomplete_recipe",
 ]);
 
 function isBusinessDate(value: string) {
@@ -190,7 +191,8 @@ function isNeutralLine(line: PreviewLine) {
 
 function hasIncompleteRecipeAncestor(
   line: PreviewLine,
-  lineByRefDetailId: Map<string, PreviewLine>
+  lineByRefDetailId: Map<string, PreviewLine>,
+  shouldBlockLine: (line: PreviewLine) => boolean
 ) {
   const visited = new Set<string>();
   let parentRefDetailId = line.parentRefDetailId;
@@ -201,14 +203,14 @@ function hasIncompleteRecipeAncestor(
 
     const parent = lineByRefDetailId.get(parentRefDetailId);
     if (!parent) return false;
-    if (isIncompleteRecipeLine(parent)) return true;
+    if (isIncompleteRecipeLine(parent) && shouldBlockLine(parent)) return true;
     parentRefDetailId = parent.parentRefDetailId;
   }
 
   return false;
 }
 
-function getLineClassification(receipt: PreviewReceipt) {
+function getLineClassification(receipt: PreviewReceipt, sourceReceipt: ReceiptRow) {
   const lineByRefDetailId = new Map(
     receipt.lines
       .filter((line) => Boolean(line.refDetailId))
@@ -217,19 +219,29 @@ function getLineClassification(receipt: PreviewReceipt) {
   const blockingReasons = new Set<string>();
   let actionableLineCount = 0;
   let neutralLineCount = 0;
+  const shouldBlockLine = (line: PreviewLine) =>
+    shouldBlockIncompleteRecipe({
+      source: sourceReceipt.source,
+      isModified: sourceReceipt.is_modified,
+      isOption: line.isOption,
+    });
 
   for (const line of receipt.lines) {
     const hasIncompleteAncestor = hasIncompleteRecipeAncestor(
       line,
-      lineByRefDetailId
+      lineByRefDetailId,
+      shouldBlockLine
     );
-    const neutral = isNeutralLine(line);
+    const blocksForIncompleteRecipe =
+      isIncompleteRecipeLine(line) && shouldBlockLine(line);
+    const neutral = !blocksForIncompleteRecipe && isNeutralLine(line);
     if (line.deductions.length > 0) actionableLineCount += 1;
     if (neutral) neutralLineCount += 1;
 
     const blocking =
       !neutral &&
-      (hasIncompleteAncestor ||
+      (blocksForIncompleteRecipe ||
+        hasIncompleteAncestor ||
         BLOCKING_STATUSES.has(line.status) ||
         BLOCKING_LINE_TYPES.has(line.lineType) ||
         line.deductions.some(
@@ -238,7 +250,9 @@ function getLineClassification(receipt: PreviewReceipt) {
     if (blocking) {
       blockingReasons.add(
         line.blockedReason ||
-          (hasIncompleteAncestor ? "incomplete_recipe" : null) ||
+          (blocksForIncompleteRecipe || hasIncompleteAncestor
+            ? "incomplete_recipe"
+            : null) ||
           line.status ||
           line.lineType ||
           "inventory_deduction_blocked"
@@ -246,6 +260,7 @@ function getLineClassification(receipt: PreviewReceipt) {
     }
   }
 
+  const receiptStatusCanBlock = BLOCKING_STATUSES.has(receipt.status);
   for (const reason of receipt.blockedReasons) {
     if (
       receipt.status === "applied_after_modified" ||
@@ -253,11 +268,7 @@ function getLineClassification(receipt: PreviewReceipt) {
     ) {
       continue;
     }
-    if (receipt.status === "incomplete_recipe") {
-      blockingReasons.add("incomplete_recipe");
-      continue;
-    }
-    blockingReasons.add(reason);
+    if (receiptStatusCanBlock) blockingReasons.add(reason);
   }
 
   return {
@@ -451,7 +462,7 @@ function classifyReceipt(params: {
 }) {
   const { receipt, previewReceipt, currentFingerprint, history } = params;
   const previewClassification = previewReceipt
-    ? getLineClassification(previewReceipt)
+    ? getLineClassification(previewReceipt, receipt)
     : getEmptyLineClassification();
   const blockingReasons = [...previewClassification.blockingReasons];
   const hasActiveDeduction = history.activeAppliedDeductionCount > 0;
