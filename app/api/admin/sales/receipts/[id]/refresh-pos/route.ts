@@ -13,6 +13,7 @@ import {
   saveReceipts,
   saveLines,
   savePayments,
+  markReceiptsInventoryDeductionEligible,
 } from "@/lib/pos/cukcuk/sales-receipt-sync";
 
 export const runtime = "nodejs";
@@ -252,7 +253,7 @@ export async function POST(
     });
 
     try {
-      await saveReceipts([receiptForSave]);
+      const receiptSaveResult = await saveReceipts([receiptForSave]);
 
       const details = getDetailsFromInvoicePayload(detailPayload);
       const lineRows = details.map((detail, index) =>
@@ -268,7 +269,7 @@ export async function POST(
           syncedAt,
         })
       );
-      await saveLines(lineRows);
+      const lineSaveResult = await saveLines(lineRows);
 
       const payments = getPaymentsFromInvoicePayload(detailPayload);
       const paymentRows = payments.map((payment) =>
@@ -282,6 +283,16 @@ export async function POST(
         })
       );
       await savePayments(paymentRows);
+      await markReceiptsInventoryDeductionEligible(
+        Array.from(
+          new Set([
+            ...receiptSaveResult.autoEligibleReceiptIds,
+            ...lineSaveResult.inventoryChangedReceiptIds,
+          ])
+        ),
+        syncedAt,
+        lineSaveResult.inventoryChangedReceiptIds
+      );
     } catch (saveError) {
       console.error("[SALES_REFRESH_POS_SAVE_FAILED]", {
         receiptId,

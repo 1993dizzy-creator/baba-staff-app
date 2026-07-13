@@ -2,9 +2,8 @@ import crypto from "crypto";
 import { NextResponse } from "next/server";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { supabaseServer } from "@/lib/supabase/server";
-import { buildInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-preview";
-import { saveInventoryDeductionPreviewBatch } from "@/lib/sales/inventory-deduction-batches";
-import { validateInventoryDeductionBatch } from "@/lib/sales/inventory-deduction-batch-validation";
+import { buildUnifiedInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-unified-preview";
+import { executeUnifiedInventoryDeductions } from "@/lib/sales/inventory-deduction-unified-execute";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -95,15 +94,20 @@ async function getCronActor() {
   return { actor: { id: Number(data.id), username: String(data.username) } };
 }
 
-async function getDeductionCandidateReceiptIds(businessDate: string) {
+async function getDeductionCandidateReceiptIds() {
+  const retryBefore = new Date(Date.now() - 15 * 60 * 1000).toISOString();
   const { data, error } = await supabaseServer
     .from("pos_sales_receipts")
     .select("id")
-    .eq("business_date", businessDate)
-    .eq("payment_status", 3)
-    .or("is_canceled.is.null,is_canceled.eq.false")
-    .or("source.is.null,source.neq.manual")
-    .order("id", { ascending: true });
+    .not("inventory_deduction_auto_eligible_at", "is", null)
+    .eq("inventory_deduction_processing_paused", false)
+    .or(
+      `inventory_deduction_last_checked_at.is.null,inventory_deduction_last_checked_at.lt.${retryBefore}`
+    )
+    .or("payment_status.eq.3,is_canceled.eq.true")
+    .order("inventory_deduction_auto_eligible_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(200);
 
   if (error) {
     throw new Error(`Failed to fetch sales deduction candidates: ${error.message}`);
@@ -112,12 +116,63 @@ async function getDeductionCandidateReceiptIds(businessDate: string) {
   return ((data || []) as { id: number }[]).map((row) => Number(row.id));
 }
 
+async function recoverStaleReceiptEditPauses() {
+  const staleBefore = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const { error } = await supabaseServer
+    .from("pos_sales_receipts")
+    .update({
+      inventory_deduction_auto_eligible_at: null,
+      inventory_deduction_processing_paused: false,
+      inventory_deduction_processing_paused_at: null,
+      inventory_deduction_processing_error: "stale_admin_edit",
+    })
+    .eq("inventory_deduction_processing_paused", true)
+    .lt("inventory_deduction_processing_paused_at", staleBefore);
+
+  if (error) {
+    throw new Error(`Failed to recover stale receipt edit pauses: ${error.message}`);
+  }
+}
+
+async function finalizeDeductionCandidate(params: {
+  receiptId: number;
+  terminal: boolean;
+  expectedUpdatedAt: string;
+  fingerprint: string | null;
+  pendingStatus: string;
+}) {
+  const checkedAt = new Date().toISOString();
+  const update = params.terminal
+    ? {
+        inventory_deduction_auto_eligible_at: null,
+        inventory_deduction_last_checked_at: checkedAt,
+        inventory_deduction_reprocess_required: false,
+        inventory_deduction_pending_fingerprint: null,
+        inventory_deduction_pending_status: null,
+      }
+    : {
+        inventory_deduction_last_checked_at: checkedAt,
+        inventory_deduction_pending_fingerprint: params.fingerprint,
+        inventory_deduction_pending_status: params.pendingStatus,
+      };
+  const { error } = await supabaseServer
+    .from("pos_sales_receipts")
+    .update(update)
+    .eq("id", params.receiptId)
+    .eq("updated_at", params.expectedUpdatedAt)
+    .eq("inventory_deduction_processing_paused", false);
+
+  if (error) {
+    throw new Error(`Failed to finalize deduction candidate: ${error.message}`);
+  }
+}
+
 async function applyReceiptDeduction(params: {
   receiptId: number;
   businessDate: string;
   actorUsername: string;
 }) {
-  const preview = await buildInventoryDeductionPreview({
+  const preview = await buildUnifiedInventoryDeductionPreview({
     businessDateFrom: params.businessDate,
     businessDateTo: params.businessDate,
     receiptIds: [params.receiptId],
@@ -125,64 +180,93 @@ async function applyReceiptDeduction(params: {
 
   const receiptPreview = preview.receipts[0];
 
-  if (preview.receipts.length !== 1 || !receiptPreview) {
-    return { outcome: "skipped" as const, reason: "preview_receipt_not_found" };
-  }
-
-  if (receiptPreview.status !== "ready") {
+  if (!receiptPreview) {
     return {
       outcome: "skipped" as const,
-      reason: `not_ready:${receiptPreview.status}`,
+      reason: "preview_receipt_not_found",
+      terminal: false,
+      expectedUpdatedAt: null,
+      fingerprint: null,
+    };
+  }
+
+  if (!receiptPreview.canExecute) {
+    return {
+      outcome: "skipped" as const,
+      terminal: receiptPreview.operationType === "no_op",
+      expectedUpdatedAt: receiptPreview.updatedAt,
+      fingerprint: receiptPreview.currentFingerprint,
+      reason: [
+        receiptPreview.operationType,
+        receiptPreview.rawPreviewStatus,
+        ...receiptPreview.blockingReasons,
+      ]
+        .filter(Boolean)
+        .join(":"),
+    };
+  }
+
+  const executed = await executeUnifiedInventoryDeductions({
+    actorUsername: params.actorUsername,
+    executionId: `cron:${params.businessDate}:${params.receiptId}`,
+    items: [
+      {
+        receiptId: params.receiptId,
+        expectedOperationType: receiptPreview.operationType,
+        expectedFingerprint: receiptPreview.currentFingerprint,
+        expectedInventoryAffectingHash:
+          receiptPreview.inventoryAffectingHash,
+        expectedReceiptUpdatedAt: receiptPreview.updatedAt,
+      },
+    ],
+  });
+  const result = executed.results[0];
+
+  if (!result) {
+    return {
+      outcome: "failed" as const,
+      error: "Unified deduction execution returned no receipt result.",
+      batchId: null,
+      code: null,
+      terminal: false,
+      expectedUpdatedAt: receiptPreview.updatedAt,
+      fingerprint: receiptPreview.currentFingerprint,
+    };
+  }
+
+  if (result.result === "applied" || result.result === "already_processed") {
+    return {
+      outcome: "applied" as const,
+      batchId: result.batchId,
+      terminal: true,
+      expectedUpdatedAt: receiptPreview.updatedAt,
+      fingerprint: receiptPreview.currentFingerprint,
     };
   }
 
   if (
-    receiptPreview.lines.every((line) => line.deductions.length === 0)
+    result.result === "no_op" ||
+    result.result === "needs_check" ||
+    result.result === "stale_preview"
   ) {
-    return { outcome: "skipped" as const, reason: "no_deduction_candidates" };
-  }
-
-  const savedBatch = await saveInventoryDeductionPreviewBatch({
-    preview,
-    actorUsername: params.actorUsername,
-    note: "cron_auto_apply",
-  });
-
-  const validation = await validateInventoryDeductionBatch(savedBatch.batchId);
-
-  if (!validation.found || !validation.applyReady) {
     return {
       outcome: "skipped" as const,
-      reason: "validation_not_apply_ready",
+      terminal: result.result === "no_op",
+      expectedUpdatedAt: receiptPreview.updatedAt,
+      fingerprint: receiptPreview.currentFingerprint,
+      reason: `${result.result}:${result.failureReason || "no_reason"}`,
     };
   }
 
-  const validationReceipts = validation.receipts.map((receipt) => ({
-    receiptId: receipt.receiptId,
-    currentInventoryHash: receipt.currentInventoryHash,
-    currentReceiptUpdatedAt: receipt.currentReceiptUpdatedAt,
-    applyAllowed: receipt.applyAllowed,
-  }));
-
-  const { error } = await supabaseServer.rpc(
-    "apply_sales_inventory_deduction_batch",
-    {
-      p_batch_id: savedBatch.batchId,
-      p_actor_username: params.actorUsername,
-      p_validation_receipts: validationReceipts,
-    }
-  );
-
-  if (error) {
-    return {
-      outcome: "failed" as const,
-      error: error.message,
-      batchId: savedBatch.batchId,
-      code: error.code,
-    };
-  }
-
-  return { outcome: "applied" as const, batchId: savedBatch.batchId };
+  return {
+    outcome: "failed" as const,
+    error: result.failureReason || result.result,
+    batchId: result.batchId,
+    code: result.result,
+    terminal: false,
+    expectedUpdatedAt: receiptPreview.updatedAt,
+    fingerprint: receiptPreview.currentFingerprint,
+  };
 }
 
 export async function GET(req: Request) {
@@ -202,9 +286,8 @@ export async function GET(req: Request) {
   );
 
   try {
-    const candidateReceiptIds = await getDeductionCandidateReceiptIds(
-      businessDate
-    );
+    await recoverStaleReceiptEditPauses();
+    const candidateReceiptIds = await getDeductionCandidateReceiptIds();
 
     const appliedReceiptIds: number[] = [];
     const skipped: SkippedReceipt[] = [];
@@ -217,6 +300,18 @@ export async function GET(req: Request) {
           businessDate,
           actorUsername: actor.username,
         });
+        if (result.expectedUpdatedAt) {
+          await finalizeDeductionCandidate({
+            receiptId,
+            terminal: result.terminal === true,
+            expectedUpdatedAt: result.expectedUpdatedAt,
+            fingerprint: result.fingerprint,
+            pendingStatus:
+              result.outcome === "skipped"
+                ? result.reason
+                : result.outcome,
+          });
+        }
 
         if (result.outcome === "applied") {
           appliedReceiptIds.push(receiptId);

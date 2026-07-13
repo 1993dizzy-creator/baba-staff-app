@@ -888,6 +888,22 @@ export async function POST(req: Request) {
       throw new Error(`Failed to insert receipt payment: ${insertPaymentError.message}`);
     }
 
+    const { error: eligibilityError } = await supabaseServer
+      .from("pos_sales_receipts")
+      .update({
+        inventory_deduction_auto_eligible_at: now,
+        inventory_deduction_reprocess_required: true,
+        inventory_deduction_last_checked_at: null,
+        inventory_deduction_pending_fingerprint: null,
+        inventory_deduction_pending_status: null,
+      })
+      .eq("id", receiptId);
+    if (eligibilityError) {
+      throw new Error(
+        `Failed to enable automatic inventory deduction: ${eligibilityError.message}`
+      );
+    }
+
     return NextResponse.json({
       ok: true,
       receipt: { id: receiptId, refId, refNo, businessDate, finalAmount: receiptFinalAmount },

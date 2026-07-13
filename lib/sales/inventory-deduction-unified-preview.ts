@@ -6,6 +6,10 @@ import {
   getReceiptContentFingerprint,
   type ReceiptContentFingerprintLineInput,
 } from "@/lib/sales/inventory-deduction-fingerprint";
+import {
+  classifyInventoryDeductionWorkflow,
+  type InventoryDeductionWorkflowOperation,
+} from "@/lib/sales/inventory-deduction-workflow-policy";
 
 type InventoryDeductionPreview = Awaited<
   ReturnType<typeof buildInventoryDeductionPreview>
@@ -14,10 +18,7 @@ type PreviewReceipt = InventoryDeductionPreview["receipts"][number];
 type PreviewLine = PreviewReceipt["lines"][number];
 
 export type UnifiedInventoryDeductionOperationType =
-  | "initial_apply"
-  | "reprocess_modified"
-  | "needs_check"
-  | "no_op";
+  InventoryDeductionWorkflowOperation;
 
 type ReceiptRow = {
   id: number;
@@ -28,11 +29,15 @@ type ReceiptRow = {
   payment_status: number | null;
   is_canceled: boolean | null;
   is_modified: boolean | null;
+  inventory_deduction_processing_paused: boolean | null;
+  inventory_deduction_processing_error: string | null;
+  inventory_deduction_reprocess_required: boolean | null;
   updated_at: string | null;
 };
 
 type LineRow = ReceiptContentFingerprintLineInput & {
   receipt_id: number | null;
+  raw_json: unknown;
 };
 
 type DeductionRow = {
@@ -96,6 +101,7 @@ export type UnifiedInventoryDeductionPreview = {
     totalReceiptCount: number;
     initialApplyCount: number;
     reprocessModifiedCount: number;
+    rollbackCanceledCount: number;
     needsCheckCount: number;
     noOpCount: number;
     executableCount: number;
@@ -104,9 +110,9 @@ export type UnifiedInventoryDeductionPreview = {
 };
 
 const RECEIPT_SELECT =
-  "id, ref_id, ref_no, business_date, source, payment_status, is_canceled, is_modified, updated_at";
+  "id, ref_id, ref_no, business_date, source, payment_status, is_canceled, is_modified, inventory_deduction_processing_paused, inventory_deduction_processing_error, inventory_deduction_reprocess_required, updated_at";
 const LINE_SELECT =
-  "receipt_id, ref_detail_id, parent_ref_detail_id, item_id, item_code, quantity, ref_detail_type, inventory_item_type, is_option, is_excluded";
+  "receipt_id, ref_detail_id, parent_ref_detail_id, item_id, item_code, quantity, ref_detail_type, inventory_item_type, is_option, is_excluded, is_canceled, raw_json";
 const DEDUCTION_SELECT =
   "id, receipt_id, status, operation_type, applied_at, updated_at, inventory_log_id, reversal_of_deduction_id, batch_receipt_id";
 const DEDUCTION_RECEIPT_SELECT =
@@ -116,31 +122,31 @@ const SUCCESS_DEDUCTION_STATUSES = new Set(["applied", "success"]);
 const SUCCESS_DEDUCTION_RECEIPT_STATUSES = new Set(["applied"]);
 const NEUTRAL_STATUSES = new Set([
   "keg_tracked",
-  "incomplete_recipe",
-  "combo_incomplete_recipe",
   "ignore",
   "ignored",
   "skipped",
+  "manual_review",
 ]);
 const NEUTRAL_LINE_TYPES = new Set([
   "combo_ignore",
-  "combo_incomplete_recipe",
   "ignore",
-  "incomplete_recipe",
+  "manual",
 ]);
 const BLOCKING_STATUSES = new Set([
   "missing_mapping",
   "invalid_mapping",
-  "manual_review",
   "review_required",
   "insufficient_stock",
+  "incomplete_recipe",
+  "combo_incomplete_recipe",
 ]);
 const BLOCKING_LINE_TYPES = new Set([
   "combo_missing_mapping",
   "combo_invalid_mapping",
   "missing_mapping",
   "invalid_mapping",
-  "manual",
+  "incomplete_recipe",
+  "combo_incomplete_recipe",
 ]);
 
 function isBusinessDate(value: string) {
@@ -151,10 +157,6 @@ function compareIso(left: string | null, right: string | null) {
   if (!left) return right ? -1 : 0;
   if (!right) return 1;
   return new Date(left).getTime() - new Date(right).getTime();
-}
-
-function isAfter(left: string | null, right: string | null) {
-  return compareIso(left, right) > 0;
 }
 
 function isSuccessfulDeduction(row: DeductionRow) {
@@ -217,14 +219,18 @@ function getLineClassification(receipt: PreviewReceipt) {
   let neutralLineCount = 0;
 
   for (const line of receipt.lines) {
-    const neutral =
-      isNeutralLine(line) || hasIncompleteRecipeAncestor(line, lineByRefDetailId);
+    const hasIncompleteAncestor = hasIncompleteRecipeAncestor(
+      line,
+      lineByRefDetailId
+    );
+    const neutral = isNeutralLine(line);
     if (line.deductions.length > 0) actionableLineCount += 1;
     if (neutral) neutralLineCount += 1;
 
     const blocking =
       !neutral &&
-      (BLOCKING_STATUSES.has(line.status) ||
+      (hasIncompleteAncestor ||
+        BLOCKING_STATUSES.has(line.status) ||
         BLOCKING_LINE_TYPES.has(line.lineType) ||
         line.deductions.some(
           (deduction) => deduction.status === "insufficient_stock"
@@ -232,6 +238,7 @@ function getLineClassification(receipt: PreviewReceipt) {
     if (blocking) {
       blockingReasons.add(
         line.blockedReason ||
+          (hasIncompleteAncestor ? "incomplete_recipe" : null) ||
           line.status ||
           line.lineType ||
           "inventory_deduction_blocked"
@@ -246,7 +253,10 @@ function getLineClassification(receipt: PreviewReceipt) {
     ) {
       continue;
     }
-    if (receipt.status === "incomplete_recipe") continue;
+    if (receipt.status === "incomplete_recipe") {
+      blockingReasons.add("incomplete_recipe");
+      continue;
+    }
     blockingReasons.add(reason);
   }
 
@@ -300,7 +310,8 @@ function resolveAppliedHistory(
   const processedReceiptRows = successfulReceiptRows.filter(
     (row) =>
       row.workflow_type === "initial_apply" ||
-      row.workflow_type === "reprocess_modified"
+      row.workflow_type === "reprocess_modified" ||
+      row.workflow_type === "rollback_canceled"
   );
   const lastProcessedWithFingerprint = processedReceiptRows.find(
     (row) => Boolean(row.receipt_content_fingerprint)
@@ -368,6 +379,26 @@ async function fetchReceipts(input: {
   return (data || []) as ReceiptRow[];
 }
 
+function getOptionIdentity(rawJson: unknown) {
+  if (!rawJson || typeof rawJson !== "object" || Array.isArray(rawJson)) {
+    return null;
+  }
+  const row = rawJson as Record<string, unknown>;
+  for (const key of [
+    "InventoryItemAdditionID",
+    "InventoryItemAdditionId",
+    "AdditionID",
+    "AdditionId",
+    "OptionID",
+    "OptionId",
+    "additionId",
+  ]) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 async function fetchLines(receiptIds: number[]) {
   if (receiptIds.length === 0) return [] as LineRow[];
   const { data, error } = await supabaseServer
@@ -379,13 +410,16 @@ async function fetchLines(receiptIds: number[]) {
     receipt_id: line.receipt_id == null ? null : Number(line.receipt_id),
     itemId: line.item_id,
     itemCode: line.item_code,
+    optionIdentity: getOptionIdentity(line.raw_json),
     refDetailId: line.ref_detail_id,
     parentRefDetailId: line.parent_ref_detail_id,
     quantity: line.quantity,
     isOption: line.is_option,
     isExcluded: line.is_excluded,
+    isCanceled: line.is_canceled,
     refDetailType: line.ref_detail_type,
     inventoryItemType: line.inventory_item_type,
+    raw_json: line.raw_json,
   })) as LineRow[];
 }
 
@@ -425,19 +459,27 @@ function classifyReceipt(params: {
     history.hasSuccessfulInventoryProcessingHistory;
   const isCanceled = receipt.is_canceled === true;
 
-  if (hasProcessingHistory && isCanceled) {
+  if (receipt.inventory_deduction_processing_paused === true) {
     return {
       ...previewClassification,
       operationType: "needs_check" as const,
       canExecute: false,
-      blockingReasons: [...blockingReasons, "canceled_after_applied"],
+      blockingReasons: ["receipt_processing_paused"],
+    };
+  }
+
+  if (receipt.inventory_deduction_processing_error) {
+    return {
+      ...previewClassification,
+      operationType: "needs_check" as const,
+      canExecute: false,
+      blockingReasons: [receipt.inventory_deduction_processing_error],
     };
   }
 
   const modifiedAfterLegacyApply =
     history.lastProcessedFingerprint === null &&
-    receipt.is_modified === true &&
-    isAfter(receipt.updated_at, history.lastProcessedAt);
+    receipt.inventory_deduction_reprocess_required === true;
   const modifiedAfterFingerprintApply =
     history.lastProcessedFingerprint !== null &&
     history.lastProcessedFingerprint !== currentFingerprint;
@@ -447,53 +489,19 @@ function classifyReceipt(params: {
     (modifiedAfterLegacyApply || modifiedAfterFingerprintApply) &&
     (hasActiveDeduction || previewClassification.actionableLineCount > 0);
 
-  if (needsReprocess) {
-    if (blockingReasons.length > 0) {
-      return {
-        ...previewClassification,
-        operationType: "needs_check" as const,
-        canExecute: false,
-        blockingReasons,
-      };
-    }
-    return {
-      ...previewClassification,
-      operationType: "reprocess_modified" as const,
-      canExecute: true,
-      blockingReasons,
-    };
-  }
-
-  const isManualInitialCandidate =
-    receipt.source === "manual" &&
-    receipt.payment_status === 3 &&
-    !isCanceled &&
-    !hasProcessingHistory;
-
-  if (isManualInitialCandidate) {
-    if (blockingReasons.length > 0) {
-      return {
-        ...previewClassification,
-        operationType: "needs_check" as const,
-        canExecute: false,
-        blockingReasons,
-      };
-    }
-    if (previewClassification.actionableLineCount > 0) {
-      return {
-        ...previewClassification,
-        operationType: "initial_apply" as const,
-        canExecute: true,
-        blockingReasons,
-      };
-    }
-  }
-
   return {
     ...previewClassification,
-    operationType: "no_op" as const,
-    canExecute: false,
-    blockingReasons,
+    ...classifyInventoryDeductionWorkflow({
+      isPaid: receipt.payment_status === 3,
+      isCanceled,
+      hasProcessingHistory,
+      hasActiveDeduction,
+      hasSuccessfulCurrentFingerprint:
+        history.hasSuccessfulCurrentFingerprint,
+      needsReprocess,
+      actionableLineCount: previewClassification.actionableLineCount,
+      blockingReasons,
+    }),
   };
 }
 
@@ -592,6 +600,9 @@ export async function buildUnifiedInventoryDeductionPreview(input: {
       if (receipt.operationType === "reprocess_modified") {
         counts.reprocessModifiedCount += 1;
       }
+      if (receipt.operationType === "rollback_canceled") {
+        counts.rollbackCanceledCount += 1;
+      }
       if (receipt.operationType === "needs_check") counts.needsCheckCount += 1;
       if (receipt.operationType === "no_op") counts.noOpCount += 1;
       if (receipt.canExecute) counts.executableCount += 1;
@@ -601,6 +612,7 @@ export async function buildUnifiedInventoryDeductionPreview(input: {
       totalReceiptCount: 0,
       initialApplyCount: 0,
       reprocessModifiedCount: 0,
+      rollbackCanceledCount: 0,
       needsCheckCount: 0,
       noOpCount: 0,
       executableCount: 0,

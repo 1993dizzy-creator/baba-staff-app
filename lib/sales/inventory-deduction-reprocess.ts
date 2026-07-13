@@ -43,29 +43,29 @@ type PrepareReprocessParams = {
 const HARD_BLOCKING_STATUSES = new Set([
   "missing_mapping",
   "invalid_mapping",
-  "manual_review",
   "review_required",
+  "incomplete_recipe",
+  "combo_incomplete_recipe",
 ]);
 const HARD_BLOCKING_LINE_TYPES = new Set([
   "combo_missing_mapping",
   "combo_invalid_mapping",
   "missing_mapping",
   "invalid_mapping",
-  "manual",
+  "incomplete_recipe",
+  "combo_incomplete_recipe",
 ]);
 const NEUTRAL_STATUSES = new Set([
   "keg_tracked",
-  "incomplete_recipe",
-  "combo_incomplete_recipe",
   "ignore",
   "ignored",
   "skipped",
+  "manual_review",
 ]);
 const NEUTRAL_LINE_TYPES = new Set([
   "combo_ignore",
-  "combo_incomplete_recipe",
   "ignore",
-  "incomplete_recipe",
+  "manual",
 ]);
 
 function idempotencyKey(parts: Array<string | number | null>) {
@@ -81,16 +81,23 @@ function getHardBlockingReasons(receipt: PreviewReceipt) {
   );
 
   for (const line of receipt.lines) {
-    if (isNeutralLine(line) || hasIncompleteRecipeAncestor(line, lineByRefDetailId)) {
+    if (isNeutralLine(line)) {
       continue;
     }
 
+    const hasIncompleteAncestor = hasIncompleteRecipeAncestor(
+      line,
+      lineByRefDetailId
+    );
+
     if (
+      hasIncompleteAncestor ||
       HARD_BLOCKING_STATUSES.has(line.status) ||
       HARD_BLOCKING_LINE_TYPES.has(line.lineType)
     ) {
       reasons.add(
         line.blockedReason ||
+          (hasIncompleteAncestor ? "incomplete_recipe" : null) ||
           line.status ||
           line.lineType ||
           "inventory_deduction_blocked"
@@ -399,11 +406,7 @@ export async function prepareAndApplyReprocessInventoryDeduction(
       appliedDeductionCount: 0,
       affectedInventoryCount: 0,
       rollbackOnly: false,
-      failureReason: unifiedReceipt.blockingReasons.includes(
-        "canceled_after_applied"
-      )
-        ? "canceled_after_applied"
-        : "receipt_not_previewable",
+      failureReason: "receipt_not_previewable",
     };
   }
 
@@ -443,22 +446,6 @@ export async function prepareAndApplyReprocessInventoryDeduction(
       affectedInventoryCount: 0,
       rollbackOnly: false,
       failureReason: "receipt_updated_at_changed",
-    };
-  }
-
-  if (unifiedReceipt.blockingReasons.includes("canceled_after_applied")) {
-    return {
-      ok: false,
-      result: "not_supported",
-      receiptId: params.receiptId,
-      batchId: null,
-      deductionReceiptId: null,
-      fingerprint: unifiedReceipt.currentFingerprint,
-      reversedDeductionCount: 0,
-      appliedDeductionCount: 0,
-      affectedInventoryCount: 0,
-      rollbackOnly: false,
-      failureReason: "canceled_after_applied",
     };
   }
 

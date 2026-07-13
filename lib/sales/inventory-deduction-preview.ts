@@ -18,7 +18,7 @@ const PAGE_SIZE = 1000;
 const RECEIPT_SELECT =
   "id, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, is_modified, review_status, updated_at";
 const LINE_SELECT =
-  "id, receipt_id, receipt_ref_id, ref_detail_id, parent_ref_detail_id, sort_order, item_id, item_code, item_name, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, ref_detail_type, inventory_item_type, is_option, is_excluded, mapping_status, raw_json, ref_date, synced_at, updated_at";
+  "id, receipt_id, receipt_ref_id, ref_detail_id, parent_ref_detail_id, sort_order, item_id, item_code, item_name, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, ref_detail_type, inventory_item_type, is_option, is_excluded, is_canceled, mapping_status, raw_json, ref_date, synced_at, updated_at";
 const PRODUCT_SELECT =
   "id, source, branch_id, pos_item_id, item_id, item_code, item_name, item_name_vi, category_name, unit_name, is_active, is_sold, raw_json";
 const MAPPING_SELECT =
@@ -67,6 +67,7 @@ type LineRow = {
   inventory_item_type: number | null;
   is_option: boolean | null;
   is_excluded: boolean | null;
+  is_canceled: boolean | null;
   mapping_status: string | null;
   raw_json: unknown;
   ref_date: string | null;
@@ -311,11 +312,18 @@ function addBlockedReason(receipt: WorkingReceipt, reason: string) {
 
 function resolveBlockedStatus(lines: PreviewLine[]) {
   const hasDeductionLines = lines.some((line) => line.deductions.length > 0);
-  if (hasDeductionLines) return null;
   const statuses = new Set(lines.map((line) => line.status));
   if (statuses.has("missing_mapping")) return "missing_mapping" as const;
-  if (statuses.has("manual_review")) return "manual_review" as const;
+  if (!hasDeductionLines && statuses.has("manual_review")) {
+    return "manual_review" as const;
+  }
   if (statuses.has("invalid_mapping")) return "invalid_mapping" as const;
+  if (
+    statuses.has("incomplete_recipe") ||
+    statuses.has("combo_incomplete_recipe")
+  ) {
+    return "incomplete_recipe" as const;
+  }
   return null;
 }
 
@@ -324,7 +332,11 @@ function hasDeductionCandidates(lines: PreviewLine[]) {
 }
 
 function hasIncompleteRecipeLines(lines: PreviewLine[]) {
-  return lines.some((line) => line.status === "incomplete_recipe");
+  return lines.some(
+    (line) =>
+      line.status === "incomplete_recipe" ||
+      line.status === "combo_incomplete_recipe"
+  );
 }
 
 function getAppliedDeductionKey(row: {
@@ -352,6 +364,9 @@ export async function buildInventoryDeductionPreview(input: {
     .select(RECEIPT_SELECT)
     .eq("payment_status", 3)
     .or("is_canceled.is.null,is_canceled.eq.false")
+    .or(
+      "inventory_deduction_processing_paused.is.null,inventory_deduction_processing_paused.eq.false"
+    )
     .order("business_date", { ascending: true })
     .order("id", { ascending: true });
 
@@ -808,7 +823,7 @@ export async function buildInventoryDeductionPreview(input: {
           : null,
       };
 
-      if (line.is_excluded === true) {
+      if (line.is_excluded === true || line.is_canceled === true) {
         return {
           ...base,
           lineType: "ignore" as const,

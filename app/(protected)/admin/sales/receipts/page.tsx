@@ -550,6 +550,7 @@ type BatchApplyResult = {
 type UnifiedOperationType =
   | "initial_apply"
   | "reprocess_modified"
+  | "rollback_canceled"
   | "needs_check"
   | "no_op";
 
@@ -589,6 +590,7 @@ type UnifiedPreview = {
     totalReceiptCount: number;
     initialApplyCount: number;
     reprocessModifiedCount: number;
+    rollbackCanceledCount: number;
     needsCheckCount: number;
     noOpCount: number;
     executableCount: number;
@@ -678,6 +680,7 @@ const inventoryPreviewText = {
       executable: "처리 가능",
       initialApply: "신규 차감",
       reprocessModified: "수정 재처리",
+      rollbackCanceled: "취소 차감 복구",
       needsCheck: "확인 필요",
       noOp: "처리 대상 없음",
       restoreAndReapply: "복구 후 재차감",
@@ -708,12 +711,18 @@ const inventoryPreviewText = {
         inventory_affecting_hash_changed: "재고차감 계획이 변경되었습니다",
         receipt_updated: "영수증이 다시 수정되었습니다",
         receipt_updated_at_changed: "영수증이 다시 수정되었습니다",
+        receipt_processing_paused:
+          "영수증 수정이 완료되지 않아 자동 차감이 중지되었습니다",
+        admin_edit_failed:
+          "영수증 수정 저장이 실패했습니다. 내용을 확인한 뒤 다시 저장하세요",
+        stale_admin_edit:
+          "중단된 영수증 수정이 감지되었습니다. 내용을 확인한 뒤 다시 저장하세요",
         operation_changed: "처리 유형이 변경되었습니다",
         blocking_status: "확인이 필요한 품목이 있습니다",
         insufficient_stock_after_reversal: "재처리 후 재고가 부족합니다",
         legacy_metadata_missing: "과거 차감 정보가 부족합니다",
-        canceled_after_applied_not_supported:
-          "차감 후 취소된 영수증은 아직 자동 처리할 수 없습니다",
+        canceled_without_active_deduction:
+          "취소됐지만 복구할 활성 차감 이력을 찾을 수 없습니다",
         no_inventory_movement: "변경할 재고가 없습니다",
         apply_failed: "신규 차감 처리에 실패했습니다",
         reprocess_failed: "수정 영수증 재처리에 실패했습니다",
@@ -863,6 +872,7 @@ const inventoryPreviewText = {
       executable: "Có thể xử lý",
       initialApply: "Trừ tồn kho mới",
       reprocessModified: "Xử lý lại sau chỉnh sửa",
+      rollbackCanceled: "Hoàn tồn kho hóa đơn hủy",
       needsCheck: "Cần kiểm tra",
       noOp: "Không cần xử lý",
       restoreAndReapply: "Hoàn lại rồi trừ lại",
@@ -893,12 +903,18 @@ const inventoryPreviewText = {
         inventory_affecting_hash_changed: "Kế hoạch trừ kho đã thay đổi",
         receipt_updated: "Hóa đơn đã được chỉnh sửa lại",
         receipt_updated_at_changed: "Hóa đơn đã được chỉnh sửa lại",
+        receipt_processing_paused:
+          "Chỉnh sửa hóa đơn chưa hoàn tất nên đã tạm dừng trừ kho tự động",
+        admin_edit_failed:
+          "Lưu chỉnh sửa hóa đơn thất bại. Hãy kiểm tra và lưu lại",
+        stale_admin_edit:
+          "Phát hiện chỉnh sửa hóa đơn bị gián đoạn. Hãy kiểm tra và lưu lại",
         operation_changed: "Loại xử lý đã thay đổi",
         blocking_status: "Có món cần kiểm tra",
         insufficient_stock_after_reversal: "Không đủ tồn kho sau khi xử lý lại",
         legacy_metadata_missing: "Thiếu dữ liệu trừ kho cũ",
-        canceled_after_applied_not_supported:
-          "Hóa đơn đã hủy sau khi trừ kho chưa thể xử lý tự động",
+        canceled_without_active_deduction:
+          "Không tìm thấy lịch sử trừ kho đang hoạt động để hoàn lại",
         no_inventory_movement: "Không có tồn kho cần thay đổi",
         apply_failed: "Xử lý trừ mới thất bại",
         reprocess_failed: "Xử lý lại hóa đơn đã chỉnh sửa thất bại",
@@ -1185,8 +1201,30 @@ function isReceiptDisplayProblemLine(
 
 function getReceiptListDeductionBadge(
   receipt: InventoryDeductionPreview["receipts"][number] | undefined,
-  text: InventoryPreviewCopy
+  text: InventoryPreviewCopy,
+  workflow?: UnifiedPreviewReceipt
 ) {
+  if (workflow?.operationType === "rollback_canceled") {
+    return {
+      label: text.unified.rollbackCanceled,
+      toneStyle: previewStatusBlockedStyle,
+    };
+  }
+  if (workflow?.operationType === "reprocess_modified") {
+    return { label: text.status.modified, toneStyle: previewStatusBlockedStyle };
+  }
+  if (workflow?.operationType === "needs_check") {
+    return { label: text.status.needsCheck, toneStyle: previewStatusBlockedStyle };
+  }
+  if (workflow?.operationType === "initial_apply") {
+    return { label: text.status.ready, toneStyle: previewStatusReadyStyle };
+  }
+  if (workflow?.activeDeductionCount) {
+    return {
+      label: text.status.alreadyApplied,
+      toneStyle: previewStatusAlreadyAppliedStyle,
+    };
+  }
   if (!receipt) return null;
 
   if (receipt.status === "applied_after_modified") {
@@ -1554,6 +1592,9 @@ function getUnifiedOperationLabel(
   if (operationType === "reprocess_modified") {
     return text.unified.reprocessModified;
   }
+  if (operationType === "rollback_canceled") {
+    return text.unified.rollbackCanceled;
+  }
   if (operationType === "needs_check") return text.unified.needsCheck;
   return text.unified.noOp;
 }
@@ -1561,6 +1602,7 @@ function getUnifiedOperationLabel(
 function getUnifiedOperationStyle(operationType: UnifiedOperationType | null) {
   if (operationType === "initial_apply") return previewStatusReadyStyle;
   if (operationType === "reprocess_modified") return previewStatusAlreadyAppliedStyle;
+  if (operationType === "rollback_canceled") return previewStatusBlockedStyle;
   if (operationType === "needs_check") return previewStatusBlockedStyle;
   return previewStatusSkippedStyle;
 }
@@ -1899,6 +1941,9 @@ export default function SalesReceiptsPage() {
   const [receiptDeductionPreview, setReceiptDeductionPreview] = useState<
     InventoryDeductionPreview["receipts"] | null
   >(null);
+  const [receiptUnifiedPreview, setReceiptUnifiedPreview] = useState<
+    UnifiedPreviewReceipt[] | null
+  >(null);
   const [receiptDeductionPreviewRefreshToken, setReceiptDeductionPreviewRefreshToken] =
     useState(0);
   const [unifiedPreview, setUnifiedPreview] = useState<UnifiedPreview | null>(
@@ -1941,6 +1986,13 @@ export default function SalesReceiptsPage() {
     });
     return map;
   }, [receiptDeductionPreview]);
+  const receiptUnifiedPreviewByReceiptId = useMemo(() => {
+    const map = new Map<number, UnifiedPreviewReceipt>();
+    (receiptUnifiedPreview || []).forEach((receipt) => {
+      map.set(receipt.receiptId, receipt);
+    });
+    return map;
+  }, [receiptUnifiedPreview]);
   const receiptListIncompleteRecipeLineCount = useMemo(
     () => getIncompleteRecipeLineCount(receiptDeductionPreview),
     [receiptDeductionPreview]
@@ -1990,6 +2042,7 @@ export default function SalesReceiptsPage() {
     setExpandedReceiptId(null);
     setDetailErrorByReceiptId({});
     setReceiptDeductionPreview(null);
+    setReceiptUnifiedPreview(null);
     setUnifiedPreview(null);
     setUnifiedPreviewError("");
     setUnifiedExecuteResult(null);
@@ -2001,6 +2054,7 @@ export default function SalesReceiptsPage() {
   useEffect(() => {
     if (!canSyncMenu || !currentUser?.username || !receiptIdsKey) {
       setReceiptDeductionPreview(null);
+      setReceiptUnifiedPreview(null);
       return;
     }
 
@@ -2029,9 +2083,32 @@ export default function SalesReceiptsPage() {
         }
 
         setReceiptDeductionPreview(result.preview.receipts);
+
+        const unifiedRes = await fetch(
+          "/api/admin/sales/inventory-deductions/unified-preview",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              actorUsername: currentUser?.username,
+              receiptIds,
+            }),
+            signal: controller.signal,
+            cache: "no-store",
+          }
+        );
+        const unifiedResult = (await unifiedRes.json().catch(() => null)) as
+          | UnifiedPreviewResponse
+          | null;
+        setReceiptUnifiedPreview(
+          unifiedRes.ok && unifiedResult?.ok && unifiedResult.preview
+            ? unifiedResult.preview.receipts
+            : null
+        );
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         setReceiptDeductionPreview(null);
+        setReceiptUnifiedPreview(null);
       }
     }
 
@@ -2708,6 +2785,7 @@ export default function SalesReceiptsPage() {
             autoOpenEditReceiptId={autoOpenEditReceiptId}
             deductionText={inventoryText}
             deductionPreviewByReceiptId={receiptDeductionPreviewByReceiptId}
+            unifiedPreviewByReceiptId={receiptUnifiedPreviewByReceiptId}
             onToggleReceipt={handleToggleReceipt}
             onSaveEdit={handleSaveReceiptEdit}
             onRequestEdit={handleRequestEdit}
@@ -2804,6 +2882,7 @@ function UnifiedInventoryDeductionPanel({
     [text.unified.executable, executableReceipts.length],
     [text.unified.initialApply, preview.summary.initialApplyCount],
     [text.unified.reprocessModified, preview.summary.reprocessModifiedCount],
+    [text.unified.rollbackCanceled, preview.summary.rollbackCanceledCount],
     [text.unified.needsCheck, preview.summary.needsCheckCount],
     [text.unified.noOp, preview.summary.noOpCount],
   ] as const;
@@ -3530,6 +3609,7 @@ function ReceiptList({
   autoOpenEditReceiptId,
   deductionText,
   deductionPreviewByReceiptId,
+  unifiedPreviewByReceiptId,
   onToggleReceipt,
   onSaveEdit,
   onRequestEdit,
@@ -3552,6 +3632,7 @@ function ReceiptList({
     number,
     InventoryDeductionPreview["receipts"][number]
   >;
+  unifiedPreviewByReceiptId: Map<number, UnifiedPreviewReceipt>;
   onToggleReceipt: (receiptId: number) => void;
   onSaveEdit: (input: SaveReceiptEditInput) => void;
   onRequestEdit: (receipt: ReceiptItem) => void;
@@ -3594,6 +3675,7 @@ function ReceiptList({
               isExpanded={isExpanded}
               deductionText={deductionText}
               deductionPreview={deductionPreviewByReceiptId.get(receipt.id)}
+              unifiedPreview={unifiedPreviewByReceiptId.get(receipt.id)}
               onToggle={() => onToggleReceipt(receipt.id)}
             />
             {isExpanded ? (
@@ -3610,6 +3692,7 @@ function ReceiptList({
                 autoOpenEdit={autoOpenEditReceiptId === receipt.id}
                 deductionText={deductionText}
                 deductionPreview={deductionPreviewByReceiptId.get(receipt.id)}
+                unifiedPreview={unifiedPreviewByReceiptId.get(receipt.id)}
                 onSaveEdit={onSaveEdit}
                 onRequestEdit={() => onRequestEdit(receipt)}
               />
@@ -3627,6 +3710,7 @@ function ReceiptRow({
   isExpanded,
   deductionText,
   deductionPreview,
+  unifiedPreview,
   onToggle,
 }: {
   text: SalesReceiptsViewText;
@@ -3634,6 +3718,7 @@ function ReceiptRow({
   isExpanded: boolean;
   deductionText: InventoryPreviewCopy;
   deductionPreview?: InventoryDeductionPreview["receipts"][number];
+  unifiedPreview?: UnifiedPreviewReceipt;
   onToggle: () => void;
 }) {
   const statusLabel = getPaymentStatusLabel(receipt, text);
@@ -3651,7 +3736,8 @@ function ReceiptRow({
         : paidBadgeStyle;
   const deductionBadge = getReceiptListDeductionBadge(
     deductionPreview,
-    deductionText
+    deductionText,
+    unifiedPreview
   );
 
   return (
@@ -3728,6 +3814,7 @@ function ReceiptDropdown({
   autoOpenEdit,
   deductionText,
   deductionPreview,
+  unifiedPreview,
   onSaveEdit,
   onRequestEdit,
 }: {
@@ -3743,6 +3830,7 @@ function ReceiptDropdown({
   autoOpenEdit: boolean;
   deductionText: InventoryPreviewCopy;
   deductionPreview?: InventoryDeductionPreview["receipts"][number];
+  unifiedPreview?: UnifiedPreviewReceipt;
   onSaveEdit: (input: SaveReceiptEditInput) => void;
   onRequestEdit: () => void;
 }) {
@@ -3766,6 +3854,11 @@ function ReceiptDropdown({
     return null;
   }
   const receipt = detail.receipt;
+  const workflowBadge = getReceiptListDeductionBadge(
+    deductionPreview,
+    deductionText,
+    unifiedPreview
+  );
   const payments = detail.payments || [];
   const activeLines = (detail.lines || []).filter(
     (line) => line.isExcluded !== true
@@ -3800,6 +3893,17 @@ function ReceiptDropdown({
 
   return (
     <div style={dropdownStyle}>
+      {workflowBadge ? (
+        <span
+          style={{
+            ...previewStatusStyle,
+            ...workflowBadge.toneStyle,
+            alignSelf: "flex-start",
+          }}
+        >
+          {workflowBadge.label}
+        </span>
+      ) : null}
       <DetailSection title={text.salesItems}>
         <div style={lineListStyle}>
           {activeLines.map((line) => {

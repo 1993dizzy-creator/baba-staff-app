@@ -713,9 +713,11 @@ export async function PATCH(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  let receiptId: number | null = null;
+  let pauseAcquired = false;
   try {
     const { id } = await context.params;
-    const receiptId = parseReceiptId(id);
+    receiptId = parseReceiptId(id);
 
     if (!receiptId) {
       return NextResponse.json(
@@ -961,6 +963,29 @@ export async function PATCH(
 
       resolvedOptions.set(line.clientId, option);
     }
+
+    const inventoryContentChanged = nextLines.some((line) => {
+      if (line.mode === "create" || line.mode === "delete") return true;
+      const currentLine = currentLineById.get(line.id);
+      return !currentLine || toNumber(currentLine.quantity) !== line.quantity;
+    });
+
+    const { error: pauseDeductionError } = await supabaseServer
+      .from("pos_sales_receipts")
+      .update({
+        inventory_deduction_auto_eligible_at: null,
+        inventory_deduction_processing_paused: true,
+        inventory_deduction_processing_paused_at: now,
+        inventory_deduction_processing_error: null,
+        updated_at: now,
+      })
+      .eq("id", receiptId);
+    if (pauseDeductionError) {
+      throw new Error(
+        `Failed to pause automatic inventory deduction: ${pauseDeductionError.message}`
+      );
+    }
+    pauseAcquired = true;
 
     const deletedIds = new Set(
       nextLines
@@ -1345,6 +1370,7 @@ export async function PATCH(
       throw new Error(`Failed to insert sales receipt payment: ${insertPaymentError.message}`);
     }
 
+    const completedAt = new Date().toISOString();
     const receiptUpdate: Record<string, unknown> = {
       total_amount: nextReceiptSalesSubtotal,
       discount_amount: nextReceiptDiscount,
@@ -1355,7 +1381,15 @@ export async function PATCH(
       modified_at: now,
       modified_by: actor.username,
       modification_note: note,
-      updated_at: now,
+      inventory_deduction_auto_eligible_at: completedAt,
+      inventory_deduction_processing_paused: false,
+      inventory_deduction_processing_paused_at: null,
+      inventory_deduction_processing_error: null,
+      inventory_deduction_reprocess_required: inventoryContentChanged,
+      inventory_deduction_last_checked_at: null,
+      inventory_deduction_pending_fingerprint: null,
+      inventory_deduction_pending_status: null,
+      updated_at: completedAt,
     };
 
     if (!existingOriginalTaxSummary) {
@@ -1374,6 +1408,7 @@ export async function PATCH(
     if (error) {
       throw new Error(`Failed to update sales receipt: ${error.message}`);
     }
+    pauseAcquired = false;
 
     return NextResponse.json({
       ok: true,
@@ -1391,6 +1426,24 @@ export async function PATCH(
     });
   } catch (error) {
     console.error("[ADMIN_SALES_RECEIPT_DETAIL_PATCH_ERROR]", error);
+
+    if (pauseAcquired && receiptId) {
+      const { error: cleanupError } = await supabaseServer
+        .from("pos_sales_receipts")
+        .update({
+          inventory_deduction_auto_eligible_at: null,
+          inventory_deduction_processing_paused: false,
+          inventory_deduction_processing_paused_at: null,
+          inventory_deduction_processing_error: "admin_edit_failed",
+        })
+        .eq("id", receiptId);
+      if (cleanupError) {
+        console.error("[ADMIN_SALES_RECEIPT_PAUSE_CLEANUP_ERROR]", {
+          receiptId,
+          error: cleanupError.message,
+        });
+      }
+    }
 
     return NextResponse.json(
       {

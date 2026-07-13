@@ -1,4 +1,6 @@
 import { supabaseServer } from "@/lib/supabase/server";
+import { hasInventoryAffectingSalesLineChanged } from "@/lib/pos/cukcuk/sales-receipt-inventory-change";
+import { stripVolatilePosSyncFields } from "@/lib/pos/cukcuk/sales-receipt-sync-compare";
 
 export const CUKCUK_BASE_URL =
   process.env.CUKCUK_BASE_URL || "https://graphapi.cukcuk.vn";
@@ -533,7 +535,15 @@ function hasReceiptChanged(existing: ExistingReceiptRow, next: ReceiptRow) {
     "raw_json",
   ];
 
-  return compareKeys.some((key) => !isEqualValue(existing[key], next[key]));
+  return compareKeys.some((key) => {
+    if (key === "raw_json") {
+      return !isEqualValue(
+        stripVolatilePosSyncFields(existing[key]),
+        stripVolatilePosSyncFields(next[key])
+      );
+    }
+    return !isEqualValue(existing[key], next[key]);
+  });
 }
 
 function hasLineChanged(existing: ExistingLineRow, next: LineRow) {
@@ -874,6 +884,7 @@ export async function excludeStaleLines(params: {
       candidateCount: 0,
       excludedCount: 0,
       skippedCount: 0,
+      changedReceiptIds: [] as number[],
       timing: {
         initialQueriesMs: 0,
         staleCandidateBuildMs: 0,
@@ -907,6 +918,7 @@ export async function excludeStaleLines(params: {
   let skippedCount = 0;
   let staleCandidateBuildMs = 0;
   let staleUpdateMs = 0;
+  const changedReceiptIds = new Set<number>();
 
   for (const receiptRefId of receiptRefIds) {
     const buildStepStartedAt = Date.now();
@@ -936,24 +948,45 @@ export async function excludeStaleLines(params: {
     const activeLineSum = sumLineFinalAmount(activeLines);
     const staleCandidateSum = sumLineFinalAmount(staleCandidates);
     const overageAmount = activeLineSum - receipt.total_amount;
+    const payloadRefDetailIds = new Set(
+      payloadRows
+        .map((line) => line.ref_detail_id)
+        .filter((id): id is string => Boolean(id))
+    );
+    const hasAuthoritativeDetailIds =
+      payloadRefDetailIds.size === payloadRows.length &&
+      staleCandidates.every(
+        (line) =>
+          Boolean(line.ref_detail_id) &&
+          !payloadRefDetailIds.has(line.ref_detail_id as string)
+      );
     const skipReason = (() => {
       if (receipt.is_modified === true) return "receipt_modified";
       if (receipt.is_canceled === true) return "receipt_canceled";
-      if (receiptsWithDeductions.has(receipt.id)) return "deduction_linked";
       if (ambiguousCount > 0) return "ambiguous_payload_match";
       if (params.skippedFallbackReceiptRefIds.has(receiptRefId)) {
         return "fallback_match_skipped";
       }
+      if (!hasAuthoritativeDetailIds && receiptsWithDeductions.has(receipt.id)) {
+        return "deduction_linked_without_authoritative_ids";
+      }
       if (
-        payloadRows.some(isOptionOrLinkedLine) ||
-        activeLines.some(isOptionOrLinkedLine)
+        !hasAuthoritativeDetailIds &&
+        (payloadRows.some(isOptionOrLinkedLine) ||
+          activeLines.some(isOptionOrLinkedLine))
       ) {
         return "option_or_parent_lines_present";
       }
-      if (!isSameAmount(payloadSum, receipt.total_amount)) {
+      if (
+        !hasAuthoritativeDetailIds &&
+        !isSameAmount(payloadSum, receipt.total_amount)
+      ) {
         return "payload_sum_mismatch";
       }
-      if (overageAmount <= 0 || !isSameAmount(staleCandidateSum, overageAmount)) {
+      if (
+        !hasAuthoritativeDetailIds &&
+        (overageAmount <= 0 || !isSameAmount(staleCandidateSum, overageAmount))
+      ) {
         return "stale_sum_mismatch";
       }
       return null;
@@ -994,6 +1027,7 @@ export async function excludeStaleLines(params: {
     }
 
     excludedCount += staleLineIds.length;
+    changedReceiptIds.add(receipt.id);
     console.warn("[SALES_SYNC_STALE_LINES_EXCLUDED]", {
       receiptRefId,
       receiptId: receipt.id,
@@ -1010,6 +1044,7 @@ export async function excludeStaleLines(params: {
     candidateCount,
     excludedCount,
     skippedCount,
+    changedReceiptIds: Array.from(changedReceiptIds),
     timing: {
       initialQueriesMs,
       staleCandidateBuildMs,
@@ -1097,6 +1132,8 @@ export async function saveReceipts(rows: ReceiptRow[]) {
       createdCount: 0,
       updatedCount: 0,
       statusChangedCount: 0,
+      changedReceiptIds: [] as number[],
+      autoEligibleReceiptIds: [] as number[],
       timing: emptyTiming,
     };
   }
@@ -1111,6 +1148,14 @@ export async function saveReceipts(rows: ReceiptRow[]) {
     const existing = existingMap.get(row.ref_id);
     return existing && !existing.is_modified ? hasReceiptChanged(existing, row) : false;
   });
+  const protectedStatusUpdates = rows.filter((row) => {
+    const existing = existingMap.get(row.ref_id);
+    return (
+      existing?.is_modified === true &&
+      (existing.payment_status !== row.payment_status ||
+        existing.is_canceled !== row.is_canceled)
+    );
+  });
   const statusChangedCount =
     inserts.filter((row) => row.is_canceled).length +
     updates.filter((row) => {
@@ -1120,7 +1165,8 @@ export async function saveReceipts(rows: ReceiptRow[]) {
         (existing.payment_status !== row.payment_status ||
           existing.is_canceled !== row.is_canceled)
       );
-    }).length;
+    }).length +
+    protectedStatusUpdates.length;
   const compareReceiptsMs = Date.now() - compareStartedAt;
 
   // Perf: the receipt ID for every ref_id we already had (whether updated or
@@ -1168,11 +1214,50 @@ export async function saveReceipts(rows: ReceiptRow[]) {
     updateReceiptsMs = Date.now() - updateStartedAt;
   }
 
+  if (protectedStatusUpdates.length > 0) {
+    const updateStartedAt = Date.now();
+    for (const row of protectedStatusUpdates) {
+      const id = existingMap.get(row.ref_id)?.id;
+      const { error } = await supabaseServer
+        .from("pos_sales_receipts")
+        .update({
+          payment_status: row.payment_status,
+          is_canceled: row.is_canceled,
+          synced_at: row.synced_at,
+          updated_at: row.updated_at,
+        })
+        .eq("id", id);
+      if (error) {
+        throw new Error(
+          `Failed to update protected receipt status ${row.ref_id}: ${error.message}`
+        );
+      }
+    }
+    updateReceiptsMs += Date.now() - updateStartedAt;
+  }
+
   return {
     receiptIdMap: finalReceiptIdMap,
     createdCount: inserts.length,
-    updatedCount: updates.length,
+    updatedCount: updates.length + protectedStatusUpdates.length,
     statusChangedCount,
+    changedReceiptIds: [...inserts, ...updates, ...protectedStatusUpdates]
+      .map((row) => finalReceiptIdMap.get(row.ref_id))
+      .filter((id): id is number => id !== undefined),
+    autoEligibleReceiptIds: [
+      ...inserts,
+      ...updates.filter((row) => {
+        const existing = existingMap.get(row.ref_id);
+        return (
+          existing &&
+          (existing.payment_status !== row.payment_status ||
+            existing.is_canceled !== row.is_canceled)
+        );
+      }),
+      ...protectedStatusUpdates,
+    ]
+      .map((row) => finalReceiptIdMap.get(row.ref_id))
+      .filter((id): id is number => id !== undefined),
     timing: {
       getExistingReceiptsMs,
       compareReceiptsMs,
@@ -1181,6 +1266,54 @@ export async function saveReceipts(rows: ReceiptRow[]) {
       buildReceiptIdMapMs,
     },
   };
+}
+
+export async function markReceiptsInventoryDeductionEligible(
+  receiptIds: number[],
+  eligibleAt: string,
+  inventoryChangedReceiptIds: number[] = []
+) {
+  const ids = Array.from(
+    new Set(receiptIds.filter((id) => Number.isInteger(id) && id > 0))
+  );
+  if (ids.length === 0) return;
+
+  const { error } = await supabaseServer
+    .from("pos_sales_receipts")
+    .update({
+      inventory_deduction_auto_eligible_at: eligibleAt,
+      inventory_deduction_last_checked_at: null,
+      inventory_deduction_pending_fingerprint: null,
+      inventory_deduction_pending_status: null,
+    })
+    .in("id", ids);
+
+  if (error) {
+    throw new Error(
+      `Failed to mark sales receipts for automatic deduction: ${error.message}`
+    );
+  }
+
+  const inventoryIds = Array.from(
+    new Set(
+      inventoryChangedReceiptIds.filter(
+        (id) => ids.includes(id) && Number.isInteger(id) && id > 0
+      )
+    )
+  );
+  if (inventoryIds.length === 0) return;
+
+  const { error: reprocessError } = await supabaseServer
+    .from("pos_sales_receipts")
+    .update({ inventory_deduction_reprocess_required: true })
+    .in("id", inventoryIds)
+    .or("is_modified.is.null,is_modified.eq.false");
+
+  if (reprocessError) {
+    throw new Error(
+      `Failed to mark inventory-changing receipts: ${reprocessError.message}`
+    );
+  }
 }
 
 export async function saveLines(rows: LineRow[]) {
@@ -1208,6 +1341,7 @@ export async function saveLines(rows: LineRow[]) {
       staleCandidateCount: 0,
       staleExcludedCount: 0,
       staleSkippedCount: 0,
+      inventoryChangedReceiptIds: [] as number[],
       timing: emptyTiming,
     };
   }
@@ -1298,6 +1432,44 @@ export async function saveLines(rows: LineRow[]) {
       row.tax_reduction_amount !== 0
   ).length;
   const compareLinesMs = Date.now() - compareStartedAt;
+  const inventoryChangedReceiptIds = new Set<number>(
+    inserts
+      .map((row) => row.receipt_id)
+      .filter((id): id is number => id !== null)
+  );
+  updates.forEach(({ row, existing }) => {
+    if (
+      row.receipt_id !== null &&
+      hasInventoryAffectingSalesLineChanged(
+        {
+          refDetailId: existing.ref_detail_id,
+          parentRefDetailId: existing.parent_ref_detail_id,
+          itemId: existing.item_id,
+          itemCode: existing.item_code,
+          quantity: existing.quantity,
+          refDetailType: existing.ref_detail_type,
+          inventoryItemType: existing.inventory_item_type,
+          isOption: existing.is_option,
+          isExcluded: existing.is_excluded,
+          isCanceled: existing.is_canceled,
+        },
+        {
+          refDetailId: row.ref_detail_id,
+          parentRefDetailId: row.parent_ref_detail_id,
+          itemId: row.item_id,
+          itemCode: row.item_code,
+          quantity: row.quantity,
+          refDetailType: row.ref_detail_type,
+          inventoryItemType: row.inventory_item_type,
+          isOption: row.is_option,
+          isExcluded: false,
+          isCanceled: row.is_canceled,
+        }
+      )
+    ) {
+      inventoryChangedReceiptIds.add(row.receipt_id);
+    }
+  });
 
   let insertLinesMs = 0;
   if (inserts.length > 0) {
@@ -1336,6 +1508,9 @@ export async function saveLines(rows: LineRow[]) {
     receiptRows,
     skippedFallbackReceiptRefIds,
   });
+  staleLineResult.changedReceiptIds.forEach((id) =>
+    inventoryChangedReceiptIds.add(id)
+  );
   const excludeStaleLinesMs = Date.now() - excludeStaleLinesStartedAt;
 
   return {
@@ -1348,6 +1523,7 @@ export async function saveLines(rows: LineRow[]) {
     staleCandidateCount: staleLineResult.candidateCount,
     staleExcludedCount: staleLineResult.excludedCount,
     staleSkippedCount: staleLineResult.skippedCount,
+    inventoryChangedReceiptIds: Array.from(inventoryChangedReceiptIds),
     timing: {
       initialQueriesMs,
       compareLinesMs,

@@ -21,6 +21,7 @@ import {
   saveReceipts,
   saveLines,
   savePayments,
+  markReceiptsInventoryDeductionEligible,
   getReceiptPaymentSources,
   dedupePaymentRows,
   stripRawJson,
@@ -621,6 +622,16 @@ export async function POST(req: Request) {
     buildPaymentRowsMs += Date.now() - buildPaymentRowsStartedAt2;
 
     const paymentSaveResult = await savePayments(paymentRows);
+    await markReceiptsInventoryDeductionEligible(
+      Array.from(
+        new Set([
+          ...receiptSaveResult.autoEligibleReceiptIds,
+          ...lineSaveResult.inventoryChangedReceiptIds,
+        ])
+      ),
+      syncedAt,
+      lineSaveResult.inventoryChangedReceiptIds
+    );
     markPhase("savePaymentsMs");
     const changedCount =
       receiptSaveResult.createdCount +

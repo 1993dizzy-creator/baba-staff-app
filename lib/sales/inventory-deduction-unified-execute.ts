@@ -114,7 +114,7 @@ function makeResult(params: {
 
 async function hasAppliedWorkflowReceipt(params: {
   receiptId: number;
-  workflowType: "initial_apply" | "reprocess_modified";
+  workflowType: "initial_apply" | "reprocess_modified" | "rollback_canceled";
   fingerprint: string;
 }) {
   const { data, error } = await supabaseServer
@@ -186,17 +186,6 @@ async function applyInitialReceipt(params: {
   executionId: string;
   startedAt: number;
 }) {
-  if (params.current.source !== "manual") {
-    return makeResult({
-      item: params.item,
-      actualOperationType: params.current.operationType,
-      result: "no_op",
-      fingerprint: params.current.currentFingerprint,
-      failureReason: "automatic_cron_candidate",
-      startedAt: params.startedAt,
-    });
-  }
-
   if (params.current.actionableLineCount <= 0) {
     return makeResult({
       item: params.item,
@@ -362,6 +351,63 @@ async function applyInitialReceipt(params: {
   });
 }
 
+async function rollbackCanceledReceipt(params: {
+  item: UnifiedExecuteItemInput;
+  current: CurrentReceipt;
+  actorUsername: string;
+  startedAt: number;
+}) {
+  const { data, error } = await supabaseServer.rpc(
+    "rollback_canceled_sales_inventory_deduction_receipt",
+    {
+      p_receipt_id: params.current.receiptId,
+      p_actor_username: params.actorUsername,
+      p_expected_receipt_updated_at: params.current.updatedAt,
+      p_expected_receipt_content_fingerprint:
+        params.current.currentFingerprint,
+    }
+  );
+
+  if (error) {
+    return makeResult({
+      item: params.item,
+      actualOperationType: params.current.operationType,
+      result: "failed",
+      fingerprint: params.current.currentFingerprint,
+      failureReason: error.message,
+      startedAt: params.startedAt,
+    });
+  }
+
+  const result = (data || {}) as Record<string, unknown>;
+  const resultCode = String(result.result || "failed");
+  const mappedResult: ExecuteResultCode =
+    resultCode === "applied" ||
+    resultCode === "already_processed" ||
+    resultCode === "stale_preview" ||
+    resultCode === "needs_check"
+      ? resultCode
+      : "failed";
+
+  return makeResult({
+    item: params.item,
+    actualOperationType: params.current.operationType,
+    result: mappedResult,
+    fingerprint: params.current.currentFingerprint,
+    batchId: result.batchId == null ? null : Number(result.batchId),
+    deductionReceiptId:
+      result.deductionReceiptId == null
+        ? null
+        : Number(result.deductionReceiptId),
+    reversedDeductionCount: Number(result.reversedDeductionCount || 0),
+    appliedDeductionCount: 0,
+    rollbackOnly: mappedResult === "applied",
+    failureReason:
+      typeof result.failureReason === "string" ? result.failureReason : null,
+    startedAt: params.startedAt,
+  });
+}
+
 async function applyReprocessReceipt(params: {
   item: UnifiedExecuteItemInput;
   current: CurrentReceipt;
@@ -436,17 +482,6 @@ async function executeOne(params: {
     });
   }
 
-  if (current.blockingReasons.includes("canceled_after_applied")) {
-    return makeResult({
-      item,
-      actualOperationType: current.operationType,
-      result: "not_supported",
-      fingerprint: current.currentFingerprint,
-      failureReason: "canceled_after_applied_not_supported",
-      startedAt,
-    });
-  }
-
   if (current.operationType === "initial_apply") {
     return applyInitialReceipt({
       item,
@@ -459,6 +494,15 @@ async function executeOne(params: {
 
   if (current.operationType === "reprocess_modified") {
     return applyReprocessReceipt({
+      item,
+      current,
+      actorUsername: params.actorUsername,
+      startedAt,
+    });
+  }
+
+  if (current.operationType === "rollback_canceled") {
+    return rollbackCanceledReceipt({
       item,
       current,
       actorUsername: params.actorUsername,
@@ -482,8 +526,7 @@ async function executeOne(params: {
     actualOperationType: current.operationType,
     result: "no_op",
     fingerprint: current.currentFingerprint,
-    failureReason:
-      current.source === "manual" ? "no_inventory_movement" : "automatic_cron_candidate",
+    failureReason: "no_inventory_movement_or_already_current",
     startedAt,
   });
 }
@@ -505,7 +548,18 @@ function buildSummary(results: UnifiedExecuteReceiptResult[]) {
       ) {
         summary.reprocessedCount += 1;
       }
-      if (result.rollbackOnly) summary.rollbackOnlyCount += 1;
+      if (
+        result.result === "applied" &&
+        result.expectedOperationType === "rollback_canceled"
+      ) {
+        summary.rollbackOnlyCount += 1;
+      }
+      if (
+        result.rollbackOnly &&
+        result.expectedOperationType !== "rollback_canceled"
+      ) {
+        summary.rollbackOnlyCount += 1;
+      }
       if (result.result === "already_processed") {
         summary.alreadyProcessedCount += 1;
       }
