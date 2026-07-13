@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePathname } from "next/navigation";
 import Container from "@/components/Container";
@@ -24,13 +24,6 @@ type UserRow = {
   is_active: boolean;
 };
 
-type CurrentUser = {
-  id: string | number;
-  name?: string;
-  username?: string;
-  role?: string;
-};
-
 type AttendanceRecord = {
   id: number;
   user_id: string | number;
@@ -42,6 +35,68 @@ type AttendanceRecord = {
   approved_at: string | null;
   created_at: string | null;
 };
+
+type Feedback = {
+  type: "success" | "error";
+  message: string;
+} | null;
+
+const usersRequests = new Map<string, Promise<UserRow[]>>();
+const leaveRecordRequests = new Map<string, Promise<AttendanceRecord[]>>();
+
+function requestUsers() {
+  const requestKey = "active-attendance-users";
+  const existing = usersRequests.get(requestKey);
+  if (existing) return existing;
+
+  const request = fetch("/api/attendance/users")
+    .then(async (response) => {
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.ok) {
+        throw new Error(result?.message || "USERS_REQUEST_FAILED");
+      }
+      return ((result.users || []) as UserRow[]).filter(
+        (user) => user.position !== "owner"
+      );
+    })
+    .finally(() => {
+      if (usersRequests.get(requestKey) === request) usersRequests.delete(requestKey);
+    });
+
+  usersRequests.set(requestKey, request);
+  return request;
+}
+
+function requestLeaveRecords(date: Date, userId?: string | number) {
+  const { startDate, endDate } = getMonthRange(date);
+  const requestKey = `${startDate}:${endDate}:${normalizeId(userId) || "all"}`;
+  const existing = leaveRecordRequests.get(requestKey);
+  if (existing) return existing;
+
+  const userQuery = userId ? `&user_id=${encodeURIComponent(String(userId))}` : "";
+  const request = fetch(
+    `/api/attendance/records?status=leave&start_date=${startDate}&end_date=${endDate}${userQuery}`
+  )
+    .then(async (response) => {
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.ok) {
+        throw new Error(result?.message || "LEAVE_RECORDS_REQUEST_FAILED");
+      }
+      return (result.records || []) as AttendanceRecord[];
+    })
+    .finally(() => {
+      if (leaveRecordRequests.get(requestKey) === request) {
+        leaveRecordRequests.delete(requestKey);
+      }
+    });
+
+  leaveRecordRequests.set(requestKey, request);
+  return request;
+}
+
+function isNetworkError(error: unknown) {
+  return error instanceof TypeError;
+}
 
 function formatDateKey(date: Date) {
   const year = date.getFullYear();
@@ -116,7 +171,7 @@ export default function AttendanceLeavePage() {
   const c = commonText[lang];
 
 
-  const currentUser = getUser();
+  const [currentUser] = useState(() => getUser());
   const canManageLeave = isAdmin(currentUser);
 
   const todayWorkDate = getBusinessDate();
@@ -133,56 +188,197 @@ export default function AttendanceLeavePage() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [leaveRecords, setLeaveRecords] = useState<AttendanceRecord[]>([]);
   const [selectedDate, setSelectedDate] = useState(initialSelectedDate);
-  const [isLoading, setIsLoading] = useState(true);
-  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(true);
+  const [isLoadingRecords, setIsLoadingRecords] = useState(true);
+  const [hasLoadedRecords, setHasLoadedRecords] = useState(false);
+  const [isRefreshingRecords, setIsRefreshingRecords] = useState(false);
+  const [pendingActionKeys, setPendingActionKeys] = useState<string[]>([]);
+  const [feedback, setFeedback] = useState<Feedback>(null);
+  const mountedRef = useRef(true);
+  const hasLoadedRecordsRef = useRef(false);
+  const recordsRequestSequenceRef = useRef(0);
+  const pendingActionKeysRef = useRef(new Set<string>());
+  const calendarDateRef = useRef(calendarDate);
+  calendarDateRef.current = calendarDate;
+
+  const copy = useMemo(
+    () =>
+      lang === "vi"
+        ? {
+            loadError: "Không thể tải dữ liệu nghỉ. Vui lòng thử lại.",
+            networkError: "Vui lòng kiểm tra kết nối mạng và thử lại.",
+            requestSuccess: "Đã đăng ký nghỉ.",
+            cancelSuccess: "Đã hủy yêu cầu nghỉ.",
+            approveSuccess: "Đã duyệt ngày nghỉ.",
+            cancelApprovalSuccess: "Đã hủy duyệt ngày nghỉ.",
+            refreshing: "Đang cập nhật...",
+            total: "Tổng số đơn",
+            pending: "Chờ duyệt",
+            approved: "Đã duyệt",
+            selectedDate: "Ngày đã chọn",
+            reason: "Lý do",
+          }
+        : {
+            loadError: "휴무 정보를 불러오지 못했습니다. 다시 시도해 주세요.",
+            networkError: "네트워크 연결을 확인한 뒤 다시 시도해 주세요.",
+            requestSuccess: "휴무 신청이 완료되었습니다.",
+            cancelSuccess: "휴무 신청이 취소되었습니다.",
+            approveSuccess: "휴무 승인이 완료되었습니다.",
+            cancelApprovalSuccess: "휴무 승인이 취소되었습니다.",
+            refreshing: "갱신 중...",
+            total: "전체 신청",
+            pending: "승인 대기",
+            approved: "승인 완료",
+            selectedDate: "선택 날짜",
+            reason: "사유",
+          },
+    [lang]
+  );
+
+  const loadUsers = useCallback(async () => {
+    setIsLoadingUsers(true);
+    try {
+      const data = await requestUsers();
+      if (mountedRef.current) setUsers(data);
+    } catch (error) {
+      console.error("fetch users error:", error);
+      if (mountedRef.current) {
+        setFeedback({ type: "error", message: copy.loadError });
+      }
+    } finally {
+      if (mountedRef.current) setIsLoadingUsers(false);
+    }
+  }, [copy.loadError]);
+
+  const loadLeaveRecords = useCallback(
+    async (date: Date, options?: { background?: boolean }) => {
+      if (!canManageLeave && !currentUser?.id) {
+        setLeaveRecords([]);
+        setHasLoadedRecords(true);
+        hasLoadedRecordsRef.current = true;
+        setIsLoadingRecords(false);
+        setFeedback({ type: "error", message: c.loginAgain });
+        return;
+      }
+
+      const requestSequence = ++recordsRequestSequenceRef.current;
+      if (options?.background) setIsRefreshingRecords(true);
+      else setIsLoadingRecords(true);
+
+      try {
+        const data = await requestLeaveRecords(
+          date,
+          canManageLeave ? undefined : currentUser?.id
+        );
+        if (
+          mountedRef.current &&
+          requestSequence === recordsRequestSequenceRef.current
+        ) {
+          setLeaveRecords(data);
+          hasLoadedRecordsRef.current = true;
+          setHasLoadedRecords(true);
+        }
+      } catch (error) {
+        console.error("fetch leave records error:", error);
+        if (
+          mountedRef.current &&
+          requestSequence === recordsRequestSequenceRef.current
+        ) {
+          setFeedback({ type: "error", message: copy.loadError });
+        }
+      } finally {
+        if (
+          mountedRef.current &&
+          requestSequence === recordsRequestSequenceRef.current
+        ) {
+          setIsLoadingRecords(false);
+          setIsRefreshingRecords(false);
+        }
+      }
+    },
+    [c.loginAgain, canManageLeave, copy.loadError, currentUser?.id]
+  );
 
   useEffect(() => {
-    fetchLeaveData();
-  }, [calendarDate]);
+    mountedRef.current = true;
+    void loadUsers();
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [loadUsers]);
 
-  const fetchLeaveData = async () => {
-    setIsLoading(true);
+  useEffect(() => {
+    void loadLeaveRecords(calendarDate, {
+      background: hasLoadedRecordsRef.current,
+    });
+  }, [calendarDate, loadLeaveRecords]);
 
-    try {
-      const { startDate, endDate } = getMonthRange(calendarDate);
+  const beginAction = (actionKey: string) => {
+    if (pendingActionKeysRef.current.has(actionKey)) return false;
+    pendingActionKeysRef.current.add(actionKey);
+    setPendingActionKeys(Array.from(pendingActionKeysRef.current));
+    setFeedback(null);
+    return true;
+  };
 
-      const userRes = await fetch("/api/attendance/users");
-      const userResult = await userRes.json();
-
-      if (!userRes.ok || !userResult.ok) {
-        console.log("fetch users error:", userResult);
-        return;
-      }
-
-      const userData = ((userResult.users || []) as UserRow[]).filter(
-        (user) => user.position !== "owner"
-      );
-
-      const recordRes = await fetch(
-        `/api/attendance/records?status=leave&start_date=${startDate}&end_date=${endDate}`
-      );
-
-      const recordResult = await recordRes.json();
-
-      if (!recordRes.ok || !recordResult.ok) {
-        console.log("fetch leave records error:", recordResult);
-        return;
-      }
-
-      const recordData = recordResult.records || [];
-
-      setUsers(userData || []);
-      setLeaveRecords(recordData || []);
-    } finally {
-      setIsLoading(false);
+  const finishAction = (actionKey: string) => {
+    pendingActionKeysRef.current.delete(actionKey);
+    if (mountedRef.current) {
+      setPendingActionKeys(Array.from(pendingActionKeysRef.current));
     }
   };
 
-  const handleLeaveRequest = async () => {
-    if (pendingActionKey) return;
+  const invalidateCurrentMonthRequest = () => {
+    recordsRequestSequenceRef.current += 1;
+    setIsLoadingRecords(false);
+    setIsRefreshingRecords(false);
+  };
 
+  const replaceRecord = (record: AttendanceRecord) => {
+    if (!record.work_date.startsWith(formatDateKey(calendarDateRef.current).slice(0, 7))) {
+      return;
+    }
+    invalidateCurrentMonthRequest();
+    setLeaveRecords((current) => {
+      const index = current.findIndex((item) => item.id === record.id);
+      if (index < 0) return [...current, record];
+      const next = [...current];
+      next[index] = record;
+      return next;
+    });
+  };
+
+  const removeRecord = (record: Pick<AttendanceRecord, "id" | "work_date">) => {
+    if (!record.work_date.startsWith(formatDateKey(calendarDateRef.current).slice(0, 7))) {
+      return;
+    }
+    invalidateCurrentMonthRequest();
+    setLeaveRecords((current) => current.filter((item) => item.id !== record.id));
+  };
+
+  const postLeaveAction = async (url: string, body: Record<string, unknown>) => {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      if (isNetworkError(error)) throw new Error(copy.networkError);
+      throw error;
+    }
+
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.ok) {
+      throw new Error(result?.message || c.errorDefault);
+    }
+    return result as { record?: AttendanceRecord; message?: string };
+  };
+
+  const handleLeaveRequest = async () => {
     if (!currentUser?.id) {
-      alert(c.loginAgain);
+      setFeedback({ type: "error", message: c.loginAgain });
       return;
     }
 
@@ -196,30 +392,23 @@ export default function AttendanceLeavePage() {
       const ok = confirm(t.leaveCancelConfirm);
       if (!ok) return;
 
-      setPendingActionKey("request");
+      const actionKey = `record-${alreadyRequested.id}`;
+      if (!beginAction(actionKey)) return;
       try {
-        const res = await fetch("/api/attendance/leave", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            action: LEAVE_ACTION.CANCEL,
-            record_id: alreadyRequested.id,
-            language: lang,
-          }),
+        const result = await postLeaveAction("/api/attendance/leave", {
+          action: LEAVE_ACTION.CANCEL,
+          record_id: alreadyRequested.id,
+          language: lang,
         });
-
-        const result = await res.json();
-
-        if (!res.ok || !result.ok) {
-          alert(result.message || c.errorDefault);
-          return;
-        }
-
-        await fetchLeaveData();
+        removeRecord(result.record ?? alreadyRequested);
+        setFeedback({ type: "success", message: result.message || copy.cancelSuccess });
+      } catch (error) {
+        setFeedback({
+          type: "error",
+          message: error instanceof Error ? error.message : c.errorDefault,
+        });
       } finally {
-        setPendingActionKey(null);
+        finishAction(actionKey);
       }
       return;
     }
@@ -236,148 +425,145 @@ export default function AttendanceLeavePage() {
       reason = input.trim();
     }
 
-    setPendingActionKey("request");
+    const actionKey = `request-${selectedDate}`;
+    if (!beginAction(actionKey)) return;
     try {
-      const res = await fetch("/api/attendance/leave", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: LEAVE_ACTION.REQUEST,
-          user_id: currentUser.id,
-          work_date: selectedDate,
-          note: reason,
-          language: lang,
-        }),
+      const result = await postLeaveAction("/api/attendance/leave", {
+        action: LEAVE_ACTION.REQUEST,
+        user_id: currentUser.id,
+        work_date: selectedDate,
+        note: reason,
+        language: lang,
       });
-
-      const result = await res.json();
-
-      if (!res.ok || !result.ok) {
-        alert(result.message || c.errorDefault);
-        return;
-      }
-
-      await fetchLeaveData();
+      if (result.record) replaceRecord(result.record);
+      else void loadLeaveRecords(calendarDateRef.current, { background: true });
+      setFeedback({ type: "success", message: result.message || copy.requestSuccess });
+    } catch (error) {
+      setFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : c.errorDefault,
+      });
     } finally {
-      setPendingActionKey(null);
+      finishAction(actionKey);
     }
   };
 
   const handleApproveLeave = async (recordId: number) => {
     if (!canManageLeave) return;
 
-    const actionKey = `leave-${recordId}`;
-    if (pendingActionKey === actionKey) return;
+    const actionKey = `record-${recordId}`;
+    if (!beginAction(actionKey)) return;
 
-    setPendingActionKey(actionKey);
     try {
-      const res = await fetch("/api/attendance/leave-admin", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: LEAVE_ACTION.APPROVE,
-          record_id: recordId,
-          admin_name: currentUser?.name || currentUser?.username || null,
-          admin_id: currentUser?.id,
-          language: lang,
-        }),
+      const result = await postLeaveAction("/api/attendance/leave-admin", {
+        action: LEAVE_ACTION.APPROVE,
+        record_id: recordId,
+        admin_name: currentUser?.name || currentUser?.username || null,
+        admin_id: currentUser?.id,
+        language: lang,
       });
-
-      const result = await res.json();
-
-      if (!res.ok || !result.ok) {
-        alert(result.message || c.errorDefault);
-        return;
-      }
-
-      await fetchLeaveData();
+      if (result.record) replaceRecord(result.record);
+      else void loadLeaveRecords(calendarDateRef.current, { background: true });
+      setFeedback({ type: "success", message: result.message || copy.approveSuccess });
+    } catch (error) {
+      setFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : c.errorDefault,
+      });
     } finally {
-      setPendingActionKey(null);
+      finishAction(actionKey);
     }
   };
 
   const handleCancelApproval = async (recordId: number) => {
     if (!canManageLeave) return;
 
-    const actionKey = `leave-${recordId}`;
-    if (pendingActionKey === actionKey) return;
+    const actionKey = `record-${recordId}`;
+    if (!beginAction(actionKey)) return;
 
-    setPendingActionKey(actionKey);
     try {
-      const res = await fetch("/api/attendance/leave-admin", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: LEAVE_ACTION.CANCEL_APPROVAL,
-          record_id: recordId,
-          admin_id: currentUser?.id,
-          language: lang,
-        }),
+      const result = await postLeaveAction("/api/attendance/leave-admin", {
+        action: LEAVE_ACTION.CANCEL_APPROVAL,
+        record_id: recordId,
+        admin_id: currentUser?.id,
+        language: lang,
       });
-
-      const result = await res.json();
-
-      if (!res.ok || !result.ok) {
-        alert(result.message || c.errorDefault);
-        return;
-      }
-
-      await fetchLeaveData();
+      if (result.record) replaceRecord(result.record);
+      else void loadLeaveRecords(calendarDateRef.current, { background: true });
+      setFeedback({
+        type: "success",
+        message: result.message || copy.cancelApprovalSuccess,
+      });
+    } catch (error) {
+      setFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : c.errorDefault,
+      });
     } finally {
-      setPendingActionKey(null);
+      finishAction(actionKey);
     }
   };
 
   const handleCancelPendingLeave = async (recordId: number) => {
-    const actionKey = `leave-${recordId}`;
-    if (pendingActionKey === actionKey) return;
+    const actionKey = `record-${recordId}`;
+    if (pendingActionKeysRef.current.has(actionKey)) return;
 
     const ok = confirm(t.leaveCancelConfirm);
     if (!ok) return;
 
-    setPendingActionKey(actionKey);
+    if (!beginAction(actionKey)) return;
     try {
-      const res = await fetch("/api/attendance/leave", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: LEAVE_ACTION.CANCEL,
-          record_id: recordId,
-          language: lang,
-        }),
+      const result = await postLeaveAction("/api/attendance/leave", {
+        action: LEAVE_ACTION.CANCEL,
+        record_id: recordId,
+        language: lang,
       });
-
-      const result = await res.json();
-
-      if (!res.ok || !result.ok) {
-        alert(result.message || c.errorDefault);
-        return;
-      }
-
-      await fetchLeaveData();
+      const currentRecord = leaveRecords.find((record) => record.id === recordId);
+      if (result.record) removeRecord(result.record);
+      else if (currentRecord) removeRecord(currentRecord);
+      else void loadLeaveRecords(calendarDateRef.current, { background: true });
+      setFeedback({ type: "success", message: result.message || copy.cancelSuccess });
+    } catch (error) {
+      setFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : c.errorDefault,
+      });
     } finally {
-      setPendingActionKey(null);
+      finishAction(actionKey);
     }
   };
 
   const userMap = useMemo(() => {
     const map = new Map<string, UserRow>();
     users.forEach((user) => map.set(normalizeId(user.id), user));
+    if (!canManageLeave && currentUser?.id && !map.has(normalizeId(currentUser.id))) {
+      map.set(normalizeId(currentUser.id), {
+        id: currentUser.id,
+        name: currentUser.name || currentUser.username || normalizeId(currentUser.id),
+        username: currentUser.username || "",
+        part: currentUser.part ?? null,
+        position: currentUser.position ?? currentUser.role ?? null,
+        is_active: true,
+      });
+    }
     return map;
-  }, [users]);
+  }, [canManageLeave, currentUser, users]);
 
 
+
+  const visibleLeaveRecords = useMemo(
+    () =>
+      canManageLeave
+        ? leaveRecords
+        : leaveRecords.filter(
+            (record) =>
+              normalizeId(record.user_id) === normalizeId(currentUser?.id)
+          ),
+    [canManageLeave, currentUser?.id, leaveRecords]
+  );
 
   const selectedDateLeaves = useMemo(() => {
-    return leaveRecords
+    return visibleLeaveRecords
       .filter((record) => record.work_date === selectedDate)
       .map((record) => {
         const user = userMap.get(normalizeId(record.user_id));
@@ -389,17 +575,24 @@ export default function AttendanceLeavePage() {
         const itemA = a as { user: UserRow; record: AttendanceRecord };
         const itemB = b as { user: UserRow; record: AttendanceRecord };
 
+        if (canManageLeave) {
+          const approvalDiff =
+            Number(getApprovalStatus(itemA.record) === APPROVAL_STATUS.APPROVED) -
+            Number(getApprovalStatus(itemB.record) === APPROVAL_STATUS.APPROVED);
+          if (approvalDiff !== 0) return approvalDiff;
+        }
+
         if (itemA.record.created_at && itemB.record.created_at) {
           return itemA.record.created_at.localeCompare(itemB.record.created_at);
         }
 
         return itemA.record.id - itemB.record.id;
       }) as Array<{ user: UserRow; record: AttendanceRecord }>;
-  }, [leaveRecords, selectedDate, userMap]);
+  }, [canManageLeave, selectedDate, userMap, visibleLeaveRecords]);
 
   const leaveCountByDate = useMemo(() => {
     const map = new Map<string, { approved: number; pending: number }>();
-    leaveRecords.forEach((record) => {
+    visibleLeaveRecords.forEach((record) => {
       const prev = map.get(record.work_date) || { approved: 0, pending: 0 };
       const isApproved = getApprovalStatus(record) === APPROVAL_STATUS.APPROVED;
 
@@ -409,19 +602,17 @@ export default function AttendanceLeavePage() {
       });
     });
     return map;
-  }, [leaveRecords]);
+  }, [visibleLeaveRecords]);
 
   const staffSummaryGroups = useMemo(() => {
     const summaryMap = new Map<string, { count: number; dates: string[] }>();
 
-    leaveRecords.forEach((record) => {
+    visibleLeaveRecords.forEach((record) => {
       const userId = normalizeId(record.user_id);
       const prev = summaryMap.get(userId) || { count: 0, dates: [] };
-
-      summaryMap.set(userId, {
-        count: prev.count + 1,
-        dates: [...prev.dates, record.work_date],
-      });
+      prev.count += 1;
+      prev.dates.push(record.work_date);
+      summaryMap.set(userId, prev);
     });
 
     const groupMap = new Map<
@@ -435,15 +626,12 @@ export default function AttendanceLeavePage() {
 
       const key = getPartKey(user.part);
       const prev = groupMap.get(key) || [];
-
-      groupMap.set(key, [
-        ...prev,
-        {
-          user,
-          count: summary.count,
-          dates: summary.dates.sort(),
-        },
-      ]);
+      prev.push({
+        user,
+        count: summary.count,
+        dates: summary.dates.sort(),
+      });
+      groupMap.set(key, prev);
     });
 
     return Array.from(groupMap.entries())
@@ -458,11 +646,11 @@ export default function AttendanceLeavePage() {
         }),
       }))
       .sort((a, b) => a.meta.rank - b.meta.rank);
-  }, [leaveRecords, userMap]);
+  }, [visibleLeaveRecords, userMap]);
 
   const calendarCells = useMemo(() => getCalendarCells(calendarDate), [calendarDate]);
 
-  const mySelectedRecord = leaveRecords.find(
+  const mySelectedRecord = visibleLeaveRecords.find(
     (record) =>
       normalizeId(record.user_id) === normalizeId(currentUser?.id) &&
       record.work_date === selectedDate
@@ -472,12 +660,56 @@ export default function AttendanceLeavePage() {
     lang,
     hasMySelectedLeave
   );
+  const summary = useMemo(
+    () =>
+      visibleLeaveRecords.reduce(
+        (result, record) => {
+          result.total += 1;
+          if (getApprovalStatus(record) === APPROVAL_STATUS.APPROVED) {
+            result.approved += 1;
+          } else {
+            result.pending += 1;
+          }
+          return result;
+        },
+        { total: 0, pending: 0, approved: 0 }
+      ),
+    [visibleLeaveRecords]
+  );
+  const isInitialLoading =
+    (isLoadingUsers && users.length === 0) ||
+    (isLoadingRecords && !hasLoadedRecords);
+  const isRequestBusy = pendingActionKeys.some(
+    (key) =>
+      key === `request-${selectedDate}` ||
+      (mySelectedRecord ? key === `record-${mySelectedRecord.id}` : false)
+  );
 
   return (
     <Container noPaddingTop>
       <SubNav tabs={tabs} />
 
       <div style={sectionStyle}>
+        {feedback && (
+          <div
+            role={feedback.type === "error" ? "alert" : "status"}
+            style={{
+              ...feedbackStyle,
+              color: feedback.type === "error" ? "#b91c1c" : "#047857",
+              background: feedback.type === "error" ? "#fef2f2" : "#ecfdf5",
+              borderColor: feedback.type === "error" ? "#fecaca" : "#a7f3d0",
+            }}
+          >
+            {feedback.message}
+          </div>
+        )}
+
+        <div style={summaryCardsStyle}>
+          <SummaryCard label={copy.total} value={summary.total} color="#111827" />
+          <SummaryCard label={copy.pending} value={summary.pending} color="#d97706" />
+          <SummaryCard label={copy.approved} value={summary.approved} color="#059669" />
+        </div>
+
         <SectionTitle title={t.monthCalendar} />
 
         <div style={cardStyle}>
@@ -494,7 +726,12 @@ export default function AttendanceLeavePage() {
               ‹
             </button>
 
-            <div style={calendarTitleStyle}>{formatMonthTitle(lang, calendarDate)}</div>
+            <div style={calendarTitleStyle}>
+              {formatMonthTitle(lang, calendarDate)}
+              {isRefreshingRecords && (
+                <span style={refreshingTextStyle}>{copy.refreshing}</span>
+              )}
+            </div>
 
             <button
               type="button"
@@ -602,7 +839,13 @@ export default function AttendanceLeavePage() {
           </div>
 
           <div style={selectedListStyle}>
-            {selectedDateLeaves.length === 0 ? (
+            <div style={selectedDateTitleStyle}>
+              {copy.selectedDate} · {selectedDate}
+            </div>
+
+            {isInitialLoading ? (
+              <div style={selectedEmptyStyle}>{c.loading}</div>
+            ) : selectedDateLeaves.length === 0 ? (
               <div style={selectedEmptyStyle}>{c.noLogs}</div>
             ) : (
               selectedDateLeaves.map((item, index) => {
@@ -610,7 +853,9 @@ export default function AttendanceLeavePage() {
                 const meta = getPartMeta(user.part);
                 const isApproved = getApprovalStatus(record) === APPROVAL_STATUS.APPROVED;
 
-                const isRecordBusy = pendingActionKey === `leave-${record.id}`;
+                const isRecordBusy = pendingActionKeys.some((key) =>
+                  key.endsWith(`-${record.id}`)
+                );
 
                 return (
                   <div
@@ -631,9 +876,7 @@ export default function AttendanceLeavePage() {
                         >
                           {meta.emoji}
                         </span>
-                        <span style={userNameStyle}>
-                          {index + 1}. {user.name}
-                        </span>
+                        <span style={userNameStyle}>{index + 1}. {user.name}</span>
                         <span style={userMetaStyle}>
                           {t.positions?.[user.position as keyof typeof t.positions] || user.position || user.username}
                         </span>
@@ -652,7 +895,7 @@ export default function AttendanceLeavePage() {
                         </span>
 
                         {canManageLeave && (
-                          <div style={{ display: "flex", gap: 6 }}>
+                          <div style={leaveButtonGroupStyle}>
                             {!isApproved && (
                               <button
                                 type="button"
@@ -700,7 +943,11 @@ export default function AttendanceLeavePage() {
                       </div>
                     </div>
 
-                    {record.note && <div style={reasonStyle}>{record.note}</div>}
+                    {record.note && (
+                      <div style={reasonStyle}>
+                        <strong>{copy.reason}</strong> · {record.note}
+                      </div>
+                    )}
 
 
                   </div>
@@ -715,15 +962,13 @@ export default function AttendanceLeavePage() {
                   ...(hasMySelectedLeave
                     ? leaveCancelRequestButtonStyle
                     : requestButtonStyle),
-                  opacity: pendingActionKey === "request" ? 0.45 : 1,
-                  cursor: pendingActionKey === "request" ? "not-allowed" : "pointer",
+                  opacity: isRequestBusy ? 0.45 : 1,
+                  cursor: isRequestBusy ? "not-allowed" : "pointer",
                 }}
-                disabled={pendingActionKey === "request"}
+                disabled={isRequestBusy}
                 onClick={handleLeaveRequest}
               >
-                {pendingActionKey === "request"
-                  ? t.processing
-                  : leaveRequestButtonLabel}
+                {isRequestBusy ? t.processing : leaveRequestButtonLabel}
               </button>
             )}
           </div>
@@ -732,7 +977,7 @@ export default function AttendanceLeavePage() {
         <SectionTitle title={t.staffSummary} />
 
         <div style={cardStyle}>
-          {isLoading ? (
+          {isInitialLoading ? (
             <Empty text={c.loading} />
           ) : staffSummaryGroups.length === 0 ? (
             <Empty text={c.noLogs} />
@@ -805,6 +1050,23 @@ function Empty({ text }: { text: string }) {
   return <div style={emptyStyle}>{text}</div>;
 }
 
+function SummaryCard({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: number;
+  color: string;
+}) {
+  return (
+    <div style={summaryCardStyle}>
+      <span style={summaryCardLabelStyle}>{label}</span>
+      <strong style={{ ...summaryCardValueStyle, color }}>{value}</strong>
+    </div>
+  );
+}
+
 function getLeaveRequestButtonLabel(
   lang: "ko" | "vi",
   hasSelectedLeave: boolean
@@ -824,6 +1086,46 @@ const summaryDatesStyle: CSSProperties = {
   marginLeft: 4,
   fontSize: 11,
   fontWeight: 800,
+};
+
+const feedbackStyle: CSSProperties = {
+  border: "1px solid",
+  borderRadius: 10,
+  padding: "10px 12px",
+  fontSize: 13,
+  fontWeight: 700,
+  overflowWrap: "anywhere",
+};
+
+const summaryCardsStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))",
+  gap: 8,
+};
+
+const summaryCardStyle: CSSProperties = {
+  minWidth: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 8,
+  padding: "10px 12px",
+  border: "1px solid #e5e7eb",
+  borderRadius: 12,
+  background: "#ffffff",
+};
+
+const summaryCardLabelStyle: CSSProperties = {
+  minWidth: 0,
+  fontSize: 12,
+  fontWeight: 800,
+  color: "#6b7280",
+};
+
+const summaryCardValueStyle: CSSProperties = {
+  flexShrink: 0,
+  fontSize: 20,
+  lineHeight: 1,
 };
 
 const sectionStyle: CSSProperties = {
@@ -861,6 +1163,15 @@ const calendarTitleStyle: CSSProperties = {
   color: "#111827",
   whiteSpace: "pre-line",
   lineHeight: 1.2,
+};
+
+const refreshingTextStyle: CSSProperties = {
+  display: "block",
+  marginTop: 2,
+  fontSize: 9,
+  fontWeight: 700,
+  color: "#6b7280",
+  whiteSpace: "nowrap",
 };
 
 const monthButtonStyle: CSSProperties = {
@@ -936,6 +1247,12 @@ const selectedListStyle: CSSProperties = {
   gap: 7,
 };
 
+const selectedDateTitleStyle: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 900,
+  color: "#374151",
+};
+
 const selectedEmptyStyle: CSSProperties = {
   padding: 10,
   borderRadius: 10,
@@ -958,6 +1275,7 @@ const selectedUserTopStyle: CSSProperties = {
   alignItems: "center",
   justifyContent: "space-between",
   gap: 8,
+  flexWrap: "wrap",
 };
 
 const selectedUserLeftStyle: CSSProperties = {
@@ -965,6 +1283,7 @@ const selectedUserLeftStyle: CSSProperties = {
   alignItems: "center",
   gap: 6,
   minWidth: 0,
+  flexWrap: "wrap",
 };
 
 const partMiniStyle: CSSProperties = {
@@ -1001,13 +1320,21 @@ const leaveActionRowStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 6,
-  flexShrink: 0,
+  flexWrap: "wrap",
+};
+
+const leaveButtonGroupStyle: CSSProperties = {
+  display: "flex",
+  gap: 6,
+  flexWrap: "wrap",
 };
 
 const reasonStyle: CSSProperties = {
   fontSize: 11,
   color: "#6b7280",
   paddingLeft: 30,
+  overflowWrap: "anywhere",
+  whiteSpace: "pre-wrap",
 };
 
 
@@ -1017,7 +1344,8 @@ const approveButtonStyle: CSSProperties = {
   borderRadius: 8,
   background: "#10b981",
   color: "#ffffff",
-  padding: "6px 9px",
+  minHeight: 36,
+  padding: "7px 11px",
   fontSize: 12,
   fontWeight: 900,
   cursor: "pointer",
@@ -1028,7 +1356,8 @@ const cancelApprovalButtonStyle: CSSProperties = {
   borderRadius: 8,
   background: "#ef4444",
   color: "#ffffff",
-  padding: "6px 9px",
+  minHeight: 36,
+  padding: "7px 11px",
   fontSize: 12,
   fontWeight: 900,
   cursor: "pointer",
@@ -1036,7 +1365,7 @@ const cancelApprovalButtonStyle: CSSProperties = {
 
 const requestButtonStyle: CSSProperties = {
   width: "100%",
-  height: 40,
+  minHeight: 44,
   border: "none",
   borderRadius: 10,
   backgroundColor: "#111827",
@@ -1078,6 +1407,7 @@ const summaryRowStyle: CSSProperties = {
   padding: "7px 8px",
   border: "1px solid #f3f4f6",
   borderRadius: 10,
+  flexWrap: "wrap",
 };
 
 const summaryCountStyle: CSSProperties = {
@@ -1085,6 +1415,7 @@ const summaryCountStyle: CSSProperties = {
   fontSize: 12,
   fontWeight: 900,
   color: "#111827",
+  overflowWrap: "anywhere",
 };
 
 const emptyStyle: CSSProperties = {

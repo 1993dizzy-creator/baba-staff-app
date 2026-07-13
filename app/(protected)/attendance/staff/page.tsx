@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePathname } from "next/navigation";
 import Container from "@/components/Container";
@@ -115,6 +115,13 @@ export default function AttendanceStaffPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loginUser, setLoginUser] = useState<LoginUser | null>(null);
   const canManage = isAdmin(loginUser);
+  const isMountedRef = useRef(true);
+  const usersRequestRef = useRef<Promise<UserRow[]> | null>(null);
+  const recordsRequestsRef = useRef(
+    new Map<string, Promise<AttendanceRecord[]>>()
+  );
+  const recordsRequestSequenceRef = useRef(0);
+  const mutationInFlightRef = useRef(false);
 
   const [manualModal, setManualModal] = useState<{
     type: "check_in" | "check_out";
@@ -123,64 +130,114 @@ export default function AttendanceStaffPage() {
     timeValue: string;
   } | null>(null);
 
+  const fetchUsers = useCallback(async () => {
+    let request = usersRequestRef.current;
+    if (!request) {
+      request = fetch("/api/attendance/users").then(async (res) => {
+        const result = await res.json().catch(() => null);
+        if (!res.ok || !result?.ok) {
+          throw new Error(result?.message || "ATTENDANCE_USERS_REQUEST_FAILED");
+        }
+        return (result.users || []) as UserRow[];
+      });
+      usersRequestRef.current = request;
+    }
+
+    try {
+      const userData = await request;
+      if (isMountedRef.current) {
+        setUsers(userData.filter((user) => !isAdmin(user)));
+      }
+    } catch (error) {
+      console.log("fetch users error:", error);
+    } finally {
+      if (usersRequestRef.current === request) {
+        usersRequestRef.current = null;
+      }
+    }
+  }, []);
+
+  const fetchAttendanceRecords = useCallback(async () => {
+    const workDate = getBusinessDate();
+    const requestSequence = ++recordsRequestSequenceRef.current;
+    let request = recordsRequestsRef.current.get(workDate);
+
+    if (!request) {
+      request = fetch(
+        `/api/attendance/records?work_date=${workDate}`
+      ).then(async (res) => {
+        const result = await res.json().catch(() => null);
+        if (!res.ok || !result?.ok) {
+          throw new Error(
+            result?.message || "ATTENDANCE_RECORDS_REQUEST_FAILED"
+          );
+        }
+        return (result.records || []) as AttendanceRecord[];
+      });
+      recordsRequestsRef.current.set(workDate, request);
+    }
+
+    try {
+      const recordData = await request;
+      if (
+        isMountedRef.current &&
+        requestSequence === recordsRequestSequenceRef.current
+      ) {
+        setRecords(recordData);
+      }
+    } catch (error) {
+      console.log("fetch attendance records error:", error);
+    } finally {
+      if (recordsRequestsRef.current.get(workDate) === request) {
+        recordsRequestsRef.current.delete(workDate);
+      }
+    }
+  }, []);
+
+  const applyAttendanceRecord = useCallback((record: AttendanceRecord) => {
+    recordsRequestSequenceRef.current += 1;
+    recordsRequestsRef.current.delete(record.work_date);
+    if (!isMountedRef.current) return;
+    setRecords((current) => [
+      ...current.filter(
+        (item) => String(item.user_id) !== String(record.user_id)
+      ),
+      record,
+    ]);
+  }, []);
+
   useEffect(() => {
+    isMountedRef.current = true;
     setLoginUser(getUser());
-    fetchList();
+
+    void Promise.allSettled([fetchUsers(), fetchAttendanceRecords()]).finally(
+      () => {
+        if (isMountedRef.current) setIsLoading(false);
+      }
+    );
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        fetchList();
+        void fetchAttendanceRecords();
       }
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     const pollingTimer = window.setInterval(() => {
-      fetchList();
+      void fetchAttendanceRecords();
     }, 60000);
 
     return () => {
+      isMountedRef.current = false;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.clearInterval(pollingTimer);
     };
-  }, []);
-
-  const fetchList = async () => {
-    setIsLoading(true);
-
-    try {
-      const workDate = getBusinessDate();
-      const userRes = await fetch("/api/attendance/users");
-      const userResult = await userRes.json();
-
-      if (!userRes.ok || !userResult.ok) {
-        console.log("fetch users error:", userResult);
-        return;
-      }
-
-      const userData = userResult.users || [];
-
-      const recordRes = await fetch(
-        `/api/attendance/records?work_date=${workDate}`
-      );
-
-      const recordResult = await recordRes.json();
-
-      if (!recordRes.ok || !recordResult.ok) {
-        console.log("fetch attendance records error:", recordResult);
-        return;
-      }
-
-      const recordData = recordResult.records || [];
-
-      setUsers((userData as UserRow[]).filter((user) => !isAdmin(user)));
-      setRecords(recordData || []);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }, [fetchAttendanceRecords, fetchUsers]);
 
   const handleForceCheckIn = async (user: UserRow, time: string) => {
+    if (mutationInFlightRef.current) return;
+    mutationInFlightRef.current = true;
     const me = getUser();
     const workDate = getBusinessDate();
     try {
@@ -206,14 +263,24 @@ export default function AttendanceStaffPage() {
         return;
       }
 
-      await fetchList();
+      if (result.record) {
+        applyAttendanceRecord(result.record as AttendanceRecord);
+      } else {
+        recordsRequestSequenceRef.current += 1;
+        recordsRequestsRef.current.delete(workDate);
+        void fetchAttendanceRecords();
+      }
     } catch (err) {
       console.error(err);
       alert(c.editFail);
+    } finally {
+      mutationInFlightRef.current = false;
     }
   };
 
   const handleForceCheckOut = async (user: UserRow, time: string) => {
+    if (mutationInFlightRef.current) return;
+    mutationInFlightRef.current = true;
     const me = getUser();
     const workDate = getBusinessDate();
 
@@ -240,14 +307,24 @@ export default function AttendanceStaffPage() {
         return;
       }
 
-      await fetchList();
+      if (result.record) {
+        applyAttendanceRecord(result.record as AttendanceRecord);
+      } else {
+        recordsRequestSequenceRef.current += 1;
+        recordsRequestsRef.current.delete(workDate);
+        void fetchAttendanceRecords();
+      }
     } catch (err) {
       console.error(err);
       alert(c.editFail);
+    } finally {
+      mutationInFlightRef.current = false;
     }
   };
 
   const handleSetLeave = async (user: UserRow) => {
+    if (mutationInFlightRef.current) return;
+    mutationInFlightRef.current = true;
     const me = getUser();
     const workDate = getBusinessDate();
     try {
@@ -272,10 +349,18 @@ export default function AttendanceStaffPage() {
         return;
       }
 
-      await fetchList();
+      if (result.record) {
+        applyAttendanceRecord(result.record as AttendanceRecord);
+      } else {
+        recordsRequestSequenceRef.current += 1;
+        recordsRequestsRef.current.delete(workDate);
+        void fetchAttendanceRecords();
+      }
     } catch (err) {
       console.error(err);
       alert(c.editFail);
+    } finally {
+      mutationInFlightRef.current = false;
     }
   };
 
@@ -305,8 +390,12 @@ export default function AttendanceStaffPage() {
 
     users.forEach((user) => {
       const partKey = getPartKey(user.part);
-      const prev = groupMap.get(partKey) || [];
-      groupMap.set(partKey, [...prev, user]);
+      const group = groupMap.get(partKey);
+      if (group) {
+        group.push(user);
+      } else {
+        groupMap.set(partKey, [user]);
+      }
     });
 
     return Array.from(groupMap.entries())

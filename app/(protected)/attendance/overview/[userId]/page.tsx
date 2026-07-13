@@ -280,7 +280,6 @@ export default function AttendanceUserDetailPage() {
         checkInDateTime,
         checkOutDateTime,
         clearCheckOut,
-        markNormal,
         isNew,
     }: {
         id?: number;
@@ -288,7 +287,6 @@ export default function AttendanceUserDetailPage() {
         checkInDateTime?: string;
         checkOutDateTime?: string;
         clearCheckOut?: boolean;
-        markNormal?: boolean;
         isNew?: boolean;
     }) => {
         if (!user) return;
@@ -312,7 +310,6 @@ export default function AttendanceUserDetailPage() {
                     check_out_datetime: clearCheckOut ? undefined : checkOutDateTime || undefined,
                     clear_check_out: clearCheckOut === true,
                     note,
-                    mark_normal: markNormal === true,
                     is_new: isNew === true,
                     actorUsername: loginUser?.username || "",
                     lang,
@@ -342,6 +339,44 @@ export default function AttendanceUserDetailPage() {
                 setSelectedDate(result.record.work_date);
             }
 
+            setMessage(t.correctionDone);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : t.correctionFailed);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleNormalizeLate = async (recordId: number) => {
+        const loginUser = getUser();
+        setIsSaving(true);
+        setMessage("");
+
+        try {
+            const res = await fetch("/api/attendance/admin", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    action: "normalize_late",
+                    attendance_id: recordId,
+                    actorUsername: loginUser?.username || "",
+                    lang,
+                }),
+            });
+
+            const result = await res.json();
+
+            if (!res.ok || !result.ok) {
+                throw new Error(result.message || t.correctionFailed);
+            }
+
+            setRecords((current) =>
+                current.map((record) =>
+                    record.id === result.record.id ? result.record : record
+                )
+            );
             setMessage(t.correctionDone);
         } catch (error) {
             setMessage(error instanceof Error ? error.message : t.correctionFailed);
@@ -497,6 +532,7 @@ export default function AttendanceUserDetailPage() {
                         isSaving={isSaving}
                         message={message}
                         onSave={handleSaveRecord}
+                        onNormalizeLate={handleNormalizeLate}
                         onSaveLeave={handleSaveLeave}
                     />
 
@@ -696,7 +732,6 @@ type SaveRecordInput = {
     checkInDateTime?: string;
     checkOutDateTime?: string;
     clearCheckOut?: boolean;
-    markNormal?: boolean;
     isNew?: boolean;
 };
 
@@ -708,6 +743,7 @@ function RecordDetailPanel({
     isSaving,
     message,
     onSave,
+    onNormalizeLate,
     onSaveLeave,
 }: {
     selectedDate: string;
@@ -717,6 +753,7 @@ function RecordDetailPanel({
     isSaving: boolean;
     message: string;
     onSave: (input: SaveRecordInput) => void;
+    onNormalizeLate: (recordId: number) => void;
     onSaveLeave: (input: { note: string; isNew?: boolean }) => void;
 }) {
     const { lang } = useLanguage();
@@ -933,12 +970,7 @@ function RecordDetailPanel({
                                     type="button"
                                     style={primaryActionButtonStyle}
                                     disabled={isSaving}
-                                    onClick={() =>
-                                        onSave({
-                                            ...buildSavePayload(),
-                                            markNormal: true,
-                                        })
-                                    }
+                                    onClick={() => onNormalizeLate(record.id)}
                                 >
                                     {t.markNormal}
                                 </button>

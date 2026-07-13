@@ -156,7 +156,8 @@ export async function POST(req: Request) {
         .delete()
         .eq("id", record_id)
         .eq("status", ATTENDANCE_STATUS.LEAVE)
-        .select("id");
+        .select()
+        .maybeSingle();
 
       if (error) {
         console.error("leave cancel error:", error);
@@ -166,7 +167,7 @@ export async function POST(req: Request) {
         );
       }
 
-      if (!data || data.length === 0) {
+      if (!data) {
         return NextResponse.json(
           { ok: false, message: messages[lang].noCancelTarget },
           { status: 404 }
@@ -176,6 +177,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ok: true,
         message: messages[lang].successCancel,
+        record: data,
       });
     }
 

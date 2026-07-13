@@ -86,7 +86,9 @@ export async function POST(req: Request) {
         })
         .eq("id", record_id)
         .eq("status", ATTENDANCE_STATUS.LEAVE)
-        .select("id, approval_status, approved_by, approved_at");
+        .or(`approval_status.eq.${APPROVAL_STATUS.PENDING},approval_status.is.null`)
+        .select()
+        .maybeSingle();
 
       if (error) {
         console.error("leave approve error:", error);
@@ -96,7 +98,7 @@ export async function POST(req: Request) {
         );
       }
 
-      if (!data || data.length === 0) {
+      if (!data) {
         return NextResponse.json(
           { ok: false, message: messages[lang].noTarget },
           { status: 404 }
@@ -106,6 +108,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ok: true,
         message: messages[lang].successApprove,
+        record: data,
       });
     }
 
@@ -119,7 +122,9 @@ export async function POST(req: Request) {
         })
         .eq("id", record_id)
         .eq("status", ATTENDANCE_STATUS.LEAVE)
-        .select("id, approval_status, approved_by, approved_at");
+        .eq("approval_status", APPROVAL_STATUS.APPROVED)
+        .select()
+        .maybeSingle();
 
       if (error) {
         console.error("leave cancel approval error:", error);
@@ -129,7 +134,7 @@ export async function POST(req: Request) {
         );
       }
 
-      if (!data || data.length === 0) {
+      if (!data) {
         return NextResponse.json(
           { ok: false, message: messages[lang].noTarget },
           { status: 404 }
@@ -139,6 +144,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ok: true,
         message: messages[lang].successCancelApproval,
+        record: data,
       });
     }
 

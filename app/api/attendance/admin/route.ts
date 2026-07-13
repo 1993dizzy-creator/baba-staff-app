@@ -22,6 +22,7 @@ type Action =
   | "force_check_out"
   | "set_leave"
   | "update_record"
+  | "normalize_late"
   | "auto_close_at_01"
   | "delete_orphan_record";
 
@@ -192,7 +193,11 @@ export async function POST(req: Request) {
       is_new?: boolean;
     } = body;
 
-    if (!action || !user_id || !work_date) {
+    const isNormalizeLateAction =
+      action === "normalize_late" ||
+      (action === "update_record" && mark_normal === true);
+
+    if (!action || (!isNormalizeLateAction && (!user_id || !work_date))) {
       return NextResponse.json(
         {
           ok: false,
@@ -235,6 +240,159 @@ export async function POST(req: Request) {
               : "권한이 없습니다.",
         },
         { status: 403 }
+      );
+    }
+
+    // 지각 정상처리는 일반 보정 폼과 분리한다. 이전 화면 버전이 update_record와
+    // mark_normal을 함께 보내더라도 출퇴근/조퇴/메모 필드를 절대 덮어쓰지 않는다.
+    if (isNormalizeLateAction) {
+      if (!attendance_id) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Thiếu mã bản ghi chấm công."
+                : "근태 기록 ID가 없습니다.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const { data: targetRecord, error: targetError } = await supabaseServer
+        .from("attendance_records")
+        .select("*")
+        .eq("id", attendance_id)
+        .maybeSingle();
+
+      if (targetError) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Lỗi khi truy vấn bản ghi chấm công."
+                : "근태 기록 조회 중 오류가 발생했습니다.",
+          },
+          { status: 500 }
+        );
+      }
+
+      if (!targetRecord) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Không tìm thấy bản ghi chấm công."
+                : "근태 기록을 찾을 수 없습니다.",
+          },
+          { status: 404 }
+        );
+      }
+
+      if (targetRecord.status === ATTENDANCE_STATUS.LEAVE) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Không thể xử lý đi muộn cho ngày nghỉ."
+                : "휴무 기록은 지각 정상처리할 수 없습니다.",
+          },
+          { status: 409 }
+        );
+      }
+
+      if (Number(targetRecord.late_minutes || 0) <= 0) {
+        return NextResponse.json({ ok: true, record: targetRecord, no_op: true });
+      }
+
+      if (!targetRecord.check_in_at) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Không có dữ liệu giờ vào."
+                : "출근 기록이 없습니다.",
+          },
+          { status: 409 }
+        );
+      }
+
+      const normalizedStatus =
+        targetRecord.status === ATTENDANCE_STATUS.EARLY_LEAVE ||
+        Number(targetRecord.early_leave_minutes || 0) > 0
+          ? ATTENDANCE_STATUS.EARLY_LEAVE
+          : targetRecord.check_out_at
+            ? ATTENDANCE_STATUS.DONE
+            : ATTENDANCE_STATUS.WORKING;
+
+      const { data, error } = await supabaseServer
+        .from("attendance_records")
+        .update({
+          late_minutes: 0,
+          status: normalizedStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", targetRecord.id)
+        .gt("late_minutes", 0)
+        .select()
+        .maybeSingle();
+
+      if (error) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Lỗi khi xử lý đi muộn."
+                : "지각 정상처리 중 오류가 발생했습니다.",
+          },
+          { status: 500 }
+        );
+      }
+
+      // 같은 기록을 동시에 정상처리한 경우 최신 행을 다시 읽어 안전한 no-op으로 응답한다.
+      if (!data) {
+        const { data: latest, error: latestError } = await supabaseServer
+          .from("attendance_records")
+          .select("*")
+          .eq("id", targetRecord.id)
+          .maybeSingle();
+
+        if (latestError || !latest) {
+          return NextResponse.json(
+            {
+              ok: false,
+              message:
+                lang === "vi"
+                  ? "Lỗi khi xử lý đi muộn."
+                  : "지각 정상처리 중 오류가 발생했습니다.",
+            },
+            { status: 500 }
+          );
+        }
+
+        return NextResponse.json({ ok: true, record: latest, no_op: true });
+      }
+
+      return NextResponse.json({ ok: true, record: data });
+    }
+
+    // normalize_late 이외의 기존 action은 아래 공통 처리에서 사용자와 근무일을 사용한다.
+    // 상단 검증과 동일한 조건을 명시해 타입을 좁히고 기존 필수값 정책을 유지한다.
+    if (!user_id || !work_date) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            lang === "vi"
+              ? "Thiếu thông tin bắt buộc."
+              : "필수 정보가 없습니다.",
+        },
+        { status: 400 }
       );
     }
 
@@ -720,7 +878,7 @@ export async function POST(req: Request) {
         }
       }
 
-      let nextLateMinutes = getLateMinutes(
+      const nextLateMinutes = getLateMinutes(
         finalCheckInIso,
         user.work_start_time,
         targetWorkDate
@@ -743,14 +901,6 @@ export async function POST(req: Request) {
         nextStatus = getStatusByMinutes(nextLateMinutes, rawEarlyLeaveMinutes);
         nextEarlyLeaveMinutes =
           nextStatus === ATTENDANCE_STATUS.EARLY_LEAVE ? rawEarlyLeaveMinutes : 0;
-      }
-
-      if (mark_normal === true) {
-        nextLateMinutes = 0;
-        nextEarlyLeaveMinutes = 0;
-        nextStatus = finalCheckOutIso
-          ? ATTENDANCE_STATUS.DONE
-          : ATTENDANCE_STATUS.WORKING;
       }
 
       const recordPayload = {

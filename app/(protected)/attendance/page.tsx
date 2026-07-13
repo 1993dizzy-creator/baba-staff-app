@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import Container from "@/components/Container";
@@ -60,6 +60,78 @@ type AttendanceState = {
   };
 };
 
+type AttendanceRecord = {
+  id?: number;
+  work_date: string;
+  status?: string | null;
+  approval_status?: string | null;
+  check_in_at?: string | null;
+  check_out_at?: string | null;
+  work_minutes?: number | string | null;
+  late_minutes?: number | string | null;
+  early_leave_minutes?: number | string | null;
+};
+
+type AttendanceAction = "check_in" | "check_out";
+type AttendanceActionPhase =
+  | "idle"
+  | "locating"
+  | "saving"
+  | "success"
+  | "error";
+
+type AttendanceActionFeedback = {
+  action: AttendanceAction | null;
+  phase: AttendanceActionPhase;
+  message: string;
+};
+
+const initialActionFeedback: AttendanceActionFeedback = {
+  action: null,
+  phase: "idle",
+  message: "",
+};
+
+const monthlyAttendanceRequests = new Map<
+  string,
+  Promise<AttendanceRecord[]>
+>();
+
+class AttendanceNetworkError extends Error {}
+
+const attendanceActionCopy = {
+  ko: {
+    locating: "위치 확인 중입니다.",
+    savingCheckIn: "출근 정보를 저장하고 있습니다.",
+    savingCheckOut: "퇴근 정보를 저장하고 있습니다.",
+    refreshing: "근태 현황을 갱신하고 있습니다.",
+    refreshFailed: "출퇴근은 저장됐지만 월간 현황 갱신에 실패했습니다.",
+    monthLoadFailed: "월간 근태 정보를 불러오지 못했습니다.",
+    checkInSuccess: "출근 완료",
+    checkOutSuccess: "퇴근 완료",
+    permissionDenied: "위치 권한이 거부되었습니다. 브라우저 설정에서 위치 권한을 허용해 주세요.",
+    positionUnavailable: "현재 위치 정보를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+    positionTimeout: "위치 확인 시간이 초과되었습니다. GPS 상태를 확인하고 다시 시도해 주세요.",
+    networkError: "네트워크 연결을 확인한 뒤 다시 시도해 주세요.",
+    unexpectedError: "예상하지 못한 오류가 발생했습니다. 다시 시도해 주세요.",
+  },
+  vi: {
+    locating: "Đang kiểm tra vị trí.",
+    savingCheckIn: "Đang lưu giờ vào ca.",
+    savingCheckOut: "Đang lưu giờ tan ca.",
+    refreshing: "Đang cập nhật tình hình chấm công.",
+    refreshFailed: "Đã lưu chấm công nhưng không thể cập nhật dữ liệu tháng.",
+    monthLoadFailed: "Không thể tải dữ liệu chấm công tháng.",
+    checkInSuccess: "Đã chấm công vào",
+    checkOutSuccess: "Đã chấm công ra",
+    permissionDenied: "Quyền vị trí đã bị từ chối. Vui lòng cho phép vị trí trong cài đặt trình duyệt.",
+    positionUnavailable: "Không thể xác định vị trí hiện tại. Vui lòng thử lại sau.",
+    positionTimeout: "Hết thời gian xác định vị trí. Vui lòng kiểm tra GPS và thử lại.",
+    networkError: "Vui lòng kiểm tra kết nối mạng và thử lại.",
+    unexpectedError: "Đã xảy ra lỗi không mong muốn. Vui lòng thử lại.",
+  },
+} as const;
+
 const initialAttendanceState: AttendanceState = {
   status: "before",
   checkInTime: "-",
@@ -107,11 +179,11 @@ function calculateWorkMinutes(startIso: string, endIso: string) {
 }
 
 
-function isApprovedLeave(record: any) {
+function isApprovedLeave(record?: AttendanceRecord | null) {
   return record?.status === ATTENDANCE_STATUS.LEAVE && record?.approval_status === "approved";
 }
 
-function calculateMonthSummary(records: any[]) {
+function calculateMonthSummary(records: AttendanceRecord[]) {
   const now = new Date();
 
   const vietnamNow = new Date(
@@ -216,22 +288,89 @@ function getCurrentPosition(): Promise<GeolocationPosition> {
   });
 }
 
+function getMonthRange(date: Date) {
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  const monthText = String(month).padStart(2, "0");
+  const lastDay = new Date(year, month, 0).getDate();
+
+  return {
+    monthKey: `${year}-${monthText}`,
+    start: `${year}-${monthText}-01`,
+    end: `${year}-${monthText}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+function getGeolocationErrorMessage(
+  error: unknown,
+  copy: (typeof attendanceActionCopy)["ko"] | (typeof attendanceActionCopy)["vi"]
+) {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? Number((error as { code?: unknown }).code)
+      : null;
+
+  if (code === 1) return copy.permissionDenied;
+  if (code === 2) return copy.positionUnavailable;
+  if (code === 3) return copy.positionTimeout;
+  return copy.positionUnavailable;
+}
+
+function requestMonthlyAttendance(input: {
+  userId: string | number;
+  date: Date;
+  force?: boolean;
+}) {
+  const { monthKey, start, end } = getMonthRange(input.date);
+  const requestKey = `${input.userId}:${monthKey}`;
+
+  if (!input.force) {
+    const existingRequest = monthlyAttendanceRequests.get(requestKey);
+    if (existingRequest) return existingRequest;
+  }
+
+  const request: Promise<AttendanceRecord[]> = fetch(
+    `/api/attendance/records?user_id=${input.userId}&start_date=${start}&end_date=${end}`
+  )
+    .then(async (res) => {
+      const result = await res.json().catch(() => null);
+      if (!res.ok || !result?.ok) {
+        throw new Error(result?.message || "MONTHLY_ATTENDANCE_REQUEST_FAILED");
+      }
+      return (result.records || []) as AttendanceRecord[];
+    })
+    .catch((error) => {
+      if (error instanceof TypeError) {
+        throw new AttendanceNetworkError(error.message);
+      }
+      throw error;
+    })
+    .finally(() => {
+      if (monthlyAttendanceRequests.get(requestKey) === request) {
+        monthlyAttendanceRequests.delete(requestKey);
+      }
+    });
+
+  monthlyAttendanceRequests.set(requestKey, request);
+  return request;
+}
+
 
 function getStatusLabel(
-  lang: "ko" | "vi",
   status: AttendanceStatus,
-  t: (typeof attendanceText)["ko"] | (typeof attendanceText)["vi"]
+  t: (typeof attendanceText)["ko"] | (typeof attendanceText)["vi"],
+  checkInTime: string,
+  checkOutTime: string
 ) {
   if (status === "before") return t.workBefore;
+  if (status === ATTENDANCE_STATUS.LEAVE) return t.workLeave;
+  if (checkOutTime !== "-") {
+    return status === ATTENDANCE_STATUS.EARLY_LEAVE
+      ? t.workEarlyLeave
+      : t.workDone;
+  }
+  if (checkInTime !== "-") return t.working;
   if (status === ATTENDANCE_STATUS.DONE) return t.workDone;
-  if (status === ATTENDANCE_STATUS.EARLY_LEAVE) {
-    return t.workEarlyLeave;
-  }
-
-  if (status === ATTENDANCE_STATUS.LEAVE) {
-    return t.workLeave;
-  }
-
   return t.working;
 }
 
@@ -249,12 +388,24 @@ export default function AttendancePage() {
 }
 
 function MyAttendance() {
-
   const [isLoadingToday, setIsLoadingToday] = useState(true);
   const { lang } = useLanguage();
   const c = commonText[lang];
   const t = attendanceText[lang];
-  const [isSubmittingAttendance, setIsSubmittingAttendance] = useState(false);
+  const actionCopy = attendanceActionCopy[lang];
+  const [actionFeedback, setActionFeedback] =
+    useState<AttendanceActionFeedback>(initialActionFeedback);
+  const [calendarDate, setCalendarDate] = useState(new Date());
+  const [monthRecords, setMonthRecords] = useState<AttendanceRecord[]>([]);
+  const [isRefreshingMonth, setIsRefreshingMonth] = useState(false);
+  const [monthFeedback, setMonthFeedback] = useState("");
+  const actionInFlightRef = useRef(false);
+  const monthRequestSequenceRef = useRef(0);
+  const isMountedRef = useRef(true);
+  const calendarDateRef = useRef(calendarDate);
+  calendarDateRef.current = calendarDate;
+  const isSubmittingAttendance =
+    actionFeedback.phase === "locating" || actionFeedback.phase === "saving";
 
   const [nowText, setNowText] = useState("");
 
@@ -280,12 +431,13 @@ function MyAttendance() {
 
   const [attendance, setAttendance] =
     useState<AttendanceState>(initialAttendanceState);
-  const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
   const [hasPendingLeaveToday, setHasPendingLeaveToday] = useState(false);
 
   useEffect(() => {
-    fetchTodayAttendance();
-    fetchMonthSummary();
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   const fetchTodayAttendance = async () => {
@@ -311,13 +463,19 @@ function MyAttendance() {
       const data = result.records?.[0] || null;
 
       if (!data) {
-        setAttendance(initialAttendanceState);
+        setAttendance((prev) => ({
+          ...initialAttendanceState,
+          monthSummary: prev.monthSummary,
+        }));
         setHasPendingLeaveToday(false);
         return;
       }
 
       if (data.status === ATTENDANCE_STATUS.LEAVE && !isApprovedLeave(data)) {
-        setAttendance(initialAttendanceState);
+        setAttendance((prev) => ({
+          ...initialAttendanceState,
+          monthSummary: prev.monthSummary,
+        }));
         setHasPendingLeaveToday(true);
         return;
       }
@@ -337,213 +495,337 @@ function MyAttendance() {
     }
   };
 
-  const fetchMonthSummary = async () => {
-    const user = getUser();
-    if (!user?.id) return;
+  useEffect(() => {
+    void fetchTodayAttendance();
+  }, []);
 
-    const now = new Date();
+  useEffect(() => {
+    if (actionFeedback.phase !== "success") return;
+    const timer = window.setTimeout(() => {
+      setActionFeedback((current) =>
+        current.phase === "success" ? initialActionFeedback : current
+      );
+    }, 5000);
 
-    const vietnamDate = new Date(
-      now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
-    );
+    return () => window.clearTimeout(timer);
+  }, [actionFeedback.phase]);
 
-    const year = vietnamDate.getFullYear();
-    const month = vietnamDate.getMonth() + 1;
+  const loadMonthAttendance = useCallback(
+    async (options?: {
+      date?: Date;
+      force?: boolean;
+      afterAttendanceSave?: boolean;
+    }) => {
+      const user = getUser();
+      if (!user?.id) return;
+      const requestDate = options?.date ?? calendarDateRef.current;
 
-    const start = `${year}-${String(month).padStart(2, "0")}-01`;
-    const lastDay = new Date(year, month, 0).getDate();
-    const end = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      const requestSequence = ++monthRequestSequenceRef.current;
+      setIsRefreshingMonth(true);
+      setMonthFeedback("");
 
-    const res = await fetch(
-      `/api/attendance/records?user_id=${user.id}&start_date=${start}&end_date=${end}`
-    );
+      try {
+        const records = await requestMonthlyAttendance({
+          userId: user.id,
+          date: requestDate,
+          force: options?.force,
+        });
 
-    const result = await res.json();
+        if (
+          !isMountedRef.current ||
+          requestSequence !== monthRequestSequenceRef.current
+        ) {
+          return;
+        }
 
-    if (!res.ok || !result.ok) {
-      console.log("fetchMonthSummary error:", result);
-      return;
-    }
+        setMonthRecords(records);
+        setAttendance((prev) => ({
+          ...prev,
+          monthSummary: calculateMonthSummary(records),
+        }));
+      } catch (error) {
+        if (
+          !isMountedRef.current ||
+          requestSequence !== monthRequestSequenceRef.current
+        ) {
+          return;
+        }
 
-    const data = result.records || [];
+        console.error("fetch monthly attendance error:", error);
+        setMonthFeedback(
+          options?.afterAttendanceSave
+            ? actionCopy.refreshFailed
+            : actionCopy.monthLoadFailed
+        );
+      } finally {
+        if (
+          isMountedRef.current &&
+          requestSequence === monthRequestSequenceRef.current
+        ) {
+          setIsRefreshingMonth(false);
+        }
+      }
+    },
+    [actionCopy.monthLoadFailed, actionCopy.refreshFailed]
+  );
 
-    const monthSummary = calculateMonthSummary(data || []);
-
-    setAttendance((prev) => ({
-      ...prev,
-      monthSummary,
-    }));
-  };
+  useEffect(() => {
+    void loadMonthAttendance({ date: calendarDate });
+  }, [calendarDate, loadMonthAttendance]);
 
   const handleCheckIn = async () => {
-    if (isSubmittingAttendance) return;
+    if (actionInFlightRef.current || isSubmittingAttendance) return;
     if (isLoadingToday) return;
     if (attendance.status !== "before") return;
     if (attendance.checkInTime !== "-") return;
     if (hasPendingLeaveToday) return;
 
-    setIsSubmittingAttendance(true);
-
     const user = getUser();
 
     if (!user?.id) {
-      alert(c.noData);
-      setIsSubmittingAttendance(false);
+      setActionFeedback({ action: "check_in", phase: "error", message: c.noData });
       return;
     }
 
-    let latitude: number | null = null;
-    let longitude: number | null = null;
-    let distanceM: number | null = null;
-    let isLocationValid = false;
+    actionInFlightRef.current = true;
+    setActionFeedback({
+      action: "check_in",
+      phase: "locating",
+      message: actionCopy.locating,
+    });
 
     try {
-      const position = await getCurrentPosition();
-
-      latitude = position.coords.latitude;
-      longitude = position.coords.longitude;
-
-      distanceM = getDistanceMeters(latitude, longitude, STORE_LAT, STORE_LNG);
-      isLocationValid = distanceM <= ALLOWED_DISTANCE_M;
-
-      if (!isLocationValid) {
-        alert(t.checkInOutOfRange.replace("{distance}", String(distanceM)));
+      let position: GeolocationPosition;
+      try {
+        position = await getCurrentPosition();
+      } catch (error) {
+        setActionFeedback({
+          action: "check_in",
+          phase: "error",
+          message: getGeolocationErrorMessage(error, actionCopy),
+        });
         return;
       }
 
-      const res = await fetch("/api/attendance/check-in", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          user_id: user.id,
-          user_name: user.name || user.full_name || "",
-          username: user.username || "",
-          language: lang,
-          latitude,
-          longitude,
-          distance_m: distanceM,
-          is_location_valid: isLocationValid,
-        }),
+      const latitude = position.coords.latitude;
+      const longitude = position.coords.longitude;
+
+      const distanceM = getDistanceMeters(latitude, longitude, STORE_LAT, STORE_LNG);
+      const isLocationValid = distanceM <= ALLOWED_DISTANCE_M;
+
+      if (!isLocationValid) {
+        setActionFeedback({
+          action: "check_in",
+          phase: "error",
+          message: t.checkInOutOfRange.replace("{distance}", String(distanceM)),
+        });
+        return;
+      }
+
+      setActionFeedback({
+        action: "check_in",
+        phase: "saving",
+        message: actionCopy.savingCheckIn,
       });
 
-      const result = await res.json();
+      let res: Response;
+      try {
+        res = await fetch("/api/attendance/check-in", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            user_id: user.id,
+            user_name: user.name || user.full_name || "",
+            username: user.username || "",
+            language: lang,
+            latitude,
+            longitude,
+            distance_m: distanceM,
+            is_location_valid: isLocationValid,
+          }),
+        });
+      } catch {
+        throw new AttendanceNetworkError(actionCopy.networkError);
+      }
 
-      if (!res.ok || !result.ok) {
-        alert(result.message || t.checkInFail);
+      const result = await res.json().catch(() => null);
+
+      if (!result) throw new Error("INVALID_CHECK_IN_RESPONSE");
+      if (!res.ok || !result?.ok) {
+        setActionFeedback({
+          action: "check_in",
+          phase: "error",
+          message: result?.message || t.checkInFail,
+        });
         return;
       }
 
       const data = result.record;
+      const checkInTime = data.check_in_at
+        ? formatTimeForDisplay(data.check_in_at)
+        : "-";
 
       setAttendance((prev) => ({
         ...prev,
         status: data.status || ATTENDANCE_STATUS.WORKING,
-        checkInTime: data.check_in_at ? formatTimeForDisplay(data.check_in_at) : "-",
+        checkInTime,
         checkOutTime: "-",
         workDuration: "00:00",
         lateMinutes: data.late_minutes || 0,
         earlyLeaveMinutes: data.early_leave_minutes || 0,
       }));
-
-      await fetchMonthSummary();
-      setCalendarRefreshKey((prev) => prev + 1);
+      setActionFeedback({
+        action: "check_in",
+        phase: "success",
+        message: `${actionCopy.checkInSuccess} · ${checkInTime}`,
+      });
+      void loadMonthAttendance({ force: true, afterAttendanceSave: true });
     } catch (error) {
       console.error(error);
-
-      alert(t.gpsFail);
+      setActionFeedback({
+        action: "check_in",
+        phase: "error",
+        message:
+          error instanceof AttendanceNetworkError
+            ? actionCopy.networkError
+            : actionCopy.unexpectedError,
+      });
     } finally {
-      setIsSubmittingAttendance(false);
+      actionInFlightRef.current = false;
     }
   };
 
-
   const handleCheckOutClick = () => {
-    if (attendance.status !== ATTENDANCE_STATUS.WORKING) return;
-
-    const user = getUser();
-    handleConfirmCheckOut();
+    if (attendance.checkInTime === "-" || attendance.checkOutTime !== "-") return;
+    void handleConfirmCheckOut();
   };
 
   const handleConfirmCheckOut = async () => {
-    if (isSubmittingAttendance) return;
-
-    setIsSubmittingAttendance(true);
+    if (actionInFlightRef.current || isSubmittingAttendance) return;
 
     const user = getUser();
 
     if (!user?.id) {
-      alert(c.noData);
-      setIsSubmittingAttendance(false);
+      setActionFeedback({ action: "check_out", phase: "error", message: c.noData });
       return;
     }
 
-    let latitude: number | null = null;
-    let longitude: number | null = null;
-    let distanceM: number | null = null;
-    let isLocationValid = false;
+    actionInFlightRef.current = true;
+    setActionFeedback({
+      action: "check_out",
+      phase: "locating",
+      message: actionCopy.locating,
+    });
 
     try {
-      const position = await getCurrentPosition();
-
-      latitude = position.coords.latitude;
-      longitude = position.coords.longitude;
-
-      distanceM = getDistanceMeters(latitude, longitude, STORE_LAT, STORE_LNG);
-      isLocationValid = distanceM <= ALLOWED_DISTANCE_M;
-
-      if (!isLocationValid) {
-        alert(t.checkOutOutOfRange.replace("{distance}", String(distanceM)));
+      let position: GeolocationPosition;
+      try {
+        position = await getCurrentPosition();
+      } catch (error) {
+        setActionFeedback({
+          action: "check_out",
+          phase: "error",
+          message: getGeolocationErrorMessage(error, actionCopy),
+        });
         return;
       }
 
-      const res = await fetch("/api/attendance/check-out", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          user_id: user.id,
-          user_name: user.name || user.full_name || "",
-          username: user.username || "",
-          language: lang,
-          latitude,
-          longitude,
-          distance_m: distanceM,
-          is_location_valid: isLocationValid,
-        }),
+      const latitude = position.coords.latitude;
+      const longitude = position.coords.longitude;
+
+      const distanceM = getDistanceMeters(latitude, longitude, STORE_LAT, STORE_LNG);
+      const isLocationValid = distanceM <= ALLOWED_DISTANCE_M;
+
+      if (!isLocationValid) {
+        setActionFeedback({
+          action: "check_out",
+          phase: "error",
+          message: t.checkOutOutOfRange.replace("{distance}", String(distanceM)),
+        });
+        return;
+      }
+
+      setActionFeedback({
+        action: "check_out",
+        phase: "saving",
+        message: actionCopy.savingCheckOut,
       });
 
-      const result = await res.json();
+      let res: Response;
+      try {
+        res = await fetch("/api/attendance/check-out", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            user_id: user.id,
+            user_name: user.name || user.full_name || "",
+            username: user.username || "",
+            language: lang,
+            latitude,
+            longitude,
+            distance_m: distanceM,
+            is_location_valid: isLocationValid,
+          }),
+        });
+      } catch {
+        throw new AttendanceNetworkError(actionCopy.networkError);
+      }
 
-      if (!res.ok || !result.ok) {
-        alert(result.message || t.checkOutFail);
+      const result = await res.json().catch(() => null);
+
+      if (!result) throw new Error("INVALID_CHECK_OUT_RESPONSE");
+      if (!res.ok || !result?.ok) {
+        setActionFeedback({
+          action: "check_out",
+          phase: "error",
+          message: result?.message || t.checkOutFail,
+        });
         return;
       }
 
       const data = result.record;
+      const checkOutTime = data.check_out_at
+        ? formatTimeForDisplay(data.check_out_at)
+        : "-";
 
       setAttendance((prev) => ({
         ...prev,
         status: data.status || ATTENDANCE_STATUS.DONE,
-        checkOutTime: data.check_out_at ? formatTimeForDisplay(data.check_out_at) : "-",
+        checkOutTime,
         workDuration: formatMinutesToHHMM(data.work_minutes || 0),
+        lateMinutes: data.late_minutes || prev.lateMinutes,
         earlyLeaveMinutes: data.early_leave_minutes || 0,
       }));
-
-      await fetchMonthSummary();
-      setCalendarRefreshKey((prev) => prev + 1);
+      setActionFeedback({
+        action: "check_out",
+        phase: "success",
+        message: `${actionCopy.checkOutSuccess} · ${checkOutTime}`,
+      });
+      void loadMonthAttendance({ force: true, afterAttendanceSave: true });
     } catch (error) {
       console.error(error);
-
-      alert(t.gpsFail);
+      setActionFeedback({
+        action: "check_out",
+        phase: "error",
+        message:
+          error instanceof AttendanceNetworkError
+            ? actionCopy.networkError
+            : actionCopy.unexpectedError,
+      });
     } finally {
-      setIsSubmittingAttendance(false);
+      actionInFlightRef.current = false;
     }
   };
 
   const isEarlyLeave = attendance.status === ATTENDANCE_STATUS.EARLY_LEAVE;
+  const isCurrentlyWorking =
+    attendance.status !== ATTENDANCE_STATUS.LEAVE &&
+    attendance.checkInTime !== "-" &&
+    attendance.checkOutTime === "-";
 
   const checkInDisabled =
     isLoadingToday ||
@@ -555,7 +837,7 @@ function MyAttendance() {
   const checkOutDisabled =
     isLoadingToday ||
     isSubmittingAttendance ||
-    attendance.status !== ATTENDANCE_STATUS.WORKING;
+    !isCurrentlyWorking;
 
   const lateDisplayText =
     attendance.lateMinutes > 0
@@ -569,7 +851,12 @@ function MyAttendance() {
       <div style={cardStyle}>
         <div style={todayHeaderRow}>
           <div style={statusBadgeStyle(attendance.status)}>
-            ● {getStatusLabel(lang, attendance.status, t)}
+            ● {getStatusLabel(
+              attendance.status,
+              t,
+              attendance.checkInTime,
+              attendance.checkOutTime
+            )}
           </div>
 
           <div style={todayDateRow}>
@@ -626,7 +913,15 @@ function MyAttendance() {
             <span style={actionButtonIcon}>↪</span>
             <div style={actionButtonTextWrap}>
               <div style={actionButtonTitle}>
-                {isLoadingToday ? c.loading : t.checkInButton}
+                {isLoadingToday
+                  ? c.loading
+                  : actionFeedback.action === "check_in" &&
+                      actionFeedback.phase === "locating"
+                    ? actionCopy.locating
+                    : actionFeedback.action === "check_in" &&
+                        actionFeedback.phase === "saving"
+                      ? actionCopy.savingCheckIn
+                      : t.checkInButton}
               </div>
               <div style={actionButtonSubDark}>{t.checkInButtonDesc}</div>
             </div>
@@ -645,15 +940,49 @@ function MyAttendance() {
             <span style={actionButtonIconDark}>↩</span>
             <div style={actionButtonTextWrap}>
               <div style={actionButtonTitleDark}>
-                {isLoadingToday ? c.loading : t.checkOutButton}
+                {isLoadingToday
+                  ? c.loading
+                  : actionFeedback.action === "check_out" &&
+                      actionFeedback.phase === "locating"
+                    ? actionCopy.locating
+                    : actionFeedback.action === "check_out" &&
+                        actionFeedback.phase === "saving"
+                      ? actionCopy.savingCheckOut
+                      : t.checkOutButton}
               </div>
               <div style={actionButtonSubDark}>{t.checkOutButtonDesc}</div>
             </div>
           </button>
         </div>
+
+        {actionFeedback.message ? (
+          <div
+            role={actionFeedback.phase === "error" ? "alert" : "status"}
+            aria-live="polite"
+            style={actionFeedbackStyle(actionFeedback.phase)}
+          >
+            {actionFeedback.message}
+          </div>
+        ) : null}
+
+        {isRefreshingMonth ? (
+          <div role="status" aria-live="polite" style={refreshFeedbackStyle}>
+            {actionCopy.refreshing}
+          </div>
+        ) : null}
+
+        {monthFeedback ? (
+          <div role="alert" style={monthFeedbackStyle}>
+            {monthFeedback}
+          </div>
+        ) : null}
       </div>
 
-      <Calendar refreshKey={calendarRefreshKey} />
+      <Calendar
+        calendarDate={calendarDate}
+        monthRecords={monthRecords}
+        onMonthChange={setCalendarDate}
+      />
 
       <div style={cardStyle}>
         <div style={monthSummaryHeader}>
@@ -841,45 +1170,26 @@ function getCalendarCells(baseDate: Date) {
   return cells;
 }
 
-function Calendar({ refreshKey }: { refreshKey: number }) {
+function Calendar({
+  calendarDate,
+  monthRecords,
+  onMonthChange,
+}: {
+  calendarDate: Date;
+  monthRecords: AttendanceRecord[];
+  onMonthChange: (date: Date) => void;
+}) {
   const { lang } = useLanguage();
   const t = attendanceText[lang];
   const c = commonText[lang];
-  const [calendarDate, setCalendarDate] = useState(new Date());
-  const calendarCells = getCalendarCells(calendarDate);
-
-  const [monthRecords, setMonthRecords] = useState<any[]>([]);
-
-  useEffect(() => {
-    fetchMonthAttendance();
-  }, [refreshKey, calendarDate]);
-
-  const fetchMonthAttendance = async () => {
-    const user = getUser();
-    if (!user?.id) return;
-
-    const year = calendarDate.getFullYear();
-    const month = calendarDate.getMonth() + 1;
-
-    const start = `${year}-${String(month).padStart(2, "0")}-01`;
-    const lastDay = new Date(year, month, 0).getDate();
-    const end = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-
-    const res = await fetch(
-      `/api/attendance/records?user_id=${user.id}&start_date=${start}&end_date=${end}`
-    );
-
-    const result = await res.json();
-
-    if (!res.ok || !result.ok) {
-      console.log("fetchMonthAttendance error:", result);
-      return;
-    }
-
-    const data = result.records || [];
-
-    setMonthRecords(data || []);
-  };
+  const calendarCells = useMemo(
+    () => getCalendarCells(calendarDate),
+    [calendarDate]
+  );
+  const recordsByDate = useMemo(
+    () => new Map(monthRecords.map((record) => [record.work_date, record])),
+    [monthRecords]
+  );
 
   const getDayRecord = (day: number) => {
     const year = calendarDate.getFullYear();
@@ -887,7 +1197,7 @@ function Calendar({ refreshKey }: { refreshKey: number }) {
 
     const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
-    return monthRecords.find((r) => r.work_date === dateStr);
+    return recordsByDate.get(dateStr);
   };
 
   return (
@@ -898,7 +1208,9 @@ function Calendar({ refreshKey }: { refreshKey: number }) {
             type="button"
             style={calendarMonthButtonStyle}
             onClick={() =>
-              setCalendarDate((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))
+              onMonthChange(
+                new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1)
+              )
             }
           >
             ‹
@@ -910,7 +1222,9 @@ function Calendar({ refreshKey }: { refreshKey: number }) {
             type="button"
             style={calendarMonthButtonStyle}
             onClick={() =>
-              setCalendarDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))
+              onMonthChange(
+                new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1)
+              )
             }
           >
             ›
@@ -1204,6 +1518,40 @@ const actionGrid: CSSProperties = {
   gap: 10,
 };
 
+function actionFeedbackStyle(
+  phase: AttendanceActionPhase
+): CSSProperties {
+  const isError = phase === "error";
+  const isSuccess = phase === "success";
+
+  return {
+    marginTop: 10,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: `1px solid ${isError ? "#fecaca" : isSuccess ? "#bbf7d0" : "#bfdbfe"}`,
+    background: isError ? "#fef2f2" : isSuccess ? "#f0fdf4" : "#eff6ff",
+    color: isError ? "#b91c1c" : isSuccess ? "#15803d" : "#1d4ed8",
+    fontSize: 13,
+    fontWeight: 700,
+    lineHeight: 1.4,
+  };
+}
+
+const refreshFeedbackStyle: CSSProperties = {
+  marginTop: 8,
+  color: "#4b5563",
+  fontSize: 12,
+  fontWeight: 700,
+};
+
+const monthFeedbackStyle: CSSProperties = {
+  marginTop: 8,
+  color: "#b45309",
+  fontSize: 12,
+  fontWeight: 700,
+  lineHeight: 1.4,
+};
+
 const actionButtonBase: CSSProperties = {
   minHeight: 68,
   borderRadius: 14,
@@ -1431,4 +1779,3 @@ const summarySubValueStyle: CSSProperties = {
   minHeight: 14,
   lineHeight: 1.2,
 };
-
