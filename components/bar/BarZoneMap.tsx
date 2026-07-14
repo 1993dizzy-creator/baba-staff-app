@@ -2,6 +2,8 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { BAR_COLORS } from "@/lib/bar/colors";
+import type { BarZoneRecord } from "@/lib/bar/types";
 import {
   BAR_FRONT_IMAGE_HEIGHT,
   BAR_FRONT_IMAGE_SRC,
@@ -29,6 +31,7 @@ type BarZoneMapProps = {
   labels: BarZoneMapLabels;
   lang: "ko" | "vi";
   expanded?: boolean;
+  zoneData?: Record<string, BarZoneRecord>;
 };
 
 const colors = {
@@ -51,6 +54,7 @@ export default function BarZoneMap({
   labels,
   lang,
   expanded = false,
+  zoneData = {},
 }: BarZoneMapProps) {
   const [hoveredCode, setHoveredCode] = useState<string | null>(null);
   const [focusedCode, setFocusedCode] = useState<string | null>(null);
@@ -109,7 +113,10 @@ export default function BarZoneMap({
             const isFocused = focusedCode === zone.code;
             const label = lang === "vi" ? zone.labelVi : zone.labelKo;
             const hit = zone.hitSvg ?? zone.svg;
-            const lineColor = zone.kind === "equipment" ? colors.equipmentLine : colors.storageLine;
+            const assigneeColor = zoneData[zone.code]?.assignee?.colorKey;
+            const lineColor = assigneeColor
+              ? BAR_COLORS[assigneeColor].css
+              : zone.kind === "equipment" ? colors.equipmentLine : colors.storageLine;
             const isMiddle = zone.level === "middle";
             const labelX = isMiddle
               ? zone.label?.x ?? zone.svg.x + zone.svg.width / 2
@@ -165,7 +172,7 @@ export default function BarZoneMap({
                     y1={labelY + 18}
                     x2={labelX}
                     y2={zone.svg.y}
-                    stroke={isSelected || isFocused ? colors.selectedLine : colors.connector}
+                    stroke={isSelected || isFocused ? lineColor : colors.connector}
                     strokeWidth={isSelected || isFocused ? 3 : 1.5}
                     strokeDasharray="7 7"
                     vectorEffect="non-scaling-stroke"
@@ -187,8 +194,9 @@ export default function BarZoneMap({
                           ? `url(#bar-equipment-pattern-${expanded ? "expanded" : "default"})`
                           : "none"
                   }
-                  stroke={isFocused ? colors.focusLine : isSelected ? colors.selectedLine : lineColor}
+                  stroke={lineColor}
                   strokeWidth={isFocused ? 6 : isSelected ? 5 : 2.5}
+                  style={{ filter: isSelected || isFocused ? `drop-shadow(0 0 5px ${lineColor})` : undefined }}
                   vectorEffect="non-scaling-stroke"
                   pointerEvents="none"
                 />
@@ -211,7 +219,7 @@ export default function BarZoneMap({
                     width={58}
                     height={28}
                     rx={5}
-                    fill={isSelected ? colors.selectedLine : colors.labelBackground}
+                    fill={isSelected ? lineColor : colors.labelBackground}
                     stroke={isFocused ? colors.focusLine : "none"}
                     strokeWidth={isFocused ? 3 : 0}
                   />

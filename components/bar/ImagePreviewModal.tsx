@@ -1,7 +1,7 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- private signed URLs bypass the public Next image optimizer */
 
-import Image from "next/image";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 type ImagePreviewModalProps = {
   src: string;
@@ -16,6 +16,7 @@ export default function ImagePreviewModal({
   closeLabel,
   onClose,
 }: ImagePreviewModalProps) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -24,6 +25,7 @@ export default function ImagePreviewModal({
 
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", handleKeyDown);
+    closeButtonRef.current?.focus();
 
     return () => {
       document.body.style.overflow = previousOverflow;
@@ -81,6 +83,7 @@ export default function ImagePreviewModal({
             {alt}
           </strong>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             aria-label={closeLabel}
@@ -109,12 +112,11 @@ export default function ImagePreviewModal({
             overflow: "hidden",
           }}
         >
-          <Image
+          {/* Signed private Storage URLs are displayed directly and expire after one hour. */}
+          <img
             src={src}
             alt={alt}
-            fill
-            sizes="(max-width: 800px) 100vw, 960px"
-            style={{ objectFit: "contain" }}
+            style={{ display: "block", width: "100%", height: "100%", objectFit: "contain" }}
           />
         </div>
       </div>

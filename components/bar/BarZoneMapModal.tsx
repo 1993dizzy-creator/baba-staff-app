@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
 import type { BarZoneDefinition } from "@/lib/bar/zone-map";
 import BarZoneMap, { type BarZoneMapLabels } from "@/components/bar/BarZoneMap";
+import type { BarZoneRecord } from "@/lib/bar/types";
 
 export default function BarZoneMapModal({
   selectedCode,
@@ -13,6 +14,7 @@ export default function BarZoneMapModal({
   lang,
   closeLabel,
   returnFocusRef,
+  zoneData,
 }: {
   selectedCode: string | null;
   onSelect: (zone: BarZoneDefinition) => void;
@@ -21,6 +23,7 @@ export default function BarZoneMapModal({
   lang: "ko" | "vi";
   closeLabel: string;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
+  zoneData?: Record<string, BarZoneRecord>;
 }) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -112,6 +115,7 @@ export default function BarZoneMapModal({
             labels={labels}
             lang={lang}
             expanded
+            zoneData={zoneData}
           />
         </div>
       </div>

@@ -74,6 +74,17 @@ function ProtectedLayoutContent({
   }, [pathname]);
 
   useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === "baba_user" && event.newValue === null) {
+        router.replace("/login");
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [router]);
+
+  useEffect(() => {
     const checkLeaveAlert = async () => {
       if (!checked || !isReady) return;
       if (leaveAlertShownRef.current) return;
@@ -121,7 +132,12 @@ function ProtectedLayoutContent({
     checkLeaveAlert();
   }, [checked, isReady, pathname, router, lang]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/logout", { method: "POST" });
+    } catch (error) {
+      console.warn("Failed to clear server session", error);
+    }
     localStorage.removeItem("baba_user");
     alert(t.logoutDone);
     router.push("/login");

@@ -27,7 +27,12 @@ function readCachedUser() {
   }
 }
 
-function redirectToLogin() {
+async function redirectToLogin() {
+  try {
+    await fetch("/api/logout", { method: "POST", keepalive: true });
+  } catch {
+    // Local logout must still complete if the server is unavailable.
+  }
   try {
     window.localStorage.removeItem("baba_user");
   } catch {
@@ -71,7 +76,7 @@ export default function UserSessionRefresher() {
         const result = (await res.json().catch(() => null)) as MeResponse | null;
 
         if (res.status === 403 || res.status === 404) {
-          redirectToLogin();
+          await redirectToLogin();
           return;
         }
 

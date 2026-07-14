@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  isServerSessionConfigured,
+  setServerSessionCookie,
+} from "@/lib/auth/server-session";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -73,10 +77,20 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       ok: true,
       user: data,
     });
+    if (isServerSessionConfigured()) {
+      setServerSessionCookie(response, data.id);
+    } else if (process.env.NODE_ENV === "production") {
+      throw new Error("BABA_SESSION_SECRET is not configured.");
+    } else {
+      console.warn(
+        "[BABA_SESSION_DISABLED] BABA_SESSION_SECRET is not configured; legacy localStorage login remains available in development."
+      );
+    }
+    return response;
   } catch (err) {
     console.error("login exception:", err);
     return NextResponse.json(
