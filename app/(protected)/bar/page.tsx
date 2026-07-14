@@ -24,32 +24,19 @@ export default function BarAreaPage() {
     leftShort: t.leftShort,
     rightShort: t.rightShort,
     unavailable: t.unavailable,
-    posDirection: t.posDirection,
-    equipmentDirection: t.equipmentDirection,
+    equipmentShort: t.equipmentShort,
+    mapAriaLabel: t.mapAriaLabel,
   };
 
   return (
-    <div style={{ minWidth: 0, maxWidth: "100%", padding: "12px 0 24px" }}>
-      <header style={{ marginBottom: 16 }}>
-        <h1 style={{ margin: 0, color: "#111827", fontSize: 26 }}>{t.areaTitle}</h1>
-        <p
-          style={{
-            margin: "8px 0 0",
-            color: "#6b7280",
-            fontSize: 14,
-            lineHeight: 1.5,
-          }}
-        >
-          {t.areaDescription}
-        </p>
-      </header>
-
+    <div style={{ minWidth: 0, maxWidth: "100%", padding: "0 0 24px" }}>
       <section
         style={{
-          ...ui.card,
           minWidth: 0,
-          padding: 12,
-          marginBottom: 12,
+          padding: 0,
+          marginBottom: 8,
+          border: "1px solid #dcdfe4",
+          borderRadius: 10,
           overflow: "hidden",
         }}
       >
@@ -68,7 +55,7 @@ export default function BarAreaPage() {
         style={{
           ...ui.subButton,
           minHeight: 48,
-          marginBottom: 16,
+          marginBottom: 14,
           fontWeight: 800,
         }}
       >
@@ -82,6 +69,7 @@ export default function BarAreaPage() {
           selectZone: t.selectZone,
           selectedZone: t.selectedZone,
           zoneCode: t.zoneCode,
+          keepingUnavailable: t.keepingUnavailable,
           noPhoto: t.noPhoto,
           noItems: t.noItems,
           futureManagement: t.futureManagement,

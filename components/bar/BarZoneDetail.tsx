@@ -5,6 +5,7 @@ type BarZoneDetailText = {
   selectZone: string;
   selectedZone: string;
   zoneCode: string;
+  keepingUnavailable: string;
   noPhoto: string;
   noItems: string;
   futureManagement: string;
@@ -58,6 +59,22 @@ export default function BarZoneDetail({
       <p style={{ margin: "14px 0", color: "#374151", fontSize: 14, lineHeight: 1.6 }}>
         {description}
       </p>
+      {!zone.selectableForKeeping ? (
+        <div
+          style={{
+            marginBottom: 14,
+            padding: "10px 12px",
+            border: "1px solid #fbbf24",
+            borderRadius: 10,
+            background: "#fffbeb",
+            color: "#92400e",
+            fontSize: 13,
+            fontWeight: 900,
+          }}
+        >
+          {text.keepingUnavailable}
+        </div>
+      ) : null}
       <div
         style={{
           padding: 13,

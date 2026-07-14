@@ -46,7 +46,7 @@ export default function BarZoneMapModal({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={lang === "vi" ? "Chọn khu vực BAR" : "BAR 구역 선택"}
+      aria-label={labels.mapAriaLabel}
       onClick={onClose}
       style={{
         position: "fixed",
