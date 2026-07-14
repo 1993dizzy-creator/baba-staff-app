@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canViewBarLogs } from "@/lib/bar/permissions";
 import { getBarServerActor } from "@/lib/bar/server-auth";
+import { isBarZoneCode } from "@/lib/bar/zone-map";
 import { supabaseServer } from "@/lib/supabase/server";
+
+const ZONE_LOG_ACTIONS = [
+  "zone_content_updated", "zone_assignee_assigned", "zone_assignee_changed", "zone_assignee_removed",
+  "zone_photo_added", "zone_photo_replaced", "zone_photo_removed",
+] as const;
 
 export async function GET(request: NextRequest) {
   try {
@@ -9,7 +15,12 @@ export async function GET(request: NextRequest) {
     if (response || !actor) return response;
     if (!canViewBarLogs(actor)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
-    const pageSize = Math.min(50, Math.max(1, Number(request.nextUrl.searchParams.get("pageSize")) || 20));
+    const rawPageSize = request.nextUrl.searchParams.get("limit") ?? request.nextUrl.searchParams.get("pageSize");
+    const parsedPageSize = rawPageSize == null ? 20 : Number(rawPageSize);
+    if (!Number.isInteger(parsedPageSize) || parsedPageSize < 1 || parsedPageSize > 50) {
+      return NextResponse.json({ ok: false, error: "Invalid log limit", code: "INVALID_INPUT" }, { status: 400 });
+    }
+    const pageSize = parsedPageSize;
     const cursorParam = request.nextUrl.searchParams.get("cursor");
     const cursor = cursorParam ? parseCursor(cursorParam) : null;
     if (cursorParam && !cursor) {
@@ -21,8 +32,16 @@ export async function GET(request: NextRequest) {
       .order("created_at", { ascending: false })
       .order("id", { ascending: false });
     const entityType = request.nextUrl.searchParams.get("entityType");
+    const code = request.nextUrl.searchParams.get("code");
     const actionType = request.nextUrl.searchParams.get("actionType");
+    if (entityType && entityType !== "zone") {
+      return NextResponse.json({ ok: false, error: "Invalid log entity type", code: "INVALID_INPUT" }, { status: 400 });
+    }
+    if (code && (entityType !== "zone" || !isBarZoneCode(code))) {
+      return NextResponse.json({ ok: false, error: "Invalid BAR zone code", code: "INVALID_ZONE" }, { status: 400 });
+    }
     if (entityType) query = query.eq("entity_type", entityType);
+    if (code) query = query.eq("entity_code_snapshot", code).in("action_type", [...ZONE_LOG_ACTIONS]);
     if (actionType) query = query.eq("action_type", actionType);
     if (cursor) {
       query = query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);

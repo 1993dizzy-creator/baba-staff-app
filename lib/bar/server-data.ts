@@ -13,6 +13,7 @@ type ZoneRow = {
   note_ko: string | null;
   note_vi: string | null;
   image_path: string | null;
+  image_updated_at: string | null;
   assignee_user_id: number | null;
   is_active: boolean;
   version: number;
@@ -22,7 +23,7 @@ type ZoneRow = {
 export async function getBarZones(): Promise<BarZoneRecord[]> {
   const { data, error } = await supabaseServer
     .from("bar_zones")
-    .select("id, code, kind, selectable_for_keeping, note_ko, note_vi, image_path, assignee_user_id, is_active, version, updated_at");
+    .select("id, code, kind, selectable_for_keeping, note_ko, note_vi, image_path, image_updated_at, assignee_user_id, is_active, version, updated_at");
   if (error) throw new Error(`Failed to load BAR zones: ${error.message}`);
 
   const rows = (data ?? []) as ZoneRow[];
@@ -60,6 +61,7 @@ export async function getBarZones(): Promise<BarZoneRecord[]> {
       noteVi: row.note_vi,
       imagePath: row.image_path,
       imageUrl: row.image_path ? signedUrls.get(row.image_path) ?? null : null,
+      imageUpdatedAt: row.image_updated_at,
       assignee: user ? {
         id: Number(user.id),
         name: user.name || user.full_name || user.username,
@@ -72,4 +74,3 @@ export async function getBarZones(): Promise<BarZoneRecord[]> {
     };
   }).sort((a, b) => (order.get(a.code) ?? 999) - (order.get(b.code) ?? 999));
 }
-

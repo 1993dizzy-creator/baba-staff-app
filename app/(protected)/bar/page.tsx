@@ -23,6 +23,7 @@ export default function BarAreaPage() {
   const [loadError, setLoadError] = useState("");
   const [isMapModalOpen, setIsMapModalOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [recentLogsRefreshKey, setRecentLogsRefreshKey] = useState(0);
   const expandButtonRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
   const [user, setUser] = useState<ReturnType<typeof getUser>>(null);
@@ -52,6 +53,11 @@ export default function BarAreaPage() {
     } catch (error) { setLoadError(error instanceof Error ? error.message : t.loadError); }
   }, [mayAssign, t.loadError]);
 
+  const handleSaved = useCallback(async () => {
+    await loadData();
+    setRecentLogsRefreshKey((current) => current + 1);
+  }, [loadData]);
+
   useEffect(() => { setUser(getUser()); setUserReady(true); }, []);
   useEffect(() => { if (userReady) void loadData(); }, [loadData, userReady]);
   const mapLabels: BarZoneMapLabels = { upper: t.upper, middle: t.middle, lower: t.lower, leftShort: t.leftShort, rightShort: t.rightShort, unavailable: t.unavailable, equipmentShort: t.equipmentShort, mapAriaLabel: t.mapAriaLabel };
@@ -62,8 +68,8 @@ export default function BarAreaPage() {
     </section>
     <button ref={expandButtonRef} type="button" onClick={() => setIsMapModalOpen(true)} style={{ ...ui.subButton, minHeight: 48, marginBottom: 14, fontWeight: 800 }}>{t.enlargeMap}</button>
     {loadError ? <p role="alert" style={{ color: "#b91c1c", fontSize: 13, fontWeight: 700 }}>{loadError}</p> : null}
-    <BarZoneDetail zone={selectedZone} data={selectedData} lang={lang} canEdit={mayEdit && Boolean(selectedData)} onEdit={() => setIsEditOpen(true)} editButtonRef={editButtonRef} text={{ selectZone: t.selectZone, selectedZone: t.selectedZone, keepingUnavailable: t.keepingUnavailable, noZoneInfo: t.noZoneInfo, photo: t.photo, assignee: t.assignee, inactiveEmployee: t.inactiveEmployee, editZone: t.editZone, close: t.close }} />
+    <BarZoneDetail zone={selectedZone} data={selectedData} lang={lang} canEdit={mayEdit && Boolean(selectedData)} onEdit={() => setIsEditOpen(true)} editButtonRef={editButtonRef} recentLogsRefreshKey={recentLogsRefreshKey} text={{ selectZone: t.selectZone, keepingUnavailable: t.keepingUnavailable, noZoneInfo: t.noZoneInfo, photo: t.photo, note: t.note, assignee: t.assignee, inactiveEmployee: t.inactiveEmployee, editZone: t.editZone, photoUpdated: t.photoUpdated, recentLogs: t.recentLogs, recentLogsEmpty: t.recentLogsEmpty, recentLogsLoading: t.recentLogsLoading, recentLogsError: t.recentLogsError, retry: t.retry, viewAllLogs: t.viewAllLogs }} />
     {isMapModalOpen ? <BarZoneMapModal selectedCode={selectedZone?.code ?? null} onSelect={setSelectedZone} onClose={closeMapModal} labels={mapLabels} lang={lang} closeLabel={t.close} returnFocusRef={expandButtonRef} zoneData={zoneData} /> : null}
-    {isEditOpen && selectedData ? <BarZoneEditModal zone={selectedData} staff={staff} canAssign={mayAssign} lang={lang} labels={{ editZone: t.editZone, photo: t.photo, noteKo: t.noteKo, noteVi: t.noteVi, assignee: t.assignee, assigneeColor: t.assigneeColor, noAssignee: t.noAssignee, save: t.save, saving: t.saving, cancel: t.cancel, replacePhoto: t.replacePhoto, takePhoto: t.takePhoto, deletePhoto: t.deletePhoto, confirmDeletePhoto: t.confirmDeletePhoto, conflict: t.conflict, saveError: t.saveError, photoError: t.photoError, unsupportedPhoto: t.unsupportedPhoto }} onClose={closeEditModal} onSaved={loadData} returnFocusRef={editButtonRef} /> : null}
+    {isEditOpen && selectedData ? <BarZoneEditModal zone={selectedData} staff={staff} canAssign={mayAssign} lang={lang} labels={{ editZone: t.editZone, photo: t.photo, note: t.note, assignee: t.assignee, assigneeColor: t.assigneeColor, noAssignee: t.noAssignee, inactiveEmployee: t.inactiveEmployee, save: t.save, saving: t.saving, cancel: t.cancel, replacePhoto: t.replacePhoto, takePhoto: t.takePhoto, deletePhoto: t.deletePhoto, confirmDeletePhoto: t.confirmDeletePhoto, conflict: t.conflict, saveError: t.saveError, photoError: t.photoError, unsupportedPhoto: t.unsupportedPhoto }} onClose={closeEditModal} onSaved={handleSaved} returnFocusRef={editButtonRef} /> : null}
   </div>;
 }
