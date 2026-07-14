@@ -158,6 +158,31 @@ function AdminIcon() {
   );
 }
 
+function BarIcon() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M5 4H19L14.2 10.2C13.7 10.8 12.9 11.2 12 11.2C11.1 11.2 10.3 10.8 9.8 10.2L5 4Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 11.5V19M8.5 20H15.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function subscribeToUserPermissionChange(onStoreChange: () => void) {
   window.addEventListener("baba_user_updated", onStoreChange);
   window.addEventListener("storage", onStoreChange);
@@ -193,6 +218,8 @@ export default function BottomNav() {
     pathname === "/inventory" || pathname.startsWith("/inventory/");
 
   const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
+
+  const isBarPage = pathname === "/bar" || pathname.startsWith("/bar/");
 
   const adminLabel = lang === "vi" ? "Admin" : "관리자";
 
@@ -233,10 +260,15 @@ export default function BottomNav() {
           <span>{t.attendance}</span>
         </Link>
 
-        <div style={inactiveItemStyle()}>
-          <span style={iconStyle}>📢</span>
-          <span>{t.notice}</span>
-        </div>
+        <Link
+          href="/bar"
+          style={isBarPage ? activeItemStyle() : inactiveItemStyle()}
+        >
+          <span style={{ ...iconStyle, display: "inline-flex" }}>
+            <BarIcon />
+          </span>
+          <span>{t.bar}</span>
+        </Link>
       </nav>
 
       {/* <div style={{ height: 60 }} /> */}
