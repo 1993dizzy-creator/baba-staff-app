@@ -1,4 +1,5 @@
 export const KEEPING_EXPIRY_WARNING_DAYS = 14;
+export const KEEPING_STORAGE_MONTHS = 3;
 export const KEEPING_LIST_LIMIT = 20;
 export const KEEPING_LIST_MAX_LIMIT = 50;
 export const KEEPING_DETAIL_IMAGE_MAX_BYTES = 700 * 1024;
@@ -34,6 +35,14 @@ export function vietnamToday() {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
   const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
   return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+export function keepingRemainingDays(expiresAt: string, today = vietnamToday()) {
+  const toDayNumber = (value: string) => {
+    const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+    return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
+  };
+  return toDayNumber(expiresAt) - toDayNumber(today);
 }
 
 export function safeKeepingReturnPath(value: string | null | undefined) {

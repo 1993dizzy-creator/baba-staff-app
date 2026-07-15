@@ -1,7 +1,9 @@
 export const keepingNewText = {
   ko: {
     back: "← 키핑 목록",
-    searchPlaceholder: "고객명·고객 특징·주류명 검색",
+    searchPlaceholder: "고객명 / 고객 특징 / 주류명 검색",
+    recentSort: "최근순",
+    oldSort: "오래된순",
     customerFeature: "고객 특징",
     customerFeaturePlaceholder: "예: 안경, 1234, 생일 손님",
     customerNamePlaceholder: "고객명 입력",
@@ -21,7 +23,9 @@ export const keepingNewText = {
   },
   vi: {
     back: "← Danh sách ký gửi",
-    searchPlaceholder: "Tìm khách, đặc điểm hoặc tên rượu",
+    searchPlaceholder: "Tên khách / Đặc điểm / Tên rượu",
+    recentSort: "Mới nhất",
+    oldSort: "Cũ nhất",
     customerFeature: "Dấu hiệu nhận biết",
     customerFeaturePlaceholder: "VD: đeo kính, 1234, khách sinh nhật",
     customerNamePlaceholder: "Nhập tên khách",
