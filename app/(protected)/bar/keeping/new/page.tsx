@@ -1,0 +1,3 @@
+"use client";
+import Link from "next/link";import KeepingForm from "@/components/bar/keeping/KeepingForm";import { useLanguage } from "@/lib/language-context";import { keepingText } from "@/lib/text/bar-keeping";
+export default function NewKeepingPage(){const{lang}=useLanguage(),t=keepingText[lang];return <div style={{padding:"2px 0 20px"}}><div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:12}}><Link href="/bar/keeping" style={{color:"#374151",fontSize:13,fontWeight:700,textDecoration:"none"}}>← {t.list}</Link><strong style={{fontSize:14}}>{t.newKeeping.replace("＋ ","")}</strong></div><KeepingForm lang={lang}/></div>}

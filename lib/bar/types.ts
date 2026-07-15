@@ -39,4 +39,6 @@ export type BarActivityLog = {
   actionType: string;
   actorName: string;
   createdAt: string;
+  beforeData?: Record<string, unknown> | null;
+  afterData?: Record<string, unknown> | null;
 };

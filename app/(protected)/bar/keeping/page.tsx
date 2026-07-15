@@ -1,44 +1,18 @@
 "use client";
-
-import { useLanguage } from "@/lib/language-context";
-import { barText } from "@/lib/text/bar";
-import { ui } from "@/lib/styles/ui";
-
-export default function BarKeepingPage() {
-  const { lang } = useLanguage();
-  const t = barText[lang];
-
-  return (
-    <div style={{ padding: "12px 0 20px" }}>
-      <h1 style={{ margin: 0, fontSize: 26, color: "#111827" }}>
-        {t.keepingTitle}
-      </h1>
-      <p
-        style={{
-          margin: "8px 0 16px",
-          color: "#6b7280",
-          fontSize: 14,
-          lineHeight: 1.5,
-        }}
-      >
-        {t.keepingDescription}
-      </p>
-      <section
-        style={{
-          ...ui.card,
-          minHeight: 180,
-          padding: 24,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "#6b7280",
-          fontSize: 15,
-          fontWeight: 800,
-          textAlign: "center",
-        }}
-      >
-        {t.keepingPreparing}
-      </section>
-    </div>
-  );
-}
+import Link from "next/link";import { usePathname,useRouter,useSearchParams } from "next/navigation";import { useCallback,useEffect,useMemo,useRef,useState } from "react";import { KeepingListCard,KeepingSkeleton } from "@/components/bar/keeping/KeepingBasics";import type { BarKeepingListItem } from "@/lib/bar/keeping-types";import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";import { barZones } from "@/lib/bar/zone-map";import { useLanguage } from "@/lib/language-context";import { keepingText } from "@/lib/text/bar-keeping";import { ui } from "@/lib/styles/ui";
+type Result={items:BarKeepingListItem[];total:number;hasMore:boolean;nextCursor:string|null;capabilities:{manage:boolean}};
+export default function BarKeepingPage(){const{lang}=useLanguage();const t=keepingText[lang];const router=useRouter(),pathname=usePathname(),searchParams=useSearchParams();const queryKey=searchParams.toString();const[items,setItems]=useState<BarKeepingListItem[]>([]),[total,setTotal]=useState(0),[next,setNext]=useState<string|null>(null),[loading,setLoading]=useState(true),[more,setMore]=useState(false),[error,setError]=useState(""),[manage,setManage]=useState(false),[filterOpen,setFilterOpen]=useState(false),[search,setSearch]=useState(searchParams.get("q")??"");const request=useRef(0);
+ const status=searchParams.get("status")==="closed"?"closed":"active",sort=searchParams.get("sort")??"recent_activity";
+ const replace=useCallback((changes:Record<string,string|null>)=>{const params=new URLSearchParams(searchParams.toString());Object.entries(changes).forEach(([key,value])=>{if(value)params.set(key,value);else params.delete(key)});router.replace(`${pathname}?${params}`,{scroll:false})},[pathname,router,searchParams]);
+ useEffect(()=>{const timer=setTimeout(()=>{if(search.trim()!==(searchParams.get("q")??""))replace({q:search.trim()||null})},300);return()=>clearTimeout(timer)},[replace,search,searchParams]);
+ const load=useCallback(async(cursor?:string)=>{const id=++request.current;if(cursor)setMore(true);else setLoading(true);setError("");try{const params=new URLSearchParams(queryKey);if(cursor)params.set("cursor",cursor);const response=await fetch(`/api/bar/keepings?${params}`,{cache:"no-store"});if(await handleBarApiUnauthorized(response))return;if(!response.ok)throw new Error(t.error);const result=await response.json() as Result;if(id!==request.current)return;setItems(current=>cursor?[...current,...result.items]:result.items);setTotal(result.total);setNext(result.hasMore?result.nextCursor:null);setManage(result.capabilities.manage)}catch(caught){if(id===request.current)setError(caught instanceof Error?caught.message:t.error)}finally{if(id===request.current){setLoading(false);setMore(false)}}},[queryKey,t.error]);
+ useEffect(()=>{void load()},[load]);const empty=!loading&&!error&&items.length===0;const detailSuffix=useMemo(()=>queryKey?`?from=${encodeURIComponent(`/bar/keeping?${queryKey}`)}`:"",[queryKey]);
+ return <div style={{padding:"0 0 20px",minWidth:0}}><div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:8,marginBottom:10}}><div style={{position:"relative"}}><input value={search} onChange={e=>setSearch(e.target.value)} aria-label={t.search} placeholder={t.search} style={{...ui.input,paddingRight:search?38:14}}/>{search?<button type="button" aria-label={t.reset} onClick={()=>setSearch("")} style={{position:"absolute",right:2,top:2,width:40,height:40,border:0,background:"transparent",fontSize:18}}>×</button>:null}</div><button type="button" onClick={()=>setFilterOpen(true)} style={{...ui.subButton,width:"auto",minHeight:44,padding:"8px 13px",fontSize:13}}>{t.filter}</button></div>
+ <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}><button onClick={()=>replace({status:"active",closeReason:null})} style={chip(status==="active")}>{t.active} {status==="active"?total:""}</button><button onClick={()=>replace({status:"closed"})} style={chip(status==="closed")}>{t.closed} {status==="closed"?total:""}</button><select aria-label={t.recentActivity} value={sort} onChange={e=>replace({sort:e.target.value})} style={{marginLeft:"auto",minWidth:0,maxWidth:150,minHeight:38,border:"1px solid #d1d5db",borderRadius:9,background:"#fff",fontSize:12,padding:"0 7px"}}>{[["recent_activity",t.recentActivity],["old_activity",t.oldActivity],["recent_created",t.recentCreated],["customer_name",t.customerSort],["zone",t.zoneSort],["expiry_soon",t.expirySort]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></div>
+ {manage?<Link href="/bar/keeping/new" style={{...ui.button,minHeight:46,marginBottom:12,fontSize:14}}>{t.newKeeping}</Link>:null}
+ {error?<section role="alert" style={{...ui.card,padding:18,color:"#b91c1c",marginBottom:10}}>{error}<button onClick={()=>void load()} style={{marginLeft:8}}>{t.retry}</button></section>:null}<div style={{display:"grid",gap:10}}>{loading?[0,1,2,3].map(i=><KeepingSkeleton key={i}/>):items.map(item=><KeepingListCard key={item.id} item={item} lang={lang} href={`/bar/keeping/${item.id}${detailSuffix}`}/>)}</div>
+ {empty?<section style={{...ui.card,padding:24,textAlign:"center",color:"#6b7280"}}><p style={{margin:0}}>{queryKey.includes("q=")||searchParams.get("zone")||searchParams.get("expiry")?t.noResults:status==="active"?t.noActive:t.noClosed}</p>{status==="active"&&manage&&!queryKey.includes("q=")?<><p style={{fontSize:12}}>{t.first}</p><Link href="/bar/keeping/new" style={{color:"#2563eb",fontWeight:700}}>{t.newKeeping}</Link></>:null}{queryKey?<button onClick={()=>{setSearch("");router.replace("/bar/keeping")}} style={{display:"block",margin:"12px auto 0"}}>{t.reset}</button>:null}</section>:null}
+ {next?<button disabled={more} onClick={()=>void load(next)} style={{...ui.subButton,marginTop:12,minHeight:44}}>{more?t.loading:t.loadMore}</button>:null}{filterOpen?<Filter lang={lang} params={searchParams} close={()=>setFilterOpen(false)} apply={values=>{replace(values);setFilterOpen(false)}}/>:null}</div>}
+function chip(active:boolean):React.CSSProperties{return{minHeight:38,padding:"0 11px",border:active?"1px solid #111827":"1px solid #d1d5db",borderRadius:999,background:active?"#111827":"#fff",color:active?"#fff":"#4b5563",fontSize:12,fontWeight:800}}
+function Filter({lang,params,close,apply}:{lang:"ko"|"vi";params:URLSearchParams;close:()=>void;apply:(v:Record<string,string|null>)=>void}){const t=keepingText[lang];const[zone,setZone]=useState(params.get("zone")??""),[reason,setReason]=useState(params.get("closeReason")??""),[expiry,setExpiry]=useState(params.get("expiry")??"");return <div role="dialog" aria-modal="true" onClick={close} style={{position:"fixed",inset:0,zIndex:1400,padding:12,background:"rgba(15,23,42,.68)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}><div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:540,maxHeight:"85vh",overflowY:"auto",background:"#fff",borderRadius:"16px 16px 0 0",padding:16,paddingBottom:"calc(16px + env(safe-area-inset-bottom))"}}><label style={field}>{t.zone}<select value={zone} onChange={e=>setZone(e.target.value)} style={ui.input}><option value="">{t.allZones}</option>{barZones.filter(z=>z.selectableForKeeping).map(z=><option key={z.code} value={z.code}>{z.code} · {lang==="vi"?z.labelVi:z.labelKo}</option>)}</select></label><label style={field}>{t.closeReason}<select value={reason} onChange={e=>setReason(e.target.value)} style={ui.input}><option value="">{t.all}</option><option value="finished">{t.finished}</option><option value="returned">{t.returned}</option><option value="discarded">{t.discarded}</option><option value="expired">{t.expiredReason}</option><option value="other">{t.other}</option></select></label><label style={field}>{t.expiryFilter}<select value={expiry} onChange={e=>setExpiry(e.target.value)} style={ui.input}><option value="">{t.all}</option><option value="soon">{t.expirySoon}</option><option value="expired">{t.expiryPassed}</option></select></label><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><button onClick={()=>{setZone("");setReason("");setExpiry("")}} style={ui.subButton}>{t.reset}</button><button onClick={()=>apply({zone:zone||null,closeReason:reason||null,expiry:expiry||null})} style={ui.button}>{t.apply}</button></div></div></div>}
+const field:React.CSSProperties={display:"grid",gap:6,marginBottom:14,fontSize:12,fontWeight:700};

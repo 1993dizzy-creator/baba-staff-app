@@ -6,6 +6,7 @@ import type { BarZoneRecord } from "@/lib/bar/types";
 import { formatBarDateTime } from "@/lib/bar/log-format";
 import { ui } from "@/lib/styles/ui";
 import BarZoneRecentLogs from "@/components/bar/BarZoneRecentLogs";
+import ZoneKeepingSummary from "@/components/bar/keeping/ZoneKeepingSummary";
 
 type Text = {
   selectZone: string;
@@ -108,6 +109,7 @@ export default function BarZoneDetail({ zone, data, lang, text, canEdit, onEdit,
           ) : null}
         </div>
       )}
+      {zone.selectableForKeeping ? <ZoneKeepingSummary zoneCode={zone.code} lang={lang} refreshKey={recentLogsRefreshKey} /> : null}
       <BarZoneRecentLogs
         zoneCode={zone.code}
         lang={lang}

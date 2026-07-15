@@ -28,20 +28,25 @@ export async function GET(request: NextRequest) {
     }
     let query = supabaseServer
       .from("bar_activity_logs")
-      .select("id, entity_type, entity_id, entity_code_snapshot, action_type, actor_name_snapshot, created_at")
+      .select("id, entity_type, entity_id, entity_code_snapshot, action_type, before_data, after_data, actor_name_snapshot, created_at")
       .order("created_at", { ascending: false })
       .order("id", { ascending: false });
     const entityType = request.nextUrl.searchParams.get("entityType");
     const code = request.nextUrl.searchParams.get("code");
     const actionType = request.nextUrl.searchParams.get("actionType");
-    if (entityType && entityType !== "zone") {
+    const entityId = request.nextUrl.searchParams.get("id");
+    if (entityType && !["zone", "keeping"].includes(entityType)) {
       return NextResponse.json({ ok: false, error: "Invalid log entity type", code: "INVALID_INPUT" }, { status: 400 });
     }
     if (code && (entityType !== "zone" || !isBarZoneCode(code))) {
       return NextResponse.json({ ok: false, error: "Invalid BAR zone code", code: "INVALID_ZONE" }, { status: 400 });
     }
+    if (entityId && (entityType !== "keeping" || !Number.isSafeInteger(Number(entityId)) || Number(entityId) < 1)) {
+      return NextResponse.json({ ok: false, error: "Invalid keeping id", code: "INVALID_INPUT" }, { status: 400 });
+    }
     if (entityType) query = query.eq("entity_type", entityType);
     if (code) query = query.eq("entity_code_snapshot", code).in("action_type", [...ZONE_LOG_ACTIONS]);
+    if (entityId) query = query.eq("entity_id", Number(entityId));
     if (actionType) query = query.eq("action_type", actionType);
     if (cursor) {
       query = query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
@@ -57,6 +62,7 @@ export async function GET(request: NextRequest) {
         id: Number(row.id), entityType: row.entity_type, entityId: Number(row.entity_id),
         entityCode: row.entity_code_snapshot, actionType: row.action_type,
         actorName: row.actor_name_snapshot, createdAt: row.created_at,
+        beforeData: safeLogData(row.before_data), afterData: safeLogData(row.after_data),
       })),
       pageSize,
       hasMore,
@@ -68,6 +74,14 @@ export async function GET(request: NextRequest) {
     console.error("[BAR_LOGS_GET_ERROR]", error);
     return NextResponse.json({ ok: false, error: "Failed to load BAR logs" }, { status: 500 });
   }
+}
+
+function safeLogData(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  return Object.fromEntries(["customer_name", "liquor_name", "remaining_percent", "zone_code", "close_reason"].flatMap((key) =>
+    typeof source[key] === "string" || typeof source[key] === "number" ? [[key, source[key]]] : []
+  ));
 }
 
 function parseCursor(value: string) {

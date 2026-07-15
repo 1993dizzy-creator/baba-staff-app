@@ -24,3 +24,13 @@ export const canAssignBarZone = (user: BarPermissionUser) =>
   (isOwnerOrMaster(user) || isBarRole(user, ["leader"]));
 
 export const canViewBarLogs = (user: BarPermissionUser) => isActive(user);
+
+export const canManageBarKeeping = (user: BarPermissionUser) =>
+  isActive(user) &&
+  (isOwnerOrMaster(user) || isBarRole(user, ["leader", "staff"]));
+
+export const canReactivateBarKeeping = (user: BarPermissionUser) =>
+  isActive(user) &&
+  (isOwnerOrMaster(user) || isBarRole(user, ["leader"]));
+
+export const canEditClosedBarKeeping = canReactivateBarKeeping;

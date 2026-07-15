@@ -9,7 +9,7 @@ export const barText = {
     confirmDeletePhoto: "구역 사진을 삭제하시겠습니까?", sessionExpired: "보안을 위해 다시 로그인해 주세요.", conflict: "다른 사용자가 먼저 수정했습니다. 최신 정보를 다시 불러옵니다.",
     loadError: "BAR 정보를 불러오지 못했습니다.", saveError: "저장하지 못했습니다.", photoError: "사진을 처리하지 못했습니다.", unsupportedPhoto: "이 기기에서 지원하지 않는 사진 형식입니다. JPEG, PNG 또는 WebP 사진을 선택해 주세요.",
     keepingTitle: "키핑", keepingDescription: "고객별 키핑 주류를 관리하는 화면입니다.", keepingPreparing: "키핑 관리 기능 준비 중",
-    logsTitle: "로그", logsDescription: "BAR 구역 변경 이력입니다.", logsEmpty: "BAR 활동 로그가 없습니다.", logsLoadError: "로그를 불러오지 못했습니다.", loadMore: "더보기",
+    logsTitle: "로그", logsDescription: "BAR 구역과 키핑 활동 기록입니다.", logsEmpty: "BAR 활동 로그가 없습니다.", logsLoadError: "로그를 불러오지 못했습니다.", loadMore: "더보기",
     recentLogs: "최근 기록", recentLogsEmpty: "이 구역의 기록이 없습니다.", recentLogsLoading: "기록을 불러오는 중…", recentLogsError: "최근 기록을 불러오지 못했습니다.", retry: "다시 시도", viewAllLogs: "전체 기록 보기", allBarLogs: "전체 BAR 기록 보기", zoneLogsSuffix: "구역 기록",
   },
   vi: {
@@ -22,7 +22,7 @@ export const barText = {
     confirmDeletePhoto: "Bạn có muốn xóa ảnh khu vực không?", sessionExpired: "Vui lòng đăng nhập lại để bảo mật.", conflict: "Người khác đã cập nhật trước. Đang tải dữ liệu mới nhất.",
     loadError: "Không thể tải thông tin BAR.", saveError: "Không thể lưu.", photoError: "Không thể xử lý ảnh.", unsupportedPhoto: "Thiết bị này không hỗ trợ định dạng ảnh. Vui lòng chọn ảnh JPEG, PNG hoặc WebP.",
     keepingTitle: "Giữ rượu", keepingDescription: "Màn hình quản lý rượu giữ theo khách hàng.", keepingPreparing: "Tính năng quản lý giữ rượu đang được chuẩn bị",
-    logsTitle: "Nhật ký", logsDescription: "Lịch sử thay đổi khu vực BAR.", logsEmpty: "Chưa có nhật ký hoạt động BAR.", logsLoadError: "Không thể tải nhật ký.", loadMore: "Xem thêm",
+    logsTitle: "Nhật ký", logsDescription: "Nhật ký khu vực và giữ rượu BAR.", logsEmpty: "Chưa có nhật ký hoạt động BAR.", logsLoadError: "Không thể tải nhật ký.", loadMore: "Xem thêm",
     recentLogs: "Nhật ký gần đây", recentLogsEmpty: "Chưa có nhật ký cho khu vực này.", recentLogsLoading: "Đang tải nhật ký…", recentLogsError: "Không thể tải nhật ký gần đây.", retry: "Thử lại", viewAllLogs: "Xem toàn bộ nhật ký", allBarLogs: "Xem toàn bộ nhật ký BAR", zoneLogsSuffix: "Nhật ký khu vực",
   },
 } as const;

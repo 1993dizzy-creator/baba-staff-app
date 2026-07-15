@@ -16,8 +16,10 @@ export default function BarLogsPage() {
   const searchParams = useSearchParams();
   const entityType = searchParams.get("entityType");
   const code = searchParams.get("code");
+  const entityId = searchParams.get("id");
   const isZoneFilter = entityType === "zone" && Boolean(code);
-  const filterKey = `${entityType ?? ""}:${code ?? ""}`;
+  const isKeepingFilter = entityType === "keeping" && Boolean(entityId);
+  const filterKey = `${entityType ?? ""}:${code ?? ""}:${entityId ?? ""}`;
   const [logs, setLogs] = useState<BarActivityLog[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -38,6 +40,7 @@ export default function BarLogsPage() {
       if (cursor) query.set("cursor", cursor);
       if (entityType) query.set("entityType", entityType);
       if (code) query.set("code", code);
+      if (entityId) query.set("id", entityId);
       const response = await fetch(`/api/bar/logs?${query}`, { cache: "no-store", signal: controller.signal });
       if (await handleBarApiUnauthorized(response)) return;
       if (!response.ok) throw new Error(t.logsLoadError);
@@ -52,7 +55,7 @@ export default function BarLogsPage() {
     } finally {
       if (requestRef.current === requestId) setLoading(false);
     }
-  }, [code, entityType, t.logsLoadError]);
+  }, [code, entityId, entityType, t.logsLoadError]);
 
   useEffect(() => {
     setLogs([]);
@@ -71,6 +74,12 @@ export default function BarLogsPage() {
         <Link href="/bar/logs" style={{ color: "#1d4ed8", fontWeight: 700, textDecoration: "none" }}>{t.allBarLogs}</Link>
       </div>
     ) : null}
+    {isKeepingFilter ? (
+      <div style={{ marginBottom: 12, padding: "9px 11px", border: "1px solid #dbeafe", borderRadius: 9, background: "#eff6ff", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, color: "#1e3a8a", fontSize: 12 }}>
+        <strong>{lang === "vi" ? `Nhật ký giữ rượu #${entityId}` : `키핑 #${entityId} 기록`}</strong>
+        <Link href="/bar/logs" style={{ color: "#1d4ed8", fontWeight: 700, textDecoration: "none" }}>{t.allBarLogs}</Link>
+      </div>
+    ) : null}
     {error ? <section role="alert" style={{ ...ui.card, padding: 18, color: "#b91c1c" }}>{error}</section> : null}
     {!error && !loading && logs.length === 0 ? <section style={{ ...ui.card, padding: 24, textAlign: "center", color: "#6b7280" }}>{t.logsEmpty}</section> : null}
     <div style={{ display: "grid", gap: 10 }}>
@@ -81,6 +90,7 @@ export default function BarLogsPage() {
             <time dateTime={log.createdAt}>{formatBarDateTime(log.createdAt, lang)}</time>
           </div>
           <p style={{ margin: "8px 0 0", color: "#111827", lineHeight: 1.5 }}>{formatBarLogSummary(log, lang)}</p>
+          {log.entityType === "keeping" ? <Link href={`/bar/keeping/${log.entityId}`} style={{ display: "inline-block", marginTop: 6, color: "#2563eb", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>{log.entityCode}</Link> : null}
         </article>
       ))}
     </div>
