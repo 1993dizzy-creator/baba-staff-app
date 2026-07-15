@@ -3,7 +3,7 @@ import { canManageBarKeeping, canReactivateBarKeeping, canViewBar } from "@/lib/
 import { getBarServerActor } from "@/lib/bar/server-auth";
 import { KEEPING_LIST_LIMIT, KEEPING_LIST_MAX_LIMIT, isKeepingCloseReason, isKeepingSort, keepingExpiryState, maskCustomerIdentifier } from "@/lib/bar/keeping";
 import { isBarZoneCode } from "@/lib/bar/zone-map";
-import { cleanDate, cleanPercent, cleanText, removeKeepingFiles, signedUrl, uploadKeepingFiles, validKeepingZone } from "@/lib/bar/keeping-server";
+import { cleanDate, cleanPercent, cleanText, removeKeepingFiles, resolveKeepingLiquor, signedUrl, uploadKeepingFiles, validKeepingZone } from "@/lib/bar/keeping-server";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
@@ -33,10 +33,11 @@ export async function POST(request: NextRequest) {
   let paths:{imagePath:string;thumbnailPath:string}|null=null;
   try{
     const {actor,response}=await getBarServerActor();if(response||!actor)return response;if(!canManageBarKeeping(actor))return NextResponse.json({ok:false,error:"Forbidden"},{status:403});
-    const form=await request.formData();const customerName=cleanText(form.get("customerName"),120,true),identifier=cleanText(form.get("customerIdentifier"),120),liquorName=cleanText(form.get("liquorName"),160,true),note=cleanText(form.get("note"),3000),zone=cleanText(form.get("zoneCode"),8,true),percent=cleanPercent(form.get("remainingPercent")),storedAt=cleanDate(form.get("storedAt"),true),expiresAt=cleanDate(form.get("expiresAt"));
-    const detail=form.get("image"),thumb=form.get("thumbnail");if(customerName===undefined||identifier===undefined||liquorName===undefined||note===undefined||!zone||percent===undefined||!storedAt||expiresAt===undefined||!(detail instanceof File)||!(thumb instanceof File))return bad("Invalid keeping data");
+    const form=await request.formData();const customerName=cleanText(form.get("customerName"),120,true),identifier=cleanText(form.get("customerIdentifier"),120),note=cleanText(form.get("note"),3000),zone=cleanText(form.get("zoneCode"),8,true),percent=cleanPercent(form.get("remainingPercent")),storedAt=cleanDate(form.get("storedAt"),true),expiresAt=cleanDate(form.get("expiresAt"));
+    const liquor=await resolveKeepingLiquor(form.get("liquorSource"),form.get("inventoryItemId"),form.get("liquorName"));
+    const detail=form.get("image"),thumb=form.get("thumbnail");if(customerName===undefined||identifier===undefined||!liquor||note===undefined||!zone||percent===undefined||!storedAt||expiresAt===undefined||!(detail instanceof File)||!(thumb instanceof File))return bad("Invalid keeping data");
     if(!await validKeepingZone(zone))return bad("Invalid keeping zone");paths=await uploadKeepingFiles(detail,thumb);
-    const {data,error}=await supabaseServer.rpc("bar_create_keeping",{p_customer_name:customerName,p_customer_identifier:identifier,p_liquor_name:liquorName,p_note:note,p_zone_code:zone,p_remaining_percent:percent,p_image_path:paths.imagePath,p_thumbnail_path:paths.thumbnailPath,p_stored_at:storedAt,p_expires_at:expiresAt,p_actor_user_id:actor.id});if(error)throw error;
+    const {data,error}=await supabaseServer.rpc("bar_create_keeping",{p_customer_name:customerName,p_customer_identifier:identifier,p_liquor_source:liquor.liquorSource,p_inventory_item_id:liquor.inventoryItemId,p_liquor_name:liquor.liquorName,p_note:note,p_zone_code:zone,p_remaining_percent:percent,p_image_path:paths.imagePath,p_thumbnail_path:paths.thumbnailPath,p_stored_at:storedAt,p_expires_at:expiresAt,p_actor_user_id:actor.id});if(error)throw error;
     if(data?.status!=="ok"){await removeKeepingFiles([paths.imagePath,paths.thumbnailPath],"KEEPING_CREATE_COMPENSATION");return bad("Could not create keeping");}paths=null;return NextResponse.json({ok:true,id:Number(data.id),version:data.version},{status:201});
   }catch(error){if(paths)await removeKeepingFiles([paths.imagePath,paths.thumbnailPath],"KEEPING_CREATE_COMPENSATION");console.error("[KEEPING_CREATE_ERROR]",error);return NextResponse.json({ok:false,error:"Failed to create keeping"},{status:500});}
 }

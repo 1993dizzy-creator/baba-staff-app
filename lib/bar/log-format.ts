@@ -3,15 +3,18 @@ export type BarLanguage = "ko" | "vi";
 
 const numberValue=(data:Record<string,unknown>|null|undefined,key:string)=>typeof data?.[key]==="number"?data[key] as number:null;
 const stringValue=(data:Record<string,unknown>|null|undefined,key:string)=>typeof data?.[key]==="string"?data[key] as string:null;
+const liquorSourceLabel=(value:string|null,lang:BarLanguage)=>value==="inventory"?(lang==="vi"?"hàng của quán":"판매상품"):value==="external"?(lang==="vi"?"mang từ ngoài":"외부반입"):(lang==="vi"?"chưa phân loại":"구분 미지정");
 export function formatBarLogSummary(log:BarActivityLog,lang:BarLanguage,options:{includeTarget?:boolean}={}){
   const include=options.includeTarget??true;const target=log.entityCode||(log.entityType==="staff_profile"?`#${log.entityId}`:"BAR");const prefix=include?`${target} `:"";const suffix=include?` ${target}`:"";
   const beforePercent=numberValue(log.beforeData,"remaining_percent"),afterPercent=numberValue(log.afterData,"remaining_percent");
   const beforeZone=stringValue(log.beforeData,"zone_code"),afterZone=stringValue(log.afterData,"zone_code");const closeReason=stringValue(log.afterData,"close_reason");
   const customerChanged=stringValue(log.beforeData,"customer_name")!==stringValue(log.afterData,"customer_name");
   const liquorChanged=stringValue(log.beforeData,"liquor_name")!==stringValue(log.afterData,"liquor_name");
+  const sourceChanged=stringValue(log.beforeData,"liquor_source")!==stringValue(log.afterData,"liquor_source");
   if(log.actionType==="keeping_remaining_corrected"&&beforePercent!==null&&afterPercent!==null)return lang==="vi"?`Đã chỉnh lượng còn lại ${beforePercent}% → ${afterPercent}%${suffix}.`:`${prefix}잔량을 ${beforePercent}% → ${afterPercent}%로 정정했습니다.`;
   if(log.actionType==="keeping_zone_changed"&&beforeZone&&afterZone)return lang==="vi"?`Đã chuyển vị trí ${beforeZone} → ${afterZone}${suffix}.`:`${prefix}위치를 ${beforeZone} → ${afterZone}로 이동했습니다.`;
   if(log.actionType==="keeping_used"&&afterPercent!==null){const finished=closeReason==="finished";return lang==="vi"?`Đã xử lý sử dụng, còn ${afterPercent}%${finished?" và kết thúc do đã dùng hết":""}${suffix}.`:`${prefix}사용 처리했습니다. 잔량 ${afterPercent}%${finished?", 소진 종료":""}.`;}
+  if(log.actionType==="keeping_updated"&&sourceChanged){const before=liquorSourceLabel(stringValue(log.beforeData,"liquor_source"),lang),after=liquorSourceLabel(stringValue(log.afterData,"liquor_source"),lang);return lang==="vi"?`Đã đổi loại rượu ${before} → ${after}${suffix}.`:`${prefix}주류 구분을 ${before} → ${after}으로 변경했습니다.`;}
   if(log.actionType==="keeping_updated"&&(customerChanged||liquorChanged)){const koLabel=customerChanged&&liquorChanged?"고객 정보와 주류명":customerChanged?"고객 정보":"주류명";const viLabel=customerChanged&&liquorChanged?"thông tin khách và tên rượu":customerChanged?"thông tin khách":"tên rượu";return lang==="vi"?`Đã sửa ${viLabel}${suffix}.`:`${prefix}${koLabel}을 수정했습니다.`;}
   const reasonKo:Record<string,string>={finished:"소진",returned:"반출",discarded:"폐기",expired:"만료",other:"기타 종료"};
   const reasonVi:Record<string,string>={finished:"Đã dùng hết",returned:"Đã trả khách",discarded:"Đã hủy",expired:"Hết hạn",other:"Đã kết thúc"};

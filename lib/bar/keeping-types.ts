@@ -2,7 +2,7 @@ import type { KeepingCloseReason, KeepingStatus } from "@/lib/bar/keeping";
 
 export type KeepingCapabilities = { view: boolean; manage: boolean; reactivate: boolean; editClosed: boolean };
 export type BarKeeping = {
-  id: number; customerName: string; customerIdentifier: string | null; liquorName: string; note: string | null;
+  id: number; customerName: string; customerIdentifier: string | null; liquorName: string; liquorSource: "inventory" | "external" | null; inventoryItemId: number | null; note: string | null;
   zoneCode: string; zoneLabelKo: string; zoneLabelVi: string; zoneIsActive: boolean;
   status: KeepingStatus; closeReason: KeepingCloseReason | null; closeNote: string | null;
   remainingPercent: number; imageUrl: string | null; thumbnailUrl: string | null; imageUpdatedAt: string | null;
