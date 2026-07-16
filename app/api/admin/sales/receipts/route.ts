@@ -825,7 +825,7 @@ export async function POST(req: Request) {
       payment_status: 3,
       is_canceled: false,
       mapping_status: line.isAdjustment
-        ? "manual_adjustment"
+        ? "manual"
         : line.isOption
           ? "option"
           : line.productId !== null

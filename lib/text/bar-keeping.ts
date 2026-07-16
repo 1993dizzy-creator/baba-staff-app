@@ -7,3 +7,8 @@ export const keepingListText = {
   ko: { soldProduct: "판매상품", outsideBottle: "외부반입", zone: "보관 구역" },
   vi: { soldProduct: "Hàng bán", outsideBottle: "Mang vào", zone: "Khu vực" },
 } as const;
+
+export const keepingDetailText = {
+  ko: { photoSelected: "사진 선택 완료", contact: "연락처", customerFeature: "고객 특징", zoneChange: "보관 구역 변경", currentZone: "현재", liquorUse: "키핑 사용", keepingClose: "키핑 종료", useHelp: "실제 사용 후 남은 잔량을 입력합니다.", correctionHelp: "사용 처리 없이 잘못 기록된 잔량만 수정합니다.", photoChange: "사진 변경", photoView: "사진 보기", useCount: (count: number) => `사용 ${count}회` },
+  vi: { photoSelected: "Đã chọn ảnh", contact: "Liên hệ", customerFeature: "Đặc điểm khách", zoneChange: "Đổi khu vực", currentZone: "Hiện tại", liquorUse: "Sử dụng rượu gửi", keepingClose: "Kết thúc giữ rượu", useHelp: "Nhập lượng còn lại sau khi sử dụng thực tế.", correctionHelp: "Chỉ sửa lượng đã ghi sai, không xử lý sử dụng.", photoChange: "Thay ảnh", photoView: "Xem ảnh", useCount: (count: number) => `Đã dùng ${count} lần` },
+} as const;

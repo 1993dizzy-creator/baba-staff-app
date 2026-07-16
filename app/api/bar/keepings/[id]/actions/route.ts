@@ -5,7 +5,7 @@ import { isKeepingCloseReason } from "@/lib/bar/keeping";
 import { cleanDate,cleanDateTime,cleanId,cleanPercent,cleanText,cleanVersion,removeKeepingFiles,resolveKeepingLiquor,uploadKeepingFiles,validKeepingZone } from "@/lib/bar/keeping-server";
 import { supabaseServer } from "@/lib/supabase/server";
 type Context={params:Promise<{id:string}>};
-const ACTIONS=new Set(["update","use","correct_remaining","move","replace_photo","close","reactivate"]);
+const ACTIONS=new Set(["update","update_with_move","use","correct_remaining","move","replace_photo","close","reactivate"]);
 
 export async function POST(request:NextRequest,context:Context){
   let uploaded:{imagePath:string;thumbnailPath:string}|null=null;
@@ -18,12 +18,13 @@ export async function POST(request:NextRequest,context:Context){
     const detail=form.get("image"),thumb=form.get("thumbnail");const hasFiles=detail instanceof File&&detail.size>0||thumb instanceof File&&thumb.size>0;
     if(hasFiles){if(!(detail instanceof File)||!(thumb instanceof File))return bad("Both image sizes are required");uploaded=await uploadKeepingFiles(detail,thumb);payload.image_path=uploaded.imagePath;payload.thumbnail_path=uploaded.thumbnailPath;}
     if(action==="replace_photo"&&!uploaded)return bad("Photo is required");
-    const {data,error}=await supabaseServer.rpc("bar_mutate_keeping_v3",{p_id:id,p_expected_version:version,p_action:action,p_payload:payload,p_actor_user_id:actor.id});if(error)throw error;
+    const rpc=action==="update_with_move"?"bar_update_and_move_keeping":"bar_mutate_keeping_v3";const {data,error}=await supabaseServer.rpc(rpc,{p_id:id,p_expected_version:version,...(action==="update_with_move"?{p_update_payload:payload.update,p_move_payload:payload.move}:{p_action:action,p_payload:payload}),p_actor_user_id:actor.id});if(error)throw error;
     if(data?.status!=="ok"){if(uploaded)await removeKeepingFiles([uploaded.imagePath,uploaded.thumbnailPath],"KEEPING_ACTION_COMPENSATION");if(data?.status==="conflict")return NextResponse.json({ok:false,error:"Another user updated this keeping",code:"VERSION_CONFLICT",version:data.version},{status:409});if(["invalid_state","same_zone"].includes(data?.status))return conflict("Invalid keeping state");return bad("Invalid action data");}
     uploaded=null;if(payload.image_path)await removeKeepingFiles([data.old_image_path,data.old_thumbnail_path],"KEEPING_OLD_PHOTO_CLEANUP");return NextResponse.json({ok:true,version:data.version});
   }catch(error){if(uploaded)await removeKeepingFiles([uploaded.imagePath,uploaded.thumbnailPath],"KEEPING_ACTION_COMPENSATION");console.error("[KEEPING_ACTION_ERROR]",error);return NextResponse.json({ok:false,error:"Failed to update keeping"},{status:500});}}
 
-async function validate(action:string,raw:Record<string,unknown>,currentZone:string,allowClosed:boolean){
+async function validate(action:string,raw:Record<string,unknown>,currentZone:string,allowClosed:boolean):Promise<Record<string,unknown>|null>{
+  if(action==="update_with_move"){const update=await validate("update",raw,currentZone,allowClosed),move=await validate("move",raw,currentZone,allowClosed);return update&&move?{update,move}:null;}
   if(action==="update"){const customer_name=cleanText(raw.customerName,120,true),customer_contact=cleanText(raw.customerContact,120),customer_identifier=cleanText(raw.customerIdentifier,120),liquor=await resolveKeepingLiquor(raw.liquorSource,raw.inventoryItemId,raw.liquorName),note=cleanText(raw.note,3000),stored_at=cleanDate(raw.storedAt,true);if(customer_name===undefined||customer_contact===undefined||customer_identifier===undefined||!liquor||note===undefined||!stored_at)return null;return{customer_name,customer_contact,customer_identifier,liquor_name:liquor.liquorName,liquor_source:liquor.liquorSource,inventory_item_id:liquor.inventoryItemId,note,stored_at,allow_closed:allowClosed};}
   if(action==="use"){const remaining_percent=cleanPercent(raw.remainingPercent),used_at=cleanDateTime(raw.usedAt),note=cleanText(raw.note,1000);if(remaining_percent===undefined||!used_at||note===undefined)return null;return{remaining_percent,used_at,note,finish:remaining_percent===0&&raw.finish===true};}
   if(action==="correct_remaining"){const remaining_percent=cleanPercent(raw.remainingPercent),reason=cleanText(raw.reason,500,true);return remaining_percent===undefined||!reason?null:{remaining_percent,reason};}

@@ -157,6 +157,11 @@ type ReceiptDetail = {
   reviewStatus: string | null;
   adminNote: string | null;
   originalAmountSummary: AmountSummarySnapshot | null;
+  taxOverrideMode: "apply" | "exclude_all" | null;
+  calculatedVatAmount: number | null;
+  calculatedFinalAmount: number | null;
+  finalAmountOverride: number | null;
+  revision: number;
 };
 
 type PaymentDetail = {
@@ -218,6 +223,12 @@ type ReceiptPatchResponse = {
     modifiedAt: string | null;
     modifiedBy: string | null;
     modificationNote: string | null;
+    vatAmount: number;
+    calculatedVatAmount: number;
+    calculatedFinalAmount: number;
+    finalAmountOverride: number | null;
+    taxOverrideMode: "apply" | "exclude_all";
+    revision: number;
   };
 };
 
@@ -227,6 +238,10 @@ type SaveReceiptEditInput = {
   paymentMethod: PaymentMethod;
   cashReceivedAmount: number | null;
   note: string;
+  taxOverrideMode: "apply" | "exclude_all";
+  finalAmountOverride: number | null;
+  expectedRevision: number;
+  requestId: string;
 };
 
 type PaymentMethod = "cash" | "other";
@@ -2169,6 +2184,10 @@ export default function SalesReceiptsPage() {
     paymentMethod,
     cashReceivedAmount,
     note,
+    taxOverrideMode,
+    finalAmountOverride,
+    expectedRevision,
+    requestId,
   }: SaveReceiptEditInput) {
     const user = getUser();
 
@@ -2198,10 +2217,23 @@ export default function SalesReceiptsPage() {
           cashReceivedAmount,
           note,
           lines,
+          taxOverrideMode,
+          finalAmountOverride,
+          expectedRevision,
+          requestId,
         }),
       });
 
       const result = (await res.json()) as ReceiptPatchResponse;
+
+      if (res.status === 409 && result.code === "receipt_revision_conflict") {
+        const refreshed = await fetch(`/api/admin/sales/receipts/${receiptId}`, { cache: "no-store" });
+        const latest = (await refreshed.json()) as ReceiptDetailResponse;
+        if (refreshed.ok && latest.ok && latest.receipt) {
+          setDetailByReceiptId((current) => ({ ...current, [receiptId]: latest }));
+        }
+        throw new Error(receiptsEditText.revisionConflict);
+      }
 
       if (!res.ok || !result.ok || !result.receipt) {
         throw new Error(
@@ -2244,6 +2276,12 @@ export default function SalesReceiptsPage() {
               modifiedAt: updatedReceipt.modifiedAt,
               modifiedBy: updatedReceipt.modifiedBy,
               modificationNote: updatedReceipt.modificationNote,
+              vatAmount: updatedReceipt.vatAmount,
+              calculatedVatAmount: updatedReceipt.calculatedVatAmount,
+              calculatedFinalAmount: updatedReceipt.calculatedFinalAmount,
+              finalAmountOverride: updatedReceipt.finalAmountOverride,
+              taxOverrideMode: updatedReceipt.taxOverrideMode,
+              revision: updatedReceipt.revision,
             },
           },
         };
@@ -3975,6 +4013,16 @@ function ReceiptDropdown({
             <span style={miniLabelStyle}>{text.totalTax}</span>
             <strong style={miniValueStyle}>{formatVnd(originalTotalTaxAmount)}</strong>
           </div>
+          {detail.receipt.taxOverrideMode ? (
+            <div style={miniRowStyle}>
+              <span style={miniLabelStyle}>VAT</span>
+              <strong style={miniValueStyle}>
+                {detail.receipt.taxOverrideMode === "exclude_all"
+                  ? editText.vatExclude
+                  : editText.vatApply}
+              </strong>
+            </div>
+          ) : null}
           {taxRows.map((tax) => (
             <div key={tax.taxRate} style={miniRowStyle}>
               <span style={miniLabelStyle}>{text.vat} {formatNumber(tax.taxRate)}%</span>
@@ -4127,6 +4175,15 @@ function ReceiptEditPanel({
   const [cashReceivedAmount, setCashReceivedAmount] = useState(
     receipt.receiveAmount ?? receipt.finalAmount
   );
+  const [taxOverrideMode, setTaxOverrideMode] = useState<"apply" | "exclude_all">(
+    receipt.taxOverrideMode ?? "apply"
+  );
+  const [finalAmountInput, setFinalAmountInput] = useState(
+    String(receipt.finalAmountOverride ?? receipt.calculatedFinalAmount ?? receipt.finalAmount)
+  );
+  const [finalAmountTouched, setFinalAmountTouched] = useState(
+    receipt.finalAmountOverride !== null
+  );
   const [note, setNote] = useState(receipt.modificationNote || "");
   const [productQuery, setProductQuery] = useState("");
   const [productResults, setProductResults] = useState<PosProduct[]>([]);
@@ -4228,11 +4285,22 @@ function ReceiptEditPanel({
     (sum, line) => sum + line.finalAmount,
     0
   );
-  const draftAdjustedTaxAmount = draftLineTotals.reduce(
+  const rawDraftAdjustedTaxAmount = draftLineTotals.reduce(
     (sum, line) => sum + calculateLineTaxAmount(line.finalAmount, line.taxRate),
     0
   );
-  const draftPaymentTotal = draftSalesSubtotal + draftAdjustedTaxAmount;
+  const draftAdjustedTaxAmount = taxOverrideMode === "exclude_all" ? 0 : rawDraftAdjustedTaxAmount;
+  const draftCalculatedTotal = draftSalesSubtotal + draftAdjustedTaxAmount;
+  const parsedFinalAmount = Number(finalAmountInput);
+  const finalAmountInvalid =
+    finalAmountInput.trim() === "" ||
+    !Number.isSafeInteger(parsedFinalAmount) ||
+    parsedFinalAmount < 0 ||
+    parsedFinalAmount > 999999999999;
+  const draftPaymentTotal = finalAmountTouched && !finalAmountInvalid
+    ? parsedFinalAmount
+    : draftCalculatedTotal;
+  const manualAdjustmentAmount = draftPaymentTotal - draftCalculatedTotal;
   const returnAmount =
     paymentMethod === "cash"
       ? Math.max(0, cashReceivedAmount - draftPaymentTotal)
@@ -4241,7 +4309,11 @@ function ReceiptEditPanel({
     paymentMethod === "cash" &&
     (!Number.isFinite(cashReceivedAmount) ||
       cashReceivedAmount < draftPaymentTotal);
-  const saveDisabled = isSaving || draftSalesSubtotal <= 0 || cashPaymentInvalid;
+  const saveDisabled = isSaving || draftSalesSubtotal <= 0 || cashPaymentInvalid || finalAmountInvalid;
+
+  useEffect(() => {
+    if (!finalAmountTouched) setFinalAmountInput(String(draftCalculatedTotal));
+  }, [draftCalculatedTotal, finalAmountTouched]);
 
   function updateLine(index: number, nextLine: Partial<ReceiptDraftLine>) {
     setDraftLines((current) =>
@@ -4344,6 +4416,9 @@ function ReceiptEditPanel({
     setNewLines([]);
     setPaymentMethod(hasCashPayment(payments) ? "cash" : "other");
     setCashReceivedAmount(receipt.receiveAmount ?? receipt.finalAmount);
+    setTaxOverrideMode(receipt.taxOverrideMode ?? "apply");
+    setFinalAmountInput(String(receipt.finalAmountOverride ?? receipt.calculatedFinalAmount ?? receipt.finalAmount));
+    setFinalAmountTouched(receipt.finalAmountOverride !== null);
     setNote(receipt.modificationNote || "");
     setSelectedProduct(null);
     setSelectedOptions({});
@@ -4378,6 +4453,13 @@ function ReceiptEditPanel({
       paymentMethod,
       cashReceivedAmount: paymentMethod === "cash" ? cashReceivedAmount : null,
       note,
+      taxOverrideMode,
+      finalAmountOverride:
+        finalAmountTouched && parsedFinalAmount !== draftCalculatedTotal
+          ? parsedFinalAmount
+          : null,
+      expectedRevision: receipt.revision,
+      requestId: crypto.randomUUID(),
     });
   }
 
@@ -4726,6 +4808,23 @@ function ReceiptEditPanel({
                   {text.other}
                 </button>
               </span>
+              <span style={reviewCurrentStatusStyle}>{text.vatApply}</span>
+              <span style={paymentMethodButtonsStyle}>
+                <button
+                  type="button"
+                  onClick={() => setTaxOverrideMode("apply")}
+                  style={{ ...secondaryButtonStyle, ...(taxOverrideMode === "apply" ? activeSegmentStyle : null) }}
+                >
+                  {text.vatApply}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTaxOverrideMode("exclude_all")}
+                  style={{ ...secondaryButtonStyle, ...(taxOverrideMode === "exclude_all" ? activeSegmentStyle : null) }}
+                >
+                  {text.vatExclude}
+                </button>
+              </span>
               {paymentMethod === "cash" ? (
                 <div style={cashPaymentEditStyle}>
                   <label style={cashInputLabelStyle}>
@@ -4748,6 +4847,53 @@ function ReceiptEditPanel({
                   </div>
                 </div>
               ) : null}
+            </div>
+
+            <div style={modalAdjustmentBoxStyle}>
+              <div style={miniRowStyle}>
+                <span style={miniLabelStyle}>{text.salesAmount}</span>
+                <strong style={miniValueStyle}>{formatVnd(draftSalesSubtotal)}</strong>
+              </div>
+              <div style={miniRowStyle}>
+                <span style={miniLabelStyle}>{text.calculatedVat}</span>
+                <strong style={miniValueStyle}>{formatVnd(draftAdjustedTaxAmount)}</strong>
+              </div>
+              <div style={miniRowStyle}>
+                <span style={miniLabelStyle}>{text.calculatedTotal}</span>
+                <strong style={miniValueStyle}>{formatVnd(draftCalculatedTotal)}</strong>
+              </div>
+              <label style={cashInputLabelStyle}>
+                <span style={reviewCurrentStatusStyle}>{text.finalPaymentAmount}</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={999999999999}
+                  step={1}
+                  value={finalAmountInput}
+                  onChange={(event) => {
+                    setFinalAmountTouched(true);
+                    setFinalAmountInput(event.target.value);
+                  }}
+                  style={editNameInputStyle}
+                  disabled={isSaving}
+                />
+              </label>
+              <div style={miniRowStyle}>
+                <span style={miniLabelStyle}>{text.manualAdjustmentAmount}</span>
+                <strong style={miniValueStyle}>{formatVnd(manualAdjustmentAmount)}</strong>
+              </div>
+              <button
+                type="button"
+                style={secondaryButtonStyle}
+                onClick={() => {
+                  setFinalAmountTouched(false);
+                  setFinalAmountInput(String(draftCalculatedTotal));
+                }}
+                disabled={isSaving}
+              >
+                {text.restoreCalculatedAmount}
+              </button>
+              {finalAmountInvalid ? <span style={reviewErrorTextStyle}>{text.invalidFinalPaymentAmount}</span> : null}
             </div>
 
             <textarea

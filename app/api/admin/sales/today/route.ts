@@ -15,6 +15,7 @@ type ReceiptRow = {
   is_modified: boolean | null;
   original_tax_summary: unknown | null;
   original_amount_summary: unknown | null;
+  tax_override_mode: "apply" | "exclude_all" | null;
 };
 
 type LineRow = {
@@ -365,6 +366,11 @@ function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
 function getReceiptTaxAmount(receipt: ReceiptRow) {
   const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
 
+  if (receipt.tax_override_mode === "exclude_all") return 0;
+  if (receipt.tax_override_mode === "apply") {
+    return originalTaxSummary?.totalTaxAmount ?? toNumber(receipt.vat_amount);
+  }
+
   if (receipt.is_modified && originalTaxSummary) {
     return originalTaxSummary.totalTaxAmount;
   }
@@ -447,6 +453,7 @@ function buildTaxSummary(receipts: ReceiptRow[], lines: LineRow[]) {
       const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
 
       if (receipt.is_modified) {
+        if (receipt.tax_override_mode === "exclude_all") return;
         if (originalTaxSummary) {
           originalTaxSummary.taxByRate.forEach((tax) => {
             addTaxBucket(map, tax.taxRate, tax.taxAmount, tax.lineCount);
@@ -490,6 +497,9 @@ function buildTaxSavingAmount(
     .reduce((sum, receipt) => {
       const receiptLines = linesByReceiptId.get(receipt.id) || [];
       const originalTaxAmount = getOriginalTaxAmount(receipt);
+      if (receipt.tax_override_mode !== null) {
+        return sum + Math.max(0, originalTaxAmount - getReceiptTaxAmount(receipt));
+      }
       const adjustedTaxAmount = getAdjustedTaxAmount(receiptLines);
 
       return sum + Math.max(0, adjustedTaxAmount - originalTaxAmount);
@@ -526,7 +536,7 @@ export async function GET(req: Request) {
     const { data: receipts, error: receiptsError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary"
+        "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary, tax_override_mode"
       )
       .eq("business_date", businessDate);
 

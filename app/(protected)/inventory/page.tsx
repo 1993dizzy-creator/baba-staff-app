@@ -3422,6 +3422,7 @@ export default function InventoryPage() {
                                                             style={{
                                                                 fontSize: 11,
                                                                 minWidth: 0,
+                                                                flex: 1,
                                                                 overflow: "hidden",
                                                                 textOverflow: "ellipsis",
                                                                 whiteSpace: "nowrap",
@@ -3429,8 +3430,7 @@ export default function InventoryPage() {
                                                         >
                                                             {item.supplier || "-"}
                                                         </span>
-                                                        <span>·</span>
-                                                        <span>{formatMoneyDisplay(item.purchase_price)}</span>
+                                                        <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>· {formatMoneyDisplay(item.purchase_price)}</span>
                                                     </div>
                                                 </div>
 
@@ -3981,19 +3981,8 @@ export default function InventoryPage() {
                                                     </div>
 
                                                     <div style={ui.detailGrid}>
-                                                        {packageContentText ? (
-                                                            <>
-                                                                <div style={ui.detailLabel}>{t.packageContentLabel}</div>
-                                                                <div style={ui.detailValue}>{packageContentText}</div>
-                                                            </>
-                                                        ) : null}
-
-                                                        <div style={ui.detailLabel}>{t.lowStockThreshold}</div>
-                                                        <div style={ui.detailValue}>
-                                                            {item.low_stock_enabled === true
-                                                                ? item.low_stock_threshold ?? 1
-                                                                : "-"}
-                                                        </div>
+                                                        <div style={ui.detailLabel}>{c.supplier}</div>
+                                                        <div style={{ ...ui.detailValue, overflowWrap: "anywhere" }}>{item.supplier || "-"}</div>
 
                                                         <div style={ui.detailLabel}>{c.update}</div>
                                                         <div style={ui.detailValue}>

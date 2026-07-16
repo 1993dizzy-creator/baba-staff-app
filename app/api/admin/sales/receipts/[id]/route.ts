@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import {
+  calculateReceiptFinancials,
+  MAX_VND_RECEIPT_AMOUNT,
+} from "@/lib/sales/receipt-financials";
 
 type ReceiptRow = {
   id: number;
@@ -25,6 +29,11 @@ type ReceiptRow = {
   admin_note: string | null;
   original_tax_summary: unknown | null;
   original_amount_summary: unknown | null;
+  tax_override_mode: "apply" | "exclude_all" | null;
+  calculated_vat_amount: number | string | null;
+  calculated_final_amount: number | string | null;
+  final_amount_override: number | string | null;
+  revision: number | string;
 };
 
 type LineRow = {
@@ -87,6 +96,10 @@ type UpdateReceiptBody = {
   cashReceivedAmount?: unknown;
   note?: unknown;
   lines?: unknown;
+  taxOverrideMode?: unknown;
+  finalAmountOverride?: unknown;
+  expectedRevision?: unknown;
+  requestId?: unknown;
 };
 
 type EditableLineInput = {
@@ -561,7 +574,7 @@ export async function GET(
     const { data: receipt, error: receiptError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, customer_name, table_name, is_modified, modified_at, modified_by, modification_note, review_status, admin_note, original_tax_summary, original_amount_summary"
+        "id, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, customer_name, table_name, is_modified, modified_at, modified_by, modification_note, review_status, admin_note, original_tax_summary, original_amount_summary, tax_override_mode, calculated_vat_amount, calculated_final_amount, final_amount_override, revision"
       )
       .eq("id", receiptId)
       .maybeSingle();
@@ -610,18 +623,25 @@ export async function GET(
       receiptRow.original_tax_summary
     );
 
+    const hasExplicitTaxMode = receiptRow.tax_override_mode !== null;
+    const isVatExcluded = receiptRow.tax_override_mode === "exclude_all";
+    const originalTaxAmount =
+      savedOriginalTaxSummary?.totalTaxAmount ?? toNumber(receiptRow.vat_amount);
+    const appliedTaxAmount = isVatExcluded
+      ? 0
+      : hasExplicitTaxMode
+        ? originalTaxAmount
+        : originalTaxAmount;
     const taxSummary = {
-      totalTaxAmount:
-        savedOriginalTaxSummary?.totalTaxAmount || toNumber(receiptRow.vat_amount),
-      taxByRate: savedOriginalTaxSummary?.taxByRate || adjustedTaxSummary.taxByRate,
+      totalTaxAmount: appliedTaxAmount,
+      taxByRate: isVatExcluded
+        ? []
+        : savedOriginalTaxSummary?.taxByRate || adjustedTaxSummary.taxByRate,
       taxSavingAmount:
         receiptRow.is_modified === true
-          ? Math.max(
-              0,
-              adjustedTaxSummary.totalTaxAmount -
-                (savedOriginalTaxSummary?.totalTaxAmount ||
-                  toNumber(receiptRow.vat_amount))
-            )
+          ? hasExplicitTaxMode
+            ? Math.max(0, originalTaxAmount - appliedTaxAmount)
+            : Math.max(0, adjustedTaxSummary.totalTaxAmount - originalTaxAmount)
           : 0,
       amountDifferenceAmount:
         receiptRow.is_modified === true
@@ -657,6 +677,20 @@ export async function GET(
         reviewStatus: receiptRow.review_status,
         adminNote: receiptRow.admin_note,
         originalAmountSummary,
+        taxOverrideMode: receiptRow.tax_override_mode,
+        calculatedVatAmount:
+          receiptRow.calculated_vat_amount === null
+            ? null
+            : toNumber(receiptRow.calculated_vat_amount),
+        calculatedFinalAmount:
+          receiptRow.calculated_final_amount === null
+            ? null
+            : toNumber(receiptRow.calculated_final_amount),
+        finalAmountOverride:
+          receiptRow.final_amount_override === null
+            ? null
+            : toNumber(receiptRow.final_amount_override),
+        revision: toNumber(receiptRow.revision),
       },
       payments: paymentRows.map((payment) => ({
         id: payment.id,
@@ -713,6 +747,9 @@ export async function PATCH(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  if (req.method === "PATCH") {
+    return handleAtomicReceiptPatch(req, context);
+  }
   let receiptId: number | null = null;
   let pauseAcquired = false;
   try {
@@ -1455,5 +1492,192 @@ export async function PATCH(
       },
       { status: 500 }
     );
+  }
+}
+
+async function handleAtomicReceiptPatch(
+  req: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await context.params;
+    const receiptId = parseReceiptId(id);
+    if (!receiptId) return NextResponse.json({ ok: false, error: "Invalid receipt id" }, { status: 400 });
+    const body = (await req.json().catch(() => null)) as UpdateReceiptBody | null;
+    if (!body) return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
+    const actor = await getAdminActor(body.actorUsername);
+    if (!actor) return NextResponse.json({ ok: false, error: "No permission" }, { status: 403 });
+    const inputs = normalizeEditableLines(body.lines);
+    const paymentMethod = normalizePaymentMethod(body.paymentMethod);
+    const taxMode = body.taxOverrideMode === "apply" || body.taxOverrideMode === "exclude_all"
+      ? body.taxOverrideMode : null;
+    const expectedRevision = Number(body.expectedRevision);
+    const requestId = typeof body.requestId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.requestId)
+      ? body.requestId : null;
+    const override = body.finalAmountOverride === null || body.finalAmountOverride === undefined
+      ? null : Number(body.finalAmountOverride);
+    const hasEmptyOverride = body.finalAmountOverride === "";
+    if (!inputs?.length || !paymentMethod || !taxMode || !requestId ||
+        !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 ||
+        hasEmptyOverride ||
+        (override !== null && (!Number.isSafeInteger(override) || override < 0 || override > MAX_VND_RECEIPT_AMOUNT))) {
+      return NextResponse.json({ ok: false, error: "Invalid receipt edit input." }, { status: 400 });
+    }
+
+    const { data: receipt, error: receiptError } = await supabaseServer
+      .from("pos_sales_receipts")
+      .select("id,source,ref_id,business_date,ref_date,payment_status,is_canceled,revision")
+      .eq("id", receiptId).maybeSingle();
+    if (receiptError) throw receiptError;
+    if (!receipt) return NextResponse.json({ ok: false, error: "Receipt not found" }, { status: 404 });
+    if (receipt.payment_status !== 3 || receipt.is_canceled === true) {
+      return NextResponse.json({ ok: false, error: "Only paid, active receipts can be edited." }, { status: 400 });
+    }
+    if (receipt.source !== "cukcuk" && receipt.source !== "manual") {
+      return NextResponse.json({ ok: false, error: "Receipt source cannot be edited." }, { status: 400 });
+    }
+
+    const { data: current, error: linesError } = await supabaseServer
+      .from("pos_sales_receipt_lines")
+      .select("id,ref_detail_id,parent_ref_detail_id,sort_order,item_id,item_code,item_name,unit_name,quantity,unit_price,amount,discount_amount,final_amount,tax_rate,tax_amount,pre_tax_amount,tax_reduction_amount,ref_detail_type,inventory_item_type,is_option,is_excluded,mapping_status,raw_json")
+      .eq("receipt_id", receiptId).order("sort_order").order("id");
+    if (linesError) throw linesError;
+    const active = ((current || []) as (LineRow & { item_id?: string | null })[])
+      .filter((line) => line.is_excluded !== true);
+    const byId = new Map(active.map((line) => [line.id, line]));
+    const requested = new Map(inputs.filter((line) => line.mode !== "create").map((line) => [line.id, line]));
+    if ([...requested.keys()].some((lineId) => !byId.has(lineId))) {
+      return NextResponse.json({ ok: false, error: "Receipt line changed. Reload the receipt." }, { status: 409 });
+    }
+    if ([...requested.keys()].some((lineId) => isOptionLine(byId.get(lineId)!))) {
+      return NextResponse.json({ ok: false, error: "Option lines cannot be edited directly." }, { status: 400 });
+    }
+
+    const creates = inputs.filter((line): line is Extract<NormalizedLineInput, { mode: "create" }> => line.mode === "create");
+    const products = await getProductsById(creates.map((line) => line.productId).filter((value): value is number => Boolean(value)));
+    const createByClientId = new Map(creates.map((line) => [line.clientId, line]));
+    const resolvedOptions = new Map<string, ReturnType<typeof findProductAddition>>();
+    for (const line of creates) {
+      if (!line.isOption) {
+        if (!line.productId || !products.has(line.productId))
+          return NextResponse.json({ ok: false, error: "Selected POS product was not found." }, { status: 400 });
+      } else {
+        const parent = line.parentClientId ? createByClientId.get(line.parentClientId) : null;
+        const product = parent?.productId ? products.get(parent.productId) : null;
+        const option = product && line.additionId ? findProductAddition(product, line.additionId) : null;
+        if (!parent || parent.isOption || !option)
+          return NextResponse.json({ ok: false, error: "Selected POS product option was not found." }, { status: 400 });
+        resolvedOptions.set(line.clientId, option);
+      }
+    }
+
+    const deletedParents = new Set(inputs.filter((line) => line.mode === "delete")
+      .map((line) => byId.get(line.id)?.ref_detail_id).filter(Boolean));
+    const quantityByRef = new Map<string, number>();
+    const rpcLines: Record<string, unknown>[] = [];
+    let sortOrder = 1;
+    const appendExisting = (line: (typeof active)[number], quantity: number) => {
+      const unitPrice = toNumber(line.unit_price);
+      const discount = toNumber(line.discount_amount);
+      const amount = Math.round(unitPrice * quantity);
+      const finalAmount = Math.max(0, amount - discount);
+      const rate = toNumber(line.tax_rate);
+      const tax = calculateTaxAmount(finalAmount, rate);
+      rpcLines.push({
+        id: line.id, sort_order: sortOrder++, ref_detail_id: line.ref_detail_id,
+        parent_ref_detail_id: getParentRefDetailId(line), item_id: line.item_id ?? null,
+        item_code: line.item_code, item_name: line.item_name || "", unit_name: line.unit_name,
+        quantity, unit_price: unitPrice, amount, discount_amount: discount,
+        final_amount: finalAmount, tax_rate: rate || null, tax_amount: tax,
+        pre_tax_amount: calculatePreTaxAmount(finalAmount, tax),
+        tax_reduction_amount: toNumber(line.tax_reduction_amount),
+        ref_detail_type: line.ref_detail_type ?? 1, inventory_item_type: line.inventory_item_type,
+        is_option: isOptionLine(line), mapping_status: line.mapping_status || (isOptionLine(line) ? "option" : "unmapped"),
+        raw_json: line.raw_json || {},
+      });
+    };
+    for (const line of active.filter((candidate) => !isOptionLine(candidate))) {
+      const input = requested.get(line.id);
+      if (input?.mode === "delete") continue;
+      const quantity = input?.mode === "update" ? input.quantity : toNumber(line.quantity);
+      if (line.ref_detail_id) quantityByRef.set(line.ref_detail_id, quantity);
+      appendExisting(line, quantity);
+    }
+    for (const line of active.filter(isOptionLine)) {
+      const parentRef = getParentRefDetailId(line);
+      if (parentRef && deletedParents.has(parentRef)) continue;
+      appendExisting(line, parentRef ? quantityByRef.get(parentRef) ?? toNumber(line.quantity) : toNumber(line.quantity));
+    }
+
+    const generatedRefs = new Map(creates.map((line, index) => [line.clientId, `manual-${receiptId}-${requestId.slice(0, 8)}-${index + 1}`]));
+    const orderedCreates = creates.filter((line) => !line.isOption).flatMap((parent) => [parent, ...creates.filter((line) => line.parentClientId === parent.clientId)]);
+    for (const line of orderedCreates) {
+      const parent = line.parentClientId ? createByClientId.get(line.parentClientId) : null;
+      const product = line.productId ? products.get(line.productId) : parent?.productId ? products.get(parent.productId) : null;
+      const option = line.isOption ? resolvedOptions.get(line.clientId) : null;
+      const unitPrice = option?.unitPrice ?? (line.isOption ? line.unitPrice : toNumber(product?.unit_price ?? line.unitPrice));
+      const quantity = line.isOption && parent ? parent.quantity : line.quantity;
+      const rate = toNumber(line.isOption ? line.taxRate ?? product?.tax_rate : product?.tax_rate ?? line.taxRate);
+      const amount = Math.round(unitPrice * quantity);
+      const tax = calculateTaxAmount(amount, rate);
+      rpcLines.push({
+        id: null, sort_order: sortOrder++, ref_detail_id: generatedRefs.get(line.clientId),
+        parent_ref_detail_id: line.parentClientId ? generatedRefs.get(line.parentClientId) : null,
+        item_id: line.isOption ? null : product?.pos_item_id || product?.item_id || null,
+        item_code: option?.code || product?.item_code || line.itemCode,
+        item_name: option?.name || product?.item_name || line.itemName,
+        unit_name: product?.unit_name || line.unitName, quantity, unit_price: unitPrice,
+        amount, discount_amount: 0, final_amount: amount, tax_rate: rate || null,
+        tax_amount: tax, pre_tax_amount: calculatePreTaxAmount(amount, tax), tax_reduction_amount: 0,
+        ref_detail_type: line.isOption ? 2 : 1,
+        inventory_item_type: line.isOption ? line.inventoryItemType ?? 6 : product?.item_type ?? line.inventoryItemType,
+        is_option: line.isOption, mapping_status: line.isOption ? "option" : "manual",
+        raw_json: { source: "manual-receipt-edit", productId: product?.id ?? null,
+          InventoryItemAdditionID: line.additionId, OptionGroupName: line.optionGroupName },
+      });
+    }
+    if (!rpcLines.length) return NextResponse.json({ ok: false, error: "At least one sales line must remain." }, { status: 400 });
+
+    const financials = calculateReceiptFinancials({
+      lines: rpcLines.map((line) => ({
+        finalAmount: Number(line.final_amount),
+        taxRate: line.tax_rate === null ? null : Number(line.tax_rate),
+      })),
+      taxMode,
+      originalTaxAmount: 0,
+      finalAmountOverride: override,
+    });
+    const normalizedOverride = financials.finalAmountOverride;
+    const finalAmount = financials.finalAmount;
+    const cash = paymentMethod === "cash" ? Number(body.cashReceivedAmount) : finalAmount;
+    if (paymentMethod === "cash" && (!Number.isSafeInteger(cash) || cash < finalAmount || cash > MAX_VND_RECEIPT_AMOUNT))
+      return NextResponse.json({ ok: false, error: "Cash received must cover the final amount." }, { status: 400 });
+
+    const note = typeof body.note === "string" ? body.note.trim() || null : null;
+    const { data, error } = await supabaseServer.rpc("admin_update_paid_sales_receipt", {
+      p_receipt_id: receiptId, p_expected_revision: expectedRevision, p_request_id: requestId,
+      p_actor_username: actor.username, p_modification_note: note,
+      p_tax_override_mode: taxMode, p_final_amount_override: normalizedOverride,
+      p_payment_method: paymentMethod, p_cash_received_amount: cash, p_lines: rpcLines,
+    });
+    if (error) {
+      if (error.message.includes("receipt_revision_conflict"))
+        return NextResponse.json({ ok: false, code: "receipt_revision_conflict", error: "Receipt was modified by another user." }, { status: 409 });
+      throw error;
+    }
+    const saved = data as Record<string, unknown>;
+    return NextResponse.json({ ok: true, receipt: {
+      id: receiptId, totalAmount: toNumber(saved.totalAmount), vatAmount: toNumber(saved.vatAmount),
+      calculatedVatAmount: toNumber(saved.calculatedVatAmount), calculatedFinalAmount: toNumber(saved.calculatedFinalAmount),
+      finalAmountOverride: saved.finalAmountOverride === null ? null : toNumber(saved.finalAmountOverride),
+      taxOverrideMode: taxMode, finalAmount: toNumber(saved.finalAmount),
+      receiveAmount: toNumber(saved.receiveAmount), returnAmount: toNumber(saved.returnAmount),
+      revision: toNumber(saved.revision), isModified: true, modifiedAt: saved.modifiedAt,
+      modifiedBy: actor.username, modificationNote: note,
+    }});
+  } catch (error) {
+    console.error("[ADMIN_SALES_RECEIPT_ATOMIC_PATCH_ERROR]", error);
+    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Failed to update receipt." }, { status: 500 });
   }
 }

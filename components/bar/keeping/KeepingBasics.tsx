@@ -46,7 +46,7 @@ export function KeepingListCard({ item, lang, href }: { item: BarKeepingListItem
   );
 }
 
-function KeepingSourceBadge({ source, label }: { source: "inventory" | "external"; label: string }) {
+export function KeepingSourceBadge({ source, label }: { source: "inventory" | "external"; label: string }) {
   return <span style={{ height: 18, padding: "0 5px", borderRadius: 999, background: source === "inventory" ? "#eff6ff" : "#fff7ed", color: source === "inventory" ? "#3b5f8a" : "#9a5b24", display: "inline-flex", alignItems: "center", flexShrink: 0, fontSize: 10, fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap" }}>{label}</span>;
 }
 
