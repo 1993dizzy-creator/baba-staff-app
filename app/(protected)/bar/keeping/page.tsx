@@ -105,7 +105,7 @@ export default function BarKeepingPage() {
 
       {zone ? <div style={{ minHeight: 34, marginBottom: 8, padding: "6px 9px", borderRadius: 8, background: "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, color: "#374151", fontSize: 12, fontWeight: 700 }}><span>{zone} {lang === "vi" ? "· khu vực" : "구역 키핑"}</span><button type="button" onClick={() => replace({ zone: null })} style={{ minHeight: 28, padding: "3px 8px", border: "1px solid #d1d5db", borderRadius: 7, background: "#fff", color: "#4b5563", fontSize: 11 }}>{lang === "vi" ? "Bỏ" : "해제"}</button></div> : null}
 
-      {manage ? <Link href="/bar/keeping/new" style={{ ...primaryButtonStyle, display: "block", textAlign: "center", textDecoration: "none", marginBottom: 10 }}>{t.newKeeping}</Link> : null}
+      {manage ? <Link href="/bar/keeping/new" style={{ ...primaryButtonStyle, display: "block", textAlign: "center", textDecoration: "none", marginBottom: 10, fontSize: 14, fontWeight: 700, letterSpacing: "-0.2px" }}>{t.newKeeping}</Link> : null}
       {initialized && loading ? <div role="status" style={{ margin: "0 0 7px", color: "#6b7280", fontSize: 11, textAlign: "right" }}>{t.loading}</div> : null}
       {error ? <State message={error} action={<button onClick={() => void load(undefined)} style={secondaryButtonStyle}>{t.retry}</button>} /> : (
         <div aria-busy={loading} style={{ display: "grid", gap: 8 }}>

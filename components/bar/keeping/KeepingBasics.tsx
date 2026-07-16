@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { BarKeepingListItem } from "@/lib/bar/keeping-types";
 import type { KeepingCloseReason, KeepingStatus } from "@/lib/bar/keeping";
 import { keepingRemainingDays } from "@/lib/bar/keeping";
-import { keepingText } from "@/lib/text/bar-keeping";
+import { keepingListText, keepingText } from "@/lib/text/bar-keeping";
 
 export function KeepingStatusBadge({ status, reason, lang }: { status: KeepingStatus; reason: KeepingCloseReason | null; lang: "ko" | "vi" }) {
   const t = keepingText[lang];
@@ -14,6 +14,7 @@ export function KeepingStatusBadge({ status, reason, lang }: { status: KeepingSt
 
 export function KeepingListCard({ item, lang, href }: { item: BarKeepingListItem; lang: "ko" | "vi"; href: string }) {
   const t = keepingText[lang];
+  const listText = keepingListText[lang];
   const period = item.status === "closed" ? closedLabel(item.closedAt, lang) : remainingLabel(item.expiresAt, lang);
   return (
     <Link href={href} style={{ minHeight: 102, padding: 11, border: "1px solid #dcdfe4", borderRadius: 16, background: "#fff", boxShadow: "0 4px 14px rgba(0,0,0,.035)", display: "flex", gap: 11, color: "inherit", textDecoration: "none" }}>
@@ -21,16 +22,19 @@ export function KeepingListCard({ item, lang, href }: { item: BarKeepingListItem
         {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ color: "#9ca3af", fontSize: 11 }}>{lang === "vi" ? "Không ảnh" : "사진 없음"}</span>}
       </div>
       <div style={{ minWidth: 0, flex: 1, display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8 }}>
-        <div style={{ minWidth: 0, display: "grid", gridTemplateRows: "auto auto 1fr", alignItems: "start" }}>
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", alignItems: "stretch" }}>
           <div style={{ minWidth: 0, display: "flex", alignItems: "baseline", gap: 4 }}>
             <strong style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 15 }}>{item.customerName}</strong>
             <span style={{ flexShrink: 0, color: "#6b7280", fontSize: 10, whiteSpace: "nowrap" }}>· {lang === "vi" ? `Dùng ${item.useCount} lần` : `사용 ${item.useCount}회`}</span>
           </div>
-          <div style={{ minWidth: 0, marginTop: 3, display: "flex", alignItems: "baseline", gap: 4, fontSize: 13 }}>
+          <div style={{ minWidth: 0, width: "fit-content", maxWidth: "100%", marginTop: 2, display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13 }}>
             <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.liquorName}</span>
-            <span style={{ flexShrink: 0, color: "#4b5563", fontSize: 11, fontWeight: 700 }}>· {item.zoneCode}</span>
+            {item.liquorSource ? <KeepingSourceBadge source={item.liquorSource} label={item.liquorSource === "inventory" ? listText.soldProduct : listText.outsideBottle} /> : null}
           </div>
-          <span style={{ alignSelf: "end", color: "#6b7280", fontSize: 10, whiteSpace: "nowrap" }}>{t.storedAt} {shortDate(item.storedAt, lang)}</span>
+          <div style={{ marginTop: 2, minWidth: 0, color: "#6b7280", fontSize: 10, lineHeight: "14px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <span>{listText.zone}</span><span style={{ color: "#4b5563", fontWeight: 700 }}> · {item.zoneCode || "-"}</span>
+          </div>
+          <span style={{ marginTop: "auto", color: "#6b7280", fontSize: 10, lineHeight: "14px", whiteSpace: "nowrap" }}>{t.storedAt} {shortDate(item.storedAt, lang)}</span>
         </div>
         <div style={{ minWidth: 68, flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "space-between", textAlign: "right" }}>
           <KeepingStatusBadge status={item.status} reason={item.closeReason} lang={lang} />
@@ -40,6 +44,10 @@ export function KeepingListCard({ item, lang, href }: { item: BarKeepingListItem
       </div>
     </Link>
   );
+}
+
+function KeepingSourceBadge({ source, label }: { source: "inventory" | "external"; label: string }) {
+  return <span style={{ height: 18, padding: "0 5px", borderRadius: 999, background: source === "inventory" ? "#eff6ff" : "#fff7ed", color: source === "inventory" ? "#3b5f8a" : "#9a5b24", display: "inline-flex", alignItems: "center", flexShrink: 0, fontSize: 10, fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap" }}>{label}</span>;
 }
 
 function remainingLabel(expiresAt: string | null, lang: "ko" | "vi") {
