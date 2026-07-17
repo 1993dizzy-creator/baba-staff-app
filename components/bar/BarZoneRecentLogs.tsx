@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";
-import { formatBarDateTime, formatBarLogSummary } from "@/lib/bar/log-format";
+import { formatBarDateTime, formatBarLogSummary, getBarLogNote } from "@/lib/bar/log-format";
 import type { BarActivityLog } from "@/lib/bar/types";
 
 type Text = {
@@ -101,12 +101,11 @@ export default function BarZoneRecentLogs({ zoneCode, lang, refreshKey, text }: 
           {!loading && !error && logs.length === 0 ? <p style={{ margin: "8px 0", color: "#6b7280", fontSize: 12 }}>{text.recentLogsEmpty}</p> : null}
           {!error && logs.length > 0 ? (
             <div style={{ display: "grid" }}>
-              {logs.map((log) => (
-                <div key={log.id} style={{ padding: "9px 0", borderTop: "1px solid #f3f4f6" }}>
-                  <div style={{ color: "#6b7280", fontSize: 11, lineHeight: 1.4 }}><time dateTime={log.createdAt}>{formatBarDateTime(log.createdAt, lang, true)}</time> · {log.actorName}</div>
-                  <div style={{ marginTop: 3, color: "#374151", fontSize: 12, lineHeight: 1.5 }}>{formatBarLogSummary(log, lang, { includeTarget: false })}</div>
-                </div>
-              ))}
+              {logs.map((log) => { const note = getBarLogNote(log); return <div key={log.id} style={{ padding: "9px 0", borderTop: "1px solid #f3f4f6" }}>
+                <div style={{ color: "#374151", fontSize: 12, lineHeight: 1.5, overflowWrap: "anywhere" }}>{formatBarLogSummary(log, lang, { includeTarget: false })}</div>
+                {note ? <div style={{ marginTop: 4, whiteSpace: "pre-wrap", overflowWrap: "anywhere", color: "#4b5563", fontSize: 11 }}><strong style={{ color: "#6b7280" }}>{lang === "vi" ? "Ghi chú" : "비고"}</strong> · {note}</div> : null}
+                <div style={{ marginTop: 5, color: "#9ca3af", fontSize: 10, lineHeight: 1.4, textAlign: "right" }}>{log.actorName} · <time dateTime={log.createdAt}>{formatBarDateTime(log.createdAt, lang, true)}</time></div>
+              </div>; })}
             </div>
           ) : null}
           {!loading && !error ? <Link href={`/bar/logs?entityType=zone&code=${encodeURIComponent(zoneCode)}`} style={{ display: "inline-block", marginTop: 7, color: "#2563eb", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>{text.viewAllLogs}</Link> : null}

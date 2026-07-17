@@ -5,6 +5,7 @@ import BarZoneDetail from "@/components/bar/BarZoneDetail";
 import BarZoneEditModal from "@/components/bar/BarZoneEditModal";
 import BarZoneMap, { type BarZoneMapLabels } from "@/components/bar/BarZoneMap";
 import BarZoneMapModal from "@/components/bar/BarZoneMapModal";
+import BarZoneOverviewLogs from "@/components/bar/BarZoneOverviewLogs";
 import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import { canAssignBarZone, canEditBarZone } from "@/lib/bar/permissions";
 import type { BarZoneDefinition } from "@/lib/bar/zone-map";
@@ -66,9 +67,10 @@ export default function BarAreaPage() {
     <section style={{ minWidth: 0, padding: 0, marginBottom: 8, border: "1px solid #dcdfe4", borderRadius: 10, overflow: "hidden" }}>
       <BarZoneMap selectedCode={selectedZone?.code ?? null} onSelect={setSelectedZone} labels={mapLabels} lang={lang} zoneData={zoneData} />
     </section>
-    <button ref={expandButtonRef} type="button" onClick={() => setIsMapModalOpen(true)} style={{ ...ui.subButton, minHeight: 48, marginBottom: 14, fontWeight: 800 }}>{t.enlargeMap}</button>
+    <button ref={expandButtonRef} type="button" onClick={() => setIsMapModalOpen(true)} style={{ ...ui.subButton, minHeight: 48, marginBottom: 14, border: 0, background: "#111827", color: "#fff", fontWeight: 800 }}><span aria-hidden="true" style={{ marginRight: 6 }}>🔍</span>{t.enlargeMap}</button>
     {loadError ? <p role="alert" style={{ color: "#b91c1c", fontSize: 13, fontWeight: 700 }}>{loadError}</p> : null}
     <BarZoneDetail zone={selectedZone} data={selectedData} lang={lang} canEdit={mayEdit && Boolean(selectedData)} onEdit={() => setIsEditOpen(true)} editButtonRef={editButtonRef} recentLogsRefreshKey={recentLogsRefreshKey} text={{ selectZone: t.selectZone, keepingUnavailable: t.keepingUnavailable, noZoneInfo: t.noZoneInfo, photo: t.photo, note: t.note, assignee: t.assignee, inactiveEmployee: t.inactiveEmployee, editZone: t.editZone, photoUpdated: t.photoUpdated, recentLogs: t.recentLogs, recentLogsEmpty: t.recentLogsEmpty, recentLogsLoading: t.recentLogsLoading, recentLogsError: t.recentLogsError, retry: t.retry, viewAllLogs: t.viewAllLogs }} />
+    {!selectedZone ? <BarZoneOverviewLogs lang={lang} text={{ title: t.allZoneRecentLogs, loading: t.recentLogsLoading, empty: t.allZoneLogsEmpty, error: t.recentLogsError, retry: t.retry, viewAll: t.viewAllLogs }} /> : null}
     {isMapModalOpen ? <BarZoneMapModal selectedCode={selectedZone?.code ?? null} onSelect={setSelectedZone} onClose={closeMapModal} labels={mapLabels} lang={lang} closeLabel={t.close} returnFocusRef={expandButtonRef} zoneData={zoneData} /> : null}
     {isEditOpen && selectedData ? <BarZoneEditModal zone={selectedData} staff={staff} canAssign={mayAssign} lang={lang} labels={{ editZone: t.editZone, photo: t.photo, note: t.note, assignee: t.assignee, assigneeColor: t.assigneeColor, noAssignee: t.noAssignee, inactiveEmployee: t.inactiveEmployee, save: t.save, saving: t.saving, cancel: t.cancel, replacePhoto: t.replacePhoto, takePhoto: t.takePhoto, deletePhoto: t.deletePhoto, confirmDeletePhoto: t.confirmDeletePhoto, conflict: t.conflict, saveError: t.saveError, photoError: t.photoError, unsupportedPhoto: t.unsupportedPhoto }} onClose={closeEditModal} onSaved={handleSaved} returnFocusRef={editButtonRef} /> : null}
   </div>;
