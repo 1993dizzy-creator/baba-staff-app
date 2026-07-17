@@ -349,12 +349,21 @@ type PosProductsResponse = {
   products?: PosProduct[];
 };
 
-function isExistingOptionLine(line: LineDetail) {
-  return (
-    line.isOption ||
-    Boolean(line.parentRefDetailId) ||
-    line.refDetailType !== 1 ||
-    line.mappingStatus === "option"
+function isExistingOptionLine(
+  line: LineDetail,
+  receiptLineRefDetailIds: Set<string>
+) {
+  return Boolean(
+    line.parentRefDetailId &&
+      receiptLineRefDetailIds.has(line.parentRefDetailId)
+  );
+}
+
+function getReceiptLineRefDetailIds(lines: LineDetail[]) {
+  return new Set(
+    lines
+      .map((line) => line.refDetailId)
+      .filter((id): id is string => Boolean(id))
   );
 }
 
@@ -2311,10 +2320,20 @@ export default function SalesReceiptsPage() {
                   amount: payment.amount,
                 })),
                 lineCount: (refreshedDetail.lines || []).filter(
-                  (line) => line.isExcluded !== true && !isExistingOptionLine(line)
+                  (line) =>
+                    line.isExcluded !== true &&
+                    !isExistingOptionLine(
+                      line,
+                      getReceiptLineRefDetailIds(refreshedDetail.lines || [])
+                    )
                 ).length,
                 optionLineCount: (refreshedDetail.lines || []).filter(
-                  (line) => line.isExcluded !== true && isExistingOptionLine(line)
+                  (line) =>
+                    line.isExcluded !== true &&
+                    isExistingOptionLine(
+                      line,
+                      getReceiptLineRefDetailIds(refreshedDetail.lines || [])
+                    )
                 ).length,
               }
               : receipt
@@ -2449,10 +2468,20 @@ export default function SalesReceiptsPage() {
                 amount: payment.amount,
               })),
               lineCount: (detailResult.lines || []).filter(
-                (line) => line.isExcluded !== true && !isExistingOptionLine(line)
+                (line) =>
+                  line.isExcluded !== true &&
+                  !isExistingOptionLine(
+                    line,
+                    getReceiptLineRefDetailIds(detailResult.lines || [])
+                  )
               ).length,
               optionLineCount: (detailResult.lines || []).filter(
-                (line) => line.isExcluded !== true && isExistingOptionLine(line)
+                (line) =>
+                  line.isExcluded !== true &&
+                  isExistingOptionLine(
+                    line,
+                    getReceiptLineRefDetailIds(detailResult.lines || [])
+                  )
               ).length,
             }
             : item
@@ -3901,9 +3930,12 @@ function ReceiptDropdown({
   const activeLines = (detail.lines || []).filter(
     (line) => line.isExcluded !== true
   );
+  const activeLineRefDetailIds = getReceiptLineRefDetailIds(activeLines);
   const hasOptionLines =
     detail.hasOptionLines === true ||
-    activeLines.some(isExistingOptionLine);
+    activeLines.some((line) =>
+      isExistingOptionLine(line, activeLineRefDetailIds)
+    );
   const previewLinesByReceiptLineId = new Map<
     number,
     InventoryDeductionPreview["receipts"][number]["lines"]
@@ -3945,7 +3977,10 @@ function ReceiptDropdown({
       <DetailSection title={text.salesItems}>
         <div style={lineListStyle}>
           {activeLines.map((line) => {
-            const isOption = isExistingOptionLine(line);
+            const isOption = isExistingOptionLine(
+              line,
+              activeLineRefDetailIds
+            );
             const lineTotalAmount = line.finalAmount || line.amount;
             const lineStatusInfo = deductionPreview
               ? getReceiptDetailLineStatusInfo(
@@ -4136,6 +4171,7 @@ function ReceiptEditPanel({
   onSave: (values: Omit<SaveReceiptEditInput, "receiptId">) => void;
 }) {
   const [isEditing, setIsEditing] = useState(initialEditing === true);
+  const receiptLineRefDetailIds = getReceiptLineRefDetailIds(lines);
   const isReceiptCanceled =
     receipt.isCanceled ||
     receipt.paymentStatus === 4 ||
@@ -4151,7 +4187,11 @@ function ReceiptEditPanel({
   }
   const [draftLines, setDraftLines] = useState<ReceiptDraftLine[]>(() =>
     lines
-      .filter((line) => line.isExcluded !== true && !isExistingOptionLine(line))
+      .filter(
+        (line) =>
+          line.isExcluded !== true &&
+          !isExistingOptionLine(line, receiptLineRefDetailIds)
+      )
       .map((line) => ({
         id: line.id,
         refDetailId: line.refDetailId,
@@ -4166,7 +4206,9 @@ function ReceiptEditPanel({
       }))
   );
   const existingOptionLines = lines.filter(
-    (line) => line.isExcluded !== true && isExistingOptionLine(line)
+    (line) =>
+      line.isExcluded !== true &&
+      isExistingOptionLine(line, receiptLineRefDetailIds)
   );
   const [newLines, setNewLines] = useState<NewDraftLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
@@ -4399,7 +4441,11 @@ function ReceiptEditPanel({
   function resetDraft() {
     setDraftLines(
       lines
-        .filter((line) => line.isExcluded !== true && !isExistingOptionLine(line))
+        .filter(
+          (line) =>
+            line.isExcluded !== true &&
+            !isExistingOptionLine(line, receiptLineRefDetailIds)
+        )
         .map((line) => ({
           id: line.id,
           refDetailId: line.refDetailId,

@@ -81,7 +81,7 @@ function getHardBlockingReasons(receipt: PreviewReceipt) {
   );
 
   for (const line of receipt.lines) {
-    if (isNeutralLine(line)) {
+    if (isNeutralLine(line) || line.blocksReceipt !== true) {
       continue;
     }
 

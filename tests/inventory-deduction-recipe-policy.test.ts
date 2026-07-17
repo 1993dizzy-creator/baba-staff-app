@@ -45,7 +45,7 @@ test("an original POS receipt applies ready lines while excluding an incomplete 
   assert.equal(workflow.canExecute, true);
 });
 
-test("an incomplete recipe blocks a manually-created receipt", () => {
+test("an incomplete recipe on a manually-created receipt is skipped", () => {
   const blocks = shouldBlockIncompleteRecipe({
     source: "manual",
     isModified: false,
@@ -57,11 +57,11 @@ test("an incomplete recipe blocks a manually-created receipt", () => {
     blockingReasons: blocks ? ["incomplete_recipe"] : [],
   });
 
-  assert.equal(blocks, true);
-  assert.equal(workflow.operationType, "needs_check");
+  assert.equal(blocks, false);
+  assert.equal(workflow.operationType, "no_op");
 });
 
-test("an incomplete recipe on an edited receipt preserves its active deduction", () => {
+test("an incomplete recipe on an edited receipt does not block its latest plan", () => {
   const blocks = shouldBlockIncompleteRecipe({
     source: "cukcuk",
     isModified: true,
@@ -72,22 +72,22 @@ test("an incomplete recipe on an edited receipt preserves its active deduction",
     hasProcessingHistory: true,
     hasActiveDeduction: true,
     needsReprocess: true,
-    actionableLineCount: 0,
+    actionableLineCount: 1,
     blockingReasons: blocks ? ["incomplete_recipe"] : [],
   });
 
-  assert.equal(blocks, true);
-  assert.equal(workflow.operationType, "needs_check");
-  assert.equal(workflow.canExecute, false);
+  assert.equal(blocks, false);
+  assert.equal(workflow.operationType, "reprocess_modified");
+  assert.equal(workflow.canExecute, true);
 });
 
-test("an incomplete recipe on a selected T-code option remains blocking", () => {
+test("an incomplete recipe on a selected T-code option is skipped", () => {
   assert.equal(
     shouldBlockIncompleteRecipe({
       source: "cukcuk",
       isModified: false,
       isOption: true,
     }),
-    true
+    false
   );
 });

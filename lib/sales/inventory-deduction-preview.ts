@@ -186,6 +186,7 @@ type PreviewLine = {
   isKegTracked?: boolean;
   status: string;
   blockedReason: string | null;
+  blocksReceipt: boolean;
   deductions: DeductionComponent[];
 };
 
@@ -314,8 +315,9 @@ function addBlockedReason(receipt: WorkingReceipt, reason: string) {
 
 function resolveBlockedStatus(lines: PreviewLine[], receipt: ReceiptRow) {
   const hasDeductionLines = lines.some((line) => line.deductions.length > 0);
-  const statuses = new Set(lines.map((line) => line.status));
-  if (statuses.has("missing_mapping")) return "missing_mapping" as const;
+  const statuses = new Set(
+    lines.filter((line) => line.blocksReceipt).map((line) => line.status)
+  );
   if (!hasDeductionLines && statuses.has("manual_review")) {
     return "manual_review" as const;
   }
@@ -823,6 +825,7 @@ export async function buildInventoryDeductionPreview(input: {
               ),
             }
           : null,
+        blocksReceipt: false,
       };
 
       if (line.is_excluded === true || line.is_canceled === true) {
@@ -844,6 +847,10 @@ export async function buildInventoryDeductionPreview(input: {
           ...base,
           lineType: "invalid_mapping" as const,
           status: "invalid_mapping",
+          blocksReceipt:
+            productCandidates.length > 1 ||
+            mappingCandidates.length > 1 ||
+            Boolean(product && product.is_active !== true),
           blockedReason:
             productCandidates.length > 1 || mappingCandidates.length > 1
               ? "POS 상품 또는 mapping 후보가 여러 개입니다."
@@ -895,6 +902,7 @@ export async function buildInventoryDeductionPreview(input: {
             ...base,
             lineType: "combo_invalid_mapping" as const,
             status: "invalid_mapping",
+            blocksReceipt: true,
             blockedReason: "Combo mapping은 POS 옵션에는 사용할 수 없습니다.",
             deductions: [],
           };
@@ -908,6 +916,7 @@ export async function buildInventoryDeductionPreview(input: {
             ...base,
             lineType: "combo_invalid_mapping" as const,
             status: "invalid_mapping",
+            blocksReceipt: true,
             blockedReason: "Combo 구성 상품을 POS catalog에서 확인할 수 없습니다.",
             deductions: [],
           };
@@ -974,6 +983,7 @@ export async function buildInventoryDeductionPreview(input: {
               ...childBase,
               lineType: "combo_invalid_mapping" as const,
               status: "invalid_mapping",
+              blocksReceipt: true,
               blockedReason:
                 childProducts.length > 1 || childMappingCandidates.length > 1
                   ? "Combo 구성 상품 후보가 여러 개입니다."
@@ -997,6 +1007,7 @@ export async function buildInventoryDeductionPreview(input: {
               ...childBase,
               lineType: "combo_invalid_mapping" as const,
               status: "invalid_mapping",
+              blocksReceipt: true,
               blockedReason: "Combo 안에 Combo는 지원하지 않습니다.",
               deductions: [],
             };
@@ -1037,6 +1048,7 @@ export async function buildInventoryDeductionPreview(input: {
                 ...childBase,
                 lineType: "combo_invalid_mapping" as const,
                 status: "invalid_mapping",
+                blocksReceipt: true,
                 blockedReason:
                   "Combo 구성 상품 Direct mapping 설정이 올바르지 않습니다.",
                 deductions: [],
@@ -1136,6 +1148,7 @@ export async function buildInventoryDeductionPreview(input: {
             ...childBase,
             lineType: "combo_invalid_mapping" as const,
             status: "invalid_mapping",
+            blocksReceipt: true,
             blockedReason: "Combo 구성 상품 mapping type을 지원하지 않습니다.",
             deductions: [],
           };
@@ -1150,6 +1163,7 @@ export async function buildInventoryDeductionPreview(input: {
             ...base,
             lineType: "invalid_mapping" as const,
             status: "invalid_mapping",
+            blocksReceipt: true,
             blockedReason:
               "Direct mapping의 inventory 품목 또는 차감 배수가 유효하지 않습니다.",
             deductions: [],
@@ -1243,6 +1257,7 @@ export async function buildInventoryDeductionPreview(input: {
         ...base,
         lineType: "invalid_mapping" as const,
         status: "invalid_mapping",
+        blocksReceipt: true,
         blockedReason: "지원하지 않는 mapping type입니다.",
         deductions: [],
       };

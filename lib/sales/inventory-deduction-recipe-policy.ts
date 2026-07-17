@@ -3,9 +3,6 @@ export function shouldBlockIncompleteRecipe(input: {
   isModified: boolean | null | undefined;
   isOption: boolean | null | undefined;
 }) {
-  return (
-    input.source === "manual" ||
-    input.isModified === true ||
-    input.isOption === true
-  );
+  void input;
+  return false;
 }

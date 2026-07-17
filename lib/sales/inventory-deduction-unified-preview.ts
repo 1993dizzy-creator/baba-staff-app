@@ -239,6 +239,7 @@ function getLineClassification(receipt: PreviewReceipt, sourceReceipt: ReceiptRo
     if (neutral) neutralLineCount += 1;
 
     const blocking =
+      line.blocksReceipt === true &&
       !neutral &&
       (blocksForIncompleteRecipe ||
         hasIncompleteAncestor ||

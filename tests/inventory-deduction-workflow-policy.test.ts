@@ -28,6 +28,26 @@ test("an edited receipt with no prior deduction applies its latest plan once", (
   );
 });
 
+test("a paid receipt executes ready plans when unresolved lines were skipped", () => {
+  const result = classifyInventoryDeductionWorkflow({
+    ...base,
+    actionableLineCount: 1,
+    blockingReasons: [],
+  });
+  assert.equal(result.operationType, "initial_apply");
+  assert.equal(result.canExecute, true);
+});
+
+test("a receipt with only skipped unresolved lines has no executable movement", () => {
+  const result = classifyInventoryDeductionWorkflow({
+    ...base,
+    actionableLineCount: 0,
+    blockingReasons: [],
+  });
+  assert.equal(result.operationType, "no_op");
+  assert.equal(result.canExecute, false);
+});
+
 test("a changed applied receipt is rolled back and reapplied", () => {
   const result = classifyInventoryDeductionWorkflow({
     ...base,

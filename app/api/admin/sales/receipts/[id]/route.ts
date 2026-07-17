@@ -701,7 +701,15 @@ export async function GET(
       })),
       taxSummary,
       adjustedTaxSummary,
-      hasOptionLines: activeLineRows.some(isOptionLine),
+      hasOptionLines: activeLineRows.some((line) => {
+        const parentRefDetailId = getParentRefDetailId(line);
+        return Boolean(
+          parentRefDetailId &&
+            activeLineRows.some(
+              (parent) => parent.ref_detail_id === parentRefDetailId
+            )
+        );
+      }),
       lines: activeLineRows.map((line) => ({
         id: line.id,
         refDetailId: line.ref_detail_id,
