@@ -79,9 +79,16 @@ export async function GET(request: NextRequest) {
 function safeLogData(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
-  return Object.fromEntries(["customer_name", "liquor_name", "remaining_percent", "zone_code", "close_reason"].flatMap((key) =>
-    typeof source[key] === "string" || typeof source[key] === "number" ? [[key, source[key]]] : []
-  ));
+  const safe: Record<string, string | number | null> = {};
+  for (const key of ["customer_name", "liquor_name", "remaining_percent", "zone_code", "close_reason", "action_note", "note", "reason", "close_note"]) {
+    if (key === "action_note" && Object.prototype.hasOwnProperty.call(source, key) && source[key] === null) {
+      safe[key] = null;
+      continue;
+    }
+    const field = source[key];
+    if (typeof field === "string" || typeof field === "number") safe[key] = field;
+  }
+  return safe;
 }
 
 function parseCursor(value: string) {

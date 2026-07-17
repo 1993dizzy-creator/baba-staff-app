@@ -89,7 +89,7 @@ export default function BarLogsPage() {
             <strong style={{ color: "#374151" }}>{log.actorName}</strong>
             <time dateTime={log.createdAt}>{formatBarDateTime(log.createdAt, lang)}</time>
           </div>
-          <p style={{ margin: "8px 0 0", color: "#111827", lineHeight: 1.5 }}>{formatBarLogSummary(log, lang)}</p>
+          <p style={{ margin: "8px 0 0", color: "#111827", lineHeight: 1.5, overflowWrap: "anywhere" }}>{formatBarLogSummary(log, lang)}</p>
           {log.entityType === "keeping" ? <Link href={`/bar/keeping/${log.entityId}`} style={{ display: "inline-block", marginTop: 6, color: "#2563eb", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>{log.entityCode}</Link> : null}
         </article>
       ))}
