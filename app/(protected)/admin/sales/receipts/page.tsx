@@ -597,6 +597,12 @@ type UnifiedPreviewReceipt = {
   activeDeductionCount: number;
   activeDeductionIds?: number[];
   actionableLineCount: number;
+  actionableSalesLines: Array<{
+    receiptLineId: number;
+    posItemCode: string | null;
+    itemName: string | null;
+    quantitySold: number;
+  }>;
   neutralLineCount: number;
   blockingReasons: string[];
   rawPreviewStatus: string | null;
@@ -712,6 +718,7 @@ const inventoryPreviewText = {
       reapplyOnly: "현재 내용 재차감",
       activeDeduction: "기존 차감",
       actionableLine: "처리 라인",
+      actionableItems: "차감 가능",
       neutralLine: "제외 라인",
       resultApplied: "처리 완료",
       resultAlreadyProcessed: "이미 처리됨",
@@ -904,6 +911,7 @@ const inventoryPreviewText = {
       reapplyOnly: "Trừ lại theo nội dung hiện tại",
       activeDeduction: "Đã trừ trước",
       actionableLine: "Dòng xử lý",
+      actionableItems: "Có thể trừ",
       neutralLine: "Dòng bỏ qua",
       resultApplied: "Đã xử lý",
       resultAlreadyProcessed: "Đã xử lý trước đó",
@@ -1068,7 +1076,7 @@ function getInventoryTotalName(total: {
     : total.inventoryItemName;
 }
 
-function getKegTrackingProductName(product: {
+function getPosSalesItemName(product: {
   posItemCode: string | null;
   posItemName: string | null;
 }) {
@@ -1083,6 +1091,25 @@ function getKegTrackingProductName(product: {
     return `[${product.posItemCode}] ${product.posItemName}`;
   }
   return product.posItemName || product.posItemCode || "-";
+}
+
+function getKegTrackingProductName(product: {
+  posItemCode: string | null;
+  posItemName: string | null;
+}) {
+  return getPosSalesItemName(product);
+}
+
+function getActionableSalesLineLabel(line: {
+  receiptLineId: number;
+  posItemCode: string | null;
+  itemName: string | null;
+  quantitySold: number;
+}) {
+  return `${getPosSalesItemName({
+    posItemCode: line.posItemCode,
+    posItemName: line.itemName || `#${line.receiptLineId}`,
+  })} ×${formatNumber(line.quantitySold)}`;
 }
 
 function formatKegUsageMl(value: number) {
@@ -3167,11 +3194,46 @@ function UnifiedReceiptPreviewRow({
 }) {
   const reprocessMode = getUnifiedReprocessMode(receipt, text);
   const reason = receipt.blockingReasons[0] || "";
+  const actionableSalesLines = receipt.canExecute
+    ? receipt.actionableSalesLines ?? []
+    : [];
 
   return (
     <div style={previewReceiptStyle}>
-      <div style={previewReceiptHeaderRowStyle}>
+      <div style={unifiedReceiptHeaderStyle}>
         <span style={previewReceiptMainStyle}>
+          <span
+            style={{
+              ...previewStatusStyle,
+              ...getUnifiedOperationStyle(receipt.operationType),
+              alignSelf: "flex-start",
+            }}
+          >
+            {getUnifiedOperationLabel(receipt.operationType, text)}
+          </span>
+          {actionableSalesLines.length > 0 ? (
+            <div style={unifiedActionableItemsStyle}>
+              <span style={unifiedActionableItemsLabelStyle}>
+                {text.unified.actionableItems}:
+              </span>
+              {actionableSalesLines.length === 1 ? (
+                <span style={unifiedActionableSingleItemStyle}>
+                  {getActionableSalesLineLabel(actionableSalesLines[0])}
+                </span>
+              ) : (
+                <ul style={unifiedActionableItemsListStyle}>
+                  {actionableSalesLines.map((line) => (
+                    <li
+                      key={line.receiptLineId}
+                      style={unifiedActionableItemStyle}
+                    >
+                      {getActionableSalesLineLabel(line)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : null}
           <strong>
             {salesReceipt?.tableName
               ? `${receiptText.table}: ${salesReceipt.tableName}`
@@ -3190,14 +3252,6 @@ function UnifiedReceiptPreviewRow({
             {text.countSuffix}
             {reprocessMode ? ` · ${reprocessMode}` : ""}
           </span>
-        </span>
-        <span
-          style={{
-            ...previewStatusStyle,
-            ...getUnifiedOperationStyle(receipt.operationType),
-          }}
-        >
-          {getUnifiedOperationLabel(receipt.operationType, text)}
         </span>
       </div>
       {reason ? <p style={previewLineErrorStyle}>{reason}</p> : null}
@@ -6074,6 +6128,10 @@ const previewReceiptHeaderRowStyle: CSSProperties = {
   padding: "9px 10px",
 };
 
+const unifiedReceiptHeaderStyle: CSSProperties = {
+  padding: "9px 10px",
+};
+
 const previewReceiptHeaderButtonStyle: CSSProperties = {
   width: "100%",
   border: 0,
@@ -6135,6 +6193,39 @@ const previewReceiptMetaStyle: CSSProperties = {
   color: "#667085",
   fontSize: 10,
   lineHeight: 1.35,
+};
+
+const unifiedActionableItemsStyle: CSSProperties = {
+  minWidth: 0,
+  marginTop: 2,
+  color: "#344054",
+  fontSize: 11,
+  lineHeight: 1.4,
+};
+
+const unifiedActionableItemsLabelStyle: CSSProperties = {
+  fontWeight: 700,
+};
+
+const unifiedActionableSingleItemStyle: CSSProperties = {
+  marginLeft: 4,
+  overflowWrap: "anywhere",
+  fontWeight: 600,
+};
+
+const unifiedActionableItemsListStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 1,
+  margin: "2px 0 0",
+  padding: 0,
+  listStyle: "none",
+};
+
+const unifiedActionableItemStyle: CSSProperties = {
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  fontWeight: 600,
 };
 
 const previewReceiptMainStyle: CSSProperties = {

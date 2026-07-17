@@ -85,6 +85,12 @@ export type UnifiedInventoryDeductionPreviewReceipt = {
   activeDeductionCount: number;
   activeDeductionIds: number[];
   actionableLineCount: number;
+  actionableSalesLines: Array<{
+    receiptLineId: number;
+    posItemCode: string | null;
+    itemName: string | null;
+    quantitySold: number;
+  }>;
   neutralLineCount: number;
   blockingReasons: string[];
   rawPreviewStatus: string | null;
@@ -584,6 +590,21 @@ export async function buildUnifiedInventoryDeductionPreview(input: {
       currentFingerprint,
       history,
     });
+    const actionableSalesLines = Array.from(
+      new Map(
+        (previewReceipt?.lines ?? [])
+          .filter((line) => line.deductions.length > 0)
+          .map((line) => [
+            line.receiptLineId,
+            {
+              receiptLineId: line.receiptLineId,
+              posItemCode: line.posItemCode,
+              itemName: line.itemName,
+              quantitySold: line.quantitySold,
+            },
+          ])
+      ).values()
+    );
 
     return {
       operationType: classified.operationType,
@@ -595,6 +616,7 @@ export async function buildUnifiedInventoryDeductionPreview(input: {
       activeDeductionCount: history.activeAppliedDeductionCount,
       activeDeductionIds: history.activeAppliedDeductionIds,
       actionableLineCount: classified.actionableLineCount,
+      actionableSalesLines,
       neutralLineCount: classified.neutralLineCount,
       blockingReasons: classified.blockingReasons,
       rawPreviewStatus: previewReceipt?.status ?? null,

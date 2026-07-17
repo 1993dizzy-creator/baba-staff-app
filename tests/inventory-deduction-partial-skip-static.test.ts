@@ -42,3 +42,15 @@ test("receipt option display requires a resolvable explicit parent", () => {
   );
   assert.doesNotMatch(page, /line\.refDetailType !== 1/);
 });
+
+test("unified cards expose unique actionable sales lines only when executable", () => {
+  const unified = source("lib/sales/inventory-deduction-unified-preview.ts");
+  const page = source("app/(protected)/admin/sales/receipts/page.tsx");
+
+  assert.match(unified, /new Map\(/);
+  assert.match(unified, /line\.receiptLineId/);
+  assert.match(unified, /line\.deductions\.length > 0/);
+  assert.match(page, /receipt\.canExecute/);
+  assert.match(page, /key=\{line\.receiptLineId\}/);
+  assert.match(page, /text\.unified\.actionableItems/);
+});
