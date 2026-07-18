@@ -22,12 +22,12 @@ export async function DELETE(request:NextRequest,context:Context){
     let body:unknown;try{body=await request.json();}catch{return NextResponse.json({ok:false,error:"Invalid request"},{status:400});}
     const version=typeof body==="object"&&body!==null&&"version" in body?Number(body.version):NaN;
     if(!Number.isSafeInteger(version)||version<1)return NextResponse.json({ok:false,error:"Invalid version"},{status:400});
-    const {data,error}=await supabaseServer.rpc("bar_delete_active_keeping_v1",{p_id:id,p_expected_version:version,p_actor_user_id:actor.id});
+    const {data,error}=await supabaseServer.rpc("bar_delete_keeping_v2",{p_id:id,p_expected_version:version,p_actor_user_id:actor.id});
     if(error)throw error;
     if(data?.status==="conflict")return NextResponse.json({ok:false,error:"Another user updated this keeping",code:"VERSION_CONFLICT",version:data.version},{status:409});
     if(data?.status==="not_found")return NextResponse.json({ok:false,error:"Keeping not found"},{status:404});
     if(data?.status==="forbidden")return NextResponse.json({ok:false,error:"Forbidden"},{status:403});
-    if(data?.status==="invalid_state")return NextResponse.json({ok:false,error:"Only active keepings can be deleted",code:"INVALID_STATE"},{status:409});
+    if(data?.status==="invalid_state")return NextResponse.json({ok:false,error:"This keeping cannot be deleted in its current state",code:"INVALID_STATE"},{status:409});
     if(data?.status!=="ok")throw new Error("Unexpected delete keeping status");
     const cleanup=await removeKeepingFiles([data.old_image_path,data.old_thumbnail_path],"KEEPING_DELETE_STORAGE_CLEANUP");
     if(!cleanup.succeeded)console.warn("[KEEPING_DELETE_STORAGE_CLEANUP_WARNING]",{keepingId:id,attempted:cleanup.attempted});

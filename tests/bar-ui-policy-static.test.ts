@@ -7,7 +7,8 @@ const source = (path: string) => readFileSync(join(process.cwd(), path), "utf8")
 
 test("closed keepings expose reactivation but not the information edit action", () => {
   const detail = source("components/bar/keeping/KeepingDetail.tsx");
-  assert.match(detail, /item\.status === "closed" && capabilities\.reactivate/);
+  assert.match(detail, /item\.status === "closed" && \(capabilities\.reactivate \|\| capabilities\.delete\)/);
+  assert.match(detail, /capabilities\.delete \? <button ref=\{deleteRef\}/);
   assert.doesNotMatch(detail, /capabilities\.editClosed \? <button onClick=\{\(\) => setAction\("update"\)\}/);
   assert.doesNotMatch(detail, /<span \/>\}\{capabilities\.editClosed/);
 });
@@ -31,8 +32,8 @@ test("log notes are formatted separately and zone move reasons stay hidden", () 
   const card = source("components/bar/BarLogEntry.tsx");
   assert.match(formatter, /export function getBarLogNote/);
   assert.match(formatter, /log\.actionType==="keeping_updated"/);
-  assert.match(formatter, /keeping_remaining_corrected"\?"reason":"close_note"/);
-  assert.match(formatter, /if\(!\["keeping_used","keeping_remaining_corrected","keeping_closed"\]/);
+  assert.match(formatter, /keeping_remaining_corrected"\|\|log\.actionType==="keeping_reactivated"\?"reason":"close_note"/);
+  assert.match(formatter, /if\(!\["keeping_used","keeping_remaining_corrected","keeping_closed","keeping_reactivated"\]/);
   assert.match(card, /const note = getBarLogNote\(log\)/);
   assert.match(card, /formatBarLogSummary\(log, lang, \{ includeTarget: false \}\)/);
   assert.match(card, /whiteSpace: "pre-wrap"/);

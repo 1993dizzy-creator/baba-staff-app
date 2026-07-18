@@ -9,9 +9,9 @@ export function getBarLogNote(log:BarActivityLog){
     const before=nonBlankString(log.beforeData,"note"),after=nonBlankString(log.afterData,"note");
     return before!==after?after:null;
   }
-  if(!["keeping_used","keeping_remaining_corrected","keeping_closed"].includes(log.actionType))return null;
+  if(!["keeping_used","keeping_remaining_corrected","keeping_closed","keeping_reactivated"].includes(log.actionType))return null;
   if(log.afterData&&Object.prototype.hasOwnProperty.call(log.afterData,"action_note"))return nonBlankString(log.afterData,"action_note");
-  const legacyKey=log.actionType==="keeping_used"?"note":log.actionType==="keeping_remaining_corrected"?"reason":"close_note";
+  const legacyKey=log.actionType==="keeping_used"?"note":log.actionType==="keeping_remaining_corrected"||log.actionType==="keeping_reactivated"?"reason":"close_note";
   return nonBlankString(log.afterData,legacyKey);
 }
 const liquorSourceLabel=(value:string|null,lang:BarLanguage)=>value==="inventory"?(lang==="vi"?"hàng của quán":"판매상품"):value==="external"?(lang==="vi"?"mang từ ngoài":"외부반입"):(lang==="vi"?"chưa phân loại":"구분 미지정");

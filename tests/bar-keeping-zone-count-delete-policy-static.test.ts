@@ -41,12 +41,12 @@ test("inventory keepings expose only localized names and preserve external snaps
   assert.match(types, /: item\.liquorName;/);
 });
 
-test("delete is owner or master only, versioned, active-only, and cleans storage after RPC", () => {
+test("delete is owner or master only, versioned, supports active and closed, and cleans storage after RPC", () => {
   const permissions = read("lib/bar/permissions.ts");
   const route = read("app/api/bar/keepings/[id]/route.ts");
   const auth = read("lib/bar/server-auth.ts");
   const session = read("lib/auth/server-session.ts");
-  const migration = read("supabase/migrations/202607180002_delete_active_bar_keeping.sql");
+  const migration = read("supabase/migrations/202607180003_delete_bar_keeping_v2.sql");
   assert.match(permissions, /canDeleteBarKeeping/);
   assert.match(permissions, /isOwnerOrMaster/);
   assert.match(route, /canDeleteBarKeeping\(actor\)/);
@@ -55,10 +55,10 @@ test("delete is owner or master only, versioned, active-only, and cleans storage
   assert.match(auth, /readServerSession\(\)/);
   assert.match(auth, /eq\("id", session\.uid\)/);
   assert.match(session, /timingSafeEqual/);
-  assert.match(route, /bar_delete_active_keeping_v1/);
-  assert.ok(route.indexOf("bar_delete_active_keeping_v1") < route.indexOf("KEEPING_DELETE_STORAGE_CLEANUP"));
+  assert.match(route, /bar_delete_keeping_v2/);
+  assert.ok(route.indexOf("bar_delete_keeping_v2") < route.indexOf("KEEPING_DELETE_STORAGE_CLEANUP"));
   assert.match(migration, /v_old\.version <> p_expected_version/);
-  assert.match(migration, /v_old\.status <> 'active'/);
+  assert.match(migration, /v_old\.status not in \('active', 'closed'\)/);
   assert.match(migration, /u\.role::text/);
   assert.match(migration, /'#' \|\| u\.id::text/);
   assert.match(migration, /keeping_deleted/);
@@ -70,7 +70,7 @@ test("deleted keeping logs remain visible without a dead detail link or private 
   const entry = read("components/bar/BarLogEntry.tsx");
   const formatter = read("lib/bar/log-format.ts");
   const logs = read("app/api/bar/logs/route.ts");
-  const migration = read("supabase/migrations/202607180002_delete_active_bar_keeping.sql");
+  const migration = read("supabase/migrations/202607180003_delete_bar_keeping_v2.sql");
   assert.match(entry, /actionType === "keeping_deleted"/);
   assert.match(entry, /&& !isDeletedKeeping \? <Link/);
   assert.match(formatter, /keeping_deleted:`\$\{prefix\}키핑을 삭제했습니다\.`/);
