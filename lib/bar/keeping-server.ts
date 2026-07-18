@@ -55,26 +55,30 @@ export async function resolveKeepingLiquor(source: unknown, inventoryItemId: unk
 export async function uploadKeepingFiles(detail: File, thumbnail: File) {
   validateImage(detail, KEEPING_DETAIL_IMAGE_MAX_BYTES); validateImage(thumbnail, KEEPING_THUMBNAIL_MAX_BYTES);
   const token = `${Date.now()}-${randomBytes(12).toString("hex")}`;
-  const imagePath = `keeping/${token}/main.webp`; const thumbnailPath = `keeping/${token}/thumb.webp`;
+  const imagePath = `keeping/${token}/main.${imageExtension(detail.type)}`; const thumbnailPath = `keeping/${token}/thumb.${imageExtension(thumbnail.type)}`;
   const uploaded: string[] = [];
   try {
     for (const [path, file] of [[imagePath, detail], [thumbnailPath, thumbnail]] as const) {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      if (!isWebp(bytes)) throw new Error("Invalid WebP content");
-      const { error } = await supabaseServer.storage.from(KEEPING_BUCKET).upload(path, bytes, { contentType: "image/webp", upsert: false, cacheControl: "3600" });
+      if (!matchesImageSignature(bytes, file.type)) throw new Error("Invalid keeping image content");
+      const { error } = await supabaseServer.storage.from(KEEPING_BUCKET).upload(path, bytes, { contentType: file.type, upsert: false, cacheControl: "3600" });
       if (error) throw error; uploaded.push(path);
     }
     return { imagePath, thumbnailPath };
   } catch (error) { if (uploaded.length) await removeKeepingFiles(uploaded, "KEEPING_PARTIAL_UPLOAD_CLEANUP"); throw error; }
 }
 export async function removeKeepingFiles(paths: Array<string | null | undefined>, label: string) {
-  const clean = paths.filter((path): path is string => typeof path === "string" && /^keeping\/\d+-[0-9a-f]{24}\/(main|thumb)\.webp$/.test(path));
+  const clean = paths.filter((path): path is string => typeof path === "string" && /^keeping\/\d+-[0-9a-f]{24}\/(main|thumb)\.(webp|jpg)$/.test(path));
   if (clean.length !== paths.filter(Boolean).length) console.warn(`[${label}_INVALID_PATH_SKIPPED]`);
   if (!clean.length) return;
   const { error } = await supabaseServer.storage.from(KEEPING_BUCKET).remove(clean); if (error) console.warn(`[${label}]`, error.message);
 }
-function validateImage(file: File, max: number) { if (file.type !== "image/webp" || file.size < 1 || file.size > max) throw new Error("Invalid keeping image"); }
-function isWebp(bytes: Uint8Array) { return bytes.length >= 12 && String.fromCharCode(...bytes.slice(0,4)) === "RIFF" && String.fromCharCode(...bytes.slice(8,12)) === "WEBP"; }
+function validateImage(file: File, max: number) { if (!["image/webp", "image/jpeg"].includes(file.type) || file.size < 1 || file.size > max) throw new Error("Invalid keeping image"); }
+function imageExtension(type: string) { return type === "image/webp" ? "webp" : "jpg"; }
+function matchesImageSignature(bytes: Uint8Array, type: string) {
+  if (type === "image/jpeg") return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  return type === "image/webp" && bytes.length >= 12 && String.fromCharCode(...bytes.slice(0,4)) === "RIFF" && String.fromCharCode(...bytes.slice(8,12)) === "WEBP";
+}
 
 export async function signedUrl(path: string | null) {
   if (!path) return null; const { data, error } = await supabaseServer.storage.from(KEEPING_BUCKET).createSignedUrl(path, 3600);

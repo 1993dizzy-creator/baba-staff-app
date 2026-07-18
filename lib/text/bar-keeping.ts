@@ -12,3 +12,16 @@ export const keepingDetailText = {
   ko: { photoSelected: "사진 선택 완료", contact: "연락처", customerFeature: "고객 특징", zoneChange: "보관 구역 변경", currentZone: "현재", liquorUse: "키핑 사용", keepingClose: "키핑 종료", useHelp: "실제 사용 후 남은 잔량을 입력합니다.", correctionHelp: "사용 처리 없이 잘못 기록된 잔량만 수정합니다.", photoChange: "사진 변경", photoView: "사진 보기", useCount: (count: number) => `사용 ${count}회` },
   vi: { photoSelected: "Đã chọn ảnh", contact: "Liên hệ", customerFeature: "Đặc điểm khách", zoneChange: "Đổi khu vực", currentZone: "Hiện tại", liquorUse: "Sử dụng rượu gửi", keepingClose: "Kết thúc giữ rượu", useHelp: "Nhập lượng còn lại sau khi sử dụng thực tế.", correctionHelp: "Chỉ sửa lượng đã ghi sai, không xử lý sử dụng.", photoChange: "Thay ảnh", photoView: "Xem ảnh", useCount: (count: number) => `Đã dùng ${count} lần` },
 } as const;
+
+export const keepingImageErrorText = {
+  ko: {
+    unsupported: "지원하지 않는 사진 형식입니다.",
+    processingFailed: "사진을 처리하지 못했습니다. 다시 촬영해 주세요.",
+    tooLarge: "사진 용량을 줄이지 못했습니다. 다른 사진을 선택해 주세요.",
+  },
+  vi: {
+    unsupported: "Định dạng ảnh không được hỗ trợ.",
+    processingFailed: "Không thể xử lý ảnh. Vui lòng chụp lại.",
+    tooLarge: "Không thể giảm dung lượng ảnh. Vui lòng chọn ảnh khác.",
+  },
+} as const;

@@ -6,7 +6,7 @@ import { isBarZoneCode } from "@/lib/bar/zone-map";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const BUCKET = "bar-zone-images";
-const MAX_SIZE = 250 * 1024;
+const MAX_SIZE = 800 * 1024;
 const MIME_EXTENSIONS = new Map([["image/webp", "webp"], ["image/jpeg", "jpg"], ["image/png", "png"]]);
 type Context = { params: Promise<{ code: string }> };
 
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest, context: Context) {
     }
     const extension = MIME_EXTENSIONS.get(file.type);
     if (!extension || file.size <= 0 || file.size > MAX_SIZE) {
-      return NextResponse.json({ ok: false, error: "Use a JPEG, PNG, or WebP image up to 250 KB" }, { status: 400 });
+      return NextResponse.json({ ok: false, error: "Use a JPEG, PNG, or WebP image up to 800 KB" }, { status: 400 });
     }
     uploadedPath = `zones/${auth.code}/${Date.now()}-${randomBytes(8).toString("hex")}.${extension}`;
     const bytes = new Uint8Array(await file.arrayBuffer());

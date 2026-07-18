@@ -8,6 +8,7 @@ type ImagePreviewModalProps = {
   alt: string;
   closeLabel: string;
   onClose: () => void;
+  returnFocusRef?: React.RefObject<HTMLElement | null>;
 };
 
 export default function ImagePreviewModal({
@@ -15,10 +16,12 @@ export default function ImagePreviewModal({
   alt,
   closeLabel,
   onClose,
+  returnFocusRef,
 }: ImagePreviewModalProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
+    const focusTarget = returnFocusRef?.current ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
@@ -30,8 +33,9 @@ export default function ImagePreviewModal({
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
+      focusTarget?.focus();
     };
-  }, [onClose]);
+  }, [onClose, returnFocusRef]);
 
   return (
     <div

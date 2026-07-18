@@ -15,7 +15,7 @@ type Props = { item: BarKeeping; capabilities: KeepingCapabilities; lang: "ko" |
 export default function KeepingDetail({ item, capabilities, lang, onRefresh }: Props) {
   const t = keepingText[lang], listText = keepingListText[lang], detailText = keepingDetailText[lang];
   const [action, setAction] = useState<KeepingAction | null>(null), [preview, setPreview] = useState(false), [refreshKey, setRefreshKey] = useState(0);
-  const actionRef = useRef<HTMLButtonElement>(null);
+  const actionRef = useRef<HTMLButtonElement>(null), photoRef = useRef<HTMLButtonElement>(null);
   const remainingWidth = Math.min(100, Math.max(0, Number.isFinite(item.remainingPercent) ? item.remainingPercent : 0));
   const canManagePhoto = capabilities.manage && (item.status === "active" || capabilities.editClosed);
   async function saved() { await onRefresh(); setRefreshKey(value => value + 1); }
@@ -24,9 +24,9 @@ export default function KeepingDetail({ item, capabilities, lang, onRefresh }: P
     {item.isExpired ? <div style={warning("#fee2e2", "#991b1b")}>{t.expiryPassed}</div> : item.isExpirySoon ? <div style={warning("#fef3c7", "#92400e")}>{t.expirySoon}</div> : null}
     <section style={{ border: "1px solid #dcdfe4", borderRadius: 18, background: "#fff", overflow: "hidden", boxShadow: "0 6px 20px rgba(0,0,0,.04)" }}>
       <div style={{ position: "relative", background: "#f3f4f6" }}>
-        {item.imageUrl ? <button type="button" onClick={() => canManagePhoto ? setAction("replace_photo") : setPreview(true)} aria-label={canManagePhoto ? detailText.photoChange : detailText.photoView} style={{ width: "100%", padding: 0, border: 0, background: "transparent", cursor: "pointer" }}><img src={item.imageUrl} alt={`${item.customerName} ${item.liquorName}`} style={{ display: "block", width: "100%", height: "clamp(210px,66vw,290px)", objectFit: "contain" }} /></button> : <div style={{ height: 210, display: "grid", placeItems: "center", color: "#6b7280", fontSize: 12 }}>{lang === "vi" ? "Không có ảnh" : "사진 없음"}</div>}
+        {item.imageUrl ? <button ref={photoRef} type="button" onClick={() => setPreview(true)} aria-label={detailText.photoView} style={{ width: "100%", padding: 0, border: 0, background: "transparent", cursor: "zoom-in" }}><img src={item.imageUrl} alt={`${item.customerName} ${item.liquorName}`} style={{ display: "block", width: "100%", height: "clamp(210px,66vw,290px)", objectFit: "contain" }} /></button> : <div style={{ height: 210, display: "grid", placeItems: "center", color: "#6b7280", fontSize: 12 }}>{lang === "vi" ? "Không có ảnh" : "사진 없음"}</div>}
         <div style={{ position: "absolute", top: 13, right: 13, zIndex: 1 }}><KeepingStatusBadge status={item.status} reason={item.closeReason} lang={lang} /></div>
-        <div style={{ position: "absolute", left: 13, bottom: 13, zIndex: 1, padding: "5px 8px", borderRadius: 999, background: "rgba(17,24,39,.72)", color: "#fff", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 700, pointerEvents: "none" }}><CameraIcon />{canManagePhoto ? detailText.photoChange : detailText.photoView}</div>
+        {canManagePhoto ? <button type="button" onClick={() => setAction("replace_photo")} style={{ position: "absolute", left: 13, bottom: 13, zIndex: 1, padding: "7px 9px", border: 0, borderRadius: 999, background: "rgba(17,24,39,.78)", color: "#fff", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 700, cursor: "pointer" }}><CameraIcon />{detailText.photoChange}</button> : <div style={{ position: "absolute", left: 13, bottom: 13, zIndex: 1, padding: "5px 8px", borderRadius: 999, background: "rgba(17,24,39,.72)", color: "#fff", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontWeight: 700, pointerEvents: "none" }}><CameraIcon />{detailText.photoView}</div>}
       </div>
       <div style={{ padding: 15 }}>
         <div style={{ minWidth: 0 }}>
@@ -57,7 +57,7 @@ export default function KeepingDetail({ item, capabilities, lang, onRefresh }: P
         <KeepingRecentLogs id={item.id} lang={lang} refreshKey={refreshKey} />
       </div>
     </section>
-    {preview && item.imageUrl ? <ImagePreviewModal src={item.imageUrl} alt={`${item.customerName} ${item.liquorName}`} closeLabel={t.cancel} onClose={() => setPreview(false)} /> : null}
+    {preview && item.imageUrl ? <ImagePreviewModal src={item.imageUrl} alt={`${item.customerName} ${item.liquorName}`} closeLabel={t.cancel} onClose={() => setPreview(false)} returnFocusRef={photoRef} /> : null}
     {action ? <KeepingActionModal item={item} action={action} lang={lang} onClose={() => setAction(null)} onSaved={saved} returnFocusRef={actionRef} /> : null}
   </div>;
 }

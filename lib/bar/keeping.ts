@@ -2,8 +2,8 @@ export const KEEPING_EXPIRY_WARNING_DAYS = 14;
 export const KEEPING_STORAGE_MONTHS = 3;
 export const KEEPING_LIST_LIMIT = 20;
 export const KEEPING_LIST_MAX_LIMIT = 50;
-export const KEEPING_DETAIL_IMAGE_MAX_BYTES = 700 * 1024;
-export const KEEPING_THUMBNAIL_MAX_BYTES = 120 * 1024;
+export const KEEPING_DETAIL_IMAGE_MAX_BYTES = 900 * 1024;
+export const KEEPING_THUMBNAIL_MAX_BYTES = 100 * 1024;
 
 export const KEEPING_CLOSE_REASONS = ["finished", "returned", "discarded", "expired", "other"] as const;
 export const KEEPING_SORTS = ["recent_activity", "old_activity", "recent_created", "customer_name", "zone", "expiry_soon"] as const;

@@ -1,6 +1,8 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- private signed URLs bypass the public Next image optimizer */
 
+import { useRef, useState } from "react";
+import ImagePreviewModal from "@/components/bar/ImagePreviewModal";
 import type { BarZoneDefinition } from "@/lib/bar/zone-map";
 import type { BarZoneRecord } from "@/lib/bar/types";
 import { formatBarDateTime } from "@/lib/bar/log-format";
@@ -36,6 +38,8 @@ export default function BarZoneDetail({ zone, data, lang, text, canEdit, onEdit,
   editButtonRef: React.RefObject<HTMLButtonElement | null>;
   recentLogsRefreshKey: number;
 }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const photoButtonRef = useRef<HTMLButtonElement>(null);
   if (!zone) {
     return (
       <section aria-live="polite" style={{ ...ui.card, minHeight: 96, padding: 18, display: "flex", alignItems: "center", justifyContent: "center", color: "#6b7280", fontSize: 13, fontWeight: 600, textAlign: "center" }}>
@@ -86,9 +90,9 @@ export default function BarZoneDetail({ zone, data, lang, text, canEdit, onEdit,
         <div style={{ display: "grid", gap: 14, marginTop: 14 }}>
           {data?.imageUrl ? (
             <div>
-              <div style={{ overflow: "hidden", border: "1px solid #e5e7eb", borderRadius: 11, background: "#f9fafb" }}>
+              <button ref={photoButtonRef} type="button" onClick={() => setPreviewOpen(true)} aria-label={`${label} ${text.photo}`} style={{ width: "100%", padding: 0, overflow: "hidden", border: "1px solid #e5e7eb", borderRadius: 11, background: "#f9fafb", cursor: "zoom-in" }}>
                 <img src={data.imageUrl} alt={`${label} ${text.photo}`} style={{ display: "block", width: "100%", maxHeight: 340, objectFit: "contain" }} />
-              </div>
+              </button>
               {photoUpdatedAt ? <div style={{ marginTop: 6, color: "#9ca3af", fontSize: 11, lineHeight: 1.4 }}>{text.photoUpdated} · {photoUpdatedAt}</div> : null}
             </div>
           ) : null}
@@ -116,6 +120,7 @@ export default function BarZoneDetail({ zone, data, lang, text, canEdit, onEdit,
         refreshKey={recentLogsRefreshKey}
         text={{ recentLogs: text.recentLogs, recentLogsEmpty: text.recentLogsEmpty, recentLogsLoading: text.recentLogsLoading, recentLogsError: text.recentLogsError, retry: text.retry, viewAllLogs: text.viewAllLogs }}
       />
+      {previewOpen && data?.imageUrl ? <ImagePreviewModal src={data.imageUrl} alt={`${label} ${text.photo}`} closeLabel={lang === "vi" ? "Đóng" : "닫기"} onClose={() => setPreviewOpen(false)} returnFocusRef={photoButtonRef} /> : null}
     </section>
   );
 }

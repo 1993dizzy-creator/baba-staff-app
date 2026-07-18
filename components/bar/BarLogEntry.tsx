@@ -9,9 +9,15 @@ export default function BarLogEntry({ log, lang, compact = false }: { log: BarAc
   const targetStyle: React.CSSProperties = { color: "#1f2937", fontSize: compact ? 12 : 13, fontWeight: 800, lineHeight: 1.4, overflowWrap: "anywhere", textDecoration: log.entityType === "keeping" ? "underline" : "none", textDecorationColor: "#9ca3af", textUnderlineOffset: 2 };
 
   return <article style={compact ? { padding: "9px 0", borderTop: "1px solid #f3f4f6" } : { ...ui.card, padding: 12 }}>
-    {log.entityType === "keeping" ? <Link href={`/bar/keeping/${log.entityId}`} style={targetStyle}>{target}</Link> : <div style={targetStyle}>{target}</div>}
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "start", gap: 8 }}>
+      {log.entityType === "keeping" ? <Link href={`/bar/keeping/${log.entityId}`} style={{ ...targetStyle, minWidth: 0 }}>{target}</Link> : <div style={{ ...targetStyle, minWidth: 0 }}>{target}</div>}
+      <div style={{ minWidth: 0, maxWidth: "min(52vw, 180px)", display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 4, color: "#9ca3af", fontSize: 10, lineHeight: 1.4, textAlign: "right", whiteSpace: "nowrap" }}>
+        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{log.actorName}</span>
+        <span aria-hidden style={{ flexShrink: 0 }}>·</span>
+        <time dateTime={log.createdAt} style={{ flexShrink: 0 }}>{formatBarDateTime(log.createdAt, lang, true)}</time>
+      </div>
+    </div>
     <p style={{ margin: "4px 0 0", color: "#374151", fontSize: 12, lineHeight: 1.5, overflowWrap: "anywhere" }}>{formatBarLogSummary(log, lang, { includeTarget: false })}</p>
-    {note ? <div style={{ marginTop: 6 }}><div style={{ color: "#6b7280", fontSize: 10, fontWeight: 700 }}>{lang === "vi" ? "Ghi chú" : "비고"}</div><div style={{ marginTop: 2, color: "#374151", fontSize: 12, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{note}</div></div> : null}
-    <div style={{ marginTop: 7, display: "flex", justifyContent: "flex-end", alignItems: "baseline", flexWrap: "wrap", gap: 4, color: "#9ca3af", fontSize: 10, lineHeight: 1.35, textAlign: "right" }}><span style={{ maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>{log.actorName}</span><span aria-hidden>·</span><time dateTime={log.createdAt}>{formatBarDateTime(log.createdAt, lang)}</time></div>
+    {note ? <div style={{ marginTop: 5, color: "#374151", fontSize: 12, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}><strong style={{ color: "#6b7280", fontSize: 11 }}>{lang === "vi" ? "Ghi chú" : "비고"}</strong> · {note}</div> : null}
   </article>;
 }
