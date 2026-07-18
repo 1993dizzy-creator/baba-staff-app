@@ -17,6 +17,7 @@ export type BarZoneRecord = {
   imagePath: string | null;
   imageUrl: string | null;
   imageUpdatedAt: string | null;
+  activeKeepingCount: number;
   assignee: BarAssignee | null;
   isActive: boolean;
   version: number;

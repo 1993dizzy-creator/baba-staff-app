@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- private signed thumbnail URLs */
 import Link from "next/link";
-import type { BarKeepingListItem } from "@/lib/bar/keeping-types";
+import { keepingLiquorName, type BarKeepingListItem } from "@/lib/bar/keeping-types";
 import type { KeepingCloseReason, KeepingStatus } from "@/lib/bar/keeping";
 import { keepingRemainingDays } from "@/lib/bar/keeping";
 import { keepingListText, keepingText } from "@/lib/text/bar-keeping";
@@ -28,7 +28,7 @@ export function KeepingListCard({ item, lang, href }: { item: BarKeepingListItem
             <span style={{ flexShrink: 0, color: "#6b7280", fontSize: 10, whiteSpace: "nowrap" }}>· {lang === "vi" ? `Dùng ${item.useCount} lần` : `사용 ${item.useCount}회`}</span>
           </div>
           <div style={{ minWidth: 0, width: "fit-content", maxWidth: "100%", marginTop: 2, display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13 }}>
-            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.liquorName}</span>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{keepingLiquorName(item, lang)}</span>
             {item.liquorSource ? <KeepingSourceBadge source={item.liquorSource} label={item.liquorSource === "inventory" ? listText.soldProduct : listText.outsideBottle} /> : null}
           </div>
           <div style={{ marginTop: 2, minWidth: 0, color: "#6b7280", fontSize: 10, lineHeight: "14px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>

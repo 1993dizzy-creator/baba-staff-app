@@ -1,24 +1,45 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- private signed URLs */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import ImagePreviewModal from "@/components/bar/ImagePreviewModal";
 import KeepingActionModal, { type KeepingAction } from "@/components/bar/keeping/KeepingActionModal";
 import { KeepingSourceBadge, KeepingStatusBadge } from "@/components/bar/keeping/KeepingBasics";
 import KeepingRecentLogs from "@/components/bar/keeping/KeepingRecentLogs";
 import { primaryButtonStyle, secondaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
-import type { BarKeeping, KeepingCapabilities } from "@/lib/bar/keeping-types";
+import { keepingLiquorName, type BarKeeping, type KeepingCapabilities } from "@/lib/bar/keeping-types";
 import { formatBarDateTime } from "@/lib/bar/log-format";
 import { keepingDetailText, keepingListText, keepingText } from "@/lib/text/bar-keeping";
 
 type Props = { item: BarKeeping; capabilities: KeepingCapabilities; lang: "ko" | "vi"; back: string; onRefresh: () => Promise<void> };
 
-export default function KeepingDetail({ item, capabilities, lang, onRefresh }: Props) {
+export default function KeepingDetail({ item, capabilities, lang, back, onRefresh }: Props) {
   const t = keepingText[lang], listText = keepingListText[lang], detailText = keepingDetailText[lang];
-  const [action, setAction] = useState<KeepingAction | null>(null), [preview, setPreview] = useState(false), [refreshKey, setRefreshKey] = useState(0);
-  const actionRef = useRef<HTMLButtonElement>(null), photoRef = useRef<HTMLButtonElement>(null);
+  const router = useRouter();
+  const [action, setAction] = useState<KeepingAction | null>(null), [preview, setPreview] = useState(false), [refreshKey, setRefreshKey] = useState(0), [deleteOpen, setDeleteOpen] = useState(false), [deleting, setDeleting] = useState(false), [deleteError, setDeleteError] = useState("");
+  const actionRef = useRef<HTMLButtonElement>(null), photoRef = useRef<HTMLButtonElement>(null), deleteRef = useRef<HTMLButtonElement>(null), cancelDeleteRef = useRef<HTMLButtonElement>(null);
   const remainingWidth = Math.min(100, Math.max(0, Number.isFinite(item.remainingPercent) ? item.remainingPercent : 0));
   const canManagePhoto = capabilities.manage && (item.status === "active" || capabilities.editClosed);
   async function saved() { await onRefresh(); setRefreshKey(value => value + 1); }
+  const displayLiquorName = keepingLiquorName(item, lang);
+  useEffect(() => {
+    if (!deleteOpen) return;
+    const returnFocus = deleteRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    cancelDeleteRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape" && !deleting) setDeleteOpen(false); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener("keydown", onKeyDown); returnFocus?.focus(); };
+  }, [deleteOpen, deleting]);
+  async function deleteKeeping() {
+    setDeleting(true); setDeleteError("");
+    try {
+      const response = await fetch(`/api/bar/keepings/${item.id}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: item.version }) });
+      if (!response.ok) throw new Error(response.status === 409 ? (lang === "vi" ? "Dữ liệu đã thay đổi. Vui lòng tải lại." : "정보가 변경되었습니다. 다시 불러와 주세요.") : (lang === "vi" ? "Không thể xóa rượu giữ." : "키핑을 삭제하지 못했습니다."));
+      router.replace(back); router.refresh();
+    } catch (error) { setDeleteError(error instanceof Error ? error.message : t.error); setDeleting(false); }
+  }
 
   return <div style={{ padding: "0 0 20px" }}>
     {item.isExpired ? <div style={warning("#fee2e2", "#991b1b")}>{t.expiryPassed}</div> : item.isExpirySoon ? <div style={warning("#fef3c7", "#92400e")}>{t.expirySoon}</div> : null}
@@ -40,7 +61,7 @@ export default function KeepingDetail({ item, capabilities, lang, onRefresh }: P
           </div>
           {item.customerIdentifier ? <div style={customerMeta}><span>{detailText.customerFeature}</span><strong> · {item.customerIdentifier}</strong></div> : null}
           <div style={{ minWidth: 0, width: "fit-content", maxWidth: "100%", marginTop: 10, display: "inline-flex", alignItems: "center", gap: 5, fontSize: 15, fontWeight: 700 }}>
-            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.liquorName}</span>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{displayLiquorName}</span>
             {item.liquorSource ? <KeepingSourceBadge source={item.liquorSource} label={item.liquorSource === "inventory" ? listText.soldProduct : listText.outsideBottle} /> : null}
           </div>
         </div>
@@ -48,7 +69,7 @@ export default function KeepingDetail({ item, capabilities, lang, onRefresh }: P
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6, color: "#374151", fontSize: 12, fontWeight: 800 }}><span>{t.remaining}</span><strong style={{ whiteSpace: "nowrap" }}>{item.remainingPercent}%</strong></div>
           <div aria-hidden="true" style={{ height: 7, overflow: "hidden", borderRadius: 999, background: "#d1d5db" }}><div style={{ width: `${remainingWidth}%`, height: "100%", borderRadius: 999, background: "#10b981" }} /></div>
         </div>
-        {capabilities.manage && item.status === "active" ? <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}><button ref={actionRef} onClick={() => setAction("use")} style={primaryButtonStyle}>{t.use}</button><button onClick={() => setAction("update")} style={secondaryButtonStyle}>{t.edit}</button></div> : null}
+        {capabilities.manage && item.status === "active" ? <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}><button ref={actionRef} onClick={() => setAction("use")} style={primaryButtonStyle}>{t.use}</button><button onClick={() => setAction("update")} style={secondaryButtonStyle}>{t.edit}</button>{capabilities.delete ? <button ref={deleteRef} type="button" onClick={() => setDeleteOpen(true)} style={{ ...secondaryButtonStyle, gridColumn: "1 / -1", borderColor: "#fca5a5", color: "#b91c1c", background: "#fff7f7" }}>{lang === "vi" ? "Xóa" : "삭제"}</button> : null}</div> : null}
         {item.status === "closed" && capabilities.reactivate ? <div style={{ marginTop: 12 }}><button ref={actionRef} onClick={() => setAction("reactivate")} style={{ ...primaryButtonStyle, width: "100%" }}>{t.reactivate}</button></div> : null}
         <div style={{ marginTop: 16, padding: "12px 0", borderTop: "1px solid #e5e7eb", borderBottom: "1px solid #e5e7eb" }}>
           <h2 style={{ margin: "0 0 10px", fontSize: 13 }}>{item.status === "closed" ? (lang === "vi" ? "Thông tin kết thúc" : "종료 정보") : (lang === "vi" ? "Thông tin lưu giữ" : "보관 정보")}</h2>
@@ -59,6 +80,7 @@ export default function KeepingDetail({ item, capabilities, lang, onRefresh }: P
     </section>
     {preview && item.imageUrl ? <ImagePreviewModal src={item.imageUrl} alt={`${item.customerName} ${item.liquorName}`} closeLabel={t.cancel} onClose={() => setPreview(false)} returnFocusRef={photoRef} /> : null}
     {action ? <KeepingActionModal item={item} action={action} lang={lang} onClose={() => setAction(null)} onSaved={saved} returnFocusRef={actionRef} /> : null}
+    {deleteOpen ? <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) setDeleteOpen(false); }} style={{ position: "fixed", inset: 0, zIndex: 1400, padding: 16, background: "rgba(17,24,39,.62)", display: "grid", placeItems: "center" }}><section role="alertdialog" aria-modal="true" aria-labelledby="keeping-delete-title" aria-describedby="keeping-delete-description" style={{ width: "min(100%,420px)", padding: 18, borderRadius: 16, background: "#fff", boxShadow: "0 20px 60px rgba(0,0,0,.3)" }}><h2 id="keeping-delete-title" style={{ margin: 0, fontSize: 17 }}>{lang === "vi" ? "Xóa rượu giữ?" : "키핑을 삭제할까요?"}</h2><p id="keeping-delete-description" style={{ margin: "10px 0", color: "#4b5563", fontSize: 13, lineHeight: 1.55, overflowWrap: "anywhere" }}>{lang === "vi" ? `${item.customerName} · ${displayLiquorName} · khu vực ${item.zoneCode}. Thao tác này không thể hoàn tác.` : `${item.customerName} · ${displayLiquorName} · ${item.zoneCode} 구역. 이 작업은 되돌릴 수 없습니다.`}</p>{deleteError ? <p role="alert" style={{ color: "#b91c1c", fontSize: 12 }}>{deleteError}</p> : null}<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}><button ref={cancelDeleteRef} type="button" disabled={deleting} onClick={() => setDeleteOpen(false)} style={secondaryButtonStyle}>{t.cancel}</button><button type="button" disabled={deleting} onClick={() => void deleteKeeping()} style={{ ...primaryButtonStyle, background: "#b91c1c" }}>{deleting ? (lang === "vi" ? "Đang xóa…" : "삭제 중…") : (lang === "vi" ? "Xóa" : "삭제")}</button></div></section></div> : null}
   </div>;
 }
 

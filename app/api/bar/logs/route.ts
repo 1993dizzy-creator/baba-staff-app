@@ -8,6 +8,11 @@ const ZONE_LOG_ACTIONS = [
   "zone_content_updated", "zone_assignee_assigned", "zone_assignee_changed", "zone_assignee_removed",
   "zone_photo_added", "zone_photo_replaced", "zone_photo_removed",
 ] as const;
+const KEEPING_LOG_ACTIONS = [
+  "keeping_created", "keeping_updated", "keeping_used", "keeping_remaining_corrected",
+  "keeping_zone_changed", "keeping_photo_replaced", "keeping_closed", "keeping_reactivated", "keeping_deleted",
+] as const;
+const BAR_LOG_ACTIONS = new Set<string>([...ZONE_LOG_ACTIONS, ...KEEPING_LOG_ACTIONS]);
 
 export async function GET(request: NextRequest) {
   try {
@@ -43,6 +48,9 @@ export async function GET(request: NextRequest) {
     }
     if (entityId && (entityType !== "keeping" || !Number.isSafeInteger(Number(entityId)) || Number(entityId) < 1)) {
       return NextResponse.json({ ok: false, error: "Invalid keeping id", code: "INVALID_INPUT" }, { status: 400 });
+    }
+    if (actionType && !BAR_LOG_ACTIONS.has(actionType)) {
+      return NextResponse.json({ ok: false, error: "Invalid BAR log action", code: "INVALID_INPUT" }, { status: 400 });
     }
     if (entityType) query = query.eq("entity_type", entityType);
     if (code) query = query.eq("entity_code_snapshot", code).in("action_type", [...ZONE_LOG_ACTIONS]);
@@ -80,7 +88,7 @@ function safeLogData(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
   const safe: Record<string, string | number | null> = {};
-  for (const key of ["customer_name", "liquor_name", "remaining_percent", "zone_code", "close_reason", "action_note", "note", "reason", "close_note"]) {
+  for (const key of ["customer_name", "liquor_name", "liquor_source", "inventory_item_id", "status", "version", "remaining_percent", "zone_code", "close_reason", "action_note", "note", "reason", "close_note"]) {
     if (key === "action_note" && Object.prototype.hasOwnProperty.call(source, key) && source[key] === null) {
       safe[key] = null;
       continue;

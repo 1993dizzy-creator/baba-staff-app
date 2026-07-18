@@ -94,12 +94,22 @@ export async function signedUrl(path: string | null) {
   if (error) { console.error("[KEEPING_SIGNED_URL_ERROR]", error.message); return null; } return data.signedUrl;
 }
 
+export type KeepingInventoryNames = { ko: string | null; vi: string | null };
+export async function keepingInventoryNames(ids: Array<number | null | undefined>) {
+  const uniqueIds = [...new Set(ids.filter((id): id is number => Number.isSafeInteger(id) && Number(id) > 0).map(Number))];
+  if (!uniqueIds.length) return new Map<number, KeepingInventoryNames>();
+  const { data, error } = await supabaseServer.from("inventory").select("id,item_name,item_name_vi").in("id", uniqueIds);
+  if (error) throw new Error(`Failed to load keeping inventory names: ${error.message}`);
+  return new Map((data ?? []).map((item) => [Number(item.id), { ko: cleanText(item.item_name, 160), vi: cleanText(item.item_name_vi, 160) }]));
+}
+
 // Supabase joins are untyped in this project; this mapper is the runtime boundary.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function mapKeeping(row: Record<string, any>, includeDetail: boolean): Promise<BarKeeping> {
   const zone = Array.isArray(row.bar_zones) ? row.bar_zones[0] : row.bar_zones;
+  const names = (await keepingInventoryNames([row.inventory_item_id])).get(Number(row.inventory_item_id));
   const { isExpirySoon, isExpired } = keepingExpiryState(row.expires_at);
-  return { id:Number(row.id), customerName:row.customer_name, customerContact:row.customer_contact, customerIdentifier:row.customer_identifier, liquorName:row.liquor_name, liquorSource:row.liquor_source, inventoryItemId:row.inventory_item_id == null ? null : Number(row.inventory_item_id), useCount:Number(row.use_count ?? 0), note:row.note,
+  return { id:Number(row.id), customerName:row.customer_name, customerContact:row.customer_contact, customerIdentifier:row.customer_identifier, liquorName:row.liquor_name, liquorNameKo:names?.ko ?? null, liquorNameVi:names?.vi ?? null, liquorSource:row.liquor_source, inventoryItemId:row.inventory_item_id == null ? null : Number(row.inventory_item_id), useCount:Number(row.use_count ?? 0), note:row.note,
     zoneCode:row.zone_code, zoneLabelKo:row.zone_code, zoneLabelVi:row.zone_code, zoneIsActive:zone?.is_active === true, status:row.status,
     closeReason:row.close_reason, closeNote:row.close_note, remainingPercent:row.remaining_percent,
     imageUrl:includeDetail ? await signedUrl(row.image_path) : null, thumbnailUrl:await signedUrl(row.thumbnail_path), imageUpdatedAt:row.image_updated_at,

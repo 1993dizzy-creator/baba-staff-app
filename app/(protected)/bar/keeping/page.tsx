@@ -29,6 +29,7 @@ export default function BarKeepingPage() {
   const [more, setMore] = useState(false);
   const [error, setError] = useState("");
   const [manage, setManage] = useState(false);
+  const [counts, setCounts] = useState({ active: 0, closed: 0 });
   const [search, setSearch] = useState(params.get("q") ?? "");
   const status = params.get("status") === "closed" ? "closed" : "active";
   const sort = params.get("sort") === "old_activity" ? "old_activity" : "recent_activity";
@@ -79,13 +80,23 @@ export default function BarKeepingPage() {
     return () => controller.abort();
   }, [load]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/bar/keepings/counts", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => { if (await handleBarApiUnauthorized(response)) return null; if (!response.ok) throw new Error(t.error); return response.json(); })
+      .then((result) => { if (result?.counts) setCounts({ active: Number(result.counts.active) || 0, closed: Number(result.counts.closed) || 0 }); })
+      .catch((caught) => { if (!controller.signal.aborted) console.warn("[KEEPING_COUNTS_CLIENT_ERROR]", caught); });
+    return () => controller.abort();
+  }, [t.error]);
+
   const initialLoading = !initialized && loading;
   const empty = initialized && !loading && !error && items.length === 0;
   const detailSuffix = useMemo(() => queryKey ? `?from=${encodeURIComponent(`/bar/keeping?${queryKey}`)}` : "", [queryKey]);
   const hasSearchOrZone = Boolean(params.get("q") || zone);
 
   return (
-    <div style={{ padding: "0 0 calc(76px + env(safe-area-inset-bottom))", minWidth: 0 }}>
+    <div className="bar-keeping-page" style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+      <style>{`@media (max-width:800px){.bar-keeping-page{height:calc(100vh - 160px - env(safe-area-inset-top));height:calc(100dvh - 160px - env(safe-area-inset-top));overflow:hidden}.bar-keeping-scroll{min-height:0;flex:1;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding-bottom:calc(8px + env(safe-area-inset-bottom))}}`}</style>
       <div style={{ position: "relative", marginBottom: 8 }}>
         <span aria-hidden="true" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 16, color: "#9ca3af", pointerEvents: "none" }}>🔍</span>
         <input type="text" value={search} onChange={(event) => setSearch(event.target.value)} aria-label={nt.searchPlaceholder} placeholder={nt.searchPlaceholder} style={{ ...ui.input, paddingLeft: 40, paddingRight: search ? 40 : 14, marginBottom: 0 }} />
@@ -94,8 +105,8 @@ export default function BarKeepingPage() {
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 104px", alignItems: "stretch", gap: 8, marginBottom: 8 }}>
         <div role="tablist" aria-label={lang === "vi" ? "Trạng thái" : "보관 상태"} style={{ ...ui.card, padding: 4, marginBottom: 0, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-          <button type="button" role="tab" aria-selected={status === "active"} onClick={() => replace({ status: "active", closeReason: null })} style={statusButton(status === "active")}>{t.active}</button>
-          <button type="button" role="tab" aria-selected={status === "closed"} onClick={() => replace({ status: "closed" })} style={statusButton(status === "closed")}>{t.closed}</button>
+          <button type="button" role="tab" aria-selected={status === "active"} aria-label={lang === "vi" ? `${counts.active} chai đang được lưu giữ` : `보관 중 키핑 ${counts.active}건`} onClick={() => replace({ status: "active", closeReason: null })} style={statusButton(status === "active")}><span>{t.active}</span><CountBadge count={counts.active} active={status === "active"} /></button>
+          <button type="button" role="tab" aria-selected={status === "closed"} aria-label={lang === "vi" ? `${counts.closed} chai đã kết thúc lưu giữ` : `종료 키핑 ${counts.closed}건`} onClick={() => replace({ status: "closed" })} style={statusButton(status === "closed")}><span>{t.closed}</span><CountBadge count={counts.closed} active={status === "closed"} /></button>
         </div>
         <select aria-label={lang === "vi" ? "Sắp xếp" : "정렬"} value={sort} onChange={(event) => replace({ sort: event.target.value })} style={{ width: "100%", minWidth: 0, minHeight: 44, padding: "0 7px", border: "1px solid #d1d5db", borderRadius: 10, background: "#fff", color: "#4b5563", fontSize: 12, fontWeight: 700 }}>
           <option value="recent_activity">{nt.recentSort}</option>
@@ -106,6 +117,7 @@ export default function BarKeepingPage() {
       {zone ? <div style={{ minHeight: 34, marginBottom: 8, padding: "6px 9px", borderRadius: 8, background: "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, color: "#374151", fontSize: 12, fontWeight: 700 }}><span>{zone} {lang === "vi" ? "· khu vực" : "구역 키핑"}</span><button type="button" onClick={() => replace({ zone: null })} style={{ minHeight: 28, padding: "3px 8px", border: "1px solid #d1d5db", borderRadius: 7, background: "#fff", color: "#4b5563", fontSize: 11 }}>{lang === "vi" ? "Bỏ" : "해제"}</button></div> : null}
 
       {manage ? <Link href="/bar/keeping/new" style={{ ...primaryButtonStyle, display: "block", textAlign: "center", textDecoration: "none", marginBottom: 10, fontSize: 14, fontWeight: 700, letterSpacing: "-0.2px" }}>{t.newKeeping}</Link> : null}
+      <div className="bar-keeping-scroll">
       {error ? <State message={error} action={<button onClick={() => void load(undefined)} style={secondaryButtonStyle}>{t.retry}</button>} /> : (
         <div aria-busy={loading} style={{ display: "grid", gap: 8 }}>
           {initialLoading ? [0, 1, 2, 3].map((index) => <KeepingSkeleton key={index} />) : initialized && loading ? <div role="status" aria-live="polite" style={{ minHeight: 150, display: "grid", placeItems: "center", color: "#6b7280", fontSize: 12, fontWeight: 700 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><span aria-hidden="true" style={{ width: 16, height: 16, border: "2px solid #d1d5db", borderTopColor: "#374151", borderRadius: "50%", animation: "bar-keeping-spin .8s linear infinite" }} />{t.loading}</span><style>{`@keyframes bar-keeping-spin{to{transform:rotate(360deg)}}`}</style></div> : items.map((item) => <KeepingListCard key={item.id} item={item} lang={lang} href={`/bar/keeping/${item.id}${detailSuffix}`} />)}
@@ -113,6 +125,7 @@ export default function BarKeepingPage() {
       )}
       {empty ? <State message={hasSearchOrZone ? t.noResults : status === "active" ? t.noActive : t.noClosed} action={hasSearchOrZone ? <button onClick={() => { setSearch(""); replace({ q: null, zone: null }); }} style={secondaryButtonStyle}>{t.reset}</button> : undefined} /> : null}
       {next ? <button disabled={more} onClick={() => void load(next)} style={{ ...secondaryButtonStyle, width: "100%", marginTop: 10 }}>{more ? t.loading : t.loadMore}</button> : null}
+      </div>
     </div>
   );
 }
@@ -122,5 +135,9 @@ function State({ message, action }: { message: string; action?: React.ReactNode 
 }
 
 function statusButton(active: boolean): React.CSSProperties {
-  return { minWidth: 0, border: active ? "1px solid #93c5fd" : "1px solid transparent", borderRadius: 8, background: active ? "#eff6ff" : "transparent", color: active ? "#1d4ed8" : "#6b7280", padding: "8px 6px", fontSize: 13, fontWeight: 900, cursor: "pointer", boxShadow: active ? "0 1px 2px rgba(15, 23, 42, 0.08)" : "none", whiteSpace: "nowrap" };
+  return { minWidth: 0, border: active ? "1px solid #93c5fd" : "1px solid transparent", borderRadius: 8, background: active ? "#eff6ff" : "transparent", color: active ? "#1d4ed8" : "#6b7280", padding: "8px 6px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 13, fontWeight: 900, cursor: "pointer", boxShadow: active ? "0 1px 2px rgba(15, 23, 42, 0.08)" : "none", whiteSpace: "nowrap", overflow: "hidden" };
+}
+
+function CountBadge({ count, active }: { count: number; active: boolean }) {
+  return <span aria-hidden="true" style={{ minWidth: 22, maxWidth: 48, height: 20, padding: "0 6px", borderRadius: 999, background: active ? "#dbeafe" : "#e5e7eb", color: active ? "#1d4ed8" : "#4b5563", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 10, fontWeight: 900, lineHeight: 1 }}>{count}</span>;
 }

@@ -21,10 +21,14 @@ type ZoneRow = {
 };
 
 export async function getBarZones(): Promise<BarZoneRecord[]> {
-  const { data, error } = await supabaseServer
-    .from("bar_zones")
-    .select("id, code, kind, selectable_for_keeping, note_ko, note_vi, image_path, image_updated_at, assignee_user_id, is_active, version, updated_at");
+  const [{ data, error }, keepingsResult] = await Promise.all([
+    supabaseServer.from("bar_zones").select("id, code, kind, selectable_for_keeping, note_ko, note_vi, image_path, image_updated_at, assignee_user_id, is_active, version, updated_at"),
+    supabaseServer.from("bar_keepings").select("zone_code").eq("status", "active"),
+  ]);
   if (error) throw new Error(`Failed to load BAR zones: ${error.message}`);
+  if (keepingsResult.error) throw new Error(`Failed to load BAR keeping counts: ${keepingsResult.error.message}`);
+  const activeCounts = new Map<string, number>();
+  for (const keeping of keepingsResult.data ?? []) activeCounts.set(keeping.zone_code, (activeCounts.get(keeping.zone_code) ?? 0) + 1);
 
   const rows = (data ?? []) as ZoneRow[];
   const assigneeIds = [...new Set(rows.flatMap((row) => row.assignee_user_id == null ? [] : [row.assignee_user_id]))];
@@ -62,6 +66,7 @@ export async function getBarZones(): Promise<BarZoneRecord[]> {
       imagePath: row.image_path,
       imageUrl: row.image_path ? signedUrls.get(row.image_path) ?? null : null,
       imageUpdatedAt: row.image_updated_at,
+      activeKeepingCount: activeCounts.get(row.code) ?? 0,
       assignee: user ? {
         id: Number(user.id),
         name: user.name || user.full_name || user.username,

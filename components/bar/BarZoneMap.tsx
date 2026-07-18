@@ -114,6 +114,8 @@ export default function BarZoneMap({
             const label = lang === "vi" ? zone.labelVi : zone.labelKo;
             const hit = zone.hitSvg ?? zone.svg;
             const assigneeColor = zoneData[zone.code]?.assignee?.colorKey;
+            const activeKeepingCount = zoneData[zone.code]?.activeKeepingCount ?? 0;
+            const countLabel = lang === "vi" ? `${activeKeepingCount} chai đang được lưu giữ` : `활성 키핑 ${activeKeepingCount}건`;
             const lineColor = assigneeColor
               ? BAR_COLORS[assigneeColor].css
               : zone.kind === "equipment" ? colors.equipmentLine : colors.storageLine;
@@ -134,7 +136,7 @@ export default function BarZoneMap({
                 key={zone.code}
                 role="button"
                 tabIndex={0}
-                aria-label={`${label} (${zone.code})`}
+                aria-label={`${label} (${zone.code})${activeKeepingCount > 0 ? `, ${countLabel}` : ""}`}
                 aria-pressed={isSelected}
                 onClick={() => onSelect(zone)}
                 onKeyDown={(event) => {
@@ -234,6 +236,10 @@ export default function BarZoneMap({
                   >
                     {zone.code}
                   </text>
+                  {activeKeepingCount > 0 ? <g aria-label={countLabel}>
+                    <rect x={labelX + 34} y={labelY - 12} width={activeKeepingCount > 99 ? 40 : 34} height={24} rx={12} fill="#eff6ff" stroke="#93c5fd" strokeWidth={1.5} />
+                    <text x={labelX + (activeKeepingCount > 99 ? 54 : 51)} y={labelY + 1} textAnchor="middle" dominantBaseline="middle" fontSize={13} fontWeight="900" fill="#1d4ed8">{activeKeepingCount}</text>
+                  </g> : null}
                   {zone.kind === "equipment" ? (
                     <>
                       <rect

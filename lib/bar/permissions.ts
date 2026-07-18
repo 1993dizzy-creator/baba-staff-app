@@ -34,3 +34,6 @@ export const canReactivateBarKeeping = (user: BarPermissionUser) =>
   (isOwnerOrMaster(user) || isBarRole(user, ["leader"]));
 
 export const canEditClosedBarKeeping = canReactivateBarKeeping;
+
+export const canDeleteBarKeeping = (user: BarPermissionUser) =>
+  isActive(user) && isOwnerOrMaster(user);

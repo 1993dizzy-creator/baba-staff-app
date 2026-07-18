@@ -3,7 +3,7 @@ import { canManageBarKeeping, canReactivateBarKeeping, canViewBar } from "@/lib/
 import { getBarServerActor } from "@/lib/bar/server-auth";
 import { KEEPING_LIST_LIMIT, KEEPING_LIST_MAX_LIMIT, isKeepingCloseReason, isKeepingSort, keepingExpiryState, maskCustomerIdentifier } from "@/lib/bar/keeping";
 import { isBarZoneCode } from "@/lib/bar/zone-map";
-import { cleanDate, cleanPercent, cleanText, keepingImageDiagnostic, removeKeepingFiles, resolveKeepingLiquor, signedUrl, uploadKeepingFiles, validKeepingZone } from "@/lib/bar/keeping-server";
+import { cleanDate, cleanPercent, cleanText, keepingImageDiagnostic, keepingInventoryNames, removeKeepingFiles, resolveKeepingLiquor, signedUrl, uploadKeepingFiles, validKeepingZone } from "@/lib/bar/keeping-server";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     const sort=params.get("sort") ?? "recent_activity"; if(!isKeepingSort(sort)) return bad("Invalid sort");
     const limit=Number(params.get("limit") ?? KEEPING_LIST_LIMIT); if(!Number.isInteger(limit)||limit<1||limit>KEEPING_LIST_MAX_LIMIT) return bad("Invalid limit");
     const offset=parseCursor(params.get("cursor")); if(offset===null) return bad("Invalid cursor");
-    let query=supabaseServer.from("bar_keepings").select("id,customer_name,customer_identifier,liquor_name,liquor_source,use_count,zone_code,status,close_reason,remaining_percent,thumbnail_path,stored_at,last_used_at,expires_at,closed_at,updated_at");
+    let query=supabaseServer.from("bar_keepings").select("id,customer_name,customer_identifier,liquor_name,liquor_source,inventory_item_id,use_count,zone_code,status,close_reason,remaining_percent,thumbnail_path,stored_at,last_used_at,expires_at,closed_at,updated_at");
     if(status!=="all") query=query.eq("status",status); const zone=params.get("zone"); if(zone){if(!isBarZoneCode(zone)||zone==="A2")return bad("Invalid zone");query=query.eq("zone_code",zone);}
     const reason=params.get("closeReason"); if(reason){if(!isKeepingCloseReason(reason)) return bad("Invalid close reason"); query=query.eq("close_reason",reason);}
     const q=(params.get("q")??"").trim().replace(/[,_%()."'\\]/g," ").trim().slice(0,80); if(q) query=query.or(`customer_name.ilike.%${q}%,customer_identifier.ilike.%${q}%,liquor_name.ilike.%${q}%,zone_code.ilike.%${q}%`);
@@ -26,7 +26,8 @@ export async function GET(request: NextRequest) {
     const orders:Record<string,[string,boolean]>={recent_activity:["updated_at",false],old_activity:["updated_at",true],recent_created:["id",false],customer_name:["customer_name",true],zone:["zone_code",true],expiry_soon:["expires_at",true]};
     const [column,ascending]=orders[sort]; query=query.order(column,{ascending,nullsFirst:false}).order("id",{ascending});
     const {data,error}=await query.range(offset,offset+limit); if(error) throw error; const queryFinishedAt=performance.now();const rows=(data??[]).slice(0,limit); const hasMore=(data?.length??0)>limit;
-    const items=await Promise.all(rows.map(async row=>{const expiryState=keepingExpiryState(row.expires_at);return{id:Number(row.id),customerName:row.customer_name,customerIdentifierMasked:maskCustomerIdentifier(row.customer_identifier),liquorName:row.liquor_name,liquorSource:row.liquor_source,useCount:Number(row.use_count??0),zoneCode:row.zone_code,status:row.status,closeReason:row.close_reason,remainingPercent:row.remaining_percent,thumbnailUrl:await signedUrl(row.thumbnail_path),storedAt:row.stored_at,lastUsedAt:row.last_used_at,expiresAt:row.expires_at,closedAt:row.closed_at,updatedAt:row.updated_at,...expiryState};}));
+    const inventoryNames=await keepingInventoryNames(rows.map(row=>row.inventory_item_id));
+    const items=await Promise.all(rows.map(async row=>{const expiryState=keepingExpiryState(row.expires_at),names=inventoryNames.get(Number(row.inventory_item_id));return{id:Number(row.id),customerName:row.customer_name,customerIdentifierMasked:maskCustomerIdentifier(row.customer_identifier),liquorName:row.liquor_name,liquorNameKo:names?.ko??null,liquorNameVi:names?.vi??null,liquorSource:row.liquor_source,useCount:Number(row.use_count??0),zoneCode:row.zone_code,status:row.status,closeReason:row.close_reason,remainingPercent:row.remaining_percent,thumbnailUrl:await signedUrl(row.thumbnail_path),storedAt:row.stored_at,lastUsedAt:row.last_used_at,expiresAt:row.expires_at,closedAt:row.closed_at,updatedAt:row.updated_at,...expiryState};}));
     const finishedAt=performance.now();const result=NextResponse.json({ok:true,items,hasMore,nextCursor:hasMore?Buffer.from(String(offset+limit)).toString("base64url"):null,capabilities:{manage:canManageBarKeeping(actor),reactivate:canReactivateBarKeeping(actor)}});result.headers.set("Server-Timing",`auth;dur=${(authFinishedAt-startedAt).toFixed(1)},query;dur=${(queryFinishedAt-authFinishedAt).toFixed(1)},sign;dur=${(finishedAt-queryFinishedAt).toFixed(1)},total;dur=${(finishedAt-startedAt).toFixed(1)}`);return result;
   } catch(error){console.error("[KEEPINGS_GET_ERROR]",error);return NextResponse.json({ok:false,error:"Failed to load keepings"},{status:500});}
 }
