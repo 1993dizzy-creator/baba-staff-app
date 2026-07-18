@@ -80,6 +80,12 @@ export default function KeepingProductAutocomplete({
     const alternate = lang === "vi" ? item.item_name : item.item_name_vi;
     return [item.code, alternate && alternate !== displayName(item) ? alternate : null].filter(Boolean).join(" · ");
   };
+  const chooseItem = (item: KeepingProduct) => {
+    const name = displayName(item);
+    setQuery(name);
+    setOpen(false);
+    onSelect(item, name);
+  };
 
   return (
     <div>
@@ -111,12 +117,8 @@ export default function KeepingProductAutocomplete({
               role="option"
               aria-selected="false"
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                const name = displayName(item);
-                setQuery(name);
-                setOpen(false);
-                onSelect(item, name);
-              }}
+              onPointerDown={(event) => { if (event.pointerType !== "mouse") { event.preventDefault(); chooseItem(item); } }}
+              onClick={() => chooseItem(item)}
               style={optionStyle}
             >
               <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 700 }}>{displayName(item)}</span>

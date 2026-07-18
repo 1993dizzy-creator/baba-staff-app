@@ -62,7 +62,9 @@ export async function uploadKeepingFiles(detail: File, thumbnail: File) {
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (!matchesImageSignature(bytes, file.type)) throw new Error("Invalid keeping image content");
       const { error } = await supabaseServer.storage.from(KEEPING_BUCKET).upload(path, bytes, { contentType: file.type, upsert: false, cacheControl: "3600" });
-      if (error) throw error; uploaded.push(path);
+      if (error) { console.error("[KEEPING_CREATE_STAGE]", { stage: path.includes("/main.") ? "detail_upload_failed" : "thumbnail_upload_failed", code: error.name, message: error.message }); throw error; }
+      console.info("[KEEPING_CREATE_STAGE]", { stage: path.includes("/main.") ? "detail_upload_succeeded" : "thumbnail_upload_succeeded" });
+      uploaded.push(path);
     }
     return { imagePath, thumbnailPath };
   } catch (error) { if (uploaded.length) await removeKeepingFiles(uploaded, "KEEPING_PARTIAL_UPLOAD_CLEANUP"); throw error; }
@@ -70,14 +72,21 @@ export async function uploadKeepingFiles(detail: File, thumbnail: File) {
 export async function removeKeepingFiles(paths: Array<string | null | undefined>, label: string) {
   const clean = paths.filter((path): path is string => typeof path === "string" && /^keeping\/\d+-[0-9a-f]{24}\/(main|thumb)\.(webp|jpg)$/.test(path));
   if (clean.length !== paths.filter(Boolean).length) console.warn(`[${label}_INVALID_PATH_SKIPPED]`);
-  if (!clean.length) return;
-  const { error } = await supabaseServer.storage.from(KEEPING_BUCKET).remove(clean); if (error) console.warn(`[${label}]`, error.message);
+  if (!clean.length) return { attempted: 0, succeeded: true };
+  const { error } = await supabaseServer.storage.from(KEEPING_BUCKET).remove(clean);
+  if (error) console.warn(`[${label}]`, { attempted: clean.length, succeeded: false, message: error.message });
+  else console.info(`[${label}]`, { attempted: clean.length, succeeded: true });
+  return { attempted: clean.length, succeeded: !error };
 }
 function validateImage(file: File, max: number) { if (!["image/webp", "image/jpeg"].includes(file.type) || file.size < 1 || file.size > max) throw new Error("Invalid keeping image"); }
 function imageExtension(type: string) { return type === "image/webp" ? "webp" : "jpg"; }
 function matchesImageSignature(bytes: Uint8Array, type: string) {
   if (type === "image/jpeg") return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   return type === "image/webp" && bytes.length >= 12 && String.fromCharCode(...bytes.slice(0,4)) === "RIFF" && String.fromCharCode(...bytes.slice(8,12)) === "WEBP";
+}
+export async function keepingImageDiagnostic(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  return { mime: file.type.toLowerCase(), extension: file.name.split(".").pop()?.toLowerCase() ?? "", size: file.size, signatureValid: matchesImageSignature(bytes, file.type) };
 }
 
 export async function signedUrl(path: string | null) {

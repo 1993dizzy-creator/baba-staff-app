@@ -64,3 +64,24 @@ test("image preview modal preserves accessibility and restores focus", () => {
   assert.match(zone, /<ImagePreviewModal/);
   assert.match(detail, /src=\{item\.imageUrl\}/);
 });
+
+test("keeping creation diagnostics separate devices, stages, safe fields, and RPC statuses", () => {
+  const route = source("app/api/bar/keepings/route.ts");
+  const form = source("components/bar/keeping/KeepingForm.tsx");
+  const autocomplete = source("components/bar/keeping/KeepingProductAutocomplete.tsx");
+  const migration = source("supabase/migrations/202607180001_allow_jpeg_bar_keeping_paths.sql");
+  assert.match(route, /"iOS\/Safari"/);
+  assert.match(route, /"Android\/Chrome"/);
+  for (const stage of ["form_data_parse_failed", "input_validation_failed", "file_validation_failed", "detail_upload_failed", "thumbnail_upload_failed", "rpc_error", "rpc_non_ok", "success"]) assert.match(route + source("lib/bar/keeping-server.ts"), new RegExp(stage));
+  for (const status of ["invalid_inventory_item", "invalid_zone", "invalid_actor", "invalid_input"]) assert.match(route, new RegExp(status));
+  assert.match(route, /customerName:textDiagnostic\(customerRaw\)/);
+  assert.match(route, /contact:textDiagnostic\(contactRaw\)/);
+  assert.match(route, /identifier:textDiagnostic\(identifierRaw\)/);
+  assert.match(route, /note:textDiagnostic\(noteRaw\)/);
+  assert.doesNotMatch(route, /console\.(?:info|warn|error)\([^\n]*p_customer_/);
+  assert.match(form, /form\.set\("lang",lang\)/);
+  assert.match(form, /KEEPING_INVALID_INVENTORY/);
+  assert.match(autocomplete, /onPointerDown/);
+  assert.match(migration, /main\[\.\]\(webp\|jpg\)/);
+  assert.match(migration, /thumb\[\.\]\(webp\|jpg\)/);
+});
