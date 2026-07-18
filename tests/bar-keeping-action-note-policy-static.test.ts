@@ -12,11 +12,12 @@ test("keeping actions use a separate optional action note and moves have no reas
   const route = source("app/api/bar/keepings/[id]/actions/route.ts");
 
   assert.match(modal, /actionNote: ""/);
+  assert.match(modal, /zoneCode: item\.zoneCode/);
   assert.match(modal, /\{ note: String\(values\.actionNote\) \}/);
   assert.doesNotMatch(modal, /label=\{t\.moveReason\}/);
   assert.doesNotMatch(modal, /label=\{t\.correctionReason\}/);
   assert.doesNotMatch(modal, /values\.closeNote/);
-  assert.match(route, /"bar_mutate_keeping_v5"/);
+  assert.match(route, /KEEPING_REACTIVATE_RPC/);
   assert.match(route, /return\{zone_code\}/);
   assert.doesNotMatch(route, /cleanText\(raw\.reason,500,true\).*correct_remaining/);
   assert.doesNotMatch(route, /raw\.closeNote/);

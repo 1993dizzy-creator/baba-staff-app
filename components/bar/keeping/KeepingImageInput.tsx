@@ -6,9 +6,9 @@ import { keepingDetailText, keepingImageErrorText, keepingText } from "@/lib/tex
 
 export type KeepingImageFiles = { detail: File; thumbnail: File; preview: string };
 
-export default function KeepingImageInput({ lang, onChange, onBusyChange, required = false, disabled = false, currentUrl = null }: {
+export default function KeepingImageInput({ lang, onChange, onBusyChange, required = false, disabled = false, currentUrl = null, hideLabel = false }: {
   lang: "ko" | "vi"; onChange: (files: KeepingImageFiles | null) => void; onBusyChange?: (busy: boolean) => void;
-  required?: boolean; disabled?: boolean; compact?: boolean; currentUrl?: string | null;
+  required?: boolean; disabled?: boolean; compact?: boolean; currentUrl?: string | null; hideLabel?: boolean;
 }) {
   const t = keepingText[lang], dt = keepingDetailText[lang], imageError = keepingImageErrorText[lang];
   const [preview, setPreview] = useState<string | null>(currentUrl), [busy, setBusy] = useState(false), [error, setError] = useState("");
@@ -44,7 +44,7 @@ export default function KeepingImageInput({ lang, onChange, onBusyChange, requir
   </label>;
 
   return <div>
-    <div style={{ color: "#4b5563", fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{t.photo}{required ? " *" : ""}</div>
+    {hideLabel ? null : <div style={{ color: "#4b5563", fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{t.photo}{required ? " *" : ""}</div>}
     {preview ? <div style={{ display: "grid", gridTemplateColumns: "72px minmax(0,1fr)", gap: 10, alignItems: "center", marginBottom: 8 }}><div style={{ width: 72, height: 92, border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden", background: "#f3f4f6" }}><img src={preview} alt={t.photo} style={{ width: "100%", height: "100%", objectFit: "contain" }} /></div><div style={{ minWidth: 0, color: "#6b7280", fontSize: 11, lineHeight: 1.45 }}>{busy ? t.loading : dt.photoSelected}</div></div> : null}
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>{action(true)}{action(false)}</div>
     {busy ? <p aria-live="polite" style={{ margin: "6px 0 0", fontSize: 11, color: "#6b7280" }}>{t.loading}</p> : null}

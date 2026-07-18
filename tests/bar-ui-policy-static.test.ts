@@ -19,6 +19,28 @@ test("closed keeping mutations are limited to reactivation and photo replacement
   assert.match(route, /action==="replace_photo"&&!canEditClosedBarKeeping\(actor\)\)return forbidden/);
 });
 
+test("reactivation reuses the keeping form sections and the sheet keeps mobile-safe scrolling", () => {
+  const modal = source("components/bar/keeping/KeepingActionModal.tsx");
+  const ui = source("components/bar/keeping/KeepingUi.tsx");
+  const image = source("components/bar/keeping/KeepingImageInput.tsx");
+
+  assert.match(modal, /BarSection title=\{nt\.storageSection\} icon="📦" first/);
+  assert.match(modal, /BarSection title=\{t\.photo\} icon="📷"/);
+  assert.match(modal, /KeepingRegistrationPercentSelector label=\{t\.remaining\} directInputLabel=\{nt\.directPercent\}/);
+  assert.doesNotMatch(modal, /KeepingPercentSelector label=\{t\.remaining\}/);
+  assert.match(modal, /reactivateZonePercentStyle: React\.CSSProperties = \{ minWidth: 0, display: "grid", gap: 22 \}/);
+  assert.match(modal, /zoneCode: item\.zoneCode/);
+  assert.match(modal, /KeepingImageInput[^>]*currentUrl=\{item\.imageUrl\}[^>]*hideLabel/);
+  assert.match(image, /hideLabel \? null/);
+  assert.match(ui, /min\(92vh,92dvh,820px\)/);
+  assert.match(ui, /\{number\}%<\/button>/);
+  assert.match(ui, /gridTemplateColumns:"repeat\(5,minmax\(0,1fr\)\)"/);
+  assert.match(ui, /style=\{\{\.\.\.keepingInputStyle,width:"100%",paddingRight:34/);
+  assert.match(ui, /overscrollBehavior:"contain"/);
+  assert.match(ui, /scrollPaddingBottom:88/);
+  assert.match(ui, /env\(safe-area-inset-bottom\)/);
+});
+
 test("logs default to zone and tab changes discard detailed filters", () => {
   const page = source("app/(protected)/bar/logs/page.tsx");
   assert.match(page, /searchParams\.get\("entityType"\) === "keeping" \? "keeping" : "zone"/);
