@@ -266,7 +266,6 @@ async function saveReprocessBatch(params: {
           ]);
 
           return {
-            processed_line_id: null,
             invoice_ref_id: params.previewReceipt.refId,
             ref_detail_id: line.refDetailId,
             pos_item_code: line.posItemCode,

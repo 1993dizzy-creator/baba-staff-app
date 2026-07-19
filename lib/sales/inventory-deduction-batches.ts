@@ -162,7 +162,6 @@ export async function saveInventoryDeductionPreviewBatch(params: {
           ]);
 
           return {
-            processed_line_id: null,
             invoice_ref_id: receipt.refId,
             ref_detail_id: line.refDetailId,
             pos_item_code: line.posItemCode,
