@@ -45,9 +45,8 @@ export type StoreSettingAuditLog = {
 };
 
 export const DEFAULT_STORE_HOURS: StoreBusinessHour[] = [
-  { weekday: 0, isClosed: false, openTime: "17:00", closeTime: "01:00" },
-  ...Array.from({ length: 6 }, (_, index) => ({
-    weekday: index + 1,
+  ...Array.from({ length: 7 }, (_, weekday) => ({
+    weekday,
     isClosed: false,
     openTime: "16:00",
     closeTime: "01:00",

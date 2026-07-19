@@ -1,7 +1,7 @@
 export const CORE_STORE_TIMEZONE = "Asia/Ho_Chi_Minh";
 export const CORE_STORE_CUTOFF = "03:00";
 export type CoreBusinessHour = { weekday: number; isClosed: boolean; openTime: string | null; closeTime: string | null };
-export const CORE_DEFAULT_HOURS: CoreBusinessHour[] = [{weekday:0,isClosed:false,openTime:"17:00",closeTime:"01:00"},...Array.from({length:6},(_,index)=>({weekday:index+1,isClosed:false,openTime:"16:00",closeTime:"01:00"}))];
+export const CORE_DEFAULT_HOURS: CoreBusinessHour[] = Array.from({length:7},(_,weekday)=>({weekday,isClosed:false,openTime:"16:00",closeTime:"01:00"}));
 const DATE_RE=/^\d{4}-\d{2}-\d{2}$/,TIME_RE=/^(?:[01]\d|2[0-3]):[0-5]\d$/;
 function partsAt(value:Date,timeZone:string){const parts=new Intl.DateTimeFormat("en-CA",{timeZone,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).formatToParts(value);const get=(type:Intl.DateTimeFormatPartTypes)=>Number(parts.find(part=>part.type===type)?.value);return{year:get("year"),month:get("month"),day:get("day"),hour:get("hour"),minute:get("minute")}}
 function key(parts:{year:number;month:number;day:number}){return`${parts.year}-${String(parts.month).padStart(2,"0")}-${String(parts.day).padStart(2,"0")}`}

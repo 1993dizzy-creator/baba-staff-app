@@ -334,18 +334,18 @@ async function fetchInventorySummaries(inventoryIds: number[]) {
 async function fetchReferenceCounts(mappingIds: number[]) {
   const counts = new Map<
     number,
-    { recipeCount: number; deductionCount: number; processedLineCount: number }
+    { recipeCount: number; deductionCount: number }
   >(
     mappingIds.map((id) => [
       id,
-      { recipeCount: 0, deductionCount: 0, processedLineCount: 0 },
+      { recipeCount: 0, deductionCount: 0 },
     ])
   );
   if (mappingIds.length === 0) return counts;
 
   for (let offset = 0; offset < mappingIds.length; offset += 500) {
     const ids = mappingIds.slice(offset, offset + 500);
-    const [recipeResult, deductionResult, processedResult] = await Promise.all([
+    const [recipeResult, deductionResult] = await Promise.all([
       supabaseServer
         .from("pos_item_mapping_recipes")
         .select("mapping_id")
@@ -354,15 +354,10 @@ async function fetchReferenceCounts(mappingIds: number[]) {
         .from("pos_inventory_deductions")
         .select("mapping_id")
         .in("mapping_id", ids),
-      supabaseServer
-        .from("pos_processed_invoice_lines")
-        .select("mapping_id")
-        .in("mapping_id", ids),
     ]);
 
     if (recipeResult.error) throw recipeResult.error;
     if (deductionResult.error) throw deductionResult.error;
-    if (processedResult.error) throw processedResult.error;
 
     for (const row of recipeResult.data || []) {
       const value = counts.get(Number(row.mapping_id));
@@ -371,10 +366,6 @@ async function fetchReferenceCounts(mappingIds: number[]) {
     for (const row of deductionResult.data || []) {
       const value = counts.get(Number(row.mapping_id));
       if (value) value.deductionCount += 1;
-    }
-    for (const row of processedResult.data || []) {
-      const value = counts.get(Number(row.mapping_id));
-      if (value) value.processedLineCount += 1;
     }
   }
 
@@ -929,7 +920,6 @@ export async function GET(req: Request) {
         const references = referenceCounts.get(Number(mapping.id)) ?? {
           recipeCount: 0,
           deductionCount: 0,
-          processedLineCount: 0,
         };
         return {
             status: "orphaned" as const,
@@ -954,8 +944,7 @@ export async function GET(req: Request) {
             canHardDelete:
               legacyCandidates.length === 0 &&
               references.recipeCount === 0 &&
-              references.deductionCount === 0 &&
-              references.processedLineCount === 0,
+              references.deductionCount === 0,
             options: includeOptions ? [] : undefined,
           };
       });

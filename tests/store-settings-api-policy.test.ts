@@ -6,6 +6,7 @@ import test from "node:test";
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const route = read("app/api/admin/store-settings/route.ts");
 const server = read("lib/store-settings/server.ts");
+const types = read("lib/store-settings/types.ts");
 const page = read("app/(protected)/admin/settings/store/page.tsx");
 const login = read("app/api/login/route.ts");
 const logout = read("app/api/logout/route.ts");
@@ -35,6 +36,18 @@ test("empty database bootstraps through fallback revision zero", () => {
   assert.match(server, /fallbackUsed: true/);
   assert.match(page, /expectedRevision:data\.overview\.latestRevision/);
   assert.match(page, /data\.capabilities\.mutate&&!data\.overview\.scheduled/);
+});
+
+test("fallback and reservation form share the all-week 16:00 default policy", () => {
+  assert.match(types, /Array\.from\(\{ length: 7 \}, \(_, weekday\)/);
+  assert.match(types, /openTime: "16:00"/);
+  assert.match(types, /closeTime: "01:00"/);
+  assert.match(server, /hours: DEFAULT_STORE_HOURS/);
+  assert.match(page, /useState<StoreBusinessHour\[\]>\(DEFAULT_STORE_HOURS\.map/);
+  assert.match(page, /const defaults=DEFAULT_STORE_HOURS\[h\.weekday\]/);
+  assert.match(page, /summaryWeekdayLabel\(group,lang\)/);
+  assert.match(page, /weekday===0\?"#dc2626":weekday===6\?"#2563eb"/);
+  assert.match(page, /expectedRevision:data\.overview\.latestRevision/);
 });
 
 test("login issues and logout clears the shared HttpOnly session", () => {

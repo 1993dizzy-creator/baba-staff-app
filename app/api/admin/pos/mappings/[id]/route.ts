@@ -941,7 +941,7 @@ export async function DELETE(
       current.pos_item_code,
       catalogProducts
     );
-    const [recipeResult, deductionResult, processedLineResult] =
+    const [recipeResult, deductionResult] =
       await Promise.all([
         supabaseServer
           .from("pos_item_mapping_recipes")
@@ -951,15 +951,10 @@ export async function DELETE(
           .from("pos_inventory_deductions")
           .select("id", { count: "exact", head: true })
           .eq("mapping_id", mappingId),
-        supabaseServer
-          .from("pos_processed_invoice_lines")
-          .select("id", { count: "exact", head: true })
-          .eq("mapping_id", mappingId),
       ]);
 
     if (recipeResult.error) throw recipeResult.error;
     if (deductionResult.error) throw deductionResult.error;
-    if (processedLineResult.error) throw processedLineResult.error;
 
     const blockers: string[] = [];
     if (legacyCandidates.length > 0) {
@@ -972,11 +967,6 @@ export async function DELETE(
     if ((deductionResult.count || 0) > 0) {
       blockers.push(
         `판매 재고차감 이력 ${deductionResult.count || 0}건이 이 매핑을 참조합니다.`
-      );
-    }
-    if ((processedLineResult.count || 0) > 0) {
-      blockers.push(
-        `구형 POS 처리 이력 ${processedLineResult.count || 0}건이 이 매핑을 참조합니다.`
       );
     }
     if ((recipeResult.count || 0) > 0) {

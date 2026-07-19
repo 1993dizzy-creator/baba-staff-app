@@ -639,7 +639,7 @@ export default function AdminPosItemsPage() {
           <strong>다음 단계</strong>
           <span>
             이 목록을 기준으로 `/admin/pos/mappings`에서 direct/manual/ignore 저장 기능을 만들고,
-            그 다음 `/admin/pos/recipes`에서 recipe 차감 구조를 분리하는 순서가 안전합니다.
+            recipe 차감 구조도 현재 `/admin/pos/mappings`에서 함께 관리합니다.
           </span>
         </section>
 

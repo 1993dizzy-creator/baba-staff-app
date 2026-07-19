@@ -27,11 +27,16 @@ test("new cutoff calculation matches the legacy calculation under current policy
 
 test("weekday hours distinguish open, close and post-close cutoff window", () => {
   assert.equal(getStoreOperationState("2026-07-20T16:00:00+07:00").isOpen, true); // Monday
-  assert.equal(getStoreOperationState("2026-07-19T16:30:00+07:00").isOpen, false); // Sunday
-  assert.equal(getStoreOperationState("2026-07-19T17:00:00+07:00").isOpen, true);
+  assert.equal(getStoreOperationState("2026-07-19T15:59:00+07:00").isOpen, false); // Sunday
+  assert.equal(getStoreOperationState("2026-07-19T16:00:00+07:00").isOpen, true);
   assert.equal(getStoreOperationState("2026-07-21T00:30:00+07:00").isOpen, true);
   assert.deepEqual(getStoreOperationState("2026-07-21T01:00:00+07:00"), { isOpen: false, isAfterCloseBeforeCutoff: true });
   assert.equal(getStoreOperationState("2026-07-21T03:00:00+07:00").isAfterCloseBeforeCutoff, false);
+});
+
+test("default policy opens every weekday from 16:00 until 01:00", () => {
+  assert.deepEqual(DEFAULT_STORE_HOURS.map(({ weekday, isClosed, openTime, closeTime }) => ({ weekday, isClosed, openTime, closeTime })),
+    Array.from({ length: 7 }, (_, weekday) => ({ weekday, isClosed: false, openTime: "16:00", closeTime: "01:00" })));
 });
 
 test("closed weekday and seven-row validation", () => {

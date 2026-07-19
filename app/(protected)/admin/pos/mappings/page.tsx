@@ -159,7 +159,6 @@ type CatalogItem = {
   referenceCounts?: {
     recipeCount: number;
     deductionCount: number;
-    processedLineCount: number;
   };
   canHardDelete?: boolean;
   comboChildren?: ComboChild[];

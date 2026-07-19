@@ -1,5 +1,11 @@
 # CUKCUK API Capability Map
 
+> Status update (2026-07-19): the early login/debug/scan routes and the legacy
+> sales invoice lookup, dry-run, and apply routes have been retired. Current
+> operations use `sainvoices/sync-to-sales`, `products/sync-from-cukcuk`, and
+> the admin receipt refresh route. The remaining document is a historical API
+> capability survey, not a current operations runbook.
+
 Last reviewed: 2026-05-07
 
 Scope: BABA 앱에서 CUKCUK Open Platform 기반으로 구현 가능한 POS 매출 조회, 주문/영수증 상세 확인, 상품 코드 기반 재고 자동 차감, 고객/쿠폰 연동 가능성을 정리한다.
@@ -30,7 +36,6 @@ Base URL: `https://graphapi.cukcuk.vn`
 
 ## 로컬 POS 관련 파일 구조
 
-- `app/api/pos/cukcuk/login-test/route.ts`: CUKCUK 로그인 테스트 route. 응답 토큰 마스킹 처리.
 - `lib/pos/cukcuk/auth.ts`: 로그인 서명 생성, env 로딩, 로그인 호출 helper.
 - `app/(protected)/sales/page.tsx`: POS 연동 준비 상태를 보여주는 sales placeholder/dashboard 성격의 화면.
 
@@ -432,10 +437,7 @@ Base URL: `https://graphapi.cukcuk.vn`
 
 ## 추천 API route 구현 순서
 
-1. `GET /api/pos/cukcuk/branches`: login helper 재사용, branch 목록 조회.
 2. `POST /api/pos/cukcuk/inventory-items/sync-preview`: POS `Code`와 BABA `inventory.code` 매칭/미매칭 미리보기.
-3. `POST /api/pos/cukcuk/sales/invoices`: `sainvoices/paging` 기반 매출 목록 조회.
-4. `GET /api/pos/cukcuk/sales/invoices/[refId]`: invoice detail 조회와 token masking/logging 정책 적용.
 5. `POST /api/pos/cukcuk/inventory-deductions/preview`: 차감 대상 line 산출, 제외 사유 리포트.
 6. `POST /api/pos/cukcuk/inventory-deductions/apply`: idempotent 차감 적용. unique key로 중복 방지.
 7. `POST /api/pos/cukcuk/inventory-deductions/reconcile`: 취소/임시취소/수정 invoice 재조회 후 reverse 또는 보류 처리.
