@@ -11,7 +11,7 @@ export async function GET() {
     const auth = await getStoreSettingsActor();
     if (auth.response || !auth.actor) return auth.response;
     const overview = await getStoreSettingsOverview();
-    return NextResponse.json({ ok: true, overview, capabilities: { mutate: canMutateStoreSettings(auth.actor), audit: canMutateStoreSettings(auth.actor) } }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ ok: true, overview, capabilities: { mutate: canMutateStoreSettings(auth.actor), audit: canMutateStoreSettings(auth.actor), posShadow: canMutateStoreSettings(auth.actor) } }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("[STORE_SETTINGS_GET_FAILED]", error);
     return NextResponse.json({ ok: false, code: "STORE_SETTINGS_LOAD_FAILED" }, { status: 500 });
