@@ -1,0 +1,50 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+
+const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
+const route = read("app/api/admin/store-settings/route.ts");
+const server = read("lib/store-settings/server.ts");
+const page = read("app/(protected)/admin/settings/store/page.tsx");
+const login = read("app/api/login/route.ts");
+const logout = read("app/api/logout/route.ts");
+const session = read("lib/auth/server-session.ts");
+const barAuth = read("lib/bar/server-auth.ts");
+
+test("store settings actor comes only from the HttpOnly server session", () => {
+  assert.match(server, /readServerSession\(\)/);
+  assert.match(server, /\.eq\("id", session\.uid\)/);
+  assert.doesNotMatch(route, /actorUserId|actorUsername|p_actor_user_id:\s*body/);
+  assert.match(route, /p_actor_user_id: auth\.actor\.id/);
+});
+
+test("owner and master mutate while manager and leader are read-only", () => {
+  assert.match(server, /\["owner", "master", "manager", "leader"\]/);
+  assert.match(server, /\["owner", "master"\]\.includes\(actor\.role\)/);
+  assert.match(route, /if \(!canMutateStoreSettings\(auth\.actor\)\).*403/);
+});
+
+test("request contracts reject unexpected fields and use no-store reads", () => {
+  assert.match(route, /Object\.keys\(body\)\.some\(\(key\) => !allowedKeys\.has\(key\)\)/);
+  assert.match(route, /"Cache-Control": "no-store"/);
+});
+
+test("empty database bootstraps through fallback revision zero", () => {
+  assert.match(server, /revision: 0/);
+  assert.match(server, /fallbackUsed: true/);
+  assert.match(page, /expectedRevision:data\.overview\.latestRevision/);
+  assert.match(page, /data\.capabilities\.mutate&&!data\.overview\.scheduled/);
+});
+
+test("login issues and logout clears the shared HttpOnly session", () => {
+  assert.match(login, /setServerSessionCookie\(response, data\.id\)/);
+  assert.match(logout, /clearServerSessionCookie\(response\)/);
+  assert.match(session, /BABA_SESSION_COOKIE = "baba_session"/);
+  assert.match(session, /httpOnly: true/);
+  assert.match(session, /sameSite: "lax"/);
+  assert.match(session, /path: "\/"/);
+  assert.match(session, /BABA_SESSION_MAX_AGE_SECONDS = 60 \* 60 \* 24 \* 7/);
+  assert.match(page, /requireFreshServerSession\(res\)/);
+  assert.match(barAuth, /readServerSession\(\)/);
+});
