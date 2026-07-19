@@ -41,4 +41,13 @@ test("UI includes owner capability gate, bilingual copy, and loading/error state
   assert.match(ui, /Đang kiểm tra/);
   assert.match(ui, /CUKCUK 조회 실패/);
   assert.match(ui, /aria-live="polite"/);
+  assert.match(ui, /설정 기준 확인 완료/);
+  assert.match(ui, /영업 진행 중 · 임시 결과/);
+  assert.match(ui, /조회된 영수증 없음/);
+  assert.match(ui, /Đang trong ca kinh doanh · Kết quả tạm thời/);
+  assert.match(ui, /Sử dụng cài đặt mặc định/);
+  assert.match(ui, /사용함/);
+  assert.match(ui, /사용 안 함/);
+  assert.match(ui, /formatPosShadowStoreDateTime\(result\.window\.legacy\.from/);
+  assert.match(ui, /formatPosShadowStoreDateTime\(result\.window\.configured\.from/);
 });

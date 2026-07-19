@@ -115,6 +115,7 @@ function invoiceStatus(detail: JsonObject | null, invoice: CukcukInvoice) {
 }
 
 export async function runPosShadow(params: { businessDate: string; limit: number }) {
+  const checkedAt = new Date().toISOString();
   const snapshots = await loadBusinessTimeSnapshotsForDates([params.businessDate]);
   const requestedSnapshot = snapshots.get(params.businessDate);
   if (!requestedSnapshot) throw new Error("STORE_SETTING_LOOKUP_FAILED");
@@ -128,6 +129,22 @@ export async function runPosShadow(params: { businessDate: string; limit: number
     (left, right) => new Date(left).getTime() - new Date(right).getTime()
   )[0];
   if (!queryFrom) throw new Error("COLLECTION_WINDOW_UNAVAILABLE");
+
+  if (configuredWindow.from && new Date(checkedAt).getTime() < new Date(configuredWindow.from).getTime()) {
+    return buildPosShadowResult({
+      checkedAt,
+      businessDate: params.businessDate,
+      snapshot: requestedSnapshot,
+      legacyWindow,
+      configuredWindow,
+      listCount: 0,
+      detailCount: 0,
+      detailFailureCount: 0,
+      queryPerformed: false,
+      limit: params.limit,
+      observations: [],
+    });
+  }
 
   const login = await loginCukcuk();
   const invoices = await fetchInvoiceList({
@@ -208,6 +225,7 @@ export async function runPosShadow(params: { businessDate: string; limit: number
   });
 
   return buildPosShadowResult({
+    checkedAt,
     businessDate: params.businessDate,
     snapshot: requestedSnapshot,
     legacyWindow,
@@ -215,6 +233,7 @@ export async function runPosShadow(params: { businessDate: string; limit: number
     listCount: invoices.length,
     detailCount: details.filter((item) => item.detail).length,
     detailFailureCount: details.filter((item) => item.failed).length,
+    queryPerformed: true,
     limit: params.limit,
     observations,
   });

@@ -1,6 +1,7 @@
 import type { BusinessTimeSnapshot } from "./business-time-adapter-core.ts";
 
-export type PosShadowStatus = "ready" | "mismatch" | "incomplete";
+export type PosShadowStatus = "ready" | "mismatch" | "incomplete" | "no_invoices";
+export type PosShadowWindowState = "future" | "in_progress" | "completed";
 
 export type PosShadowObservation = {
   timestamp: string | null;
@@ -15,6 +16,9 @@ export type PosShadowObservation = {
 
 export type PosShadowResult = {
   status: PosShadowStatus;
+  windowState: PosShadowWindowState;
+  isFinalResult: boolean;
+  checkedAt: string;
   businessDate: string;
   setting: {
     revision: number;
@@ -31,6 +35,7 @@ export type PosShadowResult = {
     matches: boolean;
   };
   cukcuk: {
+    queryPerformed: boolean;
     listCount: number;
     detailCount: number;
     limit: number;
@@ -82,7 +87,18 @@ export function isTimestampInHalfOpenRange(
     && value >= lower && value < upper;
 }
 
+export function formatPosShadowStoreDateTime(value: string | null) {
+  if (!value) return "-";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(value));
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`;
+}
+
 export function buildPosShadowResult(params: {
+  checkedAt: string;
   businessDate: string;
   snapshot: BusinessTimeSnapshot;
   legacyWindow: { from: string; to: string };
@@ -90,6 +106,7 @@ export function buildPosShadowResult(params: {
   listCount: number;
   detailCount: number;
   detailFailureCount: number;
+  queryPerformed: boolean;
   limit: number;
   observations: PosShadowObservation[];
 }): PosShadowResult {
@@ -114,20 +131,37 @@ export function buildPosShadowResult(params: {
   ).length;
   const missingTimestampCount = params.observations.filter((item) => !item.timestamp).length;
   const limitReached = params.listCount >= params.limit;
+  const checkedAtTime = new Date(params.checkedAt).getTime();
+  const configuredFromTime = params.configuredWindow.from
+    ? new Date(params.configuredWindow.from).getTime()
+    : Number.NaN;
+  const configuredToTime = new Date(params.configuredWindow.to).getTime();
+  const windowState: PosShadowWindowState = Number.isFinite(configuredFromTime)
+    && checkedAtTime < configuredFromTime
+    ? "future"
+    : checkedAtTime < configuredToTime
+      ? "in_progress"
+      : "completed";
   const mismatchKinds: string[] = [];
   if (!windowMatches) mismatchKinds.push("collectionWindow");
   if (legacyConfiguredMismatchCount > 0) mismatchKinds.push("legacyConfiguredBusinessDate");
   if (pureDbMismatchCount > 0) mismatchKinds.push("configuredPureDatabaseBusinessDate");
   if (legacyOnlyCount > 0 || configuredOnlyCount > 0) mismatchKinds.push("invoiceRangeSet");
 
+  const hasComparedInvoices = comparable.length > 0;
   const status: PosShadowStatus = mismatchKinds.length > 0
     ? "mismatch"
-    : limitReached || missingTimestampCount > 0 || params.detailFailureCount > 0
+    : windowState !== "completed" || limitReached || missingTimestampCount > 0 || params.detailFailureCount > 0
       ? "incomplete"
-      : "ready";
+      : !hasComparedInvoices
+        ? "no_invoices"
+        : "ready";
 
   return {
     status,
+    windowState,
+    isFinalResult: windowState === "completed" && (status === "ready" || status === "no_invoices"),
+    checkedAt: params.checkedAt,
     businessDate: params.businessDate,
     setting: {
       revision: params.snapshot.revision,
@@ -144,6 +178,7 @@ export function buildPosShadowResult(params: {
       matches: windowMatches,
     },
     cukcuk: {
+      queryPerformed: params.queryPerformed,
       listCount: params.listCount,
       detailCount: params.detailCount,
       limit: params.limit,
