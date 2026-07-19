@@ -3,9 +3,9 @@ import { canViewBar } from "@/lib/bar/permissions";
 import { getBarServerActor } from "@/lib/bar/server-auth";
 import { supabaseServer } from "@/lib/supabase/server";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const { actor, response } = await getBarServerActor();
+    const { actor, response } = await getBarServerActor(request);
     if (response || !actor) return response;
     if (!canViewBar(actor)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
     const [activeResult, closedResult] = await Promise.all([

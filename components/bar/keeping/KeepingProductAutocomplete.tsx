@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";
+import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import { keepingNewText } from "@/lib/text/bar-keeping-new";
 
 export type KeepingProduct = {
@@ -47,7 +47,7 @@ export default function KeepingProductAutocomplete({
       setLoading(true);
       setError("");
       try {
-        const response = await fetch(`/api/bar/keeping-products?q=${encodeURIComponent(normalized)}`, {
+        const response = await fetchBarApi(`/api/bar/keeping-products?q=${encodeURIComponent(normalized)}`, {
           cache: "no-store",
           signal: controller.signal,
         });

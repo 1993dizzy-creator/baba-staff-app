@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import BarLogEntry from "@/components/bar/BarLogEntry";
-import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";
+import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import type { BarActivityLog } from "@/lib/bar/types";
 import { ui } from "@/lib/styles/ui";
 
@@ -12,7 +12,7 @@ export default function BarZoneOverviewLogs({ lang, text }: { lang: "ko" | "vi";
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true); setError("");
     try {
-      const response = await fetch("/api/bar/logs?entityType=zone&limit=5", { cache: "no-store", signal });
+      const response = await fetchBarApi("/api/bar/logs?entityType=zone&limit=5", { cache: "no-store", signal });
       if (await handleBarApiUnauthorized(response)) return;
       if (!response.ok) throw new Error(text.error);
       setLogs((await response.json()).logs ?? []);

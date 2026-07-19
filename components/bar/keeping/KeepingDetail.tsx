@@ -6,6 +6,7 @@ import ImagePreviewModal from "@/components/bar/ImagePreviewModal";
 import KeepingActionModal, { type KeepingAction } from "@/components/bar/keeping/KeepingActionModal";
 import { KeepingSourceBadge, KeepingStatusBadge } from "@/components/bar/keeping/KeepingBasics";
 import KeepingRecentLogs from "@/components/bar/keeping/KeepingRecentLogs";
+import { fetchBarApi } from "@/lib/bar/client-auth";
 import { primaryButtonStyle, secondaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
 import { keepingLiquorName, type BarKeeping, type KeepingCapabilities } from "@/lib/bar/keeping-types";
 import { formatBarDateTime } from "@/lib/bar/log-format";
@@ -35,7 +36,7 @@ export default function KeepingDetail({ item, capabilities, lang, back, onRefres
   async function deleteKeeping() {
     setDeleting(true); setDeleteError("");
     try {
-      const response = await fetch(`/api/bar/keepings/${item.id}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: item.version }) });
+      const response = await fetchBarApi(`/api/bar/keepings/${item.id}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: item.version }) });
       if (!response.ok) throw new Error(response.status === 409 ? (lang === "vi" ? "Dữ liệu đã thay đổi. Vui lòng tải lại." : "정보가 변경되었습니다. 다시 불러와 주세요.") : (lang === "vi" ? "Không thể xóa rượu giữ." : "키핑을 삭제하지 못했습니다."));
       router.replace(back); router.refresh();
     } catch (error) { setDeleteError(error instanceof Error ? error.message : t.error); setDeleting(false); }

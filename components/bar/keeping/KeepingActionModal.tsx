@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import KeepingImageInput, { type KeepingImageFiles } from "@/components/bar/keeping/KeepingImageInput";
 import KeepingProductAutocomplete, { type KeepingProduct } from "@/components/bar/keeping/KeepingProductAutocomplete";
 import KeepingZonePicker from "@/components/bar/keeping/KeepingZonePicker";
+import { fetchBarApi } from "@/lib/bar/client-auth";
 import { BarField, BarSection, BarSegmentedControl, BarSheet, KeepingRegistrationPercentSelector, dangerButtonStyle, keepingInputStyle, primaryButtonStyle, secondaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
 import type { BarKeeping } from "@/lib/bar/keeping-types";
 import { vietnamToday } from "@/lib/bar/keeping";
@@ -40,7 +41,7 @@ export default function KeepingActionModal({ item, action, lang, onClose, onSave
       const payload: Record<string, unknown> = { ...values, ...(["use", "correct_remaining", "close", "reactivate"].includes(effectiveAction) ? { note: String(values.actionNote) } : null), ...(action === "update" ? { liquorSource: source, inventoryItemId: product?.id ?? null, zoneChanged } : null) };
       const form = new FormData(); form.set("action", submitAction); form.set("version", String(item.version)); form.set("payload", JSON.stringify(payload));
       if (image && (effectiveAction === "replace_photo" || effectiveAction === "reactivate")) { form.set("image", image.detail); form.set("thumbnail", image.thumbnail); }
-      const response = await fetch(`/api/bar/keepings/${item.id}/actions`, { method: "POST", body: form });
+      const response = await fetchBarApi(`/api/bar/keepings/${item.id}/actions`, { method: "POST", body: form });
       if (await handleBarApiUnauthorized(response)) return;
       const result = await response.json();
       if (response.status === 409 && result.code === "VERSION_CONFLICT") { setError(t.conflict); setSaving(false); return; }

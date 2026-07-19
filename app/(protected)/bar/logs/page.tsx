@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import BarLogEntry from "@/components/bar/BarLogEntry";
-import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";
+import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import type { BarActivityLog } from "@/lib/bar/types";
 import { useLanguage } from "@/lib/language-context";
 import { barText } from "@/lib/text/bar";
@@ -36,7 +36,7 @@ export default function BarLogsPage() {
     try {
       const query = new URLSearchParams({ pageSize: "20", entityType });
       if (cursor) query.set("cursor", cursor); if (code) query.set("code", code); if (entityId) query.set("id", entityId); if (actionType) query.set("actionType", actionType);
-      const response = await fetch(`/api/bar/logs?${query}`, { cache: "no-store", signal: controller.signal });
+      const response = await fetchBarApi(`/api/bar/logs?${query}`, { cache: "no-store", signal: controller.signal });
       if (await handleBarApiUnauthorized(response)) return; if (!response.ok) throw new Error(t.logsLoadError);
       const result = await response.json(); if (requestRef.current !== requestId) return;
       setLogs(current => append ? [...current, ...(result.logs ?? [])] : result.logs ?? []); setNextCursor(result.nextCursor ?? null); setHasMore(Boolean(result.hasMore));

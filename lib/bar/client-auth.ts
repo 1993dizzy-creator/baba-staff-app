@@ -1,5 +1,28 @@
 "use client";
 
+type BarClientActor = { id?: unknown; username?: unknown };
+
+function readBarClientActor(): BarClientActor | null {
+  try {
+    const raw = window.localStorage.getItem("baba_user");
+    return raw ? JSON.parse(raw) as BarClientActor : null;
+  } catch {
+    return null;
+  }
+}
+
+export function barActorHeaders(initial?: HeadersInit) {
+  const headers = new Headers(initial);
+  const actor = readBarClientActor();
+  if (actor?.id != null) headers.set("x-baba-actor-id", String(actor.id));
+  if (typeof actor?.username === "string") headers.set("x-baba-actor-username", actor.username);
+  return headers;
+}
+
+export function fetchBarApi(input: RequestInfo | URL, init: RequestInit = {}) {
+  return fetch(input, { ...init, headers: barActorHeaders(init.headers) });
+}
+
 export async function handleBarApiUnauthorized(response: Response) {
   if (response.status !== 401) return false;
   const result = await response.clone().json().catch(() => null);

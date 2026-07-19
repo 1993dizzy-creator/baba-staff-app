@@ -1,7 +1,6 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
-import { readServerSession } from "@/lib/auth/server-session";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export type BarServerActor = {
@@ -15,26 +14,14 @@ export type BarServerActor = {
   is_active: boolean;
 };
 
-export async function getBarServerActor() {
-  let session;
-  try {
-    session = await readServerSession();
-  } catch (error) {
-    console.error("[BAR_SESSION_CONFIG_ERROR]", error);
+export async function getBarServerActor(request: Request) {
+  const actorIdValue = request.headers.get("x-baba-actor-id")?.trim() ?? "";
+  const actorUsername = request.headers.get("x-baba-actor-username")?.trim() ?? "";
+  if (!/^\d+$/.test(actorIdValue) || !actorUsername || actorUsername.length > 120) {
     return {
       actor: null,
       response: NextResponse.json(
-        { ok: false, error: "Server session is not configured." },
-        { status: 500 }
-      ),
-    };
-  }
-
-  if (!session) {
-    return {
-      actor: null,
-      response: NextResponse.json(
-        { ok: false, error: "Re-login required", code: "RELOGIN_REQUIRED" },
+        { ok: false, error: "Login user information is required", code: "RELOGIN_REQUIRED" },
         { status: 401 }
       ),
     };
@@ -43,7 +30,8 @@ export async function getBarServerActor() {
   const { data, error } = await supabaseServer
     .from("users")
     .select("id, username, name, full_name, role, part, position, is_active")
-    .eq("id", session.uid)
+    .eq("id", actorIdValue)
+    .eq("username", actorUsername)
     .maybeSingle();
 
   if (error) throw new Error(`Failed to verify BAR actor: ${error.message}`);

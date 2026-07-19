@@ -59,5 +59,5 @@ test("login issues and logout clears the shared HttpOnly session", () => {
   assert.match(session, /path: "\/"/);
   assert.match(session, /BABA_SESSION_MAX_AGE_SECONDS = 60 \* 60 \* 24 \* 7/);
   assert.match(page, /requireFreshServerSession\(res\)/);
-  assert.match(barAuth, /readServerSession\(\)/);
+  assert.doesNotMatch(barAuth, /readServerSession|baba_session/);
 });

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import BarLogEntry from "@/components/bar/BarLogEntry";
-import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";
+import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import type { BarActivityLog } from "@/lib/bar/types";
 
 type Text = {
@@ -46,7 +46,7 @@ export default function BarZoneRecentLogs({ zoneCode, lang, refreshKey, text }: 
     setError("");
     try {
       const query = new URLSearchParams({ entityType: "zone", code, limit: "5" });
-      const response = await fetch(`/api/bar/logs?${query}`, { cache: "no-store", signal: controller.signal });
+      const response = await fetchBarApi(`/api/bar/logs?${query}`, { cache: "no-store", signal: controller.signal });
       if (await handleBarApiUnauthorized(response)) return;
       if (!response.ok) throw new Error(text.recentLogsError);
       const result = await response.json();

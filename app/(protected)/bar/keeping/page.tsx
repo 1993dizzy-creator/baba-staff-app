@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { KeepingListCard, KeepingSkeleton } from "@/components/bar/keeping/KeepingBasics";
 import { primaryButtonStyle, secondaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
 import type { BarKeepingListItem } from "@/lib/bar/keeping-types";
-import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";
+import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import { useLanguage } from "@/lib/language-context";
 import { keepingText } from "@/lib/text/bar-keeping";
 import { keepingNewText } from "@/lib/text/bar-keeping-new";
@@ -56,7 +56,7 @@ export default function BarKeepingPage() {
       const requestParams = new URLSearchParams(queryKey);
       requestParams.set("sort", sort);
       if (cursor) requestParams.set("cursor", cursor);
-      const response = await fetch(`/api/bar/keepings?${requestParams}`, { cache: "no-store", signal });
+      const response = await fetchBarApi(`/api/bar/keepings?${requestParams}`, { cache: "no-store", signal });
       if (await handleBarApiUnauthorized(response)) return;
       if (!response.ok) throw new Error(t.error);
       const result = await response.json() as Result;
@@ -82,7 +82,7 @@ export default function BarKeepingPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/bar/keepings/counts", { cache: "no-store", signal: controller.signal })
+    fetchBarApi("/api/bar/keepings/counts", { cache: "no-store", signal: controller.signal })
       .then(async (response) => { if (await handleBarApiUnauthorized(response)) return null; if (!response.ok) throw new Error(t.error); return response.json(); })
       .then((result) => { if (result?.counts) setCounts({ active: Number(result.counts.active) || 0, closed: Number(result.counts.closed) || 0 }); })
       .catch((caught) => { if (!controller.signal.aborted) console.warn("[KEEPING_COUNTS_CLIENT_ERROR]", caught); });

@@ -6,9 +6,9 @@ import { keepingInventoryNames, signedUrl } from "@/lib/bar/keeping-server";
 import { supabaseServer } from "@/lib/supabase/server";
 
 type Context = { params: Promise<{ code: string }> };
-export async function GET(_request: NextRequest, context: Context) {
+export async function GET(request: NextRequest, context: Context) {
   try {
-    const { actor, response } = await getBarServerActor();
+    const { actor, response } = await getBarServerActor(request);
     if (response || !actor) return response;
     if (!canViewBar(actor)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
     const { code } = await context.params;

@@ -6,8 +6,8 @@ import { barZones } from "@/lib/bar/zone-map";
 import { supabaseServer } from "@/lib/supabase/server";
 type Context={params:Promise<{id:string}>};
 
-export async function GET(_request:NextRequest,context:Context){
-  try{const {actor,response}=await getBarServerActor();if(response||!actor)return response;if(!canViewBar(actor))return NextResponse.json({ok:false,error:"Forbidden"},{status:403});
+export async function GET(request:NextRequest,context:Context){
+  try{const {actor,response}=await getBarServerActor(request);if(response||!actor)return response;if(!canViewBar(actor))return NextResponse.json({ok:false,error:"Forbidden"},{status:403});
     const id=cleanId((await context.params).id);if(!id)return NextResponse.json({ok:false,error:"Invalid keeping id"},{status:400});
     const {data,error}=await supabaseServer.from("bar_keepings").select(KEEPING_SELECT).eq("id",id).maybeSingle();if(error)throw error;if(!data)return NextResponse.json({ok:false,error:"Keeping not found"},{status:404});
     const item=await mapKeeping(data,true);const zone=barZones.find(candidate=>candidate.code===item.zoneCode);if(zone){item.zoneLabelKo=zone.labelKo;item.zoneLabelVi=zone.labelVi;}
@@ -16,7 +16,7 @@ export async function GET(_request:NextRequest,context:Context){
 
 export async function DELETE(request:NextRequest,context:Context){
   try{
-    const {actor,response}=await getBarServerActor();if(response||!actor)return response;
+    const {actor,response}=await getBarServerActor(request);if(response||!actor)return response;
     if(!canDeleteBarKeeping(actor))return NextResponse.json({ok:false,error:"Forbidden"},{status:403});
     const id=cleanId((await context.params).id);if(!id)return NextResponse.json({ok:false,error:"Invalid keeping id"},{status:400});
     let body:unknown;try{body=await request.json();}catch{return NextResponse.json({ok:false,error:"Invalid request"},{status:400});}

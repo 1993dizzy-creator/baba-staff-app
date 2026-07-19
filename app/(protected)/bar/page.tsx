@@ -6,7 +6,7 @@ import BarZoneEditModal from "@/components/bar/BarZoneEditModal";
 import BarZoneMap, { type BarZoneMapLabels } from "@/components/bar/BarZoneMap";
 import BarZoneMapModal from "@/components/bar/BarZoneMapModal";
 import BarZoneOverviewLogs from "@/components/bar/BarZoneOverviewLogs";
-import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";
+import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import { canAssignBarZone, canEditBarZone } from "@/lib/bar/permissions";
 import type { BarZoneDefinition } from "@/lib/bar/zone-map";
 import type { BarStaffOption, BarZoneRecord } from "@/lib/bar/types";
@@ -39,8 +39,8 @@ export default function BarAreaPage() {
   const loadData = useCallback(async () => {
     setLoadError("");
     try {
-      const requests: Promise<Response>[] = [fetch("/api/bar/zones", { cache: "no-store" })];
-      if (mayAssign) requests.push(fetch("/api/bar/staff", { cache: "no-store" }));
+      const requests: Promise<Response>[] = [fetchBarApi("/api/bar/zones", { cache: "no-store" })];
+      if (mayAssign) requests.push(fetchBarApi("/api/bar/staff", { cache: "no-store" }));
       const [zonesResponse, staffResponse] = await Promise.all(requests);
       if (await handleBarApiUnauthorized(zonesResponse)) return;
       if (!zonesResponse.ok) throw new Error(t.loadError);

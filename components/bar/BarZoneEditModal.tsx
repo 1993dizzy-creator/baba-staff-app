@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BAR_COLORS, BAR_COLOR_KEYS, type BarColorKey } from "@/lib/bar/colors";
 import { BarImageCompressionError, compressBarZoneImage } from "@/lib/bar/image-compression";
-import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";
+import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import type { BarStaffOption, BarZoneRecord } from "@/lib/bar/types";
 
 type Labels = Record<
@@ -115,7 +115,7 @@ export default function BarZoneEditModal({ zone, staff, canAssign, lang, labels,
         }
       }
 
-      const patchResponse = await fetch(`/api/bar/zones/${zone.code}`, {
+      const patchResponse = await fetchBarApi(`/api/bar/zones/${zone.code}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patchBody),
@@ -135,7 +135,7 @@ export default function BarZoneEditModal({ zone, staff, canAssign, lang, labels,
         const form = new FormData();
         form.set("file", photo);
         form.set("version", String(version));
-        const response = await fetch(`/api/bar/zones/${zone.code}/photo`, { method: "POST", body: form });
+        const response = await fetchBarApi(`/api/bar/zones/${zone.code}/photo`, { method: "POST", body: form });
         if (await handleBarApiUnauthorized(response)) return;
         const result = await response.json();
         if (response.status === 409) {
@@ -163,7 +163,7 @@ export default function BarZoneEditModal({ zone, staff, canAssign, lang, labels,
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(`/api/bar/zones/${zone.code}/photo`, {
+      const response = await fetchBarApi(`/api/bar/zones/${zone.code}/photo`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ version: zone.version }),

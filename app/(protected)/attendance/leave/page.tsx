@@ -67,15 +67,14 @@ function requestUsers() {
   return request;
 }
 
-function requestLeaveRecords(date: Date, userId?: string | number) {
+function requestLeaveRecords(date: Date) {
   const { startDate, endDate } = getMonthRange(date);
-  const requestKey = `${startDate}:${endDate}:${normalizeId(userId) || "all"}`;
+  const requestKey = `${startDate}:${endDate}:all`;
   const existing = leaveRecordRequests.get(requestKey);
   if (existing) return existing;
 
-  const userQuery = userId ? `&user_id=${encodeURIComponent(String(userId))}` : "";
   const request = fetch(
-    `/api/attendance/records?status=leave&start_date=${startDate}&end_date=${endDate}${userQuery}`
+    `/api/attendance/records?status=leave&start_date=${startDate}&end_date=${endDate}`
   )
     .then(async (response) => {
       const result = await response.json().catch(() => null);
@@ -266,10 +265,7 @@ export default function AttendanceLeavePage() {
       else setIsLoadingRecords(true);
 
       try {
-        const data = await requestLeaveRecords(
-          date,
-          canManageLeave ? undefined : currentUser?.id
-        );
+        const data = await requestLeaveRecords(date);
         if (
           mountedRef.current &&
           requestSequence === recordsRequestSequenceRef.current
@@ -551,16 +547,7 @@ export default function AttendanceLeavePage() {
 
 
 
-  const visibleLeaveRecords = useMemo(
-    () =>
-      canManageLeave
-        ? leaveRecords
-        : leaveRecords.filter(
-            (record) =>
-              normalizeId(record.user_id) === normalizeId(currentUser?.id)
-          ),
-    [canManageLeave, currentUser?.id, leaveRecords]
-  );
+  const visibleLeaveRecords = leaveRecords;
 
   const selectedDateLeaves = useMemo(() => {
     return visibleLeaveRecords
@@ -575,12 +562,10 @@ export default function AttendanceLeavePage() {
         const itemA = a as { user: UserRow; record: AttendanceRecord };
         const itemB = b as { user: UserRow; record: AttendanceRecord };
 
-        if (canManageLeave) {
-          const approvalDiff =
-            Number(getApprovalStatus(itemA.record) === APPROVAL_STATUS.APPROVED) -
-            Number(getApprovalStatus(itemB.record) === APPROVAL_STATUS.APPROVED);
-          if (approvalDiff !== 0) return approvalDiff;
-        }
+        const approvalDiff =
+          Number(getApprovalStatus(itemA.record) === APPROVAL_STATUS.APPROVED) -
+          Number(getApprovalStatus(itemB.record) === APPROVAL_STATUS.APPROVED);
+        if (approvalDiff !== 0) return approvalDiff;
 
         if (itemA.record.created_at && itemB.record.created_at) {
           return itemA.record.created_at.localeCompare(itemB.record.created_at);
@@ -588,7 +573,7 @@ export default function AttendanceLeavePage() {
 
         return itemA.record.id - itemB.record.id;
       }) as Array<{ user: UserRow; record: AttendanceRecord }>;
-  }, [canManageLeave, selectedDate, userMap, visibleLeaveRecords]);
+  }, [selectedDate, userMap, visibleLeaveRecords]);
 
   const leaveCountByDate = useMemo(() => {
     const map = new Map<string, { approved: number; pending: number }>();

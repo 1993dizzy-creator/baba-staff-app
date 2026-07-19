@@ -9,7 +9,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 export async function GET(request: NextRequest) {
   const startedAt = performance.now();
   try {
-    const { actor, response } = await getBarServerActor(); if (response || !actor) return response;
+    const { actor, response } = await getBarServerActor(request); if (response || !actor) return response;
     const authFinishedAt = performance.now();
     if (!canViewBar(actor)) return NextResponse.json({ok:false,error:"Forbidden"},{status:403});
     const params=request.nextUrl.searchParams; const status=params.get("status") ?? "active"; if(!["active","closed","all"].includes(status)) return bad("Invalid status");
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
   let paths:{imagePath:string;thumbnailPath:string}|null=null;
   let stage="auth";
   try{
-    const {actor,response}=await getBarServerActor();if(response||!actor)return response;if(!canManageBarKeeping(actor))return NextResponse.json({ok:false,error:"Forbidden"},{status:403});
+    const {actor,response}=await getBarServerActor(request);if(response||!actor)return response;if(!canManageBarKeeping(actor))return NextResponse.json({ok:false,error:"Forbidden"},{status:403});
     stage="form_data_parse";let form:FormData;try{form=await request.formData();}catch(error){console.error("[KEEPING_CREATE_STAGE]",{stage:"form_data_parse_failed",device:deviceSummary(request.headers.get("user-agent")),message:error instanceof Error?error.message:"Unknown error"});return createBad("KEEPING_INVALID_INPUT");}
     const customerRaw=form.get("customerName"),contactRaw=form.get("customerContact"),identifierRaw=form.get("customerIdentifier"),noteRaw=form.get("note"),storedAtRaw=form.get("storedAt");
     const customerName=cleanText(customerRaw,120,true),contact=cleanText(contactRaw,120),identifier=cleanText(identifierRaw,120),note=cleanText(noteRaw,3000),zone=cleanText(form.get("zoneCode"),8,true),percent=cleanPercent(form.get("remainingPercent")),storedAt=cleanDate(storedAtRaw,true);

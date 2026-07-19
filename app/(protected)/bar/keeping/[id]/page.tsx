@@ -4,7 +4,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import KeepingDetail from "@/components/bar/keeping/KeepingDetail";
 import { KeepingSkeleton } from "@/components/bar/keeping/KeepingBasics";
 import type { BarKeeping, KeepingCapabilities } from "@/lib/bar/keeping-types";
-import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";
+import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import { safeKeepingReturnPath } from "@/lib/bar/keeping";
 import { useLanguage } from "@/lib/language-context";
 import { keepingText } from "@/lib/text/bar-keeping";
@@ -18,7 +18,7 @@ export default function KeepingDetailPage() {
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const response = await fetch(`/api/bar/keepings/${params.id}`, { cache: "no-store" });
+      const response = await fetchBarApi(`/api/bar/keepings/${params.id}`, { cache: "no-store" });
       if (await handleBarApiUnauthorized(response)) return;
       if (!response.ok) throw new Error(response.status === 404 ? "Not found" : t.error);
       const result = await response.json(); setItem(result.item); setCapabilities(result.capabilities);

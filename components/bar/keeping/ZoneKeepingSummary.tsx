@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element -- private signed thumbnail URLs */
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { handleBarApiUnauthorized } from "@/lib/bar/client-auth";
+import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import { keepingText } from "@/lib/text/bar-keeping";
 import { keepingLiquorName } from "@/lib/bar/keeping-types";
 
@@ -12,7 +12,7 @@ export default function ZoneKeepingSummary({ zoneCode, lang, refreshKey }: { zon
   const [items, setItems] = useState<Item[]>([]); const [total, setTotal] = useState(0); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`/api/bar/keepings/zone/${zoneCode}?refresh=${refreshKey}`, { cache: "no-store", signal: controller.signal })
+    fetchBarApi(`/api/bar/keepings/zone/${zoneCode}?refresh=${refreshKey}`, { cache: "no-store", signal: controller.signal })
       .then(async (response) => { if (await handleBarApiUnauthorized(response)) return null; if (!response.ok) throw new Error(t.error); return response.json(); })
       .then((result) => { if (result) { setItems(result.items ?? []); setTotal(result.total ?? 0); setError(""); } })
       .catch((caught) => { if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : t.error); })

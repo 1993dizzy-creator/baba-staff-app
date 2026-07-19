@@ -12,7 +12,8 @@ const copy = {
     setting: "설정 기준", range: "조회 범위", receipts: "영수증 분류", missing: "누락",
     match: "일치", mismatch: "불일치", ready: "전환 준비 완료", incomplete: "추가 확인 필요",
     error: "CUKCUK 조회 실패", forbidden: "권한 없음", limit: "조회 한도 도달",
-    details: "기술 상세", fallback: "기본 설정 사용", revision: "설정 Revision",
+    details: "비교 상세", fallback: "기본 설정 사용", revision: "설정 변경번호",
+    legacy: "기존 시간 기준", configured: "새 매장설정 기준",
     enabled: "사용함", disabled: "사용 안 함",
     settingChecked: "설정 기준 확인 완료",
     futureDescription: "아직 영업 시작 전이라 실제 영수증은 검사하지 않았습니다.",
@@ -24,8 +25,8 @@ const copy = {
     currentNoInvoices: "현재 조회된 영수증 없음",
     noInvoicesDescription: "설정과 조회 범위는 일치하지만 실제 영수증 분류 결과는 없습니다.",
     notChecked: "실제 영수증 검사 전",
-    revisionFallback: "저장된 적용 설정이 없어 기본 설정 사용",
-    revisionConfigured: "DB에 저장된 실제 설정 버전",
+    revisionFallback: "저장된 설정이 없어 기본 영업시간 사용",
+    revisionConfigured: "관리자가 저장한 매장설정 사용",
   },
   vi: {
     title: "So sánh kết nối POS", readOnly: "Kiểm tra chỉ đọc",
@@ -34,7 +35,8 @@ const copy = {
     setting: "Cài đặt", range: "Phạm vi truy vấn", receipts: "Phân loại hóa đơn", missing: "Thiếu",
     match: "Khớp", mismatch: "Không khớp", ready: "Sẵn sàng chuyển đổi", incomplete: "Cần kiểm tra thêm",
     error: "Không thể truy vấn CUKCUK", forbidden: "Không có quyền", limit: "Đã đạt giới hạn truy vấn",
-    details: "Chi tiết kỹ thuật", fallback: "Sử dụng cài đặt mặc định", revision: "Revision cài đặt",
+    details: "Chi tiết so sánh", fallback: "Sử dụng cài đặt mặc định", revision: "Số lần thay đổi cài đặt",
+    legacy: "Tiêu chuẩn thời gian cũ", configured: "Tiêu chuẩn cài đặt cửa hàng mới",
     enabled: "Có", disabled: "Không",
     settingChecked: "Đã kiểm tra tiêu chuẩn cài đặt",
     futureDescription: "Ca kinh doanh chưa bắt đầu nên chưa thể kiểm tra hóa đơn thực tế.",
@@ -46,8 +48,8 @@ const copy = {
     currentNoInvoices: "Hiện chưa có hóa đơn được tìm thấy",
     noInvoicesDescription: "Cài đặt và phạm vi truy vấn khớp, nhưng không có kết quả phân loại hóa đơn thực tế.",
     notChecked: "Chưa kiểm tra hóa đơn thực tế",
-    revisionFallback: "Không có cài đặt đã lưu nên đang dùng cài đặt mặc định",
-    revisionConfigured: "Phiên bản cài đặt thực tế được lưu trong DB",
+    revisionFallback: "Không có cài đặt đã lưu nên sử dụng giờ hoạt động mặc định",
+    revisionConfigured: "Sử dụng cài đặt cửa hàng do quản trị viên lưu",
   },
 } as const;
 
@@ -159,10 +161,10 @@ export default function StorePosShadowPanel({ defaultBusinessDate }: { defaultBu
         </div>
         {result.cukcuk.limitReached?<p style={styles.notice}>{t.limit}</p>:null}
         <details style={styles.technical}><summary>{t.details}</summary><dl style={styles.dl}>
-          <dt>{t.revision}</dt><dd>{result.setting.revision} · {result.setting.revision===0?t.revisionFallback:t.revisionConfigured}</dd>
-          <dt>{t.fallback}</dt><dd>{result.setting.isFallback?t.enabled:t.disabled}</dd>
-          <dt>Legacy</dt><dd>{formatPosShadowStoreDateTime(result.window.legacy.from)} → {formatPosShadowStoreDateTime(result.window.legacy.to)}</dd>
-          <dt>Configured</dt><dd>{formatPosShadowStoreDateTime(result.window.configured.from)} → {formatPosShadowStoreDateTime(result.window.configured.to)}</dd>
+          <dt style={styles.detailTerm}>{t.revision}</dt><dd style={styles.detailValue}>{result.setting.revision} · {result.setting.revision===0?t.revisionFallback:t.revisionConfigured}</dd>
+          <dt style={styles.detailTerm}>{t.fallback}</dt><dd style={styles.detailValue}>{result.setting.isFallback?t.enabled:t.disabled}</dd>
+          <dt style={styles.detailTerm}>{t.legacy}</dt><dd style={styles.detailValue}>{formatPosShadowStoreDateTime(result.window.legacy.from)} → {formatPosShadowStoreDateTime(result.window.legacy.to)}</dd>
+          <dt style={styles.detailTerm}>{t.configured}</dt><dd style={styles.detailValue}>{formatPosShadowStoreDateTime(result.window.configured.from)} → {formatPosShadowStoreDateTime(result.window.configured.to)}</dd>
         </dl></details>
       </div>:null}
     </div>
@@ -183,5 +185,5 @@ const styles: Record<string, React.CSSProperties> = {
   button:{background:"#2563eb",border:0,borderRadius:9,color:"#fff",cursor:"pointer",fontWeight:700,minHeight:42,padding:"0 14px",whiteSpace:"nowrap"},
   error:{background:"#fef2f2",borderRadius:9,color:"#b91c1c",fontSize:13,padding:10},result:{marginTop:14},verdict:{display:"block",marginBottom:6},statusDescription:{color:"#475569",fontSize:12,lineHeight:1.5,margin:"0 0 5px"},
   metrics:{display:"grid",gap:8,gridTemplateColumns:"repeat(2,minmax(0,1fr))"},metric:{background:"#f8fafc",borderRadius:9,display:"grid",fontSize:12,gap:3,padding:10},
-  notice:{color:"#92400e",fontSize:12},technical:{color:"#475569",fontSize:12,marginTop:12},dl:{display:"grid",gap:"6px 10px",gridTemplateColumns:"auto minmax(0,1fr)",overflowWrap:"anywhere"},
+  notice:{color:"#92400e",fontSize:12},technical:{color:"#475569",fontSize:12,marginTop:12},dl:{display:"grid",gap:"8px 10px",gridTemplateColumns:"minmax(96px,.8fr) minmax(0,1.2fr)",overflowWrap:"anywhere"},detailTerm:{fontWeight:700,minWidth:0},detailValue:{margin:0,minWidth:0},
 };

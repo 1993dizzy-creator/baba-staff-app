@@ -16,7 +16,7 @@ const BAR_LOG_ACTIONS = new Set<string>([...ZONE_LOG_ACTIONS, ...KEEPING_LOG_ACT
 
 export async function GET(request: NextRequest) {
   try {
-    const { actor, response } = await getBarServerActor();
+    const { actor, response } = await getBarServerActor(request);
     if (response || !actor) return response;
     if (!canViewBarLogs(actor)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
 

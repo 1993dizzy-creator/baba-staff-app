@@ -48,6 +48,16 @@ test("UI includes owner capability gate, bilingual copy, and loading/error state
   assert.match(ui, /Sử dụng cài đặt mặc định/);
   assert.match(ui, /사용함/);
   assert.match(ui, /사용 안 함/);
+  assert.match(ui, /비교 상세/);
+  assert.match(ui, /설정 변경번호/);
+  assert.match(ui, /기존 시간 기준/);
+  assert.match(ui, /새 매장설정 기준/);
+  assert.match(ui, /저장된 설정이 없어 기본 영업시간 사용/);
+  assert.match(ui, /관리자가 저장한 매장설정 사용/);
+  assert.match(ui, /Chi tiết so sánh/);
+  assert.match(ui, /Số lần thay đổi cài đặt/);
+  assert.match(ui, /Tiêu chuẩn thời gian cũ/);
+  assert.match(ui, /Tiêu chuẩn cài đặt cửa hàng mới/);
   assert.match(ui, /formatPosShadowStoreDateTime\(result\.window\.legacy\.from/);
   assert.match(ui, /formatPosShadowStoreDateTime\(result\.window\.configured\.from/);
 });
