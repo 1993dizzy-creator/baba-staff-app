@@ -35,6 +35,34 @@ test("only legacy deductions and processed-line schema are removed", () => {
   assert.doesNotMatch(migration, /drop[\s\S]{0,20}cascade/i);
 });
 
+test("constraint-owned legacy index is removed through its unique constraint", () => {
+  assert.match(
+    migration,
+    /alter table public\.pos_inventory_deductions\s+drop constraint pos_inventory_deductions_unique_item/i,
+  );
+  assert.doesNotMatch(
+    migration,
+    /drop index(?:\s+if exists)?\s+(?:public\.)?pos_inventory_deductions_unique_item/i,
+  );
+  assert.match(migration, /constraint_row\.conindid = index_relation\.oid/i);
+  assert.match(migration, /constraint_row\.contype = 'u'/i);
+  assert.match(migration, /UNIQUE \(processed_line_id, inventory_item_id\)/i);
+});
+
+test("receipt idempotency and reversal indexes are explicitly preserved", () => {
+  for (const indexName of [
+    "pos_inventory_deductions_idempotency_uidx",
+    "pos_inventory_deductions_success_reversal_uidx",
+    "pos_inventory_deductions_receipt_id_idx",
+  ]) {
+    assert.match(migration, new RegExp(`to_regclass\\('public\\.${indexName}'\\)`, "i"));
+    assert.doesNotMatch(
+      migration,
+      new RegExp(`drop\\s+(?:index|constraint)[\\s\\S]{0,80}${indexName}`, "i"),
+    );
+  }
+});
+
 test("legacy RPC is removed and current lifecycle functions remain service-only", () => {
   assert.match(migration, /drop function public\.apply_pos_direct_inventory_deductions/i);
   assert.match(migration, /reprocess_modified_sales_inventory_deduction_receipt/i);

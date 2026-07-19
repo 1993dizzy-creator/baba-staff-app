@@ -28,6 +28,47 @@ begin
     raise exception 'precondition failed: processed_line_id is missing';
   end if;
 
+  if not exists (
+    select 1
+    from pg_constraint constraint_row
+    join pg_class table_relation on table_relation.oid = constraint_row.conrelid
+    join pg_namespace namespace on namespace.oid = table_relation.relnamespace
+    join pg_class backing_index on backing_index.oid = constraint_row.conindid
+    where namespace.nspname = 'public'
+      and table_relation.relname = 'pos_inventory_deductions'
+      and constraint_row.conname = 'pos_inventory_deductions_unique_item'
+      and constraint_row.contype = 'u'
+      and backing_index.relname = 'pos_inventory_deductions_unique_item'
+      and pg_get_constraintdef(constraint_row.oid) =
+        'UNIQUE (processed_line_id, inventory_item_id)'
+  ) then
+    raise exception 'precondition failed: legacy unique constraint definition changed';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_class index_relation
+    join pg_index index_row on index_row.indexrelid = index_relation.oid
+    join pg_class table_relation on table_relation.oid = index_row.indrelid
+    join pg_namespace namespace on namespace.oid = table_relation.relnamespace
+    left join pg_constraint constraint_row
+      on constraint_row.conindid = index_relation.oid
+    where namespace.nspname = 'public'
+      and table_relation.relname = 'pos_inventory_deductions'
+      and index_relation.relname = 'idx_pos_inventory_deductions_processed_line_id'
+      and constraint_row.oid is null
+      and pg_get_indexdef(index_relation.oid) =
+        'CREATE INDEX idx_pos_inventory_deductions_processed_line_id ON public.pos_inventory_deductions USING btree (processed_line_id)'
+  ) then
+    raise exception 'precondition failed: processed-line index is missing, changed, or constraint-owned';
+  end if;
+
+  if to_regclass('public.pos_inventory_deductions_idempotency_uidx') is null
+    or to_regclass('public.pos_inventory_deductions_success_reversal_uidx') is null
+    or to_regclass('public.pos_inventory_deductions_receipt_id_idx') is null then
+    raise exception 'precondition failed: current receipt idempotency indexes are missing';
+  end if;
+
   if to_regprocedure(
     'public.apply_pos_direct_inventory_deductions(date,integer,text,text)'
   ) is null then
@@ -429,7 +470,8 @@ $delete_verification$;
 
 alter table public.pos_inventory_deductions
   drop constraint pos_inventory_deductions_processed_line_id_fkey;
-drop index public.pos_inventory_deductions_unique_item;
+alter table public.pos_inventory_deductions
+  drop constraint pos_inventory_deductions_unique_item;
 drop index public.idx_pos_inventory_deductions_processed_line_id;
 alter table public.pos_inventory_deductions drop column processed_line_id;
 
@@ -461,6 +503,11 @@ begin
       and column_name = 'processed_line_id'
   ) then
     raise exception 'cleanup failed: processed_line_id remains';
+  end if;
+  if to_regclass('public.pos_inventory_deductions_idempotency_uidx') is null
+    or to_regclass('public.pos_inventory_deductions_success_reversal_uidx') is null
+    or to_regclass('public.pos_inventory_deductions_receipt_id_idx') is null then
+    raise exception 'cleanup failed: current receipt idempotency indexes changed';
   end if;
   if exists (
     select 1 from pg_proc
