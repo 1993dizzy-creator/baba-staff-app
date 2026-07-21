@@ -5,6 +5,11 @@ import {
   getBusinessDate,
   getBusinessWindowByBusinessDate,
 } from "@/lib/common/business-time";
+import {
+  loadBusinessTimeAdapter,
+  loadBusinessTimeSnapshotsForDates,
+} from "@/lib/store-settings/business-time-adapter";
+import { buildPosCollectionWindow } from "@/lib/store-settings/business-time-adapter-core";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   SOURCE,
@@ -83,6 +88,77 @@ function getCukcukBusinessDateRange(businessDate: string) {
     fromDate: `${businessDate}T16:00:00+07:00`,
     toDate: `${getNextDateKey(businessDate)}T03:00:00+07:00`,
   };
+}
+
+type ResolvedSyncWindow = {
+  businessDate: string;
+  collectionFrom: string;
+  collectionTo: string;
+  revision: number;
+  isFallback: boolean;
+  settingSource: "configured" | "error_fallback";
+};
+
+// Resolves the processing business date and its POS collection window from the
+// store settings adapter once per sync run (never per receipt). A missing
+// settings row already resolves to the adapter's own fallback snapshot without
+// throwing; this only falls back to the legacy fixed 16:00~03:00 calculation
+// when the settings lookup itself fails (DB/network error).
+async function resolveSyncWindow(
+  requestedBusinessDate: string
+): Promise<ResolvedSyncWindow> {
+  try {
+    if (requestedBusinessDate) {
+      const snapshots = await loadBusinessTimeSnapshotsForDates([requestedBusinessDate]);
+      const snapshot = snapshots.get(requestedBusinessDate);
+      if (!snapshot) throw new Error("STORE_SETTING_LOOKUP_FAILED");
+
+      const window = buildPosCollectionWindow(requestedBusinessDate, snapshot);
+      if (!window.collectionFrom) throw new Error("STORE_SETTING_WINDOW_UNAVAILABLE");
+
+      return {
+        businessDate: requestedBusinessDate,
+        collectionFrom: window.collectionFrom,
+        collectionTo: window.collectionTo,
+        revision: snapshot.revision,
+        isFallback: snapshot.isFallback,
+        settingSource: "configured",
+      };
+    }
+
+    const adapter = await loadBusinessTimeAdapter(new Date());
+    const window = buildPosCollectionWindow(adapter.databaseBusinessDate, adapter.snapshot);
+    if (!window.collectionFrom) throw new Error("STORE_SETTING_WINDOW_UNAVAILABLE");
+
+    return {
+      businessDate: adapter.databaseBusinessDate,
+      collectionFrom: window.collectionFrom,
+      collectionTo: window.collectionTo,
+      revision: adapter.snapshot.revision,
+      isFallback: adapter.snapshot.isFallback,
+      settingSource: "configured",
+    };
+  } catch (error) {
+    console.error(
+      "[SALES_SYNC_STORE_SETTING_LOOKUP_FAILED]",
+      JSON.stringify({
+        requestedBusinessDate: requestedBusinessDate || null,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    const businessDate = requestedBusinessDate || getBusinessDate();
+    const legacyWindow = getBusinessWindowByBusinessDate(businessDate);
+
+    return {
+      businessDate,
+      collectionFrom: legacyWindow.start.toISOString(),
+      collectionTo: legacyWindow.end.toISOString(),
+      revision: 0,
+      isFallback: true,
+      settingSource: "error_fallback",
+    };
+  }
 }
 
 function toTimestamp(value: string | null) {
@@ -392,7 +468,6 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => ({}))) as JsonObject;
     const requestedBusinessDate =
       typeof body.businessDate === "string" ? body.businessDate.trim() : "";
-    const businessDate = requestedBusinessDate || getBusinessDate();
     const branchId =
       typeof body.branchId === "string" && body.branchId.trim()
         ? body.branchId.trim()
@@ -402,7 +477,7 @@ export async function POST(req: Request) {
     const includeLines = body.includeLines === true;
     const force = body.force === true || body.force === "true";
 
-    if (!isValidBusinessDate(businessDate)) {
+    if (requestedBusinessDate && !isValidBusinessDate(requestedBusinessDate)) {
       return NextResponse.json(
         {
           ok: false,
@@ -417,17 +492,43 @@ export async function POST(req: Request) {
       );
     }
 
-    const businessWindow = getBusinessWindowByBusinessDate(businessDate);
-    const requestRange = getCukcukBusinessDateRange(businessDate);
-    const filterFromDate = businessWindow.start.toISOString();
-    const filterToDate = businessWindow.end.toISOString();
+    // Single store-settings lookup for this sync run (never per-receipt).
+    const resolvedWindow = await resolveSyncWindow(requestedBusinessDate);
+    const businessDate = resolvedWindow.businessDate;
+    const filterFromDate = resolvedWindow.collectionFrom;
+    const filterToDate = resolvedWindow.collectionTo;
+
+    // Temporary shadow comparison: log only when the legacy fixed calculation
+    // and the configured store-settings calculation disagree. Silent when they
+    // match, which is the expected case at the current settings revision.
+    if (resolvedWindow.settingSource === "configured") {
+      const legacyBusinessWindow = getBusinessWindowByBusinessDate(businessDate);
+      const legacyRequestRange = getCukcukBusinessDateRange(businessDate);
+      const legacyFromDate = legacyBusinessWindow.start.toISOString();
+      const legacyToDate = legacyBusinessWindow.end.toISOString();
+
+      if (legacyFromDate !== filterFromDate || legacyToDate !== filterToDate) {
+        console.warn(
+          "[SALES_SYNC_STORE_SETTINGS_MISMATCH]",
+          JSON.stringify({
+            businessDate,
+            legacyCollectionFrom: legacyRequestRange.fromDate,
+            configuredCollectionFrom: filterFromDate,
+            legacyCollectionTo: legacyRequestRange.toDate,
+            configuredCollectionTo: filterToDate,
+            revision: resolvedWindow.revision,
+            isFallback: resolvedWindow.isFallback,
+          })
+        );
+      }
+    }
 
     const requestParams = {
       businessDate,
       branchId,
       limit,
-      cukcukFromDate: requestRange.fromDate,
-      cukcukToDate: requestRange.toDate,
+      cukcukFromDate: filterFromDate,
+      cukcukToDate: filterToDate,
       filterFromDate,
       filterToDate,
     };
@@ -484,7 +585,7 @@ export async function POST(req: Request) {
       accessToken: login.accessToken,
       companyCode: login.companyCode,
       branchId,
-      fromDate: requestRange.fromDate,
+      fromDate: filterFromDate,
       limit,
     });
     markPhase("invoiceListMs");

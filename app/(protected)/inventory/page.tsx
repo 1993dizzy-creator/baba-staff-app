@@ -3418,19 +3418,26 @@ export default function InventoryPage() {
                                                             minWidth: 0,
                                                         }}
                                                     >
-                                                        <span
-                                                            style={{
-                                                                fontSize: 11,
-                                                                minWidth: 0,
-                                                                flex: 1,
-                                                                overflow: "hidden",
-                                                                textOverflow: "ellipsis",
-                                                                whiteSpace: "nowrap",
-                                                            }}
-                                                        >
-                                                            {item.supplier || "-"}
-                                                        </span>
-                                                        <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>· {formatMoneyDisplay(item.purchase_price)}</span>
+                                                        {item.supplier ? (
+                                                            <>
+                                                                <span
+                                                                    style={{
+                                                                        fontSize: 11,
+                                                                        minWidth: 0,
+                                                                        flex: "0 1 auto",
+                                                                        maxWidth: "65%",
+                                                                        overflow: "hidden",
+                                                                        textOverflow: "ellipsis",
+                                                                        whiteSpace: "nowrap",
+                                                                    }}
+                                                                >
+                                                                    {item.supplier}
+                                                                </span>
+                                                                <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>· {formatMoneyDisplay(item.purchase_price)}</span>
+                                                            </>
+                                                        ) : (
+                                                            <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>{formatMoneyDisplay(item.purchase_price)}</span>
+                                                        )}
                                                     </div>
                                                 </div>
 

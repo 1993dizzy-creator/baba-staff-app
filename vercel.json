@@ -10,7 +10,7 @@
       "schedule": "*/5 10-18 * * *"
     },
     {
-      "path": "/api/cron/sales-sync",
+      "path": "/api/cron/sales-sync-final",
       "schedule": "0 20 * * *"
     },
     {
@@ -18,7 +18,7 @@
       "schedule": "*/15 10-18 * * *"
     },
     {
-      "path": "/api/cron/sales-deductions",
+      "path": "/api/cron/sales-deductions-final",
       "schedule": "5 20 * * *"
     }
   ]
