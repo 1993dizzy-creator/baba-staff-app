@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBusinessDate } from "@/lib/common/business-time";
+import { resolveAdminSalesBusinessDate } from "@/lib/sales/admin-sales-business-time";
 import { supabaseServer } from "@/lib/supabase/server";
 
 type ReceiptRow = {
@@ -520,7 +520,9 @@ function buildAmountDifferenceAmount(receipts: ReceiptRow[]) {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const businessDate = searchParams.get("businessDate") || getBusinessDate();
+    const { businessDate } = await resolveAdminSalesBusinessDate(
+      searchParams.get("businessDate")
+    );
 
     if (!isValidBusinessDate(businessDate)) {
       return NextResponse.json(

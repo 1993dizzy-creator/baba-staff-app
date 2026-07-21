@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBusinessDate } from "@/lib/common/business-time";
+import { resolveAdminSalesMonth } from "@/lib/sales/admin-sales-business-time";
 import { supabaseServer } from "@/lib/supabase/server";
 
 type ReceiptRow = {
@@ -1039,7 +1039,7 @@ async function fetchCategoryGroupMappings() {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const month = searchParams.get("month") || getBusinessDate().slice(0, 7);
+    const { month } = await resolveAdminSalesMonth(searchParams.get("month"));
 
     if (!isValidMonth(month)) {
       return NextResponse.json(

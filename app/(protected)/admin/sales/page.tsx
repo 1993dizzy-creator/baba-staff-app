@@ -5,7 +5,6 @@ import type { CSSProperties } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
-import { getBusinessDate } from "@/lib/common/business-time";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
@@ -207,7 +206,11 @@ export default function SalesPage() {
     }),
     [c, s, t.daily]
   );
-  const initialBusinessDate = searchParams.get("businessDate") || getBusinessDate();
+  // Empty means "let the server resolve today's business date" — the client
+  // never computes the 03:00/Asia-Ho_Chi_Minh cutoff itself. fetchSalesToday
+  // omits the businessDate query param in that case and syncs state/URL from
+  // the API's resolved businessDate once the response arrives.
+  const initialBusinessDate = searchParams.get("businessDate") || "";
   const [businessDate, setBusinessDate] = useState(initialBusinessDate);
   const [salesData, setSalesData] = useState<SalesTodayResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -248,6 +251,14 @@ export default function SalesPage() {
         }
 
         setSalesData(result);
+
+        if (!businessDate && result.businessDate) {
+          setBusinessDate(result.businessDate);
+          router.replace(
+            `${pathname}?businessDate=${encodeURIComponent(result.businessDate)}`,
+            { scroll: false }
+          );
+        }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -265,7 +276,7 @@ export default function SalesPage() {
         }
       }
     },
-    [businessDate, dailyText.loadFailed]
+    [businessDate, dailyText.loadFailed, pathname, router]
   );
 
   useEffect(() => {

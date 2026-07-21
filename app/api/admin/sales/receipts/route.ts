@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import {
-  BUSINESS_DAY_END_HOUR,
-  getBusinessDate,
-} from "@/lib/common/business-time";
+  resolveAdminSalesBusinessDate,
+  resolveAdminSalesCutoffHour,
+} from "@/lib/sales/admin-sales-business-time";
+import { addStoreDays } from "@/lib/store-settings/business-time-core";
 import { supabaseServer } from "@/lib/supabase/server";
 
 type ReceiptRow = {
@@ -119,13 +120,7 @@ function getManualRefNo(prefix: string, sequence: number) {
   return `${prefix}${String(sequence).padStart(3, "0")}`;
 }
 
-function addDaysToDateKey(dateKey: string, days: number) {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day + days));
-  return date.toISOString().slice(0, 10);
-}
-
-function parseManualSaleTime(value: unknown, businessDate: string) {
+function parseManualSaleTime(value: unknown, businessDate: string, cutoffHour: number) {
   if (typeof value !== "string" || !value.trim()) return null;
 
   const rawValue = value.trim();
@@ -151,9 +146,7 @@ function parseManualSaleTime(value: unknown, businessDate: string) {
   }
 
   const actualDate =
-    hour < BUSINESS_DAY_END_HOUR
-      ? addDaysToDateKey(businessDate, 1)
-      : businessDate;
+    hour < cutoffHour ? addStoreDays(businessDate, 1) : businessDate;
   const localDateTime = [
     `${actualDate}T${String(hour).padStart(2, "0")}`,
     `${String(minute).padStart(2, "0")}:00${VIETNAM_TIMEZONE_OFFSET}`,
@@ -269,7 +262,9 @@ function isOptionLine(row: Pick<LineRow, "is_option" | "mapping_status">) {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const businessDate = searchParams.get("businessDate") || getBusinessDate();
+    const { businessDate } = await resolveAdminSalesBusinessDate(
+      searchParams.get("businessDate")
+    );
 
     if (!isValidBusinessDate(businessDate)) {
       return NextResponse.json(
@@ -709,7 +704,8 @@ export async function POST(req: Request) {
     const refId = `manual-${YYYYMMDD}-${crypto.randomUUID()}`;
     const refNoPrefix = getManualRefNoPrefix(businessDate);
 
-    const refDate = parseManualSaleTime(body.saleTime, businessDate);
+    const { cutoffHour } = await resolveAdminSalesCutoffHour(businessDate);
+    const refDate = parseManualSaleTime(body.saleTime, businessDate, cutoffHour);
     if (!refDate) {
       return NextResponse.json(
         { ok: false, error: "saleTime must use HH:mm for the selected businessDate." },

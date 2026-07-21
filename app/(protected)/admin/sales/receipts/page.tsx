@@ -5,7 +5,6 @@ import type { CSSProperties } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
-import { getBusinessDate } from "@/lib/common/business-time";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
@@ -1953,7 +1952,10 @@ export default function SalesReceiptsPage() {
     taxRate: c.taxRate,
     taxAmount: c.taxAmount,
   };
-  const initialBusinessDate = searchParams.get("businessDate") || getBusinessDate();
+  // Empty means "let the server resolve today's business date" — see
+  // fetchReceipts below, which syncs state/URL from the API response once
+  // the store-settings-resolved businessDate arrives.
+  const initialBusinessDate = searchParams.get("businessDate") || "";
   const [businessDate, setBusinessDate] = useState(initialBusinessDate);
   const [receipts, setReceipts] = useState<ReceiptItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -2077,6 +2079,14 @@ export default function SalesReceiptsPage() {
         }
 
         setReceipts(sortReceiptsByRefDateDesc(result.receipts || []));
+
+        if (!businessDate && result.businessDate) {
+          setBusinessDate(result.businessDate);
+          router.replace(
+            `${pathname}?businessDate=${encodeURIComponent(result.businessDate)}`,
+            { scroll: false }
+          );
+        }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         setErrorMessage(
@@ -2100,7 +2110,7 @@ export default function SalesReceiptsPage() {
     fetchReceipts();
 
     return () => controller.abort();
-  }, [businessDate, receiptsText.loadFailed]);
+  }, [businessDate, receiptsText.loadFailed, pathname, router]);
 
   useEffect(() => {
     if (!canSyncMenu || !currentUser?.username || !receiptIdsKey) {

@@ -5,7 +5,6 @@ import type { CSSProperties } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
-import { getBusinessDate } from "@/lib/common/business-time";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
@@ -240,14 +239,14 @@ function getWeekdayStyle(tone: string) {
   return weekdayTextStyle;
 }
 
-function getCurrentMonth() {
-  return getBusinessDate().slice(0, 7);
-}
-
 function isValidBusinessDate(value: string | null): value is string {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
 }
 
+// Empty means "let the server resolve the current month" — the client never
+// computes the 03:00/Asia-Ho_Chi_Minh cutoff itself. fetchMonthlySales omits
+// the month query param in that case and syncs state/URL from the API's
+// resolved month once the response arrives.
 function getInitialMonth(searchParams: ReturnType<typeof useSearchParams>) {
   const queryMonth = searchParams.get("month");
   if (queryMonth) return queryMonth;
@@ -257,21 +256,21 @@ function getInitialMonth(searchParams: ReturnType<typeof useSearchParams>) {
     return sharedBusinessDate.slice(0, 7);
   }
 
-  return getCurrentMonth();
+  return "";
 }
 
 // businessDate is the shared "기준일자" that /admin/sales (daily) and
-// /admin/sales/receipts read/write. Monthly only ever forwards whatever
-// value it received (or today, if none) — it must never overwrite this with
-// a derived month-start date, or daily/receipts would lose the user's
-// actual selected date whenever they visit monthly.
+// /admin/sales/receipts read/write. Monthly only ever forwards whatever value
+// it received via the URL — it must never overwrite this with a derived
+// month-start date, or daily/receipts would lose the user's actual selected
+// date whenever they visit monthly. When absent, monthly does not compute one
+// either: daily/receipts resolve their own current-businessDate default via
+// their own APIs when landed on without this param.
 function getInitialSharedBusinessDate(
   searchParams: ReturnType<typeof useSearchParams>
 ) {
   const queryBusinessDate = searchParams.get("businessDate");
-  if (isValidBusinessDate(queryBusinessDate)) return queryBusinessDate;
-
-  return getBusinessDate();
+  return isValidBusinessDate(queryBusinessDate) ? queryBusinessDate : "";
 }
 
 function shiftMonth(month: string, diff: number) {
@@ -346,17 +345,21 @@ export default function SalesMonthlyPage() {
     currentRole === "manager";
 
   const isLeader = currentRole === "leader";
-  const tabs = salesTabs.filter((tab) => !isLeader || tab.key === "monthly").map((tab) => ({
-    label: t.tabs[tab.key],
-    href:
-      tab.href === "/admin/sales/monthly"
-        ? `${tab.href}?month=${encodeURIComponent(month)}&businessDate=${encodeURIComponent(sharedBusinessDate)}`
-        : `${tab.href}?businessDate=${encodeURIComponent(sharedBusinessDate)}`,
-    active:
-      tab.href === "/admin/sales"
-        ? pathname === "/admin/sales" || pathname === "/admin/sales/"
-        : pathname.startsWith(tab.href),
-  }));
+  const tabs = salesTabs.filter((tab) => !isLeader || tab.key === "monthly").map((tab) => {
+    const params = new URLSearchParams();
+    if (tab.href === "/admin/sales/monthly" && month) params.set("month", month);
+    if (sharedBusinessDate) params.set("businessDate", sharedBusinessDate);
+    const query = params.toString();
+
+    return {
+      label: t.tabs[tab.key],
+      href: query ? `${tab.href}?${query}` : tab.href,
+      active:
+        tab.href === "/admin/sales"
+          ? pathname === "/admin/sales" || pathname === "/admin/sales/"
+          : pathname.startsWith(tab.href),
+    };
+  });
 
   const fetchMonthlySales = useCallback(
     async (signal?: AbortSignal) => {
@@ -378,6 +381,14 @@ export default function SalesMonthlyPage() {
         }
 
         setMonthlyData(result);
+
+        if (!month && result.month) {
+          setMonth(result.month);
+          const params = new URLSearchParams();
+          params.set("month", result.month);
+          if (sharedBusinessDate) params.set("businessDate", sharedBusinessDate);
+          router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+        }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         setErrorMessage(
@@ -390,7 +401,7 @@ export default function SalesMonthlyPage() {
         if (!signal?.aborted) setIsLoading(false);
       }
     },
-    [month, monthlyText.loadFailed]
+    [month, monthlyText.loadFailed, pathname, router, sharedBusinessDate]
   );
 
   useEffect(() => {
@@ -420,12 +431,10 @@ export default function SalesMonthlyPage() {
     setMonth(nextMonth);
     setMenuSalesDirection("desc");
     setMenuSalesGroup("all");
-    router.replace(
-      `${pathname}?month=${encodeURIComponent(nextMonth)}&businessDate=${encodeURIComponent(sharedBusinessDate)}`,
-      {
-        scroll: false,
-      }
-    );
+    const params = new URLSearchParams();
+    params.set("month", nextMonth);
+    if (sharedBusinessDate) params.set("businessDate", sharedBusinessDate);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
 
   async function handleCategoryGroupUpdate(
