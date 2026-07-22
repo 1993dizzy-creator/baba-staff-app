@@ -16,6 +16,7 @@ export const LEAVE_ACTION = {
   CANCEL: "cancel",
   APPROVE: "approve",
   CANCEL_APPROVAL: "cancel-approval",
+  CANCEL_REQUEST: "cancel-request",
 } as const;
 
 export type AttendanceStatus =

@@ -5,7 +5,11 @@ import test from "node:test";
 
 const policyModulePath = "../lib/attendance/mutation-policy.ts";
 const apiPolicyModulePath = "../lib/attendance/api-policy.ts";
-const { canCancelOwnLeave, getNormalizedLatePatch } = await import(
+const {
+  canCancelOwnLeave,
+  getAdminLeaveCancellationDecision,
+  getNormalizedLatePatch,
+} = await import(
   policyModulePath
 );
 const { isAttendanceAdminRole, validateLeaveRequestTarget } = await import(
@@ -47,6 +51,26 @@ test("attendance administration is restricted to owner and master", () => {
   }
 });
 
+test("admin request cancellation allows only pending or legacy null leave rows", () => {
+  assert.deepEqual(
+    getAdminLeaveCancellationDecision({ status: "leave", approval_status: "pending" }),
+    { ok: true }
+  );
+  assert.deepEqual(
+    getAdminLeaveCancellationDecision({ status: "leave", approval_status: null }),
+    { ok: true }
+  );
+  assert.equal(
+    getAdminLeaveCancellationDecision({ status: "leave", approval_status: "approved" }).code,
+    "APPROVAL_MUST_BE_CANCELLED_FIRST"
+  );
+  assert.equal(
+    getAdminLeaveCancellationDecision({ status: "working", approval_status: "pending" }).status,
+    409
+  );
+  assert.equal(getAdminLeaveCancellationDecision(null).status, 404);
+});
+
 test("late normalization changes only late state and preserves open checkout", () => {
   const patch = getNormalizedLatePatch(
     { status: "late", check_out_at: null, early_leave_minutes: 0 },
@@ -77,6 +101,11 @@ test("routes authenticate the session and clients do not send actor identity", (
     assert.match(route, /requireAttendanceActor\(\)/);
   }
   assert.doesNotMatch(leaveAdmin, /admin_id|admin_name/);
+  assert.match(leaveAdmin, /action === LEAVE_ACTION\.CANCEL_REQUEST/);
+  assert.match(
+    leaveAdmin,
+    /\.delete\(\)[\s\S]*\.eq\("status", ATTENDANCE_STATUS\.LEAVE\)[\s\S]*approval_status\.eq/
+  );
   assert.doesNotMatch(admin, /actorUsername|admin_name/);
 
   const screens = [
@@ -88,4 +117,6 @@ test("routes authenticate the session and clients do not send actor identity", (
   assert.doesNotMatch(screens, /actorUsername|admin_id|admin_name/);
   assert.match(screens, /attendanceFetch\("\/api\/attendance\/admin"/);
   assert.match(screens, /attendanceFetch\(url/);
+  assert.match(screens, /LEAVE_ACTION\.CANCEL_REQUEST/);
+  assert.match(screens, /isOwnRequest[\s\S]*\/api\/attendance\/leave-admin/);
 });

@@ -212,6 +212,9 @@ export default function AttendanceLeavePage() {
             cancelSuccess: "Đã hủy yêu cầu nghỉ.",
             approveSuccess: "Đã duyệt ngày nghỉ.",
             cancelApprovalSuccess: "Đã hủy duyệt ngày nghỉ.",
+            cancelForbidden: "Bạn không có quyền hủy đơn nghỉ này.",
+            cancelApprovalFirst: "Vui lòng hủy phê duyệt trước, sau đó hủy đơn đăng ký.",
+            cancelNotFound: "Đơn đăng ký đã bị hủy hoặc không còn tồn tại.",
             refreshing: "Đang cập nhật...",
             total: "Tổng số đơn",
             pending: "Chờ duyệt",
@@ -226,6 +229,9 @@ export default function AttendanceLeavePage() {
             cancelSuccess: "휴무 신청이 취소되었습니다.",
             approveSuccess: "휴무 승인이 완료되었습니다.",
             cancelApprovalSuccess: "휴무 승인이 취소되었습니다.",
+            cancelForbidden: "이 휴무 신청을 취소할 권한이 없습니다.",
+            cancelApprovalFirst: "승인을 먼저 취소한 후 신청을 취소해 주세요.",
+            cancelNotFound: "이미 취소되었거나 존재하지 않는 신청입니다.",
             refreshing: "갱신 중...",
             total: "전체 신청",
             pending: "승인 대기",
@@ -369,6 +375,16 @@ export default function AttendanceLeavePage() {
 
     const result = await response.json().catch(() => null);
     if (!response.ok || !result?.ok) {
+      if (body.action === LEAVE_ACTION.CANCEL_REQUEST) {
+        if (response.status === 403) throw new Error(copy.cancelForbidden);
+        if (response.status === 404) throw new Error(copy.cancelNotFound);
+        if (
+          response.status === 409 &&
+          result?.code === "APPROVAL_MUST_BE_CANCELLED_FIRST"
+        ) {
+          throw new Error(copy.cancelApprovalFirst);
+        }
+      }
       throw new Error(result?.message || c.errorDefault);
     }
     return result as { record?: AttendanceRecord; message?: string };
@@ -498,7 +514,8 @@ export default function AttendanceLeavePage() {
     }
   };
 
-  const handleCancelPendingLeave = async (recordId: number) => {
+  const handleCancelPendingLeave = async (record: AttendanceRecord) => {
+    const recordId = record.id;
     const actionKey = `record-${recordId}`;
     if (pendingActionKeysRef.current.has(actionKey)) return;
 
@@ -507,11 +524,20 @@ export default function AttendanceLeavePage() {
 
     if (!beginAction(actionKey)) return;
     try {
-      const result = await postLeaveAction("/api/attendance/leave", {
-        action: LEAVE_ACTION.CANCEL,
-        record_id: recordId,
-        language: lang,
-      });
+      const isOwnRequest =
+        normalizeId(record.user_id) === normalizeId(currentUser?.id);
+      const result = await postLeaveAction(
+        isOwnRequest
+          ? "/api/attendance/leave"
+          : "/api/attendance/leave-admin",
+        {
+          action: isOwnRequest
+            ? LEAVE_ACTION.CANCEL
+            : LEAVE_ACTION.CANCEL_REQUEST,
+          record_id: recordId,
+          language: lang,
+        }
+      );
       const currentRecord = leaveRecords.find((record) => record.id === recordId);
       if (result.record) removeRecord(result.record);
       else if (currentRecord) removeRecord(currentRecord);
@@ -916,7 +942,7 @@ export default function AttendanceLeavePage() {
                                   cursor: isRecordBusy ? "not-allowed" : "pointer",
                                 }}
                                 disabled={isRecordBusy}
-                                onClick={() => handleCancelPendingLeave(record.id)}
+                                onClick={() => handleCancelPendingLeave(record)}
                               >
                                 {isRecordBusy ? t.processing : t.cancelRequest}
                               </button>

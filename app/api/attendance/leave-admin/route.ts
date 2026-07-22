@@ -6,6 +6,7 @@ import {
   LEAVE_ACTION,
 } from "@/lib/attendance/status";
 import { isAttendanceAdminRole } from "@/lib/attendance/api-policy";
+import { getAdminLeaveCancellationDecision } from "@/lib/attendance/mutation-policy";
 import {
   attendanceAuthFailure,
   attendanceJson,
@@ -21,6 +22,10 @@ const messages = {
     noTarget: "처리된 휴무 신청이 없습니다.",
     successApprove: "휴무 승인되었습니다.",
     successCancelApproval: "휴무 승인이 취소되었습니다.",
+    successCancelRequest: "휴무 신청을 취소했습니다.",
+    cancelApprovalFirst: "승인을 먼저 취소한 후 신청을 취소해 주세요.",
+    cancelNotFound: "이미 취소되었거나 존재하지 않는 신청입니다.",
+    invalidCancelState: "현재 상태에서는 휴무 신청을 취소할 수 없습니다.",
     exception: "휴무 승인 처리 중 오류가 발생했습니다.",
   },
   vi: {
@@ -31,6 +36,10 @@ const messages = {
     noTarget: "Không có yêu cầu nghỉ nào được xử lý.",
     successApprove: "Đã duyệt ngày nghỉ.",
     successCancelApproval: "Đã hủy duyệt ngày nghỉ.",
+    successCancelRequest: "Đã hủy đơn đăng ký nghỉ.",
+    cancelApprovalFirst: "Vui lòng hủy phê duyệt trước, sau đó hủy đơn đăng ký.",
+    cancelNotFound: "Đơn đăng ký đã bị hủy hoặc không còn tồn tại.",
+    invalidCancelState: "Không thể hủy đơn nghỉ ở trạng thái hiện tại.",
     exception: "Đã xảy ra lỗi khi xử lý duyệt nghỉ.",
   },
 } as const;
@@ -140,6 +149,94 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ok: true,
         message: messages[lang].successCancelApproval,
+        record: data,
+      });
+    }
+
+    if (action === LEAVE_ACTION.CANCEL_REQUEST) {
+      const attendanceId =
+        typeof record_id === "number" ? record_id : Number.NaN;
+      if (!Number.isSafeInteger(attendanceId) || attendanceId <= 0) {
+        return attendanceJson(
+          { ok: false, code: "INVALID_LEAVE_REQUEST", message: messages[lang].missingRecord },
+          400
+        );
+      }
+
+      const { data: targetRecord, error: targetError } = await supabaseServer
+        .from("attendance_records")
+        .select("id,status,approval_status")
+        .eq("id", attendanceId)
+        .maybeSingle();
+
+      if (targetError) {
+        console.error("leave admin cancel target error:", targetError);
+        return attendanceJson(
+          { ok: false, code: "LEAVE_REQUEST_CANCEL_FAILED", message: messages[lang].updateError },
+          500
+        );
+      }
+
+      const decision = getAdminLeaveCancellationDecision(targetRecord);
+      if (!decision.ok) {
+        const message =
+          decision.code === "APPROVAL_MUST_BE_CANCELLED_FIRST"
+            ? messages[lang].cancelApprovalFirst
+            : decision.code === "LEAVE_REQUEST_NOT_FOUND"
+              ? messages[lang].cancelNotFound
+              : messages[lang].invalidCancelState;
+        return attendanceJson({ ok: false, code: decision.code, message }, decision.status);
+      }
+
+      const { data, error } = await supabaseServer
+        .from("attendance_records")
+        .delete()
+        .eq("id", attendanceId)
+        .eq("status", ATTENDANCE_STATUS.LEAVE)
+        .or(`approval_status.eq.${APPROVAL_STATUS.PENDING},approval_status.is.null`)
+        .select(MUTATION_RECORD_FIELDS)
+        .maybeSingle();
+
+      if (error) {
+        console.error("leave admin cancel request error:", error);
+        return attendanceJson(
+          { ok: false, code: "LEAVE_REQUEST_CANCEL_FAILED", message: messages[lang].updateError },
+          500
+        );
+      }
+
+      if (!data) {
+        const { data: currentRecord, error: currentError } = await supabaseServer
+          .from("attendance_records")
+          .select("status,approval_status")
+          .eq("id", attendanceId)
+          .maybeSingle();
+
+        if (currentError) {
+          console.error("leave admin cancel conflict check error:", currentError);
+          return attendanceJson(
+            { ok: false, code: "LEAVE_REQUEST_CANCEL_FAILED", message: messages[lang].updateError },
+            500
+          );
+        }
+
+        const currentDecision = getAdminLeaveCancellationDecision(currentRecord);
+        const code = currentDecision.ok
+          ? "LEAVE_REQUEST_STATE_CHANGED"
+          : currentDecision.code;
+        const status = currentDecision.ok ? 409 : currentDecision.status;
+        const message =
+          code === "LEAVE_REQUEST_NOT_FOUND"
+            ? messages[lang].cancelNotFound
+            : code === "APPROVAL_MUST_BE_CANCELLED_FIRST"
+              ? messages[lang].cancelApprovalFirst
+              : messages[lang].invalidCancelState;
+        return attendanceJson({ ok: false, code, message }, status);
+      }
+
+      return attendanceJson({
+        ok: true,
+        message: messages[lang].successCancelRequest,
         record: data,
       });
     }

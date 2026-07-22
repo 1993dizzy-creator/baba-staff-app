@@ -29,6 +29,14 @@ test("staff controls remain own-record only while admin record actions stay gate
   assert.doesNotMatch(page, /user_id: currentUser\.id/);
   assert.doesNotMatch(page, /admin_id: currentUser\?\.id/);
   assert.match(page, /attendanceFetch\(url/);
+  assert.match(
+    page,
+    /normalizeId\(record\.user_id\) === normalizeId\(currentUser\?\.id\)/
+  );
+  assert.match(page, /LEAVE_ACTION\.CANCEL_REQUEST/);
+  assert.match(page, /copy\.cancelForbidden/);
+  assert.match(page, /copy\.cancelApprovalFirst/);
+  assert.match(page, /copy\.cancelNotFound/);
 });
 
 test("pending leave remains ordered before approved leave for every viewer", () => {

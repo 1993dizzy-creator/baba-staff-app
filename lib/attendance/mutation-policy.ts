@@ -11,6 +11,33 @@ export function canCancelOwnLeave(input: {
   return Number(input.recordUserId) === input.actorId;
 }
 
+export type AdminLeaveCancellationRecord = {
+  status: string;
+  approval_status: string | null;
+};
+
+export function getAdminLeaveCancellationDecision(
+  record: AdminLeaveCancellationRecord | null
+) {
+  if (!record) {
+    return { ok: false as const, status: 404 as const, code: "LEAVE_REQUEST_NOT_FOUND" as const };
+  }
+  if (record.status !== "leave") {
+    return { ok: false as const, status: 409 as const, code: "INVALID_LEAVE_REQUEST_STATE" as const };
+  }
+  if (record.approval_status === "approved") {
+    return {
+      ok: false as const,
+      status: 409 as const,
+      code: "APPROVAL_MUST_BE_CANCELLED_FIRST" as const,
+    };
+  }
+  if (record.approval_status !== null && record.approval_status !== "pending") {
+    return { ok: false as const, status: 409 as const, code: "INVALID_LEAVE_REQUEST_STATE" as const };
+  }
+  return { ok: true as const };
+}
+
 export function getNormalizedLatePatch(
   record: LateNormalizationRecord,
   updatedAt: string
