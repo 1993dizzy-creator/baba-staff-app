@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { toNumber, roundDecimal } from "@/lib/inventory/number";
-import { getSnapshotDate } from "@/lib/inventory/business-day";
+import { resolveInventoryPreviousBusinessDate } from "@/lib/inventory/inventory-business-time";
 
 const formatSnapshotDisplayDate = (value: string) => {
   const d = new Date(value);
@@ -134,7 +134,7 @@ export async function GET(request: Request) {
 
     const supabase = createSupabaseAdmin();
 
-    const snapshotDate = getSnapshotDate();
+    const { businessDate: snapshotDate } = await resolveInventoryPreviousBusinessDate();
 
     const { data: existingBatch, error: existingBatchError } = await supabase
       .from("inventory_snapshot_batches")

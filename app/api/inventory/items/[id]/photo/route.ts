@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { getBusinessDate } from "@/lib/common/business-time";
+import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 
 const INVENTORY_IMAGE_BUCKET = "inventory-images";
 const MAX_UPLOAD_BYTES = 120 * 1024;
@@ -175,7 +175,7 @@ const insertPhotoLog = async ({
       new_low_stock_threshold: item.low_stock_threshold ?? 1,
       reason: "other",
       source: "photo",
-      business_date: getBusinessDate(),
+      business_date: (await resolveInventoryBusinessDate()).businessDate,
     },
   ]);
 

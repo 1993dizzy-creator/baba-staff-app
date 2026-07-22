@@ -11,6 +11,9 @@ const page = read("app/(protected)/admin/settings/store/page.tsx");
 const login = read("app/api/login/route.ts");
 const logout = read("app/api/logout/route.ts");
 const session = read("lib/auth/server-session.ts");
+const token = read("lib/auth/session-token.ts");
+const sessionRoute = read("app/api/session/route.ts");
+const commonAuth = read("lib/auth/server-auth.ts");
 const barAuth = read("lib/bar/server-auth.ts");
 
 test("store settings actor comes only from the HttpOnly server session", () => {
@@ -57,7 +60,16 @@ test("login issues and logout clears the shared HttpOnly session", () => {
   assert.match(session, /httpOnly: true/);
   assert.match(session, /sameSite: "lax"/);
   assert.match(session, /path: "\/"/);
-  assert.match(session, /BABA_SESSION_MAX_AGE_SECONDS = 60 \* 60 \* 24 \* 7/);
+  assert.match(session, /secure: process\.env\.NODE_ENV === "production"/);
+  assert.match(token, /BABA_SESSION_IDLE_SECONDS = 60 \* 60 \* 24 \* 30/);
+  assert.match(token, /BABA_SESSION_ABSOLUTE_SECONDS = 60 \* 60 \* 24 \* 180/);
+  assert.match(session, /if \(!isServerSessionConfigured\(\)\)/);
+  assert.match(session, /createServerSessionPayload\(userId, now\)/);
+  assert.match(session, /setServerSessionPayloadCookie\(response, payload, now\)/);
+  assert.match(sessionRoute, /refreshServerSessionCookie\(response, auth\.session\)/);
+  assert.match(commonAuth, /\.eq\("id", session\.uid\)/);
+  assert.match(commonAuth, /data\.is_active !== true/);
+  assert.match(session, /sessionCookieOptions\(0\)/);
   assert.match(page, /requireFreshServerSession\(res\)/);
   assert.doesNotMatch(barAuth, /readServerSession|baba_session/);
 });

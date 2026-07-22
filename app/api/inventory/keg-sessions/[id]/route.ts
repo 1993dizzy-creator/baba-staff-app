@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import {
-  BUSINESS_TIMEZONE_OFFSET,
-  getBusinessDate,
-} from "@/lib/common/business-time";
+import { BUSINESS_TIMEZONE_OFFSET } from "@/lib/common/business-time";
+import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -115,7 +113,7 @@ export async function PATCH(
       );
     }
 
-    const businessDate = getBusinessDate(startedAt);
+    const businessDate = (await resolveInventoryBusinessDate(startedAt)).businessDate;
     const startedAtIso = startedAt.toISOString();
 
     const { error: updateError } = await supabaseAdmin

@@ -15,6 +15,12 @@ type MeResponse = {
   error?: string;
 };
 
+type SessionResponse = {
+  authenticated: boolean;
+  user?: CachedUser;
+  code?: string;
+};
+
 const REFRESH_THROTTLE_MS = 60 * 1000;
 const USER_UPDATED_EVENT = "baba_user_updated";
 
@@ -66,26 +72,52 @@ export default function UserSessionRefresher() {
       lastRefreshAtRef.current = now;
 
       try {
-        const res = await fetch(
-          `/api/me?username=${encodeURIComponent(username)}`,
-          {
-            cache: "no-store",
-          }
-        );
+        const sessionResponse = await fetch("/api/session", {
+          cache: "no-store",
+        });
+        const sessionResult = (await sessionResponse
+          .json()
+          .catch(() => null)) as SessionResponse | null;
 
-        const result = (await res.json().catch(() => null)) as MeResponse | null;
+        let result: MeResponse | SessionResponse | null = sessionResult;
+        let responseStatus = sessionResponse.status;
 
-        if (res.status === 403 || res.status === 404) {
+        // Transitional compatibility: an expired or missing legacy cookie must
+        // not interrupt attendance before attendance APIs require server auth.
+        if (sessionResponse.status === 401) {
+          const legacyResponse = await fetch(
+            `/api/me?username=${encodeURIComponent(username)}`,
+            { cache: "no-store" }
+          );
+          result = (await legacyResponse
+            .json()
+            .catch(() => null)) as MeResponse | null;
+          responseStatus = legacyResponse.status;
+        }
+
+        if (responseStatus === 403 || responseStatus === 404) {
           await redirectToLogin();
           return;
         }
 
-        if (!res.ok || !result?.ok || !result.user) {
-          console.warn("Failed to refresh baba_user", result?.error);
+        const succeeded = Boolean(
+          result &&
+            (("authenticated" in result && result.authenticated === true) ||
+              ("ok" in result && result.ok === true))
+        );
+        if (responseStatus >= 400 || !succeeded || !result?.user) {
+          let errorCode: string | undefined;
+          if (result && "error" in result) errorCode = result.error;
+          else if (result && "code" in result) errorCode = result.code;
+          console.warn(
+            "Failed to refresh baba_user",
+            errorCode
+          );
           return;
         }
 
         const nextUser = {
+          ...cachedUser,
           ...result.user,
           language: cachedUser?.language ?? result.user.language,
         };

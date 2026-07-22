@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getBusinessDate } from "@/lib/common/business-time";
+import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
+import { addStoreDays } from "@/lib/store-settings/business-time-core";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -49,13 +51,10 @@ const getDaysBetweenBusinessDates = (fromDateKey: string, toDateKey: string) => 
   return Math.max(0, Math.floor((toTime - fromTime) / 86_400_000));
 };
 
-const addDaysToBusinessDateKey = (dateKey: string, days: number) => {
-  const date = new Date(`${dateKey}T12:00:00+07:00`);
-  date.setUTCDate(date.getUTCDate() + days);
-
-  return getBusinessDate(date);
-};
-
+// Fallback only, for legacy inventory_logs rows saved before business_date
+// existed on this table. This runs once per row inside a loop, so it
+// deliberately uses the plain legacy cutoff calculation instead of an async
+// store-settings lookup (see resolveInventoryBusinessDate's doc comment).
 const getStockCheckDateKey = (log: StockCheckLogRow) => {
   if (log.business_date) return String(log.business_date);
   if (!log.created_at) return null;
@@ -85,7 +84,7 @@ const fetchRecentSaleDeductionItemIds = async (
   const activeItemIds = new Set<number>();
   if (itemIds.length === 0) return activeItemIds;
 
-  const fromBusinessDate = addDaysToBusinessDateKey(
+  const fromBusinessDate = addStoreDays(
     currentBusinessDate,
     -SALE_DEDUCTION_ACTIVE_LOOKBACK_DAYS
   );
@@ -196,7 +195,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, statusMap: {} });
     }
 
-    const currentBusinessDate = getBusinessDate();
+    const currentBusinessDate = (await resolveInventoryBusinessDate()).businessDate;
     const saleDeductionActiveItemIds = await fetchRecentSaleDeductionItemIds(
       itemIds,
       currentBusinessDate

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { getBusinessDate } from "@/lib/common/business-time";
+import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 import {
   type InventoryReasonValue,
   normalizeInventoryReason,
@@ -185,8 +185,6 @@ const getSupplierLabel = (supplier?: string | null) => {
   const trimmed = supplier?.trim();
   return trimmed || null;
 };
-
-const getDefaultMonth = () => getBusinessDate().slice(0, 7);
 
 const isValidMonth = (value: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
 
@@ -585,20 +583,25 @@ const fetchMonthlyInventoryLogs = async (
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const month = searchParams.get("month") || getDefaultMonth();
-
-  if (!isValidMonth(month)) {
-    return NextResponse.json(
-      { ok: false, message: "Invalid month format. Use YYYY-MM." },
-      { status: 400 }
-    );
-  }
+  const requestedMonth = searchParams.get("month");
 
   try {
+    // Single settings lookup per request: the current businessDate is needed
+    // both to default an unspecified month and to cap "this month" at today
+    // instead of the full calendar month-end.
+    const { businessDate: currentBusinessDate } = await resolveInventoryBusinessDate();
+    const currentMonth = currentBusinessDate.slice(0, 7);
+    const month = requestedMonth || currentMonth;
+
+    if (!isValidMonth(month)) {
+      return NextResponse.json(
+        { ok: false, message: "Invalid month format. Use YYYY-MM." },
+        { status: 400 }
+      );
+    }
+
     const { monthStart, monthEnd } = getMonthRange(month);
-    const currentMonth = getDefaultMonth();
     const isCurrentMonth = month === currentMonth;
-    const currentBusinessDate = getBusinessDate();
     const toDate = isCurrentMonth ? currentBusinessDate : monthEnd;
 
     const baselineBatchQuery = supabaseAdmin

@@ -9,7 +9,7 @@ import {
   normalizeInventoryCode,
   normalizeInventoryName,
 } from "@/lib/inventory/normalize";
-import { getBusinessDate } from "@/lib/common/business-time";
+import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
 import {
   type InventoryReasonValue,
@@ -251,7 +251,8 @@ const insertInventoryLog = async (
     businessDate?: string;
   }
 ) => {
-  const businessDate = meta.businessDate ?? getBusinessDate();
+  const businessDate =
+    meta.businessDate ?? (await resolveInventoryBusinessDate()).businessDate;
   const logPayload = {
     ...payload,
     reason: meta.reason,
@@ -422,7 +423,7 @@ export async function POST(req: Request) {
         ? getReasonByRegistrationType(registrationType)
         : normalizeInventoryReason(reason, "unclassified");
 
-    const businessDate = getBusinessDate();
+    const businessDate = (await resolveInventoryBusinessDate()).businessDate;
 
     await insertInventoryLog(
       {
@@ -737,7 +738,7 @@ export async function PATCH(req: Request) {
           : fallbackLogReason;
     const logSource = mode === "quick-save" ? "quick_save" : "edit_form";
 
-    const businessDate = getBusinessDate();
+    const businessDate = (await resolveInventoryBusinessDate()).businessDate;
 
     await insertInventoryLog(
       {

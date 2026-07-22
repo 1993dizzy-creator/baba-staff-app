@@ -9,7 +9,6 @@ import { useLanguage } from "@/lib/language-context";
 import { commonText } from "@/lib/text";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import { INVENTORY_REASON_EMOJIS } from "@/lib/inventory/reasons";
-import { getBusinessDate } from "@/lib/common/business-time";
 
 type MonthlyItemStatus = "existing" | "new" | "missing";
 
@@ -325,8 +324,6 @@ const monthlyText = {
   },
 } as const;
 
-const getVietnamMonth = () => getBusinessDate().slice(0, 7);
-
 const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 3,
 });
@@ -498,7 +495,11 @@ export default function InventoryMonthlyPage() {
   const pathname = usePathname();
   const inventoryTabs = getInventoryTabs(pathname, lang);
 
-  const [selectedMonth, setSelectedMonth] = useState(getVietnamMonth);
+  // Empty means "let the server resolve the current business month" — the
+  // client never computes the 03:00/Asia-Ho_Chi_Minh cutoff itself. The fetch
+  // effect below omits the month query param in that case and syncs state
+  // from the API's resolved month once the response arrives.
+  const [selectedMonth, setSelectedMonth] = useState("");
   const [data, setData] = useState<MonthlyInventoryResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -515,7 +516,8 @@ export default function InventoryMonthlyPage() {
       setError("");
 
       try {
-        const res = await fetch(`/api/inventory/monthly?month=${selectedMonth}`, {
+        const query = selectedMonth ? `?month=${selectedMonth}` : "";
+        const res = await fetch(`/api/inventory/monthly${query}`, {
           cache: "no-store",
         });
         const json = (await res.json()) as MonthlyInventoryResponse | ErrorResponse;
@@ -533,6 +535,10 @@ export default function InventoryMonthlyPage() {
           setExpandedSupplierKeys({});
           setExpandedParts({});
           setExpandedItemIds({});
+
+          if (!selectedMonth && json.month) {
+            setSelectedMonth(json.month);
+          }
         }
       } catch (fetchError) {
         console.error(fetchError);

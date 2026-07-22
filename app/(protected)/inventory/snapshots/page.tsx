@@ -10,7 +10,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import {PART_VALUES,PART_META,type PartValue,} from "@/lib/common/parts";
 import { formatDecimalDisplay } from "@/lib/inventory/number";
-import { getBusinessDate } from "@/lib/common/business-time";
 import {
     INVENTORY_REASON_EMOJIS,
     INVENTORY_REASON_LABELS,
@@ -249,21 +248,12 @@ const buildDailyNetPurchasedItems = (items: SnapshotItem[]) => {
         .filter((item) => Number(item.change_quantity ?? 0) > 0);
 };
 
-function getInventoryBusinessDateKey(date = new Date()) {
-    return getBusinessDate(date);
-}
-
-function getInventoryBusinessMonthKey(date = new Date()) {
-    return getInventoryBusinessDateKey(date).slice(0, 7);
-}
-
 export default function InventorySnapshotsPage() {
     const { lang } = useLanguage();
     const t = inventoryText[lang];
     const c = commonText[lang];
     const currentBusinessDateLabel =
         lang === "vi" ? "Ngày kinh doanh hiện tại" : "현재 영업일";
-    const activeBusinessDateKey = getInventoryBusinessDateKey();
     const router = useRouter();
 
     const [batchList, setBatchList] = useState<SnapshotBatch[]>([]);
@@ -276,7 +266,11 @@ export default function InventorySnapshotsPage() {
     const [loadingItems, setLoadingItems] = useState(false);
     const [categoryFilter, setCategoryFilter] = useState("all");
     const [showChangedOnly, setShowChangedOnly] = useState(false);
-    const [calendarMonth, setCalendarMonth] = useState(() => getInventoryBusinessMonthKey());
+    // Empty means "let the server resolve the current business date/month" —
+    // the client never computes the 03:00/Asia-Ho_Chi_Minh cutoff itself.
+    // fetchBatches below syncs both from the API response once it arrives.
+    const [activeBusinessDateKey, setActiveBusinessDateKey] = useState("");
+    const [calendarMonth, setCalendarMonth] = useState("");
     const [purchaseDateMap, setPurchaseDateMap] = useState<Record<string, boolean>>({});
     const [supplierTab, setSupplierTab] = useState("all");
     const [movementItems, setMovementItems] = useState<SnapshotItem[]>([]);
@@ -510,6 +504,7 @@ export default function InventorySnapshotsPage() {
                     ok?: boolean;
                     batches?: SnapshotBatch[];
                     purchaseDateMap?: Record<string, boolean>;
+                    currentBusinessDate?: string;
                     error?: string;
                     message?: string;
                 }
@@ -537,8 +532,16 @@ export default function InventorySnapshotsPage() {
             setSelectedBatchId(null);
             setPurchaseDateMap(json.purchaseDateMap || {});
 
-            if (!calendarMonth && nextBatches[0]?.snapshot_date) {
-                setCalendarMonth(nextBatches[0].snapshot_date.slice(0, 7));
+            if (!activeBusinessDateKey && json.currentBusinessDate) {
+                setActiveBusinessDateKey(json.currentBusinessDate);
+            }
+
+            if (!calendarMonth) {
+                if (json.currentBusinessDate) {
+                    setCalendarMonth(json.currentBusinessDate.slice(0, 7));
+                } else if (nextBatches[0]?.snapshot_date) {
+                    setCalendarMonth(nextBatches[0].snapshot_date.slice(0, 7));
+                }
             }
         } catch (error) {
             console.warn("[inventory/snapshots] fetchBatches exception", {
@@ -552,7 +555,7 @@ export default function InventorySnapshotsPage() {
         } finally {
             setLoadingBatches(false);
         }
-    }, [calendarMonth]);
+    }, [calendarMonth, activeBusinessDateKey]);
 
     const fetchSnapshotItems = async (
         batchId: number | string | null | undefined
@@ -1016,7 +1019,6 @@ export default function InventorySnapshotsPage() {
     };
 
     useEffect(() => {
-        if (!calendarMonth) return;
         fetchBatches(calendarMonth);
     }, [calendarMonth, fetchBatches]);
 
@@ -1042,7 +1044,7 @@ export default function InventorySnapshotsPage() {
     }, [viewMode, batchList, selectedBatchId]);
 
     useEffect(() => {
-        if (viewMode !== "current") return;
+        if (viewMode !== "current" || !activeBusinessDateKey) return;
         fetchMovementItems(activeBusinessDateKey);
     }, [viewMode, activeBusinessDateKey, fetchMovementItems]);
 

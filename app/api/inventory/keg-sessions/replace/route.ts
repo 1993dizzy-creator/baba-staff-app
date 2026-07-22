@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import {
-  BUSINESS_TIMEZONE_OFFSET,
-  getBusinessDate,
-} from "@/lib/common/business-time";
+import { BUSINESS_TIMEZONE_OFFSET } from "@/lib/common/business-time";
+import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -93,7 +91,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const businessDate = getBusinessDate(replacementAt);
+    const businessDate = (await resolveInventoryBusinessDate(replacementAt)).businessDate;
     const { data, error } = await supabaseAdmin.rpc("replace_inventory_keg", {
       p_item_id: itemId,
       p_actor_username: actorUsername,

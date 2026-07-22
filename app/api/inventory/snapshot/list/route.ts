@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -56,6 +57,7 @@ export async function GET(req: Request) {
     }
 
     const supabase = createSupabaseAdmin();
+    const { businessDate: currentBusinessDate } = await resolveInventoryBusinessDate();
 
     const { data: batches, error: batchError } = await supabase
       .from("inventory_snapshot_batches")
@@ -107,6 +109,7 @@ export async function GET(req: Request) {
       ok: true,
       batches: batches ?? [],
       purchaseDateMap,
+      currentBusinessDate,
     });
   } catch (error) {
     const errorCode =
