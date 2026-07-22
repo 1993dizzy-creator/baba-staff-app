@@ -8,7 +8,6 @@ import { useLanguage } from "@/lib/language-context";
 import { layoutText } from "@/lib/text/layout";
 import BottomNav from "@/components/BottomNav";
 import UserSessionRefresher from "@/components/UserSessionRefresher";
-import { supabase } from "@/lib/supabase/client";
 
 function ProtectedLayoutContent({
   children,
@@ -23,6 +22,7 @@ function ProtectedLayoutContent({
   const [isReady, setIsReady] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const leaveAlertShownRef = useRef(false);
+  const leaveAlertRequestRef = useRef<AbortController | null>(null);
 
   const { lang, toggleLang } = useLanguage();
   const t = layoutText[lang];
@@ -85,9 +85,12 @@ function ProtectedLayoutContent({
   }, [router]);
 
   useEffect(() => {
+    const controller = new AbortController();
+
     const checkLeaveAlert = async () => {
       if (!checked || !isReady) return;
       if (leaveAlertShownRef.current) return;
+      if (leaveAlertRequestRef.current) return;
       // Attendance has its own server-session gate. Do not start a direct
       // attendance query before that gate has authenticated the user.
       if (pathname.startsWith("/attendance")) return;
@@ -99,16 +102,37 @@ function ProtectedLayoutContent({
 
       if (sessionStorage.getItem(alertKey) === "true") return;
 
-      const { data, count, error } = await supabase
-        .from("attendance_records")
-        .select("id, work_date", { count: "exact" })
-        .eq("status", "leave")
-        .eq("approval_status", "pending")
-        .order("work_date", { ascending: true })
-        .limit(1);
+      leaveAlertRequestRef.current = controller;
 
-      if (error) return;
-      if (!count || count <= 0) return;
+      let response: Response;
+      try {
+        response = await fetch("/api/attendance/leave-pending-summary", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+      } catch {
+        return;
+      } finally {
+        if (leaveAlertRequestRef.current === controller) {
+          leaveAlertRequestRef.current = null;
+        }
+      }
+
+      if (!response.ok || controller.signal.aborted) return;
+
+      let result: {
+        pendingCount?: number;
+        hasPending?: boolean;
+        oldestWorkDate?: string | null;
+      };
+      try {
+        result = await response.json();
+      } catch {
+        return;
+      }
+      const count = result.pendingCount ?? 0;
+      const data = [{ work_date: result.oldestWorkDate ?? null }];
+      if (!result.hasPending || count <= 0) return;
 
       leaveAlertShownRef.current = true;
       sessionStorage.setItem(alertKey, "true");
@@ -132,6 +156,13 @@ function ProtectedLayoutContent({
     };
 
     checkLeaveAlert();
+
+    return () => {
+      controller.abort();
+      if (leaveAlertRequestRef.current === controller) {
+        leaveAlertRequestRef.current = null;
+      }
+    };
   }, [checked, isReady, pathname, router, lang]);
 
   const handleLogout = async () => {
