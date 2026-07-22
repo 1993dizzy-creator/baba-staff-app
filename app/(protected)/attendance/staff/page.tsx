@@ -239,10 +239,9 @@ export default function AttendanceStaffPage() {
   const handleForceCheckIn = async (user: UserRow, time: string) => {
     if (mutationInFlightRef.current) return;
     mutationInFlightRef.current = true;
-    const me = getUser();
     const workDate = getBusinessDate();
     try {
-      const res = await fetch("/api/attendance/admin", {
+      const res = await attendanceFetch("/api/attendance/admin", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -252,8 +251,6 @@ export default function AttendanceStaffPage() {
           user_id: user.id,
           work_date: workDate,
           time,
-          admin_name: me?.name || "",
-          actorUsername: me?.username || "",
         }),
       });
 
@@ -282,11 +279,10 @@ export default function AttendanceStaffPage() {
   const handleForceCheckOut = async (user: UserRow, time: string) => {
     if (mutationInFlightRef.current) return;
     mutationInFlightRef.current = true;
-    const me = getUser();
     const workDate = getBusinessDate();
 
     try {
-      const res = await fetch("/api/attendance/admin", {
+      const res = await attendanceFetch("/api/attendance/admin", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -296,8 +292,6 @@ export default function AttendanceStaffPage() {
           user_id: user.id,
           work_date: workDate,
           time,
-          admin_name: me?.name || "",
-          actorUsername: me?.username || "",
         }),
       });
 
@@ -326,10 +320,9 @@ export default function AttendanceStaffPage() {
   const handleSetLeave = async (user: UserRow) => {
     if (mutationInFlightRef.current) return;
     mutationInFlightRef.current = true;
-    const me = getUser();
     const workDate = getBusinessDate();
     try {
-      const res = await fetch("/api/attendance/admin", {
+      const res = await attendanceFetch("/api/attendance/admin", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -338,8 +331,6 @@ export default function AttendanceStaffPage() {
           action: "set_leave",
           user_id: user.id,
           work_date: workDate,
-          admin_name: me?.name || "",
-          actorUsername: me?.username || "",
         }),
       });
 

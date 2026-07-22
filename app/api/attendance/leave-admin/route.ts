@@ -5,6 +5,12 @@ import {
   APPROVAL_STATUS,
   LEAVE_ACTION,
 } from "@/lib/attendance/status";
+import { isAttendanceAdminRole } from "@/lib/attendance/api-policy";
+import {
+  attendanceAuthFailure,
+  attendanceJson,
+  requireAttendanceActor,
+} from "@/lib/attendance/server-api";
 
 const messages = {
   ko: {
@@ -30,6 +36,8 @@ const messages = {
 } as const;
 
 type Lang = keyof typeof messages;
+const MUTATION_RECORD_FIELDS =
+  "id,user_id,work_date,status,note,approval_status,approved_by,approved_at,created_at,updated_at";
 
 function getLang(value: unknown): Lang {
   return value === "vi" ? "vi" : "ko";
@@ -39,28 +47,16 @@ export async function POST(req: Request) {
   let lang: Lang = "ko";
 
   try {
+    const auth = await requireAttendanceActor();
+    if (!auth.ok) return attendanceAuthFailure(auth);
+    if (!isAttendanceAdminRole(auth.actor.role)) {
+      return attendanceJson({ ok: false, code: "FORBIDDEN", message: messages[lang].noPermission }, 403);
+    }
+
     const body = await req.json();
     lang = getLang(body.language);
 
-    const { action, record_id, admin_name, admin_id } = body;
-
-    const { data: adminUser, error: adminError } = await supabaseServer
-      .from("users")
-      .select("id, name, role, is_active")
-      .eq("id", admin_id)
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (
-      adminError ||
-      !adminUser ||
-      !["owner", "master"].includes(adminUser.role)
-    ) {
-      return NextResponse.json(
-        { ok: false, message: messages[lang].noPermission },
-        { status: 403 }
-      );
-    }
+    const { action, record_id } = body;
 
     if (!action) {
       return NextResponse.json(
@@ -81,13 +77,13 @@ export async function POST(req: Request) {
         .from("attendance_records")
         .update({
           approval_status: APPROVAL_STATUS.APPROVED,
-          approved_by: adminUser.name ?? admin_name ?? null,
+          approved_by: auth.actor.name || auth.actor.username,
           approved_at: new Date().toISOString(),
         })
         .eq("id", record_id)
         .eq("status", ATTENDANCE_STATUS.LEAVE)
         .or(`approval_status.eq.${APPROVAL_STATUS.PENDING},approval_status.is.null`)
-        .select()
+        .select(MUTATION_RECORD_FIELDS)
         .maybeSingle();
 
       if (error) {
@@ -123,7 +119,7 @@ export async function POST(req: Request) {
         .eq("id", record_id)
         .eq("status", ATTENDANCE_STATUS.LEAVE)
         .eq("approval_status", APPROVAL_STATUS.APPROVED)
-        .select()
+        .select(MUTATION_RECORD_FIELDS)
         .maybeSingle();
 
       if (error) {

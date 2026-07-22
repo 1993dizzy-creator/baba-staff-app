@@ -5,6 +5,13 @@ import {
   APPROVAL_STATUS,
   LEAVE_ACTION,
 } from "@/lib/attendance/status";
+import { validateLeaveRequestTarget } from "@/lib/attendance/api-policy";
+import { canCancelOwnLeave } from "@/lib/attendance/mutation-policy";
+import {
+  attendanceAuthFailure,
+  attendanceJson,
+  requireAttendanceActor,
+} from "@/lib/attendance/server-api";
 
 const messages = {
   ko: {
@@ -40,6 +47,8 @@ const messages = {
 } as const;
 
 type Lang = keyof typeof messages;
+const MUTATION_RECORD_FIELDS =
+  "id,user_id,work_date,status,note,approval_status,approved_by,approved_at,created_at,updated_at";
 
 function getLang(value: unknown): Lang {
   return value === "vi" ? "vi" : "ko";
@@ -49,6 +58,9 @@ export async function POST(req: Request) {
   let lang: Lang = "ko";
 
   try {
+    const auth = await requireAttendanceActor();
+    if (!auth.ok) return attendanceAuthFailure(auth);
+
     const body = await req.json();
     lang = getLang(body.language);
 
@@ -62,12 +74,9 @@ export async function POST(req: Request) {
     }
 
     if (action === LEAVE_ACTION.REQUEST) {
-      if (!user_id) {
-        return NextResponse.json(
-          { ok: false, message: messages[lang].missingUser },
-          { status: 400 }
-        );
-      }
+      const target = validateLeaveRequestTarget(auth.actor.id, user_id);
+      if (!target.ok) return attendanceJson({ ok: false, code: target.code }, target.status);
+      const userId = target.userId;
 
       if (!work_date) {
         return NextResponse.json(
@@ -79,7 +88,7 @@ export async function POST(req: Request) {
       const { data: existing, error: existingError } = await supabaseServer
         .from("attendance_records")
         .select("id, status, check_in_at")
-        .eq("user_id", user_id)
+        .eq("user_id", userId)
         .eq("work_date", work_date)
         .maybeSingle();
 
@@ -119,13 +128,13 @@ export async function POST(req: Request) {
       const { data, error } = await supabaseServer
         .from("attendance_records")
         .insert({
-          user_id,
+          user_id: userId,
           work_date,
           status: ATTENDANCE_STATUS.LEAVE,
           note: note || "",
           approval_status: APPROVAL_STATUS.PENDING,
         })
-        .select()
+        .select(MUTATION_RECORD_FIELDS)
         .single();
 
       if (error) {
@@ -151,12 +160,40 @@ export async function POST(req: Request) {
         );
       }
 
+      const { data: targetRecord, error: targetError } = await supabaseServer
+        .from("attendance_records")
+        .select("id,user_id,status,approval_status")
+        .eq("id", record_id)
+        .eq("status", ATTENDANCE_STATUS.LEAVE)
+        .maybeSingle();
+
+      if (targetError) {
+        console.error("leave cancel target error:", targetError);
+        return NextResponse.json(
+          { ok: false, message: messages[lang].cancelError },
+          { status: 500 }
+        );
+      }
+      if (!targetRecord) {
+        return NextResponse.json(
+          { ok: false, message: messages[lang].noCancelTarget },
+          { status: 404 }
+        );
+      }
+      if (!canCancelOwnLeave({
+        actorId: auth.actor.id,
+        recordUserId: targetRecord.user_id,
+      })) {
+        return attendanceJson({ ok: false, code: "FORBIDDEN" }, 403);
+      }
+
       const { data, error } = await supabaseServer
         .from("attendance_records")
         .delete()
         .eq("id", record_id)
+        .eq("user_id", auth.actor.id)
         .eq("status", ATTENDANCE_STATUS.LEAVE)
-        .select()
+        .select(MUTATION_RECORD_FIELDS)
         .maybeSingle();
 
       if (error) {

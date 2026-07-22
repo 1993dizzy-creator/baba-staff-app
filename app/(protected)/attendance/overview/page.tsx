@@ -178,11 +178,7 @@ export default function AttendanceOverviewPage() {
 
     const fetchUnresolvedOpenRecords = async () => {
         try {
-            const loginUser = getUser();
-
-            const res = await fetch(
-                `/api/attendance/admin?actorUsername=${encodeURIComponent(loginUser?.username || "")}&lang=${lang}`
-            );
+            const res = await attendanceFetch(`/api/attendance/admin?lang=${lang}`);
 
             const result = await res.json();
 
@@ -205,9 +201,7 @@ export default function AttendanceOverviewPage() {
         setProcessingAction("auto");
 
         try {
-            const loginUser = getUser();
-
-            const res = await fetch("/api/attendance/admin", {
+            const res = await attendanceFetch("/api/attendance/admin", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -217,7 +211,6 @@ export default function AttendanceOverviewPage() {
                     attendance_id: record.id,
                     user_id: record.user_id,
                     work_date: record.work_date,
-                    actorUsername: loginUser?.username || "",
                     lang,
                 }),
             });
@@ -248,9 +241,7 @@ export default function AttendanceOverviewPage() {
         setProcessingAction("delete");
 
         try {
-            const loginUser = getUser();
-
-            const res = await fetch("/api/attendance/admin", {
+            const res = await attendanceFetch("/api/attendance/admin", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -260,7 +251,6 @@ export default function AttendanceOverviewPage() {
                     attendance_id: record.id,
                     user_id: record.user_id,
                     work_date: record.work_date,
-                    actorUsername: loginUser?.username || "",
                     lang,
                 }),
             });

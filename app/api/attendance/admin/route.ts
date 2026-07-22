@@ -16,6 +16,12 @@ import {
   ATTENDANCE_STATUS,
   APPROVAL_STATUS,
 } from "@/lib/attendance/status";
+import { isAttendanceAdminRole } from "@/lib/attendance/api-policy";
+import { getNormalizedLatePatch } from "@/lib/attendance/mutation-policy";
+import {
+  attendanceAuthFailure,
+  requireAttendanceActor,
+} from "@/lib/attendance/server-api";
 
 type Action =
   | "force_check_in"
@@ -26,39 +32,18 @@ type Action =
   | "auto_close_at_01"
   | "delete_orphan_record";
 
-function isAdminActor(user: { role?: string | null } | null) {
-  return user?.role === "owner" || user?.role === "master";
-}
+const MUTATION_RECORD_FIELDS =
+  "id,user_id,work_date,status,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,note,approval_status,approved_by,approved_at,created_at,updated_at";
 
 // 선택한 월과 무관하게, 이전 영업일부터 남아있는 미퇴근 기록을 관리자 화면에서 바로 확인할 수 있도록
 // 별도 조회 엔드포인트로 제공한다. 직원 수만큼 반복 조회하지 않도록 단일 쿼리로 처리한다.
 export async function GET(req: Request) {
   try {
+    const auth = await requireAttendanceActor();
+    if (!auth.ok) return attendanceAuthFailure(auth);
     const { searchParams } = new URL(req.url);
-    const actorUsername = searchParams.get("actorUsername") || "";
     const lang: "ko" | "vi" = searchParams.get("lang") === "vi" ? "vi" : "ko";
-
-    const { data: actor, error: actorError } = await supabaseServer
-      .from("users")
-      .select("id, username, role, is_active")
-      .eq("username", actorUsername)
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (actorError) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message:
-            lang === "vi"
-              ? "Lỗi khi kiểm tra quyền quản lý."
-              : "관리자 권한 확인 중 오류가 발생했습니다.",
-        },
-        { status: 500 }
-      );
-    }
-
-    if (!isAdminActor(actor)) {
+    if (!isAttendanceAdminRole(auth.actor.role)) {
       return NextResponse.json(
         {
           ok: false,
@@ -159,6 +144,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
+    const auth = await requireAttendanceActor();
+    if (!auth.ok) return attendanceAuthFailure(auth);
     const body = await req.json();
 
     const {
@@ -168,8 +155,6 @@ export async function POST(req: Request) {
       time,
       note,
       mark_normal,
-      admin_name,
-      actorUsername,
       lang = "ko", // 🔥 핵심
       check_in_datetime,
       check_out_datetime,
@@ -183,8 +168,6 @@ export async function POST(req: Request) {
       time?: string;
       note?: string;
       mark_normal?: boolean;
-      admin_name?: string;
-      actorUsername?: string;
       lang?: "ko" | "vi";
       check_in_datetime?: string;
       check_out_datetime?: string;
@@ -210,27 +193,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const { data: actor, error: actorError } = await supabaseServer
-      .from("users")
-      .select("id, username, name, role, is_active")
-      .eq("username", actorUsername || "")
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (actorError) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message:
-            lang === "vi"
-              ? "Lỗi khi kiểm tra quyền quản lý."
-              : "관리자 권한 확인 중 오류가 발생했습니다.",
-        },
-        { status: 500 }
-      );
-    }
-
-    if (!isAdminActor(actor)) {
+    if (!isAttendanceAdminRole(auth.actor.role)) {
       return NextResponse.json(
         {
           ok: false,
@@ -321,24 +284,12 @@ export async function POST(req: Request) {
         );
       }
 
-      const normalizedStatus =
-        targetRecord.status === ATTENDANCE_STATUS.EARLY_LEAVE ||
-        Number(targetRecord.early_leave_minutes || 0) > 0
-          ? ATTENDANCE_STATUS.EARLY_LEAVE
-          : targetRecord.check_out_at
-            ? ATTENDANCE_STATUS.DONE
-            : ATTENDANCE_STATUS.WORKING;
-
       const { data, error } = await supabaseServer
         .from("attendance_records")
-        .update({
-          late_minutes: 0,
-          status: normalizedStatus,
-          updated_at: new Date().toISOString(),
-        })
+        .update(getNormalizedLatePatch(targetRecord, new Date().toISOString()))
         .eq("id", targetRecord.id)
         .gt("late_minutes", 0)
-        .select()
+        .select(MUTATION_RECORD_FIELDS)
         .maybeSingle();
 
       if (error) {
@@ -655,7 +606,7 @@ export async function POST(req: Request) {
         work_minutes: 0,
         note: note || "관리자 휴무 처리",
         approval_status: APPROVAL_STATUS.APPROVED,
-        approved_by: admin_name || null,
+        approved_by: auth.actor.name || auth.actor.username,
         approved_at: nowIso,
         updated_at: nowIso,
       };
@@ -665,12 +616,12 @@ export async function POST(req: Request) {
           .from("attendance_records")
           .update(payload)
           .eq("id", existing.id)
-          .select()
+          .select(MUTATION_RECORD_FIELDS)
           .single()
         : await supabaseServer
           .from("attendance_records")
           .insert(payload)
-          .select()
+          .select(MUTATION_RECORD_FIELDS)
           .single();
 
       if (error) {
@@ -710,7 +661,7 @@ export async function POST(req: Request) {
           .from("attendance_records")
           .update({ note: note ?? existing.note ?? null, updated_at: nowIso })
           .eq("id", existing.id)
-          .select()
+          .select(MUTATION_RECORD_FIELDS)
           .single();
 
         if (error) {
@@ -921,13 +872,13 @@ export async function POST(req: Request) {
         ? await supabaseServer
           .from("attendance_records")
           .insert(recordPayload)
-          .select()
+          .select(MUTATION_RECORD_FIELDS)
           .single()
         : await supabaseServer
           .from("attendance_records")
           .update(recordPayload)
           .eq("id", existing.id)
-          .select()
+          .select(MUTATION_RECORD_FIELDS)
           .single();
 
       if (error) {
@@ -1013,7 +964,7 @@ export async function POST(req: Request) {
         })
         .eq("id", existing.id)
         .is("check_out_at", null)
-        .select()
+        .select(MUTATION_RECORD_FIELDS)
         .maybeSingle();
 
       if (error) {
@@ -1125,12 +1076,12 @@ export async function POST(req: Request) {
           .from("attendance_records")
           .update(payload)
           .eq("id", existing.id)
-          .select()
+          .select(MUTATION_RECORD_FIELDS)
           .single()
         : await supabaseServer
           .from("attendance_records")
           .insert(payload)
-          .select()
+          .select(MUTATION_RECORD_FIELDS)
           .single();
 
       if (error) {
@@ -1210,7 +1161,7 @@ export async function POST(req: Request) {
           updated_at: nowIso,
         })
         .eq("id", existing.id)
-        .select()
+        .select(MUTATION_RECORD_FIELDS)
         .single();
 
       if (error) {

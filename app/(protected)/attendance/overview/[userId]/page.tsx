@@ -293,12 +293,11 @@ export default function AttendanceUserDetailPage() {
     }) => {
         if (!user) return;
 
-        const loginUser = getUser();
         setIsSaving(true);
         setMessage("");
 
         try {
-            const res = await fetch("/api/attendance/admin", {
+            const res = await attendanceFetch("/api/attendance/admin", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -313,7 +312,6 @@ export default function AttendanceUserDetailPage() {
                     clear_check_out: clearCheckOut === true,
                     note,
                     is_new: isNew === true,
-                    actorUsername: loginUser?.username || "",
                     lang,
                 }),
             });
@@ -350,12 +348,11 @@ export default function AttendanceUserDetailPage() {
     };
 
     const handleNormalizeLate = async (recordId: number) => {
-        const loginUser = getUser();
         setIsSaving(true);
         setMessage("");
 
         try {
-            const res = await fetch("/api/attendance/admin", {
+            const res = await attendanceFetch("/api/attendance/admin", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -363,7 +360,6 @@ export default function AttendanceUserDetailPage() {
                 body: JSON.stringify({
                     action: "normalize_late",
                     attendance_id: recordId,
-                    actorUsername: loginUser?.username || "",
                     lang,
                 }),
             });
@@ -390,12 +386,11 @@ export default function AttendanceUserDetailPage() {
     const handleSaveLeave = async ({ note, isNew }: { note: string; isNew?: boolean }) => {
         if (!user) return;
 
-        const loginUser = getUser();
         setIsSaving(true);
         setMessage("");
 
         try {
-            const res = await fetch("/api/attendance/admin", {
+            const res = await attendanceFetch("/api/attendance/admin", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -406,8 +401,6 @@ export default function AttendanceUserDetailPage() {
                     work_date: selectedDate,
                     note: note || undefined,
                     is_new: isNew === true,
-                    admin_name: loginUser?.name || "",
-                    actorUsername: loginUser?.username || "",
                     lang,
                 }),
             });

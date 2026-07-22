@@ -74,6 +74,17 @@ export function isAttendanceRole(role: string): role is AttendanceRole {
   return (ATTENDANCE_ROLES as readonly string[]).includes(role);
 }
 
+export function isAttendanceAdminRole(role: string) {
+  return ADMIN_ROLES.has(role);
+}
+
+export function validateLeaveRequestTarget(
+  actorId: number,
+  requestedUserId: unknown
+) {
+  return validateAttendanceActorTarget(actorId, requestedUserId);
+}
+
 export function parsePositiveUserId(value: string | null) {
   if (!value || !/^\d+$/.test(value)) return null;
   const parsed = Number(value);

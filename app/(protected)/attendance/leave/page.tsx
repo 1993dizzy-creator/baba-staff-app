@@ -357,7 +357,7 @@ export default function AttendanceLeavePage() {
   const postLeaveAction = async (url: string, body: Record<string, unknown>) => {
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await attendanceFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -428,7 +428,6 @@ export default function AttendanceLeavePage() {
     try {
       const result = await postLeaveAction("/api/attendance/leave", {
         action: LEAVE_ACTION.REQUEST,
-        user_id: currentUser.id,
         work_date: selectedDate,
         note: reason,
         language: lang,
@@ -456,8 +455,6 @@ export default function AttendanceLeavePage() {
       const result = await postLeaveAction("/api/attendance/leave-admin", {
         action: LEAVE_ACTION.APPROVE,
         record_id: recordId,
-        admin_name: currentUser?.name || currentUser?.username || null,
-        admin_id: currentUser?.id,
         language: lang,
       });
       if (result.record) replaceRecord(result.record);
@@ -483,7 +480,6 @@ export default function AttendanceLeavePage() {
       const result = await postLeaveAction("/api/attendance/leave-admin", {
         action: LEAVE_ACTION.CANCEL_APPROVAL,
         record_id: recordId,
-        admin_id: currentUser?.id,
         language: lang,
       });
       if (result.record) replaceRecord(result.record);

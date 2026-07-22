@@ -26,8 +26,9 @@ test("staff controls remain own-record only while admin record actions stay gate
   );
   assert.match(page, /\{canManageLeave && \(/);
   assert.match(page, /\{!canManageLeave && \(/);
-  assert.match(page, /user_id: currentUser\.id/);
-  assert.match(page, /admin_id: currentUser\?\.id/);
+  assert.doesNotMatch(page, /user_id: currentUser\.id/);
+  assert.doesNotMatch(page, /admin_id: currentUser\?\.id/);
+  assert.match(page, /attendanceFetch\(url/);
 });
 
 test("pending leave remains ordered before approved leave for every viewer", () => {
