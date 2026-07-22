@@ -1,7 +1,9 @@
 "use client";
 
+import { ATTENDANCE_RETURN_PATH_KEY } from "@/lib/auth/attendance-session-transition";
+
 export const BABA_SESSION_EXPIRED_EVENT = "baba_session_expired";
-export const BABA_SESSION_RETURN_PATH_KEY = "baba_session_return_path";
+export const BABA_SESSION_RETURN_PATH_KEY = ATTENDANCE_RETURN_PATH_KEY;
 
 let handlingUnauthorized = false;
 

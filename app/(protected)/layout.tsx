@@ -88,7 +88,9 @@ function ProtectedLayoutContent({
     const checkLeaveAlert = async () => {
       if (!checked || !isReady) return;
       if (leaveAlertShownRef.current) return;
-      if (pathname === "/attendance/leave") return;
+      // Attendance has its own server-session gate. Do not start a direct
+      // attendance query before that gate has authenticated the user.
+      if (pathname.startsWith("/attendance")) return;
 
       const user = getUser();
       if (!isAdmin(user)) return;

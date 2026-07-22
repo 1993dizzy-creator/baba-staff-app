@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
 
 type CachedUser = {
   id?: string | number | null;
@@ -50,10 +51,15 @@ async function redirectToLogin() {
 }
 
 export default function UserSessionRefresher() {
+  const pathname = usePathname();
   const lastRefreshAtRef = useRef(0);
   const inFlightRef = useRef(false);
 
   useEffect(() => {
+    // Attendance has a stricter guard that must treat only /api/session as
+    // authentication. Avoid a duplicate check and the legacy /api/me fallback.
+    if (pathname.startsWith("/attendance")) return;
+
     async function refreshUserSession(force = false) {
       if (inFlightRef.current) return;
 
@@ -154,7 +160,7 @@ export default function UserSessionRefresher() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleFocus);
     };
-  }, []);
+  }, [pathname]);
 
   return null;
 }
