@@ -14,6 +14,7 @@ import { APPROVAL_STATUS, LEAVE_ACTION, } from "@/lib/attendance/status";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
 import { getPositionRank } from "@/lib/common/positions";
 import { getBusinessDate } from "@/lib/common/business-time";
+import { attendanceFetch } from "@/lib/auth/client-session";
 
 type UserRow = {
   id: string | number;
@@ -49,7 +50,7 @@ function requestUsers() {
   const existing = usersRequests.get(requestKey);
   if (existing) return existing;
 
-  const request = fetch("/api/attendance/users")
+  const request = attendanceFetch("/api/attendance/users")
     .then(async (response) => {
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.ok) {
@@ -68,13 +69,14 @@ function requestUsers() {
 }
 
 function requestLeaveRecords(date: Date) {
-  const { startDate, endDate } = getMonthRange(date);
-  const requestKey = `${startDate}:${endDate}:all`;
+  const { startDate } = getMonthRange(date);
+  const month = startDate.slice(0, 7);
+  const requestKey = `${month}:all`;
   const existing = leaveRecordRequests.get(requestKey);
   if (existing) return existing;
 
-  const request = fetch(
-    `/api/attendance/records?status=leave&start_date=${startDate}&end_date=${endDate}`
+  const request = attendanceFetch(
+    `/api/attendance/records?scope=leave_month&month=${month}`
   )
     .then(async (response) => {
       const result = await response.json().catch(() => null);

@@ -31,7 +31,7 @@ test("common 401 foundation deduplicates handling and preserves a return path", 
   const client = read("lib/auth/client-session.ts");
   assert.match(client, /handlingUnauthorized/);
   assert.match(client, /response\.status !== 401/);
-  assert.match(client, /sessionStorage\.setItem\(BABA_SESSION_RETURN_PATH_KEY/);
+  assert.match(client, /saveAttendanceReturnPath\(window\.sessionStorage, returnPath\)/);
   assert.match(client, /localStorage\.removeItem\("baba_user"\)/);
   assert.match(client, /window\.dispatchEvent/);
   assert.match(client, /window\.location\.replace\("\/login"\)/);

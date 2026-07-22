@@ -12,6 +12,7 @@ import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { getUser } from "@/lib/supabase/auth";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 import { getBusinessDate } from "@/lib/common/business-time";
+import { attendanceFetch } from "@/lib/auth/client-session";
 
 
 function formatTodayDate(lang: "ko" | "vi") {
@@ -321,7 +322,7 @@ function requestMonthlyAttendance(input: {
   date: Date;
   force?: boolean;
 }) {
-  const { monthKey, start, end } = getMonthRange(input.date);
+  const { monthKey } = getMonthRange(input.date);
   const requestKey = `${input.userId}:${monthKey}`;
 
   if (!input.force) {
@@ -329,8 +330,8 @@ function requestMonthlyAttendance(input: {
     if (existingRequest) return existingRequest;
   }
 
-  const request: Promise<AttendanceRecord[]> = fetch(
-    `/api/attendance/records?user_id=${input.userId}&start_date=${start}&end_date=${end}`
+  const request: Promise<AttendanceRecord[]> = attendanceFetch(
+    `/api/attendance/records?scope=self_month&month=${monthKey}`
   )
     .then(async (res) => {
       const result = await res.json().catch(() => null);
@@ -449,8 +450,8 @@ function MyAttendance() {
 
       const workDate = getBusinessDate();
 
-      const res = await fetch(
-        `/api/attendance/records?user_id=${user.id}&work_date=${workDate}`
+      const res = await attendanceFetch(
+        `/api/attendance/records?scope=self_day&work_date=${workDate}`
       );
 
       const result = await res.json();
@@ -630,15 +631,12 @@ function MyAttendance() {
 
       let res: Response;
       try {
-        res = await fetch("/api/attendance/check-in", {
+        res = await attendanceFetch("/api/attendance/check-in", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            user_id: user.id,
-            user_name: user.name || user.full_name || "",
-            username: user.username || "",
             language: lang,
             latitude,
             longitude,
@@ -755,15 +753,12 @@ function MyAttendance() {
 
       let res: Response;
       try {
-        res = await fetch("/api/attendance/check-out", {
+        res = await attendanceFetch("/api/attendance/check-out", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            user_id: user.id,
-            user_name: user.name || user.full_name || "",
-            username: user.username || "",
             language: lang,
             latitude,
             longitude,

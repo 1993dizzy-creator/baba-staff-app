@@ -8,6 +8,15 @@ import {
   ATTENDANCE_STATUS,
   APPROVAL_STATUS,
 } from "@/lib/attendance/status";
+import { validateAttendanceActorTarget } from "@/lib/attendance/api-policy";
+import {
+  attendanceAuthFailure,
+  attendanceJson,
+  requireAttendanceActor,
+} from "@/lib/attendance/server-api";
+
+const MUTATION_RECORD_FIELDS =
+  "id,user_id,work_date,status,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status";
 
 const messages = {
   ko: {
@@ -57,25 +66,23 @@ export async function POST(req: Request) {
   let lang: Lang = "ko";
 
   try {
+    const auth = await requireAttendanceActor();
+    if (!auth.ok) return attendanceAuthFailure(auth);
+
     const body = await req.json();
     lang = getLang(body.language);
 
     const {
       user_id,
-      user_name,
-      username,
       latitude,
       longitude,
       distance_m,
       is_location_valid,
     } = body;
 
-    if (!user_id || !user_name || !username) {
-      return NextResponse.json(
-        { ok: false, message: getMessage(lang, "missingUser") },
-        { status: 400 }
-      );
-    }
+    const target = validateAttendanceActorTarget(auth.actor.id, user_id);
+    if (!target.ok) return attendanceJson({ ok: false, code: target.code }, target.status);
+    const userId = target.userId;
 
     if (is_location_valid === false) {
       return NextResponse.json(
@@ -89,8 +96,8 @@ export async function POST(req: Request) {
 
     const { data: user, error: userError } = await supabaseServer
       .from("users")
-      .select("id, name, username, work_start_time, work_end_time, part, position")
-      .eq("id", user_id)
+      .select("id, work_start_time, work_end_time")
+      .eq("id", userId)
       .eq("is_active", true)
       .maybeSingle();
 
@@ -103,16 +110,20 @@ export async function POST(req: Request) {
     }
 
     if (!user) {
-      return NextResponse.json(
-        { ok: false, message: getMessage(lang, "inactiveUser") },
-        { status: 403 }
+      return attendanceJson(
+        {
+          ok: false,
+          code: "RELOGIN_REQUIRED",
+          message: getMessage(lang, "inactiveUser"),
+        },
+        401
       );
     }
 
     const { data: openRecord, error: openRecordError } = await supabaseServer
       .from("attendance_records")
       .select("id, work_date, check_in_at")
-      .eq("user_id", user_id)
+      .eq("user_id", userId)
       .not("check_in_at", "is", null)
       .is("check_out_at", null)
       .order("check_in_at", { ascending: false })
@@ -142,8 +153,8 @@ export async function POST(req: Request) {
 
     const { data: existing, error: existingError } = await supabaseServer
       .from("attendance_records")
-      .select("*")
-      .eq("user_id", user_id)
+      .select("id,status,check_in_at")
+      .eq("user_id", userId)
       .eq("work_date", workDate)
       .maybeSingle();
 
@@ -174,7 +185,7 @@ export async function POST(req: Request) {
     const status = ATTENDANCE_STATUS.WORKING;
 
     const payload = {
-      user_id,
+      user_id: userId,
       work_date: workDate,
       status,
       check_in_at: nowIso,
@@ -190,7 +201,7 @@ export async function POST(req: Request) {
         .from("attendance_records")
         .update(payload)
         .eq("id", existing.id)
-        .select()
+        .select(MUTATION_RECORD_FIELDS)
         .single()
       : await supabaseServer
         .from("attendance_records")
@@ -198,7 +209,7 @@ export async function POST(req: Request) {
           ...payload,
           approval_status: APPROVAL_STATUS.APPROVED,
         })
-        .select()
+        .select(MUTATION_RECORD_FIELDS)
         .single();
 
     if (error) {
@@ -210,9 +221,9 @@ export async function POST(req: Request) {
     }
 
     await supabaseServer.from("attendance_check_logs").insert({
-      user_id: String(user_id),
-      user_name,
-      username,
+      user_id: String(userId),
+      user_name: auth.actor.name,
+      username: auth.actor.username,
       work_date: workDate,
       action: "check_in",
       checked_at: nowIso,

@@ -11,6 +11,7 @@ import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { commonText, attendanceText } from "@/lib/text";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
 import { getPositionRank } from "@/lib/common/positions";
+import { attendanceFetch } from "@/lib/auth/client-session";
 
 
 type UserRow = {
@@ -285,9 +286,10 @@ export default function AttendanceOverviewPage() {
         setIsLoading(true);
 
         try {
-            const { startText, endText } = getMonthRange(currentMonth);
+            const { startText } = getMonthRange(currentMonth);
+            const month = startText.slice(0, 7);
 
-            const userRes = await fetch("/api/attendance/users");
+            const userRes = await attendanceFetch("/api/attendance/users");
             const userResult = await userRes.json();
 
             if (!userRes.ok || !userResult.ok) {
@@ -297,8 +299,8 @@ export default function AttendanceOverviewPage() {
 
             const userData = (userResult.users || []) as UserRow[];
 
-            const recordRes = await fetch(
-                `/api/attendance/records?start_date=${startText}&end_date=${endText}`
+            const recordRes = await attendanceFetch(
+                `/api/attendance/records?scope=admin_overview&month=${month}`
             );
 
             const recordResult = await recordRes.json();

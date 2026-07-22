@@ -12,7 +12,7 @@ test("every role requests the selected month's complete leave records", () => {
   assert.match(page, /requestLeaveRecords\(date: Date\)/);
   assert.match(
     page,
-    /status=leave&start_date=\$\{startDate\}&end_date=\$\{endDate\}/
+    /scope=leave_month&month=\$\{month\}/
   );
   assert.doesNotMatch(page, /userQuery/);
   assert.doesNotMatch(page, /canManageLeave \? undefined : currentUser\?\.id/);

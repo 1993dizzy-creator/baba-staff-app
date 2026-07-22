@@ -113,15 +113,15 @@ test("login consumes the safe path only after a successful login", () => {
   assert.match(login, /router\.replace\(returnPath \|\| \(isAdmin/);
 });
 
-test("attendance APIs and the unauthenticated me route remain unchanged by the guard", () => {
+test("core attendance APIs require their server actor while me remains legacy", () => {
   for (const path of [
     "app/api/attendance/records/route.ts",
     "app/api/attendance/users/route.ts",
     "app/api/attendance/check-in/route.ts",
     "app/api/attendance/check-out/route.ts",
-    "app/api/me/route.ts",
   ]) {
     const source = read(path);
-    assert.doesNotMatch(source, /getAuthenticatedActor|requireRole/);
+    assert.match(source, /requireAttendanceActor/);
   }
+  assert.doesNotMatch(read("app/api/me/route.ts"), /requireAttendanceActor/);
 });

@@ -13,6 +13,7 @@ import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { isLongShiftRecord } from "@/lib/attendance/time";
+import { attendanceFetch } from "@/lib/auth/client-session";
 
 
 type UserRow = {
@@ -133,7 +134,7 @@ export default function AttendanceStaffPage() {
   const fetchUsers = useCallback(async () => {
     let request = usersRequestRef.current;
     if (!request) {
-      request = fetch("/api/attendance/users").then(async (res) => {
+      request = attendanceFetch("/api/attendance/users").then(async (res) => {
         const result = await res.json().catch(() => null);
         if (!res.ok || !result?.ok) {
           throw new Error(result?.message || "ATTENDANCE_USERS_REQUEST_FAILED");
@@ -163,8 +164,8 @@ export default function AttendanceStaffPage() {
     let request = recordsRequestsRef.current.get(workDate);
 
     if (!request) {
-      request = fetch(
-        `/api/attendance/records?work_date=${workDate}`
+      request = attendanceFetch(
+        `/api/attendance/records?scope=staff_today&work_date=${workDate}`
       ).then(async (res) => {
         const result = await res.json().catch(() => null);
         if (!res.ok || !result?.ok) {
