@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { authorizeCron } from "@/lib/pos/cukcuk/sales-sync-cron-shared";
 import { toNumber, roundDecimal } from "@/lib/inventory/number";
 import { resolveInventoryPreviousBusinessDate } from "@/lib/inventory/inventory-business-time";
 
@@ -120,17 +121,15 @@ export async function GET(request: Request) {
       return await getSnapshotListResponse();
     }
 
-    const authHeader = request.headers.get("authorization");
-    const userAgent = request.headers.get("user-agent") || "";
-    const isCron = userAgent.includes("vercel-cron");
-    const expected = `Bearer ${process.env.CRON_SECRET}`;
-
-    if (!isCron && authHeader !== expected) {
+    if (!process.env.CRON_SECRET?.trim()) {
       return NextResponse.json(
-        { ok: false, step: "unauthorized", message: "Unauthorized" },
+        { ok: false, error: "Unauthorized cron request." },
         { status: 401 }
       );
     }
+
+    const guardResponse = authorizeCron(request);
+    if (guardResponse) return guardResponse;
 
     const supabase = createSupabaseAdmin();
 

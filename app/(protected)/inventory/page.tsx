@@ -6,6 +6,7 @@ import { commonText, inventoryText } from "@/lib/text";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
+import { fetchInventoryApi } from "@/lib/inventory/client-auth";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import { usePathname, useSearchParams } from "next/navigation";
 import SubNav from "@/components/SubNav";
@@ -320,8 +321,6 @@ const getPhotoUploadErrorMessage = (error?: string, message?: string) => {
 export default function InventoryPage() {
 
     const currentUser = getUser();
-    const actorName = currentUser?.name || "";
-    const actorUsername = currentUser?.username || "";
     const canDeleteInventoryItem = isAdmin(currentUser);
     const canToggleInventoryActive =
         currentUser?.role === "owner" ||
@@ -1087,7 +1086,6 @@ export default function InventoryPage() {
 
         if (canToggleInventoryActive && showInactiveItems) {
             params.set("includeInactive", "true");
-            params.set("actorUsername", actorUsername);
         }
 
         const url = params.size
@@ -1097,7 +1095,7 @@ export default function InventoryPage() {
 
         try {
             const nextItems = await runDedupeRequest<InventoryItem[]>(requestKey, async () => {
-                const res = await fetch(url, {
+                const res = await fetchInventoryApi(url, {
                     cache: "no-store",
                 });
                 const contentType = res.headers.get("content-type") || "";
@@ -1374,7 +1372,7 @@ export default function InventoryPage() {
         setIsEditReasonSaving(true);
 
         try {
-            const res = await fetch("/api/inventory/items", {
+            const res = await fetchInventoryApi("/api/inventory/items", {
                 method: "PATCH",
                 headers: {
                     "Content-Type": "application/json",
@@ -1382,8 +1380,6 @@ export default function InventoryPage() {
                 body: JSON.stringify({
                     id: editFormPendingSave.id,
                     payload: editFormPendingSave.payload,
-                    actorName,
-                    actorUsername,
                     source: "edit_form",
                     reason,
                 }),
@@ -1440,15 +1436,13 @@ export default function InventoryPage() {
             };
 
             const deleteInventoryItem = async (deleteRelatedHistory = false) => {
-                const res = await fetch(url, {
+                const res = await fetchInventoryApi(url, {
                     method: "DELETE",
                     headers: {
                         "Content-Type": "application/json",
                     },
                     body: JSON.stringify({
                         id,
-                        actorName,
-                        actorUsername,
                         ...(deleteRelatedHistory
                             ? { deleteRelatedHistory: true, deletePosReferences: true }
                             : {}),
@@ -1582,7 +1576,7 @@ export default function InventoryPage() {
         setActiveStatusBusyId(item.id);
 
         try {
-            const res = await fetch("/api/inventory/items", {
+            const res = await fetchInventoryApi("/api/inventory/items", {
                 method: "PATCH",
                 headers: {
                     "Content-Type": "application/json",
@@ -1593,7 +1587,6 @@ export default function InventoryPage() {
                     payload: {
                         is_active: nextIsActive,
                     },
-                    actorUsername,
                 }),
             });
 
@@ -1808,8 +1801,6 @@ export default function InventoryPage() {
                             supplier: normalizedSupplier,
                             code: normalizedCode,
                             updated_at: new Date().toISOString(),
-                            updated_by_name: actorName,
-                            updated_by_username: actorUsername,
                         }
                         : {
                             item_name_vi: normalizedItemName,
@@ -1827,8 +1818,6 @@ export default function InventoryPage() {
                             supplier: normalizedSupplier,
                             code: normalizedCode,
                             updated_at: new Date().toISOString(),
-                            updated_by_name: actorName,
-                            updated_by_username: actorUsername,
                         };
 
                 setEditFormPendingSave({
@@ -1859,8 +1848,6 @@ export default function InventoryPage() {
                             package_content_quantity: nextPackageContentQuantity,
                             package_content_unit: nextPackageContentUnit,
                             updated_at: new Date().toISOString(),
-                            updated_by_name: actorName,
-                            updated_by_username: actorUsername,
                         }
                         : {
                             item_name: "",
@@ -1879,19 +1866,15 @@ export default function InventoryPage() {
                             package_content_quantity: nextPackageContentQuantity,
                             package_content_unit: nextPackageContentUnit,
                             updated_at: new Date().toISOString(),
-                            updated_by_name: actorName,
-                            updated_by_username: actorUsername,
                         };
 
-                const res = await fetch("/api/inventory/items", {
+                const res = await fetchInventoryApi("/api/inventory/items", {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
                     },
                     body: JSON.stringify({
                         payload,
-                        actorName,
-                        actorUsername,
                         registrationType,
                     }),
                 });
@@ -2372,8 +2355,6 @@ export default function InventoryPage() {
             const payload = {
                 quantity: nextQty,
                 updated_at: new Date().toISOString(),
-                updated_by_name: actorName,
-                updated_by_username: actorUsername,
                 ...(reason === "purchase"
                     ? {
                         supplier: normalizedQuickSupplier,
@@ -2386,7 +2367,7 @@ export default function InventoryPage() {
             };
             const savedItemId = quickSaveItem.id;
 
-            const res = await fetch("/api/inventory/items", {
+            const res = await fetchInventoryApi("/api/inventory/items", {
                 method: "PATCH",
                 headers: {
                     "Content-Type": "application/json",
@@ -2395,8 +2376,6 @@ export default function InventoryPage() {
                     mode: "quick-save",
                     id: savedItemId,
                     payload,
-                    actorName,
-                    actorUsername,
                     expectedQuantity: currentQty,
                     reason,
                 }),
@@ -2449,9 +2428,7 @@ export default function InventoryPage() {
         try {
             const formData = new FormData();
             formData.append("file", file);
-            formData.append("actorUsername", actorUsername);
-
-            const res = await fetch(`/api/inventory/items/${itemId}/photo`, {
+            const res = await fetchInventoryApi(`/api/inventory/items/${itemId}/photo`, {
                 method: "POST",
                 body: formData,
             });
@@ -2590,14 +2567,8 @@ export default function InventoryPage() {
         setPhotoCompressionMessage("");
 
         try {
-            const res = await fetch(`/api/inventory/items/${itemId}/photo`, {
+            const res = await fetchInventoryApi(`/api/inventory/items/${itemId}/photo`, {
                 method: "DELETE",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    actorUsername,
-                }),
             });
 
             const result = await res.json();

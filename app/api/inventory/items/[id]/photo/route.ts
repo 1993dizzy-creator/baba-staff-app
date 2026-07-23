@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 
 const INVENTORY_IMAGE_BUCKET = "inventory-images";
@@ -32,9 +33,6 @@ type InventoryPhotoActor = {
   username?: string | null;
 };
 
-const getErrorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : "Server error";
-
 const jsonError = (error: string, message: string, status = 500) =>
   NextResponse.json({ ok: false, error, message }, { status });
 
@@ -66,18 +64,26 @@ const getSupabaseAdmin = () => {
 
 type SupabaseAdmin = NonNullable<ReturnType<typeof getSupabaseAdmin>["client"]>;
 
-const getActor = async (supabaseAdmin: SupabaseAdmin, actorUsername?: string) => {
-  if (!actorUsername) return null;
+const INTERNAL_ERROR_MESSAGE = "Inventory photo request failed";
 
-  const { data, error } = await supabaseAdmin
-    .from("users")
-    .select("id, username, name, role, is_active")
-    .eq("username", actorUsername)
-    .eq("is_active", true)
-    .maybeSingle();
+const getInventoryPhotoActor = async () => {
+  const auth = await getAuthenticatedActor();
 
-  if (error) throw error;
-  return data;
+  if (!auth.ok) {
+    return {
+      actor: null,
+      response: NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      ),
+    };
+  }
+
+  return {
+    // getAuthenticatedActor already confirmed that the current users row is active.
+    actor: { ...auth.actor, is_active: true },
+    response: null,
+  };
 };
 
 const parseItemId = async ({ params }: RouteParams) => {
@@ -184,6 +190,9 @@ const insertPhotoLog = async ({
 
 export async function POST(req: Request, context: RouteParams) {
   try {
+    const { actor, response } = await getInventoryPhotoActor();
+    if (response) return response;
+
     const { client: supabaseAdmin, error: envError, message: envMessage } =
       getSupabaseAdmin();
 
@@ -208,20 +217,6 @@ export async function POST(req: Request, context: RouteParams) {
     }
 
     const file = formData.get("file");
-    const actorUsername = String(formData.get("actorUsername") || "");
-
-    let actor: InventoryPhotoActor | null;
-
-    try {
-      actor = await getActor(supabaseAdmin, actorUsername);
-    } catch (error) {
-      console.error("[INVENTORY_PHOTO_ACTOR_FETCH_ERROR]", error);
-      return jsonError("actor_fetch_failed", getErrorMessage(error), 500);
-    }
-
-    if (!actor) {
-      return jsonError("invalid_user", "Invalid user", 401);
-    }
 
     if (!(file instanceof File)) {
       return jsonError("missing_file", "Missing image file", 400);
@@ -245,7 +240,7 @@ export async function POST(req: Request, context: RouteParams) {
       item = await getInventoryItem(supabaseAdmin, itemId);
     } catch (error) {
       console.error("[INVENTORY_PHOTO_ITEM_FETCH_ERROR]", error);
-      return jsonError("item_fetch_failed", getErrorMessage(error), 500);
+      return jsonError("item_fetch_failed", INTERNAL_ERROR_MESSAGE, 500);
     }
 
     if (!item) {
@@ -268,7 +263,7 @@ export async function POST(req: Request, context: RouteParams) {
         uploadError.message.toLowerCase().includes("bucket")
           ? "storage_bucket_not_found"
           : "storage_upload_failed",
-        uploadError.message,
+        INTERNAL_ERROR_MESSAGE,
         500
       );
     }
@@ -297,7 +292,7 @@ export async function POST(req: Request, context: RouteParams) {
 
       return jsonError(
         "database_update_failed",
-        updateError?.message || "Image path update failed",
+        INTERNAL_ERROR_MESSAGE,
         500
       );
     }
@@ -337,14 +332,17 @@ export async function POST(req: Request, context: RouteParams) {
     });
   } catch (error) {
     console.error("[INVENTORY_PHOTO_POST_ERROR]", error);
-    return jsonError("unexpected_server_error", getErrorMessage(error), 500);
+    return jsonError("unexpected_server_error", INTERNAL_ERROR_MESSAGE, 500);
   }
 }
 
 export const PUT = POST;
 
-export async function DELETE(req: Request, context: RouteParams) {
+export async function DELETE(_req: Request, context: RouteParams) {
   try {
+    const { actor, response } = await getInventoryPhotoActor();
+    if (response) return response;
+
     const { client: supabaseAdmin, error: envError, message: envMessage } =
       getSupabaseAdmin();
 
@@ -359,20 +357,13 @@ export async function DELETE(req: Request, context: RouteParams) {
       return jsonError("invalid_item_id", "Invalid item id", 400);
     }
 
-    const body = await req.json().catch(() => ({}));
-    const actor = await getActor(supabaseAdmin, body.actorUsername);
-
-    if (!actor) {
-      return jsonError("invalid_user", "Invalid user", 401);
-    }
-
     let item: InventoryPhotoItem | null;
 
     try {
       item = await getInventoryItem(supabaseAdmin, itemId);
     } catch (error) {
       console.error("[INVENTORY_PHOTO_ITEM_FETCH_ERROR]", error);
-      return jsonError("item_fetch_failed", getErrorMessage(error), 500);
+      return jsonError("item_fetch_failed", INTERNAL_ERROR_MESSAGE, 500);
     }
 
     if (!item) {
@@ -386,7 +377,7 @@ export async function DELETE(req: Request, context: RouteParams) {
 
       if (removeError) {
         console.error("[INVENTORY_PHOTO_STORAGE_DELETE_ERROR]", removeError);
-        return jsonError("storage_delete_failed", removeError.message, 500);
+        return jsonError("storage_delete_failed", INTERNAL_ERROR_MESSAGE, 500);
       }
     }
 
@@ -406,7 +397,7 @@ export async function DELETE(req: Request, context: RouteParams) {
       console.error("[INVENTORY_PHOTO_DB_UPDATE_ERROR]", updateError);
       return jsonError(
         "database_update_failed",
-        updateError?.message || "Image path update failed",
+        INTERNAL_ERROR_MESSAGE,
         500
       );
     }
@@ -429,6 +420,6 @@ export async function DELETE(req: Request, context: RouteParams) {
     });
   } catch (error) {
     console.error("[INVENTORY_PHOTO_DELETE_ERROR]", error);
-    return jsonError("unexpected_server_error", getErrorMessage(error), 500);
+    return jsonError("unexpected_server_error", INTERNAL_ERROR_MESSAGE, 500);
   }
 }

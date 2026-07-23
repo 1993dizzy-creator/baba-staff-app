@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  getAuthenticatedActor,
+  type AuthenticatedActor,
+} from "@/lib/auth/server-auth";
 import { roundDecimal } from "@/lib/inventory/number";
 import {
   fetchKegProgressByItemId,
@@ -72,19 +76,6 @@ const jsonError = (
     { status }
   );
 
-const getActor = async (actorUsername?: string) => {
-  if (!actorUsername) return null;
-
-  const { data } = await supabaseAdmin
-    .from("users")
-    .select("id, username, name, role, is_active")
-    .eq("username", actorUsername)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  return data;
-};
-
 const canDeleteInventoryItem = (role: unknown) =>
   role === "owner" || role === "master";
 
@@ -96,6 +87,51 @@ const canToggleInventoryItemActiveStatus = (role: unknown) =>
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+
+const INTERNAL_ERROR_MESSAGE = "Inventory request failed";
+
+const authenticatedActorResponse = async () => {
+  const auth = await getAuthenticatedActor();
+
+  if (!auth.ok) {
+    return {
+      actor: null,
+      response: NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      ),
+    };
+  }
+
+  return {
+    // getAuthenticatedActor already confirmed that the current users row is active.
+    actor: { ...auth.actor, is_active: true },
+    response: null,
+  };
+};
+
+const withServerActorMetadata = (
+  payload: Record<string, unknown>,
+  actor: AuthenticatedActor
+): Record<string, unknown> => {
+  const sanitized = { ...payload };
+
+  delete sanitized.actor;
+  delete sanitized.actorId;
+  delete sanitized.actorName;
+  delete sanitized.actorUsername;
+  delete sanitized.actor_id;
+  delete sanitized.actor_name;
+  delete sanitized.actor_username;
+  delete sanitized.updated_by_name;
+  delete sanitized.updated_by_username;
+
+  return {
+    ...sanitized,
+    updated_by_name: actor.name,
+    updated_by_username: actor.username,
+  };
+};
 
 const getSupabaseErrorField = (error: unknown, field: string) => {
   if (!error || typeof error !== "object") return undefined;
@@ -290,10 +326,22 @@ export async function GET(req: Request) {
     const includeInactive = searchParams.get("includeInactive") === "true";
     const includeKegProgress =
       searchParams.get("includeKegProgress") !== "false";
-    const actorUsername = searchParams.get("actorUsername") || "";
-    const actor = includeInactive ? await getActor(actorUsername) : null;
-    const canIncludeInactive =
-      includeInactive && canToggleInventoryItemActiveStatus(actor?.role);
+    let canIncludeInactive = false;
+
+    if (includeInactive) {
+      const { actor, response } = await authenticatedActorResponse();
+      if (response) return response;
+
+      if (!canToggleInventoryItemActiveStatus(actor.role)) {
+        return jsonError(
+          "inventory_item_inactive_list_forbidden",
+          "Inactive inventory items require leader permission.",
+          403
+        );
+      }
+
+      canIncludeInactive = true;
+    }
 
     let query = supabaseAdmin
       .from("inventory")
@@ -363,7 +411,7 @@ export async function GET(req: Request) {
     console.error("[INVENTORY_ITEMS_GET_ERROR]", error);
 
     return NextResponse.json(
-      { ok: false, message: getErrorMessage(error) },
+      { ok: false, error: "inventory_request_failed", message: INTERNAL_ERROR_MESSAGE },
       { status: 500 }
     );
   }
@@ -371,8 +419,11 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
+    const { actor, response } = await authenticatedActorResponse();
+    if (response) return response;
+
     const body = await req.json();
-    const { payload, actorUsername, registrationType, reason } = body;
+    const { payload, registrationType, reason } = body;
 
     if (!payload) {
       return NextResponse.json(
@@ -392,18 +443,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const actor = await getActor(actorUsername);
-
-    if (!actor) {
-      return NextResponse.json(
-        { ok: false, message: "Invalid user" },
-        { status: 401 }
-      );
-    }
+    const serverPayload = withServerActorMetadata(payload, actor);
 
     const duplicateItem = await findDuplicateInventoryItem(
-      payload.item_name_vi,
-      payload.code
+      serverPayload.item_name_vi,
+      serverPayload.code
     );
 
     if (duplicateItem) {
@@ -412,7 +456,7 @@ export async function POST(req: Request) {
 
     const { data: insertedData, error } = await supabaseAdmin
       .from("inventory")
-      .insert([payload])
+      .insert([serverPayload])
       .select()
       .single();
 
@@ -497,7 +541,7 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error("[INVENTORY_POST_ERROR]", error);
     return NextResponse.json(
-      { ok: false, message: getErrorMessage(error) },
+      { ok: false, error: "inventory_request_failed", message: INTERNAL_ERROR_MESSAGE },
       { status: 500 }
     );
   }
@@ -505,12 +549,14 @@ export async function POST(req: Request) {
 
 export async function PATCH(req: Request) {
   try {
+    const { actor, response } = await authenticatedActorResponse();
+    if (response) return response;
+
     const body = await req.json();
     const {
       mode,
       id,
       payload,
-      actorUsername,
       expectedQuantity,
       reason,
     } = body;
@@ -533,14 +579,7 @@ export async function PATCH(req: Request) {
       );
     }
 
-    const actor = await getActor(actorUsername);
-
-    if (!actor) {
-      return NextResponse.json(
-        { ok: false, message: "Invalid user" },
-        { status: 401 }
-      );
-    }
+    const serverPayload = withServerActorMetadata(payload, actor);
 
     if (mode === "active-status") {
       if (!canToggleInventoryItemActiveStatus(actor.role)) {
@@ -551,7 +590,7 @@ export async function PATCH(req: Request) {
         );
       }
 
-      const nextIsActive = payload.is_active;
+      const nextIsActive = serverPayload.is_active;
 
       if (typeof nextIsActive !== "boolean") {
         return jsonError(
@@ -585,6 +624,7 @@ export async function PATCH(req: Request) {
           .update({
             is_active: nextIsActive,
             updated_by_name: actor.name || "",
+            updated_by_username: actor.username || "",
           })
           .eq("id", Number(id))
           .select("*")
@@ -655,13 +695,13 @@ export async function PATCH(req: Request) {
 
     if (mode !== "quick-save") {
       const nextItemNameVi = Object.prototype.hasOwnProperty.call(
-        payload,
+        serverPayload,
         "item_name_vi"
       )
-        ? payload.item_name_vi
+        ? serverPayload.item_name_vi
         : prevItem.item_name_vi;
-      const nextCode = Object.prototype.hasOwnProperty.call(payload, "code")
-        ? payload.code
+      const nextCode = Object.prototype.hasOwnProperty.call(serverPayload, "code")
+        ? serverPayload.code
         : prevItem.code;
       const duplicateItem = await findDuplicateInventoryItem(
         nextItemNameVi,
@@ -679,8 +719,8 @@ export async function PATCH(req: Request) {
         ? normalizeInventoryReason(reason, "stock_check")
         : null;
     const quickSaveNextQuantity =
-      mode === "quick-save" && Object.prototype.hasOwnProperty.call(payload, "quantity")
-        ? roundDecimal(Number(payload.quantity ?? 0))
+      mode === "quick-save" && Object.prototype.hasOwnProperty.call(serverPayload, "quantity")
+        ? roundDecimal(Number(serverPayload.quantity ?? 0))
         : null;
 
     if (
@@ -701,7 +741,7 @@ export async function PATCH(req: Request) {
 
     const { data: updatedItem, error: updateError } = await supabaseAdmin
       .from("inventory")
-      .update(payload)
+      .update(serverPayload)
       .eq("id", Number(id))
       .select(`
     id,
@@ -812,7 +852,7 @@ export async function PATCH(req: Request) {
 
     if (
       mode !== "quick-save" &&
-      Object.prototype.hasOwnProperty.call(payload, "purchase_price")
+      Object.prototype.hasOwnProperty.call(serverPayload, "purchase_price")
     ) {
       await insertInventoryPriceLog({
         supabase: supabaseAdmin,
@@ -832,7 +872,7 @@ export async function PATCH(req: Request) {
   } catch (error) {
     console.error("[INVENTORY_PATCH_ERROR]", error);
     return NextResponse.json(
-      { ok: false, message: getErrorMessage(error) },
+      { ok: false, error: "inventory_request_failed", message: INTERNAL_ERROR_MESSAGE },
       { status: 500 }
     );
   }
@@ -840,10 +880,12 @@ export async function PATCH(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
+    const { actor, response } = await authenticatedActorResponse();
+    if (response) return response;
+
     const body = await req.json();
     const {
       id,
-      actorUsername,
       deleteRelatedHistory,
       deletePosMappings,
       deletePosReferences,
@@ -861,12 +903,6 @@ export async function DELETE(req: Request) {
 
     if (!Number.isFinite(itemId) || itemId <= 0) {
       return jsonError("invalid_item_id", "Invalid id", 400);
-    }
-
-    const actor = await getActor(actorUsername);
-
-    if (!actor) {
-      return jsonError("missing_actor", "Invalid user", 401);
     }
 
     if (!canDeleteInventoryItem(actor.role)) {
@@ -904,7 +940,7 @@ export async function DELETE(req: Request) {
     if (selectError) {
       return jsonError(
         "inventory_item_select_failed",
-        selectError.message,
+        INTERNAL_ERROR_MESSAGE,
         500
       );
     }
@@ -966,7 +1002,7 @@ export async function DELETE(req: Request) {
     if (relatedHistoryCountError) {
       return jsonError(
         "inventory_item_delete_failed",
-        relatedHistoryCountError.message,
+        INTERNAL_ERROR_MESSAGE,
         500
       );
     }
@@ -1022,7 +1058,7 @@ export async function DELETE(req: Request) {
       if (deductionDeleteError) {
         return jsonError(
           "pos_inventory_deductions_delete_failed",
-          deductionDeleteError.message,
+          INTERNAL_ERROR_MESSAGE,
           500,
           relatedHistoryCounts
         );
@@ -1038,7 +1074,7 @@ export async function DELETE(req: Request) {
       if (mappingDeleteError) {
         return jsonError(
           "pos_item_mappings_delete_failed",
-          mappingDeleteError.message,
+          INTERNAL_ERROR_MESSAGE,
           500,
           relatedHistoryCounts
         );
@@ -1054,7 +1090,7 @@ export async function DELETE(req: Request) {
       if (inventoryLogDeleteError) {
         return jsonError(
           "inventory_logs_delete_failed",
-          inventoryLogDeleteError.message,
+          INTERNAL_ERROR_MESSAGE,
           500,
           relatedHistoryCounts
         );
@@ -1070,7 +1106,7 @@ export async function DELETE(req: Request) {
       if (priceLogDeleteError) {
         return jsonError(
           "inventory_price_logs_delete_failed",
-          priceLogDeleteError.message,
+          INTERNAL_ERROR_MESSAGE,
           500,
           relatedHistoryCounts
         );
@@ -1086,7 +1122,7 @@ export async function DELETE(req: Request) {
       if (snapshotItemDeleteError) {
         return jsonError(
           "inventory_snapshot_items_delete_failed",
-          snapshotItemDeleteError.message,
+          INTERNAL_ERROR_MESSAGE,
           500,
           relatedHistoryCounts
         );
@@ -1119,7 +1155,7 @@ export async function DELETE(req: Request) {
 
       return jsonError(
         "inventory_item_delete_failed",
-        deleteError.message,
+        INTERNAL_ERROR_MESSAGE,
         500
       );
     }
@@ -1149,7 +1185,7 @@ export async function DELETE(req: Request) {
     console.error("[INVENTORY_DELETE_ERROR]", error);
     return jsonError(
       "inventory_item_delete_failed",
-      getErrorMessage(error),
+      INTERNAL_ERROR_MESSAGE,
       500
     );
   }
