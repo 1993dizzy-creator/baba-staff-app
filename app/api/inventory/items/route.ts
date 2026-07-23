@@ -322,6 +322,9 @@ const insertInventoryLog = async (
 
 export async function GET(req: Request) {
   try {
+    const { actor, response } = await authenticatedActorResponse();
+    if (response) return response;
+
     const { searchParams } = new URL(req.url);
     const includeInactive = searchParams.get("includeInactive") === "true";
     const includeKegProgress =
@@ -329,9 +332,6 @@ export async function GET(req: Request) {
     let canIncludeInactive = false;
 
     if (includeInactive) {
-      const { actor, response } = await authenticatedActorResponse();
-      if (response) return response;
-
       if (!canToggleInventoryItemActiveStatus(actor.role)) {
         return jsonError(
           "inventory_item_inactive_list_forbidden",

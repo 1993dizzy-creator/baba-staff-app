@@ -1,11 +1,20 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await getAuthenticatedActor();
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
     const { id } = await params;
     const batchId = Number(id);
 
@@ -47,7 +56,7 @@ export async function GET(
 
     if (error) {
       return NextResponse.json(
-        { ok: false, message: error.message },
+        { ok: false, error: "inventory_snapshot_detail_load_failed" },
         { status: 500 }
       );
     }
@@ -56,11 +65,11 @@ export async function GET(
       ok: true,
       items: data ?? [],
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
         ok: false,
-        message: error instanceof Error ? error.message : String(error),
+        error: "inventory_snapshot_detail_load_failed",
       },
       { status: 500 }
     );

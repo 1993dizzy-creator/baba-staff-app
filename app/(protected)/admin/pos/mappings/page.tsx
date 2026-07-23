@@ -15,6 +15,7 @@ import {
 import { useLanguage } from "@/lib/language-context";
 import { normalizeVietnameseText } from "@/lib/inventory/normalize";
 import { getUser } from "@/lib/supabase/auth";
+import { fetchInventoryApi } from "@/lib/inventory/client-auth";
 import styles from "./page.module.css";
 
 type MappingStatus =
@@ -1619,7 +1620,9 @@ export default function AdminPosMappingsPage() {
   }, []);
 
   const loadInventory = useCallback(async () => {
-    const response = await fetch("/api/inventory/items", { cache: "no-store" });
+    const response = await fetchInventoryApi("/api/inventory/items", {
+      cache: "no-store",
+    });
     const payload = (await getJson(response)) as {
       data?: InventoryItem[];
     };

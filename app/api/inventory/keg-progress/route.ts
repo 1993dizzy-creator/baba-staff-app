@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { fetchKegProgressByItemId } from "@/lib/inventory/keg-progress";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
-
-const getErrorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
 
 const parseItemIds = (value: string | null) => {
   if (!value) return [];
@@ -25,6 +23,14 @@ const parseItemIds = (value: string | null) => {
 
 export async function GET(req: Request) {
   try {
+    const auth = await getAuthenticatedActor();
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const itemIds = parseItemIds(searchParams.get("itemIds"));
 
@@ -70,7 +76,7 @@ export async function GET(req: Request) {
     console.error("[INVENTORY_KEG_PROGRESS_GET_ERROR]", error);
 
     return NextResponse.json(
-      { ok: false, message: getErrorMessage(error) },
+      { ok: false, error: "inventory_keg_progress_load_failed" },
       { status: 500 }
     );
   }

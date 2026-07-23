@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 import {
   type InventoryReasonValue,
@@ -163,9 +164,6 @@ type SupplierSummary = {
 type SupplierSummaryAccumulator = SupplierSummary & {
   itemMap: Map<string, MonthlyItemResult>;
 };
-
-const getErrorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : "Server error";
 
 const toNumber = (value: unknown) => {
   const numberValue = Number(value ?? 0);
@@ -582,10 +580,18 @@ const fetchMonthlyInventoryLogs = async (
 };
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const requestedMonth = searchParams.get("month");
-
   try {
+    const auth = await getAuthenticatedActor();
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
+    const requestedMonth = searchParams.get("month");
+
     // Single settings lookup per request: the current businessDate is needed
     // both to default an unspecified month and to cap "this month" at today
     // instead of the full calendar month-end.
@@ -999,7 +1005,7 @@ export async function GET(request: Request) {
     console.error("[INVENTORY_MONTHLY_GET_ERROR]", error);
 
     return NextResponse.json(
-      { ok: false, message: getErrorMessage(error) },
+      { ok: false, error: "inventory_monthly_load_failed" },
       { status: 500 }
     );
   }

@@ -19,6 +19,7 @@ import {
     type QuickReasonValue,
 } from "@/lib/inventory/reasons";
 import { formatKegSessionDuration } from "@/lib/inventory/keg-duration";
+import { fetchInventoryApi } from "@/lib/inventory/client-auth";
 
 
 type SnapshotBatch = {
@@ -509,7 +510,7 @@ export default function InventorySnapshotsPage() {
         }`;
 
         try {
-            const res = await fetch(url);
+            const res = await fetchInventoryApi(url);
             const contentType = res.headers.get("content-type") || "";
             const bodyText = await res.text();
             const bodyPreview = bodyText.slice(0, 1000);
@@ -594,7 +595,7 @@ export default function InventorySnapshotsPage() {
 
         try {
             const url = `/api/inventory/snapshot/${safeBatchId}`;
-            const res = await fetch(url, {
+            const res = await fetchInventoryApi(url, {
                 cache: "no-store",
             });
             const contentType = res.headers.get("content-type") || "";

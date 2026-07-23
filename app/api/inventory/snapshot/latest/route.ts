@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -8,6 +9,14 @@ const supabaseAdmin = createClient(
 
 export async function GET() {
   try {
+    const auth = await getAuthenticatedActor();
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
     const { data: latestBatch, error: batchError } = await supabaseAdmin
       .from("inventory_snapshot_batches")
       .select("id, snapshot_date")
@@ -59,11 +68,11 @@ export async function GET() {
           : "",
       },
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[INVENTORY_SNAPSHOT_LATEST_GET_ERROR]", error);
 
     return NextResponse.json(
-      { ok: false, message: error?.message || "Server error" },
+      { ok: false, error: "inventory_snapshot_latest_load_failed" },
       { status: 500 }
     );
   }

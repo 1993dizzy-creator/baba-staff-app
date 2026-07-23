@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
-
-const getErrorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
 
 const isValidMonthKey = (value: string | null) =>
   Boolean(value && /^\d{4}-\d{2}$/.test(value));
@@ -42,6 +40,14 @@ const createSupabaseAdmin = () => {
 
 export async function GET(req: Request) {
   try {
+    const auth = await getAuthenticatedActor();
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const month = searchParams.get("month");
 
@@ -69,7 +75,7 @@ export async function GET(req: Request) {
         {
           ok: false,
           error: "snapshot_batches_query_failed",
-          message: batchError.message,
+          message: "Failed to load snapshot data",
         },
         { status: 500 }
       );
@@ -92,7 +98,7 @@ export async function GET(req: Request) {
           {
             ok: false,
             error: "snapshot_purchase_logs_query_failed",
-            message: purchaseLogError.message,
+            message: "Failed to load snapshot data",
           },
           { status: 500 }
         );
@@ -112,18 +118,13 @@ export async function GET(req: Request) {
       currentBusinessDate,
     });
   } catch (error) {
-    const errorCode =
-      error instanceof Error && error.name === "MissingServerEnvError"
-        ? "missing_server_env"
-        : "snapshot_batches_fetch_failed";
-
     console.error("[SNAPSHOT_BATCHES_FETCH_FAILED]", error);
 
     return NextResponse.json(
       {
         ok: false,
-        error: errorCode,
-        message: getErrorMessage(error),
+        error: "snapshot_batches_fetch_failed",
+        message: "Failed to load snapshot data",
       },
       { status: 500 }
     );

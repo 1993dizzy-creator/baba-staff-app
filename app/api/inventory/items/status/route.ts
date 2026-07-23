@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 import { addStoreDays } from "@/lib/store-settings/business-time-core";
@@ -27,9 +28,6 @@ type InventoryStatus = {
 
 const STOCK_CHECK_STALE_DAYS = 7;
 const SALE_DEDUCTION_ACTIVE_LOOKBACK_DAYS = 60;
-
-const getErrorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
 
 const chunkArray = <T,>(values: T[], size: number) => {
   const chunks: T[][] = [];
@@ -188,6 +186,14 @@ const fetchStockCheckStatusByItemId = async (
 
 export async function POST(req: Request) {
   try {
+    const auth = await getAuthenticatedActor();
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
     const body = await req.json();
     const itemIds = parseItemIds(body?.itemIds);
 
@@ -218,7 +224,7 @@ export async function POST(req: Request) {
     console.error("[INVENTORY_ITEMS_STATUS_POST_ERROR]", error);
 
     return NextResponse.json(
-      { ok: false, message: getErrorMessage(error) },
+      { ok: false, error: "inventory_status_load_failed" },
       { status: 500 }
     );
   }

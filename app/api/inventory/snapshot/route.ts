@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { authorizeCron } from "@/lib/pos/cukcuk/sales-sync-cron-shared";
 import { toNumber, roundDecimal } from "@/lib/inventory/number";
 import { resolveInventoryPreviousBusinessDate } from "@/lib/inventory/inventory-business-time";
@@ -76,7 +77,7 @@ async function getSnapshotListResponse() {
 
   if (batchError) {
     return NextResponse.json(
-      { ok: false, message: batchError.message },
+      { ok: false, error: "inventory_snapshot_list_load_failed" },
       { status: 500 }
     );
   }
@@ -88,7 +89,7 @@ async function getSnapshotListResponse() {
 
   if (purchaseError) {
     return NextResponse.json(
-      { ok: false, message: purchaseError.message },
+      { ok: false, error: "inventory_snapshot_list_load_failed" },
       { status: 500 }
     );
   }
@@ -114,10 +115,26 @@ export async function GET(request: Request) {
     const mode = searchParams.get("mode");
 
     if (mode === "latest") {
+      const auth = await getAuthenticatedActor();
+      if (!auth.ok) {
+        return NextResponse.json(
+          { ok: false, error: auth.code, code: auth.code },
+          { status: auth.status }
+        );
+      }
+
       return await getLatestSnapshotResponse();
     }
 
     if (mode === "list") {
+      const auth = await getAuthenticatedActor();
+      if (!auth.ok) {
+        return NextResponse.json(
+          { ok: false, error: auth.code, code: auth.code },
+          { status: auth.status }
+        );
+      }
+
       return await getSnapshotListResponse();
     }
 
@@ -147,7 +164,7 @@ export async function GET(request: Request) {
           ok: false,
           step: "existing-batch-query-failed",
           snapshotDate,
-          error: existingBatchError.message,
+          error: "inventory_snapshot_request_failed",
         },
         { status: 500 }
       );
@@ -177,7 +194,7 @@ export async function GET(request: Request) {
           ok: false,
           step: "prev-batch-query-failed",
           snapshotDate,
-          error: prevBatchError.message,
+          error: "inventory_snapshot_request_failed",
         },
         { status: 500 }
       );
@@ -198,7 +215,7 @@ export async function GET(request: Request) {
             step: "prev-items-query-failed",
             snapshotDate,
             prevBatchId: prevBatch.id,
-            error: prevItemsError.message,
+            error: "inventory_snapshot_request_failed",
           },
           { status: 500 }
         );
@@ -226,7 +243,7 @@ export async function GET(request: Request) {
           ok: false,
           step: "batch-insert-failed",
           snapshotDate,
-          error: createBatchError?.message ?? "Batch insert failed",
+          error: "inventory_snapshot_request_failed",
         },
         { status: 500 }
       );
@@ -248,7 +265,7 @@ export async function GET(request: Request) {
           step: "inventory-query-failed",
           snapshotDate,
           batchId,
-          error: inventoryError.message,
+          error: "inventory_snapshot_request_failed",
         },
         { status: 500 }
       );
@@ -323,7 +340,7 @@ export async function GET(request: Request) {
           snapshotDate,
           batchId,
           rowCount: snapshotRows.length,
-          error: snapshotItemsError.message,
+          error: "inventory_snapshot_request_failed",
           sampleRow: snapshotRows[0] ?? null,
         },
         { status: 500 }
@@ -344,11 +361,13 @@ export async function GET(request: Request) {
       now: new Date().toISOString(),
     });
   } catch (error) {
+    console.error("[INVENTORY_SNAPSHOT_GET_ERROR]", error);
+
     return NextResponse.json(
       {
         ok: false,
         step: "top-level-catch",
-        error: error instanceof Error ? error.message : String(error),
+        error: "inventory_snapshot_request_failed",
       },
       { status: 500 }
     );

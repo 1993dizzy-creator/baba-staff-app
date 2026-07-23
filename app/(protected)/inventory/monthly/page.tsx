@@ -9,6 +9,7 @@ import { useLanguage } from "@/lib/language-context";
 import { commonText } from "@/lib/text";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import { INVENTORY_REASON_EMOJIS } from "@/lib/inventory/reasons";
+import { fetchInventoryApi } from "@/lib/inventory/client-auth";
 
 type MonthlyItemStatus = "existing" | "new" | "missing";
 
@@ -517,7 +518,7 @@ export default function InventoryMonthlyPage() {
 
       try {
         const query = selectedMonth ? `?month=${selectedMonth}` : "";
-        const res = await fetch(`/api/inventory/monthly${query}`, {
+        const res = await fetchInventoryApi(`/api/inventory/monthly${query}`, {
           cache: "no-store",
         });
         const json = (await res.json()) as MonthlyInventoryResponse | ErrorResponse;

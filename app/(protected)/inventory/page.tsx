@@ -977,7 +977,7 @@ export default function InventoryPage() {
                 const params = new URLSearchParams({
                     itemIds: sortedItemIds.join(","),
                 });
-                const res = await fetch(`/api/inventory/keg-progress?${params.toString()}`, {
+                const res = await fetchInventoryApi(`/api/inventory/keg-progress?${params.toString()}`, {
                     cache: "no-store",
                 });
                 const result = await res.json() as {
@@ -1030,7 +1030,7 @@ export default function InventoryPage() {
         }
 
         try {
-            const res = await fetch("/api/inventory/items/status", {
+            const res = await fetchInventoryApi("/api/inventory/items/status", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -1236,7 +1236,7 @@ export default function InventoryPage() {
     const fetchLatestSnapshot = async (options: { force?: boolean } = {}) => {
         try {
             const snapshot = await runDedupeRequest<LatestSnapshotData>("latest-snapshot", async () => {
-                const res = await fetch("/api/inventory/snapshot/latest", {
+                const res = await fetchInventoryApi("/api/inventory/snapshot/latest", {
                     cache: "no-store",
                 });
 
