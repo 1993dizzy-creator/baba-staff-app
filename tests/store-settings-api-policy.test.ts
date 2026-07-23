@@ -71,5 +71,6 @@ test("login issues and logout clears the shared HttpOnly session", () => {
   assert.match(commonAuth, /data\.is_active !== true/);
   assert.match(session, /sessionCookieOptions\(0\)/);
   assert.match(page, /requireFreshServerSession\(res\)/);
-  assert.doesNotMatch(barAuth, /readServerSession|baba_session/);
+  assert.match(barAuth, /getAuthenticatedActor\(\)/);
+  assert.doesNotMatch(barAuth, /request\.headers|x-baba-actor/);
 });

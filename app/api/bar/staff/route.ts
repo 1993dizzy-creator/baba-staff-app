@@ -4,9 +4,9 @@ import { canAssignBarZone, normalizeBarPermissionValue } from "@/lib/bar/permiss
 import { getBarServerActor } from "@/lib/bar/server-auth";
 import { supabaseServer } from "@/lib/supabase/server";
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    const { actor, response } = await getBarServerActor(request);
+    const { actor, response } = await getBarServerActor();
     if (response || !actor) return response;
     if (!canAssignBarZone(actor)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
 

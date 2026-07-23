@@ -71,7 +71,7 @@ export async function DELETE(request: NextRequest, context: Context) {
 }
 
 async function authorize(request: Request, context: Context) {
-  const { actor, response } = await getBarServerActor(request);
+  const { actor, response } = await getBarServerActor();
   const { code } = await context.params;
   if (response || !actor) return { actor: null, code, response };
   if (!canEditBarZone(actor)) return { actor: null, code, response: NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 }) };

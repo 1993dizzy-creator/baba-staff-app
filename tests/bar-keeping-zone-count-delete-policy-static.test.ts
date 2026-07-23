@@ -51,12 +51,9 @@ test("delete is owner or master only, versioned, supports active and closed, and
   assert.match(route, /canDeleteBarKeeping\(actor\)/);
   assert.match(route, /p_actor_user_id:actor\.id/);
   assert.doesNotMatch(route, /body\.actor|searchParams.*actor/);
-  assert.doesNotMatch(auth, /readServerSession|baba_session/);
-  assert.match(auth, /request\.headers\.get\("x-baba-actor-id"\)/);
-  assert.match(auth, /request\.headers\.get\("x-baba-actor-username"\)/);
-  assert.match(auth, /\.eq\("id", actorIdValue\)/);
-  assert.match(auth, /\.eq\("username", actorUsername\)/);
-  assert.match(auth, /data\.is_active !== true/);
+  assert.match(auth, /getAuthenticatedActor\(\)/);
+  assert.doesNotMatch(auth, /request\.headers|x-baba-actor|actorIdValue|actorUsername/);
+  assert.match(auth, /is_active: true/);
   assert.match(route, /bar_delete_keeping_v2/);
   assert.ok(route.indexOf("bar_delete_keeping_v2") < route.indexOf("KEEPING_DELETE_STORAGE_CLEANUP"));
   assert.match(migration, /v_old\.version <> p_expected_version/);

@@ -10,7 +10,7 @@ const ACTIONS=new Set(["update","update_with_move","use","correct_remaining","mo
 
 export async function POST(request:NextRequest,context:Context){
   let uploaded:{imagePath:string;thumbnailPath:string}|null=null;
-  try{const {actor,response}=await getBarServerActor(request);if(response||!actor)return response;if(!canManageBarKeeping(actor))return forbidden();
+  try{const {actor,response}=await getBarServerActor();if(response||!actor)return response;if(!canManageBarKeeping(actor))return forbidden();
     const id=cleanId((await context.params).id);if(!id)return bad("Invalid keeping id");const form=await request.formData();const action=String(form.get("action")??"");if(!ACTIONS.has(action))return bad("Invalid action");
     const {data:current,error:currentError}=await supabaseServer.from("bar_keepings").select("status,image_path,thumbnail_path,zone_code").eq("id",id).maybeSingle();if(currentError)throw currentError;if(!current)return NextResponse.json({ok:false,error:"Keeping not found"},{status:404});
     if(action==="reactivate"&&!canReactivateBarKeeping(actor))return forbidden();if(current.status==="closed"&&action==="replace_photo"&&!canEditClosedBarKeeping(actor))return forbidden();if(current.status==="closed"&&!new Set(["replace_photo","reactivate"]).has(action))return conflict("Invalid state");

@@ -8,7 +8,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 type Context = { params: Promise<{ code: string }> };
 export async function GET(request: NextRequest, context: Context) {
   try {
-    const { actor, response } = await getBarServerActor(request);
+    const { actor, response } = await getBarServerActor();
     if (response || !actor) return response;
     if (!canViewBar(actor)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
     const { code } = await context.params;

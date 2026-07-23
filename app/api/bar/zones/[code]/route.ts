@@ -9,7 +9,7 @@ type Context = { params: Promise<{ code: string }> };
 
 export async function PATCH(request: NextRequest, context: Context) {
   try {
-    const { actor, response } = await getBarServerActor(request);
+    const { actor, response } = await getBarServerActor();
     if (response || !actor) return response;
     if (!canEditBarZone(actor)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
     const { code } = await context.params;

@@ -11,7 +11,7 @@ function escapePostgrestSearch(value: string) {
 
 export async function GET(request: Request) {
   try {
-    const auth = await getBarServerActor(request);
+    const auth = await getBarServerActor();
     if (auth.response) return auth.response;
     if (!canManageBarKeeping(auth.actor)) {
       return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
