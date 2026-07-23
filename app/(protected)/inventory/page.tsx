@@ -783,7 +783,7 @@ export default function InventoryPage() {
             });
             if (summary.overageMl > 0) {
                 changes.push({
-                    label: t.kegPreviewOverage,
+                    label: "",
                     after: t.kegOverageWarning(
                         formatDecimalDisplay(summary.overageMl / 1000)
                     ),
@@ -5465,10 +5465,6 @@ export default function InventoryPage() {
                                     {formatDecimalDisplay(kegReplacementShadow.projectedQuantity)}
                                 </strong>
                                 <div>
-                                    {t.kegPreviewActiveSession}:{" "}
-                                    {kegReplacementShadow.activeSessionId ?? "-"}
-                                </div>
-                                <div>
                                     {t.kegPreviewEndedAt}:{" "}
                                     {formatDateTime(kegReplacementShadow.replacementAt)}
                                 </div>
@@ -5496,8 +5492,14 @@ export default function InventoryPage() {
                                         </>
                                     ) : null}
                                 {kegReplacementShadow.overageMl > 0 ? (
-                                    <div style={{ color: "crimson", fontWeight: 800 }}>
-                                        {t.kegPreviewOverage}:{" "}
+                                    <div
+                                        style={{
+                                            color: "crimson",
+                                            fontWeight: 800,
+                                            lineHeight: 1.45,
+                                            overflowWrap: "break-word",
+                                        }}
+                                    >
                                         {t.kegOverageWarning(
                                             formatDecimalDisplay(
                                                 kegReplacementShadow.overageMl / 1000

@@ -73,13 +73,11 @@ export const inventoryText = {
     kegRegularAverageLabel: "잔",
     kegPreview: "교체 미리보기",
     kegPreviewCurrentInventory: "현재 재고 → 예상 재고",
-    kegPreviewActiveSession: "현재 활성 세션",
     kegPreviewEndedAt: "예상 종료 시각",
     kegPreviewSalesCapacity: "판매량 / Keg 용량",
-    kegPreviewOverage: "초과 사용량",
     kegPreviewNoWrites: "실제 재고와 세션은 변경되지 않았습니다",
     kegOverageWarning: (liters: string) =>
-        `Keg 용량보다 판매 기준 사용량이 ${liters}L 많습니다. 교체 기록 누락 또는 세션 시작시간을 확인하세요.`,
+        `판매량이 Keg 용량을 ${liters}L 초과했습니다. 교체 기록을 확인하세요.`,
     kegSalesBreakdownMismatch:
         "저장된 총 판매량과 판매 구성 합계가 다릅니다. 구성 상세를 확인하세요.",
     kegTowerAverageLabel: "타워",
@@ -260,13 +258,11 @@ export const inventoryText = {
     kegRegularAverageLabel: "Ly",
     kegPreview: "Xem trước thay keg",
     kegPreviewCurrentInventory: "Tồn kho hiện tại → tồn kho dự kiến",
-    kegPreviewActiveSession: "Phiên keg đang hoạt động",
     kegPreviewEndedAt: "Thời gian kết thúc dự kiến",
     kegPreviewSalesCapacity: "Lượng bán / dung tích keg",
-    kegPreviewOverage: "Lượng vượt dung tích",
     kegPreviewNoWrites: "Tồn kho và phiên keg thực tế chưa được thay đổi",
     kegOverageWarning: (liters: string) =>
-        `Lượng sử dụng theo bán hàng vượt dung tích keg ${liters}L. Vui lòng kiểm tra việc thiếu ghi nhận thay keg hoặc thời gian bắt đầu phiên.`,
+        `Lượng bán vượt dung tích keg ${liters}L. Hãy kiểm tra lịch sử thay keg.`,
     kegSalesBreakdownMismatch:
         "Tổng lượng bán đã lưu khác với tổng chi tiết bán hàng. Vui lòng kiểm tra chi tiết.",
     kegTowerAverageLabel: "Tháp",

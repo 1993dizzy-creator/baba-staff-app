@@ -4,7 +4,7 @@ import type { CSSProperties } from "react";
 import { ui } from "@/lib/styles/ui";
 
 type ChangeItem = {
-    label: string;
+    label?: string;
     before?: string;
     after: string;
     color?: string;
@@ -191,8 +191,8 @@ export default function InventoryLogGroupCard({
                             <div
                                 key={history.id}
                                 style={{
-                                    display: "flex",
-                                    justifyContent: "space-between",
+                                    display: "grid",
+                                    gridTemplateColumns: "minmax(0, 1fr) auto",
                                     gap: 10,
                                     padding: "8px 0",
                                     borderBottom: "1px solid #f3f4f6",
@@ -201,9 +201,8 @@ export default function InventoryLogGroupCard({
                                 <div
                                     style={{
                                         minWidth: 0,
-                                        flex: 1,
                                         display: "flex",
-                                        flexDirection: "column",
+                                        alignItems: "flex-start",
                                         gap: 6,
                                     }}
                                 >
@@ -215,7 +214,7 @@ export default function InventoryLogGroupCard({
                                                 style={{
                                                     ...ui.badgeMini,
                                                     minWidth: "auto",
-                                                    alignSelf: "flex-start",
+                                                    flexShrink: 0,
                                                     ...meta.style,
                                                 }}
                                             >
@@ -223,6 +222,70 @@ export default function InventoryLogGroupCard({
                                             </span>
                                         );
                                     })()}
+                                </div>
+
+                                <div
+                                    style={{
+                                        textAlign: "right",
+                                        flexShrink: 0,
+                                        fontSize: 12,
+                                        color: "#6b7280",
+                                        whiteSpace: "nowrap",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        alignItems: "flex-end",
+                                        gap: 6,
+                                    }}
+                                >
+                                    <div>
+                                        {history.created_at
+                                            ? formatDateTime(history.created_at)
+                                            : "-"}
+                                    </div>
+                                    <div>{history.actor_name || "-"}</div>
+
+                                    {readOnlyText && (
+                                        <div
+                                            style={{
+                                                color: "#6b7280",
+                                                fontSize: 11,
+                                                fontWeight: 800,
+                                            }}
+                                        >
+                                            {readOnlyText}
+                                        </div>
+                                    )}
+
+                                    {isMaster && onDeleteSingleLog && !readOnlyText && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onDeleteSingleLog(history.id)}
+                                            style={{
+                                                ...ui.subButton,
+                                                width: "auto",
+                                                minWidth: 52,
+                                                padding: "4px 8px",
+                                                background: "crimson",
+                                                color: "white",
+                                                border: "1px solid crimson",
+                                                fontSize: 12,
+                                                fontWeight: 700,
+                                            }}
+                                        >
+                                            {deleteLabel}
+                                        </button>
+                                    )}
+                                </div>
+
+                                <div
+                                    style={{
+                                        gridColumn: "1 / -1",
+                                        minWidth: 0,
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        gap: 6,
+                                    }}
+                                >
                                     {changes.map((change, index) => (
                                         <div
                                             key={`${history.id}-${index}`}
@@ -233,21 +296,24 @@ export default function InventoryLogGroupCard({
                                                 minWidth: 0,
                                             }}
                                         >
-                                            <span
-                                                style={{
-                                                    ...ui.badgeMini,
-                                                    background: "#111827",
-                                                    flexShrink: 0,
-                                                }}
-                                            >
-                                                {change.label}
-                                            </span>
+                                            {change.label ? (
+                                                <span
+                                                    style={{
+                                                        ...ui.badgeMini,
+                                                        background: "#111827",
+                                                        flexShrink: 0,
+                                                    }}
+                                                >
+                                                    {change.label}
+                                                </span>
+                                            ) : null}
 
                                             <div
                                                 style={{
                                                     fontSize: 13,
                                                     fontWeight: 700,
                                                     wordBreak: "break-word",
+                                                    overflowWrap: "anywhere",
                                                     minWidth: 0,
                                                 }}
                                             >
@@ -282,61 +348,6 @@ export default function InventoryLogGroupCard({
                                             </div>
                                         </div>
                                     ))}
-                                </div>
-
-                                <div
-                                    style={{
-                                        textAlign: "right",
-                                        flexShrink: 0,
-                                        fontSize: 12,
-                                        color: "#6b7280",
-                                        whiteSpace: "nowrap",
-                                        display: "flex",
-                                        flexDirection: "column",
-                                        alignItems: "flex-end",
-                                        gap: 6,
-                                    }}
-                                >
-                                    <div>
-                                        {history.created_at
-                                            ? formatDateTime(history.created_at)
-                                            : "-"}
-                                    </div>
-                                    <div>{history.actor_name || "-"}</div>
-
-                    {readOnlyText && (
-                        <div
-                            style={{
-                                color: "#6b7280",
-                                fontSize: 11,
-                                fontWeight: 800,
-                            }}
-                        >
-                            {readOnlyText}
-                        </div>
-                    )}
-
-                    {isMaster && onDeleteSingleLog && !readOnlyText && (
-                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                onDeleteSingleLog(history.id)
-                                            }
-                                            style={{
-                                                ...ui.subButton,
-                                                width: "auto",
-                                                minWidth: 52,
-                                                padding: "4px 8px",
-                                                background: "crimson",
-                                                color: "white",
-                                                border: "1px solid crimson",
-                                                fontSize: 12,
-                                                fontWeight: 700,
-                                            }}
-                                        >
-                                            {deleteLabel}
-                                        </button>
-                                    )}
                                 </div>
                             </div>
                         );

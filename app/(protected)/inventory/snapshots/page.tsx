@@ -452,7 +452,14 @@ export default function InventorySnapshotsPage() {
                     {" "}({t.kegPreviousLossRate} {Math.round(summary.lossPercent)}%)
                 </div>
                 {summary.overageMl > 0 && (
-                    <div style={{ color: "crimson", fontWeight: 800 }}>
+                    <div
+                        style={{
+                            color: "crimson",
+                            fontWeight: 800,
+                            lineHeight: 1.45,
+                            overflowWrap: "break-word",
+                        }}
+                    >
                         {t.kegOverageWarning(
                             formatDecimalDisplay(summary.overageMl / 1000)
                         )}
@@ -1457,12 +1464,7 @@ export default function InventorySnapshotsPage() {
             ? kegReplaceBadgeLabel
             : log.new_note || log.prev_note || "";
         const compactDate = formatCompactLogDateTime(log.created_at);
-        const metaLead = noteText || changeText;
-        const metaLine = [
-            metaLead,
-            compactDate,
-            log.actor_name || "-",
-        ].filter(Boolean).join(" · ");
+        const metaLine = noteText || changeText;
         const unitPrice = Number(log.new_purchase_price ?? 0);
         const showPriceLine =
             log.reason === "purchase" &&
@@ -1558,18 +1560,33 @@ export default function InventorySnapshotsPage() {
                         style={{
                             flexShrink: 0,
                             textAlign: "right",
-                            fontSize: 14,
-                            fontWeight: 900,
-                            color:
-                                changeQuantity > 0
-                                    ? "seagreen"
-                                    : changeQuantity < 0
-                                        ? "crimson"
-                                        : "#111827",
                             whiteSpace: "nowrap",
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "flex-end",
+                            gap: 2,
                         }}
                     >
-                        {quantityText}
+                        <div
+                            style={{
+                                fontSize: 14,
+                                fontWeight: 900,
+                                color:
+                                    changeQuantity > 0
+                                        ? "seagreen"
+                                        : changeQuantity < 0
+                                            ? "crimson"
+                                            : "#111827",
+                            }}
+                        >
+                            {quantityText}
+                        </div>
+                        <div style={{ ...ui.metaText, textAlign: "right" }}>
+                            {compactDate || "-"}
+                        </div>
+                        <div style={{ ...ui.metaText, textAlign: "right" }}>
+                            {log.actor_name || "-"}
+                        </div>
                     </div>
                 </div>
 
