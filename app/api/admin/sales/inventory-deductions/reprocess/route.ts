@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getMappingAdminActor } from "@/lib/pos/mapping-admin";
+import { requireRole } from "@/lib/auth/server-auth";
 import { prepareAndApplyReprocessInventoryDeduction } from "@/lib/sales/inventory-deduction-reprocess";
 
 export const dynamic = "force-dynamic";
@@ -25,24 +25,15 @@ function getResponseStatus(result: string) {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as JsonObject;
-    const actorUsername = getOptionalString(body.actorUsername) ?? "";
-    const actor = await getMappingAdminActor(actorUsername);
-
-    if (
-      !actor ||
-      (actor.role !== "owner" &&
-        actor.role !== "master" &&
-        actor.role !== "manager")
-    ) {
+    const auth = await requireRole(["owner", "master", "manager"]);
+    if (!auth.ok) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "Only owner, master, or manager can reprocess deductions.",
-        },
-        { status: 403 }
+        { ok: false, result: "failed", error: auth.code, code: auth.code },
+        { status: auth.status }
       );
     }
+
+    const body = (await req.json().catch(() => ({}))) as JsonObject;
 
     const receiptId = getPositiveInteger(body.receiptId);
     if (!receiptId) {
@@ -54,7 +45,7 @@ export async function POST(req: Request) {
 
     const result = await prepareAndApplyReprocessInventoryDeduction({
       receiptId,
-      actorUsername: actor.username,
+      actorUsername: auth.actor.username,
       expectedFingerprint: getOptionalString(body.expectedFingerprint),
       expectedInventoryAffectingHash: getOptionalString(
         body.expectedInventoryAffectingHash
@@ -71,10 +62,7 @@ export async function POST(req: Request) {
       {
         ok: false,
         result: "failed",
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to reprocess inventory deduction.",
+        error: "Failed to reprocess inventory deduction.",
       },
       { status: 500 }
     );

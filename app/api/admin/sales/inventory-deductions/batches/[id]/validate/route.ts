@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
+import { requireRole } from "@/lib/auth/server-auth";
 import {
-  getMappingAdminActor,
   getPositiveInteger,
 } from "@/lib/pos/mapping-admin";
 import { validateInventoryDeductionBatch } from "@/lib/sales/inventory-deduction-batch-validation";
@@ -8,26 +8,21 @@ import { validateInventoryDeductionBatch } from "@/lib/sales/inventory-deduction
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-type JsonObject = Record<string, unknown>;
-
 export async function POST(
-  req: Request,
+  _req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await context.params;
-    const batchId = getPositiveInteger(id);
-    const body = (await req.json().catch(() => ({}))) as JsonObject;
-    const actorUsername =
-      typeof body.actorUsername === "string" ? body.actorUsername.trim() : "";
-    const actor = await getMappingAdminActor(actorUsername);
-
-    if (!actor) {
+    const auth = await requireRole(["owner", "master", "manager", "leader"]);
+    if (!auth.ok) {
       return NextResponse.json(
-        { ok: false, error: "No permission" },
-        { status: 403 }
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
       );
     }
+
+    const { id } = await context.params;
+    const batchId = getPositiveInteger(id);
     if (!batchId) {
       return NextResponse.json(
         { ok: false, error: "Invalid batch id." },
@@ -47,7 +42,7 @@ export async function POST(
       ok: true,
       validation: {
         ...validation,
-        validatedBy: actor.username,
+        validatedBy: auth.actor.username,
       },
     });
   } catch (error) {
@@ -55,10 +50,7 @@ export async function POST(
     return NextResponse.json(
       {
         ok: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to validate inventory deduction batch.",
+        error: "Failed to validate inventory deduction batch.",
       },
       { status: 500 }
     );

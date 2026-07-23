@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { getMappingAdminActor } from "@/lib/pos/mapping-admin";
+import { requireRole } from "@/lib/auth/server-auth";
 import { buildInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-preview";
-import { saveInventoryDeductionPreviewBatch } from "@/lib/sales/inventory-deduction-batches";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,15 +27,22 @@ function getReceiptIds(value: unknown) {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as JsonObject;
-    const actorUsername =
-      typeof body.actorUsername === "string" ? body.actorUsername.trim() : "";
-    const actor = await getMappingAdminActor(actorUsername);
-
-    if (!actor) {
+    const auth = await requireRole(["owner", "master", "manager", "leader"]);
+    if (!auth.ok) {
       return NextResponse.json(
-        { ok: false, error: "No permission" },
-        { status: 403 }
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
+    const body = (await req.json().catch(() => ({}))) as JsonObject;
+    if (body.saveBatch === true) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Batch saving through preview is no longer supported.",
+        },
+        { status: 400 }
       );
     }
 
@@ -87,30 +93,17 @@ export async function POST(req: Request) {
       businessDateTo: dateTo,
       receiptIds,
     });
-    const saveBatch = body.saveBatch === true;
-    const note = typeof body.note === "string" ? body.note : null;
-    const savedBatch = saveBatch
-      ? await saveInventoryDeductionPreviewBatch({
-          preview,
-          actorUsername: actor.username,
-          note,
-        })
-      : null;
-
     return NextResponse.json({
       ok: true,
       preview,
-      batch: savedBatch,
+      batch: null,
     });
   } catch (error) {
     console.error("[ADMIN_SALES_INVENTORY_PREVIEW_ERROR]", error);
     return NextResponse.json(
       {
         ok: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to build inventory deduction preview.",
+        error: "Failed to build inventory deduction preview.",
       },
       { status: 500 }
     );

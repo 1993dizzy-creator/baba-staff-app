@@ -8,6 +8,7 @@ import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
+import { fetchSalesApi } from "@/lib/sales/client-auth";
 import { commonText, salesText } from "@/lib/text";
 
 const salesTabs = [
@@ -2124,11 +2125,10 @@ export default function SalesReceiptsPage() {
 
     async function fetchReceiptDeductionPreview() {
       try {
-        const res = await fetch("/api/admin/sales/inventory-deductions/preview", {
+        const res = await fetchSalesApi("/api/admin/sales/inventory-deductions/preview", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            actorUsername: currentUser?.username,
             receiptIds,
           }),
           signal: controller.signal,
@@ -2145,13 +2145,12 @@ export default function SalesReceiptsPage() {
 
         setReceiptDeductionPreview(result.preview.receipts);
 
-        const unifiedRes = await fetch(
+        const unifiedRes = await fetchSalesApi(
           "/api/admin/sales/inventory-deductions/unified-preview",
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              actorUsername: currentUser?.username,
               receiptIds,
             }),
             signal: controller.signal,
@@ -2627,14 +2626,13 @@ export default function SalesReceiptsPage() {
     setUnifiedPreview(null);
     setUnifiedExecuteResult(null);
     try {
-      const res = await fetch(
+      const res = await fetchSalesApi(
         "/api/admin/sales/inventory-deductions/unified-preview",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             businessDate,
-            actorUsername: currentUser.username,
           }),
         }
       );
@@ -2675,7 +2673,7 @@ export default function SalesReceiptsPage() {
     setIsUnifiedExecuting(true);
     setUnifiedPreviewError("");
     try {
-      const res = await fetch(
+      const res = await fetchSalesApi(
         "/api/admin/sales/inventory-deductions/unified-execute",
         {
           method: "POST",
@@ -2701,14 +2699,13 @@ export default function SalesReceiptsPage() {
 
       setUnifiedExecuteResult(result);
       await refreshReceiptsAndDeductionPreview();
-      const previewRes = await fetch(
+      const previewRes = await fetchSalesApi(
         "/api/admin/sales/inventory-deductions/unified-preview",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             businessDate,
-            actorUsername: currentUser.username,
           }),
         }
       );

@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
+import { requireRole } from "@/lib/auth/server-auth";
 import {
   calculateStoredInventoryTotals,
 } from "@/lib/sales/inventory-deduction-batches";
 import {
-  getMappingAdminActor,
   getPositiveInteger,
 } from "@/lib/pos/mapping-admin";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -12,23 +12,20 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(
-  req: Request,
+  _req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await context.params;
-    const batchId = getPositiveInteger(id);
-    const actorUsername = (
-      new URL(req.url).searchParams.get("actorUsername") || ""
-    ).trim();
-    const actor = await getMappingAdminActor(actorUsername);
-
-    if (!actor) {
+    const auth = await requireRole(["owner", "master", "manager", "leader"]);
+    if (!auth.ok) {
       return NextResponse.json(
-        { ok: false, error: "No permission" },
-        { status: 403 }
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
       );
     }
+
+    const { id } = await context.params;
+    const batchId = getPositiveInteger(id);
     if (!batchId) {
       return NextResponse.json(
         { ok: false, error: "Invalid batch id." },
@@ -110,8 +107,7 @@ export async function GET(
     return NextResponse.json(
       {
         ok: false,
-        error:
-          error instanceof Error ? error.message : "Failed to load batch.",
+        error: "Failed to load batch.",
       },
       { status: 500 }
     );

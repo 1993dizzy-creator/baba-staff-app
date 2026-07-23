@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getMappingAdminActor } from "@/lib/pos/mapping-admin";
+import { requireRole } from "@/lib/auth/server-auth";
 import { buildUnifiedInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-unified-preview";
 
 export const dynamic = "force-dynamic";
@@ -25,17 +25,15 @@ function getReceiptIds(value: unknown) {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as JsonObject;
-    const actorUsername =
-      typeof body.actorUsername === "string" ? body.actorUsername.trim() : "";
-    const actor = await getMappingAdminActor(actorUsername);
-
-    if (!actor) {
+    const auth = await requireRole(["owner", "master", "manager", "leader"]);
+    if (!auth.ok) {
       return NextResponse.json(
-        { ok: false, error: "No permission" },
-        { status: 403 }
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
       );
     }
+
+    const body = (await req.json().catch(() => ({}))) as JsonObject;
 
     const receiptIds = getReceiptIds(body.receiptIds);
     const businessDate = body.businessDate;
@@ -86,10 +84,7 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         ok: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to build unified inventory deduction preview.",
+        error: "Failed to build unified inventory deduction preview.",
       },
       { status: 500 }
     );

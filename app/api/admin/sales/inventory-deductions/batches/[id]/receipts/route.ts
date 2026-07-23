@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
+import { requireRole } from "@/lib/auth/server-auth";
 import {
-  getMappingAdminActor,
   getPositiveInteger,
 } from "@/lib/pos/mapping-admin";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -15,19 +15,17 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await requireRole(["owner", "master", "manager", "leader"]);
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
     const { id } = await context.params;
     const batchId = getPositiveInteger(id);
     const body = (await req.json().catch(() => ({}))) as JsonObject;
-    const actorUsername =
-      typeof body.actorUsername === "string" ? body.actorUsername.trim() : "";
-    const actor = await getMappingAdminActor(actorUsername);
-
-    if (!actor) {
-      return NextResponse.json(
-        { ok: false, error: "No permission" },
-        { status: 403 }
-      );
-    }
     if (!batchId || !Array.isArray(body.receiptIds)) {
       return NextResponse.json(
         { ok: false, error: "batch id and receiptIds are required." },
@@ -125,7 +123,7 @@ export async function PATCH(
       batchId,
       receiptIds,
       selectedForApply,
-      updatedBy: actor.username,
+      updatedBy: auth.actor.username,
       updatedAt: now,
     });
   } catch (error) {
@@ -133,10 +131,7 @@ export async function PATCH(
     return NextResponse.json(
       {
         ok: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to update receipt selection.",
+        error: "Failed to update receipt selection.",
       },
       { status: 500 }
     );

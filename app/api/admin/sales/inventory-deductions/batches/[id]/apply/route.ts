@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
+import { requireRole } from "@/lib/auth/server-auth";
 import {
-  getMappingAdminActor,
   getPositiveInteger,
   getSupabaseErrorCode,
 } from "@/lib/pos/mapping-admin";
@@ -23,26 +23,20 @@ function getApplyErrorStatus(error: unknown) {
 }
 
 export async function POST(
-  req: Request,
+  _req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await context.params;
-    const batchId = getPositiveInteger(id);
-    const body = (await req.json().catch(() => ({}))) as JsonObject;
-    const actorUsername =
-      typeof body.actorUsername === "string" ? body.actorUsername.trim() : "";
-    const actor = await getMappingAdminActor(actorUsername);
-
-    if (!actor || (actor.role !== "owner" && actor.role !== "master")) {
+    const auth = await requireRole(["owner", "master"]);
+    if (!auth.ok) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "Only owner or master can apply inventory deductions.",
-        },
-        { status: 403 }
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
       );
     }
+
+    const { id } = await context.params;
+    const batchId = getPositiveInteger(id);
     if (!batchId) {
       return NextResponse.json(
         { ok: false, error: "Invalid batch id." },
@@ -79,7 +73,7 @@ export async function POST(
       "apply_sales_inventory_deduction_batch",
       {
         p_batch_id: batchId,
-        p_actor_username: actor.username,
+        p_actor_username: auth.actor.username,
         p_validation_receipts: validationReceipts,
       }
     );
@@ -90,8 +84,7 @@ export async function POST(
       return NextResponse.json(
         {
           ok: false,
-          error: error.message,
-          code: error.code,
+          error: "Failed to apply inventory deduction batch.",
           validation: failedValidation,
         },
         { status: getApplyErrorStatus(error) }
@@ -107,10 +100,7 @@ export async function POST(
     return NextResponse.json(
       {
         ok: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to apply inventory deduction batch.",
+        error: "Failed to apply inventory deduction batch.",
       },
       { status: 500 }
     );
