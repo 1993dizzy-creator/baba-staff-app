@@ -2,18 +2,11 @@
 
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
+import { handleSessionUnauthorized } from "@/lib/auth/client-session";
 
 type CachedUser = {
-  id?: string | number | null;
-  username?: string | null;
   language?: string | null;
   [key: string]: unknown;
-};
-
-type MeResponse = {
-  ok: boolean;
-  user?: CachedUser;
-  error?: string;
 };
 
 type SessionResponse = {
@@ -34,30 +27,13 @@ function readCachedUser() {
   }
 }
 
-async function redirectToLogin() {
-  try {
-    await fetch("/api/logout", { method: "POST", keepalive: true });
-  } catch {
-    // Local logout must still complete if the server is unavailable.
-  }
-  try {
-    window.localStorage.removeItem("baba_user");
-  } catch {
-    // Ignore storage cleanup errors during forced logout.
-  }
-
-  window.dispatchEvent(new Event(USER_UPDATED_EVENT));
-  window.location.href = "/login";
-}
-
 export default function UserSessionRefresher() {
   const pathname = usePathname();
   const lastRefreshAtRef = useRef(0);
   const inFlightRef = useRef(false);
 
   useEffect(() => {
-    // Attendance has a stricter guard that must treat only /api/session as
-    // authentication. Avoid a duplicate check and the legacy /api/me fallback.
+    // Attendance has its own stricter server-session guard.
     if (pathname.startsWith("/attendance")) return;
 
     async function refreshUserSession(force = false) {
@@ -68,12 +44,6 @@ export default function UserSessionRefresher() {
         return;
       }
 
-      const cachedUser = readCachedUser();
-      const username =
-        typeof cachedUser?.username === "string" ? cachedUser.username : "";
-
-      if (!username) return;
-
       inFlightRef.current = true;
       lastRefreshAtRef.current = now;
 
@@ -81,51 +51,31 @@ export default function UserSessionRefresher() {
         const sessionResponse = await fetch("/api/session", {
           cache: "no-store",
         });
+        if (sessionResponse.status === 401) {
+          handleSessionUnauthorized(sessionResponse);
+          return;
+        }
+
         const sessionResult = (await sessionResponse
           .json()
           .catch(() => null)) as SessionResponse | null;
 
-        let result: MeResponse | SessionResponse | null = sessionResult;
-        let responseStatus = sessionResponse.status;
-
-        // Transitional compatibility: an expired or missing legacy cookie must
-        // not interrupt attendance before attendance APIs require server auth.
-        if (sessionResponse.status === 401) {
-          const legacyResponse = await fetch(
-            `/api/me?username=${encodeURIComponent(username)}`,
-            { cache: "no-store" }
-          );
-          result = (await legacyResponse
-            .json()
-            .catch(() => null)) as MeResponse | null;
-          responseStatus = legacyResponse.status;
-        }
-
-        if (responseStatus === 403 || responseStatus === 404) {
-          await redirectToLogin();
-          return;
-        }
-
         const succeeded = Boolean(
-          result &&
-            (("authenticated" in result && result.authenticated === true) ||
-              ("ok" in result && result.ok === true))
+          sessionResult?.authenticated === true
         );
-        if (responseStatus >= 400 || !succeeded || !result?.user) {
-          let errorCode: string | undefined;
-          if (result && "error" in result) errorCode = result.error;
-          else if (result && "code" in result) errorCode = result.code;
+        if (!sessionResponse.ok || !succeeded || !sessionResult?.user) {
           console.warn(
             "Failed to refresh baba_user",
-            errorCode
+            sessionResult?.code
           );
           return;
         }
 
+        const cachedUser = readCachedUser();
         const nextUser = {
           ...cachedUser,
-          ...result.user,
-          language: cachedUser?.language ?? result.user.language,
+          ...sessionResult.user,
+          language: cachedUser?.language ?? sessionResult.user.language,
         };
         const previousJson = JSON.stringify(cachedUser);
         const nextJson = JSON.stringify(nextUser);

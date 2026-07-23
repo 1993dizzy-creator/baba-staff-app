@@ -113,7 +113,7 @@ test("login consumes the safe path only after a successful login", () => {
   assert.match(login, /router\.replace\(returnPath \|\| \(isAdmin/);
 });
 
-test("core attendance APIs require their server actor while me remains legacy", () => {
+test("core attendance APIs and me require server-session actors", () => {
   for (const path of [
     "app/api/attendance/records/route.ts",
     "app/api/attendance/users/route.ts",
@@ -123,5 +123,7 @@ test("core attendance APIs require their server actor while me remains legacy", 
     const source = read(path);
     assert.match(source, /requireAttendanceActor/);
   }
-  assert.doesNotMatch(read("app/api/me/route.ts"), /requireAttendanceActor/);
+  const me = read("app/api/me/route.ts");
+  assert.match(me, /getAuthenticatedActor\(\)/);
+  assert.doesNotMatch(me, /requireAttendanceActor/);
 });
