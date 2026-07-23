@@ -1,34 +1,11 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor, requireRole } from "@/lib/auth/server-auth";
 import {
   QUICK_REASON_VALUES,
   normalizeInventoryReason,
 } from "@/lib/inventory/reasons";
 import { fetchPreviousKegSummariesByLogId } from "@/lib/inventory/keg-replacement-summary";
-
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
-const getActor = async (actorUsername?: string) => {
-  if (!actorUsername) return null;
-
-  const { data } = await supabaseAdmin
-    .from("users")
-    .select("id, username, name, role, is_active")
-    .eq("username", actorUsername)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  return data;
-};
-
-type Actor = {
-  role?: string | null;
-};
-
-const isMaster = (user: Actor | null) => user?.role === "master";
+import { supabaseServer } from "@/lib/supabase/server";
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -85,15 +62,23 @@ const buildInventoryLogSyncPayload = (
 };
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const mode = searchParams.get("mode");
-  const businessDate = searchParams.get("businessDate");
-  const reason = searchParams.get("reason");
-  const itemId = searchParams.get("itemId");
-
   try {
+    const auth = await getAuthenticatedActor();
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
+    const { searchParams } = new URL(req.url);
+    const mode = searchParams.get("mode");
+    const businessDate = searchParams.get("businessDate");
+    const reason = searchParams.get("reason");
+    const itemId = searchParams.get("itemId");
+
     if (mode === "logs") {
-      let query = supabaseAdmin
+      let query = supabaseServer
         .from("inventory_logs")
         .select("*")
         .order("created_at", { ascending: false });
@@ -141,7 +126,7 @@ export async function GET(req: Request) {
         .filter((log) => log.source === "keg_replace")
         .map((log) => log.id);
       const previousKegSummaryByLogId = await fetchPreviousKegSummariesByLogId(
-        supabaseAdmin,
+        supabaseServer,
         kegReplaceLogIds
       );
 
@@ -155,7 +140,7 @@ export async function GET(req: Request) {
     }
 
     if (mode === "recent") {
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await supabaseServer
         .from("inventory_logs")
         .select("*")
         .order("created_at", { ascending: false })
@@ -176,7 +161,7 @@ export async function GET(req: Request) {
     }
 
     if (mode === "notes") {
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await supabaseServer
         .from("inventory")
         .select("id, part, code, item_name, item_name_vi, note");
 
@@ -200,10 +185,6 @@ export async function GET(req: Request) {
     );
   } catch (error) {
     console.error("[INVENTORY_LOGS_GET_ERROR]", {
-      mode,
-      businessDate,
-      reason,
-      itemId,
       message: getErrorMessage(error),
       cause: getErrorCauseMessage(error),
       error,
@@ -223,6 +204,14 @@ export async function GET(req: Request) {
 
 export async function PATCH(req: Request) {
   try {
+    const auth = await getAuthenticatedActor();
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
     const body = await req.json();
     const id = Number(body?.id);
     const logIds: number[] = Array.isArray(body?.logIds)
@@ -257,7 +246,7 @@ export async function PATCH(req: Request) {
       );
     }
 
-    const { data: existingRows, error: findError } = await supabaseAdmin
+    const { data: existingRows, error: findError } = await supabaseServer
       .from("inventory_logs")
       .select("id, item_id, reason, source, change_quantity, business_date")
       .in("id", targetLogIds);
@@ -320,7 +309,7 @@ export async function PATCH(req: Request) {
         );
       }
 
-      const { data: currentItem, error: currentItemError } = await supabaseAdmin
+      const { data: currentItem, error: currentItemError } = await supabaseServer
         .from("inventory")
         .select("item_name, item_name_vi, category, category_vi, unit, supplier, purchase_price")
         .eq("id", Number(existing.item_id))
@@ -373,7 +362,7 @@ export async function PATCH(req: Request) {
       updatePayload.new_purchase_price = purchasePrice;
     }
 
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await supabaseServer
       .from("inventory_logs")
       .update(updatePayload)
       .in("id", targetLogIds)
@@ -389,7 +378,7 @@ export async function PATCH(req: Request) {
       Number(existing.change_quantity ?? 0) > 0;
 
     if (!syncCurrentItem && updatesPurchaseInfo && isPurchaseLog && existing.item_id) {
-      const { data: latestPurchaseLog, error: latestError } = await supabaseAdmin
+      const { data: latestPurchaseLog, error: latestError } = await supabaseServer
         .from("inventory_logs")
         .select("id")
         .eq("item_id", Number(existing.item_id))
@@ -415,7 +404,7 @@ export async function PATCH(req: Request) {
         }
 
         if (Object.keys(itemUpdatePayload).length > 0) {
-          const { error: itemUpdateError } = await supabaseAdmin
+          const { error: itemUpdateError } = await supabaseServer
             .from("inventory")
             .update(itemUpdatePayload)
             .eq("id", Number(existing.item_id));
@@ -441,8 +430,16 @@ export async function PATCH(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
+    const auth = await requireRole(["master"]);
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
     const body = await req.json();
-    const { logId, actorUsername } = body;
+    const { logId } = body;
 
     if (!logId) {
       return NextResponse.json(
@@ -451,23 +448,7 @@ export async function DELETE(req: Request) {
       );
     }
 
-    const actor = await getActor(actorUsername);
-
-    if (!actor) {
-      return NextResponse.json(
-        { ok: false, message: "Invalid user" },
-        { status: 401 }
-      );
-    }
-
-    if (!isMaster(actor)) {
-      return NextResponse.json(
-        { ok: false, message: "No permission" },
-        { status: 403 }
-      );
-    }
-
-    const { data: existingLog, error: findError } = await supabaseAdmin
+    const { data: existingLog, error: findError } = await supabaseServer
       .from("inventory_logs")
       .select("id, reason, source")
       .eq("id", Number(logId))
@@ -495,7 +476,7 @@ export async function DELETE(req: Request) {
       );
     }
 
-    const { error } = await supabaseAdmin
+    const { error } = await supabaseServer
       .from("inventory_logs")
       .delete()
       .eq("id", Number(logId));

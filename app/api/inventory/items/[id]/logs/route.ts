@@ -1,37 +1,24 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { fetchPreviousKegSummariesByLogId } from "@/lib/inventory/keg-replacement-summary";
+import { supabaseServer } from "@/lib/supabase/server";
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
-
-const createSupabaseAdmin = () => {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    const missing = [
-      !supabaseUrl ? "NEXT_PUBLIC_SUPABASE_URL" : null,
-      !serviceRoleKey ? "SUPABASE_SERVICE_ROLE_KEY" : null,
-    ].filter(Boolean);
-    const error = new Error(`Missing server env: ${missing.join(", ")}`);
-    error.name = "MissingServerEnvError";
-    throw error;
-  }
-
-  return createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
-};
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await getAuthenticatedActor();
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
     const { id } = await params;
     const itemId = Number(id);
 
@@ -46,9 +33,7 @@ export async function GET(
       );
     }
 
-    const supabaseAdmin = createSupabaseAdmin();
-
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await supabaseServer
       .from("inventory_logs")
       .select("*")
       .eq("item_id", itemId)
@@ -71,7 +56,7 @@ export async function GET(
       .filter((log) => log.source === "keg_replace")
       .map((log) => log.id);
     const previousKegSummaryByLogId = await fetchPreviousKegSummariesByLogId(
-      supabaseAdmin,
+      supabaseServer,
       kegReplaceLogIds
     );
 
@@ -86,17 +71,12 @@ export async function GET(
       data: enrichedLogs,
     });
   } catch (error) {
-    const errorCode =
-      error instanceof Error && error.name === "MissingServerEnvError"
-        ? "missing_server_env"
-        : "inventory_item_logs_fetch_failed";
-
     console.error("[INVENTORY_ITEM_LOGS_GET_ERROR]", error);
 
     return NextResponse.json(
       {
         ok: false,
-        error: errorCode,
+        error: "inventory_item_logs_fetch_failed",
         message: getErrorMessage(error),
       },
       { status: 500 }

@@ -75,7 +75,6 @@ export default function InventoryLogsPage() {
             },
             body: JSON.stringify({
                 logId,
-                actorUsername: currentUser?.username || "",
             }),
         });
 

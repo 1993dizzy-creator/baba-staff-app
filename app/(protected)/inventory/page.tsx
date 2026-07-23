@@ -106,6 +106,7 @@ type KegSalesBreakdown = {
     otherUnits: number;
     otherSoldMl: number;
     otherAllocatedMl?: number;
+    otherAverageMl?: number | null;
     averageCapacityMlPerUnit?: number;
 };
 
@@ -116,9 +117,11 @@ type PreviousKegSummary = {
     capacityMl: number;
     soldMl: number;
     lossMl: number;
+    overageMl: number;
     usagePercent: number;
     lossPercent: number;
     salesBreakdown?: KegSalesBreakdown;
+    salesBreakdownMismatch: boolean;
 };
 
 type InventoryLog = {
@@ -159,6 +162,25 @@ type InventoryLog = {
     source?: string | null;
     business_date?: string | null;
     previousKegSummary?: PreviousKegSummary | null;
+};
+
+type KegReplacementShadow = {
+    ok: true;
+    dryRun: true;
+    actorUsername: string;
+    itemId: number;
+    currentQuantity: number;
+    projectedQuantity: number;
+    activeSessionId: number | null;
+    replacementAt: string;
+    businessDate: string;
+    capacityMl: number;
+    soldMl: number;
+    lossMl: number;
+    overageMl: number;
+    usagePercent: number;
+    salesBreakdown: KegSalesBreakdown | null;
+    writesPerformed: false;
 };
 
 type InventoryLogGroup = {
@@ -384,6 +406,9 @@ export default function InventoryPage() {
     const [activeStatusBusyId, setActiveStatusBusyId] = useState<number | null>(null);
     const [isQuickSaving, setIsQuickSaving] = useState(false);
     const [isKegReplacing, setIsKegReplacing] = useState(false);
+    const [kegReplacementShadow, setKegReplacementShadow] =
+        useState<KegReplacementShadow | null>(null);
+    const [isKegShadowLoading, setIsKegShadowLoading] = useState(false);
     const [photoBusyItemId, setPhotoBusyItemId] = useState<number | null>(null);
     const [photoModalItem, setPhotoModalItem] = useState<InventoryItem | null>(null);
     const [handledDeepLinkKey, setHandledDeepLinkKey] = useState("");
@@ -749,13 +774,22 @@ export default function InventoryPage() {
 
             changes.push({
                 label: t.kegPreviousSold,
-                after: `${formatDecimalDisplay(soldLiters)}L / ${formatDecimalDisplay(capacityLiters)}L (${Math.round(summary.usagePercent)}%)`,
+                after: `${formatDecimalDisplay(soldLiters)}L / ${formatDecimalDisplay(capacityLiters)}L (${formatDecimalDisplay(Math.round(summary.usagePercent * 10) / 10)}%)`,
             });
             changes.push({
                 label: t.kegPreviousRemaining,
                 after: `${formatDecimalDisplay(remainingLiters)}L (${t.kegPreviousLossRate} ${Math.round(summary.lossPercent)}%)`,
                 color: summary.lossPercent > 0 ? "crimson" : undefined,
             });
+            if (summary.overageMl > 0) {
+                changes.push({
+                    label: t.kegPreviewOverage,
+                    after: t.kegOverageWarning(
+                        formatDecimalDisplay(summary.overageMl / 1000)
+                    ),
+                    color: "crimson",
+                });
+            }
 
             if (breakdown && breakdown.totalUnits > 0) {
                 const quantityText = getKegSalesQuantityText(breakdown);
@@ -772,6 +806,13 @@ export default function InventoryPage() {
                         after: averageText,
                     });
                 }
+            }
+            if (summary.salesBreakdownMismatch) {
+                changes.push({
+                    label: t.kegAverage,
+                    after: t.kegSalesBreakdownMismatch,
+                    color: "crimson",
+                });
             }
 
             const usagePeriod = formatKegSessionDuration(
@@ -2100,6 +2141,7 @@ export default function InventoryPage() {
         if (isKegReplacing || isQuickSaving || isKegTimeSaving) return;
         setKegTimeModal({ mode: "replace", item });
         setKegTimeValue(formatVietnamDateTimeInput());
+        setKegReplacementShadow(null);
     };
 
     const openKegStartTimeModal = (item: InventoryItem) => {
@@ -2115,6 +2157,42 @@ export default function InventoryPage() {
         if (isKegReplacing || isKegTimeSaving) return;
         setKegTimeModal(null);
         setKegTimeValue("");
+        setKegReplacementShadow(null);
+    };
+
+    const runKegReplacementShadow = async () => {
+        if (!kegTimeModal || kegTimeModal.mode !== "replace" || isKegShadowLoading) {
+            return;
+        }
+        const selectedTime = parseVietnamDateTimeInput(kegTimeValue);
+        if (!selectedTime || selectedTime.getTime() > Date.now()) {
+            alert(t.kegTimeLabel);
+            return;
+        }
+
+        setIsKegShadowLoading(true);
+        setKegReplacementShadow(null);
+        try {
+            const currentQty = roundDecimal(Number(kegTimeModal.item.quantity ?? 0));
+            const res = await fetch("/api/inventory/keg-sessions/replace", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    dryRun: true,
+                    itemId: kegTimeModal.item.id,
+                    expectedQuantity: currentQty,
+                    replacementLocalDateTime: kegTimeValue,
+                }),
+            });
+            const result = await res.json();
+            if (!res.ok || !result.ok || result.dryRun !== true) {
+                alert(result.message || c.editFail);
+                return;
+            }
+            setKegReplacementShadow(result as KegReplacementShadow);
+        } finally {
+            setIsKegShadowLoading(false);
+        }
     };
 
     const submitKegTimeModal = async () => {
@@ -5367,6 +5445,71 @@ export default function InventoryPage() {
                                 )}
                             </div>
                         ) : null}
+                        {kegTimeModal.mode === "replace" && kegReplacementShadow ? (
+                            <div
+                                style={{
+                                    display: "grid",
+                                    gap: 6,
+                                    padding: "10px 12px",
+                                    border: "1px solid #bfdbfe",
+                                    borderRadius: 10,
+                                    background: "#eff6ff",
+                                    color: "#1e3a8a",
+                                    fontSize: 12,
+                                }}
+                            >
+                                <strong>
+                                    {t.kegPreviewCurrentInventory}:{" "}
+                                    {formatDecimalDisplay(kegReplacementShadow.currentQuantity)}
+                                    {" → "}
+                                    {formatDecimalDisplay(kegReplacementShadow.projectedQuantity)}
+                                </strong>
+                                <div>
+                                    {t.kegPreviewActiveSession}:{" "}
+                                    {kegReplacementShadow.activeSessionId ?? "-"}
+                                </div>
+                                <div>
+                                    {t.kegPreviewEndedAt}:{" "}
+                                    {formatDateTime(kegReplacementShadow.replacementAt)}
+                                </div>
+                                <div>
+                                    {t.kegPreviewSalesCapacity}:{" "}
+                                    {formatDecimalDisplay(kegReplacementShadow.soldMl / 1000)}L /{" "}
+                                    {formatDecimalDisplay(kegReplacementShadow.capacityMl / 1000)}L
+                                    {" "}({formatDecimalDisplay(kegReplacementShadow.usagePercent)}%)
+                                </div>
+                                {kegReplacementShadow.salesBreakdown &&
+                                    kegReplacementShadow.salesBreakdown.totalUnits > 0 ? (
+                                        <>
+                                            <div>
+                                                {t.kegSalesQuantity}:{" "}
+                                                {getKegSalesQuantityText(
+                                                    kegReplacementShadow.salesBreakdown
+                                                )}
+                                            </div>
+                                            <div>
+                                                {t.kegAverage}:{" "}
+                                                {getKegAverageText(
+                                                    kegReplacementShadow.salesBreakdown
+                                                )}
+                                            </div>
+                                        </>
+                                    ) : null}
+                                {kegReplacementShadow.overageMl > 0 ? (
+                                    <div style={{ color: "crimson", fontWeight: 800 }}>
+                                        {t.kegPreviewOverage}:{" "}
+                                        {t.kegOverageWarning(
+                                            formatDecimalDisplay(
+                                                kegReplacementShadow.overageMl / 1000
+                                            )
+                                        )}
+                                    </div>
+                                ) : null}
+                                <div style={{ fontWeight: 900, color: "#047857" }}>
+                                    {t.kegPreviewNoWrites}
+                                </div>
+                            </div>
+                        ) : null}
                         <label
                             style={{
                                 display: "flex",
@@ -5390,7 +5533,10 @@ export default function InventoryPage() {
                         <div
                             style={{
                                 display: "grid",
-                                gridTemplateColumns: "1fr 1fr",
+                                gridTemplateColumns:
+                                    kegTimeModal.mode === "replace"
+                                        ? "1fr 1fr 1fr"
+                                        : "1fr 1fr",
                                 gap: 8,
                             }}
                         >
@@ -5409,6 +5555,25 @@ export default function InventoryPage() {
                             >
                                 {c.cancel}
                             </button>
+                            {kegTimeModal.mode === "replace" ? (
+                                <button
+                                    type="button"
+                                    onClick={() => void runKegReplacementShadow()}
+                                    disabled={
+                                        isKegReplacing ||
+                                        isKegTimeSaving ||
+                                        isKegShadowLoading
+                                    }
+                                    style={{
+                                        ...ui.subButton,
+                                        borderColor: "#2563eb",
+                                        color: "#1d4ed8",
+                                        opacity: isKegShadowLoading ? 0.6 : 1,
+                                    }}
+                                >
+                                    {isKegShadowLoading ? c.saving : t.kegPreview}
+                                </button>
+                            ) : null}
                             <button
                                 type="submit"
                                 disabled={isKegReplacing || isKegTimeSaving}

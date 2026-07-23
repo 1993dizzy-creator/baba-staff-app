@@ -29,7 +29,9 @@ type SnapshotBatch = {
 type KegSalesBreakdown = {
     totalUnits: number;
     regularUnits: number;
+    regularAverageMl: number | null;
     towerUnits: number;
+    towerAverageMl: number | null;
     otherUnits: number;
     averageCapacityMlPerUnit: number;
 };
@@ -41,9 +43,11 @@ type PreviousKegSummary = {
     capacityMl: number;
     soldMl: number;
     lossMl: number;
+    overageMl: number;
     usagePercent: number;
     lossPercent: number;
     salesBreakdown?: KegSalesBreakdown;
+    salesBreakdownMismatch: boolean;
 };
 
 type SnapshotItem = {
@@ -441,15 +445,27 @@ export default function InventorySnapshotsPage() {
             >
                 <div>
                     {t.kegPreviousSold}: {formatDecimalDisplay(soldLiters)}L / {formatDecimalDisplay(capacityLiters)}L
-                    {" "}({Math.round(summary.usagePercent)}%)
+                    {" "}({formatDecimalDisplay(Math.round(summary.usagePercent * 10) / 10)}%)
                 </div>
                 <div>
                     {t.kegPreviousRemaining} {formatDecimalDisplay(remainingLiters)}L
                     {" "}({t.kegPreviousLossRate} {Math.round(summary.lossPercent)}%)
                 </div>
+                {summary.overageMl > 0 && (
+                    <div style={{ color: "crimson", fontWeight: 800 }}>
+                        {t.kegOverageWarning(
+                            formatDecimalDisplay(summary.overageMl / 1000)
+                        )}
+                    </div>
+                )}
                 {quantityText && (
                     <div>
                         {t.kegSalesQuantity} {quantityText}
+                    </div>
+                )}
+                {summary.salesBreakdownMismatch && (
+                    <div style={{ color: "crimson", fontWeight: 800 }}>
+                        {t.kegSalesBreakdownMismatch}
                     </div>
                 )}
                 {breakdown && breakdown.totalUnits > 0 && breakdown.averageCapacityMlPerUnit > 0 && (
