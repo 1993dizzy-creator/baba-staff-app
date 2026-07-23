@@ -1,18 +1,8 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { BUSINESS_TIMEZONE_OFFSET } from "@/lib/common/business-time";
 import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
-
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  }
-);
+import { supabaseServer } from "@/lib/supabase/server";
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -30,10 +20,16 @@ const parseReplacementAt = (value: unknown) => {
 
 export async function POST(req: Request) {
   try {
+    const auth = await getAuthenticatedActor();
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
     const body = await req.json();
     const itemId = Number(body?.itemId);
-    const actorUsername =
-      typeof body?.actorUsername === "string" ? body.actorUsername.trim() : "";
     const expectedQuantity =
       body?.expectedQuantity === undefined ||
       body?.expectedQuantity === null ||
@@ -47,13 +43,6 @@ export async function POST(req: Request) {
     if (!Number.isFinite(itemId) || itemId <= 0) {
       return NextResponse.json(
         { ok: false, error: "invalid_item_id", message: "Invalid item id" },
-        { status: 400 }
-      );
-    }
-
-    if (!actorUsername) {
-      return NextResponse.json(
-        { ok: false, error: "missing_actor", message: "Missing actor" },
         { status: 400 }
       );
     }
@@ -92,9 +81,9 @@ export async function POST(req: Request) {
     }
 
     const businessDate = (await resolveInventoryBusinessDate(replacementAt)).businessDate;
-    const { data, error } = await supabaseAdmin.rpc("replace_inventory_keg", {
+    const { data, error } = await supabaseServer.rpc("replace_inventory_keg", {
       p_item_id: itemId,
-      p_actor_username: actorUsername,
+      p_actor_username: auth.actor.username,
       p_business_date: businessDate,
       p_expected_quantity: expectedQuantity,
       p_replacement_at: replacementAt.toISOString(),

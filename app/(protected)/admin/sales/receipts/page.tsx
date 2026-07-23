@@ -2681,7 +2681,6 @@ export default function SalesReceiptsPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            actorUsername: currentUser.username,
             items: executableReceipts.map((receipt) => ({
               receiptId: receipt.receiptId,
               expectedOperationType: receipt.operationType,

@@ -1,18 +1,8 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { BUSINESS_TIMEZONE_OFFSET } from "@/lib/common/business-time";
 import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
-
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  }
-);
+import { supabaseServer } from "@/lib/supabase/server";
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -33,11 +23,17 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = await getAuthenticatedActor();
+    if (!auth.ok) {
+      return NextResponse.json(
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
+      );
+    }
+
     const { id } = await params;
     const sessionId = Number(id);
     const body = await req.json();
-    const actorUsername =
-      typeof body?.actorUsername === "string" ? body.actorUsername.trim() : "";
     const startedAt = parseSessionStartedAt(
       body?.startedAt ?? body?.startedLocalDateTime
     );
@@ -45,13 +41,6 @@ export async function PATCH(
     if (!Number.isFinite(sessionId) || sessionId <= 0) {
       return NextResponse.json(
         { ok: false, error: "invalid_session_id", message: "Invalid session id" },
-        { status: 400 }
-      );
-    }
-
-    if (!actorUsername) {
-      return NextResponse.json(
-        { ok: false, error: "missing_actor", message: "Missing actor" },
         { status: 400 }
       );
     }
@@ -78,21 +67,7 @@ export async function PATCH(
       );
     }
 
-    const { data: actor } = await supabaseAdmin
-      .from("users")
-      .select("id, username, is_active")
-      .eq("username", actorUsername)
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (!actor) {
-      return NextResponse.json(
-        { ok: false, error: "invalid_actor", message: "Invalid user" },
-        { status: 401 }
-      );
-    }
-
-    const { data: session, error: sessionError } = await supabaseAdmin
+    const { data: session, error: sessionError } = await supabaseServer
       .from("inventory_keg_sessions")
       .select(
         "id, inventory_item_id, status, started_at, started_log_id, created_by"
@@ -116,7 +91,7 @@ export async function PATCH(
     const businessDate = (await resolveInventoryBusinessDate(startedAt)).businessDate;
     const startedAtIso = startedAt.toISOString();
 
-    const { error: updateError } = await supabaseAdmin
+    const { error: updateError } = await supabaseServer
       .from("inventory_keg_sessions")
       .update({
         started_at: startedAtIso,
@@ -129,7 +104,7 @@ export async function PATCH(
     if (updateError) throw updateError;
 
     if (session.started_log_id) {
-      const { error: previousUpdateError } = await supabaseAdmin
+      const { error: previousUpdateError } = await supabaseServer
         .from("inventory_keg_sessions")
         .update({
           ended_at: startedAtIso,

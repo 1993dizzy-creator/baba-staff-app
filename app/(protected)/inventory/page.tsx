@@ -2149,7 +2149,6 @@ export default function InventoryPage() {
                         "Content-Type": "application/json",
                     },
                     body: JSON.stringify({
-                        actorUsername,
                         startedLocalDateTime: kegTimeValue,
                     }),
                 });
@@ -2174,7 +2173,6 @@ export default function InventoryPage() {
                 },
                 body: JSON.stringify({
                     itemId: item.id,
-                    actorUsername,
                     expectedQuantity: currentQty,
                     replacementLocalDateTime: kegTimeValue,
                 }),

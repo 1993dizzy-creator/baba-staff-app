@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import {
-  getMappingAdminActor,
-  getSupabaseErrorCode,
-} from "@/lib/pos/mapping-admin";
+import { requireRole } from "@/lib/auth/server-auth";
+import { getSupabaseErrorCode } from "@/lib/pos/mapping-admin";
 import { buildInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-preview";
 import { saveInventoryDeductionPreviewBatch } from "@/lib/sales/inventory-deduction-batches";
 import { validateInventoryDeductionBatch } from "@/lib/sales/inventory-deduction-batch-validation";
@@ -36,20 +34,15 @@ function getApplyErrorStatus(error: unknown) {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as JsonObject;
-    const actorUsername =
-      typeof body.actorUsername === "string" ? body.actorUsername.trim() : "";
-    const actor = await getMappingAdminActor(actorUsername);
-
-    if (!actor || (actor.role !== "owner" && actor.role !== "master")) {
+    const auth = await requireRole(["owner", "master"]);
+    if (!auth.ok) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "Only owner or master can apply inventory deductions.",
-        },
-        { status: 403 }
+        { ok: false, error: auth.code, code: auth.code },
+        { status: auth.status }
       );
     }
+
+    const body = (await req.json().catch(() => ({}))) as JsonObject;
 
     const receiptIds = getReceiptIds(body.receiptIds);
     if (!receiptIds || receiptIds.length === 0) {
@@ -103,7 +96,7 @@ export async function POST(req: Request) {
 
     const savedBatch = await saveInventoryDeductionPreviewBatch({
       preview,
-      actorUsername: actor.username,
+      actorUsername: auth.actor.username,
       note: "direct_apply_from_sales_receipts",
     });
     const validation = await validateInventoryDeductionBatch(savedBatch.batchId);
@@ -131,7 +124,7 @@ export async function POST(req: Request) {
       "apply_sales_inventory_deduction_batch",
       {
         p_batch_id: savedBatch.batchId,
-        p_actor_username: actor.username,
+        p_actor_username: auth.actor.username,
         p_validation_receipts: validationReceipts,
       }
     );

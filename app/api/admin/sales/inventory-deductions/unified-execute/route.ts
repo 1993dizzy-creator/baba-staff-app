@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getMappingAdminActor } from "@/lib/pos/mapping-admin";
+import { requireRole } from "@/lib/auth/server-auth";
 import {
   executeUnifiedInventoryDeductions,
   MAX_UNIFIED_EXECUTE_ITEMS,
@@ -94,24 +94,15 @@ function parseItems(value: unknown):
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as JsonObject;
-    const actorUsername = getOptionalString(body.actorUsername) ?? "";
-    const actor = await getMappingAdminActor(actorUsername);
-
-    if (
-      !actor ||
-      (actor.role !== "owner" &&
-        actor.role !== "master" &&
-        actor.role !== "manager")
-    ) {
+    const auth = await requireRole(["owner", "master", "manager"]);
+    if (!auth.ok) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Only owner, master, or manager can execute deductions.",
-        },
-        { status: 403 }
+        { success: false, error: auth.code, code: auth.code },
+        { status: auth.status }
       );
     }
+
+    const body = (await req.json().catch(() => ({}))) as JsonObject;
 
     const parsed = parseItems(body.items);
     if (!parsed.ok) {
@@ -122,7 +113,7 @@ export async function POST(req: Request) {
     }
 
     const result = await executeUnifiedInventoryDeductions({
-      actorUsername: actor.username,
+      actorUsername: auth.actor.username,
       items: parsed.items,
     });
 
