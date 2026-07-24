@@ -63,7 +63,7 @@ export function getStaffCancellationDecision(
       mutation: "update" as const,
       patch: {
         check_out_at: null,
-        work_minutes: null,
+        work_minutes: 0,
         early_leave_minutes: 0,
         status: Number(record.late_minutes || 0) > 0 ? "late" : "working",
       },

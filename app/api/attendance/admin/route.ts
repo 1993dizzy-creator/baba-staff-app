@@ -562,27 +562,59 @@ export async function POST(req: Request) {
       action === "cancel_check_out" ||
       action === "cancel_leave"
     ) {
+      const targetUserId = Number(user_id);
+      const isValidWorkDate =
+        typeof work_date === "string" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(work_date) &&
+        !Number.isNaN(Date.parse(`${work_date}T00:00:00Z`));
+
+      if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0 || !isValidWorkDate) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: "INVALID_ATTENDANCE_CANCEL_TARGET",
+            message:
+              lang === "vi"
+                ? "Thông tin nhân viên hoặc ngày làm việc không hợp lệ."
+                : "직원 또는 영업일 정보가 올바르지 않습니다.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const reason = note?.trim() || null;
       const { data: cancellation, error: cancellationError } =
         await supabaseServer.rpc("attendance_admin_cancel_record_v1", {
           p_action: action,
-          p_target_user_id: Number(user_id),
+          p_target_user_id: targetUserId,
           p_work_date: work_date,
           p_actor_user_id: auth.actor.id,
-          p_reason: note?.trim() || null,
+          p_reason: reason,
         });
 
       if (cancellationError) {
-        console.error("[ATTENDANCE_CANCEL_RPC_FAILED]", {
+        console.error("[attendance-admin] cancel RPC failed", {
+          action,
+          targetUserId,
+          workDate: work_date,
+          actorUserId: auth.actor.id,
           code: cancellationError.code,
           message: cancellationError.message,
+          details: cancellationError.details,
+          hint: cancellationError.hint,
         });
         return NextResponse.json(
           {
             ok: false,
+            code: "ATTENDANCE_CANCEL_RUNTIME_ERROR",
             message:
               lang === "vi"
-                ? "Không thể hủy bản ghi chấm công."
-                : "근태 기록 취소에 실패했습니다.",
+                ? action === "cancel_check_out"
+                  ? "Máy chủ không thể xử lý việc hủy giờ ra."
+                  : "Máy chủ không thể xử lý việc hủy bản ghi chấm công."
+                : action === "cancel_check_out"
+                  ? "서버에서 퇴근취소를 처리하지 못했습니다."
+                  : "서버에서 근태 기록 취소를 처리하지 못했습니다.",
           },
           { status: 500 }
         );

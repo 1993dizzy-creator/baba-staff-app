@@ -57,7 +57,7 @@ test("check-out cancellation preserves check-in semantics and restores open stat
     mutation: "update",
     patch: {
       check_out_at: null,
-      work_minutes: null,
+      work_minutes: 0,
       early_leave_minutes: 0,
       status: "late",
     },
@@ -71,6 +71,42 @@ test("check-out cancellation preserves check-in semantics and restores open stat
   });
   assert.equal(onTime.ok, true);
   assert.equal(onTime.ok && onTime.mutation === "update" && onTime.patch.status, "working");
+
+  const earlyLeave = getStaffCancellationDecision("cancel_check_out", {
+    status: "early_leave",
+    check_in_at: "2026-07-24T09:00:00Z",
+    check_out_at: "2026-07-24T15:00:00Z",
+    late_minutes: 0,
+  });
+  assert.deepEqual(earlyLeave, {
+    ok: true,
+    mutation: "update",
+    patch: {
+      check_out_at: null,
+      work_minutes: 0,
+      early_leave_minutes: 0,
+      status: "working",
+    },
+  });
+
+  assert.equal(
+    getStaffCancellationDecision("cancel_check_out", {
+      status: "working",
+      check_in_at: "2026-07-24T09:00:00Z",
+      check_out_at: null,
+      late_minutes: 0,
+    }).code,
+    "CHECK_OUT_CANNOT_BE_CANCELLED"
+  );
+  assert.equal(
+    getStaffCancellationDecision("cancel_check_out", {
+      status: "leave",
+      check_in_at: null,
+      check_out_at: null,
+      late_minutes: 0,
+    }).code,
+    "CHECK_OUT_CANNOT_BE_CANCELLED"
+  );
 });
 
 test("leave cancellation is limited to direct staff-list leave records", () => {
@@ -124,9 +160,10 @@ test("admin route rechecks identity, date, and current row state for cancellatio
   assert.match(route, /"cancel_check_out"/);
   assert.match(route, /"cancel_leave"/);
   assert.match(route, /\.rpc\("attendance_admin_cancel_record_v1"/);
-  assert.match(route, /p_target_user_id: Number\(user_id\)/);
+  assert.match(route, /p_target_user_id: targetUserId/);
   assert.match(route, /p_work_date: work_date/);
   assert.match(route, /p_actor_user_id: auth\.actor\.id/);
+  assert.match(route, /p_reason: reason/);
   assert.match(route, /is_staff_direct_leave: true/);
   assert.match(route, /note: note \?\? existing\?\.note \?\? null/);
   assert.match(route, /is_staff_direct_leave: false/);

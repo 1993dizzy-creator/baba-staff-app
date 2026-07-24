@@ -8,6 +8,9 @@ const read = (path: string) =>
 const migration = read(
   "supabase/migrations/202607240003_fix_attendance_cancellation_audit.sql"
 );
+const runtimeMigration = read(
+  "supabase/migrations/202607240004_fix_attendance_cancel_checkout_runtime.sql"
+);
 const route = read("app/api/attendance/admin/route.ts");
 
 test("audit action check retains legacy actions and adds all cancellation actions", () => {
@@ -101,10 +104,61 @@ test("RPC and audit table remain service-role only", () => {
 test("admin API passes only the server-session actor to the cancellation RPC", () => {
   assert.match(route, /\.rpc\("attendance_admin_cancel_record_v1"/);
   assert.match(route, /p_action: action/);
-  assert.match(route, /p_target_user_id: Number\(user_id\)/);
+  assert.match(route, /const targetUserId = Number\(user_id\)/);
+  assert.match(route, /Number\.isSafeInteger\(targetUserId\)/);
+  assert.match(route, /p_target_user_id: targetUserId/);
   assert.match(route, /p_work_date: work_date/);
   assert.match(route, /p_actor_user_id: auth\.actor\.id/);
+  assert.match(route, /const reason = note\?\.trim\(\) \|\| null/);
+  assert.match(route, /p_reason: reason/);
   assert.doesNotMatch(route, /p_actor_user_id:\s*body/);
+});
+
+test("runtime migration preserves NOT NULL work minutes and replaces only the RPC", () => {
+  assert.match(
+    runtimeMigration,
+    /^create or replace function public\.attendance_admin_cancel_record_v1/
+  );
+  assert.match(
+    runtimeMigration,
+    /update public\.attendance_records[\s\S]*check_out_at = null,[\s\S]*work_minutes = 0,[\s\S]*early_leave_minutes = 0/
+  );
+  assert.doesNotMatch(runtimeMigration, /\balter table\b/i);
+  assert.doesNotMatch(runtimeMigration, /drop not null/i);
+  assert.match(runtimeMigration, /security invoker/);
+  assert.match(runtimeMigration, /set search_path = pg_catalog, public/);
+  assert.match(runtimeMigration, /for update/);
+  assert.match(
+    runtimeMigration,
+    /p_action = 'cancel_check_in'[\s\S]*insert into public\.attendance_record_audit_logs[\s\S]*delete from public\.attendance_records/
+  );
+  assert.match(
+    runtimeMigration,
+    /p_action = 'cancel_leave'[\s\S]*insert into public\.attendance_record_audit_logs[\s\S]*delete from public\.attendance_records/
+  );
+  assert.match(
+    runtimeMigration,
+    /update public\.attendance_records[\s\S]*returning \* into v_after[\s\S]*before_snapshot,[\s\S]*after_snapshot[\s\S]*v_before_snapshot,[\s\S]*to_jsonb\(v_after\)/
+  );
+});
+
+test("cancellation RPC failures include safe context in server logs", () => {
+  assert.match(route, /console\.error\("\[attendance-admin\] cancel RPC failed"/);
+  for (const field of [
+    "action",
+    "targetUserId",
+    "workDate: work_date",
+    "actorUserId: auth.actor.id",
+    "code: cancellationError.code",
+    "message: cancellationError.message",
+    "details: cancellationError.details",
+    "hint: cancellationError.hint",
+  ]) {
+    assert.match(route, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.match(route, /code: "ATTENDANCE_CANCEL_RUNTIME_ERROR"/);
+  assert.match(route, /서버에서 퇴근취소를 처리하지 못했습니다/);
+  assert.match(route, /Máy chủ không thể xử lý việc hủy giờ ra/);
 });
 
 test("postflight verifies FK behavior, nullability, and unchanged empty audit count", () => {
