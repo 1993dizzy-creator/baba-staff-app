@@ -34,7 +34,7 @@ export const ATTENDANCE_RECORD_PROJECTIONS: Record<
   self_month:
     "id,user_id,work_date,status,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status",
   staff_today:
-    "id,user_id,work_date,status,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status",
+    "id,user_id,work_date,status,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,is_staff_direct_leave",
   leave_month:
     "id,user_id,work_date,status,note,approval_status,created_at",
   admin_user_month:

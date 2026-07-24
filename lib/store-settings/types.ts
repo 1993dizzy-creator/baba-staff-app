@@ -11,6 +11,16 @@ export type StoreBusinessHour = {
   closeTime: string | null;
 };
 
+export type StoreAttendancePolicy = {
+  lateGraceMinutes: number;
+  defaultNormalCheckoutTime: string;
+};
+
+export const DEFAULT_STORE_ATTENDANCE_POLICY: StoreAttendancePolicy = {
+  lateGraceMinutes: 0,
+  defaultNormalCheckoutTime: "00:00",
+};
+
 export type StoreSetting = {
   id: number;
   timezone: typeof STORE_TIMEZONE;
@@ -22,7 +32,22 @@ export type StoreSetting = {
   createdAt: string;
   cancelledBy: number | null;
   cancelledAt: string | null;
+  attendancePolicy: StoreAttendancePolicy;
   hours: StoreBusinessHour[];
+};
+
+export type StoreBusinessDayOverride = {
+  id: number;
+  businessDate: string;
+  actualCloseTime: string;
+  reason: string | null;
+  state: "active" | "cancelled";
+  createdBy: number;
+  createdAt: string;
+  updatedBy: number | null;
+  updatedAt: string | null;
+  cancelledBy: number | null;
+  cancelledAt: string | null;
 };
 
 export type StoreSettingsOverview = {

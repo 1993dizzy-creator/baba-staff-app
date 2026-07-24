@@ -39,6 +39,7 @@ type AttendanceRecord = {
   early_leave_minutes: number | null;
   work_minutes: number | null;
   approval_status: "pending" | "approved" | null;
+  is_staff_direct_leave: boolean;
 };
 
 type LoginUser = {
@@ -125,11 +126,45 @@ export default function AttendanceStaffPage() {
   const mutationInFlightRef = useRef(false);
 
   const [manualModal, setManualModal] = useState<{
-    type: "check_in" | "check_out";
+    type: "check_in" | "check_out" | "leave";
     user: UserRow;
     mode: "standard" | "manual";
     timeValue: string;
   } | null>(null);
+  const [mutationError, setMutationError] = useState("");
+  const [mutationBusy, setMutationBusy] = useState(false);
+  const actionCopy =
+    lang === "vi"
+      ? {
+          leaveProcess: "Xử lý ngày nghỉ",
+          setLeave: "Đánh dấu nghỉ",
+          cancelCheckIn: "Hủy giờ vào",
+          cancelCheckOut: "Hủy giờ ra",
+          cancelLeave: "Hủy ngày nghỉ",
+          confirmCheckIn: "Bạn có muốn hủy bản ghi giờ vào không?",
+          confirmCheckOut:
+            "Bạn có muốn hủy giờ ra và chuyển lại trạng thái đang làm việc không?",
+          confirmLeave: "Bạn có muốn hủy xử lý ngày nghỉ không?",
+          checkOutFirst: "Vui lòng hủy giờ ra trước.",
+        }
+      : {
+          leaveProcess: "휴무 처리",
+          setLeave: "휴무처리",
+          cancelCheckIn: "출근취소",
+          cancelCheckOut: "퇴근취소",
+          cancelLeave: "휴무취소",
+          confirmCheckIn: "출근 기록을 취소하시겠습니까?",
+          confirmCheckOut:
+            "퇴근 기록을 취소하고 다시 근무 중으로 변경하시겠습니까?",
+          confirmLeave: "휴무 처리를 취소하시겠습니까?",
+          checkOutFirst: "퇴근취소를 먼저 진행해주세요.",
+        };
+
+  const closeActionModal = useCallback(() => {
+    setManualModal(null);
+    setMutationError("");
+    setMutationBusy(false);
+  }, []);
 
   const fetchUsers = useCallback(async () => {
     let request = usersRequestRef.current;
@@ -239,6 +274,8 @@ export default function AttendanceStaffPage() {
   const handleForceCheckIn = async (user: UserRow, time: string) => {
     if (mutationInFlightRef.current) return;
     mutationInFlightRef.current = true;
+    setMutationBusy(true);
+    setMutationError("");
     const workDate = getBusinessDate();
     try {
       const res = await attendanceFetch("/api/attendance/admin", {
@@ -257,7 +294,7 @@ export default function AttendanceStaffPage() {
       const result = await res.json();
 
       if (!res.ok || !result.ok) {
-        alert(result.message || c.editFail);
+        setMutationError(result.message || c.editFail);
         return;
       }
 
@@ -268,17 +305,21 @@ export default function AttendanceStaffPage() {
         recordsRequestsRef.current.delete(workDate);
         void fetchAttendanceRecords();
       }
+      closeActionModal();
     } catch (err) {
       console.error(err);
-      alert(c.editFail);
+      setMutationError(c.editFail);
     } finally {
       mutationInFlightRef.current = false;
+      setMutationBusy(false);
     }
   };
 
   const handleForceCheckOut = async (user: UserRow, time: string) => {
     if (mutationInFlightRef.current) return;
     mutationInFlightRef.current = true;
+    setMutationBusy(true);
+    setMutationError("");
     const workDate = getBusinessDate();
 
     try {
@@ -298,7 +339,7 @@ export default function AttendanceStaffPage() {
       const result = await res.json();
 
       if (!res.ok || !result.ok) {
-        alert(result.message || c.editFail);
+        setMutationError(result.message || c.editFail);
         return;
       }
 
@@ -309,17 +350,21 @@ export default function AttendanceStaffPage() {
         recordsRequestsRef.current.delete(workDate);
         void fetchAttendanceRecords();
       }
+      closeActionModal();
     } catch (err) {
       console.error(err);
-      alert(c.editFail);
+      setMutationError(c.editFail);
     } finally {
       mutationInFlightRef.current = false;
+      setMutationBusy(false);
     }
   };
 
   const handleSetLeave = async (user: UserRow) => {
     if (mutationInFlightRef.current) return;
     mutationInFlightRef.current = true;
+    setMutationBusy(true);
+    setMutationError("");
     const workDate = getBusinessDate();
     try {
       const res = await attendanceFetch("/api/attendance/admin", {
@@ -337,7 +382,7 @@ export default function AttendanceStaffPage() {
       const result = await res.json();
 
       if (!res.ok || !result.ok) {
-        alert(result.message || c.editFail);
+        setMutationError(result.message || c.editFail);
         return;
       }
 
@@ -348,11 +393,72 @@ export default function AttendanceStaffPage() {
         recordsRequestsRef.current.delete(workDate);
         void fetchAttendanceRecords();
       }
+      closeActionModal();
     } catch (err) {
       console.error(err);
-      alert(c.editFail);
+      setMutationError(c.editFail);
     } finally {
       mutationInFlightRef.current = false;
+      setMutationBusy(false);
+    }
+  };
+
+  const handleCancelAttendance = async (
+    action: "cancel_check_in" | "cancel_check_out" | "cancel_leave",
+    user: UserRow
+  ) => {
+    const confirmMessage =
+      action === "cancel_check_in"
+        ? actionCopy.confirmCheckIn
+        : action === "cancel_check_out"
+          ? actionCopy.confirmCheckOut
+          : actionCopy.confirmLeave;
+    if (!window.confirm(confirmMessage) || mutationInFlightRef.current) return;
+
+    mutationInFlightRef.current = true;
+    setMutationBusy(true);
+    setMutationError("");
+    const workDate = getBusinessDate();
+    try {
+      const response = await attendanceFetch("/api/attendance/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          user_id: user.id,
+          work_date: workDate,
+          lang,
+        }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.ok) {
+        setMutationError(result?.message || c.editFail);
+        if (response.status === 409) void fetchAttendanceRecords();
+        return;
+      }
+
+      if (result.record) {
+        applyAttendanceRecord(result.record as AttendanceRecord);
+      } else {
+        recordsRequestSequenceRef.current += 1;
+        recordsRequestsRef.current.delete(workDate);
+        setRecords((current) =>
+          current.filter(
+            (record) =>
+              !(
+                String(record.user_id) === String(user.id) &&
+                record.work_date === workDate
+              )
+          )
+        );
+      }
+      closeActionModal();
+    } catch (error) {
+      console.error(error);
+      setMutationError(c.editFail);
+    } finally {
+      mutationInFlightRef.current = false;
+      setMutationBusy(false);
     }
   };
 
@@ -539,12 +645,15 @@ export default function AttendanceStaffPage() {
                                   cursor: "pointer",
                                 }}
                                 onClick={() =>
-                                  setManualModal({
-                                    type: "check_in",
-                                    user,
-                                    mode: "standard",
-                                    timeValue: user.work_start_time || "16:00",
-                                  })
+                                  {
+                                    setMutationError("");
+                                    setManualModal({
+                                      type: "check_in",
+                                      user,
+                                      mode: "standard",
+                                      timeValue: user.work_start_time || "16:00",
+                                    });
+                                  }
                                 }
                               >
                                 {t.updateCheckIn}
@@ -563,12 +672,15 @@ export default function AttendanceStaffPage() {
                                   cursor: "pointer",
                                 }}
                                 onClick={() =>
-                                  setManualModal({
-                                    type: "check_out",
-                                    user,
-                                    mode: "standard",
-                                    timeValue: user.work_end_time || "01:00",
-                                  })
+                                  {
+                                    setMutationError("");
+                                    setManualModal({
+                                      type: "check_out",
+                                      user,
+                                      mode: "standard",
+                                      timeValue: user.work_end_time || "01:00",
+                                    });
+                                  }
                                 }
                               >
                                 {t.updateCheckOut}
@@ -586,7 +698,15 @@ export default function AttendanceStaffPage() {
                                   fontWeight: 700,
                                   cursor: "pointer",
                                 }}
-                                onClick={() => handleSetLeave(user)}
+                                onClick={() => {
+                                  setMutationError("");
+                                  setManualModal({
+                                    type: "leave",
+                                    user,
+                                    mode: "standard",
+                                    timeValue: "",
+                                  });
+                                }}
                               >
                                 {t.workLeave}
                               </button>
@@ -609,14 +729,74 @@ export default function AttendanceStaffPage() {
           <div style={modalBoxStyle}>
             <div style={modalTitleStyle}>
               {manualModal.user.name}{" "}
-              {manualModal.type === "check_in" ? t.checkInProcess : t.checkOutProcess}
+              {manualModal.type === "check_in"
+                ? t.checkInProcess
+                : manualModal.type === "check_out"
+                  ? t.checkOutProcess
+                  : actionCopy.leaveProcess}
             </div>
 
-            {manualModal.mode === "standard" ? (
+            {mutationError ? (
+              <p role="alert" style={modalErrorStyle}>
+                {mutationError}
+              </p>
+            ) : null}
+
+            {manualModal.type === "leave" ? (
+              <>
+                <div style={modalActionStackStyle}>
+                  <button
+                    type="button"
+                    disabled={mutationBusy}
+                    style={modalOptionButtonStyle}
+                    onClick={() => void handleSetLeave(manualModal.user)}
+                  >
+                    {actionCopy.setLeave}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      mutationBusy ||
+                      recordMap.get(manualModal.user.id)?.status !==
+                        ATTENDANCE_STATUS.LEAVE ||
+                      recordMap.get(manualModal.user.id)
+                        ?.is_staff_direct_leave !== true
+                    }
+                    style={{
+                      ...modalDangerButtonStyle,
+                      opacity:
+                        recordMap.get(manualModal.user.id)?.status ===
+                          ATTENDANCE_STATUS.LEAVE &&
+                        recordMap.get(manualModal.user.id)
+                          ?.is_staff_direct_leave === true
+                          ? 1
+                          : 0.45,
+                    }}
+                    onClick={() =>
+                      void handleCancelAttendance(
+                        "cancel_leave",
+                        manualModal.user
+                      )
+                    }
+                  >
+                    {actionCopy.cancelLeave}
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  disabled={mutationBusy}
+                  style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
+                  onClick={closeActionModal}
+                >
+                  {c.cancel}
+                </button>
+              </>
+            ) : manualModal.mode === "standard" ? (
               <>
                 <div style={modalOptionGridStyle}>
                   <button
                     type="button"
+                    disabled={mutationBusy}
                     style={{
                       ...modalOptionButtonStyle,
                       borderColor: "#2563eb",
@@ -636,6 +816,7 @@ export default function AttendanceStaffPage() {
 
                   <button
                     type="button"
+                    disabled={mutationBusy}
                     style={modalOptionButtonStyle}
                     onClick={() =>
                       setManualModal((prev) =>
@@ -662,8 +843,53 @@ export default function AttendanceStaffPage() {
 
                 <button
                   type="button"
+                  disabled={
+                    mutationBusy ||
+                    (manualModal.type === "check_in"
+                      ? !recordMap.get(manualModal.user.id)?.check_in_at ||
+                        Boolean(
+                          recordMap.get(manualModal.user.id)?.check_out_at
+                        )
+                      : !recordMap.get(manualModal.user.id)?.check_out_at)
+                  }
+                  title={
+                    manualModal.type === "check_in" &&
+                    recordMap.get(manualModal.user.id)?.check_out_at
+                      ? actionCopy.checkOutFirst
+                      : undefined
+                  }
+                  style={{
+                    ...modalDangerButtonStyle,
+                    width: "100%",
+                    marginTop: 8,
+                    opacity:
+                      manualModal.type === "check_in"
+                        ? recordMap.get(manualModal.user.id)?.check_in_at &&
+                          !recordMap.get(manualModal.user.id)?.check_out_at
+                          ? 1
+                          : 0.45
+                        : recordMap.get(manualModal.user.id)?.check_out_at
+                          ? 1
+                          : 0.45,
+                  }}
+                  onClick={() =>
+                    void handleCancelAttendance(
+                      manualModal.type === "check_in"
+                        ? "cancel_check_in"
+                        : "cancel_check_out",
+                      manualModal.user
+                    )
+                  }
+                >
+                  {manualModal.type === "check_in"
+                    ? actionCopy.cancelCheckIn
+                    : actionCopy.cancelCheckOut}
+                </button>
+                <button
+                  type="button"
+                  disabled={mutationBusy}
                   style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
-                  onClick={() => setManualModal(null)}
+                  onClick={closeActionModal}
                 >
                   {c.cancel}
                 </button>
@@ -691,6 +917,7 @@ export default function AttendanceStaffPage() {
 
                   <button
                     type="button"
+                    disabled={mutationBusy}
                     style={modalSubmitButtonStyle}
                     onClick={() => {
                       if (manualModal.type === "check_in") {
@@ -706,8 +933,9 @@ export default function AttendanceStaffPage() {
 
                 <button
                   type="button"
+                  disabled={mutationBusy}
                   style={{ ...modalCancelButtonStyle, width: "100%", marginTop: 8 }}
-                  onClick={() => setManualModal(null)}
+                  onClick={closeActionModal}
                 >
                   {c.cancel}
                 </button>
@@ -801,6 +1029,32 @@ const modalCancelButtonStyle: CSSProperties = {
   fontSize: 13,
   fontWeight: 800,
   cursor: "pointer",
+};
+
+const modalDangerButtonStyle: CSSProperties = {
+  padding: "10px 8px",
+  borderRadius: 10,
+  border: "1px solid #fecaca",
+  background: "#fef2f2",
+  color: "#b91c1c",
+  fontSize: 13,
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const modalActionStackStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+};
+
+const modalErrorStyle: CSSProperties = {
+  margin: "0 0 10px",
+  padding: 9,
+  borderRadius: 9,
+  background: "#fef2f2",
+  color: "#b91c1c",
+  fontSize: 12,
+  lineHeight: 1.45,
 };
 
 const sectionStyle: CSSProperties = {

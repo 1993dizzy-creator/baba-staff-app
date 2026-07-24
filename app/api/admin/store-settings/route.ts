@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { calculateStoreBusinessDate, isStoreDateKey, isStoreTime, validateStoreHours } from "@/lib/store-settings/business-time";
 import { canMutateStoreSettings, getStoreSettingsActor, getStoreSettingsOverview } from "@/lib/store-settings/server";
-import { STORE_TIMEZONE, type StoreBusinessHour } from "@/lib/store-settings/types";
+import {
+  STORE_TIMEZONE,
+  type StoreAttendancePolicy,
+  type StoreBusinessHour,
+} from "@/lib/store-settings/types";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -25,9 +29,12 @@ export async function POST(request: Request) {
     if (!canMutateStoreSettings(auth.actor)) return NextResponse.json({ ok: false, code: "FORBIDDEN" }, { status: 403 });
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     const hours = body?.hours as StoreBusinessHour[];
+    const attendancePolicy = body?.attendancePolicy as
+      | StoreAttendancePolicy
+      | undefined;
     const expectedRevision = Number(body?.expectedRevision);
-    const allowedKeys = new Set(["timezone", "businessDayCutoffTime", "effectiveFromBusinessDate", "expectedRevision", "hours"]);
-    if (!body || Object.keys(body).some((key) => !allowedKeys.has(key)) || !isStoreDateKey(body.effectiveFromBusinessDate) || !isStoreTime(body.businessDayCutoffTime) || body.timezone !== STORE_TIMEZONE || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !Array.isArray(hours) || !validateStoreHours(hours)) {
+    const allowedKeys = new Set(["timezone", "businessDayCutoffTime", "effectiveFromBusinessDate", "expectedRevision", "hours", "attendancePolicy"]);
+    if (!body || Object.keys(body).some((key) => !allowedKeys.has(key)) || !isStoreDateKey(body.effectiveFromBusinessDate) || !isStoreTime(body.businessDayCutoffTime) || body.timezone !== STORE_TIMEZONE || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !Array.isArray(hours) || !validateStoreHours(hours) || !attendancePolicy || !Number.isInteger(attendancePolicy.lateGraceMinutes) || attendancePolicy.lateGraceMinutes < 0 || attendancePolicy.lateGraceMinutes > 180 || !isStoreTime(attendancePolicy.defaultNormalCheckoutTime)) {
       return NextResponse.json({ ok: false, code: "INVALID_SETTINGS" }, { status: 400 });
     }
     const currentBusinessDate = calculateStoreBusinessDate(new Date());
@@ -39,8 +46,18 @@ export async function POST(request: Request) {
       p_business_day_cutoff_time: body.businessDayCutoffTime,
       p_hours: hours,
       p_actor_user_id: auth.actor.id,
+      p_late_grace_minutes: attendancePolicy.lateGraceMinutes,
+      p_default_normal_checkout_time:
+        attendancePolicy.defaultNormalCheckoutTime,
     });
-    if (error) { console.error("[STORE_SETTINGS_SCHEDULE_RPC_ERROR]", { code: error.code, message: error.message }); return NextResponse.json({ ok: false, code: "STORE_SETTINGS_SAVE_FAILED" }, { status: 500 }); }
+    if (error) {
+      console.error("[STORE_SETTINGS_SCHEDULE_RPC_ERROR]", { code: error.code, message: error.message });
+      const migrationPending = error.code === "PGRST202" || error.code === "42883";
+      return NextResponse.json(
+        { ok: false, code: migrationPending ? "ATTENDANCE_SETTINGS_DB_PENDING" : "STORE_SETTINGS_SAVE_FAILED" },
+        { status: migrationPending ? 503 : 500 }
+      );
+    }
     return rpcResult(data);
   } catch (error) {
     console.error("[STORE_SETTINGS_SCHEDULE_FAILED]", error);
@@ -71,7 +88,7 @@ function rpcResult(value: unknown) {
   if (result?.status === "ok") return NextResponse.json({ ok: true, result });
   const map: Record<string, [string, number]> = {
     forbidden: ["FORBIDDEN", 403], version_conflict: ["VERSION_CONFLICT", 409], invalid_effective_date: ["INVALID_EFFECTIVE_DATE", 400],
-    invalid_timezone: ["INVALID_TIMEZONE", 400], invalid_hours: ["INVALID_SETTINGS", 400], scheduled_exists: ["SCHEDULED_EXISTS", 409], not_found: ["NOT_FOUND", 404],
+    invalid_timezone: ["INVALID_TIMEZONE", 400], invalid_hours: ["INVALID_SETTINGS", 400], invalid_attendance_policy: ["INVALID_SETTINGS", 400], scheduled_exists: ["SCHEDULED_EXISTS", 409], not_found: ["NOT_FOUND", 404],
   };
   const [code, status] = map[result?.status || ""] || ["STORE_SETTINGS_SAVE_FAILED", 500];
   return NextResponse.json({ ok: false, code, latestRevision: result?.latestRevision }, { status });

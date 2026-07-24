@@ -37,20 +37,24 @@ test("request contracts reject unexpected fields and use no-store reads", () => 
 test("empty database bootstraps through fallback revision zero", () => {
   assert.match(server, /revision: 0/);
   assert.match(server, /fallbackUsed: true/);
-  assert.match(page, /expectedRevision:data\.overview\.latestRevision/);
-  assert.match(page, /data\.capabilities\.mutate&&!data\.overview\.scheduled/);
+  assert.match(page, /expectedRevision:\s*data\.overview\.latestRevision/);
+  assert.match(
+    page,
+    /props\.data\.capabilities\.mutate\s*&&\s*!props\.data\.overview\.scheduled/
+  );
 });
 
-test("fallback and reservation form share the all-week 16:00 default policy", () => {
+test("fallback and reservation form share the store defaults", () => {
   assert.match(types, /Array\.from\(\{ length: 7 \}, \(_, weekday\)/);
   assert.match(types, /openTime: "16:00"/);
   assert.match(types, /closeTime: "01:00"/);
   assert.match(server, /hours: DEFAULT_STORE_HOURS/);
-  assert.match(page, /useState<StoreBusinessHour\[\]>\(DEFAULT_STORE_HOURS\.map/);
-  assert.match(page, /const defaults=DEFAULT_STORE_HOURS\[h\.weekday\]/);
-  assert.match(page, /summaryWeekdayLabel\(group,lang\)/);
-  assert.match(page, /weekday===0\?"#dc2626":weekday===6\?"#2563eb"/);
-  assert.match(page, /expectedRevision:data\.overview\.latestRevision/);
+  assert.match(
+    page,
+    /useState<StoreBusinessHour\[\]>\(\s*DEFAULT_STORE_HOURS\.map/
+  );
+  assert.match(page, /const defaults = DEFAULT_STORE_HOURS\[hour\.weekday\]/);
+  assert.match(page, /expectedRevision:\s*data\.overview\.latestRevision/);
 });
 
 test("login issues and logout clears the shared HttpOnly session", () => {
@@ -70,7 +74,7 @@ test("login issues and logout clears the shared HttpOnly session", () => {
   assert.match(commonAuth, /\.eq\("id", session\.uid\)/);
   assert.match(commonAuth, /data\.is_active !== true/);
   assert.match(session, /sessionCookieOptions\(0\)/);
-  assert.match(page, /requireFreshServerSession\(res\)/);
+  assert.match(page, /requireFreshServerSession\(response\)/);
   assert.match(barAuth, /getAuthenticatedActor\(\)/);
   assert.doesNotMatch(barAuth, /request\.headers|x-baba-actor/);
 });

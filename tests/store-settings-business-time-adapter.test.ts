@@ -18,6 +18,10 @@ const configuredSetting: StoreSetting = {
   createdAt: "2026-07-19T00:00:00Z",
   cancelledBy: null,
   cancelledAt: null,
+  attendancePolicy: {
+    lateGraceMinutes: 0,
+    defaultNormalCheckoutTime: "00:00",
+  },
   hours: DEFAULT_STORE_HOURS,
 };
 const snapshot = createBusinessTimeSnapshot(configuredSetting, "2026-07-20");

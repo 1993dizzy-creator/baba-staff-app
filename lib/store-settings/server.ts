@@ -4,7 +4,15 @@ import { NextResponse } from "next/server";
 import { readServerSession } from "@/lib/auth/server-session";
 import { supabaseServer } from "@/lib/supabase/server";
 import { calculateStoreBusinessDate } from "@/lib/store-settings/business-time";
-import { DEFAULT_STORE_HOURS, STORE_DEFAULT_CUTOFF, STORE_TIMEZONE, type StoreSetting, type StoreSettingsOverview } from "@/lib/store-settings/types";
+import { getStoreAttendancePolicy } from "@/lib/store-settings/attendance-server";
+import {
+  DEFAULT_STORE_ATTENDANCE_POLICY,
+  DEFAULT_STORE_HOURS,
+  STORE_DEFAULT_CUTOFF,
+  STORE_TIMEZONE,
+  type StoreSetting,
+  type StoreSettingsOverview,
+} from "@/lib/store-settings/types";
 
 export type StoreSettingsActor = { id: number; username: string; name: string; role: string };
 
@@ -27,7 +35,7 @@ export async function getStoreSettingsActor() {
 export const canMutateStoreSettings = (actor: StoreSettingsActor) => ["owner", "master"].includes(actor.role);
 
 export function fallbackStoreSetting(businessDate: string): StoreSetting {
-  return { id: 0, timezone: STORE_TIMEZONE, businessDayCutoffTime: STORE_DEFAULT_CUTOFF, effectiveFromBusinessDate: businessDate, revision: 0, state: "active", createdBy: 0, createdAt: "", cancelledBy: null, cancelledAt: null, hours: DEFAULT_STORE_HOURS };
+  return { id: 0, timezone: STORE_TIMEZONE, businessDayCutoffTime: STORE_DEFAULT_CUTOFF, effectiveFromBusinessDate: businessDate, revision: 0, state: "active", createdBy: 0, createdAt: "", cancelledBy: null, cancelledAt: null, attendancePolicy: { ...DEFAULT_STORE_ATTENDANCE_POLICY }, hours: DEFAULT_STORE_HOURS };
 }
 
 export async function getStoreSettingsOverview(baseDate = new Date()): Promise<StoreSettingsOverview> {
@@ -42,5 +50,22 @@ export async function getStoreSettingsOverview(baseDate = new Date()): Promise<S
     console.warn("[STORE_SETTINGS_FALLBACK]", JSON.stringify({ businessDate }));
     return { ...overview, current: fallbackStoreSetting(businessDate), fallbackUsed: true };
   }
-  return { ...overview, fallbackUsed: false };
+  const [currentPolicy, scheduledPolicy] = await Promise.all([
+    overview.current.attendancePolicy
+      ? Promise.resolve(overview.current.attendancePolicy)
+      : getStoreAttendancePolicy(overview.current.id),
+    overview.scheduled
+      ? overview.scheduled.attendancePolicy
+        ? Promise.resolve(overview.scheduled.attendancePolicy)
+        : getStoreAttendancePolicy(overview.scheduled.id)
+      : Promise.resolve(null),
+  ]);
+  return {
+    ...overview,
+    current: { ...overview.current, attendancePolicy: currentPolicy },
+    scheduled: overview.scheduled
+      ? { ...overview.scheduled, attendancePolicy: scheduledPolicy! }
+      : null,
+    fallbackUsed: false,
+  };
 }

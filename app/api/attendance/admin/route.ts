@@ -17,7 +17,9 @@ import {
   APPROVAL_STATUS,
 } from "@/lib/attendance/status";
 import { isAttendanceAdminRole } from "@/lib/attendance/api-policy";
-import { getNormalizedLatePatch } from "@/lib/attendance/mutation-policy";
+import {
+  getNormalizedLatePatch,
+} from "@/lib/attendance/mutation-policy";
 import {
   attendanceAuthFailure,
   requireAttendanceActor,
@@ -30,10 +32,13 @@ type Action =
   | "update_record"
   | "normalize_late"
   | "auto_close_at_01"
-  | "delete_orphan_record";
+  | "delete_orphan_record"
+  | "cancel_check_in"
+  | "cancel_check_out"
+  | "cancel_leave";
 
 const MUTATION_RECORD_FIELDS =
-  "id,user_id,work_date,status,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,note,approval_status,approved_by,approved_at,created_at,updated_at";
+  "id,user_id,work_date,status,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,note,approval_status,approved_by,approved_at,is_staff_direct_leave,created_at,updated_at";
 
 // 선택한 월과 무관하게, 이전 영업일부터 남아있는 미퇴근 기록을 관리자 화면에서 바로 확인할 수 있도록
 // 별도 조회 엔드포인트로 제공한다. 직원 수만큼 반복 조회하지 않도록 단일 쿼리로 처리한다.
@@ -552,6 +557,84 @@ export async function POST(req: Request) {
 
     const nowIso = new Date().toISOString();
 
+    if (
+      action === "cancel_check_in" ||
+      action === "cancel_check_out" ||
+      action === "cancel_leave"
+    ) {
+      const { data: cancellation, error: cancellationError } =
+        await supabaseServer.rpc("attendance_admin_cancel_record_v1", {
+          p_action: action,
+          p_target_user_id: Number(user_id),
+          p_work_date: work_date,
+          p_actor_user_id: auth.actor.id,
+          p_reason: note?.trim() || null,
+        });
+
+      if (cancellationError) {
+        console.error("[ATTENDANCE_CANCEL_RPC_FAILED]", {
+          code: cancellationError.code,
+          message: cancellationError.message,
+        });
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Không thể hủy bản ghi chấm công."
+                : "근태 기록 취소에 실패했습니다.",
+          },
+          { status: 500 }
+        );
+      }
+
+      if (cancellation?.status !== "ok") {
+        const failures: Record<string, { code: string; ko: string; vi: string }> = {
+          check_out_must_be_cancelled_first: {
+            code: "CHECK_OUT_MUST_BE_CANCELLED_FIRST",
+            ko: "퇴근 기록이 있습니다. 퇴근취소 후 출근취소해주세요.",
+            vi: "Đã có giờ ra. Vui lòng hủy giờ ra trước rồi hủy giờ vào.",
+          },
+          check_in_cannot_be_cancelled: {
+            code: "CHECK_IN_CANNOT_BE_CANCELLED",
+            ko: "현재 상태에서는 출근취소를 할 수 없습니다.",
+            vi: "Không thể hủy giờ vào ở trạng thái hiện tại.",
+          },
+          check_out_cannot_be_cancelled: {
+            code: "CHECK_OUT_CANNOT_BE_CANCELLED",
+            ko: "현재 상태에서는 퇴근취소를 할 수 없습니다.",
+            vi: "Không thể hủy giờ ra ở trạng thái hiện tại.",
+          },
+          direct_leave_cannot_be_cancelled: {
+            code: "DIRECT_LEAVE_CANNOT_BE_CANCELLED",
+            ko: "출근명부에서 직접 처리한 휴무만 취소할 수 있습니다.",
+            vi: "Chỉ có thể hủy ngày nghỉ được tạo trực tiếp từ danh sách chấm công.",
+          },
+          record_changed: {
+            code: "ATTENDANCE_RECORD_CHANGED",
+            ko: "근태 기록이 변경되었습니다. 목록을 새로고침해주세요.",
+            vi: "Bản ghi đã thay đổi. Vui lòng tải lại danh sách.",
+          },
+        };
+        const failure =
+          failures[cancellation?.status] ?? failures.record_changed;
+        return NextResponse.json(
+          {
+            ok: false,
+            code: failure.code,
+            message: lang === "vi" ? failure.vi : failure.ko,
+          },
+          { status: 409 }
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+        record: cancellation.record ?? null,
+        deleted_id: cancellation.deletedId ?? null,
+      });
+    }
+
     // 🔥 휴무 처리
     if (action === "set_leave") {
       // 공란 날짜용 "휴무 처리" 신규 생성 요청인데 그 사이 다른 요청으로 이미 근태 기록(근무든
@@ -604,7 +687,8 @@ export async function POST(req: Request) {
         late_minutes: 0,
         early_leave_minutes: 0,
         work_minutes: 0,
-        note: note || "관리자 휴무 처리",
+        note: note ?? existing?.note ?? null,
+        is_staff_direct_leave: true,
         approval_status: APPROVAL_STATUS.APPROVED,
         approved_by: auth.actor.name || auth.actor.username,
         approved_at: nowIso,
@@ -863,6 +947,7 @@ export async function POST(req: Request) {
         late_minutes: nextLateMinutes,
         early_leave_minutes: nextEarlyLeaveMinutes,
         work_minutes: nextWorkMinutes,
+        is_staff_direct_leave: false,
         approval_status: APPROVAL_STATUS.APPROVED,
         note: note ?? existing?.note ?? null,
         updated_at: nowIso,
@@ -959,6 +1044,7 @@ export async function POST(req: Request) {
           late_minutes: lateMinutes,
           early_leave_minutes: earlyLeaveMinutes,
           work_minutes: workMinutes,
+          is_staff_direct_leave: false,
           approval_status: APPROVAL_STATUS.APPROVED,
           updated_at: nowIso,
         })
@@ -1066,6 +1152,7 @@ export async function POST(req: Request) {
         late_minutes: lateMinutes,
         early_leave_minutes: earlyLeaveMinutes,
         work_minutes: workMinutes,
+        is_staff_direct_leave: false,
         approval_status: APPROVAL_STATUS.APPROVED,
         note: note || existing?.note || null,
         updated_at: nowIso,
@@ -1156,6 +1243,7 @@ export async function POST(req: Request) {
           check_out_at: checkOutIso,
           work_minutes: workMinutes,
           early_leave_minutes: earlyLeaveMinutes,
+          is_staff_direct_leave: false,
           approval_status: APPROVAL_STATUS.APPROVED,
           note: note || existing.note || null,
           updated_at: nowIso,
