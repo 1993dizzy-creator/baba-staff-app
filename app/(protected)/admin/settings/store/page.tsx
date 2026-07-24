@@ -125,7 +125,7 @@ const copy = {
   ko: {
     title: "매장 통합설정",
     intro: "운영시간과 근태 판정 기준을 같은 설정 버전으로 관리합니다.",
-    tabs: { hours: "🏪 운영시간", attendance: "⏱️ 근태설정", shadow: "📊 근태비교" },
+    tabs: { hours: "운영시간", attendance: "근태설정", shadow: "근태비교" },
     current: "🏪 현재 매장 운영시간",
     scheduled: "📅 예약 설정",
     newSetting: "🗓️ 설정 예약",
@@ -153,10 +153,9 @@ const copy = {
     lateGrace: "지각 유예시간",
     minutes: "분",
     normalCheckout: "기본 정상퇴근 인정시간",
-    attendanceHelp:
-      "특별 조기마감이 없는 영업일의 조퇴 판정에 사용합니다. 실제 매장 종료시간과는 별도입니다.",
-    lateHelp: "0분이면 예정 출근시간을 넘는 즉시 지각 처리됩니다.",
-    overrideHelp: "특별 조기마감이 등록된 날에는 특별 조기마감 시간이 우선됩니다.",
+    attendanceHelp: "퇴근 기록이 없을 때 정상 퇴근 여부를 판단하는 기준 시간입니다.",
+    lateHelp: "출근 예정시간 이후 이 시간까지는 정상 출근으로 처리합니다.",
+    scheduleNotice: "예약 설정은 선택한 영업일부터 적용되며 기존 기록은 변경하지 않습니다.",
     before: "변경 전",
     after: "변경 후",
     comparisonTitle: "📊 근태 기준 비교",
@@ -207,9 +206,9 @@ const copy = {
     intro:
       "Quản lý giờ hoạt động và quy tắc chấm công trong cùng một phiên bản.",
     tabs: {
-      hours: "🏪 Giờ hoạt động",
-      attendance: "⏱️ Cài đặt chấm công",
-      shadow: "📊 So sánh chấm công",
+      hours: "Giờ mở cửa",
+      attendance: "Chấm công",
+      shadow: "So sánh",
     },
     current: "🏪 Giờ hoạt động hiện tại",
     scheduled: "📅 Cài đặt đã lên lịch",
@@ -241,12 +240,9 @@ const copy = {
     lateGrace: "Thời gian cho phép đi muộn",
     minutes: "phút",
     normalCheckout: "Giờ tan ca được công nhận mặc định",
-    attendanceHelp:
-      "Dùng để xét về sớm khi không có giờ đóng cửa sớm đặc biệt; không phải giờ đóng cửa thực tế.",
-    lateHelp:
-      "Nếu là 0 phút, hệ thống sẽ ghi nhận đi muộn ngay khi quá giờ vào ca.",
-    overrideHelp:
-      "Nếu có giờ đóng cửa sớm đặc biệt, thời gian đó sẽ được ưu tiên.",
+    attendanceHelp: "Dùng để xác định tan ca bình thường khi không có chấm công ra.",
+    lateHelp: "Chấm công trong khoảng này sau giờ vào ca vẫn được tính là đúng giờ.",
+    scheduleNotice: "Cài đặt áp dụng từ ngày đã chọn và không thay đổi dữ liệu cũ.",
     before: "Trước khi đổi",
     after: "Sau khi đổi",
     comparisonTitle: "📊 So sánh tiêu chuẩn chấm công",
@@ -476,20 +472,22 @@ export default function StoreSettingsPage() {
         <p style={styles.warning}>{t.fallback}</p>
       ) : null}
 
-      <nav style={styles.tabs} aria-label={t.title}>
-        {(Object.keys(t.tabs) as Tab[]).map((value) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setTab(value)}
-            style={{
-              ...styles.tab,
-              ...(tab === value ? styles.activeTab : null),
-            }}
-          >
-            {t.tabs[value]}
-          </button>
-        ))}
+      <nav style={styles.subNav} aria-label={t.title}>
+        <div style={styles.subNavRow}>
+          {(Object.keys(t.tabs) as Tab[]).map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setTab(value)}
+              style={{
+                ...styles.subNavTab,
+                ...(tab === value ? styles.subNavTabActive : null),
+              }}
+            >
+              {t.tabs[value]}
+            </button>
+          ))}
+        </div>
       </nav>
 
       {data && tab === "hours" ? (
@@ -616,7 +614,9 @@ function HoursTab(props: {
               const defaults = DEFAULT_STORE_HOURS[hour.weekday];
               return (
                 <div key={hour.weekday} style={styles.day}>
-                  <strong style={{ color: weekdayColor(hour.weekday) }}>
+                  <strong
+                    style={{ ...styles.dayName, color: weekdayColor(hour.weekday) }}
+                  >
                     {weekdayNames[props.lang][hour.weekday]}
                   </strong>
                   <input
@@ -631,7 +631,7 @@ function HoursTab(props: {
                       })
                     }
                   />
-                  <span>–</span>
+                  <span style={styles.dayDash}>–</span>
                   <input
                     aria-label={`${weekdayAriaNames[props.lang][hour.weekday]} ${t.businessHours}`}
                     type="time"
@@ -667,7 +667,7 @@ function HoursTab(props: {
                         )
                       }
                     />
-                    {t.open}
+                    <span style={styles.openToggleText}>{t.open}</span>
                   </label>
                 </div>
               );
@@ -729,19 +729,18 @@ function AttendanceTab(props: {
         <h2 style={styles.sectionTitle}>⚙️ {t.current}</h2>
         <div style={styles.policyCards}>
           <div style={styles.policyCard}>
-            <strong>⏰ {t.lateGrace}</strong>
+            <strong style={styles.policyCardLabel}>⏰ {t.lateGrace}</strong>
             <span style={styles.policyValue}>
               {current.lateGraceMinutes}{t.minutes}
             </span>
             <small style={styles.help}>{t.lateHelp}</small>
           </div>
           <div style={styles.policyCard}>
-            <strong>🌙 {t.normalCheckout}</strong>
+            <strong style={styles.policyCardLabel}>🌙 {t.normalCheckout}</strong>
             <span style={styles.policyValue}>
               {current.defaultNormalCheckoutTime}
             </span>
             <small style={styles.help}>{t.attendanceHelp}</small>
-            <small style={styles.help}>{t.overrideHelp}</small>
           </div>
         </div>
       </section>
@@ -806,9 +805,7 @@ function AttendanceTab(props: {
               />
             </Field>
           </div>
-          <p style={styles.help}>{t.lateHelp}</p>
-          <p style={styles.help}>{t.attendanceHelp}</p>
-          <p style={styles.help}>{t.overrideHelp}</p>
+          <p style={styles.help}>{t.scheduleNotice}</p>
           <button
             style={ui.button}
             disabled={props.busy}
@@ -1178,51 +1175,61 @@ function Field(props: { label: string; children: React.ReactNode }) {
 function Metric(props: { label: string; value: string }) {
   return (
     <span style={styles.metric}>
-      <small>{props.label}</small>
-      <strong>{props.value}</strong>
+      <small style={styles.metricLabel}>{props.label}</small>
+      <strong style={styles.metricValue}>{props.value}</strong>
     </span>
   );
 }
 
 const styles: Record<string, CSSProperties> = {
-  tabs: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 4,
-    padding: 4,
-    margin: "0 0 10px",
-    borderRadius: 12,
-    background: "#e5e7eb",
+  subNav: {
+    borderBottom: "1px solid #e5e7eb",
+    marginBottom: 12,
   },
-  tab: {
-    minHeight: 38,
-    border: 0,
-    borderRadius: 9,
+  subNavRow: {
+    display: "flex",
+    justifyContent: "space-around",
+  },
+  subNavTab: {
+    flex: 1,
+    minWidth: 0,
+    textAlign: "center",
+    padding: "12px 0 10px",
+    fontSize: 14,
+    fontWeight: 600,
+    color: "#9ca3af",
     background: "transparent",
-    color: "#64748b",
-    fontSize: 12,
-    fontWeight: 850,
+    border: 0,
+    borderBottom: "3px solid transparent",
     whiteSpace: "nowrap",
     cursor: "pointer",
   },
-  activeTab: {
-    background: "#111827",
-    color: "#fff",
-    boxShadow: "0 2px 5px rgba(15,23,42,.2)",
+  subNavTabActive: {
+    fontWeight: 800,
+    color: "#111827",
+    borderBottom: "3px solid #111827",
   },
-  card: { ...ui.card, padding: 16, marginBottom: 12 },
+  card: {
+    background: "#fff",
+    border: "1px solid #d8dce3",
+    borderRadius: 14,
+    boxShadow: "0 1px 3px rgba(15,23,42,0.05)",
+    padding: 14,
+    marginBottom: 12,
+  },
   cardHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     gap: 10,
   },
-  sectionTitle: { fontSize: 16, fontWeight: 900, margin: "0 0 12px" },
+  sectionTitle: { fontSize: 16, fontWeight: 800, margin: "0 0 8px" },
   subheading: {
     borderTop: "1px solid #e5e7eb",
-    paddingTop: 14,
-    margin: "14px 0 8px",
+    paddingTop: 12,
+    margin: "12px 0 6px",
     fontSize: 13,
+    fontWeight: 700,
   },
   grid: {
     display: "grid",
@@ -1249,18 +1256,43 @@ const styles: Record<string, CSSProperties> = {
   },
   day: {
     display: "grid",
-    gridTemplateColumns: "28px 1fr auto 1fr 64px",
+    gridTemplateColumns: "28px minmax(0, 1fr) 12px minmax(0, 1fr) minmax(64px, auto)",
     alignItems: "center",
+    justifyItems: "center",
     gap: 6,
-    padding: 7,
+    padding: "8px 6px",
     background: "#fff",
+    minHeight: 44,
   },
-  timeInput: { ...ui.input, width: "100%", minWidth: 0, padding: 6 },
+  dayName: {
+    fontSize: 12,
+    textAlign: "center",
+  },
+  dayDash: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#9ca3af",
+    fontSize: 12,
+  },
+  timeInput: {
+    ...ui.input,
+    width: "100%",
+    minWidth: 0,
+    padding: 6,
+    fontSize: 12,
+    textAlign: "center",
+  },
   openToggle: {
     display: "flex",
     alignItems: "center",
+    justifyContent: "center",
     gap: 4,
+    width: "100%",
     fontSize: 11,
+  },
+  openToggleText: {
+    whiteSpace: "nowrap",
   },
   hourList: {
     display: "grid",
@@ -1283,16 +1315,21 @@ const styles: Record<string, CSSProperties> = {
   },
   policyCard: {
     display: "grid",
-    gap: 8,
-    padding: 14,
+    gap: 6,
+    padding: 12,
     border: "1px solid #e5e7eb",
-    borderRadius: 12,
+    borderRadius: 10,
     background: "#f8fafc",
+  },
+  policyCardLabel: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#374151",
   },
   policyValue: {
     color: "#111827",
-    fontSize: 22,
-    fontWeight: 950,
+    fontSize: 16,
+    fontWeight: 800,
   },
   changePreview: {
     display: "grid",
@@ -1304,9 +1341,20 @@ const styles: Record<string, CSSProperties> = {
     display: "grid",
     gap: 4,
     padding: 10,
+    border: "1px solid #e5e7eb",
     borderRadius: 10,
     background: "#f8fafc",
     minWidth: 0,
+  },
+  metricLabel: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#6b7280",
+  },
+  metricValue: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: "#111827",
   },
   help: {
     margin: "6px 0 12px",
@@ -1372,7 +1420,8 @@ const styles: Record<string, CSSProperties> = {
     border: 0,
     background: "transparent",
     padding: 0,
-    fontWeight: 900,
+    fontSize: 13,
+    fontWeight: 800,
     cursor: "pointer",
   },
   history: { display: "grid", gap: 7, marginTop: 12 },
