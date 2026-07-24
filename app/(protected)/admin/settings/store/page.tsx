@@ -22,6 +22,7 @@ import type {
   AttendanceShadowComparison,
   AttendanceShadowSummary,
 } from "@/lib/attendance/shadow";
+import { getCompletedBusinessDateRange } from "@/lib/attendance/shadow-period";
 import { ui } from "@/lib/styles/ui";
 
 type Tab = "hours" | "attendance" | "shadow";
@@ -35,7 +36,11 @@ type ApiData = {
 };
 type UserOption = { id: number; name: string; username: string };
 type ShadowData = {
-  businessDate: string;
+  businessDate?: string;
+  startBusinessDate: string;
+  endBusinessDate: string;
+  businessDayCount: number;
+  historicalManualOverrideWarning: boolean;
   setting: {
     revision: number;
     attendancePolicy: {
@@ -50,6 +55,19 @@ type ShadowData = {
     reason: string | null;
   } | null;
   summary: AttendanceShadowSummary;
+  dateSummaries: Array<{
+    businessDate: string;
+    settingsRevision: number;
+    storeOpenTime: string | null;
+    storeCloseTime: string | null;
+    hasBusinessOverride: boolean;
+    totalRecords: number;
+    compared: number;
+    matched: number;
+    mismatched: number;
+    excluded: number;
+  }>;
+  differenceTypeCounts: Record<string, number>;
   rows: AttendanceShadowComparison[];
 };
 
@@ -67,6 +85,37 @@ const weekdayColor = (weekday: number) =>
 // 현재 매출·재고 전환이 완료되어 POS 연동 비교 UI는 비활성화한다.
 // 필요 시 다시 활성화할 수 있도록 관련 코드와 API는 유지한다.
 const SHOW_POS_INTEGRATION_COMPARE = false;
+
+const differenceLabels = {
+  ko: {
+    late_minutes: "지각 시간 차이",
+    early_leave_minutes: "조퇴 시간 차이",
+    legacy_90_minute_threshold: "기존 90분 기준 차이",
+    special_close: "특별 조기마감 차이",
+    employee_store_close: "직원 예정시간·매장 마감 차이",
+    unresolved_at: "미퇴근 판정시각 차이",
+    manual_late_normalization: "수동 지각 정상처리 제외",
+    leave: "휴무 제외",
+    other: "기타",
+  },
+  vi: {
+    late_minutes: "Chênh lệch phút đi muộn",
+    early_leave_minutes: "Chênh lệch phút về sớm",
+    legacy_90_minute_threshold: "Chênh lệch ngưỡng cũ 90 phút",
+    special_close: "Chênh lệch đóng cửa sớm đặc biệt",
+    employee_store_close: "Chênh lệch giờ nhân viên và cửa hàng",
+    unresolved_at: "Chênh lệch mốc chưa chấm ra",
+    manual_late_normalization: "Loại trừ chuẩn hóa đi muộn thủ công",
+    leave: "Loại trừ ngày nghỉ",
+    other: "Khác",
+  },
+} as const;
+
+function differenceLabel(lang: "ko" | "vi", value: string) {
+  return differenceLabels[lang][
+    value as keyof (typeof differenceLabels)["ko"]
+  ] ?? value;
+}
 
 const copy = {
   ko: {
@@ -109,6 +158,16 @@ const copy = {
     comparisonTitle: "📊 근태 기준 비교",
     comparisonSummary: "📈 비교 요약",
     shadowDate: "영업일",
+    startDate: "시작 영업일",
+    endDate: "종료 영업일",
+    completedNotice: "진행 중인 영업일을 제외한 최근 완료 영업일 7일이 기본값입니다.",
+    historyWarning: "기존 기록 중 일부는 수동 정상처리 여부를 식별할 수 없어 비교 결과에 포함될 수 있습니다.",
+    manualExcluded: "수동 지각 정상처리 제외",
+    leaveExcluded: "휴무 제외",
+    excludedRows: "제외 기록",
+    dateSummary: "날짜별 요약",
+    differenceFilter: "차이 유형",
+    allDifferences: "전체 유형",
     employee: "직원",
     allEmployees: "전체 직원",
     compare: "비교 실행",
@@ -187,6 +246,16 @@ const copy = {
     comparisonTitle: "📊 So sánh tiêu chuẩn chấm công",
     comparisonSummary: "📈 Tóm tắt so sánh",
     shadowDate: "Ngày kinh doanh",
+    startDate: "Ngày kinh doanh bắt đầu",
+    endDate: "Ngày kinh doanh kết thúc",
+    completedNotice: "Mặc định là 7 ngày kinh doanh đã hoàn tất gần nhất, không gồm ngày đang diễn ra.",
+    historyWarning: "Một số bản ghi cũ không thể xác định việc chuẩn hóa thủ công và có thể vẫn được tính vào kết quả.",
+    manualExcluded: "Loại trừ chuẩn hóa đi muộn thủ công",
+    leaveExcluded: "Loại trừ ngày nghỉ",
+    excludedRows: "Bản ghi bị loại trừ",
+    dateSummary: "Tóm tắt theo ngày",
+    differenceFilter: "Loại chênh lệch",
+    allDifferences: "Tất cả loại",
     employee: "Nhân viên",
     allEmployees: "Tất cả nhân viên",
     compare: "Chạy so sánh",
@@ -750,8 +819,15 @@ function ShadowTab(props: {
   lang: "ko" | "vi";
 }) {
   const t = copy[props.lang];
-  const [date, setDate] = useState(props.businessDate);
+  const initialRange = useMemo(
+    () => getCompletedBusinessDateRange(props.businessDate),
+    [props.businessDate]
+  );
+  const [startDate, setStartDate] = useState(initialRange.startBusinessDate);
+  const [endDate, setEndDate] = useState(initialRange.endBusinessDate);
   const [userId, setUserId] = useState("");
+  const [differenceFilter, setDifferenceFilter] = useState("");
+  const [showExcluded, setShowExcluded] = useState(false);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [result, setResult] = useState<ShadowData | null>(null);
   const [busy, setBusy] = useState(false);
@@ -774,7 +850,8 @@ function ShadowTab(props: {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            businessDate: date,
+            startBusinessDate: startDate,
+            endBusinessDate: endDate,
             userId: userId || undefined,
           }),
         }
@@ -800,7 +877,8 @@ function ShadowTab(props: {
       [t.lateChanged, result.summary.lateChanged],
       [t.earlyChanged, result.summary.earlyLeaveChanged],
       [t.unresolvedChanged, result.summary.unresolvedChanged],
-      [t.autoCloseChanged, result.summary.autoCloseChanged],
+      [t.manualExcluded, result.summary.manualLateExcluded],
+      [t.leaveExcluded, result.summary.leaveExcluded],
     ] as const;
   }, [result, t]);
 
@@ -808,14 +886,24 @@ function ShadowTab(props: {
     <>
       <section style={styles.card}>
         <h2 style={styles.sectionTitle}>{t.comparisonTitle}</h2>
+        <p style={styles.help}>{t.completedNotice}</p>
         <div style={styles.grid}>
-          <Field label={t.shadowDate}>
+          <Field label={t.startDate}>
             <input
               type="date"
-              max={props.businessDate}
-              value={date}
+              max={endDate}
+              value={startDate}
               style={styles.input}
-              onChange={(event) => setDate(event.target.value)}
+              onChange={(event) => setStartDate(event.target.value)}
+            />
+          </Field>
+          <Field label={t.endDate}>
+            <input
+              type="date"
+              max={initialRange.endBusinessDate}
+              value={endDate}
+              style={styles.input}
+              onChange={(event) => setEndDate(event.target.value)}
             />
           </Field>
           <Field label={t.employee}>
@@ -835,7 +923,7 @@ function ShadowTab(props: {
         </div>
         <button
           style={ui.button}
-          disabled={busy || !date}
+          disabled={busy || !startDate || !endDate}
           onClick={runComparison}
         >
           {busy ? t.comparing : t.compare}
@@ -847,18 +935,12 @@ function ShadowTab(props: {
         <>
           <section style={styles.card}>
             <h2 style={styles.sectionTitle}>{t.comparisonSummary}</h2>
+            {result.historicalManualOverrideWarning ? (
+              <p style={styles.warning}>{t.historyWarning}</p>
+            ) : null}
             <div style={styles.policyBanner}>
-              <strong>
-                {t.revision} #{result.setting.revision}
-              </strong>
-              <span>
-                {result.override
-                  ? `${t.specialClose} ${result.override.actualCloseTime}`
-                  : `${t.defaultClose} ${result.setting.attendancePolicy.defaultNormalCheckoutTime}`}
-              </span>
-              <span>
-                {t.storeClose} {result.setting.storeCloseTime || "-"}
-              </span>
+              <strong>{result.startBusinessDate} ~ {result.endBusinessDate}</strong>
+              <span>{result.businessDayCount} {props.lang === "ko" ? "영업일" : "ngày"}</span>
             </div>
             <div style={styles.summaryGrid}>
               {summaryItems.map(([label, value]) => (
@@ -868,22 +950,81 @@ function ShadowTab(props: {
           </section>
 
           <section style={styles.card}>
-            <h2 style={styles.sectionTitle}>⚠️ {t.mismatched}</h2>
+            <h2 style={styles.sectionTitle}>📅 {t.dateSummary}</h2>
+            <div style={styles.shadowList}>
+              {result.dateSummaries.map((day) => (
+                <article key={day.businessDate} style={styles.shadowRow}>
+                  <strong>{day.businessDate} · #{day.settingsRevision}</strong>
+                  <small style={styles.rowMeta}>
+                    {day.storeOpenTime || "-"} ~ {day.storeCloseTime || "-"}
+                    {day.hasBusinessOverride ? ` · ${t.specialClose}` : ""}
+                  </small>
+                  <span>{t.total} {day.totalRecords} · {t.matched} {day.matched} · {t.mismatched} {day.mismatched} · {t.excludedRows} {day.excluded}</span>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section style={styles.card}>
+            <div style={styles.cardHeader}>
+              <h2 style={styles.sectionTitle}>⚠️ {t.mismatched}</h2>
+              <select
+                aria-label={t.differenceFilter}
+                value={differenceFilter}
+                style={styles.input}
+                onChange={(event) => setDifferenceFilter(event.target.value)}
+              >
+                <option value="">{t.allDifferences}</option>
+                {Object.keys(result.differenceTypeCounts).map((type) => (
+                  <option key={type} value={type}>
+                    {differenceLabel(props.lang, type)}
+                  </option>
+                ))}
+              </select>
+            </div>
             {result.rows.filter((row) =>
-              Object.values(row.differences).some(Boolean)
+              row.comparisonStatus === "compared" &&
+              Object.values(row.differences).some(Boolean) &&
+              (!differenceFilter || row.differenceTypes.includes(differenceFilter))
             ).length === 0 ? (
               <p style={styles.muted}>{t.noRows}</p>
             ) : (
               <div style={styles.shadowList}>
                 {result.rows
                   .filter((row) =>
-                    Object.values(row.differences).some(Boolean)
+                    row.comparisonStatus === "compared" &&
+                    Object.values(row.differences).some(Boolean) &&
+                    (!differenceFilter || row.differenceTypes.includes(differenceFilter))
                   )
                   .map((row) => (
                     <ShadowRow key={row.recordId} row={row} lang={props.lang} />
                   ))}
               </div>
             )}
+          </section>
+
+          <section style={styles.card}>
+            <button
+              style={ui.subButton}
+              onClick={() => setShowExcluded((value) => !value)}
+            >
+              {t.excludedRows} ({result.rows.filter((row) =>
+                row.comparisonStatus === "excluded" ||
+                row.metricComparison.late.comparisonStatus === "excluded"
+              ).length})
+            </button>
+            {showExcluded ? (
+              <div style={{ ...styles.shadowList, marginTop: 12 }}>
+                {result.rows
+                  .filter((row) =>
+                    row.comparisonStatus === "excluded" ||
+                    row.metricComparison.late.comparisonStatus === "excluded"
+                  )
+                  .map((row) => (
+                    <ShadowRow key={row.recordId} row={row} lang={props.lang} />
+                  ))}
+              </div>
+            ) : null}
           </section>
         </>
       ) : null}
@@ -935,6 +1076,13 @@ function ShadowRow(props: {
           <p>{t.unresolved}: {String(props.row.configured.unresolved)}</p>
           <p>{t.closeSource}: {sourceText}</p>
           <p>{t.revision}: #{props.row.configured.settingsRevision}</p>
+          {props.row.differenceTypes.length ? (
+            <p>
+              {props.row.differenceTypes
+                .map((type) => differenceLabel(props.lang, type))
+                .join(" · ")}
+            </p>
+          ) : null}
         </div>
       </div>
     </article>

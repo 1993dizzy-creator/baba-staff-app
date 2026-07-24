@@ -18,9 +18,6 @@ import {
 } from "@/lib/attendance/status";
 import { isAttendanceAdminRole } from "@/lib/attendance/api-policy";
 import {
-  getNormalizedLatePatch,
-} from "@/lib/attendance/mutation-policy";
-import {
   attendanceAuthFailure,
   requireAttendanceActor,
 } from "@/lib/attendance/server-api";
@@ -289,13 +286,14 @@ export async function POST(req: Request) {
         );
       }
 
-      const { data, error } = await supabaseServer
-        .from("attendance_records")
-        .update(getNormalizedLatePatch(targetRecord, new Date().toISOString()))
-        .eq("id", targetRecord.id)
-        .gt("late_minutes", 0)
-        .select(MUTATION_RECORD_FIELDS)
-        .maybeSingle();
+      const { data: normalization, error } = await supabaseServer.rpc(
+        "attendance_admin_normalize_late_v1",
+        {
+          p_attendance_record_id: targetRecord.id,
+          p_actor_user_id: auth.actor.id,
+          p_reason: note?.trim() || null,
+        }
+      );
 
       if (error) {
         return NextResponse.json(
@@ -310,8 +308,7 @@ export async function POST(req: Request) {
         );
       }
 
-      // 같은 기록을 동시에 정상처리한 경우 최신 행을 다시 읽어 안전한 no-op으로 응답한다.
-      if (!data) {
+      if (normalization?.status === "record_changed") {
         const { data: latest, error: latestError } = await supabaseServer
           .from("attendance_records")
           .select("*")
@@ -334,7 +331,27 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true, record: latest, no_op: true });
       }
 
-      return NextResponse.json({ ok: true, record: data });
+      if (
+        normalization?.status !== "ok" &&
+        normalization?.status !== "no_op"
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Không thể xử lý đi muộn ở trạng thái hiện tại."
+                : "현재 상태에서는 지각 정상처리를 할 수 없습니다.",
+          },
+          { status: 409 }
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+        record: normalization.record,
+        no_op: normalization.status === "no_op",
+      });
     }
 
     // normalize_late 이외의 기존 action은 아래 공통 처리에서 사용자와 근무일을 사용한다.

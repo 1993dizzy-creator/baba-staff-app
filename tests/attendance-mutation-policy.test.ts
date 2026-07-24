@@ -93,6 +93,18 @@ test("late normalization changes only late state and preserves open checkout", (
   }
 });
 
+test("admin late normalization uses the atomic service-role RPC", () => {
+  const admin = read("app/api/attendance/admin/route.ts");
+  assert.match(admin, /rpc\(\s*"attendance_admin_normalize_late_v1"/);
+  assert.match(admin, /p_attendance_record_id:\s*targetRecord\.id/);
+  assert.match(admin, /p_actor_user_id:\s*auth\.actor\.id/);
+  assert.match(admin, /p_reason:\s*note\?\.trim\(\) \|\| null/);
+  assert.doesNotMatch(
+    admin,
+    /from\("attendance_records"\)[\s\S]{0,250}\.update\(getNormalizedLatePatch/
+  );
+});
+
 test("routes authenticate the session and clients do not send actor identity", () => {
   const leave = read("app/api/attendance/leave/route.ts");
   const leaveAdmin = read("app/api/attendance/leave-admin/route.ts");

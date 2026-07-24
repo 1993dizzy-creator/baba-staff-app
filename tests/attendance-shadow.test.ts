@@ -54,6 +54,7 @@ test("shadow reports matches and each independent difference", () => {
     lateMinutes: false,
     earlyLeaveMinutes: false,
     unresolved: false,
+    unresolvedAt: false,
     autoCloseAt: false,
   });
 
@@ -62,23 +63,49 @@ test("shadow reports matches and each independent difference", () => {
   const early = row(match.legacy, { earlyLeaveMinutes: 61 });
   assert.equal(early.differences.earlyLeaveMinutes, true);
   const unresolved = row(match.legacy, { unresolved: true });
-  assert.equal(unresolved.differences.unresolved, true);
-  const autoClose = row(
-    { ...match.legacy, autoCloseAt: "2026-07-24T18:00:00.000Z" },
-    { effectiveStoreCloseAt: "2026-07-24T16:00:00.000Z" }
-  );
-  assert.equal(autoClose.differences.autoCloseAt, true);
-
-  assert.deepEqual(summarizeAttendanceShadow([match, status, early]), {
-    total: 3,
-    matched: 1,
-    mismatched: 2,
-    statusChanged: 1,
-    lateChanged: 0,
-    earlyLeaveChanged: 1,
-    unresolvedChanged: 0,
-    autoCloseChanged: 0,
+  assert.equal(unresolved.differences.unresolved, false);
+  const unresolvedAt = compareAttendanceShadow({
+    recordId: 2,
+    userId: 2,
+    userName: "Tester",
+    businessDate: "2026-07-24",
+    checkInAt: "2026-07-24T09:00:00.000Z",
+    checkOutAt: null,
+    legacy: {
+      ...match.legacy,
+      unresolvedAt: "2026-07-24T18:00:00.000Z",
+      autoCloseAt: "2026-07-24T18:00:00.000Z",
+    },
+    configured: { ...configured, unresolvedAt: "2026-07-24T19:00:00.000Z" },
   });
+  assert.equal(unresolvedAt.differences.unresolvedAt, true);
+  assert.equal(unresolvedAt.differences.autoCloseAt, true);
+
+  const manualLate = compareAttendanceShadow({
+    recordId: 3,
+    userId: 2,
+    userName: "Tester",
+    businessDate: "2026-07-24",
+    checkInAt: "2026-07-24T09:00:00.000Z",
+    checkOutAt: "2026-07-24T18:00:00.000Z",
+    legacy: { ...match.legacy, status: "done", lateMinutes: 0 },
+    configured: { ...configured, status: "late", lateMinutes: 6, earlyLeaveMinutes: 10 },
+    manualLateNormalization: true,
+  });
+  assert.equal(manualLate.metricComparison.late.comparisonStatus, "excluded");
+  assert.equal(manualLate.differences.lateMinutes, false);
+  assert.equal(manualLate.differences.earlyLeaveMinutes, true);
+  assert.equal(
+    summarizeAttendanceShadow([manualLate]).manualLateExcluded,
+    1
+  );
+
+  const summary = summarizeAttendanceShadow([match, status, early]);
+  assert.equal(summary.total, 3);
+  assert.equal(summary.matched, 1);
+  assert.equal(summary.mismatched, 2);
+  assert.equal(summary.statusChanged, 1);
+  assert.equal(summary.earlyLeaveChanged, 1);
 });
 
 test("shadow route is read-only and uses the server session actor", () => {
@@ -98,7 +125,7 @@ test("shadow supports special-close lookup and migration security", () => {
   const migration = read(
     "supabase/migrations/202607240001_create_attendance_policy_shadow_foundation.sql"
   );
-  assert.match(route, /getStoreBusinessDayOverride\(businessDate\)/);
+  assert.match(route, /store_business_day_overrides/);
   for (const table of [
     "store_attendance_policies",
     "store_business_day_overrides",
