@@ -42,13 +42,15 @@ type ShadowData = {
   businessDayCount: number;
   historicalManualOverrideWarning: boolean;
   setting: {
-    revision: number;
+    revision: number | null;
+    fallbackUsed: boolean;
     attendancePolicy: {
       lateGraceMinutes: number;
       defaultNormalCheckoutTime: string;
     };
     storeOpenTime: string | null;
     storeCloseTime: string | null;
+    businessDayCutoffTime: string;
   };
   override: {
     actualCloseTime: string;
@@ -57,9 +59,11 @@ type ShadowData = {
   summary: AttendanceShadowSummary;
   dateSummaries: Array<{
     businessDate: string;
-    settingsRevision: number;
+    settingsRevision: number | null;
+    fallbackUsed: boolean;
     storeOpenTime: string | null;
     storeCloseTime: string | null;
+    businessDayCutoffTime: string;
     hasBusinessOverride: boolean;
     totalRecords: number;
     compared: number;
@@ -195,6 +199,8 @@ const copy = {
     overrideSource: "특별 조기마감",
     configuredSource: "요일별 매장 종료",
     fallbackSource: "기본 인정시간",
+    fallbackSetting: "기본 설정 적용",
+    noSavedSetting: "저장된 통합설정 없음",
   },
   vi: {
     title: "Cài đặt tích hợp cửa hàng",
@@ -283,6 +289,8 @@ const copy = {
     overrideSource: "Đóng sớm đặc biệt",
     configuredSource: "Giờ đóng cửa theo ngày",
     fallbackSource: "Giờ mặc định",
+    fallbackSetting: "Áp dụng cài đặt mặc định",
+    noSavedSetting: "Không có cài đặt tích hợp đã lưu",
   },
 } as const;
 
@@ -954,11 +962,21 @@ function ShadowTab(props: {
             <div style={styles.shadowList}>
               {result.dateSummaries.map((day) => (
                 <article key={day.businessDate} style={styles.shadowRow}>
-                  <strong>{day.businessDate} · #{day.settingsRevision}</strong>
+                  <strong>
+                    {day.businessDate} ·{" "}
+                    {day.fallbackUsed
+                      ? t.fallbackSetting
+                      : `#${day.settingsRevision}`}
+                  </strong>
                   <small style={styles.rowMeta}>
                     {day.storeOpenTime || "-"} ~ {day.storeCloseTime || "-"}
+                    {" · "}
+                    {t.cutoff} {day.businessDayCutoffTime}
                     {day.hasBusinessOverride ? ` · ${t.specialClose}` : ""}
                   </small>
+                  {day.fallbackUsed ? (
+                    <small style={styles.warning}>{t.noSavedSetting}</small>
+                  ) : null}
                   <span>{t.total} {day.totalRecords} · {t.matched} {day.matched} · {t.mismatched} {day.mismatched} · {t.excludedRows} {day.excluded}</span>
                 </article>
               ))}
@@ -1075,7 +1093,12 @@ function ShadowRow(props: {
           <p>{t.early}: {props.row.configured.earlyLeaveMinutes}</p>
           <p>{t.unresolved}: {String(props.row.configured.unresolved)}</p>
           <p>{t.closeSource}: {sourceText}</p>
-          <p>{t.revision}: #{props.row.configured.settingsRevision}</p>
+          <p>
+            {t.revision}:{" "}
+            {props.row.configured.settingsRevision === null
+              ? t.fallbackSetting
+              : `#${props.row.configured.settingsRevision}`}
+          </p>
           {props.row.differenceTypes.length ? (
             <p>
               {props.row.differenceTypes

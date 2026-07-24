@@ -6,6 +6,7 @@ import test from "node:test";
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const route = read("app/api/admin/store-settings/route.ts");
 const server = read("lib/store-settings/server.ts");
+const fallback = read("lib/store-settings/fallback.ts");
 const types = read("lib/store-settings/types.ts");
 const page = read("app/(protected)/admin/settings/store/page.tsx");
 const login = read("app/api/login/route.ts");
@@ -35,7 +36,7 @@ test("request contracts reject unexpected fields and use no-store reads", () => 
 });
 
 test("empty database bootstraps through fallback revision zero", () => {
-  assert.match(server, /revision: 0/);
+  assert.match(fallback, /revision: 0/);
   assert.match(server, /fallbackUsed: true/);
   assert.match(page, /expectedRevision:\s*data\.overview\.latestRevision/);
   assert.match(
@@ -48,7 +49,7 @@ test("fallback and reservation form share the store defaults", () => {
   assert.match(types, /Array\.from\(\{ length: 7 \}, \(_, weekday\)/);
   assert.match(types, /openTime: "16:00"/);
   assert.match(types, /closeTime: "01:00"/);
-  assert.match(server, /hours: DEFAULT_STORE_HOURS/);
+  assert.match(fallback, /hours: DEFAULT_STORE_HOURS/);
   assert.match(
     page,
     /useState<StoreBusinessHour\[\]>\(\s*DEFAULT_STORE_HOURS\.map/

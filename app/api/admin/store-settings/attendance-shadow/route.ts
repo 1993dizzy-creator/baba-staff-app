@@ -6,9 +6,11 @@ import {
   type AttendanceShadowComparison,
 } from "@/lib/attendance/shadow";
 import { parseAttendanceShadowRange } from "@/lib/attendance/shadow-period";
+import { resolveAttendanceShadowSetting } from "@/lib/attendance/shadow-settings";
 import { getShiftAutoCloseIso, isOpenRecordUnresolved } from "@/lib/attendance/time";
 import {
   canMutateStoreSettings,
+  fallbackStoreSetting,
   getStoreSettingsActor,
 } from "@/lib/store-settings/server";
 import { getStoreAttendancePolicy } from "@/lib/store-settings/attendance-server";
@@ -92,12 +94,24 @@ export async function POST(request: Request) {
         if (error) throw new Error(error.message);
         const setting = (data as Omit<StoreSettingsOverview, "fallbackUsed">)
           .current as StoreSetting | null;
-        if (!setting) throw new Error(`STORE_SETTING_NOT_FOUND:${businessDate}`);
-        return [businessDate, setting] as const;
+        return [
+          businessDate,
+          resolveAttendanceShadowSetting(
+            businessDate,
+            setting,
+            fallbackStoreSetting
+          ),
+        ] as const;
       })
     );
     const settingsByDate = new Map(overviewResults);
-    const settings = [...new Map(overviewResults.map(([, setting]) => [setting.id, setting])).values()];
+    const settings = [
+      ...new Map(
+        overviewResults
+          .filter(([, resolved]) => !resolved.fallbackUsed)
+          .map(([, resolved]) => [resolved.setting.id, resolved.setting])
+      ).values(),
+    ];
     const policies = await Promise.all(
       settings.map(async (setting) => [
         setting.id,
@@ -180,8 +194,11 @@ export async function POST(request: Request) {
     );
     const now = new Date();
     const rows: AttendanceShadowComparison[] = records.map((record) => {
-      const setting = settingsByDate.get(record.work_date)!;
-      const policy = policiesBySetting.get(setting.id)!;
+      const resolved = settingsByDate.get(record.work_date)!;
+      const setting = resolved.setting;
+      const policy =
+        resolved.attendancePolicy ??
+        policiesBySetting.get(resolved.settingId!)!;
       const user = users.get(record.user_id);
       const weekday = new Date(`${record.work_date}T00:00:00Z`).getUTCDay();
       const businessHour = setting.hours.find((hour) => hour.weekday === weekday);
@@ -190,7 +207,7 @@ export async function POST(request: Request) {
         businessDate: record.work_date,
         timezone: setting.timezone,
         businessDayCutoffTime: setting.businessDayCutoffTime,
-        settingsRevision: setting.revision,
+        settingsRevision: resolved.revision,
         scheduledStartTime: normalizeTime(user?.work_start_time),
         scheduledEndTime: normalizeTime(user?.work_end_time),
         storeOpenTime: normalizeTime(businessHour?.openTime),
@@ -236,22 +253,28 @@ export async function POST(request: Request) {
     const summary = summarizeAttendanceShadow(rows, records.length);
     const dateSummaries = range.businessDates.map((businessDate) => {
       const dateRows = rows.filter((row) => row.businessDate === businessDate);
-      const setting = settingsByDate.get(businessDate)!;
+      const resolved = settingsByDate.get(businessDate)!;
+      const setting = resolved.setting;
       const hour = setting.hours.find(
         (item) => item.weekday === new Date(`${businessDate}T00:00:00Z`).getUTCDay()
       );
       return {
         businessDate,
-        settingsRevision: setting.revision,
+        settingsRevision: resolved.revision,
+        fallbackUsed: resolved.fallbackUsed,
         storeOpenTime: normalizeTime(hour?.openTime),
         storeCloseTime: normalizeTime(hour?.closeTime),
+        businessDayCutoffTime: setting.businessDayCutoffTime,
         hasBusinessOverride: overrides.has(businessDate),
         ...summarizeAttendanceShadow(dateRows, dateRows.length),
       };
     });
     const cancellationActions = (cancellationResult.data ?? []).map((item) => item.action);
-    const firstSetting = settingsByDate.get(range.startBusinessDate)!;
-    const firstPolicy = policiesBySetting.get(firstSetting.id)!;
+    const firstResolved = settingsByDate.get(range.startBusinessDate)!;
+    const firstSetting = firstResolved.setting;
+    const firstPolicy =
+      firstResolved.attendancePolicy ??
+      policiesBySetting.get(firstResolved.settingId!)!;
     const firstHour = firstSetting.hours.find(
       (item) => item.weekday === new Date(`${range.startBusinessDate}T00:00:00Z`).getUTCDay()
     );
@@ -264,10 +287,12 @@ export async function POST(request: Request) {
       businessDayCount: range.businessDates.length,
       historicalManualOverrideWarning: true,
       setting: {
-        revision: firstSetting.revision,
+        revision: firstResolved.revision,
+        fallbackUsed: firstResolved.fallbackUsed,
         attendancePolicy: firstPolicy,
         storeOpenTime: normalizeTime(firstHour?.openTime),
         storeCloseTime: normalizeTime(firstHour?.closeTime),
+        businessDayCutoffTime: firstSetting.businessDayCutoffTime,
       },
       override: range.singleDate ? overrides.get(range.startBusinessDate) ?? null : null,
       summary,

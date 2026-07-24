@@ -13,7 +13,7 @@ export type AttendancePolicyInput = {
   businessDate: string;
   timezone: string;
   businessDayCutoffTime: string;
-  settingsRevision: number;
+  settingsRevision: number | null;
   scheduledStartTime: string | null;
   scheduledEndTime: string | null;
   storeOpenTime: string | null;
@@ -42,7 +42,7 @@ export type AttendancePolicyResult = {
   unresolvedAt: string | null;
   unresolved: boolean;
   source: {
-    settingsRevision: number;
+    settingsRevision: number | null;
     close: "override" | "configured" | "fallback";
   };
 };

@@ -5,14 +5,12 @@ import { readServerSession } from "@/lib/auth/server-session";
 import { supabaseServer } from "@/lib/supabase/server";
 import { calculateStoreBusinessDate } from "@/lib/store-settings/business-time";
 import { getStoreAttendancePolicy } from "@/lib/store-settings/attendance-server";
+import { fallbackStoreSetting } from "@/lib/store-settings/fallback";
 import {
-  DEFAULT_STORE_ATTENDANCE_POLICY,
-  DEFAULT_STORE_HOURS,
-  STORE_DEFAULT_CUTOFF,
-  STORE_TIMEZONE,
-  type StoreSetting,
   type StoreSettingsOverview,
 } from "@/lib/store-settings/types";
+
+export { fallbackStoreSetting } from "@/lib/store-settings/fallback";
 
 export type StoreSettingsActor = { id: number; username: string; name: string; role: string };
 
@@ -33,10 +31,6 @@ export async function getStoreSettingsActor() {
 }
 
 export const canMutateStoreSettings = (actor: StoreSettingsActor) => ["owner", "master"].includes(actor.role);
-
-export function fallbackStoreSetting(businessDate: string): StoreSetting {
-  return { id: 0, timezone: STORE_TIMEZONE, businessDayCutoffTime: STORE_DEFAULT_CUTOFF, effectiveFromBusinessDate: businessDate, revision: 0, state: "active", createdBy: 0, createdAt: "", cancelledBy: null, cancelledAt: null, attendancePolicy: { ...DEFAULT_STORE_ATTENDANCE_POLICY }, hours: DEFAULT_STORE_HOURS };
-}
 
 export async function getStoreSettingsOverview(baseDate = new Date()): Promise<StoreSettingsOverview> {
   const fallbackBusinessDate = calculateStoreBusinessDate(baseDate);

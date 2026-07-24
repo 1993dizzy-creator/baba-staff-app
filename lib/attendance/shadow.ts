@@ -44,7 +44,7 @@ export type AttendanceShadowComparison = {
     unresolvedAt: string | null;
     normalCheckoutThresholdAt: string | null;
     scheduledEndAt: string | null;
-    settingsRevision: number;
+    settingsRevision: number | null;
     closeSource: AttendancePolicyResult["source"]["close"];
   };
   differences: {
