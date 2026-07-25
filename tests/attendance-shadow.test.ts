@@ -19,6 +19,7 @@ const configured: AttendancePolicyResult = {
   scheduledStartAt: null,
   scheduledEndAt: null,
   normalCheckoutThresholdAt: null,
+  earlyLeaveThresholdAt: null,
   scheduledStoreCloseAt: "2026-07-24T18:00:00.000Z",
   overrideCloseAt: null,
   effectiveStoreCloseAt: "2026-07-24T18:00:00.000Z",

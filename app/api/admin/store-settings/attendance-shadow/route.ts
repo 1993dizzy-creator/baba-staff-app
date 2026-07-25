@@ -213,7 +213,8 @@ export async function POST(request: Request) {
         storeOpenTime: normalizeTime(businessHour?.openTime),
         storeCloseTime: businessHour?.isClosed === false ? normalizeTime(businessHour.closeTime) : null,
         lateGraceMinutes: policy.lateGraceMinutes,
-        defaultNormalCheckoutTime: policy.defaultNormalCheckoutTime,
+        earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
+        missingCheckoutGraceMinutes: policy.missingCheckoutGraceMinutes,
         overrideCloseTime: normalizeTime(override?.actualCloseTime),
         checkInAt: record.check_in_at,
         checkOutAt: record.check_out_at,
@@ -255,6 +256,9 @@ export async function POST(request: Request) {
       const dateRows = rows.filter((row) => row.businessDate === businessDate);
       const resolved = settingsByDate.get(businessDate)!;
       const setting = resolved.setting;
+      const policy =
+        resolved.attendancePolicy ??
+        policiesBySetting.get(resolved.settingId!)!;
       const hour = setting.hours.find(
         (item) => item.weekday === new Date(`${businessDate}T00:00:00Z`).getUTCDay()
       );
@@ -266,6 +270,7 @@ export async function POST(request: Request) {
         storeCloseTime: normalizeTime(hour?.closeTime),
         businessDayCutoffTime: setting.businessDayCutoffTime,
         hasBusinessOverride: overrides.has(businessDate),
+        attendancePolicy: policy,
         ...summarizeAttendanceShadow(dateRows, dateRows.length),
       };
     });

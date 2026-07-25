@@ -46,6 +46,8 @@ type ShadowData = {
     fallbackUsed: boolean;
     attendancePolicy: {
       lateGraceMinutes: number;
+      earlyLeaveGraceMinutes: number;
+      missingCheckoutGraceMinutes: number;
       defaultNormalCheckoutTime: string;
     };
     storeOpenTime: string | null;
@@ -65,6 +67,12 @@ type ShadowData = {
     storeCloseTime: string | null;
     businessDayCutoffTime: string;
     hasBusinessOverride: boolean;
+    attendancePolicy: {
+      lateGraceMinutes: number;
+      earlyLeaveGraceMinutes: number;
+      missingCheckoutGraceMinutes: number;
+      defaultNormalCheckoutTime: string;
+    };
     totalRecords: number;
     compared: number;
     matched: number;
@@ -121,21 +129,34 @@ function differenceLabel(lang: "ko" | "vi", value: string) {
   ] ?? value;
 }
 
+function exclusionReasonLabel(
+  lang: "ko" | "vi",
+  reason: AttendanceShadowComparison["exclusionReason"]
+) {
+  const t = copy[lang];
+  if (reason === "leave") return t.exclusionLeave;
+  if (reason === "no_check_in") return t.exclusionNoCheckIn;
+  return t.exclusionOther;
+}
+
 const copy = {
   ko: {
     title: "매장 통합설정",
     intro: "운영시간과 근태 판정 기준을 같은 설정 버전으로 관리합니다.",
     tabs: { hours: "운영시간", attendance: "근태설정", shadow: "근태비교" },
     current: "🏪 현재 매장 운영시간",
+    attendancePolicyTitle: "⏰ 지각·퇴근 판정 기준",
     scheduled: "📅 예약 설정",
-    newSetting: "🗓️ 설정 예약",
+    newSetting: "🗓️ 운영시간 변경",
+    newAttendanceSetting: "✏️ 설정 예약",
     timezone: "시간대",
     cutoff: "영업일 마감",
     businessHours: "요일별 운영시간",
     effective: "적용 시작일",
     open: "영업",
     closed: "휴무",
-    save: "통합설정 예약",
+    save: "운영시간 변경 예약",
+    saveAttendance: "통합설정 예약",
     saving: "저장 중…",
     cancel: "예약 취소",
     loading: "설정을 불러오는 중…",
@@ -150,11 +171,13 @@ const copy = {
     history: "🧾 변경 기록",
     hideHistory: "이력 닫기",
     confirmCancel: "예약 설정을 취소하시겠습니까?",
-    lateGrace: "지각 유예시간",
+    lateGrace: "지각 기준",
     minutes: "분",
-    normalCheckout: "기본 정상퇴근 인정시간",
-    attendanceHelp: "퇴근 기록이 없을 때 정상 퇴근 여부를 판단하는 기준 시간입니다.",
-    lateHelp: "출근 예정시간 이후 이 시간까지는 정상 출근으로 처리합니다.",
+    lateHelp: "직원별 예정 출근시간을 넘긴 뒤 설정된 시간부터 지각으로 처리합니다.",
+    earlyLeaveGrace: "조퇴 기준",
+    earlyLeaveHelp: "직원별 기준 퇴근시간보다 설정된 시간 이상 일찍 퇴근하면 조퇴로 처리합니다.",
+    missingCheckoutGrace: "미퇴근 기준",
+    missingCheckoutHelp: "직원별 기준 퇴근시간이 지난 뒤 설정된 시간까지 퇴근 기록이 없으면 미퇴근으로 처리합니다.",
     scheduleNotice: "예약 설정은 선택한 영업일부터 적용되며 기존 기록은 변경하지 않습니다.",
     before: "변경 전",
     after: "변경 후",
@@ -179,7 +202,7 @@ const copy = {
     configured: "새 매장설정 기준",
     revision: "설정 변경번호",
     specialClose: "특별 조기마감",
-    defaultClose: "기본 정상퇴근 인정",
+    defaultClose: "직원 예정 퇴근 적용",
     storeClose: "매장 예정 종료",
     total: "전체",
     matched: "일치",
@@ -197,9 +220,21 @@ const copy = {
     closeSource: "종료 기준",
     overrideSource: "특별 조기마감",
     configuredSource: "요일별 매장 종료",
-    fallbackSource: "기본 인정시간",
+    fallbackSource: "직원 예정 퇴근 적용",
     fallbackSetting: "기본 설정 적용",
-    noSavedSetting: "저장된 통합설정 없음",
+    fallbackBadge: "기본 설정",
+    cutoffShort: "마감",
+    specialCloseShort: "조기마감",
+    statTotal: "전체",
+    statMatched: "일치",
+    statMismatched: "불일치",
+    statExcluded: "제외",
+    excludedBadge: "비교 제외",
+    notComparedStatus: "근태 계산 대상 아님",
+    exclusionLeave: "휴무 기록",
+    exclusionNoCheckIn: "출근 기록 없음",
+    exclusionOther: "비교 대상 아님",
+    manualLateBadge: "수동 지각 정상처리",
   },
   vi: {
     title: "Cài đặt tích hợp cửa hàng",
@@ -211,15 +246,18 @@ const copy = {
       shadow: "So sánh",
     },
     current: "🏪 Giờ hoạt động hiện tại",
+    attendancePolicyTitle: "⏰ Tiêu chuẩn đi muộn và tan ca",
     scheduled: "📅 Cài đặt đã lên lịch",
-    newSetting: "🗓️ Lên lịch cài đặt",
+    newSetting: "🗓️ Thay đổi giờ mở cửa",
+    newAttendanceSetting: "✏️ Lên lịch cài đặt",
     timezone: "Múi giờ",
     cutoff: "Giờ chốt ngày kinh doanh",
     businessHours: "Giờ hoạt động theo ngày",
     effective: "Ngày bắt đầu áp dụng",
     open: "Mở cửa",
     closed: "Nghỉ",
-    save: "Lưu lịch cài đặt",
+    save: "Lên lịch thay đổi giờ mở cửa",
+    saveAttendance: "Lưu lịch cài đặt",
     saving: "Đang lưu…",
     cancel: "Hủy lịch",
     loading: "Đang tải cài đặt…",
@@ -237,11 +275,13 @@ const copy = {
     history: "🧾 Lịch sử thay đổi",
     hideHistory: "Đóng lịch sử",
     confirmCancel: "Bạn có muốn hủy cài đặt đã lên lịch không?",
-    lateGrace: "Thời gian cho phép đi muộn",
+    lateGrace: "Tiêu chuẩn đi muộn",
     minutes: "phút",
-    normalCheckout: "Giờ tan ca được công nhận mặc định",
-    attendanceHelp: "Dùng để xác định tan ca bình thường khi không có chấm công ra.",
-    lateHelp: "Chấm công trong khoảng này sau giờ vào ca vẫn được tính là đúng giờ.",
+    lateHelp: "Nhân viên được tính là đi muộn sau số phút đã cài đặt kể từ giờ bắt đầu ca.",
+    earlyLeaveGrace: "Tiêu chuẩn về sớm",
+    earlyLeaveHelp: "Nhân viên được tính là về sớm khi chấm công ra sớm hơn giờ tan ca tiêu chuẩn quá số phút đã cài đặt.",
+    missingCheckoutGrace: "Tiêu chuẩn thiếu chấm công ra",
+    missingCheckoutHelp: "Nếu không có chấm công ra trong số phút đã cài đặt sau giờ tan ca tiêu chuẩn, hệ thống sẽ ghi nhận thiếu chấm công ra.",
     scheduleNotice: "Cài đặt áp dụng từ ngày đã chọn và không thay đổi dữ liệu cũ.",
     before: "Trước khi đổi",
     after: "Sau khi đổi",
@@ -266,7 +306,7 @@ const copy = {
     configured: "Tiêu chuẩn cài đặt mới",
     revision: "Phiên bản cài đặt",
     specialClose: "Đóng cửa sớm đặc biệt",
-    defaultClose: "Giờ tan ca mặc định",
+    defaultClose: "Áp dụng giờ tan ca dự kiến",
     storeClose: "Giờ đóng cửa dự kiến",
     total: "Tổng",
     matched: "Khớp",
@@ -284,9 +324,21 @@ const copy = {
     closeSource: "Căn cứ kết thúc",
     overrideSource: "Đóng sớm đặc biệt",
     configuredSource: "Giờ đóng cửa theo ngày",
-    fallbackSource: "Giờ mặc định",
+    fallbackSource: "Áp dụng giờ tan ca dự kiến",
     fallbackSetting: "Áp dụng cài đặt mặc định",
-    noSavedSetting: "Không có cài đặt tích hợp đã lưu",
+    fallbackBadge: "Mặc định",
+    cutoffShort: "Chốt",
+    specialCloseShort: "Đóng sớm",
+    statTotal: "Tổng",
+    statMatched: "Khớp",
+    statMismatched: "Lệch",
+    statExcluded: "Loại",
+    excludedBadge: "Loại khỏi so sánh",
+    notComparedStatus: "Không tính chấm công",
+    exclusionLeave: "Nghỉ phép",
+    exclusionNoCheckIn: "Không có giờ vào",
+    exclusionOther: "Không thuộc đối tượng so sánh",
+    manualLateBadge: "Đã chuẩn hóa đi muộn",
   },
 } as const;
 
@@ -311,7 +363,8 @@ export default function StoreSettingsPage() {
   const [cutoff, setCutoff] = useState("03:00");
   const [effective, setEffective] = useState("");
   const [lateGrace, setLateGrace] = useState(0);
-  const [normalCheckout, setNormalCheckout] = useState("00:00");
+  const [earlyLeaveGrace, setEarlyLeaveGrace] = useState(0);
+  const [missingCheckoutGrace, setMissingCheckoutGrace] = useState(60);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [logs, setLogs] = useState<StoreSettingAuditLog[] | null>(null);
@@ -339,9 +392,13 @@ export default function StoreSettingsPage() {
         current?.attendancePolicy?.lateGraceMinutes ??
           DEFAULT_STORE_ATTENDANCE_POLICY.lateGraceMinutes
       );
-      setNormalCheckout(
-        current?.attendancePolicy?.defaultNormalCheckoutTime ??
-          DEFAULT_STORE_ATTENDANCE_POLICY.defaultNormalCheckoutTime
+      setEarlyLeaveGrace(
+        current?.attendancePolicy?.earlyLeaveGraceMinutes ??
+          DEFAULT_STORE_ATTENDANCE_POLICY.earlyLeaveGraceMinutes
+      );
+      setMissingCheckoutGrace(
+        current?.attendancePolicy?.missingCheckoutGraceMinutes ??
+          DEFAULT_STORE_ATTENDANCE_POLICY.missingCheckoutGraceMinutes
       );
       setEffective(addStoreDays(json.overview.businessDate, 1));
     } catch {
@@ -370,7 +427,12 @@ export default function StoreSettingsPage() {
       !Number.isInteger(lateGrace) ||
       lateGrace < 0 ||
       lateGrace > 180 ||
-      !normalCheckout ||
+      !Number.isInteger(earlyLeaveGrace) ||
+      earlyLeaveGrace < 0 ||
+      earlyLeaveGrace > 180 ||
+      !Number.isInteger(missingCheckoutGrace) ||
+      missingCheckoutGrace < 0 ||
+      missingCheckoutGrace > 360 ||
       !effective
     ) {
       setError(t.invalid);
@@ -390,7 +452,16 @@ export default function StoreSettingsPage() {
           hours,
           attendancePolicy: {
             lateGraceMinutes: lateGrace,
-            defaultNormalCheckoutTime: normalCheckout,
+            earlyLeaveGraceMinutes: earlyLeaveGrace,
+            missingCheckoutGraceMinutes: missingCheckoutGrace,
+            // 더 이상 Shadow 계산에서 쓰이지 않는 deprecated 필드. UI에 입력란은
+            // 없지만, 기존 RPC 시그니처 호환을 위해 값을 계속 보내야 한다.
+            // 사용자가 지각/조퇴/미퇴근만 바꿔도 이 값이 임의로 덮어써지지
+            // 않도록 현재 적용 중인 값을 그대로 보존해서 전송한다.
+            defaultNormalCheckoutTime:
+              data.overview.current?.attendancePolicy
+                ?.defaultNormalCheckoutTime ??
+              DEFAULT_STORE_ATTENDANCE_POLICY.defaultNormalCheckoutTime,
           },
         }),
       });
@@ -512,12 +583,14 @@ export default function StoreSettingsPage() {
         <AttendanceTab
           data={data}
           lateGrace={lateGrace}
-          normalCheckout={normalCheckout}
+          earlyLeaveGrace={earlyLeaveGrace}
+          missingCheckoutGrace={missingCheckoutGrace}
           effective={effective}
           busy={busy}
           lang={lang}
           onLateGrace={setLateGrace}
-          onNormalCheckout={setNormalCheckout}
+          onEarlyLeaveGrace={setEarlyLeaveGrace}
+          onMissingCheckoutGrace={setMissingCheckoutGrace}
           onEffective={setEffective}
           onSave={save}
         />
@@ -709,12 +782,14 @@ function HoursTab(props: {
 function AttendanceTab(props: {
   data: ApiData;
   lateGrace: number;
-  normalCheckout: string;
+  earlyLeaveGrace: number;
+  missingCheckoutGrace: number;
   effective: string;
   busy: boolean;
   lang: "ko" | "vi";
   onLateGrace: (value: number) => void;
-  onNormalCheckout: (value: string) => void;
+  onEarlyLeaveGrace: (value: number) => void;
+  onMissingCheckoutGrace: (value: number) => void;
   onEffective: (value: string) => void;
   onSave: () => void;
 }) {
@@ -726,7 +801,7 @@ function AttendanceTab(props: {
   return (
     <>
       <section style={styles.card}>
-        <h2 style={styles.sectionTitle}>⚙️ {t.current}</h2>
+        <h2 style={styles.sectionTitle}>{t.attendancePolicyTitle}</h2>
         <div style={styles.policyCards}>
           <div style={styles.policyCard}>
             <strong style={styles.policyCardLabel}>⏰ {t.lateGrace}</strong>
@@ -736,11 +811,18 @@ function AttendanceTab(props: {
             <small style={styles.help}>{t.lateHelp}</small>
           </div>
           <div style={styles.policyCard}>
-            <strong style={styles.policyCardLabel}>🌙 {t.normalCheckout}</strong>
+            <strong style={styles.policyCardLabel}>🚪 {t.earlyLeaveGrace}</strong>
             <span style={styles.policyValue}>
-              {current.defaultNormalCheckoutTime}
+              {current.earlyLeaveGraceMinutes}{t.minutes}
             </span>
-            <small style={styles.help}>{t.attendanceHelp}</small>
+            <small style={styles.help}>{t.earlyLeaveHelp}</small>
+          </div>
+          <div style={styles.policyCard}>
+            <strong style={styles.policyCardLabel}>❓ {t.missingCheckoutGrace}</strong>
+            <span style={styles.policyValue}>
+              {current.missingCheckoutGraceMinutes}{t.minutes}
+            </span>
+            <small style={styles.help}>{t.missingCheckoutHelp}</small>
           </div>
         </div>
       </section>
@@ -748,7 +830,7 @@ function AttendanceTab(props: {
       {props.data.capabilities.mutate &&
       !props.data.overview.scheduled ? (
         <section style={styles.card}>
-          <h2 style={styles.sectionTitle}>✏️ {t.newSetting}</h2>
+          <h2 style={styles.sectionTitle}>{t.newAttendanceSetting}</h2>
           <div style={styles.changePreview}>
             <Metric
               label={`${t.before} · ${t.lateGrace}`}
@@ -759,12 +841,20 @@ function AttendanceTab(props: {
               value={`${props.lateGrace}${t.minutes}`}
             />
             <Metric
-              label={`${t.before} · ${t.normalCheckout}`}
-              value={current.defaultNormalCheckoutTime}
+              label={`${t.before} · ${t.earlyLeaveGrace}`}
+              value={`${current.earlyLeaveGraceMinutes}${t.minutes}`}
             />
             <Metric
-              label={`${t.after} · ${t.normalCheckout}`}
-              value={props.normalCheckout}
+              label={`${t.after} · ${t.earlyLeaveGrace}`}
+              value={`${props.earlyLeaveGrace}${t.minutes}`}
+            />
+            <Metric
+              label={`${t.before} · ${t.missingCheckoutGrace}`}
+              value={`${current.missingCheckoutGraceMinutes}${t.minutes}`}
+            />
+            <Metric
+              label={`${t.after} · ${t.missingCheckoutGrace}`}
+              value={`${props.missingCheckoutGrace}${t.minutes}`}
             />
           </div>
           <div style={styles.grid}>
@@ -785,15 +875,39 @@ function AttendanceTab(props: {
                 <span>{t.minutes}</span>
               </div>
             </Field>
-            <Field label={`🌙 ${t.normalCheckout}`}>
-              <input
-                type="time"
-                style={styles.input}
-                value={props.normalCheckout}
-                onChange={(event) =>
-                  props.onNormalCheckout(event.target.value)
-                }
-              />
+            <Field label={`🚪 ${t.earlyLeaveGrace}`}>
+              <div style={styles.inlineInput}>
+                <input
+                  type="number"
+                  min={0}
+                  max={180}
+                  step={1}
+                  required
+                  style={styles.input}
+                  value={props.earlyLeaveGrace}
+                  onChange={(event) =>
+                    props.onEarlyLeaveGrace(Number(event.target.value))
+                  }
+                />
+                <span>{t.minutes}</span>
+              </div>
+            </Field>
+            <Field label={`❓ ${t.missingCheckoutGrace}`}>
+              <div style={styles.inlineInput}>
+                <input
+                  type="number"
+                  min={0}
+                  max={360}
+                  step={1}
+                  required
+                  style={styles.input}
+                  value={props.missingCheckoutGrace}
+                  onChange={(event) =>
+                    props.onMissingCheckoutGrace(Number(event.target.value))
+                  }
+                />
+                <span>{t.minutes}</span>
+              </div>
             </Field>
             <Field label={t.effective}>
               <input
@@ -811,7 +925,7 @@ function AttendanceTab(props: {
             disabled={props.busy}
             onClick={props.onSave}
           >
-            {props.busy ? t.saving : t.save}
+            {props.busy ? t.saving : t.saveAttendance}
           </button>
         </section>
       ) : null}
@@ -956,25 +1070,48 @@ function ShadowTab(props: {
 
           <section style={styles.card}>
             <h2 style={styles.sectionTitle}>📅 {t.dateSummary}</h2>
-            <div style={styles.shadowList}>
+            <div style={styles.dateSummaryList}>
               {result.dateSummaries.map((day) => (
-                <article key={day.businessDate} style={styles.shadowRow}>
-                  <strong>
-                    {day.businessDate} ·{" "}
-                    {day.fallbackUsed
-                      ? t.fallbackSetting
-                      : `#${day.settingsRevision}`}
-                  </strong>
-                  <small style={styles.rowMeta}>
-                    {day.storeOpenTime || "-"} ~ {day.storeCloseTime || "-"}
+                <article key={day.businessDate} style={styles.dateCard}>
+                  <div style={styles.dateCardHeader}>
+                    <strong style={styles.dateCardDate}>{day.businessDate}</strong>
+                    <span style={styles.dateCardBadge}>
+                      {day.fallbackUsed
+                        ? t.fallbackBadge
+                        : `#${day.settingsRevision}`}
+                    </span>
+                  </div>
+                  <small style={styles.dateCardHours}>
+                    {day.storeOpenTime || "-"}–{day.storeCloseTime || "-"}
                     {" · "}
-                    {t.cutoff} {day.businessDayCutoffTime}
-                    {day.hasBusinessOverride ? ` · ${t.specialClose}` : ""}
+                    {t.cutoffShort} {day.businessDayCutoffTime}
+                    {day.hasBusinessOverride ? ` · ${t.specialCloseShort}` : ""}
                   </small>
-                  {day.fallbackUsed ? (
-                    <small style={styles.warning}>{t.noSavedSetting}</small>
-                  ) : null}
-                  <span>{t.total} {day.totalRecords} · {t.matched} {day.matched} · {t.mismatched} {day.mismatched} · {t.excludedRows} {day.excluded}</span>
+                  <small style={styles.dateCardHours}>
+                    {t.late} {day.attendancePolicy.lateGraceMinutes}{t.minutes}
+                    {" · "}
+                    {t.early} {day.attendancePolicy.earlyLeaveGraceMinutes}{t.minutes}
+                    {" · "}
+                    {t.unresolved} {day.attendancePolicy.missingCheckoutGraceMinutes}{t.minutes}
+                  </small>
+                  <div style={styles.dateStatGrid}>
+                    <div style={styles.dateStat}>
+                      <small style={styles.dateStatLabel}>{t.statTotal}</small>
+                      <strong style={styles.dateStatValue}>{day.totalRecords}</strong>
+                    </div>
+                    <div style={styles.dateStat}>
+                      <small style={styles.dateStatLabel}>{t.statMatched}</small>
+                      <strong style={styles.dateStatValue}>{day.matched}</strong>
+                    </div>
+                    <div style={styles.dateStat}>
+                      <small style={styles.dateStatLabel}>{t.statMismatched}</small>
+                      <strong style={styles.dateStatValue}>{day.mismatched}</strong>
+                    </div>
+                    <div style={styles.dateStat}>
+                      <small style={styles.dateStatLabel}>{t.statExcluded}</small>
+                      <strong style={styles.dateStatValue}>{day.excluded}</strong>
+                    </div>
+                  </div>
                 </article>
               ))}
             </div>
@@ -1052,12 +1189,33 @@ function ShadowRow(props: {
   lang: "ko" | "vi";
 }) {
   const t = copy[props.lang];
+
+  if (props.row.comparisonStatus === "excluded") {
+    return (
+      <article style={styles.excludedRow}>
+        <div style={styles.cardHeader}>
+          <div>
+            <strong>{props.row.userName}</strong>
+            <small style={styles.rowMeta}>{props.row.businessDate}</small>
+          </div>
+          <span style={styles.excludedBadge}>{t.excludedBadge}</span>
+        </div>
+        <p style={styles.excludedMeta}>
+          {exclusionReasonLabel(props.lang, props.row.exclusionReason)}
+        </p>
+        <p style={styles.excludedMeta}>{t.notComparedStatus}</p>
+      </article>
+    );
+  }
+
   const sourceText = {
     override: `${t.specialClose} ${props.row.configured.effectiveStoreCloseAt?.slice(11, 16) || "-"} ${props.lang === "ko" ? "적용" : "áp dụng"}`,
     configured: `${t.storeClose} ${props.row.configured.effectiveStoreCloseAt?.slice(11, 16) || "-"}`,
     fallback: `${t.defaultClose} ${props.row.configured.normalCheckoutThresholdAt?.slice(11, 16) || "-"}`,
   }[props.row.configured.closeSource];
   const changed = Object.values(props.row.differences).some(Boolean);
+  const lateExcluded =
+    props.row.metricComparison.late.comparisonStatus === "excluded";
 
   return (
     <article
@@ -1086,7 +1244,12 @@ function ShadowRow(props: {
         <div>
           <b>{t.configured}</b>
           <p>{t.status}: {props.row.configured.status}</p>
-          <p>{t.late}: {props.row.configured.lateMinutes}</p>
+          <p>
+            {t.late}: {props.row.configured.lateMinutes}
+            {lateExcluded ? (
+              <span style={styles.neutralBadge}>{t.manualLateBadge}</span>
+            ) : null}
+          </p>
           <p>{t.early}: {props.row.configured.earlyLeaveMinutes}</p>
           <p>{t.unresolved}: {String(props.row.configured.unresolved)}</p>
           <p>{t.closeSource}: {sourceText}</p>
@@ -1380,6 +1543,97 @@ const styles: Record<string, CSSProperties> = {
     padding: 12,
     border: "1px solid",
     borderRadius: 12,
+  },
+  dateSummaryList: { display: "grid", gap: 8 },
+  dateCard: {
+    display: "grid",
+    gap: 6,
+    padding: "10px 12px",
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    background: "#fff",
+  },
+  dateCardHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+  },
+  dateCardDate: {
+    fontSize: 14,
+    fontWeight: 800,
+    color: "#111827",
+  },
+  dateCardBadge: {
+    flexShrink: 0,
+    padding: "2px 7px",
+    borderRadius: 999,
+    background: "#f1f5f9",
+    color: "#475569",
+    fontSize: 10,
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+  },
+  dateCardHours: {
+    display: "block",
+    color: "#64748b",
+    fontSize: 11,
+    lineHeight: 1.4,
+  },
+  dateStatGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gap: 4,
+    marginTop: 2,
+  },
+  dateStat: {
+    display: "grid",
+    justifyItems: "center",
+    gap: 2,
+    padding: "6px 2px",
+    borderRadius: 8,
+    background: "#f8fafc",
+  },
+  dateStatLabel: {
+    fontSize: 10,
+    fontWeight: 700,
+    color: "#94a3b8",
+    whiteSpace: "nowrap",
+  },
+  dateStatValue: {
+    fontSize: 14,
+    fontWeight: 800,
+    color: "#111827",
+    lineHeight: 1,
+  },
+  excludedRow: {
+    padding: 12,
+    border: "1px solid #e2e8f0",
+    borderRadius: 12,
+    background: "#f8fafc",
+  },
+  excludedBadge: {
+    color: "#475569",
+    background: "#e2e8f0",
+    borderRadius: 999,
+    padding: "4px 8px",
+    fontSize: 11,
+    fontWeight: 700,
+  },
+  excludedMeta: {
+    margin: "4px 0 0",
+    color: "#64748b",
+    fontSize: 12,
+  },
+  neutralBadge: {
+    display: "inline-block",
+    marginLeft: 6,
+    padding: "1px 6px",
+    borderRadius: 999,
+    background: "#e2e8f0",
+    color: "#475569",
+    fontSize: 10,
+    fontWeight: 700,
   },
   rowMeta: {
     display: "block",

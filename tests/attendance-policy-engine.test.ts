@@ -13,7 +13,8 @@ const base: AttendancePolicyInput = {
   storeOpenTime: "16:00",
   storeCloseTime: "01:00",
   lateGraceMinutes: 0,
-  defaultNormalCheckoutTime: "00:00",
+  earlyLeaveGraceMinutes: 0,
+  missingCheckoutGraceMinutes: 60,
   overrideCloseTime: null,
   checkInAt: "2026-07-24T16:00:00+07:00",
   checkOutAt: null,
@@ -75,75 +76,114 @@ test("late grace keeps the raw difference and suppresses effective lateness", ()
   );
 });
 
-test("default midnight threshold handles the overnight shift", () => {
-  const cases = [
-    ["2026-07-24T23:59:00+07:00", "early_leave", 61],
-    ["2026-07-25T00:00:00+07:00", "done", 0],
-    ["2026-07-25T00:30:00+07:00", "done", 0],
-  ] as const;
-  for (const [checkOutAt, status, earlyLeaveMinutes] of cases) {
-    const result = evaluate({ checkOutAt });
-    assert.equal(result.status, status);
-    assert.equal(result.earlyLeaveMinutes, earlyLeaveMinutes);
-  }
+test("general staff: scheduled end equals store close, so the standard checkout is 01:00", () => {
+  const result = evaluate({
+    scheduledEndTime: "01:00",
+    storeCloseTime: "01:00",
+  });
+  assert.equal(result.normalCheckoutThresholdAt, "2026-07-24T18:00:00.000Z");
 });
 
-test("special close overrides the normal checkout threshold", () => {
+test("part-time staff: employee's earlier scheduled end wins over the later store close", () => {
+  const result = evaluate({
+    scheduledEndTime: "22:00",
+    storeCloseTime: "01:00",
+  });
+  assert.equal(result.normalCheckoutThresholdAt, "2026-07-24T15:00:00.000Z");
+});
+
+test("special close overrides the store close and can win or lose against the employee schedule", () => {
+  const overridesLater = evaluate({
+    scheduledEndTime: "01:00",
+    storeCloseTime: "01:00",
+    overrideCloseTime: "23:00",
+  });
+  assert.equal(overridesLater.normalCheckoutThresholdAt, "2026-07-24T16:00:00.000Z");
+  assert.equal(overridesLater.source.close, "override");
+
+  const employeeWinsAnyway = evaluate({
+    scheduledEndTime: "22:00",
+    storeCloseTime: "01:00",
+    overrideCloseTime: "23:00",
+  });
+  assert.equal(employeeWinsAnyway.normalCheckoutThresholdAt, "2026-07-24T15:00:00.000Z");
+  assert.equal(employeeWinsAnyway.source.close, "override");
+});
+
+test("missing employee end time falls back to the effective store close", () => {
+  const result = evaluate({
+    scheduledEndTime: null,
+    storeCloseTime: "01:00",
+  });
+  assert.equal(result.normalCheckoutThresholdAt, "2026-07-24T18:00:00.000Z");
+});
+
+test("overnight shift crosses the calendar day at the correct instant", () => {
+  const result = evaluate({
+    businessDate: "2026-07-25",
+    scheduledEndTime: "01:00",
+    storeCloseTime: "01:00",
+  });
+  assert.equal(result.normalCheckoutThresholdAt, "2026-07-25T18:00:00.000Z");
+});
+
+test("early leave grace boundary is exclusive, matching the late-grace convention", () => {
   const cases = [
-    ["2026-07-24T22:59:00+07:00", "early_leave", 121],
-    ["2026-07-24T23:00:00+07:00", "done", 0],
-    ["2026-07-24T23:20:00+07:00", "done", 0],
+    ["2026-07-24T21:56:00+07:00", "done", 0],
+    ["2026-07-24T21:55:00+07:00", "done", 0],
+    ["2026-07-24T21:54:00+07:00", "early_leave", 6],
   ] as const;
   for (const [checkOutAt, status, earlyLeaveMinutes] of cases) {
     const result = evaluate({
-      overrideCloseTime: "23:00",
+      scheduledEndTime: "22:00",
+      storeCloseTime: "22:00",
+      earlyLeaveGraceMinutes: 5,
       checkOutAt,
     });
     assert.equal(result.status, status);
     assert.equal(result.earlyLeaveMinutes, earlyLeaveMinutes);
-    assert.equal(result.source.close, "override");
   }
 });
 
-test("an earlier employee schedule wins over a later special close", () => {
+test("missing checkout is judged sixty minutes after the standard checkout time", () => {
   assert.equal(
     evaluate({
       scheduledEndTime: "22:00",
-      overrideCloseTime: "23:00",
-      checkOutAt: "2026-07-24T21:59:00+07:00",
-    }).status,
-    "early_leave"
-  );
-  assert.equal(
-    evaluate({
-      scheduledEndTime: "22:00",
-      overrideCloseTime: "23:00",
-      checkOutAt: "2026-07-24T22:00:00+07:00",
-    }).status,
-    "done"
-  );
-});
-
-test("unresolved begins sixty minutes after the effective store close", () => {
-  assert.equal(
-    evaluate({ now: "2026-07-25T01:59:59+07:00" }).unresolved,
-    false
-  );
-  assert.equal(
-    evaluate({ now: "2026-07-25T02:00:00+07:00" }).unresolved,
-    true
-  );
-  assert.equal(
-    evaluate({
-      overrideCloseTime: "23:00",
-      now: "2026-07-24T23:59:59+07:00",
+      storeCloseTime: "22:00",
+      missingCheckoutGraceMinutes: 60,
+      now: "2026-07-24T22:59:59+07:00",
     }).unresolved,
     false
   );
   assert.equal(
     evaluate({
-      overrideCloseTime: "23:00",
-      now: "2026-07-25T00:00:00+07:00",
+      scheduledEndTime: "22:00",
+      storeCloseTime: "22:00",
+      missingCheckoutGraceMinutes: 60,
+      now: "2026-07-24T23:00:00+07:00",
+    }).unresolved,
+    true
+  );
+});
+
+test("part-time staff missing checkout is not delayed until the late-night store close", () => {
+  // 파트타임 직원(16:00~22:00)은 매장이 01:00까지 영업하더라도 22:00 기준으로
+  // 60분 뒤인 23:00부터 미퇴근으로 판정되어야 한다.
+  assert.equal(
+    evaluate({
+      scheduledEndTime: "22:00",
+      storeCloseTime: "01:00",
+      missingCheckoutGraceMinutes: 60,
+      now: "2026-07-24T22:59:59+07:00",
+    }).unresolved,
+    false
+  );
+  assert.equal(
+    evaluate({
+      scheduledEndTime: "22:00",
+      storeCloseTime: "01:00",
+      missingCheckoutGraceMinutes: 60,
+      now: "2026-07-24T23:00:00+07:00",
     }).unresolved,
     true
   );
@@ -160,5 +200,16 @@ test("midnight boundary instants are stable and timezone explicit", () => {
   assert.throws(
     () => evaluate({ timezone: "UTC" }),
     /Unsupported attendance timezone/
+  );
+});
+
+test("out-of-range grace minutes are rejected", () => {
+  assert.throws(
+    () => evaluate({ earlyLeaveGraceMinutes: 181 }),
+    /Invalid early leave grace minutes/
+  );
+  assert.throws(
+    () => evaluate({ missingCheckoutGraceMinutes: 361 }),
+    /Invalid missing checkout grace minutes/
   );
 });

@@ -19,7 +19,8 @@ export type AttendancePolicyInput = {
   storeOpenTime: string | null;
   storeCloseTime: string | null;
   lateGraceMinutes: number;
-  defaultNormalCheckoutTime: string;
+  earlyLeaveGraceMinutes: number;
+  missingCheckoutGraceMinutes: number;
   overrideCloseTime: string | null;
   checkInAt: string | null;
   checkOutAt: string | null;
@@ -35,7 +36,10 @@ export type AttendancePolicyResult = {
   status: AttendancePolicyStatus;
   scheduledStartAt: string | null;
   scheduledEndAt: string | null;
+  /** 기준 퇴근시간 = min(직원 예정 퇴근시간, 실제 매장 마감시간[특별 조기마감 우선]). */
   normalCheckoutThresholdAt: string | null;
+  /** normalCheckoutThresholdAt - earlyLeaveGraceMinutes. */
+  earlyLeaveThresholdAt: string | null;
   scheduledStoreCloseAt: string | null;
   overrideCloseAt: string | null;
   effectiveStoreCloseAt: string | null;
@@ -146,13 +150,26 @@ export function evaluateAttendancePolicy(
     throw new Error("Unsupported attendance timezone");
   }
   assertTime(input.businessDayCutoffTime, "cutoff time");
-  assertTime(input.defaultNormalCheckoutTime, "normal checkout time");
   if (
     !Number.isInteger(input.lateGraceMinutes) ||
     input.lateGraceMinutes < 0 ||
     input.lateGraceMinutes > 180
   ) {
     throw new Error("Invalid late grace minutes");
+  }
+  if (
+    !Number.isInteger(input.earlyLeaveGraceMinutes) ||
+    input.earlyLeaveGraceMinutes < 0 ||
+    input.earlyLeaveGraceMinutes > 180
+  ) {
+    throw new Error("Invalid early leave grace minutes");
+  }
+  if (
+    !Number.isInteger(input.missingCheckoutGraceMinutes) ||
+    input.missingCheckoutGraceMinutes < 0 ||
+    input.missingCheckoutGraceMinutes > 360
+  ) {
+    throw new Error("Invalid missing checkout grace minutes");
   }
 
   const scheduledStartAt = instantAt(
@@ -165,22 +182,6 @@ export function evaluateAttendancePolicy(
     input.scheduledEndTime,
     input.businessDayCutoffTime
   );
-  const defaultNormalCheckoutAt = instantAt(
-    input.businessDate,
-    input.defaultNormalCheckoutTime,
-    input.businessDayCutoffTime
-  );
-  const normalCloseAt = input.overrideCloseTime
-    ? instantAt(
-        input.businessDate,
-        input.overrideCloseTime,
-        input.businessDayCutoffTime
-      )
-    : defaultNormalCheckoutAt;
-  const normalCheckoutThresholdAt = earlierInstant(
-    scheduledEndAt,
-    normalCloseAt
-  );
   const scheduledStoreCloseAt = instantAt(
     input.businessDate,
     input.storeCloseTime,
@@ -191,11 +192,24 @@ export function evaluateAttendancePolicy(
     input.overrideCloseTime,
     input.businessDayCutoffTime
   );
-  const effectiveStoreCloseAt =
-    overrideCloseAt ?? scheduledStoreCloseAt ?? defaultNormalCheckoutAt;
-  const unresolvedAt = effectiveStoreCloseAt
+  // 특별 조기마감이 있으면 그 시각이 실제 매장 마감시간이 되고, 없으면 요일별
+  // 매장 마감시간을 쓴다. default_normal_checkout_time은 더 이상 참조하지 않는다.
+  const effectiveStoreCloseAt = overrideCloseAt ?? scheduledStoreCloseAt;
+  // 기준 퇴근시간 = 직원 예정 퇴근시간과 실제 매장 마감시간 중 더 이른 시간.
+  const normalCheckoutThresholdAt = earlierInstant(
+    scheduledEndAt,
+    effectiveStoreCloseAt
+  );
+  const earlyLeaveThresholdAt = normalCheckoutThresholdAt
     ? new Date(
-        new Date(effectiveStoreCloseAt).getTime() + 60 * 60_000
+        new Date(normalCheckoutThresholdAt).getTime() -
+          input.earlyLeaveGraceMinutes * 60_000
+      ).toISOString()
+    : null;
+  const unresolvedAt = normalCheckoutThresholdAt
+    ? new Date(
+        new Date(normalCheckoutThresholdAt).getTime() +
+          input.missingCheckoutGraceMinutes * 60_000
       ).toISOString()
     : null;
 
@@ -203,13 +217,13 @@ export function evaluateAttendancePolicy(
   const lateMinutes =
     rawLateMinutes > input.lateGraceMinutes ? rawLateMinutes : 0;
   const rawEarlyLeaveMinutes =
-    input.checkOutAt && scheduledEndAt
-      ? minutesBetween(input.checkOutAt, scheduledEndAt)
+    input.checkOutAt && normalCheckoutThresholdAt
+      ? minutesBetween(input.checkOutAt, normalCheckoutThresholdAt)
       : 0;
   const isEarlyLeave =
-    Boolean(input.checkOutAt && normalCheckoutThresholdAt) &&
+    Boolean(input.checkOutAt && earlyLeaveThresholdAt) &&
     new Date(input.checkOutAt!).getTime() <
-      new Date(normalCheckoutThresholdAt!).getTime();
+      new Date(earlyLeaveThresholdAt!).getTime();
   const earlyLeaveMinutes = isEarlyLeave ? rawEarlyLeaveMinutes : 0;
 
   let status: AttendancePolicyStatus;
@@ -237,6 +251,7 @@ export function evaluateAttendancePolicy(
     scheduledStartAt,
     scheduledEndAt,
     normalCheckoutThresholdAt,
+    earlyLeaveThresholdAt,
     scheduledStoreCloseAt,
     overrideCloseAt,
     effectiveStoreCloseAt,

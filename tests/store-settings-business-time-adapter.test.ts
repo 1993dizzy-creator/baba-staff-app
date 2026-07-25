@@ -20,6 +20,8 @@ const configuredSetting: StoreSetting = {
   cancelledAt: null,
   attendancePolicy: {
     lateGraceMinutes: 0,
+    earlyLeaveGraceMinutes: 0,
+    missingCheckoutGraceMinutes: 60,
     defaultNormalCheckoutTime: "00:00",
   },
   hours: DEFAULT_STORE_HOURS,

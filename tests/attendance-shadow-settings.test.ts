@@ -28,6 +28,8 @@ function setting(
     cancelledAt: null,
     attendancePolicy: {
       lateGraceMinutes: 0,
+      earlyLeaveGraceMinutes: 0,
+      missingCheckoutGraceMinutes: 60,
       defaultNormalCheckoutTime: "00:00",
     },
     hours: Array.from({ length: 7 }, (_, weekday) => ({
@@ -53,6 +55,8 @@ test("a date before the first setting resolves to the official fallback", () => 
   assert.equal(resolved.revision, null);
   assert.deepEqual(resolved.attendancePolicy, {
     lateGraceMinutes: 0,
+    earlyLeaveGraceMinutes: 0,
+    missingCheckoutGraceMinutes: 60,
     defaultNormalCheckoutTime: "00:00",
   });
   assert.equal(resolved.setting.effectiveFromBusinessDate, "2026-07-17");
@@ -64,6 +68,8 @@ test("configured dates retain their own version without retroactive lookup", () 
     revision: 3,
     attendancePolicy: {
       lateGraceMinutes: 5,
+      earlyLeaveGraceMinutes: 0,
+      missingCheckoutGraceMinutes: 60,
       defaultNormalCheckoutTime: "23:30",
     },
   });
@@ -120,8 +126,9 @@ test("a special close still overrides a fallback day's store close", () => {
     storeOpenTime: "16:00",
     storeCloseTime: "01:00",
     lateGraceMinutes: resolved.attendancePolicy!.lateGraceMinutes,
-    defaultNormalCheckoutTime:
-      resolved.attendancePolicy!.defaultNormalCheckoutTime,
+    earlyLeaveGraceMinutes: resolved.attendancePolicy!.earlyLeaveGraceMinutes,
+    missingCheckoutGraceMinutes:
+      resolved.attendancePolicy!.missingCheckoutGraceMinutes,
     overrideCloseTime: "23:00",
     checkInAt: "2026-07-17T09:00:00.000Z",
     checkOutAt: "2026-07-17T16:00:00.000Z",

@@ -13,11 +13,21 @@ export type StoreBusinessHour = {
 
 export type StoreAttendancePolicy = {
   lateGraceMinutes: number;
+  earlyLeaveGraceMinutes: number;
+  missingCheckoutGraceMinutes: number;
+  /**
+   * @deprecated Store-wide fixed checkout time. No longer read by the Shadow
+   * attendance engine (see earlyLeaveGraceMinutes / missingCheckoutGraceMinutes,
+   * applied against the employee's own effective scheduled end time). Kept only
+   * for historical revision/API compatibility.
+   */
   defaultNormalCheckoutTime: string;
 };
 
 export const DEFAULT_STORE_ATTENDANCE_POLICY: StoreAttendancePolicy = {
   lateGraceMinutes: 0,
+  earlyLeaveGraceMinutes: 0,
+  missingCheckoutGraceMinutes: 60,
   defaultNormalCheckoutTime: "00:00",
 };
 

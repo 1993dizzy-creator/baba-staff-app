@@ -9,6 +9,8 @@ import {
 
 type PolicyRow = {
   late_grace_minutes: number | null;
+  early_leave_grace_minutes: number | null;
+  missing_checkout_grace_minutes: number | null;
   default_normal_checkout_time: string | null;
 };
 
@@ -39,7 +41,9 @@ export async function getStoreAttendancePolicy(
 
   const { data, error } = await supabaseServer
     .from("store_attendance_policies")
-    .select("late_grace_minutes,default_normal_checkout_time")
+    .select(
+      "late_grace_minutes,early_leave_grace_minutes,missing_checkout_grace_minutes,default_normal_checkout_time"
+    )
     .eq("setting_version_id", settingVersionId)
     .maybeSingle<PolicyRow>();
 
@@ -55,6 +59,14 @@ export async function getStoreAttendancePolicy(
     lateGraceMinutes: Number(
       data?.late_grace_minutes ??
         DEFAULT_STORE_ATTENDANCE_POLICY.lateGraceMinutes
+    ),
+    earlyLeaveGraceMinutes: Number(
+      data?.early_leave_grace_minutes ??
+        DEFAULT_STORE_ATTENDANCE_POLICY.earlyLeaveGraceMinutes
+    ),
+    missingCheckoutGraceMinutes: Number(
+      data?.missing_checkout_grace_minutes ??
+        DEFAULT_STORE_ATTENDANCE_POLICY.missingCheckoutGraceMinutes
     ),
     defaultNormalCheckoutTime: normalizeTime(
       data?.default_normal_checkout_time,
