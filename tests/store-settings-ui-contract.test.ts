@@ -110,7 +110,7 @@ test("the mismatch filter row keeps the warning label on one line and lets the s
 test("early leave grace accepts up to 180 minutes, so 90 is a valid input", () => {
   assert.match(
     page,
-    /t\.earlyLeaveGrace[\s\S]{0,300}max=\{180\}[\s\S]{0,150}value=\{props\.earlyLeaveGrace\}/
+    /t\.earlyLeaveGrace[\s\S]{0,300}<GraceMinutesInput\s*\n\s*value=\{props\.earlyLeaveGrace\}\s*\n\s*min=\{0\}\s*\n\s*max=\{180\}/
   );
   assert.match(page, /earlyLeaveGrace < 0 \|\|\s*\n\s*earlyLeaveGrace > 180/);
 });
@@ -150,6 +150,71 @@ test("shadow card times are shown in Vietnam time via the shared formatter, neve
   // hhmm/formatVietnamTime never take a language argument, so Korean and
   // Vietnamese screens necessarily render the exact same clock time.
   assert.doesNotMatch(page, /hhmm\([^)]*lang/);
+});
+
+test("current-hours and new-hours-setting cards use a forced 3-column grid instead of auto-fit", () => {
+  assert.match(page, /metaGrid3: \{[\s\S]*?gridTemplateColumns: "repeat\(3, minmax\(0, 1fr\)\)"/);
+  assert.match(page, /<div style=\{styles\.metaGrid3\}>\s*\n\s*<CompactMetric label=\{t\.metaTimezone\}/);
+  assert.match(page, /<div style=\{styles\.metaGrid3\}>\s*\n\s*<CompactField label=\{t\.metaTimezone\}/);
+  assert.match(page, /metaCutoff: "마감"/);
+  assert.match(page, /metaEffective: "적용일"/);
+  assert.match(page, /metaCutoff: "Giờ chốt"/);
+  assert.match(page, /metaEffective: "Ngày áp dụng"/);
+});
+
+test("the applied-from date is shortened to a 2-digit year in the read-only summary cards", () => {
+  assert.match(page, /function shortDate\(dateKey: string\)/);
+  assert.match(page, /dateKey\.length === 10 \? dateKey\.slice\(2\) : dateKey/);
+  assert.match(page, /value=\{shortDate\(props\.setting\.effectiveFromBusinessDate\)\}/);
+});
+
+test("the cancel-schedule button is inverted to a red fill with white text", () => {
+  assert.match(page, /danger: \{[\s\S]*?background: "#dc2626"[\s\S]*?color: "#ffffff"/);
+});
+
+test("late/early-leave/missing-checkout number inputs clear on focus only when the value is exactly 0", () => {
+  assert.match(page, /function GraceMinutesInput/);
+  assert.match(page, /value=\{focused && props\.value === 0 \? "" : props\.value\}/);
+  assert.match(page, /onFocus=\{\(\) => setFocused\(true\)\}/);
+  assert.match(page, /onBlur=\{\(\) => setFocused\(false\)\}/);
+  // typed values still flow straight through to the same numeric onChange
+  // callback used for payload/validation — no separate text buffer to desync.
+  assert.match(page, /props\.onChange\(raw === "" \? 0 : Number\(raw\)\)/);
+  assert.match(page, /<GraceMinutesInput\s*\n\s*value=\{props\.lateGrace\}/);
+  assert.match(page, /<GraceMinutesInput\s*\n\s*value=\{props\.earlyLeaveGrace\}/);
+  assert.match(page, /<GraceMinutesInput\s*\n\s*value=\{props\.missingCheckoutGrace\}/);
+});
+
+test("the attendance tab shows its own scheduled-settings card, mirroring the hours tab", () => {
+  assert.match(page, /function AttendanceScheduledBody/);
+  assert.match(page, /<AttendanceScheduledBody\s*\n\s*setting=\{props\.data\.overview\.scheduled\}/);
+  // it appears between the current-policy card and the new-setting input card.
+  assert.match(
+    page,
+    /missingCheckoutHelp\}<\/small>\s*\n\s*<\/div>\s*\n\s*<\/div>\s*\n\s*<\/section>\s*\n\s*\n\s*<section style=\{styles\.card\}>\s*\n\s*<h2[\s\S]{0,80}\{t\.scheduled\}<\/h2>/
+  );
+});
+
+test("the scheduled attendance card carries the same emoji as the current-policy card and the input fields", () => {
+  const attendanceScheduledBody = page.slice(
+    page.indexOf("function AttendanceScheduledBody"),
+    page.indexOf("function Field(")
+  );
+  assert.match(attendanceScheduledBody, /label=\{`⏰ \$\{t\.lateGrace\}`\}/);
+  assert.match(attendanceScheduledBody, /label=\{`🚪 \$\{t\.earlyLeaveGrace\}`\}/);
+  assert.match(attendanceScheduledBody, /label=\{`❓ \$\{t\.missingCheckoutGrace\}`\}/);
+  // reuses the existing lateGrace/earlyLeaveGrace/missingCheckoutGrace copy keys
+  // and Metric component — no new duplicate label strings were introduced.
+  assert.doesNotMatch(page, /scheduledLateGrace|scheduledEarlyLeaveGrace|scheduledMissingCheckoutGrace/);
+
+  // same three emoji, in the same order, on the "current" policy card...
+  assert.match(page, /policyCardLabel\}>⏰ \{t\.lateGrace\}/);
+  assert.match(page, /policyCardLabel\}>🚪 \{t\.earlyLeaveGrace\}/);
+  assert.match(page, /policyCardLabel\}>❓ \{t\.missingCheckoutGrace\}/);
+  // ...and on the new-setting input Field labels.
+  assert.match(page, /Field label=\{`⏰ \$\{t\.lateGrace\}`\}/);
+  assert.match(page, /Field label=\{`🚪 \$\{t\.earlyLeaveGrace\}`\}/);
+  assert.match(page, /Field label=\{`❓ \$\{t\.missingCheckoutGrace\}`\}/);
 });
 
 test("POS compare UI is feature-flagged off while reusable code remains", () => {

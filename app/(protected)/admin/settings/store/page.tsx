@@ -146,6 +146,12 @@ function exclusionReasonLabel(
 // 그대로 노출된다. 공용 formatVietnamTime으로 변환해서 표시한다.
 const hhmm = formatVietnamTime;
 
+// "YYYY-MM-DD" 영업일 date-key는 이미 캘린더 날짜 문자열이라 시간대 변환이
+// 필요 없다 — 앞 두 자리 연도만 잘라 좁은 카드에서 밀도를 줄인다.
+function shortDate(dateKey: string) {
+  return dateKey.length === 10 ? dateKey.slice(2) : dateKey;
+}
+
 function displayStatusLabel(
   lang: "ko" | "vi",
   input: {
@@ -194,6 +200,9 @@ const copy = {
     cutoff: "영업일 마감",
     businessHours: "요일별 운영시간",
     effective: "적용 시작일",
+    metaTimezone: "시간대",
+    metaCutoff: "마감",
+    metaEffective: "적용일",
     open: "영업",
     closed: "휴무",
     save: "통합설정 예약",
@@ -330,6 +339,9 @@ const copy = {
     cutoff: "Giờ chốt ngày kinh doanh",
     businessHours: "Giờ hoạt động theo ngày",
     effective: "Ngày bắt đầu áp dụng",
+    metaTimezone: "Múi giờ",
+    metaCutoff: "Giờ chốt",
+    metaEffective: "Ngày áp dụng",
     open: "Mở cửa",
     closed: "Nghỉ",
     save: "Lên lịch cài đặt chung",
@@ -766,8 +778,10 @@ function HoursTab(props: {
         lang={props.lang}
       />
       <section style={styles.card}>
-        <div style={styles.cardHeader}>
-          <h2 style={styles.sectionTitle}>{t.scheduled}</h2>
+        <div style={{ ...styles.cardHeader, marginBottom: 10 }}>
+          <h2 style={{ ...styles.sectionTitle, margin: 0, flex: 1, minWidth: 0 }}>
+            {t.scheduled}
+          </h2>
           {props.data.overview.scheduled &&
           props.data.capabilities.mutate ? (
             <button style={styles.danger} onClick={props.onCancel}>
@@ -789,31 +803,31 @@ function HoursTab(props: {
       !props.data.overview.scheduled ? (
         <section style={styles.card}>
           <h2 style={styles.sectionTitle}>{t.newSetting}</h2>
-          <div style={styles.grid}>
-            <Field label={t.timezone}>
+          <div style={styles.metaGrid3}>
+            <CompactField label={t.metaTimezone}>
               <input
-                style={styles.input}
+                style={styles.compactInput}
                 value={STORE_TIMEZONE}
                 disabled
               />
-            </Field>
-            <Field label={t.cutoff}>
+            </CompactField>
+            <CompactField label={t.metaCutoff}>
               <input
                 type="time"
-                style={styles.input}
+                style={styles.compactInput}
                 value={props.cutoff}
                 onChange={(event) => props.onCutoff(event.target.value)}
               />
-            </Field>
-            <Field label={t.effective}>
+            </CompactField>
+            <CompactField label={t.metaEffective}>
               <input
                 type="date"
-                style={styles.input}
+                style={styles.compactInput}
                 min={addStoreDays(calculateStoreBusinessDate(new Date()), 1)}
                 value={props.effective}
                 onChange={(event) => props.onEffective(event.target.value)}
               />
-            </Field>
+            </CompactField>
           </div>
           <h3 style={styles.subheading}>{t.businessHours}</h3>
           <div style={styles.days}>
@@ -961,6 +975,18 @@ function AttendanceTab(props: {
         </div>
       </section>
 
+      <section style={styles.card}>
+        <h2 style={{ ...styles.sectionTitle, marginBottom: 10 }}>{t.scheduled}</h2>
+        {props.data.overview.scheduled ? (
+          <AttendanceScheduledBody
+            setting={props.data.overview.scheduled}
+            lang={props.lang}
+          />
+        ) : (
+          <p style={styles.muted}>{t.empty}</p>
+        )}
+      </section>
+
       {props.data.capabilities.mutate &&
       !props.data.overview.scheduled ? (
         <section style={styles.card}>
@@ -994,51 +1020,33 @@ function AttendanceTab(props: {
           <div style={styles.grid}>
             <Field label={`⏰ ${t.lateGrace}`}>
               <div style={styles.inlineInput}>
-                <input
-                  type="number"
+                <GraceMinutesInput
+                  value={props.lateGrace}
                   min={0}
                   max={180}
-                  step={1}
-                  required
-                  style={styles.input}
-                  value={props.lateGrace}
-                  onChange={(event) =>
-                    props.onLateGrace(Number(event.target.value))
-                  }
+                  onChange={props.onLateGrace}
                 />
                 <span>{t.minutes}</span>
               </div>
             </Field>
             <Field label={`🚪 ${t.earlyLeaveGrace}`}>
               <div style={styles.inlineInput}>
-                <input
-                  type="number"
+                <GraceMinutesInput
+                  value={props.earlyLeaveGrace}
                   min={0}
                   max={180}
-                  step={1}
-                  required
-                  style={styles.input}
-                  value={props.earlyLeaveGrace}
-                  onChange={(event) =>
-                    props.onEarlyLeaveGrace(Number(event.target.value))
-                  }
+                  onChange={props.onEarlyLeaveGrace}
                 />
                 <span>{t.minutes}</span>
               </div>
             </Field>
             <Field label={`❓ ${t.missingCheckoutGrace}`}>
               <div style={styles.inlineInput}>
-                <input
-                  type="number"
+                <GraceMinutesInput
+                  value={props.missingCheckoutGrace}
                   min={0}
                   max={360}
-                  step={1}
-                  required
-                  style={styles.input}
-                  value={props.missingCheckoutGrace}
-                  onChange={(event) =>
-                    props.onMissingCheckoutGrace(Number(event.target.value))
-                  }
+                  onChange={props.onMissingCheckoutGrace}
                 />
                 <span>{t.minutes}</span>
               </div>
@@ -1652,15 +1660,15 @@ function SettingBody(props: {
   const t = copy[props.lang];
   return (
     <div>
-      <div style={styles.grid}>
-        <Metric label={t.timezone} value={props.setting.timezone} />
-        <Metric
-          label={t.cutoff}
+      <div style={styles.metaGrid3}>
+        <CompactMetric label={t.metaTimezone} value={props.setting.timezone} />
+        <CompactMetric
+          label={t.metaCutoff}
           value={props.setting.businessDayCutoffTime}
         />
-        <Metric
-          label={t.effective}
-          value={props.setting.effectiveFromBusinessDate}
+        <CompactMetric
+          label={t.metaEffective}
+          value={shortDate(props.setting.effectiveFromBusinessDate)}
         />
       </div>
       <h3 style={styles.subheading}>{t.businessHours}</h3>
@@ -1678,6 +1686,37 @@ function SettingBody(props: {
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+// 근태설정 탭의 "예약 설정" 카드 — 운영시간 탭의 SettingBody와 같은 레이아웃·
+// 폰트 규격을 쓰되, 요일별 운영시간 대신 근태 기준 3개를 보여준다. revision
+// 번호 같은 세부 정보는 굳이 드러내지 않고 "예약된 값"만 직관적으로 보여준다.
+function AttendanceScheduledBody(props: {
+  setting: StoreSetting;
+  lang: "ko" | "vi";
+}) {
+  const t = copy[props.lang];
+  const policy = props.setting.attendancePolicy;
+  return (
+    <div style={styles.grid}>
+      <Metric
+        label={t.metaEffective}
+        value={shortDate(props.setting.effectiveFromBusinessDate)}
+      />
+      <Metric
+        label={`⏰ ${t.lateGrace}`}
+        value={`${policy.lateGraceMinutes}${t.minutes}`}
+      />
+      <Metric
+        label={`🚪 ${t.earlyLeaveGrace}`}
+        value={`${policy.earlyLeaveGraceMinutes}${t.minutes}`}
+      />
+      <Metric
+        label={`❓ ${t.missingCheckoutGrace}`}
+        value={`${policy.missingCheckoutGraceMinutes}${t.minutes}`}
+      />
     </div>
   );
 }
@@ -1700,7 +1739,102 @@ function Metric(props: { label: string; value: string }) {
   );
 }
 
+// 좁은 모바일 폭에서도 시간대/마감/적용일 3칸이 줄바꿈 없이 한 줄에 들어가도록
+// Field/Metric보다 폰트·패딩을 줄인 전용 변형. 다른 곳에서 쓰는 Field/Metric은
+// 그대로 두고 이 두 곳(현재 운영시간 카드, 운영시간 변경 입력 카드)에만 쓴다.
+function CompactMetric(props: { label: string; value: string }) {
+  return (
+    <span style={styles.compactMetric}>
+      <small style={styles.compactMetricLabel}>{props.label}</small>
+      <strong style={styles.compactMetricValue}>{props.value}</strong>
+    </span>
+  );
+}
+
+function CompactField(props: { label: string; children: React.ReactNode }) {
+  return (
+    <label style={styles.compactLabel}>
+      <span>{props.label}</span>
+      {props.children}
+    </label>
+  );
+}
+
+// 근태설정 숫자 input: 값이 정확히 0일 때만 포커스 시 비우고, blur 시 여전히
+// 비어 있으면 0으로 되돌린다. 실제 숫자 state(payload/validation에 쓰이는 값)는
+// 항상 그대로 유지되고 표시(value)만 바뀌므로 저장 로직에는 영향이 없다.
+function GraceMinutesInput(props: {
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <input
+      type="number"
+      min={props.min}
+      max={props.max}
+      step={1}
+      required
+      style={styles.input}
+      value={focused && props.value === 0 ? "" : props.value}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      onChange={(event) => {
+        const raw = event.target.value;
+        props.onChange(raw === "" ? 0 : Number(raw));
+      }}
+    />
+  );
+}
+
 const styles: Record<string, CSSProperties> = {
+  metaGrid3: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 6,
+    marginBottom: 12,
+  },
+  compactMetric: {
+    display: "grid",
+    gap: 2,
+    padding: "8px 6px",
+    border: "1px solid #e5e7eb",
+    borderRadius: 8,
+    background: "#f8fafc",
+    minWidth: 0,
+  },
+  compactMetricLabel: {
+    fontSize: 10.5,
+    fontWeight: 700,
+    color: "#6b7280",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  compactMetricValue: {
+    fontSize: 12.5,
+    fontWeight: 800,
+    color: "#111827",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  compactLabel: {
+    display: "grid",
+    gap: 3,
+    fontSize: 10.5,
+    fontWeight: 800,
+    minWidth: 0,
+  },
+  compactInput: {
+    ...ui.input,
+    minWidth: 0,
+    height: 34,
+    padding: "6px 6px",
+    fontSize: 12.5,
+  },
   modalOverlay: {
     position: "fixed",
     inset: 0,
@@ -2147,12 +2281,17 @@ const styles: Record<string, CSSProperties> = {
     flexShrink: 0,
   },
   danger: {
-    border: "1px solid #fecaca",
-    background: "#fff",
-    color: "#b91c1c",
-    borderRadius: 9,
-    padding: "8px 10px",
-    fontWeight: 800,
+    border: "1px solid #dc2626",
+    background: "#dc2626",
+    color: "#ffffff",
+    borderRadius: 10,
+    padding: "8px 14px",
+    minHeight: 36,
+    fontSize: 13,
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+    cursor: "pointer",
   },
   historyButton: {
     border: 0,
