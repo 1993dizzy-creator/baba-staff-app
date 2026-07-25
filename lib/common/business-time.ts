@@ -105,3 +105,16 @@ export function getSnapshotBusinessDate(baseDate = new Date()) {
   const vietnamParts = getVietnamDateParts(baseDate);
   return addDaysToBusinessDate(formatVietnamDateKey(vietnamParts), -1);
 }
+
+/**
+ * Formats an ISO instant as "HH:MM" in Vietnam wall-clock time, independent of
+ * the host process's local timezone. ISO strings are UTC — slicing the raw
+ * string (e.g. `iso.slice(11, 16)`) silently displays UTC instead.
+ */
+export function formatVietnamTime(value: string | null | undefined): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "-";
+  const parts = getVietnamDateParts(date);
+  return `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
+}

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 // @ts-expect-error Node's direct TypeScript tests require an explicit extension.
-import { compareAttendanceShadow, summarizeAttendanceShadow } from "../lib/attendance/shadow.ts";
+import { compareAttendanceShadow, resolveDisplayStatus, summarizeAttendanceShadow } from "../lib/attendance/shadow.ts";
 import type { AttendancePolicyResult } from "../lib/attendance/policy-engine.ts";
 
 const read = (path: string) =>
@@ -100,6 +100,13 @@ test("shadow reports matches and each independent difference", () => {
     summarizeAttendanceShadow([manualLate]).manualLateExcluded,
     1
   );
+  // manually-normalized late is excluded from the metric count, so the only
+  // real change is early leave — status differs too but is folded in, not
+  // double counted.
+  assert.deepEqual(manualLate.summary, {
+    primaryDifference: "early_leave",
+    changedFieldCount: 1,
+  });
 
   const summary = summarizeAttendanceShadow([match, status, early]);
   assert.equal(summary.total, 3);
@@ -107,6 +114,105 @@ test("shadow reports matches and each independent difference", () => {
   assert.equal(summary.mismatched, 2);
   assert.equal(summary.statusChanged, 1);
   assert.equal(summary.earlyLeaveChanged, 1);
+});
+
+test("row summary picks a single primaryDifference without double-counting status", () => {
+  const base = {
+    status: "done",
+    lateMinutes: 0,
+    earlyLeaveMinutes: 0,
+    unresolved: false,
+    autoCloseAt: null,
+  };
+
+  const noDifference = row(base);
+  assert.deepEqual(noDifference.summary, {
+    primaryDifference: null,
+    changedFieldCount: 0,
+  });
+
+  const lateOnly = row(base, { status: "late", lateMinutes: 7 });
+  assert.deepEqual(lateOnly.summary, {
+    primaryDifference: "late",
+    changedFieldCount: 1,
+  });
+
+  const earlyOnly = row(base, { status: "early_leave", earlyLeaveMinutes: 15 });
+  assert.deepEqual(earlyOnly.summary, {
+    primaryDifference: "early_leave",
+    changedFieldCount: 1,
+  });
+
+  const unresolvedOnly = compareAttendanceShadow({
+    recordId: 4,
+    userId: 2,
+    userName: "Tester",
+    businessDate: "2026-07-24",
+    checkInAt: "2026-07-24T09:00:00.000Z",
+    checkOutAt: null,
+    legacy: { ...base, status: "working" },
+    configured: { ...configured, status: "working", unresolved: true },
+  });
+  assert.deepEqual(unresolvedOnly.summary, {
+    primaryDifference: "unresolved",
+    changedFieldCount: 1,
+  });
+
+  // status differs but none of the three underlying metrics do — a rare
+  // edge case, still surfaced as its own dimension rather than dropped.
+  const statusOnly = row(base, { status: "working" });
+  assert.deepEqual(statusOnly.summary, {
+    primaryDifference: "status",
+    changedFieldCount: 1,
+  });
+
+  // two metrics differ at once — "multiple", counting each changed metric
+  // plus status (which also necessarily differs here).
+  const multiple = row(base, {
+    status: "early_leave",
+    lateMinutes: 10,
+    earlyLeaveMinutes: 15,
+  });
+  assert.deepEqual(multiple.summary, {
+    primaryDifference: "multiple",
+    changedFieldCount: 3,
+  });
+});
+
+test("resolveDisplayStatus folds unresolved and combined late+early-leave into user-facing buckets", () => {
+  assert.equal(
+    resolveDisplayStatus({ status: "done", lateMinutes: 0, earlyLeaveMinutes: 0, unresolved: false }),
+    "done"
+  );
+  assert.equal(
+    resolveDisplayStatus({ status: "late", lateMinutes: 7, earlyLeaveMinutes: 0, unresolved: false }),
+    "late"
+  );
+  assert.equal(
+    resolveDisplayStatus({ status: "early_leave", lateMinutes: 0, earlyLeaveMinutes: 12, unresolved: false }),
+    "early_leave"
+  );
+  assert.equal(
+    resolveDisplayStatus({ status: "early_leave", lateMinutes: 5, earlyLeaveMinutes: 12, unresolved: false }),
+    "late_and_early_leave"
+  );
+  assert.equal(
+    resolveDisplayStatus({ status: "working", lateMinutes: 0, earlyLeaveMinutes: 0, unresolved: true }),
+    "unresolved"
+  );
+  assert.equal(
+    resolveDisplayStatus({ status: "working", lateMinutes: 0, earlyLeaveMinutes: 0, unresolved: false }),
+    "working"
+  );
+  assert.equal(
+    resolveDisplayStatus({ status: "leave", lateMinutes: 0, earlyLeaveMinutes: 0, unresolved: false }),
+    "leave"
+  );
+  // unresolved overlay wins even if status also happens to look late/early.
+  assert.equal(
+    resolveDisplayStatus({ status: "late", lateMinutes: 7, earlyLeaveMinutes: 0, unresolved: true }),
+    "unresolved"
+  );
 });
 
 test("shadow route is read-only and uses the server session actor", () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Container from "@/components/Container";
 import { StorePosShadowGate } from "@/components/StorePosShadowPanel";
@@ -9,6 +9,8 @@ import {
   addStoreDays,
   calculateStoreBusinessDate,
 } from "@/lib/store-settings/business-time";
+import { groupStoreHours } from "@/lib/store-settings/hours-summary";
+import { formatVietnamTime } from "@/lib/common/business-time";
 import {
   DEFAULT_STORE_ATTENDANCE_POLICY,
   DEFAULT_STORE_HOURS,
@@ -18,6 +20,7 @@ import {
   type StoreSettingAuditLog,
   type StoreSettingsOverview,
 } from "@/lib/store-settings/types";
+import { resolveDisplayStatus } from "@/lib/attendance/shadow";
 import type {
   AttendanceShadowComparison,
   AttendanceShadowSummary,
@@ -139,6 +142,44 @@ function exclusionReasonLabel(
   return t.exclusionOther;
 }
 
+// ISO 시각은 항상 UTC이므로 문자열을 그대로 잘라 쓰면 서버 응답의 UTC 시각이
+// 그대로 노출된다. 공용 formatVietnamTime으로 변환해서 표시한다.
+const hhmm = formatVietnamTime;
+
+function displayStatusLabel(
+  lang: "ko" | "vi",
+  input: {
+    status: string;
+    lateMinutes: number;
+    earlyLeaveMinutes: number;
+    unresolved: boolean;
+  }
+) {
+  const t = copy[lang];
+  return t.statusLabels[resolveDisplayStatus(input)] ?? input.status;
+}
+
+function changeTypeBadgeLabel(
+  lang: "ko" | "vi",
+  primaryDifference: AttendanceShadowComparison["summary"]["primaryDifference"]
+) {
+  const t = copy[lang];
+  switch (primaryDifference) {
+    case "late":
+      return t.changeTypeLate;
+    case "early_leave":
+      return t.changeTypeEarly;
+    case "unresolved":
+      return t.changeTypeUnresolved;
+    case "status":
+      return t.changeTypeStatus;
+    case "multiple":
+      return t.changeTypeMultiple;
+    default:
+      return t.matched;
+  }
+}
+
 const copy = {
   ko: {
     title: "매장 통합설정",
@@ -155,7 +196,7 @@ const copy = {
     effective: "적용 시작일",
     open: "영업",
     closed: "휴무",
-    save: "운영시간 변경 예약",
+    save: "통합설정 예약",
     saveAttendance: "통합설정 예약",
     saving: "저장 중…",
     cancel: "예약 취소",
@@ -235,6 +276,41 @@ const copy = {
     exclusionNoCheckIn: "출근 기록 없음",
     exclusionOther: "비교 대상 아님",
     manualLateBadge: "수동 지각 정상처리",
+    changeTypeLate: "지각 판정 변경",
+    changeTypeEarly: "조퇴 판정 변경",
+    changeTypeUnresolved: "미퇴근 판정 변경",
+    changeTypeStatus: "상태 판정 변경",
+    changeTypeMultiple: "복수 판정 변경",
+    changedFieldsCount: "개 판정 변경",
+    actualCheckIn: "실제 출근",
+    actualCheckOut: "실제 퇴근",
+    noCheckOutRecord: "퇴근 기록 없음",
+    expectedCheckIn: "예정 출근",
+    standardCheckout: "기준 퇴근",
+    judgmentTime: "판정 시각",
+    earlySuffix: "일찍 퇴근",
+    lateSuffix: "늦음",
+    legacyPrefix: "기존",
+    configuredPrefix: "새 기준",
+    normalLabel: "정상",
+    showDetails: "상세 보기",
+    hideDetails: "상세 닫기",
+    statusLabels: {
+      working: "근무 중",
+      done: "정상 완료",
+      late: "지각",
+      early_leave: "조퇴",
+      late_and_early_leave: "지각·조퇴",
+      unresolved: "미퇴근",
+      leave: "휴무",
+    },
+    confirmScheduleTitle: "통합설정을 예약할까요?",
+    confirmScheduleBody1: "선택한 영업일부터 현재 입력된 운영시간과 근태 기준이 함께 적용됩니다.",
+    confirmScheduleBody2: "변경하지 않은 값도 현재 화면에 표시된 값으로 새 통합설정 버전에 포함됩니다.",
+    confirmHoursSection: "운영시간",
+    confirmAttendanceSection: "근태 기준",
+    modalCancel: "취소",
+    modalConfirm: "예약하기",
   },
   vi: {
     title: "Cài đặt tích hợp cửa hàng",
@@ -256,8 +332,8 @@ const copy = {
     effective: "Ngày bắt đầu áp dụng",
     open: "Mở cửa",
     closed: "Nghỉ",
-    save: "Lên lịch thay đổi giờ mở cửa",
-    saveAttendance: "Lưu lịch cài đặt",
+    save: "Lên lịch cài đặt chung",
+    saveAttendance: "Lên lịch cài đặt chung",
     saving: "Đang lưu…",
     cancel: "Hủy lịch",
     loading: "Đang tải cài đặt…",
@@ -339,6 +415,41 @@ const copy = {
     exclusionNoCheckIn: "Không có giờ vào",
     exclusionOther: "Không thuộc đối tượng so sánh",
     manualLateBadge: "Đã chuẩn hóa đi muộn",
+    changeTypeLate: "Thay đổi đánh giá đi muộn",
+    changeTypeEarly: "Thay đổi đánh giá về sớm",
+    changeTypeUnresolved: "Thay đổi đánh giá thiếu chấm công ra",
+    changeTypeStatus: "Thay đổi trạng thái",
+    changeTypeMultiple: "Thay đổi nhiều tiêu chí",
+    changedFieldsCount: "tiêu chí thay đổi",
+    actualCheckIn: "Giờ vào thực tế",
+    actualCheckOut: "Giờ ra thực tế",
+    noCheckOutRecord: "Không có giờ ra",
+    expectedCheckIn: "Giờ vào dự kiến",
+    standardCheckout: "Giờ tan ca tiêu chuẩn",
+    judgmentTime: "Thời điểm xác định",
+    earlySuffix: "về sớm",
+    lateSuffix: "đi muộn",
+    legacyPrefix: "Trước đây",
+    configuredPrefix: "Theo tiêu chuẩn mới",
+    normalLabel: "Bình thường",
+    showDetails: "Xem chi tiết",
+    hideDetails: "Đóng chi tiết",
+    statusLabels: {
+      working: "Đang làm việc",
+      done: "Hoàn tất bình thường",
+      late: "Đi muộn",
+      early_leave: "Về sớm",
+      late_and_early_leave: "Đi muộn & về sớm",
+      unresolved: "Chưa chấm công ra",
+      leave: "Nghỉ phép",
+    },
+    confirmScheduleTitle: "Bạn có muốn lên lịch cài đặt chung không?",
+    confirmScheduleBody1: "Từ ngày kinh doanh đã chọn, giờ hoạt động và tiêu chuẩn chấm công đang hiển thị sẽ được áp dụng cùng nhau.",
+    confirmScheduleBody2: "Các giá trị không thay đổi cũng sẽ được lưu vào phiên bản cài đặt chung mới.",
+    confirmHoursSection: "Giờ mở cửa",
+    confirmAttendanceSection: "Tiêu chuẩn chấm công",
+    modalCancel: "Hủy",
+    modalConfirm: "Đặt lịch",
   },
 } as const;
 
@@ -368,6 +479,7 @@ export default function StoreSettingsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [logs, setLogs] = useState<StoreSettingAuditLog[] | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const load = useCallback(async () => {
     setError("");
@@ -421,7 +533,7 @@ export default function StoreSettingsPage() {
     );
   }
 
-  async function save() {
+  function requestSave() {
     if (!data) return;
     if (
       !Number.isInteger(lateGrace) ||
@@ -438,6 +550,12 @@ export default function StoreSettingsPage() {
       setError(t.invalid);
       return;
     }
+    setError("");
+    setConfirmOpen(true);
+  }
+
+  async function save() {
+    if (!data) return;
     setBusy(true);
     setError("");
     try {
@@ -481,6 +599,7 @@ export default function StoreSettingsPage() {
       );
     } finally {
       setBusy(false);
+      setConfirmOpen(false);
     }
   }
 
@@ -573,7 +692,7 @@ export default function StoreSettingsPage() {
           onCutoff={setCutoff}
           onEffective={setEffective}
           onHour={updateHour}
-          onSave={save}
+          onSave={requestSave}
           onCancel={cancelScheduled}
           onHistory={toggleHistory}
         />
@@ -592,7 +711,7 @@ export default function StoreSettingsPage() {
           onEarlyLeaveGrace={setEarlyLeaveGrace}
           onMissingCheckoutGrace={setMissingCheckoutGrace}
           onEffective={setEffective}
-          onSave={save}
+          onSave={requestSave}
         />
       ) : null}
 
@@ -600,6 +719,21 @@ export default function StoreSettingsPage() {
         <ShadowTab
           businessDate={data.overview.businessDate}
           lang={lang}
+        />
+      ) : null}
+
+      {confirmOpen ? (
+        <ConfirmScheduleModal
+          lang={lang}
+          effective={effective}
+          hours={hours}
+          cutoff={cutoff}
+          lateGrace={lateGrace}
+          earlyLeaveGrace={earlyLeaveGrace}
+          missingCheckoutGrace={missingCheckoutGrace}
+          busy={busy}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={save}
         />
       ) : null}
     </Container>
@@ -933,6 +1067,124 @@ function AttendanceTab(props: {
   );
 }
 
+function ConfirmScheduleModal(props: {
+  lang: "ko" | "vi";
+  effective: string;
+  hours: StoreBusinessHour[];
+  cutoff: string;
+  lateGrace: number;
+  earlyLeaveGrace: number;
+  missingCheckoutGrace: number;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const t = copy[props.lang];
+  const confirmButtonRef = useRef<HTMLButtonElement>(null);
+  const busyRef = useRef(props.busy);
+  busyRef.current = props.busy;
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busyRef.current) props.onCancel();
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    confirmButtonRef.current?.focus();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const hourGroups = groupStoreHours(props.hours);
+  const weekdayLabel = (weekday: number) => weekdayNames[props.lang][weekday];
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={t.confirmScheduleTitle}
+      onClick={props.busy ? undefined : props.onCancel}
+      style={styles.modalOverlay}
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        style={styles.modalBox}
+      >
+        <h2 style={styles.modalTitle}>{t.confirmScheduleTitle}</h2>
+        <p style={styles.modalBody}>{t.confirmScheduleBody1}</p>
+        <p style={styles.modalBody}>{t.confirmScheduleBody2}</p>
+
+        <div style={styles.modalHoursRow}>
+          <span>{t.effective}</span>
+          <strong>{props.effective}</strong>
+        </div>
+
+        <h3 style={styles.modalSectionTitle}>{t.confirmHoursSection}</h3>
+        <div style={styles.modalHoursList}>
+          {hourGroups.map((group) => (
+            <div key={group.weekdays.join("-")} style={styles.modalHoursRow}>
+              <span>
+                {group.weekdays.length > 1
+                  ? `${weekdayLabel(group.weekdays[0])}~${weekdayLabel(group.weekdays[group.weekdays.length - 1])}`
+                  : weekdayLabel(group.weekdays[0])}
+              </span>
+              <span>
+                {group.isClosed
+                  ? t.closed
+                  : `${group.openTime}~${group.closeTime}`}
+              </span>
+            </div>
+          ))}
+          <div style={styles.modalHoursRow}>
+            <span>{t.cutoff}</span>
+            <span>{props.cutoff}</span>
+          </div>
+        </div>
+
+        <h3 style={styles.modalSectionTitle}>{t.confirmAttendanceSection}</h3>
+        <div style={styles.modalHoursList}>
+          <div style={styles.modalHoursRow}>
+            <span>{t.lateGrace}</span>
+            <span>{props.lateGrace}{t.minutes}</span>
+          </div>
+          <div style={styles.modalHoursRow}>
+            <span>{t.earlyLeaveGrace}</span>
+            <span>{props.earlyLeaveGrace}{t.minutes}</span>
+          </div>
+          <div style={styles.modalHoursRow}>
+            <span>{t.missingCheckoutGrace}</span>
+            <span>{props.missingCheckoutGrace}{t.minutes}</span>
+          </div>
+        </div>
+
+        <div style={styles.modalActions}>
+          <button
+            type="button"
+            style={{ ...ui.subButton, width: "auto", flex: 1 }}
+            disabled={props.busy}
+            onClick={props.onCancel}
+          >
+            {t.modalCancel}
+          </button>
+          <button
+            ref={confirmButtonRef}
+            type="button"
+            style={{ ...ui.button, width: "auto", flex: 1 }}
+            disabled={props.busy}
+            onClick={props.onConfirm}
+          >
+            {props.busy ? t.saving : t.modalConfirm}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ShadowTab(props: {
   businessDate: string;
   lang: "ko" | "vi";
@@ -1118,8 +1370,11 @@ function ShadowTab(props: {
           </section>
 
           <section style={styles.card}>
-            <div style={styles.cardHeader}>
-              <h2 style={styles.sectionTitle}>⚠️ {t.mismatched}</h2>
+            <div style={styles.filterRow}>
+              <h2 style={styles.filterLabel}>
+                <span aria-hidden="true">⚠️</span>
+                <span>{t.mismatched}</span>
+              </h2>
               <select
                 aria-label={t.differenceFilter}
                 value={differenceFilter}
@@ -1189,6 +1444,7 @@ function ShadowRow(props: {
   lang: "ko" | "vi";
 }) {
   const t = copy[props.lang];
+  const [showDetails, setShowDetails] = useState(false);
 
   if (props.row.comparisonStatus === "excluded") {
     return (
@@ -1209,13 +1465,18 @@ function ShadowRow(props: {
   }
 
   const sourceText = {
-    override: `${t.specialClose} ${props.row.configured.effectiveStoreCloseAt?.slice(11, 16) || "-"} ${props.lang === "ko" ? "적용" : "áp dụng"}`,
-    configured: `${t.storeClose} ${props.row.configured.effectiveStoreCloseAt?.slice(11, 16) || "-"}`,
-    fallback: `${t.defaultClose} ${props.row.configured.normalCheckoutThresholdAt?.slice(11, 16) || "-"}`,
+    override: `${t.specialClose} ${hhmm(props.row.configured.effectiveStoreCloseAt)} ${props.lang === "ko" ? "적용" : "áp dụng"}`,
+    configured: `${t.storeClose} ${hhmm(props.row.configured.effectiveStoreCloseAt)}`,
+    fallback: `${t.defaultClose} ${hhmm(props.row.configured.normalCheckoutThresholdAt)}`,
   }[props.row.configured.closeSource];
   const changed = Object.values(props.row.differences).some(Boolean);
   const lateExcluded =
     props.row.metricComparison.late.comparisonStatus === "excluded";
+  const legacyLabel = displayStatusLabel(props.lang, props.row.legacy);
+  const configuredLabel = displayStatusLabel(props.lang, props.row.configured);
+  const primary = props.row.summary.primaryDifference;
+  const binaryLabel = (isFlagged: boolean, flaggedLabel: string) =>
+    isFlagged ? flaggedLabel : t.normalLabel;
 
   return (
     <article
@@ -1225,49 +1486,144 @@ function ShadowRow(props: {
       }}
     >
       <div style={styles.cardHeader}>
-        <div>
-          <strong>{props.row.userName}</strong>
+        <div style={styles.shadowRowIdentity}>
+          <strong style={styles.shadowRowName}>{props.row.userName}</strong>
           <small style={styles.rowMeta}>{props.row.businessDate}</small>
         </div>
         <span style={changed ? styles.changedBadge : styles.matchBadge}>
-          {changed ? t.mismatched : t.matched}
+          {changed ? changeTypeBadgeLabel(props.lang, primary) : t.matched}
         </span>
       </div>
-      <div style={styles.comparisonGrid}>
-        <div>
-          <b>{t.legacy}</b>
-          <p>{t.status}: {props.row.legacy.status}</p>
-          <p>{t.late}: {props.row.legacy.lateMinutes}</p>
-          <p>{t.early}: {props.row.legacy.earlyLeaveMinutes}</p>
-          <p>{t.unresolved}: {String(props.row.legacy.unresolved)}</p>
-        </div>
-        <div>
-          <b>{t.configured}</b>
-          <p>{t.status}: {props.row.configured.status}</p>
-          <p>
-            {t.late}: {props.row.configured.lateMinutes}
-            {lateExcluded ? (
-              <span style={styles.neutralBadge}>{t.manualLateBadge}</span>
-            ) : null}
-          </p>
-          <p>{t.early}: {props.row.configured.earlyLeaveMinutes}</p>
-          <p>{t.unresolved}: {String(props.row.configured.unresolved)}</p>
-          <p>{t.closeSource}: {sourceText}</p>
-          <p>
-            {t.revision}:{" "}
-            {props.row.configured.settingsRevision === null
-              ? t.fallbackSetting
-              : `#${props.row.configured.settingsRevision}`}
-          </p>
-          {props.row.differenceTypes.length ? (
-            <p>
-              {props.row.differenceTypes
-                .map((type) => differenceLabel(props.lang, type))
-                .join(" · ")}
+
+      {changed ? (
+        <div style={styles.shadowRowSummary}>
+          {primary === "late" ? (
+            <>
+              <p style={styles.summaryLine}>
+                {t.actualCheckIn} {hhmm(props.row.checkInAt)}
+              </p>
+              <p style={styles.summaryLineMuted}>
+                {t.expectedCheckIn} {hhmm(props.row.configured.scheduledStartAt)}
+                {" · "}
+                {props.row.configured.lateMinutes}{t.minutes} {t.lateSuffix}
+              </p>
+            </>
+          ) : null}
+          {primary === "early_leave" ? (
+            <>
+              <p style={styles.summaryLine}>
+                {t.actualCheckOut} {hhmm(props.row.checkOutAt)}
+              </p>
+              <p style={styles.summaryLineMuted}>
+                {t.standardCheckout} {hhmm(props.row.configured.normalCheckoutThresholdAt)}
+                {" · "}
+                {props.row.configured.earlyLeaveMinutes}{t.minutes} {t.earlySuffix}
+              </p>
+            </>
+          ) : null}
+          {primary === "unresolved" ? (
+            <>
+              <p style={styles.summaryLine}>{t.noCheckOutRecord}</p>
+              <p style={styles.summaryLineMuted}>
+                {t.standardCheckout} {hhmm(props.row.configured.normalCheckoutThresholdAt)}
+                {" · "}
+                {t.judgmentTime} {hhmm(props.row.configured.unresolvedAt)}
+              </p>
+            </>
+          ) : null}
+          {primary === "multiple" ? (
+            <>
+              <p style={styles.summaryLine}>
+                {props.row.summary.changedFieldCount} {t.changedFieldsCount}
+              </p>
+              <ul style={styles.summaryBulletList}>
+                {props.row.differences.lateMinutes ? (
+                  <li>
+                    {t.late}:{" "}
+                    {binaryLabel(props.row.legacy.lateMinutes > 0, t.late)}
+                    {" → "}
+                    {binaryLabel(props.row.configured.lateMinutes > 0, t.late)}
+                  </li>
+                ) : null}
+                {props.row.differences.earlyLeaveMinutes ? (
+                  <li>
+                    {t.early}:{" "}
+                    {binaryLabel(props.row.legacy.earlyLeaveMinutes > 0, t.early)}
+                    {" → "}
+                    {binaryLabel(props.row.configured.earlyLeaveMinutes > 0, t.early)}
+                  </li>
+                ) : null}
+                {props.row.differences.unresolved || props.row.differences.unresolvedAt ? (
+                  <li>
+                    {t.unresolved}:{" "}
+                    {binaryLabel(props.row.legacy.unresolved, t.unresolved)}
+                    {" → "}
+                    {binaryLabel(props.row.configured.unresolved, t.unresolved)}
+                  </li>
+                ) : null}
+                {props.row.differences.status ? (
+                  <li>
+                    {t.status}: {legacyLabel} → {configuredLabel}
+                  </li>
+                ) : null}
+              </ul>
+            </>
+          ) : null}
+          {primary !== "multiple" ? (
+            <p style={styles.summaryTransition}>
+              {t.legacyPrefix} {legacyLabel} → {t.configuredPrefix} {configuredLabel}
             </p>
           ) : null}
         </div>
-      </div>
+      ) : null}
+
+      <button
+        type="button"
+        style={styles.detailsToggle}
+        onClick={() => setShowDetails((value) => !value)}
+      >
+        {showDetails ? t.hideDetails : t.showDetails}
+      </button>
+
+      {showDetails ? (
+        <div style={styles.comparisonGrid}>
+          <div>
+            <b>{t.legacy}</b>
+            <p>{t.status}: {props.row.legacy.status}</p>
+            <p>{t.late}: {props.row.legacy.lateMinutes}</p>
+            <p>{t.early}: {props.row.legacy.earlyLeaveMinutes}</p>
+            <p>{t.unresolved}: {String(props.row.legacy.unresolved)}</p>
+          </div>
+          <div>
+            <b>{t.configured}</b>
+            <p>
+              {t.status}: {props.row.configured.status}
+            </p>
+            <p>
+              {t.late}: {props.row.configured.lateMinutes}
+              {lateExcluded ? (
+                <span style={styles.neutralBadge}>{t.manualLateBadge}</span>
+              ) : null}
+            </p>
+            <p>{t.early}: {props.row.configured.earlyLeaveMinutes}</p>
+            <p>{t.unresolved}: {String(props.row.configured.unresolved)}</p>
+            <p>{t.closeSource}: {sourceText}</p>
+            <p>
+              {t.revision}:{" "}
+              {props.row.configured.settingsRevision === null
+                ? t.fallbackSetting
+                : `#${props.row.configured.settingsRevision}`}
+            </p>
+            {props.row.differenceTypes.length ? (
+              <p>
+                {props.row.differenceTypes
+                  .map((type) => differenceLabel(props.lang, type))
+                  .join(" · ")}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -1345,6 +1701,79 @@ function Metric(props: { label: string; value: string }) {
 }
 
 const styles: Record<string, CSSProperties> = {
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 1300,
+    padding: 16,
+    background: "rgba(15, 23, 42, 0.6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalBox: {
+    width: "100%",
+    maxWidth: 480,
+    maxHeight: "88vh",
+    overflowY: "auto",
+    padding: 20,
+    borderRadius: 16,
+    background: "#ffffff",
+    boxShadow: "0 24px 60px rgba(0, 0, 0, 0.3)",
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 800,
+    margin: "0 0 10px",
+  },
+  modalBody: {
+    margin: "0 0 8px",
+    color: "#4b5563",
+    fontSize: 13,
+    lineHeight: 1.55,
+  },
+  modalSectionTitle: {
+    fontSize: 13,
+    fontWeight: 700,
+    margin: "16px 0 6px",
+    color: "#374151",
+  },
+  modalHoursList: {
+    display: "grid",
+    gap: 6,
+    padding: 10,
+    borderRadius: 10,
+    background: "#f8fafc",
+    border: "1px solid #e5e7eb",
+  },
+  modalHoursRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 10,
+    fontSize: 13,
+  },
+  modalActions: {
+    display: "flex",
+    gap: 10,
+    marginTop: 18,
+  },
+  filterRow: {
+    display: "grid",
+    gridTemplateColumns: "auto minmax(0, 1fr)",
+    alignItems: "center",
+    gap: 12,
+  },
+  filterLabel: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+    fontSize: 16,
+    fontWeight: 800,
+    margin: 0,
+    minWidth: 0,
+  },
   subNav: {
     borderBottom: "1px solid #e5e7eb",
     marginBottom: 12,
@@ -1540,9 +1969,60 @@ const styles: Record<string, CSSProperties> = {
   },
   shadowList: { display: "grid", gap: 9 },
   shadowRow: {
-    padding: 12,
+    padding: "10px 12px",
     border: "1px solid",
     borderRadius: 12,
+  },
+  shadowRowIdentity: {
+    minWidth: 0,
+    flex: 1,
+    overflow: "hidden",
+  },
+  shadowRowName: {
+    display: "block",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    maxWidth: "100%",
+  },
+  shadowRowSummary: {
+    marginTop: 8,
+  },
+  summaryLine: {
+    margin: "0 0 2px",
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#111827",
+  },
+  summaryLineMuted: {
+    margin: "0 0 2px",
+    fontSize: 12,
+    color: "#64748b",
+  },
+  summaryTransition: {
+    margin: "6px 0 0",
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#92400e",
+  },
+  summaryBulletList: {
+    margin: "4px 0 0",
+    padding: "0 0 0 16px",
+    fontSize: 12,
+    color: "#374151",
+    lineHeight: 1.6,
+  },
+  detailsToggle: {
+    marginTop: 10,
+    minHeight: 36,
+    padding: "8px 4px",
+    border: 0,
+    background: "transparent",
+    color: "#2563eb",
+    fontSize: 12.5,
+    fontWeight: 700,
+    cursor: "pointer",
+    textAlign: "left",
   },
   dateSummaryList: { display: "grid", gap: 8 },
   dateCard: {
@@ -1654,6 +2134,8 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 999,
     padding: "4px 8px",
     fontSize: 11,
+    whiteSpace: "nowrap",
+    flexShrink: 0,
   },
   matchBadge: {
     color: "#166534",
@@ -1661,6 +2143,8 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 999,
     padding: "4px 8px",
     fontSize: 11,
+    whiteSpace: "nowrap",
+    flexShrink: 0,
   },
   danger: {
     border: "1px solid #fecaca",

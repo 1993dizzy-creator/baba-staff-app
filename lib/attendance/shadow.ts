@@ -40,6 +40,7 @@ export type AttendanceShadowComparison = {
     lateMinutes: number;
     earlyLeaveMinutes: number;
     unresolved: boolean;
+    scheduledStartAt: string | null;
     effectiveStoreCloseAt: string | null;
     unresolvedAt: string | null;
     normalCheckoutThresholdAt: string | null;
@@ -56,7 +57,60 @@ export type AttendanceShadowComparison = {
     /** @deprecated Alias of unresolvedAt. */
     autoCloseAt: boolean;
   };
+  /**
+   * Additive display-only summary. Never recompute these client-side from raw
+   * datetimes — actualCheckOutAt/expectedCheckOutAt etc. already reflect the
+   * policy-engine's own calculation, so clients should only format them.
+   */
+  summary: {
+    primaryDifference:
+      | "late"
+      | "early_leave"
+      | "unresolved"
+      | "status"
+      | "multiple"
+      | null;
+    changedFieldCount: number;
+  };
 };
+
+export type AttendanceDisplayStatus =
+  | "working"
+  | "done"
+  | "late"
+  | "early_leave"
+  | "late_and_early_leave"
+  | "unresolved"
+  | "leave";
+
+/**
+ * Collapses a raw status string plus its late/early-leave/unresolved flags into
+ * one user-facing bucket. `unresolved` is a separate boolean overlay (not part of
+ * `status` itself), and a record can be simultaneously late and early-leave even
+ * though `status` alone can only ever report one of them (early_leave wins) — so
+ * both are folded in here rather than left for callers to reconstruct.
+ */
+export function resolveDisplayStatus(input: {
+  status: string;
+  lateMinutes: number;
+  earlyLeaveMinutes: number;
+  unresolved: boolean;
+}): AttendanceDisplayStatus {
+  if (input.unresolved) return "unresolved";
+  if (input.status === "early_leave" && input.lateMinutes > 0) {
+    return "late_and_early_leave";
+  }
+  if (
+    input.status === "working" ||
+    input.status === "done" ||
+    input.status === "late" ||
+    input.status === "early_leave" ||
+    input.status === "leave"
+  ) {
+    return input.status;
+  }
+  return "working";
+}
 
 export type AttendanceShadowSummary = {
   total: number;
@@ -94,6 +148,7 @@ export function compareAttendanceShadow(input: {
     lateMinutes: input.configured.lateMinutes,
     earlyLeaveMinutes: input.configured.earlyLeaveMinutes,
     unresolved: input.configured.unresolved,
+    scheduledStartAt: input.configured.scheduledStartAt,
     effectiveStoreCloseAt: input.configured.effectiveStoreCloseAt,
     unresolvedAt: input.configured.unresolvedAt,
     normalCheckoutThresholdAt: input.configured.normalCheckoutThresholdAt,
@@ -143,6 +198,28 @@ export function compareAttendanceShadow(input: {
   if (unresolved || unresolvedAt) differenceTypes.push("unresolved_at");
   if (status && differenceTypes.length === 0) differenceTypes.push("other");
 
+  // status is derived from late/early/unresolved, so a single-cause change
+  // (e.g. only lateMinutes newly differs) almost always makes status differ
+  // too. Only count status as its own dimension when nothing else explains
+  // it; otherwise fold it into that one metric's card instead of double
+  // counting the same underlying change.
+  const changedMetrics: Array<"late" | "early_leave" | "unresolved"> = [];
+  if (lateMinutes) changedMetrics.push("late");
+  if (earlyLeaveMinutes) changedMetrics.push("early_leave");
+  if (unresolved || unresolvedAt) changedMetrics.push("unresolved");
+  const summary: AttendanceShadowComparison["summary"] =
+    changedMetrics.length === 0
+      ? {
+          primaryDifference: status ? "status" : null,
+          changedFieldCount: status ? 1 : 0,
+        }
+      : changedMetrics.length === 1
+        ? { primaryDifference: changedMetrics[0], changedFieldCount: 1 }
+        : {
+            primaryDifference: "multiple",
+            changedFieldCount: changedMetrics.length + (status ? 1 : 0),
+          };
+
   return {
     recordId: input.recordId,
     userId: input.userId,
@@ -171,6 +248,7 @@ export function compareAttendanceShadow(input: {
       unresolvedAt,
       autoCloseAt: unresolvedAt,
     },
+    summary,
   };
 }
 
