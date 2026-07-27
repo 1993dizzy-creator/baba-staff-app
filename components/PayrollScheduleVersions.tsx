@@ -1,63 +1,11 @@
 "use client";
-
-import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
-
-type Schedule = { id:number; startTime:string; endTime:string; unpaidBreakMinutes:number; effectiveFrom:string; effectiveTo:string|null; revision:number; changeReason:string|null };
-
-export default function PayrollScheduleVersions({ userId, vi }: { userId:number; vi:boolean }) {
-  const [history, setHistory] = useState<Schedule[]>([]);
-  const [allowedDate, setAllowedDate] = useState("");
-  const [changesAllowed, setChangesAllowed] = useState(false);
-  const [message, setMessage] = useState("");
-  const [form, setForm] = useState({ startTime:"16:00", endTime:"01:00", unpaidBreakMinutes:"0", changeReason:"" });
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch(`/api/admin/payroll/schedules?userId=${userId}`, { cache:"no-store", signal:controller.signal })
-      .then((response) => response.json())
-      .then((data) => {
-        if (!data.ok) return;
-        setHistory(data.history);
-        setAllowedDate(data.allowedEffectiveDate);
-        setChangesAllowed(data.scheduleChangesAllowed === true);
-        const template = data.current ?? data.scheduled;
-        if (template) setForm((value) => ({ ...value, startTime:template.startTime, endTime:template.endTime, unpaidBreakMinutes:String(template.unpaidBreakMinutes) }));
-      })
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, [userId]);
-
-  async function submit(event:FormEvent) {
-    event.preventDefault();
-    if (!changesAllowed) return;
-    setMessage("");
-    const response = await fetch("/api/admin/payroll/schedules", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ userId, effectiveFrom:allowedDate, startTime:form.startTime, endTime:form.endTime, unpaidBreakMinutes:Number(form.unpaidBreakMinutes), changeReason:form.changeReason }) });
-    const data = await response.json();
-    if (!response.ok) { setMessage(vi ? "Không thể lưu phiên bản giờ làm." : "근무시간 버전을 저장할 수 없습니다."); return; }
-    setHistory((previous) => [data.schedule, ...previous.map((item) => item.effectiveTo === null && item.effectiveFrom < data.schedule.effectiveFrom ? { ...item, effectiveTo:data.schedule.effectiveFrom } : item)]);
-    setMessage(vi ? "Đã tạo phiên bản giờ làm mới." : "새 근무시간 버전을 생성했습니다.");
-  }
-
-  const current = history.find((item) => item.effectiveFrom <= allowedDate && (!item.effectiveTo || item.effectiveTo > allowedDate));
-  const scheduled = history.find((item) => item.effectiveFrom > allowedDate);
-
-  return <section style={styles.section}>
-    <h2>{vi ? "Phiên bản giờ làm" : "근무시간 version"}</h2>
-    <p style={styles.current}><b>{vi ? "Hiện tại" : "현재"}:</b> {current ? `${current.startTime}–${current.endTime} · ${current.unpaidBreakMinutes} min break · #${current.revision}` : "-"}</p>
-    <p style={styles.current}><b>{vi ? "Sắp áp dụng" : "적용 예정"}:</b> {scheduled ? `${scheduled.effectiveFrom} · ${scheduled.startTime}–${scheduled.endTime} · ${scheduled.unpaidBreakMinutes} min break · #${scheduled.revision}` : "-"}</p>
-    <form onSubmit={submit} style={styles.form}>
-      <label>{vi ? "Ngày áp dụng" : "적용 시작일"}<input type="date" value={allowedDate} readOnly /></label>
-      <label>{vi ? "Giờ vào" : "출근시간"}<input type="time" required value={form.startTime} onChange={(event) => setForm({ ...form, startTime:event.target.value })} /></label>
-      <label>{vi ? "Giờ ra" : "퇴근시간"}<input type="time" required value={form.endTime} onChange={(event) => setForm({ ...form, endTime:event.target.value })} /></label>
-      <label>{vi ? "Nghỉ không lương (phút)" : "무급 휴게시간(분)"}<input type="number" min="0" max="720" required value={form.unpaidBreakMinutes} onChange={(event) => setForm({ ...form, unpaidBreakMinutes:event.target.value })} /></label>
-      <label>{vi ? "Lý do thay đổi" : "변경 사유"}<input required value={form.changeReason} onChange={(event) => setForm({ ...form, changeReason:event.target.value })} /></label>
-      <button disabled={!changesAllowed}>{vi ? "Tạo phiên bản giờ làm" : "근무시간 버전 생성"}</button>
-    </form>
-    <small>{!changesAllowed ? (vi ? "Có thể thay đổi từ ngày 01/08/2026." : "2026-08-01부터 변경할 수 있습니다.") : (vi ? "Không hỗ trợ đặt lịch cho ngày tương lai." : "미래 적용 스케줄은 지원하지 않습니다.")}</small>
-    {message && <p>{message}</p>}
-    <h3>{vi ? "Lịch sử giờ làm" : "근무시간 이력"}</h3>
-    {history.map((item) => <div key={item.id} style={styles.row}>#{item.revision} · {item.effectiveFrom} ≤ date &lt; {item.effectiveTo || "∞"} · {item.startTime}–{item.endTime} · break {item.unpaidBreakMinutes}m · {item.changeReason || "-"}</div>)}
-  </section>;
-}
-
-const styles = { section:{ marginTop:18, paddingTop:16, borderTop:"1px solid #e5e7eb" }, current:{ padding:12, background:"#f9fafb", borderRadius:10, fontWeight:800 }, form:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }, row:{ padding:9, marginTop:6, background:"#f9fafb", borderRadius:8, fontSize:12 } } satisfies Record<string,CSSProperties>;
+/* eslint-disable react-hooks/set-state-in-effect */
+import {useCallback,useEffect,useState,type CSSProperties,type FormEvent} from "react";import PayrollModal from "@/components/payroll/PayrollModal";import {dateLabel,type PayrollUiLang} from "@/lib/payroll/ui-labels";import {ui} from "@/lib/styles/ui";
+type Schedule={id:number;startTime:string;endTime:string;unpaidBreakMinutes:number;effectiveFrom:string;effectiveTo:string|null;revision:number;changeReason:string|null};
+export default function PayrollScheduleVersions({userId,vi}:{userId:number;vi:boolean}){const lang:PayrollUiLang=vi?"vi":"ko";const[history,setHistory]=useState<Schedule[]>([]);const[allowedDate,setAllowedDate]=useState("");const[allowed,setAllowed]=useState(false);const[open,setOpen]=useState(false);const[saving,setSaving]=useState(false);const[message,setMessage]=useState("");const[error,setError]=useState("");const[form,setForm]=useState({startTime:"18:00",endTime:"23:00",unpaidBreakMinutes:"0",changeReason:""});
+ const load=useCallback(async(signal?:AbortSignal)=>{const response=await fetch(`/api/admin/payroll/schedules?userId=${userId}`,{cache:"no-store",signal});const data=await response.json();if(!response.ok){setError(vi?"Không thể tải giờ làm việc.":"근무시간을 불러오지 못했습니다.");return}setHistory(data.history??[]);setAllowedDate(data.allowedEffectiveDate);setAllowed(data.scheduleChangesAllowed===true);const template=data.current??data.scheduled;if(template)setForm(v=>({...v,startTime:template.startTime,endTime:template.endTime,unpaidBreakMinutes:String(template.unpaidBreakMinutes)}))},[userId,vi]);
+ useEffect(()=>{const c=new AbortController();void load(c.signal);return()=>c.abort()},[load]);const today=allowedDate;const current=history.find(v=>v.effectiveFrom<=today&&(!v.effectiveTo||v.effectiveTo>today));const scheduled=history.find(v=>v.effectiveFrom>today);
+ async function submit(e:FormEvent){e.preventDefault();setSaving(true);setError("");const response=await fetch("/api/admin/payroll/schedules",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId,effectiveFrom:allowedDate,startTime:form.startTime,endTime:form.endTime,unpaidBreakMinutes:Number(form.unpaidBreakMinutes),changeReason:form.changeReason})});setSaving(false);if(!response.ok){setError(vi?"Không thể lưu giờ làm việc. Vui lòng kiểm tra nội dung.":"근무시간을 저장하지 못했습니다. 입력 내용을 확인해주세요.");return}await load();setOpen(false);setMessage(vi?"Đã lưu giờ làm việc.":"근무시간을 저장했습니다.")}
+ return <section style={{...ui.card,padding:16}}><div style={styles.head}><div><h2 style={styles.h2}>{vi?"Giờ làm việc tính lương":"급여용 근무시간"}</h2><p style={styles.help}>{vi?"Quản lý thời gian làm việc áp dụng khi tính lương.":"급여 계산에 적용할 직원 근무시간을 관리합니다."}</p></div><button type="button" style={styles.primary} disabled={!allowed} onClick={()=>setOpen(true)}>{vi?"Thay đổi":"근무시간 변경"}</button></div>{error&&<p role="alert" style={styles.error}>{error}</p>}{message&&<p role="status" style={styles.success}>{message}</p>}<ScheduleBlock title={vi?"Giờ làm việc hiện tại":"현재 근무시간"} empty={vi?"Không có giờ làm việc tính lương đang áp dụng.":"현재 적용 중인 급여용 근무시간이 없습니다."} value={current} lang={lang}/><ScheduleBlock title={vi?"Giờ làm việc sắp áp dụng":"적용 예정 근무시간"} empty={vi?"Không có giờ làm việc sắp áp dụng.":"적용 예정인 근무시간이 없습니다."} value={scheduled} lang={lang} scheduled/>{!allowed&&<p style={styles.notice}>{vi?"Có thể thay đổi giờ làm việc tính lương từ ngày 01/08/2026.":"급여용 근무시간 변경은 2026년 8월 1일부터 가능합니다."}</p>}<details style={styles.history}><summary>{vi?"Lịch sử thay đổi":"변경 이력"}</summary>{history.map(v=><article key={v.id} style={styles.row}><b>{vi?`Lần thay đổi ${v.revision}`:`변경번호 ${v.revision}`}</b><span>{dateLabel(lang,v.effectiveFrom)} · {v.startTime}~{v.endTime}</span><span>{v.unpaidBreakMinutes?`${vi?"Nghỉ không lương":"무급 휴게"} ${v.unpaidBreakMinutes}${vi?" phút":"분"}`:(vi?"Không nghỉ không lương":"무급 휴게시간 없음")}</span>{v.changeReason&&<span>{v.changeReason}</span>}</article>)}</details>{open&&<PayrollModal title={vi?"Thay đổi giờ làm việc":"근무시간 변경"} closeLabel={vi?"Đóng":"닫기"} onClose={()=>setOpen(false)} footer={<div style={styles.actions}><button type="button" style={styles.secondary} onClick={()=>setOpen(false)}>{vi?"Hủy":"취소"}</button><button form="schedule-form" disabled={saving} style={styles.primary}>{saving?(vi?"Đang lưu…":"저장 중…"):(vi?"Lưu":"저장")}</button></div>}><form id="schedule-form" onSubmit={submit} style={styles.form}><label>{vi?"Ngày áp dụng":"적용 시작일"}<input style={styles.input} type="date" value={allowedDate} readOnly/></label><label>{vi?"Giờ vào":"출근시간"}<input style={styles.input} type="time" required value={form.startTime} onChange={e=>setForm({...form,startTime:e.target.value})}/></label><label>{vi?"Giờ ra":"퇴근시간"}<input style={styles.input} type="time" required value={form.endTime} onChange={e=>setForm({...form,endTime:e.target.value})}/></label><label>{vi?"Nghỉ không lương (phút)":"무급 휴게시간 (분)"}<input style={styles.input} type="number" min="0" max="720" required value={form.unpaidBreakMinutes} onChange={e=>setForm({...form,unpaidBreakMinutes:e.target.value})}/></label><label>{vi?"Lý do thay đổi":"변경 사유"}<textarea style={styles.textarea} required value={form.changeReason} onChange={e=>setForm({...form,changeReason:e.target.value})}/></label></form></PayrollModal>}</section>}
+function ScheduleBlock({title,empty,value,lang,scheduled=false}:{title:string;empty:string;value?:Schedule;lang:PayrollUiLang;scheduled?:boolean}){return <div><h3 style={styles.h3}>{title}</h3>{value?<article style={styles.card}>{scheduled&&<b>{lang==="vi"?"Áp dụng lần đầu":"최초 적용 예정"}</b>}<strong>{dateLabel(lang,value.effectiveFrom)}{lang==="vi"?" áp dụng":"부터"}</strong><span style={styles.time}>{value.startTime}~{value.endTime}</span><span>{value.unpaidBreakMinutes?`${lang==="vi"?"Nghỉ không lương":"무급 휴게"} ${value.unpaidBreakMinutes}${lang==="vi"?" phút":"분"}`:(lang==="vi"?"Không nghỉ không lương":"무급 휴게시간 없음")}</span></article>:<div style={styles.empty}>{empty}</div>}</div>}
+const styles={head:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap"},h2:{margin:"0 0 6px",fontSize:18},h3:{margin:"15px 0 7px",fontSize:14},help:{margin:0,color:"#6b7280",fontSize:13},card:{display:"grid",gap:5,padding:14,border:"1px solid #e5e7eb",borderRadius:12,background:"#f9fafb",fontSize:13},time:{fontSize:20,fontWeight:900},empty:{padding:15,border:"1px dashed #d1d5db",borderRadius:12,color:"#6b7280",fontSize:13},notice:{padding:12,borderRadius:10,background:"#fffbeb",color:"#92400e",fontSize:13},history:{marginTop:14,paddingTop:12,borderTop:"1px solid #e5e7eb"},row:{display:"grid",gap:4,padding:12,marginTop:7,borderRadius:10,background:"#f9fafb",fontSize:12},form:{display:"grid",gap:12},input:{width:"100%",minHeight:44,padding:"10px 12px",marginTop:6,border:"1px solid #d1d5db",borderRadius:11,background:"#fff"},textarea:{width:"100%",minHeight:80,padding:12,marginTop:6,border:"1px solid #d1d5db",borderRadius:11},primary:{minHeight:44,padding:"10px 14px",border:0,borderRadius:11,background:"#111827",color:"#fff",fontWeight:800},secondary:{minHeight:44,padding:"10px 14px",border:"1px solid #d1d5db",borderRadius:11,background:"#fff",fontWeight:800},actions:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8},error:{color:"#b91c1c",background:"#fef2f2",padding:10,borderRadius:9},success:{color:"#047857",background:"#ecfdf5",padding:10,borderRadius:9}} satisfies Record<string,CSSProperties>;
