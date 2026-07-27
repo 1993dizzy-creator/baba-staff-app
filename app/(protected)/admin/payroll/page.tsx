@@ -1,31 +1,9 @@
 "use client";
-
-import type { CSSProperties } from "react";
+import { useEffect,useMemo,useState,type CSSProperties } from "react";
 import Container from "@/components/Container";
 import { useLanguage } from "@/lib/language-context";
-import { payrollText } from "@/lib/text/payroll";
 import { ui } from "@/lib/styles/ui";
-
-export default function AdminPayrollPage() {
-  const { lang } = useLanguage();
-  const text = payrollText[lang];
-
-  return (
-    <Container>
-      <section style={styles.card}>
-        <div style={styles.eyebrow}>PAYROLL</div>
-        <h1 style={styles.title}>{text.managementTitle}</h1>
-        <p style={styles.description}>{text.managementDescription}</p>
-        <div style={styles.notice}>{text.preparing}</div>
-      </section>
-    </Container>
-  );
-}
-
-const styles = {
-  card: { ...ui.card, padding: 20 },
-  eyebrow: { ...ui.metaText, fontSize: 12, fontWeight: 900, letterSpacing: 0.7 },
-  title: { margin: "6px 0 8px", fontSize: 24, fontWeight: 950, color: "#111827" },
-  description: { ...ui.metaText, margin: "0 0 16px", fontSize: 14, lineHeight: 1.5 },
-  notice: { padding: 14, borderRadius: 14, background: "#f9fafb", border: "1px solid #e5e7eb", fontSize: 13, lineHeight: 1.45, color: "#374151", fontWeight: 700 },
-} satisfies Record<string, CSSProperties>;
+type User={id:number;name:string|null;full_name:string|null;username:string};type Projection={recognizedMinutes:number|null;recognizedHours:number|null;recognizedDays:number|null;estimatedAmount:number|null;payrollStatus:string;warningCodes:string[]};type Day={businessDate:string;facts:{scheduledMinutes:number|null;actualMinutes:number|null;scheduledOverlapMinutes:number|null;overtimeCandidateMinutes:number;attendanceStatus:string;warningCodes:string[];stored:{status:string|null;lateMinutes:number|null;earlyLeaveMinutes:number|null;workMinutes:number|null}};projections:Record<'minute'|'hour'|'day',Projection>};type Result={summary:Record<'minute'|'hour'|'day',{recognizedMinutes:number;recognizedHours:number;recognizedDays:number;estimatedAmount:number;requiresReviewDays:number}>;days:Day[]};const bases=['minute','hour','day'] as const;
+function currentMonth(){const p=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit'}).formatToParts(new Date());return `${p.find(x=>x.type==='year')?.value}-${p.find(x=>x.type==='month')?.value}`;}
+export default function AdminPayrollPage(){const{lang}=useLanguage();const vi=lang==='vi';const[users,setUsers]=useState<User[]>([]);const[userId,setUserId]=useState<number|null>(null);const[month,setMonth]=useState(currentMonth);const[result,setResult]=useState<Result|null>(null);const[warning,setWarning]=useState('');useEffect(()=>{const c=new AbortController();fetch('/api/admin/payroll/users',{cache:'no-store',signal:c.signal}).then(r=>r.json()).then(d=>{if(d.ok)setUsers(d.users)}).catch(()=>undefined);return()=>c.abort();},[]);useEffect(()=>{if(!userId)return;const c=new AbortController();fetch(`/api/admin/payroll/shadow?userId=${userId}&month=${month}`,{cache:'no-store',signal:c.signal}).then(r=>r.json()).then(d=>setResult(d.ok?d:null)).catch(()=>undefined);return()=>c.abort();},[userId,month]);const warnings=useMemo(()=>result?[...new Set(result.days.flatMap(d=>d.facts.warningCodes))]:[],[result]);return <Container><section style={styles.card}><div>PAYROLL SHADOW</div><h1>{vi?'Tiền lương':'급여관리'}</h1><div style={styles.notice}>{vi?'Chỉ là kết quả so sánh, không phải lương đã chốt.':'급여 확정 결과가 아닌 조회 전용 비교 결과입니다.'}</div><div style={styles.filters}><select aria-label={vi?'Chọn nhân viên':'직원 선택'} value={userId??''} onChange={e=>{setUserId(Number(e.target.value)||null);setResult(null)}}><option value="">{vi?'Chọn nhân viên':'직원 선택'}</option>{users.map(u=><option key={u.id} value={u.id}>{u.name||u.full_name||u.username}</option>)}</select><input aria-label={vi?'Tháng':'월'} type="month" value={month} onChange={e=>{setMonth(e.target.value);setResult(null)}}/><select aria-label="warning" value={warning} onChange={e=>setWarning(e.target.value)}><option value="">{vi?'Tất cả cảnh báo':'전체 warning'}</option>{warnings.map(w=><option key={w}>{w}</option>)}</select></div>{userId&&!result&&<p>{vi?'Đang tải...':'조회 중...'}</p>}{result&&<><div style={styles.summaryGrid}>{bases.map(b=><div key={b} style={styles.summary}><b>{b.toUpperCase()}</b><strong>{b==='minute'?`${result.summary[b].recognizedMinutes} min`:b==='hour'?`${result.summary[b].recognizedHours.toFixed(2)} h`:`${result.summary[b].recognizedDays.toFixed(2)} d`}</strong><span>{result.summary[b].estimatedAmount.toLocaleString()} VND</span><small>review {result.summary[b].requiresReviewDays}</small></div>)}</div><div style={styles.tableWrap}><table style={styles.table}><thead><tr><th>{vi?'Ngày':'날짜'}</th><th>{vi?'Lưu':'저장값'}</th><th>{vi?'Tính lại':'재계산'}</th><th>Schedule</th><th>Actual</th><th>Overlap</th><th>OT</th><th>Minute</th><th>Hour</th><th>Day</th><th>Warnings</th></tr></thead><tbody>{result.days.filter(d=>!warning||d.facts.warningCodes.includes(warning)).map(d=><tr key={d.businessDate}><td>{d.businessDate}</td><td>{d.facts.stored.status||'-'} / L{d.facts.stored.lateMinutes??'-'} / E{d.facts.stored.earlyLeaveMinutes??'-'} / W{d.facts.stored.workMinutes??'-'}</td><td>{d.facts.attendanceStatus}</td><td>{d.facts.scheduledMinutes??'-'}</td><td>{d.facts.actualMinutes??'-'}</td><td>{d.facts.scheduledOverlapMinutes??'-'}</td><td>{d.facts.overtimeCandidateMinutes}</td>{bases.map(b=><td key={b}>{d.projections[b].recognizedMinutes??'review'}</td>)}<td>{d.facts.warningCodes.join(', ')||'-'}</td></tr>)}</tbody></table></div></>}</section></Container>}
+const styles={card:{...ui.card,padding:20},notice:{padding:13,border:'1px solid #f59e0b',background:'#fffbeb',borderRadius:12,fontSize:13,fontWeight:800},filters:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:8,margin:'16px 0'},summaryGrid:{display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:8},summary:{display:'flex',flexDirection:'column',gap:6,padding:13,background:'#f9fafb',borderRadius:12,minWidth:0},tableWrap:{overflowX:'auto',marginTop:16},table:{width:'100%',borderCollapse:'collapse',fontSize:12}} satisfies Record<string,CSSProperties>;
