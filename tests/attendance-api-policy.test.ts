@@ -140,8 +140,8 @@ test("all attendance screens use scoped reads and the common 401 fetch", () => {
   const main = read("app/(protected)/attendance/page.tsx");
   const staff = read("app/(protected)/attendance/staff/page.tsx");
   const leave = read("app/(protected)/attendance/leave/page.tsx");
-  const overview = read("app/(protected)/attendance/overview/page.tsx");
-  const detail = read("app/(protected)/attendance/overview/[userId]/page.tsx");
+  const overview = read("app/(protected)/admin/payroll/attendance/page.tsx");
+  const detail = read("app/(protected)/admin/payroll/attendance/[userId]/page.tsx");
   const combined = [main, staff, leave, overview, detail].join("\n");
 
   for (const scope of [

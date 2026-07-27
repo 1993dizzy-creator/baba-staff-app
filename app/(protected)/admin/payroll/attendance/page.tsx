@@ -2,13 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
-import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
-import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { commonText, attendanceText } from "@/lib/text";
+import { payrollText } from "@/lib/text/payroll";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
 import { getPositionRank } from "@/lib/common/positions";
 import { attendanceFetch } from "@/lib/auth/client-session";
@@ -64,6 +63,15 @@ function getMonthRange(month: Date) {
     const endText = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
 
     return { startText, endText };
+}
+
+function getMonthFromParam(monthParam: string | null) {
+    if (!monthParam || !/^\d{4}-\d{2}$/.test(monthParam)) return new Date();
+
+    const [year, month] = monthParam.split("-").map(Number);
+    if (year < 2000 || year > 2100 || month < 1 || month > 12) return new Date();
+
+    return new Date(year, month - 1, 1);
 }
 
 function formatMonth(month: Date, monthFormat: string) {
@@ -148,13 +156,15 @@ function formatElapsedSince(
 
 export default function AttendanceOverviewPage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { lang } = useLanguage();
     const c = commonText[lang];
     const t = attendanceText[lang];
-    const pathname = usePathname();
-    const tabs = getAttendanceTabs(pathname, lang);
+    const payroll = payrollText[lang];
 
-    const [currentMonth, setCurrentMonth] = useState(new Date());
+    const [currentMonth, setCurrentMonth] = useState(() =>
+        getMonthFromParam(searchParams.get("month"))
+    );
     const [users, setUsers] = useState<UserRow[]>([]);
     const [records, setRecords] = useState<AttendanceRecord[]>([]);
     const [expandedUserId, setExpandedUserId] = useState<number | null>(null);
@@ -430,18 +440,18 @@ export default function AttendanceOverviewPage() {
         const year = currentMonth.getFullYear();
         const month = String(currentMonth.getMonth() + 1).padStart(2, "0");
 
-        router.push(`/attendance/overview/${userId}?month=${year}-${month}`);
+        router.push(`/admin/payroll/attendance/${userId}?month=${year}-${month}`);
     };
 
     const goDetailForDate = (userId: number, workDate: string) => {
         const month = workDate.slice(0, 7);
 
-        router.push(`/attendance/overview/${userId}?month=${month}&date=${workDate}`);
+        router.push(`/admin/payroll/attendance/${userId}?month=${month}&date=${workDate}`);
     };
 
     return (
         <Container noPaddingTop>
-            <SubNav tabs={tabs} />
+            <h1 style={pageTitleStyle}>{payroll.attendanceTitle}</h1>
 
             <div style={monthHeaderStyle}>
                 <button type="button" style={monthButtonStyle} onClick={() => moveMonth(-1)}>
@@ -690,6 +700,14 @@ function InfoBox({ label, value }: { label: string; value: string }) {
         </div>
     );
 }
+
+const pageTitleStyle: CSSProperties = {
+    margin: "12px 0 10px",
+    fontSize: 22,
+    lineHeight: 1.25,
+    fontWeight: 950,
+    color: "#111827",
+};
 
 const monthHeaderStyle: CSSProperties = {
     display: "grid",

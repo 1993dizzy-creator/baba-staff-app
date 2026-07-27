@@ -6,16 +6,16 @@ import { useLanguage } from "@/lib/language-context";
 import { payrollText } from "@/lib/text/payroll";
 import { ui } from "@/lib/styles/ui";
 
-export default function AdminPayrollPage() {
+export default function PayrollSettingsPage() {
   const { lang } = useLanguage();
   const text = payrollText[lang];
 
   return (
     <Container>
       <section style={styles.card}>
-        <div style={styles.eyebrow}>PAYROLL</div>
-        <h1 style={styles.title}>{text.managementTitle}</h1>
-        <p style={styles.description}>{text.managementDescription}</p>
+        <div style={styles.eyebrow}>PAYROLL SETTINGS</div>
+        <h1 style={styles.title}>{text.settingsTitle}</h1>
+        <p style={styles.description}>{text.settingsDescription}</p>
         <div style={styles.notice}>{text.preparing}</div>
       </section>
     </Container>

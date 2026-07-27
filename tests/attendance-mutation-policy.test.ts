@@ -123,8 +123,8 @@ test("routes authenticate the session and clients do not send actor identity", (
   const screens = [
     "app/(protected)/attendance/leave/page.tsx",
     "app/(protected)/attendance/staff/page.tsx",
-    "app/(protected)/attendance/overview/page.tsx",
-    "app/(protected)/attendance/overview/[userId]/page.tsx",
+    "app/(protected)/admin/payroll/attendance/page.tsx",
+    "app/(protected)/admin/payroll/attendance/[userId]/page.tsx",
   ].map(read).join("\n");
   assert.doesNotMatch(screens, /actorUsername|admin_id|admin_name/);
   assert.match(screens, /attendanceFetch\("\/api\/attendance\/admin"/);

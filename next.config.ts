@@ -1,6 +1,20 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  async redirects() {
+    return [
+      {
+        source: "/attendance/overview",
+        destination: "/admin/payroll/attendance",
+        permanent: false,
+      },
+      {
+        source: "/attendance/overview/:path*",
+        destination: "/admin/payroll/attendance/:path*",
+        permanent: false,
+      },
+    ];
+  },
   async rewrites() {
     return [
       {

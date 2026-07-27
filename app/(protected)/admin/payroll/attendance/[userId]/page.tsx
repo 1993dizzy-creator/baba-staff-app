@@ -2,14 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import { useParams, usePathname, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useParams, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
-import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
-import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
 import { ui } from "@/lib/styles/ui";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { commonText, attendanceText } from "@/lib/text";
+import { payrollText } from "@/lib/text/payroll";
 import {
     getDefaultShiftDateTimeValue,
     isLongShiftRecord,
@@ -189,11 +189,9 @@ export default function AttendanceUserDetailPage() {
     const { lang } = useLanguage();
     const c = commonText[lang];
     const t = attendanceText[lang];
-    const pathname = usePathname();
+    const payroll = payrollText[lang];
     const params = useParams();
     const searchParams = useSearchParams();
-
-    const tabs = getAttendanceTabs(pathname, lang);
 
     const userId = Number(params.userId);
     const initialMonth = getMonthFromParam(searchParams.get("month"));
@@ -473,7 +471,12 @@ export default function AttendanceUserDetailPage() {
 
     return (
         <Container noPaddingTop>
-            <SubNav tabs={tabs} />
+            <Link
+                href={`/admin/payroll/attendance?month=${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, "0")}`}
+                style={backLinkStyle}
+            >
+                ← {payroll.backToAttendance}
+            </Link>
 
             <div style={headerCardStyle}>
                 <div style={headerTopRowStyle}>
@@ -1143,6 +1146,15 @@ function LegendItem({ label, color }: { label: string; color: string }) {
         </div>
     );
 }
+
+const backLinkStyle: CSSProperties = {
+    display: "inline-flex",
+    margin: "12px 0 10px",
+    color: "#6b7280",
+    fontSize: 13,
+    fontWeight: 800,
+    textDecoration: "none",
+};
 
 const headerCardStyle: CSSProperties = {
     background: "#ffffff",

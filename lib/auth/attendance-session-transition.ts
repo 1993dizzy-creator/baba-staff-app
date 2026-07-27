@@ -43,7 +43,12 @@ export function isSafeAttendanceReturnPath(value: unknown): value is string {
   try {
     const url = new URL(value, "https://baba.local");
     if (url.origin !== "https://baba.local" || url.hash) return false;
-    return url.pathname === "/attendance" || url.pathname.startsWith("/attendance/");
+    return (
+      url.pathname === "/attendance" ||
+      url.pathname.startsWith("/attendance/") ||
+      url.pathname === "/admin/payroll/attendance" ||
+      url.pathname.startsWith("/admin/payroll/attendance/")
+    );
   } catch {
     return false;
   }

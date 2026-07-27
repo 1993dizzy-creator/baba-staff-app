@@ -1,21 +1,12 @@
-import { getUser, isAdmin } from "@/lib/supabase/auth";
-
 export function getAttendanceTabs(
   pathname: string,
   lang: "ko" | "vi"
 ) {
-  const user = getUser();
-  const isAdminUser = isAdmin(user);
-
   return [
     {
-      href: isAdminUser ? "/attendance/overview" : "/attendance",
-      label: isAdminUser
-        ? lang === "vi" ? "Tổng quan" : "전체현황"
-        : lang === "vi" ? "Cá nhân" : "내 근태",
-      active: isAdminUser
-        ? pathname.startsWith("/attendance/overview")
-        : pathname === "/attendance" || pathname === "/attendance/",
+      href: "/attendance",
+      label: lang === "vi" ? "Cá nhân" : "내 근태",
+      active: pathname === "/attendance" || pathname === "/attendance/",
     },
     {
       href: "/attendance/staff",

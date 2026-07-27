@@ -54,7 +54,7 @@ test("only same-site attendance return paths are accepted", () => {
   for (const path of [
     "/attendance",
     "/attendance/leave?month=2026-07",
-    "/attendance/overview/42?month=2026-07&date=2026-07-22",
+    "/admin/payroll/attendance/42?month=2026-07&date=2026-07-22",
   ]) {
     assert.equal(isSafeAttendanceReturnPath(path), true, path);
   }
@@ -62,6 +62,8 @@ test("only same-site attendance return paths are accepted", () => {
   for (const path of [
     "/login",
     "/inventory",
+    "/admin/payroll",
+    "/admin/payroll/settings",
     "//example.com/attendance",
     "https://example.com/attendance",
     "/\\example.com/attendance",

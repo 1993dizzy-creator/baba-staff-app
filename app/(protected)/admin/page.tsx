@@ -12,14 +12,6 @@ type AdminMenuAccess = "manage" | "admin" | "leader" | "leader-or-admin" | "all-
 
 const adminMenus = [
   {
-    title: { ko: "매장설정", vi: "Cài đặt cửa hàng" },
-    description: { ko: "영업시간과 영업일 마감 설정을 확인합니다.", vi: "Xem giờ hoạt động và giờ chốt ngày kinh doanh." },
-    href: "/admin/settings/store",
-    badge: "STORE",
-    emoji: "⚙️",
-    access: "all-admin" as AdminMenuAccess,
-  },
-  {
     title: {
       ko: "매출확인",
       vi: "Kiểm tra doanh thu",
@@ -67,8 +59,8 @@ const adminMenus = [
       vi: "Quản lý lương",
     },
     description: {
-      ko: "근태 기록을 기준으로 급여 정산 화면을 준비합니다.",
-      vi: "Chuẩn bị tính lương dựa trên dữ liệu chấm công.",
+      ko: "근태 현황과 급여를 관리하고 급여 기준을 설정합니다.",
+      vi: "Quản lý chấm công, tiền lương và thiết lập tiêu chuẩn tính lương.",
     },
     href: "/admin/payroll",
     badge: "PAY",
@@ -88,6 +80,17 @@ const adminMenus = [
     badge: "POS",
     emoji: "⚙️",
     access: "leader-or-admin" as AdminMenuAccess,
+  },
+  {
+    title: { ko: "매장설정", vi: "Cài đặt cửa hàng" },
+    description: {
+      ko: "매장 영업시간과 근태 기준을 설정합니다.",
+      vi: "Thiết lập giờ hoạt động của cửa hàng và tiêu chuẩn chấm công.",
+    },
+    href: "/admin/settings/store",
+    badge: "STORE",
+    emoji: "⚙️",
+    access: "all-admin" as AdminMenuAccess,
   },
 ];
 

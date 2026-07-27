@@ -32,12 +32,14 @@ export default function SubNav({
             href={tab.href}
             style={{
               flex: 1,
+              minWidth: 0,
               textAlign: "center",
               padding: "12px 0 10px",
               fontSize: 14,
               fontWeight: tab.active ? 800 : 600,
               color: tab.active ? "#111827" : "#9ca3af",
               textDecoration: "none",
+              whiteSpace: "nowrap",
               borderBottom: tab.active
                 ? "3px solid #111827"
                 : "3px solid transparent",
