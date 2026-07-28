@@ -11,6 +11,8 @@ import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ui } from "@/lib/styles/ui";
 import { adminUsersText } from "@/lib/text";
 import { attendanceFetch } from "@/lib/auth/client-session";
+import EmployeeLevelBadge from "@/components/employee/EmployeeLevelBadge";
+import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 
 type UserRow = {
   id: number | string;
@@ -29,6 +31,16 @@ type UserRow = {
   is_active: boolean | null;
   is_system_account: boolean;
   payroll_eligible_override: boolean | null;
+  level_program_enabled: boolean | null;
+  level_base_date_override: string | null;
+  levelInfo: EmployeeLevelInfo;
+};
+
+type LevelPolicyDraft = {
+  status: "unset" | "enabled" | "disabled";
+  baseDateMode: "hire_date" | "override";
+  levelBaseDateOverride: string;
+  changeReason: string;
 };
 
 type UsersResponse = {
@@ -245,11 +257,13 @@ function UserCard({
   user,
   onSave,
   onRehire,
+  onSaveLevelPolicy,
   isSaving,
 }: {
   user: UserRow;
   onSave: (user: UserRow, draft: UserRow) => void;
   onRehire: (user: UserRow, rehireDate: string) => void;
+  onSaveLevelPolicy: (user: UserRow, draft: LevelPolicyDraft) => Promise<boolean>;
   isSaving: boolean;
 }) {
   const { lang } = useLanguage();
@@ -258,10 +272,12 @@ function UserCard({
   const [draft, setDraft] = useState<UserRow>(user);
   const [rehireOpen, setRehireOpen] = useState(false);
   const [rehireDate, setRehireDate] = useState("");
-
-  useEffect(() => {
-    setDraft(user);
-  }, [user]);
+  const [levelDraft, setLevelDraft] = useState<LevelPolicyDraft>({
+    status: user.level_program_enabled === null ? "unset" : user.level_program_enabled ? "enabled" : "disabled",
+    baseDateMode: user.level_base_date_override ? "override" : "hire_date",
+    levelBaseDateOverride: user.level_base_date_override || "",
+    changeReason: "",
+  });
 
   const displayName = user.name || user.full_name || user.username;
   const isMasterUser = user.role === "master";
@@ -287,6 +303,9 @@ function UserCard({
       <div style={styles.rowMain}>
         <div style={styles.rowText}>
           <span style={styles.rowTitle}>
+            {user.level_program_enabled === true && user.levelInfo.eligible && user.levelInfo.level ? (
+              <EmployeeLevelBadge level={user.levelInfo.level} negotiationEligible={user.levelInfo.negotiationEligible} lang={lang} />
+            ) : null}
             <span style={styles.rowName}>{nameText}</span>
             <span style={styles.rowPosition}> · {positionText}</span>
           </span>
@@ -298,13 +317,26 @@ function UserCard({
             <button
               type="button"
               style={styles.inlineEditButton}
-              onClick={() => setIsEditing((current) => !current)}
+              onClick={() => {
+                if (!isEditing) {
+                  setDraft(user);
+                  setLevelDraft({
+                    status: user.level_program_enabled === null ? "unset" : user.level_program_enabled ? "enabled" : "disabled",
+                    baseDateMode: user.level_base_date_override ? "override" : "hire_date",
+                    levelBaseDateOverride: user.level_base_date_override || "",
+                    changeReason: "",
+                  });
+                }
+                setIsEditing((current) => !current);
+              }}
             >
               {isEditing ? text.cancel : text.edit}
             </button>
           ) : null}
         </div>
       </div>
+
+      <LevelSummary user={user} text={text} lang={lang} />
 
       {isEditing ? (
         <div style={styles.formGrid}>
@@ -450,6 +482,43 @@ function UserCard({
               <span style={styles.fieldNotice}>{text.payrollEligibleOverrideHelp}</span>
             </label>
           ) : null}
+          <section style={styles.levelEditor}>
+            <strong style={styles.levelEditorTitle}>{text.employeeLevel}</strong>
+            {user.termination_date ? (
+              <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span>
+            ) : (
+              <>
+                <Field label={text.employeeLevel}>
+                  <select value={levelDraft.status} onChange={(event) => setLevelDraft((current) => ({ ...current, status: event.target.value as LevelPolicyDraft["status"] }))} style={styles.input}>
+                    <option value="unset">{text.levelStatusUnset}</option>
+                    <option value="enabled">{text.levelProgramEnabled}</option>
+                    <option value="disabled">{text.levelProgramDisabled}</option>
+                  </select>
+                </Field>
+                {levelDraft.status === "enabled" ? (
+                  <>
+                    <Field label={text.levelBaseDate}>
+                      <select value={levelDraft.baseDateMode} onChange={(event) => setLevelDraft((current) => ({ ...current, baseDateMode: event.target.value as LevelPolicyDraft["baseDateMode"] }))} style={styles.input}>
+                        <option value="hire_date">{text.hireDateBase}</option>
+                        <option value="override">{text.directBase}</option>
+                      </select>
+                    </Field>
+                    {levelDraft.baseDateMode === "hire_date" ? <span style={styles.readonlyDate}>{user.hire_date || "-"}</span> : (
+                      <input type="date" value={levelDraft.levelBaseDateOverride} onChange={(event) => setLevelDraft((current) => ({ ...current, levelBaseDateOverride: event.target.value }))} style={styles.input} />
+                    )}
+                  </>
+                ) : null}
+                {levelDraft.status !== "unset" ? (
+                  <>
+                    <Field label={text.changeReason}><input value={levelDraft.changeReason} onChange={(event) => setLevelDraft((current) => ({ ...current, changeReason: event.target.value }))} style={styles.input} /></Field>
+                    <button type="button" style={styles.primaryButton} disabled={isSaving || levelDraft.changeReason.trim().length < 2} onClick={async () => { if (await onSaveLevelPolicy(user, levelDraft)) setLevelDraft((current) => ({ ...current, changeReason: "" })); }}>
+                      {isSaving ? text.saving : text.saveLevelPolicy}
+                    </button>
+                  </>
+                ) : null}
+              </>
+            )}
+          </section>
           <div style={styles.actionRow}>
             <button
               type="button"
@@ -487,6 +556,22 @@ function UserCard({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function LevelSummary({ user, text, lang }: { user: UserRow; text: AdminUsersPageText; lang: "ko" | "vi" }) {
+  if (user.level_program_enabled === null) return <div style={styles.levelSummary}>{text.levelUnset}</div>;
+  if (user.level_program_enabled === false) return <div style={styles.levelSummary}>{text.levelProgramDisabled}</div>;
+  const info = user.levelInfo;
+  if (!info.eligible || !info.displayLabel) return <div style={styles.levelSummary}>{text.levelUnset}</div>;
+  const amount = new Intl.NumberFormat(lang === "vi" ? "vi-VN" : "ko-KR").format(info.cumulativeRaiseAmount);
+  return (
+    <div style={styles.levelSummary}>
+      <span>{text.currentLevel} {info.displayLabel}</span>
+      <span>{text.levelBaseDate} {info.baseDate} · {info.baseDateSource === "override" ? text.directBase : text.hireDateBase}</span>
+      <span>{text.cumulativeRaise} {amount} VND</span>
+      {info.negotiationEligible ? <span>{text.negotiationEligible} · {text.negotiationEligibleAt} {info.negotiationEligibleAt}</span> : info.nextLevelDate ? <span>{text.nextLevel} Lv.{Math.min(8, (info.level || 1) + 1)} {info.nextLevelDate}</span> : <span>{text.negotiationEligibleAt} {info.negotiationEligibleAt}</span>}
+    </div>
   );
 }
 
@@ -644,6 +729,37 @@ export default function AdminUsersPage() {
     finally { setSavingId(null); }
   }
 
+  async function saveLevelPolicy(user: UserRow, draft: LevelPolicyDraft) {
+    if (draft.status === "unset") return false;
+    setSavingId(user.id);
+    setMessage("");
+    try {
+      const res = await attendanceFetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_employee_level_policy",
+          id: user.id,
+          lang,
+          levelProgramEnabled: draft.status === "enabled",
+          baseDateMode: draft.baseDateMode,
+          levelBaseDateOverride: draft.baseDateMode === "override" ? draft.levelBaseDateOverride : null,
+          changeReason: draft.changeReason,
+        }),
+      });
+      const result = (await res.json()) as UsersResponse;
+      if (!res.ok || !result.ok || !result.user) throw new Error(result.error || text.saveFailed);
+      setUsers((current) => current.map((item) => item.id === user.id ? result.user! : item));
+      setMessage(text.levelSaveSuccess);
+      return true;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : text.saveFailed);
+      return false;
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   if (checked && !canAccess) {
     return (
       <Container noPaddingTop>
@@ -679,6 +795,7 @@ export default function AdminUsersPage() {
             text={text}
             onSave={saveUser}
             onRehire={rehireUser}
+            onSaveLevelPolicy={saveLevelPolicy}
             savingId={savingId}
           />
         ))}
@@ -693,6 +810,7 @@ function UserGroup({
   text,
   onSave,
   onRehire,
+  onSaveLevelPolicy,
   savingId,
 }: {
   groupKey: UserGroupKey;
@@ -700,6 +818,7 @@ function UserGroup({
   text: AdminUsersPageText;
   onSave: (user: UserRow, draft: UserRow) => void;
   onRehire: (user: UserRow, rehireDate: string) => void;
+  onSaveLevelPolicy: (user: UserRow, draft: LevelPolicyDraft) => Promise<boolean>;
   savingId: number | string | null;
 }) {
   const meta = getGroupMeta(groupKey, text);
@@ -727,6 +846,7 @@ function UserGroup({
             user={user}
             onSave={onSave}
             onRehire={onRehire}
+            onSaveLevelPolicy={onSaveLevelPolicy}
             isSaving={savingId === user.id}
           />
         ))}
@@ -814,11 +934,18 @@ const styles = {
     overflow: "hidden",
   },
   rowTitle: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    minWidth: 0,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
   rowName: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
     fontSize: 13,
     fontWeight: 700,
     color: "#111827",
@@ -909,6 +1036,36 @@ const styles = {
     padding: "8px 9px",
     borderRadius: 8,
     background: "#fffbeb",
+  },
+  levelSummary: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "3px 10px",
+    marginTop: 6,
+    fontSize: 11,
+    lineHeight: 1.4,
+    fontWeight: 750,
+    color: "#4b5563",
+  },
+  levelEditor: {
+    display: "grid",
+    gap: 7,
+    padding: "9px",
+    border: "1px solid #ddd6fe",
+    borderRadius: 9,
+    background: "#faf5ff",
+  },
+  levelEditorTitle: {
+    fontSize: 12,
+    color: "#5b21b6",
+  },
+  readonlyDate: {
+    padding: "7px 8px",
+    borderRadius: 7,
+    background: "#f3f4f6",
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#374151",
   },
   input: {
     ...ui.input,
