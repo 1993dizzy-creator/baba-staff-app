@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Container from "@/components/Container";
 import { StorePosShadowGate } from "@/components/StorePosShadowPanel";
@@ -10,7 +10,6 @@ import {
   calculateStoreBusinessDate,
 } from "@/lib/store-settings/business-time";
 import { groupStoreHours } from "@/lib/store-settings/hours-summary";
-import { formatVietnamTime } from "@/lib/common/business-time";
 import {
   DEFAULT_STORE_ATTENDANCE_POLICY,
   DEFAULT_STORE_HOURS,
@@ -20,7 +19,6 @@ import {
   type StoreSettingAuditLog,
   type StoreSettingsOverview,
 } from "@/lib/store-settings/types";
-import { resolveDisplayStatus } from "@/lib/attendance/shadow";
 import type {
   AttendanceShadowComparison,
   AttendanceShadowSummary,
@@ -101,89 +99,10 @@ const weekdayColor = (weekday: number) =>
 // 필요 시 다시 활성화할 수 있도록 관련 코드와 API는 유지한다.
 const SHOW_POS_INTEGRATION_COMPARE = false;
 
-const differenceLabels = {
-  ko: {
-    late_minutes: "지각 시간 차이",
-    early_leave_minutes: "조퇴 시간 차이",
-    legacy_90_minute_threshold: "기존 90분 기준 차이",
-    special_close: "특별 조기마감 차이",
-    employee_store_close: "직원 예정시간·매장 마감 차이",
-    unresolved_at: "미퇴근 판정시각 차이",
-    manual_late_normalization: "수동 지각 정상처리 제외",
-    leave: "휴무 제외",
-    other: "기타",
-  },
-  vi: {
-    late_minutes: "Chênh lệch phút đi muộn",
-    early_leave_minutes: "Chênh lệch phút về sớm",
-    legacy_90_minute_threshold: "Chênh lệch ngưỡng cũ 90 phút",
-    special_close: "Chênh lệch đóng cửa sớm đặc biệt",
-    employee_store_close: "Chênh lệch giờ nhân viên và cửa hàng",
-    unresolved_at: "Chênh lệch mốc chưa chấm ra",
-    manual_late_normalization: "Loại trừ chuẩn hóa đi muộn thủ công",
-    leave: "Loại trừ ngày nghỉ",
-    other: "Khác",
-  },
-} as const;
-
-function differenceLabel(lang: "ko" | "vi", value: string) {
-  return differenceLabels[lang][
-    value as keyof (typeof differenceLabels)["ko"]
-  ] ?? value;
-}
-
-function exclusionReasonLabel(
-  lang: "ko" | "vi",
-  reason: AttendanceShadowComparison["exclusionReason"]
-) {
-  const t = copy[lang];
-  if (reason === "leave") return t.exclusionLeave;
-  if (reason === "no_check_in") return t.exclusionNoCheckIn;
-  return t.exclusionOther;
-}
-
-// ISO 시각은 항상 UTC이므로 문자열을 그대로 잘라 쓰면 서버 응답의 UTC 시각이
-// 그대로 노출된다. 공용 formatVietnamTime으로 변환해서 표시한다.
-const hhmm = formatVietnamTime;
-
 // "YYYY-MM-DD" 영업일 date-key는 이미 캘린더 날짜 문자열이라 시간대 변환이
 // 필요 없다 — 앞 두 자리 연도만 잘라 좁은 카드에서 밀도를 줄인다.
 function shortDate(dateKey: string) {
   return dateKey.length === 10 ? dateKey.slice(2) : dateKey;
-}
-
-function displayStatusLabel(
-  lang: "ko" | "vi",
-  input: {
-    status: string;
-    lateMinutes: number;
-    earlyLeaveMinutes: number;
-    unresolved: boolean;
-  }
-) {
-  const t = copy[lang];
-  return t.statusLabels[resolveDisplayStatus(input)] ?? input.status;
-}
-
-function changeTypeBadgeLabel(
-  lang: "ko" | "vi",
-  primaryDifference: AttendanceShadowComparison["summary"]["primaryDifference"]
-) {
-  const t = copy[lang];
-  switch (primaryDifference) {
-    case "late":
-      return t.changeTypeLate;
-    case "early_leave":
-      return t.changeTypeEarly;
-    case "unresolved":
-      return t.changeTypeUnresolved;
-    case "status":
-      return t.changeTypeStatus;
-    case "multiple":
-      return t.changeTypeMultiple;
-    default:
-      return t.matched;
-  }
 }
 
 const copy = {
@@ -192,7 +111,9 @@ const copy = {
     intro: "운영시간과 근태 판정 기준을 같은 설정 버전으로 관리합니다.",
     tabs: { hours: "운영시간", attendance: "근태설정", shadow: "근태비교" },
     current: "🏪 현재 매장 운영시간",
-    attendancePolicyTitle: "⏰ 지각·퇴근 판정 기준",
+    attendancePolicyTitle: "⏰ 현재 근태 기준",
+    policyDescription: "기준 설명",
+    policyDescriptionClose: "기준 설명 닫기",
     scheduled: "📅 예약 설정",
     newSetting: "🗓️ 운영시간 변경",
     newAttendanceSetting: "✏️ 설정 예약",
@@ -203,6 +124,7 @@ const copy = {
     metaTimezone: "시간대",
     metaCutoff: "마감",
     metaEffective: "적용일",
+    metaRevision: "변경번호",
     open: "영업",
     closed: "휴무",
     save: "통합설정 예약",
@@ -223,11 +145,11 @@ const copy = {
     confirmCancel: "예약 설정을 취소하시겠습니까?",
     lateGrace: "지각 기준",
     minutes: "분",
-    lateHelp: "직원별 예정 출근시간을 넘긴 뒤 설정된 시간부터 지각으로 처리합니다.",
+    lateHelp: "예정 출근시간 + 설정값 이후 출근",
     earlyLeaveGrace: "조퇴 기준",
-    earlyLeaveHelp: "직원별 기준 퇴근시간보다 설정된 시간 이상 일찍 퇴근하면 조퇴로 처리합니다.",
+    earlyLeaveHelp: "기준 퇴근시간 - 설정값 이전 퇴근",
     missingCheckoutGrace: "미퇴근 기준",
-    missingCheckoutHelp: "직원별 기준 퇴근시간이 지난 뒤 설정된 시간까지 퇴근 기록이 없으면 미퇴근으로 처리합니다.",
+    missingCheckoutHelp: "기준 퇴근시간 + 설정값까지 퇴근 기록 없음",
     scheduleNotice: "예약 설정은 선택한 영업일부터 적용되며 기존 기록은 변경하지 않습니다.",
     before: "변경 전",
     after: "변경 후",
@@ -238,22 +160,20 @@ const copy = {
     endDate: "종료 영업일",
     completedNotice: "진행 중인 영업일을 제외한 최근 완료 영업일 7일이 기본값입니다.",
     historyWarning: "기존 기록 중 일부는 수동 정상처리 여부를 식별할 수 없어 비교 결과에 포함될 수 있습니다.",
-    manualExcluded: "수동 지각 정상처리 제외",
-    leaveExcluded: "휴무 제외",
-    excludedRows: "제외 기록",
     dateSummary: "날짜별 요약",
-    differenceFilter: "차이 유형",
-    allDifferences: "전체 유형",
+    businessDayCount: "비교 영업일",
+    comparisonCount: "비교 대상",
+    comparisonShort: "비교",
+    verificationNeeded: "검증 필요",
+    verificationNoCheckIn: "출근 기록 없음",
+    verificationManualLate: "수동 지각 정상처리",
+    specialCloseApplied: "특별 조기마감 적용",
+    openSection: "펼치기",
+    closeSection: "접기",
     employee: "직원",
     allEmployees: "전체 직원",
     compare: "비교 실행",
     comparing: "비교 중…",
-    legacy: "기존 근태 기준",
-    configured: "새 매장설정 기준",
-    revision: "설정 변경번호",
-    specialClose: "특별 조기마감",
-    defaultClose: "직원 예정 퇴근 적용",
-    storeClose: "매장 예정 종료",
     total: "전체",
     matched: "일치",
     mismatched: "불일치",
@@ -262,57 +182,10 @@ const copy = {
     earlyChanged: "조퇴 판정 변경",
     unresolvedChanged: "미퇴근 기준 변경",
     autoCloseChanged: "종료 기준 변경",
-    noRows: "비교할 출근 기록이 없습니다.",
-    status: "상태",
     late: "지각",
     early: "조퇴",
     unresolved: "미퇴근",
-    closeSource: "종료 기준",
-    overrideSource: "특별 조기마감",
-    configuredSource: "요일별 매장 종료",
-    fallbackSource: "직원 예정 퇴근 적용",
-    fallbackSetting: "기본 설정 적용",
     fallbackBadge: "기본 설정",
-    cutoffShort: "마감",
-    specialCloseShort: "조기마감",
-    statTotal: "전체",
-    statMatched: "일치",
-    statMismatched: "불일치",
-    statExcluded: "제외",
-    excludedBadge: "비교 제외",
-    notComparedStatus: "근태 계산 대상 아님",
-    exclusionLeave: "휴무 기록",
-    exclusionNoCheckIn: "출근 기록 없음",
-    exclusionOther: "비교 대상 아님",
-    manualLateBadge: "수동 지각 정상처리",
-    changeTypeLate: "지각 판정 변경",
-    changeTypeEarly: "조퇴 판정 변경",
-    changeTypeUnresolved: "미퇴근 판정 변경",
-    changeTypeStatus: "상태 판정 변경",
-    changeTypeMultiple: "복수 판정 변경",
-    changedFieldsCount: "개 판정 변경",
-    actualCheckIn: "실제 출근",
-    actualCheckOut: "실제 퇴근",
-    noCheckOutRecord: "퇴근 기록 없음",
-    expectedCheckIn: "예정 출근",
-    standardCheckout: "기준 퇴근",
-    judgmentTime: "판정 시각",
-    earlySuffix: "일찍 퇴근",
-    lateSuffix: "늦음",
-    legacyPrefix: "기존",
-    configuredPrefix: "새 기준",
-    normalLabel: "정상",
-    showDetails: "상세 보기",
-    hideDetails: "상세 닫기",
-    statusLabels: {
-      working: "근무 중",
-      done: "정상 완료",
-      late: "지각",
-      early_leave: "조퇴",
-      late_and_early_leave: "지각·조퇴",
-      unresolved: "미퇴근",
-      leave: "휴무",
-    },
     confirmScheduleTitle: "통합설정을 예약할까요?",
     confirmScheduleBody1: "선택한 영업일부터 현재 입력된 운영시간과 근태 기준이 함께 적용됩니다.",
     confirmScheduleBody2: "변경하지 않은 값도 현재 화면에 표시된 값으로 새 통합설정 버전에 포함됩니다.",
@@ -331,7 +204,9 @@ const copy = {
       shadow: "So sánh",
     },
     current: "🏪 Giờ hoạt động hiện tại",
-    attendancePolicyTitle: "⏰ Tiêu chuẩn đi muộn và tan ca",
+    attendancePolicyTitle: "⏰ Tiêu chuẩn chấm công hiện tại",
+    policyDescription: "Giải thích tiêu chuẩn",
+    policyDescriptionClose: "Đóng phần giải thích",
     scheduled: "📅 Cài đặt đã lên lịch",
     newSetting: "🗓️ Thay đổi giờ mở cửa",
     newAttendanceSetting: "✏️ Lên lịch cài đặt",
@@ -342,6 +217,7 @@ const copy = {
     metaTimezone: "Múi giờ",
     metaCutoff: "Giờ chốt",
     metaEffective: "Ngày áp dụng",
+    metaRevision: "Lần thay đổi",
     open: "Mở cửa",
     closed: "Nghỉ",
     save: "Lên lịch cài đặt chung",
@@ -365,11 +241,11 @@ const copy = {
     confirmCancel: "Bạn có muốn hủy cài đặt đã lên lịch không?",
     lateGrace: "Tiêu chuẩn đi muộn",
     minutes: "phút",
-    lateHelp: "Nhân viên được tính là đi muộn sau số phút đã cài đặt kể từ giờ bắt đầu ca.",
+    lateHelp: "Chấm công vào sau giờ vào dự kiến + giá trị cài đặt",
     earlyLeaveGrace: "Tiêu chuẩn về sớm",
-    earlyLeaveHelp: "Nhân viên được tính là về sớm khi chấm công ra sớm hơn giờ tan ca tiêu chuẩn quá số phút đã cài đặt.",
+    earlyLeaveHelp: "Chấm công ra trước giờ tan ca chuẩn - giá trị cài đặt",
     missingCheckoutGrace: "Tiêu chuẩn thiếu chấm công ra",
-    missingCheckoutHelp: "Nếu không có chấm công ra trong số phút đã cài đặt sau giờ tan ca tiêu chuẩn, hệ thống sẽ ghi nhận thiếu chấm công ra.",
+    missingCheckoutHelp: "Không có chấm công ra đến giờ tan ca chuẩn + giá trị cài đặt",
     scheduleNotice: "Cài đặt áp dụng từ ngày đã chọn và không thay đổi dữ liệu cũ.",
     before: "Trước khi đổi",
     after: "Sau khi đổi",
@@ -380,22 +256,20 @@ const copy = {
     endDate: "Ngày kinh doanh kết thúc",
     completedNotice: "Mặc định là 7 ngày kinh doanh đã hoàn tất gần nhất, không gồm ngày đang diễn ra.",
     historyWarning: "Một số bản ghi cũ không thể xác định việc chuẩn hóa thủ công và có thể vẫn được tính vào kết quả.",
-    manualExcluded: "Loại trừ chuẩn hóa đi muộn thủ công",
-    leaveExcluded: "Loại trừ ngày nghỉ",
-    excludedRows: "Bản ghi bị loại trừ",
     dateSummary: "Tóm tắt theo ngày",
-    differenceFilter: "Loại chênh lệch",
-    allDifferences: "Tất cả loại",
+    businessDayCount: "Ngày kinh doanh so sánh",
+    comparisonCount: "Đối tượng so sánh",
+    comparisonShort: "So sánh",
+    verificationNeeded: "Cần kiểm tra",
+    verificationNoCheckIn: "Không có ghi nhận chấm công vào",
+    verificationManualLate: "Đi muộn đã được xử lý thủ công",
+    specialCloseApplied: "Áp dụng giờ đóng cửa sớm đặc biệt",
+    openSection: "Mở",
+    closeSection: "Đóng",
     employee: "Nhân viên",
     allEmployees: "Tất cả nhân viên",
     compare: "Chạy so sánh",
     comparing: "Đang so sánh…",
-    legacy: "Tiêu chuẩn chấm công cũ",
-    configured: "Tiêu chuẩn cài đặt mới",
-    revision: "Phiên bản cài đặt",
-    specialClose: "Đóng cửa sớm đặc biệt",
-    defaultClose: "Áp dụng giờ tan ca dự kiến",
-    storeClose: "Giờ đóng cửa dự kiến",
     total: "Tổng",
     matched: "Khớp",
     mismatched: "Không khớp",
@@ -404,57 +278,10 @@ const copy = {
     earlyChanged: "Đổi về sớm",
     unresolvedChanged: "Đổi chưa chấm ra",
     autoCloseChanged: "Đổi mốc kết thúc",
-    noRows: "Không có bản ghi vào ca để so sánh.",
-    status: "Trạng thái",
     late: "Đi muộn",
     early: "Về sớm",
-    unresolved: "Chưa chấm ra",
-    closeSource: "Căn cứ kết thúc",
-    overrideSource: "Đóng sớm đặc biệt",
-    configuredSource: "Giờ đóng cửa theo ngày",
-    fallbackSource: "Áp dụng giờ tan ca dự kiến",
-    fallbackSetting: "Áp dụng cài đặt mặc định",
+    unresolved: "Chưa chấm công ra",
     fallbackBadge: "Mặc định",
-    cutoffShort: "Chốt",
-    specialCloseShort: "Đóng sớm",
-    statTotal: "Tổng",
-    statMatched: "Khớp",
-    statMismatched: "Lệch",
-    statExcluded: "Loại",
-    excludedBadge: "Loại khỏi so sánh",
-    notComparedStatus: "Không tính chấm công",
-    exclusionLeave: "Nghỉ phép",
-    exclusionNoCheckIn: "Không có giờ vào",
-    exclusionOther: "Không thuộc đối tượng so sánh",
-    manualLateBadge: "Đã chuẩn hóa đi muộn",
-    changeTypeLate: "Thay đổi đánh giá đi muộn",
-    changeTypeEarly: "Thay đổi đánh giá về sớm",
-    changeTypeUnresolved: "Thay đổi đánh giá thiếu chấm công ra",
-    changeTypeStatus: "Thay đổi trạng thái",
-    changeTypeMultiple: "Thay đổi nhiều tiêu chí",
-    changedFieldsCount: "tiêu chí thay đổi",
-    actualCheckIn: "Giờ vào thực tế",
-    actualCheckOut: "Giờ ra thực tế",
-    noCheckOutRecord: "Không có giờ ra",
-    expectedCheckIn: "Giờ vào dự kiến",
-    standardCheckout: "Giờ tan ca tiêu chuẩn",
-    judgmentTime: "Thời điểm xác định",
-    earlySuffix: "về sớm",
-    lateSuffix: "đi muộn",
-    legacyPrefix: "Trước đây",
-    configuredPrefix: "Theo tiêu chuẩn mới",
-    normalLabel: "Bình thường",
-    showDetails: "Xem chi tiết",
-    hideDetails: "Đóng chi tiết",
-    statusLabels: {
-      working: "Đang làm việc",
-      done: "Hoàn tất bình thường",
-      late: "Đi muộn",
-      early_leave: "Về sớm",
-      late_and_early_leave: "Đi muộn & về sớm",
-      unresolved: "Chưa chấm công ra",
-      leave: "Nghỉ phép",
-    },
     confirmScheduleTitle: "Bạn có muốn lên lịch cài đặt chung không?",
     confirmScheduleBody1: "Từ ngày kinh doanh đã chọn, giờ hoạt động và tiêu chuẩn chấm công đang hiển thị sẽ được áp dụng cùng nhau.",
     confirmScheduleBody2: "Các giá trị không thay đổi cũng sẽ được lưu vào phiên bản cài đặt chung mới.",
@@ -945,34 +772,34 @@ function AttendanceTab(props: {
   const current =
     props.data.overview.current?.attendancePolicy ??
     DEFAULT_STORE_ATTENDANCE_POLICY;
+  const currentSetting = props.data.overview.current;
+  const [showPolicyDescription, setShowPolicyDescription] = useState(false);
+  const policyDescriptionId = useId();
 
   return (
     <>
       <section style={styles.card}>
         <h2 style={styles.sectionTitle}>{t.attendancePolicyTitle}</h2>
-        <div style={styles.policyCards}>
-          <div style={styles.policyCard}>
-            <strong style={styles.policyCardLabel}>⏰ {t.lateGrace}</strong>
-            <span style={styles.policyValue}>
-              {current.lateGraceMinutes}{t.minutes}
-            </span>
-            <small style={styles.help}>{t.lateHelp}</small>
-          </div>
-          <div style={styles.policyCard}>
-            <strong style={styles.policyCardLabel}>🚪 {t.earlyLeaveGrace}</strong>
-            <span style={styles.policyValue}>
-              {current.earlyLeaveGraceMinutes}{t.minutes}
-            </span>
-            <small style={styles.help}>{t.earlyLeaveHelp}</small>
-          </div>
-          <div style={styles.policyCard}>
-            <strong style={styles.policyCardLabel}>❓ {t.missingCheckoutGrace}</strong>
-            <span style={styles.policyValue}>
-              {current.missingCheckoutGraceMinutes}{t.minutes}
-            </span>
-            <small style={styles.help}>{t.missingCheckoutHelp}</small>
-          </div>
+        <div style={styles.policyMetaGrid}>
+          <CompactMetric label={t.metaEffective} value={currentSetting ? shortDate(currentSetting.effectiveFromBusinessDate) : "-"} />
+          <CompactMetric label={t.metaRevision} value={currentSetting ? String(currentSetting.revision) : "-"} />
         </div>
+        <div style={styles.metaGrid3}>
+          <CompactMetric label={t.lateGrace} value={`${current.lateGraceMinutes}${t.minutes}`} />
+          <CompactMetric label={t.earlyLeaveGrace} value={`${current.earlyLeaveGraceMinutes}${t.minutes}`} />
+          <CompactMetric label={t.missingCheckoutGrace} value={`${current.missingCheckoutGraceMinutes}${t.minutes}`} />
+        </div>
+        <button type="button" style={styles.compactDisclosure} aria-expanded={showPolicyDescription} aria-controls={policyDescriptionId} onClick={() => setShowPolicyDescription((value) => !value)}>
+          {showPolicyDescription ? t.policyDescriptionClose : t.policyDescription}
+          <span aria-hidden="true">{showPolicyDescription ? "▴" : "▾"}</span>
+        </button>
+        {showPolicyDescription ? (
+          <div id={policyDescriptionId} style={styles.policyDescription}>
+            <p style={styles.policyDescriptionLine}><strong>{t.lateGrace}:</strong> {t.lateHelp}</p>
+            <p style={styles.policyDescriptionLine}><strong>{t.earlyLeaveGrace}:</strong> {t.earlyLeaveHelp}</p>
+            <p style={styles.policyDescriptionLine}><strong>{t.missingCheckoutGrace}:</strong> {t.missingCheckoutHelp}</p>
+          </div>
+        ) : null}
       </section>
 
       <section style={styles.card}>
@@ -991,34 +818,8 @@ function AttendanceTab(props: {
       !props.data.overview.scheduled ? (
         <section style={styles.card}>
           <h2 style={styles.sectionTitle}>{t.newAttendanceSetting}</h2>
-          <div style={styles.changePreview}>
-            <Metric
-              label={`${t.before} · ${t.lateGrace}`}
-              value={`${current.lateGraceMinutes}${t.minutes}`}
-            />
-            <Metric
-              label={`${t.after} · ${t.lateGrace}`}
-              value={`${props.lateGrace}${t.minutes}`}
-            />
-            <Metric
-              label={`${t.before} · ${t.earlyLeaveGrace}`}
-              value={`${current.earlyLeaveGraceMinutes}${t.minutes}`}
-            />
-            <Metric
-              label={`${t.after} · ${t.earlyLeaveGrace}`}
-              value={`${props.earlyLeaveGrace}${t.minutes}`}
-            />
-            <Metric
-              label={`${t.before} · ${t.missingCheckoutGrace}`}
-              value={`${current.missingCheckoutGraceMinutes}${t.minutes}`}
-            />
-            <Metric
-              label={`${t.after} · ${t.missingCheckoutGrace}`}
-              value={`${props.missingCheckoutGrace}${t.minutes}`}
-            />
-          </div>
-          <div style={styles.grid}>
-            <Field label={`⏰ ${t.lateGrace}`}>
+          <div style={styles.metaGrid3}>
+            <CompactField label={t.lateGrace}>
               <div style={styles.inlineInput}>
                 <GraceMinutesInput
                   value={props.lateGrace}
@@ -1028,8 +829,8 @@ function AttendanceTab(props: {
                 />
                 <span>{t.minutes}</span>
               </div>
-            </Field>
-            <Field label={`🚪 ${t.earlyLeaveGrace}`}>
+            </CompactField>
+            <CompactField label={t.earlyLeaveGrace}>
               <div style={styles.inlineInput}>
                 <GraceMinutesInput
                   value={props.earlyLeaveGrace}
@@ -1039,8 +840,8 @@ function AttendanceTab(props: {
                 />
                 <span>{t.minutes}</span>
               </div>
-            </Field>
-            <Field label={`❓ ${t.missingCheckoutGrace}`}>
+            </CompactField>
+            <CompactField label={t.missingCheckoutGrace}>
               <div style={styles.inlineInput}>
                 <GraceMinutesInput
                   value={props.missingCheckoutGrace}
@@ -1050,7 +851,9 @@ function AttendanceTab(props: {
                 />
                 <span>{t.minutes}</span>
               </div>
-            </Field>
+            </CompactField>
+          </div>
+          <div style={styles.effectiveField}>
             <Field label={t.effective}>
               <input
                 type="date"
@@ -1205,8 +1008,7 @@ function ShadowTab(props: {
   const [startDate, setStartDate] = useState(initialRange.startBusinessDate);
   const [endDate, setEndDate] = useState(initialRange.endBusinessDate);
   const [userId, setUserId] = useState("");
-  const [differenceFilter, setDifferenceFilter] = useState("");
-  const [showExcluded, setShowExcluded] = useState(false);
+  const [showDateSummaries, setShowDateSummaries] = useState(false);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [result, setResult] = useState<ShadowData | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1249,15 +1051,8 @@ function ShadowTab(props: {
   const summaryItems = useMemo(() => {
     if (!result) return [];
     return [
-      [t.total, result.summary.total],
-      [t.matched, result.summary.matched],
+      [t.comparisonCount, result.summary.compared],
       [t.mismatched, result.summary.mismatched],
-      [t.statusChanged, result.summary.statusChanged],
-      [t.lateChanged, result.summary.lateChanged],
-      [t.earlyChanged, result.summary.earlyLeaveChanged],
-      [t.unresolvedChanged, result.summary.unresolvedChanged],
-      [t.manualExcluded, result.summary.manualLateExcluded],
-      [t.leaveExcluded, result.summary.leaveExcluded],
     ] as const;
   }, [result, t]);
 
@@ -1266,7 +1061,7 @@ function ShadowTab(props: {
       <section style={styles.card}>
         <h2 style={styles.sectionTitle}>{t.comparisonTitle}</h2>
         <p style={styles.help}>{t.completedNotice}</p>
-        <div style={styles.grid}>
+        <div style={styles.shadowConditionGrid}>
           <Field label={t.startDate}>
             <input
               type="date"
@@ -1285,10 +1080,11 @@ function ShadowTab(props: {
               onChange={(event) => setEndDate(event.target.value)}
             />
           </Field>
+          <div style={styles.shadowEmployeeField}>
           <Field label={t.employee}>
             <select
               value={userId}
-              style={styles.input}
+              style={{ ...styles.input, width: "100%" }}
               onChange={(event) => setUserId(event.target.value)}
             >
               <option value="">{t.allEmployees}</option>
@@ -1299,6 +1095,7 @@ function ShadowTab(props: {
               ))}
             </select>
           </Field>
+          </div>
         </div>
         <button
           style={ui.button}
@@ -1329,310 +1126,100 @@ function ShadowTab(props: {
           </section>
 
           <section style={styles.card}>
-            <h2 style={styles.sectionTitle}>📅 {t.dateSummary}</h2>
-            <div style={styles.dateSummaryList}>
-              {result.dateSummaries.map((day) => (
-                <article key={day.businessDate} style={styles.dateCard}>
-                  <div style={styles.dateCardHeader}>
-                    <strong style={styles.dateCardDate}>{day.businessDate}</strong>
-                    <span style={styles.dateCardBadge}>
-                      {day.fallbackUsed
-                        ? t.fallbackBadge
-                        : `#${day.settingsRevision}`}
-                    </span>
-                  </div>
-                  <small style={styles.dateCardHours}>
-                    {day.storeOpenTime || "-"}–{day.storeCloseTime || "-"}
-                    {" · "}
-                    {t.cutoffShort} {day.businessDayCutoffTime}
-                    {day.hasBusinessOverride ? ` · ${t.specialCloseShort}` : ""}
-                  </small>
-                  <small style={styles.dateCardHours}>
-                    {t.late} {day.attendancePolicy.lateGraceMinutes}{t.minutes}
-                    {" · "}
-                    {t.early} {day.attendancePolicy.earlyLeaveGraceMinutes}{t.minutes}
-                    {" · "}
-                    {t.unresolved} {day.attendancePolicy.missingCheckoutGraceMinutes}{t.minutes}
-                  </small>
-                  <div style={styles.dateStatGrid}>
-                    <div style={styles.dateStat}>
-                      <small style={styles.dateStatLabel}>{t.statTotal}</small>
-                      <strong style={styles.dateStatValue}>{day.totalRecords}</strong>
-                    </div>
-                    <div style={styles.dateStat}>
-                      <small style={styles.dateStatLabel}>{t.statMatched}</small>
-                      <strong style={styles.dateStatValue}>{day.matched}</strong>
-                    </div>
-                    <div style={styles.dateStat}>
-                      <small style={styles.dateStatLabel}>{t.statMismatched}</small>
-                      <strong style={styles.dateStatValue}>{day.mismatched}</strong>
-                    </div>
-                    <div style={styles.dateStat}>
-                      <small style={styles.dateStatLabel}>{t.statExcluded}</small>
-                      <strong style={styles.dateStatValue}>{day.excluded}</strong>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section style={styles.card}>
-            <div style={styles.filterRow}>
-              <h2 style={styles.filterLabel}>
-                <span aria-hidden="true">⚠️</span>
-                <span>{t.mismatched}</span>
-              </h2>
-              <select
-                aria-label={t.differenceFilter}
-                value={differenceFilter}
-                style={styles.input}
-                onChange={(event) => setDifferenceFilter(event.target.value)}
-              >
-                <option value="">{t.allDifferences}</option>
-                {Object.keys(result.differenceTypeCounts).map((type) => (
-                  <option key={type} value={type}>
-                    {differenceLabel(props.lang, type)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {result.rows.filter((row) =>
-              row.comparisonStatus === "compared" &&
-              Object.values(row.differences).some(Boolean) &&
-              (!differenceFilter || row.differenceTypes.includes(differenceFilter))
-            ).length === 0 ? (
-              <p style={styles.muted}>{t.noRows}</p>
-            ) : (
-              <div style={styles.shadowList}>
-                {result.rows
-                  .filter((row) =>
-                    row.comparisonStatus === "compared" &&
-                    Object.values(row.differences).some(Boolean) &&
-                    (!differenceFilter || row.differenceTypes.includes(differenceFilter))
-                  )
-                  .map((row) => (
-                    <ShadowRow key={row.recordId} row={row} lang={props.lang} />
-                  ))}
-              </div>
-            )}
-          </section>
-
-          <section style={styles.card}>
-            <button
-              style={ui.subButton}
-              onClick={() => setShowExcluded((value) => !value)}
-            >
-              {t.excludedRows} ({result.rows.filter((row) =>
-                row.comparisonStatus === "excluded" ||
-                row.metricComparison.late.comparisonStatus === "excluded"
-              ).length})
+            <button type="button" style={styles.sectionDisclosure} aria-expanded={showDateSummaries} aria-controls="attendance-shadow-date-summaries" onClick={() => setShowDateSummaries((value) => !value)}>
+              <span style={styles.dateSummaryHeader}>
+                <strong style={styles.dateSummaryTitle}>{t.dateSummary}</strong>
+                <small style={styles.dateSummaryOverview}>{result.businessDayCount}{props.lang === "ko" ? "일" : " ngày"} · {t.mismatched} {result.summary.mismatched}</small>
+              </span>
+              <span aria-hidden="true">{showDateSummaries ? "▴" : "▾"}</span>
             </button>
-            {showExcluded ? (
-              <div style={{ ...styles.shadowList, marginTop: 12 }}>
-                {result.rows
-                  .filter((row) =>
-                    row.comparisonStatus === "excluded" ||
-                    row.metricComparison.late.comparisonStatus === "excluded"
-                  )
-                  .map((row) => (
-                    <ShadowRow key={row.recordId} row={row} lang={props.lang} />
-                  ))}
+            {showDateSummaries ? (
+              <div id="attendance-shadow-date-summaries" style={styles.dateSummaryList}>
+                {result.dateSummaries.map((day) => <DateSummaryRow key={day.businessDate} day={day} rows={result.rows} lang={props.lang} />)}
               </div>
             ) : null}
           </section>
+
         </>
       ) : null}
     </>
   );
 }
 
-function ShadowRow(props: {
-  row: AttendanceShadowComparison;
+function DateSummaryRow(props: {
+  day: ShadowData["dateSummaries"][number];
+  rows: AttendanceShadowComparison[];
   lang: "ko" | "vi";
 }) {
   const t = copy[props.lang];
-  const [showDetails, setShowDetails] = useState(false);
-
-  if (props.row.comparisonStatus === "excluded") {
-    return (
-      <article style={styles.excludedRow}>
-        <div style={styles.cardHeader}>
-          <div>
-            <strong>{props.row.userName}</strong>
-            <small style={styles.rowMeta}>{props.row.businessDate}</small>
-          </div>
-          <span style={styles.excludedBadge}>{t.excludedBadge}</span>
-        </div>
-        <p style={styles.excludedMeta}>
-          {exclusionReasonLabel(props.lang, props.row.exclusionReason)}
-        </p>
-        <p style={styles.excludedMeta}>{t.notComparedStatus}</p>
-      </article>
-    );
-  }
-
-  const sourceText = {
-    override: `${t.specialClose} ${hhmm(props.row.configured.effectiveStoreCloseAt)} ${props.lang === "ko" ? "적용" : "áp dụng"}`,
-    configured: `${t.storeClose} ${hhmm(props.row.configured.effectiveStoreCloseAt)}`,
-    fallback: `${t.defaultClose} ${hhmm(props.row.configured.normalCheckoutThresholdAt)}`,
-  }[props.row.configured.closeSource];
-  const changed = Object.values(props.row.differences).some(Boolean);
-  const lateExcluded =
-    props.row.metricComparison.late.comparisonStatus === "excluded";
-  const legacyLabel = displayStatusLabel(props.lang, props.row.legacy);
-  const configuredLabel = displayStatusLabel(props.lang, props.row.configured);
-  const primary = props.row.summary.primaryDifference;
-  const binaryLabel = (isFlagged: boolean, flaggedLabel: string) =>
-    isFlagged ? flaggedLabel : t.normalLabel;
-
+  const [open, setOpen] = useState(false);
+  const detailsId = useId();
+  const { day } = props;
+  const dateRows = props.rows.filter(
+    (row) =>
+      row.businessDate === day.businessDate && row.exclusionReason !== "leave"
+  );
+  const mismatchRows = dateRows.filter(
+    (row) =>
+      row.comparisonStatus === "compared" &&
+      Object.values(row.differences).some(Boolean)
+  );
+  const verificationRows = dateRows.flatMap((row) => {
+    const reasons = [
+      row.comparisonStatus === "excluded" &&
+      row.exclusionReason === "no_check_in"
+        ? t.verificationNoCheckIn
+        : null,
+      row.metricComparison.late.comparisonStatus === "excluded"
+        ? t.verificationManualLate
+        : null,
+    ].filter((reason) => reason !== null);
+    return reasons.length ? [{ row, reasons }] : [];
+  });
   return (
-    <article
-      style={{
-        ...styles.shadowRow,
-        borderColor: changed ? "#f59e0b" : "#bbf7d0",
-      }}
-    >
-      <div style={styles.cardHeader}>
-        <div style={styles.shadowRowIdentity}>
-          <strong style={styles.shadowRowName}>{props.row.userName}</strong>
-          <small style={styles.rowMeta}>{props.row.businessDate}</small>
-        </div>
-        <span style={changed ? styles.changedBadge : styles.matchBadge}>
-          {changed ? changeTypeBadgeLabel(props.lang, primary) : t.matched}
-        </span>
-      </div>
-
-      {changed ? (
-        <div style={styles.shadowRowSummary}>
-          {primary === "late" ? (
-            <>
-              <p style={styles.summaryLine}>
-                {t.actualCheckIn} {hhmm(props.row.checkInAt)}
-              </p>
-              <p style={styles.summaryLineMuted}>
-                {t.expectedCheckIn} {hhmm(props.row.configured.scheduledStartAt)}
-                {" · "}
-                {props.row.configured.lateMinutes}{t.minutes} {t.lateSuffix}
-              </p>
-            </>
-          ) : null}
-          {primary === "early_leave" ? (
-            <>
-              <p style={styles.summaryLine}>
-                {t.actualCheckOut} {hhmm(props.row.checkOutAt)}
-              </p>
-              <p style={styles.summaryLineMuted}>
-                {t.standardCheckout} {hhmm(props.row.configured.normalCheckoutThresholdAt)}
-                {" · "}
-                {props.row.configured.earlyLeaveMinutes}{t.minutes} {t.earlySuffix}
-              </p>
-            </>
-          ) : null}
-          {primary === "unresolved" ? (
-            <>
-              <p style={styles.summaryLine}>{t.noCheckOutRecord}</p>
-              <p style={styles.summaryLineMuted}>
-                {t.standardCheckout} {hhmm(props.row.configured.normalCheckoutThresholdAt)}
-                {" · "}
-                {t.judgmentTime} {hhmm(props.row.configured.unresolvedAt)}
-              </p>
-            </>
-          ) : null}
-          {primary === "multiple" ? (
-            <>
-              <p style={styles.summaryLine}>
-                {props.row.summary.changedFieldCount} {t.changedFieldsCount}
-              </p>
-              <ul style={styles.summaryBulletList}>
-                {props.row.differences.lateMinutes ? (
-                  <li>
-                    {t.late}:{" "}
-                    {binaryLabel(props.row.legacy.lateMinutes > 0, t.late)}
-                    {" → "}
-                    {binaryLabel(props.row.configured.lateMinutes > 0, t.late)}
-                  </li>
-                ) : null}
-                {props.row.differences.earlyLeaveMinutes ? (
-                  <li>
-                    {t.early}:{" "}
-                    {binaryLabel(props.row.legacy.earlyLeaveMinutes > 0, t.early)}
-                    {" → "}
-                    {binaryLabel(props.row.configured.earlyLeaveMinutes > 0, t.early)}
-                  </li>
-                ) : null}
-                {props.row.differences.unresolved || props.row.differences.unresolvedAt ? (
-                  <li>
-                    {t.unresolved}:{" "}
-                    {binaryLabel(props.row.legacy.unresolved, t.unresolved)}
-                    {" → "}
-                    {binaryLabel(props.row.configured.unresolved, t.unresolved)}
-                  </li>
-                ) : null}
-                {props.row.differences.status ? (
-                  <li>
-                    {t.status}: {legacyLabel} → {configuredLabel}
-                  </li>
-                ) : null}
-              </ul>
-            </>
-          ) : null}
-          {primary !== "multiple" ? (
-            <p style={styles.summaryTransition}>
-              {t.legacyPrefix} {legacyLabel} → {t.configuredPrefix} {configuredLabel}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
-      <button
-        type="button"
-        style={styles.detailsToggle}
-        onClick={() => setShowDetails((value) => !value)}
-      >
-        {showDetails ? t.hideDetails : t.showDetails}
+    <div style={{ ...styles.dateCard, borderColor: day.mismatched ? "#fcd34d" : "#dbe5df", background: day.mismatched ? "#fffbeb" : "#f8faf9" }}>
+      <button type="button" style={styles.dateRowButton} aria-expanded={open} aria-controls={detailsId} onClick={() => setOpen((value) => !value)}>
+        <strong style={styles.dateCardDate}>{shortDate(day.businessDate)}</strong>
+        <span style={styles.dateCardBadge}>{day.fallbackUsed || day.settingsRevision === null ? t.fallbackBadge : `#${day.settingsRevision}`}</span>
+        <span style={styles.dateRowStats}>{t.comparisonShort} {day.compared} · {t.mismatched} {day.mismatched}</span>
+        <span aria-hidden="true">{open ? "▴" : "▾"}</span>
       </button>
-
-      {showDetails ? (
-        <div style={styles.comparisonGrid}>
-          <div>
-            <b>{t.legacy}</b>
-            <p>{t.status}: {props.row.legacy.status}</p>
-            <p>{t.late}: {props.row.legacy.lateMinutes}</p>
-            <p>{t.early}: {props.row.legacy.earlyLeaveMinutes}</p>
-            <p>{t.unresolved}: {String(props.row.legacy.unresolved)}</p>
-          </div>
-          <div>
-            <b>{t.configured}</b>
-            <p>
-              {t.status}: {props.row.configured.status}
-            </p>
-            <p>
-              {t.late}: {props.row.configured.lateMinutes}
-              {lateExcluded ? (
-                <span style={styles.neutralBadge}>{t.manualLateBadge}</span>
-              ) : null}
-            </p>
-            <p>{t.early}: {props.row.configured.earlyLeaveMinutes}</p>
-            <p>{t.unresolved}: {String(props.row.configured.unresolved)}</p>
-            <p>{t.closeSource}: {sourceText}</p>
-            <p>
-              {t.revision}:{" "}
-              {props.row.configured.settingsRevision === null
-                ? t.fallbackSetting
-                : `#${props.row.configured.settingsRevision}`}
-            </p>
-            {props.row.differenceTypes.length ? (
-              <p>
-                {props.row.differenceTypes
-                  .map((type) => differenceLabel(props.lang, type))
-                  .join(" · ")}
-              </p>
-            ) : null}
-          </div>
+      {open ? (
+        <div id={detailsId} style={styles.dateDetails}>
+          {day.hasBusinessOverride ? <span style={styles.specialCloseBadge}>{t.specialCloseApplied}</span> : null}
+          <span style={styles.datePolicyLine}>{t.late} {day.attendancePolicy.lateGraceMinutes}{t.minutes} · {t.early} {day.attendancePolicy.earlyLeaveGraceMinutes}{t.minutes} · {t.unresolved} {day.attendancePolicy.missingCheckoutGraceMinutes}{t.minutes}</span>
+          {mismatchRows.length ? (
+            <section style={styles.dateDetailSection}>
+              <h4 style={styles.dateDetailTitle}>{t.mismatched}</h4>
+              <ul style={styles.dateDetailList}>
+                {mismatchRows.map((row) => {
+                  const outcomes = [
+                    row.configured.lateMinutes > 0
+                      ? `${t.late} ${row.configured.lateMinutes}${t.minutes}`
+                      : null,
+                    row.configured.earlyLeaveMinutes > 0
+                      ? `${t.early} ${row.configured.earlyLeaveMinutes}${t.minutes}`
+                      : null,
+                    row.configured.unresolved ? t.unresolved : null,
+                  ].filter((outcome): outcome is string => outcome !== null);
+                  return <li key={row.recordId}><strong>{row.userName}</strong> · {outcomes.join(" · ")}</li>;
+                })}
+              </ul>
+            </section>
+          ) : null}
+          {verificationRows.length ? (
+            <section style={styles.dateDetailSection}>
+              <h4 style={styles.dateDetailTitle}>{t.verificationNeeded}</h4>
+              <ul style={styles.dateDetailList}>
+                {verificationRows.map(({ row, reasons }) => (
+                  <li key={row.recordId}><strong>{row.userName}</strong> · {reasons.join(" · ")}</li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
         </div>
       ) : null}
-    </article>
+    </div>
   );
 }
 
@@ -1660,8 +1247,9 @@ function SettingBody(props: {
   const t = copy[props.lang];
   return (
     <div>
-      <div style={styles.metaGrid3}>
+      <div style={styles.currentMetaGrid}>
         <CompactMetric label={t.metaTimezone} value={props.setting.timezone} />
+        <CompactMetric label={t.metaRevision} value={String(props.setting.revision)} />
         <CompactMetric
           label={t.metaCutoff}
           value={props.setting.businessDayCutoffTime}
@@ -1690,9 +1278,6 @@ function SettingBody(props: {
   );
 }
 
-// 근태설정 탭의 "예약 설정" 카드 — 운영시간 탭의 SettingBody와 같은 레이아웃·
-// 폰트 규격을 쓰되, 요일별 운영시간 대신 근태 기준 3개를 보여준다. revision
-// 번호 같은 세부 정보는 굳이 드러내지 않고 "예약된 값"만 직관적으로 보여준다.
 function AttendanceScheduledBody(props: {
   setting: StoreSetting;
   lang: "ko" | "vi";
@@ -1700,23 +1285,16 @@ function AttendanceScheduledBody(props: {
   const t = copy[props.lang];
   const policy = props.setting.attendancePolicy;
   return (
-    <div style={styles.grid}>
-      <Metric
-        label={t.metaEffective}
-        value={shortDate(props.setting.effectiveFromBusinessDate)}
-      />
-      <Metric
-        label={`⏰ ${t.lateGrace}`}
-        value={`${policy.lateGraceMinutes}${t.minutes}`}
-      />
-      <Metric
-        label={`🚪 ${t.earlyLeaveGrace}`}
-        value={`${policy.earlyLeaveGraceMinutes}${t.minutes}`}
-      />
-      <Metric
-        label={`❓ ${t.missingCheckoutGrace}`}
-        value={`${policy.missingCheckoutGraceMinutes}${t.minutes}`}
-      />
+    <div>
+      <div style={styles.policyMetaGrid}>
+        <CompactMetric label={t.metaEffective} value={shortDate(props.setting.effectiveFromBusinessDate)} />
+        <CompactMetric label={t.metaRevision} value={String(props.setting.revision)} />
+      </div>
+      <div style={styles.metaGrid3}>
+        <CompactMetric label={t.lateGrace} value={`${policy.lateGraceMinutes}${t.minutes}`} />
+        <CompactMetric label={t.earlyLeaveGrace} value={`${policy.earlyLeaveGraceMinutes}${t.minutes}`} />
+        <CompactMetric label={t.missingCheckoutGrace} value={`${policy.missingCheckoutGraceMinutes}${t.minutes}`} />
+      </div>
     </div>
   );
 }
@@ -1796,6 +1374,18 @@ const styles: Record<string, CSSProperties> = {
     gap: 6,
     marginBottom: 12,
   },
+  currentMetaGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 6,
+    marginBottom: 12,
+  },
+  policyMetaGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 6,
+    marginBottom: 6,
+  },
   compactMetric: {
     display: "grid",
     gap: 2,
@@ -1835,6 +1425,37 @@ const styles: Record<string, CSSProperties> = {
     padding: "6px 6px",
     fontSize: 12.5,
   },
+  compactDisclosure: {
+    display: "flex",
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "8px 2px 0",
+    border: 0,
+    background: "transparent",
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  policyDescription: {
+    marginTop: 6,
+    padding: "4px 2px 0",
+    color: "#64748b",
+    fontSize: 11.5,
+    lineHeight: 1.4,
+  },
+  policyDescriptionLine: { margin: "0 0 3px" },
+  dateSummaryHeader: {
+    display: "flex",
+    flex: 1,
+    flexWrap: "wrap",
+    alignItems: "baseline",
+    gap: "4px 14px",
+    minWidth: 0,
+  },
+  dateSummaryTitle: { flexShrink: 0 },
+  dateSummaryOverview: { color: "#64748b", fontSize: 11.5 },
   modalOverlay: {
     position: "fixed",
     inset: 0,
@@ -1891,23 +1512,6 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
     marginTop: 18,
   },
-  filterRow: {
-    display: "grid",
-    gridTemplateColumns: "auto minmax(0, 1fr)",
-    alignItems: "center",
-    gap: 12,
-  },
-  filterLabel: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 4,
-    whiteSpace: "nowrap",
-    flexShrink: 0,
-    fontSize: 16,
-    fontWeight: 800,
-    margin: 0,
-    minWidth: 0,
-  },
   subNav: {
     borderBottom: "1px solid #e5e7eb",
     marginBottom: 12,
@@ -1963,6 +1567,14 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
     marginBottom: 12,
   },
+  shadowConditionGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 10,
+    marginBottom: 12,
+  },
+  shadowEmployeeField: { gridColumn: "1 / -1", minWidth: 0 },
+  effectiveField: { marginBottom: 12 },
   label: { display: "grid", gap: 5, fontSize: 12, fontWeight: 800 },
   input: { ...ui.input, minWidth: 0, height: 40, padding: "8px 10px" },
   inlineInput: {
@@ -2101,6 +1713,48 @@ const styles: Record<string, CSSProperties> = {
     gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))",
     gap: 6,
   },
+  sectionDisclosure: {
+    display: "flex",
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    padding: 0,
+    border: 0,
+    background: "transparent",
+    color: "#111827",
+    textAlign: "left",
+    fontSize: 15,
+    cursor: "pointer",
+  },
+  shadowRowButton: {
+    display: "flex",
+    width: "100%",
+    alignItems: "center",
+    gap: 8,
+    padding: 0,
+    border: 0,
+    background: "transparent",
+    color: "inherit",
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  configuredOutcomes: {
+    display: "block",
+    marginTop: 3,
+    color: "#334155",
+    fontSize: 12,
+    fontWeight: 700,
+    lineHeight: 1.35,
+  },
+  shadowDetails: {
+    display: "grid",
+    gap: 7,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTop: "1px solid #e5e7eb",
+    fontSize: 12,
+  },
   shadowList: { display: "grid", gap: 9 },
   shadowRow: {
     padding: "10px 12px",
@@ -2172,6 +1826,45 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     gap: 8,
+  },
+  dateRowButton: {
+    display: "grid",
+    width: "100%",
+    gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
+    alignItems: "center",
+    gap: 7,
+    padding: 0,
+    border: 0,
+    background: "transparent",
+    color: "inherit",
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  dateRowStats: {
+    minWidth: 0,
+    color: "#475569",
+    fontSize: 11,
+    textAlign: "right",
+  },
+  dateDetails: {
+    display: "grid",
+    gap: 4,
+    paddingTop: 7,
+    borderTop: "1px solid #e5e7eb",
+    color: "#64748b",
+    fontSize: 11,
+  },
+  datePolicyLine: { display: "flex", flexWrap: "wrap", gap: 2 },
+  dateDetailSection: { display: "grid", gap: 3, marginTop: 4 },
+  dateDetailTitle: { margin: 0, color: "#334155", fontSize: 11.5, fontWeight: 800 },
+  dateDetailList: { display: "grid", gap: 3, margin: 0, paddingLeft: 16, color: "#475569", lineHeight: 1.45 },
+  specialCloseBadge: {
+    justifySelf: "start",
+    padding: "2px 7px",
+    borderRadius: 999,
+    background: "#fef3c7",
+    color: "#92400e",
+    fontWeight: 700,
   },
   dateCardDate: {
     fontSize: 14,
