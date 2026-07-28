@@ -27,6 +27,8 @@ type UserRow = {
   work_start_time: string | null;
   work_end_time: string | null;
   is_active: boolean | null;
+  is_system_account: boolean;
+  payroll_eligible_override: boolean | null;
 };
 
 type UsersResponse = {
@@ -118,8 +120,12 @@ function getPositionLabel(position: string | null, text: AdminUsersPageText) {
   return position || "-";
 }
 
+function isOwnerGroupUser(user: Pick<UserRow, "role">) {
+  return user.role === "owner" || user.role === "master";
+}
+
 function getUserGroup(user: UserRow): UserGroupKey {
-  if (user.role === "owner" || user.role === "master") return "owner";
+  if (isOwnerGroupUser(user)) return "owner";
   if (user.part === "kitchen") return "kitchen";
   if (user.part === "hall") return "hall";
   if (user.part === "bar") return "bar";
@@ -260,10 +266,10 @@ function UserCard({
   const displayName = user.name || user.full_name || user.username;
   const isMasterUser = user.role === "master";
   const age = getAge(user.birth_date);
-  const isAdminGroupUser = user.role === "owner" || user.role === "master";
+  const isAdminGroupUser = isOwnerGroupUser(user);
   const positionText = getPositionLabel(user.position || user.role, text);
   const nameText = `${displayName}${age ? ` (${age})` : ""}`;
-  const workTime = !isAdminGroupUser ? formatWorkTime(user) : "";
+  const workTime = !isAdminGroupUser && !user.termination_date ? formatWorkTime(user) : "";
   const roleValue = isRoleOption(draft.role) ? draft.role : "staff";
   const partValue = isPartOption(draft.part) ? draft.part : "kitchen";
   const positionValue = isPositionOption(draft.position)
@@ -288,10 +294,7 @@ function UserCard({
         <div style={styles.badgeRow}>
           {workTime ? <span style={styles.workTimeText}>{workTime}</span> : null}
           {user.termination_date ? <span style={styles.lockedBadge}>{text.terminatedOn} {user.termination_date}</span> : null}
-          {isMasterUser ? (
-            <span style={styles.lockedBadge}>{text.cannotEdit}</span>
-          ) : null}
-          {isMasterUser ? null : (
+          {!user.is_system_account ? (
             <button
               type="button"
               style={styles.inlineEditButton}
@@ -299,12 +302,14 @@ function UserCard({
             >
               {isEditing ? text.cancel : text.edit}
             </button>
-          )}
+          ) : null}
         </div>
       </div>
 
       {isEditing ? (
         <div style={styles.formGrid}>
+          {!isMasterUser ? (
+            <>
           <Field label={text.name}>
             <input
               value={draft.name || ""}
@@ -394,6 +399,11 @@ function UserCard({
               onChange={(event) => update("termination_date", emptyToNull(event.target.value))}
               style={styles.input}
             />
+            {draft.termination_date ? (
+              <span style={styles.fieldNotice}>
+                {text.terminationDeactivationNotice}
+              </span>
+            ) : null}
           </Field>
           <Field label={text.workStartTime}>
             <input
@@ -414,11 +424,32 @@ function UserCard({
           <label style={styles.checkRow}>
             <input
               type="checkbox"
-              checked={draft.is_active !== false}
+              checked={draft.termination_date ? false : draft.is_active !== false}
               onChange={(event) => update("is_active", event.target.checked)}
+              disabled={Boolean(draft.termination_date)}
             />
             {text.activeStatus}
           </label>
+            </>
+          ) : null}
+          {isAdminGroupUser && !user.is_system_account ? (
+            <label style={styles.payrollOverrideField}>
+              <span style={styles.checkRow}>
+                <input
+                  type="checkbox"
+                  checked={draft.payroll_eligible_override === true}
+                  onChange={(event) =>
+                    update(
+                      "payroll_eligible_override",
+                      event.target.checked ? true : null
+                    )
+                  }
+                />
+                {text.payrollEligibleOverride}
+              </span>
+              <span style={styles.fieldNotice}>{text.payrollEligibleOverrideHelp}</span>
+            </label>
+          ) : null}
           <div style={styles.actionRow}>
             <button
               type="button"
@@ -443,7 +474,7 @@ function UserCard({
               {isSaving ? text.saving : text.save}
             </button>
           </div>
-          {user.is_active === false && user.termination_date ? (
+          {!isMasterUser && user.is_active === false && user.termination_date ? (
             <div style={{...styles.notice, gridColumn: "1 / -1"}}>
               <button type="button" style={styles.secondaryButton} onClick={() => setRehireOpen(current => !current)}>{text.rehire}</button>
               {rehireOpen ? <div style={{display:"grid",gap:8,marginTop:8}}>
@@ -527,8 +558,15 @@ export default function AdminUsersPage() {
     };
   }, [canAccess, checked, text.loadFailed]);
 
-  const activeCount = useMemo(
-    () => users.filter((user) => user.is_active !== false).length,
+  const activeEmployeeCount = useMemo(
+    () =>
+      users.filter(
+        (user) =>
+          !isOwnerGroupUser(user) &&
+          user.is_system_account !== true &&
+          user.is_active === true &&
+          user.termination_date === null
+      ).length,
     [users]
   );
   const groupedUsers = useMemo(
@@ -549,13 +587,9 @@ export default function AdminUsersPage() {
     setMessage("");
 
     try {
-      const res = await attendanceFetch("/api/admin/users", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lang,
-          id: original.id,
-          updates: {
+      const updates: Record<string, unknown> = original.role === "master"
+        ? { payroll_eligible_override: draft.payroll_eligible_override }
+        : {
             name: draft.name,
             full_name: draft.full_name,
             role: draft.role,
@@ -568,7 +602,17 @@ export default function AdminUsersPage() {
             work_start_time: draft.work_start_time,
             work_end_time: draft.work_end_time,
             is_active: draft.is_active !== false,
-          },
+          };
+      if (original.role === "owner") {
+        updates.payroll_eligible_override = draft.payroll_eligible_override;
+      }
+      const res = await attendanceFetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lang,
+          id: original.id,
+          updates,
         }),
       });
       const result = (await res.json()) as UsersResponse;
@@ -614,9 +658,9 @@ export default function AdminUsersPage() {
       <UserNav active="list" />
 
       <section style={styles.summaryCard}>
-        <span>{text.listTab}</span>
+        <span>{text.summaryLabel}</span>
         <strong>
-          {activeCount} / {users.length}
+          {activeEmployeeCount}{text.peopleUnit}
         </strong>
       </section>
 
@@ -852,6 +896,19 @@ const styles = {
     fontSize: 11,
     fontWeight: 900,
     color: "#374151",
+  },
+  fieldNotice: {
+    fontSize: 11,
+    lineHeight: 1.4,
+    fontWeight: 800,
+    color: "#b45309",
+  },
+  payrollOverrideField: {
+    display: "grid",
+    gap: 4,
+    padding: "8px 9px",
+    borderRadius: 8,
+    background: "#fffbeb",
   },
   input: {
     ...ui.input,

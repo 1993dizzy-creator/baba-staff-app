@@ -4,6 +4,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { normalizeAttendanceDayFacts } from "./attendance-facts";
 import { mapContract, mapSchedule } from "./db-mappers";
 import { roundMinutes } from "./projection";
+import { isPayrollUserCandidate } from "./eligibility";
 import type { PayrollContract, WorkScheduleVersion } from "./types";
 
 export const PAYROLL_RUN_ENGINE_VERSION = "monthly-payroll-v2";
@@ -21,7 +22,7 @@ const BLOCKING_WARNING_CODES=new Set<string>(["NO_PAYROLL_CONTRACT","MISSING_CHE
 const ACTIONABLE_WARNING_CODES=new Set<string>(["PENDING_LEAVE_APPROVAL","LEAVE_PAYROLL_TREATMENT_UNSPECIFIED","OVERTIME_APPROVAL_UNAVAILABLE"]);
 
 type CriticalWarning = typeof CRITICAL_WARNING_CODES[number];
-type UserRow={id:number;name:string|null;full_name:string|null;username:string;is_active:boolean;role:string;hire_date:string|null;termination_date:string|null;is_system_account:boolean};
+type UserRow={id:number;name:string|null;full_name:string|null;username:string;is_active:boolean;role:string;hire_date:string|null;termination_date:string|null;is_system_account:boolean;payroll_eligible_override:boolean|null};
 type AttendanceRow={id:number;user_id:number;status:string;work_date:string;check_in_at:string|null;check_out_at:string|null;late_minutes:number|null;early_leave_minutes:number|null;work_minutes:number|null;approval_status:string|null;updated_at:string|null};
 type AutoCategory="base_work"|"paid_leave"|"overtime"|"late_deduction"|"early_leave_deduction";
 export type PayrollRunItemInput={itemType:"automatic"|"manual"|"review_adjustment";category:AutoCategory|string;direction:"addition"|"deduction";amount:number;originalAmount:number|null;businessDate:string|null;description:string;sourceSnapshot:Record<string,unknown>};
@@ -46,10 +47,13 @@ export function selectPayrollUsers(input:{users:UserRow[];attendance:AttendanceR
   const attendanceIds=new Set(input.attendance.map(row=>Number(row.user_id)));const contractIds=new Set(input.contracts.filter(row=>intersectsMonth(row,start,endExclusive)).map(row=>row.userId));
   const monthEnd=new Date(`${endExclusive}T00:00:00Z`);monthEnd.setUTCDate(monthEnd.getUTCDate()-1);const monthEndDate=monthEnd.toISOString().slice(0,10);
   return input.users.filter(user=>{
-    if(user.is_system_account)return false;
     const intersects=Boolean(user.hire_date)&&user.hire_date!<=monthEndDate&&(!user.termination_date||user.termination_date>=start);
-    if(user.role==="owner"||user.role==="master")return contractIds.has(user.id);
-    return intersects||attendanceIds.has(user.id)||contractIds.has(user.id);
+    return isPayrollUserCandidate({
+      user,
+      employmentIntersects:intersects,
+      hasAttendance:attendanceIds.has(user.id),
+      hasContract:contractIds.has(user.id),
+    });
   });
 }
 
@@ -106,7 +110,7 @@ function calculateEmployee(user:UserRow,records:AttendanceRow[],input:BatchInput
 export async function loadPayrollMonthSnapshot(month:string){
   const dates=payrollMonthDates(month);const start=dates[0],end=dates.at(-1)!;const nextMonth=new Date(`${start}T00:00:00Z`);nextMonth.setUTCMonth(nextMonth.getUTCMonth()+1);const endExclusive=nextMonth.toISOString().slice(0,10);
   const[userResult,attendanceResult,contractResult,scheduleResult,settingsResults]=await Promise.all([
-    supabaseServer.from("users").select("id,name,full_name,username,is_active,role,hire_date,termination_date,is_system_account").order("id"),
+    supabaseServer.from("users").select("id,name,full_name,username,is_active,role,hire_date,termination_date,is_system_account,payroll_eligible_override").order("id"),
     supabaseServer.from("attendance_records").select("id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,updated_at").gte("work_date",start).lte("work_date",end),
     supabaseServer.from("payroll_contract_versions").select("id,user_id,pay_type,calculation_basis,base_salary,standard_workdays,standard_minutes_per_day,time_block_minutes,rounding_mode,late_adjustment_mode,early_leave_adjustment_mode,overtime_mode,paid_leave_mode,effective_from,effective_to,revision").lt("effective_from",endExclusive).or(`effective_to.is.null,effective_to.gt.${start}`),
     supabaseServer.from("employee_work_schedule_versions").select("id,user_id,start_time,end_time,unpaid_break_minutes,effective_from,effective_to,revision,change_reason").lt("effective_from",endExclusive).or(`effective_to.is.null,effective_to.gt.${start}`),

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth/server-auth";
 import { isDateKey, validateEmploymentDates } from "@/lib/employment/eligibility";
+import { enforceTerminationAccountPolicy } from "@/lib/employment/termination-policy";
+import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
 
 type JsonObject = Record<string, unknown>;
 
@@ -21,6 +23,7 @@ type UserRow = {
   work_end_time: string | null;
   is_active: boolean | null;
   is_system_account: boolean;
+  payroll_eligible_override: boolean | null;
 };
 
 const USER_SELECT = `
@@ -38,7 +41,8 @@ const USER_SELECT = `
   work_start_time,
   work_end_time,
   is_active,
-  is_system_account
+  is_system_account,
+  payroll_eligible_override
 `;
 
 const ROLE_ORDER = new Map([
@@ -68,6 +72,7 @@ const ALLOWED_UPDATE_KEYS = new Set([
   "work_start_time",
   "work_end_time",
   "is_active",
+  "payroll_eligible_override",
 ]);
 
 function normalizeText(value: unknown) {
@@ -152,6 +157,13 @@ function normalizeUpdate(input: JsonObject) {
 
     if (key === "is_active") {
       update.is_active = value === true;
+      return;
+    }
+
+    if (key === "payroll_eligible_override") {
+      if (value === true || value === null) {
+        update.payroll_eligible_override = value;
+      }
       return;
     }
 
@@ -250,7 +262,7 @@ export async function PATCH(req: Request) {
       }
     }
 
-    const update = normalizeUpdate(inputUpdates);
+    let update = normalizeUpdate(inputUpdates);
 
     if (Object.keys(update).length === 0) {
       return NextResponse.json(
@@ -261,7 +273,7 @@ export async function PATCH(req: Request) {
 
     const { data: target, error: targetError } = await supabaseServer
       .from("users")
-      .select("id, role, hire_date, termination_date, is_system_account")
+      .select("id, role, hire_date, termination_date, is_active, is_system_account, payroll_eligible_override")
       .eq("id", id)
       .maybeSingle();
 
@@ -276,7 +288,26 @@ export async function PATCH(req: Request) {
       );
     }
 
-    if (target.role === "master") {
+    const hasPayrollOverrideUpdate = Object.prototype.hasOwnProperty.call(
+      inputUpdates,
+      "payroll_eligible_override"
+    );
+    if (hasPayrollOverrideUpdate) {
+      const requestedOverride = inputUpdates.payroll_eligible_override;
+      if (
+        !isPayrollOwnerRole(target.role) ||
+        (requestedOverride !== true && requestedOverride !== null)
+      ) {
+        return NextResponse.json(
+          { ok: false, error: "Payroll eligibility override is not editable for this user." },
+          { status: 403 }
+        );
+      }
+    }
+
+    const isPayrollOverrideOnly =
+      hasPayrollOverrideUpdate && Object.keys(update).length === 1;
+    if (target.role === "master" && !isPayrollOverrideOnly) {
       return NextResponse.json(
         {
           ok: false,
@@ -293,6 +324,27 @@ export async function PATCH(req: Request) {
     if (!validateEmploymentDates(employment)) {
       return NextResponse.json({ ok: false, error: lang === "vi" ? "Ngày nghỉ việc không thể sớm hơn ngày vào làm." : "퇴사일은 입사일보다 빠를 수 없습니다." }, { status: 400 });
     }
+
+    const terminationPolicy = enforceTerminationAccountPolicy({
+      update,
+      current: {
+        termination_date: target.termination_date,
+        is_active: target.is_active,
+      },
+    });
+    if (!terminationPolicy.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            lang === "vi"
+              ? "Ngày nghỉ việc không thể sau ngày hôm nay."
+              : "퇴사일은 오늘 이후 날짜로 설정할 수 없습니다.",
+        },
+        { status: 400 }
+      );
+    }
+    update = terminationPolicy.update;
 
     const { data, error } = await supabaseServer
       .from("users")

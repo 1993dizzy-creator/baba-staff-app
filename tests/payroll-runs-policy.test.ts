@@ -36,11 +36,12 @@ test("official runs use only recorded dates and reject months before July 2026",
 
 test("employee union excludes system accounts and applies employment dates", () => {
   assert.match(engine, /contractIds\.has\(user\.id\)/);
-  assert.match(engine, /if\(user\.is_system_account\)return false/);
+  assert.match(engine, /isPayrollUserCandidate/);
+  assert.match(engine, /payroll_eligible_override/);
   assert.match(engine, /const intersects=Boolean\(user\.hire_date\)/);
   assert.match(engine, /user\.termination_date>=start/);
-  assert.match(engine, /attendanceIds\.has\(user\.id\)\|\|contractIds\.has\(user\.id\)/);
-  assert.match(engine, /user\.role==="owner"\|\|user\.role==="master"/);
+  assert.match(engine, /hasAttendance:attendanceIds\.has\(user\.id\)/);
+  assert.match(engine, /hasContract:contractIds\.has\(user\.id\)/);
   assert.match(engine, /row\.work_date<=user\.termination_date/);
   assert.match(engine, /NO_PAYROLL_CONTRACT/);
 });
