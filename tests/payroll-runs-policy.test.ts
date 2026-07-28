@@ -5,6 +5,7 @@ import test from "node:test";
 
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "utf8");
 const migration = read("supabase/migrations/202607270002_create_payroll_runs.sql");
+const lifecycleMigration = read("supabase/migrations/202607280001_add_employee_lifecycle_and_payroll_schedule.sql");
 const engine = read("lib/payroll/monthly-run.ts");
 const runApi = read("app/api/admin/payroll/runs/route.ts");
 const detailApi = read("app/api/admin/payroll/runs/[runId]/route.ts");
@@ -23,21 +24,24 @@ test("ledger schema normalizes reviews and enforces one active monthly run", () 
   assert.match(migration, /amount bigint not null check \(amount >= 0\)/);
 });
 
-test("official runs use only recorded dates and reject months before August 2026", () => {
+test("official runs use only recorded dates and reject months before July 2026", () => {
   assert.match(engine, /const eligibleRecords=records\.filter/);
   assert.doesNotMatch(engine, /payrollMonthDates\(input\.month\)[\s\S]*calculateEmployee/);
-  assert.match(engine, /PAYROLL_RUN_START_MONTH = "2026-08"/);
+  assert.match(engine, /PAYROLL_RUN_START_MONTH = "2026-07"/);
   assert.match(runApi, /isOfficialPayrollMonth/);
   assert.match(runApi, /PAYROLL_MONTH_NOT_SUPPORTED/);
-  assert.match(migration, /p_month<date '2026-08-01'/);
+  assert.match(lifecycleMigration, /p_month<date '2026-07-01'/);
   assert.match(engine, /row\.work_date>=user\.hire_date/);
 });
 
-test("employee union includes contracts, active non-admins, and recorded attendance", () => {
+test("employee union excludes system accounts and applies employment dates", () => {
   assert.match(engine, /contractIds\.has\(user\.id\)/);
-  assert.match(engine, /user\.is_active&&\(!user\.hire_date\|\|user\.hire_date<=monthEndDate\)/);
+  assert.match(engine, /if\(user\.is_system_account\)return false/);
+  assert.match(engine, /const intersects=Boolean\(user\.hire_date\)/);
+  assert.match(engine, /user\.termination_date>=start/);
   assert.match(engine, /attendanceIds\.has\(user\.id\)\|\|contractIds\.has\(user\.id\)/);
-  assert.match(engine, /user\.role==="owner"\|\|user\.role==="master"\?contractIds\.has\(user\.id\)/);
+  assert.match(engine, /user\.role==="owner"\|\|user\.role==="master"/);
+  assert.match(engine, /row\.work_date<=user\.termination_date/);
   assert.match(engine, /NO_PAYROLL_CONTRACT/);
 });
 

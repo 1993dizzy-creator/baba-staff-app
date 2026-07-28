@@ -224,7 +224,7 @@ export default function AttendanceUserDetailPage() {
             const { startText } = getMonthRange(currentMonth);
             const month = startText.slice(0, 7);
 
-            const userRes = await attendanceFetch("/api/attendance/users");
+            const userRes = await attendanceFetch(`/api/attendance/users?mode=month&month=${month}`);
             const userResult = await userRes.json();
 
             if (!userRes.ok || !userResult.ok) {

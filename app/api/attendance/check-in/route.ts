@@ -96,9 +96,10 @@ export async function POST(req: Request) {
 
     const { data: user, error: userError } = await supabaseServer
       .from("users")
-      .select("id, work_start_time, work_end_time")
+      .select("id, work_start_time, work_end_time, hire_date, termination_date, is_system_account")
       .eq("id", userId)
       .eq("is_active", true)
+      .eq("is_system_account", false)
       .maybeSingle();
 
     if (userError) {
@@ -109,7 +110,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!user) {
+    if (!user || (user.hire_date && user.hire_date > workDate) || (user.termination_date && user.termination_date < workDate)) {
       return attendanceJson(
         {
           ok: false,

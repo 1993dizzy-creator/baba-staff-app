@@ -7,7 +7,7 @@ import { roundMinutes } from "./projection";
 import type { PayrollContract, WorkScheduleVersion } from "./types";
 
 export const PAYROLL_RUN_ENGINE_VERSION = "monthly-payroll-v2";
-export const PAYROLL_RUN_START_MONTH = "2026-08";
+export const PAYROLL_RUN_START_MONTH = "2026-07";
 
 export const CRITICAL_WARNING_CODES = [
   "NO_PAYROLL_CONTRACT", "MISSING_CHECK_IN", "MISSING_CHECK_OUT", "INVALID_TIME_RANGE",
@@ -21,7 +21,7 @@ const BLOCKING_WARNING_CODES=new Set<string>(["NO_PAYROLL_CONTRACT","MISSING_CHE
 const ACTIONABLE_WARNING_CODES=new Set<string>(["PENDING_LEAVE_APPROVAL","LEAVE_PAYROLL_TREATMENT_UNSPECIFIED","OVERTIME_APPROVAL_UNAVAILABLE"]);
 
 type CriticalWarning = typeof CRITICAL_WARNING_CODES[number];
-type UserRow={id:number;name:string|null;full_name:string|null;username:string;is_active:boolean;role:string;hire_date:string|null};
+type UserRow={id:number;name:string|null;full_name:string|null;username:string;is_active:boolean;role:string;hire_date:string|null;termination_date:string|null;is_system_account:boolean};
 type AttendanceRow={id:number;user_id:number;status:string;work_date:string;check_in_at:string|null;check_out_at:string|null;late_minutes:number|null;early_leave_minutes:number|null;work_minutes:number|null;approval_status:string|null;updated_at:string|null};
 type AutoCategory="base_work"|"paid_leave"|"overtime"|"late_deduction"|"early_leave_deduction";
 export type PayrollRunItemInput={itemType:"automatic"|"manual"|"review_adjustment";category:AutoCategory|string;direction:"addition"|"deduction";amount:number;originalAmount:number|null;businessDate:string|null;description:string;sourceSnapshot:Record<string,unknown>};
@@ -45,7 +45,12 @@ export function selectPayrollUsers(input:{users:UserRow[];attendance:AttendanceR
   const start=`${input.month}-01`;const next=new Date(`${start}T00:00:00Z`);next.setUTCMonth(next.getUTCMonth()+1);const endExclusive=next.toISOString().slice(0,10);
   const attendanceIds=new Set(input.attendance.map(row=>Number(row.user_id)));const contractIds=new Set(input.contracts.filter(row=>intersectsMonth(row,start,endExclusive)).map(row=>row.userId));
   const monthEnd=new Date(`${endExclusive}T00:00:00Z`);monthEnd.setUTCDate(monthEnd.getUTCDate()-1);const monthEndDate=monthEnd.toISOString().slice(0,10);
-  return input.users.filter(user=>user.role==="owner"||user.role==="master"?contractIds.has(user.id):(user.is_active&&(!user.hire_date||user.hire_date<=monthEndDate))||attendanceIds.has(user.id)||contractIds.has(user.id));
+  return input.users.filter(user=>{
+    if(user.is_system_account)return false;
+    const intersects=Boolean(user.hire_date)&&user.hire_date!<=monthEndDate&&(!user.termination_date||user.termination_date>=start);
+    if(user.role==="owner"||user.role==="master")return contractIds.has(user.id);
+    return intersects||attendanceIds.has(user.id)||contractIds.has(user.id);
+  });
 }
 
 export function calculatePayrollBatch(input:BatchInput):PayrollRunEmployeeInput[]{
@@ -55,7 +60,7 @@ export function calculatePayrollBatch(input:BatchInput):PayrollRunEmployeeInput[
 
 function calculateEmployee(user:UserRow,records:AttendanceRow[],input:BatchInput):PayrollRunEmployeeInput{
   const contracts=input.contracts.filter(row=>row.userId===user.id);const schedules=input.schedules.filter(row=>row.userId===user.id);const items:PayrollRunItemInput[]=[];const reviews:PayrollRunReviewInput[]=[];const days:Record<string,unknown>[]=[];let recognizedMinutes=0,recognizedWorkdays=0,lateMinutes=0,earlyLeaveMinutes=0,overtimeCandidateMinutes=0;
-  const eligibleRecords=records.filter(row=>!user.hire_date||row.work_date>=user.hire_date).sort((a,b)=>a.work_date.localeCompare(b.work_date));
+  const eligibleRecords=records.filter(row=>(!user.hire_date||row.work_date>=user.hire_date)&&(!user.termination_date||row.work_date<=user.termination_date)).sort((a,b)=>a.work_date.localeCompare(b.work_date));
   if(contracts.length===0)reviews.push(review("NO_PAYROLL_CONTRACT",null,{userId:user.id,month:input.month}));
   for(const record of eligibleRecords){const date=record.work_date;const contractMatches=activeOn(contracts,date);const scheduleMatches=activeOn(schedules,date);const contract=contractMatches.length===1?contractMatches[0]:null;const schedule=scheduleMatches.length===1?scheduleMatches[0]:null;const settings=input.settingsByDate.get(date)??{revision:null,lateGraceMinutes:0,earlyLeaveGraceMinutes:0};
     const facts=normalizeAttendanceDayFacts({userId:user.id,businessDate:date,attendanceRecord:{id:Number(record.id),status:record.status,checkInAt:record.check_in_at,checkOutAt:record.check_out_at,approvalStatus:record.approval_status,storedLateMinutes:record.late_minutes,storedEarlyLeaveMinutes:record.early_leave_minutes,storedWorkMinutes:record.work_minutes},schedule,hireDate:user.hire_date,storeSettingsRevision:settings.revision,lateGraceMinutes:settings.lateGraceMinutes,earlyLeaveGraceMinutes:settings.earlyLeaveGraceMinutes});
@@ -101,7 +106,7 @@ function calculateEmployee(user:UserRow,records:AttendanceRow[],input:BatchInput
 export async function loadPayrollMonthSnapshot(month:string){
   const dates=payrollMonthDates(month);const start=dates[0],end=dates.at(-1)!;const nextMonth=new Date(`${start}T00:00:00Z`);nextMonth.setUTCMonth(nextMonth.getUTCMonth()+1);const endExclusive=nextMonth.toISOString().slice(0,10);
   const[userResult,attendanceResult,contractResult,scheduleResult,settingsResults]=await Promise.all([
-    supabaseServer.from("users").select("id,name,full_name,username,is_active,role,hire_date").order("id"),
+    supabaseServer.from("users").select("id,name,full_name,username,is_active,role,hire_date,termination_date,is_system_account").order("id"),
     supabaseServer.from("attendance_records").select("id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,updated_at").gte("work_date",start).lte("work_date",end),
     supabaseServer.from("payroll_contract_versions").select("id,user_id,pay_type,calculation_basis,base_salary,standard_workdays,standard_minutes_per_day,time_block_minutes,rounding_mode,late_adjustment_mode,early_leave_adjustment_mode,overtime_mode,paid_leave_mode,effective_from,effective_to,revision").lt("effective_from",endExclusive).or(`effective_to.is.null,effective_to.gt.${start}`),
     supabaseServer.from("employee_work_schedule_versions").select("id,user_id,start_time,end_time,unpaid_break_minutes,effective_from,effective_to,revision,change_reason").lt("effective_from",endExclusive).or(`effective_to.is.null,effective_to.gt.${start}`),

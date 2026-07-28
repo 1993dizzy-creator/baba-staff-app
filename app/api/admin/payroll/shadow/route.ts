@@ -28,7 +28,7 @@ export async function GET(request: Request) {
   const dates = monthDates(month);
   const start = dates[0]; const end = dates[dates.length - 1];
   const [userResult, recordResult, scheduleResult, contractResult, settingsResults] = await Promise.all([
-    supabaseServer.from("users").select("id,name,full_name,username,is_active,hire_date").eq("id", userId).maybeSingle(),
+    supabaseServer.from("users").select("id,name,full_name,username,is_active,hire_date,termination_date,is_system_account").eq("id", userId).eq("is_system_account",false).maybeSingle(),
     supabaseServer.from("attendance_records").select("id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,updated_at").eq("user_id", userId).gte("work_date", start).lte("work_date", end),
     supabaseServer.from("employee_work_schedule_versions").select("id,user_id,start_time,end_time,unpaid_break_minutes,effective_from,effective_to,revision,change_reason").eq("user_id", userId).lte("effective_from", end).or(`effective_to.is.null,effective_to.gt.${start}`),
     supabaseServer.from("payroll_contract_versions").select("id,user_id,pay_type,calculation_basis,base_salary,standard_workdays,standard_minutes_per_day,time_block_minutes,rounding_mode,late_adjustment_mode,early_leave_adjustment_mode,overtime_mode,paid_leave_mode,effective_from,effective_to,revision").eq("user_id", userId).lte("effective_from", end).or(`effective_to.is.null,effective_to.gt.${start}`),
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
   if (userResult.error || recordResult.error || scheduleResult.error || contractResult.error || settingsResults.some((item) => item.error)) return payrollJson({ ok: false, code: "PAYROLL_SHADOW_READ_FAILED" }, 500);
   if (!userResult.data) return payrollJson({ ok: false, code: "USER_NOT_FOUND" }, 404);
   const user = userResult.data;
-  const records = new Map((recordResult.data ?? []).map((row) => [row.work_date, row]));
+  const records = new Map((recordResult.data ?? []).filter(row=>(!user.hire_date||row.work_date>=user.hire_date)&&(!user.termination_date||row.work_date<=user.termination_date)).map((row) => [row.work_date, row]));
   const schedules = (scheduleResult.data ?? []).map((row) => mapSchedule(row as Record<string, unknown>));
   const contracts = (contractResult.data ?? []).map((row) => mapContract(row as Record<string, unknown>));
   const revisions = new Map(dates.map((date, index) => {

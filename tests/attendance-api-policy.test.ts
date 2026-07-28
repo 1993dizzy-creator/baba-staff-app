@@ -124,7 +124,8 @@ test("routes use the server actor and check logs never use request identity", ()
   }
   assert.match(users, /attendanceJson/);
   assert.match(records, /attendanceJson/);
-  assert.doesNotMatch(users, /password|gender|hire_date|full_name/);
+  assert.doesNotMatch(users, /password|gender|full_name/);
+  assert.match(users, /hire_date,termination_date,is_system_account/);
   assert.match(users, /birth_date/);
   assert.match(records, /resolveAttendanceRecordsPolicy/);
   assert.doesNotMatch(records, /select\("\*"\)/);

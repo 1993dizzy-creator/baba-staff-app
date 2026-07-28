@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { requireRole } from "@/lib/auth/server-auth";
+import { isDateKey, validateEmploymentDates } from "@/lib/employment/eligibility";
 
 type JsonObject = Record<string, unknown>;
 
@@ -14,9 +16,11 @@ type UserRow = {
   gender: string | null;
   birth_date: string | null;
   hire_date: string | null;
+  termination_date: string | null;
   work_start_time: string | null;
   work_end_time: string | null;
   is_active: boolean | null;
+  is_system_account: boolean;
 };
 
 const USER_SELECT = `
@@ -29,10 +33,12 @@ const USER_SELECT = `
   position,
   birth_date,
   hire_date,
+  termination_date,
   gender,
   work_start_time,
   work_end_time,
-  is_active
+  is_active,
+  is_system_account
 `;
 
 const ROLE_ORDER = new Map([
@@ -58,6 +64,7 @@ const ALLOWED_UPDATE_KEYS = new Set([
   "gender",
   "birth_date",
   "hire_date",
+  "termination_date",
   "work_start_time",
   "work_end_time",
   "is_active",
@@ -109,26 +116,6 @@ function getBlockedPositionError(lang: "ko" | "vi") {
     : "선택할 수 없는 직급입니다.";
 }
 
-async function getAdminActor(actorUsername: unknown) {
-  const username = normalizeText(actorUsername);
-
-  if (!username) return null;
-
-  const { data, error } = await supabaseServer
-    .from("users")
-    .select("id, username, role, is_active")
-    .eq("username", username)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Failed to verify admin actor: ${error.message}`);
-  }
-
-  if (data?.role !== "owner" && data?.role !== "master") return null;
-  return data;
-}
-
 function sortUsers(users: UserRow[]) {
   return [...users].sort((a, b) => {
     const aRank =
@@ -168,7 +155,7 @@ function normalizeUpdate(input: JsonObject) {
       return;
     }
 
-    if (key === "birth_date" || key === "hire_date") {
+    if (key === "birth_date" || key === "hire_date" || key === "termination_date") {
       update[key] = nullableDate(value);
       return;
     }
@@ -186,17 +173,11 @@ function normalizeUpdate(input: JsonObject) {
 
 export async function GET(req: Request) {
   try {
-    const { searchParams } = new URL(req.url);
-    const actor = await getAdminActor(searchParams.get("actorUsername"));
+    void req;
+    const auth = await requireRole(["owner", "master"]);
+    if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
 
-    if (!actor) {
-      return NextResponse.json(
-        { ok: false, error: "No permission" },
-        { status: 403 }
-      );
-    }
-
-    const { data, error } = await supabaseServer.from("users").select(USER_SELECT);
+    const { data, error } = await supabaseServer.from("users").select(USER_SELECT).eq("is_system_account", false);
 
     if (error) {
       throw new Error(`Failed to fetch users: ${error.message}`);
@@ -222,14 +203,8 @@ export async function GET(req: Request) {
 export async function PATCH(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as JsonObject;
-    const actor = await getAdminActor(body.actorUsername);
-
-    if (!actor) {
-      return NextResponse.json(
-        { ok: false, error: "No permission" },
-        { status: 403 }
-      );
-    }
+    const auth = await requireRole(["owner", "master"]);
+    if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
 
     const id = body.id;
     const lang = getLang(body.lang);
@@ -242,6 +217,19 @@ export async function PATCH(req: Request) {
     }
 
     const inputUpdates = (body.updates || {}) as JsonObject;
+    if (body.action === "rehire") {
+      const rehireDate = body.rehireDate;
+      if (body.confirmPreviousPayrollCompleted !== true || !isDateKey(rehireDate)) {
+        return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng xác nhận và nhập ngày làm lại hợp lệ." : "확인 후 올바른 복귀일을 입력해주세요." }, { status: 400 });
+      }
+      const { data: target } = await supabaseServer.from("users").select("id,is_active,termination_date,is_system_account").eq("id", id).maybeSingle();
+      if (!target || target.is_system_account || target.is_active !== false || !target.termination_date) {
+        return NextResponse.json({ ok: false, error: lang === "vi" ? "Không thể xử lý làm lại cho tài khoản này." : "이 계정은 복귀 처리할 수 없습니다." }, { status: 409 });
+      }
+      const { data, error } = await supabaseServer.from("users").update({ hire_date: rehireDate, termination_date: null, is_active: true }).eq("id", id).eq("is_system_account", false).select(USER_SELECT).single();
+      if (error) throw new Error(`Failed to rehire user: ${error.message}`);
+      return NextResponse.json({ ok: true, user: data as UserRow });
+    }
     const requestedRole = normalizeText(inputUpdates.role);
 
     if (BLOCKED_FORM_ROLES.has(requestedRole)) {
@@ -273,7 +261,7 @@ export async function PATCH(req: Request) {
 
     const { data: target, error: targetError } = await supabaseServer
       .from("users")
-      .select("id, role")
+      .select("id, role, hire_date, termination_date, is_system_account")
       .eq("id", id)
       .maybeSingle();
 
@@ -281,7 +269,7 @@ export async function PATCH(req: Request) {
       throw new Error(`Failed to fetch target user: ${targetError.message}`);
     }
 
-    if (!target) {
+    if (!target || target.is_system_account) {
       return NextResponse.json(
         { ok: false, error: "User not found" },
         { status: 404 }
@@ -298,10 +286,19 @@ export async function PATCH(req: Request) {
       );
     }
 
+    const employment = {
+      hire_date: Object.prototype.hasOwnProperty.call(update, "hire_date") ? update.hire_date as string | null : target.hire_date,
+      termination_date: Object.prototype.hasOwnProperty.call(update, "termination_date") ? update.termination_date as string | null : target.termination_date,
+    };
+    if (!validateEmploymentDates(employment)) {
+      return NextResponse.json({ ok: false, error: lang === "vi" ? "Ngày nghỉ việc không thể sớm hơn ngày vào làm." : "퇴사일은 입사일보다 빠를 수 없습니다." }, { status: 400 });
+    }
+
     const { data, error } = await supabaseServer
       .from("users")
       .update(update)
       .eq("id", id)
+      .eq("is_system_account", false)
       .select(USER_SELECT)
       .single();
 

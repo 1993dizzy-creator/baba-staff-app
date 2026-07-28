@@ -10,6 +10,7 @@ import { useLanguage } from "@/lib/language-context";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ui } from "@/lib/styles/ui";
 import { adminUsersText } from "@/lib/text";
+import { attendanceFetch } from "@/lib/auth/client-session";
 
 type UserRow = {
   id: number | string;
@@ -22,6 +23,7 @@ type UserRow = {
   gender: string | null;
   birth_date: string | null;
   hire_date: string | null;
+  termination_date: string | null;
   work_start_time: string | null;
   work_end_time: string | null;
   is_active: boolean | null;
@@ -236,16 +238,20 @@ function UserNav({ active }: { active: "list" | "create" }) {
 function UserCard({
   user,
   onSave,
+  onRehire,
   isSaving,
 }: {
   user: UserRow;
   onSave: (user: UserRow, draft: UserRow) => void;
+  onRehire: (user: UserRow, rehireDate: string) => void;
   isSaving: boolean;
 }) {
   const { lang } = useLanguage();
   const text = adminUsersText[lang];
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<UserRow>(user);
+  const [rehireOpen, setRehireOpen] = useState(false);
+  const [rehireDate, setRehireDate] = useState("");
 
   useEffect(() => {
     setDraft(user);
@@ -281,6 +287,7 @@ function UserCard({
         </div>
         <div style={styles.badgeRow}>
           {workTime ? <span style={styles.workTimeText}>{workTime}</span> : null}
+          {user.termination_date ? <span style={styles.lockedBadge}>{text.terminatedOn} {user.termination_date}</span> : null}
           {isMasterUser ? (
             <span style={styles.lockedBadge}>{text.cannotEdit}</span>
           ) : null}
@@ -380,6 +387,14 @@ function UserCard({
               style={styles.input}
             />
           </Field>
+          <Field label={text.terminationDate}>
+            <input
+              type="date"
+              value={draft.termination_date || ""}
+              onChange={(event) => update("termination_date", emptyToNull(event.target.value))}
+              style={styles.input}
+            />
+          </Field>
           <Field label={text.workStartTime}>
             <input
               type="time"
@@ -428,6 +443,16 @@ function UserCard({
               {isSaving ? text.saving : text.save}
             </button>
           </div>
+          {user.is_active === false && user.termination_date ? (
+            <div style={{...styles.notice, gridColumn: "1 / -1"}}>
+              <button type="button" style={styles.secondaryButton} onClick={() => setRehireOpen(current => !current)}>{text.rehire}</button>
+              {rehireOpen ? <div style={{display:"grid",gap:8,marginTop:8}}>
+                <p style={{margin:0,fontSize:12,lineHeight:1.5}}>{text.rehireWarning}</p>
+                <Field label={text.rehireDate}><input type="date" value={rehireDate} onChange={event=>setRehireDate(event.target.value)} style={styles.input}/></Field>
+                <button type="button" disabled={!rehireDate||isSaving} style={styles.primaryButton} onClick={()=>onRehire(user,rehireDate)}>{text.rehire}</button>
+              </div> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </article>
@@ -449,7 +474,6 @@ export default function AdminUsersPage() {
   const router = useRouter();
   const [checked, setChecked] = useState(false);
   const [canAccess, setCanAccess] = useState(false);
-  const [actorUsername, setActorUsername] = useState("");
   const [users, setUsers] = useState<UserRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [savingId, setSavingId] = useState<number | string | null>(null);
@@ -462,12 +486,11 @@ export default function AdminUsersPage() {
       return;
     }
     setCanAccess(isAdmin(user));
-    setActorUsername(user?.username || "");
     setChecked(true);
   }, [router]);
 
   useEffect(() => {
-    if (!checked || !canAccess || !actorUsername) return;
+    if (!checked || !canAccess) return;
 
     let cancelled = false;
 
@@ -476,10 +499,7 @@ export default function AdminUsersPage() {
       setMessage("");
 
       try {
-        const res = await fetch(
-          `/api/admin/users?actorUsername=${encodeURIComponent(actorUsername)}`,
-          { cache: "no-store" }
-        );
+        const res = await attendanceFetch("/api/admin/users", { cache: "no-store" });
         const result = (await res.json()) as UsersResponse;
 
         if (!res.ok || !result.ok) {
@@ -505,7 +525,7 @@ export default function AdminUsersPage() {
     return () => {
       cancelled = true;
     };
-  }, [actorUsername, canAccess, checked, text.loadFailed]);
+  }, [canAccess, checked, text.loadFailed]);
 
   const activeCount = useMemo(
     () => users.filter((user) => user.is_active !== false).length,
@@ -529,11 +549,10 @@ export default function AdminUsersPage() {
     setMessage("");
 
     try {
-      const res = await fetch("/api/admin/users", {
+      const res = await attendanceFetch("/api/admin/users", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          actorUsername,
           lang,
           id: original.id,
           updates: {
@@ -545,6 +564,7 @@ export default function AdminUsersPage() {
             gender: draft.gender,
             birth_date: draft.birth_date,
             hire_date: draft.hire_date,
+            termination_date: draft.termination_date,
             work_start_time: draft.work_start_time,
             work_end_time: draft.work_end_time,
             is_active: draft.is_active !== false,
@@ -566,6 +586,18 @@ export default function AdminUsersPage() {
     } finally {
       setSavingId(null);
     }
+  }
+
+  async function rehireUser(user: UserRow, rehireDate: string) {
+    if (!window.confirm(text.rehireWarning)) return;
+    setSavingId(user.id); setMessage("");
+    try {
+      const res = await attendanceFetch("/api/admin/users", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"rehire",id:user.id,lang,rehireDate,confirmPreviousPayrollCompleted:true}) });
+      const result=(await res.json()) as UsersResponse;
+      if(!res.ok||!result.ok||!result.user)throw new Error(result.error||text.saveFailed);
+      setUsers(current=>current.map(item=>item.id===user.id?result.user!:item)); setMessage(text.saveSuccess);
+    } catch(error) { setMessage(error instanceof Error?error.message:text.saveFailed); }
+    finally { setSavingId(null); }
   }
 
   if (checked && !canAccess) {
@@ -602,6 +634,7 @@ export default function AdminUsersPage() {
             users={group.users}
             text={text}
             onSave={saveUser}
+            onRehire={rehireUser}
             savingId={savingId}
           />
         ))}
@@ -615,12 +648,14 @@ function UserGroup({
   users,
   text,
   onSave,
+  onRehire,
   savingId,
 }: {
   groupKey: UserGroupKey;
   users: UserRow[];
   text: AdminUsersPageText;
   onSave: (user: UserRow, draft: UserRow) => void;
+  onRehire: (user: UserRow, rehireDate: string) => void;
   savingId: number | string | null;
 }) {
   const meta = getGroupMeta(groupKey, text);
@@ -647,6 +682,7 @@ function UserGroup({
             key={user.id}
             user={user}
             onSave={onSave}
+            onRehire={onRehire}
             isSaving={savingId === user.id}
           />
         ))}

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { requireRole } from "@/lib/auth/server-auth";
 
 type JsonObject = Record<string, unknown>;
 
@@ -13,10 +14,12 @@ const USER_SELECT = `
   position,
   birth_date,
   hire_date,
+  termination_date,
   gender,
   work_start_time,
   work_end_time,
-  is_active
+  is_active,
+  is_system_account
 `;
 
 const ALLOWED_ROLES = new Set(["owner", "manager", "leader", "staff"]);
@@ -58,37 +61,11 @@ function getBlockedPositionError(lang: "ko" | "vi") {
     : "선택할 수 없는 직급입니다.";
 }
 
-async function getAdminActor(actorUsername: unknown) {
-  const username = normalizeText(actorUsername);
-
-  if (!username) return null;
-
-  const { data, error } = await supabaseServer
-    .from("users")
-    .select("id, username, role, is_active")
-    .eq("username", username)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Failed to verify admin actor: ${error.message}`);
-  }
-
-  if (data?.role !== "owner" && data?.role !== "master") return null;
-  return data;
-}
-
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as JsonObject;
-    const actor = await getAdminActor(body.actorUsername);
-
-    if (!actor) {
-      return NextResponse.json(
-        { ok: false, error: "No permission" },
-        { status: 403 }
-      );
-    }
+    const auth = await requireRole(["owner", "master"]);
+    if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
 
     const username = normalizeText(body.username);
     const password = normalizeText(body.password);
@@ -155,9 +132,11 @@ export async function POST(req: Request) {
         gender: nullableText(body.gender),
         birth_date: nullableDate(body.birth_date),
         hire_date: nullableDate(body.hire_date),
+        termination_date: null,
         work_start_time: nullableTime(body.work_start_time),
         work_end_time: nullableTime(body.work_end_time),
         is_active: body.is_active === false ? false : true,
+        is_system_account: false,
       })
       .select(USER_SELECT)
       .single();

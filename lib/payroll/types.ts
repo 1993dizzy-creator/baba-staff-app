@@ -1,4 +1,4 @@
-export const PAYROLL_AUTOMATION_START_DATE = "2026-08-01";
+export const PAYROLL_AUTOMATION_START_DATE = "2026-07-01";
 export const PAYROLL_FACTS_ENGINE_VERSION = "attendance-facts-v1";
 export const PAYROLL_PROJECTION_ENGINE_VERSION = "payroll-projection-v1";
 

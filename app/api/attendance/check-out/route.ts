@@ -90,9 +90,9 @@ export async function POST(req: Request) {
 
     const { data: user, error: userError } = await supabaseServer
       .from("users")
-      .select("id, work_start_time, work_end_time")
+      .select("id, work_start_time, work_end_time, is_system_account")
       .eq("id", userId)
-      .eq("is_active", true)
+      .eq("is_system_account", false)
       .maybeSingle();
 
     if (userError) {

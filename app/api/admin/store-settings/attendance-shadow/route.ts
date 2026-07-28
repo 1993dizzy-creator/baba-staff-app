@@ -152,8 +152,9 @@ export async function POST(request: Request) {
       records.length
         ? supabaseServer
             .from("users")
-            .select("id,name,username,work_start_time,work_end_time")
+            .select("id,name,username,work_start_time,work_end_time,is_system_account")
             .in("id", [...new Set(records.map((record) => record.user_id))])
+            .eq("is_system_account", false)
         : Promise.resolve({ data: [], error: null }),
       recordIds.length
         ? supabaseServer

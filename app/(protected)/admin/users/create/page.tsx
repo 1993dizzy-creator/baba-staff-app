@@ -9,6 +9,7 @@ import { useLanguage } from "@/lib/language-context";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ui } from "@/lib/styles/ui";
 import { adminUsersText } from "@/lib/text";
+import { attendanceFetch } from "@/lib/auth/client-session";
 
 type CreateResponse = {
   ok: boolean;
@@ -148,7 +149,6 @@ export default function AdminUserCreatePage() {
   const router = useRouter();
   const [checked, setChecked] = useState(false);
   const [canAccess, setCanAccess] = useState(false);
-  const [actorUsername, setActorUsername] = useState("");
   const [form, setForm] = useState<FormState>(initialForm);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -165,7 +165,6 @@ export default function AdminUserCreatePage() {
       return;
     }
     setCanAccess(isAdmin(user));
-    setActorUsername(user?.username || "");
     setChecked(true);
   }, [router]);
 
@@ -183,11 +182,10 @@ export default function AdminUserCreatePage() {
     setMessage("");
 
     try {
-      const res = await fetch("/api/admin/users/create", {
+      const res = await attendanceFetch("/api/admin/users/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          actorUsername,
           lang,
           ...form,
         }),

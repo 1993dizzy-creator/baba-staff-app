@@ -7,7 +7,7 @@ const labels={
 export function payrollLabel(lang:PayrollUiLang,value:string){const key=value==="paid"?"paid_status":value;return(labels[lang] as Record<string,string>)[key]??value;}
 export function money(value:number|null|undefined){return `${Number(value??0).toLocaleString("en-US")} VND`;}
 export function minutesLabel(lang:PayrollUiLang,value:number){return value>0?`${value.toLocaleString()}${lang==="vi"?" phút":"분"}`:lang==="vi"?"Không có":"없음";}
-export function monthLabel(lang:PayrollUiLang,value:string){const[y,m]=value.slice(0,7).split("-");return lang==="vi"?`Bảng lương tháng ${Number(m)}/${y}`:`${y}년 ${Number(m)}월 급여`;}
+export function monthLabel(lang:PayrollUiLang,value:string){const[y,m]=value.slice(0,7).split("-");return lang==="vi"?`Phần công tháng ${Number(m)}/${y}`:`${y}년 ${Number(m)}월 근무분`;}
 export function dateLabel(lang:PayrollUiLang,value:string){const[y,m,d]=value.slice(0,10).split("-");return lang==="vi"?`${Number(d)}/${Number(m)}/${y}`:`${y}년 ${Number(m)}월 ${Number(d)}일`;}
 export const categoryLabels={ko:{base_work:"기본 근무",paid_leave:"유급휴무",overtime:"추가근무",late_deduction:"지각 공제",early_leave_deduction:"조퇴 공제",incentive:"인센티브",meal:"식대",transport:"교통비",housing:"주거수당",insurance_tax:"보험·세금",advance:"가불",penalty:"벌금",other_addition:"기타 추가",other_deduction:"기타 공제"},vi:{base_work:"Lương cơ bản",paid_leave:"Nghỉ có lương",overtime:"Làm thêm giờ",late_deduction:"Trừ đi muộn",early_leave_deduction:"Trừ về sớm",incentive:"Thưởng",meal:"Tiền ăn",transport:"Đi lại",housing:"Nhà ở",insurance_tax:"Bảo hiểm·thuế",advance:"Tạm ứng",penalty:"Phạt",other_addition:"Cộng khác",other_deduction:"Trừ khác"}} as const;
 export function categoryLabel(lang:PayrollUiLang,value:string){return(categoryLabels[lang] as Record<string,string>)[value]??value;}

@@ -45,12 +45,14 @@ type Feedback = {
 const usersRequests = new Map<string, Promise<UserRow[]>>();
 const leaveRecordRequests = new Map<string, Promise<AttendanceRecord[]>>();
 
-function requestUsers() {
-  const requestKey = "active-attendance-users";
+function requestUsers(date: Date) {
+  const { startDate } = getMonthRange(date);
+  const month = startDate.slice(0, 7);
+  const requestKey = `attendance-users:${month}`;
   const existing = usersRequests.get(requestKey);
   if (existing) return existing;
 
-  const request = attendanceFetch("/api/attendance/users")
+  const request = attendanceFetch(`/api/attendance/users?mode=month&month=${month}`)
     .then(async (response) => {
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.ok) {
@@ -245,7 +247,7 @@ export default function AttendanceLeavePage() {
   const loadUsers = useCallback(async () => {
     setIsLoadingUsers(true);
     try {
-      const data = await requestUsers();
+      const data = await requestUsers(calendarDate);
       if (mountedRef.current) setUsers(data);
     } catch (error) {
       console.error("fetch users error:", error);
@@ -255,7 +257,7 @@ export default function AttendanceLeavePage() {
     } finally {
       if (mountedRef.current) setIsLoadingUsers(false);
     }
-  }, [copy.loadError]);
+  }, [calendarDate, copy.loadError]);
 
   const loadLeaveRecords = useCallback(
     async (date: Date, options?: { background?: boolean }) => {
