@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+// @ts-expect-error Node test execution needs explicit TypeScript extensions.
+import { sanitizePublicEmployeeUser } from "../lib/employee-level/public-user.ts";
 
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "utf8");
 
@@ -67,7 +69,7 @@ test("level audit is exactly conditional on a real allowed base-date change", ()
 
 test("owner and master inclusion is stored atomically by the follow-up RPC", () => {
   const route = read("app/api/admin/users/route.ts");
-  const sql = read("supabase/migrations/20260729222342_add_manual_owner_levels_and_zero_based_audit.sql");
+  const sql = read("supabase/migrations/20260729160628_add_manual_owner_levels_and_zero_based_audit.sql");
   assert.match(route, /employee_update_profile_and_level_v3/);
   assert.match(route, /p_level_program_enabled: levelProgramEnabled/);
   assert.match(sql, /employee_update_profile_and_level_v3/);
@@ -81,6 +83,83 @@ test("owner and master inclusion is stored atomically by the follow-up RPC", () 
   assert.match(sql, /security definer/);
   assert.match(sql, /revoke all on function[\s\S]*from public, anon, authenticated/);
   assert.match(sql, /grant execute[\s\S]*to service_role/);
+});
+
+test("v3 work-time hotfix preserves the function except for text-compatible assignments", () => {
+  const original = read("supabase/migrations/20260729160628_add_manual_owner_levels_and_zero_based_audit.sql");
+  const hotfix = read("supabase/migrations/20260729162803_fix_employee_profile_v3_text_work_times.sql");
+  const functionSql = (sql: string) => {
+    const start = sql.indexOf("create or replace function public.employee_update_profile_and_level_v3");
+    const end = sql.indexOf("\n$$;", start) + 4;
+    return sql.slice(start, end);
+  };
+  const expected = functionSql(original)
+    .replace("nullif(p_updates ->> 'work_start_time', '')::time", "nullif(p_updates ->> 'work_start_time', '')")
+    .replace("nullif(p_updates ->> 'work_end_time', '')::time", "nullif(p_updates ->> 'work_end_time', '')");
+
+  assert.equal(functionSql(hotfix), expected);
+  assert.doesNotMatch(hotfix, /work_(?:start|end)_time[\s\S]{0,100}::time/);
+  assert.match(hotfix, /security definer/);
+  assert.match(hotfix, /set search_path = pg_catalog, public/);
+  assert.match(hotfix, /revoke all on function[\s\S]*from public, anon, authenticated/);
+  assert.match(hotfix, /grant execute[\s\S]*to service_role/);
+});
+
+test("v3 security hotfix only removes password from the RPC return", () => {
+  const workTimeHotfix = read("supabase/migrations/20260729162803_fix_employee_profile_v3_text_work_times.sql");
+  const securityHotfix = read("supabase/migrations/20260729233229_remove_password_from_employee_profile_v3.sql");
+  const functionSql = (sql: string) => {
+    const start = sql.indexOf("create or replace function public.employee_update_profile_and_level_v3");
+    const end = sql.indexOf("\n$$;", start) + 4;
+    return sql.slice(start, end);
+  };
+
+  assert.equal(
+    functionSql(securityHotfix),
+    functionSql(workTimeHotfix).replace(
+      "return to_jsonb(v_after);",
+      "return to_jsonb(v_after) - 'password';"
+    )
+  );
+  assert.match(securityHotfix, /security definer/);
+  assert.match(securityHotfix, /set search_path = pg_catalog, public/);
+  assert.match(securityHotfix, /revoke all on function[\s\S]*from public, anon, authenticated/);
+  assert.match(securityHotfix, /grant execute[\s\S]*to service_role/);
+});
+
+test("admin user response sanitizer drops password and every unexpected field", () => {
+  const safe = sanitizePublicEmployeeUser({
+    id: 7,
+    username: "employee",
+    name: "Employee",
+    full_name: null,
+    role: "staff",
+    part: "hall",
+    position: "staff",
+    gender: null,
+    birth_date: null,
+    hire_date: "2026-01-01",
+    termination_date: null,
+    work_start_time: "09:00",
+    work_end_time: "18:00",
+    is_active: true,
+    is_system_account: false,
+    payroll_eligible_override: null,
+    level_program_enabled: null,
+    level_base_date_override: null,
+    password: "must-not-leak",
+    private_token: "must-not-leak-either",
+  });
+
+  assert.equal(safe.username, "employee");
+  assert.equal(safe.hire_date, "2026-01-01");
+  assert.equal(Object.prototype.hasOwnProperty.call(safe, "password"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(safe, "private_token"), false);
+
+  const route = read("app/api/admin/users/route.ts");
+  assert.match(route, /const USER_SELECT = `/);
+  assert.match(route, /sanitizePublicEmployeeUser\(data\)/);
+  assert.doesNotMatch(route, /withEmployeeLevelInfo\(data as UserRow/);
 });
 
 test("employee cards use the shared theme badge and preserve compact mobile layout", () => {

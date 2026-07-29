@@ -11,29 +11,14 @@ import {
   isEmployeeLevelManualRole,
   type EmployeeLevelValidationCode,
 } from "@/lib/employee-level/types";
+import {
+  sanitizePublicEmployeeUser,
+  type PublicEmployeeUserRow,
+} from "@/lib/employee-level/public-user";
 
 type JsonObject = Record<string, unknown>;
 
-type UserRow = {
-  id: number | string;
-  username: string;
-  name: string | null;
-  full_name: string | null;
-  role: string | null;
-  part: string | null;
-  position: string | null;
-  gender: string | null;
-  birth_date: string | null;
-  hire_date: string | null;
-  termination_date: string | null;
-  work_start_time: string | null;
-  work_end_time: string | null;
-  is_active: boolean | null;
-  is_system_account: boolean;
-  payroll_eligible_override: boolean | null;
-  level_program_enabled: boolean | null;
-  level_base_date_override: string | null;
-};
+type UserRow = PublicEmployeeUserRow;
 
 const USER_SELECT = `
   id,
@@ -241,7 +226,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      users: sortUsers((data || []) as UserRow[]).map((user) => withEmployeeLevelInfo(user, getVietnamDateKey())),
+      users: sortUsers((data || []).map(sanitizePublicEmployeeUser)).map((user) => withEmployeeLevelInfo(user, getVietnamDateKey())),
     });
   } catch (error) {
     console.error("[ADMIN_USERS_GET_ERROR]", error);
@@ -291,7 +276,10 @@ export async function PATCH(req: Request) {
         p_previous_level: previousInfo.level,
       });
       if (error) throw new Error(`Failed to rehire user: ${error.message}`);
-      return NextResponse.json({ ok: true, user: withEmployeeLevelInfo(data as UserRow, today) });
+      return NextResponse.json({
+        ok: true,
+        user: withEmployeeLevelInfo(sanitizePublicEmployeeUser(data), today),
+      });
     }
     const requestedRole = normalizeText(inputUpdates.role);
 
@@ -484,7 +472,10 @@ export async function PATCH(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      user: withEmployeeLevelInfo(data as UserRow, getVietnamDateKey()),
+      user: withEmployeeLevelInfo(
+        sanitizePublicEmployeeUser(data),
+        getVietnamDateKey()
+      ),
     });
   } catch (error) {
     console.error("[ADMIN_USERS_PATCH_ERROR]", error);

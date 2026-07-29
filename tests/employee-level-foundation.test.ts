@@ -198,7 +198,7 @@ test("all level themes are complete, unique, and negotiation-neutral", () => {
 
 test("zero-based audit constraints are added by a follow-up migration", () => {
   const migration = fs.readFileSync(
-    path.join(process.cwd(), "supabase/migrations/20260729222342_add_manual_owner_levels_and_zero_based_audit.sql"),
+    path.join(process.cwd(), "supabase/migrations/20260729160628_add_manual_owner_levels_and_zero_based_audit.sql"),
     "utf8"
   );
   assert.match(migration, /previous_level between 0 and 7/);
