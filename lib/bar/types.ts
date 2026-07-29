@@ -1,10 +1,12 @@
 import type { BarColorKey } from "@/lib/bar/colors";
+import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 
 export type BarAssignee = {
   id: number;
   name: string;
   isActive: boolean;
   colorKey: BarColorKey | null;
+  levelInfo: EmployeeLevelInfo;
 };
 
 export type BarZoneRecord = {
@@ -30,6 +32,7 @@ export type BarStaffOption = {
   role: string;
   part: string;
   colorKey: BarColorKey | null;
+  levelInfo: EmployeeLevelInfo;
 };
 
 export type BarActivityLog = {

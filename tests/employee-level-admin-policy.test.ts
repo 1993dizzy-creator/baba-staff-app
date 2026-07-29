@@ -107,7 +107,7 @@ test("v3 work-time hotfix preserves the function except for text-compatible assi
 
 test("v3 security hotfix only removes password from the RPC return", () => {
   const workTimeHotfix = read("supabase/migrations/20260729162803_fix_employee_profile_v3_text_work_times.sql");
-  const securityHotfix = read("supabase/migrations/20260729233229_remove_password_from_employee_profile_v3.sql");
+  const securityHotfix = read("supabase/migrations/20260729163753_remove_password_from_employee_profile_v3.sql");
   const functionSql = (sql: string) => {
     const start = sql.indexOf("create or replace function public.employee_update_profile_and_level_v3");
     const end = sql.indexOf("\n$$;", start) + 4;
@@ -166,7 +166,9 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   const page = read("app/(protected)/admin/users/page.tsx");
   const route = read("app/api/admin/users/route.ts");
   const badge = read("components/employee/EmployeeLevelBadge.tsx");
-  assert.match(page, /EmployeeLevelBadge/);
+  const nameWithLevel = read("components/employee/EmployeeNameWithLevel.tsx");
+  assert.match(page, /EmployeeNameWithLevel/);
+  assert.match(nameWithLevel, /EmployeeLevelBadge/);
   assert.match(page, /isEmployeeLevelEligibleRole\(user\.role, user\.level_program_enabled\)/);
   assert.match(route, /isEmployeeLevelEligibleRole\(resultingRole, levelProgramEnabled\)/);
   assert.match(page, /baseDateMode: "hire_date" \| "override"/);
@@ -179,7 +181,7 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   assert.match(page, /levelProgramEnabled: levelDraft\.included/);
   assert.match(page, /isEmployeeLevelManualRole\(draft\.role\) && !levelDraft\.included[\s\S]*\? null/);
   assert.match(route, /levelProgramEnabled !== true[\s\S]*levelBaseDateOverride = null/);
-  assert.match(page, /user\.levelInfo\.level !== null/);
+  assert.match(nameWithLevel, /levelInfo\?\.eligible === true && levelInfo\.level !== null/);
   assert.match(badge, /EMPLOYEE_LEVEL_THEME\[level\]/);
   assert.match(badge, /minWidth: 16/);
   assert.match(badge, /height: 16/);

@@ -4,6 +4,8 @@ import { BAR_ZONE_CODES } from "@/lib/bar/zone-map";
 import { isBarColorKey } from "@/lib/bar/colors";
 import type { BarZoneRecord } from "@/lib/bar/types";
 import { supabaseServer } from "@/lib/supabase/server";
+import { getVietnamDateKey } from "@/lib/employment/termination-policy";
+import { withEmployeeLevelInfo, type EmployeeLevelUser } from "@/lib/employee-level/server";
 
 type ZoneRow = {
   id: number;
@@ -34,7 +36,7 @@ export async function getBarZones(): Promise<BarZoneRecord[]> {
   const assigneeIds = [...new Set(rows.flatMap((row) => row.assignee_user_id == null ? [] : [row.assignee_user_id]))];
   const [usersResult, profilesResult] = await Promise.all([
     assigneeIds.length
-      ? supabaseServer.from("users").select("id, username, name, full_name, is_active").in("id", assigneeIds)
+      ? supabaseServer.from("users").select("id, username, name, full_name, role, hire_date, termination_date, is_active, is_system_account, level_program_enabled, level_base_date_override").in("id", assigneeIds)
       : Promise.resolve({ data: [], error: null }),
     assigneeIds.length
       ? supabaseServer.from("bar_staff_profiles").select("user_id, color_key").in("user_id", assigneeIds)
@@ -45,6 +47,7 @@ export async function getBarZones(): Promise<BarZoneRecord[]> {
 
   const users = new Map((usersResult.data ?? []).map((user) => [Number(user.id), user]));
   const colors = new Map((profilesResult.data ?? []).map((profile) => [Number(profile.user_id), isBarColorKey(profile.color_key) ? profile.color_key : null]));
+  const levelAsOfDate = getVietnamDateKey();
   const signedUrls = new Map<string, string>();
   await Promise.all(rows.flatMap((row) => !row.image_path ? [] : [
     supabaseServer.storage.from("bar-zone-images").createSignedUrl(row.image_path, 3600).then(({ data: signed, error: signedError }) => {
@@ -72,6 +75,7 @@ export async function getBarZones(): Promise<BarZoneRecord[]> {
         name: user.name || user.full_name || user.username,
         isActive: user.is_active === true,
         colorKey: colors.get(Number(user.id)) ?? null,
+        levelInfo: withEmployeeLevelInfo(user as EmployeeLevelUser, levelAsOfDate).levelInfo,
       } : null,
       isActive: row.is_active,
       version: row.version,

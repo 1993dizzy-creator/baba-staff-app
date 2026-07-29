@@ -9,6 +9,7 @@ import { formatBarDateTime } from "@/lib/bar/log-format";
 import { ui } from "@/lib/styles/ui";
 import BarZoneRecentLogs from "@/components/bar/BarZoneRecentLogs";
 import ZoneKeepingSummary from "@/components/bar/keeping/ZoneKeepingSummary";
+import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 
 type Text = {
   selectZone: string;
@@ -107,7 +108,7 @@ export default function BarZoneDetail({ zone, data, lang, text, canEdit, onEdit,
           {data?.assignee ? (
             <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 7, color: "#374151", fontSize: 13, lineHeight: 1.4 }}>
               <span style={{ color: "#6b7280", fontSize: 11, fontWeight: 700 }}>{text.assignee}</span>
-              <strong style={{ fontWeight: 700 }}>{data.assignee.name}</strong>
+              <EmployeeNameWithLevel name={data.assignee.name} levelInfo={data.assignee.levelInfo} lang={lang} nameStyle={{ fontWeight: 700 }} />
               {!data.assignee.isActive ? <span style={{ padding: "3px 7px", borderRadius: 999, background: "#fee2e2", color: "#991b1b", fontSize: 10, fontWeight: 700 }}>{text.inactiveEmployee}</span> : null}
             </div>
           ) : null}

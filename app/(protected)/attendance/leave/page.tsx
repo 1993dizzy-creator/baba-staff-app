@@ -15,6 +15,8 @@ import { getPartMeta, getPartKey } from "@/lib/common/parts";
 import { getPositionRank } from "@/lib/common/positions";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { attendanceFetch } from "@/lib/auth/client-session";
+import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
+import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 
 type UserRow = {
   id: string | number;
@@ -23,6 +25,7 @@ type UserRow = {
   part: string | null;
   position: string | null;
   is_active: boolean;
+  levelInfo?: EmployeeLevelInfo;
 };
 
 type AttendanceRecord = {
@@ -887,7 +890,7 @@ export default function AttendanceLeavePage() {
                         >
                           {meta.emoji}
                         </span>
-                        <span style={userNameStyle}>{index + 1}. {user.name}</span>
+                        <EmployeeNameWithLevel name={`${index + 1}. ${user.name}`} levelInfo={user.levelInfo} lang={lang} nameStyle={userNameStyle} />
                         <span style={userMetaStyle}>
                           {t.positions?.[user.position as keyof typeof t.positions] || user.position || user.username}
                         </span>
@@ -1009,7 +1012,7 @@ export default function AttendanceLeavePage() {
 
                   {group.items.map((item) => (
                     <div key={item.user.id} style={summaryRowStyle}>
-                      <span style={userNameStyle}>{item.user.name}</span>
+                      <EmployeeNameWithLevel name={item.user.name} levelInfo={item.user.levelInfo} lang={lang} nameStyle={userNameStyle} />
                       <span style={userMetaStyle}>
                         {t.positions?.[item.user.position as keyof typeof t.positions] || item.user.position || item.user.username}
                       </span>

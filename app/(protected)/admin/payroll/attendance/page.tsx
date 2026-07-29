@@ -11,6 +11,8 @@ import { payrollText } from "@/lib/text/payroll";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
 import { getPositionRank } from "@/lib/common/positions";
 import { attendanceFetch } from "@/lib/auth/client-session";
+import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
+import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 
 
 type UserRow = {
@@ -22,6 +24,7 @@ type UserRow = {
     position: string | null;
     birth_date: string | null;
     is_active: boolean;
+    levelInfo: EmployeeLevelInfo;
 };
 
 type AttendanceRecord = {
@@ -612,10 +615,7 @@ export default function AttendanceOverviewPage() {
                                                 style={staffSummaryButtonStyle}
                                             >
                                                 <div style={staffLeftStyle}>
-                                                    <span style={staffNameStyle}>
-                                                        {user.name}
-                                                        {age ? ` (${age})` : ""}
-                                                    </span>
+                                                    <EmployeeNameWithLevel name={`${user.name}${age ? ` (${age})` : ""}`} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} />
                                                     <span style={staffMetaStyle}>
                                                         {user.position
                                                             ? t.positions?.[user.position as keyof typeof t.positions] || user.position

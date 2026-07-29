@@ -25,6 +25,8 @@ import type {
 } from "@/lib/attendance/shadow";
 import { getCompletedBusinessDateRange } from "@/lib/attendance/shadow-period";
 import { ui } from "@/lib/styles/ui";
+import { formatEmployeeNameWithLevel } from "@/lib/employee-level/display";
+import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 
 type Tab = "hours" | "attendance" | "shadow";
 type ApiData = {
@@ -35,7 +37,7 @@ type ApiData = {
     posShadow: boolean;
   };
 };
-type UserOption = { id: number; name: string; username: string };
+type UserOption = { id: number; name: string; username: string; levelInfo: EmployeeLevelInfo };
 type ShadowData = {
   businessDate?: string;
   startBusinessDate: string;
@@ -1090,7 +1092,7 @@ function ShadowTab(props: {
               <option value="">{t.allEmployees}</option>
               {users.map((user) => (
                 <option key={user.id} value={user.id}>
-                  {user.name || user.username}
+                  {formatEmployeeNameWithLevel(user.name || user.username, user.levelInfo)}
                 </option>
               ))}
             </select>

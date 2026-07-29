@@ -6,6 +6,7 @@ import { BAR_COLORS, BAR_COLOR_KEYS, type BarColorKey } from "@/lib/bar/colors";
 import { BarImageCompressionError, compressBarZoneImage } from "@/lib/bar/image-compression";
 import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import type { BarStaffOption, BarZoneRecord } from "@/lib/bar/types";
+import { formatEmployeeNameWithLevel } from "@/lib/employee-level/display";
 
 type Labels = Record<
   | "editZone"
@@ -248,9 +249,9 @@ export default function BarZoneEditModal({ zone, staff, canAssign, lang, labels,
                 >
                   <option value="">{labels.noAssignee}</option>
                   {zone.assignee && !zone.assignee.isActive && !staff.some((person) => person.id === zone.assignee?.id) ? (
-                    <option value={zone.assignee.id} disabled>{zone.assignee.name} · {labels.inactiveEmployee}</option>
+                    <option value={zone.assignee.id} disabled>{formatEmployeeNameWithLevel(zone.assignee.name, zone.assignee.levelInfo)} · {labels.inactiveEmployee}</option>
                   ) : null}
-                  {staff.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
+                  {staff.map((person) => <option key={person.id} value={person.id}>{formatEmployeeNameWithLevel(person.name, person.levelInfo)}</option>)}
                 </select>
               </label>
 

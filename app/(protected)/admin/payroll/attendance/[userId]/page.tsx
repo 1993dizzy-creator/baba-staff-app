@@ -16,6 +16,8 @@ import {
     isOpenRecordUnresolved,
 } from "@/lib/attendance/time";
 import { attendanceFetch } from "@/lib/auth/client-session";
+import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
+import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 
 
 type UserRow = {
@@ -27,6 +29,7 @@ type UserRow = {
     birth_date: string | null;
     work_start_time: string | null;
     work_end_time: string | null;
+    levelInfo: EmployeeLevelInfo;
 };
 
 type AttendanceRecord = {
@@ -481,7 +484,7 @@ export default function AttendanceUserDetailPage() {
             <div style={headerCardStyle}>
                 <div style={headerTopRowStyle}>
                     <div style={headerIdentityStyle}>
-                        <div style={userNameStyle}>{user?.name || "-"}</div>
+                        <EmployeeNameWithLevel name={user?.name || "-"} levelInfo={user?.levelInfo} lang={lang} nameStyle={userNameStyle} />
                         <div style={userMetaStyle}>
                             {user?.position
                                 ? t.positions?.[user.position as keyof typeof t.positions] || user.position

@@ -14,6 +14,8 @@ import { getPartMeta, getPartKey } from "@/lib/common/parts";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { isLongShiftRecord } from "@/lib/attendance/time";
 import { attendanceFetch } from "@/lib/auth/client-session";
+import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
+import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 
 
 type UserRow = {
@@ -26,6 +28,7 @@ type UserRow = {
   is_active: boolean;
   work_start_time: string | null;
   work_end_time: string | null;
+  levelInfo: EmployeeLevelInfo;
 };
 
 type AttendanceRecord = {
@@ -554,7 +557,7 @@ export default function AttendanceStaffPage() {
                         style={staffSummaryButtonStyle}
                       >
                         <div style={staffLeftStyle}>
-                          <span style={staffNameStyle}>{user.name}</span>
+                          <EmployeeNameWithLevel name={user.name} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} />
                           <span style={staffMetaStyle}>
                             {user.position
                               ? t.positions?.[user.position as keyof typeof t.positions] || user.position
@@ -728,7 +731,7 @@ export default function AttendanceStaffPage() {
         <div style={modalOverlayStyle}>
           <div style={modalBoxStyle}>
             <div style={modalTitleStyle}>
-              {manualModal.user.name}{" "}
+              <EmployeeNameWithLevel name={manualModal.user.name} levelInfo={manualModal.user.levelInfo} lang={lang} nameStyle={modalTitleStyle} />{" "}
               {manualModal.type === "check_in"
                 ? t.checkInProcess
                 : manualModal.type === "check_out"

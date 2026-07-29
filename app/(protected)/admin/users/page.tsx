@@ -11,7 +11,7 @@ import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ui } from "@/lib/styles/ui";
 import { adminUsersText } from "@/lib/text";
 import { attendanceFetch } from "@/lib/auth/client-session";
-import EmployeeLevelBadge from "@/components/employee/EmployeeLevelBadge";
+import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import {
   isEmployeeLevelAutomaticRole,
   isEmployeeLevelEligibleRole,
@@ -307,10 +307,7 @@ function UserCard({
       <div style={styles.rowMain}>
         <div style={styles.rowText}>
           <span style={styles.rowTitle}>
-            {hasEmployeeLevel && user.levelInfo.eligible && user.levelInfo.level !== null ? (
-              <EmployeeLevelBadge level={user.levelInfo.level} negotiationEligible={user.levelInfo.negotiationEligible} lang={lang} />
-            ) : null}
-            <span style={styles.rowName}>{nameText}</span>
+            <EmployeeNameWithLevel name={nameText} levelInfo={user.levelInfo} lang={lang} nameStyle={styles.rowName} />
             <span style={styles.rowPosition}> · {positionText}</span>
           </span>
         </div>
