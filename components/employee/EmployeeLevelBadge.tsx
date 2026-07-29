@@ -17,11 +17,11 @@ export default function EmployeeLevelBadge({
       <span
         aria-label={lang === "vi" ? `Cấp nhân viên ${level}` : `직원 레벨 ${level}`}
         style={{
-          minWidth: 18,
-          height: 18,
-          padding: "0 4px",
+          minWidth: 16,
+          height: 16,
+          padding: "0 3px",
           boxSizing: "border-box",
-          borderRadius: 6,
+          borderRadius: 5,
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
@@ -29,8 +29,8 @@ export default function EmployeeLevelBadge({
           background: `linear-gradient(145deg, ${theme.backgroundColor}, ${theme.borderColor})`,
           color: theme.textColor,
           border: `1px solid ${theme.borderColor}`,
-          boxShadow: "0 1px 2px rgba(15, 23, 42, 0.12)",
-          fontSize: 10,
+          boxShadow: "0 1px 1px rgba(15, 23, 42, 0.08)",
+          fontSize: 9,
           fontWeight: 800,
           lineHeight: 1,
         }}
@@ -38,7 +38,7 @@ export default function EmployeeLevelBadge({
         {theme.shortLabel}
       </span>
       {negotiationEligible ? (
-        <span aria-hidden="true" style={{ color: "#a16207", fontSize: 11 }}>
+        <span aria-hidden="true" style={{ color: "#ca8a04", fontSize: 10 }}>
           ★
         </span>
       ) : null}

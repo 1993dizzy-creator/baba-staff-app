@@ -8,6 +8,7 @@ import { getEmployeeLevelInfo, withEmployeeLevelInfo } from "@/lib/employee-leve
 import { validateEmployeeLevelConfiguration } from "@/lib/employee-level/validation";
 import {
   isEmployeeLevelEligibleRole,
+  isEmployeeLevelManualRole,
   type EmployeeLevelValidationCode,
 } from "@/lib/employee-level/types";
 
@@ -115,6 +116,7 @@ function getLang(value: unknown) {
 
 type LevelPolicyErrorCode =
   | "EMPLOYEE_NOT_FOUND" | "SYSTEM_ACCOUNT_NOT_ELIGIBLE" | "TERMINATED_EMPLOYEE_READ_ONLY"
+  | "INVALID_LEVEL_PROGRAM_SETTING"
   | "HIRE_DATE_REQUIRED"
   | "BASE_DATE_REQUIRED" | "INVALID_BASE_DATE" | "BASE_DATE_BEFORE_HIRE_DATE"
   | "BASE_DATE_AFTER_TERMINATION_DATE" | "BASE_DATE_IN_FUTURE";
@@ -124,6 +126,7 @@ function levelPolicyError(code: LevelPolicyErrorCode, lang: "ko" | "vi") {
     EMPLOYEE_NOT_FOUND: { ko: "직원을 찾을 수 없습니다.", vi: "Không tìm thấy nhân viên." },
     SYSTEM_ACCOUNT_NOT_ELIGIBLE: { ko: "시스템 계정에는 직원 레벨을 설정할 수 없습니다.", vi: "Không thể thiết lập cấp nhân viên cho tài khoản hệ thống." },
     TERMINATED_EMPLOYEE_READ_ONLY: { ko: "퇴사자의 레벨 설정은 조회만 가능합니다.", vi: "Thiết lập cấp của nhân viên đã nghỉ việc chỉ có thể xem." },
+    INVALID_LEVEL_PROGRAM_SETTING: { ko: "레벨 대상 포함 설정이 올바르지 않습니다.", vi: "Thiết lập bao gồm cấp nhân viên không hợp lệ." },
     HIRE_DATE_REQUIRED: { ko: "레벨 제도를 적용하려면 입사일이 필요합니다.", vi: "Cần có ngày vào làm để áp dụng chế độ cấp." },
     BASE_DATE_REQUIRED: { ko: "레벨 기준일을 입력해주세요.", vi: "Vui lòng nhập ngày bắt đầu tính cấp." },
     INVALID_BASE_DATE: { ko: "레벨 기준일 형식이 올바르지 않습니다.", vi: "Định dạng ngày bắt đầu tính cấp không hợp lệ." },
@@ -417,6 +420,18 @@ export async function PATCH(req: Request) {
     const resultingRole = Object.prototype.hasOwnProperty.call(update, "role")
       ? update.role as string | null
       : target.role;
+    let levelProgramEnabled = target.level_program_enabled;
+    if (isEmployeeLevelManualRole(resultingRole)) {
+      if (Object.prototype.hasOwnProperty.call(body, "levelProgramEnabled")) {
+        if (typeof body.levelProgramEnabled !== "boolean") {
+          return policyResponse("INVALID_LEVEL_PROGRAM_SETTING", lang);
+        }
+        levelProgramEnabled = body.levelProgramEnabled === true ? true : null;
+      }
+      if (levelProgramEnabled !== true) {
+        levelBaseDateOverride = null;
+      }
+    }
     if (
       target.is_system_account
       && target.level_base_date_override !== levelBaseDateOverride
@@ -424,7 +439,13 @@ export async function PATCH(req: Request) {
     ) {
       return policyResponse("SYSTEM_ACCOUNT_NOT_ELIGIBLE", lang, 403);
     }
-    if (!target.is_system_account && isEmployeeLevelEligibleRole(resultingRole)) {
+    if (target.is_system_account && levelProgramEnabled === true) {
+      return policyResponse("SYSTEM_ACCOUNT_NOT_ELIGIBLE", lang, 403);
+    }
+    if (
+      !target.is_system_account
+      && isEmployeeLevelEligibleRole(resultingRole, levelProgramEnabled)
+    ) {
       const levelValidation = validateEmployeeLevelConfiguration({
         hireDate: resultingHireDate,
         levelBaseDateOverride,
@@ -437,16 +458,20 @@ export async function PATCH(req: Request) {
     }
     if (
       target.termination_date
-      && target.level_base_date_override !== levelBaseDateOverride
+      && (
+        target.level_base_date_override !== levelBaseDateOverride
+        || target.level_program_enabled !== levelProgramEnabled
+      )
     ) {
       return policyResponse("TERMINATED_EMPLOYEE_READ_ONLY", lang, 409);
     }
 
     const { data, error } = await supabaseServer.rpc(
-      "employee_update_profile_and_level_v2",
+      "employee_update_profile_and_level_v3",
       {
         p_user_id: id,
         p_updates: update,
+        p_level_program_enabled: levelProgramEnabled,
         p_base_date_override: levelBaseDateOverride,
         p_actor_id: auth.actor.id,
         p_actor_username: auth.actor.username,

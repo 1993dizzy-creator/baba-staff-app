@@ -77,7 +77,7 @@ export function calculateEmployeeLevel(
   if (input.isSystemAccount) {
     return ineligible("SYSTEM_ACCOUNT", baseDate, baseDateSource, null);
   }
-  if (!isEmployeeLevelEligibleRole(input.role)) {
+  if (!isEmployeeLevelEligibleRole(input.role, input.levelProgramEnabled)) {
     return ineligible("ROLE_NOT_ELIGIBLE", baseDate, baseDateSource, null);
   }
   if (!baseDate) {
@@ -103,7 +103,7 @@ export function calculateEmployeeLevel(
   );
   const level = Math.min(
     EMPLOYEE_LEVEL_MAX,
-    completedQuarterCount + 1
+    completedQuarterCount
   ) as EmployeeLevel;
   const earnedRaiseCount = Math.min(
     EMPLOYEE_LEVEL_MAX_RAISE_COUNT,
@@ -128,7 +128,7 @@ export function calculateEmployeeLevel(
     eligible: true,
     reason: null,
     level,
-    displayLabel: negotiationEligible ? "Lv.8★" : `Lv.${level}`,
+    displayLabel: negotiationEligible ? "Lv.7★" : `Lv.${level}`,
     baseDate,
     baseDateSource,
     calculationDate,

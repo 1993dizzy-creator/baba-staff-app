@@ -10,7 +10,7 @@ test("admin users API exposes calculated level info through the shared calculato
   assert.match(route, /requireRole\(\["owner", "master"\]\)/);
   assert.match(route, /level_base_date_override/);
   assert.match(route, /withEmployeeLevelInfo/);
-  assert.match(route, /employee_update_profile_and_level_v2/);
+  assert.match(route, /employee_update_profile_and_level_v3/);
   assert.match(route, /validateEmployeeLevelConfiguration/);
   for (const code of [
     "SYSTEM_ACCOUNT_NOT_ELIGIBLE", "HIRE_DATE_REQUIRED", "BASE_DATE_BEFORE_HIRE_DATE",
@@ -33,6 +33,7 @@ test("level policy and rehire mutations are atomic audited RPCs", () => {
   assert.doesNotMatch(sql, /update\s+public\.users\s+set\s+level_program_enabled/i);
   assert.match(sql, /revoke all on function[\s\S]*from public, anon, authenticated/);
   assert.match(sql, /grant execute[\s\S]*to service_role/);
+  assert.equal((sql.match(/insert into public\.employee_level_audit_logs/g) || []).length, 1);
 });
 
 test("system accounts may save profiles but cannot set a level base date", () => {
@@ -64,24 +65,47 @@ test("level audit is exactly conditional on a real allowed base-date change", ()
   assert.match(sql, /employee_profile_save/);
 });
 
+test("owner and master inclusion is stored atomically by the follow-up RPC", () => {
+  const route = read("app/api/admin/users/route.ts");
+  const sql = read("supabase/migrations/20260729222342_add_manual_owner_levels_and_zero_based_audit.sql");
+  assert.match(route, /employee_update_profile_and_level_v3/);
+  assert.match(route, /p_level_program_enabled: levelProgramEnabled/);
+  assert.match(sql, /employee_update_profile_and_level_v3/);
+  assert.match(sql, /v_role in \('owner', 'master'\)/);
+  assert.match(sql, /level_program_enabled = v_level_program_enabled/);
+  assert.match(sql, /v_level_program_enabled is distinct from true then null[\s\S]*else p_base_date_override/);
+  assert.match(sql, /level_base_date_override = v_base_date_override/);
+  assert.match(sql, /else v_before\.level_program_enabled/);
+  assert.match(sql, /level_program_enabled is distinct from v_after\.level_program_enabled/);
+  assert.match(sql, /v_before\.termination_date is not null[\s\S]*level_program_enabled is distinct from v_level_program_enabled/);
+  assert.match(sql, /security definer/);
+  assert.match(sql, /revoke all on function[\s\S]*from public, anon, authenticated/);
+  assert.match(sql, /grant execute[\s\S]*to service_role/);
+});
+
 test("employee cards use the shared theme badge and preserve compact mobile layout", () => {
   const page = read("app/(protected)/admin/users/page.tsx");
   const route = read("app/api/admin/users/route.ts");
   const badge = read("components/employee/EmployeeLevelBadge.tsx");
   assert.match(page, /EmployeeLevelBadge/);
-  assert.match(page, /isEmployeeLevelEligibleRole\(user\.role\)/);
-  assert.match(route, /isEmployeeLevelEligibleRole\(resultingRole\)/);
+  assert.match(page, /isEmployeeLevelEligibleRole\(user\.role, user\.level_program_enabled\)/);
+  assert.match(route, /isEmployeeLevelEligibleRole\(resultingRole, levelProgramEnabled\)/);
   assert.match(page, /baseDateMode: "hire_date" \| "override"/);
-  assert.match(page, /levelBaseDateOverride: levelDraft\.baseDateMode === "override"/);
+  assert.match(page, /levelBaseDateOverride:[\s\S]*levelDraft\.baseDateMode === "override"/);
   assert.match(page, /setUsers\(\(current\) =>[\s\S]*current\.map/);
   assert.doesNotMatch(page, /saveLevelPolicy/);
   assert.doesNotMatch(page, /changeReason/);
-  assert.doesNotMatch(page, /level_program_enabled === true/);
+  assert.match(page, /levelProgramInclude/);
+  assert.match(page, /isEmployeeLevelManualRole\(draft\.role\)/);
+  assert.match(page, /levelProgramEnabled: levelDraft\.included/);
+  assert.match(page, /isEmployeeLevelManualRole\(draft\.role\) && !levelDraft\.included[\s\S]*\? null/);
+  assert.match(route, /levelProgramEnabled !== true[\s\S]*levelBaseDateOverride = null/);
+  assert.match(page, /user\.levelInfo\.level !== null/);
   assert.match(badge, /EMPLOYEE_LEVEL_THEME\[level\]/);
-  assert.match(badge, /minWidth: 18/);
-  assert.match(badge, /height: 18/);
+  assert.match(badge, /minWidth: 16/);
+  assert.match(badge, /height: 16/);
   assert.match(badge, /linear-gradient/);
-  assert.match(badge, /fontSize: 10/);
+  assert.match(badge, /fontSize: 9/);
   assert.match(badge, /flexShrink: 0/);
   assert.match(badge, /negotiationEligible/);
   assert.match(page, /textOverflow: "ellipsis"/);

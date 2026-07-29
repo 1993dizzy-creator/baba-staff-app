@@ -20,14 +20,14 @@ const enabled = (asOfDate: string, overrides: Record<string, unknown> = {}) =>
     ...overrides,
   });
 
-test("level boundaries start at Lv.1 and advance on exact calendar anniversaries", () => {
+test("level boundaries start at Lv.0 and advance on exact calendar anniversaries", () => {
   const cases = [
-    ["2026-01-15", 1, 0, "Lv.1"],
-    ["2026-01-16", 1, 0, "Lv.1"],
-    ["2026-04-14", 1, 0, "Lv.1"],
-    ["2026-04-15", 2, 1, "Lv.2"],
-    ["2026-07-15", 3, 2, "Lv.3"],
-    ["2027-10-15", 8, 7, "Lv.8"],
+    ["2026-01-15", 0, 0, "Lv.0"],
+    ["2026-01-16", 0, 0, "Lv.0"],
+    ["2026-04-14", 0, 0, "Lv.0"],
+    ["2026-04-15", 1, 1, "Lv.1"],
+    ["2026-07-15", 2, 2, "Lv.2"],
+    ["2027-10-15", 7, 7, "Lv.7"],
   ] as const;
   for (const [date, level, raises, label] of cases) {
     const info = enabled(date);
@@ -38,17 +38,17 @@ test("level boundaries start at Lv.1 and advance on exact calendar anniversaries
   }
 });
 
-test("24 months changes presentation to Lv.8 star without an eighth raise", () => {
+test("24 months changes presentation to Lv.7 star without an eighth raise", () => {
   const before = enabled("2028-01-14");
-  assert.equal(before.level, 8);
+  assert.equal(before.level, 7);
   assert.equal(before.negotiationEligible, false);
-  assert.equal(before.displayLabel, "Lv.8");
+  assert.equal(before.displayLabel, "Lv.7");
 
   for (const date of ["2028-01-15", "2030-01-15"]) {
     const info = enabled(date);
-    assert.equal(info.level, 8);
+    assert.equal(info.level, 7);
     assert.equal(info.negotiationEligible, true);
-    assert.equal(info.displayLabel, "Lv.8★");
+    assert.equal(info.displayLabel, "Lv.7★");
     assert.equal(info.earnedRaiseCount, EMPLOYEE_LEVEL_MAX_RAISE_COUNT);
     assert.equal(
       info.cumulativeRaiseAmount,
@@ -65,7 +65,7 @@ test("calendar month addition clamps month-end, leap-year, and year boundaries",
   assert.equal(addCalendarMonthsClamped("2026-11-30", 3), "2027-02-28");
 
   const monthEnd = enabled("2026-04-30", { hireDate: "2026-01-31" });
-  assert.equal(monthEnd.level, 2);
+  assert.equal(monthEnd.level, 1);
   assert.equal(monthEnd.nextLevelDate, "2026-07-31");
 });
 
@@ -79,7 +79,7 @@ test("override takes priority while hire date is the fallback", () => {
   });
   assert.equal(override.baseDate, "2026-04-15");
   assert.equal(override.baseDateSource, "override");
-  assert.equal(override.level, 1);
+  assert.equal(override.level, 0);
 });
 
 test("missing, invalid, and future base dates are ineligible", () => {
@@ -96,24 +96,24 @@ test("missing, invalid, and future base dates are ineligible", () => {
 test("termination date freezes level and raises after departure", () => {
   const before = enabled("2026-07-14", { terminationDate: "2026-07-15" });
   assert.equal(before.calculationDate, "2026-07-14");
-  assert.equal(before.level, 2);
+  assert.equal(before.level, 1);
 
   const after = enabled("2028-01-15", { terminationDate: "2026-07-15" });
   assert.equal(after.calculationDate, "2026-07-15");
-  assert.equal(after.level, 3);
+  assert.equal(after.level, 2);
   assert.equal(after.earnedRaiseCount, 2);
   assert.equal(after.negotiationEligible, false);
 });
 
-test("legacy enablement is irrelevant while system accounts never calculate a level", () => {
-  assert.equal(enabled("2026-04-15").level, 2);
+test("automatic-role enablement is implicit while system accounts never calculate a level", () => {
+  assert.equal(enabled("2026-04-15").level, 1);
   assert.equal(
     enabled("2026-04-15", { isSystemAccount: true }).reason,
     "SYSTEM_ACCOUNT"
   );
 });
 
-test("only manager, leader, and staff roles calculate employee levels", () => {
+test("staff roles are automatic while owner and master require explicit inclusion", () => {
   for (const role of ["manager", "leader", "staff"]) {
     assert.equal(enabled("2026-04-15", { role }).eligible, true);
   }
@@ -121,7 +121,17 @@ test("only manager, leader, and staff roles calculate employee levels", () => {
     const info = enabled("2026-04-15", { role });
     assert.equal(info.eligible, false);
     assert.equal(info.reason, "ROLE_NOT_ELIGIBLE");
+    assert.equal(enabled("2026-04-15", { role, levelProgramEnabled: true }).eligible, true);
+    assert.equal(enabled("2026-04-15", { role, levelProgramEnabled: false }).eligible, false);
   }
+  assert.equal(
+    enabled("2026-04-15", {
+      role: "owner",
+      levelProgramEnabled: true,
+      isSystemAccount: true,
+    }).reason,
+    "SYSTEM_ACCOUNT"
+  );
 });
 
 test("configuration validation returns stable error codes", () => {
@@ -173,13 +183,29 @@ test("all level themes are complete, unique, and negotiation-neutral", () => {
   const themes = Object.values(EMPLOYEE_LEVEL_THEME);
   assert.equal(themes.length, 8);
   assert.equal(new Set(themes.map((theme) => theme.backgroundColor)).size, 8);
-  for (let level = 1; level <= 8; level += 1) {
+  for (let level = 0; level <= 7; level += 1) {
     const theme = EMPLOYEE_LEVEL_THEME[level as keyof typeof EMPLOYEE_LEVEL_THEME];
     assert.equal(theme.shortLabel, String(level));
     assert.equal(theme.textColor, "#FFFFFF");
     assert.ok(theme.borderColor);
     assert.doesNotMatch(theme.label, /★/);
   }
+  assert.deepEqual(
+    Array.from({ length: 8 }, (_, level) => EMPLOYEE_LEVEL_THEME[level as keyof typeof EMPLOYEE_LEVEL_THEME].backgroundColor),
+    ["#94A3B8", "#EF4444", "#F97316", "#FACC15", "#22C55E", "#3B82F6", "#4F46E5", "#A855F7"]
+  );
+});
+
+test("zero-based audit constraints are added by a follow-up migration", () => {
+  const migration = fs.readFileSync(
+    path.join(process.cwd(), "supabase/migrations/20260729222342_add_manual_owner_levels_and_zero_based_audit.sql"),
+    "utf8"
+  );
+  assert.match(migration, /previous_level between 0 and 7/);
+  assert.match(migration, /next_level between 0 and 7/);
+  assert.match(migration, /when previous_level between 1 and 8 then previous_level - 1/);
+  assert.match(migration, /when next_level between 1 and 8 then next_level - 1/);
+  assert.match(migration, /where previous_level between 1 and 8 or next_level between 1 and 8/);
 });
 
 test("migration adds nullable foundations without data backfill or client writes", () => {

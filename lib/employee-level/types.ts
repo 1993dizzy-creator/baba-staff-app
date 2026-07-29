@@ -1,19 +1,33 @@
 export const EMPLOYEE_LEVEL_INTERVAL_MONTHS = 3;
-export const EMPLOYEE_LEVEL_MAX = 8;
+export const EMPLOYEE_LEVEL_MAX = 7;
 export const EMPLOYEE_LEVEL_RAISE_AMOUNT = 500_000;
 export const EMPLOYEE_LEVEL_MAX_RAISE_COUNT = 7;
 export const EMPLOYEE_LEVEL_NEGOTIATION_MONTHS = 24;
 
-export const EMPLOYEE_LEVEL_ELIGIBLE_ROLES = ["manager", "leader", "staff"] as const;
+export const EMPLOYEE_LEVEL_AUTOMATIC_ROLES = ["manager", "leader", "staff"] as const;
+export const EMPLOYEE_LEVEL_MANUAL_ROLES = ["owner", "master"] as const;
 
-export function isEmployeeLevelEligibleRole(role: string | null | undefined) {
-  return EMPLOYEE_LEVEL_ELIGIBLE_ROLES.some((eligibleRole) => eligibleRole === role);
+export function isEmployeeLevelAutomaticRole(role: string | null | undefined) {
+  return EMPLOYEE_LEVEL_AUTOMATIC_ROLES.some((automaticRole) => automaticRole === role);
 }
 
-export type EmployeeLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+export function isEmployeeLevelManualRole(role: string | null | undefined) {
+  return EMPLOYEE_LEVEL_MANUAL_ROLES.some((manualRole) => manualRole === role);
+}
+
+export function isEmployeeLevelEligibleRole(
+  role: string | null | undefined,
+  levelProgramEnabled?: boolean | null
+) {
+  return isEmployeeLevelAutomaticRole(role)
+    || (isEmployeeLevelManualRole(role) && levelProgramEnabled === true);
+}
+
+export type EmployeeLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 export type EmployeeLevelCalculationInput = {
   role: string | null;
+  levelProgramEnabled?: boolean | null;
   hireDate: string | null;
   levelBaseDateOverride: string | null;
   terminationDate?: string | null;

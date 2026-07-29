@@ -13,7 +13,9 @@ import { adminUsersText } from "@/lib/text";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeLevelBadge from "@/components/employee/EmployeeLevelBadge";
 import {
+  isEmployeeLevelAutomaticRole,
   isEmployeeLevelEligibleRole,
+  isEmployeeLevelManualRole,
   type EmployeeLevelInfo,
 } from "@/lib/employee-level/types";
 
@@ -34,11 +36,13 @@ type UserRow = {
   is_active: boolean | null;
   is_system_account: boolean;
   payroll_eligible_override: boolean | null;
+  level_program_enabled: boolean | null;
   level_base_date_override: string | null;
   levelInfo: EmployeeLevelInfo;
 };
 
 type LevelPolicyDraft = {
+  included: boolean;
   baseDateMode: "hire_date" | "override";
   levelBaseDateOverride: string;
 };
@@ -271,6 +275,7 @@ function UserCard({
   const [rehireOpen, setRehireOpen] = useState(false);
   const [rehireDate, setRehireDate] = useState("");
   const [levelDraft, setLevelDraft] = useState<LevelPolicyDraft>({
+    included: isEmployeeLevelAutomaticRole(user.role) || user.level_program_enabled === true,
     baseDateMode: user.level_base_date_override ? "override" : "hire_date",
     levelBaseDateOverride: user.level_base_date_override || "",
   });
@@ -289,7 +294,9 @@ function UserCard({
     : draft.role === "owner"
       ? "owner"
       : "staff";
-  const hasEmployeeLevel = isEmployeeLevelEligibleRole(user.role);
+  const hasEmployeeLevel = isEmployeeLevelEligibleRole(user.role, user.level_program_enabled);
+  const hasLevelEditor = isEmployeeLevelAutomaticRole(draft.role)
+    || (isEmployeeLevelManualRole(draft.role) && levelDraft.included);
 
   function update<K extends keyof UserRow>(key: K, value: UserRow[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -300,7 +307,7 @@ function UserCard({
       <div style={styles.rowMain}>
         <div style={styles.rowText}>
           <span style={styles.rowTitle}>
-            {hasEmployeeLevel && user.levelInfo.eligible && user.levelInfo.level ? (
+            {hasEmployeeLevel && user.levelInfo.eligible && user.levelInfo.level !== null ? (
               <EmployeeLevelBadge level={user.levelInfo.level} negotiationEligible={user.levelInfo.negotiationEligible} lang={lang} />
             ) : null}
             <span style={styles.rowName}>{nameText}</span>
@@ -318,6 +325,7 @@ function UserCard({
                 if (!isEditing) {
                   setDraft(user);
                   setLevelDraft({
+                    included: isEmployeeLevelAutomaticRole(user.role) || user.level_program_enabled === true,
                     baseDateMode: user.level_base_date_override ? "override" : "hire_date",
                     levelBaseDateOverride: user.level_base_date_override || "",
                   });
@@ -354,7 +362,13 @@ function UserCard({
           <Field label={text.role}>
             <select
               value={roleValue}
-              onChange={(event) => update("role", event.target.value)}
+              onChange={(event) => {
+                const nextRole = event.target.value;
+                update("role", nextRole);
+                if (isEmployeeLevelManualRole(nextRole) && !isEmployeeLevelManualRole(draft.role)) {
+                  setLevelDraft((current) => ({ ...current, included: false }));
+                }
+              }}
               style={styles.input}
             >
               {roleOptions.map((role) => (
@@ -477,7 +491,24 @@ function UserCard({
               <span style={styles.fieldNotice}>{text.payrollEligibleOverrideHelp}</span>
             </label>
           ) : null}
-          {hasEmployeeLevel ? <section style={styles.levelEditor}>
+          {isEmployeeLevelManualRole(draft.role) && !user.is_system_account ? (
+            <label style={styles.levelIncludeField}>
+              <span style={styles.checkRow}>
+                <input
+                  type="checkbox"
+                  checked={levelDraft.included}
+                  disabled={Boolean(user.termination_date)}
+                  onChange={(event) => setLevelDraft((current) => ({
+                    ...current,
+                    included: event.target.checked,
+                  }))}
+                />
+                {text.levelProgramInclude}
+              </span>
+              <span style={styles.fieldNotice}>{text.levelProgramIncludeHelp}</span>
+            </label>
+          ) : null}
+          {hasLevelEditor ? <section style={styles.levelEditor}>
             <strong style={styles.levelEditorTitle}>{text.employeeLevel}</strong>
             {user.termination_date ? (
               <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span>
@@ -513,7 +544,7 @@ function UserCard({
               onClick={async () => {
                 if (await onSave(user, draft, levelDraft)) setIsEditing(false);
               }}
-              disabled={isSaving || (levelDraft.baseDateMode === "override" && !levelDraft.levelBaseDateOverride)}
+              disabled={isSaving || (hasLevelEditor && levelDraft.baseDateMode === "override" && !levelDraft.levelBaseDateOverride)}
             >
               {isSaving ? text.saving : text.save}
             </button>
@@ -541,7 +572,7 @@ function LevelSummary({ user, text }: { user: UserRow; text: AdminUsersPageText 
     ? `${text.directBaseShort} ${info.baseDate}`
     : text.hireDateBase;
   const nextLabel = info.nextLevelDate
-    ? `${text.nextLevelShort} Lv.${Math.min(8, (info.level || 1) + 1)} ${info.nextLevelDate}`
+    ? `${text.nextLevelShort} Lv.${Math.min(7, (info.level ?? 0) + 1)} ${info.nextLevelDate}`
     : text.highestLevel;
   return (
     <div style={styles.levelSummary}>
@@ -673,7 +704,10 @@ export default function AdminUsersPage() {
           lang,
           id: original.id,
           updates,
-          levelBaseDateOverride: levelDraft.baseDateMode === "override"
+          levelProgramEnabled: levelDraft.included,
+          levelBaseDateOverride: isEmployeeLevelManualRole(draft.role) && !levelDraft.included
+            ? null
+            : levelDraft.baseDateMode === "override"
             ? levelDraft.levelBaseDateOverride
             : null,
         }),
@@ -981,6 +1015,14 @@ const styles = {
     padding: "8px 9px",
     borderRadius: 8,
     background: "#fffbeb",
+  },
+  levelIncludeField: {
+    display: "grid",
+    gap: 4,
+    padding: "8px 9px",
+    borderRadius: 8,
+    border: "1px solid #ddd6fe",
+    background: "#faf5ff",
   },
   levelSummary: {
     display: "flex",
