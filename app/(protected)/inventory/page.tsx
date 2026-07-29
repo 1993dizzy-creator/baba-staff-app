@@ -22,7 +22,11 @@ import {
     type QuickReasonValue,
 } from "@/lib/inventory/reasons";
 import { formatKegSessionDuration } from "@/lib/inventory/keg-duration";
-import { CATEGORY_OPTIONS_BY_PART } from "@/lib/inventory/categories";
+import {
+    CATEGORY_OPTIONS_BY_PART,
+    getInventoryCategoryLabel,
+    resolveInventoryCategoryOption,
+} from "@/lib/inventory/categories";
 import { parseDecimal,formatDecimalDisplay,roundDecimal,} from "@/lib/inventory/number";
 import { formatNumber,parsePrice,formatMoneyDisplay,} from "@/lib/inventory/money";
 import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
@@ -442,9 +446,12 @@ export default function InventoryPage() {
                     inventoryList
                         .filter((item) => item.part === part)
                         .map((item) =>
-                            lang === "vi"
-                                ? item.category_vi || item.category || ""
-                                : item.category || item.category_vi || ""
+                            getInventoryCategoryLabel(
+                                item.part,
+                                item.category,
+                                item.category_vi,
+                                lang
+                            )
                         )
                         .map((value) => value.trim())
                         .filter(Boolean)
@@ -527,14 +534,21 @@ export default function InventoryPage() {
 
     const getDisplayCategory = useCallback(
         (item: InventoryItem) =>
-            lang === "vi"
-                ? item.category_vi || item.category || "-"
-                : item.category || item.category_vi || "-",
+            getInventoryCategoryLabel(
+                item.part,
+                item.category,
+                item.category_vi,
+                lang
+            ) || "-",
         [lang]
     );
 
     const getCategoryKey = useCallback(
-        (item: InventoryItem) => item.category || item.category_vi || "-",
+        (item: InventoryItem) =>
+            resolveInventoryCategoryOption(item.part, item.category, item.category_vi)?.ko
+            || item.category
+            || item.category_vi
+            || "-",
         []
     );
 
@@ -1310,10 +1324,12 @@ export default function InventoryPage() {
 
     const getDuplicateItemAlertMessage = (duplicateItem?: DuplicateInventoryItem | null) => {
         const partLabel = getDuplicatePartLabel(duplicateItem?.part);
-        const categoryLabel =
-            lang === "vi"
-                ? duplicateItem?.category_vi || duplicateItem?.category || ""
-                : duplicateItem?.category || duplicateItem?.category_vi || "";
+        const categoryLabel = getInventoryCategoryLabel(
+            duplicateItem?.part,
+            duplicateItem?.category,
+            duplicateItem?.category_vi,
+            lang
+        );
         const location = [partLabel, categoryLabel].filter(Boolean).join("/");
 
         return location
@@ -1619,7 +1635,14 @@ export default function InventoryPage() {
         const nextPart: PartValue = PART_VALUES.includes(item.part as PartValue)
             ? (item.part as PartValue)
             : defaultPart;
-        const nextCategory = lang === "vi" ? item.category_vi || "" : item.category || "";
+        const matchedCategory = resolveInventoryCategoryOption(
+            nextPart,
+            item.category,
+            item.category_vi
+        );
+        const nextCategory = matchedCategory
+            ? matchedCategory[lang]
+            : getInventoryCategoryLabel(nextPart, item.category, item.category_vi, lang);
         const nextCategoryOptions =
             CATEGORY_OPTIONS_BY_PART[nextPart as keyof typeof CATEGORY_OPTIONS_BY_PART] ?? [];
         const nextItemName =
@@ -1636,10 +1659,10 @@ export default function InventoryPage() {
         setPart(nextPart);
         setItemName(nextItemName);
         setCategory(nextCategory);
-        setCategoryKo(item.category || item.category_vi || "");
-        setCategoryVi(item.category_vi || item.category || "");
+        setCategoryKo(matchedCategory?.ko || item.category || "");
+        setCategoryVi(matchedCategory?.vi || item.category_vi || "");
 
-        const matched = nextCategoryOptions.find(
+        const matched = matchedCategory || nextCategoryOptions.find(
             (option) => (lang === "vi" ? option.vi : option.ko) === nextCategory
         );
         setIsCustomCategory(!matched && !!nextCategory);
@@ -2805,10 +2828,12 @@ export default function InventoryPage() {
                     key,
                     {
                         key,
-                        label:
-                            lang === "vi"
-                                ? item.category_vi || item.category || "-"
-                                : item.category || item.category_vi || "-",
+                        label: getInventoryCategoryLabel(
+                            item.part,
+                            item.category,
+                            item.category_vi,
+                            lang
+                        ) || "-",
                         count: categoryCounts.get(key) ?? 0,
                     },
                 ] as const;

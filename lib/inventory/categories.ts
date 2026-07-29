@@ -31,6 +31,7 @@ export const CATEGORY_OPTIONS_BY_PART = {
         { ko: "코냑", vi: "Cognac" },
         { ko: "리큐르", vi: "Liqueur" },
         { ko: "시럽", vi: "Syrup" },
+        { ko: "음료", vi: "Đồ uống" },
         { ko: "비터", vi: "Bitters" },
         { ko: "베르무트", vi: "Vermouth" },
         { ko: "기타", vi: "Khác" },
@@ -46,3 +47,41 @@ export const CATEGORY_OPTIONS_BY_PART = {
     ],
     etc: [{ ko: "기타", vi: "Khác" }],
 };
+
+export type InventoryCategoryOption = { ko: string; vi: string };
+
+function normalizeCategoryValue(value?: string | null) {
+    return (value || "").trim().toLocaleLowerCase();
+}
+
+export function resolveInventoryCategoryOption(
+    part?: string | null,
+    category?: string | null,
+    categoryVi?: string | null
+): InventoryCategoryOption | null {
+    const options = CATEGORY_OPTIONS_BY_PART[
+        (part || "").trim().toLocaleLowerCase() as keyof typeof CATEGORY_OPTIONS_BY_PART
+    ] ?? [];
+    const candidates = new Set(
+        [category, categoryVi].map(normalizeCategoryValue).filter(Boolean)
+    );
+
+    return options.find((option) =>
+        candidates.has(normalizeCategoryValue(option.ko))
+        || candidates.has(normalizeCategoryValue(option.vi))
+    ) ?? null;
+}
+
+export function getInventoryCategoryLabel(
+    part: string | null | undefined,
+    category: string | null | undefined,
+    categoryVi: string | null | undefined,
+    lang: "ko" | "vi"
+) {
+    const option = resolveInventoryCategoryOption(part, category, categoryVi);
+    if (option) return option[lang];
+
+    const primary = lang === "vi" ? categoryVi : category;
+    const fallback = lang === "vi" ? category : categoryVi;
+    return primary?.trim() || fallback?.trim() || "";
+}
