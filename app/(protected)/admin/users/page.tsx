@@ -31,16 +31,13 @@ type UserRow = {
   is_active: boolean | null;
   is_system_account: boolean;
   payroll_eligible_override: boolean | null;
-  level_program_enabled: boolean | null;
   level_base_date_override: string | null;
   levelInfo: EmployeeLevelInfo;
 };
 
 type LevelPolicyDraft = {
-  status: "unset" | "enabled" | "disabled";
   baseDateMode: "hire_date" | "override";
   levelBaseDateOverride: string;
-  changeReason: string;
 };
 
 type UsersResponse = {
@@ -257,13 +254,11 @@ function UserCard({
   user,
   onSave,
   onRehire,
-  onSaveLevelPolicy,
   isSaving,
 }: {
   user: UserRow;
-  onSave: (user: UserRow, draft: UserRow) => void;
+  onSave: (user: UserRow, draft: UserRow, levelDraft: LevelPolicyDraft) => Promise<boolean>;
   onRehire: (user: UserRow, rehireDate: string) => void;
-  onSaveLevelPolicy: (user: UserRow, draft: LevelPolicyDraft) => Promise<boolean>;
   isSaving: boolean;
 }) {
   const { lang } = useLanguage();
@@ -273,10 +268,8 @@ function UserCard({
   const [rehireOpen, setRehireOpen] = useState(false);
   const [rehireDate, setRehireDate] = useState("");
   const [levelDraft, setLevelDraft] = useState<LevelPolicyDraft>({
-    status: user.level_program_enabled === null ? "unset" : user.level_program_enabled ? "enabled" : "disabled",
     baseDateMode: user.level_base_date_override ? "override" : "hire_date",
     levelBaseDateOverride: user.level_base_date_override || "",
-    changeReason: "",
   });
 
   const displayName = user.name || user.full_name || user.username;
@@ -303,7 +296,7 @@ function UserCard({
       <div style={styles.rowMain}>
         <div style={styles.rowText}>
           <span style={styles.rowTitle}>
-            {user.level_program_enabled === true && user.levelInfo.eligible && user.levelInfo.level ? (
+            {user.levelInfo.eligible && user.levelInfo.level ? (
               <EmployeeLevelBadge level={user.levelInfo.level} negotiationEligible={user.levelInfo.negotiationEligible} lang={lang} />
             ) : null}
             <span style={styles.rowName}>{nameText}</span>
@@ -321,10 +314,8 @@ function UserCard({
                 if (!isEditing) {
                   setDraft(user);
                   setLevelDraft({
-                    status: user.level_program_enabled === null ? "unset" : user.level_program_enabled ? "enabled" : "disabled",
                     baseDateMode: user.level_base_date_override ? "override" : "hire_date",
                     levelBaseDateOverride: user.level_base_date_override || "",
-                    changeReason: "",
                   });
                 }
                 setIsEditing((current) => !current);
@@ -488,34 +479,15 @@ function UserCard({
               <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span>
             ) : (
               <>
-                <Field label={text.employeeLevel}>
-                  <select value={levelDraft.status} onChange={(event) => setLevelDraft((current) => ({ ...current, status: event.target.value as LevelPolicyDraft["status"] }))} style={styles.input}>
-                    <option value="unset">{text.levelStatusUnset}</option>
-                    <option value="enabled">{text.levelProgramEnabled}</option>
-                    <option value="disabled">{text.levelProgramDisabled}</option>
+                <Field label={text.levelBaseDate}>
+                  <select value={levelDraft.baseDateMode} onChange={(event) => setLevelDraft((current) => ({ ...current, baseDateMode: event.target.value as LevelPolicyDraft["baseDateMode"] }))} style={styles.input}>
+                    <option value="hire_date">{text.hireDateBase}</option>
+                    <option value="override">{text.directBase}</option>
                   </select>
                 </Field>
-                {levelDraft.status === "enabled" ? (
-                  <>
-                    <Field label={text.levelBaseDate}>
-                      <select value={levelDraft.baseDateMode} onChange={(event) => setLevelDraft((current) => ({ ...current, baseDateMode: event.target.value as LevelPolicyDraft["baseDateMode"] }))} style={styles.input}>
-                        <option value="hire_date">{text.hireDateBase}</option>
-                        <option value="override">{text.directBase}</option>
-                      </select>
-                    </Field>
-                    {levelDraft.baseDateMode === "hire_date" ? <span style={styles.readonlyDate}>{user.hire_date || "-"}</span> : (
-                      <input type="date" value={levelDraft.levelBaseDateOverride} onChange={(event) => setLevelDraft((current) => ({ ...current, levelBaseDateOverride: event.target.value }))} style={styles.input} />
-                    )}
-                  </>
-                ) : null}
-                {levelDraft.status !== "unset" ? (
-                  <>
-                    <Field label={text.changeReason}><input value={levelDraft.changeReason} onChange={(event) => setLevelDraft((current) => ({ ...current, changeReason: event.target.value }))} style={styles.input} /></Field>
-                    <button type="button" style={styles.primaryButton} disabled={isSaving || levelDraft.changeReason.trim().length < 2} onClick={async () => { if (await onSaveLevelPolicy(user, levelDraft)) setLevelDraft((current) => ({ ...current, changeReason: "" })); }}>
-                      {isSaving ? text.saving : text.saveLevelPolicy}
-                    </button>
-                  </>
-                ) : null}
+                {levelDraft.baseDateMode === "hire_date" ? <span style={styles.readonlyDate}>{draft.hire_date || "-"}</span> : (
+                  <input type="date" value={levelDraft.levelBaseDateOverride} onChange={(event) => setLevelDraft((current) => ({ ...current, levelBaseDateOverride: event.target.value }))} style={styles.input} />
+                )}
               </>
             )}
           </section>
@@ -534,11 +506,10 @@ function UserCard({
             <button
               type="button"
               style={styles.primaryButton}
-              onClick={() => {
-                onSave(user, draft);
-                setIsEditing(false);
+              onClick={async () => {
+                if (await onSave(user, draft, levelDraft)) setIsEditing(false);
               }}
-              disabled={isSaving}
+              disabled={isSaving || (levelDraft.baseDateMode === "override" && !levelDraft.levelBaseDateOverride)}
             >
               {isSaving ? text.saving : text.save}
             </button>
@@ -560,8 +531,6 @@ function UserCard({
 }
 
 function LevelSummary({ user, text, lang }: { user: UserRow; text: AdminUsersPageText; lang: "ko" | "vi" }) {
-  if (user.level_program_enabled === null) return <div style={styles.levelSummary}>{text.levelUnset}</div>;
-  if (user.level_program_enabled === false) return <div style={styles.levelSummary}>{text.levelProgramDisabled}</div>;
   const info = user.levelInfo;
   if (!info.eligible || !info.displayLabel) return <div style={styles.levelSummary}>{text.levelUnset}</div>;
   const amount = new Intl.NumberFormat(lang === "vi" ? "vi-VN" : "ko-KR").format(info.cumulativeRaiseAmount);
@@ -667,7 +636,7 @@ export default function AdminUsersPage() {
     [users]
   );
 
-  async function saveUser(original: UserRow, draft: UserRow) {
+  async function saveUser(original: UserRow, draft: UserRow, levelDraft: LevelPolicyDraft) {
     setSavingId(original.id);
     setMessage("");
 
@@ -698,6 +667,9 @@ export default function AdminUsersPage() {
           lang,
           id: original.id,
           updates,
+          levelBaseDateOverride: levelDraft.baseDateMode === "override"
+            ? levelDraft.levelBaseDateOverride
+            : null,
         }),
       });
       const result = (await res.json()) as UsersResponse;
@@ -710,8 +682,10 @@ export default function AdminUsersPage() {
         current.map((user) => (user.id === original.id ? result.user! : user))
       );
       setMessage(text.saveSuccess);
+      return true;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : text.saveFailed);
+      return false;
     } finally {
       setSavingId(null);
     }
@@ -727,37 +701,6 @@ export default function AdminUsersPage() {
       setUsers(current=>current.map(item=>item.id===user.id?result.user!:item)); setMessage(text.saveSuccess);
     } catch(error) { setMessage(error instanceof Error?error.message:text.saveFailed); }
     finally { setSavingId(null); }
-  }
-
-  async function saveLevelPolicy(user: UserRow, draft: LevelPolicyDraft) {
-    if (draft.status === "unset") return false;
-    setSavingId(user.id);
-    setMessage("");
-    try {
-      const res = await attendanceFetch("/api/admin/users", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "update_employee_level_policy",
-          id: user.id,
-          lang,
-          levelProgramEnabled: draft.status === "enabled",
-          baseDateMode: draft.baseDateMode,
-          levelBaseDateOverride: draft.baseDateMode === "override" ? draft.levelBaseDateOverride : null,
-          changeReason: draft.changeReason,
-        }),
-      });
-      const result = (await res.json()) as UsersResponse;
-      if (!res.ok || !result.ok || !result.user) throw new Error(result.error || text.saveFailed);
-      setUsers((current) => current.map((item) => item.id === user.id ? result.user! : item));
-      setMessage(text.levelSaveSuccess);
-      return true;
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : text.saveFailed);
-      return false;
-    } finally {
-      setSavingId(null);
-    }
   }
 
   if (checked && !canAccess) {
@@ -795,7 +738,6 @@ export default function AdminUsersPage() {
             text={text}
             onSave={saveUser}
             onRehire={rehireUser}
-            onSaveLevelPolicy={saveLevelPolicy}
             savingId={savingId}
           />
         ))}
@@ -810,15 +752,13 @@ function UserGroup({
   text,
   onSave,
   onRehire,
-  onSaveLevelPolicy,
   savingId,
 }: {
   groupKey: UserGroupKey;
   users: UserRow[];
   text: AdminUsersPageText;
-  onSave: (user: UserRow, draft: UserRow) => void;
+  onSave: (user: UserRow, draft: UserRow, levelDraft: LevelPolicyDraft) => Promise<boolean>;
   onRehire: (user: UserRow, rehireDate: string) => void;
-  onSaveLevelPolicy: (user: UserRow, draft: LevelPolicyDraft) => Promise<boolean>;
   savingId: number | string | null;
 }) {
   const meta = getGroupMeta(groupKey, text);
@@ -846,7 +786,6 @@ function UserGroup({
             user={user}
             onSave={onSave}
             onRehire={onRehire}
-            onSaveLevelPolicy={onSaveLevelPolicy}
             isSaving={savingId === user.id}
           />
         ))}

@@ -76,9 +76,6 @@ export function calculateEmployeeLevel(
   if (input.isSystemAccount) {
     return ineligible("SYSTEM_ACCOUNT", baseDate, baseDateSource, null);
   }
-  if (input.levelProgramEnabled !== true) {
-    return ineligible("DISABLED", baseDate, baseDateSource, null);
-  }
   if (!baseDate) {
     return ineligible("MISSING_BASE_DATE", null, null, null);
   }

@@ -7,7 +7,6 @@ export const EMPLOYEE_LEVEL_NEGOTIATION_MONTHS = 24;
 export type EmployeeLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export type EmployeeLevelCalculationInput = {
-  levelProgramEnabled: boolean | null;
   hireDate: string | null;
   levelBaseDateOverride: string | null;
   terminationDate?: string | null;
@@ -16,7 +15,6 @@ export type EmployeeLevelCalculationInput = {
 };
 
 export type EmployeeLevelIneligibleReason =
-  | "DISABLED"
   | "SYSTEM_ACCOUNT"
   | "MISSING_BASE_DATE"
   | "BEFORE_BASE_DATE"

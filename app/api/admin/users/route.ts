@@ -6,7 +6,7 @@ import { enforceTerminationAccountPolicy, getVietnamDateKey } from "@/lib/employ
 import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
 import { getEmployeeLevelInfo, withEmployeeLevelInfo } from "@/lib/employee-level/server";
 import { validateEmployeeLevelConfiguration } from "@/lib/employee-level/validation";
-import type { EmployeeLevelInfo, EmployeeLevelValidationCode } from "@/lib/employee-level/types";
+import type { EmployeeLevelValidationCode } from "@/lib/employee-level/types";
 
 type JsonObject = Record<string, unknown>;
 
@@ -30,8 +30,6 @@ type UserRow = {
   level_program_enabled: boolean | null;
   level_base_date_override: string | null;
 };
-
-type UserResponseRow = UserRow & { levelInfo: EmployeeLevelInfo };
 
 const USER_SELECT = `
   id,
@@ -114,10 +112,9 @@ function getLang(value: unknown) {
 
 type LevelPolicyErrorCode =
   | "EMPLOYEE_NOT_FOUND" | "SYSTEM_ACCOUNT_NOT_ELIGIBLE" | "TERMINATED_EMPLOYEE_READ_ONLY"
-  | "HIRE_DATE_REQUIRED" | "INVALID_LEVEL_PROGRAM_ENABLED" | "INVALID_BASE_DATE_MODE"
+  | "HIRE_DATE_REQUIRED"
   | "BASE_DATE_REQUIRED" | "INVALID_BASE_DATE" | "BASE_DATE_BEFORE_HIRE_DATE"
-  | "BASE_DATE_AFTER_TERMINATION_DATE" | "BASE_DATE_IN_FUTURE"
-  | "CHANGE_REASON_REQUIRED" | "NO_CHANGES";
+  | "BASE_DATE_AFTER_TERMINATION_DATE" | "BASE_DATE_IN_FUTURE";
 
 function levelPolicyError(code: LevelPolicyErrorCode, lang: "ko" | "vi") {
   const messages: Record<LevelPolicyErrorCode, { ko: string; vi: string }> = {
@@ -125,15 +122,11 @@ function levelPolicyError(code: LevelPolicyErrorCode, lang: "ko" | "vi") {
     SYSTEM_ACCOUNT_NOT_ELIGIBLE: { ko: "시스템 계정에는 직원 레벨을 설정할 수 없습니다.", vi: "Không thể thiết lập cấp nhân viên cho tài khoản hệ thống." },
     TERMINATED_EMPLOYEE_READ_ONLY: { ko: "퇴사자의 레벨 설정은 조회만 가능합니다.", vi: "Thiết lập cấp của nhân viên đã nghỉ việc chỉ có thể xem." },
     HIRE_DATE_REQUIRED: { ko: "레벨 제도를 적용하려면 입사일이 필요합니다.", vi: "Cần có ngày vào làm để áp dụng chế độ cấp." },
-    INVALID_LEVEL_PROGRAM_ENABLED: { ko: "레벨 제도 상태가 올바르지 않습니다.", vi: "Trạng thái chế độ cấp không hợp lệ." },
-    INVALID_BASE_DATE_MODE: { ko: "레벨 기준 방식이 올바르지 않습니다.", vi: "Cách chọn ngày bắt đầu tính cấp không hợp lệ." },
     BASE_DATE_REQUIRED: { ko: "레벨 기준일을 입력해주세요.", vi: "Vui lòng nhập ngày bắt đầu tính cấp." },
     INVALID_BASE_DATE: { ko: "레벨 기준일 형식이 올바르지 않습니다.", vi: "Định dạng ngày bắt đầu tính cấp không hợp lệ." },
     BASE_DATE_BEFORE_HIRE_DATE: { ko: "레벨 기준일은 입사일보다 빠를 수 없습니다.", vi: "Ngày bắt đầu tính cấp không thể sớm hơn ngày vào làm." },
     BASE_DATE_AFTER_TERMINATION_DATE: { ko: "레벨 기준일은 퇴사일보다 늦을 수 없습니다.", vi: "Ngày bắt đầu tính cấp không thể sau ngày nghỉ việc." },
     BASE_DATE_IN_FUTURE: { ko: "레벨 기준일은 오늘 이후 날짜로 설정할 수 없습니다.", vi: "Ngày bắt đầu tính cấp không thể sau ngày hôm nay." },
-    CHANGE_REASON_REQUIRED: { ko: "변경 사유를 입력해주세요.", vi: "Vui lòng nhập lý do thay đổi." },
-    NO_CHANGES: { ko: "변경된 레벨 설정이 없습니다.", vi: "Không có thay đổi trong thiết lập cấp." },
   };
   return messages[code][lang];
 }
@@ -274,53 +267,6 @@ export async function PATCH(req: Request) {
     }
 
     const inputUpdates = (body.updates || {}) as JsonObject;
-    if (body.action === "update_employee_level_policy") {
-      if (typeof body.levelProgramEnabled !== "boolean") return policyResponse("INVALID_LEVEL_PROGRAM_ENABLED", lang);
-      if (body.baseDateMode !== "hire_date" && body.baseDateMode !== "override") return policyResponse("INVALID_BASE_DATE_MODE", lang);
-      const changeReason = normalizeText(body.changeReason);
-      if (changeReason.length < 2) return policyResponse("CHANGE_REASON_REQUIRED", lang);
-
-      const { data: target, error: targetError } = await supabaseServer.from("users").select(USER_SELECT).eq("id", id).maybeSingle();
-      if (targetError) throw new Error(`Failed to fetch target user: ${targetError.message}`);
-      if (!target) return policyResponse("EMPLOYEE_NOT_FOUND", lang, 404);
-      const employee = target as UserRow;
-      if (employee.is_system_account) return policyResponse("SYSTEM_ACCOUNT_NOT_ELIGIBLE", lang, 403);
-      if (employee.termination_date) return policyResponse("TERMINATED_EMPLOYEE_READ_ONLY", lang, 409);
-      if (!employee.hire_date) return policyResponse("HIRE_DATE_REQUIRED", lang);
-
-      let override: string | null = null;
-      if (body.levelProgramEnabled && body.baseDateMode === "override") {
-        if (!normalizeText(body.levelBaseDateOverride)) return policyResponse("BASE_DATE_REQUIRED", lang);
-        if (!isDateKey(body.levelBaseDateOverride)) return policyResponse("INVALID_BASE_DATE", lang);
-        override = String(body.levelBaseDateOverride);
-      }
-      const today = getVietnamDateKey();
-      const validation = validateEmployeeLevelConfiguration({
-        levelProgramEnabled: body.levelProgramEnabled,
-        hireDate: employee.hire_date,
-        levelBaseDateOverride: override,
-        terminationDate: employee.termination_date,
-        isSystemAccount: employee.is_system_account,
-        today,
-      });
-      if (!validation.valid) return policyResponse(validationCodeToPolicyCode(validation.codes[0]), lang);
-      if (employee.level_program_enabled === body.levelProgramEnabled && employee.level_base_date_override === override) return policyResponse("NO_CHANGES", lang, 409);
-
-      const previousInfo = getEmployeeLevelInfo(employee, today);
-      const nextInfo = getEmployeeLevelInfo({ ...employee, level_program_enabled: body.levelProgramEnabled, level_base_date_override: override }, today);
-      const { data, error } = await supabaseServer.rpc("employee_update_level_policy_v1", {
-        p_user_id: id,
-        p_enabled: body.levelProgramEnabled,
-        p_base_date_override: override,
-        p_actor_id: auth.actor.id,
-        p_actor_username: auth.actor.username,
-        p_change_reason: changeReason,
-        p_previous_level: previousInfo.level,
-        p_next_level: nextInfo.level,
-      });
-      if (error) throw new Error(`Failed to update employee level policy: ${error.message}`);
-      return NextResponse.json({ ok: true, user: withEmployeeLevelInfo(data as UserRow, today) satisfies UserResponseRow });
-    }
     if (body.action === "rehire") {
       const rehireDate = body.rehireDate;
       if (body.confirmPreviousPayrollCompleted !== true || !isDateKey(rehireDate)) {
@@ -380,7 +326,7 @@ export async function PATCH(req: Request) {
       throw new Error(`Failed to fetch target user: ${targetError.message}`);
     }
 
-    if (!target || target.is_system_account) {
+    if (!target) {
       return NextResponse.json(
         { ok: false, error: "User not found" },
         { status: 404 }
@@ -445,16 +391,64 @@ export async function PATCH(req: Request) {
     }
     update = terminationPolicy.update;
 
-    const { data, error } = await supabaseServer
-      .from("users")
-      .update(update)
-      .eq("id", id)
-      .eq("is_system_account", false)
-      .select(USER_SELECT)
-      .single();
+    const hasLevelBaseDateUpdate = Object.prototype.hasOwnProperty.call(
+      body,
+      "levelBaseDateOverride"
+    );
+    let levelBaseDateOverride = target.level_base_date_override;
+    if (hasLevelBaseDateUpdate) {
+      if (body.levelBaseDateOverride !== null && !isDateKey(body.levelBaseDateOverride)) {
+        return policyResponse("INVALID_BASE_DATE", lang);
+      }
+      levelBaseDateOverride = body.levelBaseDateOverride === null
+        ? null
+        : String(body.levelBaseDateOverride);
+    }
+
+    const resultingHireDate = Object.prototype.hasOwnProperty.call(update, "hire_date")
+      ? update.hire_date as string | null
+      : target.hire_date;
+    const resultingTerminationDate = Object.prototype.hasOwnProperty.call(update, "termination_date")
+      ? update.termination_date as string | null
+      : target.termination_date;
+    if (
+      target.is_system_account
+      && target.level_base_date_override !== levelBaseDateOverride
+      && levelBaseDateOverride !== null
+    ) {
+      return policyResponse("SYSTEM_ACCOUNT_NOT_ELIGIBLE", lang, 403);
+    }
+    if (!target.is_system_account) {
+      const levelValidation = validateEmployeeLevelConfiguration({
+        hireDate: resultingHireDate,
+        levelBaseDateOverride,
+        terminationDate: resultingTerminationDate,
+        today: getVietnamDateKey(),
+      });
+      if (!levelValidation.valid) {
+        return policyResponse(validationCodeToPolicyCode(levelValidation.codes[0]), lang);
+      }
+    }
+    if (
+      target.termination_date
+      && target.level_base_date_override !== levelBaseDateOverride
+    ) {
+      return policyResponse("TERMINATED_EMPLOYEE_READ_ONLY", lang, 409);
+    }
+
+    const { data, error } = await supabaseServer.rpc(
+      "employee_update_profile_and_level_v2",
+      {
+        p_user_id: id,
+        p_updates: update,
+        p_base_date_override: levelBaseDateOverride,
+        p_actor_id: auth.actor.id,
+        p_actor_username: auth.actor.username,
+      }
+    );
 
     if (error) {
-      throw new Error(`Failed to update user: ${error.message}`);
+      throw new Error(`Failed to atomically update user: ${error.message}`);
     }
 
     return NextResponse.json({

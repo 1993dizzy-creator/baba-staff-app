@@ -7,7 +7,6 @@ export type EmployeeLevelUser = {
   hire_date: string | null;
   termination_date: string | null;
   is_system_account: boolean;
-  level_program_enabled: boolean | null;
   level_base_date_override: string | null;
 };
 
@@ -16,7 +15,6 @@ export function getEmployeeLevelInfo(
   asOfDate: string
 ): EmployeeLevelInfo {
   return calculateEmployeeLevel({
-    levelProgramEnabled: user.level_program_enabled,
     hireDate: user.hire_date,
     levelBaseDateOverride: user.level_base_date_override,
     terminationDate: user.termination_date,

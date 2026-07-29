@@ -13,7 +13,6 @@ import { validateEmployeeLevelConfiguration, validateIncludedRaiseCount } from "
 
 const enabled = (asOfDate: string, overrides: Record<string, unknown> = {}) =>
   calculateEmployeeLevel({
-    levelProgramEnabled: true,
     hireDate: "2026-01-15",
     levelBaseDateOverride: null,
     asOfDate,
@@ -105,11 +104,8 @@ test("termination date freezes level and raises after departure", () => {
   assert.equal(after.negotiationEligible, false);
 });
 
-test("disabled and system accounts never calculate a level", () => {
-  assert.equal(
-    enabled("2026-04-15", { levelProgramEnabled: false }).reason,
-    "DISABLED"
-  );
+test("legacy enablement is irrelevant while system accounts never calculate a level", () => {
+  assert.equal(enabled("2026-04-15").level, 2);
   assert.equal(
     enabled("2026-04-15", { isSystemAccount: true }).reason,
     "SYSTEM_ACCOUNT"
@@ -118,7 +114,6 @@ test("disabled and system accounts never calculate a level", () => {
 
 test("configuration validation returns stable error codes", () => {
   const base = {
-    levelProgramEnabled: true,
     hireDate: "2026-01-15",
     levelBaseDateOverride: null,
     terminationDate: null,
@@ -177,7 +172,7 @@ test("all level themes are complete, unique, and negotiation-neutral", () => {
 
 test("migration adds nullable foundations without data backfill or client writes", () => {
   const migration = fs.readFileSync(
-    path.join(process.cwd(), "supabase/migrations/202607290001_create_employee_level_foundation.sql"),
+    path.join(process.cwd(), "supabase/migrations/20260728182601_create_employee_level_foundation.sql"),
     "utf8"
   );
   assert.match(migration, /level_program_enabled boolean null/);

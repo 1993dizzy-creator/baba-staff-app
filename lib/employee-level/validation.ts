@@ -10,7 +10,6 @@ function result(codes: EmployeeLevelValidationCode[]): EmployeeLevelValidationRe
 }
 
 export function validateEmployeeLevelConfiguration(input: {
-  levelProgramEnabled: boolean | null;
   hireDate: string | null;
   levelBaseDateOverride: string | null;
   terminationDate?: string | null;
@@ -29,10 +28,10 @@ export function validateEmployeeLevelConfiguration(input: {
     codes.push("INVALID_DATE");
     return result(codes);
   }
-  if (input.isSystemAccount && (input.levelProgramEnabled === true || input.levelBaseDateOverride)) {
+  if (input.isSystemAccount) {
     codes.push("SYSTEM_ACCOUNT_NOT_ELIGIBLE");
   }
-  if (input.levelProgramEnabled === true && !input.hireDate) {
+  if (!input.hireDate) {
     codes.push("MISSING_HIRE_DATE");
   }
   if (
