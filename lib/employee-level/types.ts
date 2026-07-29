@@ -4,9 +4,16 @@ export const EMPLOYEE_LEVEL_RAISE_AMOUNT = 500_000;
 export const EMPLOYEE_LEVEL_MAX_RAISE_COUNT = 7;
 export const EMPLOYEE_LEVEL_NEGOTIATION_MONTHS = 24;
 
+export const EMPLOYEE_LEVEL_ELIGIBLE_ROLES = ["manager", "leader", "staff"] as const;
+
+export function isEmployeeLevelEligibleRole(role: string | null | undefined) {
+  return EMPLOYEE_LEVEL_ELIGIBLE_ROLES.some((eligibleRole) => eligibleRole === role);
+}
+
 export type EmployeeLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export type EmployeeLevelCalculationInput = {
+  role: string | null;
   hireDate: string | null;
   levelBaseDateOverride: string | null;
   terminationDate?: string | null;
@@ -16,6 +23,7 @@ export type EmployeeLevelCalculationInput = {
 
 export type EmployeeLevelIneligibleReason =
   | "SYSTEM_ACCOUNT"
+  | "ROLE_NOT_ELIGIBLE"
   | "MISSING_BASE_DATE"
   | "BEFORE_BASE_DATE"
   | "INVALID_DATE";

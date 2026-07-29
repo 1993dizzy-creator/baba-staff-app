@@ -13,6 +13,7 @@ import { validateEmployeeLevelConfiguration, validateIncludedRaiseCount } from "
 
 const enabled = (asOfDate: string, overrides: Record<string, unknown> = {}) =>
   calculateEmployeeLevel({
+    role: "staff",
     hireDate: "2026-01-15",
     levelBaseDateOverride: null,
     asOfDate,
@@ -110,6 +111,17 @@ test("legacy enablement is irrelevant while system accounts never calculate a le
     enabled("2026-04-15", { isSystemAccount: true }).reason,
     "SYSTEM_ACCOUNT"
   );
+});
+
+test("only manager, leader, and staff roles calculate employee levels", () => {
+  for (const role of ["manager", "leader", "staff"]) {
+    assert.equal(enabled("2026-04-15", { role }).eligible, true);
+  }
+  for (const role of ["owner", "master"]) {
+    const info = enabled("2026-04-15", { role });
+    assert.equal(info.eligible, false);
+    assert.equal(info.reason, "ROLE_NOT_ELIGIBLE");
+  }
 });
 
 test("configuration validation returns stable error codes", () => {

@@ -12,7 +12,10 @@ import { ui } from "@/lib/styles/ui";
 import { adminUsersText } from "@/lib/text";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeLevelBadge from "@/components/employee/EmployeeLevelBadge";
-import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
+import {
+  isEmployeeLevelEligibleRole,
+  type EmployeeLevelInfo,
+} from "@/lib/employee-level/types";
 
 type UserRow = {
   id: number | string;
@@ -286,6 +289,7 @@ function UserCard({
     : draft.role === "owner"
       ? "owner"
       : "staff";
+  const hasEmployeeLevel = isEmployeeLevelEligibleRole(user.role);
 
   function update<K extends keyof UserRow>(key: K, value: UserRow[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -296,7 +300,7 @@ function UserCard({
       <div style={styles.rowMain}>
         <div style={styles.rowText}>
           <span style={styles.rowTitle}>
-            {user.levelInfo.eligible && user.levelInfo.level ? (
+            {hasEmployeeLevel && user.levelInfo.eligible && user.levelInfo.level ? (
               <EmployeeLevelBadge level={user.levelInfo.level} negotiationEligible={user.levelInfo.negotiationEligible} lang={lang} />
             ) : null}
             <span style={styles.rowName}>{nameText}</span>
@@ -327,7 +331,7 @@ function UserCard({
         </div>
       </div>
 
-      <LevelSummary user={user} text={text} lang={lang} />
+      {hasEmployeeLevel ? <LevelSummary user={user} text={text} /> : null}
 
       {isEditing ? (
         <div style={styles.formGrid}>
@@ -473,7 +477,7 @@ function UserCard({
               <span style={styles.fieldNotice}>{text.payrollEligibleOverrideHelp}</span>
             </label>
           ) : null}
-          <section style={styles.levelEditor}>
+          {hasEmployeeLevel ? <section style={styles.levelEditor}>
             <strong style={styles.levelEditorTitle}>{text.employeeLevel}</strong>
             {user.termination_date ? (
               <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span>
@@ -490,7 +494,7 @@ function UserCard({
                 )}
               </>
             )}
-          </section>
+          </section> : null}
           <div style={styles.actionRow}>
             <button
               type="button"
@@ -530,16 +534,18 @@ function UserCard({
   );
 }
 
-function LevelSummary({ user, text, lang }: { user: UserRow; text: AdminUsersPageText; lang: "ko" | "vi" }) {
+function LevelSummary({ user, text }: { user: UserRow; text: AdminUsersPageText }) {
   const info = user.levelInfo;
   if (!info.eligible || !info.displayLabel) return <div style={styles.levelSummary}>{text.levelUnset}</div>;
-  const amount = new Intl.NumberFormat(lang === "vi" ? "vi-VN" : "ko-KR").format(info.cumulativeRaiseAmount);
+  const baseLabel = info.baseDateSource === "override"
+    ? `${text.directBaseShort} ${info.baseDate}`
+    : text.hireDateBase;
+  const nextLabel = info.nextLevelDate
+    ? `${text.nextLevelShort} Lv.${Math.min(8, (info.level || 1) + 1)} ${info.nextLevelDate}`
+    : text.highestLevel;
   return (
     <div style={styles.levelSummary}>
-      <span>{text.currentLevel} {info.displayLabel}</span>
-      <span>{text.levelBaseDate} {info.baseDate} · {info.baseDateSource === "override" ? text.directBase : text.hireDateBase}</span>
-      <span>{text.cumulativeRaise} {amount} VND</span>
-      {info.negotiationEligible ? <span>{text.negotiationEligible} · {text.negotiationEligibleAt} {info.negotiationEligibleAt}</span> : info.nextLevelDate ? <span>{text.nextLevel} Lv.{Math.min(8, (info.level || 1) + 1)} {info.nextLevelDate}</span> : <span>{text.negotiationEligibleAt} {info.negotiationEligibleAt}</span>}
+      <span>{baseLabel} · {nextLabel}</span>
     </div>
   );
 }

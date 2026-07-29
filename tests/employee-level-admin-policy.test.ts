@@ -66,8 +66,11 @@ test("level audit is exactly conditional on a real allowed base-date change", ()
 
 test("employee cards use the shared theme badge and preserve compact mobile layout", () => {
   const page = read("app/(protected)/admin/users/page.tsx");
+  const route = read("app/api/admin/users/route.ts");
   const badge = read("components/employee/EmployeeLevelBadge.tsx");
   assert.match(page, /EmployeeLevelBadge/);
+  assert.match(page, /isEmployeeLevelEligibleRole\(user\.role\)/);
+  assert.match(route, /isEmployeeLevelEligibleRole\(resultingRole\)/);
   assert.match(page, /baseDateMode: "hire_date" \| "override"/);
   assert.match(page, /levelBaseDateOverride: levelDraft\.baseDateMode === "override"/);
   assert.match(page, /setUsers\(\(current\) =>[\s\S]*current\.map/);
@@ -75,11 +78,17 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   assert.doesNotMatch(page, /changeReason/);
   assert.doesNotMatch(page, /level_program_enabled === true/);
   assert.match(badge, /EMPLOYEE_LEVEL_THEME\[level\]/);
-  assert.match(badge, /width: 24/);
-  assert.match(badge, /height: 24/);
+  assert.match(badge, /minWidth: 18/);
+  assert.match(badge, /height: 18/);
+  assert.match(badge, /linear-gradient/);
+  assert.match(badge, /fontSize: 10/);
   assert.match(badge, /flexShrink: 0/);
   assert.match(badge, /negotiationEligible/);
   assert.match(page, /textOverflow: "ellipsis"/);
+  assert.match(page, /text\.directBaseShort/);
+  assert.match(page, /text\.nextLevelShort/);
+  assert.match(page, /text\.highestLevel/);
+  assert.doesNotMatch(page, /info\.cumulativeRaiseAmount/);
 });
 
 test("Korean and Vietnamese employee-level copy is present", () => {

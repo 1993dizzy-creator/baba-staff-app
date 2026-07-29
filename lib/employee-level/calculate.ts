@@ -4,6 +4,7 @@ import {
   EMPLOYEE_LEVEL_MAX_RAISE_COUNT,
   EMPLOYEE_LEVEL_NEGOTIATION_MONTHS,
   EMPLOYEE_LEVEL_RAISE_AMOUNT,
+  isEmployeeLevelEligibleRole,
   type EmployeeLevel,
   type EmployeeLevelCalculationInput,
   type EmployeeLevelInfo,
@@ -75,6 +76,9 @@ export function calculateEmployeeLevel(
 
   if (input.isSystemAccount) {
     return ineligible("SYSTEM_ACCOUNT", baseDate, baseDateSource, null);
+  }
+  if (!isEmployeeLevelEligibleRole(input.role)) {
+    return ineligible("ROLE_NOT_ELIGIBLE", baseDate, baseDateSource, null);
   }
   if (!baseDate) {
     return ineligible("MISSING_BASE_DATE", null, null, null);

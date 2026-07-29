@@ -6,7 +6,10 @@ import { enforceTerminationAccountPolicy, getVietnamDateKey } from "@/lib/employ
 import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
 import { getEmployeeLevelInfo, withEmployeeLevelInfo } from "@/lib/employee-level/server";
 import { validateEmployeeLevelConfiguration } from "@/lib/employee-level/validation";
-import type { EmployeeLevelValidationCode } from "@/lib/employee-level/types";
+import {
+  isEmployeeLevelEligibleRole,
+  type EmployeeLevelValidationCode,
+} from "@/lib/employee-level/types";
 
 type JsonObject = Record<string, unknown>;
 
@@ -411,6 +414,9 @@ export async function PATCH(req: Request) {
     const resultingTerminationDate = Object.prototype.hasOwnProperty.call(update, "termination_date")
       ? update.termination_date as string | null
       : target.termination_date;
+    const resultingRole = Object.prototype.hasOwnProperty.call(update, "role")
+      ? update.role as string | null
+      : target.role;
     if (
       target.is_system_account
       && target.level_base_date_override !== levelBaseDateOverride
@@ -418,7 +424,7 @@ export async function PATCH(req: Request) {
     ) {
       return policyResponse("SYSTEM_ACCOUNT_NOT_ELIGIBLE", lang, 403);
     }
-    if (!target.is_system_account) {
+    if (!target.is_system_account && isEmployeeLevelEligibleRole(resultingRole)) {
       const levelValidation = validateEmployeeLevelConfiguration({
         hireDate: resultingHireDate,
         levelBaseDateOverride,

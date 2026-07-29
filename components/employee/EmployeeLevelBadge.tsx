@@ -17,17 +17,20 @@ export default function EmployeeLevelBadge({
       <span
         aria-label={lang === "vi" ? `Cấp nhân viên ${level}` : `직원 레벨 ${level}`}
         style={{
-          width: 24,
-          height: 24,
-          borderRadius: 8,
+          minWidth: 18,
+          height: 18,
+          padding: "0 4px",
+          boxSizing: "border-box",
+          borderRadius: 6,
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
           flexShrink: 0,
-          backgroundColor: theme.backgroundColor,
+          background: `linear-gradient(145deg, ${theme.backgroundColor}, ${theme.borderColor})`,
           color: theme.textColor,
           border: `1px solid ${theme.borderColor}`,
-          fontSize: 12,
+          boxShadow: "0 1px 2px rgba(15, 23, 42, 0.12)",
+          fontSize: 10,
           fontWeight: 800,
           lineHeight: 1,
         }}

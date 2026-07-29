@@ -4,6 +4,7 @@ import { calculateEmployeeLevel } from "./calculate";
 import type { EmployeeLevelInfo } from "./types";
 
 export type EmployeeLevelUser = {
+  role: string | null;
   hire_date: string | null;
   termination_date: string | null;
   is_system_account: boolean;
@@ -15,6 +16,7 @@ export function getEmployeeLevelInfo(
   asOfDate: string
 ): EmployeeLevelInfo {
   return calculateEmployeeLevel({
+    role: user.role,
     hireDate: user.hire_date,
     levelBaseDateOverride: user.level_base_date_override,
     terminationDate: user.termination_date,
