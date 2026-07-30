@@ -24,6 +24,7 @@ export const attendanceText = {
   
     absent: "미출근",
     viewDetail: "상세보기",
+    recent7Days: "최근 7일",
     monthFormat: "{year}년 {month}월",
     lateText: "지각 {minutes}분",
     earlyLeaveText: "조퇴 {minutes}분",
@@ -147,6 +148,7 @@ export const attendanceText = {
 
     absent: "Vắng",
     viewDetail: "Xem chi tiết",
+    recent7Days: "7 ngày gần đây",
     monthFormat: "Tháng {month}/{year}",
     lateText: "Muộn {minutes} phút",
     earlyLeaveText: "Về sớm {minutes} phút",

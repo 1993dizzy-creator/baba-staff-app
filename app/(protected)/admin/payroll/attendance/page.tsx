@@ -7,12 +7,17 @@ import Container from "@/components/Container";
 import { useLanguage } from "@/lib/language-context";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { commonText, attendanceText } from "@/lib/text";
-import { payrollText } from "@/lib/text/payroll";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
 import { getPositionRank } from "@/lib/common/positions";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
+import {
+    ATTENDANCE_STATUS_COLORS,
+    getAttendanceDisplayStatus,
+    getDateKeyWeekdayIndex,
+    getRecentAttendanceDateKeys,
+} from "@/lib/attendance/display-status";
 
 
 type UserRow = {
@@ -163,7 +168,6 @@ export default function AttendanceOverviewPage() {
     const { lang } = useLanguage();
     const c = commonText[lang];
     const t = attendanceText[lang];
-    const payroll = payrollText[lang];
 
     const [currentMonth, setCurrentMonth] = useState(() =>
         getMonthFromParam(searchParams.get("month"))
@@ -334,6 +338,11 @@ export default function AttendanceOverviewPage() {
         return map;
     }, [records]);
 
+    const recentDateKeys = useMemo(() => {
+        const { startText } = getMonthRange(currentMonth);
+        return getRecentAttendanceDateKeys(startText.slice(0, 7));
+    }, [currentMonth]);
+
     const summaries = useMemo(() => {
 
         return users.map((user) => {
@@ -352,10 +361,6 @@ export default function AttendanceOverviewPage() {
                 record.status === "leave" && record.approval_status === "approved"
             );
 
-            const pendingLeaveRecords = userRecords.filter((record) =>
-                record.status === "leave" && record.approval_status === "pending"
-            );
-
             const workDays = workRecords.length;
 
             const leaveDays = approvedLeaveRecords.length;
@@ -368,38 +373,12 @@ export default function AttendanceOverviewPage() {
                 record.status === "early_leave" || Number(record.early_leave_minutes || 0) > 0
             ).length;
 
-            const totalWorkMinutes = workRecords.reduce(
-                (sum, record) => sum + Number(record.work_minutes || 0),
-                0
-            );
-
-            const pendingLeaveCount = pendingLeaveRecords.length;
-
-            const absentCount = userRecords.filter((record) =>
-                record.status === "absent"
-            ).length;
-
-            const totalLateMinutes = workRecords.reduce(
-                (sum, record) => sum + Number(record.late_minutes || 0),
-                0
-            );
-
-            const totalEarlyLeaveMinutes = workRecords.reduce(
-                (sum, record) => sum + Number(record.early_leave_minutes || 0),
-                0
-            );
-
             return {
                 user,
                 workDays,
                 leaveDays,
                 lateCount,
                 earlyLeaveCount,
-                totalWorkMinutes,
-                pendingLeaveCount,
-                absentCount,
-                totalLateMinutes,
-                totalEarlyLeaveMinutes,
             };
         });
     }, [users, recordsByUser]);
@@ -454,8 +433,6 @@ export default function AttendanceOverviewPage() {
 
     return (
         <Container noPaddingTop>
-            <h1 style={pageTitleStyle}>{payroll.attendanceTitle}</h1>
-
             <div style={monthHeaderStyle}>
                 <button type="button" style={monthButtonStyle} onClick={() => moveMonth(-1)}>
                     ‹
@@ -606,6 +583,10 @@ export default function AttendanceOverviewPage() {
                                     const user = summary.user;
                                     const isExpanded = expandedUserId === user.id;
                                     const age = getAge(user.birth_date);
+                                    const userRecords = recordsByUser.get(user.id) || [];
+                                    const recordsByDate = isExpanded
+                                        ? new Map(userRecords.map((record) => [record.work_date, record]))
+                                        : null;
 
                                     return (
                                         <div key={user.id} style={staffCardStyle}>
@@ -613,9 +594,11 @@ export default function AttendanceOverviewPage() {
                                                 type="button"
                                                 onClick={() => setExpandedUserId(isExpanded ? null : user.id)}
                                                 style={staffSummaryButtonStyle}
+                                                aria-expanded={isExpanded}
                                             >
                                                 <div style={staffLeftStyle}>
                                                     <EmployeeNameWithLevel name={`${user.name}${age ? ` (${age})` : ""}`} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} />
+                                                    <span style={staffSeparatorStyle}>·</span>
                                                     <span style={staffMetaStyle}>
                                                         {user.position
                                                             ? t.positions?.[user.position as keyof typeof t.positions] || user.position
@@ -623,51 +606,77 @@ export default function AttendanceOverviewPage() {
                                                     </span>
                                                 </div>
 
-                                                <div style={staffRightStyle}>
-                                                    <span style={miniBadgeStyle}>
-                                                        {t.workTime} {summary.workDays}
-                                                    </span>
-
-                                                    <span style={miniBadgeStyle}>
-                                                        {t.workLeave} {summary.leaveDays}
-                                                    </span>
-
+                                                <div style={staffStatsStyle}>
+                                                    <IconStat icon="📅" label={t.summaryWorkDays} value={summary.workDays} />
+                                                    <IconStat icon="🌴" label={t.workLeave} value={summary.leaveDays} />
                                                     {summary.lateCount > 0 && (
-                                                        <span style={warningBadgeStyle}>
-                                                            {t.workLate} {summary.lateCount}
-                                                        </span>
+                                                        <IconStat icon="⏰" label={t.workLate} value={summary.lateCount} />
                                                     )}
-
                                                     {summary.earlyLeaveCount > 0 && (
-                                                        <span style={dangerBadgeStyle}>
-                                                            {t.workEarlyLeave} {summary.earlyLeaveCount}
-                                                        </span>
+                                                        <IconStat icon="🏃" label={t.workEarlyLeave} value={summary.earlyLeaveCount} />
                                                     )}
-
-                                                    <span style={expandIconStyle}>{isExpanded ? "⌃" : "⌄"}</span>
                                                 </div>
+
+                                                <span style={expandIconStyle} aria-hidden="true">{isExpanded ? "⌃" : "⌄"}</span>
                                             </button>
 
                                             {isExpanded && (
-                                                <div style={detailGridStyle}>
-                                                    <InfoBox
-                                                        label={t.summaryTotalWorkTime}
-                                                        value={formatMinutes(summary.totalWorkMinutes, c)}
-                                                    />
-                                                    <InfoBox
-                                                        label={t.workLate}
-                                                        value={formatMinutes(summary.totalLateMinutes, c)}
-                                                    />
+                                                <div style={recentAttendanceStyle}>
+                                                    <div style={recentTitleStyle}>{t.recent7Days}</div>
+                                                    <div style={recentWeekdayGridStyle}>
+                                                        {recentDateKeys.map((dateKey) => {
+                                                            const weekdayIndex = getDateKeyWeekdayIndex(dateKey);
+                                                            return (
+                                                                <span
+                                                                    key={`weekday-${dateKey}`}
+                                                                    style={{
+                                                                        ...recentWeekdayStyle,
+                                                                        color: weekdayIndex === 0
+                                                                            ? "#dc2626"
+                                                                            : weekdayIndex === 6
+                                                                                ? "#2563eb"
+                                                                                : "#6b7280",
+                                                                    }}
+                                                                >
+                                                                    {c.calendarWeekdays[weekdayIndex]}
+                                                                </span>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                    <div style={recentGridStyle}>
+                                                        {recentDateKeys.map((dateKey) => {
+                                                            const status = getAttendanceDisplayStatus(recordsByDate?.get(dateKey));
+                                                            const label = status === "early_leave"
+                                                                ? t.workEarlyLeave
+                                                                : status === "late"
+                                                                    ? t.workLate
+                                                                    : status === "approved_leave"
+                                                                        ? t.workLeave
+                                                                        : status === "normal"
+                                                                            ? t.workNormal
+                                                                            : c.noData;
 
-                                                    <InfoBox
-                                                        label={t.workEarlyLeave}
-                                                        value={formatMinutes(summary.totalEarlyLeaveMinutes, c)}
-                                                    />
-
-                                                    <InfoBox
-                                                        label={t.absent}
-                                                        value={`${summary.absentCount}`}
-                                                    />
+                                                            return (
+                                                                <div key={dateKey} style={recentDayStyle} title={label}>
+                                                                    <span style={recentDateStyle}>
+                                                                        {Number(dateKey.slice(-2))}
+                                                                    </span>
+                                                                    <span
+                                                                        role="img"
+                                                                        aria-label={label}
+                                                                        style={{
+                                                                            ...recentDotStyle,
+                                                                            ...(status === "none"
+                                                                                ? recentEmptyDotStyle
+                                                                                : { background: ATTENDANCE_STATUS_COLORS[status] }),
+                                                                        }}
+                                                                    >
+                                                                        {status === "none" ? "·" : ""}
+                                                                    </span>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
 
                                                     <div style={detailButtonWrapStyle}>
                                                         <button
@@ -692,28 +701,21 @@ export default function AttendanceOverviewPage() {
     );
 }
 
-function InfoBox({ label, value }: { label: string; value: string }) {
+function IconStat({ icon, label, value }: { icon: string; label: string; value: number }) {
     return (
-        <div style={infoBoxStyle}>
-            <div style={infoLabelStyle}>{label}</div>
-            <div style={infoValueStyle}>{value}</div>
-        </div>
+        <span style={iconStatStyle} title={label} aria-label={`${label} ${value}`}>
+            <span aria-hidden="true">{icon}</span>
+            <span>{value}</span>
+        </span>
     );
 }
-
-const pageTitleStyle: CSSProperties = {
-    margin: "12px 0 10px",
-    fontSize: 22,
-    lineHeight: 1.25,
-    fontWeight: 950,
-    color: "#111827",
-};
 
 const monthHeaderStyle: CSSProperties = {
     display: "grid",
     gridTemplateColumns: "36px 1fr 36px",
     alignItems: "center",
     gap: 8,
+    marginTop: 8,
     marginBottom: 12,
 };
 
@@ -907,7 +909,7 @@ const staffCardStyle: CSSProperties = {
     background: "#ffffff",
     border: "1px solid #e5e7eb",
     borderRadius: 12,
-    padding: "9px 10px",
+    padding: "6px 9px",
 };
 
 const staffSummaryButtonStyle: CSSProperties = {
@@ -915,10 +917,10 @@ const staffSummaryButtonStyle: CSSProperties = {
     border: "none",
     background: "transparent",
     padding: 0,
-    display: "flex",
-    justifyContent: "space-between",
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto 12px",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
     cursor: "pointer",
     textAlign: "left",
 };
@@ -928,13 +930,7 @@ const staffLeftStyle: CSSProperties = {
     alignItems: "center",
     gap: 6,
     minWidth: 0,
-};
-
-const staffRightStyle: CSSProperties = {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    flexShrink: 0,
+    overflow: "hidden",
 };
 
 const staffNameStyle: CSSProperties = {
@@ -942,44 +938,41 @@ const staffNameStyle: CSSProperties = {
     fontWeight: 800,
     color: "#111827",
     whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    minWidth: 0,
+};
+
+const staffSeparatorStyle: CSSProperties = {
+    color: "#9ca3af",
+    flexShrink: 0,
 };
 
 const staffMetaStyle: CSSProperties = {
     fontSize: 11,
     color: "#6b7280",
     whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    minWidth: 0,
 };
 
-const miniBadgeStyle: CSSProperties = {
-    border: "1px solid #d1d5db",
-    borderRadius: 999,
-    padding: "3px 7px",
+const staffStatsStyle: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    flexShrink: 0,
+    whiteSpace: "nowrap",
+};
+
+const iconStatStyle: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 1,
+    flexShrink: 0,
     fontSize: 11,
     fontWeight: 800,
-    background: "#ffffff",
     color: "#374151",
-    whiteSpace: "nowrap",
-};
-
-const warningBadgeStyle: CSSProperties = {
-    border: "1px solid #f59e0b",
-    borderRadius: 999,
-    padding: "3px 7px",
-    fontSize: 11,
-    fontWeight: 800,
-    background: "#fffbeb",
-    color: "#92400e",
-    whiteSpace: "nowrap",
-};
-
-const dangerBadgeStyle: CSSProperties = {
-    border: "1px solid #ef4444",
-    borderRadius: 999,
-    padding: "3px 7px",
-    fontSize: 11,
-    fontWeight: 800,
-    background: "#fef2f2",
-    color: "#991b1b",
     whiteSpace: "nowrap",
 };
 
@@ -988,20 +981,88 @@ const expandIconStyle: CSSProperties = {
     color: "#6b7280",
     width: 12,
     textAlign: "center",
+    flexShrink: 0,
 };
 
-const detailGridStyle: CSSProperties = {
+const recentAttendanceStyle: CSSProperties = {
     display: "grid",
-    gridTemplateColumns: "repeat(4, 1fr)",
-    gap: 6,
-    marginTop: 8,
+    gap: 3,
+    marginTop: 5,
+    paddingTop: 5,
+    borderTop: "1px solid #f3f4f6",
+};
+
+const recentTitleStyle: CSSProperties = {
+    fontSize: 11,
+    fontWeight: 800,
+    color: "#4b5563",
+};
+
+const recentWeekdayGridStyle: CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+    width: "100%",
+};
+
+const recentWeekdayStyle: CSSProperties = {
+    minWidth: 0,
+    textAlign: "center",
+    fontSize: 10,
+    lineHeight: 1.2,
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+};
+
+const recentGridStyle: CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+    overflow: "hidden",
+    border: "1px solid #e5e7eb",
+    borderRadius: 9,
+};
+
+const recentDayStyle: CSSProperties = {
+    display: "grid",
+    justifyItems: "center",
+    alignContent: "center",
+    gap: 3,
+    minWidth: 0,
+    minHeight: 40,
+    padding: "4px 1px",
+    borderRight: "1px solid #f3f4f6",
+};
+
+const recentDateStyle: CSSProperties = {
+    maxWidth: "100%",
+    overflow: "hidden",
+    fontSize: 10,
+    lineHeight: 1.2,
+    color: "#6b7280",
+    whiteSpace: "nowrap",
+};
+
+const recentDotStyle: CSSProperties = {
+    display: "grid",
+    placeItems: "center",
+    width: 8,
+    height: 8,
+    borderRadius: "50%",
+    fontSize: 14,
+    lineHeight: 1,
+};
+
+const recentEmptyDotStyle: CSSProperties = {
+    width: 12,
+    height: 12,
+    color: "#cbd5e1",
+    background: "transparent",
+    border: "1px solid #e5e7eb",
 };
 
 const detailButtonWrapStyle: CSSProperties = {
     display: "flex",
     justifyContent: "flex-end",
-    gridColumn: "1 / -1",  // 👈 이거 추가
-    marginTop: 3,
+    marginTop: 1,
 };
 
 const detailButtonStyle: CSSProperties = {
@@ -1009,30 +1070,11 @@ const detailButtonStyle: CSSProperties = {
     background: "#111827",
     color: "#ffffff",
     borderRadius: 10,
-    padding: "7px 11px",
+    minHeight: 32,
+    padding: "5px 10px",
     fontSize: 12,
     fontWeight: 900,
     cursor: "pointer",
-};
-
-const infoBoxStyle: CSSProperties = {
-    background: "#f9fafb",
-    border: "1px solid #d1d5db",
-    borderRadius: 10,
-    padding: "7px 5px",
-    textAlign: "center",
-};
-
-const infoLabelStyle: CSSProperties = {
-    fontSize: 10,
-    color: "#6b7280",
-    marginBottom: 3,
-};
-
-const infoValueStyle: CSSProperties = {
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#111827",
 };
 
 const emptyStyle: CSSProperties = {

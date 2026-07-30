@@ -2,14 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { commonText, attendanceText } from "@/lib/text";
-import { payrollText } from "@/lib/text/payroll";
 import {
     getDefaultShiftDateTimeValue,
     isLongShiftRecord,
@@ -18,6 +16,10 @@ import {
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
+import {
+    ATTENDANCE_STATUS_COLORS,
+    getAttendanceDisplayStatus,
+} from "@/lib/attendance/display-status";
 
 
 type UserRow = {
@@ -95,10 +97,6 @@ function getInitialSelectedDate(month: Date) {
     }
 
     return getMonthRange(month).startText;
-}
-
-function isApprovedLeave(record: AttendanceRecord | null | undefined) {
-    return record?.status === "leave" && record?.approval_status === "approved";
 }
 
 function formatTime(value: string | null) {
@@ -192,7 +190,6 @@ export default function AttendanceUserDetailPage() {
     const { lang } = useLanguage();
     const c = commonText[lang];
     const t = attendanceText[lang];
-    const payroll = payrollText[lang];
     const params = useParams();
     const searchParams = useSearchParams();
 
@@ -474,13 +471,6 @@ export default function AttendanceUserDetailPage() {
 
     return (
         <Container noPaddingTop>
-            <Link
-                href={`/admin/payroll/attendance?month=${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, "0")}`}
-                style={backLinkStyle}
-            >
-                ← {payroll.backToAttendance}
-            </Link>
-
             <div style={headerCardStyle}>
                 <div style={headerTopRowStyle}>
                     <div style={headerIdentityStyle}>
@@ -657,18 +647,7 @@ function Calendar({
                                 : "";
                         const isSelected = selectedDate === dateStr;
 
-                        let dotColor = "#10b981";
-
-                        const lateMinutes = Number(record?.late_minutes || 0);
-                        const earlyLeaveMinutes = Number(record?.early_leave_minutes || 0);
-
-                        if (earlyLeaveMinutes > 0 || record?.status === "early_leave") {
-                            dotColor = "#ef4444";
-                        } else if (lateMinutes > 0) {
-                            dotColor = "#f59e0b";
-                        } else if (isApprovedLeave(record)) {
-                            dotColor = "#6b7280";
-                        }
+                        const displayStatus = getAttendanceDisplayStatus(record);
 
                         return (
                             <button
@@ -687,12 +666,12 @@ function Calendar({
                             >
                                 <div>{displayDay}</div>
 
-                                {!isMuted && record && (record.status !== "leave" || isApprovedLeave(record)) && (
+                                {!isMuted && record && displayStatus !== "none" && (
                                     <>
                                         <div
                                             style={{
                                                 ...calendarDotStyle,
-                                                background: dotColor,
+                                                background: ATTENDANCE_STATUS_COLORS[displayStatus],
                                             }}
                                         />
 
@@ -1150,20 +1129,12 @@ function LegendItem({ label, color }: { label: string; color: string }) {
     );
 }
 
-const backLinkStyle: CSSProperties = {
-    display: "inline-flex",
-    margin: "12px 0 10px",
-    color: "#6b7280",
-    fontSize: 13,
-    fontWeight: 800,
-    textDecoration: "none",
-};
-
 const headerCardStyle: CSSProperties = {
     background: "#ffffff",
     border: "1px solid #e5e7eb",
     borderRadius: 14,
     padding: "10px 12px",
+    marginTop: 8,
     marginBottom: 12,
 };
 
