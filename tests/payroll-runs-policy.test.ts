@@ -47,11 +47,13 @@ test("employee union excludes system accounts and applies employment dates", () 
 });
 
 test("calculation uses contract rates and explicit automatic categories", () => {
-  assert.match(engine, /contract\.baseSalary\/contract\.standardWorkdays/);
+  assert.match(engine, /salaryBase\/contract\.standardWorkdays/);
+  assert.match(engine, /calculateCombinedSalary\(contract,levelInfo\)/);
   assert.match(engine, /contract\.payType==="daily"\?contract\.baseSalary/);
   assert.match(engine, /contract\.baseSalary\/60/);
   for (const category of ["base_work", "paid_leave", "late_deduction", "early_leave_deduction", "OVERTIME_APPROVAL_UNAVAILABLE"]) assert.match(engine, new RegExp(category));
-  assert.match(engine, /roundMinutes\(minutes,contract\.timeBlockMinutes,contract\.roundingMode\)/);
+  assert.match(engine, /roundMinutes\(actualRecognizedMinutes,contract\.timeBlockMinutes,contract\.roundingMode\)/);
+  assert.match(engine, /applyPayrollWorkPolicy/);
   assert.match(engine, /Math\.round\(value\)/);
 });
 

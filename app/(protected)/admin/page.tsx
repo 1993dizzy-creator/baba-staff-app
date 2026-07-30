@@ -62,7 +62,7 @@ const adminMenus = [
       ko: "근태 현황과 급여를 관리하고 급여 기준을 설정합니다.",
       vi: "Quản lý chấm công, tiền lương và thiết lập tiêu chuẩn tính lương.",
     },
-    href: "/admin/payroll",
+    href: "/admin/payroll/attendance",
     badge: "PAY",
     emoji: "💳",
     access: "admin" as AdminMenuAccess,

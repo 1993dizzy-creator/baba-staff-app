@@ -24,7 +24,8 @@ export type PayrollWarningCode =
   | "STORED_STATUS_POLICY_MISMATCH"
   | "STORED_LATE_MINUTES_MISMATCH"
   | "STORED_EARLY_LEAVE_MINUTES_MISMATCH"
-  | "STORED_WORK_MINUTES_MISMATCH";
+  | "STORED_WORK_MINUTES_MISMATCH"
+  | "EMPLOYEE_LEVEL_BASE_DATE_REQUIRED";
 
 export type WorkScheduleVersion = {
   id: number;
@@ -44,6 +45,7 @@ export type PayrollContract = {
   payType: PayType;
   calculationBasis: CalculationBasis;
   baseSalary: number;
+  fixedRaiseAmount: number;
   standardWorkdays: number | null;
   standardMinutesPerDay: number;
   timeBlockMinutes: number;
@@ -55,6 +57,9 @@ export type PayrollContract = {
   effectiveFrom: string;
   effectiveTo: string | null;
   revision: number;
+  createdBy?: number | null;
+  createdAt?: string | null;
+  note?: string | null;
 };
 
 export type AttendanceDayFacts = {

@@ -6,6 +6,7 @@ export function mapContract(row: Record<string, unknown>): PayrollContract {
     payType: row.pay_type as PayrollContract["payType"],
     calculationBasis: row.calculation_basis as PayrollContract["calculationBasis"],
     baseSalary: Number(row.base_salary),
+    fixedRaiseAmount: Number(row.fixed_raise_amount ?? 0),
     standardWorkdays: row.standard_workdays === null ? null : Number(row.standard_workdays),
     standardMinutesPerDay: Number(row.standard_minutes_per_day),
     timeBlockMinutes: Number(row.time_block_minutes),
@@ -17,6 +18,9 @@ export function mapContract(row: Record<string, unknown>): PayrollContract {
     effectiveFrom: String(row.effective_from),
     effectiveTo: row.effective_to ? String(row.effective_to) : null,
     revision: Number(row.revision),
+    createdBy: row.created_by === null || row.created_by === undefined ? null : Number(row.created_by),
+    createdAt: row.created_at ? String(row.created_at) : null,
+    note: row.note ? String(row.note) : null,
   };
 }
 

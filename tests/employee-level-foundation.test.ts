@@ -9,7 +9,7 @@ import { EMPLOYEE_LEVEL_THEME } from "../lib/employee-level/presentation.ts";
 // @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { EMPLOYEE_LEVEL_MAX_RAISE_COUNT, EMPLOYEE_LEVEL_RAISE_AMOUNT } from "../lib/employee-level/types.ts";
 // @ts-expect-error Node test execution needs explicit TypeScript extensions.
-import { validateEmployeeLevelConfiguration, validateIncludedRaiseCount } from "../lib/employee-level/validation.ts";
+import { validateEmployeeLevelConfiguration } from "../lib/employee-level/validation.ts";
 
 const enabled = (asOfDate: string, overrides: Record<string, unknown> = {}) =>
   calculateEmployeeLevel({
@@ -165,17 +165,6 @@ test("configuration validation returns stable error codes", () => {
   assert.deepEqual(
     validateEmployeeLevelConfiguration({ ...base, levelBaseDateOverride: "2026-02-30" }).codes,
     ["INVALID_DATE"]
-  );
-});
-
-test("included raise count accepts zero through seven and detects over-inclusion", () => {
-  assert.equal(validateIncludedRaiseCount(0, 0).valid, true);
-  assert.equal(validateIncludedRaiseCount(7, 7).valid, true);
-  assert.deepEqual(validateIncludedRaiseCount(-1, 7).codes, ["INVALID_INCLUDED_RAISE_COUNT"]);
-  assert.deepEqual(validateIncludedRaiseCount(8, 8).codes, ["INVALID_INCLUDED_RAISE_COUNT"]);
-  assert.deepEqual(
-    validateIncludedRaiseCount(3, 2).codes,
-    ["INCLUDED_RAISE_COUNT_EXCEEDS_EARNED"]
   );
 });
 

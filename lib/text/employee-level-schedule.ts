@@ -1,0 +1,1 @@
+export const employeeLevelScheduleText={ko:{future:"다음 레벨 {date} · {days}일 남음",today:"오늘 다음 레벨이 적용됩니다.",maximum:"최고 레벨입니다."},vi:{future:"Cấp tiếp theo {date} · còn {days} ngày",today:"Cấp tiếp theo được áp dụng hôm nay.",maximum:"Đã đạt cấp cao nhất."}} as const;

@@ -65,9 +65,7 @@ export type EmployeeLevelValidationCode =
   | "BASE_DATE_BEFORE_HIRE_DATE"
   | "BASE_DATE_AFTER_TERMINATION_DATE"
   | "BASE_DATE_IN_FUTURE"
-  | "SYSTEM_ACCOUNT_NOT_ELIGIBLE"
-  | "INVALID_INCLUDED_RAISE_COUNT"
-  | "INCLUDED_RAISE_COUNT_EXCEEDS_EARNED";
+  | "SYSTEM_ACCOUNT_NOT_ELIGIBLE";
 
 export type EmployeeLevelValidationResult = {
   valid: boolean;

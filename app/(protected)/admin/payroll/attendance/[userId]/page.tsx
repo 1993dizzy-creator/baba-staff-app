@@ -16,6 +16,8 @@ import {
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
+import { getNextLevelSchedule } from "@/lib/employee-level/next-level-schedule";
+import { employeeLevelScheduleText } from "@/lib/text/employee-level-schedule";
 import {
     ATTENDANCE_STATUS_COLORS,
     getAttendanceDisplayStatus,
@@ -469,6 +471,7 @@ export default function AttendanceUserDetailPage() {
     }, [records]);
 
 
+    const vietnamToday=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Ho_Chi_Minh",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());const nextLevel=getNextLevelSchedule(user?.levelInfo,vietnamToday);const nextLevelMessage=nextLevel?.status==="future"?employeeLevelScheduleText[lang].future.replace("{date}",nextLevel.date.replaceAll("-",".")).replace("{days}",String(nextLevel.days)):nextLevel?.status==="today"?employeeLevelScheduleText[lang].today:nextLevel?.status==="maximum"?employeeLevelScheduleText[lang].maximum:null;
     return (
         <Container noPaddingTop>
             <div style={headerCardStyle}>
@@ -480,6 +483,7 @@ export default function AttendanceUserDetailPage() {
                                 ? t.positions?.[user.position as keyof typeof t.positions] || user.position
                                 : user?.username || "-"}
                         </div>
+                        {nextLevelMessage?<div style={nextLevelStyle}>{nextLevelMessage}</div>:null}
                     </div>
 
                     {!isLoading && (
@@ -1161,6 +1165,8 @@ const userMetaStyle: CSSProperties = {
     fontSize: 12,
     color: "#6b7280",
 };
+
+const nextLevelStyle:CSSProperties={marginTop:4,fontSize:11,fontWeight:700,color:"#2563eb",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"};
 
 const totalWorkSummaryStyle: CSSProperties = {
     display: "flex",

@@ -17,16 +17,16 @@ test("legacy attendance overview URLs temporarily redirect to payroll attendance
 test("payroll routes are server-protected for owner and master", () => {
   const layout = read("app/(protected)/admin/payroll/layout.tsx");
 
-  assert.match(layout, /requireRole\(\["owner", "master"\]\)/);
+  assert.match(layout, /requireRole\(PAYROLL_MANAGER_ROLES\)/);
   assert.match(layout, /redirect\(auth\.status === 401 \? "\/login" : "\/admin"\)/);
 });
 
-test("attendance detail back link and legacy redirects preserve query strings", () => {
+test("attendance detail keeps month state while the removed duplicate back link stays absent", () => {
   const overview = read("app/(protected)/admin/payroll/attendance/page.tsx");
   const detail = read("app/(protected)/admin/payroll/attendance/[userId]/page.tsx");
 
   assert.match(overview, /getMonthFromParam\(searchParams\.get\("month"\)\)/);
-  assert.match(detail, /\/admin\/payroll\/attendance\?month=\$\{currentMonth\.getFullYear\(\)\}/);
+  assert.doesNotMatch(detail, /← 근태현황으로|\/admin\/payroll\/attendance\?month=\$\{currentMonth\.getFullYear\(\)\}/);
 
   const legacyUrl = new URL("https://staff.example/attendance/overview/42?month=2026-07&date=2026-07-22");
   const destination = legacyUrl.pathname.replace(
