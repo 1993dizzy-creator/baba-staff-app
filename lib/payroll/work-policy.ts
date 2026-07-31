@@ -1,5 +1,17 @@
 import type { PayrollContract } from "./types";
 
+export function calculatePayrollRates(contract: PayrollContract, salaryBase = contract.baseSalary) {
+  const dayRate = contract.payType === "monthly"
+    ? (contract.standardWorkdays ? salaryBase / contract.standardWorkdays : 0)
+    : contract.payType === "daily"
+      ? contract.baseSalary
+      : (contract.baseSalary / 60) * contract.standardMinutesPerDay;
+  return {
+    dayRate,
+    minuteRate: contract.payType === "hourly" ? contract.baseSalary / 60 : dayRate / contract.standardMinutesPerDay,
+  };
+}
+
 export type PayrollWorkPolicyResult = {
   recognizedMinutes: number;
   recognizedWorkdays: number;
@@ -19,7 +31,7 @@ export function applyPayrollWorkPolicy(input: {
   earlyLeaveMinutes: number;
 }): PayrollWorkPolicyResult {
   const { contract } = input;
-  const usesDayRate = contract.payType === "monthly" || contract.calculationBasis === "day";
+  const usesDayRate = contract.calculationBasis === "day";
   const recognizedMinutes = usesDayRate ? contract.standardMinutesPerDay : input.actualRecognizedMinutes;
   const recognizedWorkdays = usesDayRate ? 1 : recognizedMinutes / contract.standardMinutesPerDay;
   const workAmount = usesDayRate ? input.dayRate : input.minuteRate * recognizedMinutes;
@@ -27,9 +39,11 @@ export function applyPayrollWorkPolicy(input: {
     recognizedMinutes,
     recognizedWorkdays,
     workAmount,
-    automaticLatePenalty: usesDayRate && contract.lateAdjustmentMode === "deduct_minutes" ? input.minuteRate * input.lateMinutes : 0,
+    // v6 late penalties are calculated from the immutable run-level policy snapshot.
+    automaticLatePenalty: 0,
+    // No new early-leave policy is introduced. Day-based legacy behavior remains compatible.
     automaticEarlyLeavePenalty: usesDayRate && contract.earlyLeaveAdjustmentMode === "deduct_minutes" ? input.minuteRate * input.earlyLeaveMinutes : 0,
-    lateRequiresReview: usesDayRate && input.lateMinutes > 0 && contract.lateAdjustmentMode === "separate",
+    lateRequiresReview: false,
     earlyLeaveRequiresReview: usesDayRate && input.earlyLeaveMinutes > 0 && contract.earlyLeaveAdjustmentMode === "separate",
   };
 }

@@ -23,11 +23,11 @@ export function projectPayrollAttendanceDay(
   const warnings: PayrollWarningCode[] = [...facts.warningCodes];
   if (!contract) warnings.push("NO_PAYROLL_CONTRACT");
   const hardReview = !contract || facts.payrollStatus === "requires_review" || facts.payrollStatus === "pending" || facts.attendanceStatus === "unresolved" || warnings.includes("PENDING_LEAVE_APPROVAL") || warnings.includes("LEAVE_PAYROLL_TREATMENT_UNSPECIFIED");
-  if (!contract || facts.scheduledOverlapMinutes === null || hardReview) {
+  if (!contract || facts.actualMinutes === null || hardReview) {
     return { calculationBasis, recognizedMinutes: null, recognizedHours: null, recognizedDays: null, estimatedAmount: null, adjustmentMinutes: 0, overtimeCandidateMinutes: facts.overtimeCandidateMinutes, payrollStatus: facts.payrollStatus === "excluded" ? "excluded" : "requires_review", warningCodes: [...new Set(warnings)], engineVersion: PAYROLL_PROJECTION_ENGINE_VERSION };
   }
 
-  const minuteRecognized = facts.scheduledOverlapMinutes;
+  const minuteRecognized = calculationBasis === "minute" ? facts.actualMinutes : (facts.scheduledOverlapMinutes ?? facts.actualMinutes);
   const recognizedMinutes = calculationBasis === "hour"
     ? roundMinutes(minuteRecognized, contract.timeBlockMinutes, contract.roundingMode)
     : calculationBasis === "day"

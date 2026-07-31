@@ -38,6 +38,7 @@ export function normalizeAttendanceDayFacts(input: {
   storeSettingsRevision?: number | null;
   lateGraceMinutes?: number;
   earlyLeaveGraceMinutes?: number;
+  manualLateNormalized?: boolean;
 }): AttendanceDayFacts {
   const warnings: PayrollWarningCode[] = [];
   const record = input.attendanceRecord;
@@ -70,6 +71,7 @@ export function normalizeAttendanceDayFacts(input: {
         const rawLate = minutes(scheduledStart, Math.min(actualStart, scheduledEnd));
         const rawEarly = minutes(Math.max(actualEnd, scheduledStart), scheduledEnd);
         late = rawLate > (input.lateGraceMinutes ?? 0) ? rawLate : 0;
+        if (input.manualLateNormalized) late = 0;
         early = rawEarly > (input.earlyLeaveGraceMinutes ?? 0) ? rawEarly : 0;
         overtime = minutes(actualStart, Math.min(actualEnd, scheduledStart)) + minutes(Math.max(actualStart, scheduledEnd), actualEnd);
         if (overtime > 0) warnings.push("OVERTIME_APPROVAL_UNAVAILABLE");

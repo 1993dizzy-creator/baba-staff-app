@@ -17,7 +17,11 @@ export function getVietnamDateKey(now = new Date()) {
   return vietnamDateFormatter.format(now);
 }
 
-export function getPayrollOverviewPeriod(month: string, today = getVietnamDateKey()): PayrollOverviewPeriod {
+export function getLastCompletedBusinessDate(now = new Date()) {
+  return addStoreDays(calculateStoreBusinessDate(now), -1);
+}
+
+export function getPayrollOverviewPeriod(month: string, today = getLastCompletedBusinessDate()): PayrollOverviewPeriod {
   const [year, monthNumber] = month.split("-").map(Number);
   const monthEnd = `${month}-${String(new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()).padStart(2, "0")}`;
   const todayMonth = today.slice(0, 7);
@@ -25,3 +29,5 @@ export function getPayrollOverviewPeriod(month: string, today = getVietnamDateKe
   if (month === todayMonth) return { month, asOfDate: today, calculationEndDate: today, future: false, levelAsOfDate: today };
   return { month, asOfDate: monthEnd, calculationEndDate: monthEnd, future: false, levelAsOfDate: monthEnd };
 }
+// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
+import { addStoreDays, calculateStoreBusinessDate } from "../store-settings/business-time-core.ts";

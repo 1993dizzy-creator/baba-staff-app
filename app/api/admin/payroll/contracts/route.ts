@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   if (auth.response || !auth.actor) return auth.response;
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const fixedRaiseAmount = Number(body?.fixedRaiseAmount ?? 0);
-  if (!body || !validId(body.userId) || !Number.isSafeInteger(Number(body.baseSalary)) || Number(body.baseSalary) < 0 || !Number.isSafeInteger(fixedRaiseAmount) || fixedRaiseAmount < 0 || (body.payType === "hourly" && body.calculationBasis === "day") || (body.payType !== "monthly" && fixedRaiseAmount !== 0)) return payrollJson({ ok: false, code: "INVALID_CONTRACT" }, 400);
+  if (!body || !validId(body.userId) || !["minute","day"].includes(String(body.calculationBasis)) || !["monthly","daily","hourly"].includes(String(body.payType)) || !Number.isSafeInteger(Number(body.baseSalary)) || Number(body.baseSalary) < 0 || !Number.isSafeInteger(fixedRaiseAmount) || fixedRaiseAmount < 0 || (body.payType === "hourly" && body.calculationBasis === "day") || (body.payType !== "monthly" && fixedRaiseAmount !== 0)) return payrollJson({ ok: false, code: "INVALID_CONTRACT" }, 400);
   const { data: target } = await supabaseServer.from("users").select("id").eq("id",validId(body.userId)!).eq("is_system_account",false).maybeSingle();
   if(!target)return payrollJson({ok:false,code:"USER_NOT_FOUND"},404);
   const { data, error } = await supabaseServer.rpc("payroll_create_contract_version_v2", {

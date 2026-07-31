@@ -1,7 +1,6 @@
 import { supabaseServer } from "@/lib/supabase/server";
-import { loadPayrollMonthSnapshot, validPayrollMonth } from "@/lib/payroll/monthly-run";
+import { loadPayrollMonthSnapshot, resolvePayrollOverviewPeriod, validPayrollMonth } from "@/lib/payroll/monthly-run";
 import { buildPayrollOverviewEmployee, buildPayrollOverviewSummary, type PayrollMonthlyAdjustment } from "@/lib/payroll/overview";
-import { getPayrollOverviewPeriod } from "@/lib/payroll/overview-period";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +12,7 @@ export async function GET(request: Request) {
   if (!month) return payrollJson({ ok: false, code: "INVALID_MONTH" }, 400);
 
   try {
-    const period = getPayrollOverviewPeriod(month);
+    const period = await resolvePayrollOverviewPeriod(month);
     const [snapshot, adjustmentResult] = await Promise.all([
       loadPayrollMonthSnapshot(month, { calculationEndDate: period.calculationEndDate }),
       supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,kind,category,amount,business_date,reason,note,created_at").eq("payroll_month",`${month}-01`).is("cancelled_at",null),

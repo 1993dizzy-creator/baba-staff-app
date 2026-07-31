@@ -188,7 +188,7 @@ test("migration is atomic and preserves singleton, predecessor and due-date snap
 test("payroll UI and API keep due and actual payment dates distinct",()=>{
   const list=read("app/(protected)/admin/payroll/page.tsx");
   const detail=read("app/(protected)/admin/payroll/[runId]/page.tsx");
-  const settings=read("components/payroll/PayrollScheduleSettings.tsx");
+  const settings=read("components/payroll/PayrollCommonSettings.tsx");
   assert.match(list,/payment_due_date/);
   assert.match(detail,/payment_due_date/);
   assert.match(detail,/payment_date/);

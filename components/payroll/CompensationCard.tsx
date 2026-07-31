@@ -88,7 +88,9 @@ export function CompensationCard({
           {!employee.contract ? (
             <>
               <p>{t.noContract}</p>
-              <Link href={`/admin/payroll/settings?userId=${employee.userId}`}>
+              <Link
+                href={`/admin/payroll/settings?tab=employee&userId=${employee.userId}`}
+              >
                 {t.payrollSettingsLink}
               </Link>
             </>
@@ -309,8 +311,12 @@ function AdjustmentModal({
               style={s.item}
             >
               <span>
-                {item.businessDate.slice(5)} · {item.description} {item.minutes}
-                {t.minutes}
+                {item.businessDate.slice(5)} · {item.category === "late"
+                  ? (lang === "vi" ? "Phạt đi muộn" : "지각 패널티")
+                  : item.category === "unauthorized_absence"
+                    ? (lang === "vi" ? "Phạt nghỉ không phép" : "무단결근 패널티")
+                    : item.description}
+                {item.category !== "unauthorized_absence" ? ` ${item.minutes}${t.minutes}` : ""}
               </span>
               <b>-{money(item.amount)}</b>
               <small>

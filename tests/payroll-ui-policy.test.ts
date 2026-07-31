@@ -12,8 +12,8 @@ const attendanceCopy = read("lib/text/attendance.ts");
 const employeeInsurance = read(
   "components/payroll/EmployeeInsuranceSettings.tsx",
 );
-const globalInsurance = read(
-  "components/payroll/PayrollInsuranceSettings.tsx",
+const commonSettings = read(
+  "components/payroll/PayrollCommonSettings.tsx",
 );
 const shadow = read("components/PayrollShadowPanel.tsx");
 const migration = read(
@@ -91,13 +91,21 @@ test("payroll position labels reuse attendance translations with safe fallbacks"
   assert.match(attendanceCopy, /manager: "Quản lý"/);
 });
 
-test("payroll settings renders page guidance before separated company and employee sections", () => {
-  const pageTitle = settings.indexOf('vi ? "Cài đặt lương" : "급여설정"');
-  const companySection = settings.indexOf('"회사 공통 설정"');
-  assert.ok(pageTitle >= 0 && companySection > pageTitle);
-  assert.match(settings, /"직원별 급여 설정"/);
-  assert.match(settings, /"Cài đặt chung của công ty"/);
-  assert.match(settings, /commonGrid/);
+test("payroll settings uses accessible bilingual common and employee tabs", () => {
+  assert.match(settings, /role="tablist"/);
+  assert.equal((settings.match(/role="tab"/g) ?? []).length, 2);
+  assert.equal((settings.match(/aria-selected=/g) ?? []).length, 2);
+  for (const label of ["공통 설정", "직원 설정", "Cài đặt chung", "Cài đặt nhân viên"])
+    assert.match(settings, new RegExp(label));
+  assert.match(settings, /tabParam === "common" \|\| tabParam === "employee"/);
+  assert.match(settings, /params\.has\("userId"\)[\s\S]*\? "employee"[\s\S]*: "common"/);
+  assert.match(settings, /router\.replace\(`\$\{pathname\}\?\$\{next\}`,[\s\S]*scroll: false/);
+});
+
+test("explicit common tab wins while legacy userId links default to employee", () => {
+  assert.match(settings, /tabParam === "common" \|\| tabParam === "employee"[\s\S]*\? tabParam/);
+  assert.match(settings, /params\.has\("userId"\)/);
+  assert.match(compensationCard, /settings\?tab=employee&userId=\$\{employee\.userId\}/);
 });
 
 test("employee selector has accessible selected styling and complete empty states", () => {
@@ -129,7 +137,7 @@ test("director employee keeps global-only insurance guidance", () => {
     settings,
     /"Bảo hiểm giám đốc pháp nhân được quản lý trong phần cài đặt bảo hiểm chung của công ty ở trên\."/,
   );
-  assert.match(globalInsurance, /"보험 기준"/);
+  assert.match(commonSettings, /"보험"/);
 });
 
 test("contract and insurance histories are collapsed and localized", () => {
@@ -138,4 +146,35 @@ test("contract and insurance histories are collapsed and localized", () => {
   assert.match(settings, /`Lịch sử hợp đồng \$\{contracts\.length\} mục`/);
   assert.match(employeeInsurance, /"보험 설정 변경"/);
   assert.match(employeeInsurance, /"Thay đổi cài đặt bảo hiểm"/);
+});
+
+test("common payroll settings has one read and one unified save flow", () => {
+  assert.equal(
+    (commonSettings.match(/fetch\("\/api\/admin\/payroll\/settings"/g) ?? []).length,
+    2,
+  );
+  assert.equal((commonSettings.match(/method: "PATCH"/g) ?? []).length, 1);
+  for (const field of [
+    "paymentDay",
+    "employeeInsuranceRateBp",
+    "employerInsuranceRateBp",
+    "directorInsuranceEnabled",
+    "directorInsuranceBaseAmount",
+    "directorInsuranceRateBp",
+  ]) assert.match(commonSettings, new RegExp(`${field}:`));
+  assert.match(commonSettings, /JSON\.stringify\(payload\) !== JSON\.stringify\(snapshotPayload\)/);
+  assert.match(commonSettings, /disabled=\{!dirty \|\| !valid \|\| saving\}/);
+  assert.match(commonSettings, /setDraft\(next\);[\s\S]*setSnapshot\(next\)/);
+  assert.match(commonSettings, /percentToBasisPoints/);
+  assert.equal((commonSettings.match(/공통 설정 저장/g) ?? []).length, 1);
+});
+
+test("common settings uses compact rows without duplicate page headings", () => {
+  assert.match(commonSettings, /function SettingRow/);
+  assert.match(commonSettings, /gridTemplateColumns: "minmax\(104px, \.8fr\) minmax\(0, 1\.2fr\)"/);
+  assert.match(commonSettings, /"매월 1일 ~ 말일"/);
+  for (const label of ["직원 부담률", "회사 부담률", "법인장 보험", "법인장 기준금액", "법인장 부담률", "월 보험비용"])
+    assert.match(commonSettings, new RegExp(label));
+  for (const removed of ["급여 지급일, 공통 보험 기준", '"회사 공통 설정"', '"직원별 급여 설정"'])
+    assert.doesNotMatch(settings, new RegExp(removed));
 });

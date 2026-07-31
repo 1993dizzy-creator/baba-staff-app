@@ -9,12 +9,11 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import PayrollScheduleVersions from "@/components/PayrollScheduleVersions";
-import PayrollScheduleSettings from "@/components/payroll/PayrollScheduleSettings";
-import PayrollInsuranceSettings from "@/components/payroll/PayrollInsuranceSettings";
+import PayrollCommonSettings from "@/components/payroll/PayrollCommonSettings";
 import EmployeeInsuranceSettings from "@/components/payroll/EmployeeInsuranceSettings";
 import PayrollModal from "@/components/payroll/PayrollModal";
 import { useLanguage } from "@/lib/language-context";
@@ -26,6 +25,7 @@ import {
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { attendanceText } from "@/lib/text";
 import { vietnamCurrentMonthStart } from "@/lib/payroll/ui-dates";
+import { ui } from "@/lib/styles/ui";
 type User = {
   id: number;
   name: string | null;
@@ -85,10 +85,10 @@ const defaults: FormState = {
   standardWorkdays: "26",
   standardMinutesPerDay: "540",
   timeBlockMinutes: "60",
-  roundingMode: "floor",
+  roundingMode: "none",
   lateAdjustmentMode: "separate",
   earlyLeaveAdjustmentMode: "separate",
-  overtimeMode: "requires_approval",
+  overtimeMode: "ignore",
   paidLeaveMode: "unpaid",
   effectiveFrom: vietnamCurrentMonthStart(),
   note: "",
@@ -97,7 +97,7 @@ function fromContract(contract: Contract | null): FormState {
   return contract
     ? {
         payType: contract.payType,
-        calculationBasis: contract.calculationBasis,
+        calculationBasis: contract.calculationBasis === "day" && contract.payType !== "hourly" ? "day" : "minute",
         baseSalary: String(contract.baseSalary),
         fixedRaiseAmount: String(contract.fixedRaiseAmount),
         standardWorkdays: String(contract.standardWorkdays ?? 26),
@@ -119,6 +119,15 @@ export default function PayrollSettingsPage() {
   const vi = lang === "vi";
   const attendance = attendanceText[lang];
   const params = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+  const tabParam = params.get("tab");
+  const activeTab: "common" | "employee" =
+    tabParam === "common" || tabParam === "employee"
+      ? tabParam
+      : params.has("userId")
+        ? "employee"
+        : "common";
   const [users, setUsers] = useState<User[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [usersError, setUsersError] = useState("");
@@ -148,7 +157,20 @@ export default function PayrollSettingsPage() {
     },
     [vi],
   );
+  function changeTab(tab: "common" | "employee") {
+    const next = new URLSearchParams(params.toString());
+    next.set("tab", tab);
+    router.replace(`${pathname}?${next}`, { scroll: false });
+  }
+  function selectUser(id: number) {
+    setUserId(id);
+    const next = new URLSearchParams(params.toString());
+    next.set("tab", "employee");
+    next.set("userId", String(id));
+    router.replace(`${pathname}?${next}`, { scroll: false });
+  }
   useEffect(() => {
+    if (activeTab !== "employee") return;
     setUsersLoading(true);
     setUsersError("");
     void fetch("/api/admin/payroll/users", { cache: "no-store" })
@@ -166,12 +188,12 @@ export default function PayrollSettingsPage() {
         ),
       )
       .finally(() => setUsersLoading(false));
-  }, [params, vi]);
+  }, [activeTab, params, vi]);
   useEffect(() => {
-    if (userId) void load(userId);
-  }, [userId, load]);
+    if (activeTab === "employee" && userId) void load(userId);
+  }, [activeTab, userId, load]);
   useEffect(() => {
-    if (!userId) {
+    if (activeTab !== "employee" || !userId) {
       setSelectedInsurance(null);
       return;
     }
@@ -185,7 +207,7 @@ export default function PayrollSettingsPage() {
       .then((data) => setSelectedInsurance(data.current ?? null))
       .catch(() => undefined);
     return () => controller.abort();
-  }, [userId]);
+  }, [activeTab, userId]);
   const positionLabel = useCallback(
     (user: User) =>
       user.position
@@ -232,13 +254,16 @@ export default function PayrollSettingsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...form,
+        timeBlockMinutes: 60,
+        roundingMode: "none",
+        lateAdjustmentMode: "separate",
+        overtimeMode: "ignore",
         userId,
         baseSalary: Number(form.baseSalary),
         fixedRaiseAmount: Number(form.fixedRaiseAmount),
         standardWorkdays:
           form.payType === "monthly" ? Number(form.standardWorkdays) : null,
         standardMinutesPerDay: Number(form.standardMinutesPerDay),
-        timeBlockMinutes: Number(form.timeBlockMinutes),
       }),
     });
     const data = await response.json();
@@ -251,43 +276,37 @@ export default function PayrollSettingsPage() {
     setOpen(false);
   }
   return (
-    <Container>
+    <Container noPaddingTop>
       <main style={s.page}>
-        <header style={s.pageHeader}>
-          <h1 style={s.pageTitle}>{vi ? "Cài đặt lương" : "급여설정"}</h1>
-          <p style={s.sectionHelp}>
-            {vi
-              ? "Quản lý ngày trả lương, tiêu chuẩn bảo hiểm chung và điều kiện lương của từng nhân viên."
-              : "급여 지급일, 공통 보험 기준과 직원별 급여 조건을 관리합니다."}
-          </p>
-        </header>
+        <div
+          role="tablist"
+          aria-label={vi ? "Loại cài đặt lương" : "급여설정 유형"}
+          style={s.tabs}
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "common"}
+            onClick={() => changeTab("common")}
+            style={tabStyle(activeTab === "common")}
+          >
+            {vi ? "Cài đặt chung" : "공통 설정"}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "employee"}
+            onClick={() => changeTab("employee")}
+            style={tabStyle(activeTab === "employee")}
+          >
+            {vi ? "Cài đặt nhân viên" : "직원 설정"}
+          </button>
+        </div>
 
-        <section style={s.section}>
-          <SectionHeading
-            title={vi ? "Cài đặt chung của công ty" : "회사 공통 설정"}
-            description={
-              vi
-                ? "Các tiêu chuẩn được áp dụng chung cho nhân viên và bảng lương hàng tháng."
-                : "모든 직원과 월 급여 장부에 공통으로 적용되는 기준입니다."
-            }
-          />
-          <div style={s.commonGrid}>
-            <PayrollScheduleSettings vi={vi} />
-            <PayrollInsuranceSettings vi={vi} />
-          </div>
-        </section>
-
-        <section style={s.section}>
-          <SectionHeading
-            title={
-              vi ? "Cài đặt lương theo nhân viên" : "직원별 급여 설정"
-            }
-            description={
-              vi
-                ? "Chọn nhân viên để quản lý hợp đồng lương, lịch làm việc và bảo hiểm."
-                : "직원을 선택하여 급여계약, 근무일정과 보험 설정을 관리합니다."
-            }
-          />
+        {activeTab === "common" ? (
+          <PayrollCommonSettings vi={vi} />
+        ) : (
+          <section style={s.section}>
           <section style={s.card}>
             <input
               style={s.input}
@@ -312,7 +331,7 @@ export default function PayrollSettingsPage() {
                       type="button"
                       style={selectedUser ? { ...s.person, ...s.personSelected } : s.person}
                       aria-pressed={selectedUser}
-                      onClick={() => setUserId(user.id)}
+                      onClick={() => selectUser(user.id)}
                     >
                       <span style={s.personIdentity}>
                         <EmployeeNameWithLevel
@@ -403,7 +422,8 @@ export default function PayrollSettingsPage() {
               )}
             </div>
           )}
-        </section>
+          </section>
+        )}
         {open && selected && (
           <PayrollModal
             title={vi ? "Đăng ký hợp đồng lương" : "급여계약 등록"}
@@ -462,18 +482,16 @@ export default function PayrollSettingsPage() {
                       value === "monthly" ? form.fixedRaiseAmount : "0",
                     calculationBasis:
                       value === "hourly" && form.calculationBasis === "day"
-                        ? "hour"
+                        ? "minute"
                         : form.calculationBasis,
                   })
                 }
               />
               <SelectField
-                label={vi ? "Cơ sở tính" : "계산 기준"}
+                label={vi ? "Cách tính lương" : "급여 산정 방식"}
                 value={form.calculationBasis}
                 options={
-                  form.payType === "hourly"
-                    ? ["minute", "hour"]
-                    : ["minute", "hour", "day"]
+                  form.payType === "hourly" ? ["minute"] : ["minute", "day"]
                 }
                 lang={l}
                 change={(value) =>
@@ -497,29 +515,6 @@ export default function PayrollSettingsPage() {
                   setForm({ ...form, standardMinutesPerDay: value })
                 }
               />
-              <NumberField
-                label={vi ? "Khối thời gian" : "시간 계산 블록"}
-                value={form.timeBlockMinutes}
-                change={(value) =>
-                  setForm({ ...form, timeBlockMinutes: value })
-                }
-              />
-              <SelectField
-                label={vi ? "Làm tròn" : "반올림 방식"}
-                value={form.roundingMode}
-                options={["none", "floor", "ceil", "nearest"]}
-                lang={l}
-                change={(value) => setForm({ ...form, roundingMode: value })}
-              />
-              <SelectField
-                label={vi ? "Đi muộn" : "지각 처리"}
-                value={form.lateAdjustmentMode}
-                options={["deduct_minutes", "separate", "ignore"]}
-                lang={l}
-                change={(value) =>
-                  setForm({ ...form, lateAdjustmentMode: value })
-                }
-              />
               <SelectField
                 label={vi ? "Về sớm" : "조퇴 처리"}
                 value={form.earlyLeaveAdjustmentMode}
@@ -528,13 +523,6 @@ export default function PayrollSettingsPage() {
                 change={(value) =>
                   setForm({ ...form, earlyLeaveAdjustmentMode: value })
                 }
-              />
-              <SelectField
-                label={vi ? "Làm thêm" : "추가근무 처리"}
-                value={form.overtimeMode}
-                options={["requires_approval", "ignore"]}
-                lang={l}
-                change={(value) => setForm({ ...form, overtimeMode: value })}
               />
               <SelectField
                 label={vi ? "Ngày nghỉ" : "휴무 처리"}
@@ -585,20 +573,6 @@ function ContractCard({ contract, vi }: { contract: Contract; vi: boolean }) {
     </article>
   );
 }
-function SectionHeading({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
-  return (
-    <header>
-      <h2 style={s.sectionTitle}>{title}</h2>
-      <p style={s.sectionHelp}>{description}</p>
-    </header>
-  );
-}
 function SummaryItem({ label, value }: { label: string; value: string }) {
   return (
     <div style={s.summaryItem}>
@@ -626,7 +600,7 @@ function ContractSummary({
       <SummaryItem label={vi ? "Mức tăng theo cấp" : "레벨 인상"} value={`+${money(levelRaise)}`} />
       <SummaryItem label={vi ? "Tổng lương" : "합산급여"} value={money(combined)} />
       <SummaryItem label={vi ? "Loại lương" : "급여 형태"} value={payrollLabel(lang, contract.payType)} />
-      <SummaryItem label={vi ? "Cơ sở tính" : "계산 기준"} value={payrollLabel(lang, contract.calculationBasis)} />
+      <SummaryItem label={vi ? "Cách tính lương" : "급여 산정 방식"} value={payrollLabel(lang, contract.calculationBasis)} />
       <SummaryItem label={vi ? "Ngày áp dụng" : "적용 시작일"} value={contract.effectiveFrom} />
       <SummaryItem label="revision" value={`#${contract.revision}`} />
     </div>
@@ -695,14 +669,11 @@ function SelectField({
   );
 }
 const s = {
-  page: { display: "grid", gap: 24, paddingBottom: 30, minWidth: 0 },
-  pageHeader: { display: "grid", gap: 5, paddingTop: 12 },
-  pageTitle: { margin: 0, fontSize: 24, fontWeight: 900 },
+  page: { display: "grid", gap: 8, padding: "8px 0 30px", minWidth: 0 },
+  tabs: { ...ui.card, padding: 4, marginBottom: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 },
   section: { display: "grid", gap: 12, minWidth: 0 },
-  sectionTitle: { margin: 0, fontSize: 18, fontWeight: 900 },
   cardTitle: { margin: 0, fontSize: 17, fontWeight: 900 },
   sectionHelp: { margin: "4px 0 0", color: "#6b7280", fontSize: 13, lineHeight: 1.45 },
-  commonGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 12, alignItems: "start" },
   card: {
     padding: 14,
     border: "1px solid #e5e7eb",
@@ -793,3 +764,16 @@ const s = {
     fontSize: 12,
   },
 } satisfies Record<string, CSSProperties>;
+
+function tabStyle(active: boolean): CSSProperties {
+  return {
+    minHeight: 36,
+    border: active ? "1px solid #93c5fd" : "1px solid transparent",
+    borderRadius: 8,
+    background: active ? "#eff6ff" : "transparent",
+    color: active ? "#1d4ed8" : "#6b7280",
+    fontSize: 13,
+    fontWeight: 900,
+    cursor: "pointer",
+  };
+}

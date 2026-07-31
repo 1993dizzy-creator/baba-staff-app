@@ -60,7 +60,7 @@ export type PayrollOverviewEmployee = {
     employerInsuranceAmount: number;
   };
   adjustments: PayrollMonthlyAdjustment[];
-  automaticPenalties: Array<{sourceType:"automatic";category:"late"|"early_leave";businessDate:string;minutes:number;amount:number;attendanceRecordId:number|null;description:string}>;
+  automaticPenalties: Array<{sourceType:"automatic";category:"late"|"early_leave"|"unauthorized_absence";businessDate:string;minutes:number;amount:number;attendanceRecordId:number|null;description:string}>;
   unresolvedAttendanceCount: number;
   attendanceMetrics: {
     lateCount: number;
@@ -109,9 +109,10 @@ export function buildPayrollOverviewEmployee(input: {
   const overtimeAmount = sum(items, "overtime", "addition");
   const latePenaltyAmount = sum(items, "late_deduction", "deduction");
   const earlyLeavePenaltyAmount = sum(items, "early_leave_deduction", "deduction");
-  const automaticPenalties=items.filter(entry=>entry.direction==="deduction"&&(entry.category==="late_deduction"||entry.category==="early_leave_deduction")).map(entry=>({sourceType:"automatic" as const,category:entry.category==="late_deduction"?"late" as const:"early_leave" as const,businessDate:entry.businessDate??"",minutes:Number(entry.sourceSnapshot.minutes??0),amount:entry.amount,attendanceRecordId:entry.sourceSnapshot.attendanceRecordId===null||entry.sourceSnapshot.attendanceRecordId===undefined?null:Number(entry.sourceSnapshot.attendanceRecordId),description:entry.description}));
-  const adjustments=input.adjustments??[];const incentives=adjustments.filter(entry=>entry.kind==="incentive");const manualPenalties=adjustments.filter(entry=>entry.kind==="penalty");const incentiveAmount=incentives.reduce((total,entry)=>total+entry.amount,0);const manualPenaltyAmount=manualPenalties.reduce((total,entry)=>total+entry.amount,0);const automaticPenaltyAmount=latePenaltyAmount+earlyLeavePenaltyAmount;const penaltyAmount=automaticPenaltyAmount+manualPenaltyAmount;const workAppliedAmount=accruedWorkAmount+paidLeaveAmount;
-  const knownCategories = new Set(["base_work", "paid_leave", "overtime", "late_deduction", "early_leave_deduction", "insurance_employee_deduction"]);
+  const unauthorizedAbsencePenaltyAmount=sum(items,"unauthorized_absence_deduction","deduction");
+  const automaticPenalties=items.filter(entry=>entry.direction==="deduction"&&["late_deduction","early_leave_deduction","unauthorized_absence_deduction"].includes(entry.category)).map(entry=>({sourceType:"automatic" as const,category:entry.category==="late_deduction"?"late" as const:entry.category==="early_leave_deduction"?"early_leave" as const:"unauthorized_absence" as const,businessDate:entry.businessDate??"",minutes:Number(entry.sourceSnapshot.lateMinutes??entry.sourceSnapshot.minutes??0),amount:entry.amount,attendanceRecordId:entry.sourceSnapshot.attendanceRecordId===null||entry.sourceSnapshot.attendanceRecordId===undefined?null:Number(entry.sourceSnapshot.attendanceRecordId),description:entry.description}));
+  const adjustments=input.adjustments??[];const incentives=adjustments.filter(entry=>entry.kind==="incentive");const manualPenalties=adjustments.filter(entry=>entry.kind==="penalty");const incentiveAmount=incentives.reduce((total,entry)=>total+entry.amount,0);const manualPenaltyAmount=manualPenalties.reduce((total,entry)=>total+entry.amount,0);const automaticPenaltyAmount=latePenaltyAmount+earlyLeavePenaltyAmount+unauthorizedAbsencePenaltyAmount;const penaltyAmount=automaticPenaltyAmount+manualPenaltyAmount;const workAppliedAmount=accruedWorkAmount+paidLeaveAmount;
+  const knownCategories = new Set(["base_work", "paid_leave", "overtime", "late_deduction", "early_leave_deduction", "unauthorized_absence_deduction", "insurance_employee_deduction"]);
   const otherAdditionAmount = items.filter((entry) => entry.direction === "addition" && !knownCategories.has(entry.category)).reduce((total, entry) => total + entry.amount, 0);
   const otherDeductionAmount = items.filter((entry) => entry.direction === "deduction" && !knownCategories.has(entry.category)).reduce((total, entry) => total + entry.amount, 0);
   const blockingCount = employee.reviews.filter((review) => review.reviewLevel === "blocking").length;
@@ -159,7 +160,7 @@ export function buildPayrollOverviewEmployee(input: {
       otherDeductionAmount,
       currentAmount: unavailable ? null : netPayoutAmount,
       workAppliedAmount: unavailable ? null : workAppliedAmount,
-      incentiveAmount,incentiveCount:incentives.length,automaticPenaltyAmount,manualPenaltyAmount,penaltyAmount,penaltyCount:manualPenalties.length+items.filter(entry=>entry.direction==="deduction"&&(entry.category==="late_deduction"||entry.category==="early_leave_deduction")).length,
+      incentiveAmount,incentiveCount:incentives.length,automaticPenaltyAmount,manualPenaltyAmount,penaltyAmount,penaltyCount:manualPenalties.length+items.filter(entry=>entry.direction==="deduction"&&["late_deduction","early_leave_deduction","unauthorized_absence_deduction"].includes(entry.category)).length,
       insuranceBaseAmount:employee.insuranceSnapshot.insuranceBaseAmount,preInsurancePayoutAmount,employeeInsuranceDeductionAmount,netPayoutAmount,employerInsuranceAmount:employee.insuranceSnapshot.employerAmount,
     },
     attendanceMetrics: {

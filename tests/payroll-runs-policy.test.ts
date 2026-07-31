@@ -7,6 +7,7 @@ const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "
 const migration = read("supabase/migrations/202607270002_create_payroll_runs.sql");
 const lifecycleMigration = read("supabase/migrations/202607280001_add_employee_lifecycle_and_payroll_schedule.sql");
 const engine = read("lib/payroll/monthly-run.ts");
+const workPolicy = read("lib/payroll/work-policy.ts");
 const runApi = read("app/api/admin/payroll/runs/route.ts");
 const detailApi = read("app/api/admin/payroll/runs/[runId]/route.ts");
 const itemApi = read("app/api/admin/payroll/runs/[runId]/employees/[employeeId]/items/route.ts");
@@ -24,14 +25,14 @@ test("ledger schema normalizes reviews and enforces one active monthly run", () 
   assert.match(migration, /amount bigint not null check \(amount >= 0\)/);
 });
 
-test("official runs use only recorded dates and reject months before July 2026", () => {
-  assert.match(engine, /const eligibleRecords=records\.filter/);
-  assert.doesNotMatch(engine, /payrollMonthDates\(input\.month\)[\s\S]*calculateEmployee/);
+test("official runs inspect completed scheduled dates and reject months before July 2026", () => {
+  assert.match(engine, /const eligibleDates=input\.dates\.filter/);
+  assert.match(engine, /const recordsByDate=new Map/);
   assert.match(engine, /PAYROLL_RUN_START_MONTH = "2026-07"/);
   assert.match(runApi, /isOfficialPayrollMonth/);
   assert.match(runApi, /PAYROLL_MONTH_NOT_SUPPORTED/);
   assert.match(lifecycleMigration, /p_month<date '2026-07-01'/);
-  assert.match(engine, /row\.work_date>=user\.hire_date/);
+  assert.match(engine, /date>=user\.hire_date/);
 });
 
 test("employee union excludes system accounts and applies employment dates", () => {
@@ -42,15 +43,15 @@ test("employee union excludes system accounts and applies employment dates", () 
   assert.match(engine, /user\.termination_date>=start/);
   assert.match(engine, /hasAttendance:attendanceIds\.has\(user\.id\)/);
   assert.match(engine, /hasContract:contractIds\.has\(user\.id\)/);
-  assert.match(engine, /row\.work_date<=user\.termination_date/);
+  assert.match(engine, /date<=user\.termination_date/);
   assert.match(engine, /NO_PAYROLL_CONTRACT/);
 });
 
 test("calculation uses contract rates and explicit automatic categories", () => {
-  assert.match(engine, /salaryBase\/contract\.standardWorkdays/);
+  assert.match(workPolicy, /salaryBase \/ contract\.standardWorkdays/);
   assert.match(engine, /calculateCombinedSalary\(contract,levelInfo\)/);
-  assert.match(engine, /contract\.payType==="daily"\?contract\.baseSalary/);
-  assert.match(engine, /contract\.baseSalary\/60/);
+  assert.match(workPolicy, /contract\.payType === "daily"/);
+  assert.match(workPolicy, /contract\.baseSalary \/ 60/);
   for (const category of ["base_work", "paid_leave", "late_deduction", "early_leave_deduction", "OVERTIME_APPROVAL_UNAVAILABLE"]) assert.match(engine, new RegExp(category));
   assert.match(engine, /roundMinutes\(actualRecognizedMinutes,contract\.timeBlockMinutes,contract\.roundingMode\)/);
   assert.match(engine, /applyPayrollWorkPolicy/);
@@ -82,7 +83,7 @@ test("recalculation is one RPC transaction, copies manual items, and recreates r
   assert.match(migration, /i\.item_type='manual'/);
   assert.doesNotMatch(body, /review_resolutions/);
   assert.ok(body.indexOf("perform public.payroll_insert_payload_v2") < body.indexOf("update public.payroll_runs set status='cancelled'"));
-  assert.match(detailApi, /payroll_recalculate_run_v3/);
+  assert.match(detailApi, /payroll_recalculate_run_v4/);
   assert.match(detailApi, /Number\.isSafeInteger\(replacementRunId\)/);
 });
 
@@ -101,8 +102,8 @@ test("all APIs are owner-master server routes with run/employee membership check
     assert.match(source, /payrollJson/);
     assert.doesNotMatch(source, /NEXT_PUBLIC_SUPABASE_SERVICE_ROLE/);
   }
-  assert.match(itemApi, /p_run_id:runId,p_run_employee_id:employeeId/);
-  assert.match(reviewApi, /p_run_id:runId,p_run_employee_id:employeeId/);
+  assert.match(itemApi, /p_run_id: runId, p_run_employee_id: employeeId/);
+  assert.match(reviewApi, /p_run_id: runId, p_run_employee_id: employeeId/);
   assert.match(migration, /PAYROLL_EMPLOYEE_RUN_MISMATCH/);
   assert.doesNotMatch(migration, /(insert into|update|delete from) public\.attendance_records/i);
 });

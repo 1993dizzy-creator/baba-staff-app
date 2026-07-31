@@ -2,7 +2,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 
 export const dynamic = "force-dynamic";
-const FIELDS = "payment_day,payment_month_offset,employee_insurance_rate_bp,employer_insurance_rate_bp,director_insurance_enabled,director_insurance_base_amount,director_insurance_rate_bp,updated_at,updated_by";
+const FIELDS = "payment_day,payment_month_offset,employee_insurance_rate_bp,employer_insurance_rate_bp,director_insurance_enabled,director_insurance_base_amount,director_insurance_rate_bp,late_major_threshold_minutes,late_minor_penalty_minutes,late_major_penalty_rate_bp,unauthorized_absence_penalty_days,updated_at,updated_by";
 
 export async function GET() {
   const auth = await requirePayrollActor();
@@ -16,7 +16,7 @@ export async function PATCH(request: Request) {
   if (auth.response || !auth.actor) return auth.response;
   const body = await request.json().catch(() => null) as Record<string,unknown> | null;
   if(!body)return payrollJson({ok:false,code:"INVALID_PAYROLL_SETTINGS"},400);
-  const allowed=new Set(["paymentDay","employeeInsuranceRateBp","employerInsuranceRateBp","directorInsuranceEnabled","directorInsuranceBaseAmount","directorInsuranceRateBp"]);if(Object.keys(body).some(key=>!allowed.has(key))||!Object.keys(body).some(key=>allowed.has(key)))return payrollJson({ok:false,code:"INVALID_PAYROLL_SETTINGS"},400);
+  const allowed=new Set(["paymentDay","employeeInsuranceRateBp","employerInsuranceRateBp","directorInsuranceEnabled","directorInsuranceBaseAmount","directorInsuranceRateBp","lateMajorThresholdMinutes","lateMinorPenaltyMinutes","lateMajorPenaltyRateBp","unauthorizedAbsencePenaltyDays"]);if(Object.keys(body).some(key=>!allowed.has(key))||!Object.keys(body).some(key=>allowed.has(key)))return payrollJson({ok:false,code:"INVALID_PAYROLL_SETTINGS"},400);
   const{data:current,error:readError}=await supabaseServer.from("payroll_settings").select(FIELDS).eq("id",1).single();if(readError||!current)return payrollJson({ok:false,code:"PAYROLL_SETTINGS_READ_FAILED"},500);
   const update:Record<string,unknown>={updated_at:new Date().toISOString(),updated_by:auth.actor.id};
   if("paymentDay" in body){const paymentDay=Number(body.paymentDay);if(!Number.isInteger(paymentDay)||paymentDay<1||paymentDay>28)return payrollJson({ok:false,code:"INVALID_PAYMENT_DAY"},400);update.payment_day=paymentDay;}
@@ -25,6 +25,12 @@ export async function PATCH(request: Request) {
   if("directorInsuranceRateBp" in (body??{})){const value=Number(body?.directorInsuranceRateBp);if(!Number.isInteger(value)||value<0||value>10000)return payrollJson({ok:false,code:"INVALID_INSURANCE_SETTINGS"},400);update.director_insurance_rate_bp=value;}
   if("directorInsuranceBaseAmount" in (body??{})){const value=Number(body?.directorInsuranceBaseAmount);if(!Number.isSafeInteger(value)||value<0)return payrollJson({ok:false,code:"INVALID_INSURANCE_SETTINGS"},400);update.director_insurance_base_amount=value;}
   if("directorInsuranceEnabled" in (body??{})){if(typeof body?.directorInsuranceEnabled!=="boolean")return payrollJson({ok:false,code:"INVALID_INSURANCE_SETTINGS"},400);update.director_insurance_enabled=body.directorInsuranceEnabled;}
+  for(const [key,column,min,max] of [
+    ["lateMajorThresholdMinutes","late_major_threshold_minutes",1,1440],
+    ["lateMinorPenaltyMinutes","late_minor_penalty_minutes",1,1440],
+    ["lateMajorPenaltyRateBp","late_major_penalty_rate_bp",0,10000],
+    ["unauthorizedAbsencePenaltyDays","unauthorized_absence_penalty_days",1,31],
+  ] as const){if(key in body){const value=Number(body[key]);if(!Number.isInteger(value)||value<min||value>max)return payrollJson({ok:false,code:"INVALID_PENALTY_SETTINGS"},400);update[column]=value;}}
   const { data, error } = await supabaseServer.from("payroll_settings").update(update).eq("id",1).select(FIELDS).single();
   return error ? payrollJson({ ok:false, code:"PAYROLL_SETTINGS_UPDATE_FAILED" },500) : payrollJson({ ok:true, settings:data });
 }
