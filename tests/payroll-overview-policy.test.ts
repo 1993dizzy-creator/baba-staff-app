@@ -39,7 +39,10 @@ test("contract base salary is distinct from accrued base-work items", () => {
 test("missing contracts and future months never masquerade as zero salary", () => {
   assert.match(overview, /const unavailable = period\.future \|\| !contract \|\| compensation\?\.combinedSalary===null/);
   assert.match(overview, /currentAmount: unavailable \? null : netPayoutAmount/);
-  assert.match(compensationCard, /!employee\.contract\?t\.contractUnset/);
+  assert.match(
+    compensationCard,
+    /!employee\.contract\s*\?\s*t\.contractUnset/,
+  );
 });
 
 test("level raise comes only from employee-management level data", () => {
@@ -53,7 +56,10 @@ test("level raise comes only from employee-management level data", () => {
 test("UI keeps grouped compact cards, part totals, details, and ledger last", () => {
   assert.match(page, /getPartKey\(employee\.part\)/);
   assert.match(page, /getPositionRank\(a\.position\)/);
-  assert.match(compensationCard, /gridTemplateColumns:"minmax\(0,1fr\) auto 12px"/);
+  assert.match(
+    compensationCard,
+    /gridTemplateColumns:\s*"minmax\(0,1fr\) auto 12px"/,
+  );
   assert.match(page, /<CombinedPartTotal employees=\{group\.employees\}/);
   assert.match(page, /<CompensationCard/);
   assert.ok(page.indexOf("<section style={styles.ledgerSection}") > page.indexOf("<CombinedPartTotal"));
