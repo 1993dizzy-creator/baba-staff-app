@@ -38,7 +38,7 @@ test("contract base salary is distinct from accrued base-work items", () => {
 
 test("missing contracts and future months never masquerade as zero salary", () => {
   assert.match(overview, /const unavailable = period\.future \|\| !contract \|\| compensation\?\.combinedSalary===null/);
-  assert.match(overview, /currentAmount: unavailable \? null : currentNet/);
+  assert.match(overview, /currentAmount: unavailable \? null : netPayoutAmount/);
   assert.match(compensationCard, /!employee\.contract\?t\.contractUnset/);
 });
 

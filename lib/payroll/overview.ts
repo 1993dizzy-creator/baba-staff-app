@@ -10,6 +10,7 @@ import type {
 import type { PayrollContract } from "@/lib/payroll/types";
 import type { PayrollOverviewPeriod } from "@/lib/payroll/overview-period";
 import { calculateCombinedSalary } from "@/lib/payroll/compensation";
+import { calculatePayrollInsuranceTotals } from "@/lib/payroll/insurance";
 
 export type PayrollMonthlyAdjustment = { id:number;kind:"incentive"|"penalty";category:string;amount:number;businessDate:string;reason:string;note:string|null;createdAt:string };
 
@@ -52,6 +53,11 @@ export type PayrollOverviewEmployee = {
     manualPenaltyAmount: number;
     penaltyAmount: number;
     penaltyCount: number;
+    insuranceBaseAmount: number;
+    preInsurancePayoutAmount: number;
+    employeeInsuranceDeductionAmount: number;
+    netPayoutAmount: number;
+    employerInsuranceAmount: number;
   };
   adjustments: PayrollMonthlyAdjustment[];
   automaticPenalties: Array<{sourceType:"automatic";category:"late"|"early_leave";businessDate:string;minutes:number;amount:number;attendanceRecordId:number|null;description:string}>;
@@ -105,12 +111,13 @@ export function buildPayrollOverviewEmployee(input: {
   const earlyLeavePenaltyAmount = sum(items, "early_leave_deduction", "deduction");
   const automaticPenalties=items.filter(entry=>entry.direction==="deduction"&&(entry.category==="late_deduction"||entry.category==="early_leave_deduction")).map(entry=>({sourceType:"automatic" as const,category:entry.category==="late_deduction"?"late" as const:"early_leave" as const,businessDate:entry.businessDate??"",minutes:Number(entry.sourceSnapshot.minutes??0),amount:entry.amount,attendanceRecordId:entry.sourceSnapshot.attendanceRecordId===null||entry.sourceSnapshot.attendanceRecordId===undefined?null:Number(entry.sourceSnapshot.attendanceRecordId),description:entry.description}));
   const adjustments=input.adjustments??[];const incentives=adjustments.filter(entry=>entry.kind==="incentive");const manualPenalties=adjustments.filter(entry=>entry.kind==="penalty");const incentiveAmount=incentives.reduce((total,entry)=>total+entry.amount,0);const manualPenaltyAmount=manualPenalties.reduce((total,entry)=>total+entry.amount,0);const automaticPenaltyAmount=latePenaltyAmount+earlyLeavePenaltyAmount;const penaltyAmount=automaticPenaltyAmount+manualPenaltyAmount;const workAppliedAmount=accruedWorkAmount+paidLeaveAmount;
-  const knownCategories = new Set(["base_work", "paid_leave", "overtime", "late_deduction", "early_leave_deduction"]);
+  const knownCategories = new Set(["base_work", "paid_leave", "overtime", "late_deduction", "early_leave_deduction", "insurance_employee_deduction"]);
   const otherAdditionAmount = items.filter((entry) => entry.direction === "addition" && !knownCategories.has(entry.category)).reduce((total, entry) => total + entry.amount, 0);
   const otherDeductionAmount = items.filter((entry) => entry.direction === "deduction" && !knownCategories.has(entry.category)).reduce((total, entry) => total + entry.amount, 0);
   const blockingCount = employee.reviews.filter((review) => review.reviewLevel === "blocking").length;
   const warningCodes = [...new Set(employee.reviews.map((review) => review.warningCode))];
-  const currentNet = workAppliedAmount+incentiveAmount-penaltyAmount;
+  const automaticPreInsuranceAmount=items.filter(entry=>entry.category!=="insurance_employee_deduction").reduce((total,entry)=>total+(entry.direction==="addition"?entry.amount:-entry.amount),0);
+  const preInsurancePayoutAmount=automaticPreInsuranceAmount+incentiveAmount-manualPenaltyAmount;const employeeInsuranceDeductionAmount=employee.insuranceSnapshot.employeeDeductionAmount;const netPayoutAmount=preInsurancePayoutAmount-employeeInsuranceDeductionAmount;
   const unavailable = period.future || !contract || compensation?.combinedSalary===null;
   const requiresReview = !unavailable && (employee.reviews.length > 0 || levelStatus === "requires_review");
   const days = ((employee.attendanceSnapshot.days ?? []) as Array<{ facts?: { lateMinutes?: number; earlyLeaveMinutes?: number } }>);
@@ -150,9 +157,10 @@ export function buildPayrollOverviewEmployee(input: {
       earlyLeavePenaltyAmount,
       otherAdditionAmount,
       otherDeductionAmount,
-      currentAmount: unavailable ? null : currentNet,
+      currentAmount: unavailable ? null : netPayoutAmount,
       workAppliedAmount: unavailable ? null : workAppliedAmount,
       incentiveAmount,incentiveCount:incentives.length,automaticPenaltyAmount,manualPenaltyAmount,penaltyAmount,penaltyCount:manualPenalties.length+items.filter(entry=>entry.direction==="deduction"&&(entry.category==="late_deduction"||entry.category==="early_leave_deduction")).length,
+      insuranceBaseAmount:employee.insuranceSnapshot.insuranceBaseAmount,preInsurancePayoutAmount,employeeInsuranceDeductionAmount,netPayoutAmount,employerInsuranceAmount:employee.insuranceSnapshot.employerAmount,
     },
     attendanceMetrics: {
       lateCount: days.filter((day) => Number(day.facts?.lateMinutes || 0) > 0).length,
@@ -165,3 +173,5 @@ export function buildPayrollOverviewEmployee(input: {
     warningCodes,
   };
 }
+
+export function buildPayrollOverviewSummary(employees:PayrollOverviewEmployee[],directorInsuranceAmount:number){return calculatePayrollInsuranceTotals({preInsurancePayoutAmounts:employees.map(employee=>employee.amounts.preInsurancePayoutAmount),employeeDeductionAmounts:employees.map(employee=>employee.amounts.employeeInsuranceDeductionAmount),employerAmounts:employees.map(employee=>employee.amounts.employerInsuranceAmount),directorAmount:directorInsuranceAmount});}

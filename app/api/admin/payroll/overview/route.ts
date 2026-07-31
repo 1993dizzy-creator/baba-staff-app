@@ -1,6 +1,6 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { loadPayrollMonthSnapshot, validPayrollMonth } from "@/lib/payroll/monthly-run";
-import { buildPayrollOverviewEmployee, type PayrollMonthlyAdjustment } from "@/lib/payroll/overview";
+import { buildPayrollOverviewEmployee, buildPayrollOverviewSummary, type PayrollMonthlyAdjustment } from "@/lib/payroll/overview";
 import { getPayrollOverviewPeriod } from "@/lib/payroll/overview-period";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 
@@ -37,7 +37,8 @@ export async function GET(request: Request) {
         period,
       })];
     });
-    return payrollJson({ ok: true, month, asOfDate: period.asOfDate, future: period.future, employees });
+    const director=Number(((snapshot.sourceSnapshot.insuranceSettings as {director?:{calculatedAmount?:number}}|undefined)?.director?.calculatedAmount)??0);
+    return payrollJson({ ok: true, month, asOfDate: period.asOfDate, future: period.future, employees, summary:buildPayrollOverviewSummary(employees,director) });
   } catch {
     return payrollJson({ ok: false, code: "PAYROLL_OVERVIEW_READ_FAILED" }, 500);
   }

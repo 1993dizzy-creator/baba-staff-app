@@ -1,0 +1,17 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+// @ts-expect-error Node's test runner imports the TypeScript source directly.
+import { buildEmployeeInsuranceSnapshot, calculateDirectorInsurance, calculatePayrollInsuranceTotals, percentToBasisPoints, selectInsuranceSetting, type PayrollInsuranceGlobalSettings, type PayrollInsuranceSettingVersion } from "../lib/payroll/insurance.ts";
+
+const global:PayrollInsuranceGlobalSettings={employeeRateBp:1050,employerRateBp:2150,directorEnabled:true,directorBaseAmount:9_000_000,directorRateBp:3200,settingsUpdatedAt:"2026-07-31T00:00:00Z"};
+const version=(overrides:Partial<PayrollInsuranceSettingVersion>={}):PayrollInsuranceSettingVersion=>({id:1,userId:10,isEnrolled:true,insuranceBaseAmount:5_000_000,effectiveMonth:"2026-07-01",revision:1,createdBy:1,createdAt:"2026-07-01T00:00:00Z",note:null,...overrides});
+
+test("employee insurance is rounded separately and deducted exactly once",()=>{const insurance=buildEmployeeInsuranceSnapshot(version(),global);assert.equal(insurance.employeeDeductionAmount,525_000);assert.equal(insurance.employerAmount,1_075_000);const preInsurance=10_000_000;const net=preInsurance-insurance.employeeDeductionAmount;assert.equal(net,9_475_000);assert.equal(preInsurance,net+insurance.employeeDeductionAmount);assert.equal(preInsurance+insurance.employerAmount,11_075_000);});
+
+test("four enrolled employees and director insurance reconcile",()=>{const employees=Array.from({length:4},()=>buildEmployeeInsuranceSnapshot(version(),global));const totals=calculatePayrollInsuranceTotals({preInsurancePayoutAmounts:Array(4).fill(10_000_000),employeeDeductionAmounts:employees.map(x=>x.employeeDeductionAmount),employerAmounts:employees.map(x=>x.employerAmount),directorAmount:calculateDirectorInsurance(global)});assert.equal(totals.totalEmployeeInsuranceDeductionAmount,2_100_000);assert.equal(totals.totalEmployerInsuranceAmount,4_300_000);assert.equal(totals.directorInsuranceAmount,2_880_000);assert.equal(totals.totalInsuranceRemittanceAmount,9_280_000);assert.equal(totals.totalCompanyCostAmount,47_180_000);assert.equal(totals.totalPreInsurancePayoutAmount,totals.totalNetAmount+totals.totalEmployeeInsuranceDeductionAmount);});
+
+test("missing and unenrolled settings produce zero employee and employer amounts",()=>{assert.deepEqual(buildEmployeeInsuranceSnapshot(null,global).employeeDeductionAmount,0);const disabled=buildEmployeeInsuranceSnapshot(version({isEnrolled:false,insuranceBaseAmount:0}),global);assert.equal(disabled.employeeDeductionAmount,0);assert.equal(disabled.employerAmount,0);});
+
+test("latest effective month and highest same-month revision win without deleting history",()=>{const history=[version(),version({id:2,revision:2,insuranceBaseAmount:6_000_000}),version({id:3,effectiveMonth:"2026-08-01",revision:3,insuranceBaseAmount:7_000_000})];assert.equal(selectInsuranceSetting(history,"2026-07")?.id,2);assert.equal(selectInsuranceSetting(history,"2026-08")?.id,3);assert.equal(history.length,3);});
+
+test("percent input converts exactly to basis points and rejects invalid precision",()=>{assert.equal(percentToBasisPoints("10.5"),1050);assert.equal(percentToBasisPoints("21.5"),2150);assert.equal(percentToBasisPoints("32"),3200);assert.equal(percentToBasisPoints("10.505"),null);assert.equal(percentToBasisPoints(Number.NaN),null);assert.equal(percentToBasisPoints(Number.POSITIVE_INFINITY),null);assert.equal(percentToBasisPoints(-1),null);assert.equal(percentToBasisPoints(100.01),null);});

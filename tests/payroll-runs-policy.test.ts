@@ -82,7 +82,7 @@ test("recalculation is one RPC transaction, copies manual items, and recreates r
   assert.match(migration, /i\.item_type='manual'/);
   assert.doesNotMatch(body, /review_resolutions/);
   assert.ok(body.indexOf("perform public.payroll_insert_payload_v2") < body.indexOf("update public.payroll_runs set status='cancelled'"));
-  assert.match(detailApi, /payroll_recalculate_run_v2/);
+  assert.match(detailApi, /payroll_recalculate_run_v3/);
   assert.match(detailApi, /Number\.isSafeInteger\(replacementRunId\)/);
 });
 
