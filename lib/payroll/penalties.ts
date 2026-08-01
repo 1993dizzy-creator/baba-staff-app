@@ -21,7 +21,7 @@ export function calculateLatePenalty(input: {
   majorPenaltyRateBp: number;
 }) {
   if (input.lateMinutes <= 0) return { tier: "none" as const, amount: 0 };
-  if (input.lateMinutes < input.thresholdMinutes) {
+  if (input.lateMinutes <= input.thresholdMinutes) {
     return {
       tier: "minor" as const,
       amount: Math.round(input.minuteRate * input.minorPenaltyMinutes),

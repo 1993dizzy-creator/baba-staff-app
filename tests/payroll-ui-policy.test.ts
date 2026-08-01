@@ -171,10 +171,22 @@ test("common payroll settings has one read and one unified save flow", () => {
 
 test("common settings uses compact rows without duplicate page headings", () => {
   assert.match(commonSettings, /function SettingRow/);
-  assert.match(commonSettings, /gridTemplateColumns: "minmax\(104px, \.8fr\) minmax\(0, 1\.2fr\)"/);
+  assert.match(commonSettings, /function SettingsGroup/);
+  assert.match(commonSettings, /gridTemplateColumns: "minmax\(104px, auto\) minmax\(0, 1fr\)"/);
+  assert.match(commonSettings, /width: 56/);
+  assert.match(commonSettings, /height: 34/);
+  assert.match(commonSettings, /padding: "4px 6px"/);
   assert.match(commonSettings, /"매월 1일 ~ 말일"/);
   for (const label of ["직원 부담률", "회사 부담률", "법인장 보험", "법인장 기준금액", "법인장 부담률", "월 보험비용"])
     assert.match(commonSettings, new RegExp(label));
   for (const removed of ["급여 지급일, 공통 보험 기준", '"회사 공통 설정"', '"직원별 급여 설정"'])
     assert.doesNotMatch(settings, new RegExp(removed));
+});
+
+test("common settings formats the director base and describes inclusive late thresholds", () => {
+  assert.match(commonSettings, /function formatInteger/);
+  assert.match(commonSettings, /type="text"[\s\S]*inputMode="numeric"/);
+  assert.match(commonSettings, /directorInsuranceBaseAmount: event\.target\.value\.replace\(\/\\D\/g, ""\)/);
+  for (const label of ["지각 구간 기준", "Mốc phân loại", "분 초과 지각", "Đi muộn quá", "일당의", "lương ngày"])
+    assert.match(commonSettings, new RegExp(label));
 });

@@ -5,7 +5,6 @@ import {
   calculateInsuranceAmount,
   percentToBasisPoints,
 } from "@/lib/payroll/insurance";
-import { money } from "@/lib/payroll/ui-labels";
 
 type ApiSettings = {
   payment_day: number;
@@ -46,6 +45,11 @@ function toDraft(settings: ApiSettings): Draft {
     lateMajorPenaltyRate: String(settings.late_major_penalty_rate_bp / 100),
     unauthorizedAbsencePenaltyDays: String(settings.unauthorized_absence_penalty_days),
   };
+}
+
+function formatInteger(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
 function toPayload(draft: Draft) {
@@ -181,30 +185,32 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
 
   return (
     <section style={s.card}>
-      <h2 style={s.sectionTitle}>💰 {vi ? "Lương" : "급여"}</h2>
-      <SettingRow label={vi ? "Kỳ lương" : "급여 일정"}>
-        {vi ? "Từ ngày 1 đến ngày cuối tháng" : "매월 1일 ~ 말일"}
-      </SettingRow>
-      <SettingRow label={vi ? "Ngày trả" : "지급일"}>
-        <span style={s.inlineValue}>
-          {vi ? "Ngày" : "다음 달"}
-          <input
-            style={s.shortInput}
-            aria-label={vi ? "Ngày trả lương" : "급여 지급일"}
-            type="number"
-            min="1"
-            max="28"
-            value={draft.paymentDay}
-            onChange={(event) =>
-              setDraft({ ...draft, paymentDay: event.target.value })
-            }
-          />
-          {vi ? "của tháng tiếp theo" : "일"}
-        </span>
-      </SettingRow>
+      <SettingsGroup title={`💰 ${vi ? "Lương" : "급여"}`}>
+        <SettingRow label={vi ? "Kỳ lương" : "급여 일정"}>
+          {vi ? "Ngày 1 ~ cuối tháng" : "매월 1일 ~ 말일"}
+        </SettingRow>
+        <SettingRow label={vi ? "Ngày trả" : "지급일"} last>
+          <span style={s.inlineValue}>
+            {vi ? "Tháng sau, ngày" : "다음 달"}
+            <input
+              style={s.shortInput}
+              aria-label={vi ? "Ngày trả lương" : "급여 지급일"}
+              type="number"
+              inputMode="numeric"
+              min="1"
+              max="28"
+              value={draft.paymentDay}
+              onChange={(event) =>
+                setDraft({ ...draft, paymentDay: event.target.value })
+              }
+            />
+            {vi ? "" : "일"}
+          </span>
+        </SettingRow>
+      </SettingsGroup>
 
-      <h2 style={s.insuranceTitle}>🛡️ {vi ? "Bảo hiểm" : "보험"}</h2>
-      <SettingRow label={vi ? "NV đóng" : "직원 부담률"}>
+      <SettingsGroup title={`🛡️ ${vi ? "Bảo hiểm" : "보험"}`}>
+      <SettingRow label={vi ? "Nhân viên đóng" : "직원 부담률"}>
         <PercentInput
           value={draft.employeeInsuranceRate}
           label={vi ? "NV đóng" : "직원 부담률"}
@@ -248,21 +254,23 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
       <SettingRow
         label={vi ? "Mức cơ sở" : "법인장 기준금액"}
       >
-        <input
-          style={s.input}
-          aria-label={vi ? "Mức cơ sở" : "법인장 기준금액"}
-          type="number"
-          min="0"
-          step="1"
-          disabled={!draft.directorInsuranceEnabled}
-          value={draft.directorInsuranceBaseAmount}
-          onChange={(event) =>
-            setDraft({
-              ...draft,
-              directorInsuranceBaseAmount: event.target.value,
-            })
-          }
-        />
+        <span style={s.percent}>
+          <input
+            style={s.moneyInput}
+            aria-label={vi ? "Mức cơ sở" : "법인장 기준금액"}
+            type="text"
+            inputMode="numeric"
+            disabled={!draft.directorInsuranceEnabled}
+            value={formatInteger(draft.directorInsuranceBaseAmount)}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                directorInsuranceBaseAmount: event.target.value.replace(/\D/g, ""),
+              })
+            }
+          />
+          {vi ? "đồng" : "동"}
+        </span>
       </SettingRow>
       <SettingRow label={vi ? "Tỷ lệ" : "법인장 부담률"}>
         <PercentInput
@@ -276,23 +284,30 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
       </SettingRow>
       <SettingRow
         label={vi ? "Phí BH/tháng" : "월 보험비용"}
+        last
       >
-        <b style={s.total}>{money(directorCost)}</b>
+        <b style={s.total}>{directorCost.toLocaleString("en-US")}{vi ? " đồng" : "동"}</b>
       </SettingRow>
+      </SettingsGroup>
 
-      <h2 style={s.insuranceTitle}>⚠️ {vi ? "Phạt" : "패널티"}</h2>
-      <SettingRow label={vi ? "Mốc đi muộn" : "지각 기준"}>
-        <NumberInput width={72} value={draft.lateMajorThresholdMinutes} label={vi ? "Mốc đi muộn" : "지각 기준"} suffix={vi ? "phút trở lên" : "분 이상"} change={(value)=>setDraft({...draft,lateMajorThresholdMinutes:value})}/>
+      <SettingsGroup title={`⚠️ ${vi ? "Phạt" : "패널티"}`}>
+      <SettingRow label={vi ? "Mốc phân loại" : "지각 구간 기준"}>
+        <NumberInput value={draft.lateMajorThresholdMinutes} label={vi ? "Mốc phân loại" : "지각 구간 기준"} suffix={vi ? "phút" : "분"} change={(value)=>setDraft({...draft,lateMajorThresholdMinutes:value})}/>
       </SettingRow>
-      <SettingRow label={vi ? "Đi muộn nhẹ" : `1~${Math.max(1, Number(draft.lateMajorThresholdMinutes) - 1)}분 지각`}>
-        <NumberInput width={72} value={draft.lateMinorPenaltyMinutes} label={vi ? "Đi muộn nhẹ" : "경미 지각"} suffix={vi ? "phút lương" : "분 급여 감봉"} change={(value)=>setDraft({...draft,lateMinorPenaltyMinutes:value})}/>
+      <SettingRow label={vi ? `Đi muộn 1~${draft.lateMajorThresholdMinutes || "-"} phút` : `1~${draft.lateMajorThresholdMinutes || "-"}분 지각`}>
+        <NumberInput value={draft.lateMinorPenaltyMinutes} label={vi ? "Mức phạt đi muộn nhẹ" : "경미 지각 감봉 시간"} suffix={vi ? "phút lương" : "분 급여 감봉"} change={(value)=>setDraft({...draft,lateMinorPenaltyMinutes:value})}/>
       </SettingRow>
-      <SettingRow label={vi ? "Đi muộn nặng" : `${draft.lateMajorThresholdMinutes || "-"}분 이상`}>
-        <PercentInput value={draft.lateMajorPenaltyRate} label={vi ? "Đi muộn nặng" : "중대 지각"} change={(value)=>setDraft({...draft,lateMajorPenaltyRate:value})}/>
+      <SettingRow label={vi ? `Đi muộn quá ${draft.lateMajorThresholdMinutes || "-"} phút` : `${draft.lateMajorThresholdMinutes || "-"}분 초과 지각`}>
+        <span style={s.percent}>
+          {vi ? null : "일당의"}
+          <PercentInput value={draft.lateMajorPenaltyRate} label={vi ? "Tỷ lệ phạt đi muộn nặng" : "중대 지각 감봉 비율"} change={(value)=>setDraft({...draft,lateMajorPenaltyRate:value})}/>
+          {vi ? "lương ngày" : null}
+        </span>
       </SettingRow>
-      <SettingRow label={vi ? "Nghỉ không phép" : "무단결근"}>
-        <NumberInput width={72} value={draft.unauthorizedAbsencePenaltyDays} label={vi ? "Nghỉ không phép" : "무단결근"} suffix={vi ? "ngày lương" : "일분"} change={(value)=>setDraft({...draft,unauthorizedAbsencePenaltyDays:value})}/>
+      <SettingRow label={vi ? "Nghỉ không phép" : "무단결근"} last>
+        <span style={s.percent}>{vi ? null : "일당의"}<NumberInput value={draft.unauthorizedAbsencePenaltyDays} label={vi ? "Nghỉ không phép" : "무단결근"} suffix={vi ? "ngày lương" : "일분"} change={(value)=>setDraft({...draft,unauthorizedAbsencePenaltyDays:value})}/></span>
       </SettingRow>
+      </SettingsGroup>
 
       {error ? <p role="alert" style={s.error}>{errorText}</p> : null}
       {message ? <p role="status" style={s.success}>{message}</p> : null}
@@ -314,9 +329,13 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
   );
 }
 
-function SettingRow({ label, children }: { label: string; children: ReactNode }) {
+function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
+  return <section style={s.group}><h2 style={s.sectionTitle}>{title}</h2><div>{children}</div></section>;
+}
+
+function SettingRow({ label, children, last = false }: { label: string; children: ReactNode; last?: boolean }) {
   return (
-    <div style={s.row}>
+    <div style={last ? { ...s.row, borderBottom: 0 } : s.row}>
       <span style={s.label}>{label}</span>
       <div style={s.value}>{children}</div>
     </div>
@@ -340,6 +359,7 @@ function PercentInput({
         style={s.shortInput}
         aria-label={label}
         type="number"
+        inputMode="decimal"
         min="0"
         max="100"
         step="0.01"
@@ -352,8 +372,8 @@ function PercentInput({
   );
 }
 
-function NumberInput({value,label,suffix,width,change}:{value:string;label:string;suffix:string;width:number;change:(value:string)=>void}) {
-  return <span style={s.percent}><input style={{...s.shortInput,width}} aria-label={label} type="number" min="1" step="1" value={value} onChange={(event)=>change(event.target.value)}/>{suffix}</span>;
+function NumberInput({value,label,suffix,change}:{value:string;label:string;suffix:string;change:(value:string)=>void}) {
+  return <span style={s.percent}><input style={s.shortInput} aria-label={label} type="number" inputMode="numeric" min="1" step="1" value={value} onChange={(event)=>change(event.target.value)}/>{suffix}</span>;
 }
 
 const s = {
@@ -363,32 +383,27 @@ const s = {
     borderRadius: 14,
     background: "#fff",
     display: "grid",
+    gap: 10,
     minWidth: 0,
     fontSize: 13,
   },
-  sectionTitle: { margin: "0 0 4px", fontSize: 15, fontWeight: 900 },
-  insuranceTitle: {
-    margin: "14px 0 4px",
-    paddingTop: 12,
-    borderTop: "1px solid #e5e7eb",
-    fontSize: 15,
-    fontWeight: 900,
-  },
+  group: { padding: "10px 11px", border: "1px solid #e5e7eb", borderRadius: 11, background: "#f8fafc", minWidth: 0 },
+  sectionTitle: { margin: "0 0 5px", fontSize: 15, fontWeight: 900 },
   row: {
     display: "grid",
-    gridTemplateColumns: "minmax(104px, .8fr) minmax(0, 1.2fr)",
+    gridTemplateColumns: "minmax(104px, auto) minmax(0, 1fr)",
     alignItems: "center",
     gap: 8,
-    minHeight: 44,
+    minHeight: 40,
     borderBottom: "1px solid #f1f5f9",
     minWidth: 0,
   },
-  label: { color: "#374151", fontWeight: 800, overflowWrap: "normal", wordBreak: "keep-all" },
+  label: { color: "#374151", fontWeight: 800, fontSize: 12, whiteSpace: "nowrap" },
   value: { display: "flex", justifyContent: "flex-end", alignItems: "center", minWidth: 0, textAlign: "right", overflowWrap: "anywhere" },
-  inlineValue: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" },
-  input: { width: 132, maxWidth: "100%", minWidth: 0, minHeight: 40, padding: "8px 9px", border: "1px solid #d1d5db", borderRadius: 9, background: "#fff", textAlign: "right" },
-  shortInput: { width: 70, maxWidth: "100%", minHeight: 40, padding: "8px 7px", border: "1px solid #d1d5db", borderRadius: 9, background: "#fff", textAlign: "right" },
-  percent: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5, whiteSpace: "nowrap", minWidth: 0 },
+  inlineValue: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, minWidth: 0, whiteSpace: "nowrap", fontSize: 12 },
+  moneyInput: { boxSizing: "border-box", width: 112, maxWidth: "100%", height: 34, padding: "4px 6px", border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", fontSize: 13, textAlign: "right" },
+  shortInput: { boxSizing: "border-box", width: 56, maxWidth: "100%", height: 34, padding: "4px 6px", border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", fontSize: 13, textAlign: "right" },
+  percent: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, whiteSpace: "nowrap", minWidth: 0, fontSize: 12 },
   toggle: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 7, minHeight: 40, fontWeight: 800 },
   total: { fontSize: 15, fontWeight: 900 },
   button: { minHeight: 44, marginTop: 14, padding: "10px 14px", border: 0, borderRadius: 10, background: "#111827", color: "#fff", fontWeight: 900 },
