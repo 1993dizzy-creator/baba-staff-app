@@ -35,7 +35,8 @@ test("schedule forms default to month start and accept the July automation bound
   const component = read("components/PayrollScheduleVersions.tsx");
   const route = read("app/api/admin/payroll/schedules/route.ts");
   assert.match(component, /effectiveFrom:vietnamCurrentMonthStart\(\)/);
-  assert.match(component, /min="2026-07-01"/);
+  assert.match(component, /const SCHEDULE_CHANGE_START="2026-07-01"/);
+  assert.match(component, /min=\{SCHEDULE_CHANGE_START\}/);
   assert.match(route, /body\.effectiveFrom<'2026-07-01'/);
 });
 

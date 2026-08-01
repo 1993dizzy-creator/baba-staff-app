@@ -4,6 +4,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
@@ -28,6 +29,7 @@ export default function EmployeeInsuranceSettings({
   userId: number;
   vi: boolean;
 }) {
+  const mounted = useRef(true);
   const [history, setHistory] = useState<PayrollInsuranceSettingVersion[]>([]);
   const [current, setCurrent] =
     useState<PayrollInsuranceSettingVersion | null>(null);
@@ -52,28 +54,44 @@ export default function EmployeeInsuranceSettings({
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
-      const response = await fetch(
-        `/api/admin/payroll/insurance?userId=${userId}`,
-        { cache: "no-store", signal },
-      );
-      const data = await response.json();
-      if (!response.ok) {
+      try {
+        const response = await fetch(
+          `/api/admin/payroll/insurance?userId=${userId}`,
+          { cache: "no-store", signal },
+        );
+        if (signal?.aborted || !mounted.current) return;
+        const data = await response.json();
+        if (signal?.aborted || !mounted.current) return;
+        if (!response.ok) {
+          setError(
+            vi
+              ? "Không thể tải cài đặt bảo hiểm."
+              : "보험 설정을 불러오지 못했습니다.",
+          );
+          return;
+        }
+        const nextCurrent = data.current ?? null;
+        setHistory(data.history ?? []);
+        setCurrent(nextCurrent);
+        resetForm(nextCurrent);
+      } catch (loadError: unknown) {
+        if (
+          signal?.aborted ||
+          !mounted.current ||
+          (loadError instanceof Error && loadError.name === "AbortError")
+        ) return;
         setError(
           vi
             ? "Không thể tải cài đặt bảo hiểm."
             : "보험 설정을 불러오지 못했습니다.",
         );
-        return;
       }
-      const nextCurrent = data.current ?? null;
-      setHistory(data.history ?? []);
-      setCurrent(nextCurrent);
-      resetForm(nextCurrent);
     },
     [resetForm, userId, vi],
   );
 
   useEffect(() => {
+    mounted.current = true;
     const controller = new AbortController();
     setHistory([]);
     setCurrent(null);
@@ -88,7 +106,10 @@ export default function EmployeeInsuranceSettings({
         );
       }
     });
-    return () => controller.abort();
+    return () => {
+      mounted.current = false;
+      controller.abort();
+    };
   }, [load, resetForm, userId, vi]);
 
   function openForm() {
@@ -111,6 +132,7 @@ export default function EmployeeInsuranceSettings({
         note,
       }),
     });
+    if (!mounted.current) return;
     setSaving(false);
     if (!response.ok) {
       setError(
@@ -121,6 +143,7 @@ export default function EmployeeInsuranceSettings({
       return;
     }
     await load();
+    if (!mounted.current) return;
     setFormOpen(false);
   }
 
@@ -286,43 +309,43 @@ function Summary({ label, value }: { label: string; value: string }) {
 
 const s = {
   card: {
-    padding: 14,
+    padding: 13,
     border: "1px solid #e5e7eb",
     borderRadius: 14,
     background: "#fff",
     display: "grid",
-    gap: 12,
+    gap: 9,
     minWidth: 0,
   },
   head: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    gap: 10,
+    gap: 8,
     flexWrap: "wrap",
   },
-  title: { margin: 0, fontSize: 17, fontWeight: 900 },
-  help: { margin: "4px 0 0", color: "#6b7280", fontSize: 13 },
+  title: { margin: 0, fontSize: 15, fontWeight: 900 },
+  help: { margin: "3px 0 0", color: "#6b7280", fontSize: 12, lineHeight: 1.4 },
   current: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-    gap: 8,
-    padding: 10,
-    borderRadius: 10,
-    background: "#eff6ff",
-    fontSize: 13,
+    gap: 6,
+    padding: "8px 9px",
+    borderRadius: 9,
+    background: "#f8fafc",
+    fontSize: 12,
   },
   summary: { display: "grid", gap: 3, minWidth: 0 },
-  empty: { margin: 0, padding: 12, borderRadius: 10, background: "#f9fafb", color: "#6b7280", fontSize: 13 },
-  form: { display: "grid", gap: 10, paddingTop: 12, borderTop: "1px solid #e5e7eb" },
+  empty: { margin: 0, padding: "10px 11px", border: "1px dashed #d1d5db", borderRadius: 10, color: "#6b7280", fontSize: 12 },
+  form: { display: "grid", gap: 8, paddingTop: 8, borderTop: "1px solid #e5e7eb" },
   field: { display: "grid", gap: 5, fontSize: 13, fontWeight: 700 },
   toggleRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, minHeight: 44, padding: "8px 10px", borderRadius: 10, background: "#f9fafb", fontSize: 13, fontWeight: 800 },
-  input: { width: "100%", minHeight: 42, padding: 8, border: "1px solid #d1d5db", borderRadius: 9 },
+  input: { width: "100%", minHeight: 40, padding: 8, border: "1px solid #d1d5db", borderRadius: 9 },
   textarea: { width: "100%", minHeight: 72, padding: 8, border: "1px solid #d1d5db", borderRadius: 9, resize: "vertical" },
   actions: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
-  button: { minHeight: 42, padding: "9px 13px", border: 0, borderRadius: 10, background: "#111827", color: "#fff", fontWeight: 800 },
-  secondary: { minHeight: 42, padding: "9px 13px", border: "1px solid #d1d5db", borderRadius: 10, background: "#fff", color: "#111827", fontWeight: 800 },
-  error: { margin: 0, padding: 10, borderRadius: 10, background: "#fef2f2", color: "#b91c1c", fontSize: 13 },
-  details: { paddingTop: 10, borderTop: "1px solid #e5e7eb", fontSize: 13 },
-  history: { display: "grid", gap: 3, padding: 9, marginTop: 6, border: "1px solid #e5e7eb", borderRadius: 9, fontSize: 12 },
+  button: { minHeight: 38, padding: "7px 10px", border: 0, borderRadius: 9, background: "#111827", color: "#fff", fontSize: 13, fontWeight: 800 },
+  secondary: { minHeight: 36, padding: "7px 10px", border: "1px solid #d1d5db", borderRadius: 9, background: "#fff", color: "#111827", fontSize: 13, fontWeight: 800 },
+  error: { margin: 0, padding: "8px 9px", borderRadius: 9, background: "#fef2f2", color: "#b91c1c", fontSize: 12 },
+  details: { paddingTop: 8, borderTop: "1px solid #e5e7eb", fontSize: 12 },
+  history: { display: "grid", gap: 3, padding: "8px 9px", marginTop: 5, border: "1px solid #e5e7eb", borderRadius: 9, fontSize: 12 },
 } satisfies Record<string, CSSProperties>;

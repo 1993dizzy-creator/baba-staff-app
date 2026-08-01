@@ -140,20 +140,35 @@ export default function PayrollSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [selectedInsurance, setSelectedInsurance] =
     useState<InsuranceCurrent | null>(null);
+  const [selectedInsuranceError, setSelectedInsuranceError] = useState(false);
   const load = useCallback(
-    async (id: number) => {
-      const response = await fetch(
-        `/api/admin/payroll/contracts?userId=${id}`,
-        { cache: "no-store" },
-      );
-      const data = await response.json();
-      if (response.ok) setContracts(data.history ?? []);
-      else
+    async (id: number, signal?: AbortSignal) => {
+      try {
+        const response = await fetch(
+          `/api/admin/payroll/contracts?userId=${id}`,
+          { cache: "no-store", signal },
+        );
+        if (signal?.aborted) return;
+        const data = await response.json();
+        if (signal?.aborted) return;
+        if (response.ok) setContracts(data.history ?? []);
+        else
+          setError(
+            vi
+              ? "Không thể tải hợp đồng lương."
+              : "급여계약을 불러오지 못했습니다.",
+          );
+      } catch (loadError: unknown) {
+        if (
+          signal?.aborted ||
+          (loadError instanceof Error && loadError.name === "AbortError")
+        ) return;
         setError(
           vi
             ? "Không thể tải hợp đồng lương."
             : "급여계약을 불러오지 못했습니다.",
         );
+      }
     },
     [vi],
   );
@@ -190,22 +205,47 @@ export default function PayrollSettingsPage() {
       .finally(() => setUsersLoading(false));
   }, [activeTab, params, vi]);
   useEffect(() => {
-    if (activeTab === "employee" && userId) void load(userId);
+    if (activeTab !== "employee" || !userId) {
+      setContracts([]);
+      return;
+    }
+    const controller = new AbortController();
+    setContracts([]);
+    setError("");
+    void load(userId, controller.signal).catch(() => undefined);
+    return () => controller.abort();
   }, [activeTab, userId, load]);
   useEffect(() => {
     if (activeTab !== "employee" || !userId) {
       setSelectedInsurance(null);
+      setSelectedInsuranceError(false);
       return;
     }
     const controller = new AbortController();
     setSelectedInsurance(null);
-    void fetch(`/api/admin/payroll/insurance?userId=${userId}`, {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then((response) => response.json())
-      .then((data) => setSelectedInsurance(data.current ?? null))
-      .catch(() => undefined);
+    setSelectedInsuranceError(false);
+    void (async () => {
+      try {
+        const response = await fetch(`/api/admin/payroll/insurance?userId=${userId}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        const data = await response.json();
+        if (controller.signal.aborted) return;
+        if (!response.ok) {
+          setSelectedInsuranceError(true);
+          return;
+        }
+        setSelectedInsurance(data.current ?? null);
+      } catch (insuranceError: unknown) {
+        if (
+          controller.signal.aborted ||
+          (insuranceError instanceof Error && insuranceError.name === "AbortError")
+        ) return;
+        setSelectedInsuranceError(true);
+      }
+    })().catch(() => undefined);
     return () => controller.abort();
   }, [activeTab, userId]);
   const positionLabel = useCallback(
@@ -375,13 +415,16 @@ export default function PayrollSettingsPage() {
                   <SummaryItem
                     label={vi ? "Tổng lương hiện tại" : "현재 합산급여"}
                     value={combined === null ? (vi ? "Chưa cài đặt hợp đồng lương" : "급여계약 미설정") : money(combined)}
+                    important
                   />
                   <SummaryItem
                     label={vi ? "Bảo hiểm" : "보험"}
                     value={
                       selected.username === "mjk"
                         ? vi ? "Quản lý trong cài đặt chung" : "회사 공통 설정에서 관리"
-                        : selectedInsurance
+                        : selectedInsuranceError
+                          ? vi ? "Không thể tải trạng thái bảo hiểm" : "보험 상태 조회 실패"
+                          : selectedInsurance
                           ? selectedInsurance.isEnrolled ? (vi ? "Đang tham gia" : "가입") : (vi ? "Không tham gia" : "미가입")
                           : vi ? "Chưa cài đặt bảo hiểm · xử lý là không tham gia" : "보험 미설정 · 미가입 처리"
                     }
@@ -410,7 +453,7 @@ export default function PayrollSettingsPage() {
                 </details>
               </section>
 
-              <PayrollScheduleVersions userId={selected.id} vi={vi} />
+              <PayrollScheduleVersions key={selected.id} userId={selected.id} vi={vi} />
               {selected.username !== "mjk" ? (
                 <EmployeeInsuranceSettings key={selected.id} userId={selected.id} vi={vi} />
               ) : (
@@ -573,11 +616,11 @@ function ContractCard({ contract, vi }: { contract: Contract; vi: boolean }) {
     </article>
   );
 }
-function SummaryItem({ label, value }: { label: string; value: string }) {
+function SummaryItem({ label, value, important = false }: { label: string; value: string; important?: boolean }) {
   return (
     <div style={s.summaryItem}>
       <span>{label}</span>
-      <b>{value}</b>
+      <b style={important ? s.summaryImportant : s.summaryValue}>{value}</b>
     </div>
   );
 }
@@ -598,7 +641,7 @@ function ContractSummary({
       <SummaryItem label={vi ? "Lương theo hợp đồng" : "계약급여"} value={money(contract.baseSalary)} />
       <SummaryItem label={vi ? "Mức tăng cố định" : "고정 급여인상"} value={`+${money(contract.fixedRaiseAmount)}`} />
       <SummaryItem label={vi ? "Mức tăng theo cấp" : "레벨 인상"} value={`+${money(levelRaise)}`} />
-      <SummaryItem label={vi ? "Tổng lương" : "합산급여"} value={money(combined)} />
+      <SummaryItem label={vi ? "Tổng lương" : "합산급여"} value={money(combined)} important />
       <SummaryItem label={vi ? "Loại lương" : "급여 형태"} value={payrollLabel(lang, contract.payType)} />
       <SummaryItem label={vi ? "Cách tính lương" : "급여 산정 방식"} value={payrollLabel(lang, contract.calculationBasis)} />
       <SummaryItem label={vi ? "Ngày áp dụng" : "적용 시작일"} value={contract.effectiveFrom} />
@@ -671,24 +714,24 @@ function SelectField({
 const s = {
   page: { display: "grid", gap: 8, padding: "8px 0 30px", minWidth: 0 },
   tabs: { ...ui.card, padding: 4, marginBottom: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 },
-  section: { display: "grid", gap: 12, minWidth: 0 },
-  cardTitle: { margin: 0, fontSize: 17, fontWeight: 900 },
-  sectionHelp: { margin: "4px 0 0", color: "#6b7280", fontSize: 13, lineHeight: 1.45 },
+  section: { display: "grid", gap: 9, minWidth: 0 },
+  cardTitle: { margin: 0, fontSize: 15, fontWeight: 900 },
+  sectionHelp: { margin: "3px 0 0", color: "#6b7280", fontSize: 12, lineHeight: 1.4 },
   card: {
-    padding: 14,
+    padding: 13,
     border: "1px solid #e5e7eb",
     borderRadius: 14,
     background: "#fff",
     display: "grid",
-    gap: 10,
+    gap: 9,
     minWidth: 0,
   },
-  error: { margin: 0, padding: 10, borderRadius: 10, background: "#fef2f2", color: "#b91c1c", fontSize: 13 },
-  emptyState: { margin: 0, padding: 14, border: "1px dashed #d1d5db", borderRadius: 11, color: "#6b7280", fontSize: 13, textAlign: "center" },
+  error: { margin: 0, padding: "8px 9px", borderRadius: 9, background: "#fef2f2", color: "#b91c1c", fontSize: 12 },
+  emptyState: { margin: 0, padding: "10px 11px", border: "1px dashed #d1d5db", borderRadius: 10, color: "#6b7280", fontSize: 12, textAlign: "center" },
   input: {
     width: "100%",
-    minHeight: 42,
-    padding: "9px 10px",
+    minHeight: 40,
+    padding: "8px 9px",
     border: "1px solid #d1d5db",
     borderRadius: 10,
   },
@@ -727,33 +770,36 @@ const s = {
     flexWrap: "wrap",
   },
   primary: {
-    minHeight: 42,
-    padding: "9px 13px",
+    minHeight: 36,
+    padding: "7px 10px",
     border: 0,
-    borderRadius: 10,
+    borderRadius: 9,
     background: "#111827",
     color: "#fff",
+    fontSize: 13,
     fontWeight: 800,
   },
   contract: {
     display: "grid",
     gap: 4,
-    padding: 11,
-    margin: "8px 0",
+    padding: "8px 9px",
+    margin: "5px 0",
     border: "1px solid #e5e7eb",
-    borderRadius: 10,
-    fontSize: 13,
+    borderRadius: 9,
+    fontSize: 12,
   },
-  employeeSettings: { display: "grid", gap: 12, minWidth: 0 },
-  employeeSummary: { display: "grid", gap: 12, padding: 14, border: "1px solid #bfdbfe", borderRadius: 14, background: "#f8fbff", minWidth: 0 },
+  employeeSettings: { display: "grid", gap: 9, minWidth: 0 },
+  employeeSummary: { display: "grid", gap: 8, padding: 12, border: "1px solid #bfdbfe", borderRadius: 14, background: "#f8fbff", minWidth: 0 },
   summaryIdentity: { display: "grid", gap: 3, minWidth: 0 },
-  summaryName: { fontSize: 18, fontWeight: 900, minWidth: 0, overflowWrap: "anywhere" },
-  summaryGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 },
-  summaryItem: { display: "grid", gap: 3, minWidth: 0, padding: 9, borderRadius: 9, background: "rgba(255,255,255,.8)", fontSize: 12, overflowWrap: "anywhere" },
-  contractSummary: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 },
-  details: { paddingTop: 10, borderTop: "1px solid #e5e7eb", fontSize: 13 },
-  directorNotice: { padding: 13, border: "1px solid #e5e7eb", borderRadius: 14, background: "#f9fafb", color: "#4b5563", fontSize: 13, lineHeight: 1.5 },
-  form: { display: "grid", gap: 10 },
+  summaryName: { fontSize: 16, fontWeight: 900, minWidth: 0, overflowWrap: "anywhere" },
+  summaryGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))", gap: 6 },
+  summaryItem: { display: "grid", gap: 2, minWidth: 0, padding: "7px 8px", borderRadius: 8, background: "rgba(255,255,255,.72)", fontSize: 11, overflowWrap: "anywhere" },
+  summaryValue: { fontSize: 12, fontWeight: 700 },
+  summaryImportant: { fontSize: 13, fontWeight: 900 },
+  contractSummary: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6 },
+  details: { paddingTop: 8, borderTop: "1px solid #e5e7eb", fontSize: 12 },
+  directorNotice: { padding: 11, border: "1px solid #e5e7eb", borderRadius: 12, background: "#f9fafb", color: "#4b5563", fontSize: 12, lineHeight: 1.45 },
+  form: { display: "grid", gap: 8 },
   field: { display: "grid", gap: 5, fontSize: 13 },
   level: {
     display: "grid",

@@ -15,6 +15,7 @@ const employeeInsurance = read(
 const commonSettings = read(
   "components/payroll/PayrollCommonSettings.tsx",
 );
+const scheduleSettings = read("components/PayrollScheduleVersions.tsx");
 const shadow = read("components/PayrollShadowPanel.tsx");
 const migration = read(
   "supabase/migrations/202607270002_create_payroll_runs.sql",
@@ -128,6 +129,36 @@ test("employee insurance form is collapsed and resets from the current setting p
   assert.match(employeeInsurance, /\[load, resetForm, userId, vi\]/);
   assert.match(employeeInsurance, /<details/);
   assert.match(employeeInsurance, /`설정 이력 \$\{history\.length\}건`/);
+});
+
+test("employee payroll requests ignore aborts without allowing stale state", () => {
+  for (const source of [scheduleSettings, employeeInsurance, settings]) {
+    assert.match(source, /signal\?\.aborted|controller\.signal\.aborted/);
+    assert.match(source, /name === "AbortError"|name==="AbortError"/);
+    assert.match(source, /\.abort\(\)/);
+    assert.match(source, /mounted\.current|setContracts\(\[\]\)/);
+  }
+  assert.match(scheduleSettings, /setHistory\(\[\]\)/);
+  assert.match(settings, /setContracts\(\[\]\)/);
+  assert.match(settings, /if \(!response\.ok\) \{[\s\S]*setSelectedInsuranceError\(true\)/);
+});
+
+test("employee settings cards share compact mobile dimensions", () => {
+  for (const source of [scheduleSettings, employeeInsurance, settings]) {
+    assert.match(source, /fontSize: ?15/);
+    assert.match(source, /fontSize: ?12/);
+    assert.match(source, /minHeight: ?36/);
+    assert.match(source, /padding: ?13/);
+  }
+  assert.match(scheduleSettings, /time:\{fontSize:17,fontWeight:900\}/);
+  assert.match(settings, /summaryName: \{ fontSize: 16/);
+  assert.match(employeeInsurance, /minHeight: 40/);
+});
+
+test("schedule availability uses one policy date for both languages", () => {
+  assert.match(scheduleSettings, /const SCHEDULE_CHANGE_START="2026-07-01"/);
+  assert.match(scheduleSettings, /dateLabel\(lang,SCHEDULE_CHANGE_START\)/);
+  assert.doesNotMatch(scheduleSettings, /01\/08\/2026/);
 });
 
 test("director employee keeps global-only insurance guidance", () => {
