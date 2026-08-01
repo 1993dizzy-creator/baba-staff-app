@@ -3,7 +3,7 @@ export const PAYROLL_FACTS_ENGINE_VERSION = "attendance-facts-v1";
 export const PAYROLL_PROJECTION_ENGINE_VERSION = "payroll-projection-v1";
 
 export type PayType = "monthly" | "daily" | "hourly";
-export type CalculationBasis = "minute" | "hour" | "day";
+export type CalculationBasis = "minute" | "hour" | "day" | "fixed_monthly";
 export type RoundingMode = "none" | "floor" | "ceil" | "nearest";
 export type AdjustmentMode = "separate" | "deduct_minutes" | "ignore";
 export type OvertimeMode = "requires_approval" | "ignore";

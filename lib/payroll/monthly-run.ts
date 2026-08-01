@@ -14,6 +14,7 @@ import { calculateLatePenalty, type PayrollPenaltySettings } from "./penalties";
 import { getLastCompletedBusinessDate, getPayrollOverviewPeriod } from "./overview-period";
 import { addStoreDays } from "@/lib/store-settings/business-time-core";
 import { isMissingAttendanceCandidateDate } from "./missing-attendance";
+import { calculateFixedMonthlyPayroll } from "./fixed-monthly";
 
 export const PAYROLL_RUN_ENGINE_VERSION = "monthly-payroll-v6";
 export const PAYROLL_RUN_START_MONTH = "2026-07";
@@ -76,6 +77,18 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
   const recordsByDate=new Map(records.map(row=>[row.work_date,row]));
   const eligibleDates=input.dates.filter(date=>(!user.hire_date||date>=user.hire_date)&&(!user.termination_date||date<=user.termination_date));
   if(contracts.length===0)reviews.push(review("NO_PAYROLL_CONTRACT",null,{userId:user.id,month:input.month}));
+  const calculationDate=eligibleDates.at(-1)??input.dates.at(-1)??null;
+  const fixedContractMatches=calculationDate?activeOn(contracts,calculationDate).filter(contract=>contract.calculationBasis==="fixed_monthly"):[];
+  if(calculationDate&&fixedContractMatches.length===1){
+    const contract=fixedContractMatches[0];
+    const levelInfo=getEmployeeLevelInfo(user,calculationDate);
+    const fixed=calculateFixedMonthlyPayroll(contract,levelInfo,calculationDate);
+    if(!fixed)reviews.push(review("EMPLOYEE_LEVEL_BASE_DATE_REQUIRED",null,{contractRevision:contract.revision,calculationDate}));
+    else items.push(item("base_work","addition",fixed.amount,null,"월 고정급여 / Lương cố định hàng tháng",{contractRevision:contract.revision,calculationBasis:"fixed_monthly",contractSalary:contract.baseSalary,fixedRaiseAmount:contract.fixedRaiseAmount,...fixed.levelSnapshot}));
+    const insuranceSetting=selectInsuranceSetting(input.insuranceVersionsByUser.get(user.id)??[],input.month);const insuranceSnapshot=buildEmployeeInsuranceSnapshot(insuranceSetting,input.insuranceGlobal);
+    if(insuranceSnapshot.isEnrolled)items.push(item("insurance_employee_deduction","deduction",insuranceSnapshot.employeeDeductionAmount,null,"직원 보험 공제",{insuranceSettingVersionId:insuranceSnapshot.settingVersionId,insuranceSettingRevision:insuranceSnapshot.revision,effectiveMonth:insuranceSnapshot.effectiveMonth,insuranceBaseAmount:insuranceSnapshot.insuranceBaseAmount,employeeRateBp:insuranceSnapshot.employeeRateBp,employerRateBp:insuranceSnapshot.employerRateBp,employeeDeductionAmount:insuranceSnapshot.employeeDeductionAmount,employerContributionAmount:insuranceSnapshot.employerAmount}));
+    return{userId:user.id,employeeName:employeeName(user),contractSnapshot:contracts,attendanceSnapshot:{month:input.month,engineVersion:PAYROLL_RUN_ENGINE_VERSION,calculationBasis:"fixed_monthly",calculationDate,levelSnapshot:fixed?.levelSnapshot??null,days:[]},insuranceSnapshot,recognizedWorkdays:0,recognizedMinutes:0,lateMinutes:0,earlyLeaveMinutes:0,overtimeCandidateMinutes:0,items,reviews};
+  }
   for(const date of eligibleDates){const record=recordsByDate.get(date)??null;const contractMatches=activeOn(contracts,date);const scheduleMatches=activeOn(schedules,date);const contract=contractMatches.length===1?contractMatches[0]:null;const schedule=scheduleMatches.length===1?scheduleMatches[0]:null;if(!record&&!schedule)continue;const settings=input.settingsByDate.get(date)??{revision:null,lateGraceMinutes:0,earlyLeaveGraceMinutes:0};
     const facts=normalizeAttendanceDayFacts({userId:user.id,businessDate:date,attendanceRecord:record?{id:Number(record.id),status:record.status,checkInAt:record.check_in_at,checkOutAt:record.check_out_at,approvalStatus:record.approval_status,storedLateMinutes:record.late_minutes,storedEarlyLeaveMinutes:record.early_leave_minutes,storedWorkMinutes:record.work_minutes}:null,schedule,hireDate:user.hire_date,storeSettingsRevision:settings.revision,lateGraceMinutes:settings.lateGraceMinutes,earlyLeaveGraceMinutes:settings.earlyLeaveGraceMinutes,manualLateNormalized:record?input.lateNormalizedRecordIds.has(Number(record.id)):false});
     if(contractMatches.length>1&&!facts.warningCodes.includes("CONTRACT_OVERLAP"))facts.warningCodes.push("CONTRACT_OVERLAP");

@@ -2,7 +2,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { mapContract } from "@/lib/payroll/db-mappers";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 import { getEmployeeLevelInfo } from "@/lib/employee-level/server";
-import { resolveFixedRaiseReason } from "@/lib/payroll/contract-form";
+import { isMonthFirstDate, resolveFixedRaiseReason } from "@/lib/payroll/contract-form";
 
 export const dynamic = "force-dynamic";
 const FIELDS = "id,user_id,pay_type,calculation_basis,base_salary,fixed_raise_amount,standard_workdays,standard_minutes_per_day,time_block_minutes,rounding_mode,late_adjustment_mode,early_leave_adjustment_mode,overtime_mode,paid_leave_mode,effective_from,effective_to,revision,created_by,created_at,note";
@@ -30,9 +30,12 @@ export async function POST(request: Request) {
   if (auth.response || !auth.actor) return auth.response;
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const fixedRaiseAmount = Number(body?.fixedRaiseAmount ?? 0);
-  if (!body || !validId(body.userId) || !["minute","day"].includes(String(body.calculationBasis)) || !["monthly","daily","hourly"].includes(String(body.payType)) || !Number.isSafeInteger(Number(body.baseSalary)) || Number(body.baseSalary) < 0 || !Number.isSafeInteger(fixedRaiseAmount) || fixedRaiseAmount < 0 || (body.payType === "hourly" && body.calculationBasis === "day") || (body.payType !== "monthly" && fixedRaiseAmount !== 0)) return payrollJson({ ok: false, code: "INVALID_CONTRACT" }, 400);
-  const { data: target } = await supabaseServer.from("users").select("id").eq("id",validId(body.userId)!).eq("is_system_account",false).maybeSingle();
+  if (!body || !validId(body.userId) || !["minute","day","fixed_monthly"].includes(String(body.calculationBasis)) || !["monthly","daily","hourly"].includes(String(body.payType)) || !Number.isSafeInteger(Number(body.baseSalary)) || Number(body.baseSalary) < 0 || !Number.isSafeInteger(fixedRaiseAmount) || fixedRaiseAmount < 0 || (body.payType === "hourly" && body.calculationBasis === "day") || (body.payType !== "monthly" && fixedRaiseAmount !== 0)) return payrollJson({ ok: false, code: "INVALID_CONTRACT" }, 400);
+  const { data: target } = await supabaseServer.from("users").select("id,position,is_active").eq("id",validId(body.userId)!).eq("is_system_account",false).eq("is_active",true).maybeSingle();
   if(!target)return payrollJson({ok:false,code:"USER_NOT_FOUND"},404);
+  const targetIsOwner = String(target.position ?? "").toLowerCase() === "owner";
+  if ((targetIsOwner && (body.payType !== "monthly" || body.calculationBasis !== "fixed_monthly")) || (!targetIsOwner && body.calculationBasis === "fixed_monthly")) return payrollJson({ ok: false, code: "INVALID_CONTRACT" }, 400);
+  if (targetIsOwner && body.payType === "monthly" && body.calculationBasis === "fixed_monthly" && !isMonthFirstDate(body.effectiveFrom)) return payrollJson({ ok: false, code: "INVALID_FIXED_MONTHLY_EFFECTIVE_DATE" }, 400);
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const { data: currentContract, error: currentError } = await supabaseServer
     .from("payroll_contract_versions")
@@ -47,7 +50,7 @@ export async function POST(request: Request) {
   const currentFixedRaiseAmount = Number(currentContract?.fixed_raise_amount ?? 0);
   const fixedRaiseReason = resolveFixedRaiseReason(currentFixedRaiseAmount, fixedRaiseAmount, body.note);
   if (!fixedRaiseReason.valid) return payrollJson({ ok: false, code: "FIXED_RAISE_REASON_REQUIRED" }, 400);
-  const { data, error } = await supabaseServer.rpc("payroll_create_contract_version_v2", {
+  const { data, error } = await supabaseServer.rpc("payroll_create_contract_version_v3", {
     p_user_id: validId(body.userId), p_pay_type: body.payType, p_calculation_basis: body.calculationBasis,
     p_base_salary: body.baseSalary, p_fixed_raise_amount: fixedRaiseAmount, p_standard_workdays: body.standardWorkdays || null,
     p_standard_minutes_per_day: body.standardMinutesPerDay, p_time_block_minutes: body.timeBlockMinutes,

@@ -1,5 +1,4 @@
 "use client";
-/* eslint-disable react-hooks/set-state-in-effect */
 import {
   useCallback,
   useEffect,
@@ -19,13 +18,15 @@ import PayrollModal from "@/components/payroll/PayrollModal";
 import { useLanguage } from "@/lib/language-context";
 import {
   money,
+  partLabel,
   payrollLabel,
   type PayrollUiLang,
 } from "@/lib/payroll/ui-labels";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { attendanceText } from "@/lib/text";
 import { vietnamCurrentMonthStart } from "@/lib/payroll/ui-dates";
-import { currencyAmount, formatIntegerInput, hoursInputToMinutes, integerInputDigits, minutesToHoursInput, signedAmount } from "@/lib/payroll/contract-form";
+import { currencyAmount, formatIntegerInput, hoursInputToMinutes, integerInputDigits, isMonthFirstDate, minutesToHoursInput, signedAmount } from "@/lib/payroll/contract-form";
+import { comparePayrollEmployees } from "@/lib/payroll/employee-sort";
 import { ui } from "@/lib/styles/ui";
 type User = {
   id: number;
@@ -93,7 +94,12 @@ function fromContract(contract: Contract | null): FormState {
   return contract
     ? {
         payType: contract.payType,
-        calculationBasis: contract.calculationBasis === "day" && contract.payType !== "hourly" ? "day" : "minute",
+        calculationBasis:
+          contract.calculationBasis === "fixed_monthly"
+            ? "fixed_monthly"
+            : contract.calculationBasis === "day" && contract.payType !== "hourly"
+              ? "day"
+              : "minute",
         baseSalary: String(contract.baseSalary),
         fixedRaiseAmount: String(contract.fixedRaiseAmount),
         standardWorkdays: String(contract.standardWorkdays ?? 26),
@@ -116,6 +122,7 @@ export default function PayrollSettingsPage() {
   const pathname = usePathname();
   const router = useRouter();
   const tabParam = params.get("tab");
+  const requestedUserIdParam = params.get("userId");
   const activeTab: "common" | "employee" =
     tabParam === "common" || tabParam === "employee"
       ? tabParam
@@ -125,6 +132,8 @@ export default function PayrollSettingsPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [usersError, setUsersError] = useState("");
+  const [employeeListOpen, setEmployeeListOpen] = useState(true);
+  const [scrollRequestVersion, setScrollRequestVersion] = useState(0);
   const [userId, setUserId] = useState<number | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [currentContract, setCurrentContract] = useState<Contract | null>(null);
@@ -133,12 +142,14 @@ export default function PayrollSettingsPage() {
   const [form, setForm] = useState<FormState>(defaults);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
+  const [modalError, setModalError] = useState("");
   const [saving, setSaving] = useState(false);
   const [selectedInsurance, setSelectedInsurance] =
     useState<InsuranceCurrent | null>(null);
   const [selectedInsuranceError, setSelectedInsuranceError] = useState(false);
+  const [selectedInsuranceLoading, setSelectedInsuranceLoading] = useState(false);
   const employeeSettingsRef = useRef<HTMLDivElement>(null);
-  const clickedUserIdRef = useRef<number | null>(null);
+  const pendingScrollUserIdRef = useRef<number | null>(null);
   const load = useCallback(
     async (id: number, signal?: AbortSignal) => {
       try {
@@ -179,15 +190,14 @@ export default function PayrollSettingsPage() {
     router.replace(`${pathname}?${next}`, { scroll: false });
   }
   function selectUser(id: number) {
-    clickedUserIdRef.current = id;
+    pendingScrollUserIdRef.current = id;
+    setScrollRequestVersion((version) => version + 1);
+    setEmployeeListOpen(false);
     setUserId(id);
     const next = new URLSearchParams(params.toString());
     next.set("tab", "employee");
     next.set("userId", String(id));
     router.replace(`${pathname}?${next}`, { scroll: false });
-    if (id === userId && !contractsLoading) {
-      requestAnimationFrame(() => employeeSettingsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
-    }
   }
   useEffect(() => {
     if (activeTab !== "employee") return;
@@ -196,9 +206,7 @@ export default function PayrollSettingsPage() {
     void fetch("/api/admin/payroll/users", { cache: "no-store" })
       .then((r) => r.json())
       .then((data) => {
-        setUsers(data.users ?? []);
-        const requested = Number(params.get("userId"));
-        if (Number.isSafeInteger(requested)) setUserId(requested);
+        setUsers((data.users ?? []).sort(comparePayrollEmployees));
       })
       .catch(() =>
         setUsersError(
@@ -208,7 +216,12 @@ export default function PayrollSettingsPage() {
         ),
       )
       .finally(() => setUsersLoading(false));
-  }, [activeTab, params, vi]);
+  }, [activeTab, vi]);
+  useEffect(() => {
+    if (activeTab !== "employee" || usersLoading) return;
+    const requested = Number(requestedUserIdParam);
+    setUserId(Number.isSafeInteger(requested) && users.some((user) => user.id === requested) ? requested : null);
+  }, [activeTab, requestedUserIdParam, users, usersLoading]);
   useEffect(() => {
     if (activeTab !== "employee" || !userId) {
       setContracts([]);
@@ -229,11 +242,13 @@ export default function PayrollSettingsPage() {
     if (activeTab !== "employee" || !userId) {
       setSelectedInsurance(null);
       setSelectedInsuranceError(false);
+      setSelectedInsuranceLoading(false);
       return;
     }
     const controller = new AbortController();
     setSelectedInsurance(null);
     setSelectedInsuranceError(false);
+    setSelectedInsuranceLoading(true);
     void (async () => {
       try {
         const response = await fetch(`/api/admin/payroll/insurance?userId=${userId}`, {
@@ -255,7 +270,9 @@ export default function PayrollSettingsPage() {
         ) return;
         setSelectedInsuranceError(true);
       }
-    })().catch(() => undefined);
+    })().catch(() => undefined).finally(() => {
+      if (!controller.signal.aborted) setSelectedInsuranceLoading(false);
+    });
     return () => controller.abort();
   }, [activeTab, userId]);
   const positionLabel = useCallback(
@@ -267,26 +284,36 @@ export default function PayrollSettingsPage() {
         : user.username,
     [attendance],
   );
+  const employeeMetaLabel = useCallback((user: User) => {
+    const displayedPart = user.part ? partLabel(l, user.part) : "";
+    const displayedPosition = user.position ? positionLabel(user) : "";
+    const values = [displayedPart, displayedPosition].filter((value, index, all) => value && all.indexOf(value) === index);
+    return values.join(" · ") || user.username;
+  }, [l, positionLabel]);
   const visible = useMemo(
     () =>
       users.filter((user) =>
-        `${user.name ?? ""} ${user.username} ${user.part ?? ""} ${user.position ?? ""} ${positionLabel(user)}`
+        `${user.name ?? ""} ${user.username} ${user.part ?? ""} ${user.position ?? ""} ${employeeMetaLabel(user)}`
           .toLowerCase()
           .includes(query.toLowerCase()),
-      ),
-    [positionLabel, query, users],
+      ).sort(comparePayrollEmployees),
+    [employeeMetaLabel, query, users],
   );
   const selected = users.find((user) => user.id === userId);
   const selectedId = selected?.id ?? null;
+  const selectedIsOwner = selected?.position?.toLowerCase() === "owner";
   useEffect(() => {
-    if (!selectedId || contractsLoading || clickedUserIdRef.current !== selectedId) return;
+    if (!selectedId || employeeListOpen || contractsLoading || selectedInsuranceLoading || pendingScrollUserIdRef.current !== selectedId) return;
     const frame = requestAnimationFrame(() => {
-      if (clickedUserIdRef.current !== selectedId) return;
-      employeeSettingsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      clickedUserIdRef.current = null;
+      if (pendingScrollUserIdRef.current !== selectedId) return;
+      requestAnimationFrame(() => {
+        if (pendingScrollUserIdRef.current !== selectedId) return;
+        employeeSettingsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        pendingScrollUserIdRef.current = null;
+      });
     });
     return () => cancelAnimationFrame(frame);
-  }, [contractsLoading, selectedId]);
+  }, [contractsLoading, employeeListOpen, scrollRequestVersion, selectedId, selectedInsuranceLoading]);
   const current = currentContract;
   const levelRaise = selected?.levelInfo.eligible
     ? selected.levelInfo.earnedRaiseCount *
@@ -300,51 +327,68 @@ export default function PayrollSettingsPage() {
   const fixedRaiseChanged = nextFixedRaise !== currentFixedRaise;
   const standardMinutesPreview = hoursInputToMinutes(form.standardHoursPerDay);
   function openForm() {
-    setForm(fromContract(current));
+    const next = fromContract(current);
+    setForm(selectedIsOwner ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next);
     setError("");
+    setModalError("");
     setOpen(true);
+  }
+  function closeForm() {
+    setModalError("");
+    setOpen(false);
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!userId) return;
-    const standardMinutesPerDay = hoursInputToMinutes(form.standardHoursPerDay);
+    setModalError("");
+    const fixedMonthlyEffectiveDateMessage = vi ? "Hợp đồng trả cố định hàng tháng chỉ có thể áp dụng từ ngày đầu tiên của tháng." : "매월 고정 지급 계약은 매월 1일부터 적용할 수 있습니다.";
+    if (form.calculationBasis === "fixed_monthly" && !isMonthFirstDate(form.effectiveFrom)) {
+      window.alert(fixedMonthlyEffectiveDateMessage);
+      return;
+    }
+    const standardMinutesPerDay = selectedIsOwner ? 540 : hoursInputToMinutes(form.standardHoursPerDay);
     if (standardMinutesPerDay === null) {
-      setError(vi ? "Giờ làm việc chuẩn phải lớn hơn 0, không quá 24 giờ và quy đổi thành số phút nguyên." : "하루 기준 근무시간은 0시간 초과 24시간 이하이며 정수 분으로 환산되어야 합니다.");
+      setModalError(vi ? "Giờ làm việc chuẩn phải lớn hơn 0, không quá 24 giờ và quy đổi thành số phút nguyên." : "하루 기준 근무시간은 0시간 초과 24시간 이하이며 정수 분으로 환산되어야 합니다.");
       return;
     }
     if (fixedRaiseChanged && !form.fixedRaiseReason.trim()) {
-      setError(vi ? "Cần nhập lý do thay đổi mức tăng lương cố định." : "고정 급여인상 총액 변경 사유를 입력해주세요.");
+      setModalError(vi ? "Cần nhập lý do thay đổi mức tăng lương cố định." : "고정 급여인상 총액 변경 사유를 입력해주세요.");
       return;
     }
     setSaving(true);
-    const response = await fetch("/api/admin/payroll/contracts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...form,
-        timeBlockMinutes: 60,
-        roundingMode: "none",
-        lateAdjustmentMode: "separate",
-        overtimeMode: "ignore",
-        earlyLeaveAdjustmentMode: "deduct_minutes",
-        paidLeaveMode: "unpaid",
-        note: fixedRaiseChanged ? form.fixedRaiseReason.trim() : null,
-        userId,
-        baseSalary: Number(form.baseSalary),
-        fixedRaiseAmount: Number(form.fixedRaiseAmount),
-        standardWorkdays:
-          form.payType === "monthly" ? Number(form.standardWorkdays) : null,
-        standardMinutesPerDay,
-      }),
-    });
-    const data = await response.json();
-    setSaving(false);
-    if (!response.ok) {
-      setError(data.code === "FIXED_RAISE_REASON_REQUIRED" ? (vi ? "Cần nhập lý do thay đổi mức tăng lương cố định." : "고정 급여인상 총액 변경 사유를 입력해주세요.") : (data.code ?? "INVALID_CONTRACT"));
-      return;
+    try {
+      const response = await fetch("/api/admin/payroll/contracts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...form,
+          timeBlockMinutes: 60,
+          roundingMode: "none",
+          lateAdjustmentMode: "separate",
+          overtimeMode: "ignore",
+          earlyLeaveAdjustmentMode: "deduct_minutes",
+          paidLeaveMode: "unpaid",
+          note: fixedRaiseChanged ? form.fixedRaiseReason.trim() : null,
+          userId,
+          baseSalary: Number(form.baseSalary),
+          fixedRaiseAmount: Number(form.fixedRaiseAmount),
+          standardWorkdays: selectedIsOwner ? 26 : form.payType === "monthly" ? Number(form.standardWorkdays) : null,
+          standardMinutesPerDay,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        if (data.code === "INVALID_FIXED_MONTHLY_EFFECTIVE_DATE") window.alert(fixedMonthlyEffectiveDateMessage);
+        else setModalError(data.code === "FIXED_RAISE_REASON_REQUIRED" ? (vi ? "Cần nhập lý do thay đổi mức tăng lương cố định." : "고정 급여인상 총액 변경 사유를 입력해주세요.") : (data.code ?? "INVALID_CONTRACT"));
+        return;
+      }
+      await load(userId);
+      setOpen(false);
+    } catch {
+      setModalError(vi ? "Không thể lưu hợp đồng lương. Vui lòng thử lại." : "급여계약을 저장하지 못했습니다. 다시 시도해주세요.");
+    } finally {
+      setSaving(false);
     }
-    await load(userId);
-    setOpen(false);
   }
   return (
     <Container noPaddingTop>
@@ -379,14 +423,30 @@ export default function PayrollSettingsPage() {
         ) : (
           <section style={s.section}>
           <section style={s.card}>
-            <input
-              style={s.input}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={vi ? "Tìm nhân viên" : "직원 검색"}
-              aria-label={vi ? "Tìm nhân viên" : "직원 검색"}
-            />
-            {usersError ? (
+            <div style={s.listHeader}>
+              <b style={s.listTitle}>
+                {vi ? `Danh sách nhân viên ${users.length} người` : `직원 목록 ${users.length}명`}
+                {!employeeListOpen && selected ? <span style={s.selectedSummary}> · {vi ? "Đã chọn" : "선택"}: {selected.name ?? selected.username} · {employeeMetaLabel(selected)}</span> : null}
+              </b>
+              <button
+                type="button"
+                style={s.listToggle}
+                aria-expanded={employeeListOpen}
+                aria-controls="payroll-employee-list"
+                onClick={() => setEmployeeListOpen((value) => !value)}
+              >
+                {employeeListOpen ? (vi ? "Thu gọn ▲" : "접기 ▲") : (vi ? "Mở rộng ▼" : "펼치기 ▼")}
+              </button>
+            </div>
+            {employeeListOpen ? <div id="payroll-employee-list" style={s.listBody}>
+              <input
+                style={s.input}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={vi ? "Tìm nhân viên" : "직원 검색"}
+                aria-label={vi ? "Tìm nhân viên" : "직원 검색"}
+              />
+              {usersError ? (
               <p role="alert" style={s.error}>{usersError}</p>
             ) : usersLoading ? (
               <p style={s.emptyState}>{vi ? "Đang tải danh sách nhân viên…" : "직원 목록을 불러오는 중입니다…"}</p>
@@ -411,7 +471,7 @@ export default function PayrollSettingsPage() {
                           lang={lang}
                           nameStyle={s.personName}
                         />
-                        <small style={s.personMeta}>{user.part ?? "-"} · {positionLabel(user)}</small>
+                        <small style={s.personMeta}>{employeeMetaLabel(user)}</small>
                       </span>
                       <span style={selectedUser ? s.selectedLabel : s.selectMark}>
                         {selectedUser ? (vi ? "Đã chọn" : "선택됨") : "›"}
@@ -420,7 +480,7 @@ export default function PayrollSettingsPage() {
                   );
                 })}
               </div>
-            )}
+            )}</div> : null}
           </section>
 
           {error ? <p role="alert" style={s.error}>{error}</p> : null}
@@ -440,7 +500,7 @@ export default function PayrollSettingsPage() {
                     lang={lang}
                     nameStyle={s.summaryName}
                   />
-                  <span style={s.sectionHelp}>{selected.part ?? "-"} · {positionLabel(selected)}</span>
+                  <span style={s.sectionHelp}>{employeeMetaLabel(selected)}</span>
                 </div>
                 <div style={s.summaryGrid}>
                   <SummaryItem
@@ -499,9 +559,10 @@ export default function PayrollSettingsPage() {
         )}
         {open && selected && (
           <PayrollModal
+            placement="top"
             title={vi ? "Đăng ký hợp đồng lương" : "급여계약 등록"}
             closeLabel={vi ? "Đóng" : "닫기"}
-            onClose={() => setOpen(false)}
+            onClose={closeForm}
             footer={
               <button form="contract" style={s.modalSave} disabled={saving}>
                 {saving ? (vi ? "Đang lưu" : "저장 중") : vi ? "Lưu" : "저장"}
@@ -509,22 +570,31 @@ export default function PayrollSettingsPage() {
             }
           >
             <form id="contract" style={s.form} onSubmit={submit}>
-              <NumberField
+              <Field label={vi ? "Ngày áp dụng" : "적용 시작일"}>
+                <input
+                  style={s.input}
+                  type="date"
+                  required
+                  value={form.effectiveFrom}
+                  onChange={(event) =>
+                    setForm({ ...form, effectiveFrom: event.target.value })
+                  }
+                />
+              </Field>
+              {modalError ? <p role="alert" style={s.error}>{modalError}</p> : null}
+              <MoneyInputField
                 label={vi ? "Lương theo hợp đồng" : "계약급여"}
                 value={form.baseSalary}
                 change={(value) => setForm({ ...form, baseSalary: value })}
               />
-              <Field label={vi ? "Tổng mức tăng lương cố định" : "고정 급여인상 총액"}>
-                <input
-                  style={s.input}
-                  required
-                  type="text"
-                  inputMode="numeric"
-                  value={formatIntegerInput(form.fixedRaiseAmount)}
-                  onChange={(event) => setForm({ ...form, fixedRaiseAmount: integerInputDigits(event.target.value) })}
-                />
+              <MoneyInputField
+                label={vi ? "Tổng mức tăng lương cố định" : "고정 급여인상 총액"}
+                value={form.fixedRaiseAmount}
+                change={(value) => setForm({ ...form, fixedRaiseAmount: value })}
+                clearZeroOnFocus
+              >
                 <small style={s.fieldHelp}>{vi ? "Nhập tổng số tiền tăng cố định hiện áp dụng, không phải riêng mức thay đổi lần này." : "이번 변동액이 아닌 현재 적용할 누적 총액을 입력합니다."}</small>
-              </Field>
+              </MoneyInputField>
               <div style={s.changePreview}>
                 <SummaryItem label={vi ? "Tổng hiện tại" : "현재 총액"} value={currencyAmount(currentFixedRaise, vi)} />
                 <SummaryItem label={vi ? "Tổng sau thay đổi" : "변경 후 총액"} value={currencyAmount(nextFixedRaise, vi)} important />
@@ -535,7 +605,10 @@ export default function PayrollSettingsPage() {
               <div style={s.level}>
                 <b>{selected.levelInfo.displayLabel ?? (vi ? "Không áp dụng cấp" : "레벨 미적용")} · {vi ? "Tăng theo cấp" : "레벨 인상"} {signedAmount(levelRaise, vi)}</b>
               </div>
-              <SelectField
+              {selectedIsOwner ? <>
+                <ReadOnlyField label={vi ? "Loại lương" : "급여 형태"} value={payrollLabel(l, "monthly")} />
+                <ReadOnlyField label={vi ? "Cách tính lương" : "급여 산정 방식"} value={payrollLabel(l, "fixed_monthly")} />
+              </> : <><SelectField
                 label={vi ? "Loại lương" : "급여 형태"}
                 value={form.payType}
                 options={["monthly", "daily", "hourly"]}
@@ -563,8 +636,8 @@ export default function PayrollSettingsPage() {
                 change={(value) =>
                   setForm({ ...form, calculationBasis: value })
                 }
-              />
-              {form.payType === "monthly" && (
+              /></>}
+              {!selectedIsOwner && form.payType === "monthly" && (
                 <NumberField
                   label={vi ? "Ngày làm việc chuẩn" : "월 기준 근무일수"}
                   value={form.standardWorkdays}
@@ -574,24 +647,13 @@ export default function PayrollSettingsPage() {
                   step="0.01"
                 />
               )}
-              <Field label={vi ? "Giờ làm việc chuẩn mỗi ngày" : "하루 기준 근무시간"}>
+              {!selectedIsOwner ? <Field label={vi ? "Giờ làm việc chuẩn mỗi ngày" : "하루 기준 근무시간"}>
                 <div style={s.hoursRow}>
                   <input style={s.hoursInput} required type="number" min="0.01" max="24" step="0.01" value={form.standardHoursPerDay} onChange={(event) => setForm({ ...form, standardHoursPerDay: event.target.value })} />
                   <span>{vi ? "giờ" : "시간"}</span>
                   {standardMinutesPreview !== null ? <span style={s.minutesPreview}>{standardMinutesPreview}{vi ? " phút" : "분"}</span> : null}
                 </div>
-              </Field>
-              <Field label={vi ? "Ngày áp dụng" : "적용 시작일"}>
-                <input
-                  style={s.input}
-                  type="date"
-                  required
-                  value={form.effectiveFrom}
-                  onChange={(e) =>
-                    setForm({ ...form, effectiveFrom: e.target.value })
-                  }
-                />
-              </Field>
+              </Field> : null}
             </form>
           </PayrollModal>
         )}
@@ -683,6 +745,38 @@ function NumberField({
     </Field>
   );
 }
+function MoneyInputField({
+  label,
+  value,
+  change,
+  clearZeroOnFocus = false,
+  children,
+}: {
+  label: string;
+  value: string;
+  change: (value: string) => void;
+  clearZeroOnFocus?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <Field label={label}>
+      <input
+        style={s.input}
+        required
+        type="text"
+        inputMode="numeric"
+        value={formatIntegerInput(value)}
+        onFocus={() => { if (clearZeroOnFocus && value === "0") change(""); }}
+        onBlur={() => { if (clearZeroOnFocus && value === "") change("0"); }}
+        onChange={(event) => change(integerInputDigits(event.target.value))}
+      />
+      {children}
+    </Field>
+  );
+}
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return <Field label={label}><div style={s.readOnlyValue}>{value}</div></Field>;
+}
 function SelectField({
   label,
   value,
@@ -736,6 +830,7 @@ const s = {
     border: "1px solid #d1d5db",
     borderRadius: 10,
   },
+  readOnlyValue: { minHeight: 40, padding: "9px 10px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#f9fafb", color: "#374151", fontSize: 13, fontWeight: 700 },
   people: {
     display: "grid",
     gap: 6,
@@ -743,6 +838,11 @@ const s = {
     overflowY: "auto",
     overflowX: "hidden",
   },
+  listHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minWidth: 0 },
+  listTitle: { minWidth: 0, fontSize: 13, overflowWrap: "anywhere" },
+  selectedSummary: { color: "#4b5563", fontWeight: 600 },
+  listToggle: { flexShrink: 0, minHeight: 34, padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", color: "#374151", fontSize: 12, fontWeight: 800 },
+  listBody: { display: "grid", gap: 9, minWidth: 0 },
   person: {
     display: "flex",
     justifyContent: "space-between",

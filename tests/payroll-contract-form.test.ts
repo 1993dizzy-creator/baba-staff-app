@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // @ts-expect-error Node's test runner requires the explicit TypeScript extension.
-import { currencyAmount, formatIntegerInput, hoursInputToMinutes, integerInputDigits, minutesToHoursInput, resolveFixedRaiseReason, signedAmount } from "../lib/payroll/contract-form.ts";
+import { currencyAmount, formatIntegerInput, hoursInputToMinutes, integerInputDigits, isMonthFirstDate, minutesToHoursInput, resolveFixedRaiseReason, signedAmount } from "../lib/payroll/contract-form.ts";
 
 test("contract hours convert to integer stored minutes", () => {
   assert.equal(hoursInputToMinutes("9"), 540);
@@ -38,4 +38,10 @@ test("fixed raise reasons are required only when the cumulative total changes", 
   assert.equal(resolveFixedRaiseReason(1_000_000, 1_500_000, "   ").valid, false);
   assert.equal(resolveFixedRaiseReason(1_000_000, 500_000, null).valid, false);
   assert.deepEqual(resolveFixedRaiseReason(1_000_000, 1_000_000, "old"), { changed: false, valid: true, note: null });
+});
+
+test("fixed monthly effective dates accept only a real first day of month", () => {
+  assert.equal(isMonthFirstDate("2026-08-01"), true);
+  for (const value of ["2026-08-02", "2026-08-15", "2026-00-01", "2026-13-01", "2026-02-30", "not-a-date", null])
+    assert.equal(isMonthFirstDate(value), false);
 });

@@ -1,4 +1,4 @@
-export const PART_VALUES = ["kitchen", "hall", "bar", "etc"] as const;
+export const PART_VALUES = ["owner", "kitchen", "hall", "bar", "etc"] as const;
 
 export type PartValue = (typeof PART_VALUES)[number];
 
@@ -14,6 +14,15 @@ export const PART_META: Record<
     rank: number;
   }
 > = {
+  owner: {
+    label: "Owner",
+    color: "#7c3aed",
+    soft: "#f5f3ff",
+    bg: "#f5f3ff",
+    border: "#7c3aed",
+    emoji: "👑",
+    rank: 0,
+  },
   kitchen: {
     label: "Kitchen",
     color: "#f59e0b",
@@ -53,6 +62,7 @@ export const PART_META: Record<
 };
 
 export function getPartKey(part?: string | null): PartValue {
+  if (part === "owner") return "owner";
   if (part === "kitchen") return "kitchen";
   if (part === "hall") return "hall";
   if (part === "bar") return "bar";

@@ -171,8 +171,9 @@ test("contract editor uses cumulative fixed raises, hour input, and unpaid leave
 });
 
 test("contract amount formatting, compact hours row, and modal focus are stable", () => {
-  assert.match(settings, /value=\{formatIntegerInput\(form\.fixedRaiseAmount\)\}/);
-  assert.match(settings, /fixedRaiseAmount: integerInputDigits\(event\.target\.value\)/);
+  assert.match(settings, /function MoneyInputField/);
+  assert.match(settings, /value=\{formatIntegerInput\(value\)\}/);
+  assert.match(settings, /change\(integerInputDigits\(event\.target\.value\)\)/);
   assert.match(settings, /gridTemplateColumns: "minmax\(80px, 50%\) auto minmax\(0, 1fr\)"/);
   assert.match(settings, /standardMinutesPreview !== null \? <span style=\{s\.minutesPreview\}/);
   assert.doesNotMatch(settings, /<small style=\{s\.fieldHelp\}>\{hoursInputToMinutes/);
@@ -195,10 +196,49 @@ test("fixed raise reason is conditional in UI and enforced by the server", () =>
 });
 
 test("direct employee clicks scroll only after the selected employee finishes loading", () => {
-  assert.match(settings, /clickedUserIdRef/);
+  assert.match(settings, /pendingScrollUserIdRef/);
   assert.match(settings, /contractsLoading/);
+  assert.match(settings, /selectedInsuranceLoading/);
+  assert.match(settings, /employeeListOpen/);
   assert.match(settings, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
   assert.match(settings, /scrollMarginTop: 72/);
+});
+
+test("employee payroll parts use the shared localized formatter", () => {
+  assert.match(settings, /partLabel\(l, user\.part\)/);
+  assert.doesNotMatch(settings, /\{user\.part \?\? "-"\}/);
+  assert.doesNotMatch(settings, /\{selected\.part \?\? "-"\}/);
+  assert.match(settings, /employeeMetaLabel\(user\)/);
+  assert.match(settings, /employeeMetaLabel\(selected\)/);
+  assert.match(list, /partLabel\(l,group\.part\)/);
+});
+
+test("contract modal starts at the top and renders the effective date first", () => {
+  assert.match(settings, /<PayrollModal\s+[\s\S]*?placement="top"/);
+  const formStart = settings.indexOf('<form id="contract"');
+  const baseSalary = settings.indexOf('value={form.baseSalary}', formStart);
+  const effectiveDate = settings.indexOf('value={form.effectiveFrom}', formStart);
+  const fixedRaise = settings.indexOf('value={form.fixedRaiseAmount}', formStart);
+  assert.ok(formStart >= 0 && effectiveDate > formStart && baseSalary > effectiveDate && fixedRaise > baseSalary);
+  assert.equal(settings.indexOf('value={form.effectiveFrom}', effectiveDate + 1), -1);
+  assert.match(payrollModal, /placement\?:"bottom"\|"top"/);
+  assert.match(payrollModal, /alignItems:"flex-start"/);
+  assert.match(payrollModal, /100dvh/);
+  assert.match(payrollModal, /env\(safe-area-inset-top\)/);
+  assert.match(payrollModal, /env\(safe-area-inset-bottom\)/);
+  assert.match(payrollModal, /overflowY:"auto"/);
+  assert.match(payrollModal, /flexShrink:0/);
+});
+
+test("fixed monthly date failures alert inside the open modal flow", () => {
+  assert.match(settings, /form\.calculationBasis === "fixed_monthly" && !isMonthFirstDate\(form\.effectiveFrom\)/);
+  assert.match(settings, /window\.alert\(fixedMonthlyEffectiveDateMessage\)/);
+  assert.ok(settings.indexOf("!isMonthFirstDate(form.effectiveFrom)") < settings.indexOf("setSaving(true)"));
+  assert.match(settings, /data\.code === "INVALID_FIXED_MONTHLY_EFFECTIVE_DATE"/);
+  assert.match(settings, /const \[modalError, setModalError\] = useState\(""\)/);
+  assert.match(settings, /modalError \? <p role="alert"/);
+  assert.doesNotMatch(settings, /setError\(vi \? "Hợp đồng trả cố định hàng tháng/);
+  assert.match(settings, /finally \{\s*setSaving\(false\)/);
 });
 
 test("early-leave deductions retain audit inputs and stop on stored-policy mismatches", () => {

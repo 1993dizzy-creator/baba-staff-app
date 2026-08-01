@@ -55,7 +55,7 @@ test("level raise comes only from employee-management level data", () => {
 
 test("UI keeps grouped compact cards, part totals, details, and ledger last", () => {
   assert.match(page, /getPartKey\(employee\.part\)/);
-  assert.match(page, /getPositionRank\(a\.position\)/);
+  assert.match(page, /employees\.sort\(comparePayrollEmployees\)/);
   assert.match(
     compensationCard,
     /gridTemplateColumns:\s*"minmax\(0,1fr\) auto 12px"/,

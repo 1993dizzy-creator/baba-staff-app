@@ -3,6 +3,7 @@ export function getPositionRank(position?: string | null) {
 
   const value = position.toLowerCase();
 
+  if (value === "owner") return 0;
   if (value.includes("manager")) return 1;
   if (value.includes("leader")) return 2;
   if (value.includes("staff")) return 3;

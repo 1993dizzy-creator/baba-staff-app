@@ -39,3 +39,11 @@ export function resolveFixedRaiseReason(currentAmount: number, nextAmount: numbe
     note: changed && normalized ? normalized : null,
   };
 }
+
+export function isMonthFirstDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-(0[1-9]|1[0-2])-01$/.test(value)) {
+    return false;
+  }
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}

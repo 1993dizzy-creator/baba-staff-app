@@ -9,8 +9,8 @@ import PayrollModal from "@/components/payroll/PayrollModal";
 import { CompensationCard, CombinedPartTotal } from "@/components/payroll/CompensationCard";
 import { useLanguage } from "@/lib/language-context";
 import { getPartKey, getPartMeta } from "@/lib/common/parts";
-import { getPositionRank } from "@/lib/common/positions";
-import { dateLabel, money, monthLabel, payrollLabel, type PayrollUiLang } from "@/lib/payroll/ui-labels";
+import { comparePayrollEmployees } from "@/lib/payroll/employee-sort";
+import { dateLabel, money, monthLabel, partLabel, payrollLabel, type PayrollUiLang } from "@/lib/payroll/ui-labels";
 import type { PayrollOverviewEmployee } from "@/lib/payroll/overview";
 import { payrollOverviewText } from "@/lib/text/payroll-overview";
 import { attendanceText, commonText } from "@/lib/text";
@@ -45,7 +45,7 @@ export default function AdminPayrollPage() {
 
   const selectedRun=useMemo(()=>runs.find(run=>run.payroll_month.slice(0,7)===month&&run.status!=="cancelled"),[runs,month]);
   const supported=month>="2026-07";
-  const groups=useMemo(()=>{const map=new Map<string,PayrollOverviewEmployee[]>();for(const employee of overview?.employees??[]){const key=getPartKey(employee.part);map.set(key,[...(map.get(key)??[]),employee])}return [...map.entries()].map(([part,employees])=>({part,meta:getPartMeta(part),employees:employees.sort((a,b)=>{const rank=getPositionRank(a.position)-getPositionRank(b.position);return rank||a.name.localeCompare(b.name)})})).sort((a,b)=>a.meta.rank-b.meta.rank||a.part.localeCompare(b.part))},[overview]);
+  const groups=useMemo(()=>{const map=new Map<string,PayrollOverviewEmployee[]>();for(const employee of overview?.employees??[]){const key=getPartKey(employee.part);map.set(key,[...(map.get(key)??[]),employee])}return [...map.entries()].map(([part,employees])=>({part,meta:getPartMeta(part),employees:employees.sort(comparePayrollEmployees)})).sort((a,b)=>a.meta.rank-b.meta.rank||a.part.localeCompare(b.part))},[overview]);
   function moveMonth(amount:number){const [year,number]=month.split("-").map(Number);const next=new Date(Date.UTC(year,number-1+amount,1));setMonth(`${next.getUTCFullYear()}-${String(next.getUTCMonth()+1).padStart(2,"0")}`)}
   async function openConfirmation(){setLedgerError("");if(!supported)return;const response=await fetch(`/api/admin/payroll/runs?previewMonth=${month}`,{cache:"no-store"});const data=await response.json();if(!response.ok){setLedgerError(data.message||(vi?"Không thể tải đối tượng tính lương.":"급여 대상을 불러오지 못했습니다."));return}setPreview(data.preview);setConfirm(true)}
   async function create(){setBusy(true);const response=await fetch("/api/admin/payroll/runs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({month})});const data=await response.json();setBusy(false);if(!response.ok){setConfirm(false);setLedgerError(data.message||(vi?"Không thể tạo bảng lương.":"급여 초안을 생성하지 못했습니다."));return}router.push(`/admin/payroll/${data.runId}`)}
@@ -54,7 +54,7 @@ export default function AdminPayrollPage() {
     <div style={styles.monthHeader}><button type="button" style={styles.monthButton} onClick={()=>moveMonth(-1)}>‹</button><div style={styles.monthTitle}>{monthText(month,attendance.monthFormat)}</div><button type="button" style={styles.monthButton} onClick={()=>moveMonth(1)}>›</button></div>
     <section style={styles.overviewSection} aria-busy={overviewLoading}>
       {overviewLoading?<div style={styles.state}>{overviewText.loading}</div>:overviewError?<div role="alert" style={styles.error}>{overviewError}</div>:groups.length===0?<div style={styles.state}>{overviewText.empty}</div>:groups.map(group=><section key={group.part} style={styles.partGroup}>
-        <div style={{...styles.partTitle,color:group.meta.color,background:group.meta.bg,borderLeft:`4px solid ${group.meta.border}`}}><span>{group.meta.emoji}</span><span>{c[group.part as keyof typeof c]||group.meta.label}</span><span style={styles.partCount}>{group.employees.length}</span></div>
+        <div style={{...styles.partTitle,color:group.meta.color,background:group.meta.bg,borderLeft:`4px solid ${group.meta.border}`}}><span>{group.meta.emoji}</span><span>{partLabel(l,group.part)}</span><span style={styles.partCount}>{group.employees.length}</span></div>
         <div style={styles.staffList}>{group.employees.map(employee=><CompensationCard key={employee.userId} employee={employee} expanded={expandedUserId===employee.userId} toggle={()=>setExpandedUserId(expandedUserId===employee.userId?null:employee.userId)} lang={lang} month={month} future={overview?.future===true} refresh={()=>refreshOverview()}/>)}</div>
         {overview?.future?<div style={styles.partTotal}><DetailRow label={payrollOverviewText[lang].combinedSalaryTotal} value="—" strong/><small>{payrollOverviewText[lang].beforeCalculationPeriod}</small></div>:<CombinedPartTotal employees={group.employees} lang={lang}/>}
       </section>)}

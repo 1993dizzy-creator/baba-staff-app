@@ -52,6 +52,7 @@ export const attendanceText = {
       staff: "직원",
       manager: "매니저",
       leader: "리더",
+      owner: "사장",
     },
 
     approvalPending: "승인대기",
@@ -176,6 +177,7 @@ export const attendanceText = {
       staff: "Nhân viên",
       manager: "Quản lý",
       leader: "Trưởng nhóm",
+      owner: "Chủ quán",
     },
 
     approvalPending: "Chờ duyệt",
