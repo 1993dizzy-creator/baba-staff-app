@@ -127,10 +127,10 @@ test("overnight shift crosses the calendar day at the correct instant", () => {
   assert.equal(result.normalCheckoutThresholdAt, "2026-07-25T18:00:00.000Z");
 });
 
-test("early leave grace boundary is exclusive, matching the late-grace convention", () => {
+test("early leave threshold includes its exact boundary and preserves full raw minutes", () => {
   const cases = [
     ["2026-07-24T21:56:00+07:00", "done", 0],
-    ["2026-07-24T21:55:00+07:00", "done", 0],
+    ["2026-07-24T21:55:00+07:00", "early_leave", 5],
     ["2026-07-24T21:54:00+07:00", "early_leave", 6],
   ] as const;
   for (const [checkOutAt, status, earlyLeaveMinutes] of cases) {

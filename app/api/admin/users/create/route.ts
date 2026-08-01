@@ -4,24 +4,6 @@ import { requireRole } from "@/lib/auth/server-auth";
 
 type JsonObject = Record<string, unknown>;
 
-const USER_SELECT = `
-  id,
-  username,
-  name,
-  full_name,
-  role,
-  part,
-  position,
-  birth_date,
-  hire_date,
-  termination_date,
-  gender,
-  work_start_time,
-  work_end_time,
-  is_active,
-  is_system_account
-`;
-
 const ALLOWED_ROLES = new Set(["owner", "manager", "leader", "staff"]);
 const BLOCKED_FORM_ROLES = new Set(["master", "admin"]);
 const ALLOWED_POSITIONS = new Set(["owner", "manager", "leader", "staff"]);
@@ -119,9 +101,9 @@ export async function POST(req: Request) {
       );
     }
 
-    const { data, error } = await supabaseServer
-      .from("users")
-      .insert({
+    const { data, error } = await supabaseServer.rpc(
+      "employee_create_with_schedule_v1",
+      { p_employee: {
         username,
         password,
         name,
@@ -137,9 +119,8 @@ export async function POST(req: Request) {
         work_end_time: nullableTime(body.work_end_time),
         is_active: body.is_active === false ? false : true,
         is_system_account: false,
-      })
-      .select(USER_SELECT)
-      .single();
+      }, p_actor_id: auth.actor.id, p_actor_username: auth.actor.username },
+    );
 
     if (error) {
       throw new Error(`Failed to create user: ${error.message}`);

@@ -193,5 +193,5 @@ test("payroll UI and API keep due and actual payment dates distinct",()=>{
   assert.match(detail,/payment_due_date/);
   assert.match(detail,/payment_date/);
   assert.match(settings,/매월 1일 ~ 말일/);
-  assert.match(settings,/của tháng tiếp theo/);
+  assert.match(settings,/Tháng sau, ngày/);
 });

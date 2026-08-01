@@ -220,10 +220,8 @@ export function evaluateAttendancePolicy(
     input.checkOutAt && normalCheckoutThresholdAt
       ? minutesBetween(input.checkOutAt, normalCheckoutThresholdAt)
       : 0;
-  const isEarlyLeave =
-    Boolean(input.checkOutAt && earlyLeaveThresholdAt) &&
-    new Date(input.checkOutAt!).getTime() <
-      new Date(earlyLeaveThresholdAt!).getTime();
+  const isEarlyLeave = rawEarlyLeaveMinutes > 0 &&
+    rawEarlyLeaveMinutes >= input.earlyLeaveGraceMinutes;
   const earlyLeaveMinutes = isEarlyLeave ? rawEarlyLeaveMinutes : 0;
 
   let status: AttendancePolicyStatus;

@@ -5,6 +5,7 @@ import {
   calculateInsuranceAmount,
   percentToBasisPoints,
 } from "@/lib/payroll/insurance";
+import { formatIntegerInput, integerInputDigits } from "@/lib/payroll/contract-form";
 
 type ApiSettings = {
   payment_day: number;
@@ -45,11 +46,6 @@ function toDraft(settings: ApiSettings): Draft {
     lateMajorPenaltyRate: String(settings.late_major_penalty_rate_bp / 100),
     unauthorizedAbsencePenaltyDays: String(settings.unauthorized_absence_penalty_days),
   };
-}
-
-function formatInteger(value: string) {
-  const digits = value.replace(/\D/g, "");
-  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
 function toPayload(draft: Draft) {
@@ -261,11 +257,11 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
             type="text"
             inputMode="numeric"
             disabled={!draft.directorInsuranceEnabled}
-            value={formatInteger(draft.directorInsuranceBaseAmount)}
+            value={formatIntegerInput(draft.directorInsuranceBaseAmount)}
             onChange={(event) =>
               setDraft({
                 ...draft,
-                directorInsuranceBaseAmount: event.target.value.replace(/\D/g, ""),
+                directorInsuranceBaseAmount: integerInputDigits(event.target.value),
               })
             }
           />

@@ -133,7 +133,7 @@ test("date details never render raw status booleans", () => {
 
 test("attendance policy descriptions remain short bilingual labeled lines", () => {
   assert.match(page, /lateHelp: "예정 출근시간 \+ 설정값 이후 출근"/);
-  assert.match(page, /earlyLeaveHelp: "기준 퇴근시간 - 설정값 이전 퇴근"/);
+  assert.match(page, /earlyLeaveHelp: "기준 퇴근시간보다 설정값 이상 일찍 퇴근하면 조퇴"/);
   assert.match(page, /missingCheckoutHelp: "기준 퇴근시간 \+ 설정값까지 퇴근 기록 없음"/);
   assert.match(page, /lateHelp: "Chấm công vào sau giờ vào dự kiến \+ giá trị cài đặt"/);
   assert.match(page, /aria-expanded=\{showPolicyDescription\}/);

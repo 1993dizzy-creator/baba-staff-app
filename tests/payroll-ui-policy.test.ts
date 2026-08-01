@@ -15,7 +15,7 @@ const employeeInsurance = read(
 const commonSettings = read(
   "components/payroll/PayrollCommonSettings.tsx",
 );
-const scheduleSettings = read("components/PayrollScheduleVersions.tsx");
+const payrollModal = read("components/payroll/PayrollModal.tsx");
 const shadow = read("components/PayrollShadowPanel.tsx");
 const migration = read(
   "supabase/migrations/202607270002_create_payroll_runs.sql",
@@ -40,8 +40,7 @@ test("settings sends versioned compensation fields, preserves contract policy, a
     /levelRaiseIncludedCount|level_raise_included_count/,
   );
   assert.match(settings, /await load\(userId\)/);
-  const schedule = read("components/PayrollScheduleVersions.tsx");
-  assert.match(schedule, /await load\(\)/);
+  assert.match(settings, /await load\(userId\)/);
 });
 test("review UI offers warning-specific actions and no bulk acknowledgement", () => {
   for (const action of [
@@ -132,33 +131,89 @@ test("employee insurance form is collapsed and resets from the current setting p
 });
 
 test("employee payroll requests ignore aborts without allowing stale state", () => {
-  for (const source of [scheduleSettings, employeeInsurance, settings]) {
+  for (const source of [employeeInsurance, settings]) {
     assert.match(source, /signal\?\.aborted|controller\.signal\.aborted/);
     assert.match(source, /name === "AbortError"|name==="AbortError"/);
     assert.match(source, /\.abort\(\)/);
     assert.match(source, /mounted\.current|setContracts\(\[\]\)/);
   }
-  assert.match(scheduleSettings, /setHistory\(\[\]\)/);
   assert.match(settings, /setContracts\(\[\]\)/);
   assert.match(settings, /if \(!response\.ok\) \{[\s\S]*setSelectedInsuranceError\(true\)/);
 });
 
+test("employee insurance remounts per employee without the removed schedule editor", () => {
+  assert.match(settings, /key=\{`insurance-\$\{selected\.id\}`\}/);
+  assert.doesNotMatch(settings, /key=\{selected\.id\}/);
+  assert.doesNotMatch(settings, /PayrollScheduleVersions/);
+  assert.match(settings, /selected\.username !== "mjk"/);
+});
+
 test("employee settings cards share compact mobile dimensions", () => {
-  for (const source of [scheduleSettings, employeeInsurance, settings]) {
+  for (const source of [employeeInsurance, settings]) {
     assert.match(source, /fontSize: ?15/);
     assert.match(source, /fontSize: ?12/);
     assert.match(source, /minHeight: ?36/);
     assert.match(source, /padding: ?13/);
   }
-  assert.match(scheduleSettings, /time:\{fontSize:17,fontWeight:900\}/);
   assert.match(settings, /summaryName: \{ fontSize: 16/);
   assert.match(employeeInsurance, /minHeight: 40/);
 });
 
-test("schedule availability uses one policy date for both languages", () => {
-  assert.match(scheduleSettings, /const SCHEDULE_CHANGE_START="2026-07-01"/);
-  assert.match(scheduleSettings, /dateLabel\(lang,SCHEDULE_CHANGE_START\)/);
-  assert.doesNotMatch(scheduleSettings, /01\/08\/2026/);
+test("contract editor uses cumulative fixed raises, hour input, and unpaid leave payload", () => {
+  assert.match(settings, /고정 급여인상 총액/);
+  assert.match(settings, /Tổng mức tăng lương cố định/);
+  assert.match(settings, /hoursInputToMinutes\(form\.standardHoursPerDay\)/);
+  assert.match(settings, /paidLeaveMode: "unpaid"/);
+  assert.match(settings, /earlyLeaveAdjustmentMode: "deduct_minutes"/);
+  assert.doesNotMatch(settings, /label=\{vi \? "Ngày nghỉ" : "휴무 처리"\}/);
+  assert.doesNotMatch(settings, /label=\{vi \? "Về sớm" : "조퇴 처리"\}/);
+  assert.doesNotMatch(settings, /label=\{vi \? "Lý do thay đổi" : "변경 사유"\}/);
+});
+
+test("contract amount formatting, compact hours row, and modal focus are stable", () => {
+  assert.match(settings, /value=\{formatIntegerInput\(form\.fixedRaiseAmount\)\}/);
+  assert.match(settings, /fixedRaiseAmount: integerInputDigits\(event\.target\.value\)/);
+  assert.match(settings, /gridTemplateColumns: "minmax\(80px, 50%\) auto minmax\(0, 1fr\)"/);
+  assert.match(settings, /standardMinutesPreview !== null \? <span style=\{s\.minutesPreview\}/);
+  assert.doesNotMatch(settings, /<small style=\{s\.fieldHelp\}>\{hoursInputToMinutes/);
+  assert.match(payrollModal, /const onCloseRef=useRef\(onClose\)/);
+  assert.match(payrollModal, /onCloseRef\.current=onClose/);
+  assert.match(payrollModal, /if\(e\.key==="Escape"\)onCloseRef\.current\(\)/);
+  assert.match(payrollModal, /closeRef\.current\?\.focus\(\)[\s\S]*document\.body\.style\.overflow="hidden"[\s\S]*\},\[\]\)/);
+  assert.doesNotMatch(payrollModal, /closeRef\.current\?\.focus\(\)[\s\S]*\},\[onClose\]\)/);
+});
+
+test("fixed raise reason is conditional in UI and enforced by the server", () => {
+  const route = read("app/api/admin/payroll/contracts/route.ts");
+  assert.match(settings, /fixedRaiseChanged \? <Field label=\{vi \? "Lý do thay đổi mức tăng lương cố định" : "고정 급여인상 사유"\}/);
+  assert.match(settings, /note: fixedRaiseChanged \? form\.fixedRaiseReason\.trim\(\) : null/);
+  assert.doesNotMatch(settings, /Chênh lệch/);
+  assert.match(route, /FIXED_RAISE_REASON_REQUIRED/);
+  assert.match(route, /p_early_leave_adjustment_mode: "deduct_minutes"/);
+  assert.match(route, /p_paid_leave_mode: "unpaid"/);
+  assert.match(route, /p_note: fixedRaiseReason\.note/);
+});
+
+test("direct employee clicks scroll only after the selected employee finishes loading", () => {
+  assert.match(settings, /clickedUserIdRef/);
+  assert.match(settings, /contractsLoading/);
+  assert.match(settings, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
+  assert.match(settings, /scrollMarginTop: 72/);
+});
+
+test("early-leave deductions retain audit inputs and stop on stored-policy mismatches", () => {
+  const run = read("lib/payroll/monthly-run.ts");
+  for (const field of ["rawEarlyLeaveMinutes", "earlyLeaveThresholdMinutes", "isEarlyLeave", "deductionEarlyLeaveMinutes", "calculationBasis", "minuteRate", "calculatedAmount", "scheduleRevision", "storeSettingsRevision"])
+    assert.match(run, new RegExp(field));
+  assert.match(run, /automaticEarlyLeavePenalty>0&&!facts\.warningCodes\.includes\("STORED_EARLY_LEAVE_MINUTES_MISMATCH"\)/);
+});
+
+test("insurance form reveals details only for meaningful enrollment transitions", () => {
+  assert.match(employeeInsurance, /enrolled \|\| current\?\.isEnrolled === true/);
+  assert.match(employeeInsurance, /if \(!enrolled && current\?\.isEnrolled !== true\) return/);
+  assert.match(employeeInsurance, /insuranceBaseAmount: enrolled \? Number\(base\) : 0/);
+  assert.match(employeeInsurance, /보험 설정 적용/);
+  assert.match(employeeInsurance, /Áp dụng cài đặt bảo hiểm/);
 });
 
 test("director employee keeps global-only insurance guidance", () => {
@@ -215,9 +270,9 @@ test("common settings uses compact rows without duplicate page headings", () => 
 });
 
 test("common settings formats the director base and describes inclusive late thresholds", () => {
-  assert.match(commonSettings, /function formatInteger/);
+  assert.match(commonSettings, /formatIntegerInput/);
   assert.match(commonSettings, /type="text"[\s\S]*inputMode="numeric"/);
-  assert.match(commonSettings, /directorInsuranceBaseAmount: event\.target\.value\.replace\(\/\\D\/g, ""\)/);
+  assert.match(commonSettings, /directorInsuranceBaseAmount: integerInputDigits\(event\.target\.value\)/);
   for (const label of ["지각 구간 기준", "Mốc phân loại", "분 초과 지각", "Đi muộn quá", "일당의", "lương ngày"])
     assert.match(commonSettings, new RegExp(label));
 });

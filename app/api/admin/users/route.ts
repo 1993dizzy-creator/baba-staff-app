@@ -455,7 +455,7 @@ export async function PATCH(req: Request) {
     }
 
     const { data, error } = await supabaseServer.rpc(
-      "employee_update_profile_and_level_v3",
+      "employee_update_profile_and_level_v4",
       {
         p_user_id: id,
         p_updates: update,

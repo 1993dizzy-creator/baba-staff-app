@@ -58,6 +58,7 @@ export function normalizeAttendanceDayFacts(input: {
   let overtime = 0;
   let late = 0;
   let early = 0;
+  let rawEarly = 0;
 
   if (record?.checkInAt && record.checkOutAt) {
     const actualStart = new Date(record.checkInAt).getTime();
@@ -69,10 +70,10 @@ export function normalizeAttendanceDayFacts(input: {
       if (scheduledStart !== null && scheduledEnd !== null) {
         overlap = Math.max(0, minutes(Math.max(actualStart, scheduledStart), Math.min(actualEnd, scheduledEnd)) - (input.schedule?.unpaidBreakMinutes ?? 0));
         const rawLate = minutes(scheduledStart, Math.min(actualStart, scheduledEnd));
-        const rawEarly = minutes(Math.max(actualEnd, scheduledStart), scheduledEnd);
+        rawEarly = minutes(Math.max(actualEnd, scheduledStart), scheduledEnd);
         late = rawLate > (input.lateGraceMinutes ?? 0) ? rawLate : 0;
         if (input.manualLateNormalized) late = 0;
-        early = rawEarly > (input.earlyLeaveGraceMinutes ?? 0) ? rawEarly : 0;
+        early = rawEarly > 0 && rawEarly >= (input.earlyLeaveGraceMinutes ?? 0) ? rawEarly : 0;
         overtime = minutes(actualStart, Math.min(actualEnd, scheduledStart)) + minutes(Math.max(actualStart, scheduledEnd), actualEnd);
         if (overtime > 0) warnings.push("OVERTIME_APPROVAL_UNAVAILABLE");
       }
@@ -120,6 +121,9 @@ export function normalizeAttendanceDayFacts(input: {
     scheduledOverlapMinutes: overlap,
     lateMinutes: late,
     earlyLeaveMinutes: early,
+    rawEarlyLeaveMinutes: rawEarly,
+    earlyLeaveThresholdMinutes: input.earlyLeaveGraceMinutes ?? 0,
+    isEarlyLeave: early > 0,
     overtimeCandidateMinutes: overtime,
     attendanceStatus,
     payrollStatus: excluded ? "excluded" : warnings.includes("PENDING_LEAVE_APPROVAL") ? "pending" : review ? "requires_review" : "calculable",

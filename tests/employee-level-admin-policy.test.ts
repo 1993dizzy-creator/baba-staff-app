@@ -12,7 +12,7 @@ test("admin users API exposes calculated level info through the shared calculato
   assert.match(route, /requireRole\(\["owner", "master"\]\)/);
   assert.match(route, /level_base_date_override/);
   assert.match(route, /withEmployeeLevelInfo/);
-  assert.match(route, /employee_update_profile_and_level_v3/);
+  assert.match(route, /employee_update_profile_and_level_v4/);
   assert.match(route, /validateEmployeeLevelConfiguration/);
   for (const code of [
     "SYSTEM_ACCOUNT_NOT_ELIGIBLE", "HIRE_DATE_REQUIRED", "BASE_DATE_BEFORE_HIRE_DATE",
@@ -70,7 +70,7 @@ test("level audit is exactly conditional on a real allowed base-date change", ()
 test("owner and master inclusion is stored atomically by the follow-up RPC", () => {
   const route = read("app/api/admin/users/route.ts");
   const sql = read("supabase/migrations/20260729160628_add_manual_owner_levels_and_zero_based_audit.sql");
-  assert.match(route, /employee_update_profile_and_level_v3/);
+  assert.match(route, /employee_update_profile_and_level_v4/);
   assert.match(route, /p_level_program_enabled: levelProgramEnabled/);
   assert.match(sql, /employee_update_profile_and_level_v3/);
   assert.match(sql, /v_role in \('owner', 'master'\)/);

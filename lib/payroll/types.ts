@@ -70,6 +70,9 @@ export type AttendanceDayFacts = {
   scheduledOverlapMinutes: number | null;
   lateMinutes: number;
   earlyLeaveMinutes: number;
+  rawEarlyLeaveMinutes: number;
+  earlyLeaveThresholdMinutes: number;
+  isEarlyLeave: boolean;
   overtimeCandidateMinutes: number;
   attendanceStatus: "no_record" | "working" | "done" | "late" | "early_leave" | "late_and_early_leave" | "leave" | "unresolved";
   payrollStatus: PayrollStatus;

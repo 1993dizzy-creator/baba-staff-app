@@ -119,6 +119,7 @@ export default function EmployeeInsuranceSettings({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (!enrolled && current?.isEnrolled !== true) return;
     setSaving(true);
     setError("");
     const response = await fetch("/api/admin/payroll/insurance", {
@@ -208,19 +209,18 @@ export default function EmployeeInsuranceSettings({
               }}
             />
           </label>
-          <label style={s.field}>
+          {enrolled ? <label style={s.field}>
             {vi ? "Mức lương cơ sở bảo hiểm" : "보험 기준급여"}
             <input
               style={s.input}
-              disabled={!enrolled}
-              required={enrolled}
-              type="number"
-              min={enrolled ? 1 : 0}
-              step="1"
-              value={base}
-              onChange={(event) => setBase(event.target.value)}
+              required
+              type="text"
+              inputMode="numeric"
+              value={Number(base || 0).toLocaleString("en-US")}
+              onChange={(event) => setBase(event.target.value.replace(/\D/g, ""))}
             />
-          </label>
+          </label> : null}
+          {enrolled || current?.isEnrolled === true ? <>
           <label style={s.field}>
             {vi ? "Tháng áp dụng" : "적용 월"}
             <input
@@ -257,10 +257,11 @@ export default function EmployeeInsuranceSettings({
                   ? "Đang lưu…"
                   : "저장 중…"
                 : vi
-                  ? "Thêm phiên bản"
-                  : "새 revision 등록"}
+                  ? "Áp dụng cài đặt bảo hiểm"
+                  : "보험 설정 적용"}
             </button>
           </div>
+          </> : null}
         </form>
       ) : null}
 

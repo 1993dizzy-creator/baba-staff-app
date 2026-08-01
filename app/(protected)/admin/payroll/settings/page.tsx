@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
@@ -12,7 +13,6 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
-import PayrollScheduleVersions from "@/components/PayrollScheduleVersions";
 import PayrollCommonSettings from "@/components/payroll/PayrollCommonSettings";
 import EmployeeInsuranceSettings from "@/components/payroll/EmployeeInsuranceSettings";
 import PayrollModal from "@/components/payroll/PayrollModal";
@@ -25,6 +25,7 @@ import {
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { attendanceText } from "@/lib/text";
 import { vietnamCurrentMonthStart } from "@/lib/payroll/ui-dates";
+import { currencyAmount, formatIntegerInput, hoursInputToMinutes, integerInputDigits, minutesToHoursInput, signedAmount } from "@/lib/payroll/contract-form";
 import { ui } from "@/lib/styles/ui";
 type User = {
   id: number;
@@ -51,7 +52,6 @@ type Contract = {
   timeBlockMinutes: number;
   roundingMode: string;
   lateAdjustmentMode: string;
-  earlyLeaveAdjustmentMode: string;
   overtimeMode: string;
   paidLeaveMode: string;
   effectiveFrom: string;
@@ -67,15 +67,13 @@ type FormState = {
   baseSalary: string;
   fixedRaiseAmount: string;
   standardWorkdays: string;
-  standardMinutesPerDay: string;
+  standardHoursPerDay: string;
   timeBlockMinutes: string;
   roundingMode: string;
   lateAdjustmentMode: string;
-  earlyLeaveAdjustmentMode: string;
   overtimeMode: string;
-  paidLeaveMode: string;
   effectiveFrom: string;
-  note: string;
+  fixedRaiseReason: string;
 };
 const defaults: FormState = {
   payType: "monthly",
@@ -83,15 +81,13 @@ const defaults: FormState = {
   baseSalary: "",
   fixedRaiseAmount: "0",
   standardWorkdays: "26",
-  standardMinutesPerDay: "540",
+  standardHoursPerDay: "9",
   timeBlockMinutes: "60",
   roundingMode: "none",
   lateAdjustmentMode: "separate",
-  earlyLeaveAdjustmentMode: "separate",
   overtimeMode: "ignore",
-  paidLeaveMode: "unpaid",
   effectiveFrom: vietnamCurrentMonthStart(),
-  note: "",
+  fixedRaiseReason: "",
 };
 function fromContract(contract: Contract | null): FormState {
   return contract
@@ -101,15 +97,13 @@ function fromContract(contract: Contract | null): FormState {
         baseSalary: String(contract.baseSalary),
         fixedRaiseAmount: String(contract.fixedRaiseAmount),
         standardWorkdays: String(contract.standardWorkdays ?? 26),
-        standardMinutesPerDay: String(contract.standardMinutesPerDay),
+        standardHoursPerDay: minutesToHoursInput(contract.standardMinutesPerDay),
         timeBlockMinutes: String(contract.timeBlockMinutes),
         roundingMode: contract.roundingMode,
         lateAdjustmentMode: contract.lateAdjustmentMode,
-        earlyLeaveAdjustmentMode: contract.earlyLeaveAdjustmentMode,
         overtimeMode: contract.overtimeMode,
-        paidLeaveMode: contract.paidLeaveMode,
         effectiveFrom: vietnamCurrentMonthStart(),
-        note: "",
+        fixedRaiseReason: "",
       }
     : { ...defaults };
 }
@@ -133,6 +127,8 @@ export default function PayrollSettingsPage() {
   const [usersError, setUsersError] = useState("");
   const [userId, setUserId] = useState<number | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
+  const [currentContract, setCurrentContract] = useState<Contract | null>(null);
+  const [contractsLoading, setContractsLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [form, setForm] = useState<FormState>(defaults);
   const [open, setOpen] = useState(false);
@@ -141,6 +137,8 @@ export default function PayrollSettingsPage() {
   const [selectedInsurance, setSelectedInsurance] =
     useState<InsuranceCurrent | null>(null);
   const [selectedInsuranceError, setSelectedInsuranceError] = useState(false);
+  const employeeSettingsRef = useRef<HTMLDivElement>(null);
+  const clickedUserIdRef = useRef<number | null>(null);
   const load = useCallback(
     async (id: number, signal?: AbortSignal) => {
       try {
@@ -151,7 +149,10 @@ export default function PayrollSettingsPage() {
         if (signal?.aborted) return;
         const data = await response.json();
         if (signal?.aborted) return;
-        if (response.ok) setContracts(data.history ?? []);
+        if (response.ok) {
+          setContracts(data.history ?? []);
+          setCurrentContract(data.current ?? null);
+        }
         else
           setError(
             vi
@@ -178,11 +179,15 @@ export default function PayrollSettingsPage() {
     router.replace(`${pathname}?${next}`, { scroll: false });
   }
   function selectUser(id: number) {
+    clickedUserIdRef.current = id;
     setUserId(id);
     const next = new URLSearchParams(params.toString());
     next.set("tab", "employee");
     next.set("userId", String(id));
     router.replace(`${pathname}?${next}`, { scroll: false });
+    if (id === userId && !contractsLoading) {
+      requestAnimationFrame(() => employeeSettingsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
   }
   useEffect(() => {
     if (activeTab !== "employee") return;
@@ -207,12 +212,17 @@ export default function PayrollSettingsPage() {
   useEffect(() => {
     if (activeTab !== "employee" || !userId) {
       setContracts([]);
+      setCurrentContract(null);
       return;
     }
     const controller = new AbortController();
+    setContractsLoading(true);
     setContracts([]);
+    setCurrentContract(null);
     setError("");
-    void load(userId, controller.signal).catch(() => undefined);
+    void load(userId, controller.signal).finally(() => {
+      if (!controller.signal.aborted) setContractsLoading(false);
+    });
     return () => controller.abort();
   }, [activeTab, userId, load]);
   useEffect(() => {
@@ -267,8 +277,17 @@ export default function PayrollSettingsPage() {
     [positionLabel, query, users],
   );
   const selected = users.find((user) => user.id === userId);
-  const current =
-    contracts.find((contract) => !contract.effectiveTo) ?? contracts[0] ?? null;
+  const selectedId = selected?.id ?? null;
+  useEffect(() => {
+    if (!selectedId || contractsLoading || clickedUserIdRef.current !== selectedId) return;
+    const frame = requestAnimationFrame(() => {
+      if (clickedUserIdRef.current !== selectedId) return;
+      employeeSettingsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      clickedUserIdRef.current = null;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [contractsLoading, selectedId]);
+  const current = currentContract;
   const levelRaise = selected?.levelInfo.eligible
     ? selected.levelInfo.earnedRaiseCount *
       selected.levelInfo.raiseAmountPerStep
@@ -276,10 +295,10 @@ export default function PayrollSettingsPage() {
   const combined = current
     ? current.baseSalary + current.fixedRaiseAmount + levelRaise
     : null;
-  const formCombined =
-    Number(form.baseSalary || 0) +
-    Number(form.fixedRaiseAmount || 0) +
-    levelRaise;
+  const currentFixedRaise = current?.fixedRaiseAmount ?? 0;
+  const nextFixedRaise = Number(form.fixedRaiseAmount || 0);
+  const fixedRaiseChanged = nextFixedRaise !== currentFixedRaise;
+  const standardMinutesPreview = hoursInputToMinutes(form.standardHoursPerDay);
   function openForm() {
     setForm(fromContract(current));
     setError("");
@@ -288,6 +307,15 @@ export default function PayrollSettingsPage() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!userId) return;
+    const standardMinutesPerDay = hoursInputToMinutes(form.standardHoursPerDay);
+    if (standardMinutesPerDay === null) {
+      setError(vi ? "Giờ làm việc chuẩn phải lớn hơn 0, không quá 24 giờ và quy đổi thành số phút nguyên." : "하루 기준 근무시간은 0시간 초과 24시간 이하이며 정수 분으로 환산되어야 합니다.");
+      return;
+    }
+    if (fixedRaiseChanged && !form.fixedRaiseReason.trim()) {
+      setError(vi ? "Cần nhập lý do thay đổi mức tăng lương cố định." : "고정 급여인상 총액 변경 사유를 입력해주세요.");
+      return;
+    }
     setSaving(true);
     const response = await fetch("/api/admin/payroll/contracts", {
       method: "POST",
@@ -298,18 +326,21 @@ export default function PayrollSettingsPage() {
         roundingMode: "none",
         lateAdjustmentMode: "separate",
         overtimeMode: "ignore",
+        earlyLeaveAdjustmentMode: "deduct_minutes",
+        paidLeaveMode: "unpaid",
+        note: fixedRaiseChanged ? form.fixedRaiseReason.trim() : null,
         userId,
         baseSalary: Number(form.baseSalary),
         fixedRaiseAmount: Number(form.fixedRaiseAmount),
         standardWorkdays:
           form.payType === "monthly" ? Number(form.standardWorkdays) : null,
-        standardMinutesPerDay: Number(form.standardMinutesPerDay),
+        standardMinutesPerDay,
       }),
     });
     const data = await response.json();
     setSaving(false);
     if (!response.ok) {
-      setError(data.code ?? "INVALID_CONTRACT");
+      setError(data.code === "FIXED_RAISE_REASON_REQUIRED" ? (vi ? "Cần nhập lý do thay đổi mức tăng lương cố định." : "고정 급여인상 총액 변경 사유를 입력해주세요.") : (data.code ?? "INVALID_CONTRACT"));
       return;
     }
     await load(userId);
@@ -400,7 +431,7 @@ export default function PayrollSettingsPage() {
                 : "직원을 선택하면 급여 설정을 확인할 수 있습니다."}
             </p>
           ) : (
-            <div style={s.employeeSettings}>
+            <div ref={employeeSettingsRef} style={s.employeeSettings}>
               <section style={s.employeeSummary}>
                 <div style={s.summaryIdentity}>
                   <EmployeeNameWithLevel
@@ -449,13 +480,12 @@ export default function PayrollSettingsPage() {
                 )}
                 <details style={s.details}>
                   <summary>{vi ? `Lịch sử hợp đồng ${contracts.length} mục` : `계약 이력 ${contracts.length}건`}</summary>
-                  {contracts.map((contract) => <ContractCard key={contract.id} contract={contract} vi={vi} />)}
+                  {contracts.map((contract, index) => <ContractCard key={contract.id} contract={contract} previous={contracts[index + 1] ?? null} vi={vi} />)}
                 </details>
               </section>
 
-              <PayrollScheduleVersions key={selected.id} userId={selected.id} vi={vi} />
               {selected.username !== "mjk" ? (
-                <EmployeeInsuranceSettings key={selected.id} userId={selected.id} vi={vi} />
+                <EmployeeInsuranceSettings key={`insurance-${selected.id}`} userId={selected.id} vi={vi} />
               ) : (
                 <aside style={s.directorNotice}>
                   {vi
@@ -473,7 +503,7 @@ export default function PayrollSettingsPage() {
             closeLabel={vi ? "Đóng" : "닫기"}
             onClose={() => setOpen(false)}
             footer={
-              <button form="contract" style={s.primary} disabled={saving}>
+              <button form="contract" style={s.modalSave} disabled={saving}>
                 {saving ? (vi ? "Đang lưu" : "저장 중") : vi ? "Lưu" : "저장"}
               </button>
             }
@@ -484,33 +514,26 @@ export default function PayrollSettingsPage() {
                 value={form.baseSalary}
                 change={(value) => setForm({ ...form, baseSalary: value })}
               />
-              <NumberField
-                label={vi ? "Mức tăng cố định" : "고정 급여인상"}
-                value={form.fixedRaiseAmount}
-                change={(value) =>
-                  setForm({ ...form, fixedRaiseAmount: value })
-                }
-              />
+              <Field label={vi ? "Tổng mức tăng lương cố định" : "고정 급여인상 총액"}>
+                <input
+                  style={s.input}
+                  required
+                  type="text"
+                  inputMode="numeric"
+                  value={formatIntegerInput(form.fixedRaiseAmount)}
+                  onChange={(event) => setForm({ ...form, fixedRaiseAmount: integerInputDigits(event.target.value) })}
+                />
+                <small style={s.fieldHelp}>{vi ? "Nhập tổng số tiền tăng cố định hiện áp dụng, không phải riêng mức thay đổi lần này." : "이번 변동액이 아닌 현재 적용할 누적 총액을 입력합니다."}</small>
+              </Field>
+              <div style={s.changePreview}>
+                <SummaryItem label={vi ? "Tổng hiện tại" : "현재 총액"} value={currencyAmount(currentFixedRaise, vi)} />
+                <SummaryItem label={vi ? "Tổng sau thay đổi" : "변경 후 총액"} value={currencyAmount(nextFixedRaise, vi)} important />
+              </div>
+              {fixedRaiseChanged ? <Field label={vi ? "Lý do thay đổi mức tăng lương cố định" : "고정 급여인상 사유"}>
+                <textarea style={s.input} required value={form.fixedRaiseReason} onChange={(event) => setForm({ ...form, fixedRaiseReason: event.target.value })} />
+              </Field> : null}
               <div style={s.level}>
-                <b>
-                  {vi
-                    ? "Thông tin cấp hiện tại (chỉ đọc)"
-                    : "현재 레벨 정보 — 읽기 전용"}
-                </b>
-                <span>{selected.levelInfo.displayLabel ?? "-"}</span>
-                <span>
-                  {vi ? "Mức tăng theo cấp" : "현재 레벨 증액"}{" "}
-                  {money(levelRaise)}
-                </span>
-                <span>
-                  {vi ? "Tổng lương dự kiến" : "예상 합산급여"}{" "}
-                  {money(formCombined)}
-                </span>
-                <small>
-                  {vi
-                    ? "Tiêu chuẩn cấp được thiết lập trong quản lý nhân viên."
-                    : "레벨 기준은 직원관리에서 설정합니다."}
-                </small>
+                <b>{selected.levelInfo.displayLabel ?? (vi ? "Không áp dụng cấp" : "레벨 미적용")} · {vi ? "Tăng theo cấp" : "레벨 인상"} {signedAmount(levelRaise, vi)}</b>
               </div>
               <SelectField
                 label={vi ? "Loại lương" : "급여 형태"}
@@ -551,29 +574,13 @@ export default function PayrollSettingsPage() {
                   step="0.01"
                 />
               )}
-              <NumberField
-                label={vi ? "Phút chuẩn mỗi ngày" : "하루 기준 근무시간(분)"}
-                value={form.standardMinutesPerDay}
-                change={(value) =>
-                  setForm({ ...form, standardMinutesPerDay: value })
-                }
-              />
-              <SelectField
-                label={vi ? "Về sớm" : "조퇴 처리"}
-                value={form.earlyLeaveAdjustmentMode}
-                options={["deduct_minutes", "separate", "ignore"]}
-                lang={l}
-                change={(value) =>
-                  setForm({ ...form, earlyLeaveAdjustmentMode: value })
-                }
-              />
-              <SelectField
-                label={vi ? "Ngày nghỉ" : "휴무 처리"}
-                value={form.paidLeaveMode}
-                options={["unpaid", "manual_review"]}
-                lang={l}
-                change={(value) => setForm({ ...form, paidLeaveMode: value })}
-              />
+              <Field label={vi ? "Giờ làm việc chuẩn mỗi ngày" : "하루 기준 근무시간"}>
+                <div style={s.hoursRow}>
+                  <input style={s.hoursInput} required type="number" min="0.01" max="24" step="0.01" value={form.standardHoursPerDay} onChange={(event) => setForm({ ...form, standardHoursPerDay: event.target.value })} />
+                  <span>{vi ? "giờ" : "시간"}</span>
+                  {standardMinutesPreview !== null ? <span style={s.minutesPreview}>{standardMinutesPreview}{vi ? " phút" : "분"}</span> : null}
+                </div>
+              </Field>
               <Field label={vi ? "Ngày áp dụng" : "적용 시작일"}>
                 <input
                   style={s.input}
@@ -585,14 +592,6 @@ export default function PayrollSettingsPage() {
                   }
                 />
               </Field>
-              <Field label={vi ? "Lý do thay đổi" : "변경 사유"}>
-                <textarea
-                  style={s.input}
-                  required
-                  value={form.note}
-                  onChange={(e) => setForm({ ...form, note: e.target.value })}
-                />
-              </Field>
             </form>
           </PayrollModal>
         )}
@@ -600,19 +599,21 @@ export default function PayrollSettingsPage() {
     </Container>
   );
 }
-function ContractCard({ contract, vi }: { contract: Contract; vi: boolean }) {
+function ContractCard({ contract, previous, vi }: { contract: Contract; previous: Contract | null; vi: boolean }) {
+  const before = previous?.fixedRaiseAmount ?? 0;
   return (
     <article style={s.contract}>
-      <b>#{contract.revision}</b>
+      <b>{vi ? `Lần thay đổi ${contract.revision}` : `변경번호 ${contract.revision}`}</b>
       <span>
         {vi ? "Lương theo hợp đồng" : "계약급여"} {money(contract.baseSalary)}
       </span>
       <span>
-        {vi ? "Tăng cố định" : "고정 급여인상"} +
-        {money(contract.fixedRaiseAmount)}
+        {vi ? "Tổng mức tăng cố định" : "고정 인상 총액"} {currencyAmount(before, vi)} → {currencyAmount(contract.fixedRaiseAmount, vi)}
       </span>
-      <span>{contract.effectiveFrom}</span>
-      {contract.note && <small>{contract.note}</small>}
+      {contract.fixedRaiseAmount !== before && contract.note ? <span>{vi ? "Lý do" : "사유"}: {contract.note}</span> : null}
+      <span>{vi ? "Ngày áp dụng" : "적용일"} {contract.effectiveFrom}</span>
+      {contract.createdBy ? <small>{vi ? "Người tạo" : "생성자"} #{contract.createdBy}</small> : null}
+      {contract.createdAt ? <small>{vi ? "Tạo lúc" : "생성 시각"} {new Date(contract.createdAt).toLocaleString(vi ? "vi-VN" : "ko-KR")}</small> : null}
     </article>
   );
 }
@@ -779,6 +780,7 @@ const s = {
     fontSize: 13,
     fontWeight: 800,
   },
+  modalSave: { width: "100%", minHeight: 42, padding: "8px 12px", border: 0, borderRadius: 9, background: "#111827", color: "#fff", fontSize: 14, fontWeight: 800 },
   contract: {
     display: "grid",
     gap: 4,
@@ -788,7 +790,7 @@ const s = {
     borderRadius: 9,
     fontSize: 12,
   },
-  employeeSettings: { display: "grid", gap: 9, minWidth: 0 },
+  employeeSettings: { display: "grid", gap: 9, minWidth: 0, scrollMarginTop: 72 },
   employeeSummary: { display: "grid", gap: 8, padding: 12, border: "1px solid #bfdbfe", borderRadius: 14, background: "#f8fbff", minWidth: 0 },
   summaryIdentity: { display: "grid", gap: 3, minWidth: 0 },
   summaryName: { fontSize: 16, fontWeight: 900, minWidth: 0, overflowWrap: "anywhere" },
@@ -801,10 +803,14 @@ const s = {
   directorNotice: { padding: 11, border: "1px solid #e5e7eb", borderRadius: 12, background: "#f9fafb", color: "#4b5563", fontSize: 12, lineHeight: 1.45 },
   form: { display: "grid", gap: 8 },
   field: { display: "grid", gap: 5, fontSize: 13 },
+  fieldHelp: { color: "#6b7280", fontSize: 12, lineHeight: 1.4 },
+  hoursRow: { display: "grid", gridTemplateColumns: "minmax(80px, 50%) auto minmax(0, 1fr)", alignItems: "center", gap: 7, fontSize: 13 },
+  hoursInput: { width: "100%", minWidth: 0, height: 40, boxSizing: "border-box", padding: "8px 10px", border: "1px solid #d1d5db", borderRadius: 9, background: "#fff", color: "#111827", fontSize: 14 },
+  minutesPreview: { color: "#6b7280", fontSize: 12, whiteSpace: "nowrap" },
+  changePreview: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, padding: 8, borderRadius: 10, background: "#f8fafc" },
   level: {
-    display: "grid",
-    gap: 4,
-    padding: 10,
+    display: "block",
+    padding: "8px 10px",
     borderRadius: 10,
     background: "#eff6ff",
     fontSize: 12,

@@ -18,6 +18,7 @@ export type PayrollWorkPolicyResult = {
   workAmount: number;
   automaticLatePenalty: number;
   automaticEarlyLeavePenalty: number;
+  deductionEarlyLeaveMinutes: number;
   lateRequiresReview: boolean;
   earlyLeaveRequiresReview: boolean;
 };
@@ -35,6 +36,9 @@ export function applyPayrollWorkPolicy(input: {
   const recognizedMinutes = usesDayRate ? contract.standardMinutesPerDay : input.actualRecognizedMinutes;
   const recognizedWorkdays = usesDayRate ? 1 : recognizedMinutes / contract.standardMinutesPerDay;
   const workAmount = usesDayRate ? input.dayRate : input.minuteRate * recognizedMinutes;
+  const deductionEarlyLeaveMinutes = usesDayRate && input.earlyLeaveMinutes > 0
+    ? input.earlyLeaveMinutes
+    : 0;
   return {
     recognizedMinutes,
     recognizedWorkdays,
@@ -42,7 +46,8 @@ export function applyPayrollWorkPolicy(input: {
     // v6 late penalties are calculated from the immutable run-level policy snapshot.
     automaticLatePenalty: 0,
     // No new early-leave policy is introduced. Day-based legacy behavior remains compatible.
-    automaticEarlyLeavePenalty: usesDayRate && contract.earlyLeaveAdjustmentMode === "deduct_minutes" ? input.minuteRate * input.earlyLeaveMinutes : 0,
+    automaticEarlyLeavePenalty: contract.earlyLeaveAdjustmentMode === "deduct_minutes" ? input.minuteRate * deductionEarlyLeaveMinutes : 0,
+    deductionEarlyLeaveMinutes,
     lateRequiresReview: false,
     earlyLeaveRequiresReview: usesDayRate && input.earlyLeaveMinutes > 0 && contract.earlyLeaveAdjustmentMode === "separate",
   };
