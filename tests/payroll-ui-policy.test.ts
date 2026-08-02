@@ -187,7 +187,7 @@ test("contract amount formatting, compact hours row, and modal focus are stable"
 test("fixed raise reason is conditional in UI and enforced by the server", () => {
   const route = read("app/api/admin/payroll/contracts/route.ts");
   assert.match(settings, /fixedRaiseChanged \? <Field label=\{vi \? "Lý do thay đổi mức tăng lương cố định" : "고정 급여인상 사유"\}/);
-  assert.match(settings, /note: fixedRaiseChanged \? form\.fixedRaiseReason\.trim\(\) : null/);
+  assert.match(settings, /note: fixedRaiseChanged \? form\.fixedRaiseReason\.trim\(\) : correcting\?\.note \?\? null/);
   assert.doesNotMatch(settings, /Chênh lệch/);
   assert.match(route, /FIXED_RAISE_REASON_REQUIRED/);
   assert.match(route, /p_early_leave_adjustment_mode: "deduct_minutes"/);
@@ -234,7 +234,7 @@ test("fixed monthly date failures alert inside the open modal flow", () => {
   assert.match(settings, /form\.calculationBasis === "fixed_monthly" && !isMonthFirstDate\(form\.effectiveFrom\)/);
   assert.match(settings, /window\.alert\(fixedMonthlyEffectiveDateMessage\)/);
   assert.ok(settings.indexOf("!isMonthFirstDate(form.effectiveFrom)") < settings.indexOf("setSaving(true)"));
-  assert.match(settings, /data\.code === "INVALID_FIXED_MONTHLY_EFFECTIVE_DATE"/);
+  assert.match(settings, /payrollContractErrorMessage\(l, data\.code,/);
   assert.match(settings, /const \[modalError, setModalError\] = useState\(""\)/);
   assert.match(settings, /modalError \? <p role="alert"/);
   assert.doesNotMatch(settings, /setError\(vi \? "Hợp đồng trả cố định hàng tháng/);

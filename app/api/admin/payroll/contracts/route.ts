@@ -14,13 +14,19 @@ export async function GET(request: Request) {
   if (auth.response) return auth.response;
   const userId = validId(new URL(request.url).searchParams.get("userId"));
   if (!userId) return payrollJson({ ok: false, code: "INVALID_USER_ID" }, 400);
-  const [{ data: user, error: userError }, { data, error }] = await Promise.all([
+  const [{ data: user, error: userError }, { data, error }, { data: auditData, error: auditError }] = await Promise.all([
     supabaseServer.from("users").select("id,name,full_name,username,is_active,hire_date,termination_date,is_system_account,role,level_program_enabled,level_base_date_override").eq("id", userId).eq("is_system_account",false).maybeSingle(),
     supabaseServer.from("payroll_contract_versions").select(FIELDS).eq("user_id", userId).order("effective_from", { ascending: false }),
+    supabaseServer.from("payroll_contract_audit_logs").select("id,contract_version_id").eq("user_id", userId).order("id", { ascending: false }),
   ]);
-  if (userError || error) return payrollJson({ ok: false, code: "PAYROLL_CONTRACT_READ_FAILED" }, 500);
+  if (userError || error || auditError) return payrollJson({ ok: false, code: "PAYROLL_CONTRACT_READ_FAILED" }, 500);
   if (!user) return payrollJson({ ok: false, code: "USER_NOT_FOUND" }, 404);
-  const contracts = (data ?? []).map((row) => mapContract(row as Record<string, unknown>));
+  const latestAuditByContract = new Map<number, number>();
+  for (const audit of auditData ?? []) if (!latestAuditByContract.has(Number(audit.contract_version_id))) latestAuditByContract.set(Number(audit.contract_version_id), Number(audit.id));
+  const contracts = (data ?? []).map((row) => {
+    const contract = mapContract(row as Record<string, unknown>);
+    return { ...contract, auditVersion: latestAuditByContract.get(contract.id) ?? null };
+  });
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   return payrollJson({ ok: true, user: { ...user, levelInfo: getEmployeeLevelInfo(user, today) }, current: contracts.find((c) => c.effectiveFrom <= today && (!c.effectiveTo || c.effectiveTo > today)) ?? null, scheduled: contracts.find((c) => c.effectiveFrom > today) ?? null, history: contracts });
 }

@@ -28,6 +28,7 @@ import { vietnamCurrentMonthStart } from "@/lib/payroll/ui-dates";
 import { currencyAmount, formatIntegerInput, hoursInputToMinutes, integerInputDigits, isMonthFirstDate, minutesToHoursInput, signedAmount } from "@/lib/payroll/contract-form";
 import { comparePayrollEmployees } from "@/lib/payroll/employee-sort";
 import { ui } from "@/lib/styles/ui";
+import { payrollContractErrorMessage } from "@/lib/payroll/contract-errors";
 type User = {
   id: number;
   name: string | null;
@@ -58,6 +59,7 @@ type Contract = {
   effectiveFrom: string;
   effectiveTo: string | null;
   revision: number;
+  auditVersion: number | null;
   createdBy?: number | null;
   createdAt?: string | null;
   note?: string | null;
@@ -113,6 +115,11 @@ function fromContract(contract: Contract | null): FormState {
       }
     : { ...defaults };
 }
+function salaryInputLabel(lang: PayrollUiLang, payType: string) {
+  if (payType === "hourly") return lang === "vi" ? "Lương theo giờ" : "시급";
+  if (payType === "daily") return lang === "vi" ? "Lương theo ngày" : "일급";
+  return lang === "vi" ? "Lương hợp đồng hàng tháng" : "월 계약급여";
+}
 export default function PayrollSettingsPage() {
   const { lang } = useLanguage();
   const l = lang as PayrollUiLang;
@@ -141,6 +148,9 @@ export default function PayrollSettingsPage() {
   const [query, setQuery] = useState("");
   const [form, setForm] = useState<FormState>(defaults);
   const [open, setOpen] = useState(false);
+  const [formMode, setFormMode] = useState<"create" | "correct">("create");
+  const [correctionTarget, setCorrectionTarget] = useState<Contract | null>(null);
+  const [correctionReason, setCorrectionReason] = useState("");
   const [error, setError] = useState("");
   const [modalError, setModalError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -322,24 +332,40 @@ export default function PayrollSettingsPage() {
   const combined = current
     ? current.baseSalary + current.fixedRaiseAmount + levelRaise
     : null;
-  const currentFixedRaise = current?.fixedRaiseAmount ?? 0;
+  const currentFixedRaise = (formMode === "correct" ? correctionTarget : current)?.fixedRaiseAmount ?? 0;
   const nextFixedRaise = Number(form.fixedRaiseAmount || 0);
   const fixedRaiseChanged = nextFixedRaise !== currentFixedRaise;
   const standardMinutesPreview = hoursInputToMinutes(form.standardHoursPerDay);
   function openForm() {
     const next = fromContract(current);
     setForm(selectedIsOwner ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next);
+    setFormMode("create");
+    setCorrectionTarget(null);
+    setCorrectionReason("");
+    setError("");
+    setModalError("");
+    setOpen(true);
+  }
+  function openCorrectionForm() {
+    const latest = contracts[0] ?? null;
+    if (!latest) return;
+    const next = { ...fromContract(latest), effectiveFrom: latest.effectiveFrom };
+    setForm(selectedIsOwner ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next);
+    setFormMode("correct");
+    setCorrectionTarget(latest);
+    setCorrectionReason("");
     setError("");
     setModalError("");
     setOpen(true);
   }
   function closeForm() {
+    if (saving) return;
     setModalError("");
     setOpen(false);
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!userId) return;
+    if (!userId || saving) return;
     setModalError("");
     const fixedMonthlyEffectiveDateMessage = vi ? "Hợp đồng trả cố định hàng tháng chỉ có thể áp dụng từ ngày đầu tiên của tháng." : "매월 고정 지급 계약은 매월 1일부터 적용할 수 있습니다.";
     if (form.calculationBasis === "fixed_monthly" && !isMonthFirstDate(form.effectiveFrom)) {
@@ -355,9 +381,14 @@ export default function PayrollSettingsPage() {
       setModalError(vi ? "Cần nhập lý do thay đổi mức tăng lương cố định." : "고정 급여인상 총액 변경 사유를 입력해주세요.");
       return;
     }
+    if (formMode === "correct" && !correctionReason.trim()) {
+      setModalError(payrollContractErrorMessage(l, "CONTRACT_CORRECTION_REASON_REQUIRED"));
+      return;
+    }
     setSaving(true);
     try {
-      const response = await fetch("/api/admin/payroll/contracts", {
+      const correcting = formMode === "correct" ? correctionTarget : null;
+      const response = await fetch(correcting ? "/api/admin/payroll/contracts/correct" : "/api/admin/payroll/contracts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -368,8 +399,13 @@ export default function PayrollSettingsPage() {
           overtimeMode: "ignore",
           earlyLeaveAdjustmentMode: "deduct_minutes",
           paidLeaveMode: "unpaid",
-          note: fixedRaiseChanged ? form.fixedRaiseReason.trim() : null,
+          note: fixedRaiseChanged ? form.fixedRaiseReason.trim() : correcting?.note ?? null,
           userId,
+          contractId: correcting?.id,
+          expectedRevision: correcting?.revision,
+          expectedAuditVersion: correcting?.auditVersion,
+          expectedEffectiveFrom: correcting?.effectiveFrom,
+          correctionReason: correcting ? correctionReason.trim() : undefined,
           baseSalary: Number(form.baseSalary),
           fixedRaiseAmount: Number(form.fixedRaiseAmount),
           standardWorkdays: selectedIsOwner ? 26 : form.payType === "monthly" ? Number(form.standardWorkdays) : null,
@@ -378,14 +414,13 @@ export default function PayrollSettingsPage() {
       });
       const data = await response.json();
       if (!response.ok) {
-        if (data.code === "INVALID_FIXED_MONTHLY_EFFECTIVE_DATE") window.alert(fixedMonthlyEffectiveDateMessage);
-        else setModalError(data.code === "FIXED_RAISE_REASON_REQUIRED" ? (vi ? "Cần nhập lý do thay đổi mức tăng lương cố định." : "고정 급여인상 총액 변경 사유를 입력해주세요.") : (data.code ?? "INVALID_CONTRACT"));
+        setModalError(payrollContractErrorMessage(l, data.code, formMode === "correct" ? "PAYROLL_CONTRACT_CORRECTION_FAILED" : "PAYROLL_CONTRACT_CREATE_FAILED"));
         return;
       }
       await load(userId);
       setOpen(false);
     } catch {
-      setModalError(vi ? "Không thể lưu hợp đồng lương. Vui lòng thử lại." : "급여계약을 저장하지 못했습니다. 다시 시도해주세요.");
+      setModalError(payrollContractErrorMessage(l, formMode === "correct" ? "PAYROLL_CONTRACT_CORRECTION_FAILED" : "PAYROLL_CONTRACT_CREATE_FAILED"));
     } finally {
       setSaving(false);
     }
@@ -529,9 +564,14 @@ export default function PayrollSettingsPage() {
                     <h2 style={s.cardTitle}>{vi ? "Hợp đồng lương" : "급여계약"}</h2>
                     <p style={s.sectionHelp}>{vi ? "Điều kiện hợp đồng hiện đang áp dụng" : "현재 적용 중인 계약 조건"}</p>
                   </div>
-                  <button type="button" style={s.primary} onClick={openForm}>
-                    {vi ? "Đăng ký thay đổi" : "계약 변경 등록"}
-                  </button>
+                  <div style={s.contractActions}>
+                    {contracts[0]?.auditVersion ? <button type="button" style={s.secondary} onClick={openCorrectionForm}>
+                      {vi ? "Chỉnh sửa hợp đồng mới nhất" : "최신 계약 정정"}
+                    </button> : null}
+                    <button type="button" style={s.primary} onClick={openForm}>
+                      {vi ? "Đăng ký thay đổi" : "계약 변경 등록"}
+                    </button>
+                  </div>
                 </div>
                 {current ? (
                   <ContractSummary contract={current} levelRaise={levelRaise} combined={combined ?? 0} lang={l} />
@@ -560,7 +600,7 @@ export default function PayrollSettingsPage() {
         {open && selected && (
           <PayrollModal
             placement="top"
-            title={vi ? "Đăng ký hợp đồng lương" : "급여계약 등록"}
+            title={formMode === "correct" ? (vi ? "Chỉnh sửa hợp đồng lương mới nhất" : "최신 급여계약 정정") : (vi ? "Đăng ký hợp đồng lương" : "급여계약 등록")}
             closeLabel={vi ? "Đóng" : "닫기"}
             onClose={closeForm}
             footer={
@@ -571,22 +611,28 @@ export default function PayrollSettingsPage() {
           >
             <form id="contract" style={s.form} onSubmit={submit}>
               <Field label={vi ? "Ngày áp dụng" : "적용 시작일"}>
-                <input
-                  style={s.input}
-                  type="date"
-                  required
-                  value={form.effectiveFrom}
-                  onChange={(event) =>
-                    setForm({ ...form, effectiveFrom: event.target.value })
-                  }
-                />
+                {formMode === "correct"
+                  ? <div style={s.readOnlyValue}>{form.effectiveFrom}</div>
+                  : <input
+                      style={s.input}
+                      type="date"
+                      required
+                      value={form.effectiveFrom}
+                      onChange={(event) => setForm({ ...form, effectiveFrom: event.target.value })}
+                    />}
               </Field>
               {modalError ? <p role="alert" style={s.error}>{modalError}</p> : null}
               <MoneyInputField
-                label={vi ? "Lương theo hợp đồng" : "계약급여"}
+                label={salaryInputLabel(l, form.payType)}
                 value={form.baseSalary}
                 change={(value) => setForm({ ...form, baseSalary: value })}
-              />
+              >
+                {form.payType === "hourly" ? <small style={s.fieldHelp}>
+                  {vi
+                    ? "Nhập mức lương cho 1 giờ. Ví dụ: nhập 30.000 đồng thì sẽ được tính là 30.000 đồng/giờ."
+                    : "1시간 기준 급여를 입력합니다. 예: 30,000동 입력 시 시급 30,000동으로 계산됩니다."}
+                </small> : null}
+              </MoneyInputField>
               <MoneyInputField
                 label={vi ? "Tổng mức tăng lương cố định" : "고정 급여인상 총액"}
                 value={form.fixedRaiseAmount}
@@ -601,6 +647,9 @@ export default function PayrollSettingsPage() {
               </div>
               {fixedRaiseChanged ? <Field label={vi ? "Lý do thay đổi mức tăng lương cố định" : "고정 급여인상 사유"}>
                 <textarea style={s.input} required value={form.fixedRaiseReason} onChange={(event) => setForm({ ...form, fixedRaiseReason: event.target.value })} />
+              </Field> : null}
+              {formMode === "correct" ? <Field label={vi ? "Lý do chỉnh sửa hợp đồng" : "계약 정정 사유"}>
+                <textarea style={s.input} required value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} />
               </Field> : null}
               <div style={s.level}>
                 <b>{selected.levelInfo.displayLabel ?? (vi ? "Không áp dụng cấp" : "레벨 미적용")} · {vi ? "Tăng theo cấp" : "레벨 인상"} {signedAmount(levelRaise, vi)}</b>
@@ -653,6 +702,7 @@ export default function PayrollSettingsPage() {
                   <span>{vi ? "giờ" : "시간"}</span>
                   {standardMinutesPreview !== null ? <span style={s.minutesPreview}>{standardMinutesPreview}{vi ? " phút" : "분"}</span> : null}
                 </div>
+                <small style={s.fieldHelp}>{vi ? "Đây là số giờ làm việc chuẩn trong một ngày dùng để tính lương và khấu trừ khi đi muộn hoặc về sớm." : "급여 계산과 지각·조퇴 공제에 사용하는 1일 기준 근무시간입니다."}</small>
               </Field> : null}
             </form>
           </PayrollModal>
@@ -667,7 +717,7 @@ function ContractCard({ contract, previous, vi }: { contract: Contract; previous
     <article style={s.contract}>
       <b>{vi ? `Lần thay đổi ${contract.revision}` : `변경번호 ${contract.revision}`}</b>
       <span>
-        {vi ? "Lương theo hợp đồng" : "계약급여"} {money(contract.baseSalary)}
+        {salaryInputLabel(vi ? "vi" : "ko", contract.payType)} {money(contract.baseSalary)}
       </span>
       <span>
         {vi ? "Tổng mức tăng cố định" : "고정 인상 총액"} {currencyAmount(before, vi)} → {currencyAmount(contract.fixedRaiseAmount, vi)}
@@ -701,7 +751,7 @@ function ContractSummary({
   const vi = lang === "vi";
   return (
     <div style={s.contractSummary}>
-      <SummaryItem label={vi ? "Lương theo hợp đồng" : "계약급여"} value={money(contract.baseSalary)} />
+      <SummaryItem label={salaryInputLabel(lang, contract.payType)} value={money(contract.baseSalary)} />
       <SummaryItem label={vi ? "Mức tăng cố định" : "고정 급여인상"} value={`+${money(contract.fixedRaiseAmount)}`} />
       <SummaryItem label={vi ? "Mức tăng theo cấp" : "레벨 인상"} value={`+${money(levelRaise)}`} />
       <SummaryItem label={vi ? "Tổng lương" : "합산급여"} value={money(combined)} important />
@@ -880,6 +930,8 @@ const s = {
     fontSize: 13,
     fontWeight: 800,
   },
+  secondary: { minHeight: 36, padding: "7px 10px", border: "1px solid #d1d5db", borderRadius: 9, background: "#fff", color: "#374151", fontSize: 13, fontWeight: 800 },
+  contractActions: { display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" },
   modalSave: { width: "100%", minHeight: 42, padding: "8px 12px", border: 0, borderRadius: 9, background: "#111827", color: "#fff", fontSize: 14, fontWeight: 800 },
   contract: {
     display: "grid",
