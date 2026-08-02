@@ -25,10 +25,12 @@ import {
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { attendanceText } from "@/lib/text";
 import { vietnamCurrentMonthStart } from "@/lib/payroll/ui-dates";
-import { currencyAmount, formatIntegerInput, hoursInputToMinutes, integerInputDigits, isMonthFirstDate, minutesToHoursInput, signedAmount } from "@/lib/payroll/contract-form";
+import { currencyAmount, formatIntegerInput, integerInputDigits, isMonthFirstDate, minutesToHoursInput, signedAmount } from "@/lib/payroll/contract-form";
 import { comparePayrollEmployees } from "@/lib/payroll/employee-sort";
 import { ui } from "@/lib/styles/ui";
 import { payrollContractErrorMessage } from "@/lib/payroll/contract-errors";
+import type { WorkScheduleVersion } from "@/lib/payroll/types";
+import { scheduledMinutesPerDay, schedulesActiveOn } from "@/lib/payroll/work-schedule";
 type User = {
   id: number;
   name: string | null;
@@ -144,6 +146,7 @@ export default function PayrollSettingsPage() {
   const [userId, setUserId] = useState<number | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [currentContract, setCurrentContract] = useState<Contract | null>(null);
+  const [workSchedules, setWorkSchedules] = useState<WorkScheduleVersion[]>([]);
   const [contractsLoading, setContractsLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [form, setForm] = useState<FormState>(defaults);
@@ -173,6 +176,7 @@ export default function PayrollSettingsPage() {
         if (response.ok) {
           setContracts(data.history ?? []);
           setCurrentContract(data.current ?? null);
+          setWorkSchedules(data.workSchedules ?? []);
         }
         else
           setError(
@@ -312,6 +316,9 @@ export default function PayrollSettingsPage() {
   const selected = users.find((user) => user.id === userId);
   const selectedId = selected?.id ?? null;
   const selectedIsOwner = selected?.position?.toLowerCase() === "owner";
+  const effectiveSchedules = schedulesActiveOn(workSchedules, form.effectiveFrom);
+  const effectiveSchedule = effectiveSchedules.length === 1 ? effectiveSchedules[0] : null;
+  const automaticStandardMinutes = effectiveSchedule ? scheduledMinutesPerDay(effectiveSchedule.startTime, effectiveSchedule.endTime, effectiveSchedule.unpaidBreakMinutes) : null;
   useEffect(() => {
     if (!selectedId || employeeListOpen || contractsLoading || selectedInsuranceLoading || pendingScrollUserIdRef.current !== selectedId) return;
     const frame = requestAnimationFrame(() => {
@@ -335,7 +342,6 @@ export default function PayrollSettingsPage() {
   const currentFixedRaise = (formMode === "correct" ? correctionTarget : current)?.fixedRaiseAmount ?? 0;
   const nextFixedRaise = Number(form.fixedRaiseAmount || 0);
   const fixedRaiseChanged = nextFixedRaise !== currentFixedRaise;
-  const standardMinutesPreview = hoursInputToMinutes(form.standardHoursPerDay);
   function openForm() {
     const next = fromContract(current);
     setForm(selectedIsOwner ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next);
@@ -372,9 +378,9 @@ export default function PayrollSettingsPage() {
       window.alert(fixedMonthlyEffectiveDateMessage);
       return;
     }
-    const standardMinutesPerDay = selectedIsOwner ? 540 : hoursInputToMinutes(form.standardHoursPerDay);
+    const standardMinutesPerDay = selectedIsOwner ? 540 : automaticStandardMinutes;
     if (standardMinutesPerDay === null) {
-      setModalError(vi ? "Giờ làm việc chuẩn phải lớn hơn 0, không quá 24 giờ và quy đổi thành số phút nguyên." : "하루 기준 근무시간은 0시간 초과 24시간 이하이며 정수 분으로 환산되어야 합니다.");
+      setModalError(payrollContractErrorMessage(l, effectiveSchedules.length > 1 ? "WORK_SCHEDULE_OVERLAP" : effectiveSchedule ? "INVALID_WORK_SCHEDULE" : "WORK_SCHEDULE_NOT_FOUND"));
       return;
     }
     if (fixedRaiseChanged && !form.fixedRaiseReason.trim()) {
@@ -393,6 +399,7 @@ export default function PayrollSettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
+          calculationBasis: selectedIsOwner ? "fixed_monthly" : "minute",
           timeBlockMinutes: 60,
           roundingMode: "none",
           lateAdjustmentMode: "separate",
@@ -604,7 +611,7 @@ export default function PayrollSettingsPage() {
             closeLabel={vi ? "Đóng" : "닫기"}
             onClose={closeForm}
             footer={
-              <button form="contract" style={s.modalSave} disabled={saving}>
+              <button form="contract" style={s.modalSave} disabled={saving || (!selectedIsOwner && automaticStandardMinutes === null)}>
                 {saving ? (vi ? "Đang lưu" : "저장 중") : vi ? "Lưu" : "저장"}
               </button>
             }
@@ -675,17 +682,7 @@ export default function PayrollSettingsPage() {
                   })
                 }
               />
-              <SelectField
-                label={vi ? "Cách tính lương" : "급여 산정 방식"}
-                value={form.calculationBasis}
-                options={
-                  form.payType === "hourly" ? ["minute"] : ["minute", "day"]
-                }
-                lang={l}
-                change={(value) =>
-                  setForm({ ...form, calculationBasis: value })
-                }
-              /></>}
+              </>}
               {!selectedIsOwner && form.payType === "monthly" && (
                 <NumberField
                   label={vi ? "Ngày làm việc chuẩn" : "월 기준 근무일수"}
@@ -696,14 +693,11 @@ export default function PayrollSettingsPage() {
                   step="0.01"
                 />
               )}
-              {!selectedIsOwner ? <Field label={vi ? "Giờ làm việc chuẩn mỗi ngày" : "하루 기준 근무시간"}>
-                <div style={s.hoursRow}>
-                  <input style={s.hoursInput} required type="number" min="0.01" max="24" step="0.01" value={form.standardHoursPerDay} onChange={(event) => setForm({ ...form, standardHoursPerDay: event.target.value })} />
-                  <span>{vi ? "giờ" : "시간"}</span>
-                  {standardMinutesPreview !== null ? <span style={s.minutesPreview}>{standardMinutesPreview}{vi ? " phút" : "분"}</span> : null}
-                </div>
-                <small style={s.fieldHelp}>{vi ? "Đây là số giờ làm việc chuẩn trong một ngày dùng để tính lương và khấu trừ khi đi muộn hoặc về sớm." : "급여 계산과 지각·조퇴 공제에 사용하는 1일 기준 근무시간입니다."}</small>
-              </Field> : null}
+              {!selectedIsOwner ? <>
+                <ReadOnlyField label={vi ? "Giờ làm việc dự kiến" : "예정 근무시간"} value={effectiveSchedule ? `${effectiveSchedule.startTime}~${effectiveSchedule.endTime}` : (vi ? "Không có lịch làm việc" : "근무시간 없음")} />
+                <ReadOnlyField label={vi ? "Giờ làm việc chuẩn mỗi ngày" : "하루 기준 근무시간"} value={automaticStandardMinutes === null ? "-" : `${automaticStandardMinutes / 60}${vi ? " giờ" : "시간"}`} />
+                <small style={s.fieldHelp}>{vi ? "Tự động áp dụng theo giờ làm việc trong quản lý nhân viên." : "직원관리의 근무시간을 기준으로 자동 적용됩니다."}</small>
+              </> : null}
             </form>
           </PayrollModal>
         )}
@@ -756,9 +750,7 @@ function ContractSummary({
       <SummaryItem label={vi ? "Mức tăng theo cấp" : "레벨 인상"} value={`+${money(levelRaise)}`} />
       <SummaryItem label={vi ? "Tổng lương" : "합산급여"} value={money(combined)} important />
       <SummaryItem label={vi ? "Loại lương" : "급여 형태"} value={payrollLabel(lang, contract.payType)} />
-      <SummaryItem label={vi ? "Cách tính lương" : "급여 산정 방식"} value={payrollLabel(lang, contract.calculationBasis)} />
       <SummaryItem label={vi ? "Ngày áp dụng" : "적용 시작일"} value={contract.effectiveFrom} />
-      <SummaryItem label="revision" value={`#${contract.revision}`} />
     </div>
   );
 }

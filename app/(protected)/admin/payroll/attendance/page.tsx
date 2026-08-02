@@ -12,6 +12,8 @@ import { getPositionRank } from "@/lib/common/positions";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
+import { getNextLevelSchedule } from "@/lib/employee-level/next-level-schedule";
+import { employeeLevelScheduleText } from "@/lib/text/employee-level-schedule";
 import {
     ATTENDANCE_STATUS_COLORS,
     getAttendanceDisplayStatus,
@@ -587,6 +589,22 @@ export default function AttendanceOverviewPage() {
                                     const recordsByDate = isExpanded
                                         ? new Map(userRecords.map((record) => [record.work_date, record]))
                                         : null;
+                                    const vietnamToday = new Intl.DateTimeFormat("en-CA", {
+                                        timeZone: "Asia/Ho_Chi_Minh",
+                                        year: "numeric",
+                                        month: "2-digit",
+                                        day: "2-digit",
+                                    }).format(new Date());
+                                    const nextLevel = getNextLevelSchedule(user.levelInfo, vietnamToday);
+                                    const nextLevelMessage = nextLevel?.status === "future"
+                                        ? employeeLevelScheduleText[lang].future
+                                            .replace("{date}", nextLevel.date.replaceAll("-", "."))
+                                            .replace("{days}", String(nextLevel.days))
+                                        : nextLevel?.status === "today"
+                                            ? employeeLevelScheduleText[lang].today
+                                            : nextLevel?.status === "maximum"
+                                                ? employeeLevelScheduleText[lang].maximum
+                                                : null;
 
                                     return (
                                         <div key={user.id} style={staffCardStyle}>
@@ -679,6 +697,9 @@ export default function AttendanceOverviewPage() {
                                                     </div>
 
                                                     <div style={detailButtonWrapStyle}>
+                                                        {nextLevelMessage ? (
+                                                            <div style={nextLevelMessageStyle}>{nextLevelMessage}</div>
+                                                        ) : null}
                                                         <button
                                                             type="button"
                                                             onClick={() => goDetail(user.id)}
@@ -1061,11 +1082,24 @@ const recentEmptyDotStyle: CSSProperties = {
 
 const detailButtonWrapStyle: CSSProperties = {
     display: "flex",
-    justifyContent: "flex-end",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    minWidth: 0,
     marginTop: 1,
 };
 
+const nextLevelMessageStyle: CSSProperties = {
+    minWidth: 0,
+    color: "#2563eb",
+    fontSize: 11,
+    fontWeight: 700,
+    lineHeight: 1.4,
+    overflowWrap: "anywhere",
+};
+
 const detailButtonStyle: CSSProperties = {
+    flexShrink: 0,
     border: "1px solid #111827",
     background: "#111827",
     color: "#ffffff",

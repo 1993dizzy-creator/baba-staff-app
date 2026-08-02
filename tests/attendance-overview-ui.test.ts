@@ -52,6 +52,16 @@ test("mobile identity and seven-day rows keep shrink and overflow guards", () =>
   assert.match(page, /const staffLeftStyle[\s\S]*?minWidth: 0,[\s\S]*?overflow: "hidden"/);
   assert.match(page, /const staffNameStyle[\s\S]*?textOverflow: "ellipsis"/);
   assert.match(page, /const staffMetaStyle[\s\S]*?textOverflow: "ellipsis"/);
+  assert.match(page, /const detailButtonWrapStyle[\s\S]*?minWidth: 0/);
+  assert.match(page, /const nextLevelMessageStyle[\s\S]*?minWidth: 0[\s\S]*?overflowWrap: "anywhere"/);
+  assert.match(page, /const detailButtonStyle[\s\S]*?flexShrink: 0/);
+});
+
+test("next-level schedule appears only in the expanded overview footer beside detail", () => {
+  assert.match(page, /getNextLevelSchedule\(user\.levelInfo, vietnamToday\)/);
+  assert.match(page, /\{isExpanded && \([\s\S]*?\{nextLevelMessage \? \([\s\S]*?nextLevelMessageStyle[\s\S]*?onClick=\{\(\) => goDetail\(user\.id\)\}/);
+  assert.doesNotMatch(detailPage, /getNextLevelSchedule|employeeLevelScheduleText|nextLevelMessage|nextLevelStyle/);
+  assert.match(page, /const detailButtonWrapStyle[\s\S]*?alignItems: "center"[\s\S]*?justifyContent: "space-between"/);
 });
 
 test("recent weekdays are separate, ordered by date, and use calendar weekend colors", () => {

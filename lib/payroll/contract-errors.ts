@@ -16,6 +16,9 @@ const messages: Record<PayrollUiLang, Record<string, string>> = {
     CONTRACT_CORRECTION_FORBIDDEN: "급여계약을 정정할 권한이 없습니다.",
     FORBIDDEN: "급여계약을 관리할 권한이 없습니다.",
     PAYROLL_CONTRACT_CORRECTION_FAILED: "급여계약을 정정하지 못했습니다. 잠시 후 다시 시도해주세요.",
+    WORK_SCHEDULE_NOT_FOUND: "계약 적용일에 유효한 직원 근무시간이 없습니다. 직원관리에서 근무시간을 먼저 등록해주세요.",
+    WORK_SCHEDULE_OVERLAP: "계약 적용일의 근무시간 이력이 겹칩니다. 직원 근무시간 이력을 확인해주세요.",
+    INVALID_WORK_SCHEDULE: "직원 근무시간 또는 휴게시간이 올바르지 않아 하루 근무시간을 계산할 수 없습니다.",
   },
   vi: {
     CONTRACT_PERIOD_CONFLICT: "Đã có hợp đồng lương áp dụng trong cùng khoảng thời gian. Vui lòng kiểm tra ngày áp dụng của hợp đồng hiện tại hoặc chỉnh sửa hợp đồng mới nhất.",
@@ -32,6 +35,9 @@ const messages: Record<PayrollUiLang, Record<string, string>> = {
     CONTRACT_CORRECTION_FORBIDDEN: "Bạn không có quyền chỉnh sửa hợp đồng lương.",
     FORBIDDEN: "Bạn không có quyền quản lý hợp đồng lương.",
     PAYROLL_CONTRACT_CORRECTION_FAILED: "Không thể chỉnh sửa hợp đồng lương. Vui lòng thử lại sau.",
+    WORK_SCHEDULE_NOT_FOUND: "Không có lịch làm việc hợp lệ vào ngày áp dụng hợp đồng. Vui lòng thiết lập giờ làm việc trong quản lý nhân viên trước.",
+    WORK_SCHEDULE_OVERLAP: "Lịch sử giờ làm việc bị trùng vào ngày áp dụng hợp đồng. Vui lòng kiểm tra lại.",
+    INVALID_WORK_SCHEDULE: "Không thể tính giờ làm việc mỗi ngày vì giờ làm việc hoặc thời gian nghỉ không hợp lệ.",
   },
 };
 

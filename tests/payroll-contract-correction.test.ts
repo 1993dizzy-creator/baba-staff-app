@@ -9,6 +9,7 @@ import { calculatePayrollRates } from "../lib/payroll/work-policy.ts";
 
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "utf8");
 const migration = read("supabase/migrations/202608020001_correct_latest_unused_payroll_contract.sql");
+const v7Migration = read("supabase/migrations/202608020002_add_unified_payroll_engine_v7.sql");
 const route = read("app/api/admin/payroll/contracts/correct/route.ts");
 const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
 const modal = read("components/payroll/PayrollModal.tsx");
@@ -19,8 +20,8 @@ test("hourly contract labels and help are bilingual while monthly and daily labe
     "Lương hợp đồng hàng tháng", "Lương theo ngày", "Lương theo giờ",
     "1시간 기준 급여를 입력합니다. 예: 30,000동 입력 시 시급 30,000동으로 계산됩니다.",
     "Nhập mức lương cho 1 giờ. Ví dụ: nhập 30.000 đồng thì sẽ được tính là 30.000 đồng/giờ.",
-    "급여 계산과 지각·조퇴 공제에 사용하는 1일 기준 근무시간입니다.",
-    "Đây là số giờ làm việc chuẩn trong một ngày dùng để tính lương và khấu trừ khi đi muộn hoặc về sớm.",
+    "직원관리의 근무시간을 기준으로 자동 적용됩니다.",
+    "Tự động áp dụng theo giờ làm việc trong quản lý nhân viên.",
   ]) assert.match(settings, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(settings, /salaryInputLabel\(l, form\.payType\)/);
 });
@@ -43,9 +44,11 @@ test("correction RPC locks and updates only the latest expected revision with th
   assert.doesNotMatch(migration, /insert into public\.payroll_contract_versions/);
 });
 
-test("540 to 300 minute correction payload is supported without changing hourly calculation semantics", () => {
-  assert.match(route, /p_standard_minutes_per_day: standardMinutesPerDay/);
-  assert.match(settings, /standardMinutesPerDay/);
+test("correction derives 300 minutes from schedule instead of trusting the client payload", () => {
+  assert.match(route, /scheduledMinutesPerDay/);
+  assert.doesNotMatch(route, /p_standard_minutes_per_day/);
+  assert.match(v7Migration, /v_minutes:=/);
+  assert.match(v7Migration, /payroll_correct_latest_unused_contract_v2/);
   assert.match(settings, /expectedRevision: correcting\?\.revision/);
   assert.match(settings, /expectedAuditVersion: correcting\?\.auditVersion/);
   assert.match(settings, /expectedEffectiveFrom: correcting\?\.effectiveFrom/);
@@ -99,7 +102,7 @@ test("correction API maps concurrency, history, usage, locked payroll, date, and
     "PAYROLL_CONTRACT_CORRECTION_FAILED",
   ]) assert.match(route, new RegExp(code));
   assert.match(route, /requirePayrollActor\(\)/);
-  assert.match(route, /payroll_correct_latest_unused_contract_v1/);
+  assert.match(route, /payroll_correct_latest_unused_contract_v2/);
 });
 
 test("contract error mapper never returns internal contract codes in Korean or Vietnamese", () => {
@@ -121,7 +124,7 @@ test("contract error mapper never returns internal contract codes in Korean or V
 
 test("correction modal preserves input on failure, prevents duplicates, and keeps mobile footer reachable", () => {
   assert.match(settings, /if \(!userId \|\| saving\) return/);
-  assert.match(settings, /disabled=\{saving\}/);
+  assert.match(settings, /disabled=\{saving \|\| \(!selectedIsOwner && automaticStandardMinutes === null\)\}/);
   assert.match(settings, /if \(!response\.ok\) \{[\s\S]*setModalError[\s\S]*return/);
   const failedResponse = settings.indexOf("if (!response.ok)");
   const failureReturn = settings.indexOf("return;", failedResponse);

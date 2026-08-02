@@ -28,6 +28,17 @@ test("payroll pages use forms and mobile cards without prompt or wide tables", (
   assert.match(detail, /EmployeeCard/);
   assert.match(settings, /PayrollModal/);
 });
+test("current contract summary hides legacy calculation basis and revision labels only", () => {
+  const summary = settings.slice(
+    settings.indexOf("function ContractSummary"),
+    settings.indexOf("function Field("),
+  );
+  assert.doesNotMatch(summary, /급여 산정 방식|Cách tính lương|label="revision"/);
+  assert.match(summary, /월 계약급여|고정 급여인상|레벨 인상|합산급여|급여 형태|적용 시작일/);
+  assert.match(settings, /expectedRevision: correcting\?\.revision/);
+  assert.match(settings, /변경번호 \$\{contract\.revision\}/);
+  assert.match(settings, /calculationBasis: selectedIsOwner \? "fixed_monthly" : "minute"/);
+});
 test("settings sends versioned compensation fields, preserves contract policy, and excludes payroll-owned level inputs", () => {
   assert.match(
     settings,
@@ -159,10 +170,12 @@ test("employee settings cards share compact mobile dimensions", () => {
   assert.match(employeeInsurance, /minHeight: 40/);
 });
 
-test("contract editor uses cumulative fixed raises, hour input, and unpaid leave payload", () => {
+test("contract editor uses cumulative fixed raises and schedule-derived read-only hours", () => {
   assert.match(settings, /고정 급여인상 총액/);
   assert.match(settings, /Tổng mức tăng lương cố định/);
-  assert.match(settings, /hoursInputToMinutes\(form\.standardHoursPerDay\)/);
+  assert.match(settings, /scheduledMinutesPerDay\(effectiveSchedule\.startTime/);
+  assert.match(settings, /예정 근무시간/);
+  assert.doesNotMatch(settings, /type="number"[^>]*value=\{form\.standardHoursPerDay\}/);
   assert.match(settings, /paidLeaveMode: "unpaid"/);
   assert.match(settings, /earlyLeaveAdjustmentMode: "deduct_minutes"/);
   assert.doesNotMatch(settings, /label=\{vi \? "Ngày nghỉ" : "휴무 처리"\}/);
@@ -170,12 +183,12 @@ test("contract editor uses cumulative fixed raises, hour input, and unpaid leave
   assert.doesNotMatch(settings, /label=\{vi \? "Lý do thay đổi" : "변경 사유"\}/);
 });
 
-test("contract amount formatting, compact hours row, and modal focus are stable", () => {
+test("contract amount formatting, read-only schedule summary, and modal focus are stable", () => {
   assert.match(settings, /function MoneyInputField/);
   assert.match(settings, /value=\{formatIntegerInput\(value\)\}/);
   assert.match(settings, /change\(integerInputDigits\(event\.target\.value\)\)/);
-  assert.match(settings, /gridTemplateColumns: "minmax\(80px, 50%\) auto minmax\(0, 1fr\)"/);
-  assert.match(settings, /standardMinutesPreview !== null \? <span style=\{s\.minutesPreview\}/);
+  assert.match(settings, /effectiveSchedule\.startTime.*effectiveSchedule\.endTime/);
+  assert.match(settings, /automaticStandardMinutes \/ 60/);
   assert.doesNotMatch(settings, /<small style=\{s\.fieldHelp\}>\{hoursInputToMinutes/);
   assert.match(payrollModal, /const onCloseRef=useRef\(onClose\)/);
   assert.match(payrollModal, /onCloseRef\.current=onClose/);
@@ -190,8 +203,7 @@ test("fixed raise reason is conditional in UI and enforced by the server", () =>
   assert.match(settings, /note: fixedRaiseChanged \? form\.fixedRaiseReason\.trim\(\) : correcting\?\.note \?\? null/);
   assert.doesNotMatch(settings, /Chênh lệch/);
   assert.match(route, /FIXED_RAISE_REASON_REQUIRED/);
-  assert.match(route, /p_early_leave_adjustment_mode: "deduct_minutes"/);
-  assert.match(route, /p_paid_leave_mode: "unpaid"/);
+  assert.match(route, /payroll_create_contract_version_v4/);
   assert.match(route, /p_note: fixedRaiseReason\.note/);
 });
 
@@ -241,11 +253,12 @@ test("fixed monthly date failures alert inside the open modal flow", () => {
   assert.match(settings, /finally \{\s*setSaving\(false\)/);
 });
 
-test("early-leave deductions retain audit inputs and stop on stored-policy mismatches", () => {
+test("v7 retains early-leave audit inputs without creating a separate deduction", () => {
   const run = read("lib/payroll/monthly-run.ts");
   for (const field of ["rawEarlyLeaveMinutes", "earlyLeaveThresholdMinutes", "isEarlyLeave", "deductionEarlyLeaveMinutes", "calculationBasis", "minuteRate", "calculatedAmount", "scheduleRevision", "storeSettingsRevision"])
     assert.match(run, new RegExp(field));
-  assert.match(run, /automaticEarlyLeavePenalty>0&&!facts\.warningCodes\.includes\("STORED_EARLY_LEAVE_MINUTES_MISMATCH"\)/);
+  assert.doesNotMatch(run, /item\("early_leave_deduction"/);
+  assert.match(run, /STORED_EARLY_LEAVE_MINUTES_MISMATCH/);
 });
 
 test("insurance form reveals details only for meaningful enrollment transitions", () => {

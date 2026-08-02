@@ -2,6 +2,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { mapContract } from "@/lib/payroll/db-mappers";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 import { isMonthFirstDate } from "@/lib/payroll/contract-form";
+import { scheduledMinutesPerDay } from "@/lib/payroll/work-schedule";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,6 @@ export async function POST(request: Request) {
   const expectedAuditVersion = positiveId(body?.expectedAuditVersion);
   const baseSalary = Number(body?.baseSalary);
   const fixedRaiseAmount = Number(body?.fixedRaiseAmount ?? 0);
-  const standardMinutesPerDay = Number(body?.standardMinutesPerDay);
   const timeBlockMinutes = Number(body?.timeBlockMinutes);
   const standardWorkdays = body?.standardWorkdays === null ? null : Number(body?.standardWorkdays);
   const correctionReason = typeof body?.correctionReason === "string" ? body.correctionReason.trim() : "";
@@ -36,7 +36,6 @@ export async function POST(request: Request) {
     || !["minute", "hour", "day", "fixed_monthly"].includes(String(body.calculationBasis))
     || !Number.isSafeInteger(baseSalary) || baseSalary < 0
     || !Number.isSafeInteger(fixedRaiseAmount) || fixedRaiseAmount < 0
-    || !Number.isSafeInteger(standardMinutesPerDay) || standardMinutesPerDay < 1 || standardMinutesPerDay > 1440
     || !Number.isSafeInteger(timeBlockMinutes) || timeBlockMinutes < 1 || timeBlockMinutes > 1440
     || (body.payType === "monthly" && (!(standardWorkdays! > 0) || !Number.isFinite(standardWorkdays)))
     || (body.payType !== "monthly" && standardWorkdays !== null)
@@ -61,25 +60,25 @@ export async function POST(request: Request) {
   if (targetIsOwner && !isMonthFirstDate(body.effectiveFrom)) {
     return payrollJson({ ok: false, code: "INVALID_FIXED_MONTHLY_EFFECTIVE_DATE" }, 400);
   }
+  if (!targetIsOwner) {
+    const { data: schedules, error: scheduleError } = await supabaseServer.from("employee_work_schedule_versions").select("start_time,end_time,unpaid_break_minutes").eq("user_id", userId).lte("effective_from", String(body.effectiveFrom)).or(`effective_to.is.null,effective_to.gt.${body.effectiveFrom}`);
+    if (scheduleError) return payrollJson({ ok: false, code: "PAYROLL_CONTRACT_READ_FAILED" }, 500);
+    if (!schedules || schedules.length === 0) return payrollJson({ ok: false, code: "WORK_SCHEDULE_NOT_FOUND" }, 400);
+    if (schedules.length !== 1) return payrollJson({ ok: false, code: "WORK_SCHEDULE_OVERLAP" }, 409);
+    const calculated = scheduledMinutesPerDay(String(schedules[0].start_time), String(schedules[0].end_time), Number(schedules[0].unpaid_break_minutes));
+    if (calculated === null) return payrollJson({ ok: false, code: "INVALID_WORK_SCHEDULE" }, 400);
+  }
 
-  const { data, error } = await supabaseServer.rpc("payroll_correct_latest_unused_contract_v1", {
+  const { data, error } = await supabaseServer.rpc("payroll_correct_latest_unused_contract_v2", {
     p_contract_id: contractId,
     p_user_id: userId,
     p_expected_revision: expectedRevision,
     p_expected_audit_log_id: expectedAuditVersion,
     p_expected_effective_from: body.expectedEffectiveFrom,
     p_pay_type: body.payType,
-    p_calculation_basis: body.calculationBasis,
     p_base_salary: baseSalary,
     p_fixed_raise_amount: fixedRaiseAmount,
     p_standard_workdays: standardWorkdays,
-    p_standard_minutes_per_day: standardMinutesPerDay,
-    p_time_block_minutes: timeBlockMinutes,
-    p_rounding_mode: body.roundingMode,
-    p_late_adjustment_mode: body.lateAdjustmentMode,
-    p_early_leave_adjustment_mode: body.earlyLeaveAdjustmentMode,
-    p_overtime_mode: body.overtimeMode,
-    p_paid_leave_mode: body.paidLeaveMode,
     p_effective_from: body.effectiveFrom,
     p_actor_user_id: auth.actor.id,
     p_note: typeof body.note === "string" ? body.note.trim() || null : null,
@@ -100,6 +99,9 @@ export async function POST(request: Request) {
     invalid_fixed_monthly_effective_date: { code: "INVALID_FIXED_MONTHLY_EFFECTIVE_DATE", http: 400 },
     invalid_contract: { code: "INVALID_CONTRACT", http: 400 },
     contract_not_found: { code: "CONTRACT_REVISION_CONFLICT", http: 409 },
+    work_schedule_not_found: { code: "WORK_SCHEDULE_NOT_FOUND", http: 400 },
+    work_schedule_overlap: { code: "WORK_SCHEDULE_OVERLAP", http: 409 },
+    invalid_work_schedule: { code: "INVALID_WORK_SCHEDULE", http: 400 },
   };
   if (result.status !== "corrected" || !result.contract) {
     const mapped = statusCodes[String(result.status)] ?? { code: "PAYROLL_CONTRACT_CORRECTION_FAILED", http: 400 };

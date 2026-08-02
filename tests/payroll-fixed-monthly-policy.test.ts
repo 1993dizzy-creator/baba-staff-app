@@ -58,26 +58,27 @@ test("contract money fields share formatting and zero-only focus convenience", (
   assert.match(settings, /baseSalary: Number\(form\.baseSalary\)/);
 });
 
-test("owner contract UI is fixed monthly while regular options stay unchanged", () => {
+test("owner contract UI stays fixed monthly while regular contracts use one hidden basis", () => {
   assert.match(settings, /selected\?\.position\?\.toLowerCase\(\) === "owner"/);
   assert.match(settings, /calculationBasis: "fixed_monthly"/);
   assert.match(settings, /payrollLabel\(l, "fixed_monthly"\)/);
   assert.match(settings, /!selectedIsOwner && form\.payType === "monthly"/);
-  assert.match(settings, /!selectedIsOwner \? <Field label=/);
-  assert.match(settings, /form\.payType === "hourly" \? \["minute"\] : \["minute", "day"\]/);
+  assert.match(settings, /calculationBasis: selectedIsOwner \? "fixed_monthly" : "minute"/);
+  assert.doesNotMatch(settings, /options=\{\s*form\.payType === "hourly"/);
   assert.match(settings, /isMonthFirstDate\(form\.effectiveFrom\)/);
   assert.match(settings, /매월 고정 지급 계약은 매월 1일부터 적용할 수 있습니다/);
   assert.match(settings, /Hợp đồng trả cố định hàng tháng chỉ có thể áp dụng từ ngày đầu tiên của tháng/);
 });
 
-test("contract API validates position and uses the private v3 RPC", () => {
+test("contract API validates position and uses the schedule-aware private v4 RPC", () => {
   assert.match(contractsRoute, /select\("id,position,is_active"\)/);
   assert.match(contractsRoute, /targetIsOwner/);
   assert.match(contractsRoute, /!targetIsOwner && body\.calculationBasis === "fixed_monthly"/);
-  assert.match(contractsRoute, /payroll_create_contract_version_v3/);
+  assert.match(contractsRoute, /payroll_create_contract_version_v4/);
+  assert.match(contractsRoute, /scheduledMinutesPerDay/);
   assert.match(contractsRoute, /!isMonthFirstDate\(body\.effectiveFrom\)/);
   assert.match(contractsRoute, /INVALID_FIXED_MONTHLY_EFFECTIVE_DATE/);
-  assert.ok(contractsRoute.indexOf("INVALID_FIXED_MONTHLY_EFFECTIVE_DATE") < contractsRoute.indexOf('rpc("payroll_create_contract_version_v3"'));
+  assert.ok(contractsRoute.indexOf("INVALID_FIXED_MONTHLY_EFFECTIVE_DATE") < contractsRoute.indexOf('rpc("payroll_create_contract_version_v4"'));
 });
 
 test("fixed monthly payroll creates one month item before attendance processing", () => {

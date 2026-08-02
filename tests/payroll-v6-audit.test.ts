@@ -58,6 +58,7 @@ test("legacy recalculate and unfinalize are blocked while v3 non-recalculate com
   assert.doesNotMatch(read("app/api/admin/payroll/runs/[runId]/route.ts"), /rpc\("payroll_recalculate_run_v3"/);
   assert.match(combined, /payrollRpcVersion\(run\.engine_version\)/);
   assert.equal(payrollRpcVersion("monthly-payroll-v6"), "v4");
+  assert.equal(payrollRpcVersion("monthly-payroll-v7"), "v4");
   assert.equal(payrollRpcVersion("monthly-payroll-v5"), "v3");
   assert.equal(payrollRpcVersion("unknown"), null);
   assert.equal(payrollRunActionGuard("monthly-payroll-v5", "recalculate"), "PAYROLL_LEGACY_RUN_RECALC_UNSUPPORTED");
@@ -66,11 +67,11 @@ test("legacy recalculate and unfinalize are blocked while v3 non-recalculate com
   assert.equal(payrollRunActionGuard("monthly-payroll-v6", "recalculate"), null);
 });
 
-test("new runs are v6-only and operational preflight checks zero draft ledgers", () => {
+test("new runs use v7 while v6 operational preflight remains historical evidence", () => {
   const create = read("app/api/admin/payroll/runs/route.ts");
   const engine = read("lib/payroll/monthly-run.ts");
   const preflight = read("supabase/payroll_work_policy_penalties_v6_preflight.sql");
-  assert.match(engine, /PAYROLL_RUN_ENGINE_VERSION = "monthly-payroll-v6"/);
+  assert.match(engine, /PAYROLL_RUN_ENGINE_VERSION = "monthly-payroll-v7"/);
   assert.match(create, /payroll_create_run_v4/);
   assert.doesNotMatch(create, /payroll_create_run_v3/);
   assert.match(preflight, /count\(\*\) as total_runs/);
