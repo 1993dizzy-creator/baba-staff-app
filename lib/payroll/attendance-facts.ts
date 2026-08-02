@@ -119,6 +119,7 @@ export function normalizeAttendanceDayFacts(input: {
     scheduledMinutes,
     actualMinutes,
     scheduledOverlapMinutes: overlap,
+    manualLateNormalized: input.manualLateNormalized === true,
     lateMinutes: late,
     earlyLeaveMinutes: early,
     rawEarlyLeaveMinutes: rawEarly,

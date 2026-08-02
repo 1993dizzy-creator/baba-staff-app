@@ -56,6 +56,6 @@ export function applyUnifiedPayrollWorkPolicy(input: Parameters<typeof applyPayr
   return { recognizedMinutes, recognizedWorkdays: recognizedMinutes / input.contract.standardMinutesPerDay, workAmount: input.minuteRate * recognizedMinutes, automaticLatePenalty: 0, automaticEarlyLeavePenalty: 0, deductionEarlyLeaveMinutes: 0, lateRequiresReview: false, earlyLeaveRequiresReview: false };
 }
 
-export function selectUnifiedRecognizedMinutes(input:{scheduledMinutes:number;scheduledOverlapMinutes:number;actualMinutes:number;lateMinutes:number;earlyLeaveMinutes:number}) {
-  return input.lateMinutes === 0 && input.earlyLeaveMinutes === 0 ? input.scheduledMinutes : input.scheduledOverlapMinutes;
+export function selectUnifiedRecognizedMinutes(input:{scheduledMinutes:number;scheduledOverlapMinutes:number;actualMinutes:number;lateMinutes:number;earlyLeaveMinutes:number;manualLateNormalized:boolean}) {
+  return !input.manualLateNormalized && input.lateMinutes === 0 && input.earlyLeaveMinutes === 0 ? input.scheduledMinutes : input.scheduledOverlapMinutes;
 }

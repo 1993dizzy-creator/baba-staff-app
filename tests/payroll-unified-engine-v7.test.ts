@@ -52,13 +52,12 @@ test("monthly and daily unified engine prorate only by recognized scheduled minu
 function recognized(checkInAt:string,checkOutAt:string,lateGraceMinutes=0,earlyLeaveGraceMinutes=0,manualLateNormalized=false){
   const schedule:WorkScheduleVersion={id:1,userId:23,startTime:"16:00",endTime:"01:00",unpaidBreakMinutes:0,effectiveFrom:"2026-08-01",effectiveTo:null,revision:1,changeReason:null};
   const facts=normalizeAttendanceDayFacts({userId:23,businessDate:"2026-08-03",schedule,lateGraceMinutes,earlyLeaveGraceMinutes,manualLateNormalized,attendanceRecord:{id:1,status:"done",checkInAt,checkOutAt,approvalStatus:"approved"}});
-  return {facts,minutes:selectUnifiedRecognizedMinutes({scheduledMinutes:facts.scheduledMinutes!,scheduledOverlapMinutes:facts.scheduledOverlapMinutes!,actualMinutes:facts.actualMinutes!,lateMinutes:facts.lateMinutes,earlyLeaveMinutes:facts.earlyLeaveMinutes})};
+  return {facts,minutes:selectUnifiedRecognizedMinutes({scheduledMinutes:facts.scheduledMinutes!,scheduledOverlapMinutes:facts.scheduledOverlapMinutes!,actualMinutes:facts.actualMinutes!,lateMinutes:facts.lateMinutes,earlyLeaveMinutes:facts.earlyLeaveMinutes,manualLateNormalized:facts.manualLateNormalized})};
 }
 
 test("normal and grace-qualified attendance receives the full scheduled day",()=>{
   assert.equal(recognized("2026-08-03T16:00:00+07:00","2026-08-04T01:00:00+07:00").minutes,540);
   assert.equal(recognized("2026-08-03T16:05:00+07:00","2026-08-04T00:55:00+07:00",10,10).minutes,540);
-  assert.equal(recognized("2026-08-03T18:00:00+07:00","2026-08-04T01:00:00+07:00",0,0,true).minutes,540);
 });
 
 test("late and early leave recognize only overlap inside the schedule",()=>{
@@ -107,12 +106,35 @@ test("Diep-equivalent 200-minute late shift pays 319 minutes then deducts half a
   assert.equal(Math.round(work.workAmount)-penalty.amount,29665);
 });
 
-test("normalized late receives the full schedule and produces no late deduction",()=>{
-  const attendance=recognized("2026-08-03T18:00:00+07:00","2026-08-04T01:00:00+07:00",0,0,true);
-  const rates=calculatePayrollRates({...contract,standardMinutesPerDay:540});
-  const penalty=calculateLatePenalty({lateMinutes:attendance.facts.lateMinutes,minuteRate:rates.minuteRate,dayRate:rates.dayRate,thresholdMinutes:20,minorPenaltyMinutes:60,majorPenaltyRateBp:5000});
-  assert.equal(attendance.minutes,540);
+test("normalized late keeps actual overlap and produces no late deduction",()=>{
+  const schedule:WorkScheduleVersion={id:1,userId:5,startTime:"16:00",endTime:"01:00",unpaidBreakMinutes:0,effectiveFrom:"2026-08-01",effectiveTo:null,revision:1,changeReason:null};
+  const record={id:1197,status:"done",checkInAt:"2026-08-03T19:20:00+07:00",checkOutAt:"2026-08-04T00:39:00+07:00",approvalStatus:"approved",storedLateMinutes:0,storedEarlyLeaveMinutes:0,storedWorkMinutes:319};
+  const facts=normalizeAttendanceDayFacts({userId:5,businessDate:"2026-08-03",schedule,lateGraceMinutes:0,earlyLeaveGraceMinutes:90,manualLateNormalized:true,attendanceRecord:record});
+  const minutes=selectUnifiedRecognizedMinutes({scheduledMinutes:facts.scheduledMinutes!,scheduledOverlapMinutes:facts.scheduledOverlapMinutes!,actualMinutes:facts.actualMinutes!,lateMinutes:facts.lateMinutes,earlyLeaveMinutes:facts.earlyLeaveMinutes,manualLateNormalized:facts.manualLateNormalized});
+  const normalizedContract={...contract,payType:"monthly" as const,baseSalary:8_000_000,fixedRaiseAmount:500_000,standardWorkdays:26,standardMinutesPerDay:540};
+  const rates=calculatePayrollRates(normalizedContract,9_500_000);
+  const work=applyPayrollWorkPolicy({contract:normalizedContract,actualRecognizedMinutes:minutes,dayRate:rates.dayRate,minuteRate:rates.minuteRate,lateMinutes:facts.lateMinutes,earlyLeaveMinutes:facts.earlyLeaveMinutes});
+  const penalty=calculateLatePenalty({lateMinutes:facts.lateMinutes,minuteRate:rates.minuteRate,dayRate:rates.dayRate,thresholdMinutes:20,minorPenaltyMinutes:60,majorPenaltyRateBp:5000});
+  assert.equal(facts.manualLateNormalized,true);
+  assert.equal(facts.lateMinutes,0);
+  assert.equal(facts.actualMinutes,319);
+  assert.equal(facts.stored.workMinutes,319);
+  assert.equal(record.checkInAt,"2026-08-03T19:20:00+07:00");
+  assert.equal(record.checkOutAt,"2026-08-04T00:39:00+07:00");
+  assert.equal(minutes,319);
+  assert.notEqual(minutes,540);
+  assert.equal(minutes/540,319/540);
+  assert.equal(Math.round(work.workAmount),215848);
   assert.deepEqual(penalty,{tier:"none",amount:0});
+});
+
+test("preview, run creation, and recalculation share the same monthly snapshot calculation",()=>{
+  const overviewRoute=fs.readFileSync(path.join(process.cwd(),"app/api/admin/payroll/overview/route.ts"),"utf8");
+  const runsRoute=fs.readFileSync(path.join(process.cwd(),"app/api/admin/payroll/runs/route.ts"),"utf8");
+  const runRoute=fs.readFileSync(path.join(process.cwd(),"app/api/admin/payroll/runs/[runId]/route.ts"),"utf8");
+  for(const source of [overviewRoute,runsRoute,runRoute]) assert.match(source,/loadPayrollMonthSnapshot/);
+  assert.match(runsRoute,/p_employees:snapshot\.employees/);
+  assert.match(runRoute,/p_employees: snapshot\.employees/);
 });
 
 test("late deduction snapshot keeps all inputs while early-leave deduction remains absent",()=>{

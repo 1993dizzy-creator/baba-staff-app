@@ -68,6 +68,7 @@ export type AttendanceDayFacts = {
   scheduledMinutes: number | null;
   actualMinutes: number | null;
   scheduledOverlapMinutes: number | null;
+  manualLateNormalized: boolean;
   lateMinutes: number;
   earlyLeaveMinutes: number;
   rawEarlyLeaveMinutes: number;
