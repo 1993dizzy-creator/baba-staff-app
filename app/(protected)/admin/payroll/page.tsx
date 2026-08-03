@@ -37,11 +37,11 @@ export default function AdminPayrollPage() {
   const [expandedUserId,setExpandedUserId] = useState<number|null>(null);
   const [confirm,setConfirm] = useState(false); const [preview,setPreview] = useState<Preview|null>(null); const [busy,setBusy] = useState(false);
 
-  const refreshOverview=useCallback(async(signal?:AbortSignal)=>{setOverviewLoading(true);setOverviewError("");const response=await fetch(`/api/admin/payroll/overview?month=${month}`,{cache:"no-store",signal});const data=await response.json();if(!response.ok)throw new Error(data.code);setOverview(data);setOverviewLoading(false)},[month]);
+  const refreshOverview=useCallback(async(signal?:AbortSignal)=>{setOverviewLoading(true);setOverviewError("");try{const response=await fetch(`/api/admin/payroll/overview?month=${month}`,{cache:"no-store",signal});const data=await response.json();if(!response.ok)throw new Error(data.code);setOverview(data);return true}catch(error){if((error as Error).name!=="AbortError")setOverviewError(overviewText.loadError);return false}finally{if(!signal?.aborted)setOverviewLoading(false)}},[month,overviewText.loadError]);
 
   const loadRuns = useCallback(async(signal?:AbortSignal) => { setLedgerLoading(true); setLedgerError(""); try { const response=await fetch("/api/admin/payroll/runs",{cache:"no-store",signal}); const data=await response.json(); if(!response.ok) throw new Error(data.message); setRuns(data.runs??[]); } catch(error) { if((error as Error).name!=="AbortError") setLedgerError(vi?"Không thể tải danh sách sổ lương.":"급여 장부 목록을 불러오지 못했습니다."); } finally { setLedgerLoading(false); } },[vi]);
   useEffect(()=>{const controller=new AbortController();void loadRuns(controller.signal);return()=>controller.abort()},[loadRuns]);
-  useEffect(()=>{const controller=new AbortController();setOverview(null);setExpandedUserId(null);void refreshOverview(controller.signal).catch(error=>{if(error.name!=="AbortError"){setOverviewError(overviewText.loadError);setOverviewLoading(false)}});return()=>controller.abort()},[refreshOverview,overviewText.loadError]);
+  useEffect(()=>{const controller=new AbortController();setOverview(null);setExpandedUserId(null);void refreshOverview(controller.signal);return()=>controller.abort()},[refreshOverview]);
 
   const selectedRun=useMemo(()=>runs.find(run=>run.payroll_month.slice(0,7)===month&&run.status!=="cancelled"),[runs,month]);
   const supported=month>="2026-07";

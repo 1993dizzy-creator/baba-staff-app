@@ -41,7 +41,7 @@ export function CompensationCard({
   lang: "ko" | "vi";
   month: string;
   future: boolean;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<boolean>;
 }) {
   const t = payrollOverviewText[lang];
   const attendance = attendanceText[lang];
@@ -232,7 +232,7 @@ function AdjustmentModal({
   kind: "incentive" | "penalty";
   lang: "ko" | "vi";
   close: () => void;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<boolean>;
 }) {
   const t = payrollOverviewText[lang];
   const [amount, setAmount] = useState("");
@@ -242,52 +242,115 @@ function AdjustmentModal({
   const [cancelTarget, setCancelTarget] =
     useState<PayrollMonthlyAdjustment | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [mutationCompleted, setMutationCompleted] = useState(false);
   const list = employee.adjustments.filter((item) => item.kind === kind);
+  const saveError =
+    lang === "vi"
+      ? "Không thể thêm điều chỉnh lương."
+      : "급여 조정 내역을 등록하지 못했습니다.";
+  const cancelError =
+    lang === "vi"
+      ? "Không thể hủy điều chỉnh lương."
+      : "급여 조정 내역을 취소하지 못했습니다.";
+  const refreshError =
+    lang === "vi"
+      ? "Điều chỉnh đã được lưu nhưng không thể tải lại thông tin lương. Vui lòng đóng cửa sổ và kiểm tra lại."
+      : "조정 내역은 반영되었지만 급여 정보를 새로 불러오지 못했습니다. 창을 닫고 다시 확인해주세요.";
+  async function responseError(response: Response, fallback: string) {
+    try {
+      const body = await response.text();
+      if (!body) return fallback;
+      const data = JSON.parse(body) as { message?: string; code?: string };
+      if (typeof data.message === "string" && data.message) return data.message;
+      if (typeof data.code === "string" && data.code) return data.code;
+      return fallback;
+    } catch {
+      return fallback;
+    }
+  }
   async function save() {
-    const response = await fetch("/api/admin/payroll/adjustments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId: employee.userId,
-        month,
-        kind,
-        category: "manual",
-        amount: Number(amount),
-        businessDate: date,
-        reason,
-        note,
-      }),
-    });
-    if (response.ok) {
-      await refresh();
+    if (busy || mutationCompleted) return;
+    setError("");
+    setBusy(true);
+    let completed = false;
+    try {
+      const response = await fetch("/api/admin/payroll/adjustments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: employee.userId,
+          month,
+          kind,
+          category: "manual",
+          amount: Number(amount),
+          businessDate: date,
+          reason,
+          note,
+        }),
+      });
+      if (!response.ok) throw new Error(await responseError(response, saveError));
+      completed = true;
+      setMutationCompleted(true);
+      if (!(await refresh())) throw new Error(refreshError);
       close();
+    } catch (reason) {
+      setError(
+        completed
+          ? refreshError
+          : reason instanceof Error
+            ? reason.message || saveError
+            : saveError,
+      );
+    } finally {
+      setBusy(false);
     }
   }
   async function cancel() {
-    if (!cancelTarget || !cancelReason.trim()) return;
-    const response = await fetch("/api/admin/payroll/adjustments", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: cancelTarget.id,
-        cancellationReason: cancelReason,
-      }),
-    });
-    if (response.ok) {
-      await refresh();
+    if (busy || mutationCompleted || !cancelTarget || !cancelReason.trim()) return;
+    setError("");
+    setBusy(true);
+    let completed = false;
+    try {
+      const response = await fetch("/api/admin/payroll/adjustments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: cancelTarget.id,
+          cancellationReason: cancelReason,
+        }),
+      });
+      if (!response.ok)
+        throw new Error(await responseError(response, cancelError));
+      completed = true;
+      setMutationCompleted(true);
+      if (!(await refresh())) throw new Error(refreshError);
       close();
+    } catch (reason) {
+      setError(
+        completed
+          ? refreshError
+          : reason instanceof Error
+            ? reason.message || cancelError
+            : cancelError,
+      );
+    } finally {
+      setBusy(false);
     }
   }
   return (
     <PayrollModal
       title={`${month} ${kind === "incentive" ? t.incentive : t.penalty}`}
       closeLabel={lang === "vi" ? "Đóng" : "닫기"}
-      onClose={close}
+      onClose={() => {
+        if (!busy) close();
+      }}
       footer={
         cancelTarget ? (
           <button
             style={s.danger}
-            disabled={!cancelReason.trim()}
+            disabled={busy || mutationCompleted || !cancelReason.trim()}
             onClick={cancel}
           >
             {t.cancel}
@@ -295,7 +358,7 @@ function AdjustmentModal({
         ) : (
           <button
             style={s.primary}
-            disabled={!reason || Number(amount) < 1}
+            disabled={busy || mutationCompleted || !reason || Number(amount) < 1}
             onClick={save}
           >
             {kind === "incentive" ? t.addIncentive : t.addPenalty}
@@ -342,12 +405,21 @@ function AdjustmentModal({
                 lang === "vi" ? "vi-VN" : "ko-KR",
               )}
             </small>
-            <button style={s.cancel} onClick={() => setCancelTarget(item)}>
+            <button
+              style={s.cancel}
+              disabled={busy}
+              onClick={() => setCancelTarget(item)}
+            >
               {t.cancel}
             </button>
           </article>
         ))}
       </div>
+      {error && (
+        <p role="alert" style={s.error}>
+          {error}
+        </p>
+      )}
       {cancelTarget ? (
         <label style={s.field}>
           {t.cancellationReason}
@@ -539,6 +611,13 @@ const s = {
     color: "#b91c1c",
     borderRadius: 8,
     padding: "5px 8px",
+  },
+  error: {
+    margin: 0,
+    padding: 10,
+    borderRadius: 9,
+    background: "#fef2f2",
+    color: "#b91c1c",
   },
   list: { display: "grid", gap: 7 },
   item: {
