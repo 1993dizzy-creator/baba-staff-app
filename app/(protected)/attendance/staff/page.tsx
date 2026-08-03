@@ -557,7 +557,7 @@ export default function AttendanceStaffPage() {
                         style={staffSummaryButtonStyle}
                       >
                         <div style={staffLeftStyle}>
-                          <EmployeeNameWithLevel name={user.name} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} />
+                          <EmployeeNameWithLevel name={user.name} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} showDisabledBadge />
                           <span style={staffMetaStyle}>
                             {user.position
                               ? t.positions?.[user.position as keyof typeof t.positions] || user.position
@@ -731,7 +731,7 @@ export default function AttendanceStaffPage() {
         <div style={modalOverlayStyle}>
           <div style={modalBoxStyle}>
             <div style={modalTitleStyle}>
-              <EmployeeNameWithLevel name={manualModal.user.name} levelInfo={manualModal.user.levelInfo} lang={lang} nameStyle={modalTitleStyle} />{" "}
+              <EmployeeNameWithLevel name={manualModal.user.name} levelInfo={manualModal.user.levelInfo} lang={lang} nameStyle={modalTitleStyle} showDisabledBadge />{" "}
               {manualModal.type === "check_in"
                 ? t.checkInProcess
                 : manualModal.type === "check_out"

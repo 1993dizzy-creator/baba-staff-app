@@ -45,11 +45,15 @@ test("shared employee name component owns the badge eligibility guard", () => {
   assert.match(component, /textOverflow: "ellipsis"/);
 });
 
-test("disabled X badge is opt-in on admin employee and payroll screens", () => {
+test("disabled X badge is opt-in on employee, payroll, and attendance screens", () => {
+  const attendanceStaff = read("app/(protected)/attendance/staff/page.tsx");
+  const attendanceLeave = read("app/(protected)/attendance/leave/page.tsx");
+
   assert.match(read("app/(protected)/admin/users/page.tsx"), /showDisabledBadge/);
   assert.match(read("app/(protected)/admin/payroll/page.tsx"), /EmployeeLevelDisabledBadgeScope/);
+  assert.equal(attendanceStaff.match(/showDisabledBadge/g)?.length, 2);
+  assert.equal(attendanceLeave.match(/showDisabledBadge/g)?.length, 2);
   assert.doesNotMatch(read("components/bar/BarZoneDetail.tsx"), /showDisabledBadge/);
-  assert.doesNotMatch(read("app/(protected)/attendance/staff/page.tsx"), /showDisabledBadge/);
 });
 
 test("employee list APIs select only explicit level inputs and calculate levelInfo", () => {

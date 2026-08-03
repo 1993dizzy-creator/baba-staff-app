@@ -890,7 +890,7 @@ export default function AttendanceLeavePage() {
                         >
                           {meta.emoji}
                         </span>
-                        <EmployeeNameWithLevel name={`${index + 1}. ${user.name}`} levelInfo={user.levelInfo} lang={lang} nameStyle={userNameStyle} />
+                        <EmployeeNameWithLevel name={`${index + 1}. ${user.name}`} levelInfo={user.levelInfo} lang={lang} nameStyle={userNameStyle} showDisabledBadge />
                         <span style={userMetaStyle}>
                           {t.positions?.[user.position as keyof typeof t.positions] || user.position || user.username}
                         </span>
@@ -1012,7 +1012,7 @@ export default function AttendanceLeavePage() {
 
                   {group.items.map((item) => (
                     <div key={item.user.id} style={summaryRowStyle}>
-                      <EmployeeNameWithLevel name={item.user.name} levelInfo={item.user.levelInfo} lang={lang} nameStyle={userNameStyle} />
+                      <EmployeeNameWithLevel name={item.user.name} levelInfo={item.user.levelInfo} lang={lang} nameStyle={userNameStyle} showDisabledBadge />
                       <span style={userMetaStyle}>
                         {t.positions?.[item.user.position as keyof typeof t.positions] || item.user.position || item.user.username}
                       </span>
