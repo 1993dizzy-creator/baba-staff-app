@@ -38,9 +38,18 @@ test("native employee options use the shared level label", () => {
 test("shared employee name component owns the badge eligibility guard", () => {
   const component = read("components/employee/EmployeeNameWithLevel.tsx");
   assert.match(component, /levelInfo\?\.eligible === true && levelInfo\.level !== null/);
+  assert.match(component, /reason === "PROGRAM_DISABLED"/);
+  assert.match(component, /showDisabledBadge = false/);
   assert.match(component, /EmployeeLevelBadge/);
   assert.match(component, /whiteSpace: "nowrap"/);
   assert.match(component, /textOverflow: "ellipsis"/);
+});
+
+test("disabled X badge is opt-in on admin employee and payroll screens", () => {
+  assert.match(read("app/(protected)/admin/users/page.tsx"), /showDisabledBadge/);
+  assert.match(read("app/(protected)/admin/payroll/page.tsx"), /EmployeeLevelDisabledBadgeScope/);
+  assert.doesNotMatch(read("components/bar/BarZoneDetail.tsx"), /showDisabledBadge/);
+  assert.doesNotMatch(read("app/(protected)/attendance/staff/page.tsx"), /showDisabledBadge/);
 });
 
 test("employee list APIs select only explicit level inputs and calculate levelInfo", () => {

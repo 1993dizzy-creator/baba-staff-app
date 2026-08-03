@@ -55,6 +55,11 @@ export async function POST(req: Request) {
     const role = normalizeText(body.role) || "staff";
     const position = normalizeText(body.position) || "staff";
     const lang = getLang(body.lang);
+    const levelProgramEnabled = typeof body.level_program_enabled === "boolean"
+      ? body.level_program_enabled
+      : !["owner", "master"].includes(role);
+    const levelChangeReason = normalizeText(body.level_change_reason)
+      || (lang === "vi" ? "Chính sách cấp khi tạo nhân viên" : "직원 생성 시 레벨 정책");
 
     if (!username || !password || !name) {
       return NextResponse.json(
@@ -84,6 +89,14 @@ export async function POST(req: Request) {
       );
     }
 
+    const hireDate = nullableDate(body.hire_date);
+    if (levelProgramEnabled && !hireDate) {
+      return NextResponse.json(
+        { ok: false, error: lang === "vi" ? "Cần có ngày vào làm để áp dụng cấp." : "레벨을 적용하려면 입사일이 필요합니다." },
+        { status: 400 },
+      );
+    }
+
     const { data: existing, error: existingError } = await supabaseServer
       .from("users")
       .select("id")
@@ -102,7 +115,7 @@ export async function POST(req: Request) {
     }
 
     const { data, error } = await supabaseServer.rpc(
-      "employee_create_with_schedule_v1",
+      "employee_create_with_schedule_v2",
       { p_employee: {
         username,
         password,
@@ -113,13 +126,14 @@ export async function POST(req: Request) {
         position,
         gender: nullableText(body.gender),
         birth_date: nullableDate(body.birth_date),
-        hire_date: nullableDate(body.hire_date),
+        hire_date: hireDate,
         termination_date: null,
         work_start_time: nullableTime(body.work_start_time),
         work_end_time: nullableTime(body.work_end_time),
         is_active: body.is_active === false ? false : true,
         is_system_account: false,
-      }, p_actor_id: auth.actor.id, p_actor_username: auth.actor.username },
+      }, p_level_program_enabled: levelProgramEnabled, p_change_reason: levelChangeReason,
+        p_actor_id: auth.actor.id, p_actor_username: auth.actor.username },
     );
 
     if (error) {

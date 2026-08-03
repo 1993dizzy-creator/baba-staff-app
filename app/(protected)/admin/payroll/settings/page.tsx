@@ -511,6 +511,7 @@ export default function PayrollSettingsPage() {
                           name={user.name ?? user.username}
                           levelInfo={user.levelInfo}
                           lang={lang}
+                          showDisabledBadge
                           nameStyle={s.personName}
                         />
                         <small style={s.personMeta}>{employeeMetaLabel(user)}</small>
@@ -540,6 +541,7 @@ export default function PayrollSettingsPage() {
                     name={selected.name ?? selected.username}
                     levelInfo={selected.levelInfo}
                     lang={lang}
+                    showDisabledBadge
                     nameStyle={s.summaryName}
                   />
                   <span style={s.sectionHelp}>{employeeMetaLabel(selected)}</span>

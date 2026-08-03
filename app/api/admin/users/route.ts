@@ -4,11 +4,11 @@ import { requireRole } from "@/lib/auth/server-auth";
 import { isDateKey, validateEmploymentDates } from "@/lib/employment/eligibility";
 import { enforceTerminationAccountPolicy, getVietnamDateKey } from "@/lib/employment/termination-policy";
 import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
-import { getEmployeeLevelInfo, withEmployeeLevelInfo } from "@/lib/employee-level/server";
+import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLevelProgramVersions, withEmployeeLevelInfo } from "@/lib/employee-level/server";
 import { validateEmployeeLevelConfiguration } from "@/lib/employee-level/validation";
 import {
   isEmployeeLevelEligibleRole,
-  isEmployeeLevelManualRole,
+  type EmployeeLevelProgramVersion,
   type EmployeeLevelValidationCode,
 } from "@/lib/employee-level/types";
 import {
@@ -19,6 +19,32 @@ import {
 type JsonObject = Record<string, unknown>;
 
 type UserRow = PublicEmployeeUserRow;
+
+function nextMonthStart(dateKey: string) {
+  const [year, month] = dateKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+}
+
+function withLevelPolicyState(
+  user: UserRow,
+  currentVersion: EmployeeLevelProgramVersion | undefined,
+  nextVersion: EmployeeLevelProgramVersion | undefined,
+  today: string,
+) {
+  const currentUser = applyEmployeeLevelProgramVersion(user, currentVersion);
+  const nextUser = applyEmployeeLevelProgramVersion(user, nextVersion);
+  const currentEnabled = isEmployeeLevelEligibleRole(currentUser.role, currentUser.level_program_enabled);
+  const nextEnabled = isEmployeeLevelEligibleRole(nextUser.role, nextUser.level_program_enabled);
+  return {
+    ...withEmployeeLevelInfo(currentUser, today),
+    levelProgramPolicy: {
+      currentEnabled,
+      nextEnabled,
+      hasScheduledChange: currentEnabled !== nextEnabled,
+      nextEffectiveFrom: nextMonthStart(today),
+    },
+  };
+}
 
 const USER_SELECT = `
   id,
@@ -224,9 +250,18 @@ export async function GET(req: Request) {
       throw new Error(`Failed to fetch users: ${error.message}`);
     }
 
+    const users = sortUsers((data || []).map(sanitizePublicEmployeeUser));
+    const today = getVietnamDateKey();
+    const userIds = users.map((user) => Number(user.id));
+    const [versions, nextVersions] = await Promise.all([
+      loadEmployeeLevelProgramVersions(userIds, today),
+      loadEmployeeLevelProgramVersions(userIds, nextMonthStart(today)),
+    ]);
     return NextResponse.json({
       ok: true,
-      users: sortUsers((data || []).map(sanitizePublicEmployeeUser)).map((user) => withEmployeeLevelInfo(user, getVietnamDateKey())),
+      users: users.map((user) => withLevelPolicyState(
+        user, versions.get(Number(user.id)), nextVersions.get(Number(user.id)), today,
+      )),
     });
   } catch (error) {
     console.error("[ADMIN_USERS_GET_ERROR]", error);
@@ -260,7 +295,9 @@ export async function PATCH(req: Request) {
     const inputUpdates = (body.updates || {}) as JsonObject;
     if (body.action === "rehire") {
       const rehireDate = body.rehireDate;
-      if (body.confirmPreviousPayrollCompleted !== true || !isDateKey(rehireDate)) {
+      const rehireLevelEnabled = body.levelProgramEnabled;
+      const changeReason = normalizeText(body.changeReason);
+      if (body.confirmPreviousPayrollCompleted !== true || !isDateKey(rehireDate) || typeof rehireLevelEnabled !== "boolean" || !changeReason) {
         return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng xác nhận và nhập ngày làm lại hợp lệ." : "확인 후 올바른 복귀일을 입력해주세요." }, { status: 400 });
       }
       const { data: target } = await supabaseServer.from("users").select(USER_SELECT).eq("id", id).maybeSingle();
@@ -268,17 +305,31 @@ export async function PATCH(req: Request) {
         return NextResponse.json({ ok: false, error: lang === "vi" ? "Không thể xử lý làm lại cho tài khoản này." : "이 계정은 복귀 처리할 수 없습니다." }, { status: 409 });
       }
       const today = getVietnamDateKey();
-      const previousInfo = getEmployeeLevelInfo(target as UserRow, today);
-      const { data, error } = await supabaseServer.rpc("employee_rehire_with_level_reset_v1", {
+      const previousVersions = await loadEmployeeLevelProgramVersions([Number(id)], today);
+      const previousInfo = getEmployeeLevelInfo(
+        applyEmployeeLevelProgramVersion(target as UserRow, previousVersions.get(Number(id))),
+        today,
+      );
+      const { data, error } = await supabaseServer.rpc("employee_rehire_with_level_policy_v2", {
         p_user_id: id, p_rehire_date: rehireDate, p_actor_id: auth.actor.id,
         p_actor_username: auth.actor.username,
-        p_change_reason: lang === "vi" ? "Đặt lại chính sách cấp khi làm lại" : "복귀에 따른 레벨 정책 초기화",
+        p_level_program_enabled: rehireLevelEnabled,
+        p_change_reason: changeReason,
         p_previous_level: previousInfo.level,
       });
       if (error) throw new Error(`Failed to rehire user: ${error.message}`);
+      const [versions, nextVersions] = await Promise.all([
+        loadEmployeeLevelProgramVersions([Number(id)], today),
+        loadEmployeeLevelProgramVersions([Number(id)], nextMonthStart(today)),
+      ]);
       return NextResponse.json({
         ok: true,
-        user: withEmployeeLevelInfo(sanitizePublicEmployeeUser(data), today),
+        user: withLevelPolicyState(
+          sanitizePublicEmployeeUser(data),
+          versions.get(Number(id)),
+          nextVersions.get(Number(id)),
+          today,
+        ),
       });
     }
     const requestedRole = normalizeText(inputUpdates.role);
@@ -408,25 +459,44 @@ export async function PATCH(req: Request) {
     const resultingRole = Object.prototype.hasOwnProperty.call(update, "role")
       ? update.role as string | null
       : target.role;
-    let levelProgramEnabled = target.level_program_enabled;
-    if (isEmployeeLevelManualRole(resultingRole)) {
-      if (Object.prototype.hasOwnProperty.call(body, "levelProgramEnabled")) {
-        if (typeof body.levelProgramEnabled !== "boolean") {
-          return policyResponse("INVALID_LEVEL_PROGRAM_SETTING", lang);
-        }
-        levelProgramEnabled = body.levelProgramEnabled === true ? true : null;
+    const today = getVietnamDateKey();
+    const versions = await loadEmployeeLevelProgramVersions([Number(id)], today);
+    const currentVersion = versions.get(Number(id));
+    let levelProgramEnabled = currentVersion?.enabled
+      ?? isEmployeeLevelEligibleRole(resultingRole, target.level_program_enabled);
+    if (Object.prototype.hasOwnProperty.call(body, "levelProgramEnabled")) {
+      if (typeof body.levelProgramEnabled !== "boolean") {
+        return policyResponse("INVALID_LEVEL_PROGRAM_SETTING", lang);
       }
-      if (levelProgramEnabled !== true) {
-        levelBaseDateOverride = null;
+      levelProgramEnabled = body.levelProgramEnabled;
+    }
+    const requestedEffectiveFrom = normalizeText(body.levelEffectiveFrom);
+    const currentMonth = `${today.slice(0, 7)}-01`;
+    const nextMonth = nextMonthStart(today);
+    if (requestedEffectiveFrom) {
+      if (!/^\d{4}-\d{2}-01$/.test(requestedEffectiveFrom)
+        || (requestedEffectiveFrom !== currentMonth && requestedEffectiveFrom !== nextMonth)) {
+        return NextResponse.json({
+          ok: false,
+          code: "INVALID_LEVEL_EFFECTIVE_MONTH",
+          error: lang === "vi"
+            ? "Chỉ có thể chọn tháng này hoặc tháng sau."
+            : "적용 월은 이번 달 또는 다음 달만 선택할 수 있습니다.",
+        }, { status: 400 });
       }
     }
-    if (
-      target.is_system_account
-      && target.level_base_date_override !== levelBaseDateOverride
-      && levelBaseDateOverride !== null
-    ) {
-      return policyResponse("SYSTEM_ACCOUNT_NOT_ELIGIBLE", lang, 403);
+    const comparisonVersion = requestedEffectiveFrom
+      ? (await loadEmployeeLevelProgramVersions([Number(id)], requestedEffectiveFrom)).get(Number(id))
+      : currentVersion;
+    const comparisonEnabled = comparisonVersion?.enabled
+      ?? isEmployeeLevelEligibleRole(resultingRole, target.level_program_enabled);
+    const levelStateChanged = comparisonEnabled !== levelProgramEnabled;
+    const levelEffectiveFrom = levelStateChanged ? requestedEffectiveFrom : "";
+    const levelChangeReason = levelStateChanged ? normalizeText(body.levelChangeReason) : "";
+    if (levelStateChanged && (!levelEffectiveFrom || !levelChangeReason)) {
+      return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng chọn tháng áp dụng và nhập lý do thay đổi." : "적용 월과 변경 사유를 입력해주세요." }, { status: 400 });
     }
+    if (levelStateChanged) levelBaseDateOverride = levelProgramEnabled ? levelEffectiveFrom : null;
     if (target.is_system_account && levelProgramEnabled === true) {
       return policyResponse("SYSTEM_ACCOUNT_NOT_ELIGIBLE", lang, 403);
     }
@@ -438,29 +508,24 @@ export async function PATCH(req: Request) {
         hireDate: resultingHireDate,
         levelBaseDateOverride,
         terminationDate: resultingTerminationDate,
-        today: getVietnamDateKey(),
+        today,
       });
       if (!levelValidation.valid) {
         return policyResponse(validationCodeToPolicyCode(levelValidation.codes[0]), lang);
       }
     }
-    if (
-      target.termination_date
-      && (
-        target.level_base_date_override !== levelBaseDateOverride
-        || target.level_program_enabled !== levelProgramEnabled
-      )
-    ) {
+    if (target.termination_date && levelStateChanged) {
       return policyResponse("TERMINATED_EMPLOYEE_READ_ONLY", lang, 409);
     }
 
     const { data, error } = await supabaseServer.rpc(
-      "employee_update_profile_and_level_v4",
+      "employee_update_profile_and_level_v5",
       {
         p_user_id: id,
         p_updates: update,
         p_level_program_enabled: levelProgramEnabled,
-        p_base_date_override: levelBaseDateOverride,
+        p_effective_from: levelStateChanged ? levelEffectiveFrom : null,
+        p_change_reason: levelStateChanged ? levelChangeReason : null,
         p_actor_id: auth.actor.id,
         p_actor_username: auth.actor.username,
       }
@@ -470,11 +535,17 @@ export async function PATCH(req: Request) {
       throw new Error(`Failed to atomically update user: ${error.message}`);
     }
 
+    const [updatedVersions, updatedNextVersions] = await Promise.all([
+      loadEmployeeLevelProgramVersions([Number(id)], today),
+      loadEmployeeLevelProgramVersions([Number(id)], nextMonthStart(today)),
+    ]);
     return NextResponse.json({
       ok: true,
-      user: withEmployeeLevelInfo(
+      user: withLevelPolicyState(
         sanitizePublicEmployeeUser(data),
-        getVietnamDateKey()
+        updatedVersions.get(Number(id)),
+        updatedNextVersions.get(Number(id)),
+        today,
       ),
     });
   } catch (error) {

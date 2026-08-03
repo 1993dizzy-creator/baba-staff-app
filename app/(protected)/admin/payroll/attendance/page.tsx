@@ -615,7 +615,7 @@ export default function AttendanceOverviewPage() {
                                                 aria-expanded={isExpanded}
                                             >
                                                 <div style={staffLeftStyle}>
-                                                    <EmployeeNameWithLevel name={`${user.name}${age ? ` (${age})` : ""}`} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} />
+                                                    <EmployeeNameWithLevel name={`${user.name}${age ? ` (${age})` : ""}`} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} showDisabledBadge />
                                                     <span style={staffSeparatorStyle}>·</span>
                                                     <span style={staffMetaStyle}>
                                                         {user.position

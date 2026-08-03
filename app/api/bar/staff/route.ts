@@ -4,7 +4,7 @@ import { canAssignBarZone, normalizeBarPermissionValue } from "@/lib/bar/permiss
 import { getBarServerActor } from "@/lib/bar/server-auth";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getVietnamDateKey } from "@/lib/employment/termination-policy";
-import { withEmployeeLevelInfo, type EmployeeLevelUser } from "@/lib/employee-level/server";
+import { applyEmployeeLevelProgramVersion, loadEmployeeLevelProgramVersions, withEmployeeLevelInfo, type EmployeeLevelUser } from "@/lib/employee-level/server";
 
 export async function GET() {
   try {
@@ -20,10 +20,11 @@ export async function GET() {
     if (profilesError) throw profilesError;
     const colorByUser = new Map((profiles ?? []).map((profile) => [Number(profile.user_id), isBarColorKey(profile.color_key) ? profile.color_key : null]));
     const levelAsOfDate = getVietnamDateKey();
+    const versions = await loadEmployeeLevelProgramVersions((users ?? []).map((user) => Number(user.id)), levelAsOfDate);
     const staff = (users ?? [])
       .filter((user) => normalizeBarPermissionValue(user.part) === "bar")
       .map((user) => {
-        const levelInfo = withEmployeeLevelInfo(user as EmployeeLevelUser, levelAsOfDate).levelInfo;
+        const levelInfo = withEmployeeLevelInfo(applyEmployeeLevelProgramVersion(user as EmployeeLevelUser, versions.get(Number(user.id))), levelAsOfDate).levelInfo;
         return {
           id: Number(user.id),
           name: user.name || user.full_name || user.username,

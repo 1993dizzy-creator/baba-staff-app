@@ -140,8 +140,8 @@ export function buildPayrollOverviewEmployee(input: {
     unresolvedAttendanceCount,
     levelApplication: {
       currentLevel: levelInfo.level,
-      earnedRaiseCount: levelInfo.eligible ? levelInfo.earnedRaiseCount : null,
-      raiseAmountPerStep: levelInfo.eligible ? levelInfo.raiseAmountPerStep : null,
+      earnedRaiseCount: levelInfo.eligible || levelInfo.reason === "PROGRAM_DISABLED" ? levelInfo.earnedRaiseCount : null,
+      raiseAmountPerStep: levelInfo.eligible || levelInfo.reason === "PROGRAM_DISABLED" ? levelInfo.raiseAmountPerStep : null,
       accruedRaiseAmount: compensation?.levelRaiseAmount ?? null,
       status: levelStatus,
     },

@@ -1,7 +1,7 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { mapContract } from "@/lib/payroll/db-mappers";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
-import { getEmployeeLevelInfo } from "@/lib/employee-level/server";
+import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLevelProgramVersions } from "@/lib/employee-level/server";
 import { isMonthFirstDate, resolveFixedRaiseReason } from "@/lib/payroll/contract-form";
 import { mapSchedule } from "@/lib/payroll/db-mappers";
 import { scheduledMinutesPerDay } from "@/lib/payroll/work-schedule";
@@ -31,7 +31,9 @@ export async function GET(request: Request) {
     return { ...contract, auditVersion: latestAuditByContract.get(contract.id) ?? null };
   });
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  return payrollJson({ ok: true, user: { ...user, levelInfo: getEmployeeLevelInfo(user, today) }, current: contracts.find((c) => c.effectiveFrom <= today && (!c.effectiveTo || c.effectiveTo > today)) ?? null, scheduled: contracts.find((c) => c.effectiveFrom > today) ?? null, history: contracts, workSchedules: (scheduleData ?? []).map((row) => mapSchedule(row as Record<string, unknown>)) });
+  const versions = await loadEmployeeLevelProgramVersions([Number(user.id)], today);
+  const levelUser = applyEmployeeLevelProgramVersion(user, versions.get(Number(user.id)));
+  return payrollJson({ ok: true, user: { ...levelUser, levelInfo: getEmployeeLevelInfo(levelUser, today) }, current: contracts.find((c) => c.effectiveFrom <= today && (!c.effectiveTo || c.effectiveTo > today)) ?? null, scheduled: contracts.find((c) => c.effectiveFrom > today) ?? null, history: contracts, workSchedules: (scheduleData ?? []).map((row) => mapSchedule(row as Record<string, unknown>)) });
 }
 
 export async function POST(request: Request) {

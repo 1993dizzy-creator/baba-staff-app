@@ -7,6 +7,7 @@ import Container from "@/components/Container";
 import PayrollShadowPanel from "@/components/PayrollShadowPanel";
 import PayrollModal from "@/components/payroll/PayrollModal";
 import { CompensationCard, CombinedPartTotal } from "@/components/payroll/CompensationCard";
+import { EmployeeLevelDisabledBadgeScope } from "@/components/employee/EmployeeNameWithLevel";
 import { useLanguage } from "@/lib/language-context";
 import { getPartKey, getPartMeta } from "@/lib/common/parts";
 import { comparePayrollEmployees } from "@/lib/payroll/employee-sort";
@@ -55,7 +56,7 @@ export default function AdminPayrollPage() {
     <section style={styles.overviewSection} aria-busy={overviewLoading}>
       {overviewLoading?<div style={styles.state}>{overviewText.loading}</div>:overviewError?<div role="alert" style={styles.error}>{overviewError}</div>:groups.length===0?<div style={styles.state}>{overviewText.empty}</div>:groups.map(group=><section key={group.part} style={styles.partGroup}>
         <div style={{...styles.partTitle,color:group.meta.color,background:group.meta.bg,borderLeft:`4px solid ${group.meta.border}`}}><span>{group.meta.emoji}</span><span>{partLabel(l,group.part)}</span><span style={styles.partCount}>{group.employees.length}</span></div>
-        <div style={styles.staffList}>{group.employees.map(employee=><CompensationCard key={employee.userId} employee={employee} expanded={expandedUserId===employee.userId} toggle={()=>setExpandedUserId(expandedUserId===employee.userId?null:employee.userId)} lang={lang} month={month} future={overview?.future===true} refresh={()=>refreshOverview()}/>)}</div>
+        <EmployeeLevelDisabledBadgeScope><div style={styles.staffList}>{group.employees.map(employee=><CompensationCard key={employee.userId} employee={employee} expanded={expandedUserId===employee.userId} toggle={()=>setExpandedUserId(expandedUserId===employee.userId?null:employee.userId)} lang={lang} month={month} future={overview?.future===true} refresh={()=>refreshOverview()}/>)}</div></EmployeeLevelDisabledBadgeScope>
         {overview?.future?<div style={styles.partTotal}><DetailRow label={payrollOverviewText[lang].combinedSalaryTotal} value="—" strong/><small>{payrollOverviewText[lang].beforeCalculationPeriod}</small></div>:<CombinedPartTotal employees={group.employees} lang={lang}/>}
       </section>)}
     </section>

@@ -1,6 +1,14 @@
-import type { CSSProperties } from "react";
+"use client";
+
+import { createContext, useContext, type CSSProperties, type ReactNode } from "react";
 import EmployeeLevelBadge from "@/components/employee/EmployeeLevelBadge";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
+
+const DisabledBadgeContext = createContext(false);
+
+export function EmployeeLevelDisabledBadgeScope({ children }: { children: ReactNode }) {
+  return <DisabledBadgeContext.Provider value>{children}</DisabledBadgeContext.Provider>;
+}
 
 export default function EmployeeNameWithLevel({
   name,
@@ -9,6 +17,7 @@ export default function EmployeeNameWithLevel({
   className,
   style,
   nameStyle,
+  showDisabledBadge = false,
 }: {
   name: string;
   levelInfo?: EmployeeLevelInfo | null;
@@ -16,8 +25,11 @@ export default function EmployeeNameWithLevel({
   className?: string;
   style?: CSSProperties;
   nameStyle?: CSSProperties;
+  showDisabledBadge?: boolean;
 }) {
+  const showDisabledFromScope = useContext(DisabledBadgeContext);
   const showLevel = levelInfo?.eligible === true && levelInfo.level !== null;
+  const showDisabled = (showDisabledBadge || showDisabledFromScope) && levelInfo?.reason === "PROGRAM_DISABLED";
 
   return (
     <span
@@ -25,18 +37,19 @@ export default function EmployeeNameWithLevel({
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: showLevel ? 4 : 0,
+        gap: showLevel || showDisabled ? 4 : 0,
         minWidth: 0,
         maxWidth: "100%",
         whiteSpace: "nowrap",
         ...style,
       }}
     >
-      {showLevel ? (
+      {showLevel || showDisabled ? (
         <EmployeeLevelBadge
-          level={levelInfo.level!}
+          level={showLevel ? levelInfo.level! : null}
           negotiationEligible={levelInfo.negotiationEligible}
           lang={lang}
+          disabled={showDisabled}
         />
       ) : null}
       <span

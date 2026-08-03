@@ -473,7 +473,7 @@ export default function AttendanceUserDetailPage() {
             <div style={headerCardStyle}>
                 <div style={headerTopRowStyle}>
                     <div style={headerIdentityStyle}>
-                        <EmployeeNameWithLevel name={user?.name || "-"} levelInfo={user?.levelInfo} lang={lang} nameStyle={userNameStyle} />
+                        <EmployeeNameWithLevel name={user?.name || "-"} levelInfo={user?.levelInfo} lang={lang} nameStyle={userNameStyle} showDisabledBadge />
                         <div style={userMetaStyle}>
                             {user?.position
                                 ? t.positions?.[user.position as keyof typeof t.positions] || user.position

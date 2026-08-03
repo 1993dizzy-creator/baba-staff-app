@@ -5,17 +5,21 @@ export default function EmployeeLevelBadge({
   level,
   negotiationEligible,
   lang,
+  disabled = false,
 }: {
-  level: EmployeeLevel;
+  level: EmployeeLevel | null;
   negotiationEligible: boolean;
   lang: "ko" | "vi";
+  disabled?: boolean;
 }) {
-  const theme = EMPLOYEE_LEVEL_THEME[level];
+  const theme = level === null ? null : EMPLOYEE_LEVEL_THEME[level];
 
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
       <span
-        aria-label={lang === "vi" ? `Cấp nhân viên ${level}` : `직원 레벨 ${level}`}
+        aria-label={disabled
+          ? lang === "vi" ? "Không áp dụng cấp nhân viên" : "직원 레벨 미적용"
+          : lang === "vi" ? `Cấp nhân viên ${level}` : `직원 레벨 ${level}`}
         style={{
           minWidth: 16,
           height: 16,
@@ -26,18 +30,18 @@ export default function EmployeeLevelBadge({
           alignItems: "center",
           justifyContent: "center",
           flexShrink: 0,
-          background: `linear-gradient(145deg, ${theme.backgroundColor}, ${theme.borderColor})`,
-          color: theme.textColor,
-          border: `1px solid ${theme.borderColor}`,
+          background: disabled ? "#f3f4f6" : `linear-gradient(145deg, ${theme!.backgroundColor}, ${theme!.borderColor})`,
+          color: disabled ? "#374151" : theme!.textColor,
+          border: `1px solid ${disabled ? "#9ca3af" : theme!.borderColor}`,
           boxShadow: "0 1px 1px rgba(15, 23, 42, 0.08)",
           fontSize: 9,
           fontWeight: 800,
           lineHeight: 1,
         }}
       >
-        {theme.shortLabel}
+        {disabled ? "X" : theme!.shortLabel}
       </span>
-      {negotiationEligible ? (
+      {!disabled && negotiationEligible ? (
         <span aria-hidden="true" style={{ color: "#ca8a04", fontSize: 10 }}>
           ★
         </span>

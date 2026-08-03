@@ -5,7 +5,7 @@ import { isBarColorKey } from "@/lib/bar/colors";
 import type { BarZoneRecord } from "@/lib/bar/types";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getVietnamDateKey } from "@/lib/employment/termination-policy";
-import { withEmployeeLevelInfo, type EmployeeLevelUser } from "@/lib/employee-level/server";
+import { applyEmployeeLevelProgramVersion, loadEmployeeLevelProgramVersions, withEmployeeLevelInfo, type EmployeeLevelUser } from "@/lib/employee-level/server";
 
 type ZoneRow = {
   id: number;
@@ -48,6 +48,7 @@ export async function getBarZones(): Promise<BarZoneRecord[]> {
   const users = new Map((usersResult.data ?? []).map((user) => [Number(user.id), user]));
   const colors = new Map((profilesResult.data ?? []).map((profile) => [Number(profile.user_id), isBarColorKey(profile.color_key) ? profile.color_key : null]));
   const levelAsOfDate = getVietnamDateKey();
+  const versions = await loadEmployeeLevelProgramVersions(assigneeIds, levelAsOfDate);
   const signedUrls = new Map<string, string>();
   await Promise.all(rows.flatMap((row) => !row.image_path ? [] : [
     supabaseServer.storage.from("bar-zone-images").createSignedUrl(row.image_path, 3600).then(({ data: signed, error: signedError }) => {
@@ -75,7 +76,7 @@ export async function getBarZones(): Promise<BarZoneRecord[]> {
         name: user.name || user.full_name || user.username,
         isActive: user.is_active === true,
         colorKey: colors.get(Number(user.id)) ?? null,
-        levelInfo: withEmployeeLevelInfo(user as EmployeeLevelUser, levelAsOfDate).levelInfo,
+        levelInfo: withEmployeeLevelInfo(applyEmployeeLevelProgramVersion(user as EmployeeLevelUser, versions.get(Number(user.id))), levelAsOfDate).levelInfo,
       } : null,
       isActive: row.is_active,
       version: row.version,

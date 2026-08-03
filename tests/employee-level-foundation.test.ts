@@ -116,6 +116,12 @@ test("automatic-role enablement is implicit while system accounts never calculat
 test("staff roles are automatic while owner and master require explicit inclusion", () => {
   for (const role of ["manager", "leader", "staff"]) {
     assert.equal(enabled("2026-04-15", { role }).eligible, true);
+    const disabled = enabled("2026-04-15", { role, levelProgramEnabled: false });
+    assert.equal(disabled.eligible, false);
+    assert.equal(disabled.reason, "PROGRAM_DISABLED");
+    assert.equal(disabled.level, null);
+    assert.equal(disabled.earnedRaiseCount, 0);
+    assert.equal(disabled.cumulativeRaiseAmount, 0);
   }
   for (const role of ["owner", "master"]) {
     const info = enabled("2026-04-15", { role });

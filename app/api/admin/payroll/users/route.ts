@@ -2,7 +2,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 import { isPayrollEligible } from "@/lib/payroll/eligibility";
 import { getVietnamDateKey } from "@/lib/employment/termination-policy";
-import { withEmployeeLevelInfo, type EmployeeLevelUser } from "@/lib/employee-level/server";
+import { applyEmployeeLevelProgramVersion, loadEmployeeLevelProgramVersions, withEmployeeLevelInfo, type EmployeeLevelUser } from "@/lib/employee-level/server";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,8 @@ export async function GET() {
   if (auth.response) return auth.response;
   const { data, error } = await supabaseServer.from("users").select("id,name,full_name,username,is_active,hire_date,termination_date,part,position,role,is_system_account,payroll_eligible_override,level_program_enabled,level_base_date_override").eq("is_system_account",false).eq("is_active",true).order("id");
   if (error) return payrollJson({ ok: false, code: "PAYROLL_USERS_READ_FAILED" }, 500);
-  const users = (data ?? []).filter(isPayrollEligible) as unknown as EmployeeLevelUser[];
+  const users = (data ?? []).filter(isPayrollEligible) as unknown as Array<EmployeeLevelUser & { id: number }>;
   const levelAsOfDate = getVietnamDateKey();
-  return payrollJson({ ok: true, users: users.map((user) => withEmployeeLevelInfo(user, levelAsOfDate)) });
+  const versions = await loadEmployeeLevelProgramVersions(users.map((user) => Number(user.id)), levelAsOfDate);
+  return payrollJson({ ok: true, users: users.map((user) => withEmployeeLevelInfo(applyEmployeeLevelProgramVersion(user, versions.get(Number(user.id))), levelAsOfDate)) });
 }

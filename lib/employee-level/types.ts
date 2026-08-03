@@ -19,6 +19,7 @@ export function isEmployeeLevelEligibleRole(
   role: string | null | undefined,
   levelProgramEnabled?: boolean | null
 ) {
+  if (levelProgramEnabled === false) return false;
   return isEmployeeLevelAutomaticRole(role)
     || (isEmployeeLevelManualRole(role) && levelProgramEnabled === true);
 }
@@ -37,6 +38,7 @@ export type EmployeeLevelCalculationInput = {
 
 export type EmployeeLevelIneligibleReason =
   | "SYSTEM_ACCOUNT"
+  | "PROGRAM_DISABLED"
   | "ROLE_NOT_ELIGIBLE"
   | "MISSING_BASE_DATE"
   | "BEFORE_BASE_DATE"
@@ -57,6 +59,15 @@ export type EmployeeLevelInfo = {
   nextLevelDate: string | null;
   negotiationEligibleAt: string | null;
   negotiationEligible: boolean;
+};
+
+export type EmployeeLevelProgramVersion = {
+  id: number;
+  enabled: boolean;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  baseDate: string | null;
+  revision: number;
 };
 
 export type EmployeeLevelValidationCode =

@@ -6,7 +6,7 @@ import {
 import { supabaseServer } from "@/lib/supabase/server";
 import { getAttendanceWorkDate } from "@/lib/attendance/time";
 import { isEmployedOn, shouldIncludeMonthlyEmployee } from "@/lib/employment/eligibility";
-import { withEmployeeLevelInfo, type EmployeeLevelUser } from "@/lib/employee-level/server";
+import { applyEmployeeLevelProgramVersion, loadEmployeeLevelProgramVersions, withEmployeeLevelInfo, type EmployeeLevelUser } from "@/lib/employee-level/server";
 
 const BASE_USER_FIELDS =
   "id,username,name,role,is_active,part,position,work_start_time,work_end_time,hire_date,termination_date,is_system_account,level_program_enabled,level_base_date_override";
@@ -46,12 +46,14 @@ export async function GET(request: Request) {
     }
 
     const rows = (data ?? []) as unknown as Array<EmployeeLevelUser & {id:number;is_active:boolean}>;
-    const withLevels = (users: typeof rows, asOfDate: string) =>
-      users.map((user) => withEmployeeLevelInfo(user, asOfDate));
+    const withLevels = async (users: typeof rows, asOfDate: string) => {
+      const versions = await loadEmployeeLevelProgramVersions(users.map((user) => Number(user.id)), asOfDate);
+      return users.map((user) => withEmployeeLevelInfo(applyEmployeeLevelProgramVersion(user, versions.get(Number(user.id))), asOfDate));
+    };
     const levelAsOfDate = getAttendanceWorkDate();
     if (mode === "current") {
       const date = levelAsOfDate;
-      return attendanceJson({ ok: true, users: withLevels(rows.filter(user => user.is_active === true && isEmployedOn(user, date)), date) });
+      return attendanceJson({ ok: true, users: await withLevels(rows.filter(user => user.is_active === true && isEmployedOn(user, date)), date) });
     }
     const first = `${month}-01`;
     const next = new Date(`${first}T00:00:00Z`); next.setUTCMonth(next.getUTCMonth() + 1); next.setUTCDate(0);
@@ -59,7 +61,7 @@ export async function GET(request: Request) {
     const { data: attendance, error: attendanceError } = await supabaseServer.from("attendance_records").select("user_id").gte("work_date", first).lte("work_date", last);
     if (attendanceError) throw new Error(`Failed to load monthly attendance users: ${attendanceError.message}`);
     const recordedIds = new Set((attendance ?? []).map(row => Number(row.user_id)));
-    return attendanceJson({ ok: true, users: withLevels(rows.filter(user => shouldIncludeMonthlyEmployee(user, month!, recordedIds.has(Number(user.id)))), levelAsOfDate) });
+    return attendanceJson({ ok: true, users: await withLevels(rows.filter(user => shouldIncludeMonthlyEmployee(user, month!, recordedIds.has(Number(user.id)))), last) });
   } catch (err) {
     console.error("attendance users exception:", err);
     return attendanceJson(

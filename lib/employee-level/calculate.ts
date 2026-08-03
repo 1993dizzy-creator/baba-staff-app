@@ -9,7 +9,8 @@ import {
   type EmployeeLevelCalculationInput,
   type EmployeeLevelInfo,
   type EmployeeLevelIneligibleReason,
-} from "./types";
+// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
+} from "./types.ts";
 
 const DATE_KEY = /^\d{4}-(0[1-9]|1[0-2])-([012]\d|3[01])$/;
 
@@ -76,6 +77,9 @@ export function calculateEmployeeLevel(
 
   if (input.isSystemAccount) {
     return ineligible("SYSTEM_ACCOUNT", baseDate, baseDateSource, null);
+  }
+  if (input.levelProgramEnabled === false) {
+    return ineligible("PROGRAM_DISABLED", baseDate, baseDateSource, null);
   }
   if (!isEmployeeLevelEligibleRole(input.role, input.levelProgramEnabled)) {
     return ineligible("ROLE_NOT_ELIGIBLE", baseDate, baseDateSource, null);

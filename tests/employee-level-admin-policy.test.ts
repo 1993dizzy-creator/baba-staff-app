@@ -12,7 +12,8 @@ test("admin users API exposes calculated level info through the shared calculato
   assert.match(route, /requireRole\(\["owner", "master"\]\)/);
   assert.match(route, /level_base_date_override/);
   assert.match(route, /withEmployeeLevelInfo/);
-  assert.match(route, /employee_update_profile_and_level_v4/);
+  assert.match(route, /employee_update_profile_and_level_v5/);
+  assert.match(route, /loadEmployeeLevelProgramVersions/);
   assert.match(route, /validateEmployeeLevelConfiguration/);
   for (const code of [
     "SYSTEM_ACCOUNT_NOT_ELIGIBLE", "HIRE_DATE_REQUIRED", "BASE_DATE_BEFORE_HIRE_DATE",
@@ -43,7 +44,7 @@ test("system accounts may save profiles but cannot set a level base date", () =>
   const sql = read("supabase/migrations/20260729114539_simplify_employee_level_profile_save.sql");
 
   assert.doesNotMatch(route, /if \(!target \|\| target\.is_system_account\)/);
-  assert.match(route, /target\.is_system_account[\s\S]*target\.level_base_date_override !== levelBaseDateOverride[\s\S]*levelBaseDateOverride !== null/);
+  assert.match(route, /target\.is_system_account && levelProgramEnabled === true/);
   assert.match(sql, /v_before\.is_system_account[\s\S]*level_base_date_override is distinct from p_base_date_override[\s\S]*p_base_date_override is not null/);
   assert.match(sql, /if not v_before\.is_system_account and v_hire_date is null/);
   assert.match(sql, /if not v_before\.is_system_account[\s\S]*insert into public\.employee_level_audit_logs/);
@@ -53,7 +54,7 @@ test("terminated employees may save unchanged profiles but base-date changes rol
   const route = read("app/api/admin/users/route.ts");
   const sql = read("supabase/migrations/20260729114539_simplify_employee_level_profile_save.sql");
 
-  assert.match(route, /target\.termination_date[\s\S]*target\.level_base_date_override !== levelBaseDateOverride[\s\S]*TERMINATED_EMPLOYEE_READ_ONLY/);
+  assert.match(route, /target\.termination_date && levelStateChanged[\s\S]*TERMINATED_EMPLOYEE_READ_ONLY/);
   assert.match(sql, /v_before\.termination_date is not null[\s\S]*level_base_date_override is distinct from p_base_date_override[\s\S]*TERMINATED_EMPLOYEE_READ_ONLY/);
   assert.match(sql, /begin;[\s\S]*TERMINATED_EMPLOYEE_READ_ONLY[\s\S]*update public\.users[\s\S]*commit;/);
 });
@@ -67,19 +68,17 @@ test("level audit is exactly conditional on a real allowed base-date change", ()
   assert.match(sql, /employee_profile_save/);
 });
 
-test("owner and master inclusion is stored atomically by the follow-up RPC", () => {
+test("all employee roles store effective-dated level policy atomically", () => {
   const route = read("app/api/admin/users/route.ts");
-  const sql = read("supabase/migrations/20260729160628_add_manual_owner_levels_and_zero_based_audit.sql");
-  assert.match(route, /employee_update_profile_and_level_v4/);
+  const sql = read("supabase/migrations/202608030001_add_employee_level_program_versions.sql");
+  assert.match(route, /employee_update_profile_and_level_v5/);
   assert.match(route, /p_level_program_enabled: levelProgramEnabled/);
-  assert.match(sql, /employee_update_profile_and_level_v3/);
-  assert.match(sql, /v_role in \('owner', 'master'\)/);
-  assert.match(sql, /level_program_enabled = v_level_program_enabled/);
-  assert.match(sql, /v_level_program_enabled is distinct from true then null[\s\S]*else p_base_date_override/);
-  assert.match(sql, /level_base_date_override = v_base_date_override/);
-  assert.match(sql, /else v_before\.level_program_enabled/);
-  assert.match(sql, /level_program_enabled is distinct from v_after\.level_program_enabled/);
-  assert.match(sql, /v_before\.termination_date is not null[\s\S]*level_program_enabled is distinct from v_level_program_enabled/);
+  assert.match(sql, /employee_update_profile_and_level_v5/);
+  assert.match(sql, /employee_level_program_versions/);
+  assert.match(sql, /when effective_from < p_effective_from then p_effective_from/);
+  assert.match(sql, /v_current\.enabled is not distinct from p_level_program_enabled/);
+  assert.match(sql, /level_program_enabled = p_level_program_enabled/);
+  assert.match(sql, /TERMINATED_EMPLOYEE_READ_ONLY/);
   assert.match(sql, /security definer/);
   assert.match(sql, /revoke all on function[\s\S]*from public, anon, authenticated/);
   assert.match(sql, /grant execute[\s\S]*to service_role/);
@@ -169,19 +168,20 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   const nameWithLevel = read("components/employee/EmployeeNameWithLevel.tsx");
   assert.match(page, /EmployeeNameWithLevel/);
   assert.match(nameWithLevel, /EmployeeLevelBadge/);
-  assert.match(page, /isEmployeeLevelEligibleRole\(user\.role, user\.level_program_enabled\)/);
+  assert.match(page, /levelProgramPolicy\?\.currentEnabled/);
   assert.match(route, /isEmployeeLevelEligibleRole\(resultingRole, levelProgramEnabled\)/);
-  assert.match(page, /baseDateMode: "hire_date" \| "override"/);
-  assert.match(page, /levelBaseDateOverride:[\s\S]*levelDraft\.baseDateMode === "override"/);
+  assert.match(page, /effectiveMonth: "current" \| "next"/);
+  assert.match(page, /levelEffectiveFrom/);
   assert.match(page, /setUsers\(\(current\) =>[\s\S]*current\.map/);
   assert.doesNotMatch(page, /saveLevelPolicy/);
-  assert.doesNotMatch(page, /changeReason/);
-  assert.match(page, /levelProgramInclude/);
-  assert.match(page, /isEmployeeLevelManualRole\(draft\.role\)/);
+  assert.match(page, /changeReason/);
+  assert.match(page, /levelPolicyHelp/);
   assert.match(page, /levelProgramEnabled: levelDraft\.included/);
-  assert.match(page, /isEmployeeLevelManualRole\(draft\.role\) && !levelDraft\.included[\s\S]*\? null/);
-  assert.match(route, /levelProgramEnabled !== true[\s\S]*levelBaseDateOverride = null/);
+  assert.match(page, /levelStateChanged/);
+  assert.match(route, /comparisonEnabled !== levelProgramEnabled/);
   assert.match(nameWithLevel, /levelInfo\?\.eligible === true && levelInfo\.level !== null/);
+  assert.match(nameWithLevel, /PROGRAM_DISABLED/);
+  assert.match(badge, /disabled \? "X"/);
   assert.match(badge, /EMPLOYEE_LEVEL_THEME\[level\]/);
   assert.match(badge, /minWidth: 16/);
   assert.match(badge, /height: 16/);
@@ -199,7 +199,7 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
 test("Korean and Vietnamese employee-level copy is present", () => {
   const text = read("lib/text/admin-users.ts");
   for (const phrase of [
-    "직원 레벨", "입사일 기준", "직접 설정", "급여 협상 가능",
-    "Cấp nhân viên", "Theo ngày vào làm", "Ngày thiết lập riêng", "Có thể thương lượng lương",
+    "장기근무 레벨", "레벨 미적용", "레벨 설정 필요", "급여 협상 가능",
+    "Cấp làm việc lâu dài", "Không áp dụng cấp", "Cần thiết lập cấp", "Có thể thương lượng lương",
   ]) assert.match(text, new RegExp(phrase));
 });

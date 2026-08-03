@@ -30,6 +30,8 @@ type FormState = {
   work_start_time: string;
   work_end_time: string;
   is_active: boolean;
+  level_program_enabled: boolean;
+  level_change_reason: string;
 };
 
 const roleOptions = ["owner", "manager", "leader", "staff"] as const;
@@ -51,6 +53,8 @@ const initialForm: FormState = {
   work_start_time: "16:00",
   work_end_time: "01:00",
   is_active: true,
+  level_program_enabled: true,
+  level_change_reason: "",
 };
 
 type AdminUsersPageText = (typeof adminUsersText)[keyof typeof adminUsersText];
@@ -94,6 +98,14 @@ function getAge(birthDate: string) {
   }
 
   return age;
+}
+
+function shiftHours(start: string, end: string) {
+  const [startHour, startMinute] = start.split(":").map(Number);
+  const [endHour, endMinute] = end.split(":").map(Number);
+  if (![startHour, startMinute, endHour, endMinute].every(Number.isFinite)) return null;
+  const minutes = (endHour * 60 + endMinute - startHour * 60 - startMinute + 1440) % 1440;
+  return Number((minutes / 60).toFixed(1));
 }
 
 function Section({
@@ -157,6 +169,7 @@ export default function AdminUserCreatePage() {
   const previewPosition = getPositionLabel(form.position, text);
   const previewWorkTime =
     form.position === "owner" ? "" : `${form.work_start_time}-${form.work_end_time}`;
+  const hours = shiftHours(form.work_start_time, form.work_end_time);
 
   useEffect(() => {
     const user = getUser();
@@ -281,7 +294,14 @@ export default function AdminUserCreatePage() {
             <Field label={text.role}>
               <select
                 value={form.role}
-                onChange={(event) => update("role", event.target.value)}
+                onChange={(event) => {
+                  const role = event.target.value;
+                  setForm((current) => ({
+                    ...current,
+                    role,
+                    level_program_enabled: role !== "owner",
+                  }));
+                }}
                 style={styles.input}
               >
                 {roleOptions.map((role) => (
@@ -373,6 +393,22 @@ export default function AdminUserCreatePage() {
               />
               {text.activeStatus}
             </label>
+            <div style={styles.levelPolicy}>
+              <strong style={styles.fieldLabel}>{text.longTermLevel}</strong>
+              <div style={styles.segmented}>
+                {[true, false].map((enabled) => (
+                  <label key={String(enabled)} style={form.level_program_enabled === enabled ? styles.segmentActive : styles.segment}>
+                    <input type="radio" name="level-program" checked={form.level_program_enabled === enabled} onChange={() => update("level_program_enabled", enabled)} />
+                    {enabled ? text.levelEnabled : text.levelDisabled}
+                  </label>
+                ))}
+              </div>
+              <span style={styles.helpText}>{text.levelPolicyHelp}</span>
+              {hours !== null && hours < 9 ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
+              <Field label={text.levelChangeReason}>
+                <input value={form.level_change_reason} onChange={(event) => update("level_change_reason", event.target.value)} style={styles.input} />
+              </Field>
+            </div>
           </Section>
 
           {message ? <p style={styles.message}>{message}</p> : null}
@@ -519,4 +555,10 @@ const styles = {
     whiteSpace: "nowrap",
     flexShrink: 0,
   },
+  levelPolicy: { display: "grid", gap: 6, padding: 9, border: "1px solid #ddd6fe", borderRadius: 9, background: "#faf5ff" },
+  segmented: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 },
+  segment: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: 8, border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", fontSize: 12, fontWeight: 800 },
+  segmentActive: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: 8, border: "1px solid #4f46e5", borderRadius: 8, background: "#eef2ff", color: "#3730a3", fontSize: 12, fontWeight: 900 },
+  helpText: { fontSize: 11, lineHeight: 1.5, color: "#6b7280" },
+  shortShiftNotice: { padding: 8, borderRadius: 8, background: "#fffbeb", color: "#92400e", fontSize: 11, lineHeight: 1.5 },
 } satisfies Record<string, CSSProperties>;
