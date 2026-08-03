@@ -31,7 +31,6 @@ type FormState = {
   work_end_time: string;
   is_active: boolean;
   level_program_enabled: boolean;
-  level_change_reason: string;
 };
 
 const roleOptions = ["owner", "manager", "leader", "staff"] as const;
@@ -54,7 +53,6 @@ const initialForm: FormState = {
   work_end_time: "01:00",
   is_active: true,
   level_program_enabled: true,
-  level_change_reason: "",
 };
 
 type AdminUsersPageText = (typeof adminUsersText)[keyof typeof adminUsersText];
@@ -405,9 +403,6 @@ export default function AdminUserCreatePage() {
               </div>
               <span style={styles.helpText}>{text.levelPolicyHelp}</span>
               {hours !== null && hours < 9 ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
-              <Field label={text.levelChangeReason}>
-                <input value={form.level_change_reason} onChange={(event) => update("level_change_reason", event.target.value)} style={styles.input} />
-              </Field>
             </div>
           </Section>
 

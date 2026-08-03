@@ -174,7 +174,7 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   assert.match(page, /levelEffectiveFrom/);
   assert.match(page, /setUsers\(\(current\) =>[\s\S]*current\.map/);
   assert.doesNotMatch(page, /saveLevelPolicy/);
-  assert.match(page, /changeReason/);
+  assert.doesNotMatch(page, /changeReason|levelChangeReason|rehireReason/);
   assert.match(page, /levelPolicyHelp/);
   assert.match(page, /levelProgramEnabled: levelDraft\.included/);
   assert.match(page, /levelStateChanged/);
@@ -194,6 +194,28 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   assert.match(page, /text\.nextLevelShort/);
   assert.match(page, /text\.highestLevel/);
   assert.doesNotMatch(page, /info\.cumulativeRaiseAmount/);
+});
+
+test("level policy mutations use server-owned stable audit reason codes", () => {
+  const page = read("app/(protected)/admin/users/page.tsx");
+  const createPage = read("app/(protected)/admin/users/create/page.tsx");
+  const route = read("app/api/admin/users/route.ts");
+  const createRoute = read("app/api/admin/users/create/route.ts");
+  const text = read("lib/text/admin-users.ts");
+
+  assert.match(route, /"admin_level_enabled"/);
+  assert.match(route, /"admin_level_disabled"/);
+  assert.match(route, /"employee_rehired_level_enabled"/);
+  assert.match(route, /"employee_rehired_level_disabled"/);
+  assert.doesNotMatch(route, /body\.levelChangeReason|body\.changeReason/);
+  assert.match(createRoute, /"employee_created_level_enabled"/);
+  assert.match(createRoute, /"employee_created_level_disabled"/);
+  assert.doesNotMatch(createRoute, /body\.level_change_reason/);
+  assert.doesNotMatch(page, /levelStateChanged && !levelDraft/);
+  assert.match(page, /disabled=\{isSaving\}/);
+  assert.match(page, /disabled=\{!rehireDate\|\|isSaving\}/);
+  assert.doesNotMatch(createPage, /level_change_reason|levelChangeReason/);
+  assert.doesNotMatch(text, /levelChangeReason/);
 });
 
 test("Korean and Vietnamese employee-level copy is present", () => {

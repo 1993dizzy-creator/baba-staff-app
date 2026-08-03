@@ -58,8 +58,9 @@ export async function POST(req: Request) {
     const levelProgramEnabled = typeof body.level_program_enabled === "boolean"
       ? body.level_program_enabled
       : !["owner", "master"].includes(role);
-    const levelChangeReason = normalizeText(body.level_change_reason)
-      || (lang === "vi" ? "Chính sách cấp khi tạo nhân viên" : "직원 생성 시 레벨 정책");
+    const automaticChangeReason = levelProgramEnabled
+      ? "employee_created_level_enabled"
+      : "employee_created_level_disabled";
 
     if (!username || !password || !name) {
       return NextResponse.json(
@@ -132,7 +133,7 @@ export async function POST(req: Request) {
         work_end_time: nullableTime(body.work_end_time),
         is_active: body.is_active === false ? false : true,
         is_system_account: false,
-      }, p_level_program_enabled: levelProgramEnabled, p_change_reason: levelChangeReason,
+      }, p_level_program_enabled: levelProgramEnabled, p_change_reason: automaticChangeReason,
         p_actor_id: auth.actor.id, p_actor_username: auth.actor.username },
     );
 

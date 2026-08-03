@@ -296,8 +296,7 @@ export async function PATCH(req: Request) {
     if (body.action === "rehire") {
       const rehireDate = body.rehireDate;
       const rehireLevelEnabled = body.levelProgramEnabled;
-      const changeReason = normalizeText(body.changeReason);
-      if (body.confirmPreviousPayrollCompleted !== true || !isDateKey(rehireDate) || typeof rehireLevelEnabled !== "boolean" || !changeReason) {
+      if (body.confirmPreviousPayrollCompleted !== true || !isDateKey(rehireDate) || typeof rehireLevelEnabled !== "boolean") {
         return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng xác nhận và nhập ngày làm lại hợp lệ." : "확인 후 올바른 복귀일을 입력해주세요." }, { status: 400 });
       }
       const { data: target } = await supabaseServer.from("users").select(USER_SELECT).eq("id", id).maybeSingle();
@@ -314,7 +313,9 @@ export async function PATCH(req: Request) {
         p_user_id: id, p_rehire_date: rehireDate, p_actor_id: auth.actor.id,
         p_actor_username: auth.actor.username,
         p_level_program_enabled: rehireLevelEnabled,
-        p_change_reason: changeReason,
+        p_change_reason: rehireLevelEnabled
+          ? "employee_rehired_level_enabled"
+          : "employee_rehired_level_disabled",
         p_previous_level: previousInfo.level,
       });
       if (error) throw new Error(`Failed to rehire user: ${error.message}`);
@@ -492,10 +493,12 @@ export async function PATCH(req: Request) {
       ?? isEmployeeLevelEligibleRole(resultingRole, target.level_program_enabled);
     const levelStateChanged = comparisonEnabled !== levelProgramEnabled;
     const levelEffectiveFrom = levelStateChanged ? requestedEffectiveFrom : "";
-    const levelChangeReason = levelStateChanged ? normalizeText(body.levelChangeReason) : "";
-    if (levelStateChanged && (!levelEffectiveFrom || !levelChangeReason)) {
-      return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng chọn tháng áp dụng và nhập lý do thay đổi." : "적용 월과 변경 사유를 입력해주세요." }, { status: 400 });
+    if (levelStateChanged && !levelEffectiveFrom) {
+      return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng chọn tháng áp dụng." : "적용 월을 선택해주세요." }, { status: 400 });
     }
+    const automaticChangeReason = levelProgramEnabled
+      ? "admin_level_enabled"
+      : "admin_level_disabled";
     if (levelStateChanged) levelBaseDateOverride = levelProgramEnabled ? levelEffectiveFrom : null;
     if (target.is_system_account && levelProgramEnabled === true) {
       return policyResponse("SYSTEM_ACCOUNT_NOT_ELIGIBLE", lang, 403);
@@ -525,7 +528,7 @@ export async function PATCH(req: Request) {
         p_updates: update,
         p_level_program_enabled: levelProgramEnabled,
         p_effective_from: levelStateChanged ? levelEffectiveFrom : null,
-        p_change_reason: levelStateChanged ? levelChangeReason : null,
+        p_change_reason: levelStateChanged ? automaticChangeReason : null,
         p_actor_id: auth.actor.id,
         p_actor_username: auth.actor.username,
       }

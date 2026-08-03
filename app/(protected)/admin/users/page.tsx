@@ -49,7 +49,6 @@ type UserRow = {
 type LevelPolicyDraft = {
   included: boolean;
   effectiveMonth: "current" | "next";
-  changeReason: string;
 };
 
 function currentPolicyEnabled(user: UserRow) {
@@ -67,9 +66,9 @@ function policyEnabledForMonth(user: UserRow, month: LevelPolicyDraft["effective
 
 function initialLevelPolicyDraft(user: UserRow): LevelPolicyDraft {
   if (user.levelProgramPolicy?.hasScheduledChange) {
-    return { included: user.levelProgramPolicy.nextEnabled, effectiveMonth: "next", changeReason: "" };
+    return { included: user.levelProgramPolicy.nextEnabled, effectiveMonth: "next" };
   }
-  return { included: currentPolicyEnabled(user), effectiveMonth: "current", changeReason: "" };
+  return { included: currentPolicyEnabled(user), effectiveMonth: "current" };
 }
 
 type UsersResponse = {
@@ -311,7 +310,7 @@ function UserCard({
 }: {
   user: UserRow;
   onSave: (user: UserRow, draft: UserRow, levelDraft: LevelPolicyDraft) => Promise<boolean>;
-  onRehire: (user: UserRow, rehireDate: string, levelEnabled: boolean, changeReason: string) => void;
+  onRehire: (user: UserRow, rehireDate: string, levelEnabled: boolean) => void;
   isSaving: boolean;
 }) {
   const { lang } = useLanguage();
@@ -321,7 +320,6 @@ function UserCard({
   const [rehireOpen, setRehireOpen] = useState(false);
   const [rehireDate, setRehireDate] = useState("");
   const [rehireLevelEnabled, setRehireLevelEnabled] = useState(true);
-  const [rehireReason, setRehireReason] = useState("");
   const [levelDraft, setLevelDraft] = useState<LevelPolicyDraft>(() => initialLevelPolicyDraft(user));
 
   const displayName = user.name || user.full_name || user.username;
@@ -545,7 +543,6 @@ function UserCard({
                 {hours !== null && hours < 9 ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
                 {levelStateChanged ? <>
                   <Field label={text.levelEffectiveMonth}><select value={levelDraft.effectiveMonth} onChange={(event) => setLevelDraft((current) => ({ ...current, effectiveMonth: event.target.value as LevelPolicyDraft["effectiveMonth"] }))} style={styles.input}><option value="current">{text.thisMonth}</option><option value="next">{text.nextMonth}</option></select></Field>
-                  <Field label={text.levelChangeReason}><input value={levelDraft.changeReason} onChange={(event) => setLevelDraft((current) => ({ ...current, changeReason: event.target.value }))} style={styles.input} /></Field>
                 </> : null}
               </>
             )}
@@ -568,7 +565,7 @@ function UserCard({
               onClick={async () => {
                 if (await onSave(user, draft, levelDraft)) setIsEditing(false);
               }}
-              disabled={isSaving || (levelStateChanged && !levelDraft.changeReason.trim())}
+              disabled={isSaving}
             >
               {isSaving ? text.saving : text.save}
             </button>
@@ -580,8 +577,7 @@ function UserCard({
                 <p style={{margin:0,fontSize:12,lineHeight:1.5}}>{text.rehireWarning}</p>
                 <Field label={text.rehireDate}><input type="date" value={rehireDate} onChange={event=>setRehireDate(event.target.value)} style={styles.input}/></Field>
                 <div style={styles.segmented}>{[true,false].map(enabled=><label key={String(enabled)} style={rehireLevelEnabled===enabled?styles.segmentActive:styles.segment}><input type="radio" name={`rehire-level-${user.id}`} checked={rehireLevelEnabled===enabled} onChange={()=>setRehireLevelEnabled(enabled)}/>{enabled?text.levelEnabled:text.levelDisabled}</label>)}</div>
-                <Field label={text.levelChangeReason}><input value={rehireReason} onChange={event=>setRehireReason(event.target.value)} style={styles.input}/></Field>
-                <button type="button" disabled={!rehireDate||!rehireReason.trim()||isSaving} style={styles.primaryButton} onClick={()=>onRehire(user,rehireDate,rehireLevelEnabled,rehireReason)}>{text.rehire}</button>
+                <button type="button" disabled={!rehireDate||isSaving} style={styles.primaryButton} onClick={()=>onRehire(user,rehireDate,rehireLevelEnabled)}>{text.rehire}</button>
               </div> : null}
             </div>
           ) : null}
@@ -739,7 +735,6 @@ export default function AdminUsersPage() {
           updates,
           levelProgramEnabled: levelDraft.included,
           levelEffectiveFrom: levelDraft.included !== policyEnabledForMonth(original, levelDraft.effectiveMonth) ? levelEffectiveFrom(levelDraft.effectiveMonth) : null,
-          levelChangeReason: levelDraft.changeReason,
         }),
       });
       const result = (await res.json()) as UsersResponse;
@@ -761,11 +756,11 @@ export default function AdminUsersPage() {
     }
   }
 
-  async function rehireUser(user: UserRow, rehireDate: string, levelProgramEnabled: boolean, changeReason: string) {
+  async function rehireUser(user: UserRow, rehireDate: string, levelProgramEnabled: boolean) {
     if (!window.confirm(text.rehireWarning)) return;
     setSavingId(user.id); setMessage("");
     try {
-      const res = await attendanceFetch("/api/admin/users", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"rehire",id:user.id,lang,rehireDate,levelProgramEnabled,changeReason,confirmPreviousPayrollCompleted:true}) });
+      const res = await attendanceFetch("/api/admin/users", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"rehire",id:user.id,lang,rehireDate,levelProgramEnabled,confirmPreviousPayrollCompleted:true}) });
       const result=(await res.json()) as UsersResponse;
       if(!res.ok||!result.ok||!result.user)throw new Error(result.error||text.saveFailed);
       setUsers(current=>current.map(item=>item.id===user.id?result.user!:item)); setMessage(text.saveSuccess);
@@ -828,7 +823,7 @@ function UserGroup({
   users: UserRow[];
   text: AdminUsersPageText;
   onSave: (user: UserRow, draft: UserRow, levelDraft: LevelPolicyDraft) => Promise<boolean>;
-  onRehire: (user: UserRow, rehireDate: string, levelEnabled: boolean, changeReason: string) => void;
+  onRehire: (user: UserRow, rehireDate: string, levelEnabled: boolean) => void;
   savingId: number | string | null;
 }) {
   const meta = getGroupMeta(groupKey, text);
