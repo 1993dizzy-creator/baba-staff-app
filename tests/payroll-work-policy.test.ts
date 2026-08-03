@@ -3,7 +3,7 @@ import test from "node:test";
 // @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { calculateLatePenalty } from "../lib/payroll/penalties.ts";
 // @ts-expect-error Node test execution needs explicit TypeScript extensions.
-import { applyPayrollWorkPolicy, calculatePayrollRates } from "../lib/payroll/work-policy.ts";
+import { applyPayrollWorkPolicy, calculateContractMonthlyEquivalent, calculatePayrollRates } from "../lib/payroll/work-policy.ts";
 import type { PayrollContract } from "../lib/payroll/types.ts";
 
 const base: PayrollContract={id:1,userId:1,payType:"monthly",calculationBasis:"day",baseSalary:9_500_000,fixedRaiseAmount:500_000,standardWorkdays:25,standardMinutesPerDay:480,timeBlockMinutes:60,roundingMode:"none",lateAdjustmentMode:"separate",earlyLeaveAdjustmentMode:"deduct_minutes",overtimeMode:"ignore",paidLeaveMode:"manual_review",effectiveFrom:"2026-07-01",effectiveTo:null,revision:1};
@@ -17,3 +17,9 @@ test("actual-time basis never creates a second early-leave deduction",()=>{for(c
 test("late penalty boundaries apply exactly one tier",()=>{const common={minuteRate:1_000,dayRate:480_000,thresholdMinutes:20,minorPenaltyMinutes:60,majorPenaltyRateBp:5000};for(const [late,tier,amount] of [[0,"none",0],[1,"minor",60_000],[19,"minor",60_000],[20,"minor",60_000],[21,"major",240_000]] as const){assert.deepEqual(calculateLatePenalty({...common,lateMinutes:late}),{tier,amount});}});
 test("a custom late threshold includes its boundary in the minor tier",()=>{const common={minuteRate:1_000,dayRate:480_000,thresholdMinutes:15,minorPenaltyMinutes:60,majorPenaltyRateBp:5000};assert.deepEqual(calculateLatePenalty({...common,lateMinutes:15}),{tier:"minor",amount:60_000});assert.deepEqual(calculateLatePenalty({...common,lateMinutes:16}),{tier:"major",amount:240_000});});
 test("monthly, daily, and hourly contracts derive the documented minute and day rates",()=>{assert.deepEqual(calculatePayrollRates(base,9_500_000),{dayRate:380_000,minuteRate:380_000/480});assert.deepEqual(calculatePayrollRates({...base,payType:"daily",baseSalary:380_000}),{dayRate:380_000,minuteRate:380_000/480});assert.deepEqual(calculatePayrollRates({...base,payType:"hourly",baseSalary:60_000}),{dayRate:480_000,minuteRate:1_000});});
+
+test("contract monthly equivalent reuses official rates and the established 26-day default", () => {
+  assert.equal(calculateContractMonthlyEquivalent(base, 9_500_000), 9_500_000);
+  assert.equal(calculateContractMonthlyEquivalent({...base, payType:"daily", baseSalary:380_000}), 380_000);
+  assert.equal(calculateContractMonthlyEquivalent({...base, payType:"hourly", baseSalary:30_000, standardMinutesPerDay:480, standardWorkdays:null}), 6_240_000);
+});

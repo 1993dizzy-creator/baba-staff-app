@@ -1,19 +1,21 @@
 "use client";
 import Link from "next/link";
-import { useState, type CSSProperties } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import PayrollModal from "@/components/payroll/PayrollModal";
 import type {
   PayrollMonthlyAdjustment,
   PayrollOverviewEmployee,
 } from "@/lib/payroll/overview";
-import { money } from "@/lib/payroll/ui-labels";
+import {
+  formatContractRate,
+  formatPayrollHeaderAmount,
+  formatSignedVnd,
+  formatVnd,
+} from "@/lib/payroll/payroll-page-money";
+import { formatRecognizedWork, getPayrollHeaderAmount } from "@/lib/payroll/payroll-page-display";
 import { attendanceText } from "@/lib/text";
 import { payrollOverviewText } from "@/lib/text/payroll-overview";
-const compact = (value: number) =>
-  value >= 1_000_000
-    ? `${Number((value / 1_000_000).toFixed(2))}M VND`
-    : `${Math.round(value / 1000)}K VND`;
 function age(date: string | null) {
   if (!date) return null;
   const today = new Date(),
@@ -45,15 +47,19 @@ export function CompensationCard({
 }) {
   const t = payrollOverviewText[lang];
   const attendance = attendanceText[lang];
+  const detailText = lang === "vi"
+    ? { salaryComposition: "Cấu thành lương", monthApplication: "Áp dụng tháng này", insuranceAndNet: "Bảo hiểm và thực nhận", recognizedWork: "Chấm công được ghi nhận", adjustmentManage: "Thêm · hủy", finalPayout: "Thực nhận", preInsurancePayoutWithInsurance: "Thu nhập trước khấu trừ bảo hiểm", monthlyEquivalent: "Quy đổi lương tháng", monthlyEquivalentHelp: "Theo điều kiện làm đủ theo hợp đồng" }
+    : { salaryComposition: "급여 구성", monthApplication: "이번 달 반영", insuranceAndNet: "보험 및 최종 지급", recognizedWork: "인정 근무", adjustmentManage: "추가·취소", finalPayout: "최종 지급액", preInsurancePayoutWithInsurance: "보험 공제 전 금액", monthlyEquivalent: "월급여 환산", monthlyEquivalentHelp: "계약 기준 풀근무 시" };
   const [modal, setModal] = useState<"incentive" | "penalty" | null>(null);
   const combined = employee.amounts.combinedSalary;
+  const headerAmount = getPayrollHeaderAmount(employee, future);
   const header = future
     ? "—"
     : !employee.contract
       ? t.contractUnset
       : combined === null
         ? t.levelBaseRequired
-        : compact(combined);
+        : formatPayrollHeaderAmount(headerAmount ?? combined);
   const employeeAge = age(employee.birthDate);
   const positionLabel = employee.position
     ? (attendance.positions[
@@ -61,7 +67,7 @@ export function CompensationCard({
       ] ?? employee.position)
     : employee.username;
   return (
-    <article style={s.card}>
+    <article style={{ ...s.card, ...(expanded ? s.expandedCard : {}) }}>
       <button style={s.head} onClick={toggle} aria-expanded={expanded}>
         <span style={s.identity}>
           <EmployeeNameWithLevel
@@ -75,7 +81,7 @@ export function CompensationCard({
         </span>
         <b
           style={s.amount}
-          title={combined === null ? header : money(combined)}
+          title={headerAmount === null ? header : formatVnd(headerAmount)}
         >
           {header}
         </b>
@@ -101,77 +107,55 @@ export function CompensationCard({
             </>
           ) : (
             <>
-              <Row
-                label={t.contractSalary}
-                value={money(employee.amounts.contractSalary ?? 0)}
-              />
-              <Row
-                label={t.fixedRaise}
-                value={`+${money(employee.amounts.fixedRaiseAmount ?? 0)}`}
-              />
-              <Row
-                label={t.levelRaise}
-                value={`+${money(employee.amounts.levelRaiseAmount ?? 0)}`}
-              />
-              <Row label={t.combinedSalary} value={money(combined)} strong />
-              <button style={s.rowButton} onClick={() => setModal("incentive")}>
-                <span>{t.incentive}</span>
-                <b>
-                  +{money(employee.amounts.incentiveAmount)} ·{" "}
-                  {employee.amounts.incentiveCount}
-                  {t.count}
-                </b>
-              </button>
-              <button style={s.rowButton} onClick={() => setModal("penalty")}>
-                <span>{t.penalty}</span>
-                <b>
-                  -{money(employee.amounts.penaltyAmount)} ·{" "}
-                  {employee.amounts.penaltyCount}
-                  {t.count}
-                </b>
-              </button>
-              <Row
-                label={`${t.accruedWork} · ${Number(employee.recognizedWorkdays.toFixed(2))}${t.days}`}
-                value={
-                  employee.amounts.workAppliedAmount === null
-                    ? t.settingsRequired
-                    : money(employee.amounts.workAppliedAmount)
-                }
-              />
-              <Row
-                label={t.preInsurancePayout}
-                value={money(employee.amounts.preInsurancePayoutAmount)}
-              />
-              <Row
-                label={t.insuranceBase}
-                value={money(employee.amounts.insuranceBaseAmount)}
-              />
-              <Row
-                label={t.employeeInsuranceDeduction}
-                value={`-${money(employee.amounts.employeeInsuranceDeductionAmount)}`}
-              />
-              <Row
-                label={t.netPayout}
-                value={
-                  employee.amounts.currentAmount === null
-                    ? t.settingsRequired
-                    : money(employee.amounts.netPayoutAmount)
-                }
-                strong
-              />
-              <Row
-                label={t.employerInsurance}
-                value={money(employee.amounts.employerInsuranceAmount)}
-              />
-              {employee.amounts.employerInsuranceAmount > 0 && (
-                <small>{t.employerInsuranceHelp}</small>
-              )}
-              {employee.unresolvedAttendanceCount > 0 && (
-                <Row
-                  label={t.unresolvedAttendance}
-                  value={`${employee.unresolvedAttendanceCount}${t.days}`}
+              <DetailSection icon="💰" title={detailText.salaryComposition} first>
+                <Row label={t.contractSalary} value={formatContractRate(employee.amounts.contractSalary, employee.contract.payType, lang)} />
+                <Row label={t.fixedRaise} value={formatContractRate(employee.amounts.fixedRaiseAmount, employee.contract.payType, lang, "+")} />
+                <Row label={t.levelRaise} value={formatContractRate(employee.amounts.levelRaiseAmount, employee.contract.payType, lang, "+")} />
+                <CombinedSalarySummary
+                  label={t.combinedSalary}
+                  value={formatContractRate(combined, employee.contract.payType, lang)}
+                  monthlyEquivalent={employee.contract.payType === "hourly" ? employee.amounts.contractMonthlyEquivalent : null}
+                  monthlyEquivalentLabel={detailText.monthlyEquivalent}
+                  monthlyEquivalentHelp={detailText.monthlyEquivalentHelp}
                 />
-              )}
+              </DetailSection>
+
+              <DetailSection icon="📅" title={detailText.monthApplication}>
+                <Row label={detailText.recognizedWork} value={formatRecognizedWork(employee.recognizedMinutes, employee.recognizedWorkdays, lang)} wrapValue />
+                <Row
+                  label={t.accruedWork}
+                  value={employee.amounts.workAppliedAmount === null ? t.settingsRequired : formatVnd(employee.amounts.workAppliedAmount)}
+                />
+                <AdjustmentButton
+                  kind="incentive"
+                  label={t.incentive}
+                  manageLabel={detailText.adjustmentManage}
+                  value={`${formatSignedVnd(employee.amounts.incentiveAmount, "+")} · ${employee.amounts.incentiveCount}${t.count}`}
+                  onClick={() => setModal("incentive")}
+                />
+                <AdjustmentButton
+                  kind="penalty"
+                  label={t.penalty}
+                  manageLabel={detailText.adjustmentManage}
+                  value={`${formatSignedVnd(employee.amounts.penaltyAmount, "-")} · ${employee.amounts.penaltyCount}${t.count}`}
+                  onClick={() => setModal("penalty")}
+                />
+                <Row label={employee.insuranceEnrolled ? detailText.preInsurancePayoutWithInsurance : detailText.finalPayout} value={formatVnd(employee.amounts.preInsurancePayoutAmount)} highlight={employee.insuranceEnrolled ? "subtotal" : "net"} />
+                {!employee.insuranceEnrolled && employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
+              </DetailSection>
+
+              {employee.insuranceEnrolled && <DetailSection icon="🛡️" title={detailText.insuranceAndNet}>
+                <Row label={t.insuranceBase} value={formatVnd(employee.amounts.insuranceBaseAmount)} />
+                <Row label={t.employeeInsuranceDeduction} value={formatSignedVnd(employee.amounts.employeeInsuranceDeductionAmount, "-")} />
+                <Row
+                  label={t.netPayout}
+                  value={employee.amounts.currentAmount === null ? t.settingsRequired : formatVnd(employee.amounts.netPayoutAmount)}
+                  highlight="net"
+                />
+                <Row label={t.employerInsurance} value={formatVnd(employee.amounts.employerInsuranceAmount)} muted />
+                {employee.amounts.employerInsuranceAmount > 0 && <small style={s.help}>{t.employerInsuranceHelp}</small>}
+                {employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
+              </DetailSection>}
             </>
           )}
         </div>
@@ -207,7 +191,7 @@ export function CombinedPartTotal({
     <div style={s.total}>
       <Row
         label={t.combinedSalaryTotal}
-        value={money(values.reduce((a, b) => a + b, 0))}
+        value={formatVnd(values.reduce((a, b) => a + b, 0))}
         strong
       />
       {excluded > 0 && (
@@ -381,7 +365,7 @@ function AdjustmentModal({
                     : item.description}
                 {item.category !== "unauthorized_absence" ? ` ${item.minutes}${t.minutes}` : ""}
               </span>
-              <b>-{money(item.amount)}</b>
+              <b>{formatSignedVnd(item.amount, "-")}</b>
               <small>
                 {lang === "vi" ? "Tự động · chỉ đọc" : "자동 · 읽기 전용"}
               </small>
@@ -393,8 +377,7 @@ function AdjustmentModal({
               {item.businessDate.slice(5)} · {item.category}
             </span>
             <b>
-              {kind === "incentive" ? "+" : "-"}
-              {money(item.amount)}
+              {formatSignedVnd(item.amount, kind === "incentive" ? "+" : "-")}
             </b>
             <span>
               {item.reason}
@@ -475,17 +458,78 @@ function AdjustmentModal({
 function Row({
   label,
   value,
+  highlight,
   strong = false,
+  muted = false,
+  wrapValue = false,
 }: {
   label: string;
   value: string;
+  highlight?: "combined" | "subtotal" | "net";
   strong?: boolean;
+  muted?: boolean;
+  wrapValue?: boolean;
 }) {
   return (
-    <div style={s.row}>
-      <span>{label}</span>
-      <b style={strong ? { fontSize: 14 } : undefined}>{value}</b>
+    <div style={{ ...s.row, ...(highlight ? s.highlightRow : {}), ...(highlight === "subtotal" ? s.subtotalRow : {}), ...(highlight === "net" ? s.netHighlightRow : {}), ...(muted ? s.mutedRow : {}) }}>
+      <span style={{ ...s.rowLabel, ...(muted ? s.mutedLabel : {}) }}>{label}</span>
+      <b style={highlight ? { ...s.highlightAmount, ...(highlight === "subtotal" ? s.subtotalAmount : {}), ...(highlight === "net" ? s.netHighlightAmount : {}) } : strong ? { ...s.rowAmount, fontSize: 14 } : { ...s.rowAmount, ...(muted ? s.mutedAmount : {}), ...(wrapValue ? s.wrappingAmount : {}) }}>{value}</b>
     </div>
+  );
+}
+
+function DetailSection({ icon, title, children, first = false }: { icon: string; title: string; children: ReactNode; first?: boolean }) {
+  return (
+    <section style={{ ...s.detailSection, ...(first ? s.firstDetailSection : {}) }}>
+      <h4 style={s.sectionTitle}><span aria-hidden="true" style={s.sectionIcon}>{icon}</span>{title}</h4>
+      <div style={s.sectionRows}>{children}</div>
+    </section>
+  );
+}
+
+function CombinedSalarySummary({
+  label,
+  value,
+  monthlyEquivalent,
+  monthlyEquivalentLabel,
+  monthlyEquivalentHelp,
+}: {
+  label: string;
+  value: string;
+  monthlyEquivalent: number | null;
+  monthlyEquivalentLabel: string;
+  monthlyEquivalentHelp: string;
+}) {
+  return (
+    <div style={{ ...s.highlightRow, ...s.combinedSummary }}>
+      <div style={s.row}>
+        <span style={s.rowLabel}>{label}</span>
+        <b style={s.highlightAmount}>{value}</b>
+      </div>
+      {monthlyEquivalent !== null ? <div style={s.monthlyEquivalent}>
+        <div style={s.row}>
+          <span style={s.monthlyEquivalentLabel}>{monthlyEquivalentLabel}</span>
+          <b style={s.monthlyEquivalentAmount}>{formatVnd(monthlyEquivalent)}</b>
+        </div>
+        <small style={s.monthlyEquivalentHelp}>{monthlyEquivalentHelp}</small>
+      </div> : null}
+    </div>
+  );
+}
+
+function AdjustmentButton({ kind, label, manageLabel, value, onClick }: {
+  kind: "incentive" | "penalty";
+  label: string;
+  manageLabel: string;
+  value: string;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" style={{ ...s.adjustmentButton, ...(kind === "incentive" ? s.incentiveButton : s.penaltyButton) }} onClick={onClick}>
+      <span style={s.adjustmentCopy}><b>{label}</b><small style={s.adjustmentHint}>{manageLabel}</small></span>
+      <span style={s.adjustmentValue}>{value}</span>
+      <span aria-hidden="true" style={s.chevron}>›</span>
+    </button>
   );
 }
 const s = {
@@ -494,6 +538,11 @@ const s = {
     border: "1px solid #e5e7eb",
     borderRadius: 12,
     padding: "6px 9px",
+  },
+  expandedCard: {
+    background: "#f8fafc",
+    border: "1px solid #cbd5e1",
+    boxShadow: "0 3px 10px rgba(15, 23, 42, 0.07)",
   },
   head: {
     width: "100%",
@@ -532,7 +581,7 @@ const s = {
     textOverflow: "ellipsis",
     minWidth: 0,
   },
-  amount: { fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" },
+  amount: { fontSize: 12, fontWeight: 900, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" },
   expandIcon: {
     fontSize: 13,
     color: "#6b7280",
@@ -542,7 +591,7 @@ const s = {
   },
   detail: {
     display: "grid",
-    gap: 6,
+    gap: 12,
     marginTop: 6,
     paddingTop: 7,
     borderTop: "1px solid #e5e7eb",
@@ -553,16 +602,38 @@ const s = {
     justifyContent: "space-between",
     gap: 10,
     alignItems: "baseline",
+    minWidth: 0,
   },
-  rowButton: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 10,
-    width: "100%",
-    padding: "7px 0",
-    border: 0,
-    background: "transparent",
-  },
+  rowLabel: { minWidth: 0, color: "#475569" },
+  rowAmount: { flexShrink: 0, textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" },
+  wrappingAmount: { minWidth: 0, whiteSpace: "normal", lineHeight: 1.35 },
+  highlightRow: { marginTop: 2, padding: "7px 8px", borderRadius: 8, background: "#fff" },
+  highlightAmount: { flexShrink: 0, textAlign: "right", whiteSpace: "nowrap", fontSize: 14, fontWeight: 900, fontVariantNumeric: "tabular-nums" },
+  combinedSummary: { display: "grid", gap: 5 },
+  monthlyEquivalent: { display: "grid", gap: 2, paddingTop: 5, borderTop: "1px solid #e2e8f0" },
+  monthlyEquivalentLabel: { minWidth: 0, color: "#64748b", fontWeight: 700 },
+  monthlyEquivalentAmount: { flexShrink: 0, color: "#334155", textAlign: "right", whiteSpace: "nowrap", fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums" },
+  monthlyEquivalentHelp: { color: "#94a3b8", fontSize: 10, lineHeight: 1.3 },
+  subtotalRow: { marginTop: 4, background: "#fff", boxShadow: "inset 0 1px #e2e8f0" },
+  subtotalAmount: { fontSize: 13 },
+  netHighlightRow: { background: "#eff6ff", boxShadow: "inset 0 1px #bfdbfe" },
+  netHighlightAmount: { color: "#1d4ed8", fontSize: 15 },
+  mutedRow: { background: "#f8fafc", padding: "6px 8px", borderRadius: 7 },
+  mutedLabel: { color: "#64748b" },
+  mutedAmount: { color: "#475569", fontWeight: 800 },
+  detailSection: { display: "grid", gap: 6, paddingTop: 11, borderTop: "1px solid #f1f5f9" },
+  firstDetailSection: { paddingTop: 0, borderTop: 0 },
+  sectionTitle: { margin: 0, display: "flex", alignItems: "center", gap: 5, fontSize: 12, lineHeight: 1.25, fontWeight: 900, color: "#475569", letterSpacing: ".01em" },
+  sectionIcon: { width: 14, fontSize: 12, lineHeight: 1, textAlign: "center", opacity: .82 },
+  sectionRows: { width: "100%", boxSizing: "border-box", display: "grid", gap: 6, paddingLeft: 10 },
+  adjustmentButton: { width: "100%", minWidth: 0, minHeight: 36, display: "grid", gridTemplateColumns: "minmax(0,1fr) auto 9px", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 8, textAlign: "left", cursor: "pointer" },
+  incentiveButton: { border: "1px solid #dcfce7", background: "#f7fcf8", color: "#166534" },
+  penaltyButton: { border: "1px solid #fee2e2", background: "#fff8f8", color: "#991b1b" },
+  adjustmentCopy: { minWidth: 0, display: "grid", gap: 1 },
+  adjustmentHint: { fontSize: 10, fontWeight: 600, opacity: .72 },
+  adjustmentValue: { fontWeight: 800, whiteSpace: "nowrap", textAlign: "right", fontVariantNumeric: "tabular-nums" },
+  chevron: { fontSize: 15, lineHeight: 1, fontWeight: 900 },
+  help: { color: "#64748b", lineHeight: 1.45 },
   total: {
     display: "grid",
     gap: 5,

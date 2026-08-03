@@ -11,6 +11,7 @@ import type { PayrollContract } from "@/lib/payroll/types";
 import type { PayrollOverviewPeriod } from "@/lib/payroll/overview-period";
 import { calculateCombinedSalary } from "@/lib/payroll/compensation";
 import { calculatePayrollInsuranceTotals } from "@/lib/payroll/insurance";
+import { calculateContractMonthlyEquivalent } from "@/lib/payroll/work-policy";
 
 export type PayrollMonthlyAdjustment = { id:number;kind:"incentive"|"penalty";category:string;amount:number;businessDate:string;reason:string;note:string|null;createdAt:string };
 
@@ -24,6 +25,8 @@ export type PayrollOverviewEmployee = {
   levelInfo: EmployeeLevelInfo;
   calculationStatus: "calculable" | "requires_review" | "unavailable";
   recognizedWorkdays: number;
+  recognizedMinutes: number;
+  insuranceEnrolled: boolean;
   contract: PayrollContract | null;
   levelApplication: {
     currentLevel: number | null;
@@ -36,6 +39,7 @@ export type PayrollOverviewEmployee = {
     contractSalary: number | null;
     fixedRaiseAmount: number | null;
     combinedSalary: number | null;
+    contractMonthlyEquivalent: number | null;
     contractBaseSalary: number | null;
     accruedWorkAmount: number;
     levelRaiseAmount: number | null;
@@ -134,6 +138,8 @@ export function buildPayrollOverviewEmployee(input: {
     levelInfo,
     calculationStatus: unavailable ? "unavailable" : requiresReview ? "requires_review" : "calculable",
     recognizedWorkdays: employee.recognizedWorkdays,
+    recognizedMinutes: employee.recognizedMinutes,
+    insuranceEnrolled: employee.insuranceSnapshot.isEnrolled,
     contract,
     adjustments,
     automaticPenalties,
@@ -149,6 +155,9 @@ export function buildPayrollOverviewEmployee(input: {
       contractSalary: contract?.baseSalary ?? null,
       fixedRaiseAmount: contract?.fixedRaiseAmount ?? null,
       combinedSalary: compensation?.combinedSalary ?? null,
+      contractMonthlyEquivalent: contract && compensation && compensation.combinedSalary !== null
+        ? calculateContractMonthlyEquivalent(contract, compensation.combinedSalary)
+        : null,
       contractBaseSalary: contract?.baseSalary ?? null,
       accruedWorkAmount,
       levelRaiseAmount: compensation?.levelRaiseAmount ?? null,

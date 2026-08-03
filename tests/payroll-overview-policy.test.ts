@@ -53,16 +53,50 @@ test("level raise comes only from employee-management level data", () => {
   assert.doesNotMatch(overview, /cumulativeRaiseAmount/);
 });
 
-test("UI keeps grouped compact cards, part totals, details, and ledger last", () => {
+test("UI keeps grouped compact cards, non-owner part totals, details, and ledger last", () => {
   assert.match(page, /getPartKey\(employee\.part\)/);
   assert.match(page, /employees\.sort\(comparePayrollEmployees\)/);
+  assert.match(page, /sortPayrollEmployeesByHeaderAmount\(employees\.sort\(comparePayrollEmployees\),overview\?\.future===true\)/);
   assert.match(
     compensationCard,
     /gridTemplateColumns:\s*"minmax\(0,1fr\) auto 12px"/,
   );
+  assert.match(page, /group\.part !== "owner"/);
   assert.match(page, /<CombinedPartTotal employees=\{group\.employees\}/);
   assert.match(page, /<CompensationCard/);
   assert.ok(page.indexOf("<section style={styles.ledgerSection}") > page.indexOf("<CombinedPartTotal"));
+});
+
+test("employee detail groups salary, month application, insurance, and adjustment controls", () => {
+  assert.match(compensationCard, /salaryComposition: "급여 구성"/);
+  assert.match(compensationCard, /monthApplication: "이번 달 반영"/);
+  assert.match(compensationCard, /insuranceAndNet: "보험 및 최종 지급"/);
+  assert.match(compensationCard, /salaryComposition: "Cấu thành lương"/);
+  assert.match(compensationCard, /monthApplication: "Áp dụng tháng này"/);
+  assert.match(compensationCard, /insuranceAndNet: "Bảo hiểm và thực nhận"/);
+  assert.match(compensationCard, /finalPayout: "최종 지급액"/);
+  assert.match(compensationCard, /finalPayout: "Thực nhận"/);
+  assert.match(compensationCard, /preInsurancePayoutWithInsurance: "보험 공제 전 금액"/);
+  assert.match(compensationCard, /preInsurancePayoutWithInsurance: "Thu nhập trước khấu trừ bảo hiểm"/);
+  assert.match(compensationCard, /paddingLeft: 10/);
+  assert.match(compensationCard, /fontVariantNumeric: "tabular-nums"/);
+  assert.match(compensationCard, /highlight=\{employee\.insuranceEnrolled \? "subtotal" : "net"\}/);
+  assert.match(compensationCard, /formatContractRate\(employee\.amounts\.contractSalary/);
+  assert.match(compensationCard, /monthlyEquivalent: "월급여 환산"/);
+  assert.match(compensationCard, /monthlyEquivalent: "Quy đổi lương tháng"/);
+  assert.match(compensationCard, /employee\.contract\.payType === "hourly" \? employee\.amounts\.contractMonthlyEquivalent : null/);
+  assert.match(compensationCard, /formatVnd\(monthlyEquivalent\)/);
+  assert.match(compensationCard, /expanded \? s\.expandedCard/);
+  assert.match(compensationCard, /type="button"[\s\S]*adjustmentButton/);
+});
+
+test("overview exposes resolved insurance enrollment and source recognized minutes", () => {
+  assert.match(overview, /recognizedMinutes: employee\.recognizedMinutes/);
+  assert.match(overview, /contractMonthlyEquivalent: contract && compensation && compensation\.combinedSalary !== null/);
+  assert.match(overview, /insuranceEnrolled: employee\.insuranceSnapshot\.isEnrolled/);
+  assert.doesNotMatch(compensationCard, /insuranceEnrolled\s*=.*(?:insuranceBaseAmount|InsuranceDeductionAmount|employerInsuranceAmount)/);
+  assert.match(compensationCard, /employee\.insuranceEnrolled && <DetailSection icon="🛡️"/);
+  assert.match(compensationCard, /!employee\.insuranceEnrolled && employee\.unresolvedAttendanceCount/);
 });
 
 test("Korean and Vietnamese payroll overview labels are centralized", () => {

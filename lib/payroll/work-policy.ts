@@ -1,5 +1,7 @@
 import type { PayrollContract } from "./types";
 
+export const DEFAULT_STANDARD_WORKDAYS = 26;
+
 export function calculatePayrollRates(contract: PayrollContract, salaryBase = contract.baseSalary) {
   const dayRate = contract.payType === "monthly"
     ? (contract.standardWorkdays ? salaryBase / contract.standardWorkdays : 0)
@@ -10,6 +12,15 @@ export function calculatePayrollRates(contract: PayrollContract, salaryBase = co
     dayRate,
     minuteRate: contract.payType === "hourly" ? contract.baseSalary / 60 : dayRate / contract.standardMinutesPerDay,
   };
+}
+
+export function calculateContractMonthlyEquivalent(
+  contract: PayrollContract,
+  salaryBase = contract.baseSalary,
+) {
+  if (contract.payType !== "hourly") return Math.round(salaryBase);
+  const { dayRate } = calculatePayrollRates(contract, salaryBase);
+  return Math.round(dayRate * (contract.standardWorkdays ?? DEFAULT_STANDARD_WORKDAYS));
 }
 
 export type PayrollWorkPolicyResult = {
