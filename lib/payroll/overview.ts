@@ -75,6 +75,10 @@ export type PayrollOverviewEmployee = {
   reviewCount: number;
   blockingCount: number;
   warningCodes: string[];
+  payment?: {user_id:number;payment_status:"unpaid"|"paid";calculated_net_amount:number|null;actual_paid_amount:number|null;difference_amount:number|null;difference_reason:string|null;payment_date:string|null;paid_at:string|null;paid_by:number|null;paid_actor?:{name:string|null;full_name:string|null;username:string|null}|null}|null;
+  batchStatus?: "paying"|"completed"|null;
+  batchId?: number|null;
+  calculationHash?: string|null;
 };
 
 function sum(items: PayrollRunItemInput[], category: string, direction?: "addition" | "deduction") {

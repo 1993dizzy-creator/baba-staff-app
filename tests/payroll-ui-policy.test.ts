@@ -16,15 +16,12 @@ const commonSettings = read(
   "components/payroll/PayrollCommonSettings.tsx",
 );
 const payrollModal = read("components/payroll/PayrollModal.tsx");
-const migration = read(
-  "supabase/migrations/202607270002_create_payroll_runs.sql",
-);
 test("payroll pages use forms and mobile cards without prompt or wide tables", () => {
   for (const source of [list, detail, settings])
     assert.doesNotMatch(source, /prompt\s*\(/);
   assert.doesNotMatch(list, /<table/);
-  assert.match(list, /runCard/);
-  assert.match(detail, /EmployeeCard/);
+  assert.match(list, /PaymentBatchCard/);
+  assert.match(detail, /Chi trả theo nhân viên|직원별 지급 내역/);
   assert.match(settings, /PayrollModal/);
 });
 test("current contract summary hides legacy calculation basis and revision labels only", () => {
@@ -52,32 +49,10 @@ test("settings sends versioned compensation fields, preserves contract policy, a
   assert.match(settings, /await load\(userId\)/);
   assert.match(settings, /await load\(userId\)/);
 });
-test("review UI offers warning-specific actions and no bulk acknowledgement", () => {
-  for (const action of [
-    "approve_overtime",
-    "exclude_overtime",
-    "custom_overtime_minutes",
-    "paid_leave",
-    "unpaid_leave",
-    "exclude_pending_leave",
-    "use_stored_attendance",
-    "use_recalculated_attendance",
-    "exclude_date",
-  ])
-    assert.match(detail, new RegExp(action));
-  assert.doesNotMatch(detail, /resolveAll|bulkResolve/);
-});
-test("finalization, cancellation, payment, and paid locking have dedicated UI", () => {
-  for (const action of [
-    "force_finalize",
-    "cancel_finalization",
-    "pay",
-    "recalculate",
-  ])
-    assert.match(detail, new RegExp(action));
-  assert.match(detail, /const locked=run\.status!=="draft"/);
-  assert.match(migration, /p_action='force_finalize'/);
-  assert.match(migration, /p_action='cancel_finalization'/);
+test("ledger detail is read-only and omits the retired review and transition workflow", () => {
+  for (const action of ["force_finalize","cancel_finalization","recalculate","resolve_review","mutate_item"])
+    assert.doesNotMatch(detail, new RegExp(action));
+  assert.match(detail, /calculation_snapshot/);
 });
 test("payroll position labels reuse attendance translations with safe fallbacks", () => {
   for (const source of [compensationCard, settings]) {

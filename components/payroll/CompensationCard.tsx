@@ -36,6 +36,7 @@ export function CompensationCard({
   lang,
   month,
   future,
+  monthClosed,
   refresh,
 }: {
   employee: PayrollOverviewEmployee;
@@ -44,6 +45,7 @@ export function CompensationCard({
   lang: "ko" | "vi";
   month: string;
   future: boolean;
+  monthClosed: boolean;
   refresh: () => Promise<boolean>;
 }) {
   const t = payrollOverviewText[lang];
@@ -52,6 +54,7 @@ export function CompensationCard({
     ? { salaryComposition: "Cấu thành lương", monthApplication: "Áp dụng tháng này", insuranceAndNet: "Bảo hiểm và thực nhận", recognizedWork: "Chấm công được ghi nhận", adjustmentManage: "Thêm · hủy", finalPayout: "Thực nhận", preInsurancePayoutWithInsurance: "Thu nhập trước khấu trừ bảo hiểm", monthlyEquivalent: "Quy đổi lương tháng", monthlyEquivalentHelp: "Theo điều kiện làm đủ theo hợp đồng" }
     : { salaryComposition: "급여 구성", monthApplication: "이번 달 반영", insuranceAndNet: "보험 및 최종 지급", recognizedWork: "인정 근무", adjustmentManage: "추가·취소", finalPayout: "최종 지급액", preInsurancePayoutWithInsurance: "보험 공제 전 금액", monthlyEquivalent: "월급여 환산", monthlyEquivalentHelp: "계약 기준 풀근무 시" };
   const [modal, setModal] = useState<"incentive" | "penalty" | null>(null);
+  const [paymentOpen, setPaymentOpen] = useState(false);
   const combined = employee.amounts.combinedSalary;
   const headerAmount = getPayrollHeaderAmount(employee, future);
   const header = future
@@ -80,12 +83,16 @@ export function CompensationCard({
           <span style={s.separator}>·</span>
           <span style={s.position}>{positionLabel}</span>
         </span>
+        <span style={s.headerPayment}>
         <b
           style={s.amount}
           title={headerAmount === null ? header : formatVnd(headerAmount)}
         >
           {header}
         </b>
+        {employee.payment?.payment_status === "paid" && <span style={s.paymentBadge}>{employee.payment.difference_amount ? (lang === "vi" ? "Trả điều chỉnh" : "조정지급") : (lang === "vi" ? "Đã trả" : "지급완료")}</span>}
+        {!future && employee.payment?.payment_status !== "paid" && <span style={s.unpaidBadge}>{lang === "vi" ? "Chưa trả" : "미지급"}</span>}
+        </span>
         <span style={s.expandIcon} aria-hidden="true">
           {expanded ? "⌃" : "⌄"}
         </span>
@@ -133,6 +140,7 @@ export function CompensationCard({
                   manageLabel={detailText.adjustmentManage}
                   value={`${formatSignedVnd(employee.amounts.incentiveAmount, "+")} · ${employee.amounts.incentiveCount}${t.count}`}
                   onClick={() => setModal("incentive")}
+                  disabled={employee.payment?.payment_status === "paid"}
                 />
                 <AdjustmentButton
                   kind="penalty"
@@ -140,6 +148,7 @@ export function CompensationCard({
                   manageLabel={detailText.adjustmentManage}
                   value={`${formatSignedVnd(employee.amounts.penaltyAmount, "-")} · ${employee.amounts.penaltyCount}${t.count}`}
                   onClick={() => setModal("penalty")}
+                  disabled={employee.payment?.payment_status === "paid"}
                 />
                 <Row label={employee.insuranceEnrolled ? detailText.preInsurancePayoutWithInsurance : detailText.finalPayout} value={formatVnd(employee.amounts.preInsurancePayoutAmount)} highlight={employee.insuranceEnrolled ? "subtotal" : "net"} />
                 {!employee.insuranceEnrolled && employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
@@ -157,6 +166,7 @@ export function CompensationCard({
                 {employee.amounts.employerInsuranceAmount > 0 && <small style={s.help}>{t.employerInsuranceHelp}</small>}
                 {employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
               </DetailSection>}
+              {!future && <><button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (!monthClosed || employee.calculationStatus === "unavailable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus === "unavailable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Chỉ có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월이 종료된 후 지급할 수 있습니다."}</small>}</>}
             </>
           )}
         </div>
@@ -171,6 +181,7 @@ export function CompensationCard({
           refresh={refresh}
         />
       )}
+      {paymentOpen && <PaymentModal employee={employee} month={month} lang={lang} close={()=>setPaymentOpen(false)} refresh={refresh}/>}
     </article>
   );
 }
@@ -465,6 +476,18 @@ function AdjustmentModal({
     </PayrollModal>
   );
 }
+function PaymentModal({employee,month,lang,close,refresh}:{employee:PayrollOverviewEmployee;month:string;lang:"ko"|"vi";close:()=>void;refresh:()=>Promise<boolean>}){
+  const vi=lang==="vi";const payment=employee.payment;const calculated=employee.amounts.netPayoutAmount;
+  const [actual,setActual]=useState(String(payment?.actual_paid_amount??calculated));const [date,setDate]=useState(payment?.payment_date??new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Ho_Chi_Minh",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()));const [reason,setReason]=useState(payment?.difference_reason??"");const[cancelMode,setCancelMode]=useState(false);const[cancelReason,setCancelReason]=useState("");const[busy,setBusy]=useState(false);const[error,setError]=useState("");
+  const actualNumber=Number(actual||0);const difference=actualNumber-calculated;const actor=payment?.paid_actor;const actorLabel=actor?.name||actor?.full_name||actor?.username||"—";
+  async function submit(){if(busy||actualNumber<1||(difference!==0&&!reason.trim())||!employee.calculationHash)return;setBusy(true);setError("");try{const response=await fetch("/api/admin/payroll/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({month,userId:employee.userId,calculationHash:employee.calculationHash,actualPaidAmount:actualNumber,differenceReason:reason,paymentDate:date})});const data=await response.json();if(!response.ok){if(data.code==="PAYROLL_CALCULATION_STALE")await refresh();const preflight=data.code==="PAYROLL_BATCH_PREFLIGHT_FAILED"&&Array.isArray(data.employees)?data.employees.map((item:{employeeName:string;reasonCodes:string[]})=>`${item.employeeName}: ${item.reasonCodes.join(", ")}`).join("\n"):null;throw new Error(preflight?`${vi?data.messageVi:data.message}\n${preflight}`:data.code==="PAYROLL_MONTH_NOT_CLOSED"?(vi?data.messageVi:data.message):data.code==="PAYROLL_CALCULATION_STALE"?(vi?data.messageVi:data.message):(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}await refresh();close()}catch(cause){setError(cause instanceof Error?cause.message:(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}finally{setBusy(false)}}
+  async function cancelPayment(){if(busy||!cancelReason.trim()||!employee.batchId)return;setBusy(true);setError("");try{const response=await fetch("/api/admin/payroll/payments",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({runId:employee.batchId,userId:employee.userId,reason:cancelReason})});if(!response.ok)throw new Error(vi?"Không thể hủy chi trả.":"지급을 취소하지 못했습니다.");await refresh();close()}catch(cause){setError(cause instanceof Error?cause.message:(vi?"Không thể hủy chi trả.":"지급을 취소하지 못했습니다."))}finally{setBusy(false)}}
+  return <PayrollModal placement="top" title={payment?.payment_status==="paid"?(vi?"Chi tiết chi trả":"지급 내역"):(vi?"Chi trả lương":"급여 지급")} closeLabel={vi?"Đóng":"닫기"} onClose={()=>{if(!busy)close()}} footer={<div style={s.modalFooter}>{payment?.payment_status==="paid"?(employee.batchStatus==="paying"?<button type="button" style={{...s.danger,...s.modalAction}} disabled={busy||cancelMode&&!cancelReason.trim()} onClick={()=>cancelMode?void cancelPayment():setCancelMode(true)}>{cancelMode?(vi?"Xác nhận hủy":"지급 취소 실행"):(vi?"Hủy chi trả":"지급 취소")}</button>:null):<button type="button" style={{...s.primary,...s.modalAction}} disabled={busy||actualNumber<1||(difference!==0&&!reason.trim())} onClick={()=>void submit()}>{vi?"Chi trả":"지급"}</button>}</div>}>
+    <div style={s.paymentSummary}><Row label={vi?"Nhân viên":"직원"} value={employee.name}/><Row label={vi?"Tháng lương":"급여 대상 월"} value={month}/><Row label={vi?"Lương thực nhận tính toán":"계산 최종 실수령액"} value={formatVnd(payment?.calculated_net_amount??calculated)}/></div>
+    {payment?.payment_status==="paid"?<><Row label={vi?"Thực trả":"실제 지급액"} value={formatVnd(payment.actual_paid_amount??0)} strong/><Row label={vi?"Chênh lệch":"차액"} value={formatVnd(payment.difference_amount??0)}/>{payment.difference_reason&&<Row label={vi?"Lý do chênh lệch":"차액 사유"} value={payment.difference_reason}/>}<Row label={vi?"Ngày trả":"지급일"} value={payment.payment_date??"—"}/><Row label={vi?"Người xử lý":"지급 처리자"} value={actorLabel}/><Row label={vi?"Thời gian xử lý":"지급 시각"} value={payment.paid_at?new Date(payment.paid_at).toLocaleString(vi?"vi-VN":"ko-KR"):"—"}/>{cancelMode&&<label style={s.field}><span>{vi?"Lý do hủy (bắt buộc)":"취소 사유 (필수)"}</span><textarea style={s.input} value={cancelReason} onChange={event=>setCancelReason(event.target.value)}/></label>}</>:<><label style={s.field}><span>{vi?"Số tiền thực trả":"실제 지급액"}</span><input style={s.input} type="text" inputMode="numeric" value={formatPositiveIntegerInput(actual)} onChange={event=>setActual(normalizePositiveIntegerInput(event.target.value))}/></label><Row label={vi?"Chênh lệch":"차액"} value={formatVnd(difference)}/><label style={s.field}><span>{vi?"Ngày trả":"지급일"}</span><input style={s.input} type="date" value={date} onChange={event=>setDate(event.target.value)}/></label>{difference!==0&&<label style={s.field}><span>{vi?"Lý do thay đổi (bắt buộc)":"변경 사유 (필수)"}</span><textarea style={s.input} value={reason} onChange={event=>setReason(event.target.value)}/></label>}</>}
+    {error&&<p role="alert" style={s.error}>{error}</p>}
+  </PayrollModal>;
+}
 function Row({
   label,
   value,
@@ -527,15 +550,16 @@ function CombinedSalarySummary({
   );
 }
 
-function AdjustmentButton({ kind, label, manageLabel, value, onClick }: {
+function AdjustmentButton({ kind, label, manageLabel, value, onClick, disabled=false }: {
   kind: "incentive" | "penalty";
   label: string;
   manageLabel: string;
   value: string;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
-    <button type="button" style={{ ...s.adjustmentButton, ...(kind === "incentive" ? s.incentiveButton : s.penaltyButton) }} onClick={onClick}>
+    <button type="button" disabled={disabled} style={{ ...s.adjustmentButton, ...(kind === "incentive" ? s.incentiveButton : s.penaltyButton), ...(disabled?s.disabledButton:{}) }} onClick={onClick}>
       <span style={s.adjustmentCopy}><b>{label}</b><small style={s.adjustmentHint}>{manageLabel}</small></span>
       <span style={s.adjustmentValue}>{value}</span>
       <span aria-hidden="true" style={s.chevron}>›</span>
@@ -592,6 +616,9 @@ const s = {
     minWidth: 0,
   },
   amount: { fontSize: 12, fontWeight: 900, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" },
+  headerPayment: { display:"flex", alignItems:"center", justifyContent:"flex-end", gap:4, minWidth:0 },
+  paymentBadge: { padding:"2px 6px", borderRadius:999, background:"#dcfce7", color:"#166534", fontSize:9, fontWeight:800, whiteSpace:"nowrap" },
+  unpaidBadge: { padding:"2px 6px", borderRadius:999, background:"#f1f5f9", color:"#475569", fontSize:9, fontWeight:800, whiteSpace:"nowrap" },
   expandIcon: {
     fontSize: 13,
     color: "#6b7280",
@@ -639,6 +666,7 @@ const s = {
   adjustmentButton: { width: "100%", minWidth: 0, minHeight: 36, display: "grid", gridTemplateColumns: "minmax(0,1fr) auto 9px", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 8, textAlign: "left", cursor: "pointer" },
   incentiveButton: { border: "1px solid #dcfce7", background: "#f7fcf8", color: "#166534" },
   penaltyButton: { border: "1px solid #fee2e2", background: "#fff8f8", color: "#991b1b" },
+  disabledButton: { opacity:.55, cursor:"not-allowed" },
   adjustmentCopy: { minWidth: 0, display: "grid", gap: 1 },
   adjustmentHint: { fontSize: 10, fontWeight: 600, opacity: .72 },
   adjustmentValue: { fontWeight: 800, whiteSpace: "nowrap", textAlign: "right", fontVariantNumeric: "tabular-nums" },
@@ -675,6 +703,8 @@ const s = {
   },
   modalFooter: { display: "flex", justifyContent: "center", alignItems: "center", width: "100%" },
   modalAction: { minWidth: 148, maxWidth: "100%" },
+  paymentButton: { minHeight:42, border:0, borderRadius:10, background:"#111827", color:"#fff", fontWeight:800 },
+  paymentSummary: { display:"grid", gap:6, padding:10, borderRadius:9, background:"#f8fafc" },
   primary: {
     minHeight: 42,
     padding: "9px 13px",
@@ -707,6 +737,7 @@ const s = {
     borderRadius: 9,
     background: "#fef2f2",
     color: "#b91c1c",
+    whiteSpace: "pre-line",
   },
   list: { display: "grid", gap: 5 },
   item: {

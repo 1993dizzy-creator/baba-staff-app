@@ -26,7 +26,7 @@ test("part totals include the localized part and full employee count without the
   assert.match(card,/partName: string/);
   assert.match(card,/employees\.length/);
   assert.match(page,/partName=\{partLabel\(l,group\.part\)\}/);
-  assert.match(page,/group\.part !== "owner"/);
+  assert.match(page,/group\.part!=="owner"/);
   assert.doesNotMatch(card,/t\.totalHelp/);
 });
 

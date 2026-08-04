@@ -128,13 +128,14 @@ test("normalized late keeps actual overlap and produces no late deduction",()=>{
   assert.deepEqual(penalty,{tier:"none",amount:0});
 });
 
-test("preview, run creation, and recalculation share the same monthly snapshot calculation",()=>{
+test("overview and employee payment share the same monthly snapshot calculation",()=>{
   const overviewRoute=fs.readFileSync(path.join(process.cwd(),"app/api/admin/payroll/overview/route.ts"),"utf8");
-  const runsRoute=fs.readFileSync(path.join(process.cwd(),"app/api/admin/payroll/runs/route.ts"),"utf8");
-  const runRoute=fs.readFileSync(path.join(process.cwd(),"app/api/admin/payroll/runs/[runId]/route.ts"),"utf8");
-  for(const source of [overviewRoute,runsRoute,runRoute]) assert.match(source,/loadPayrollMonthSnapshot/);
-  assert.match(runsRoute,/p_employees:snapshot\.employees/);
-  assert.match(runRoute,/p_employees: snapshot\.employees/);
+  const overviewServer=fs.readFileSync(path.join(process.cwd(),"lib/payroll/overview-server.ts"),"utf8");
+  const payments=fs.readFileSync(path.join(process.cwd(),"app/api/admin/payroll/payments/route.ts"),"utf8");
+  assert.match(overviewRoute,/loadPayrollOverview\(month\)/);
+  assert.match(payments,/loadPayrollOverview\(month\)/);
+  assert.match(overviewServer,/loadPayrollMonthSnapshot\(month/);
+  assert.match(payments,/p_calculation_snapshot:calculationSnapshot/);
 });
 
 test("late deduction snapshot keeps all inputs while early-leave deduction remains absent",()=>{

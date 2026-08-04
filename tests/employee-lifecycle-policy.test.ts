@@ -185,13 +185,13 @@ test("migration is atomic and preserves singleton, predecessor and due-date snap
   assert.equal((migration.match(/update public\.users set is_system_account = true/g)??[]).length,1);
 });
 
-test("payroll UI and API keep due and actual payment dates distinct",()=>{
-  const list=read("app/(protected)/admin/payroll/page.tsx");
+test("employee payment UI records the actual payment date independently of the payroll month",()=>{
   const detail=read("app/(protected)/admin/payroll/[runId]/page.tsx");
+  const payments=read("app/api/admin/payroll/payments/route.ts");
   const settings=read("components/payroll/PayrollCommonSettings.tsx");
-  assert.match(list,/payment_due_date/);
-  assert.match(detail,/payment_due_date/);
   assert.match(detail,/payment_date/);
+  assert.match(payments,/p_payment_date:paymentDate/);
+  assert.match(payments,/p_month:`\$\{month\}-01`/);
   assert.match(settings,/매월 1일 ~ 말일/);
   assert.match(settings,/Tháng sau, ngày/);
 });

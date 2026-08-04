@@ -7,7 +7,7 @@ import { canManagePayroll } from "../lib/payroll/authorization.ts";
 
 const root=process.cwd();
 const routeFiles=[
-  "users/route.ts","settings/route.ts","schedules/route.ts","runs/route.ts","runs/[runId]/route.ts","overview/route.ts","contracts/route.ts","adjustments/route.ts","runs/[runId]/employees/[employeeId]/reviews/route.ts","runs/[runId]/employees/[employeeId]/items/route.ts",
+  "users/route.ts","settings/route.ts","schedules/route.ts","runs/route.ts","runs/[runId]/route.ts","overview/route.ts","contracts/route.ts","adjustments/route.ts","payments/route.ts",
 ];
 
 test("master is an owner-equivalent payroll manager while lower roles are denied",()=>{

@@ -4,6 +4,7 @@ import test from "node:test";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const route = read("app/api/admin/payroll/overview/route.ts");
+const overviewServer = read("lib/payroll/overview-server.ts");
 const overview = read("lib/payroll/overview.ts");
 const monthly = read("lib/payroll/monthly-run.ts");
 const page = read("app/(protected)/admin/payroll/page.tsx");
@@ -25,7 +26,7 @@ test("overview is one owner-master authenticated monthly endpoint", () => {
 });
 
 test("official batch engine receives the overview cutoff without mutating a payroll run", () => {
-  assert.match(route, /loadPayrollMonthSnapshot\(month, \{ calculationEndDate: period\.calculationEndDate \}\)/);
+  assert.match(overviewServer, /loadPayrollMonthSnapshot\(month,\{calculationEndDate:period\.calculationEndDate\}\)/);
   assert.match(monthly, /calculatePayrollBatch\(input\)/);
   assert.doesNotMatch(route, /payroll_create_run|\.rpc\(/);
 });
@@ -61,10 +62,10 @@ test("UI keeps grouped compact cards, non-owner part totals, details, and ledger
     compensationCard,
     /gridTemplateColumns:\s*"minmax\(0,1fr\) auto 12px"/,
   );
-  assert.match(page, /group\.part !== "owner"/);
+  assert.match(page, /group\.part!=="owner"/);
   assert.match(page, /<CombinedPartTotal employees=\{group\.employees\}/);
   assert.match(page, /<CompensationCard/);
-  assert.ok(page.indexOf("<section style={styles.ledgerSection}") > page.indexOf("<CombinedPartTotal"));
+  assert.ok(page.indexOf("<PaymentBatchCard") > page.indexOf("<CombinedPartTotal"));
 });
 
 test("employee detail groups salary, month application, insurance, and adjustment controls", () => {

@@ -1,8 +1,9 @@
 import { supabaseServer } from "@/lib/supabase/server";
-import { loadPayrollMonthSnapshot, resolvePayrollOverviewPeriod, validPayrollMonth } from "@/lib/payroll/monthly-run";
-import { buildPayrollOverviewEmployee, buildPayrollOverviewSummary, type PayrollMonthlyAdjustment } from "@/lib/payroll/overview";
+import { validPayrollMonth } from "@/lib/payroll/monthly-run";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
-import { buildPayrollOverviewProjectedSummary } from "@/lib/payroll/overview-projection";
+import { loadPayrollOverview } from "@/lib/payroll/overview-server";
+import { buildEmployeePaymentSnapshot, payrollPaymentSnapshotHash } from "@/lib/payroll/payment-snapshot";
+import { isClosedPayrollMonth } from "@/lib/payroll/payment-period";
 
 export const dynamic = "force-dynamic";
 
@@ -13,32 +14,12 @@ export async function GET(request: Request) {
   if (!month) return payrollJson({ ok: false, code: "INVALID_MONTH" }, 400);
 
   try {
-    const period = await resolvePayrollOverviewPeriod(month);
-    const [snapshot, adjustmentResult] = await Promise.all([
-      loadPayrollMonthSnapshot(month, { calculationEndDate: period.calculationEndDate }),
-      supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,kind,category,amount,business_date,reason,note,created_at").eq("payroll_month",`${month}-01`).is("cancelled_at",null),
-    ]);
-    if(adjustmentResult.error)throw new Error("PAYROLL_ADJUSTMENT_READ_FAILED");const adjustmentsByUser=new Map<number,PayrollMonthlyAdjustment[]>();for(const row of adjustmentResult.data??[]){const list=adjustmentsByUser.get(Number(row.user_id))??[];list.push({id:Number(row.id),kind:row.kind as "incentive"|"penalty",category:String(row.category),amount:Number(row.amount),businessDate:String(row.business_date),reason:String(row.reason),note:row.note?String(row.note):null,createdAt:String(row.created_at)});adjustmentsByUser.set(Number(row.user_id),list);}
-    const userById = new Map(snapshot.context.users.map((user) => [user.id, user]));
-    const contractsByUser = new Map<number, typeof snapshot.context.contracts>();
-    for (const contract of snapshot.context.contracts) {
-      const list = contractsByUser.get(contract.userId) ?? [];
-      list.push(contract);
-      contractsByUser.set(contract.userId, list);
-    }
-    const employees = snapshot.employees.flatMap((employee) => {
-      const user = userById.get(employee.userId);
-      if (!user) return [];
-      return [buildPayrollOverviewEmployee({
-        employee,
-        user,
-        contracts: contractsByUser.get(employee.userId) ?? [],
-        adjustments: adjustmentsByUser.get(employee.userId) ?? [],
-        period,
-      })];
-    });
-    const director=Number(((snapshot.sourceSnapshot.insuranceSettings as {director?:{calculatedAmount?:number}}|undefined)?.director?.calculatedAmount)??0);
-    return payrollJson({ ok: true, month, asOfDate: period.asOfDate, future: period.future, employees, summary:buildPayrollOverviewSummary(employees,director), projectedSummary:buildPayrollOverviewProjectedSummary(employees,director) });
+    const overview=await loadPayrollOverview(month);
+    const {data:run,error:runError}=await supabaseServer.from("payroll_payment_batches").select("*").eq("payroll_month",`${month}-01`).maybeSingle();if(runError)throw runError;
+    const{data:payments,error:paymentError}=run?await supabaseServer.from("payroll_employee_payments").select("user_id,payment_status,calculated_net_amount,actual_paid_amount,difference_amount,difference_reason,payment_date,paid_at,paid_by,paid_actor:users!payroll_employee_payments_paid_by_fkey(name,full_name,username)").eq("payroll_batch_id",run.id):{data:[],error:null};if(paymentError)throw paymentError;
+    const paymentByUser=new Map((payments??[]).map(row=>[Number(row.user_id),row]));
+    const employees=overview.employees.map(employee=>{const raw=overview.rawByUser.get(employee.userId);const calculationHash=raw?payrollPaymentSnapshotHash(buildEmployeePaymentSnapshot(employee,raw,overview.snapshot.sourceSnapshot as Record<string,unknown>)):null;return{...employee,payment:paymentByUser.get(employee.userId)??null,batchStatus:run?.status??null,batchId:run?.id??null,calculationHash}});
+    return payrollJson({ok:true,month,asOfDate:overview.period.asOfDate,future:overview.period.future,monthClosed:isClosedPayrollMonth(month),employees,summary:overview.summary,projectedSummary:overview.projectedSummary,paymentBatch:run??null});
   } catch {
     return payrollJson({ ok: false, code: "PAYROLL_OVERVIEW_READ_FAILED" }, 500);
   }
