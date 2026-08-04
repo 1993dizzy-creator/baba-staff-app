@@ -5,7 +5,7 @@ import { calculateCombinedSalary } from "../lib/payroll/compensation.ts";
 import type { EmployeeLevelInfo } from "../lib/employee-level/types.ts";
 import type { PayrollContract } from "../lib/payroll/types.ts";
 
-const contract: PayrollContract = { id:1,userId:7,payType:"monthly",calculationBasis:"day",baseSalary:8_000_000,fixedRaiseAmount:500_000,standardWorkdays:26,standardMinutesPerDay:540,timeBlockMinutes:1,roundingMode:"none",lateAdjustmentMode:"deduct_minutes",earlyLeaveAdjustmentMode:"deduct_minutes",overtimeMode:"requires_approval",paidLeaveMode:"manual_review",effectiveFrom:"2026-07-01",effectiveTo:null,revision:1 };
+const contract: PayrollContract = { id:1,userId:7,payType:"monthly",calculationBasis:"minute",baseSalary:8_000_000,fixedRaiseAmount:500_000,standardWorkdays:26,standardMinutesPerDay:540,timeBlockMinutes:1,roundingMode:"none",lateAdjustmentMode:"deduct_minutes",earlyLeaveAdjustmentMode:"deduct_minutes",overtimeMode:"requires_approval",paidLeaveMode:"manual_review",effectiveFrom:"2026-07-01",effectiveTo:null,revision:1 };
 const level = (earnedRaiseCount: number, reason: EmployeeLevelInfo["reason"] = null): EmployeeLevelInfo => ({ eligible:reason===null,reason,level:reason===null?Math.min(7,earnedRaiseCount+1) as EmployeeLevelInfo["level"]:null,displayLabel:null,baseDate:reason===null?"2026-01-01":null,baseDateSource:reason===null?"hire_date":null,calculationDate:"2026-07-31",completedQuarterCount:earnedRaiseCount,earnedRaiseCount,cumulativeRaiseAmount:earnedRaiseCount*500_000,raiseAmountPerStep:500_000,nextLevelDate:null,negotiationEligibleAt:null,negotiationEligible:false });
 
 test("combined salary uses employee-management earned raises without an included-count offset",()=>{

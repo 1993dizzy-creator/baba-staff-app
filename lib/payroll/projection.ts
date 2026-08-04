@@ -30,21 +30,15 @@ export function projectPayrollAttendanceDay(
   const minuteRecognized = calculationBasis === "minute" ? facts.actualMinutes : (facts.scheduledOverlapMinutes ?? facts.actualMinutes);
   const recognizedMinutes = calculationBasis === "hour"
     ? roundMinutes(minuteRecognized, contract.timeBlockMinutes, contract.roundingMode)
-    : calculationBasis === "day"
-      ? contract.standardMinutesPerDay
-      : minuteRecognized;
-  const recognizedDays = calculationBasis === "day" ? 1 : recognizedMinutes / contract.standardMinutesPerDay;
-  const adjustmentMinutes = calculationBasis === "day" && (facts.lateMinutes > 0 || facts.earlyLeaveMinutes > 0)
-    ? (contract.lateAdjustmentMode === "ignore" ? 0 : facts.lateMinutes) +
-      (contract.earlyLeaveAdjustmentMode === "ignore" ? 0 : facts.earlyLeaveMinutes)
-    : 0;
+    : minuteRecognized;
+  const recognizedDays = recognizedMinutes / contract.standardMinutesPerDay;
   return {
     calculationBasis,
     recognizedMinutes,
     recognizedHours: recognizedMinutes / 60,
     recognizedDays,
     estimatedAmount: amountFor(recognizedMinutes, recognizedDays, contract),
-    adjustmentMinutes,
+    adjustmentMinutes: 0,
     overtimeCandidateMinutes: facts.overtimeCandidateMinutes,
     payrollStatus: facts.payrollStatus,
     warningCodes: [...new Set(warnings)],

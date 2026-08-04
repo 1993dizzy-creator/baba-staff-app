@@ -33,13 +33,12 @@ export async function POST(request: Request) {
     || !validDate(body.expectedEffectiveFrom) || !validDate(body.effectiveFrom)
     || body.expectedEffectiveFrom !== body.effectiveFrom
     || !["monthly", "daily", "hourly"].includes(String(body.payType))
-    || !["minute", "hour", "day", "fixed_monthly"].includes(String(body.calculationBasis))
+    || !["minute", "hour", "fixed_monthly"].includes(String(body.calculationBasis))
     || !Number.isSafeInteger(baseSalary) || baseSalary < 0
     || !Number.isSafeInteger(fixedRaiseAmount) || fixedRaiseAmount < 0
     || !Number.isSafeInteger(timeBlockMinutes) || timeBlockMinutes < 1 || timeBlockMinutes > 1440
     || (body.payType === "monthly" && (!(standardWorkdays! > 0) || !Number.isFinite(standardWorkdays)))
     || (body.payType !== "monthly" && standardWorkdays !== null)
-    || (body.payType === "hourly" && body.calculationBasis === "day")
     || (body.payType !== "monthly" && fixedRaiseAmount !== 0)
   ) return payrollJson({ ok: false, code: body?.expectedEffectiveFrom !== body?.effectiveFrom ? "CONTRACT_EFFECTIVE_FROM_CHANGE_FORBIDDEN" : "INVALID_CONTRACT" }, 400);
   if (!correctionReason) return payrollJson({ ok: false, code: "CONTRACT_CORRECTION_REASON_REQUIRED" }, 400);

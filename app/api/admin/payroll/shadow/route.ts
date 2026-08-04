@@ -6,7 +6,7 @@ import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 import type { CalculationBasis, PayrollWarningCode } from "@/lib/payroll/types";
 
 export const dynamic = "force-dynamic";
-const BASES: CalculationBasis[] = ["minute", "hour", "day"];
+const BASES: CalculationBasis[] = ["minute", "hour"];
 
 function validMonth(value: string | null) { return value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : null; }
 function monthDates(month: string) {

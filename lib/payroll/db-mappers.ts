@@ -1,10 +1,17 @@
-import type { PayrollContract, WorkScheduleVersion } from "./types";
+import type { CalculationBasis, PayrollContract, WorkScheduleVersion } from "./types";
+
+const CALCULATION_BASES = new Set<CalculationBasis>(["minute", "hour", "fixed_monthly"]);
+
+function calculationBasis(value: unknown): CalculationBasis {
+  if (typeof value === "string" && CALCULATION_BASES.has(value as CalculationBasis)) return value as CalculationBasis;
+  throw new Error("INVALID_PAYROLL_CALCULATION_BASIS");
+}
 
 export function mapContract(row: Record<string, unknown>): PayrollContract {
   return {
     id: Number(row.id), userId: Number(row.user_id),
     payType: row.pay_type as PayrollContract["payType"],
-    calculationBasis: row.calculation_basis as PayrollContract["calculationBasis"],
+    calculationBasis: calculationBasis(row.calculation_basis),
     baseSalary: Number(row.base_salary),
     fixedRaiseAmount: Number(row.fixed_raise_amount ?? 0),
     standardWorkdays: row.standard_workdays === null ? null : Number(row.standard_workdays),

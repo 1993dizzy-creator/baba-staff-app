@@ -85,7 +85,7 @@ type FormState = {
 };
 const defaults: FormState = {
   payType: "monthly",
-  calculationBasis: "day",
+  calculationBasis: "minute",
   baseSalary: "",
   fixedRaiseAmount: "0",
   standardWorkdays: "26",
@@ -101,12 +101,7 @@ function fromContract(contract: Contract | null): FormState {
   return contract
     ? {
         payType: contract.payType,
-        calculationBasis:
-          contract.calculationBasis === "fixed_monthly"
-            ? "fixed_monthly"
-            : contract.calculationBasis === "day" && contract.payType !== "hourly"
-              ? "day"
-              : "minute",
+        calculationBasis: contract.calculationBasis === "fixed_monthly" ? "fixed_monthly" : contract.calculationBasis,
         baseSalary: String(contract.baseSalary),
         fixedRaiseAmount: String(contract.fixedRaiseAmount),
         standardWorkdays: String(contract.standardWorkdays ?? 26),
@@ -690,10 +685,7 @@ export default function PayrollSettingsPage() {
                     payType: value,
                     fixedRaiseAmount:
                       value === "monthly" ? form.fixedRaiseAmount : "0",
-                    calculationBasis:
-                      value === "hourly" && form.calculationBasis === "day"
-                        ? "minute"
-                        : form.calculationBasis,
+                    calculationBasis: form.calculationBasis,
                   })
                 }
               />
