@@ -1,7 +1,14 @@
-import assert from "node:assert/strict";import test from "node:test";import{readFileSync}from"node:fs";
-const migration=readFileSync("supabase/migrations/202607300001_add_payroll_compensation_and_adjustment_ledger.sql","utf8");const route=readFileSync("app/api/admin/payroll/adjustments/route.ts","utf8");const overview=readFileSync("lib/payroll/overview.ts","utf8");const card=readFileSync("components/payroll/CompensationCard.tsx","utf8");
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFileSync } from "node:fs";
+
+const migration=readFileSync("supabase/migrations/202607300001_add_payroll_compensation_and_adjustment_ledger.sql","utf8");
+const route=readFileSync("app/api/admin/payroll/adjustments/route.ts","utf8");
+const overview=readFileSync("lib/payroll/overview.ts","utf8");
+const card=readFileSync("components/payroll/CompensationCard.tsx","utf8");
+
 test("ledger is append-only with cancellation audit and no public grants",()=>{assert.match(migration,/payroll_monthly_adjustments/);assert.match(migration,/cancelled_at/);assert.match(migration,/cancellation_reason/);assert.match(migration,/enable row level security/);assert.match(migration,/revoke all[\s\S]*public, anon, authenticated/);assert.doesNotMatch(route,/\.delete\(/)});
 test("adjustment API authenticates and validates month, positive amount, and business date",()=>{assert.match(route,/requirePayrollActor/);assert.match(route,/validPayrollMonth/);assert.match(route,/amount<1/);assert.match(route,/dateInMonth/)});
 test("current amount includes adjustments and deducts employee insurance exactly once",()=>{assert.match(overview,/automaticPreInsuranceAmount\+incentiveAmount-manualPenaltyAmount/);assert.match(overview,/netPayoutAmount=preInsurancePayoutAmount-employeeInsuranceDeductionAmount/);assert.match(overview,/automaticPenaltyAmount\+manualPenaltyAmount/)});
-test("manual adjustments cancel with an audit reason while automatic penalties are labelled read-only",()=>{assert.match(route,/cancelled_at:new Date\(\)\.toISOString\(\)/);assert.match(route,/cancelled_by:auth\.actor\.id/);assert.match(route,/cancellation_reason:reason/);assert.match(card,/자동 · 읽기 전용/);assert.match(card,/method:\s*"PATCH"/)});
+test("manual adjustments cancel with an audit reason while automatic penalties remain non-actionable",()=>{assert.match(route,/cancelled_at:new Date\(\)\.toISOString\(\)/);assert.match(route,/cancelled_by:auth\.actor\.id/);assert.match(route,/cancellation_reason:reason/);assert.doesNotMatch(card,/자동 · 읽기 전용|Tự động · chỉ đọc/);assert.match(card,/employee\.automaticPenalties\.map/);assert.match(card,/method:\s*"PATCH"/)});
 test("unapplied compensation migration leaves the legacy included-count column untouched and out of the new RPC",()=>{assert.doesNotMatch(migration,/level_raise_included_count|p_level_raise_included_count/);assert.match(migration,/p_fixed_raise_amount numeric/)});

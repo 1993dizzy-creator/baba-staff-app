@@ -2,6 +2,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { loadPayrollMonthSnapshot, resolvePayrollOverviewPeriod, validPayrollMonth } from "@/lib/payroll/monthly-run";
 import { buildPayrollOverviewEmployee, buildPayrollOverviewSummary, type PayrollMonthlyAdjustment } from "@/lib/payroll/overview";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
+import { buildPayrollOverviewProjectedSummary } from "@/lib/payroll/overview-projection";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
       })];
     });
     const director=Number(((snapshot.sourceSnapshot.insuranceSettings as {director?:{calculatedAmount?:number}}|undefined)?.director?.calculatedAmount)??0);
-    return payrollJson({ ok: true, month, asOfDate: period.asOfDate, future: period.future, employees, summary:buildPayrollOverviewSummary(employees,director) });
+    return payrollJson({ ok: true, month, asOfDate: period.asOfDate, future: period.future, employees, summary:buildPayrollOverviewSummary(employees,director), projectedSummary:buildPayrollOverviewProjectedSummary(employees,director) });
   } catch {
     return payrollJson({ ok: false, code: "PAYROLL_OVERVIEW_READ_FAILED" }, 500);
   }

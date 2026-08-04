@@ -13,6 +13,7 @@ import {
   formatSignedVnd,
   formatVnd,
 } from "@/lib/payroll/payroll-page-money";
+import { formatPositiveIntegerInput, normalizePositiveIntegerInput } from "@/lib/payroll/positive-integer-input";
 import { formatRecognizedWork, getPayrollHeaderAmount } from "@/lib/payroll/payroll-page-display";
 import { attendanceText } from "@/lib/text";
 import { payrollOverviewText } from "@/lib/text/payroll-overview";
@@ -176,9 +177,13 @@ export function CompensationCard({
 export function CombinedPartTotal({
   employees,
   lang,
+  partName,
+  future = false,
 }: {
   employees: PayrollOverviewEmployee[];
   lang: "ko" | "vi";
+  partName: string;
+  future?: boolean;
 }) {
   const t = payrollOverviewText[lang];
   const values = employees.flatMap((employee) =>
@@ -187,19 +192,20 @@ export function CombinedPartTotal({
       : [employee.amounts.combinedSalary],
   );
   const excluded = employees.length - values.length;
+  const title = lang === "vi"
+    ? `${t.combinedSalaryTotal} ${partName} (${employees.length} ${t.people})`
+    : `${partName} ${t.combinedSalaryTotal} (${employees.length}${t.people})`;
   return (
     <div style={s.total}>
       <Row
-        label={t.combinedSalaryTotal}
-        value={formatVnd(values.reduce((a, b) => a + b, 0))}
+        label={title}
+        value={future ? "—" : formatVnd(values.reduce((a, b) => a + b, 0))}
         strong
       />
-      {excluded > 0 && (
+      {!future && excluded > 0 && (
         <Row label={t.settingsRequired} value={`${excluded}${t.people}`} />
       )}
-      <small>
-        {t.totalHelp} {excluded > 0 ? t.reviewHelp : ""}
-      </small>
+      {future && <small style={s.help}>{t.beforeCalculationPeriod}</small>}
     </div>
   );
 }
@@ -325,15 +331,15 @@ function AdjustmentModal({
   }
   return (
     <PayrollModal
+      placement="top"
       title={`${month} ${kind === "incentive" ? t.incentive : t.penalty}`}
       closeLabel={lang === "vi" ? "Đóng" : "닫기"}
       onClose={() => {
         if (!busy) close();
       }}
-      footer={
-        cancelTarget ? (
+      footer={<div style={s.modalFooter}>{cancelTarget ? (
           <button
-            style={s.danger}
+            style={{...s.danger,...s.modalAction}}
             disabled={busy || mutationCompleted || !cancelReason.trim()}
             onClick={cancel}
           >
@@ -341,14 +347,13 @@ function AdjustmentModal({
           </button>
         ) : (
           <button
-            style={s.primary}
+            style={{...s.primary,...s.modalAction}}
             disabled={busy || mutationCompleted || !reason || Number(amount) < 1}
             onClick={save}
           >
             {kind === "incentive" ? t.addIncentive : t.addPenalty}
           </button>
-        )
-      }
+        )}</div>}
     >
       <div style={s.list}>
         {kind === "penalty" &&
@@ -357,7 +362,7 @@ function AdjustmentModal({
               key={`${item.category}:${item.businessDate}`}
               style={s.item}
             >
-              <span>
+              <span style={s.itemText}>
                 {item.businessDate.slice(5)} · {item.category === "late"
                   ? (lang === "vi" ? "Phạt đi muộn" : "지각 패널티")
                   : item.category === "unauthorized_absence"
@@ -365,25 +370,22 @@ function AdjustmentModal({
                     : item.description}
                 {item.category !== "unauthorized_absence" ? ` ${item.minutes}${t.minutes}` : ""}
               </span>
-              <b>{formatSignedVnd(item.amount, "-")}</b>
-              <small>
-                {lang === "vi" ? "Tự động · chỉ đọc" : "자동 · 읽기 전용"}
-              </small>
+              <b style={s.itemAmount}>{formatSignedVnd(item.amount, "-")}</b>
             </article>
           ))}
         {list.map((item) => (
           <article key={item.id} style={s.item}>
-            <span>
+            <span style={s.itemText}>
               {item.businessDate.slice(5)} · {item.category}
             </span>
-            <b>
+            <b style={s.itemAmount}>
               {formatSignedVnd(item.amount, kind === "incentive" ? "+" : "-")}
             </b>
-            <span>
+            <span style={s.itemDetail}>
               {item.reason}
               {item.note ? ` · ${item.note}` : ""}
             </span>
-            <small>
+            <small style={s.itemMeta}>
               {new Date(item.createdAt).toLocaleString(
                 lang === "vi" ? "vi-VN" : "ko-KR",
               )}
@@ -405,7 +407,7 @@ function AdjustmentModal({
       )}
       {cancelTarget ? (
         <label style={s.field}>
-          {t.cancellationReason}
+          <span style={s.fieldLabel}>📝 {t.cancellationReason}</span>
           <textarea
             style={s.input}
             required
@@ -416,17 +418,21 @@ function AdjustmentModal({
       ) : (
         <>
           <label style={s.field}>
-            {lang === "vi" ? "Số tiền" : "금액"}
+            <span style={s.fieldLabel}>💰 {lang === "vi" ? "Số tiền" : "금액"}</span>
             <input
               style={s.input}
-              type="number"
-              min="1"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={formatPositiveIntegerInput(amount)}
+              onChange={(e) => setAmount(normalizePositiveIntegerInput(e.target.value))}
             />
+            <small style={s.fieldHelp}>{kind === "incentive"
+              ? (lang === "vi" ? "Nhập số nguyên dương. Số tiền nhập sẽ được cộng vào lương." : "양수 정수로 입력하세요. 입력 금액은 급여에 추가됩니다.")
+              : (lang === "vi" ? "Nhập số nguyên dương. Khoản phạt sẽ tự động được trừ." : "양수 정수로 입력하세요. 입력 금액은 급여에서 자동 차감됩니다.")}</small>
           </label>
           <label style={s.field}>
-            {lang === "vi" ? "Ngày" : "적용일"}
+            <span style={s.fieldLabel}>📅 {lang === "vi" ? "Ngày áp dụng" : "적용일"}</span>
             <input
               style={s.input}
               type="date"
@@ -435,19 +441,23 @@ function AdjustmentModal({
             />
           </label>
           <label style={s.field}>
-            {lang === "vi" ? "Lý do" : "사유"}
+            <span style={s.fieldLabel}>📝 {lang === "vi" ? "Lý do (bắt buộc)" : "사유 (필수)"}</span>
             <input
               style={s.input}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
+              placeholder={kind === "incentive"
+                ? (lang === "vi" ? "Thưởng đạt mục tiêu doanh thu" : "매출 목표 달성 보너스")
+                : (lang === "vi" ? "Làm hỏng vật dụng" : "비품 파손")}
             />
           </label>
           <label style={s.field}>
-            {lang === "vi" ? "Ghi chú" : "메모"}
+            <span style={s.fieldLabel}>📌 {lang === "vi" ? "Ghi chú nội bộ (không bắt buộc)" : "내부 메모 (선택)"}</span>
             <textarea
               style={s.input}
               value={note}
               onChange={(e) => setNote(e.target.value)}
+              placeholder={lang === "vi" ? "Nhập nội dung bổ sung nếu cần." : "필요한 추가 내용을 입력하세요."}
             />
           </label>
         </>
@@ -645,18 +655,26 @@ const s = {
   },
   field: {
     display: "grid",
-    gap: 4,
-    marginTop: 8,
+    gap: 6,
+    marginTop: 6,
     fontSize: 12,
     fontWeight: 700,
+    minWidth: 0,
   },
+  fieldLabel: { display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 800, lineHeight: 1.3 },
+  fieldHelp: { color: "#64748b", fontSize: 10, fontWeight: 500, lineHeight: 1.4 },
   input: {
     width: "100%",
+    maxWidth: "100%",
+    boxSizing: "border-box",
     minHeight: 40,
-    padding: 8,
+    padding: "9px 10px",
     border: "1px solid #d1d5db",
-    borderRadius: 9,
+    borderRadius: 10,
+    font: "inherit",
   },
+  modalFooter: { display: "flex", justifyContent: "center", alignItems: "center", width: "100%" },
+  modalAction: { minWidth: 148, maxWidth: "100%" },
   primary: {
     minHeight: 42,
     padding: "9px 13px",
@@ -690,13 +708,19 @@ const s = {
     background: "#fef2f2",
     color: "#b91c1c",
   },
-  list: { display: "grid", gap: 7 },
+  list: { display: "grid", gap: 5 },
   item: {
     display: "grid",
     gridTemplateColumns: "minmax(0,1fr) auto",
-    gap: 4,
-    padding: 8,
+    gap: "3px 7px",
+    padding: "6px 7px",
     border: "1px solid #e5e7eb",
     borderRadius: 9,
+    fontSize: 11,
+    lineHeight: 1.35,
   },
+  itemText: { minWidth: 0, overflowWrap: "anywhere", color: "#475569" },
+  itemAmount: { alignSelf: "start", whiteSpace: "nowrap", fontSize: 11, fontWeight: 800, fontVariantNumeric: "tabular-nums" },
+  itemDetail: { gridColumn: "1 / -1", minWidth: 0, overflowWrap: "anywhere", color: "#334155" },
+  itemMeta: { minWidth: 0, color: "#64748b", fontSize: 10 },
 } satisfies Record<string, CSSProperties>;
