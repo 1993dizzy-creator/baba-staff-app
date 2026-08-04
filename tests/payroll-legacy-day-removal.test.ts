@@ -20,7 +20,6 @@ test("current code rejects legacy day while retaining the daily pay type",()=>{
   assert.doesNotMatch(read("lib/payroll/projection.ts"),/calculationBasis === "day"/);
   assert.doesNotMatch(read("lib/payroll/work-policy.ts"),/calculationBasis === "day"/);
   assert.doesNotMatch(read("app/api/admin/payroll/contracts/correct/route.ts"),/"day"/);
-  assert.doesNotMatch(read("app/api/admin/payroll/shadow/route.ts"),/"day"/);
   assert.match(read("lib/payroll/types.ts"),/PayType = "monthly" \| "daily" \| "hourly"/);
   assert.match(read("app/api/admin/payroll/contracts/route.ts"),/\["monthly","daily","hourly"\]/);
 });

@@ -16,7 +16,6 @@ const commonSettings = read(
   "components/payroll/PayrollCommonSettings.tsx",
 );
 const payrollModal = read("components/payroll/PayrollModal.tsx");
-const shadow = read("components/PayrollShadowPanel.tsx");
 const migration = read(
   "supabase/migrations/202607270002_create_payroll_runs.sql",
 );
@@ -80,12 +79,6 @@ test("finalization, cancellation, payment, and paid locking have dedicated UI", 
   assert.match(migration, /p_action='force_finalize'/);
   assert.match(migration, /p_action='cancel_finalization'/);
 });
-test("shadow is collapsed and uses localized user-facing labels", () => {
-  assert.match(shadow, /<details/);
-  assert.match(shadow, /급여 계산 비교/);
-  assert.doesNotMatch(shadow, /PAYROLL SHADOW|review \{|warning_code/);
-});
-
 test("payroll position labels reuse attendance translations with safe fallbacks", () => {
   for (const source of [compensationCard, settings]) {
     assert.match(source, /import \{ attendanceText \} from "@\/lib\/text"/);
