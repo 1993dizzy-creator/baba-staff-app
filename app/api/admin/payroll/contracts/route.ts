@@ -19,16 +19,35 @@ export async function GET(request: Request) {
   const [{ data: user, error: userError }, { data, error }, { data: auditData, error: auditError }, { data: scheduleData, error: scheduleError }] = await Promise.all([
     supabaseServer.from("users").select("id,name,full_name,username,is_active,hire_date,termination_date,is_system_account,role,level_program_enabled,level_base_date_override").eq("id", userId).eq("is_system_account",false).maybeSingle(),
     supabaseServer.from("payroll_contract_versions").select(FIELDS).eq("user_id", userId).order("effective_from", { ascending: false }),
-    supabaseServer.from("payroll_contract_audit_logs").select("id,contract_version_id").eq("user_id", userId).order("id", { ascending: false }),
+    supabaseServer.from("payroll_contract_audit_logs").select("id,contract_version_id,action,actor_user_id,reason,created_at").eq("user_id", userId).order("id", { ascending: true }),
     supabaseServer.from("employee_work_schedule_versions").select("id,user_id,start_time,end_time,unpaid_break_minutes,effective_from,effective_to,revision,change_reason").eq("user_id", userId).order("effective_from", { ascending: false }),
   ]);
   if (userError || error || auditError || scheduleError) return payrollJson({ ok: false, code: "PAYROLL_CONTRACT_READ_FAILED" }, 500);
   if (!user) return payrollJson({ ok: false, code: "USER_NOT_FOUND" }, 404);
-  const latestAuditByContract = new Map<number, number>();
-  for (const audit of auditData ?? []) if (!latestAuditByContract.has(Number(audit.contract_version_id))) latestAuditByContract.set(Number(audit.contract_version_id), Number(audit.id));
+  const actorIds = [...new Set([
+    ...(data ?? []).map((row) => Number(row.created_by)),
+    ...(auditData ?? []).map((row) => Number(row.actor_user_id)),
+  ].filter(Number.isSafeInteger))];
+  const { data: actorData, error: actorError } = actorIds.length
+    ? await supabaseServer.from("users").select("id,name,full_name,username").in("id", actorIds)
+    : { data: [], error: null };
+  if (actorError) return payrollJson({ ok: false, code: "PAYROLL_CONTRACT_READ_FAILED" }, 500);
+  const actorNames = new Map((actorData ?? []).map((actor) => [
+    Number(actor.id),
+    String(actor.name || actor.full_name || actor.username || "").trim() || null,
+  ]));
+  const auditsByContract = new Map<number, Array<{ id: number; action: string; actorUserId: number; actorName: string | null; reason: string | null; createdAt: string }>>();
+  for (const audit of auditData ?? []) {
+    const contractId = Number(audit.contract_version_id);
+    const list = auditsByContract.get(contractId) ?? [];
+    const actorUserId = Number(audit.actor_user_id);
+    list.push({ id: Number(audit.id), action: String(audit.action), actorUserId, actorName: actorNames.get(actorUserId) ?? null, reason: audit.reason ? String(audit.reason) : null, createdAt: String(audit.created_at) });
+    auditsByContract.set(contractId, list);
+  }
   const contracts = (data ?? []).map((row) => {
     const contract = mapContract(row as Record<string, unknown>);
-    return { ...contract, auditVersion: latestAuditByContract.get(contract.id) ?? null };
+    const auditLogs = auditsByContract.get(contract.id) ?? [];
+    return { ...contract, createdByName: contract.createdBy ? actorNames.get(contract.createdBy) ?? null : null, auditVersion: auditLogs.at(-1)?.id ?? null, auditLogs };
   });
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const versions = await loadEmployeeLevelProgramVersions([Number(user.id)], today);

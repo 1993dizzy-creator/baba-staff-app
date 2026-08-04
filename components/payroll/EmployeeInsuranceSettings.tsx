@@ -11,6 +11,7 @@ import {
 } from "react";
 import { money } from "@/lib/payroll/ui-labels";
 import type { PayrollInsuranceSettingVersion } from "@/lib/payroll/insurance";
+import { formatInsuranceNote } from "@/lib/payroll/insurance-note";
 
 function currentMonth() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -291,7 +292,7 @@ export default function EmployeeInsuranceSettings({
                   : "미가입"}{" "}
               · {money(item.insuranceBaseAmount)}
             </span>
-            {item.note ? <small>{item.note}</small> : null}
+            {formatInsuranceNote(item.note, vi) ? <small>{formatInsuranceNote(item.note, vi)}</small> : null}
           </article>
         ))}
       </details>

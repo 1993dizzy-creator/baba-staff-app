@@ -11,14 +11,14 @@ const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
 const monthlyRun = read("lib/payroll/monthly-run.ts");
 
 test("employee profile update and schedule revision share one RPC transaction", () => {
-  assert.match(usersRoute, /employee_update_profile_and_level_v4/);
+  assert.match(usersRoute, /employee_update_profile_and_level_v6/);
   assert.match(migration, /employee_update_profile_and_level_v3\(/);
   assert.match(migration, /pg_advisory_xact_lock\(-p_user_id\)/);
   assert.match(migration, /Asia\/Ho_Chi_Minh/);
   assert.match(migration, /is distinct from v_start_time/);
   assert.match(migration, /is distinct from v_end_time/);
   assert.match(migration, /unpaid_break_minutes[\s\S]*0,/);
-  assert.match(usersCreateRoute, /employee_create_with_schedule_v1/);
+  assert.match(usersCreateRoute, /employee_create_with_schedule_v3/);
   assert.doesNotMatch(usersCreateRoute, /\.from\("users"\)[\s\S]*\.insert\(/);
 });
 

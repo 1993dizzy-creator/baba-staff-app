@@ -41,6 +41,10 @@ type UserRow = {
   levelProgramPolicy?: {
     currentEnabled: boolean;
     nextEnabled: boolean;
+    currentBaseDateMode: "hire_date" | "override";
+    nextBaseDateMode: "hire_date" | "override";
+    currentBaseDate: string | null;
+    nextBaseDate: string | null;
     hasScheduledChange: boolean;
     nextEffectiveFrom: string;
   };
@@ -48,6 +52,8 @@ type UserRow = {
 
 type LevelPolicyDraft = {
   included: boolean;
+  baseDateMode: "hire_date" | "override";
+  baseDateOverride: string;
   effectiveMonth: "current" | "next";
 };
 
@@ -64,11 +70,22 @@ function policyEnabledForMonth(user: UserRow, month: LevelPolicyDraft["effective
     : currentPolicyEnabled(user);
 }
 
+function policyBaseForMonth(user: UserRow, month: LevelPolicyDraft["effectiveMonth"]) {
+  const next = month === "next";
+  const mode = next ? user.levelProgramPolicy?.nextBaseDateMode : user.levelProgramPolicy?.currentBaseDateMode;
+  const baseDate = next ? user.levelProgramPolicy?.nextBaseDate : user.levelProgramPolicy?.currentBaseDate;
+  return {
+    mode: mode ?? (user.level_base_date_override ? "override" : "hire_date"),
+    baseDate: baseDate ?? user.level_base_date_override ?? user.hire_date,
+  } as const;
+}
+
 function initialLevelPolicyDraft(user: UserRow): LevelPolicyDraft {
   if (user.levelProgramPolicy?.hasScheduledChange) {
-    return { included: user.levelProgramPolicy.nextEnabled, effectiveMonth: "next" };
+    return { included: user.levelProgramPolicy.nextEnabled, baseDateMode: user.levelProgramPolicy.nextBaseDateMode, baseDateOverride: user.levelProgramPolicy.nextBaseDateMode === "override" ? user.levelProgramPolicy.nextBaseDate ?? "" : "", effectiveMonth: "next" };
   }
-  return { included: currentPolicyEnabled(user), effectiveMonth: "current" };
+  const base = policyBaseForMonth(user, "current");
+  return { included: currentPolicyEnabled(user), baseDateMode: base.mode, baseDateOverride: base.mode === "override" ? base.baseDate ?? "" : "", effectiveMonth: "current" };
 }
 
 type UsersResponse = {
@@ -336,9 +353,11 @@ function UserCard({
     : draft.role === "owner"
       ? "owner"
       : "staff";
-  const hasEmployeeLevel = currentPolicyEnabled(user);
   const hasLevelEditor = !user.is_system_account;
-  const levelStateChanged = levelDraft.included !== policyEnabledForMonth(user, levelDraft.effectiveMonth);
+  const comparedBase = policyBaseForMonth(user, levelDraft.effectiveMonth);
+  const levelStateChanged = levelDraft.included !== policyEnabledForMonth(user, levelDraft.effectiveMonth)
+    || levelDraft.baseDateMode !== comparedBase.mode
+    || (levelDraft.baseDateMode === "override" && levelDraft.baseDateOverride !== comparedBase.baseDate);
   const hours = shiftHours(draft.work_start_time, draft.work_end_time);
 
   function update<K extends keyof UserRow>(key: K, value: UserRow[K]) {
@@ -375,7 +394,7 @@ function UserCard({
         </div>
       </div>
 
-      {hasEmployeeLevel ? <LevelSummary user={user} text={text} /> : null}
+      {hasLevelEditor ? <LevelSummary user={user} text={text} /> : null}
 
       {isEditing ? (
         <div style={styles.formGrid}>
@@ -541,6 +560,16 @@ function UserCard({
                 </div>
                 <span style={styles.fieldNotice}>{text.levelPolicyHelp}</span>
                 {hours !== null && hours < 9 ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
+                <strong style={styles.levelEditorTitle}>{text.levelCalculationBasis}</strong>
+                <div style={styles.segmented}>
+                  {(["hire_date", "override"] as const).map((mode) => <label key={mode} style={levelDraft.baseDateMode === mode ? styles.segmentActive : styles.segment}>
+                    <input type="radio" name={`level-base-${user.id}`} checked={levelDraft.baseDateMode === mode} onChange={() => setLevelDraft((current) => ({ ...current, baseDateMode: mode }))} />
+                    {mode === "hire_date" ? text.levelHireDateMode : text.levelOverrideMode}
+                  </label>)}
+                </div>
+                {levelDraft.baseDateMode === "hire_date"
+                  ? <span style={styles.fieldNotice}>{text.hireDate}: {draft.hire_date ?? "-"}</span>
+                  : <Field label={text.levelCalculationStartDate}><input type="date" required value={levelDraft.baseDateOverride} onChange={(event) => setLevelDraft((current) => ({ ...current, baseDateOverride: event.target.value }))} style={styles.input} /></Field>}
                 {levelStateChanged ? <>
                   <Field label={text.levelEffectiveMonth}><select value={levelDraft.effectiveMonth} onChange={(event) => setLevelDraft((current) => ({ ...current, effectiveMonth: event.target.value as LevelPolicyDraft["effectiveMonth"] }))} style={styles.input}><option value="current">{text.thisMonth}</option><option value="next">{text.nextMonth}</option></select></Field>
                 </> : null}
@@ -553,6 +582,7 @@ function UserCard({
               style={styles.secondaryButton}
               onClick={() => {
                 setDraft(user);
+                setLevelDraft(initialLevelPolicyDraft(user));
                 setIsEditing(false);
               }}
               disabled={isSaving}
@@ -707,6 +737,12 @@ export default function AdminUsersPage() {
     setMessage("");
 
     try {
+      const levelBaseDate = levelDraft.baseDateMode === "hire_date" ? draft.hire_date : levelDraft.baseDateOverride;
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      if (!levelBaseDate) throw new Error(lang === "vi" ? "Vui lòng nhập ngày bắt đầu tính cấp." : "레벨 기준일을 입력해주세요.");
+      if (draft.hire_date && levelBaseDate < draft.hire_date) throw new Error(lang === "vi" ? "Ngày bắt đầu tính không thể trước ngày vào làm." : "레벨 기준일은 입사일보다 빠를 수 없습니다.");
+      if (draft.termination_date && levelBaseDate > draft.termination_date) throw new Error(lang === "vi" ? "Ngày bắt đầu tính không thể sau ngày nghỉ việc." : "레벨 기준일은 퇴사일보다 늦을 수 없습니다.");
+      if (levelBaseDate > today) throw new Error(lang === "vi" ? "Ngày bắt đầu tính không thể là ngày trong tương lai." : "레벨 기준일은 미래 날짜일 수 없습니다.");
       const updates: Record<string, unknown> = original.role === "master"
         ? { payroll_eligible_override: draft.payroll_eligible_override }
         : {
@@ -734,7 +770,12 @@ export default function AdminUsersPage() {
           id: original.id,
           updates,
           levelProgramEnabled: levelDraft.included,
-          levelEffectiveFrom: levelDraft.included !== policyEnabledForMonth(original, levelDraft.effectiveMonth) ? levelEffectiveFrom(levelDraft.effectiveMonth) : null,
+          levelBaseDateMode: levelDraft.baseDateMode,
+          levelBaseDateOverride: levelDraft.baseDateMode === "override" ? levelDraft.baseDateOverride : null,
+          levelEffectiveFrom: levelDraft.included !== policyEnabledForMonth(original, levelDraft.effectiveMonth)
+            || levelDraft.baseDateMode !== policyBaseForMonth(original, levelDraft.effectiveMonth).mode
+            || (levelDraft.baseDateMode === "override" && levelDraft.baseDateOverride !== policyBaseForMonth(original, levelDraft.effectiveMonth).baseDate)
+            ? levelEffectiveFrom(levelDraft.effectiveMonth) : null,
         }),
       });
       const result = (await res.json()) as UsersResponse;

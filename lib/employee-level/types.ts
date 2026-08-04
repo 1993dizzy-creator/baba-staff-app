@@ -67,6 +67,7 @@ export type EmployeeLevelProgramVersion = {
   effectiveFrom: string;
   effectiveTo: string | null;
   baseDate: string | null;
+  baseDateMode: "hire_date" | "override" | null;
   revision: number;
 };
 

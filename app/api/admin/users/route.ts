@@ -40,7 +40,13 @@ function withLevelPolicyState(
     levelProgramPolicy: {
       currentEnabled,
       nextEnabled,
-      hasScheduledChange: currentEnabled !== nextEnabled,
+      currentBaseDateMode: currentVersion?.baseDateMode ?? (currentUser.level_base_date_override ? "override" : "hire_date"),
+      nextBaseDateMode: nextVersion?.baseDateMode ?? (nextUser.level_base_date_override ? "override" : "hire_date"),
+      currentBaseDate: currentVersion?.baseDate ?? currentUser.hire_date,
+      nextBaseDate: nextVersion?.baseDate ?? nextUser.hire_date,
+      hasScheduledChange: currentEnabled !== nextEnabled
+        || currentVersion?.baseDateMode !== nextVersion?.baseDateMode
+        || currentVersion?.baseDate !== nextVersion?.baseDate,
       nextEffectiveFrom: nextMonthStart(today),
     },
   };
@@ -309,7 +315,7 @@ export async function PATCH(req: Request) {
         applyEmployeeLevelProgramVersion(target as UserRow, previousVersions.get(Number(id))),
         today,
       );
-      const { data, error } = await supabaseServer.rpc("employee_rehire_with_level_policy_v2", {
+      const { data, error } = await supabaseServer.rpc("employee_rehire_with_level_policy_v3", {
         p_user_id: id, p_rehire_date: rehireDate, p_actor_id: auth.actor.id,
         p_actor_username: auth.actor.username,
         p_level_program_enabled: rehireLevelEnabled,
@@ -437,20 +443,6 @@ export async function PATCH(req: Request) {
     }
     update = terminationPolicy.update;
 
-    const hasLevelBaseDateUpdate = Object.prototype.hasOwnProperty.call(
-      body,
-      "levelBaseDateOverride"
-    );
-    let levelBaseDateOverride = target.level_base_date_override;
-    if (hasLevelBaseDateUpdate) {
-      if (body.levelBaseDateOverride !== null && !isDateKey(body.levelBaseDateOverride)) {
-        return policyResponse("INVALID_BASE_DATE", lang);
-      }
-      levelBaseDateOverride = body.levelBaseDateOverride === null
-        ? null
-        : String(body.levelBaseDateOverride);
-    }
-
     const resultingHireDate = Object.prototype.hasOwnProperty.call(update, "hire_date")
       ? update.hire_date as string | null
       : target.hire_date;
@@ -491,25 +483,42 @@ export async function PATCH(req: Request) {
       : currentVersion;
     const comparisonEnabled = comparisonVersion?.enabled
       ?? isEmployeeLevelEligibleRole(resultingRole, target.level_program_enabled);
-    const levelStateChanged = comparisonEnabled !== levelProgramEnabled;
-    const levelEffectiveFrom = levelStateChanged ? requestedEffectiveFrom : "";
-    if (levelStateChanged && !levelEffectiveFrom) {
+    const requestedBaseDateMode = body.levelBaseDateMode;
+    if (requestedBaseDateMode !== "hire_date" && requestedBaseDateMode !== "override") {
+      return policyResponse("INVALID_BASE_DATE", lang);
+    }
+    const requestedBaseDateOverride = requestedBaseDateMode === "override"
+      ? normalizeText(body.levelBaseDateOverride)
+      : null;
+    if (requestedBaseDateMode === "override" && (!requestedBaseDateOverride || !isDateKey(requestedBaseDateOverride))) {
+      return policyResponse("INVALID_BASE_DATE", lang);
+    }
+    const comparisonBaseDateMode = comparisonVersion?.baseDateMode
+      ?? (target.level_base_date_override ? "override" : "hire_date");
+    const comparisonBaseDateOverride = comparisonBaseDateMode === "override"
+      ? comparisonVersion?.baseDate ?? target.level_base_date_override
+      : null;
+    const levelPolicyChanged = comparisonEnabled !== levelProgramEnabled
+      || comparisonBaseDateMode !== requestedBaseDateMode
+      || (requestedBaseDateMode === "override" && comparisonBaseDateOverride !== requestedBaseDateOverride);
+    const levelEffectiveFrom = levelPolicyChanged ? requestedEffectiveFrom : "";
+    if (levelPolicyChanged && !levelEffectiveFrom) {
       return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng chọn tháng áp dụng." : "적용 월을 선택해주세요." }, { status: 400 });
     }
-    const automaticChangeReason = levelProgramEnabled
-      ? "admin_level_enabled"
-      : "admin_level_disabled";
-    if (levelStateChanged) levelBaseDateOverride = levelProgramEnabled ? levelEffectiveFrom : null;
+    const automaticChangeReason = comparisonEnabled !== levelProgramEnabled
+      ? levelProgramEnabled ? "admin_level_enabled" : "admin_level_disabled"
+      : comparisonBaseDateMode !== requestedBaseDateMode
+        ? requestedBaseDateMode === "hire_date" ? "admin_level_base_hire_date" : "admin_level_base_override"
+        : "admin_level_base_date_changed";
     if (target.is_system_account && levelProgramEnabled === true) {
       return policyResponse("SYSTEM_ACCOUNT_NOT_ELIGIBLE", lang, 403);
     }
     if (
       !target.is_system_account
-      && isEmployeeLevelEligibleRole(resultingRole, levelProgramEnabled)
     ) {
       const levelValidation = validateEmployeeLevelConfiguration({
         hireDate: resultingHireDate,
-        levelBaseDateOverride,
+        levelBaseDateOverride: requestedBaseDateOverride,
         terminationDate: resultingTerminationDate,
         today,
       });
@@ -517,18 +526,20 @@ export async function PATCH(req: Request) {
         return policyResponse(validationCodeToPolicyCode(levelValidation.codes[0]), lang);
       }
     }
-    if (target.termination_date && levelStateChanged) {
+    if (target.termination_date && levelPolicyChanged) {
       return policyResponse("TERMINATED_EMPLOYEE_READ_ONLY", lang, 409);
     }
 
     const { data, error } = await supabaseServer.rpc(
-      "employee_update_profile_and_level_v5",
+      "employee_update_profile_and_level_v6",
       {
         p_user_id: id,
         p_updates: update,
         p_level_program_enabled: levelProgramEnabled,
-        p_effective_from: levelStateChanged ? levelEffectiveFrom : null,
-        p_change_reason: levelStateChanged ? automaticChangeReason : null,
+        p_effective_from: levelPolicyChanged ? levelEffectiveFrom : null,
+        p_base_date_mode: requestedBaseDateMode,
+        p_base_date_override: requestedBaseDateOverride,
+        p_change_reason: levelPolicyChanged ? automaticChangeReason : null,
         p_actor_id: auth.actor.id,
         p_actor_username: auth.actor.username,
       }

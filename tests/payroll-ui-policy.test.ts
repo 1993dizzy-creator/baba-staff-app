@@ -174,7 +174,8 @@ test("contract editor uses cumulative fixed raises and schedule-derived read-onl
   assert.match(settings, /고정 급여인상 총액/);
   assert.match(settings, /Tổng mức tăng lương cố định/);
   assert.match(settings, /scheduledMinutesPerDay\(effectiveSchedule\.startTime/);
-  assert.match(settings, /예정 근무시간/);
+  assert.match(settings, /현재 근무시간/);
+  assert.match(settings, /근무시간 이력/);
   assert.doesNotMatch(settings, /type="number"[^>]*value=\{form\.standardHoursPerDay\}/);
   assert.match(settings, /paidLeaveMode: "unpaid"/);
   assert.match(settings, /earlyLeaveAdjustmentMode: "deduct_minutes"/);
@@ -187,8 +188,8 @@ test("contract amount formatting, read-only schedule summary, and modal focus ar
   assert.match(settings, /function MoneyInputField/);
   assert.match(settings, /value=\{formatIntegerInput\(value\)\}/);
   assert.match(settings, /change\(integerInputDigits\(event\.target\.value\)\)/);
-  assert.match(settings, /effectiveSchedule\.startTime.*effectiveSchedule\.endTime/);
-  assert.match(settings, /automaticStandardMinutes \/ 60/);
+  assert.match(settings, /current \? scheduleValue\(current\)/);
+  assert.match(settings, /minutes \/ 60/);
   assert.doesNotMatch(settings, /<small style=\{s\.fieldHelp\}>\{hoursInputToMinutes/);
   assert.match(payrollModal, /const onCloseRef=useRef\(onClose\)/);
   assert.match(payrollModal, /onCloseRef\.current=onClose/);

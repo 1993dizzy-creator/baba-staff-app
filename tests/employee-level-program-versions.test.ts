@@ -41,13 +41,14 @@ test("payroll month loading uses and snapshots the version effective for that mo
 test("future reservations are compared at their target month and later choices cancel overlapping schedules", () => {
   const route = read("app/api/admin/users/route.ts");
   const page = read("app/(protected)/admin/users/page.tsx");
-  const migration = read("supabase/migrations/202608030001_add_employee_level_program_versions.sql");
+  const migration = read("supabase/migrations/202608040001_restore_employee_level_base_date_modes.sql");
   assert.match(route, /loadEmployeeLevelProgramVersions\(\[Number\(id\)\], requestedEffectiveFrom\)/);
-  assert.match(route, /comparisonEnabled !== levelProgramEnabled/);
+  assert.match(route, /levelPolicyChanged/);
   assert.match(route, /nextVersions/);
   assert.match(page, /levelProgramPolicy\?\.nextEnabled/);
   assert.match(page, /policyEnabledForMonth/);
-  assert.match(migration, /else effective_from[\s\S]*or effective_from >= p_effective_from/);
+  assert.match(migration, /v_next_effective_from/);
+  assert.doesNotMatch(migration, /effective_to = case[\s\S]*else effective_from/);
 });
 
 test("current and next month ranges use half-open boundaries without an active duplicate", () => {
@@ -85,7 +86,7 @@ test("monthly attendance badges resolve level policy at the selected month", () 
 });
 
 test("user mutation APIs call the versioned transactional RPCs", () => {
-  assert.match(read("app/api/admin/users/route.ts"), /employee_update_profile_and_level_v5/);
-  assert.match(read("app/api/admin/users/route.ts"), /employee_rehire_with_level_policy_v2/);
-  assert.match(read("app/api/admin/users/create/route.ts"), /employee_create_with_schedule_v2/);
+  assert.match(read("app/api/admin/users/route.ts"), /employee_update_profile_and_level_v6/);
+  assert.match(read("app/api/admin/users/route.ts"), /employee_rehire_with_level_policy_v3/);
+  assert.match(read("app/api/admin/users/create/route.ts"), /employee_create_with_schedule_v3/);
 });

@@ -20,8 +20,9 @@ test("hourly contract labels and help are bilingual while monthly and daily labe
     "Lương hợp đồng hàng tháng", "Lương theo ngày", "Lương theo giờ",
     "1시간 기준 급여를 입력합니다. 예: 30,000동 입력 시 시급 30,000동으로 계산됩니다.",
     "Nhập mức lương cho 1 giờ. Ví dụ: nhập 30.000 đồng thì sẽ được tính là 30.000 đồng/giờ.",
-    "직원관리의 근무시간을 기준으로 자동 적용됩니다.",
-    "Tự động áp dụng theo giờ làm việc trong quản lý nhân viên.",
+    "현재 근무시간", "Giờ làm việc hiện tại",
+    "급여 계산에는 날짜별 근무시간이 자동 적용됩니다.",
+    "Giờ làm việc theo từng ngày được tự động áp dụng khi tính lương.",
   ]) assert.match(settings, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(settings, /salaryInputLabel\(l, form\.payType\)/);
 });

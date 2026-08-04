@@ -63,9 +63,12 @@ type Contract = {
   revision: number;
   auditVersion: number | null;
   createdBy?: number | null;
+  createdByName?: string | null;
   createdAt?: string | null;
   note?: string | null;
+  auditLogs?: ContractAuditLog[];
 };
+type ContractAuditLog = { id: number; action: string; actorUserId: number; actorName: string | null; reason: string | null; createdAt: string };
 type FormState = {
   payType: string;
   calculationBasis: string;
@@ -319,6 +322,16 @@ export default function PayrollSettingsPage() {
   const effectiveSchedules = schedulesActiveOn(workSchedules, form.effectiveFrom);
   const effectiveSchedule = effectiveSchedules.length === 1 ? effectiveSchedules[0] : null;
   const automaticStandardMinutes = effectiveSchedule ? scheduledMinutesPerDay(effectiveSchedule.startTime, effectiveSchedule.endTime, effectiveSchedule.unpaidBreakMinutes) : null;
+  const vietnamToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const currentScheduleMatches = schedulesActiveOn(workSchedules, vietnamToday);
+  const currentSchedule = currentScheduleMatches.length === 1 ? currentScheduleMatches[0] : null;
+  const effectiveMonthStart = `${form.effectiveFrom.slice(0, 7)}-01`;
+  const nextMonth = new Date(`${effectiveMonthStart}T00:00:00Z`);
+  nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+  const effectiveMonthEndExclusive = nextMonth.toISOString().slice(0, 10);
+  const effectiveMonthSchedules = workSchedules
+    .filter((schedule) => (!schedule.effectiveTo || schedule.effectiveTo > schedule.effectiveFrom) && schedule.effectiveFrom < effectiveMonthEndExclusive && (!schedule.effectiveTo || schedule.effectiveTo > effectiveMonthStart))
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
   useEffect(() => {
     if (!selectedId || employeeListOpen || contractsLoading || selectedInsuranceLoading || pendingScrollUserIdRef.current !== selectedId) return;
     const frame = requestAnimationFrame(() => {
@@ -695,11 +708,7 @@ export default function PayrollSettingsPage() {
                   step="0.01"
                 />
               )}
-              {!selectedIsOwner ? <>
-                <ReadOnlyField label={vi ? "Giờ làm việc dự kiến" : "예정 근무시간"} value={effectiveSchedule ? `${effectiveSchedule.startTime}~${effectiveSchedule.endTime}` : (vi ? "Không có lịch làm việc" : "근무시간 없음")} />
-                <ReadOnlyField label={vi ? "Giờ làm việc chuẩn mỗi ngày" : "하루 기준 근무시간"} value={automaticStandardMinutes === null ? "-" : `${automaticStandardMinutes / 60}${vi ? " giờ" : "시간"}`} />
-                <small style={s.fieldHelp}>{vi ? "Tự động áp dụng theo giờ làm việc trong quản lý nhân viên." : "직원관리의 근무시간을 기준으로 자동 적용됩니다."}</small>
-              </> : null}
+              {!selectedIsOwner ? <ScheduleHistory current={currentSchedule} monthSchedules={effectiveMonthSchedules} month={form.effectiveFrom.slice(0, 7)} vi={vi} /> : null}
             </form>
           </PayrollModal>
         )}
@@ -709,6 +718,8 @@ export default function PayrollSettingsPage() {
 }
 function ContractCard({ contract, previous, vi }: { contract: Contract; previous: Contract | null; vi: boolean }) {
   const before = previous?.fixedRaiseAmount ?? 0;
+  const corrections = (contract.auditLogs ?? []).filter((audit) => audit.action === "corrected");
+  const userLabel = (name: string | null | undefined, id: number | null | undefined) => name || `${vi ? "Người dùng" : "사용자"} #${id}`;
   return (
     <article style={s.contract}>
       <b>{vi ? `Lần thay đổi ${contract.revision}` : `변경번호 ${contract.revision}`}</b>
@@ -720,10 +731,42 @@ function ContractCard({ contract, previous, vi }: { contract: Contract; previous
       </span>
       {contract.fixedRaiseAmount !== before && contract.note ? <span>{vi ? "Lý do" : "사유"}: {contract.note}</span> : null}
       <span>{vi ? "Ngày áp dụng" : "적용일"} {contract.effectiveFrom}</span>
-      {contract.createdBy ? <small>{vi ? "Người tạo" : "생성자"} #{contract.createdBy}</small> : null}
-      {contract.createdAt ? <small>{vi ? "Tạo lúc" : "생성 시각"} {new Date(contract.createdAt).toLocaleString(vi ? "vi-VN" : "ko-KR")}</small> : null}
+      {contract.createdBy ? <small>{vi ? "Người đăng ký" : "등록 담당자"}: {userLabel(contract.createdByName, contract.createdBy)}</small> : null}
+      {contract.createdAt ? <small>{vi ? "Thời gian đăng ký" : "등록 시각"}: {new Date(contract.createdAt).toLocaleString(vi ? "vi-VN" : "ko-KR")}</small> : null}
+      {corrections.length ? <details style={s.auditDetails}>
+        <summary>{vi ? `Lịch sử chỉnh sửa ${corrections.length} mục` : `정정 기록 ${corrections.length}건`}</summary>
+        {corrections.map((audit) => <div key={audit.id} style={s.auditEntry}>
+          <span>{vi ? "Người chỉnh sửa" : "정정 담당자"}: {userLabel(audit.actorName, audit.actorUserId)}</span>
+          {audit.reason ? <span>{vi ? "Lý do chỉnh sửa" : "정정 사유"}: {audit.reason}</span> : null}
+          <span>{vi ? "Thời gian chỉnh sửa" : "정정 시각"}: {new Date(audit.createdAt).toLocaleString(vi ? "vi-VN" : "ko-KR")}</span>
+        </div>)}
+      </details> : null}
     </article>
   );
+}
+function ScheduleHistory({ current, monthSchedules, month, vi }: { current: WorkScheduleVersion | null; monthSchedules: WorkScheduleVersion[]; month: string; vi: boolean }) {
+  const scheduleValue = (schedule: WorkScheduleVersion) => {
+    const minutes = scheduledMinutesPerDay(schedule.startTime, schedule.endTime, schedule.unpaidBreakMinutes);
+    return `${schedule.startTime}~${schedule.endTime} · ${minutes === null ? "-" : minutes / 60}${vi ? " giờ" : "시간"}`;
+  };
+  const scheduleEnd = (effectiveTo: string | null) => {
+    if (!effectiveTo) return vi ? "sau đó" : "이후";
+    const end = new Date(`${effectiveTo}T00:00:00Z`);
+    end.setUTCDate(end.getUTCDate() - 1);
+    return end.toISOString().slice(0, 10);
+  };
+  return <section style={s.scheduleBox}>
+    <b>{vi ? "Giờ làm việc hiện tại" : "현재 근무시간"}</b>
+    <span>{current ? scheduleValue(current) : (vi ? "Không có lịch làm việc hiện tại" : "현재 근무시간 없음")}</span>
+    {monthSchedules.length > 1 ? <>
+      <b>{vi ? `Lịch sử giờ làm việc tháng ${month.slice(5, 7)}` : `${Number(month.slice(5, 7))}월 근무시간 이력`}</b>
+      {monthSchedules.map((schedule) => <div key={schedule.id} style={s.scheduleRow}>
+        <span>{schedule.effectiveFrom} ~ {scheduleEnd(schedule.effectiveTo)}</span>
+        <span>{scheduleValue(schedule)}</span>
+      </div>)}
+    </> : null}
+    <small style={s.fieldHelp}>{vi ? "Giờ làm việc theo từng ngày được tự động áp dụng khi tính lương." : "급여 계산에는 날짜별 근무시간이 자동 적용됩니다."}</small>
+  </section>;
 }
 function SummaryItem({ label, value, important = false }: { label: string; value: string; important?: boolean }) {
   return (
@@ -936,6 +979,10 @@ const s = {
     borderRadius: 9,
     fontSize: 12,
   },
+  auditDetails: { marginTop: 4, paddingTop: 5, borderTop: "1px solid #e5e7eb" },
+  auditEntry: { display: "grid", gap: 2, padding: "6px 8px", marginTop: 4, borderRadius: 8, background: "#f9fafb", overflowWrap: "anywhere" },
+  scheduleBox: { display: "grid", gap: 5, padding: "9px 10px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#f9fafb", fontSize: 12, minWidth: 0, overflowWrap: "anywhere" },
+  scheduleRow: { display: "grid", gap: 2, padding: "6px 8px", borderRadius: 8, background: "#fff" },
   employeeSettings: { display: "grid", gap: 9, minWidth: 0, scrollMarginTop: 72 },
   employeeSummary: { display: "grid", gap: 8, padding: 12, border: "1px solid #bfdbfe", borderRadius: 14, background: "#f8fbff", minWidth: 0 },
   summaryIdentity: { display: "grid", gap: 3, minWidth: 0 },

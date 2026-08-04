@@ -116,7 +116,7 @@ export async function POST(req: Request) {
     }
 
     const { data, error } = await supabaseServer.rpc(
-      "employee_create_with_schedule_v2",
+      "employee_create_with_schedule_v3",
       { p_employee: {
         username,
         password,

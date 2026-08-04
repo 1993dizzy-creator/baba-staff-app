@@ -12,7 +12,7 @@ test("admin users API exposes calculated level info through the shared calculato
   assert.match(route, /requireRole\(\["owner", "master"\]\)/);
   assert.match(route, /level_base_date_override/);
   assert.match(route, /withEmployeeLevelInfo/);
-  assert.match(route, /employee_update_profile_and_level_v5/);
+  assert.match(route, /employee_update_profile_and_level_v6/);
   assert.match(route, /loadEmployeeLevelProgramVersions/);
   assert.match(route, /validateEmployeeLevelConfiguration/);
   for (const code of [
@@ -54,7 +54,7 @@ test("terminated employees may save unchanged profiles but base-date changes rol
   const route = read("app/api/admin/users/route.ts");
   const sql = read("supabase/migrations/20260729114539_simplify_employee_level_profile_save.sql");
 
-  assert.match(route, /target\.termination_date && levelStateChanged[\s\S]*TERMINATED_EMPLOYEE_READ_ONLY/);
+  assert.match(route, /target\.termination_date && levelPolicyChanged[\s\S]*TERMINATED_EMPLOYEE_READ_ONLY/);
   assert.match(sql, /v_before\.termination_date is not null[\s\S]*level_base_date_override is distinct from p_base_date_override[\s\S]*TERMINATED_EMPLOYEE_READ_ONLY/);
   assert.match(sql, /begin;[\s\S]*TERMINATED_EMPLOYEE_READ_ONLY[\s\S]*update public\.users[\s\S]*commit;/);
 });
@@ -70,14 +70,14 @@ test("level audit is exactly conditional on a real allowed base-date change", ()
 
 test("all employee roles store effective-dated level policy atomically", () => {
   const route = read("app/api/admin/users/route.ts");
-  const sql = read("supabase/migrations/202608030001_add_employee_level_program_versions.sql");
-  assert.match(route, /employee_update_profile_and_level_v5/);
+  const sql = read("supabase/migrations/202608040001_restore_employee_level_base_date_modes.sql");
+  assert.match(route, /employee_update_profile_and_level_v6/);
   assert.match(route, /p_level_program_enabled: levelProgramEnabled/);
-  assert.match(sql, /employee_update_profile_and_level_v5/);
+  assert.match(sql, /employee_update_profile_and_level_v6/);
   assert.match(sql, /employee_level_program_versions/);
-  assert.match(sql, /when effective_from < p_effective_from then p_effective_from/);
-  assert.match(sql, /v_current\.enabled is not distinct from p_level_program_enabled/);
-  assert.match(sql, /level_program_enabled = p_level_program_enabled/);
+  assert.match(sql, /where id = v_target\.id and v_target\.effective_from < p_effective_from/);
+  assert.match(sql, /v_target\.enabled is not distinct from p_level_program_enabled/);
+  assert.match(sql, /level_program_enabled = v_active\.enabled/);
   assert.match(sql, /TERMINATED_EMPLOYEE_READ_ONLY/);
   assert.match(sql, /security definer/);
   assert.match(sql, /revoke all on function[\s\S]*from public, anon, authenticated/);
@@ -169,7 +169,7 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   assert.match(page, /EmployeeNameWithLevel/);
   assert.match(nameWithLevel, /EmployeeLevelBadge/);
   assert.match(page, /levelProgramPolicy\?\.currentEnabled/);
-  assert.match(route, /isEmployeeLevelEligibleRole\(resultingRole, levelProgramEnabled\)/);
+  assert.match(route, /levelPolicyChanged/);
   assert.match(page, /effectiveMonth: "current" \| "next"/);
   assert.match(page, /levelEffectiveFrom/);
   assert.match(page, /setUsers\(\(current\) =>[\s\S]*current\.map/);
@@ -178,7 +178,7 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   assert.match(page, /levelPolicyHelp/);
   assert.match(page, /levelProgramEnabled: levelDraft\.included/);
   assert.match(page, /levelStateChanged/);
-  assert.match(route, /comparisonEnabled !== levelProgramEnabled/);
+  assert.match(route, /comparisonBaseDateMode/);
   assert.match(nameWithLevel, /levelInfo\?\.eligible === true && levelInfo\.level !== null/);
   assert.match(nameWithLevel, /PROGRAM_DISABLED/);
   assert.match(badge, /disabled \? "X"/);
@@ -222,6 +222,8 @@ test("Korean and Vietnamese employee-level copy is present", () => {
   const text = read("lib/text/admin-users.ts");
   for (const phrase of [
     "장기근무 레벨", "레벨 미적용", "레벨 설정 필요", "급여 협상 가능",
+    "레벨 계산 기준", "입사일 기준", "직접 기준",
     "Cấp làm việc lâu dài", "Không áp dụng cấp", "Cần thiết lập cấp", "Có thể thương lượng lương",
+    "Mốc tính cấp", "Theo ngày vào làm", "Ngày chỉ định",
   ]) assert.match(text, new RegExp(phrase));
 });
