@@ -86,7 +86,7 @@ test("monthly attendance badges resolve level policy at the selected month", () 
 });
 
 test("user mutation APIs call the versioned transactional RPCs", () => {
-  assert.match(read("app/api/admin/users/route.ts"), /employee_update_profile_and_level_v6/);
+  assert.match(read("app/api/admin/users/route.ts"), /employee_update_profile_and_level_v9/);
   assert.match(read("app/api/admin/users/route.ts"), /employee_rehire_with_level_policy_v3/);
-  assert.match(read("app/api/admin/users/create/route.ts"), /employee_create_with_schedule_v3/);
+  assert.match(read("app/api/admin/users/create/route.ts"), /employee_create_with_schedule_v5/);
 });

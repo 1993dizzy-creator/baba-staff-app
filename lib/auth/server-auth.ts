@@ -48,14 +48,16 @@ export async function getAuthenticatedActor(): Promise<AuthenticationResult> {
 
   const { data, error } = await supabaseServer
     .from("users")
-    .select("id,username,name,full_name,role,part,position,is_active")
+    .select("id,username,name,full_name,role,part,position,is_active,app_login_enabled")
     .eq("id", session.uid)
     .maybeSingle();
 
   if (error) {
     throw new Error(`Failed to verify authenticated actor: ${error.message}`);
   }
-  if (!data || data.is_active !== true) {
+  // app_login_enabled는 로그인 가능 여부만 담당한다(재직 상태는 is_active가 담당).
+  // 관리자가 로그인 사용을 끄면 이미 발급된 세션도 다음 요청부터 여기서 차단된다.
+  if (!data || data.is_active !== true || data.app_login_enabled !== true) {
     return { ok: false, status: 401, code: "RELOGIN_REQUIRED" };
   }
 

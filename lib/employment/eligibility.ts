@@ -27,12 +27,22 @@ export function employmentIntersectsMonth(user: EmploymentDates, month: string) 
 }
 
 export function shouldIncludeMonthlyEmployee(
-  user: EmploymentDates & { is_system_account?: boolean },
+  user: EmploymentDates & {
+    is_system_account?: boolean;
+    attendance_tracking_enabled?: boolean;
+  },
   month: string,
   actualAttendanceExists: boolean
 ) {
   if (user.is_system_account === true) return false;
-  return actualAttendanceExists || employmentIntersectsMonth(user, month);
+  // 해당 월에 실제 근태 기록이 있으면 현재 attendance_tracking_enabled가 false여도
+  // 과거 월 조회에서는 계속 표시한다. 기록이 없으면 근태 사용 직원만 재직기간 기준으로
+  // 표시한다(신규 근태 처리 대상 판정과 동일한 규칙).
+  if (actualAttendanceExists) return true;
+  return (
+    user.attendance_tracking_enabled === true &&
+    employmentIntersectsMonth(user, month)
+  );
 }
 
 export function validateEmploymentDates(user: EmploymentDates) {

@@ -14,6 +14,11 @@ import {
   attendanceJson,
   requireAttendanceActor,
 } from "@/lib/attendance/server-api";
+import {
+  ATTENDANCE_TRACKING_DISABLED_CODE,
+  getAttendanceTrackingDisabledMessage,
+  isAttendanceTrackingUser,
+} from "@/lib/attendance/tracking-policy";
 
 const MUTATION_RECORD_FIELDS =
   "id,user_id,work_date,status,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status";
@@ -96,7 +101,7 @@ export async function POST(req: Request) {
 
     const { data: user, error: userError } = await supabaseServer
       .from("users")
-      .select("id, work_start_time, work_end_time, hire_date, termination_date, is_system_account")
+      .select("id, work_start_time, work_end_time, hire_date, termination_date, is_system_account, attendance_tracking_enabled")
       .eq("id", userId)
       .eq("is_active", true)
       .eq("is_system_account", false)
@@ -118,6 +123,17 @@ export async function POST(req: Request) {
           message: getMessage(lang, "inactiveUser"),
         },
         401
+      );
+    }
+
+    if (!isAttendanceTrackingUser(user)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: ATTENDANCE_TRACKING_DISABLED_CODE,
+          message: getAttendanceTrackingDisabledMessage(lang),
+        },
+        { status: 409 }
       );
     }
 

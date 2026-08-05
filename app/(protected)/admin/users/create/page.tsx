@@ -10,6 +10,7 @@ import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ui } from "@/lib/styles/ui";
 import { adminUsersText } from "@/lib/text";
 import { attendanceFetch } from "@/lib/auth/client-session";
+import { PART_VALUES } from "@/lib/common/parts";
 
 type CreateResponse = {
   ok: boolean;
@@ -31,10 +32,12 @@ type FormState = {
   work_end_time: string;
   is_active: boolean;
   level_program_enabled: boolean;
+  attendance_tracking_enabled: boolean;
+  app_login_enabled: boolean;
 };
 
 const roleOptions = ["owner", "manager", "leader", "staff"] as const;
-const partOptions = ["owner", "kitchen", "hall", "bar"] as const;
+const partOptions = PART_VALUES;
 const positionOptions = ["owner", "manager", "leader", "staff"] as const;
 const genders = ["", "male", "female", "other"];
 
@@ -53,6 +56,8 @@ const initialForm: FormState = {
   work_end_time: "01:00",
   is_active: true,
   level_program_enabled: true,
+  attendance_tracking_enabled: true,
+  app_login_enabled: true,
 };
 
 type AdminUsersPageText = (typeof adminUsersText)[keyof typeof adminUsersText];
@@ -70,6 +75,8 @@ function getPartLabel(part: string, text: AdminUsersPageText) {
   if (part === "kitchen") return text.kitchenGroup;
   if (part === "hall") return text.hallGroup;
   if (part === "bar") return text.barGroup;
+  if (part === "cleaning") return text.cleaningGroup;
+  if (part === "etc") return text.etcGroup;
   return part;
 }
 
@@ -166,7 +173,9 @@ export default function AdminUserCreatePage() {
   const previewName = form.name.trim() || text.name;
   const previewPosition = getPositionLabel(form.position, text);
   const previewWorkTime =
-    form.position === "owner" ? "" : `${form.work_start_time}-${form.work_end_time}`;
+    form.position === "owner" || !form.attendance_tracking_enabled
+      ? ""
+      : `${form.work_start_time}-${form.work_end_time}`;
   const hours = shiftHours(form.work_start_time, form.work_end_time);
 
   useEffect(() => {
@@ -186,6 +195,14 @@ export default function AdminUserCreatePage() {
   async function submit() {
     if (!form.username.trim() || !form.password.trim() || !form.name.trim()) {
       setMessage(text.required);
+      return;
+    }
+
+    if (
+      form.attendance_tracking_enabled &&
+      (!form.work_start_time || !form.work_end_time)
+    ) {
+      setMessage(text.workTimeRequiredForTracking);
       return;
     }
 
@@ -367,22 +384,46 @@ export default function AdminUserCreatePage() {
                 style={styles.input}
               />
             </Field>
-            <Field label={text.workStartTime}>
+            <label style={styles.checkRow}>
               <input
-                type="time"
-                value={form.work_start_time}
-                onChange={(event) => update("work_start_time", event.target.value)}
-                style={styles.input}
+                type="checkbox"
+                checked={form.attendance_tracking_enabled}
+                onChange={(event) =>
+                  update("attendance_tracking_enabled", event.target.checked)
+                }
               />
-            </Field>
-            <Field label={text.workEndTime}>
+              {text.attendanceTracking}
+            </label>
+            <span style={styles.helpText}>{text.attendanceTrackingHelp}</span>
+            {form.attendance_tracking_enabled ? (
+              <>
+                <Field label={text.workStartTime}>
+                  <input
+                    type="time"
+                    value={form.work_start_time}
+                    onChange={(event) => update("work_start_time", event.target.value)}
+                    style={styles.input}
+                  />
+                </Field>
+                <Field label={text.workEndTime}>
+                  <input
+                    type="time"
+                    value={form.work_end_time}
+                    onChange={(event) => update("work_end_time", event.target.value)}
+                    style={styles.input}
+                  />
+                </Field>
+              </>
+            ) : null}
+            <label style={styles.checkRow}>
               <input
-                type="time"
-                value={form.work_end_time}
-                onChange={(event) => update("work_end_time", event.target.value)}
-                style={styles.input}
+                type="checkbox"
+                checked={form.app_login_enabled}
+                onChange={(event) => update("app_login_enabled", event.target.checked)}
               />
-            </Field>
+              {text.appLoginEnabled}
+            </label>
+            <span style={styles.helpText}>{text.appLoginEnabledHelp}</span>
             <label style={styles.checkRow}>
               <input
                 type="checkbox"

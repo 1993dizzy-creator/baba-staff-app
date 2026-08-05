@@ -74,12 +74,18 @@ test("termination day is inclusive and later dates are excluded",()=>{
 });
 
 test("monthly attendance requires an actual record or an explicit intersecting hire date",()=>{
-  const nullHire={hire_date:null,termination_date:"2026-07-10",is_system_account:false};
+  const nullHire={hire_date:null,termination_date:"2026-07-10",is_system_account:false,attendance_tracking_enabled:true};
   assert.equal(shouldIncludeMonthlyEmployee(nullHire,"2026-07",false),false);
   assert.equal(shouldIncludeMonthlyEmployee(nullHire,"2026-07",true),true);
-  assert.equal(shouldIncludeMonthlyEmployee({hire_date:"2026-06-09",termination_date:"2026-07-10",is_system_account:false},"2026-07",false),true);
-  assert.equal(shouldIncludeMonthlyEmployee({hire_date:"2026-06-09",termination_date:"2026-07-10",is_system_account:false},"2026-07",true),true);
-  assert.equal(shouldIncludeMonthlyEmployee({hire_date:null,termination_date:null,is_system_account:true},"2026-07",true),false);
+  assert.equal(shouldIncludeMonthlyEmployee({hire_date:"2026-06-09",termination_date:"2026-07-10",is_system_account:false,attendance_tracking_enabled:true},"2026-07",false),true);
+  assert.equal(shouldIncludeMonthlyEmployee({hire_date:"2026-06-09",termination_date:"2026-07-10",is_system_account:false,attendance_tracking_enabled:true},"2026-07",true),true);
+  assert.equal(shouldIncludeMonthlyEmployee({hire_date:null,termination_date:null,is_system_account:true,attendance_tracking_enabled:true},"2026-07",true),false);
+});
+
+test("attendance_tracking_enabled=false only shows in a month with an actual record, matching the current-list rule",()=>{
+  const trackingOff={hire_date:"2026-06-09",termination_date:null,is_system_account:false,attendance_tracking_enabled:false};
+  assert.equal(shouldIncludeMonthlyEmployee(trackingOff,"2026-07",false),false);
+  assert.equal(shouldIncludeMonthlyEmployee(trackingOff,"2026-07",true),true);
 });
 
 test("real-time eligibility continues to allow a missing hire date",()=>{

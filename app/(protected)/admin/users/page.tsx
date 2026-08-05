@@ -5,7 +5,7 @@ import type { CSSProperties } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
-import { getPartMeta } from "@/lib/common/parts";
+import { PART_VALUES, getPartKey, getPartMeta } from "@/lib/common/parts";
 import { useLanguage } from "@/lib/language-context";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ui } from "@/lib/styles/ui";
@@ -37,6 +37,8 @@ type UserRow = {
   payroll_eligible_override: boolean | null;
   level_program_enabled: boolean | null;
   level_base_date_override: string | null;
+  attendance_tracking_enabled: boolean;
+  app_login_enabled: boolean;
   levelInfo: EmployeeLevelInfo;
   levelProgramPolicy?: {
     currentEnabled: boolean;
@@ -98,10 +100,10 @@ type UsersResponse = {
 type AdminUsersPageText = (typeof adminUsersText)[keyof typeof adminUsersText];
 
 const roleOptions = ["owner", "manager", "leader", "staff"] as const;
-const partOptions = ["owner", "kitchen", "hall", "bar"] as const;
+const partOptions = PART_VALUES;
 const positionOptions = ["owner", "manager", "leader", "staff"] as const;
 const genders = ["", "male", "female", "other"];
-const groupOrder = ["owner", "kitchen", "hall", "bar", "inactive"] as const;
+const groupOrder = ["owner", "kitchen", "hall", "bar", "cleaning", "etc", "inactive"] as const;
 
 type UserGroupKey = (typeof groupOrder)[number];
 type GroupMeta = {
@@ -187,6 +189,8 @@ function getPartLabel(part: string, text: AdminUsersPageText) {
   if (part === "kitchen") return text.kitchenGroup;
   if (part === "hall") return text.hallGroup;
   if (part === "bar") return text.barGroup;
+  if (part === "cleaning") return text.cleaningGroup;
+  if (part === "etc") return text.etcGroup;
   return part;
 }
 
@@ -202,13 +206,20 @@ function isOwnerGroupUser(user: Pick<UserRow, "role">) {
   return user.role === "owner" || user.role === "master";
 }
 
+// 파트 판정은 공통 상수(lib/common/parts)의 getPartKey를 그대로 사용한다. 알 수 없는
+// part 값은 (예전처럼 "주방"으로 떨어지지 않고) getPartKey의 기본값인 "etc"로 모인다.
 function getUserGroup(user: UserRow): UserGroupKey {
   if (isOwnerGroupUser(user)) return "owner";
-  if (user.part === "kitchen") return "kitchen";
-  if (user.part === "hall") return "hall";
-  if (user.part === "bar") return "bar";
-  return "kitchen";
+  return getPartKey(user.part);
 }
+
+const PART_GROUP_LABELS: Record<Exclude<UserGroupKey, "owner" | "inactive">, keyof AdminUsersPageText> = {
+  kitchen: "kitchenGroup",
+  hall: "hallGroup",
+  bar: "barGroup",
+  cleaning: "cleaningGroup",
+  etc: "etcGroup",
+};
 
 function getGroupMeta(key: UserGroupKey, text: AdminUsersPageText): GroupMeta {
   if (key === "owner") {
@@ -231,34 +242,10 @@ function getGroupMeta(key: UserGroupKey, text: AdminUsersPageText): GroupMeta {
     };
   }
 
-  if (key === "kitchen") {
-    const meta = getPartMeta("kitchen");
-
-    return {
-      label: text.kitchenGroup,
-      emoji: meta.emoji,
-      color: meta.color,
-      bg: meta.bg,
-      border: meta.border,
-    };
-  }
-
-  if (key === "hall") {
-    const meta = getPartMeta("hall");
-
-    return {
-      label: text.hallGroup,
-      emoji: meta.emoji,
-      color: meta.color,
-      bg: meta.bg,
-      border: meta.border,
-    };
-  }
-
-  const meta = getPartMeta("bar");
+  const meta = getPartMeta(key);
 
   return {
-    label: text.barGroup,
+    label: text[PART_GROUP_LABELS[key]],
     emoji: meta.emoji,
     color: meta.color,
     bg: meta.bg,
@@ -501,22 +488,47 @@ function UserCard({
               </span>
             ) : null}
           </Field>
-          <Field label={text.workStartTime}>
+          <label style={styles.checkRow}>
             <input
-              type="time"
-              value={draft.work_start_time || ""}
-              onChange={(event) => update("work_start_time", emptyToNull(event.target.value))}
-              style={styles.input}
+              type="checkbox"
+              checked={draft.attendance_tracking_enabled !== false}
+              onChange={(event) =>
+                update("attendance_tracking_enabled", event.target.checked)
+              }
             />
-          </Field>
-          <Field label={text.workEndTime}>
+            {text.attendanceTracking}
+          </label>
+          <span style={styles.fieldNotice}>{text.attendanceTrackingHelp}</span>
+          <span style={styles.fieldNotice}>{text.attendanceTrackingOpenRecordNotice}</span>
+          {draft.attendance_tracking_enabled !== false ? (
+            <>
+              <Field label={text.workStartTime}>
+                <input
+                  type="time"
+                  value={draft.work_start_time || ""}
+                  onChange={(event) => update("work_start_time", emptyToNull(event.target.value))}
+                  style={styles.input}
+                />
+              </Field>
+              <Field label={text.workEndTime}>
+                <input
+                  type="time"
+                  value={draft.work_end_time || ""}
+                  onChange={(event) => update("work_end_time", emptyToNull(event.target.value))}
+                  style={styles.input}
+                />
+              </Field>
+            </>
+          ) : null}
+          <label style={styles.checkRow}>
             <input
-              type="time"
-              value={draft.work_end_time || ""}
-              onChange={(event) => update("work_end_time", emptyToNull(event.target.value))}
-              style={styles.input}
+              type="checkbox"
+              checked={draft.app_login_enabled !== false}
+              onChange={(event) => update("app_login_enabled", event.target.checked)}
             />
-          </Field>
+            {text.appLoginEnabled}
+          </label>
+          <span style={styles.fieldNotice}>{text.appLoginEnabledHelp}</span>
           <label style={styles.checkRow}>
             <input
               type="checkbox"
@@ -743,6 +755,13 @@ export default function AdminUsersPage() {
       if (draft.hire_date && levelBaseDate < draft.hire_date) throw new Error(lang === "vi" ? "Ngày bắt đầu tính không thể trước ngày vào làm." : "레벨 기준일은 입사일보다 빠를 수 없습니다.");
       if (draft.termination_date && levelBaseDate > draft.termination_date) throw new Error(lang === "vi" ? "Ngày bắt đầu tính không thể sau ngày nghỉ việc." : "레벨 기준일은 퇴사일보다 늦을 수 없습니다.");
       if (levelBaseDate > today) throw new Error(lang === "vi" ? "Ngày bắt đầu tính không thể là ngày trong tương lai." : "레벨 기준일은 미래 날짜일 수 없습니다.");
+      if (
+        original.role !== "master" &&
+        draft.attendance_tracking_enabled !== false &&
+        (!draft.work_start_time || !draft.work_end_time)
+      ) {
+        throw new Error(text.workTimeRequiredForTracking);
+      }
       const updates: Record<string, unknown> = original.role === "master"
         ? { payroll_eligible_override: draft.payroll_eligible_override }
         : {
@@ -758,6 +777,8 @@ export default function AdminUsersPage() {
             work_start_time: draft.work_start_time,
             work_end_time: draft.work_end_time,
             is_active: draft.is_active !== false,
+            attendance_tracking_enabled: draft.attendance_tracking_enabled !== false,
+            app_login_enabled: draft.app_login_enabled !== false,
           };
       if (original.role === "owner") {
         updates.payroll_eligible_override = draft.payroll_eligible_override;

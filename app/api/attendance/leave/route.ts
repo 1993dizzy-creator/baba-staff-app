@@ -12,6 +12,11 @@ import {
   attendanceJson,
   requireAttendanceActor,
 } from "@/lib/attendance/server-api";
+import {
+  ATTENDANCE_TRACKING_DISABLED_CODE,
+  getAttendanceTrackingDisabledMessage,
+  isAttendanceTrackingUser,
+} from "@/lib/attendance/tracking-policy";
 
 const messages = {
   ko: {
@@ -82,6 +87,31 @@ export async function POST(req: Request) {
         return NextResponse.json(
           { ok: false, message: messages[lang].missingDate },
           { status: 400 }
+        );
+      }
+
+      const { data: trackingUser, error: trackingUserError } = await supabaseServer
+        .from("users")
+        .select("attendance_tracking_enabled, is_system_account")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (trackingUserError) {
+        console.error("leave tracking user error:", trackingUserError);
+        return NextResponse.json(
+          { ok: false, message: messages[lang].existingError },
+          { status: 500 }
+        );
+      }
+
+      if (!trackingUser || !isAttendanceTrackingUser(trackingUser)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: ATTENDANCE_TRACKING_DISABLED_CODE,
+            message: getAttendanceTrackingDisabledMessage(lang),
+          },
+          { status: 409 }
         );
       }
 

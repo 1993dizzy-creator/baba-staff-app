@@ -17,6 +17,8 @@ export type PublicEmployeeUserRow = {
   payroll_eligible_override: boolean | null;
   level_program_enabled: boolean | null;
   level_base_date_override: string | null;
+  attendance_tracking_enabled: boolean;
+  app_login_enabled: boolean;
 };
 
 export function sanitizePublicEmployeeUser(value: unknown): PublicEmployeeUserRow {
@@ -44,5 +46,7 @@ export function sanitizePublicEmployeeUser(value: unknown): PublicEmployeeUserRo
     payroll_eligible_override: row.payroll_eligible_override as PublicEmployeeUserRow["payroll_eligible_override"],
     level_program_enabled: row.level_program_enabled as PublicEmployeeUserRow["level_program_enabled"],
     level_base_date_override: row.level_base_date_override as PublicEmployeeUserRow["level_base_date_override"],
+    attendance_tracking_enabled: (row.attendance_tracking_enabled as boolean | undefined) ?? true,
+    app_login_enabled: (row.app_login_enabled as boolean | undefined) ?? true,
   };
 }

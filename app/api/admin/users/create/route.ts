@@ -115,8 +115,11 @@ export async function POST(req: Request) {
       );
     }
 
+    const attendanceTrackingEnabled = body.attendance_tracking_enabled !== false;
+    const appLoginEnabled = body.app_login_enabled !== false;
+
     const { data, error } = await supabaseServer.rpc(
-      "employee_create_with_schedule_v3",
+      "employee_create_with_schedule_v5",
       { p_employee: {
         username,
         password,
@@ -133,6 +136,8 @@ export async function POST(req: Request) {
         work_end_time: nullableTime(body.work_end_time),
         is_active: body.is_active === false ? false : true,
         is_system_account: false,
+        attendance_tracking_enabled: attendanceTrackingEnabled,
+        app_login_enabled: appLoginEnabled,
       }, p_level_program_enabled: levelProgramEnabled, p_change_reason: automaticChangeReason,
         p_actor_id: auth.actor.id, p_actor_username: auth.actor.username },
     );

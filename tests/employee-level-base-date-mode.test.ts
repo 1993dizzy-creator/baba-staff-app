@@ -76,7 +76,8 @@ test("legacy repair uses the current effective policy instead of any historical 
 });
 
 test("v6 changes participation and basis independently without empty periods", () => {
-  assert.match(route, /employee_update_profile_and_level_v6/);
+  // 202608060001 Migration부터 API는 v6의 로직을 그대로 계승한 v9를 호출한다.
+  assert.match(route, /employee_update_profile_and_level_v9/);
   assert.match(route, /comparisonEnabled !== levelProgramEnabled/);
   assert.match(route, /comparisonBaseDateMode !== requestedBaseDateMode/);
   assert.match(route, /p_base_date_mode: requestedBaseDateMode/);

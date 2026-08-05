@@ -20,6 +20,11 @@ import {
 } from "@/lib/attendance/server-api";
 import { resolveAttendanceRecordPolicy } from "@/lib/attendance/policy-resolution-adapter";
 import { recordAttendanceAuditLog } from "@/lib/attendance/audit-log";
+import {
+  ATTENDANCE_TRACKING_DISABLED_CODE,
+  getAttendanceTrackingDisabledMessage,
+  isAttendanceTrackingUser,
+} from "@/lib/attendance/tracking-policy";
 
 type Action =
   | "force_check_in"
@@ -726,6 +731,19 @@ export async function POST(req: Request) {
         );
       }
 
+      // 신규 휴무 기록 생성(existing 없음)만 근태 미사용 직원에서 차단한다. 기존 휴무
+      // 기록을 고치는 것은 근태 사용 여부와 무관하게 계속 허용한다.
+      if (!existing && !isAttendanceTrackingUser(user)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: ATTENDANCE_TRACKING_DISABLED_CODE,
+            message: getAttendanceTrackingDisabledMessage(lang),
+          },
+          { status: 409 }
+        );
+      }
+
       const payload = {
         user_id,
         work_date,
@@ -839,6 +857,19 @@ export async function POST(req: Request) {
               lang === "vi" ? "Vui lòng nhập giờ vào." : "출근 일시를 입력해주세요.",
           },
           { status: 400 }
+        );
+      }
+
+      // 공란 날짜에 새 근무 기록을 만드는 것만 근태 미사용 직원에서 차단한다. 기존
+      // 기록의 시간 보정은 근태 사용 여부와 무관하게 계속 허용한다.
+      if (isCreating && !isAttendanceTrackingUser(user)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: ATTENDANCE_TRACKING_DISABLED_CODE,
+            message: getAttendanceTrackingDisabledMessage(lang),
+          },
+          { status: 409 }
         );
       }
 
@@ -1194,6 +1225,19 @@ export async function POST(req: Request) {
 
     // 🔥 출근 수정
     if (action === "force_check_in") {
+      // 새 출근 기록을 만드는 것만 근태 미사용 직원에서 차단한다. 기존 기록의 출근시각
+      // 보정은 근태 사용 여부와 무관하게 계속 허용한다.
+      if (!existing && !isAttendanceTrackingUser(user)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: ATTENDANCE_TRACKING_DISABLED_CODE,
+            message: getAttendanceTrackingDisabledMessage(lang),
+          },
+          { status: 409 }
+        );
+      }
+
       const checkInIso = makeCheckInIso(work_date, time);
       const checkOutIso = existing?.check_out_at ?? null;
 

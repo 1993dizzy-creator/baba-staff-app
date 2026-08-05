@@ -70,7 +70,9 @@ const USER_SELECT = `
   is_system_account,
   payroll_eligible_override,
   level_program_enabled,
-  level_base_date_override
+  level_base_date_override,
+  attendance_tracking_enabled,
+  app_login_enabled
 `;
 
 const ROLE_ORDER = new Map([
@@ -101,6 +103,8 @@ const ALLOWED_UPDATE_KEYS = new Set([
   "work_end_time",
   "is_active",
   "payroll_eligible_override",
+  "attendance_tracking_enabled",
+  "app_login_enabled",
 ]);
 
 function normalizeText(value: unknown) {
@@ -182,6 +186,12 @@ function getBlockedPositionError(lang: "ko" | "vi") {
     : "선택할 수 없는 직급입니다.";
 }
 
+function getAttendanceOpenRecordError(lang: "ko" | "vi") {
+  return lang === "vi"
+    ? "Không thể tắt chấm công vì nhân viên vẫn còn bản ghi chưa chấm công ra. Vui lòng xử lý giờ ra hoặc điều chỉnh bản ghi trước."
+    : "현재 퇴근되지 않은 근태 기록이 있어 근태 사용을 해제할 수 없습니다. 먼저 퇴근 처리하거나 관리자 보정을 완료해주세요.";
+}
+
 function sortUsers(users: UserRow[]) {
   return [...users].sort((a, b) => {
     const aRank =
@@ -218,6 +228,11 @@ function normalizeUpdate(input: JsonObject) {
 
     if (key === "is_active") {
       update.is_active = value === true;
+      return;
+    }
+
+    if (key === "attendance_tracking_enabled" || key === "app_login_enabled") {
+      update[key] = value === true;
       return;
     }
 
@@ -531,7 +546,7 @@ export async function PATCH(req: Request) {
     }
 
     const { data, error } = await supabaseServer.rpc(
-      "employee_update_profile_and_level_v6",
+      "employee_update_profile_and_level_v9",
       {
         p_user_id: id,
         p_updates: update,
@@ -546,6 +561,16 @@ export async function PATCH(req: Request) {
     );
 
     if (error) {
+      if (error.message?.includes("ATTENDANCE_OPEN_RECORD_EXISTS")) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: "ATTENDANCE_OPEN_RECORD_EXISTS",
+            error: getAttendanceOpenRecordError(lang),
+          },
+          { status: 409 }
+        );
+      }
       throw new Error(`Failed to atomically update user: ${error.message}`);
     }
 

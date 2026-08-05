@@ -11,14 +11,17 @@ const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
 const monthlyRun = read("lib/payroll/monthly-run.ts");
 
 test("employee profile update and schedule revision share one RPC transaction", () => {
-  assert.match(usersRoute, /employee_update_profile_and_level_v6/);
+  // 202608060001 Migration부터 API는 employee_update_profile_and_level_v9(내부적으로
+  // v8→v7 호출, v4/v3의 schedule-revision 로직을 그대로 계승)을 호출한다.
+  assert.match(usersRoute, /employee_update_profile_and_level_v9/);
   assert.match(migration, /employee_update_profile_and_level_v3\(/);
   assert.match(migration, /pg_advisory_xact_lock\(-p_user_id\)/);
   assert.match(migration, /Asia\/Ho_Chi_Minh/);
   assert.match(migration, /is distinct from v_start_time/);
   assert.match(migration, /is distinct from v_end_time/);
   assert.match(migration, /unpaid_break_minutes[\s\S]*0,/);
-  assert.match(usersCreateRoute, /employee_create_with_schedule_v3/);
+  // API는 employee_create_with_schedule_v5(내부적으로 v4→v1 호출)를 호출한다.
+  assert.match(usersCreateRoute, /employee_create_with_schedule_v5/);
   assert.doesNotMatch(usersCreateRoute, /\.from\("users"\)[\s\S]*\.insert\(/);
 });
 

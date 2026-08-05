@@ -9,7 +9,7 @@ import { isEmployedOn, shouldIncludeMonthlyEmployee } from "@/lib/employment/eli
 import { applyEmployeeLevelProgramVersion, loadEmployeeLevelProgramVersions, withEmployeeLevelInfo, type EmployeeLevelUser } from "@/lib/employee-level/server";
 
 const BASE_USER_FIELDS =
-  "id,username,name,role,is_active,part,position,work_start_time,work_end_time,hire_date,termination_date,is_system_account,level_program_enabled,level_base_date_override";
+  "id,username,name,role,is_active,part,position,work_start_time,work_end_time,hire_date,termination_date,is_system_account,level_program_enabled,level_base_date_override,attendance_tracking_enabled";
 
 export async function GET(request: Request) {
   try {
@@ -45,7 +45,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const rows = (data ?? []) as unknown as Array<EmployeeLevelUser & {id:number;is_active:boolean}>;
+    const rows = (data ?? []) as unknown as Array<EmployeeLevelUser & {id:number;is_active:boolean;attendance_tracking_enabled:boolean}>;
     const withLevels = async (users: typeof rows, asOfDate: string) => {
       const versions = await loadEmployeeLevelProgramVersions(users.map((user) => Number(user.id)), asOfDate);
       return users.map((user) => withEmployeeLevelInfo(applyEmployeeLevelProgramVersion(user, versions.get(Number(user.id))), asOfDate));
@@ -53,7 +53,20 @@ export async function GET(request: Request) {
     const levelAsOfDate = getAttendanceWorkDate();
     if (mode === "current") {
       const date = levelAsOfDate;
-      return attendanceJson({ ok: true, users: await withLevels(rows.filter(user => user.is_active === true && isEmployedOn(user, date)), date) });
+      // 근태 신규 처리 대상 목록(출근명부·근태현황·관리자 대상자 선택)이므로 근태
+      // 미사용 직원은 여기서 제외한다. 과거 기록 조회는 mode=month가 별도로 처리한다.
+      return attendanceJson({
+        ok: true,
+        users: await withLevels(
+          rows.filter(
+            (user) =>
+              user.is_active === true &&
+              user.attendance_tracking_enabled === true &&
+              isEmployedOn(user, date)
+          ),
+          date
+        ),
+      });
     }
     const first = `${month}-01`;
     const next = new Date(`${first}T00:00:00Z`); next.setUTCMonth(next.getUTCMonth() + 1); next.setUTCDate(0);

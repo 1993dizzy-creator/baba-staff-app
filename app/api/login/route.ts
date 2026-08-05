@@ -60,6 +60,7 @@ export async function POST(req: Request) {
       .eq("username", username)
       .eq("password", password)
       .eq("is_active", true)
+      .eq("app_login_enabled", true)
       .maybeSingle();
 
     if (error) {
