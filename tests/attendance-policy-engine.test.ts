@@ -127,11 +127,13 @@ test("overnight shift crosses the calendar day at the correct instant", () => {
   assert.equal(result.normalCheckoutThresholdAt, "2026-07-25T18:00:00.000Z");
 });
 
-test("early leave threshold includes its exact boundary and preserves full raw minutes", () => {
+test("early leave grace is a deducted allowance, not an all-or-nothing threshold", () => {
+  // raw는 checkOutAt과 22:00(예정 퇴근=매장 마감) 사이 분. grace=5분이면
+  // raw<=5는 전액 공제되어 0/done, raw=6부터 1분만 조퇴로 남는다.
   const cases = [
-    ["2026-07-24T21:56:00+07:00", "done", 0],
-    ["2026-07-24T21:55:00+07:00", "early_leave", 5],
-    ["2026-07-24T21:54:00+07:00", "early_leave", 6],
+    ["2026-07-24T21:56:00+07:00", "done", 0], // raw 4
+    ["2026-07-24T21:55:00+07:00", "done", 0], // raw 5 == grace: 경계값도 전액 공제
+    ["2026-07-24T21:54:00+07:00", "early_leave", 1], // raw 6
   ] as const;
   for (const [checkOutAt, status, earlyLeaveMinutes] of cases) {
     const result = evaluate({
@@ -143,6 +145,65 @@ test("early leave threshold includes its exact boundary and preserves full raw m
     assert.equal(result.status, status);
     assert.equal(result.earlyLeaveMinutes, earlyLeaveMinutes);
   }
+});
+
+// Quyen(2026-08-04) 재현 시나리오: 예정 퇴근 01:00, 실제 퇴근 23:30, 유예 60분.
+// raw 90분에서 유예 60분을 공제한 30분만 조퇴로 인정되어야 한다(관리자 수정으로
+// 퇴근시각을 23:30으로 고쳐도 early_leave_minutes=0/done으로 떨어지면 안 된다).
+test("Quyen 2026-08-04 reproduction: raw 90 minutes, 60 minute grace, keeps 30 minutes early leave", () => {
+  const result = evaluate({
+    scheduledEndTime: "01:00",
+    storeCloseTime: "01:00",
+    earlyLeaveGraceMinutes: 60,
+    checkOutAt: "2026-07-24T23:30:00+07:00",
+  });
+  assert.equal(result.rawEarlyLeaveMinutes, 90);
+  assert.equal(result.earlyLeaveMinutes, 30);
+  assert.equal(result.status, "early_leave");
+});
+
+test("early leave grace boundary: 59/60/61 minutes raw against a 60 minute grace", () => {
+  // 예정 퇴근(=매장 마감) 임계값은 다음날 01:00. raw는 그 임계값까지 남은 분.
+  const cases = [
+    ["2026-07-25T00:01:00+07:00", 59, 0, "done"],
+    ["2026-07-25T00:00:00+07:00", 60, 0, "done"],
+    ["2026-07-24T23:59:00+07:00", 61, 1, "early_leave"],
+  ] as const;
+  for (const [checkOutAt, rawEarlyLeaveMinutes, earlyLeaveMinutes, status] of cases) {
+    const result = evaluate({
+      scheduledEndTime: "01:00",
+      storeCloseTime: "01:00",
+      earlyLeaveGraceMinutes: 60,
+      checkOutAt,
+    });
+    assert.equal(result.rawEarlyLeaveMinutes, rawEarlyLeaveMinutes);
+    assert.equal(result.earlyLeaveMinutes, earlyLeaveMinutes);
+    assert.equal(result.status, status);
+  }
+});
+
+test("zero grace reflects the full raw early leave minutes", () => {
+  const result = evaluate({
+    scheduledEndTime: "01:00",
+    storeCloseTime: "01:00",
+    earlyLeaveGraceMinutes: 0,
+    checkOutAt: "2026-07-24T23:30:00+07:00",
+  });
+  assert.equal(result.rawEarlyLeaveMinutes, 90);
+  assert.equal(result.earlyLeaveMinutes, 90);
+  assert.equal(result.status, "early_leave");
+});
+
+test("no checkout keeps status working regardless of grace or schedule", () => {
+  const result = evaluate({
+    scheduledEndTime: "01:00",
+    storeCloseTime: "01:00",
+    earlyLeaveGraceMinutes: 60,
+    checkOutAt: null,
+  });
+  assert.equal(result.status, "working");
+  assert.equal(result.earlyLeaveMinutes, 0);
+  assert.equal(result.rawEarlyLeaveMinutes, 0);
 });
 
 test("missing checkout is judged sixty minutes after the standard checkout time", () => {

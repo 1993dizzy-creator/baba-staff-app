@@ -2,11 +2,8 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   getAttendanceWorkDate,
-  getEarlyLeaveMinutes,
-  getLateMinutes,
   getMinutesDiff,
   getShiftAutoCloseIso,
-  getStatusByMinutes,
   isOpenRecordUnresolved,
   makeCheckInIso,
   makeCheckOutIso,
@@ -21,6 +18,8 @@ import {
   attendanceAuthFailure,
   requireAttendanceActor,
 } from "@/lib/attendance/server-api";
+import { resolveAttendanceRecordPolicy } from "@/lib/attendance/policy-resolution-adapter";
+import { recordAttendanceAuditLog } from "@/lib/attendance/audit-log";
 
 type Action =
   | "force_check_in"
@@ -962,39 +961,46 @@ export async function POST(req: Request) {
         }
       }
 
-      const nextLateMinutes = getLateMinutes(
-        finalCheckInIso,
-        user.work_start_time,
-        targetWorkDate
-      );
-      let nextWorkMinutes = 0;
-      let nextEarlyLeaveMinutes = 0;
-      let nextStatus: typeof ATTENDANCE_STATUS[keyof typeof ATTENDANCE_STATUS] =
-        ATTENDANCE_STATUS.WORKING;
-
-      if (finalCheckOutIso) {
-        nextWorkMinutes = getMinutesDiff(finalCheckInIso, finalCheckOutIso);
-
-        const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
-          finalCheckInIso,
-          finalCheckOutIso,
-          user.work_end_time,
-          targetWorkDate
+      // work_date별로 유효한 store_setting_versions/store_attendance_policies/
+      // store_business_hours/store_business_day_overrides와 employee_work_schedule_versions를
+      // 조회해 공통 정책 엔진(evaluateAttendancePolicy)으로 late/early-leave/status를 계산한다.
+      // 레거시 23:30 하드코딩이나 별도의 조퇴 threshold 공식은 여기서 다시 만들지 않는다.
+      let policyResult;
+      try {
+        policyResult = await resolveAttendanceRecordPolicy({
+          userId: Number(user_id),
+          workDate: targetWorkDate,
+          fallbackScheduledStartTime: user.work_start_time,
+          fallbackScheduledEndTime: user.work_end_time,
+          checkInAt: finalCheckInIso,
+          checkOutAt: finalCheckOutIso,
+        });
+      } catch (policyError) {
+        console.error("[attendance-admin] policy evaluation failed", policyError);
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Lỗi khi tính toán chính sách chấm công."
+                : "근태 정책 계산 중 오류가 발생했습니다.",
+          },
+          { status: 500 }
         );
-
-        nextStatus = getStatusByMinutes(nextLateMinutes, rawEarlyLeaveMinutes);
-        nextEarlyLeaveMinutes =
-          nextStatus === ATTENDANCE_STATUS.EARLY_LEAVE ? rawEarlyLeaveMinutes : 0;
       }
+
+      const nextWorkMinutes = finalCheckOutIso
+        ? getMinutesDiff(finalCheckInIso, finalCheckOutIso)
+        : 0;
 
       const recordPayload = {
         user_id,
         work_date: targetWorkDate,
-        status: nextStatus,
+        status: policyResult.status,
         check_in_at: finalCheckInIso,
         check_out_at: finalCheckOutIso,
-        late_minutes: nextLateMinutes,
-        early_leave_minutes: nextEarlyLeaveMinutes,
+        late_minutes: policyResult.lateMinutes,
+        early_leave_minutes: policyResult.earlyLeaveMinutes,
         work_minutes: nextWorkMinutes,
         is_staff_direct_leave: false,
         approval_status: APPROVAL_STATUS.APPROVED,
@@ -1027,6 +1033,18 @@ export async function POST(req: Request) {
           { status: 500 }
         );
       }
+
+      await recordAttendanceAuditLog({
+        attendanceRecordId: data.id,
+        sourceAttendanceRecordId: existing?.id ?? data.id,
+        targetUserId: Number(user_id),
+        workDate: targetWorkDate,
+        action: "manual_update",
+        actorUserId: auth.actor.id,
+        beforeSnapshot: existing ?? null,
+        afterSnapshot: data,
+        reason: note?.trim() || null,
+      });
 
       return NextResponse.json({ ok: true, record: data });
     }
@@ -1065,23 +1083,41 @@ export async function POST(req: Request) {
         );
       }
 
-      const lateMinutes = getLateMinutes(
-        existing.check_in_at,
-        user.work_start_time,
-        existing.work_date
-      );
+      let policyResult;
+      try {
+        policyResult = await resolveAttendanceRecordPolicy({
+          userId: Number(user_id),
+          workDate: existing.work_date,
+          fallbackScheduledStartTime: user.work_start_time,
+          fallbackScheduledEndTime: user.work_end_time,
+          checkInAt: existing.check_in_at,
+          checkOutAt: autoCheckOutIso,
+        });
+      } catch (policyError) {
+        console.error("[attendance-admin] auto-close policy evaluation failed", policyError);
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Lỗi khi tính toán chính sách chấm công."
+                : "근태 정책 계산 중 오류가 발생했습니다.",
+          },
+          { status: 500 }
+        );
+      }
+
+      // 출근시각은 자동보정으로 바뀌지 않으므로 late_minutes는 기존 저장값을 유지하고,
+      // 조퇴 여부만 공통 정책 엔진(유예 공제 방식)으로 다시 판정한다.
+      const lateMinutes = Number(existing.late_minutes || 0);
+      const earlyLeaveMinutes = policyResult.earlyLeaveMinutes;
+      const status =
+        earlyLeaveMinutes > 0
+          ? ATTENDANCE_STATUS.EARLY_LEAVE
+          : lateMinutes > 0
+            ? ATTENDANCE_STATUS.LATE
+            : ATTENDANCE_STATUS.DONE;
       const workMinutes = getMinutesDiff(existing.check_in_at, autoCheckOutIso);
-
-      const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
-        existing.check_in_at,
-        autoCheckOutIso,
-        user.work_end_time,
-        existing.work_date
-      );
-
-      const status = getStatusByMinutes(lateMinutes, rawEarlyLeaveMinutes);
-      const earlyLeaveMinutes =
-        status === ATTENDANCE_STATUS.EARLY_LEAVE ? rawEarlyLeaveMinutes : 0;
 
       // 다른 요청이 그 사이 이미 퇴근 처리를 완료했다면 check_out_at이 더 이상 null이 아니므로
       // 이 조건부 업데이트는 0건에 매치되어 중복 보정을 막는다.
@@ -1128,6 +1164,18 @@ export async function POST(req: Request) {
         );
       }
 
+      await recordAttendanceAuditLog({
+        attendanceRecordId: data.id,
+        sourceAttendanceRecordId: existing.id,
+        targetUserId: Number(user_id),
+        workDate: existing.work_date,
+        action: "auto_close",
+        actorUserId: auth.actor.id,
+        beforeSnapshot: existing,
+        afterSnapshot: data,
+        reason: null,
+      });
+
       return NextResponse.json({ ok: true, record: data });
     }
 
@@ -1165,41 +1213,41 @@ export async function POST(req: Request) {
         );
       }
 
-      const lateMinutes = getLateMinutes(
-        checkInIso,
-        user.work_start_time,
-        work_date
-      );
+      let policyResult;
+      try {
+        policyResult = await resolveAttendanceRecordPolicy({
+          userId: Number(user_id),
+          workDate: work_date,
+          fallbackScheduledStartTime: user.work_start_time,
+          fallbackScheduledEndTime: user.work_end_time,
+          checkInAt: checkInIso,
+          checkOutAt: checkOutIso,
+        });
+      } catch (policyError) {
+        console.error("[attendance-admin] force-check-in policy evaluation failed", policyError);
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Lỗi khi tính toán chính sách chấm công."
+                : "근태 정책 계산 중 오류가 발생했습니다.",
+          },
+          { status: 500 }
+        );
+      }
 
       const workMinutes = checkOutIso
         ? getMinutesDiff(checkInIso, checkOutIso)
         : existing?.work_minutes ?? 0;
 
-      let earlyLeaveMinutes = existing?.early_leave_minutes ?? 0;
-      let status: typeof ATTENDANCE_STATUS[keyof typeof ATTENDANCE_STATUS] =
-        ATTENDANCE_STATUS.WORKING;
-
-      if (checkOutIso) {
-        const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
-          checkInIso,
-          checkOutIso,
-          user.work_end_time,
-          work_date
-        );
-
-        status = getStatusByMinutes(lateMinutes, rawEarlyLeaveMinutes);
-
-        earlyLeaveMinutes =
-          status === ATTENDANCE_STATUS.EARLY_LEAVE ? rawEarlyLeaveMinutes : 0;
-      }
-
       const payload = {
         user_id,
         work_date,
-        status,
+        status: policyResult.status,
         check_in_at: checkInIso,
-        late_minutes: lateMinutes,
-        early_leave_minutes: earlyLeaveMinutes,
+        late_minutes: policyResult.lateMinutes,
+        early_leave_minutes: policyResult.earlyLeaveMinutes,
         work_minutes: workMinutes,
         is_staff_direct_leave: false,
         approval_status: APPROVAL_STATUS.APPROVED,
@@ -1232,6 +1280,18 @@ export async function POST(req: Request) {
           { status: 500 }
         );
       }
+
+      await recordAttendanceAuditLog({
+        attendanceRecordId: data.id,
+        sourceAttendanceRecordId: existing?.id ?? data.id,
+        targetUserId: Number(user_id),
+        workDate: work_date,
+        action: "manual_update",
+        actorUserId: auth.actor.id,
+        beforeSnapshot: existing ?? null,
+        afterSnapshot: data,
+        reason: note?.trim() || null,
+      });
 
       return NextResponse.json({ ok: true, record: data });
     }
@@ -1268,22 +1328,42 @@ export async function POST(req: Request) {
         );
       }
 
-      const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
-        checkInIso,
-        checkOutIso,
-        user.work_end_time,
-        work_date
-      );
+      let policyResult;
+      try {
+        policyResult = await resolveAttendanceRecordPolicy({
+          userId: Number(user_id),
+          workDate: existing.work_date,
+          fallbackScheduledStartTime: user.work_start_time,
+          fallbackScheduledEndTime: user.work_end_time,
+          checkInAt: checkInIso,
+          checkOutAt: checkOutIso,
+        });
+      } catch (policyError) {
+        console.error("[attendance-admin] force-check-out policy evaluation failed", policyError);
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              lang === "vi"
+                ? "Lỗi khi tính toán chính sách chấm công."
+                : "근태 정책 계산 중 오류가 발생했습니다.",
+          },
+          { status: 500 }
+        );
+      }
+
+      // 출근시각은 이 액션으로 바뀌지 않으므로 late_minutes는 기존 저장값을 유지하고,
+      // 조퇴 여부만 공통 정책 엔진(유예 공제 방식)으로 다시 판정한다.
+      const lateMinutes = Number(existing.late_minutes || 0);
+      const earlyLeaveMinutes = policyResult.earlyLeaveMinutes;
+      const status =
+        earlyLeaveMinutes > 0
+          ? ATTENDANCE_STATUS.EARLY_LEAVE
+          : lateMinutes > 0
+            ? ATTENDANCE_STATUS.LATE
+            : ATTENDANCE_STATUS.DONE;
 
       const workMinutes = getMinutesDiff(checkInIso, checkOutIso);
-
-      const status = getStatusByMinutes(
-        Number(existing.late_minutes || 0),
-        rawEarlyLeaveMinutes
-      );
-
-      const earlyLeaveMinutes =
-        status === ATTENDANCE_STATUS.EARLY_LEAVE ? rawEarlyLeaveMinutes : 0;
 
       const { data, error } = await supabaseServer
         .from("attendance_records")
@@ -1313,6 +1393,18 @@ export async function POST(req: Request) {
           { status: 500 }
         );
       }
+
+      await recordAttendanceAuditLog({
+        attendanceRecordId: data.id,
+        sourceAttendanceRecordId: existing.id,
+        targetUserId: Number(user_id),
+        workDate: existing.work_date,
+        action: "manual_update",
+        actorUserId: auth.actor.id,
+        beforeSnapshot: existing,
+        afterSnapshot: data,
+        reason: note?.trim() || null,
+      });
 
       return NextResponse.json({ ok: true, record: data });
     }

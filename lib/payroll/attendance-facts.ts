@@ -73,7 +73,8 @@ export function normalizeAttendanceDayFacts(input: {
         rawEarly = minutes(Math.max(actualEnd, scheduledStart), scheduledEnd);
         late = rawLate > (input.lateGraceMinutes ?? 0) ? rawLate : 0;
         if (input.manualLateNormalized) late = 0;
-        early = rawEarly > 0 && rawEarly >= (input.earlyLeaveGraceMinutes ?? 0) ? rawEarly : 0;
+        // 조퇴 유예는 threshold가 아니라 공제되는 허용 시간이다(정책 엔진과 동일한 의미).
+        early = Math.max(0, rawEarly - (input.earlyLeaveGraceMinutes ?? 0));
         overtime = minutes(actualStart, Math.min(actualEnd, scheduledStart)) + minutes(Math.max(actualStart, scheduledEnd), actualEnd);
         if (overtime > 0) warnings.push("OVERTIME_APPROVAL_UNAVAILABLE");
       }

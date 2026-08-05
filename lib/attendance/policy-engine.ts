@@ -220,9 +220,12 @@ export function evaluateAttendancePolicy(
     input.checkOutAt && normalCheckoutThresholdAt
       ? minutesBetween(input.checkOutAt, normalCheckoutThresholdAt)
       : 0;
-  const isEarlyLeave = rawEarlyLeaveMinutes > 0 &&
-    rawEarlyLeaveMinutes >= input.earlyLeaveGraceMinutes;
-  const earlyLeaveMinutes = isEarlyLeave ? rawEarlyLeaveMinutes : 0;
+  // 조퇴 유예는 판정 threshold가 아니라 공제되는 허용 시간이다: 유예분을 raw 조기
+  // 퇴근분에서 제외한 나머지만 조퇴로 인정한다(예: raw 90분, 유예 60분 → 조퇴 30분).
+  const earlyLeaveMinutes = Math.max(
+    0,
+    rawEarlyLeaveMinutes - input.earlyLeaveGraceMinutes
+  );
 
   let status: AttendancePolicyStatus;
   if (!input.checkOutAt) status = "working";

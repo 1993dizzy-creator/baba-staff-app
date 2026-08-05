@@ -1,0 +1,56 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+
+const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
+
+const admin = read("app/api/attendance/admin/route.ts");
+const checkOut = read("app/api/attendance/check-out/route.ts");
+const time = read("lib/attendance/time.ts");
+
+test("admin route no longer imports the legacy fixed-threshold early-leave calculation", () => {
+  assert.doesNotMatch(admin, /getEarlyLeaveMinutes/);
+  assert.doesNotMatch(admin, /getStatusByMinutes/);
+  assert.doesNotMatch(admin, /NORMAL_EARLY_CLOSE_TIME/);
+  assert.doesNotMatch(admin, /getLateMinutes/);
+});
+
+test("check-out route no longer imports the legacy fixed-threshold early-leave calculation", () => {
+  assert.doesNotMatch(checkOut, /getEarlyLeaveMinutes/);
+  assert.doesNotMatch(checkOut, /getStatusByMinutes/);
+});
+
+test("the legacy 23:30 hardcode and 90-minute threshold constant are removed from time.ts", () => {
+  assert.doesNotMatch(time, /NORMAL_EARLY_CLOSE_TIME/);
+  assert.doesNotMatch(time, /EARLY_LEAVE_STATUS_THRESHOLD_MINUTES/);
+});
+
+test("update_record, force_check_in, force_check_out, and auto_close_at_01 all resolve through the shared date-scoped policy engine", () => {
+  const occurrences = admin.match(/resolveAttendanceRecordPolicy\(/g) ?? [];
+  // update_record, force_check_in, force_check_out, auto_close_at_01
+  assert.equal(occurrences.length, 4);
+});
+
+test("employee self checkout resolves through the same shared policy engine", () => {
+  assert.match(checkOut, /resolveAttendanceRecordPolicy\(/);
+});
+
+test("admin mutation paths write before/after/actor/reason/work_date audit log entries without a new migration or RPC", () => {
+  assert.match(admin, /recordAttendanceAuditLog\(/);
+  assert.match(admin, /beforeSnapshot: existing/);
+  assert.match(admin, /afterSnapshot: data/);
+  assert.match(admin, /actorUserId: auth\.actor\.id/);
+  // manual corrections vs. the unattended auto-close action are tagged distinctly,
+  // matching the existing attendance_record_audit_logs action enum.
+  assert.match(admin, /action: "manual_update"/);
+  assert.match(admin, /action: "auto_close"/);
+});
+
+test("the normalize_late (지각 정상처리) RPC path is untouched by the early-leave fix", () => {
+  assert.match(admin, /rpc\(\s*"attendance_admin_normalize_late_v1"/);
+});
+
+test("the cancellation RPC path is untouched by the early-leave fix", () => {
+  assert.match(admin, /rpc\(\s*"attendance_admin_cancel_record_v1"/);
+});

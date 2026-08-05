@@ -1,13 +1,7 @@
-import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
-
 export const ATTENDANCE_BUSINESS_START_HOUR = 16;
 export const ATTENDANCE_BUSINESS_END_HOUR = 3;
-export const EARLY_LEAVE_STATUS_THRESHOLD_MINUTES = 90;
 export const LONG_SHIFT_WARNING_MINUTES = 16 * 60;
 export const TIMEZONE_OFFSET = "+07:00";
-// 손님이 없어 정규 영업 종료(01:00)보다 일찍 마감하는 날, 이 시각 이후 퇴근은
-// 개인 예정 퇴근시간과 무관하게 조퇴로 처리하지 않는다.
-export const NORMAL_EARLY_CLOSE_TIME = "23:30";
 
 export function normalizeTime(time?: string | null) {
   if (!time) return null;
@@ -65,56 +59,6 @@ export function getLateMinutes(
   );
 
   return Math.max(0, diff);
-}
-
-export function getEarlyLeaveMinutes(
-  checkInIso: string,
-  checkOutIso: string,
-  workEndTime: string | null | undefined,
-  workDate: string
-) {
-  const safeWorkEndTime = normalizeTime(workEndTime);
-  if (!safeWorkEndTime) return 0;
-
-  const checkIn = new Date(checkInIso);
-  const checkOut = new Date(checkOutIso);
-
-  const normalCloseFloor = new Date(
-    `${workDate}T${NORMAL_EARLY_CLOSE_TIME}:00${TIMEZONE_OFFSET}`
-  );
-
-  if (checkOut.getTime() >= normalCloseFloor.getTime()) {
-    return 0;
-  }
-
-  const standardEnd = new Date(
-    `${workDate}T${safeWorkEndTime}:00${TIMEZONE_OFFSET}`
-  );
-
-  if (standardEnd.getTime() < checkIn.getTime()) {
-    standardEnd.setDate(standardEnd.getDate() + 1);
-  }
-
-  const diff = Math.floor(
-    (standardEnd.getTime() - checkOut.getTime()) / 60000
-  );
-
-  return Math.max(0, diff);
-}
-
-export function getStatusByMinutes(
-  lateMinutes: number,
-  earlyLeaveMinutes: number
-): (typeof ATTENDANCE_STATUS)[keyof typeof ATTENDANCE_STATUS] {
-  if (earlyLeaveMinutes >= EARLY_LEAVE_STATUS_THRESHOLD_MINUTES) {
-    return ATTENDANCE_STATUS.EARLY_LEAVE;
-  }
-
-  if (lateMinutes > 0) {
-    return ATTENDANCE_STATUS.LATE;
-  }
-
-  return ATTENDANCE_STATUS.DONE;
 }
 
 // 실제 출근·퇴근 datetime 차이가 기준(16시간)을 넘는지 판단하는 공통 함수.

@@ -1,11 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
-import {
-  getAttendanceWorkDate,
-  getEarlyLeaveMinutes,
-  getMinutesDiff,
-  getStatusByMinutes,
-} from "@/lib/attendance/time";
+import { getAttendanceWorkDate, getMinutesDiff } from "@/lib/attendance/time";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 import { validateAttendanceActorTarget } from "@/lib/attendance/api-policy";
 import {
@@ -13,6 +8,7 @@ import {
   attendanceJson,
   requireAttendanceActor,
 } from "@/lib/attendance/server-api";
+import { resolveAttendanceRecordPolicy } from "@/lib/attendance/policy-resolution-adapter";
 
 const MUTATION_RECORD_FIELDS =
   "id,user_id,work_date,status,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status";
@@ -148,20 +144,33 @@ export async function POST(req: Request) {
 
     const workMinutes = getMinutesDiff(existing.check_in_at, nowIso);
 
-    const rawEarlyLeaveMinutes = getEarlyLeaveMinutes(
-      existing.check_in_at,
-      nowIso,
-      user.work_end_time,
-      existing.work_date
-    );
+    let policyResult;
+    try {
+      policyResult = await resolveAttendanceRecordPolicy({
+        userId,
+        workDate: existing.work_date,
+        fallbackScheduledStartTime: user.work_start_time,
+        fallbackScheduledEndTime: user.work_end_time,
+        checkInAt: existing.check_in_at,
+        checkOutAt: nowIso,
+      });
+    } catch (policyError) {
+      console.error("check-out policy error:", policyError);
+      return NextResponse.json(
+        { ok: false, message: getMessage(lang, "saveError") },
+        { status: 500 }
+      );
+    }
 
-    const status = getStatusByMinutes(
-      Number(existing.late_minutes || 0),
-      rawEarlyLeaveMinutes
-    );
-
-    const earlyLeaveMinutes =
-      status === ATTENDANCE_STATUS.EARLY_LEAVE ? rawEarlyLeaveMinutes : 0;
+    // 출근시각은 퇴근 처리로 바뀌지 않으므로 late_minutes는 출근 시점에 저장된 값을
+    // 그대로 유지하고, 조퇴 여부만 공통 정책 엔진(유예 공제 방식)으로 다시 판정한다.
+    const earlyLeaveMinutes = policyResult.earlyLeaveMinutes;
+    const status =
+      earlyLeaveMinutes > 0
+        ? ATTENDANCE_STATUS.EARLY_LEAVE
+        : Number(existing.late_minutes || 0) > 0
+          ? ATTENDANCE_STATUS.LATE
+          : ATTENDANCE_STATUS.DONE;
 
     const { data, error } = await supabaseServer
       .from("attendance_records")
