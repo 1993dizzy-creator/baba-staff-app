@@ -104,6 +104,10 @@ export async function POST(request: Request) {
   if (result.status === "work_schedule_not_found") return payrollJson({ ok: false, code: "WORK_SCHEDULE_NOT_FOUND" }, 400);
   if (result.status === "work_schedule_overlap") return payrollJson({ ok: false, code: "WORK_SCHEDULE_OVERLAP" }, 409);
   if (result.status === "invalid_work_schedule") return payrollJson({ ok: false, code: "INVALID_WORK_SCHEDULE" }, 400);
+  // v6이 fixed_monthly 분기에서 자체적으로 검증하는 매월 1일 적용 규칙(202608070003) —
+  // 대문자 코드로 명시 매핑하지 않으면 아래 catch-all이 소문자 status를 그대로 code로
+  // 내려보내 lib/payroll/contract-errors.ts의 메시지 매핑을 못 찾고 일반 메시지로 숨는다.
+  if (result.status === "invalid_fixed_monthly_effective_date") return payrollJson({ ok: false, code: "INVALID_FIXED_MONTHLY_EFFECTIVE_DATE" }, 400);
   if (result.status !== "created" || !result.contract) return payrollJson({ ok: false, code: String(result.status || "INVALID_CONTRACT") }, result.status === "forbidden" ? 403 : 400);
   return payrollJson({ ok: true, contract: mapContract(result.contract) }, 201);
 }
