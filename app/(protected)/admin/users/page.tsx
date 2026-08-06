@@ -6,6 +6,12 @@ import { usePathname, useRouter } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { PART_VALUES, getPartKey, getPartMeta } from "@/lib/common/parts";
+import {
+  EDITABLE_EMPLOYEE_ROLE_VALUES,
+  getEmployeeRoleLabel,
+  getEmployeeRoleRank,
+  isEditableEmployeeRole,
+} from "@/lib/common/roles";
 import { useLanguage } from "@/lib/language-context";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ui } from "@/lib/styles/ui";
@@ -99,9 +105,8 @@ type UsersResponse = {
 
 type AdminUsersPageText = (typeof adminUsersText)[keyof typeof adminUsersText];
 
-const roleOptions = ["owner", "manager", "leader", "staff"] as const;
+const roleOptions = EDITABLE_EMPLOYEE_ROLE_VALUES;
 const partOptions = PART_VALUES;
-const positionOptions = ["owner", "manager", "leader", "staff"] as const;
 const genders = ["", "male", "female", "other"];
 const groupOrder = ["owner", "kitchen", "hall", "bar", "cleaning", "etc", "inactive"] as const;
 
@@ -163,25 +168,11 @@ function getAge(birthDate?: string | null) {
 }
 
 function isRoleOption(value: string | null): value is (typeof roleOptions)[number] {
-  return roleOptions.includes(value as (typeof roleOptions)[number]);
+  return isEditableEmployeeRole(value);
 }
 
 function isPartOption(value: string | null): value is (typeof partOptions)[number] {
   return partOptions.includes(value as (typeof partOptions)[number]);
-}
-
-function isPositionOption(
-  value: string | null
-): value is (typeof positionOptions)[number] {
-  return positionOptions.includes(value as (typeof positionOptions)[number]);
-}
-
-function getRoleLabel(role: string, text: AdminUsersPageText) {
-  if (role === "owner") return text.ownerGroup;
-  if (role === "manager") return text.managerRole;
-  if (role === "leader") return text.leaderRole;
-  if (role === "staff") return text.staffRole;
-  return role;
 }
 
 function getPartLabel(part: string, text: AdminUsersPageText) {
@@ -192,14 +183,6 @@ function getPartLabel(part: string, text: AdminUsersPageText) {
   if (part === "cleaning") return text.cleaningGroup;
   if (part === "etc") return text.etcGroup;
   return part;
-}
-
-function getPositionLabel(position: string | null, text: AdminUsersPageText) {
-  if (position === "owner") return text.ownerGroup;
-  if (position === "manager") return text.managerRole;
-  if (position === "leader") return text.leaderRole;
-  if (position === "staff") return text.staffRole;
-  return position || "-";
 }
 
 function isOwnerGroupUser(user: Pick<UserRow, "role">) {
@@ -253,15 +236,10 @@ function getGroupMeta(key: UserGroupKey, text: AdminUsersPageText): GroupMeta {
   };
 }
 
+// 표시 순서는 role 기준이다: master → owner → manager → leader → staff.
+// (예전에는 role=owner가 role=master보다 먼저 나오는 순서 오류가 있었다.)
 function getRank(user: UserRow) {
-  if (user.role === "owner") return 1;
-  if (user.role === "master") return 2;
-
-  const position = (user.position || "").toLowerCase();
-  if (position === "manager") return 3;
-  if (position === "leader") return 4;
-  if (position === "staff") return 5;
-  return 6;
+  return getEmployeeRoleRank(user.role);
 }
 
 function getActiveUserGroup(user: UserRow): UserGroupKey {
@@ -330,16 +308,11 @@ function UserCard({
   const isMasterUser = user.role === "master";
   const age = getAge(user.birth_date);
   const isAdminGroupUser = isOwnerGroupUser(user);
-  const positionText = getPositionLabel(user.position || user.role, text);
+  const positionText = getEmployeeRoleLabel(user.role, lang);
   const nameText = `${displayName}${age ? ` (${age})` : ""}`;
   const workTime = !isAdminGroupUser && !user.termination_date ? formatWorkTime(user) : "";
   const roleValue = isRoleOption(draft.role) ? draft.role : "staff";
   const partValue = isPartOption(draft.part) ? draft.part : "kitchen";
-  const positionValue = isPositionOption(draft.position)
-    ? draft.position
-    : draft.role === "owner"
-      ? "owner"
-      : "staff";
   const hasLevelEditor = !user.is_system_account;
   const comparedBase = policyBaseForMonth(user, levelDraft.effectiveMonth);
   const levelStateChanged = levelDraft.included !== policyEnabledForMonth(user, levelDraft.effectiveMonth)
@@ -415,10 +388,11 @@ function UserCard({
             >
               {roleOptions.map((role) => (
                 <option key={role} value={role}>
-                  {getRoleLabel(role, text)}
+                  {getEmployeeRoleLabel(role, lang)}
                 </option>
               ))}
             </select>
+            <span style={styles.fieldNotice}>{text.roleFieldHelp}</span>
           </Field>
           <Field label={text.part}>
             <select
@@ -429,19 +403,6 @@ function UserCard({
               {partOptions.map((part) => (
                 <option key={part} value={part}>
                   {getPartLabel(part, text)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label={text.position}>
-            <select
-              value={positionValue}
-              onChange={(event) => update("position", event.target.value)}
-              style={styles.input}
-            >
-              {positionOptions.map((position) => (
-                <option key={position} value={position}>
-                  {getPositionLabel(position, text)}
                 </option>
               ))}
             </select>
@@ -769,7 +730,6 @@ export default function AdminUsersPage() {
             full_name: draft.full_name,
             role: draft.role,
             part: draft.part,
-            position: draft.position,
             gender: draft.gender,
             birth_date: draft.birth_date,
             hire_date: draft.hire_date,

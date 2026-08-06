@@ -12,7 +12,7 @@ import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { useSearchParams } from "next/navigation";
 import { APPROVAL_STATUS, LEAVE_ACTION, } from "@/lib/attendance/status";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
-import { getPositionRank } from "@/lib/common/positions";
+import { getEmployeeRoleLabel, getEmployeeRoleRank, isOwnerOrMasterRole } from "@/lib/common/roles";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
@@ -24,6 +24,7 @@ type UserRow = {
   username: string;
   part: string | null;
   position: string | null;
+  role: string | null;
   is_active: boolean;
   levelInfo?: EmployeeLevelInfo;
 };
@@ -61,8 +62,9 @@ function requestUsers(date: Date) {
       if (!response.ok || !result?.ok) {
         throw new Error(result?.message || "USERS_REQUEST_FAILED");
       }
+      // 사장급(owner/master)은 휴무 관리 대상 직원 목록에서 제외한다.
       return ((result.users || []) as UserRow[]).filter(
-        (user) => user.position !== "owner"
+        (user) => !isOwnerOrMasterRole(user.role)
       );
     })
     .finally(() => {
@@ -567,7 +569,8 @@ export default function AttendanceLeavePage() {
         name: currentUser.name || currentUser.username || normalizeId(currentUser.id),
         username: currentUser.username || "",
         part: currentUser.part ?? null,
-        position: currentUser.position ?? currentUser.role ?? null,
+        position: currentUser.position ?? null,
+        role: currentUser.role ?? null,
         is_active: true,
       });
     }
@@ -654,7 +657,7 @@ export default function AttendanceLeavePage() {
         meta: getPartMeta(part),
         items: items.sort((a, b) => {
           const positionDiff =
-            getPositionRank(a.user.position) - getPositionRank(b.user.position);
+            getEmployeeRoleRank(a.user.role) - getEmployeeRoleRank(b.user.role);
           if (positionDiff !== 0) return positionDiff;
           return a.user.name.localeCompare(b.user.name);
         }),
@@ -892,7 +895,7 @@ export default function AttendanceLeavePage() {
                         </span>
                         <EmployeeNameWithLevel name={`${index + 1}. ${user.name}`} levelInfo={user.levelInfo} lang={lang} nameStyle={userNameStyle} showDisabledBadge />
                         <span style={userMetaStyle}>
-                          {t.positions?.[user.position as keyof typeof t.positions] || user.position || user.username}
+                          {user.role ? getEmployeeRoleLabel(user.role, lang) : user.username}
                         </span>
                       </div>
 
@@ -1014,7 +1017,7 @@ export default function AttendanceLeavePage() {
                     <div key={item.user.id} style={summaryRowStyle}>
                       <EmployeeNameWithLevel name={item.user.name} levelInfo={item.user.levelInfo} lang={lang} nameStyle={userNameStyle} showDisabledBadge />
                       <span style={userMetaStyle}>
-                        {t.positions?.[item.user.position as keyof typeof t.positions] || item.user.position || item.user.username}
+                        {item.user.role ? getEmployeeRoleLabel(item.user.role, lang) : item.user.username}
                       </span>
                       <span style={summaryCountStyle}>
                         {item.count}

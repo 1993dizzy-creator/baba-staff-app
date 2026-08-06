@@ -1,3 +1,6 @@
+// isOwnerOrMasterRole(lib/common/roles.ts)과 의미가 같다. 이 파일은 tests/에서
+// "@/" 별칭 없는 Node 직접 실행(--experimental-strip-types)으로 상대 경로 임포트되므로,
+// 별칭 기반 cross-module import를 추가하지 않고 판정식만 그대로 유지한다.
 export type PayrollEligibilityUser = {
   role: string | null;
   is_system_account: boolean;

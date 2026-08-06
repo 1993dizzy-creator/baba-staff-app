@@ -3,6 +3,7 @@ import { mapContract } from "@/lib/payroll/db-mappers";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 import { isMonthFirstDate } from "@/lib/payroll/contract-form";
 import { scheduledMinutesPerDay } from "@/lib/payroll/work-schedule";
+import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
 
 export const dynamic = "force-dynamic";
 
@@ -45,14 +46,14 @@ export async function POST(request: Request) {
 
   const { data: target, error: targetError } = await supabaseServer
     .from("users")
-    .select("id,position,is_active")
+    .select("id,role,is_active")
     .eq("id", userId)
     .eq("is_system_account", false)
     .eq("is_active", true)
     .maybeSingle();
   if (targetError) return payrollJson({ ok: false, code: "PAYROLL_CONTRACT_READ_FAILED" }, 500);
   if (!target) return payrollJson({ ok: false, code: "USER_NOT_FOUND" }, 404);
-  const targetIsOwner = String(target.position ?? "").toLowerCase() === "owner";
+  const targetIsOwner = isPayrollOwnerRole(target.role);
   if ((targetIsOwner && (body.payType !== "monthly" || body.calculationBasis !== "fixed_monthly")) || (!targetIsOwner && body.calculationBasis === "fixed_monthly")) {
     return payrollJson({ ok: false, code: "INVALID_CONTRACT" }, 400);
   }
@@ -68,7 +69,7 @@ export async function POST(request: Request) {
     if (calculated === null) return payrollJson({ ok: false, code: "INVALID_WORK_SCHEDULE" }, 400);
   }
 
-  const { data, error } = await supabaseServer.rpc("payroll_correct_latest_unused_contract_v2", {
+  const { data, error } = await supabaseServer.rpc("payroll_correct_latest_unused_contract_v3", {
     p_contract_id: contractId,
     p_user_id: userId,
     p_expected_revision: expectedRevision,

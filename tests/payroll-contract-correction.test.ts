@@ -103,7 +103,7 @@ test("correction API maps concurrency, history, usage, locked payroll, date, and
     "PAYROLL_CONTRACT_CORRECTION_FAILED",
   ]) assert.match(route, new RegExp(code));
   assert.match(route, /requirePayrollActor\(\)/);
-  assert.match(route, /payroll_correct_latest_unused_contract_v2/);
+  assert.match(route, /payroll_correct_latest_unused_contract_v3/);
 });
 
 test("contract error mapper never returns internal contract codes in Korean or Vietnamese", () => {

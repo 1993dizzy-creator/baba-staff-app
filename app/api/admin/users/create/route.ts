@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth/server-auth";
+import { toLegacyEmployeePosition } from "@/lib/common/roles";
 
 type JsonObject = Record<string, unknown>;
 
 const ALLOWED_ROLES = new Set(["owner", "manager", "leader", "staff"]);
 const BLOCKED_FORM_ROLES = new Set(["master", "admin"]);
-const ALLOWED_POSITIONS = new Set(["owner", "manager", "leader", "staff"]);
 
 function normalizeText(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
@@ -37,12 +37,6 @@ function getBlockedRoleError(lang: "ko" | "vi") {
     : "선택할 수 없는 권한입니다.";
 }
 
-function getBlockedPositionError(lang: "ko" | "vi") {
-  return lang === "vi"
-    ? "Không thể chọn chức vụ này."
-    : "선택할 수 없는 직급입니다.";
-}
-
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as JsonObject;
@@ -53,7 +47,6 @@ export async function POST(req: Request) {
     const password = normalizeText(body.password);
     const name = normalizeText(body.name);
     const role = normalizeText(body.role) || "staff";
-    const position = normalizeText(body.position) || "staff";
     const lang = getLang(body.lang);
     const levelProgramEnabled = typeof body.level_program_enabled === "boolean"
       ? body.level_program_enabled
@@ -83,12 +76,10 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!ALLOWED_POSITIONS.has(position)) {
-      return NextResponse.json(
-        { ok: false, error: getBlockedPositionError(lang) },
-        { status: 400 }
-      );
-    }
+    // 레거시 DB 호환용 position은 클라이언트가 보낸 값을 신뢰하지 않고 항상 검증된
+    // role에서 파생한다. 구버전 탭이 position 필드를 함께 보내도 여기서는 아예
+    // 읽지 않으므로 요청이 실패하지 않는다(롤링 배포 호환).
+    const position = toLegacyEmployeePosition(role);
 
     const hireDate = nullableDate(body.hire_date);
     if (levelProgramEnabled && !hireDate) {

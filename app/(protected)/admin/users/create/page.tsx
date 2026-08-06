@@ -11,6 +11,7 @@ import { ui } from "@/lib/styles/ui";
 import { adminUsersText } from "@/lib/text";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import { PART_VALUES } from "@/lib/common/parts";
+import { EDITABLE_EMPLOYEE_ROLE_VALUES, getEmployeeRoleLabel } from "@/lib/common/roles";
 
 type CreateResponse = {
   ok: boolean;
@@ -24,7 +25,6 @@ type FormState = {
   full_name: string;
   role: string;
   part: string;
-  position: string;
   gender: string;
   birth_date: string;
   hire_date: string;
@@ -36,9 +36,8 @@ type FormState = {
   app_login_enabled: boolean;
 };
 
-const roleOptions = ["owner", "manager", "leader", "staff"] as const;
+const roleOptions = EDITABLE_EMPLOYEE_ROLE_VALUES;
 const partOptions = PART_VALUES;
-const positionOptions = ["owner", "manager", "leader", "staff"] as const;
 const genders = ["", "male", "female", "other"];
 
 const initialForm: FormState = {
@@ -48,7 +47,6 @@ const initialForm: FormState = {
   full_name: "",
   role: "staff",
   part: "kitchen",
-  position: "staff",
   gender: "",
   birth_date: "",
   hire_date: "",
@@ -62,14 +60,6 @@ const initialForm: FormState = {
 
 type AdminUsersPageText = (typeof adminUsersText)[keyof typeof adminUsersText];
 
-function getRoleLabel(role: string, text: AdminUsersPageText) {
-  if (role === "owner") return text.ownerGroup;
-  if (role === "manager") return text.managerRole;
-  if (role === "leader") return text.leaderRole;
-  if (role === "staff") return text.staffRole;
-  return role;
-}
-
 function getPartLabel(part: string, text: AdminUsersPageText) {
   if (part === "owner") return text.ownerGroup;
   if (part === "kitchen") return text.kitchenGroup;
@@ -78,14 +68,6 @@ function getPartLabel(part: string, text: AdminUsersPageText) {
   if (part === "cleaning") return text.cleaningGroup;
   if (part === "etc") return text.etcGroup;
   return part;
-}
-
-function getPositionLabel(position: string, text: AdminUsersPageText) {
-  if (position === "owner") return text.ownerGroup;
-  if (position === "manager") return text.managerRole;
-  if (position === "leader") return text.leaderRole;
-  if (position === "staff") return text.staffRole;
-  return position;
 }
 
 function getAge(birthDate: string) {
@@ -171,9 +153,9 @@ export default function AdminUserCreatePage() {
   const [message, setMessage] = useState("");
   const age = getAge(form.birth_date);
   const previewName = form.name.trim() || text.name;
-  const previewPosition = getPositionLabel(form.position, text);
+  const previewPosition = getEmployeeRoleLabel(form.role, lang);
   const previewWorkTime =
-    form.position === "owner" || !form.attendance_tracking_enabled
+    form.role === "owner" || !form.attendance_tracking_enabled
       ? ""
       : `${form.work_start_time}-${form.work_end_time}`;
   const hours = shiftHours(form.work_start_time, form.work_end_time);
@@ -321,10 +303,11 @@ export default function AdminUserCreatePage() {
               >
                 {roleOptions.map((role) => (
                   <option key={role} value={role}>
-                    {getRoleLabel(role, text)}
+                    {getEmployeeRoleLabel(role, lang)}
                   </option>
                 ))}
               </select>
+              <span style={styles.helpText}>{text.roleFieldHelp}</span>
             </Field>
             <Field label={text.part}>
               <select
@@ -335,19 +318,6 @@ export default function AdminUserCreatePage() {
                 {partOptions.map((part) => (
                   <option key={part} value={part}>
                     {getPartLabel(part, text)}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label={text.position}>
-              <select
-                value={form.position}
-                onChange={(event) => update("position", event.target.value)}
-                style={styles.input}
-              >
-                {positionOptions.map((position) => (
-                  <option key={position} value={position}>
-                    {getPositionLabel(position, text)}
                   </option>
                 ))}
               </select>

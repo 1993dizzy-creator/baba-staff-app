@@ -8,7 +8,7 @@ const list = read("app/(protected)/admin/payroll/page.tsx");
 const detail = read("app/(protected)/admin/payroll/[runId]/page.tsx");
 const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
 const compensationCard = read("components/payroll/CompensationCard.tsx");
-const attendanceCopy = read("lib/text/attendance.ts");
+const roles = read("lib/common/roles.ts");
 const employeeInsurance = read(
   "components/payroll/EmployeeInsuranceSettings.tsx",
 );
@@ -54,20 +54,16 @@ test("ledger detail is read-only and omits the retired review and transition wor
     assert.doesNotMatch(detail, new RegExp(action));
   assert.match(detail, /calculation_snapshot/);
 });
-test("payroll position labels reuse attendance translations with safe fallbacks", () => {
+test("payroll position labels are role-based (via the shared lib/common/roles module), not position-based, with a username fallback", () => {
   for (const source of [compensationCard, settings]) {
-    assert.match(source, /import \{ attendanceText \} from "@\/lib\/text"/);
-    assert.match(source, /attendance\.positions\[/);
-    assert.match(source, /\] \?\? (?:employee|user)\.position/);
+    assert.match(source, /from "@\/lib\/common\/roles"/);
+    assert.match(source, /getEmployeeRoleLabel\(/);
+    assert.doesNotMatch(source, /attendance\.positions\[/);
   }
-  assert.doesNotMatch(
-    compensationCard,
-    /employee\.position \?\? employee\.username/,
-  );
+  assert.match(compensationCard, /employee\.role\s*\n?\s*\? getEmployeeRoleLabel\(employee\.role, lang\)/);
   assert.match(compensationCard, /: employee\.username/);
-  assert.match(settings, /: user\.username/);
-  assert.match(attendanceCopy, /manager: "매니저"/);
-  assert.match(attendanceCopy, /manager: "Quản lý"/);
+  assert.match(settings, /user\.role \? getEmployeeRoleLabel\(user\.role, l\) : user\.username/);
+  assert.match(roles, /manager: \{ ko: "매니저", vi: "Quản lý" \}/);
 });
 
 test("payroll settings uses accessible bilingual common and employee tabs", () => {
@@ -172,7 +168,7 @@ test("fixed raise reason is conditional in UI and enforced by the server", () =>
   assert.match(settings, /note: fixedRaiseChanged \? form\.fixedRaiseReason\.trim\(\) : correcting\?\.note \?\? null/);
   assert.doesNotMatch(settings, /Chênh lệch/);
   assert.match(route, /FIXED_RAISE_REASON_REQUIRED/);
-  assert.match(route, /payroll_create_contract_version_v4/);
+  assert.match(route, /payroll_create_contract_version_v5/);
   assert.match(route, /p_note: fixedRaiseReason\.note/);
 });
 

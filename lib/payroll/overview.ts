@@ -22,6 +22,7 @@ export type PayrollOverviewEmployee = {
   birthDate: string | null;
   part: string | null;
   position: string | null;
+  role: string | null;
   levelInfo: EmployeeLevelInfo;
   calculationStatus: "calculable" | "requires_review" | "unavailable";
   recognizedWorkdays: number;
@@ -139,6 +140,7 @@ export function buildPayrollOverviewEmployee(input: {
     birthDate: user.birth_date,
     part: user.part,
     position: user.position,
+    role: user.role,
     levelInfo,
     calculationStatus: unavailable ? "unavailable" : requiresReview ? "requires_review" : "calculable",
     recognizedWorkdays: employee.recognizedWorkdays,

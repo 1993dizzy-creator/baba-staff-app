@@ -11,6 +11,7 @@ import { commonText, attendanceText } from "@/lib/text";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
+import { getEmployeeRoleLabel, getEmployeeRoleRank } from "@/lib/common/roles";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { isLongShiftRecord } from "@/lib/attendance/time";
 import { attendanceFetch } from "@/lib/auth/client-session";
@@ -95,16 +96,6 @@ function getStatusColor(record?: AttendanceRecord) {
   if (record.check_in_at) return "#10b981";
   if (record.status === ATTENDANCE_STATUS.LEAVE) return "#6b7280";
   return "#6b7280";
-}
-
-function getPositionRank(position?: string | null) {
-  const value = String(position || "").toLowerCase();
-
-  if (value.includes("manager") || value.includes("master")) return 1;
-  if (value.includes("leader") || value.includes("head")) return 2;
-  if (value.includes("staff")) return 3;
-
-  return 99;
 }
 
 export default function AttendanceStaffPage() {
@@ -504,7 +495,7 @@ export default function AttendanceStaffPage() {
         part,
         meta: getPartMeta(part),
         users: groupUsers.sort((a, b) => {
-          const rankDiff = getPositionRank(a.position) - getPositionRank(b.position);
+          const rankDiff = getEmployeeRoleRank(a.role) - getEmployeeRoleRank(b.role);
           if (rankDiff !== 0) return rankDiff;
           return a.name.localeCompare(b.name);
         }),
@@ -559,9 +550,7 @@ export default function AttendanceStaffPage() {
                         <div style={staffLeftStyle}>
                           <EmployeeNameWithLevel name={user.name} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} showDisabledBadge />
                           <span style={staffMetaStyle}>
-                            {user.position
-                              ? t.positions?.[user.position as keyof typeof t.positions] || user.position
-                              : user.username}
+                            {user.role ? getEmployeeRoleLabel(user.role, lang) : user.username}
                           </span>
                         </div>
 

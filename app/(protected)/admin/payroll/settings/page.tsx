@@ -23,7 +23,6 @@ import {
   type PayrollUiLang,
 } from "@/lib/payroll/ui-labels";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
-import { attendanceText } from "@/lib/text";
 import { vietnamCurrentMonthStart } from "@/lib/payroll/ui-dates";
 import { currencyAmount, formatIntegerInput, integerInputDigits, isMonthFirstDate, minutesToHoursInput, signedAmount } from "@/lib/payroll/contract-form";
 import { comparePayrollEmployees } from "@/lib/payroll/employee-sort";
@@ -31,12 +30,15 @@ import { ui } from "@/lib/styles/ui";
 import { payrollContractErrorMessage } from "@/lib/payroll/contract-errors";
 import type { WorkScheduleVersion } from "@/lib/payroll/types";
 import { scheduledMinutesPerDay, schedulesActiveOn } from "@/lib/payroll/work-schedule";
+import { getEmployeeRoleLabel } from "@/lib/common/roles";
+import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
 type User = {
   id: number;
   name: string | null;
   username: string;
   part: string | null;
   position: string | null;
+  role: string | null;
   levelInfo: EmployeeLevelInfo;
 };
 type InsuranceCurrent = {
@@ -124,7 +126,6 @@ export default function PayrollSettingsPage() {
   const { lang } = useLanguage();
   const l = lang as PayrollUiLang;
   const vi = lang === "vi";
-  const attendance = attendanceText[lang];
   const params = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
@@ -288,24 +289,19 @@ export default function PayrollSettingsPage() {
     return () => controller.abort();
   }, [activeTab, userId]);
   const positionLabel = useCallback(
-    (user: User) =>
-      user.position
-        ? (attendance.positions[
-            user.position as keyof typeof attendance.positions
-          ] ?? user.position)
-        : user.username,
-    [attendance],
+    (user: User) => (user.role ? getEmployeeRoleLabel(user.role, l) : user.username),
+    [l],
   );
   const employeeMetaLabel = useCallback((user: User) => {
     const displayedPart = user.part ? partLabel(l, user.part) : "";
-    const displayedPosition = user.position ? positionLabel(user) : "";
+    const displayedPosition = user.role ? positionLabel(user) : "";
     const values = [displayedPart, displayedPosition].filter((value, index, all) => value && all.indexOf(value) === index);
     return values.join(" · ") || user.username;
   }, [l, positionLabel]);
   const visible = useMemo(
     () =>
       users.filter((user) =>
-        `${user.name ?? ""} ${user.username} ${user.part ?? ""} ${user.position ?? ""} ${employeeMetaLabel(user)}`
+        `${user.name ?? ""} ${user.username} ${user.part ?? ""} ${user.role ?? ""} ${employeeMetaLabel(user)}`
           .toLowerCase()
           .includes(query.toLowerCase()),
       ).sort(comparePayrollEmployees),
@@ -313,7 +309,7 @@ export default function PayrollSettingsPage() {
   );
   const selected = users.find((user) => user.id === userId);
   const selectedId = selected?.id ?? null;
-  const selectedIsOwner = selected?.position?.toLowerCase() === "owner";
+  const selectedIsOwner = isPayrollOwnerRole(selected?.role ?? null);
   const effectiveSchedules = schedulesActiveOn(workSchedules, form.effectiveFrom);
   const effectiveSchedule = effectiveSchedules.length === 1 ? effectiveSchedules[0] : null;
   const automaticStandardMinutes = effectiveSchedule ? scheduledMinutesPerDay(effectiveSchedule.startTime, effectiveSchedule.endTime, effectiveSchedule.unpaidBreakMinutes) : null;

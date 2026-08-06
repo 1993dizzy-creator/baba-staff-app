@@ -7,6 +7,7 @@ import { useLanguage } from "@/lib/language-context";
 import { mypageText } from "@/lib/text";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
+import { getEmployeeRoleLabel } from "@/lib/common/roles";
 
 type UserInfo = {
   id: number;
@@ -14,6 +15,7 @@ type UserInfo = {
   name: string;
   part: string | null;
   position: string | null;
+  role: string | null;
   birth_date: string | null;
   hire_date: string | null;
 };
@@ -41,7 +43,7 @@ export default function MyPage() {
 
     const { data, error } = await supabase
       .from("users")
-      .select("id, username, name, part, position, birth_date, hire_date")
+      .select("id, username, name, part, position, role, birth_date, hire_date")
       .eq("id", savedUser.id)
       .single();
 
@@ -115,7 +117,7 @@ export default function MyPage() {
           </div>
 
           <div>
-            <b>{t.position}:</b> {userInfo?.position || "-"}
+            <b>{t.position}:</b> {userInfo?.role ? getEmployeeRoleLabel(userInfo.role, lang) : "-"}
           </div>
           <div>
             <b>{t.part}:</b> {userInfo?.part || "-"}

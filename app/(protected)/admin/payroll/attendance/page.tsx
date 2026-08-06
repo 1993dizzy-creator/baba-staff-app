@@ -8,7 +8,7 @@ import { useLanguage } from "@/lib/language-context";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { commonText, attendanceText } from "@/lib/text";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
-import { getPositionRank } from "@/lib/common/positions";
+import { getEmployeeRoleLabel, getEmployeeRoleRank } from "@/lib/common/roles";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
@@ -399,7 +399,7 @@ export default function AttendanceOverviewPage() {
                 part,
                 meta: getPartMeta(part),
                 summaries: groupSummaries.sort((a, b) => {
-                    const rankDiff = getPositionRank(a.user.position) - getPositionRank(b.user.position);
+                    const rankDiff = getEmployeeRoleRank(a.user.role) - getEmployeeRoleRank(b.user.role);
                     if (rankDiff !== 0) return rankDiff;
                     return a.user.name.localeCompare(b.user.name);
                 }),
@@ -618,9 +618,7 @@ export default function AttendanceOverviewPage() {
                                                     <EmployeeNameWithLevel name={`${user.name}${age ? ` (${age})` : ""}`} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} showDisabledBadge />
                                                     <span style={staffSeparatorStyle}>·</span>
                                                     <span style={staffMetaStyle}>
-                                                        {user.position
-                                                            ? t.positions?.[user.position as keyof typeof t.positions] || user.position
-                                                            : user.username}
+                                                        {user.role ? getEmployeeRoleLabel(user.role, lang) : user.username}
                                                     </span>
                                                 </div>
 

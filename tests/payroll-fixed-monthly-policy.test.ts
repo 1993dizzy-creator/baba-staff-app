@@ -59,7 +59,7 @@ test("contract money fields share formatting and zero-only focus convenience", (
 });
 
 test("owner contract UI stays fixed monthly while regular contracts use one hidden basis", () => {
-  assert.match(settings, /selected\?\.position\?\.toLowerCase\(\) === "owner"/);
+  assert.match(settings, /isPayrollOwnerRole\(selected\?\.role \?\? null\)/);
   assert.match(settings, /calculationBasis: "fixed_monthly"/);
   assert.match(settings, /payrollLabel\(l, "fixed_monthly"\)/);
   assert.match(settings, /!selectedIsOwner && form\.payType === "monthly"/);
@@ -70,15 +70,17 @@ test("owner contract UI stays fixed monthly while regular contracts use one hidd
   assert.match(settings, /Hợp đồng trả cố định hàng tháng chỉ có thể áp dụng từ ngày đầu tiên của tháng/);
 });
 
-test("contract API validates position and uses the schedule-aware private v4 RPC", () => {
-  assert.match(contractsRoute, /select\("id,position,is_active"\)/);
-  assert.match(contractsRoute, /targetIsOwner/);
+test("contract API validates role (not position) and uses the schedule-aware private v5 RPC", () => {
+  assert.match(contractsRoute, /select\("id,role,is_active"\)/);
+  assert.match(contractsRoute, /from "@\/lib\/payroll\/eligibility"/);
+  assert.match(contractsRoute, /targetIsOwner = isPayrollOwnerRole\(target\.role\)/);
   assert.match(contractsRoute, /!targetIsOwner && body\.calculationBasis === "fixed_monthly"/);
-  assert.match(contractsRoute, /payroll_create_contract_version_v4/);
+  assert.match(contractsRoute, /payroll_create_contract_version_v5/);
+  assert.doesNotMatch(contractsRoute, /payroll_create_contract_version_v4/);
   assert.match(contractsRoute, /scheduledMinutesPerDay/);
   assert.match(contractsRoute, /!isMonthFirstDate\(body\.effectiveFrom\)/);
   assert.match(contractsRoute, /INVALID_FIXED_MONTHLY_EFFECTIVE_DATE/);
-  assert.ok(contractsRoute.indexOf("INVALID_FIXED_MONTHLY_EFFECTIVE_DATE") < contractsRoute.indexOf('rpc("payroll_create_contract_version_v4"'));
+  assert.ok(contractsRoute.indexOf("INVALID_FIXED_MONTHLY_EFFECTIVE_DATE") < contractsRoute.indexOf('rpc("payroll_create_contract_version_v5"'));
 });
 
 test("fixed monthly payroll creates one month item before attendance processing", () => {

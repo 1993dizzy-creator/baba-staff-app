@@ -16,6 +16,7 @@ import {
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
+import { getEmployeeRoleLabel } from "@/lib/common/roles";
 import {
     ATTENDANCE_STATUS_COLORS,
     getAttendanceDisplayStatus,
@@ -28,6 +29,7 @@ type UserRow = {
     username: string;
     part: string | null;
     position: string | null;
+    role: string | null;
     birth_date: string | null;
     work_start_time: string | null;
     work_end_time: string | null;
@@ -475,8 +477,8 @@ export default function AttendanceUserDetailPage() {
                     <div style={headerIdentityStyle}>
                         <EmployeeNameWithLevel name={user?.name || "-"} levelInfo={user?.levelInfo} lang={lang} nameStyle={userNameStyle} showDisabledBadge />
                         <div style={userMetaStyle}>
-                            {user?.position
-                                ? t.positions?.[user.position as keyof typeof t.positions] || user.position
+                            {user?.role
+                                ? getEmployeeRoleLabel(user.role, lang)
                                 : user?.username || "-"}
                         </div>
                     </div>

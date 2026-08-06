@@ -4,6 +4,8 @@ import { requireRole } from "@/lib/auth/server-auth";
 import { isDateKey, validateEmploymentDates } from "@/lib/employment/eligibility";
 import { enforceTerminationAccountPolicy, getVietnamDateKey } from "@/lib/employment/termination-policy";
 import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
+import { getEmployeeRoleRank, toLegacyEmployeePosition } from "@/lib/common/roles";
+import { isMasterGeneralEditBlocked, isPayrollOverrideOnlyUpdate } from "@/lib/employee/profile-update-policy";
 import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLevelProgramVersions, withEmployeeLevelInfo } from "@/lib/employee-level/server";
 import { validateEmployeeLevelConfiguration } from "@/lib/employee-level/validation";
 import {
@@ -75,26 +77,16 @@ const USER_SELECT = `
   app_login_enabled
 `;
 
-const ROLE_ORDER = new Map([
-  ["owner", 0],
-  ["master", 1],
-]);
-
-const POSITION_ORDER = new Map([
-  ["manager", 2],
-  ["leader", 3],
-  ["staff", 4],
-]);
-
 const ALLOWED_ROLES = new Set(["owner", "manager", "leader", "staff"]);
 const BLOCKED_FORM_ROLES = new Set(["master", "admin"]);
-const ALLOWED_POSITIONS = new Set(["owner", "manager", "leader", "staff"]);
+// position은 더 이상 독립 입력 필드가 아니다 — 최종 role에서 항상 파생해 저장한다
+// (아래 resultingRole 계산부 참고). 클라이언트가 payload에 position을 보내도
+// normalizeUpdate가 허용 키에서 걸러내 조용히 무시한다(구버전 탭 호환).
 const ALLOWED_UPDATE_KEYS = new Set([
   "name",
   "full_name",
   "role",
   "part",
-  "position",
   "gender",
   "birth_date",
   "hire_date",
@@ -180,12 +172,6 @@ function getMasterEditError(lang: "ko" | "vi") {
     : "마스터 계정은 수정할 수 없습니다.";
 }
 
-function getBlockedPositionError(lang: "ko" | "vi") {
-  return lang === "vi"
-    ? "Không thể chọn chức vụ này."
-    : "선택할 수 없는 직급입니다.";
-}
-
 function getAttendanceOpenRecordError(lang: "ko" | "vi") {
   return lang === "vi"
     ? "Không thể tắt chấm công vì nhân viên vẫn còn bản ghi chưa chấm công ra. Vui lòng xử lý giờ ra hoặc điều chỉnh bản ghi trước."
@@ -194,15 +180,8 @@ function getAttendanceOpenRecordError(lang: "ko" | "vi") {
 
 function sortUsers(users: UserRow[]) {
   return [...users].sort((a, b) => {
-    const aRank =
-      ROLE_ORDER.get(a.role || "") ??
-      POSITION_ORDER.get((a.position || "").toLowerCase()) ??
-      99;
-    const bRank =
-      ROLE_ORDER.get(b.role || "") ??
-      POSITION_ORDER.get((b.position || "").toLowerCase()) ??
-      99;
-    const rankDiff = aRank - bRank;
+    // 표시 순서는 role 기준: master → owner → manager → leader → staff.
+    const rankDiff = getEmployeeRoleRank(a.role) - getEmployeeRoleRank(b.role);
     if (rankDiff !== 0) return rankDiff;
 
     const activeDiff = Number(b.is_active === true) - Number(a.is_active === true);
@@ -363,17 +342,6 @@ export async function PATCH(req: Request) {
       );
     }
 
-    if (Object.prototype.hasOwnProperty.call(inputUpdates, "position")) {
-      const requestedPosition = normalizeText(inputUpdates.position);
-
-      if (!ALLOWED_POSITIONS.has(requestedPosition)) {
-        return NextResponse.json(
-          { ok: false, error: getBlockedPositionError(lang) },
-          { status: 400 }
-        );
-      }
-    }
-
     let update = normalizeUpdate(inputUpdates);
 
     if (Object.keys(update).length === 0) {
@@ -417,9 +385,8 @@ export async function PATCH(req: Request) {
       }
     }
 
-    const isPayrollOverrideOnly =
-      hasPayrollOverrideUpdate && Object.keys(update).length === 1;
-    if (target.role === "master" && !isPayrollOverrideOnly) {
+    const isPayrollOverrideOnly = isPayrollOverrideOnlyUpdate(update, hasPayrollOverrideUpdate);
+    if (isMasterGeneralEditBlocked(target.role, isPayrollOverrideOnly)) {
       return NextResponse.json(
         {
           ok: false,
@@ -467,6 +434,16 @@ export async function PATCH(req: Request) {
     const resultingRole = Object.prototype.hasOwnProperty.call(update, "role")
       ? update.role as string | null
       : target.role;
+    // 레거시 DB 호환용 position은 클라이언트가 무엇을 보냈든 최종 role에서 다시
+    // 계산한다(role=master는 position=owner로 유지). update에 role이 없는 요청
+    // (예: 생년월일만 수정)도 target.role 기준으로 항상 동기화된다.
+    //
+    // update 객체 자체에는 절대 position을 섞지 않는다 — isPayrollOverrideOnlyUpdate가
+    // update의 키 개수로 override-only 여부를 판정하는데(위에서 isMasterGeneralEditBlocked
+    // 판정까지 이미 끝남), 이 시점 이후 어떤 코드가 update에 필드를 추가해도 그 판정이
+    // 흔들리지 않도록, derivedPosition은 별도 변수로 들고 있다가 RPC 호출 시점에만
+    // 병합한다.
+    const derivedPosition = toLegacyEmployeePosition(resultingRole);
     const today = getVietnamDateKey();
     const versions = await loadEmployeeLevelProgramVersions([Number(id)], today);
     const currentVersion = versions.get(Number(id));
@@ -549,7 +526,7 @@ export async function PATCH(req: Request) {
       "employee_update_profile_and_level_v9",
       {
         p_user_id: id,
-        p_updates: update,
+        p_updates: { ...update, position: derivedPosition },
         p_level_program_enabled: levelProgramEnabled,
         p_effective_from: levelPolicyChanged ? levelEffectiveFrom : null,
         p_base_date_mode: requestedBaseDateMode,

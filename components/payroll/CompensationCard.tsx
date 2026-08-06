@@ -15,8 +15,8 @@ import {
 } from "@/lib/payroll/payroll-page-money";
 import { formatPositiveIntegerInput, normalizePositiveIntegerInput } from "@/lib/payroll/positive-integer-input";
 import { formatRecognizedWork, getPayrollHeaderAmount } from "@/lib/payroll/payroll-page-display";
-import { attendanceText } from "@/lib/text";
 import { payrollOverviewText } from "@/lib/text/payroll-overview";
+import { getEmployeeRoleLabel } from "@/lib/common/roles";
 function age(date: string | null) {
   if (!date) return null;
   const today = new Date(),
@@ -49,7 +49,6 @@ export function CompensationCard({
   refresh: () => Promise<boolean>;
 }) {
   const t = payrollOverviewText[lang];
-  const attendance = attendanceText[lang];
   const detailText = lang === "vi"
     ? { salaryComposition: "Cấu thành lương", monthApplication: "Áp dụng tháng này", insuranceAndNet: "Bảo hiểm và thực nhận", recognizedWork: "Chấm công được ghi nhận", adjustmentManage: "Thêm · hủy", finalPayout: "Thực nhận", preInsurancePayoutWithInsurance: "Thu nhập trước khấu trừ bảo hiểm", monthlyEquivalent: "Quy đổi lương tháng", monthlyEquivalentHelp: "Theo điều kiện làm đủ theo hợp đồng" }
     : { salaryComposition: "급여 구성", monthApplication: "이번 달 반영", insuranceAndNet: "보험 및 최종 지급", recognizedWork: "인정 근무", adjustmentManage: "추가·취소", finalPayout: "최종 지급액", preInsurancePayoutWithInsurance: "보험 공제 전 금액", monthlyEquivalent: "월급여 환산", monthlyEquivalentHelp: "계약 기준 풀근무 시" };
@@ -65,10 +64,8 @@ export function CompensationCard({
         ? t.levelBaseRequired
         : formatPayrollHeaderAmount(headerAmount ?? combined);
   const employeeAge = age(employee.birthDate);
-  const positionLabel = employee.position
-    ? (attendance.positions[
-        employee.position as keyof typeof attendance.positions
-      ] ?? employee.position)
+  const positionLabel = employee.role
+    ? getEmployeeRoleLabel(employee.role, lang)
     : employee.username;
   return (
     <article style={{ ...s.card, ...(expanded ? s.expandedCard : {}) }}>
