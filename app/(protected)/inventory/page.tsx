@@ -11,7 +11,13 @@ import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import { usePathname, useSearchParams } from "next/navigation";
 import SubNav from "@/components/SubNav";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
-import {PART_VALUES, PART_META, type PartValue,} from "@/lib/common/parts";
+import {PART_META} from "@/lib/common/parts";
+import {
+    INVENTORY_PART_VALUES,
+    type InventoryPartValue,
+    isInventoryPart,
+    resolveInventoryDefaultPart,
+} from "@/lib/inventory/parts";
 import {
     INVENTORY_REASON_EMOJIS,
     INVENTORY_REASON_LABELS,
@@ -332,10 +338,12 @@ export default function InventoryPage() {
         currentUser?.role === "manager" ||
         currentUser?.role === "leader";
 
-    const defaultPart: PartValue =
-        PART_VALUES.includes(currentUser?.part as PartValue)
-            ? (currentUser?.part as PartValue)
-            : "kitchen";
+    // 로그인 사용자 파트(owner/kitchen/hall/bar/cleaning/etc)만 반영한 기본값이다.
+    // localStorage 저장값 우선순위는 아래 partFilter 초기화 useEffect에서 별도로 처리한다.
+    const defaultPart: InventoryPartValue = resolveInventoryDefaultPart(
+        null,
+        currentUser?.part
+    );
 
     const { lang } = useLanguage();
     const pathname = usePathname();
@@ -346,7 +354,7 @@ export default function InventoryPage() {
     const [quantity, setQuantity] = useState("");
     const [unit, setUnit] = useState("");
     const [note, setNote] = useState("");
-    const [part, setPart] = useState<PartValue>(defaultPart);
+    const [part, setPart] = useState<InventoryPartValue>(defaultPart);
     const [category, setCategory] = useState("");
     const [categoryKo, setCategoryKo] = useState("");
     const [categoryVi, setCategoryVi] = useState("");
@@ -374,7 +382,7 @@ export default function InventoryPage() {
         useState<InventoryRegistrationType | null>(null);
 
     const [search, setSearch] = useState("");
-    const [partFilter, setPartFilter] = useState<PartValue>(defaultPart);
+    const [partFilter, setPartFilter] = useState<InventoryPartValue>(defaultPart);
     const [categoryFilter, setCategoryFilter] = useState("all");
     const [showLowStockOnly, setShowLowStockOnly] = useState(false);
     const [showTodayUpdatedOnly, setShowTodayUpdatedOnly] = useState(false);
@@ -1632,8 +1640,8 @@ export default function InventoryPage() {
     };
 
     const handleEdit = (item: InventoryItem) => {
-        const nextPart: PartValue = PART_VALUES.includes(item.part as PartValue)
-            ? (item.part as PartValue)
+        const nextPart: InventoryPartValue = isInventoryPart(item.part)
+            ? item.part
             : defaultPart;
         const matchedCategory = resolveInventoryCategoryOption(
             nextPart,
@@ -1711,7 +1719,7 @@ export default function InventoryPage() {
             const normalizedNote = normalizeText(note);
             const normalizedCode = normalizeText(code);
 
-            if (!part || !normalizedItemName || !quantity || !normalizedUnit) {
+            if (!isInventoryPart(part) || !normalizedItemName || !quantity || !normalizedUnit) {
                 alert(t.requiredFields);
                 return;
             }
@@ -2662,12 +2670,11 @@ export default function InventoryPage() {
     }, [showInactiveItems, canToggleInventoryActive]);
 
     useEffect(() => {
+        // 저장값이 owner/cleaning/빈 문자열/알 수 없는 값이면 defaultPart(유효한 사용자
+        // 파트 또는 kitchen)로 자동 대체된다. 아래 write-back useEffect가 이 값을 다시
+        // localStorage에 저장하므로, 사용자가 브라우저 저장소를 직접 지우지 않아도 된다.
         const savedPartFilter = localStorage.getItem("inventory_part_filter");
-        if (savedPartFilter && PART_VALUES.includes(savedPartFilter as PartValue)) {
-            setPartFilter(savedPartFilter as PartValue);
-        } else {
-            setPartFilter(defaultPart);
-        }
+        setPartFilter(resolveInventoryDefaultPart(savedPartFilter, defaultPart));
     }, [defaultPart]);
 
     useEffect(() => {
@@ -2693,9 +2700,7 @@ export default function InventoryPage() {
         }
 
         setPartFilter(
-            PART_VALUES.includes(targetItem.part as PartValue)
-                ? (targetItem.part as PartValue)
-                : defaultPart
+            isInventoryPart(targetItem.part) ? targetItem.part : defaultPart
         );
         setCategoryFilter("all");
         setOpenItemId(targetItem.id);
@@ -2786,19 +2791,19 @@ export default function InventoryPage() {
         Number(item.quantity) <= Number(item.low_stock_threshold), []);
 
     const partLowStockCounts = useMemo(() => {
-        const counts = PART_VALUES.reduce(
+        const counts = INVENTORY_PART_VALUES.reduce(
             (acc, partValue) => {
                 acc[partValue] = 0;
                 return acc;
             },
-            {} as Record<PartValue, number>
+            {} as Record<InventoryPartValue, number>
         );
 
         inventoryList.forEach((item) => {
             if (item.is_active === false || !isLowStockItem(item)) return;
-            if (!PART_VALUES.includes(item.part as PartValue)) return;
+            if (!isInventoryPart(item.part)) return;
 
-            counts[item.part as PartValue] += 1;
+            counts[item.part] += 1;
         });
 
         return counts;
@@ -2847,15 +2852,26 @@ export default function InventoryPage() {
     }, [inventoryList, partFilter, showInactiveItems, getCategoryKey, lang, c.all]);
 
     const getPartMeta = (value?: string | null) => {
-        const safePart: PartValue =
-            value && PART_VALUES.includes(value as PartValue)
-                ? (value as PartValue)
-                : "etc";
+        const safePart: InventoryPartValue = isInventoryPart(value) ? value : "etc";
 
         return PART_META[safePart];
     };
 
-    const getPartButtonStyle = (value: PartValue, active: boolean) => {
+    // 재고 파트 필터/등록 버튼과 내부 허용값이 서로 어긋나지 않도록, 화면에 그리는 버튼
+    // 목록 자체를 INVENTORY_PART_VALUES에서 생성한다. 여기 없는 값(owner/cleaning 등)은
+    // 버튼도 없고 내부 상태로도 들어올 수 없다.
+    const inventoryPartLabels: Record<InventoryPartValue, string> = {
+        kitchen: c.kitchen,
+        hall: c.hall,
+        bar: c.bar,
+        etc: c.etc,
+    };
+    const inventoryPartOptions = INVENTORY_PART_VALUES.map((value) => ({
+        value,
+        label: inventoryPartLabels[value],
+    }));
+
+    const getPartButtonStyle = (value: InventoryPartValue, active: boolean) => {
         const meta = PART_META[value];
 
         return {
@@ -3158,13 +3174,8 @@ export default function InventoryPage() {
                             overflow: "visible",
                         }}
                     >
-                        {[
-                            { value: "kitchen", label: c.kitchen },
-                            { value: "hall", label: c.hall },
-                            { value: "bar", label: c.bar },
-                            { value: "etc", label: c.etc },
-                        ].map((partOption) => {
-                            const partValue = partOption.value as PartValue;
+                        {inventoryPartOptions.map((partOption) => {
+                            const partValue = partOption.value;
                             const active = partFilter === partValue;
                             const meta = PART_META[partValue];
                             const lowStockCount = partLowStockCounts[partValue] ?? 0;
@@ -4366,13 +4377,8 @@ export default function InventoryPage() {
                                     gap: 8,
                                 }}
                             >
-                                {[
-                                    { value: "kitchen", label: c.kitchen },
-                                    { value: "hall", label: c.hall },
-                                    { value: "bar", label: c.bar },
-                                    { value: "etc", label: c.etc },
-                                ].map((partOption) => {
-                                    const partValue = partOption.value as PartValue;
+                                {inventoryPartOptions.map((partOption) => {
+                                    const partValue = partOption.value;
                                     const active = part === partValue;
                                     const meta = PART_META[partValue];
 

@@ -21,6 +21,10 @@ import {
   getReasonByRegistrationType,
   normalizeInventoryReason,
 } from "@/lib/inventory/reasons";
+import {
+  INVENTORY_PART_VALUES,
+  validateInventoryPartPayload,
+} from "@/lib/inventory/parts";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -190,6 +194,37 @@ const normalizePackageContentPayload = (payload: Record<string, unknown>) => {
   payload.package_content_quantity = quantity;
   payload.package_content_unit = unit;
   return true;
+};
+
+const formatInventoryPartValuesList = () => {
+  const values = [...INVENTORY_PART_VALUES];
+  const last = values.pop();
+  return `${values.join(", ")}, or ${last}`;
+};
+
+const invalidInventoryPartResponse = () =>
+  jsonError(
+    "invalid_inventory_part",
+    `Inventory part must be one of ${formatInventoryPartValuesList()}.`,
+    400
+  );
+
+// 실제 판정(순수 함수)은 lib/inventory/parts.ts의 validateInventoryPartPayload가 맡는다.
+// 여기서는 그 판정을 HTTP 응답으로 감싸고, 유효하면 trim된 값을 payload에 반영만 한다
+// (공백이 섞인 값이 그대로 저장되지 않게). POST(required: true)/PATCH(required: false)가
+// 이 한 함수를 공유한다.
+const enforceInventoryPartPayload = (
+  payload: Record<string, unknown>,
+  options: { required: boolean }
+): NextResponse | null => {
+  const result = validateInventoryPartPayload(payload, options);
+
+  if (!result.ok) return invalidInventoryPartResponse();
+  if (result.normalizedPart !== undefined) {
+    payload.part = result.normalizedPart;
+  }
+
+  return null;
 };
 
 const isPosReferenceFkError = (error: unknown) => {
@@ -443,6 +478,11 @@ export async function POST(req: Request) {
       );
     }
 
+    const partValidationError = enforceInventoryPartPayload(payload, {
+      required: true,
+    });
+    if (partValidationError) return partValidationError;
+
     const serverPayload = withServerActorMetadata(payload, actor);
 
     const duplicateItem = await findDuplicateInventoryItem(
@@ -578,6 +618,13 @@ export async function PATCH(req: Request) {
         { status: 400 }
       );
     }
+
+    // part가 payload에 없으면(quick-save, active-status, 사진·수량 관련 흐름) 그대로
+    // 통과한다. part가 포함된 일반 품목 수정에서만 유효한 재고 파트인지 검사한다.
+    const partValidationError = enforceInventoryPartPayload(payload, {
+      required: false,
+    });
+    if (partValidationError) return partValidationError;
 
     const serverPayload = withServerActorMetadata(payload, actor);
 

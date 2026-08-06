@@ -229,8 +229,35 @@ test("existing RPC chain (v1-v6, create v1/v3) is still untouched by this OLD-is
   assert.doesNotMatch(migration, /drop function/);
 });
 
-test("no new migration file/number was introduced for this patch", () => {
-  const files = readdirSync(join(process.cwd(), "supabase/migrations"));
-  const relevant = files.filter((name) => name.startsWith("2026080600"));
-  assert.deepEqual(relevant, ["202608060001_add_employee_attendance_and_login_flags.sql"]);
+// 원래 이 자리의 테스트는 "no new migration file/number was introduced for this patch"라는
+// 이름으로 supabase/migrations 전체 디렉터리를 202608060001 하나로 하드코딩 비교했다.
+// 의도는 open-record 동시성 가드(트리거+함수)가 이 patch에서 실수로 다른 파일에 중복
+// 생성되거나, 다른 Migration과 뒤섞여 들어가지 않았는지 확인하려는 것이었다. 하지만
+// "이 시점 이후 파일 목록 전체가 절대 바뀌면 안 된다"는 형태라, 이 가드와 전혀 무관한
+// 다른 기능(예: 재고 파트 정책)이 새 Migration 파일을 추가하기만 해도 실패했다.
+// 아래는 같은 의도(가드 중복/누락 감지)를 유지하되, 이 가드의 트리거/함수 정의를 실제로
+// 포함하는 파일만 전체 Migration 디렉터리에서 content 기준으로 찾아 검증한다 — 다른
+// 기능의 신규 Migration 파일은 이 검사에 잡히지 않는다.
+const ATTENDANCE_GUARD_TRIGGER_DEFINITION =
+  "create trigger attendance_records_block_new_check_in";
+const ATTENDANCE_GUARD_FUNCTION_DEFINITION =
+  "create or replace function public.attendance_records_block_new_check_in_when_tracking_disabled(";
+
+const migrationFilesContaining = (needle: string) => {
+  const migrationsDir = join(process.cwd(), "supabase/migrations");
+  return readdirSync(migrationsDir).filter((name) =>
+    readFileSync(join(migrationsDir, name), "utf8").includes(needle)
+  );
+};
+
+test("the open-record guard trigger is created in exactly one migration file (this one), never duplicated elsewhere", () => {
+  assert.deepEqual(migrationFilesContaining(ATTENDANCE_GUARD_TRIGGER_DEFINITION), [
+    "202608060001_add_employee_attendance_and_login_flags.sql",
+  ]);
+});
+
+test("the open-record guard function is created in exactly one migration file (this one), never duplicated elsewhere", () => {
+  assert.deepEqual(migrationFilesContaining(ATTENDANCE_GUARD_FUNCTION_DEFINITION), [
+    "202608060001_add_employee_attendance_and_login_flags.sql",
+  ]);
 });
