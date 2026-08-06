@@ -9,6 +9,7 @@ const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "
 const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
 const usersRoute = read("app/api/admin/payroll/users/route.ts");
 const contractsRoute = read("app/api/admin/payroll/contracts/route.ts");
+const correctRoute = read("app/api/admin/payroll/contracts/correct/route.ts");
 const monthly = read("lib/payroll/monthly-run.ts");
 const fixed = read("lib/payroll/fixed-monthly.ts");
 const migration = read("supabase/migrations/202608010003_add_fixed_monthly_payroll_basis.sql");
@@ -58,29 +59,61 @@ test("contract money fields share formatting and zero-only focus convenience", (
   assert.match(settings, /baseSalary: Number\(form\.baseSalary\)/);
 });
 
-test("owner contract UI stays fixed monthly while regular contracts use one hidden basis", () => {
+test("owner (and now attendance-tracking-disabled) contract UI stays fixed monthly while regular contracts use one hidden basis", () => {
   assert.match(settings, /isPayrollOwnerRole\(selected\?\.role \?\? null\)/);
+  assert.match(settings, /requiresFixedMonthlyContract\(selected\?\.role \?\? null, selected\?\.attendanceTrackingEnabled \?\? true\)/);
   assert.match(settings, /calculationBasis: "fixed_monthly"/);
   assert.match(settings, /payrollLabel\(l, "fixed_monthly"\)/);
-  assert.match(settings, /!selectedIsOwner && form\.payType === "monthly"/);
-  assert.match(settings, /calculationBasis: selectedIsOwner \? "fixed_monthly" : "minute"/);
+  assert.match(settings, /!selectedRequiresFixedMonthly && form\.payType === "monthly"/);
+  assert.match(settings, /calculationBasis: selectedRequiresFixedMonthly \? "fixed_monthly" : "minute"/);
   assert.doesNotMatch(settings, /options=\{\s*form\.payType === "hourly"/);
   assert.match(settings, /isMonthFirstDate\(form\.effectiveFrom\)/);
   assert.match(settings, /매월 고정 지급 계약은 매월 1일부터 적용할 수 있습니다/);
   assert.match(settings, /Hợp đồng trả cố định hàng tháng chỉ có thể áp dụng từ ngày đầu tiên của tháng/);
 });
 
-test("contract API validates role (not position) and uses the schedule-aware private v5 RPC", () => {
-  assert.match(contractsRoute, /select\("id,role,is_active"\)/);
+test("save button disables only when a work schedule is genuinely required and missing, and the same reason is shown inline (no silent no-op)", () => {
+  assert.match(settings, /disabled=\{saving \|\| \(selectedRequiresWorkSchedule && automaticStandardMinutes === null\)\}/);
+  assert.match(
+    settings,
+    /\{selectedRequiresWorkSchedule && automaticStandardMinutes === null \? \(\s*\n\s*<p role="alert" style=\{s\.error\}>\s*\n\s*\{payrollContractErrorMessage\(l, effectiveSchedules\.length > 1 \? "WORK_SCHEDULE_OVERLAP" : effectiveSchedule \? "INVALID_WORK_SCHEDULE" : "WORK_SCHEDULE_NOT_FOUND"\)\}/,
+  );
+});
+
+test("attendance-tracking-disabled employees get a 근태 미사용 · 월 고정급 notice instead of the schedule history box (owners keep the existing no-notice hidden state)", () => {
+  assert.match(settings, /selectedRequiresWorkSchedule \? \(/);
+  assert.match(settings, /<ScheduleHistory current=\{currentSchedule\} monthSchedules=\{effectiveMonthSchedules\} month=\{form\.effectiveFrom\.slice\(0, 7\)\} vi=\{vi\} \/>/);
+  assert.match(settings, /\) : selectedIsOwner \? null : \(/);
+  assert.match(settings, /근태 미사용 · 월 고정급/);
+  assert.match(settings, /Không sử dụng chấm công · Lương cố định hàng tháng/);
+});
+
+test("contract API validates role AND attendance_tracking_enabled (not position) and uses the schedule-aware private v6 RPC", () => {
+  assert.match(contractsRoute, /select\("id,role,is_active,attendance_tracking_enabled"\)/);
   assert.match(contractsRoute, /from "@\/lib\/payroll\/eligibility"/);
-  assert.match(contractsRoute, /targetIsOwner = isPayrollOwnerRole\(target\.role\)/);
-  assert.match(contractsRoute, /!targetIsOwner && body\.calculationBasis === "fixed_monthly"/);
-  assert.match(contractsRoute, /payroll_create_contract_version_v5/);
-  assert.doesNotMatch(contractsRoute, /payroll_create_contract_version_v4/);
+  assert.match(contractsRoute, /targetUsesFixedMonthly = requiresFixedMonthlyContract\(target\.role, target\.attendance_tracking_enabled\)/);
+  assert.match(contractsRoute, /!targetUsesFixedMonthly && body\.calculationBasis === "fixed_monthly"/);
+  assert.match(contractsRoute, /payroll_create_contract_version_v6/);
+  assert.doesNotMatch(contractsRoute, /payroll_create_contract_version_v5|payroll_create_contract_version_v4/);
   assert.match(contractsRoute, /scheduledMinutesPerDay/);
   assert.match(contractsRoute, /!isMonthFirstDate\(body\.effectiveFrom\)/);
   assert.match(contractsRoute, /INVALID_FIXED_MONTHLY_EFFECTIVE_DATE/);
-  assert.ok(contractsRoute.indexOf("INVALID_FIXED_MONTHLY_EFFECTIVE_DATE") < contractsRoute.indexOf('rpc("payroll_create_contract_version_v5"'));
+  assert.ok(contractsRoute.indexOf("INVALID_FIXED_MONTHLY_EFFECTIVE_DATE") < contractsRoute.indexOf('rpc("payroll_create_contract_version_v6"'));
+});
+
+test("/api/admin/payroll/users exposes attendanceTrackingEnabled so the settings UI can compute requiresFixedMonthlyContract client-side", () => {
+  assert.match(usersRoute, /attendance_tracking_enabled/);
+  assert.match(usersRoute, /attendanceTrackingEnabled: user\.attendance_tracking_enabled !== false/);
+});
+
+test("correction API applies the exact same fixed-monthly-target policy (role or attendance_tracking_enabled=false) and calls the schedule-aware private v4-correct RPC", () => {
+  assert.match(correctRoute, /select\("id,role,is_active,attendance_tracking_enabled"\)/);
+  assert.match(correctRoute, /from "@\/lib\/payroll\/eligibility"/);
+  assert.match(correctRoute, /targetUsesFixedMonthly = requiresFixedMonthlyContract\(target\.role, target\.attendance_tracking_enabled\)/);
+  assert.match(correctRoute, /!targetUsesFixedMonthly && body\.calculationBasis === "fixed_monthly"/);
+  assert.match(correctRoute, /targetUsesFixedMonthly && !isMonthFirstDate\(body\.effectiveFrom\)/);
+  assert.match(correctRoute, /payroll_correct_latest_unused_contract_v4/);
+  assert.doesNotMatch(correctRoute, /payroll_correct_latest_unused_contract_v3|payroll_correct_latest_unused_contract_v2/);
 });
 
 test("fixed monthly payroll creates one month item before attendance processing", () => {

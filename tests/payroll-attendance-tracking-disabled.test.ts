@@ -113,7 +113,28 @@ test("payroll candidate selection does not reference attendance_tracking_enabled
   assert.doesNotMatch(selectFnSource, /attendance_tracking_enabled/);
 });
 
-test("eligibility.ts payroll-candidate functions are untouched by the attendance-tracking flag", () => {
+test("eligibility.ts payroll-candidate functions (isPayrollEligible/isPayrollUserCandidate — 급여 대상자 포함 여부) are untouched by the attendance-tracking flag", () => {
+  // "급여 대상자로 포함되는가"(isPayrollEligible/isPayrollUserCandidate)와 "그 사람 계약에
+  // 근무시간이 필요한가"(requiresFixedMonthlyContract, 급여설정에서 근태 미사용 직원의 월
+  // 고정급 계약을 지원하기 위해 신설)는 서로 다른 질문이다. requiresFixedMonthlyContract는
+  // attendance_tracking_enabled를 의도적으로 참조하지만, 급여 대상자 포함 여부 판정
+  // 함수 두 개는 이 플래그와 여전히 무관해야 한다 — 이 테스트는 그 두 함수만 정밀하게
+  // 검사한다(파일 전체 텍스트가 아니라).
   const eligibility = read("lib/payroll/eligibility.ts");
-  assert.doesNotMatch(eligibility, /attendance_tracking_enabled/);
+  const isPayrollEligibleStart = eligibility.indexOf("export function isPayrollEligible(");
+  const isPayrollUserCandidateStart = eligibility.indexOf("export function isPayrollUserCandidate(");
+  assert.ok(isPayrollEligibleStart > -1 && isPayrollUserCandidateStart > isPayrollEligibleStart);
+  const isPayrollEligibleBody = eligibility.slice(isPayrollEligibleStart, isPayrollUserCandidateStart);
+  const isPayrollUserCandidateBody = eligibility.slice(isPayrollUserCandidateStart);
+  assert.doesNotMatch(isPayrollEligibleBody, /attendance_tracking_enabled/);
+  assert.doesNotMatch(isPayrollUserCandidateBody, /attendance_tracking_enabled/);
+});
+
+test("requiresFixedMonthlyContract (근태 미사용 직원의 월 고정급 계약 판정) is a separate, new function that legitimately references attendance tracking — it is not isPayrollEligible/isPayrollUserCandidate and does not change their behavior", () => {
+  const eligibility = read("lib/payroll/eligibility.ts");
+  assert.match(eligibility, /export function requiresFixedMonthlyContract\(/);
+  assert.match(eligibility, /isPayrollOwnerRole\(role\) \|\| attendanceTrackingEnabled === false/);
+  // 세 함수가 서로 다른 함수로 명확히 분리돼 있어야 한다(하나로 합쳐지지 않음).
+  assert.match(eligibility, /export function isPayrollEligible\(/);
+  assert.match(eligibility, /export function isPayrollUserCandidate\(/);
 });

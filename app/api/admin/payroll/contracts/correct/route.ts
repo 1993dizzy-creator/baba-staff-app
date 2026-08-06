@@ -3,7 +3,7 @@ import { mapContract } from "@/lib/payroll/db-mappers";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 import { isMonthFirstDate } from "@/lib/payroll/contract-form";
 import { scheduledMinutesPerDay } from "@/lib/payroll/work-schedule";
-import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
+import { requiresFixedMonthlyContract } from "@/lib/payroll/eligibility";
 
 export const dynamic = "force-dynamic";
 
@@ -46,21 +46,23 @@ export async function POST(request: Request) {
 
   const { data: target, error: targetError } = await supabaseServer
     .from("users")
-    .select("id,role,is_active")
+    .select("id,role,is_active,attendance_tracking_enabled")
     .eq("id", userId)
     .eq("is_system_account", false)
     .eq("is_active", true)
     .maybeSingle();
   if (targetError) return payrollJson({ ok: false, code: "PAYROLL_CONTRACT_READ_FAILED" }, 500);
   if (!target) return payrollJson({ ok: false, code: "USER_NOT_FOUND" }, 404);
-  const targetIsOwner = isPayrollOwnerRole(target.role);
-  if ((targetIsOwner && (body.payType !== "monthly" || body.calculationBasis !== "fixed_monthly")) || (!targetIsOwner && body.calculationBasis === "fixed_monthly")) {
+  // create route와 동일한 정책: owner/master이거나 근태 기록을 쓰지 않는 직원은 월 고정급만
+  // 허용하고 근무시간 검증을 건너뛴다. role은 여기서 바뀌지 않는다.
+  const targetUsesFixedMonthly = requiresFixedMonthlyContract(target.role, target.attendance_tracking_enabled);
+  if ((targetUsesFixedMonthly && (body.payType !== "monthly" || body.calculationBasis !== "fixed_monthly")) || (!targetUsesFixedMonthly && body.calculationBasis === "fixed_monthly")) {
     return payrollJson({ ok: false, code: "INVALID_CONTRACT" }, 400);
   }
-  if (targetIsOwner && !isMonthFirstDate(body.effectiveFrom)) {
+  if (targetUsesFixedMonthly && !isMonthFirstDate(body.effectiveFrom)) {
     return payrollJson({ ok: false, code: "INVALID_FIXED_MONTHLY_EFFECTIVE_DATE" }, 400);
   }
-  if (!targetIsOwner) {
+  if (!targetUsesFixedMonthly) {
     const { data: schedules, error: scheduleError } = await supabaseServer.from("employee_work_schedule_versions").select("start_time,end_time,unpaid_break_minutes").eq("user_id", userId).lte("effective_from", String(body.effectiveFrom)).or(`effective_to.is.null,effective_to.gt.${body.effectiveFrom}`);
     if (scheduleError) return payrollJson({ ok: false, code: "PAYROLL_CONTRACT_READ_FAILED" }, 500);
     if (!schedules || schedules.length === 0) return payrollJson({ ok: false, code: "WORK_SCHEDULE_NOT_FOUND" }, 400);
@@ -69,7 +71,7 @@ export async function POST(request: Request) {
     if (calculated === null) return payrollJson({ ok: false, code: "INVALID_WORK_SCHEDULE" }, 400);
   }
 
-  const { data, error } = await supabaseServer.rpc("payroll_correct_latest_unused_contract_v3", {
+  const { data, error } = await supabaseServer.rpc("payroll_correct_latest_unused_contract_v4", {
     p_contract_id: contractId,
     p_user_id: userId,
     p_expected_revision: expectedRevision,

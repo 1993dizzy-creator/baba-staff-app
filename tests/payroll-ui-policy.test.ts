@@ -33,7 +33,7 @@ test("current contract summary hides legacy calculation basis and revision label
   assert.match(summary, /월 계약급여|고정 급여인상|레벨 인상|합산급여|급여 형태|적용 시작일/);
   assert.match(settings, /expectedRevision: correcting\?\.revision/);
   assert.match(settings, /변경번호 \$\{contract\.revision\}/);
-  assert.match(settings, /calculationBasis: selectedIsOwner \? "fixed_monthly" : "minute"/);
+  assert.match(settings, /calculationBasis: selectedRequiresFixedMonthly \? "fixed_monthly" : "minute"/);
 });
 test("settings sends versioned compensation fields, preserves contract policy, and excludes payroll-owned level inputs", () => {
   assert.match(
@@ -168,7 +168,7 @@ test("fixed raise reason is conditional in UI and enforced by the server", () =>
   assert.match(settings, /note: fixedRaiseChanged \? form\.fixedRaiseReason\.trim\(\) : correcting\?\.note \?\? null/);
   assert.doesNotMatch(settings, /Chênh lệch/);
   assert.match(route, /FIXED_RAISE_REASON_REQUIRED/);
-  assert.match(route, /payroll_create_contract_version_v5/);
+  assert.match(route, /payroll_create_contract_version_v6/);
   assert.match(route, /p_note: fixedRaiseReason\.note/);
 });
 

@@ -5,7 +5,7 @@ import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLev
 import { isMonthFirstDate, resolveFixedRaiseReason } from "@/lib/payroll/contract-form";
 import { mapSchedule } from "@/lib/payroll/db-mappers";
 import { scheduledMinutesPerDay } from "@/lib/payroll/work-schedule";
-import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
+import { requiresFixedMonthlyContract } from "@/lib/payroll/eligibility";
 
 export const dynamic = "force-dynamic";
 const FIELDS = "id,user_id,pay_type,calculation_basis,base_salary,fixed_raise_amount,standard_workdays,standard_minutes_per_day,time_block_minutes,rounding_mode,late_adjustment_mode,early_leave_adjustment_mode,overtime_mode,paid_leave_mode,effective_from,effective_to,revision,created_by,created_at,note";
@@ -62,12 +62,16 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const fixedRaiseAmount = Number(body?.fixedRaiseAmount ?? 0);
   if (!body || !validId(body.userId) || !["minute","fixed_monthly"].includes(String(body.calculationBasis)) || !["monthly","daily","hourly"].includes(String(body.payType)) || !Number.isSafeInteger(Number(body.baseSalary)) || Number(body.baseSalary) < 0 || !Number.isSafeInteger(fixedRaiseAmount) || fixedRaiseAmount < 0 || (body.payType !== "monthly" && fixedRaiseAmount !== 0)) return payrollJson({ ok: false, code: "INVALID_CONTRACT" }, 400);
-  const { data: target } = await supabaseServer.from("users").select("id,role,is_active").eq("id",validId(body.userId)!).eq("is_system_account",false).eq("is_active",true).maybeSingle();
+  const { data: target } = await supabaseServer.from("users").select("id,role,is_active,attendance_tracking_enabled").eq("id",validId(body.userId)!).eq("is_system_account",false).eq("is_active",true).maybeSingle();
   if(!target)return payrollJson({ok:false,code:"USER_NOT_FOUND"},404);
-  const targetIsOwner = isPayrollOwnerRole(target.role);
-  if ((targetIsOwner && (body.payType !== "monthly" || body.calculationBasis !== "fixed_monthly")) || (!targetIsOwner && body.calculationBasis === "fixed_monthly")) return payrollJson({ ok: false, code: "INVALID_CONTRACT" }, 400);
-  if (targetIsOwner && body.payType === "monthly" && body.calculationBasis === "fixed_monthly" && !isMonthFirstDate(body.effectiveFrom)) return payrollJson({ ok: false, code: "INVALID_FIXED_MONTHLY_EFFECTIVE_DATE" }, 400);
-  if (!targetIsOwner) {
+  // owner/master이거나(기존과 동일) 근태 기록을 쓰지 않는 직원(예: 회계·마케팅처럼 근무시간
+  // version 자체가 없는 직원)은 월 고정급(monthly + fixed_monthly)만 허용하고 근무시간
+  // 검증을 건너뛴다. attendance_tracking_enabled=false여도 role은 staff/manager/leader
+  // 그대로 유지된다 — 여기서 권한을 바꾸지 않는다.
+  const targetUsesFixedMonthly = requiresFixedMonthlyContract(target.role, target.attendance_tracking_enabled);
+  if ((targetUsesFixedMonthly && (body.payType !== "monthly" || body.calculationBasis !== "fixed_monthly")) || (!targetUsesFixedMonthly && body.calculationBasis === "fixed_monthly")) return payrollJson({ ok: false, code: "INVALID_CONTRACT" }, 400);
+  if (targetUsesFixedMonthly && body.payType === "monthly" && body.calculationBasis === "fixed_monthly" && !isMonthFirstDate(body.effectiveFrom)) return payrollJson({ ok: false, code: "INVALID_FIXED_MONTHLY_EFFECTIVE_DATE" }, 400);
+  if (!targetUsesFixedMonthly) {
     const { data: schedules, error: scheduleError } = await supabaseServer.from("employee_work_schedule_versions").select("start_time,end_time,unpaid_break_minutes").eq("user_id", validId(body.userId)!).lte("effective_from", String(body.effectiveFrom)).or(`effective_to.is.null,effective_to.gt.${body.effectiveFrom}`);
     if (scheduleError) return payrollJson({ ok: false, code: "PAYROLL_CONTRACT_READ_FAILED" }, 500);
     if (!schedules || schedules.length === 0) return payrollJson({ ok: false, code: "WORK_SCHEDULE_NOT_FOUND" }, 400);
@@ -89,7 +93,7 @@ export async function POST(request: Request) {
   const currentFixedRaiseAmount = Number(currentContract?.fixed_raise_amount ?? 0);
   const fixedRaiseReason = resolveFixedRaiseReason(currentFixedRaiseAmount, fixedRaiseAmount, body.note);
   if (!fixedRaiseReason.valid) return payrollJson({ ok: false, code: "FIXED_RAISE_REASON_REQUIRED" }, 400);
-  const { data, error } = await supabaseServer.rpc("payroll_create_contract_version_v5", {
+  const { data, error } = await supabaseServer.rpc("payroll_create_contract_version_v6", {
     p_user_id: validId(body.userId), p_pay_type: body.payType,
     p_base_salary: body.baseSalary, p_fixed_raise_amount: fixedRaiseAmount, p_standard_workdays: body.standardWorkdays || null,
     p_effective_from: body.effectiveFrom, p_actor_user_id: auth.actor.id, p_note: fixedRaiseReason.note,

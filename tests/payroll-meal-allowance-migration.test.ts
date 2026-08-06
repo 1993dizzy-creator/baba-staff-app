@@ -396,7 +396,17 @@ test("existing payroll_create_meal_allowance_policy_version_v1 (legacy standalon
   assert.match(legacyRpc, /insert into public\.payroll_meal_allowance_policy_versions/);
 });
 
-test("this migration is the newest one in the migrations directory (no accidental ordering collision)", () => {
+test("this migration's filename is unique and sorts in its expected position (no accidental ordering collision)", () => {
+  // 이 파일이 유일한 202608070001_*임을 확인한다 — "항상 디렉터리의 마지막 파일"이라는
+  // 검증은 이후 새 Migration(예: 202608070002_...)이 정당하게 추가되면 깨지는 취약한
+  // 전제라 쓰지 않는다. 대신 파일명이 고유하고, 자기보다 이른 날짜의 모든 Migration
+  // 뒤에 정렬됨을 확인한다.
   const files = readdirSync(join(process.cwd(), "supabase/migrations")).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(files.at(-1), "202608070001_add_payroll_meal_allowance.sql");
+  const occurrences = files.filter((name) => name === "202608070001_add_payroll_meal_allowance.sql");
+  assert.equal(occurrences.length, 1);
+  const index = files.indexOf("202608070001_add_payroll_meal_allowance.sql");
+  assert.ok(index > -1);
+  for (const earlier of files.slice(0, index)) {
+    assert.ok(earlier < "202608070001_add_payroll_meal_allowance.sql");
+  }
 });

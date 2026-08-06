@@ -103,7 +103,7 @@ test("correction API maps concurrency, history, usage, locked payroll, date, and
     "PAYROLL_CONTRACT_CORRECTION_FAILED",
   ]) assert.match(route, new RegExp(code));
   assert.match(route, /requirePayrollActor\(\)/);
-  assert.match(route, /payroll_correct_latest_unused_contract_v3/);
+  assert.match(route, /payroll_correct_latest_unused_contract_v4/);
 });
 
 test("contract error mapper never returns internal contract codes in Korean or Vietnamese", () => {
@@ -125,7 +125,7 @@ test("contract error mapper never returns internal contract codes in Korean or V
 
 test("correction modal preserves input on failure, prevents duplicates, and keeps mobile footer reachable", () => {
   assert.match(settings, /if \(!userId \|\| saving\) return/);
-  assert.match(settings, /disabled=\{saving \|\| \(!selectedIsOwner && automaticStandardMinutes === null\)\}/);
+  assert.match(settings, /disabled=\{saving \|\| \(selectedRequiresWorkSchedule && automaticStandardMinutes === null\)\}/);
   assert.match(settings, /if \(!response\.ok\) \{[\s\S]*setModalError[\s\S]*return/);
   const failedResponse = settings.indexOf("if (!response.ok)");
   const failureReturn = settings.indexOf("return;", failedResponse);

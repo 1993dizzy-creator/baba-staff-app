@@ -132,7 +132,17 @@ test("v3-correct's function body is v2's body with only the owner column/conditi
   assert.equal(v3CorrectBody, v2BodyAsV3);
 });
 
-test("app/api routes call exactly the new v5/v3 RPC names, and no other application code still targets v4/v2", () => {
+test("v5/v3 (this migration's own RPCs) remain the ones payroll_create_contract_version_v6/payroll_correct_latest_unused_contract_v4 wrap internally — this migration file itself is untouched by the later fixed-monthly-by-attendance-tracking migration", () => {
+  const laterMigration = readFileSync(
+    join(process.cwd(), "supabase/migrations/202608070002_payroll_fixed_monthly_by_attendance_tracking.sql"),
+    "utf8",
+  );
+  assert.match(laterMigration, /payroll_create_contract_version_v3\(/);
+  assert.doesNotMatch(laterMigration, /create or replace function public\.payroll_create_contract_version_v5/);
+  assert.doesNotMatch(laterMigration, /create or replace function public\.payroll_correct_latest_unused_contract_v3/);
+});
+
+test("app/api routes now call the newer v6/v4 RPC names (payroll_create_contract_version_v6 / payroll_correct_latest_unused_contract_v4), added by 202608070002 to support attendance-tracking-disabled staff — v5/v3/v4/v2 are no longer referenced by application code, only kept in the DB for rollback", () => {
   const createRoute = readFileSync(
     join(process.cwd(), "app/api/admin/payroll/contracts/route.ts"),
     "utf8"
@@ -141,8 +151,8 @@ test("app/api routes call exactly the new v5/v3 RPC names, and no other applicat
     join(process.cwd(), "app/api/admin/payroll/contracts/correct/route.ts"),
     "utf8"
   );
-  assert.match(createRoute, /rpc\("payroll_create_contract_version_v5"/);
-  assert.doesNotMatch(createRoute, /payroll_create_contract_version_v4/);
-  assert.match(correctRoute, /rpc\("payroll_correct_latest_unused_contract_v3"/);
-  assert.doesNotMatch(correctRoute, /payroll_correct_latest_unused_contract_v2/);
+  assert.match(createRoute, /rpc\("payroll_create_contract_version_v6"/);
+  assert.doesNotMatch(createRoute, /payroll_create_contract_version_v5|payroll_create_contract_version_v4/);
+  assert.match(correctRoute, /rpc\("payroll_correct_latest_unused_contract_v4"/);
+  assert.doesNotMatch(correctRoute, /payroll_correct_latest_unused_contract_v3|payroll_correct_latest_unused_contract_v2/);
 });

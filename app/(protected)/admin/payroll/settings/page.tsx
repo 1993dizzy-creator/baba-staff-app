@@ -32,7 +32,7 @@ import { payrollContractErrorMessage } from "@/lib/payroll/contract-errors";
 import type { WorkScheduleVersion } from "@/lib/payroll/types";
 import { scheduledMinutesPerDay, schedulesActiveOn } from "@/lib/payroll/work-schedule";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
-import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
+import { isPayrollOwnerRole, requiresFixedMonthlyContract } from "@/lib/payroll/eligibility";
 type User = {
   id: number;
   name: string | null;
@@ -40,6 +40,7 @@ type User = {
   part: string | null;
   position: string | null;
   role: string | null;
+  attendanceTrackingEnabled: boolean;
   levelInfo: EmployeeLevelInfo;
 };
 type InsuranceCurrent = {
@@ -311,6 +312,11 @@ export default function PayrollSettingsPage() {
   const selected = users.find((user) => user.id === userId);
   const selectedId = selected?.id ?? null;
   const selectedIsOwner = isPayrollOwnerRole(selected?.role ?? null);
+  // owner/master이거나 근태 기록을 쓰지 않는 직원(attendance_tracking_enabled=false)은
+  // 근무시간 없이 월 고정급(monthly + fixed_monthly) 계약만 쓴다. role 자체는 바뀌지 않는다
+  // — 이 값은 "계약에 근무시간이 필요한가"만 판정한다.
+  const selectedRequiresFixedMonthly = requiresFixedMonthlyContract(selected?.role ?? null, selected?.attendanceTrackingEnabled ?? true);
+  const selectedRequiresWorkSchedule = !selectedRequiresFixedMonthly;
   const effectiveSchedules = schedulesActiveOn(workSchedules, form.effectiveFrom);
   const effectiveSchedule = effectiveSchedules.length === 1 ? effectiveSchedules[0] : null;
   const automaticStandardMinutes = effectiveSchedule ? scheduledMinutesPerDay(effectiveSchedule.startTime, effectiveSchedule.endTime, effectiveSchedule.unpaidBreakMinutes) : null;
@@ -349,7 +355,7 @@ export default function PayrollSettingsPage() {
   const fixedRaiseChanged = nextFixedRaise !== currentFixedRaise;
   function openForm() {
     const next = fromContract(current);
-    setForm(selectedIsOwner ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next);
+    setForm(selectedRequiresFixedMonthly ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next);
     setFormMode("create");
     setCorrectionTarget(null);
     setCorrectionReason("");
@@ -361,7 +367,7 @@ export default function PayrollSettingsPage() {
     const latest = contracts[0] ?? null;
     if (!latest) return;
     const next = { ...fromContract(latest), effectiveFrom: latest.effectiveFrom };
-    setForm(selectedIsOwner ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next);
+    setForm(selectedRequiresFixedMonthly ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next);
     setFormMode("correct");
     setCorrectionTarget(latest);
     setCorrectionReason("");
@@ -383,7 +389,7 @@ export default function PayrollSettingsPage() {
       window.alert(fixedMonthlyEffectiveDateMessage);
       return;
     }
-    const standardMinutesPerDay = selectedIsOwner ? 540 : automaticStandardMinutes;
+    const standardMinutesPerDay = selectedRequiresFixedMonthly ? 540 : automaticStandardMinutes;
     if (standardMinutesPerDay === null) {
       setModalError(payrollContractErrorMessage(l, effectiveSchedules.length > 1 ? "WORK_SCHEDULE_OVERLAP" : effectiveSchedule ? "INVALID_WORK_SCHEDULE" : "WORK_SCHEDULE_NOT_FOUND"));
       return;
@@ -404,7 +410,7 @@ export default function PayrollSettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
-          calculationBasis: selectedIsOwner ? "fixed_monthly" : "minute",
+          calculationBasis: selectedRequiresFixedMonthly ? "fixed_monthly" : "minute",
           timeBlockMinutes: 60,
           roundingMode: "none",
           lateAdjustmentMode: "separate",
@@ -420,7 +426,7 @@ export default function PayrollSettingsPage() {
           correctionReason: correcting ? correctionReason.trim() : undefined,
           baseSalary: Number(form.baseSalary),
           fixedRaiseAmount: Number(form.fixedRaiseAmount),
-          standardWorkdays: selectedIsOwner ? 26 : form.payType === "monthly" ? Number(form.standardWorkdays) : null,
+          standardWorkdays: selectedRequiresFixedMonthly ? 26 : form.payType === "monthly" ? Number(form.standardWorkdays) : null,
           standardMinutesPerDay,
         }),
       });
@@ -620,7 +626,7 @@ export default function PayrollSettingsPage() {
             closeLabel={vi ? "Đóng" : "닫기"}
             onClose={closeForm}
             footer={
-              <button form="contract" style={s.modalSave} disabled={saving || (!selectedIsOwner && automaticStandardMinutes === null)}>
+              <button form="contract" style={s.modalSave} disabled={saving || (selectedRequiresWorkSchedule && automaticStandardMinutes === null)}>
                 {saving ? (vi ? "Đang lưu" : "저장 중") : vi ? "Lưu" : "저장"}
               </button>
             }
@@ -670,7 +676,7 @@ export default function PayrollSettingsPage() {
               <div style={s.level}>
                 <b>{selected.levelInfo.displayLabel ?? (vi ? "Không áp dụng cấp" : "레벨 미적용")} · {vi ? "Tăng theo cấp" : "레벨 인상"} {signedAmount(levelRaise, vi)}</b>
               </div>
-              {selectedIsOwner ? <>
+              {selectedRequiresFixedMonthly ? <>
                 <ReadOnlyField label={vi ? "Loại lương" : "급여 형태"} value={payrollLabel(l, "monthly")} />
                 <ReadOnlyField label={vi ? "Cách tính lương" : "급여 산정 방식"} value={payrollLabel(l, "fixed_monthly")} />
               </> : <><SelectField
@@ -689,7 +695,7 @@ export default function PayrollSettingsPage() {
                 }
               />
               </>}
-              {!selectedIsOwner && form.payType === "monthly" && (
+              {!selectedRequiresFixedMonthly && form.payType === "monthly" && (
                 <NumberField
                   label={vi ? "Ngày làm việc chuẩn" : "월 기준 근무일수"}
                   value={form.standardWorkdays}
@@ -699,7 +705,20 @@ export default function PayrollSettingsPage() {
                   step="0.01"
                 />
               )}
-              {!selectedIsOwner ? <ScheduleHistory current={currentSchedule} monthSchedules={effectiveMonthSchedules} month={form.effectiveFrom.slice(0, 7)} vi={vi} /> : null}
+              {selectedRequiresWorkSchedule ? (
+                <ScheduleHistory current={currentSchedule} monthSchedules={effectiveMonthSchedules} month={form.effectiveFrom.slice(0, 7)} vi={vi} />
+              ) : selectedIsOwner ? null : (
+                <section style={s.scheduleBox}>
+                  <span style={s.fieldHelp}>
+                    {vi ? "Không sử dụng chấm công · Lương cố định hàng tháng" : "근태 미사용 · 월 고정급"}
+                  </span>
+                </section>
+              )}
+              {selectedRequiresWorkSchedule && automaticStandardMinutes === null ? (
+                <p role="alert" style={s.error}>
+                  {payrollContractErrorMessage(l, effectiveSchedules.length > 1 ? "WORK_SCHEDULE_OVERLAP" : effectiveSchedule ? "INVALID_WORK_SCHEDULE" : "WORK_SCHEDULE_NOT_FOUND")}
+                </p>
+              ) : null}
             </form>
           </PayrollModal>
         )}
