@@ -12,6 +12,7 @@ import { adminUsersText } from "@/lib/text";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import { PART_VALUES } from "@/lib/common/parts";
 import { EDITABLE_EMPLOYEE_ROLE_VALUES, getEmployeeRoleLabel } from "@/lib/common/roles";
+import { GENDER_VALUES, getGenderLabel } from "@/lib/common/genders";
 
 type CreateResponse = {
   ok: boolean;
@@ -38,7 +39,7 @@ type FormState = {
 
 const roleOptions = EDITABLE_EMPLOYEE_ROLE_VALUES;
 const partOptions = PART_VALUES;
-const genders = ["", "male", "female", "other"];
+const genders = ["", ...GENDER_VALUES] as const;
 
 const initialForm: FormState = {
   username: "",
@@ -254,98 +255,106 @@ export default function AdminUserCreatePage() {
 
         <div style={styles.sections}>
           <Section title={text.basicInfo}>
-            <Field label={text.username}>
-              <input
-                value={form.username}
-                onChange={(event) => update("username", event.target.value)}
-                style={styles.input}
-                autoComplete="off"
-              />
-            </Field>
-            <Field label={text.password}>
-              <input
-                type="password"
-                value={form.password}
-                onChange={(event) => update("password", event.target.value)}
-                style={styles.input}
-                autoComplete="new-password"
-              />
-            </Field>
-            <Field label={text.name}>
-              <input
-                value={form.name}
-                onChange={(event) => update("name", event.target.value)}
-                style={styles.input}
-              />
-            </Field>
-            <Field label={text.fullName}>
-              <input
-                value={form.full_name}
-                onChange={(event) => update("full_name", event.target.value)}
-                style={styles.input}
-              />
-            </Field>
+            <div style={styles.fieldRow2}>
+              <Field label={text.username}>
+                <input
+                  value={form.username}
+                  onChange={(event) => update("username", event.target.value)}
+                  style={styles.input}
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label={text.password}>
+                <input
+                  type="password"
+                  value={form.password}
+                  onChange={(event) => update("password", event.target.value)}
+                  style={styles.input}
+                  autoComplete="new-password"
+                />
+              </Field>
+            </div>
+            <div style={styles.fieldRow2}>
+              <Field label={text.name}>
+                <input
+                  value={form.name}
+                  onChange={(event) => update("name", event.target.value)}
+                  style={styles.input}
+                />
+              </Field>
+              <Field label={text.fullName}>
+                <input
+                  value={form.full_name}
+                  onChange={(event) => update("full_name", event.target.value)}
+                  style={styles.input}
+                />
+              </Field>
+            </div>
           </Section>
 
           <Section title={text.accessInfo}>
-            <Field label={text.role}>
-              <select
-                value={form.role}
-                onChange={(event) => {
-                  const role = event.target.value;
-                  setForm((current) => ({
-                    ...current,
-                    role,
-                    level_program_enabled: role !== "owner",
-                  }));
-                }}
-                style={styles.input}
-              >
-                {roleOptions.map((role) => (
-                  <option key={role} value={role}>
-                    {getEmployeeRoleLabel(role, lang)}
-                  </option>
-                ))}
-              </select>
-              <span style={styles.helpText}>{text.roleFieldHelp}</span>
-            </Field>
-            <Field label={text.part}>
-              <select
-                value={form.part}
-                onChange={(event) => update("part", event.target.value)}
-                style={styles.input}
-              >
-                {partOptions.map((part) => (
-                  <option key={part} value={part}>
-                    {getPartLabel(part, text)}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label={text.gender}>
-              <select
-                value={form.gender}
-                onChange={(event) => update("gender", event.target.value)}
-                style={styles.input}
-              >
-                {genders.map((gender) => (
-                  <option key={gender || "none"} value={gender}>
-                    {gender || "-"}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <div style={styles.fieldRow2}>
+              <Field label={text.role}>
+                <select
+                  value={form.role}
+                  onChange={(event) => {
+                    const role = event.target.value;
+                    setForm((current) => ({
+                      ...current,
+                      role,
+                      level_program_enabled: role !== "owner",
+                    }));
+                  }}
+                  style={styles.input}
+                >
+                  {roleOptions.map((role) => (
+                    <option key={role} value={role}>
+                      {getEmployeeRoleLabel(role, lang)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label={text.part}>
+                <select
+                  value={form.part}
+                  onChange={(event) => update("part", event.target.value)}
+                  style={styles.input}
+                >
+                  {partOptions.map((part) => (
+                    <option key={part} value={part}>
+                      {getPartLabel(part, text)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            <span style={styles.helpText}>{text.roleFieldHelp}</span>
+            <div style={styles.fieldRow2}>
+              <Field label={text.gender}>
+                <select
+                  value={form.gender}
+                  onChange={(event) => update("gender", event.target.value)}
+                  style={styles.input}
+                >
+                  {genders.map((gender) => (
+                    <option key={gender || "none"} value={gender}>
+                      {getGenderLabel(gender, lang)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label={text.birthDate}>
+                <input
+                  type="date"
+                  value={form.birth_date}
+                  onChange={(event) => update("birth_date", event.target.value)}
+                  style={styles.input}
+                />
+              </Field>
+            </div>
           </Section>
 
           <Section title={text.workInfo}>
-            <Field label={text.birthDate}>
-              <input
-                type="date"
-                value={form.birth_date}
-                onChange={(event) => update("birth_date", event.target.value)}
-                style={styles.input}
-              />
-            </Field>
             <Field label={text.hireDate}>
               <input
                 type="date"
@@ -480,9 +489,16 @@ const styles = {
     gridTemplateColumns: "1fr",
     gap: 6,
   },
+  fieldRow2: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+    gap: 7,
+    minWidth: 0,
+  },
   field: {
     display: "flex",
     flexDirection: "column",
+    minWidth: 0,
     gap: 4,
   },
   fieldLabel: {
@@ -495,6 +511,7 @@ const styles = {
     padding: "7px 8px",
     borderRadius: 7,
     fontSize: 12,
+    minWidth: 0,
   },
   checkRow: {
     display: "flex",

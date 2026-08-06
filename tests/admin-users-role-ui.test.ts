@@ -40,7 +40,13 @@ for (const [name, page] of [
     assert.match(page, /from "@\/lib\/common\/roles"/);
     assert.match(page, /EDITABLE_EMPLOYEE_ROLE_VALUES/);
     assert.match(page, /getEmployeeRoleLabel\(role, lang\)/);
-    assert.match(page, /text\.roleFieldHelp/);
+    // list page dropped the roleFieldHelp notice under the role|part row (compact
+    // detail-edit UI follow-up); create page still shows it.
+    if (name === "create page") {
+      assert.match(page, /text\.roleFieldHelp/);
+    } else {
+      assert.doesNotMatch(page, /text\.roleFieldHelp/);
+    }
   });
 
   test(`${name}: master is never one of the selectable role options`, () => {

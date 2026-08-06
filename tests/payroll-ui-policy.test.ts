@@ -257,7 +257,7 @@ test("common payroll settings has one read and one unified save flow", () => {
     (commonSettings.match(/fetch\("\/api\/admin\/payroll\/settings"/g) ?? []).length,
     2,
   );
-  assert.equal((commonSettings.match(/method: "PATCH"/g) ?? []).length, 1);
+  assert.equal((commonSettings.match(/method: "PUT"/g) ?? []).length, 1);
   for (const field of [
     "paymentDay",
     "employeeInsuranceRateBp",

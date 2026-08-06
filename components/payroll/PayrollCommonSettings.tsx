@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import {
   calculateInsuranceAmount,
   percentToBasisPoints,
@@ -86,40 +86,71 @@ function toPayload(draft: Draft) {
   };
 }
 
+type MealAllowancePolicy = {
+  id: number;
+  dailyAmount: number;
+  effectiveFrom: string;
+  revision: number;
+  note: string | null;
+};
+
 export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [snapshot, setSnapshot] = useState<Draft | null>(null);
+  // 식대 공통 정책은 payroll_settings와 별개 테이블(effective-dated version)이지만, 화면과
+  // 저장 버튼은 하나다 — 아래 draft/snapshot 쌍도 같은 "불러온 값 vs 편집 중인 값" 패턴을
+  // 그대로 따른다. 값이 비어있으면("") "미설정" 또는 "이번 저장에서 식대는 건드리지 않음"을
+  // 의미한다.
+  const [mealAmountDraft, setMealAmountDraft] = useState("");
+  const [mealEffectiveFromDraft, setMealEffectiveFromDraft] = useState("");
+  const [mealAmountSnapshot, setMealAmountSnapshot] = useState("");
+  const [mealEffectiveFromSnapshot, setMealEffectiveFromSnapshot] = useState("");
+  const [mealCurrent, setMealCurrent] = useState<MealAllowancePolicy | null>(null);
+  const [mealHistory, setMealHistory] = useState<MealAllowancePolicy[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<"" | "load" | "save">("");
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch("/api/admin/payroll/settings", {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then(async (response) => ({
+  const load = useCallback((signal?: AbortSignal) => {
+    return Promise.all([
+      fetch("/api/admin/payroll/settings", { cache: "no-store", signal }).then(async (response) => ({
         ok: response.ok,
         data: await response.json(),
-      }))
-      .then(({ ok, data }) => {
-        if (!ok || !data.settings) throw new Error("PAYROLL_SETTINGS_READ_FAILED");
-        const next = toDraft(data.settings);
-        setDraft(next);
-        setSnapshot(next);
-      })
+      })),
+      fetch("/api/admin/payroll/meal-allowance/policy", { cache: "no-store", signal }).then(async (response) => ({
+        ok: response.ok,
+        data: await response.json(),
+      })),
+    ]).then(([settingsResult, mealResult]) => {
+      if (!settingsResult.ok || !settingsResult.data.settings) throw new Error("PAYROLL_SETTINGS_READ_FAILED");
+      if (!mealResult.ok) throw new Error("MEAL_ALLOWANCE_POLICY_READ_FAILED");
+      const next = toDraft(settingsResult.data.settings);
+      setDraft(next);
+      setSnapshot(next);
+      const current: MealAllowancePolicy | null = mealResult.data.current ?? null;
+      setMealCurrent(current);
+      setMealHistory(mealResult.data.history ?? []);
+      const amount = current ? String(current.dailyAmount) : "";
+      const effectiveFrom = current ? current.effectiveFrom : "";
+      setMealAmountDraft(amount);
+      setMealEffectiveFromDraft(effectiveFrom);
+      setMealAmountSnapshot(amount);
+      setMealEffectiveFromSnapshot(effectiveFrom);
+    });
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal)
       .catch((caught: unknown) => {
-        if ((caught as Error).name !== "AbortError") {
-          setError("load");
-        }
+        if ((caught as Error).name !== "AbortError") setError("load");
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, []);
+  }, [load]);
 
   const errorText =
     error === "load"
@@ -141,10 +172,9 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
 
   const payload = toPayload(draft);
   const snapshotPayload = toPayload(snapshot);
-  const dirty =
+  const settingsDirty =
     payload !== null &&
     JSON.stringify(payload) !== JSON.stringify(snapshotPayload);
-  const valid = payload !== null;
   const directorRateBp = percentToBasisPoints(draft.directorInsuranceRate);
   const directorCost = calculateInsuranceAmount(
     draft.directorInsuranceEnabled
@@ -153,30 +183,50 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
     directorRateBp ?? 0,
   );
 
+  // 식대: 금액·적용일은 함께 입력되거나 함께 비어 있어야 한다. 저장 시점에 최신 저장값과
+  // 비교해 실제로 달라졌을 때만(RPC 쪽에서도 다시 한번) 새 revision을 만든다 — 여기서는
+  // "저장 버튼을 눌러도 되는지"만 판단한다.
+  const mealAmountBlank = mealAmountDraft === "";
+  const mealEffectiveFromBlank = mealEffectiveFromDraft === "";
+  const mealBothBlank = mealAmountBlank && mealEffectiveFromBlank;
+  const mealBothFilled = !mealAmountBlank && !mealEffectiveFromBlank;
+  const mealPairValid = mealBothBlank || mealBothFilled;
+  const mealAmountNumber = mealBothFilled ? Number(mealAmountDraft) : null;
+  const mealAmountValid = !mealBothFilled || (Number.isSafeInteger(mealAmountNumber) && mealAmountNumber! >= 0);
+  const mealDateValid = !mealBothFilled || /^\d{4}-\d{2}-\d{2}$/.test(mealEffectiveFromDraft);
+  const mealValid = mealPairValid && mealAmountValid && mealDateValid;
+  const mealDirty = mealAmountDraft !== mealAmountSnapshot || mealEffectiveFromDraft !== mealEffectiveFromSnapshot;
+
+  const valid = payload !== null && mealValid;
+  const dirty = settingsDirty || mealDirty;
+
   async function save() {
     if (!draft) return;
     const nextPayload = toPayload(draft);
-    if (!nextPayload) return;
+    if (!nextPayload || !mealValid) return;
     setSaving(true);
     setMessage("");
     setError("");
     const response = await fetch("/api/admin/payroll/settings", {
-      method: "PATCH",
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(nextPayload),
+      body: JSON.stringify({
+        ...nextPayload,
+        mealDailyAmount: mealBothFilled ? mealAmountNumber : null,
+        mealEffectiveFrom: mealBothFilled ? mealEffectiveFromDraft : null,
+      }),
     });
-    const data = await response.json().catch(() => null);
-    setSaving(false);
-    if (!response.ok || !data?.settings) {
+    if (!response.ok) {
+      // transaction 전체가 실패하면 payroll_settings도 식대 정책도 전혀 바뀌지 않는다
+      // (RPC가 하나의 transaction) — 입력 draft는 그대로 유지하고 오류 메시지 하나만 표시한다.
+      setSaving(false);
       setError("save");
       return;
     }
-    const next = toDraft(data.settings);
-    setDraft(next);
-    setSnapshot(next);
-    setMessage(
-      vi ? "Đã lưu cài đặt chung." : "공통 설정을 저장했습니다.",
-    );
+    // 성공 → 공통 설정과 식대 정책을 모두 재조회한다.
+    await load();
+    setSaving(false);
+    setMessage(vi ? "Đã lưu cài đặt chung." : "공통 설정을 저장했습니다.");
   }
 
   return (
@@ -305,6 +355,56 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
       </SettingRow>
       </SettingsGroup>
 
+      <SettingsGroup title={`🍚 ${vi ? "Trợ cấp ăn" : "식대"}`}>
+        <SettingRow label={vi ? "Hiện đang áp dụng" : "현재 적용 중"}>
+          <span style={s.inlineValue}>
+            {mealCurrent
+              ? `${mealCurrent.dailyAmount.toLocaleString("en-US")}${vi ? " đồng" : "동"} · ${mealCurrent.effectiveFrom}`
+              : vi
+                ? "Chưa thiết lập"
+                : "미설정"}
+          </span>
+        </SettingRow>
+        <SettingRow label={vi ? "Trợ cấp ăn mỗi ngày" : "1일 기본 식대"}>
+          <span style={s.percent}>
+            <input
+              style={s.moneyInput}
+              aria-label={vi ? "Trợ cấp ăn mỗi ngày" : "1일 기본 식대"}
+              type="text"
+              inputMode="numeric"
+              value={formatIntegerInput(mealAmountDraft)}
+              onChange={(event) => setMealAmountDraft(integerInputDigits(event.target.value))}
+            />
+            {vi ? "đồng" : "동"}
+          </span>
+        </SettingRow>
+        <SettingRow label={vi ? "Ngày áp dụng" : "적용일"} last>
+          <input
+            style={s.dateInput}
+            aria-label={vi ? "Ngày áp dụng trợ cấp ăn" : "식대 적용일"}
+            type="date"
+            value={mealEffectiveFromDraft}
+            onChange={(event) => setMealEffectiveFromDraft(event.target.value)}
+          />
+        </SettingRow>
+        {!mealPairValid ? (
+          <p role="alert" style={s.error}>
+            {vi
+              ? "Vui lòng nhập cả số tiền và ngày áp dụng, hoặc để trống cả hai."
+              : "금액과 적용일을 함께 입력하거나, 둘 다 비워두세요."}
+          </p>
+        ) : null}
+        <details style={s.details}>
+          <summary>{vi ? `Lịch sử ${mealHistory.length} mục` : `식대 설정 이력 ${mealHistory.length}건`}</summary>
+          {mealHistory.map((item) => (
+            <article key={item.id} style={s.mealHistory}>
+              <b>{item.effectiveFrom} · #{item.revision}</b>
+              <span>{item.dailyAmount.toLocaleString("en-US")}{vi ? " đồng" : "동"}</span>
+            </article>
+          ))}
+        </details>
+      </SettingsGroup>
+
       {error ? <p role="alert" style={s.error}>{errorText}</p> : null}
       {message ? <p role="status" style={s.success}>{message}</p> : null}
       <button
@@ -399,10 +499,13 @@ const s = {
   inlineValue: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, minWidth: 0, whiteSpace: "nowrap", fontSize: 12 },
   moneyInput: { boxSizing: "border-box", width: 112, maxWidth: "100%", height: 34, padding: "4px 6px", border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", fontSize: 13, textAlign: "right" },
   shortInput: { boxSizing: "border-box", width: 56, maxWidth: "100%", height: 34, padding: "4px 6px", border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", fontSize: 13, textAlign: "right" },
+  dateInput: { boxSizing: "border-box", width: "100%", minWidth: 0, maxWidth: 160, height: 34, padding: "4px 6px", border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", fontSize: 13 },
   percent: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, whiteSpace: "nowrap", minWidth: 0, fontSize: 12 },
   toggle: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 7, minHeight: 40, fontWeight: 800 },
   total: { fontSize: 15, fontWeight: 900 },
   button: { minHeight: 44, marginTop: 14, padding: "10px 14px", border: 0, borderRadius: 10, background: "#111827", color: "#fff", fontWeight: 900 },
   error: { margin: "10px 0 0", padding: 9, borderRadius: 9, background: "#fef2f2", color: "#b91c1c" },
   success: { margin: "10px 0 0", padding: 9, borderRadius: 9, background: "#f0fdf4", color: "#166534" },
+  details: { marginTop: 8, paddingTop: 8, borderTop: "1px solid #f1f5f9", fontSize: 12 },
+  mealHistory: { display: "grid", gap: 2, padding: "6px 8px", marginTop: 4, borderRadius: 8, background: "#f9fafb", fontSize: 12 },
 } satisfies Record<string, CSSProperties>;

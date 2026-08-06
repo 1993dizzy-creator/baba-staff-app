@@ -14,6 +14,7 @@ import Container from "@/components/Container";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import PayrollCommonSettings from "@/components/payroll/PayrollCommonSettings";
 import EmployeeInsuranceSettings from "@/components/payroll/EmployeeInsuranceSettings";
+import EmployeeMealAllowanceSettings from "@/components/payroll/EmployeeMealAllowanceSettings";
 import PayrollModal from "@/components/payroll/PayrollModal";
 import { useLanguage } from "@/lib/language-context";
 import {
@@ -606,6 +607,8 @@ export default function PayrollSettingsPage() {
                     : "법인장 보험은 위의 회사 공통 보험 설정에서 관리합니다."}
                 </aside>
               )}
+
+              <EmployeeMealAllowanceSettings key={`meal-allowance-${selected.id}`} userId={selected.id} vi={vi} />
             </div>
           )}
           </section>

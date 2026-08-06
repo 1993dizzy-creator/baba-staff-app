@@ -12,6 +12,7 @@ import {
   getEmployeeRoleRank,
   isEditableEmployeeRole,
 } from "@/lib/common/roles";
+import { GENDER_VALUES, getGenderLabel } from "@/lib/common/genders";
 import { useLanguage } from "@/lib/language-context";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ui } from "@/lib/styles/ui";
@@ -99,6 +100,7 @@ function initialLevelPolicyDraft(user: UserRow): LevelPolicyDraft {
 type UsersResponse = {
   ok: boolean;
   error?: string;
+  code?: string;
   users?: UserRow[];
   user?: UserRow;
 };
@@ -107,7 +109,7 @@ type AdminUsersPageText = (typeof adminUsersText)[keyof typeof adminUsersText];
 
 const roleOptions = EDITABLE_EMPLOYEE_ROLE_VALUES;
 const partOptions = PART_VALUES;
-const genders = ["", "male", "female", "other"];
+const genders = ["", ...GENDER_VALUES] as const;
 const groupOrder = ["owner", "kitchen", "hall", "bar", "cleaning", "etc", "inactive"] as const;
 
 type UserGroupKey = (typeof groupOrder)[number];
@@ -127,15 +129,6 @@ function formatWorkTime(user: UserRow) {
   const start = user.work_start_time || "-";
   const end = user.work_end_time || "-";
   return `${start}-${end}`;
-}
-
-function shiftHours(start: string | null, end: string | null) {
-  if (!start || !end) return null;
-  const [startHour, startMinute] = start.split(":").map(Number);
-  const [endHour, endMinute] = end.split(":").map(Number);
-  if (![startHour, startMinute, endHour, endMinute].every(Number.isFinite)) return null;
-  const minutes = (endHour * 60 + endMinute - startHour * 60 - startMinute + 1440) % 1440;
-  return Number((minutes / 60).toFixed(1));
 }
 
 function levelEffectiveFrom(mode: LevelPolicyDraft["effectiveMonth"]) {
@@ -318,7 +311,6 @@ function UserCard({
   const levelStateChanged = levelDraft.included !== policyEnabledForMonth(user, levelDraft.effectiveMonth)
     || levelDraft.baseDateMode !== comparedBase.mode
     || (levelDraft.baseDateMode === "override" && levelDraft.baseDateOverride !== comparedBase.baseDate);
-  const hours = shiftHours(draft.work_start_time, draft.work_end_time);
 
   function update<K extends keyof UserRow>(key: K, value: UserRow[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -360,109 +352,127 @@ function UserCard({
         <div style={styles.formGrid}>
           {!isMasterUser ? (
             <>
-          <Field label={text.name}>
-            <input
-              value={draft.name || ""}
-              onChange={(event) => update("name", event.target.value)}
-              style={styles.input}
-            />
-          </Field>
-          <Field label={text.fullName}>
-            <input
-              value={draft.full_name || ""}
-              onChange={(event) => update("full_name", event.target.value)}
-              style={styles.input}
-            />
-          </Field>
-          <Field label={text.role}>
-            <select
-              value={roleValue}
-              onChange={(event) => {
-                const nextRole = event.target.value;
-                update("role", nextRole);
-                if (isEmployeeLevelManualRole(nextRole) && !isEmployeeLevelManualRole(draft.role)) {
-                  setLevelDraft((current) => ({ ...current, included: false }));
+          <div style={styles.fieldRow2}>
+            <Field label={text.name}>
+              <input
+                value={draft.name || ""}
+                onChange={(event) => update("name", event.target.value)}
+                style={styles.input}
+              />
+            </Field>
+            <Field label={text.fullName}>
+              <input
+                value={draft.full_name || ""}
+                onChange={(event) => update("full_name", event.target.value)}
+                style={styles.input}
+              />
+            </Field>
+          </div>
+          <div style={styles.fieldRow2}>
+            <Field label={text.role}>
+              <select
+                value={roleValue}
+                onChange={(event) => {
+                  const nextRole = event.target.value;
+                  update("role", nextRole);
+                  if (isEmployeeLevelManualRole(nextRole) && !isEmployeeLevelManualRole(draft.role)) {
+                    setLevelDraft((current) => ({ ...current, included: false }));
+                  }
+                }}
+                style={styles.input}
+              >
+                {roleOptions.map((role) => (
+                  <option key={role} value={role}>
+                    {getEmployeeRoleLabel(role, lang)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label={text.part}>
+              <select
+                value={partValue}
+                onChange={(event) => update("part", emptyToNull(event.target.value))}
+                style={styles.input}
+              >
+                {partOptions.map((part) => (
+                  <option key={part} value={part}>
+                    {getPartLabel(part, text)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div style={styles.fieldRow2}>
+            <Field label={text.gender}>
+              <select
+                value={draft.gender || ""}
+                onChange={(event) => update("gender", emptyToNull(event.target.value))}
+                style={styles.input}
+              >
+                {genders.map((gender) => (
+                  <option key={gender || "none"} value={gender}>
+                    {getGenderLabel(gender, lang)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label={text.birthDate}>
+              <input
+                type="date"
+                value={draft.birth_date || ""}
+                onChange={(event) => update("birth_date", emptyToNull(event.target.value))}
+                style={styles.input}
+              />
+            </Field>
+          </div>
+          <div style={styles.fieldRow2}>
+            <Field label={text.hireDate}>
+              <input
+                type="date"
+                value={draft.hire_date || ""}
+                onChange={(event) => update("hire_date", emptyToNull(event.target.value))}
+                style={styles.input}
+              />
+            </Field>
+            <Field label={text.terminationDate}>
+              <input
+                type="date"
+                value={draft.termination_date || ""}
+                onChange={(event) => update("termination_date", emptyToNull(event.target.value))}
+                style={styles.input}
+              />
+            </Field>
+          </div>
+          {draft.termination_date ? (
+            <span style={styles.fieldNotice}>
+              {text.terminationDeactivationNotice}
+            </span>
+          ) : null}
+          <div style={styles.fieldRow2}>
+            <label style={styles.checkRow}>
+              <input
+                type="checkbox"
+                style={styles.checkboxFixed}
+                checked={draft.attendance_tracking_enabled !== false}
+                onChange={(event) =>
+                  update("attendance_tracking_enabled", event.target.checked)
                 }
-              }}
-              style={styles.input}
-            >
-              {roleOptions.map((role) => (
-                <option key={role} value={role}>
-                  {getEmployeeRoleLabel(role, lang)}
-                </option>
-              ))}
-            </select>
-            <span style={styles.fieldNotice}>{text.roleFieldHelp}</span>
-          </Field>
-          <Field label={text.part}>
-            <select
-              value={partValue}
-              onChange={(event) => update("part", emptyToNull(event.target.value))}
-              style={styles.input}
-            >
-              {partOptions.map((part) => (
-                <option key={part} value={part}>
-                  {getPartLabel(part, text)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label={text.gender}>
-            <select
-              value={draft.gender || ""}
-              onChange={(event) => update("gender", emptyToNull(event.target.value))}
-              style={styles.input}
-            >
-              {genders.map((gender) => (
-                <option key={gender || "none"} value={gender}>
-                  {gender || "-"}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label={text.birthDate}>
-            <input
-              type="date"
-              value={draft.birth_date || ""}
-              onChange={(event) => update("birth_date", emptyToNull(event.target.value))}
-              style={styles.input}
-            />
-          </Field>
-          <Field label={text.hireDate}>
-            <input
-              type="date"
-              value={draft.hire_date || ""}
-              onChange={(event) => update("hire_date", emptyToNull(event.target.value))}
-              style={styles.input}
-            />
-          </Field>
-          <Field label={text.terminationDate}>
-            <input
-              type="date"
-              value={draft.termination_date || ""}
-              onChange={(event) => update("termination_date", emptyToNull(event.target.value))}
-              style={styles.input}
-            />
-            {draft.termination_date ? (
-              <span style={styles.fieldNotice}>
-                {text.terminationDeactivationNotice}
-              </span>
-            ) : null}
-          </Field>
-          <label style={styles.checkRow}>
-            <input
-              type="checkbox"
-              checked={draft.attendance_tracking_enabled !== false}
-              onChange={(event) =>
-                update("attendance_tracking_enabled", event.target.checked)
-              }
-            />
-            {text.attendanceTracking}
-          </label>
+              />
+              {text.attendanceTracking}
+            </label>
+            <label style={styles.checkRow}>
+              <input
+                type="checkbox"
+                style={styles.checkboxFixed}
+                checked={draft.app_login_enabled !== false}
+                onChange={(event) => update("app_login_enabled", event.target.checked)}
+              />
+              {text.appLoginEnabled}
+            </label>
+          </div>
           <span style={styles.fieldNotice}>{text.attendanceTrackingHelp}</span>
-          <span style={styles.fieldNotice}>{text.attendanceTrackingOpenRecordNotice}</span>
           {draft.attendance_tracking_enabled !== false ? (
-            <>
+            <div style={styles.fieldRow2}>
               <Field label={text.workStartTime}>
                 <input
                   type="time"
@@ -479,17 +489,8 @@ function UserCard({
                   style={styles.input}
                 />
               </Field>
-            </>
+            </div>
           ) : null}
-          <label style={styles.checkRow}>
-            <input
-              type="checkbox"
-              checked={draft.app_login_enabled !== false}
-              onChange={(event) => update("app_login_enabled", event.target.checked)}
-            />
-            {text.appLoginEnabled}
-          </label>
-          <span style={styles.fieldNotice}>{text.appLoginEnabledHelp}</span>
           <label style={styles.checkRow}>
             <input
               type="checkbox"
@@ -532,17 +533,20 @@ function UserCard({
                   </label>)}
                 </div>
                 <span style={styles.fieldNotice}>{text.levelPolicyHelp}</span>
-                {hours !== null && hours < 9 ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
-                <strong style={styles.levelEditorTitle}>{text.levelCalculationBasis}</strong>
-                <div style={styles.segmented}>
-                  {(["hire_date", "override"] as const).map((mode) => <label key={mode} style={levelDraft.baseDateMode === mode ? styles.segmentActive : styles.segment}>
-                    <input type="radio" name={`level-base-${user.id}`} checked={levelDraft.baseDateMode === mode} onChange={() => setLevelDraft((current) => ({ ...current, baseDateMode: mode }))} />
-                    {mode === "hire_date" ? text.levelHireDateMode : text.levelOverrideMode}
-                  </label>)}
-                </div>
-                {levelDraft.baseDateMode === "hire_date"
-                  ? <span style={styles.fieldNotice}>{text.hireDate}: {draft.hire_date ?? "-"}</span>
-                  : <Field label={text.levelCalculationStartDate}><input type="date" required value={levelDraft.baseDateOverride} onChange={(event) => setLevelDraft((current) => ({ ...current, baseDateOverride: event.target.value }))} style={styles.input} /></Field>}
+                {levelDraft.included ? (
+                  <>
+                    <strong style={styles.levelEditorTitle}>{text.levelCalculationBasis}</strong>
+                    <div style={styles.segmented}>
+                      {(["hire_date", "override"] as const).map((mode) => <label key={mode} style={levelDraft.baseDateMode === mode ? styles.segmentActive : styles.segment}>
+                        <input type="radio" name={`level-base-${user.id}`} checked={levelDraft.baseDateMode === mode} onChange={() => setLevelDraft((current) => ({ ...current, baseDateMode: mode }))} />
+                        {mode === "hire_date" ? text.levelHireDateMode : text.levelOverrideMode}
+                      </label>)}
+                    </div>
+                    {levelDraft.baseDateMode === "hire_date"
+                      ? <span style={styles.fieldNotice}>{text.hireDate}: {draft.hire_date ?? "-"}</span>
+                      : <Field label={text.levelCalculationStartDate}><input type="date" required value={levelDraft.baseDateOverride} onChange={(event) => setLevelDraft((current) => ({ ...current, baseDateOverride: event.target.value }))} style={styles.input} /></Field>}
+                  </>
+                ) : null}
                 {levelStateChanged ? <>
                   <Field label={text.levelEffectiveMonth}><select value={levelDraft.effectiveMonth} onChange={(event) => setLevelDraft((current) => ({ ...current, effectiveMonth: event.target.value as LevelPolicyDraft["effectiveMonth"] }))} style={styles.input}><option value="current">{text.thisMonth}</option><option value="next">{text.nextMonth}</option></select></Field>
                 </> : null}
@@ -762,6 +766,13 @@ export default function AdminUsersPage() {
       const result = (await res.json()) as UsersResponse;
 
       if (!res.ok || !result.ok || !result.user) {
+        if (result.code === "ATTENDANCE_OPEN_RECORD_EXISTS") {
+          // 열린 출근 기록 충돌은 실제 저장 시도 후 서버가 반환했을 때만 여기서 alert로
+          // 알린다. draft(체크 해제 상태)는 그대로 두고 편집 화면도 닫지 않아, 관리자가
+          // 다시 판단할 수 있게 한다. 페이지 상단 메시지에는 중복 표시하지 않는다.
+          window.alert(result.error || text.saveFailed);
+          return false;
+        }
         throw new Error(result.error || text.saveFailed);
       }
 
@@ -1040,9 +1051,16 @@ const styles = {
     paddingTop: 7,
     borderTop: "1px dashed #e5e7eb",
   },
+  fieldRow2: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+    gap: 7,
+    minWidth: 0,
+  },
   field: {
     display: "flex",
     flexDirection: "column",
+    minWidth: 0,
     gap: 4,
   },
   fieldLabel: {
@@ -1096,7 +1114,6 @@ const styles = {
   segmented: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 },
   segment: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: 8, border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", fontSize: 12, fontWeight: 800 },
   segmentActive: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: 8, border: "1px solid #4f46e5", borderRadius: 8, background: "#eef2ff", color: "#3730a3", fontSize: 12, fontWeight: 900 },
-  shortShiftNotice: { padding: 8, borderRadius: 8, background: "#fffbeb", color: "#92400e", fontSize: 11, lineHeight: 1.5 },
   readonlyDate: {
     padding: "7px 8px",
     borderRadius: 7,
@@ -1110,6 +1127,7 @@ const styles = {
     padding: "7px 8px",
     borderRadius: 7,
     fontSize: 12,
+    minWidth: 0,
   },
   checkRow: {
     display: "flex",
@@ -1117,6 +1135,10 @@ const styles = {
     gap: 8,
     fontSize: 12,
     fontWeight: 900,
+    minWidth: 0,
+  },
+  checkboxFixed: {
+    flexShrink: 0,
   },
   actionRow: {
     display: "grid",
