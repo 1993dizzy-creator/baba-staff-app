@@ -30,7 +30,6 @@ function setting(
       lateGraceMinutes: 0,
       earlyLeaveGraceMinutes: 0,
       missingCheckoutGraceMinutes: 60,
-      defaultNormalCheckoutTime: "00:00",
     },
     hours: Array.from({ length: 7 }, (_, weekday) => ({
       weekday,
@@ -57,7 +56,6 @@ test("a date before the first setting resolves to the official fallback", () => 
     lateGraceMinutes: 0,
     earlyLeaveGraceMinutes: 0,
     missingCheckoutGraceMinutes: 60,
-    defaultNormalCheckoutTime: "00:00",
   });
   assert.equal(resolved.setting.effectiveFromBusinessDate, "2026-07-17");
 });
@@ -70,7 +68,6 @@ test("configured dates retain their own version without retroactive lookup", () 
       lateGraceMinutes: 5,
       earlyLeaveGraceMinutes: 0,
       missingCheckoutGraceMinutes: 60,
-      defaultNormalCheckoutTime: "23:30",
     },
   });
   const resolved = resolveAttendanceShadowSetting(

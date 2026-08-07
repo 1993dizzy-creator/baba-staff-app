@@ -11,7 +11,6 @@ type PolicyRow = {
   late_grace_minutes: number | null;
   early_leave_grace_minutes: number | null;
   missing_checkout_grace_minutes: number | null;
-  default_normal_checkout_time: string | null;
 };
 
 type OverrideRow = {
@@ -42,7 +41,7 @@ export async function getStoreAttendancePolicy(
   const { data, error } = await supabaseServer
     .from("store_attendance_policies")
     .select(
-      "late_grace_minutes,early_leave_grace_minutes,missing_checkout_grace_minutes,default_normal_checkout_time"
+      "late_grace_minutes,early_leave_grace_minutes,missing_checkout_grace_minutes"
     )
     .eq("setting_version_id", settingVersionId)
     .maybeSingle<PolicyRow>();
@@ -67,10 +66,6 @@ export async function getStoreAttendancePolicy(
     missingCheckoutGraceMinutes: Number(
       data?.missing_checkout_grace_minutes ??
         DEFAULT_STORE_ATTENDANCE_POLICY.missingCheckoutGraceMinutes
-    ),
-    defaultNormalCheckoutTime: normalizeTime(
-      data?.default_normal_checkout_time,
-      DEFAULT_STORE_ATTENDANCE_POLICY.defaultNormalCheckoutTime
     ),
   };
 }

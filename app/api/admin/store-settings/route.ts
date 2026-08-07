@@ -34,7 +34,7 @@ export async function POST(request: Request) {
       | undefined;
     const expectedRevision = Number(body?.expectedRevision);
     const allowedKeys = new Set(["timezone", "businessDayCutoffTime", "effectiveFromBusinessDate", "expectedRevision", "hours", "attendancePolicy"]);
-    if (!body || Object.keys(body).some((key) => !allowedKeys.has(key)) || !isStoreDateKey(body.effectiveFromBusinessDate) || !isStoreTime(body.businessDayCutoffTime) || body.timezone !== STORE_TIMEZONE || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !Array.isArray(hours) || !validateStoreHours(hours) || !attendancePolicy || !Number.isInteger(attendancePolicy.lateGraceMinutes) || attendancePolicy.lateGraceMinutes < 0 || attendancePolicy.lateGraceMinutes > 180 || !Number.isInteger(attendancePolicy.earlyLeaveGraceMinutes) || attendancePolicy.earlyLeaveGraceMinutes < 0 || attendancePolicy.earlyLeaveGraceMinutes > 180 || !Number.isInteger(attendancePolicy.missingCheckoutGraceMinutes) || attendancePolicy.missingCheckoutGraceMinutes < 0 || attendancePolicy.missingCheckoutGraceMinutes > 360 || !isStoreTime(attendancePolicy.defaultNormalCheckoutTime)) {
+    if (!body || Object.keys(body).some((key) => !allowedKeys.has(key)) || !isStoreDateKey(body.effectiveFromBusinessDate) || !isStoreTime(body.businessDayCutoffTime) || body.timezone !== STORE_TIMEZONE || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !Array.isArray(hours) || !validateStoreHours(hours) || !attendancePolicy || !Number.isInteger(attendancePolicy.lateGraceMinutes) || attendancePolicy.lateGraceMinutes < 0 || attendancePolicy.lateGraceMinutes > 180 || !Number.isInteger(attendancePolicy.earlyLeaveGraceMinutes) || attendancePolicy.earlyLeaveGraceMinutes < 0 || attendancePolicy.earlyLeaveGraceMinutes > 180 || !Number.isInteger(attendancePolicy.missingCheckoutGraceMinutes) || attendancePolicy.missingCheckoutGraceMinutes < 0 || attendancePolicy.missingCheckoutGraceMinutes > 360) {
       return NextResponse.json({ ok: false, code: "INVALID_SETTINGS" }, { status: 400 });
     }
     const currentBusinessDate = calculateStoreBusinessDate(new Date());
@@ -47,8 +47,6 @@ export async function POST(request: Request) {
       p_hours: hours,
       p_actor_user_id: auth.actor.id,
       p_late_grace_minutes: attendancePolicy.lateGraceMinutes,
-      p_default_normal_checkout_time:
-        attendancePolicy.defaultNormalCheckoutTime,
       p_early_leave_grace_minutes: attendancePolicy.earlyLeaveGraceMinutes,
       p_missing_checkout_grace_minutes:
         attendancePolicy.missingCheckoutGraceMinutes,

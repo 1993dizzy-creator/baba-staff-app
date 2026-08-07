@@ -20,7 +20,6 @@ function setting(patch: Partial<StoreSetting> = {}): StoreSetting {
       lateGraceMinutes: 0,
       earlyLeaveGraceMinutes: 60,
       missingCheckoutGraceMinutes: 60,
-      defaultNormalCheckoutTime: "00:00",
     },
     hours: Array.from({ length: 7 }, (_, weekday) => ({
       weekday,

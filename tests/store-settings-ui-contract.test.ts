@@ -20,7 +20,6 @@ test("store settings keeps its bilingual tabs and existing save contracts", () =
   assert.match(page, /lateGraceMinutes: lateGrace/);
   assert.match(page, /earlyLeaveGraceMinutes: earlyLeaveGrace/);
   assert.match(page, /missingCheckoutGraceMinutes: missingCheckoutGrace/);
-  assert.match(page, /defaultNormalCheckoutTime:\s*\n\s*data\.overview\.current\?\.attendancePolicy/);
   assert.match(route, /ATTENDANCE_SETTINGS_DB_PENDING/);
 });
 

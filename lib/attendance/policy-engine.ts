@@ -193,7 +193,7 @@ export function evaluateAttendancePolicy(
     input.businessDayCutoffTime
   );
   // 특별 조기마감이 있으면 그 시각이 실제 매장 마감시간이 되고, 없으면 요일별
-  // 매장 마감시간을 쓴다. default_normal_checkout_time은 더 이상 참조하지 않는다.
+  // 매장 마감시간을 쓴다.
   const effectiveStoreCloseAt = overrideCloseAt ?? scheduledStoreCloseAt;
   // 기준 퇴근시간 = 직원 예정 퇴근시간과 실제 매장 마감시간 중 더 이른 시간.
   const normalCheckoutThresholdAt = earlierInstant(

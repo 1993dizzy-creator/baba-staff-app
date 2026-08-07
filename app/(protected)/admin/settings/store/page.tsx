@@ -51,7 +51,6 @@ type ShadowData = {
       lateGraceMinutes: number;
       earlyLeaveGraceMinutes: number;
       missingCheckoutGraceMinutes: number;
-      defaultNormalCheckoutTime: string;
     };
     storeOpenTime: string | null;
     storeCloseTime: string | null;
@@ -74,7 +73,6 @@ type ShadowData = {
       lateGraceMinutes: number;
       earlyLeaveGraceMinutes: number;
       missingCheckoutGraceMinutes: number;
-      defaultNormalCheckoutTime: string;
     };
     totalRecords: number;
     compared: number;
@@ -413,14 +411,6 @@ export default function StoreSettingsPage() {
             lateGraceMinutes: lateGrace,
             earlyLeaveGraceMinutes: earlyLeaveGrace,
             missingCheckoutGraceMinutes: missingCheckoutGrace,
-            // 더 이상 Shadow 계산에서 쓰이지 않는 deprecated 필드. UI에 입력란은
-            // 없지만, 기존 RPC 시그니처 호환을 위해 값을 계속 보내야 한다.
-            // 사용자가 지각/조퇴/미퇴근만 바꿔도 이 값이 임의로 덮어써지지
-            // 않도록 현재 적용 중인 값을 그대로 보존해서 전송한다.
-            defaultNormalCheckoutTime:
-              data.overview.current?.attendancePolicy
-                ?.defaultNormalCheckoutTime ??
-              DEFAULT_STORE_ATTENDANCE_POLICY.defaultNormalCheckoutTime,
           },
         }),
       });
