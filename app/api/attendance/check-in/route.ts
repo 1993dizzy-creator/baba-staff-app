@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
-import {
-  getAttendanceWorkDate,
-  getLateMinutes,
-} from "@/lib/attendance/time";
+import { getAttendanceWorkDate } from "@/lib/attendance/time";
 import {
   ATTENDANCE_STATUS,
   APPROVAL_STATUS,
@@ -19,6 +16,7 @@ import {
   getAttendanceTrackingDisabledMessage,
   isAttendanceTrackingUser,
 } from "@/lib/attendance/tracking-policy";
+import { resolveAttendanceRecordPolicy } from "@/lib/attendance/policy-resolution-adapter";
 
 const MUTATION_RECORD_FIELDS =
   "id,user_id,work_date,status,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status";
@@ -197,7 +195,30 @@ export async function POST(req: Request) {
       );
     }
 
-    const lateMinutes = getLateMinutes(nowIso, user.work_start_time, workDate);
+    // work_date별로 유효한 store_setting_versions/store_attendance_policies/
+    // store_business_hours/employee_work_schedule_versions를 조회해 공통 정책
+    // 엔진(evaluateAttendancePolicy)으로 late_minutes를 계산한다. 자체 raw 계산
+    // 공식을 별도로 만들지 않고, 관리자 보정·강제 출퇴근·본인 퇴근과 동일한
+    // resolveAttendanceRecordPolicy()를 사용해 저장값과 정책 판정을 항상 일치시킨다.
+    let policyResult;
+    try {
+      policyResult = await resolveAttendanceRecordPolicy({
+        userId,
+        workDate,
+        fallbackScheduledStartTime: user.work_start_time,
+        fallbackScheduledEndTime: user.work_end_time,
+        checkInAt: nowIso,
+        checkOutAt: null,
+      });
+    } catch (policyError) {
+      console.error("check-in policy error:", policyError);
+      return NextResponse.json(
+        { ok: false, message: getMessage(lang, "saveError") },
+        { status: 500 }
+      );
+    }
+
+    const lateMinutes = policyResult.lateMinutes;
 
     const status = ATTENDANCE_STATUS.WORKING;
 

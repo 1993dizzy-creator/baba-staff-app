@@ -7,6 +7,7 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 
 const admin = read("app/api/attendance/admin/route.ts");
 const checkOut = read("app/api/attendance/check-out/route.ts");
+const checkIn = read("app/api/attendance/check-in/route.ts");
 const time = read("lib/attendance/time.ts");
 
 test("admin route no longer imports the legacy fixed-threshold early-leave calculation", () => {
@@ -21,9 +22,17 @@ test("check-out route no longer imports the legacy fixed-threshold early-leave c
   assert.doesNotMatch(checkOut, /getStatusByMinutes/);
 });
 
+test("check-in route no longer imports or calls the legacy raw-only late calculation", () => {
+  assert.doesNotMatch(checkIn, /getLateMinutes/);
+});
+
 test("the legacy 23:30 hardcode and 90-minute threshold constant are removed from time.ts", () => {
   assert.doesNotMatch(time, /NORMAL_EARLY_CLOSE_TIME/);
   assert.doesNotMatch(time, /EARLY_LEAVE_STATUS_THRESHOLD_MINUTES/);
+});
+
+test("getLateMinutes itself no longer exists anywhere in time.ts — it was fully orphaned once check-in switched to the shared policy engine", () => {
+  assert.doesNotMatch(time, /getLateMinutes/);
 });
 
 test("update_record, force_check_in, force_check_out, and auto_close_at_01 all resolve through the shared date-scoped policy engine", () => {
@@ -34,6 +43,17 @@ test("update_record, force_check_in, force_check_out, and auto_close_at_01 all r
 
 test("employee self checkout resolves through the same shared policy engine", () => {
   assert.match(checkOut, /resolveAttendanceRecordPolicy\(/);
+});
+
+test("employee self check-in resolves late_minutes through the same shared policy engine as checkout/admin, storing lateMinutes rather than inventing its own raw calculation", () => {
+  assert.match(checkIn, /resolveAttendanceRecordPolicy\(/);
+  assert.match(checkIn, /late_minutes:\s*lateMinutes/);
+  assert.match(checkIn, /const lateMinutes = policyResult\.lateMinutes;/);
+});
+
+test("check-in does not hardcode a grace value or duplicate the threshold formula — it only reads policyResult.lateMinutes", () => {
+  assert.doesNotMatch(checkIn, /lateGraceMinutes\s*[:=]\s*\d/);
+  assert.doesNotMatch(checkIn, /rawLate/i);
 });
 
 test("admin mutation paths write before/after/actor/reason/work_date audit log entries without a new migration or RPC", () => {

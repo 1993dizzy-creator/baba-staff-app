@@ -41,26 +41,6 @@ export function makeCheckOutIso(
   return checkOut.toISOString();
 }
 
-export function getLateMinutes(
-  checkInIso: string,
-  workStartTime: string | null | undefined,
-  workDate: string
-) {
-  const safeWorkStartTime = normalizeTime(workStartTime);
-  if (!safeWorkStartTime) return 0;
-
-  const checkIn = new Date(checkInIso);
-  const standardStart = new Date(
-    `${workDate}T${safeWorkStartTime}:00${TIMEZONE_OFFSET}`
-  );
-
-  const diff = Math.floor(
-    (checkIn.getTime() - standardStart.getTime()) / 60000
-  );
-
-  return Math.max(0, diff);
-}
-
 // 실제 출근·퇴근 datetime 차이가 기준(16시간)을 넘는지 판단하는 공통 함수.
 // 미퇴근(check_out_at 없음) 기록은 장시간 근무가 아니라 별도의 미처리 상태로 취급한다.
 export function isLongShiftRecord(
