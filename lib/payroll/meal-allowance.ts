@@ -76,6 +76,30 @@ export function selectMealAllowanceEligibilityAt(
   return latestVersionAt(versions, date)?.isEligible === true;
 }
 
+// 특정 급여월 동안 "한 번이라도" 식대 대상이었는지 판정한다(단일 시점 스냅샷이 아님).
+// eligibility는 하루 단위로 켜지고 꺼질 수 있어(effective_from에 월 1일 제약이 없음),
+// calculateCurrentMealAllowanceCost/calculateProjectedMealAllowanceForEmployee도 월중
+// 변경을 하위 기간으로 안분한다 — 이 함수는 그 전제를 그대로 따라, 월초 시점과 월중 모든
+// 변경 시점(effective_from) 각각에서 대상 여부를 확인해 하나라도 true면 그 달은 대상으로
+// 본다. 월 이후(monthEndExclusive 이상)에 등록된 버전은 호출자가 애초에 넘기지 않는다고
+// 가정한다(서버 조회 단계에서 effective_from < monthEndExclusive로 걸러짐).
+export function selectMealAllowanceEligibilityDuringMonth(
+  versions: readonly MealAllowanceEligibilityVersion[],
+  monthStart: string,
+  monthEndExclusive: string,
+): boolean {
+  if (selectMealAllowanceEligibilityAt(versions, monthStart)) return true;
+  const changePoints = new Set(
+    versions
+      .map((version) => version.effectiveFrom)
+      .filter((effectiveFrom) => effectiveFrom > monthStart && effectiveFrom < monthEndExclusive),
+  );
+  for (const point of changePoints) {
+    if (selectMealAllowanceEligibilityAt(versions, point)) return true;
+  }
+  return false;
+}
+
 function daysBetween(fromInclusive: string, toExclusive: string): number {
   const [fy, fm, fd] = fromInclusive.split("-").map(Number);
   const [ty, tm, td] = toExclusive.split("-").map(Number);

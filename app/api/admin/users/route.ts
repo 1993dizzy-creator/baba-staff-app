@@ -7,6 +7,7 @@ import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
 import { getEmployeeRoleRank, toLegacyEmployeePosition } from "@/lib/common/roles";
 import { isMasterGeneralEditBlocked, isPayrollOverrideOnlyUpdate } from "@/lib/employee/profile-update-policy";
 import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLevelProgramVersions, withEmployeeLevelInfo } from "@/lib/employee-level/server";
+import { loadMealAllowanceEligibilityAt } from "@/lib/payroll/meal-allowance-eligibility-server";
 import { validateEmployeeLevelConfiguration } from "@/lib/employee-level/validation";
 import {
   isEmployeeLevelEligibleRole,
@@ -52,6 +53,13 @@ function withLevelPolicyState(
       nextEffectiveFrom: nextMonthStart(today),
     },
   };
+}
+
+function withMealAllowanceEligibility<T extends { id: number | string }>(
+  user: T,
+  eligibility: Map<number, boolean>,
+) {
+  return { ...user, mealAllowanceEligible: eligibility.get(Number(user.id)) ?? false };
 }
 
 const USER_SELECT = `
@@ -253,14 +261,16 @@ export async function GET(req: Request) {
     const users = sortUsers((data || []).map(sanitizePublicEmployeeUser));
     const today = getVietnamDateKey();
     const userIds = users.map((user) => Number(user.id));
-    const [versions, nextVersions] = await Promise.all([
+    const [versions, nextVersions, mealAllowanceEligibility] = await Promise.all([
       loadEmployeeLevelProgramVersions(userIds, today),
       loadEmployeeLevelProgramVersions(userIds, nextMonthStart(today)),
+      loadMealAllowanceEligibilityAt(userIds, today),
     ]);
     return NextResponse.json({
       ok: true,
-      users: users.map((user) => withLevelPolicyState(
-        user, versions.get(Number(user.id)), nextVersions.get(Number(user.id)), today,
+      users: users.map((user) => withMealAllowanceEligibility(
+        withLevelPolicyState(user, versions.get(Number(user.id)), nextVersions.get(Number(user.id)), today),
+        mealAllowanceEligibility,
       )),
     });
   } catch (error) {
@@ -319,17 +329,21 @@ export async function PATCH(req: Request) {
         p_previous_level: previousInfo.level,
       });
       if (error) throw new Error(`Failed to rehire user: ${error.message}`);
-      const [versions, nextVersions] = await Promise.all([
+      const [versions, nextVersions, mealAllowanceEligibility] = await Promise.all([
         loadEmployeeLevelProgramVersions([Number(id)], today),
         loadEmployeeLevelProgramVersions([Number(id)], nextMonthStart(today)),
+        loadMealAllowanceEligibilityAt([Number(id)], today),
       ]);
       return NextResponse.json({
         ok: true,
-        user: withLevelPolicyState(
-          sanitizePublicEmployeeUser(data),
-          versions.get(Number(id)),
-          nextVersions.get(Number(id)),
-          today,
+        user: withMealAllowanceEligibility(
+          withLevelPolicyState(
+            sanitizePublicEmployeeUser(data),
+            versions.get(Number(id)),
+            nextVersions.get(Number(id)),
+            today,
+          ),
+          mealAllowanceEligibility,
         ),
       });
     }
@@ -551,17 +565,21 @@ export async function PATCH(req: Request) {
       throw new Error(`Failed to atomically update user: ${error.message}`);
     }
 
-    const [updatedVersions, updatedNextVersions] = await Promise.all([
+    const [updatedVersions, updatedNextVersions, updatedMealAllowanceEligibility] = await Promise.all([
       loadEmployeeLevelProgramVersions([Number(id)], today),
       loadEmployeeLevelProgramVersions([Number(id)], nextMonthStart(today)),
+      loadMealAllowanceEligibilityAt([Number(id)], today),
     ]);
     return NextResponse.json({
       ok: true,
-      user: withLevelPolicyState(
-        sanitizePublicEmployeeUser(data),
-        updatedVersions.get(Number(id)),
-        updatedNextVersions.get(Number(id)),
-        today,
+      user: withMealAllowanceEligibility(
+        withLevelPolicyState(
+          sanitizePublicEmployeeUser(data),
+          updatedVersions.get(Number(id)),
+          updatedNextVersions.get(Number(id)),
+          today,
+        ),
+        updatedMealAllowanceEligibility,
       ),
     });
   } catch (error) {

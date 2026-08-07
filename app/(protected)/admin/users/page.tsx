@@ -46,6 +46,7 @@ type UserRow = {
   level_base_date_override: string | null;
   attendance_tracking_enabled: boolean;
   app_login_enabled: boolean;
+  mealAllowanceEligible: boolean;
   levelInfo: EmployeeLevelInfo;
   levelProgramPolicy?: {
     currentEnabled: boolean;
@@ -322,6 +323,9 @@ function UserCard({
         <div style={styles.rowText}>
           <span style={styles.rowTitle}>
             <EmployeeNameWithLevel name={nameText} levelInfo={user.levelInfo} lang={lang} nameStyle={styles.rowName} showDisabledBadge />
+            {user.mealAllowanceEligible ? (
+              <span style={styles.mealBadge} title={text.mealAllowanceEligibleBadge} aria-label={text.mealAllowanceEligibleBadge}>🍚</span>
+            ) : null}
             <span style={styles.rowPosition}> · {positionText}</span>
           </span>
         </div>
@@ -991,6 +995,11 @@ const styles = {
     fontSize: 12,
     fontWeight: 700,
     color: "#6b7280",
+  },
+  mealBadge: {
+    fontSize: 12,
+    lineHeight: 1,
+    flexShrink: 0,
   },
   identity: {
     display: "flex",

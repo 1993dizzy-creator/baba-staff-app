@@ -17,6 +17,11 @@ import { formatPositiveIntegerInput, normalizePositiveIntegerInput } from "@/lib
 import { formatRecognizedWork, getPayrollHeaderAmount } from "@/lib/payroll/payroll-page-display";
 import { payrollOverviewText } from "@/lib/text/payroll-overview";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
+// /admin/users의 🍚 배지와 동일한 문구를 쓴다 — 식대는 회사 부담 비용이며 net pay에 추가
+// 지급되는 항목이 아니므로, "지급"이 아니라 "대상"이라는 중립적 표현으로 통일한다.
+export function mealAllowanceBadgeLabel(lang: "ko" | "vi") {
+  return lang === "vi" ? "Đối tượng trợ cấp ăn" : "식대 대상";
+}
 function age(date: string | null) {
   if (!date) return null;
   const today = new Date(),
@@ -38,6 +43,7 @@ export function CompensationCard({
   future,
   monthClosed,
   refresh,
+  mealAllowanceEligible = false,
 }: {
   employee: PayrollOverviewEmployee;
   expanded: boolean;
@@ -47,6 +53,7 @@ export function CompensationCard({
   future: boolean;
   monthClosed: boolean;
   refresh: () => Promise<boolean>;
+  mealAllowanceEligible?: boolean;
 }) {
   const t = payrollOverviewText[lang];
   const detailText = lang === "vi"
@@ -77,6 +84,9 @@ export function CompensationCard({
             lang={lang}
             nameStyle={s.name}
           />
+          {mealAllowanceEligible ? (
+            <span style={s.mealBadge} title={mealAllowanceBadgeLabel(lang)} aria-label={mealAllowanceBadgeLabel(lang)}>🍚</span>
+          ) : null}
           <span style={s.separator}>·</span>
           <span style={s.position}>{positionLabel}</span>
         </span>
@@ -603,6 +613,7 @@ const s = {
     textOverflow: "ellipsis",
     minWidth: 0,
   },
+  mealBadge: { fontSize: 12, lineHeight: 1, flexShrink: 0 },
   separator: { color: "#9ca3af", flexShrink: 0 },
   position: {
     fontSize: 11,
