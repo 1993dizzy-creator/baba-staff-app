@@ -32,27 +32,12 @@ export type BusinessTimeContext = BusinessTimeSnapshot & {
   isAfterCloseBeforeCutoff: boolean;
 };
 
-export type BusinessTimeShadow = {
-  matches: boolean;
-  differences: Array<"businessDate" | "databaseBusinessDate" | "collectionFrom" | "collectionTo">;
-  legacy: { businessDate: string; collectionFrom: string; collectionTo: string };
-  configured: { businessDate: string; collectionFrom: string | null; collectionTo: string };
-  databaseBusinessDate: string;
-  settingRevision: number;
-  isFallback: boolean;
-};
-
 function withSeconds(time: string) {
   return `${time}:00`;
 }
 
 function timestampAt(dateKey: string, time: string) {
   return `${dateKey}T${withSeconds(time)}${STORE_UTC_OFFSET}`;
-}
-
-function sameInstant(left: string | null, right: string | null) {
-  if (left === null || right === null) return left === right;
-  return new Date(left).getTime() === new Date(right).getTime();
 }
 
 function weekdayForDateKey(dateKey: string) {
@@ -145,36 +130,4 @@ export function calculateBusinessTimeContext(
   );
 
   return { ...snapshot, businessDate, ...window, ...operation };
-}
-
-export function compareBusinessTimeShadow(params: {
-  legacyBusinessDate: string;
-  legacyCollectionFrom: string;
-  legacyCollectionTo: string;
-  configured: BusinessTimeContext;
-  databaseBusinessDate: string;
-}): BusinessTimeShadow {
-  const differences: BusinessTimeShadow["differences"] = [];
-  if (params.legacyBusinessDate !== params.configured.businessDate) differences.push("businessDate");
-  if (params.databaseBusinessDate !== params.configured.businessDate) differences.push("databaseBusinessDate");
-  if (!sameInstant(params.legacyCollectionFrom, params.configured.collectionFrom)) differences.push("collectionFrom");
-  if (!sameInstant(params.legacyCollectionTo, params.configured.collectionTo)) differences.push("collectionTo");
-
-  return {
-    matches: differences.length === 0,
-    differences,
-    legacy: {
-      businessDate: params.legacyBusinessDate,
-      collectionFrom: params.legacyCollectionFrom,
-      collectionTo: params.legacyCollectionTo,
-    },
-    configured: {
-      businessDate: params.configured.businessDate,
-      collectionFrom: params.configured.collectionFrom,
-      collectionTo: params.configured.collectionTo,
-    },
-    databaseBusinessDate: params.databaseBusinessDate,
-    settingRevision: params.configured.revision,
-    isFallback: params.configured.isFallback,
-  };
 }

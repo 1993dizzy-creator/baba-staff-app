@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Container from "@/components/Container";
-import { StorePosShadowGate } from "@/components/StorePosShadowPanel";
 import { useLanguage } from "@/lib/language-context";
 import {
   addStoreDays,
@@ -27,7 +26,6 @@ type ApiData = {
   capabilities: {
     mutate: boolean;
     audit: boolean;
-    posShadow: boolean;
   };
 };
 
@@ -41,10 +39,6 @@ const weekdayAriaNames = {
 } as const;
 const weekdayColor = (weekday: number) =>
   weekday === 0 ? "#dc2626" : weekday === 6 ? "#2563eb" : "#111827";
-
-// 현재 매출·재고 전환이 완료되어 POS 연동 비교 UI는 비활성화한다.
-// 필요 시 다시 활성화할 수 있도록 관련 코드와 API는 유지한다.
-const SHOW_POS_INTEGRATION_COMPARE = false;
 
 // "YYYY-MM-DD" 영업일 date-key는 이미 캘린더 날짜 문자열이라 시간대 변환이
 // 필요 없다 — 앞 두 자리 연도만 잘라 좁은 카드에서 밀도를 줄인다.
@@ -463,7 +457,6 @@ function HoursTab(props: {
 
   return (
     <>
-      {SHOW_POS_INTEGRATION_COMPARE ? <StorePosShadowGate /> : null}
       <SettingCard
         title={t.current}
         setting={props.data.overview.current}

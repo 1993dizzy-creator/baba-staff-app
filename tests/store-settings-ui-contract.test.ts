@@ -6,7 +6,6 @@ import test from "node:test";
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const page = read("app/(protected)/admin/settings/store/page.tsx");
 const route = read("app/api/admin/store-settings/route.ts");
-const posPanel = read("components/StorePosShadowPanel.tsx");
 
 test("store settings only has hours and attendance tabs — the attendance comparison (shadow) tab is removed", () => {
   assert.match(page, /type Tab = "hours" \| "attendance"/);
@@ -60,8 +59,11 @@ test("attendance policy descriptions remain short bilingual labeled lines", () =
   assert.match(page, /aria-expanded=\{showPolicyDescription\}/);
 });
 
-test("POS compare remains feature-flagged off", () => {
-  assert.match(page, /const SHOW_POS_INTEGRATION_COMPARE = false/);
-  assert.match(page, /\{SHOW_POS_INTEGRATION_COMPARE \? <StorePosShadowGate \/> : null\}/);
-  assert.match(posPanel, /StorePosShadowGate/);
+test("POS Shadow no longer exists in the store settings page or its API capabilities", () => {
+  assert.doesNotMatch(
+    page,
+    /StorePosShadowGate|StorePosShadowPanel|SHOW_POS_INTEGRATION_COMPARE|posShadow/
+  );
+  assert.doesNotMatch(route, /posShadow/);
+  assert.match(route, /capabilities: \{ mutate: canMutateStoreSettings\(auth\.actor\), audit: canMutateStoreSettings\(auth\.actor\) \}/);
 });

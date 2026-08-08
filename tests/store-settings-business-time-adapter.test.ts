@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // @ts-expect-error Node's direct TypeScript runner requires an explicit extension.
-import { getBusinessDate, getBusinessWindowByBusinessDate } from "../lib/common/business-time.ts";
+import { getBusinessDate } from "../lib/common/business-time.ts";
 // @ts-expect-error Node's direct TypeScript runner requires an explicit extension.
-import { buildPosCollectionWindow, calculateBusinessTimeContext, compareBusinessTimeShadow, createBusinessTimeSnapshot, createFallbackBusinessTimeSnapshot } from "../lib/store-settings/business-time-adapter-core.ts";
+import { buildPosCollectionWindow, calculateBusinessTimeContext, createBusinessTimeSnapshot, createFallbackBusinessTimeSnapshot } from "../lib/store-settings/business-time-adapter-core.ts";
 // @ts-expect-error Node's direct TypeScript runner requires an explicit extension.
 import { DEFAULT_STORE_HOURS, type StoreSetting } from "../lib/store-settings/types.ts";
 
@@ -95,27 +95,4 @@ test("missing or incomplete settings use the explicit fallback snapshot", () => 
   assert.equal(fallback.revision, 0);
   assert.equal(fallback.hours.length, 7);
   assert.ok(fallback.hours.every((hour) => hour.openTime === "16:00" && hour.closeTime === "01:00"));
-});
-
-test("shadow reports full matches and individual mismatch categories", () => {
-  const legacyWindow = getBusinessWindowByBusinessDate("2026-07-20");
-  const configured = calculateBusinessTimeContext("2026-07-20T16:00:00+07:00", snapshot);
-  const match = compareBusinessTimeShadow({
-    legacyBusinessDate: "2026-07-20",
-    legacyCollectionFrom: legacyWindow.start.toISOString(),
-    legacyCollectionTo: legacyWindow.end.toISOString(),
-    configured,
-    databaseBusinessDate: "2026-07-20",
-  });
-  assert.equal(match.matches, true);
-  assert.deepEqual(match.differences, []);
-
-  const mismatch = compareBusinessTimeShadow({
-    legacyBusinessDate: "2026-07-19",
-    legacyCollectionFrom: "2026-07-20T17:00:00+07:00",
-    legacyCollectionTo: "2026-07-21T01:00:00+07:00",
-    configured,
-    databaseBusinessDate: "2026-07-19",
-  });
-  assert.deepEqual(mismatch.differences, ["businessDate", "databaseBusinessDate", "collectionFrom", "collectionTo"]);
 });
