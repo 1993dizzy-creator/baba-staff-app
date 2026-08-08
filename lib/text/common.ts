@@ -83,6 +83,7 @@ export const commonText = {
     kitchen: "주방",
     hall: "홀",
     bar: "바",
+    cleaning: "청소",
 
     today: "오늘",
     month: "월",
@@ -177,6 +178,7 @@ export const commonText = {
     kitchen: "Bếp",
     hall: "Sảnh",
     bar: "Bar",
+    cleaning: "Vệ sinh",
 
     today: "Hôm nay",
     month: "Tháng",
