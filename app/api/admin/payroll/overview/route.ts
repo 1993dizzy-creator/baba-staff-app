@@ -5,7 +5,6 @@ import { loadPayrollOverview } from "@/lib/payroll/overview-server";
 import { buildEmployeePaymentSnapshot, payrollPaymentSnapshotHash } from "@/lib/payroll/payment-snapshot";
 import { isClosedPayrollMonth } from "@/lib/payroll/payment-period";
 import { loadMealAllowanceCostSummary } from "@/lib/payroll/meal-allowance-server";
-import { loadMealAllowanceEligibilityDuringMonth } from "@/lib/payroll/meal-allowance-eligibility-server";
 
 export const dynamic = "force-dynamic";
 
@@ -25,16 +24,23 @@ export async function GET(request: Request) {
     // 완전히 분리된 표시 전용 집계다 — loadPayrollOverview()가 아니라 이 GET 핸들러에서만
     // 계산해 summary/projectedSummary에 얹으므로, 출근 기록이 바뀌어 식대비용이 달라져도
     // 지급 계산 hash(PAYROLL_CALCULATION_STALE 판정)에는 전혀 영향을 주지 않는다.
-    const mealAllowance=await loadMealAllowanceCostSummary(month,{calculationEndDate:overview.period.calculationEndDate});
+    //
+    // users/contracts/attendance는 loadPayrollOverview()가 이미 같은 달에 대해 읽어 둔
+    // snapshot.context를 그대로 재사용한다(추가 조회 없음). 🍚 배지(eligibleUserIds)도 "오늘"이
+    // 아니라 "조회 중인 급여월" 기준으로, employees[](calculationHash가 걸린 배열)에는 절대
+    // 섞지 않고 이 한 번의 호출 안에서 함께 계산해 응답 최상위에 별도 필드로만 내려준다 — 이
+    // 화면은 과거·미래 월을 자유롭게 넘나들며 조회할 수 있으므로, 오늘 날짜를 쓰면 이후에
+    // 등록된 eligibility 변경 때문에 과거 급여장부의 배지가 바뀌어 버린다.
+    const mealAllowance=await loadMealAllowanceCostSummary(month,{
+      calculationEndDate:overview.period.calculationEndDate,
+      users:overview.snapshot.context.users,
+      contracts:overview.snapshot.context.contracts,
+      attendance:overview.snapshot.context.attendance,
+      payrollUserIds:overview.employees.map(employee=>employee.userId),
+    });
     const summary={...overview.summary,mealAllowanceAmount:mealAllowance.currentAmount,totalCompanyCostAmount:overview.summary.totalCompanyCostAmount+mealAllowance.currentAmount};
     const projectedSummary=overview.projectedSummary?{...overview.projectedSummary,mealAllowanceAmount:mealAllowance.projectedAmount,totalCompanyCostAmount:overview.projectedSummary.totalCompanyCostAmount+mealAllowance.projectedAmount}:null;
-    // 🍚 배지 전용 조회 — employees[](calculationHash가 걸린 배열)에는 절대 섞지 않고, 응답
-    // 최상위에 별도 필드로만 내려준다. loadMealAllowanceCostSummary는 월 비용 집계(정책·계약·
-    // 출근기록까지 포함)용이라 이 용도로 재사용하지 않는다. "오늘"이 아니라 "조회 중인 급여월"
-    // 기준으로 판정한다 — 이 화면은 과거·미래 월을 자유롭게 넘나들며 조회할 수 있으므로, 오늘
-    // 날짜를 쓰면 이후에 등록된 eligibility 변경 때문에 과거 급여장부의 배지가 바뀌어 버린다.
-    const mealAllowanceEligibility=await loadMealAllowanceEligibilityDuringMonth(overview.employees.map(employee=>employee.userId),month);
-    const mealAllowanceEligibleUserIds=[...mealAllowanceEligibility.entries()].filter(([,eligible])=>eligible).map(([userId])=>userId);
+    const mealAllowanceEligibleUserIds=mealAllowance.eligibleUserIds;
     return payrollJson({ok:true,month,asOfDate:overview.period.asOfDate,future:overview.period.future,monthClosed:isClosedPayrollMonth(month),employees,summary,projectedSummary,mealAllowancePolicyMissing:mealAllowance.policyMissing,mealAllowanceEligibleUserIds,paymentBatch:run??null});
   } catch {
     return payrollJson({ ok: false, code: "PAYROLL_OVERVIEW_READ_FAILED" }, 500);

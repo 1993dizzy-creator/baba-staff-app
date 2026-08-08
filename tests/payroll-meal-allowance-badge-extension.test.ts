@@ -74,15 +74,16 @@ test("month-based eligibility: 다음 달 1일(monthEndExclusive) 정각에 시�
 // 응답 최상위 필드다 (기존 "employees[]에는 식대 데이터를 절대 섞지 않는다" 불변식 유지).
 // ---------------------------------------------------------------------------
 
-test("overview route: reuses the same shared meal-allowance-eligibility-server module as /admin/users, not a new judgment path — but calls the month-scoped loader, not the today-scoped one", () => {
-  assert.match(overviewRoute, /import \{ loadMealAllowanceEligibilityDuringMonth \} from "@\/lib\/payroll\/meal-allowance-eligibility-server";/);
+test("overview route: eligibility is computed inside the same meal-allowance-cost call, not a separate today-scoped judgment path", () => {
+  assert.doesNotMatch(overviewRoute, /loadMealAllowanceEligibilityDuringMonth/);
   assert.doesNotMatch(overviewRoute, /loadMealAllowanceEligibilityAt\(/);
   assert.doesNotMatch(overviewRoute, /getVietnamDateKey/);
 });
 
 test("overview route: eligibility is bulk-loaded once from overview.employees (pre-payment-merge array) scoped to the *browsed* payroll month, not today — a past/future month browse must never depend on today's date", () => {
-  assert.equal((overviewRoute.match(/loadMealAllowanceEligibilityDuringMonth\(/g) ?? []).length, 1);
-  assert.match(overviewRoute, /loadMealAllowanceEligibilityDuringMonth\(overview\.employees\.map\(employee=>employee\.userId\),month\)/);
+  assert.equal((overviewRoute.match(/loadMealAllowanceCostSummary\(/g) ?? []).length, 1);
+  assert.match(overviewRoute, /payrollUserIds:overview\.employees\.map\(employee=>employee\.userId\),/);
+  assert.match(overviewRoute, /const mealAllowanceEligibleUserIds=mealAllowance\.eligibleUserIds;/);
 });
 
 test("overview route: mealAllowanceEligibleUserIds is appended as a sibling response field, and the pre-existing employees/summary/projectedSummary substring is untouched (no regression to the payment-separation invariant)", () => {
