@@ -19,14 +19,37 @@ import {
   type StoreSettingsOverview,
 } from "@/lib/store-settings/types";
 import { ui } from "@/lib/styles/ui";
+import { getHolidayGroupLabel } from "@/lib/store-settings/holidays-data";
 
-type Tab = "hours" | "attendance";
+type Tab = "hours" | "attendance" | "holidays";
 type ApiData = {
   overview: StoreSettingsOverview;
   capabilities: {
     mutate: boolean;
     audit: boolean;
   };
+};
+type StoreHoliday = {
+  id: number;
+  holidayDate: string;
+  holidayCode: string;
+  nameKo: string;
+  nameVi: string;
+  holidayGroup: string;
+  isPaidHoliday: boolean;
+  isEmployerSelected: boolean;
+  /** BABA 내부 운영 지침 배율(매장 영업 + 200% 적용) — 법정 지급률이 아니다. null이면 미적용. */
+  internalPayMultiplier: number | null;
+};
+type StoreHolidayCalendar = {
+  year: number;
+  countryCode: string;
+};
+type HolidaysApiData = {
+  year: number;
+  calendar: StoreHolidayCalendar | null;
+  holidays: StoreHoliday[];
+  capabilities: { mutate: boolean };
 };
 
 const weekdayNames = {
@@ -50,7 +73,7 @@ const copy = {
   ko: {
     title: "매장 통합설정",
     intro: "운영시간과 근태 판정 기준을 같은 설정 버전으로 관리합니다.",
-    tabs: { hours: "운영시간", attendance: "근태설정" },
+    tabs: { hours: "운영시간", attendance: "근태설정", holidays: "공휴일" },
     current: "🏪 현재 매장 운영시간",
     attendancePolicyTitle: "⏰ 현재 근태 기준",
     policyDescription: "기준 설명",
@@ -101,6 +124,16 @@ const copy = {
     confirmAttendanceSection: "근태 기준",
     modalCancel: "취소",
     modalConfirm: "예약하기",
+
+    holidaysTitle: "법정공휴일",
+    holidaysEmpty: "등록된 공휴일이 없습니다.",
+    holidaysFailed: "공휴일 정보를 불러오지 못했습니다.",
+    holidaysYearPrefix: "",
+    holidaysYearSuffix: "년",
+    operationPolicyTitle: "BABA 200% 적용일",
+    operationPolicyDescription: "선택한 날짜는 매장 영업 및 내부 200% 적용일로 관리됩니다.",
+    operationPolicySaving: "저장 중…",
+    dayCountSuffix: "일",
   },
   vi: {
     title: "Cài đặt tích hợp cửa hàng",
@@ -109,6 +142,7 @@ const copy = {
     tabs: {
       hours: "Giờ mở cửa",
       attendance: "Chấm công",
+      holidays: "Ngày lễ",
     },
     current: "🏪 Giờ hoạt động hiện tại",
     attendancePolicyTitle: "⏰ Tiêu chuẩn chấm công hiện tại",
@@ -163,6 +197,17 @@ const copy = {
     confirmAttendanceSection: "Tiêu chuẩn chấm công",
     modalCancel: "Hủy",
     modalConfirm: "Đặt lịch",
+
+    holidaysTitle: "Ngày lễ hợp pháp",
+    holidaysEmpty: "Chưa có ngày lễ nào.",
+    holidaysFailed: "Không thể tải thông tin ngày lễ.",
+    holidaysYearPrefix: "Năm ",
+    holidaysYearSuffix: "",
+    operationPolicyTitle: "Ngày áp dụng 200% nội bộ BABA",
+    operationPolicyDescription:
+      "Ngày đã chọn được quản lý là ngày cửa hàng hoạt động và áp dụng mức 200% theo quy định nội bộ.",
+    operationPolicySaving: "Đang lưu…",
+    dayCountSuffix: "ngày",
   },
 } as const;
 
@@ -419,6 +464,8 @@ export default function StoreSettingsPage() {
           onSave={requestSave}
         />
       ) : null}
+
+      {tab === "holidays" ? <HolidaysTab lang={lang} /> : null}
 
       {confirmOpen ? (
         <ConfirmScheduleModal
@@ -730,6 +777,181 @@ function AttendanceTab(props: {
           >
             {props.busy ? t.saving : t.saveAttendance}
           </button>
+        </section>
+      ) : null}
+    </>
+  );
+}
+
+// "YYYY-MM-DD" → "MM/DD". 공휴일 목록/Tet 옵션 라벨 전용 — shortDate(연도만 자르는
+// 용도)와는 다른 포맷이라 별도로 둔다.
+function monthDay(dateKey: string) {
+  return dateKey.length === 10 ? dateKey.slice(5) : dateKey;
+}
+
+// 공휴일은 store_setting_versions와 완전히 독립된 원본(store_holiday_calendars/
+// store_holidays)이라, 이 탭은 페이지 상단의 data/load()와 별도로 자체 fetch를
+// 관리한다 — 다른 탭의 로딩 실패가 이 탭에 영향을 주지 않고, 반대도 마찬가지다.
+function HolidaysTab(props: { lang: "ko" | "vi" }) {
+  const t = copy[props.lang];
+  const [year, setYear] = useState(() => new Date().getFullYear());
+  const [data, setData] = useState<HolidaysApiData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [busyHolidayId, setBusyHolidayId] = useState<number | null>(null);
+
+  const load = useCallback(
+    async (targetYear: number) => {
+      setLoading(true);
+      setError("");
+      try {
+        const response = await fetch(
+          `/api/admin/store-settings/holidays?year=${targetYear}`,
+          { cache: "no-store" }
+        );
+        if (requireFreshServerSession(response)) return;
+        const json = (await response.json()) as HolidaysApiData & { ok: boolean; code?: string };
+        if (!response.ok || !json.ok) throw new Error(json.code || "failed");
+        setData(json);
+      } catch {
+        setError(t.holidaysFailed);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [t.holidaysFailed]
+  );
+
+  useEffect(() => {
+    void load(year);
+  }, [year, load]);
+
+  // 날짜 1개씩 즉시 저장한다(BABA 200% 적용 토글) — store_holidays 원본은
+  // 서버(store_toggle_holiday_operation_policy_v1)에서도 절대 지우지 않는다.
+  async function toggleHoliday(holiday: StoreHoliday) {
+    if (busyHolidayId !== null || !data?.capabilities.mutate) return;
+    setBusyHolidayId(holiday.id);
+    setError("");
+    try {
+      const response = await fetch("/api/admin/store-settings/holidays", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          holidayId: holiday.id,
+          selected: holiday.internalPayMultiplier === null,
+        }),
+      });
+      const json = await response.json();
+      if (!response.ok || !json.ok) throw new Error(json.code || "failed");
+      await load(year);
+    } catch {
+      setError(t.holidaysFailed);
+    } finally {
+      setBusyHolidayId(null);
+    }
+  }
+
+  const holidays = data?.holidays ?? [];
+  // 같은 holiday_group이 2일 이상인 것만 개별 선택 UI를 만든다(1일짜리는 상단
+  // 목록에만 표시). holiday_group 순서는 store_holidays.id insert 순서를 그대로
+  // 따르므로 날짜순 정렬만 다시 맞춘다.
+  const selectableGroups: Array<{ group: string; label: string; items: StoreHoliday[] }> = [];
+  {
+    const byGroup = new Map<string, StoreHoliday[]>();
+    for (const holiday of holidays) {
+      const list = byGroup.get(holiday.holidayGroup) ?? [];
+      list.push(holiday);
+      byGroup.set(holiday.holidayGroup, list);
+    }
+    for (const [group, items] of byGroup) {
+      if (items.length < 2) continue;
+      const sorted = [...items].sort((a, b) => a.holidayDate.localeCompare(b.holidayDate));
+      const fallbackName = props.lang === "vi" ? sorted[0].nameVi : sorted[0].nameKo;
+      selectableGroups.push({
+        group,
+        label: getHolidayGroupLabel(group, props.lang, fallbackName),
+        items: sorted,
+      });
+    }
+  }
+
+  return (
+    <>
+      <section style={styles.card}>
+        <div style={styles.cardHeader}>
+          <button
+            type="button"
+            style={styles.yearNavButton}
+            onClick={() => setYear((value) => value - 1)}
+          >
+            ‹
+          </button>
+          <h2 style={{ ...styles.sectionTitle, margin: 0, textAlign: "center", flex: 1 }}>
+            {t.holidaysYearPrefix}
+            {year}
+            {t.holidaysYearSuffix} {t.holidaysTitle}
+          </h2>
+          <button
+            type="button"
+            style={styles.yearNavButton}
+            onClick={() => setYear((value) => value + 1)}
+          >
+            ›
+          </button>
+        </div>
+
+        {error ? <p style={styles.error}>{error}</p> : null}
+
+        {loading ? (
+          <p style={styles.muted}>{t.loading}</p>
+        ) : holidays.length === 0 ? (
+          <p style={styles.muted}>{t.holidaysEmpty}</p>
+        ) : (
+          <ul style={styles.holidayList}>
+            {holidays.map((holiday) => (
+              <li key={holiday.id} style={styles.holidayItem}>
+                <span style={styles.holidayDate}>{monthDay(holiday.holidayDate)}</span>
+                <span>{props.lang === "vi" ? holiday.nameVi : holiday.nameKo}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {selectableGroups.length > 0 ? (
+        <section style={styles.card}>
+          <h2 style={styles.sectionTitle}>{t.operationPolicyTitle}</h2>
+          <p style={styles.help}>{t.operationPolicyDescription}</p>
+          {selectableGroups.map((groupEntry) => (
+            <div key={groupEntry.group} style={styles.holidayGroupBlock}>
+              <h3 style={styles.subheading}>
+                {groupEntry.label} · {groupEntry.items.length}{t.dayCountSuffix}
+              </h3>
+              <div style={styles.holidayToggleGrid}>
+                {groupEntry.items.map((holiday) => {
+                  const active = holiday.internalPayMultiplier !== null;
+                  const isBusy = busyHolidayId === holiday.id;
+                  const disabled = busyHolidayId !== null || !data?.capabilities.mutate;
+                  return (
+                    <button
+                      key={holiday.id}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => toggleHoliday(holiday)}
+                      style={{
+                        ...styles.holidayToggleButton,
+                        ...(active ? styles.holidayToggleButtonActive : null),
+                        cursor: disabled ? "not-allowed" : "pointer",
+                        opacity: disabled && !isBusy ? 0.6 : 1,
+                      }}
+                    >
+                      {isBusy ? t.operationPolicySaving : monthDay(holiday.holidayDate)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </section>
       ) : null}
     </>
@@ -1331,4 +1553,63 @@ const styles: Record<string, CSSProperties> = {
   },
   muted: { color: "#64748b", fontSize: 13 },
   status: { padding: 24, textAlign: "center", color: "#64748b" },
+  yearNavButton: {
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    borderRadius: 8,
+    width: 32,
+    height: 32,
+    fontSize: 16,
+    fontWeight: 800,
+    color: "#374151",
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  holidayList: {
+    display: "grid",
+    gap: 1,
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+    background: "#e5e7eb",
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  holidayItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "9px 10px",
+    background: "#fff",
+    fontSize: 13,
+  },
+  holidayDate: {
+    minWidth: 44,
+    fontWeight: 800,
+    color: "#b91c1c",
+  },
+  holidayGroupBlock: {
+    marginTop: 10,
+  },
+  holidayToggleGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(56px, 1fr))",
+    gap: 6,
+  },
+  holidayToggleButton: {
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    borderRadius: 10,
+    padding: "10px 4px",
+    fontSize: 12.5,
+    fontWeight: 700,
+    color: "#374151",
+    textAlign: "center",
+  },
+  holidayToggleButtonActive: {
+    border: "1px solid #111827",
+    background: "#111827",
+    color: "#fff",
+  },
 };

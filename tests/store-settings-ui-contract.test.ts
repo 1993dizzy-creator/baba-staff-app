@@ -7,11 +7,12 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const page = read("app/(protected)/admin/settings/store/page.tsx");
 const route = read("app/api/admin/store-settings/route.ts");
 
-test("store settings only has hours and attendance tabs — the attendance comparison (shadow) tab is removed", () => {
-  assert.match(page, /type Tab = "hours" \| "attendance"/);
-  assert.match(page, /tabs: \{ hours: "운영시간", attendance: "근태설정" \}/);
+test("store settings has hours/attendance/holidays tabs — the attendance comparison (shadow) tab is removed and never reintroduced", () => {
+  assert.match(page, /type Tab = "hours" \| "attendance" \| "holidays"/);
+  assert.match(page, /tabs: \{ hours: "운영시간", attendance: "근태설정", holidays: "공휴일" \}/);
   assert.match(page, /hours: "Giờ mở cửa"/);
   assert.match(page, /attendance: "Chấm công"/);
+  assert.match(page, /holidays: "Ngày lễ"/);
   assert.doesNotMatch(page, /근태비교/);
   assert.doesNotMatch(page, /So sánh/);
   assert.doesNotMatch(

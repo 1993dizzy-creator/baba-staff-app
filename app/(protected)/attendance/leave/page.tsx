@@ -46,8 +46,26 @@ type Feedback = {
   message: string;
 } | null;
 
+// 베트남 법정공휴일 — attendance_records/휴무 신청과 완전히 분리된 표시 전용 정보다.
+// "이 날짜는 법정공휴일이다"만 의미하며, 휴무 자동 생성·승인 자동 변경·급여 가산
+// 등 어떤 부수효과도 갖지 않는다.
+type Holiday = {
+  id: number;
+  holidayDate: string;
+  holidayCode: string;
+  nameKo: string;
+  nameVi: string;
+  holidayGroup: string;
+  isPaidHoliday: boolean;
+  isEmployerSelected: boolean;
+  /** BABA 내부 운영 지침 배율(매장 영업 + 200% 적용) — 법정 지급률이 아니다. API가
+   * 이미 이 값이 설정된(=BABA가 선택한) 날짜만 반환하므로 여기서는 항상 값이 있다. */
+  internalPayMultiplier: number | null;
+};
+
 const usersRequests = new Map<string, Promise<UserRow[]>>();
 const leaveRecordRequests = new Map<string, Promise<AttendanceRecord[]>>();
+const holidayRequests = new Map<string, Promise<Holiday[]>>();
 
 function requestUsers(date: Date) {
   const { startDate } = getMonthRange(date);
@@ -99,6 +117,34 @@ function requestLeaveRecords(date: Date) {
     });
 
   leaveRecordRequests.set(requestKey, request);
+  return request;
+}
+
+// 공휴일은 비핵심 정보 레이어다 — 실패해도 휴무 캘린더 자체(users/leave records)는
+// 그대로 정상 렌더되어야 하므로, 호출부(loadHolidays)에서 실패를 console.warn만
+// 하고 별도 feedback을 띄우지 않는다.
+function requestHolidays(date: Date) {
+  const { startDate } = getMonthRange(date);
+  const month = startDate.slice(0, 7);
+  const requestKey = `attendance-holidays:${month}`;
+  const existing = holidayRequests.get(requestKey);
+  if (existing) return existing;
+
+  const request = attendanceFetch(`/api/attendance/holidays?month=${month}`)
+    .then(async (response) => {
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.ok) {
+        throw new Error(result?.code || "HOLIDAYS_REQUEST_FAILED");
+      }
+      return (result.holidays || []) as Holiday[];
+    })
+    .finally(() => {
+      if (holidayRequests.get(requestKey) === request) {
+        holidayRequests.delete(requestKey);
+      }
+    });
+
+  holidayRequests.set(requestKey, request);
   return request;
 }
 
@@ -195,6 +241,7 @@ export default function AttendanceLeavePage() {
   const [calendarDate, setCalendarDate] = useState(initialCalendarDate);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [leaveRecords, setLeaveRecords] = useState<AttendanceRecord[]>([]);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [selectedDate, setSelectedDate] = useState(initialSelectedDate);
   const [isLoadingUsers, setIsLoadingUsers] = useState(true);
   const [isLoadingRecords, setIsLoadingRecords] = useState(true);
@@ -228,6 +275,7 @@ export default function AttendanceLeavePage() {
             approved: "Đã duyệt",
             selectedDate: "Ngày đã chọn",
             reason: "Lý do",
+            holidayPremiumNotice: "Mở cửa · 200%",
           }
         : {
             loadError: "휴무 정보를 불러오지 못했습니다. 다시 시도해 주세요.",
@@ -245,6 +293,7 @@ export default function AttendanceLeavePage() {
             approved: "승인 완료",
             selectedDate: "선택 날짜",
             reason: "사유",
+            holidayPremiumNotice: "매장 영업 · 200%",
           },
     [lang]
   );
@@ -323,6 +372,22 @@ export default function AttendanceLeavePage() {
       background: hasLoadedRecordsRef.current,
     });
   }, [calendarDate, loadLeaveRecords]);
+
+  // 공휴일은 users/leave records와 독립적으로 읽는다 — 이 요청이 실패해도 휴무
+  // 관리 화면 전체를 500/사용불가로 만들지 않고, 캘린더의 공휴일 표시만 생략한다.
+  const loadHolidays = useCallback(async (date: Date) => {
+    try {
+      const data = await requestHolidays(date);
+      if (mountedRef.current) setHolidays(data);
+    } catch (error) {
+      console.warn("fetch holidays error (non-critical):", error);
+      if (mountedRef.current) setHolidays([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadHolidays(calendarDate);
+  }, [calendarDate, loadHolidays]);
 
   const beginAction = (actionKey: string) => {
     if (pendingActionKeysRef.current.has(actionKey)) return false;
@@ -621,6 +686,12 @@ export default function AttendanceLeavePage() {
     return map;
   }, [visibleLeaveRecords]);
 
+  const holidayByDate = useMemo(() => {
+    const map = new Map<string, Holiday>();
+    holidays.forEach((holiday) => map.set(holiday.holidayDate, holiday));
+    return map;
+  }, [holidays]);
+
   const staffSummaryGroups = useMemo(() => {
     const summaryMap = new Map<string, { count: number; dates: string[] }>();
 
@@ -666,6 +737,7 @@ export default function AttendanceLeavePage() {
   }, [visibleLeaveRecords, userMap]);
 
   const calendarCells = useMemo(() => getCalendarCells(calendarDate), [calendarDate]);
+  const selectedHoliday = holidayByDate.get(selectedDate);
 
   const mySelectedRecord = visibleLeaveRecords.find(
     (record) =>
@@ -792,6 +864,7 @@ export default function AttendanceLeavePage() {
               const isSaturday = index % 7 === 6;
               const hasApproved = leaveCount.approved > 0;
               const hasPending = leaveCount.pending > 0;
+              const isHoliday = holidayByDate.has(cell.dateKey || "");
 
               return (
                 <button
@@ -806,24 +879,38 @@ export default function AttendanceLeavePage() {
                         ? "#f59e0b"
                         : hasApproved
                           ? "#10b981"
-                          : "#e5e7eb",
+                          : isHoliday
+                            ? "#fca5a5"
+                            : "#e5e7eb",
                     background: active
                       ? "#111827"
                       : hasPending
                         ? "#fffbeb"
                         : hasApproved
                           ? "#ecfdf5"
-                          : "#ffffff",
+                          : isHoliday
+                            ? "#fef2f2"
+                            : "#ffffff",
+                    // active(선택된 날짜의 검은 배경)가 항상 최우선이고, 그 다음이 공휴일 —
+                    // 기존 일요일 빨강/토요일 파랑 규칙과 같은 색(#dc2626)을 공유하므로
+                    // 규칙끼리 충돌하지 않는다(공휴일이 토요일이면 공휴일 빨강이 이긴다).
                     color: active
                       ? "#ffffff"
-                      : isSunday
+                      : isHoliday || isSunday
                         ? "#dc2626"
                         : isSaturday
                           ? "#2563eb"
                           : "#111827",
                   }}
                 >
-                  <span>{cell.day}</span>
+                  <span>
+                    {cell.day}
+                    {isHoliday && (
+                      <span style={holidayFlagStyle} aria-hidden="true">
+                        🇻🇳
+                      </span>
+                    )}
+                  </span>
                   {(hasApproved || hasPending) && (
                     <span style={countGroupStyle}>
                       {hasApproved && (
@@ -859,6 +946,13 @@ export default function AttendanceLeavePage() {
             <div style={selectedDateTitleStyle}>
               {copy.selectedDate} · {selectedDate}
             </div>
+
+            {selectedHoliday && (
+              <div style={holidayNoticeStyle}>
+                <div>🇻🇳 {lang === "vi" ? selectedHoliday.nameVi : selectedHoliday.nameKo}</div>
+                <div style={holidayPremiumLineStyle}>{copy.holidayPremiumNotice}</div>
+              </div>
+            )}
 
             {isInitialLoading ? (
               <div style={selectedEmptyStyle}>{c.loading}</div>
@@ -1247,6 +1341,13 @@ const countGroupStyle: CSSProperties = {
   gap: 2,
 };
 
+// 공휴일 표시 — 셀 높이(34px)를 늘리지 않도록 아주 작은 폰트로 day 숫자 옆에만 붙인다.
+const holidayFlagStyle: CSSProperties = {
+  fontSize: 8,
+  lineHeight: 1,
+  marginLeft: 1,
+};
+
 const countDotStyle: CSSProperties = {
   minWidth: 14,
   height: 14,
@@ -1268,6 +1369,22 @@ const selectedDateTitleStyle: CSSProperties = {
   fontSize: 12,
   fontWeight: 900,
   color: "#374151",
+};
+
+// 휴무 신청 카드/승인 버튼과 의미적으로 섞이지 않도록 별도 블록으로만 표시한다.
+const holidayNoticeStyle: CSSProperties = {
+  marginTop: 4,
+  fontSize: 12,
+  fontWeight: 700,
+  color: "#b91c1c",
+};
+
+// BABA 내부 운영 지침(200% 적용) 안내 — 법정 지급률이 아니라는 점을 문구 자체에서
+// "내부"로 구분한다. 공휴일 이름 줄보다 한 단계 옅게 표시한다.
+const holidayPremiumLineStyle: CSSProperties = {
+  marginTop: 2,
+  fontWeight: 600,
+  color: "#92400e",
 };
 
 const selectedEmptyStyle: CSSProperties = {
