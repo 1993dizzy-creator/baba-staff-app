@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Container from "@/components/Container";
 import { useLanguage } from "@/lib/language-context";
+import { getVietnamDateParts } from "@/lib/common/business-time";
 import {
   addStoreDays,
   calculateStoreBusinessDate,
@@ -19,7 +20,11 @@ import {
   type StoreSettingsOverview,
 } from "@/lib/store-settings/types";
 import { ui } from "@/lib/styles/ui";
-import { getHolidayGroupLabel } from "@/lib/store-settings/holidays-data";
+import {
+  FIXED_HOLIDAY_DEFINITIONS,
+  getHolidayGroupLabel,
+} from "@/lib/store-settings/holidays-data";
+import { countHolidayGroupSizes, isBabaPremiumHoliday } from "@/lib/store-settings/holidays-policy";
 
 type Tab = "hours" | "attendance" | "holidays";
 type ApiData = {
@@ -134,6 +139,28 @@ const copy = {
     operationPolicyDescription: "선택한 날짜는 매장 영업 및 내부 200% 적용일로 관리됩니다.",
     operationPolicySaving: "저장 중…",
     dayCountSuffix: "일",
+
+    notPreparedPrefix: "아직 ",
+    notPreparedSuffix: "년 공휴일이 준비되지 않았습니다.",
+    prepareButtonPrefix: "",
+    prepareButtonSuffix: "년 공휴일 준비",
+    reminderPrefix: "⚠️ ",
+    reminderSuffix: "년 공휴일 설정이 아직 없습니다.",
+    prepareModalTitle: "공휴일 준비",
+    hungKingsLabel: "흥왕기념일",
+    tetStartLabel: "음력설 시작일",
+    tetPreviewLabel: "음력설 5일",
+    nationalDayAdjacentLabel: "국경일 추가 휴일",
+    nationalDayOptionBefore: "9/1 (국경일 전날)",
+    nationalDayOptionAfter: "9/3 (국경일 다음날)",
+    sourceUrlLabel: "공식 발표 출처 URL (선택)",
+    sourcePublishedAtLabel: "발표일 (선택)",
+    prepareSubmit: "준비 완료",
+    prepareSaving: "저장 중…",
+    prepareCancel: "취소",
+    prepareYearExists: "이미 해당 연도 공휴일이 준비되어 있습니다.",
+    prepareInvalid: "입력값을 다시 확인해주세요.",
+    prepareFailed: "공휴일 준비를 처리하지 못했습니다.",
   },
   vi: {
     title: "Cài đặt tích hợp cửa hàng",
@@ -208,6 +235,28 @@ const copy = {
       "Ngày đã chọn được quản lý là ngày cửa hàng hoạt động và áp dụng mức 200% theo quy định nội bộ.",
     operationPolicySaving: "Đang lưu…",
     dayCountSuffix: "ngày",
+
+    notPreparedPrefix: "Chưa chuẩn bị ngày lễ năm ",
+    notPreparedSuffix: ".",
+    prepareButtonPrefix: "Chuẩn bị ngày lễ năm ",
+    prepareButtonSuffix: "",
+    reminderPrefix: "⚠️ Chưa có cài đặt ngày lễ năm ",
+    reminderSuffix: ".",
+    prepareModalTitle: "Chuẩn bị ngày lễ",
+    hungKingsLabel: "Giỗ Tổ Hùng Vương",
+    tetStartLabel: "Ngày bắt đầu Tết",
+    tetPreviewLabel: "5 ngày nghỉ Tết",
+    nationalDayAdjacentLabel: "Ngày nghỉ thêm dịp Quốc khánh",
+    nationalDayOptionBefore: "1/9 (trước Quốc khánh)",
+    nationalDayOptionAfter: "3/9 (sau Quốc khánh)",
+    sourceUrlLabel: "Link thông báo chính thức (không bắt buộc)",
+    sourcePublishedAtLabel: "Ngày công bố (không bắt buộc)",
+    prepareSubmit: "Hoàn tất chuẩn bị",
+    prepareSaving: "Đang lưu…",
+    prepareCancel: "Hủy",
+    prepareYearExists: "Năm này đã được chuẩn bị.",
+    prepareInvalid: "Vui lòng kiểm tra lại dữ liệu.",
+    prepareFailed: "Không thể xử lý việc chuẩn bị ngày lễ.",
   },
 } as const;
 
@@ -789,6 +838,18 @@ function monthDay(dateKey: string) {
   return dateKey.length === 10 ? dateKey.slice(5) : dateKey;
 }
 
+// "YYYY-MM-DD" 날짜 문자열에 일수를 더한다 — 음력설 시작일 1개 입력만 받고 나머지
+// 4일을 자동 계산하는 "연도 준비" 모달 전용. 시간대 경계에서 하루가 밀리지 않도록
+// 정오(T12:00:00) 기준으로 계산한다.
+function addDaysToDateKey(dateKey: string, days: number) {
+  const date = new Date(`${dateKey}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 // 공휴일은 store_setting_versions와 완전히 독립된 원본(store_holiday_calendars/
 // store_holidays)이라, 이 탭은 페이지 상단의 data/load()와 별도로 자체 fetch를
 // 관리한다 — 다른 탭의 로딩 실패가 이 탭에 영향을 주지 않고, 반대도 마찬가지다.
@@ -799,6 +860,10 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyHolidayId, setBusyHolidayId] = useState<number | null>(null);
+  const [prepareOpen, setPrepareOpen] = useState<number | null>(null);
+  // 11월 이후에만 확인하는 "다음 연도 준비 안내" — 지금 보고 있는 연도(year)와는
+  // 독립적이다(관리자가 2026년을 보고 있어도 2027년 데이터가 없으면 안내가 뜬다).
+  const [reminderYear, setReminderYear] = useState<number | null>(null);
 
   const load = useCallback(
     async (targetYear: number) => {
@@ -826,6 +891,40 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
     void load(year);
   }, [year, load]);
 
+  // 11월 1일 이후이고 다음 연도 calendar가 아직 없으면 안내를 띄운다. 실패해도
+  // 조용히 무시한다 — 이 안내는 비핵심 기능이라 탭 전체를 막지 않는다. cron 없이
+  // 탭을 열 때마다 확인한다.
+  //
+  // BABA 공식 시간대(Asia/Ho_Chi_Minh) 기준 달력 날짜로 판정한다 — new Date()의
+  // 브라우저 로컬 시간을 직접 쓰면 사용자가 다른 시간대에서 접속했을 때 11월
+  // 경계가 어긋난다. getVietnamDateParts는 영업일 03:00 cutoff를 적용하지 않는
+  // 순수 베트남 현지 달력 날짜라 이 용도에 맞는다(cutoff가 적용되는
+  // calculateStoreBusinessDate/getBusinessDate는 여기서 쓰지 않는다).
+  useEffect(() => {
+    const storeToday = getVietnamDateParts();
+    if (storeToday.month < 11) return;
+    const nextRealYear = storeToday.year + 1;
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch(
+          `/api/admin/store-settings/holidays?year=${nextRealYear}`,
+          { cache: "no-store" }
+        );
+        if (!response.ok) return;
+        const json = await response.json();
+        if (!cancelled && json.ok) {
+          setReminderYear(json.calendar ? null : nextRealYear);
+        }
+      } catch {
+        // no-op
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // 날짜 1개씩 즉시 저장한다(BABA 200% 적용 토글) — store_holidays 원본은
   // 서버(store_toggle_holiday_operation_policy_v1)에서도 절대 지우지 않는다.
   async function toggleHoliday(holiday: StoreHoliday) {
@@ -851,10 +950,19 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
     }
   }
 
+  function handlePrepareSuccess(preparedYear: number) {
+    setPrepareOpen(null);
+    if (preparedYear === year) void load(year);
+    if (preparedYear === reminderYear) setReminderYear(null);
+  }
+
   const holidays = data?.holidays ?? [];
+  // 200% 적용 여부(effective)는 holidays-policy.ts의 공통 함수로만 판정한다 —
+  // 근태 API(loadHolidaysForMonth)와 다른 기준으로 재구현하지 않는다.
+  const groupSizes = countHolidayGroupSizes(holidays);
   // 같은 holiday_group이 2일 이상인 것만 개별 선택 UI를 만든다(1일짜리는 상단
-  // 목록에만 표시). holiday_group 순서는 store_holidays.id insert 순서를 그대로
-  // 따르므로 날짜순 정렬만 다시 맞춘다.
+  // 목록에만 표시되고 자동 200%다 — 선택/해제 대상이 아니다). holiday_group 순서는
+  // store_holidays.id insert 순서를 그대로 따르므로 날짜순 정렬만 다시 맞춘다.
   const selectableGroups: Array<{ group: string; label: string; items: StoreHoliday[] }> = [];
   {
     const byGroup = new Map<string, StoreHoliday[]>();
@@ -877,6 +985,23 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
 
   return (
     <>
+      {reminderYear !== null ? (
+        <section style={{ ...styles.card, ...styles.reminderCard }}>
+          <p style={styles.reminderText}>
+            {t.reminderPrefix}
+            {reminderYear}
+            {t.reminderSuffix}
+          </p>
+          {data?.capabilities.mutate ? (
+            <button type="button" style={ui.button} onClick={() => setPrepareOpen(reminderYear)}>
+              {t.prepareButtonPrefix}
+              {reminderYear}
+              {t.prepareButtonSuffix}
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+
       <section style={styles.card}>
         <div style={styles.cardHeader}>
           <button
@@ -904,16 +1029,40 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
 
         {loading ? (
           <p style={styles.muted}>{t.loading}</p>
+        ) : !data?.calendar ? (
+          <div>
+            <p style={styles.muted}>
+              {t.notPreparedPrefix}
+              {year}
+              {t.notPreparedSuffix}
+            </p>
+            {data?.capabilities.mutate ? (
+              <button type="button" style={ui.button} onClick={() => setPrepareOpen(year)}>
+                {t.prepareButtonPrefix}
+                {year}
+                {t.prepareButtonSuffix}
+              </button>
+            ) : null}
+          </div>
         ) : holidays.length === 0 ? (
           <p style={styles.muted}>{t.holidaysEmpty}</p>
         ) : (
           <ul style={styles.holidayList}>
-            {holidays.map((holiday) => (
-              <li key={holiday.id} style={styles.holidayItem}>
-                <span style={styles.holidayDate}>{monthDay(holiday.holidayDate)}</span>
-                <span>{props.lang === "vi" ? holiday.nameVi : holiday.nameKo}</span>
-              </li>
-            ))}
+            {holidays.map((holiday) => {
+              const effective = isBabaPremiumHoliday(
+                holiday,
+                groupSizes.get(holiday.holidayGroup) ?? 0
+              );
+              return (
+                <li key={holiday.id} style={styles.holidayItem}>
+                  <span style={styles.holidayDate}>{monthDay(holiday.holidayDate)}</span>
+                  <span style={effective ? styles.holidayNameActive : undefined}>
+                    {props.lang === "vi" ? holiday.nameVi : holiday.nameKo}
+                    {effective ? " (200%)" : ""}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
@@ -929,7 +1078,7 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
               </h3>
               <div style={styles.holidayToggleGrid}>
                 {groupEntry.items.map((holiday) => {
-                  const active = holiday.internalPayMultiplier !== null;
+                  const active = isBabaPremiumHoliday(holiday, groupEntry.items.length);
                   const isBusy = busyHolidayId === holiday.id;
                   const disabled = busyHolidayId !== null || !data?.capabilities.mutate;
                   return (
@@ -954,7 +1103,218 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
           ))}
         </section>
       ) : null}
+
+      {prepareOpen !== null ? (
+        <PrepareHolidayYearModal
+          lang={props.lang}
+          year={prepareOpen}
+          onCancel={() => setPrepareOpen(null)}
+          onSuccess={handlePrepareSuccess}
+        />
+      ) : null}
     </>
+  );
+}
+
+// 다음 연도(예: 2027) 공휴일 원본을 owner/master가 직접 만드는 모달. 고정 날짜 4개는
+// FIXED_HOLIDAY_DEFINITIONS에서 자동 계산해 미리보기만 하고(입력 없음), 매년
+// 바뀌는 흥왕기념일/음력설/국경일 추가 휴일만 입력받는다. 음력설은 시작일 1개만
+// 입력받아 5일 연속으로 자동 계산한다(개별 5개 입력보다 단순하고 안전).
+function PrepareHolidayYearModal(props: {
+  lang: "ko" | "vi";
+  year: number;
+  onCancel: () => void;
+  onSuccess: (year: number) => void;
+}) {
+  const t = copy[props.lang];
+  const [hungKingsDate, setHungKingsDate] = useState("");
+  const [tetStartDate, setTetStartDate] = useState("");
+  const [nationalDayOption, setNationalDayOption] = useState<"before" | "after" | "">("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourcePublishedAt, setSourcePublishedAt] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const minDate = `${props.year}-01-01`;
+  const maxDate = `${props.year}-12-31`;
+
+  const tetDates =
+    tetStartDate.length === 10
+      ? Array.from({ length: 5 }, (_, index) => addDaysToDateKey(tetStartDate, index))
+      : [];
+
+  const nationalDayAdjacentDate =
+    nationalDayOption === "before"
+      ? `${props.year}-09-01`
+      : nationalDayOption === "after"
+        ? `${props.year}-09-03`
+        : "";
+
+  const canSubmit =
+    hungKingsDate.length === 10 &&
+    tetDates.length === 5 &&
+    tetDates.every((date) => date.startsWith(String(props.year))) &&
+    nationalDayAdjacentDate.length === 10 &&
+    !submitting;
+
+  async function submit() {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const response = await fetch("/api/admin/store-settings/holidays/prepare-year", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          year: props.year,
+          hungKingsDate,
+          tetDates,
+          nationalDayAdjacentDate,
+          sourceUrl: sourceUrl.trim() || null,
+          sourcePublishedAt: sourcePublishedAt || null,
+        }),
+      });
+      const json = await response.json();
+      if (!response.ok || !json.ok) {
+        const code = json.code as string | undefined;
+        setError(
+          code === "YEAR_ALREADY_EXISTS"
+            ? t.prepareYearExists
+            : code === "FORBIDDEN"
+              ? t.holidaysFailed
+              : t.prepareInvalid
+        );
+        return;
+      }
+      props.onSuccess(props.year);
+    } catch {
+      setError(t.prepareFailed);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={t.prepareModalTitle}
+      onClick={submitting ? undefined : props.onCancel}
+      style={styles.modalOverlay}
+    >
+      <div onClick={(event) => event.stopPropagation()} style={styles.modalBox}>
+        <h2 style={styles.modalTitle}>
+          {t.prepareModalTitle} · {props.year}
+        </h2>
+
+        {error ? <p style={styles.error}>{error}</p> : null}
+
+        <h3 style={styles.modalSectionTitle}>{t.holidaysTitle}</h3>
+        <ul style={styles.holidayList}>
+          {FIXED_HOLIDAY_DEFINITIONS.map((def) => (
+            <li key={def.code} style={styles.holidayItem}>
+              <span style={styles.holidayDate}>{def.monthDay.replace("-", "/")}</span>
+              <span>{props.lang === "vi" ? def.nameVi : def.nameKo}</span>
+            </li>
+          ))}
+        </ul>
+
+        <div style={styles.effectiveField}>
+          <Field label={t.hungKingsLabel}>
+            <input
+              type="date"
+              style={styles.input}
+              min={minDate}
+              max={maxDate}
+              value={hungKingsDate}
+              onChange={(event) => setHungKingsDate(event.target.value)}
+            />
+          </Field>
+        </div>
+
+        <div style={styles.effectiveField}>
+          <Field label={t.tetStartLabel}>
+            <input
+              type="date"
+              style={styles.input}
+              min={minDate}
+              max={maxDate}
+              value={tetStartDate}
+              onChange={(event) => setTetStartDate(event.target.value)}
+            />
+          </Field>
+          {tetDates.length === 5 ? (
+            <p style={styles.help}>
+              {t.tetPreviewLabel}: {tetDates.map((date) => monthDay(date)).join(", ")}
+            </p>
+          ) : null}
+        </div>
+
+        <h3 style={styles.modalSectionTitle}>{t.nationalDayAdjacentLabel}</h3>
+        <div style={styles.holidayToggleGrid}>
+          <button
+            type="button"
+            style={{
+              ...styles.holidayToggleButton,
+              ...(nationalDayOption === "before" ? styles.holidayToggleButtonActive : null),
+            }}
+            onClick={() => setNationalDayOption("before")}
+          >
+            {t.nationalDayOptionBefore}
+          </button>
+          <button
+            type="button"
+            style={{
+              ...styles.holidayToggleButton,
+              ...(nationalDayOption === "after" ? styles.holidayToggleButtonActive : null),
+            }}
+            onClick={() => setNationalDayOption("after")}
+          >
+            {t.nationalDayOptionAfter}
+          </button>
+        </div>
+
+        <div style={styles.effectiveField}>
+          <Field label={t.sourceUrlLabel}>
+            <input
+              type="url"
+              style={styles.input}
+              value={sourceUrl}
+              onChange={(event) => setSourceUrl(event.target.value)}
+            />
+          </Field>
+        </div>
+        <div style={styles.effectiveField}>
+          <Field label={t.sourcePublishedAtLabel}>
+            <input
+              type="date"
+              style={styles.input}
+              value={sourcePublishedAt}
+              onChange={(event) => setSourcePublishedAt(event.target.value)}
+            />
+          </Field>
+        </div>
+
+        <div style={styles.modalActions}>
+          <button
+            type="button"
+            style={{ ...ui.subButton, width: "auto", flex: 1 }}
+            disabled={submitting}
+            onClick={props.onCancel}
+          >
+            {t.prepareCancel}
+          </button>
+          <button
+            type="button"
+            style={{ ...ui.button, width: "auto", flex: 1 }}
+            disabled={!canSubmit}
+            onClick={submit}
+          >
+            {submitting ? t.prepareSaving : t.prepareSubmit}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1588,6 +1948,19 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 44,
     fontWeight: 800,
     color: "#b91c1c",
+  },
+  holidayNameActive: {
+    fontWeight: 800,
+  },
+  reminderCard: {
+    background: "#fffbeb",
+    border: "1px solid #fde68a",
+  },
+  reminderText: {
+    margin: "0 0 10px",
+    color: "#92400e",
+    fontSize: 13,
+    fontWeight: 700,
   },
   holidayGroupBlock: {
     marginTop: 10,

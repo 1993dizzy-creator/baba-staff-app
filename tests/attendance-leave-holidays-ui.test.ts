@@ -42,7 +42,7 @@ test("[scenario 6] a holiday fetch failure is non-blocking: console.warn only, l
   assert.doesNotMatch(fn, /setFeedback/);
 });
 
-test("[scenarios 1+2] holidayByDate trusts the API response as-is (every returned item is keyed in), with no extra client-side isEmployerSelected/internalPayMultiplier filter — the selection filtering is entirely the server's job (INNER JOIN in loadHolidaysForMonth), not duplicated here", () => {
+test("[scenarios 1+2] holidayByDate trusts the API response as-is (every returned item is keyed in), with no extra client-side isEmployerSelected/internalPayMultiplier filter — the effective-premium filtering is entirely the server's job (loadHolidaysForMonth + holidays-policy.ts), not duplicated here", () => {
   assert.match(
     page,
     /const holidayByDate = useMemo\(\(\) => \{\s*\n\s*const map = new Map<string, Holiday>\(\);\s*\n\s*holidays\.forEach\(\(holiday\) => map\.set\(holiday\.holidayDate, holiday\)\);\s*\n\s*return map;\s*\n\s*\}, \[holidays\]\);/
@@ -132,7 +132,7 @@ test("holiday presence never gates or auto-triggers the leave request button, ap
   }
 });
 
-test("Holiday type carries internalPayMultiplier (documented as always-set, since the API only ever returns BABA-selected dates) and has no attendance_record/leave-request fields — display-only shape mirroring the API response", () => {
+test("Holiday type carries internalPayMultiplier (may be null even for a returned/effective date — single-day holidays are auto-effective without a policy row) and has no attendance_record/leave-request fields — display-only shape mirroring the API response", () => {
   const typeBlock = page.slice(page.indexOf("type Holiday = {"), page.indexOf("const usersRequests"));
   assert.match(typeBlock, /holidayDate: string;/);
   assert.match(typeBlock, /nameKo: string;/);

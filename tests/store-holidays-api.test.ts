@@ -98,18 +98,28 @@ test("holidays-server.ts is server-only and never imported by client bundles by 
   assert.match(server, /^import "server-only";/m);
 });
 
-test("loadHolidayCalendar reads the calendar row and holidays (LEFT JOINed with store_holiday_operation_policies) in parallel — a holiday with no policy row is still included (internalPayMultiplier null), not filtered out", () => {
+test("loadYearHolidays is the single shared query for 'all holidays in a year' — LEFT JOINed with store_holiday_operation_policies (never !inner), so a holiday with no policy row is still included (internalPayMultiplier null), not filtered out", () => {
+  const fn = server.slice(
+    server.indexOf("async function loadYearHolidays"),
+    server.indexOf("// /admin/settings/store 공휴일 탭")
+  );
+  assert.match(
+    fn,
+    /\.from\("store_holidays"\)\s*\n\s*\.select\(`\$\{HOLIDAY_COLUMNS\},store_holiday_operation_policies\(internal_pay_multiplier\)`\)/
+  );
+  assert.match(fn, /\.eq\("calendar_year", year\)/);
+  assert.doesNotMatch(fn, /!inner/);
+});
+
+test("loadHolidayCalendar delegates the holiday list to the shared loadYearHolidays (no duplicated query) and fetches the calendar row in parallel via Promise.all", () => {
   const fn = server.slice(
     server.indexOf("export async function loadHolidayCalendar"),
     server.indexOf("export type ToggleHolidayOperationPolicyResult")
   );
   assert.match(fn, /await Promise\.all\(\[/);
   assert.match(fn, /\.from\("store_holiday_calendars"\)/);
-  assert.match(
-    fn,
-    /\.from\("store_holidays"\)\s*\n\s*\.select\(`\$\{HOLIDAY_COLUMNS\},store_holiday_operation_policies\(internal_pay_multiplier\)`\)/
-  );
-  assert.doesNotMatch(fn, /!inner/);
+  assert.match(fn, /loadYearHolidays\(year\),/);
+  assert.doesNotMatch(fn, /store_holiday_operation_policies/);
 });
 
 test("toggleHolidayOperationPolicy calls the single-date RPC and maps its result — never resolves date bundles (no holidays-data.ts import, no lunar/date-array logic)", () => {
@@ -123,21 +133,57 @@ test("toggleHolidayOperationPolicy calls the single-date RPC and maps its result
   assert.doesNotMatch(server, /holidays-data/);
 });
 
-test("loadHolidaysForMonth INNER JOINs store_holiday_operation_policies — only dates BABA actually selected are ever returned to the employee-facing endpoint, filtered at the DB query level (not fetched-then-filtered in JS)", () => {
+test("loadHolidaysForMonth fetches the whole year via loadYearHolidays (not a month-scoped query), then filters with the shared isBabaPremiumHoliday/countHolidayGroupSizes helpers — the DB query itself no longer does the selection filtering (single-day holidays have no policy row to INNER JOIN against)", () => {
   const fn = server.slice(server.indexOf("export async function loadHolidaysForMonth"));
-  assert.match(
-    fn,
-    /\.from\("store_holidays"\)\s*\n\s*\.select\(`\$\{HOLIDAY_COLUMNS\},store_holiday_operation_policies!inner\(internal_pay_multiplier\)`\)/
-  );
-  assert.match(fn, /\.eq\("calendar_year", year\)/);
-  assert.match(fn, /\.gte\("holiday_date", start\)/);
-  assert.match(fn, /\.lt\("holiday_date", endExclusive\)/);
+  assert.match(fn, /const yearHolidays = await loadYearHolidays\(year\);/);
+  assert.match(fn, /const groupSizes = countHolidayGroupSizes\(yearHolidays\);/);
+  assert.match(fn, /isBabaPremiumHoliday\(holiday, groupSizes\.get\(holiday\.holidayGroup\) \?\? 0\)/);
+  assert.doesNotMatch(fn, /!inner/);
   assert.doesNotMatch(fn, /store_holiday_calendars/);
+});
+
+test("loadHolidaysForMonth still narrows to the requested month's date range (year-wide fetch is filtered down, not returned wholesale)", () => {
+  const fn = server.slice(server.indexOf("export async function loadHolidaysForMonth"));
+  assert.match(fn, /holiday\.holidayDate >= start &&/);
+  assert.match(fn, /holiday\.holidayDate < endExclusive &&/);
+});
+
+test("holidays-server.ts imports the shared policy helpers from holidays-policy.ts instead of reimplementing the effective-premium decision", () => {
+  assert.match(
+    server,
+    /import \{ countHolidayGroupSizes, isBabaPremiumHoliday \} from "@\/lib\/store-settings\/holidays-policy";/
+  );
 });
 
 test("PostgREST embed extraction defensively handles either a single-object or array embed shape for store_holiday_operation_policies (cardinality is not hard-assumed), matching the same defensive pattern already used elsewhere in this codebase", () => {
   assert.match(server, /function extractMultiplier/);
   assert.match(server, /Array\.isArray\(raw\) \? raw\[0\] \?\? null : raw/);
+});
+
+test("prepareHolidayCalendar calls store_prepare_holiday_calendar_v1 with the full param set (year, hungKingsDate, tetDates, nationalDayAdjacentDate, sourceUrl, sourcePublishedAt, actor) and maps every documented non-ok status", () => {
+  const fn = server.slice(server.indexOf("export async function prepareHolidayCalendar"));
+  assert.match(fn, /supabaseServer\.rpc\("store_prepare_holiday_calendar_v1", \{/);
+  assert.match(fn, /p_year: input\.year,/);
+  assert.match(fn, /p_hung_kings_date: input\.hungKingsDate,/);
+  assert.match(fn, /p_tet_dates: input\.tetDates,/);
+  assert.match(fn, /p_national_day_adjacent_date: input\.nationalDayAdjacentDate,/);
+  assert.match(fn, /p_source_url: input\.sourceUrl,/);
+  assert.match(fn, /p_source_published_at: input\.sourcePublishedAt,/);
+  assert.match(fn, /p_actor_user_id: actorUserId,/);
+  for (const status of [
+    "forbidden",
+    "invalid_year",
+    "year_already_exists",
+    "invalid_dates",
+    "invalid_national_day_adjacent",
+  ]) {
+    assert.match(server, new RegExp(status));
+  }
+});
+
+test("prepareHolidayCalendar never creates a store_holiday_operation_policies row itself — the RPC call is the only mutation, no follow-up toggle/insert calls from this function", () => {
+  const fn = server.slice(server.indexOf("export async function prepareHolidayCalendar"));
+  assert.doesNotMatch(fn, /toggleHolidayOperationPolicy|store_holiday_operation_policies/);
 });
 
 test("naming discipline: the server module never uses a statutory/legal-sounding field or variable name for the internal premium", () => {

@@ -17,3 +17,37 @@ export function getHolidayGroupLabel(
 ): string {
   return HOLIDAY_GROUP_LABELS[holidayGroup]?.[lang] ?? fallback;
 }
+
+// "연도 준비" 모달(HolidaysTab)의 미리보기 전용 공통 정의 — 실제 DB에 심는 값은
+// supabase/migrations/202608090001_add_store_prepare_holiday_calendar_rpc.sql의
+// store_prepare_holiday_calendar_v1 안에 리터럴로 들어 있다(SQL 함수는 TS 상수를
+// import할 수 없으므로). 두 곳의 문구는 반드시 같아야 한다 — 한쪽만 고치면
+// 미리보기와 실제 저장 결과가 어긋난다. 2026 seed(202608080003)의 문구를 그대로
+// 재사용한다.
+export type FixedHolidayDefinition = {
+  code: string;
+  nameKo: string;
+  nameVi: string;
+  // target year 기준 "MM-DD" — 매년 같은 날짜인 고정 공휴일만 여기 있다.
+  monthDay: string;
+};
+
+export const FIXED_HOLIDAY_DEFINITIONS: FixedHolidayDefinition[] = [
+  { code: "NEW_YEAR", nameKo: "신정", nameVi: "Tết Dương lịch", monthDay: "01-01" },
+  {
+    code: "REUNIFICATION_DAY",
+    nameKo: "통일기념일",
+    nameVi: "Ngày Giải phóng miền Nam, thống nhất đất nước",
+    monthDay: "04-30",
+  },
+  { code: "LABOR_DAY", nameKo: "노동절", nameVi: "Ngày Quốc tế Lao động", monthDay: "05-01" },
+  { code: "NATIONAL_DAY", nameKo: "베트남 국경일", nameVi: "Quốc khánh Việt Nam", monthDay: "09-02" },
+];
+
+// 매년 날짜가 바뀌는(관리자가 입력하는) 공휴일의 이름만 — 날짜는 UI에서 입력받는다.
+export const HUNG_KINGS_HOLIDAY_NAME = { ko: "흥왕기념일", vi: "Giỗ Tổ Hùng Vương" } as const;
+export const TET_HOLIDAY_NAME = { ko: "음력설 연휴", vi: "Nghỉ Tết Nguyên Đán" } as const;
+export const NATIONAL_DAY_ADJACENT_HOLIDAY_NAME = {
+  ko: "국경일 추가 휴일",
+  vi: "Nghỉ lễ Quốc khánh",
+} as const;

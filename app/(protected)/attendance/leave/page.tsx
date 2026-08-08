@@ -58,8 +58,10 @@ type Holiday = {
   holidayGroup: string;
   isPaidHoliday: boolean;
   isEmployerSelected: boolean;
-  /** BABA 내부 운영 지침 배율(매장 영업 + 200% 적용) — 법정 지급률이 아니다. API가
-   * 이미 이 값이 설정된(=BABA가 선택한) 날짜만 반환하므로 여기서는 항상 값이 있다. */
+  /** BABA 내부 운영 지침 배율(매장 영업 + 200% 적용) — 법정 지급률이 아니다. API는
+   * "실제로 200%가 적용되는" 날짜만 반환하지만, 1일짜리 공휴일(신정/흥왕기념일/
+   * 통일기념일/노동절)은 정책 row 없이 자동 적용이라 이 값이 null일 수 있다 — 이
+   * 필드가 null이어도 이 날짜가 반환됐다는 사실 자체가 이미 "적용됨"을 뜻한다. */
   internalPayMultiplier: number | null;
 };
 
