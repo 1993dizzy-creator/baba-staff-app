@@ -32,7 +32,7 @@ store_business_day_overrides 테이블
 
 동일 영업일 활성 기록 1건 제한
 
-근태 Shadow 계산에서 특별 마감시간을 읽을 수 있는 분기
+공통 근태 정책 엔진(resolveAttendanceRecordPolicy → evaluateAttendancePolicy)이 store_business_day_overrides의 실제 마감시간을 overrideCloseTime으로 읽어 재계산에 반영하는 분기
 
 이 기반이 존재한다고 해서 특별 조기마감 운영 기능이 완성된 것은 아니다.
 
@@ -72,7 +72,7 @@ store_business_day_overrides에 운영자가 직접 SQL로 기록하지 않는�
 
 개발 시 주의
 
-기존 테이블과 Shadow 분기를 보고 운영 기능이 있다고 판단하지 않는다.
+기존 테이블과 공통 정책 엔진의 overrideCloseTime 분기를 보고 운영 기능이 있다고 판단하지 않는다.
 
 별도 승인 없이 특별 조기마감 UI·API·RPC·Migration을 추가하지 않는다.
 
@@ -82,7 +82,7 @@ store_business_day_overrides에 운영자가 직접 SQL로 기록하지 않는�
 
 전체 DB·레거시 정리 작업에서 유지 또는 제거를 다시 판단한다.
 
-관련 코드를 수정할 때는 기존 Shadow 동작을 깨뜨리지 않도록 한다.
+관련 코드를 수정할 때는 공통 근태 정책 엔진의 overrideCloseTime 처리 동작을 깨뜨리지 않도록 한다.
 
 재개 조건
 

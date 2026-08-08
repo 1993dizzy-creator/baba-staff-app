@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Container from "@/components/Container";
 import { StorePosShadowGate } from "@/components/StorePosShadowPanel";
@@ -19,16 +19,9 @@ import {
   type StoreSettingAuditLog,
   type StoreSettingsOverview,
 } from "@/lib/store-settings/types";
-import type {
-  AttendanceShadowComparison,
-  AttendanceShadowSummary,
-} from "@/lib/attendance/shadow";
-import { getCompletedBusinessDateRange } from "@/lib/attendance/shadow-period";
 import { ui } from "@/lib/styles/ui";
-import { formatEmployeeNameWithLevel } from "@/lib/employee-level/display";
-import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 
-type Tab = "hours" | "attendance" | "shadow";
+type Tab = "hours" | "attendance";
 type ApiData = {
   overview: StoreSettingsOverview;
   capabilities: {
@@ -36,52 +29,6 @@ type ApiData = {
     audit: boolean;
     posShadow: boolean;
   };
-};
-type UserOption = { id: number; name: string; username: string; levelInfo: EmployeeLevelInfo };
-type ShadowData = {
-  businessDate?: string;
-  startBusinessDate: string;
-  endBusinessDate: string;
-  businessDayCount: number;
-  historicalManualOverrideWarning: boolean;
-  setting: {
-    revision: number | null;
-    fallbackUsed: boolean;
-    attendancePolicy: {
-      lateGraceMinutes: number;
-      earlyLeaveGraceMinutes: number;
-      missingCheckoutGraceMinutes: number;
-    };
-    storeOpenTime: string | null;
-    storeCloseTime: string | null;
-    businessDayCutoffTime: string;
-  };
-  override: {
-    actualCloseTime: string;
-    reason: string | null;
-  } | null;
-  summary: AttendanceShadowSummary;
-  dateSummaries: Array<{
-    businessDate: string;
-    settingsRevision: number | null;
-    fallbackUsed: boolean;
-    storeOpenTime: string | null;
-    storeCloseTime: string | null;
-    businessDayCutoffTime: string;
-    hasBusinessOverride: boolean;
-    attendancePolicy: {
-      lateGraceMinutes: number;
-      earlyLeaveGraceMinutes: number;
-      missingCheckoutGraceMinutes: number;
-    };
-    totalRecords: number;
-    compared: number;
-    matched: number;
-    mismatched: number;
-    excluded: number;
-  }>;
-  differenceTypeCounts: Record<string, number>;
-  rows: AttendanceShadowComparison[];
 };
 
 const weekdayNames = {
@@ -109,7 +56,7 @@ const copy = {
   ko: {
     title: "매장 통합설정",
     intro: "운영시간과 근태 판정 기준을 같은 설정 버전으로 관리합니다.",
-    tabs: { hours: "운영시간", attendance: "근태설정", shadow: "근태비교" },
+    tabs: { hours: "운영시간", attendance: "근태설정" },
     current: "🏪 현재 매장 운영시간",
     attendancePolicyTitle: "⏰ 현재 근태 기준",
     policyDescription: "기준 설명",
@@ -153,39 +100,6 @@ const copy = {
     scheduleNotice: "예약 설정은 선택한 영업일부터 적용되며 기존 기록은 변경하지 않습니다.",
     before: "변경 전",
     after: "변경 후",
-    comparisonTitle: "📊 근태 기준 비교",
-    comparisonSummary: "📈 비교 요약",
-    shadowDate: "영업일",
-    startDate: "시작 영업일",
-    endDate: "종료 영업일",
-    completedNotice: "진행 중인 영업일을 제외한 최근 완료 영업일 7일이 기본값입니다.",
-    historyWarning: "기존 기록 중 일부는 수동 정상처리 여부를 식별할 수 없어 비교 결과에 포함될 수 있습니다.",
-    dateSummary: "날짜별 요약",
-    businessDayCount: "비교 영업일",
-    comparisonCount: "비교 대상",
-    comparisonShort: "비교",
-    verificationNeeded: "검증 필요",
-    verificationNoCheckIn: "출근 기록 없음",
-    verificationManualLate: "수동 지각 정상처리",
-    specialCloseApplied: "특별 조기마감 적용",
-    openSection: "펼치기",
-    closeSection: "접기",
-    employee: "직원",
-    allEmployees: "전체 직원",
-    compare: "비교 실행",
-    comparing: "비교 중…",
-    total: "전체",
-    matched: "일치",
-    mismatched: "불일치",
-    statusChanged: "상태 변경",
-    lateChanged: "지각 변경",
-    earlyChanged: "조퇴 판정 변경",
-    unresolvedChanged: "미퇴근 기준 변경",
-    autoCloseChanged: "종료 기준 변경",
-    late: "지각",
-    early: "조퇴",
-    unresolved: "미퇴근",
-    fallbackBadge: "기본 설정",
     confirmScheduleTitle: "통합설정을 예약할까요?",
     confirmScheduleBody1: "선택한 영업일부터 현재 입력된 운영시간과 근태 기준이 함께 적용됩니다.",
     confirmScheduleBody2: "변경하지 않은 값도 현재 화면에 표시된 값으로 새 통합설정 버전에 포함됩니다.",
@@ -201,7 +115,6 @@ const copy = {
     tabs: {
       hours: "Giờ mở cửa",
       attendance: "Chấm công",
-      shadow: "So sánh",
     },
     current: "🏪 Giờ hoạt động hiện tại",
     attendancePolicyTitle: "⏰ Tiêu chuẩn chấm công hiện tại",
@@ -249,39 +162,6 @@ const copy = {
     scheduleNotice: "Cài đặt áp dụng từ ngày đã chọn và không thay đổi dữ liệu cũ.",
     before: "Trước khi đổi",
     after: "Sau khi đổi",
-    comparisonTitle: "📊 So sánh tiêu chuẩn chấm công",
-    comparisonSummary: "📈 Tóm tắt so sánh",
-    shadowDate: "Ngày kinh doanh",
-    startDate: "Ngày kinh doanh bắt đầu",
-    endDate: "Ngày kinh doanh kết thúc",
-    completedNotice: "Mặc định là 7 ngày kinh doanh đã hoàn tất gần nhất, không gồm ngày đang diễn ra.",
-    historyWarning: "Một số bản ghi cũ không thể xác định việc chuẩn hóa thủ công và có thể vẫn được tính vào kết quả.",
-    dateSummary: "Tóm tắt theo ngày",
-    businessDayCount: "Ngày kinh doanh so sánh",
-    comparisonCount: "Đối tượng so sánh",
-    comparisonShort: "So sánh",
-    verificationNeeded: "Cần kiểm tra",
-    verificationNoCheckIn: "Không có ghi nhận chấm công vào",
-    verificationManualLate: "Đi muộn đã được xử lý thủ công",
-    specialCloseApplied: "Áp dụng giờ đóng cửa sớm đặc biệt",
-    openSection: "Mở",
-    closeSection: "Đóng",
-    employee: "Nhân viên",
-    allEmployees: "Tất cả nhân viên",
-    compare: "Chạy so sánh",
-    comparing: "Đang so sánh…",
-    total: "Tổng",
-    matched: "Khớp",
-    mismatched: "Không khớp",
-    statusChanged: "Đổi trạng thái",
-    lateChanged: "Đổi đi muộn",
-    earlyChanged: "Đổi về sớm",
-    unresolvedChanged: "Đổi chưa chấm ra",
-    autoCloseChanged: "Đổi mốc kết thúc",
-    late: "Đi muộn",
-    early: "Về sớm",
-    unresolved: "Chưa chấm công ra",
-    fallbackBadge: "Mặc định",
     confirmScheduleTitle: "Bạn có muốn lên lịch cài đặt chung không?",
     confirmScheduleBody1: "Từ ngày kinh doanh đã chọn, giờ hoạt động và tiêu chuẩn chấm công đang hiển thị sẽ được áp dụng cùng nhau.",
     confirmScheduleBody2: "Các giá trị không thay đổi cũng sẽ được lưu vào phiên bản cài đặt chung mới.",
@@ -543,13 +423,6 @@ export default function StoreSettingsPage() {
           onMissingCheckoutGrace={setMissingCheckoutGrace}
           onEffective={setEffective}
           onSave={requestSave}
-        />
-      ) : null}
-
-      {data && tab === "shadow" ? (
-        <ShadowTab
-          businessDate={data.overview.businessDate}
-          lang={lang}
         />
       ) : null}
 
@@ -988,233 +861,6 @@ function ConfirmScheduleModal(props: {
   );
 }
 
-function ShadowTab(props: {
-  businessDate: string;
-  lang: "ko" | "vi";
-}) {
-  const t = copy[props.lang];
-  const initialRange = useMemo(
-    () => getCompletedBusinessDateRange(props.businessDate),
-    [props.businessDate]
-  );
-  const [startDate, setStartDate] = useState(initialRange.startBusinessDate);
-  const [endDate, setEndDate] = useState(initialRange.endBusinessDate);
-  const [userId, setUserId] = useState("");
-  const [showDateSummaries, setShowDateSummaries] = useState(false);
-  const [users, setUsers] = useState<UserOption[]>([]);
-  const [result, setResult] = useState<ShadowData | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    void fetch("/api/attendance/users", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((json) => setUsers(json.users || []))
-      .catch(() => setUsers([]));
-  }, []);
-
-  async function runComparison() {
-    setBusy(true);
-    setError("");
-    try {
-      const response = await fetch(
-        "/api/admin/store-settings/attendance-shadow",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            startBusinessDate: startDate,
-            endBusinessDate: endDate,
-            userId: userId || undefined,
-          }),
-        }
-      );
-      if (requireFreshServerSession(response)) return;
-      const json = await response.json();
-      if (!response.ok) throw new Error(json.code || "failed");
-      setResult(json);
-    } catch {
-      setError(t.failed);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const summaryItems = useMemo(() => {
-    if (!result) return [];
-    return [
-      [t.comparisonCount, result.summary.compared],
-      [t.mismatched, result.summary.mismatched],
-    ] as const;
-  }, [result, t]);
-
-  return (
-    <>
-      <section style={styles.card}>
-        <h2 style={styles.sectionTitle}>{t.comparisonTitle}</h2>
-        <p style={styles.help}>{t.completedNotice}</p>
-        <div style={styles.shadowConditionGrid}>
-          <Field label={t.startDate}>
-            <input
-              type="date"
-              max={endDate}
-              value={startDate}
-              style={styles.input}
-              onChange={(event) => setStartDate(event.target.value)}
-            />
-          </Field>
-          <Field label={t.endDate}>
-            <input
-              type="date"
-              max={initialRange.endBusinessDate}
-              value={endDate}
-              style={styles.input}
-              onChange={(event) => setEndDate(event.target.value)}
-            />
-          </Field>
-          <div style={styles.shadowEmployeeField}>
-          <Field label={t.employee}>
-            <select
-              value={userId}
-              style={{ ...styles.input, width: "100%" }}
-              onChange={(event) => setUserId(event.target.value)}
-            >
-              <option value="">{t.allEmployees}</option>
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {formatEmployeeNameWithLevel(user.name || user.username, user.levelInfo)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          </div>
-        </div>
-        <button
-          style={ui.button}
-          disabled={busy || !startDate || !endDate}
-          onClick={runComparison}
-        >
-          {busy ? t.comparing : t.compare}
-        </button>
-        {error ? <p style={styles.error}>{error}</p> : null}
-      </section>
-
-      {result ? (
-        <>
-          <section style={styles.card}>
-            <h2 style={styles.sectionTitle}>{t.comparisonSummary}</h2>
-            {result.historicalManualOverrideWarning ? (
-              <p style={styles.warning}>{t.historyWarning}</p>
-            ) : null}
-            <div style={styles.policyBanner}>
-              <strong>{result.startBusinessDate} ~ {result.endBusinessDate}</strong>
-              <span>{result.businessDayCount} {props.lang === "ko" ? "영업일" : "ngày"}</span>
-            </div>
-            <div style={styles.summaryGrid}>
-              {summaryItems.map(([label, value]) => (
-                <Metric key={label} label={label} value={String(value)} />
-              ))}
-            </div>
-          </section>
-
-          <section style={styles.card}>
-            <button type="button" style={styles.sectionDisclosure} aria-expanded={showDateSummaries} aria-controls="attendance-shadow-date-summaries" onClick={() => setShowDateSummaries((value) => !value)}>
-              <span style={styles.dateSummaryHeader}>
-                <strong style={styles.dateSummaryTitle}>{t.dateSummary}</strong>
-                <small style={styles.dateSummaryOverview}>{result.businessDayCount}{props.lang === "ko" ? "일" : " ngày"} · {t.mismatched} {result.summary.mismatched}</small>
-              </span>
-              <span aria-hidden="true">{showDateSummaries ? "▴" : "▾"}</span>
-            </button>
-            {showDateSummaries ? (
-              <div id="attendance-shadow-date-summaries" style={styles.dateSummaryList}>
-                {result.dateSummaries.map((day) => <DateSummaryRow key={day.businessDate} day={day} rows={result.rows} lang={props.lang} />)}
-              </div>
-            ) : null}
-          </section>
-
-        </>
-      ) : null}
-    </>
-  );
-}
-
-function DateSummaryRow(props: {
-  day: ShadowData["dateSummaries"][number];
-  rows: AttendanceShadowComparison[];
-  lang: "ko" | "vi";
-}) {
-  const t = copy[props.lang];
-  const [open, setOpen] = useState(false);
-  const detailsId = useId();
-  const { day } = props;
-  const dateRows = props.rows.filter(
-    (row) =>
-      row.businessDate === day.businessDate && row.exclusionReason !== "leave"
-  );
-  const mismatchRows = dateRows.filter(
-    (row) =>
-      row.comparisonStatus === "compared" &&
-      Object.values(row.differences).some(Boolean)
-  );
-  const verificationRows = dateRows.flatMap((row) => {
-    const reasons = [
-      row.comparisonStatus === "excluded" &&
-      row.exclusionReason === "no_check_in"
-        ? t.verificationNoCheckIn
-        : null,
-      row.metricComparison.late.comparisonStatus === "excluded"
-        ? t.verificationManualLate
-        : null,
-    ].filter((reason) => reason !== null);
-    return reasons.length ? [{ row, reasons }] : [];
-  });
-  return (
-    <div style={{ ...styles.dateCard, borderColor: day.mismatched ? "#fcd34d" : "#dbe5df", background: day.mismatched ? "#fffbeb" : "#f8faf9" }}>
-      <button type="button" style={styles.dateRowButton} aria-expanded={open} aria-controls={detailsId} onClick={() => setOpen((value) => !value)}>
-        <strong style={styles.dateCardDate}>{shortDate(day.businessDate)}</strong>
-        <span style={styles.dateCardBadge}>{day.fallbackUsed || day.settingsRevision === null ? t.fallbackBadge : `#${day.settingsRevision}`}</span>
-        <span style={styles.dateRowStats}>{t.comparisonShort} {day.compared} · {t.mismatched} {day.mismatched}</span>
-        <span aria-hidden="true">{open ? "▴" : "▾"}</span>
-      </button>
-      {open ? (
-        <div id={detailsId} style={styles.dateDetails}>
-          {day.hasBusinessOverride ? <span style={styles.specialCloseBadge}>{t.specialCloseApplied}</span> : null}
-          <span style={styles.datePolicyLine}>{t.late} {day.attendancePolicy.lateGraceMinutes}{t.minutes} · {t.early} {day.attendancePolicy.earlyLeaveGraceMinutes}{t.minutes} · {t.unresolved} {day.attendancePolicy.missingCheckoutGraceMinutes}{t.minutes}</span>
-          {mismatchRows.length ? (
-            <section style={styles.dateDetailSection}>
-              <h4 style={styles.dateDetailTitle}>{t.mismatched}</h4>
-              <ul style={styles.dateDetailList}>
-                {mismatchRows.map((row) => {
-                  const outcomes = [
-                    row.configured.lateMinutes > 0
-                      ? `${t.late} ${row.configured.lateMinutes}${t.minutes}`
-                      : null,
-                    row.configured.earlyLeaveMinutes > 0
-                      ? `${t.early} ${row.configured.earlyLeaveMinutes}${t.minutes}`
-                      : null,
-                    row.configured.unresolved ? t.unresolved : null,
-                  ].filter((outcome): outcome is string => outcome !== null);
-                  return <li key={row.recordId}><strong>{row.userName}</strong> · {outcomes.join(" · ")}</li>;
-                })}
-              </ul>
-            </section>
-          ) : null}
-          {verificationRows.length ? (
-            <section style={styles.dateDetailSection}>
-              <h4 style={styles.dateDetailTitle}>{t.verificationNeeded}</h4>
-              <ul style={styles.dateDetailList}>
-                {verificationRows.map(({ row, reasons }) => (
-                  <li key={row.recordId}><strong>{row.userName}</strong> · {reasons.join(" · ")}</li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function SettingCard(props: {
   title: string;
   setting: StoreSetting | null;
@@ -1300,18 +946,9 @@ function Field(props: { label: string; children: React.ReactNode }) {
   );
 }
 
-function Metric(props: { label: string; value: string }) {
-  return (
-    <span style={styles.metric}>
-      <small style={styles.metricLabel}>{props.label}</small>
-      <strong style={styles.metricValue}>{props.value}</strong>
-    </span>
-  );
-}
-
 // 좁은 모바일 폭에서도 시간대/마감/적용일 3칸이 줄바꿈 없이 한 줄에 들어가도록
-// Field/Metric보다 폰트·패딩을 줄인 전용 변형. 다른 곳에서 쓰는 Field/Metric은
-// 그대로 두고 이 두 곳(현재 운영시간 카드, 운영시간 변경 입력 카드)에만 쓴다.
+// Field보다 폰트·패딩을 줄인 전용 변형. 다른 곳에서 쓰는 Field는 그대로 두고
+// 이 두 곳(현재 운영시간 카드, 운영시간 변경 입력 카드)에만 쓴다.
 function CompactMetric(props: { label: string; value: string }) {
   return (
     <span style={styles.compactMetric}>
@@ -1438,16 +1075,6 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.4,
   },
   policyDescriptionLine: { margin: "0 0 3px" },
-  dateSummaryHeader: {
-    display: "flex",
-    flex: 1,
-    flexWrap: "wrap",
-    alignItems: "baseline",
-    gap: "4px 14px",
-    minWidth: 0,
-  },
-  dateSummaryTitle: { flexShrink: 0 },
-  dateSummaryOverview: { color: "#64748b", fontSize: 11.5 },
   modalOverlay: {
     position: "fixed",
     inset: 0,
@@ -1559,13 +1186,6 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
     marginBottom: 12,
   },
-  shadowConditionGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 10,
-    marginBottom: 12,
-  },
-  shadowEmployeeField: { gridColumn: "1 / -1", minWidth: 0 },
   effectiveField: { marginBottom: 12 },
   label: { display: "grid", gap: 5, fontSize: 12, fontWeight: 800 },
   input: { ...ui.input, minWidth: 0, height: 40, padding: "8px 10px" },
@@ -1667,303 +1287,11 @@ const styles: Record<string, CSSProperties> = {
     gap: 6,
     marginBottom: 12,
   },
-  metric: {
-    display: "grid",
-    gap: 4,
-    padding: 10,
-    border: "1px solid #e5e7eb",
-    borderRadius: 10,
-    background: "#f8fafc",
-    minWidth: 0,
-  },
-  metricLabel: {
-    fontSize: 12,
-    fontWeight: 700,
-    color: "#6b7280",
-  },
-  metricValue: {
-    fontSize: 14,
-    fontWeight: 700,
-    color: "#111827",
-  },
   help: {
     margin: "6px 0 12px",
     color: "#64748b",
     fontSize: 12,
     lineHeight: 1.5,
-  },
-  policyBanner: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 10,
-    justifyContent: "space-between",
-    marginBottom: 12,
-    fontSize: 12,
-  },
-  summaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))",
-    gap: 6,
-  },
-  sectionDisclosure: {
-    display: "flex",
-    width: "100%",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    padding: 0,
-    border: 0,
-    background: "transparent",
-    color: "#111827",
-    textAlign: "left",
-    fontSize: 15,
-    cursor: "pointer",
-  },
-  shadowRowButton: {
-    display: "flex",
-    width: "100%",
-    alignItems: "center",
-    gap: 8,
-    padding: 0,
-    border: 0,
-    background: "transparent",
-    color: "inherit",
-    textAlign: "left",
-    cursor: "pointer",
-  },
-  configuredOutcomes: {
-    display: "block",
-    marginTop: 3,
-    color: "#334155",
-    fontSize: 12,
-    fontWeight: 700,
-    lineHeight: 1.35,
-  },
-  shadowDetails: {
-    display: "grid",
-    gap: 7,
-    marginTop: 10,
-    paddingTop: 10,
-    borderTop: "1px solid #e5e7eb",
-    fontSize: 12,
-  },
-  shadowList: { display: "grid", gap: 9 },
-  shadowRow: {
-    padding: "10px 12px",
-    border: "1px solid",
-    borderRadius: 12,
-  },
-  shadowRowIdentity: {
-    minWidth: 0,
-    flex: 1,
-    overflow: "hidden",
-  },
-  shadowRowName: {
-    display: "block",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    maxWidth: "100%",
-  },
-  shadowRowSummary: {
-    marginTop: 8,
-  },
-  summaryLine: {
-    margin: "0 0 2px",
-    fontSize: 13,
-    fontWeight: 700,
-    color: "#111827",
-  },
-  summaryLineMuted: {
-    margin: "0 0 2px",
-    fontSize: 12,
-    color: "#64748b",
-  },
-  summaryTransition: {
-    margin: "6px 0 0",
-    fontSize: 12,
-    fontWeight: 700,
-    color: "#92400e",
-  },
-  summaryBulletList: {
-    margin: "4px 0 0",
-    padding: "0 0 0 16px",
-    fontSize: 12,
-    color: "#374151",
-    lineHeight: 1.6,
-  },
-  detailsToggle: {
-    marginTop: 10,
-    minHeight: 36,
-    padding: "8px 4px",
-    border: 0,
-    background: "transparent",
-    color: "#2563eb",
-    fontSize: 12.5,
-    fontWeight: 700,
-    cursor: "pointer",
-    textAlign: "left",
-  },
-  dateSummaryList: { display: "grid", gap: 8 },
-  dateCard: {
-    display: "grid",
-    gap: 6,
-    padding: "10px 12px",
-    border: "1px solid #e5e7eb",
-    borderRadius: 10,
-    background: "#fff",
-  },
-  dateCardHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 8,
-  },
-  dateRowButton: {
-    display: "grid",
-    width: "100%",
-    gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
-    alignItems: "center",
-    gap: 7,
-    padding: 0,
-    border: 0,
-    background: "transparent",
-    color: "inherit",
-    textAlign: "left",
-    cursor: "pointer",
-  },
-  dateRowStats: {
-    minWidth: 0,
-    color: "#475569",
-    fontSize: 11,
-    textAlign: "right",
-  },
-  dateDetails: {
-    display: "grid",
-    gap: 4,
-    paddingTop: 7,
-    borderTop: "1px solid #e5e7eb",
-    color: "#64748b",
-    fontSize: 11,
-  },
-  datePolicyLine: { display: "flex", flexWrap: "wrap", gap: 2 },
-  dateDetailSection: { display: "grid", gap: 3, marginTop: 4 },
-  dateDetailTitle: { margin: 0, color: "#334155", fontSize: 11.5, fontWeight: 800 },
-  dateDetailList: { display: "grid", gap: 3, margin: 0, paddingLeft: 16, color: "#475569", lineHeight: 1.45 },
-  specialCloseBadge: {
-    justifySelf: "start",
-    padding: "2px 7px",
-    borderRadius: 999,
-    background: "#fef3c7",
-    color: "#92400e",
-    fontWeight: 700,
-  },
-  dateCardDate: {
-    fontSize: 14,
-    fontWeight: 800,
-    color: "#111827",
-  },
-  dateCardBadge: {
-    flexShrink: 0,
-    padding: "2px 7px",
-    borderRadius: 999,
-    background: "#f1f5f9",
-    color: "#475569",
-    fontSize: 10,
-    fontWeight: 700,
-    whiteSpace: "nowrap",
-  },
-  dateCardHours: {
-    display: "block",
-    color: "#64748b",
-    fontSize: 11,
-    lineHeight: 1.4,
-  },
-  dateStatGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-    gap: 4,
-    marginTop: 2,
-  },
-  dateStat: {
-    display: "grid",
-    justifyItems: "center",
-    gap: 2,
-    padding: "6px 2px",
-    borderRadius: 8,
-    background: "#f8fafc",
-  },
-  dateStatLabel: {
-    fontSize: 10,
-    fontWeight: 700,
-    color: "#94a3b8",
-    whiteSpace: "nowrap",
-  },
-  dateStatValue: {
-    fontSize: 14,
-    fontWeight: 800,
-    color: "#111827",
-    lineHeight: 1,
-  },
-  excludedRow: {
-    padding: 12,
-    border: "1px solid #e2e8f0",
-    borderRadius: 12,
-    background: "#f8fafc",
-  },
-  excludedBadge: {
-    color: "#475569",
-    background: "#e2e8f0",
-    borderRadius: 999,
-    padding: "4px 8px",
-    fontSize: 11,
-    fontWeight: 700,
-  },
-  excludedMeta: {
-    margin: "4px 0 0",
-    color: "#64748b",
-    fontSize: 12,
-  },
-  neutralBadge: {
-    display: "inline-block",
-    marginLeft: 6,
-    padding: "1px 6px",
-    borderRadius: 999,
-    background: "#e2e8f0",
-    color: "#475569",
-    fontSize: 10,
-    fontWeight: 700,
-  },
-  rowMeta: {
-    display: "block",
-    marginTop: 3,
-    color: "#64748b",
-    fontSize: 11,
-  },
-  comparisonGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 10,
-    marginTop: 9,
-    fontSize: 12,
-  },
-  changedBadge: {
-    color: "#92400e",
-    background: "#fef3c7",
-    borderRadius: 999,
-    padding: "4px 8px",
-    fontSize: 11,
-    whiteSpace: "nowrap",
-    flexShrink: 0,
-  },
-  matchBadge: {
-    color: "#166534",
-    background: "#dcfce7",
-    borderRadius: 999,
-    padding: "4px 8px",
-    fontSize: 11,
-    whiteSpace: "nowrap",
-    flexShrink: 0,
   },
   danger: {
     border: "1px solid #dc2626",

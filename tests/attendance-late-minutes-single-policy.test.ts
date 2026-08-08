@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 // @ts-expect-error Node's direct TypeScript tests require an explicit extension.
@@ -18,7 +18,6 @@ const adapter = read("lib/attendance/policy-resolution-adapter.ts");
 const time = read("lib/attendance/time.ts");
 const attendanceStaffPage = read("app/(protected)/attendance/staff/page.tsx");
 const attendancePage = read("app/(protected)/attendance/page.tsx");
-const shadowRoute = read("app/api/admin/store-settings/attendance-shadow/route.ts");
 const attendanceFacts = read("lib/payroll/attendance-facts.ts");
 
 // ---------------------------------------------------------------------------
@@ -135,24 +134,12 @@ test("no payroll calculation/snapshot/penalty file was modified by this phase", 
 });
 
 // ---------------------------------------------------------------------------
-// 4. Attendance Shadow는 이번 Phase에서 삭제하지 않는다. legacy(저장값) vs
-//    configured(정책 재계산) 비교 기능 자체는 유지된다.
-// ---------------------------------------------------------------------------
-
-test("Attendance Shadow route still exists and still compares stored late_minutes against a fresh evaluateAttendancePolicy() result — not removed by this phase", () => {
-  assert.ok(existsSync(join(process.cwd(), "app/api/admin/store-settings/attendance-shadow/route.ts")));
-  assert.match(shadowRoute, /evaluateAttendancePolicy\(/);
-  assert.match(shadowRoute, /lateMinutes: Number\(record\.late_minutes \|\| 0\)/);
-  assert.match(shadowRoute, /compareAttendanceShadow\(/);
-});
-
-// ---------------------------------------------------------------------------
-// 5. 이번 Phase에는 DB schema 변경이 필요 없다 — 신규 migration 파일이나 새
+// 4. 이번 Phase에는 DB schema 변경이 필요 없다 — 신규 migration 파일이나 새
 //    컬럼(raw_late_minutes 등)을 추가하지 않는다.
 // ---------------------------------------------------------------------------
 
 test("no new column such as raw_late_minutes/policy_late_minutes/effective_late_minutes was introduced anywhere in the codebase", () => {
-  const sources = [checkIn, checkOut, admin, adapter, attendanceFacts, shadowRoute];
+  const sources = [checkIn, checkOut, admin, adapter, attendanceFacts];
   for (const src of sources) {
     assert.doesNotMatch(src, /raw_late_minutes|policy_late_minutes|effective_late_minutes/);
   }
