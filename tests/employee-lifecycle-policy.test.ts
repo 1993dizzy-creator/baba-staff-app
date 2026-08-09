@@ -56,6 +56,31 @@ test("ordinary termination clearing does not reactivate an account",()=>{
   if(result.ok)assert.equal(result.update.is_active,false);
 });
 
+test("a non-terminated inactive account can be explicitly reactivated even when the client repeats termination_date null",()=>{
+  const result=enforceTerminationAccountPolicy({
+    update:{termination_date:null,is_active:true,attendance_tracking_enabled:true,app_login_enabled:true},
+    current:{termination_date:null,is_active:false},
+    today:"2026-07-28",
+  });
+  assert.equal(result.ok,true);
+  if(result.ok)assert.deepEqual(result.update,{
+    termination_date:null,
+    is_active:true,
+    attendance_tracking_enabled:true,
+    app_login_enabled:true,
+  });
+});
+
+test("a non-terminated active account can be manually deactivated when termination_date null is repeated",()=>{
+  const result=enforceTerminationAccountPolicy({
+    update:{termination_date:null,is_active:false},
+    current:{termination_date:null,is_active:true},
+    today:"2026-07-28",
+  });
+  assert.equal(result.ok,true);
+  if(result.ok)assert.equal(result.update.is_active,false);
+});
+
 test("validated termination cancellation honors an explicitly requested reactivation",()=>{
   const result=enforceTerminationAccountPolicy({
     update:{termination_date:null,is_active:true,attendance_tracking_enabled:true,app_login_enabled:true},
@@ -210,6 +235,23 @@ test("termination cancellation is explicit, preserves hire date, and does not by
   assert.match(api,/body\.action === "rehire"[\s\S]*employee_rehire_with_level_policy_v3/);
   assert.doesNotMatch(policy,/hire_date|level_program|payroll/);
   assert.match(api,/if \(target\.termination_date && levelPolicyChanged\)/);
+});
+
+test("profile save and rehire report success and validation failures with alerts instead of top-page save messages",()=>{
+  const page=read("app/(protected)/admin/users/page.tsx");
+  const saveStart=page.indexOf("async function saveUser");
+  const rehireStart=page.indexOf("async function rehireUser");
+  const renderStart=page.indexOf("if (checked && !canAccess)");
+  const save=page.slice(saveStart,rehireStart);
+  const rehire=page.slice(rehireStart,renderStart);
+  assert.match(save,/window\.alert\(text\.saveSuccess\)/);
+  assert.match(save,/window\.alert\(error instanceof Error \? error\.message : text\.saveFailed\)/);
+  assert.equal((save.match(/ATTENDANCE_OPEN_RECORD_EXISTS[\s\S]*?window\.alert/g)??[]).length,1);
+  assert.doesNotMatch(save,/setMessage\(text\.saveSuccess\)|setMessage\(error instanceof Error/);
+  assert.match(rehire,/window\.alert\(text\.saveSuccess\)/);
+  assert.match(rehire,/window\.alert\(error instanceof Error\?error\.message:text\.saveFailed\)/);
+  assert.doesNotMatch(rehire,/setMessage\(text\.saveSuccess\)|setMessage\(error instanceof Error/);
+  assert.match(page,/setMessage\(error instanceof Error \? error\.message : text\.loadFailed\)/);
 });
 
 test("terminated accounts remain blocked by the login active-user filter",()=>{

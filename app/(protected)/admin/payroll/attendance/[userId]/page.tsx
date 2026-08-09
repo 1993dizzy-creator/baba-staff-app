@@ -1284,8 +1284,8 @@ const calendarHeaderRow: CSSProperties = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
-    marginBottom: 14,
+    gap: 8,
+    marginBottom: 12,
 };
 
 const calendarTitleWrap: CSSProperties = {
@@ -1317,24 +1317,29 @@ const calendarMonthButtonStyle: CSSProperties = {
 };
 
 const calendarLegendStyle: CSSProperties = {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 14,
+    display: "grid",
+    gridTemplateColumns: "repeat(2, max-content)",
+    justifyContent: "end",
+    columnGap: 8,
+    rowGap: 3,
     alignItems: "center",
+    paddingInlineEnd: 6,
 };
 
 const legendItemStyle: CSSProperties = {
     display: "inline-flex",
     alignItems: "center",
-    gap: 6,
-    fontSize: 13,
+    gap: 4,
+    fontSize: 11,
+    lineHeight: 1.15,
     color: "#4b5563",
     fontWeight: 700,
+    whiteSpace: "nowrap",
 };
 
 const legendDotStyle: CSSProperties = {
-    width: 8,
-    height: 8,
+    width: 6,
+    height: 6,
     borderRadius: 999,
     flexShrink: 0,
 };

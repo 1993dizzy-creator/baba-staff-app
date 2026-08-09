@@ -789,10 +789,10 @@ export default function AdminUsersPage() {
       setUsers((current) =>
         current.map((user) => (user.id === original.id ? result.user! : user))
       );
-      setMessage(text.saveSuccess);
+      window.alert(text.saveSuccess);
       return true;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : text.saveFailed);
+      window.alert(error instanceof Error ? error.message : text.saveFailed);
       return false;
     } finally {
       setSavingId(null);
@@ -806,8 +806,8 @@ export default function AdminUsersPage() {
       const res = await attendanceFetch("/api/admin/users", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"rehire",id:user.id,lang,rehireDate,levelProgramEnabled,confirmPreviousPayrollCompleted:true}) });
       const result=(await res.json()) as UsersResponse;
       if(!res.ok||!result.ok||!result.user)throw new Error(result.error||text.saveFailed);
-      setUsers(current=>current.map(item=>item.id===user.id?result.user!:item)); setMessage(text.saveSuccess);
-    } catch(error) { setMessage(error instanceof Error?error.message:text.saveFailed); }
+      setUsers(current=>current.map(item=>item.id===user.id?result.user!:item)); window.alert(text.saveSuccess);
+    } catch(error) { window.alert(error instanceof Error?error.message:text.saveFailed); }
     finally { setSavingId(null); }
   }
 

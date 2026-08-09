@@ -50,7 +50,7 @@ export function enforceTerminationAccountPolicy({
 
   if (finalTerminationDate) {
     enforcedUpdate.is_active = false;
-  } else if (hasTerminationUpdate) {
+  } else if (current.termination_date && hasTerminationUpdate) {
     const hasExplicitActiveUpdate = Object.prototype.hasOwnProperty.call(
       update,
       "is_active"

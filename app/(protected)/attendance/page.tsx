@@ -14,17 +14,16 @@ import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
+import PayrollModal from "@/components/payroll/PayrollModal";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
-import { formatContractRate } from "@/lib/payroll/payroll-page-money";
+import {
+  formatContractRate,
+  formatSignedVnd,
+  formatVnd,
+} from "@/lib/payroll/payroll-page-money";
+import type { AttendancePayrollData } from "@/lib/payroll/attendance-self-summary";
 
-
-function formatTodayDate() {
-  const date = new Date();
-  return date.toLocaleDateString("sv-SE", {
-    timeZone: "Asia/Ho_Chi_Minh",
-  }).replaceAll("-", ".");
-}
 
 function formatNextLevelDate(value: string, lang: "ko" | "vi") {
   const [, month, day] = value.split("-");
@@ -102,6 +101,41 @@ type AttendanceProfile = {
 const profileCopy = {
   ko: { nextLevel: "다음 레벨", maximumLevel: "최고 레벨" },
   vi: { nextLevel: "Cấp tiếp theo", maximumLevel: "Cấp cao nhất" },
+} as const;
+
+const payrollSummaryCopy = {
+  ko: {
+    adjustments: "조정 내역",
+    estimatedPayout: "현재 예상 지급액",
+    afterAdjustment: "조정 후",
+    insuranceApplied: "보험 반영",
+    incentive: "인센티브",
+    penalty: "패널티",
+    requiresReview: "검토 필요",
+    incentiveDetails: "인센티브 내역",
+    penaltyDetails: "패널티 내역",
+    noIncentives: "등록된 인센티브 내역이 없습니다.",
+    noPenalties: "등록된 패널티 내역이 없습니다.",
+    total: "합계",
+    close: "닫기",
+    minute: "분",
+  },
+  vi: {
+    adjustments: "Điều chỉnh",
+    estimatedPayout: "Dự tính nhận",
+    afterAdjustment: "Sau điều chỉnh",
+    insuranceApplied: "Đã trừ BH",
+    incentive: "Thưởng",
+    penalty: "Phạt",
+    requiresReview: "Cần kiểm tra",
+    incentiveDetails: "Chi tiết thưởng",
+    penaltyDetails: "Chi tiết phạt",
+    noIncentives: "Chưa có khoản thưởng nào được đăng ký.",
+    noPenalties: "Chưa có khoản phạt nào được đăng ký.",
+    total: "Tổng",
+    close: "Đóng",
+    minute: "phút",
+  },
 } as const;
 
 const initialActionFeedback: AttendanceActionFeedback = {
@@ -407,32 +441,14 @@ function MyAttendance() {
   const isSubmittingAttendance =
     actionFeedback.phase === "locating" || actionFeedback.phase === "saving";
 
-  const [nowText, setNowText] = useState("");
-
-  useEffect(() => {
-    const updateNow = () => {
-      const now = new Date();
-
-      const time = now.toLocaleTimeString("vi-VN", {
-        timeZone: "Asia/Ho_Chi_Minh",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      });
-
-      setNowText(time);
-    };
-
-    updateNow();
-    const timer = setInterval(updateNow, 30000);
-
-    return () => clearInterval(timer);
-  }, []);
-
   const [attendance, setAttendance] =
     useState<AttendanceState>(initialAttendanceState);
   const [hasPendingLeaveToday, setHasPendingLeaveToday] = useState(false);
   const [profile, setProfile] = useState<AttendanceProfile | null>(null);
+  const [payrollData, setPayrollData] = useState<AttendancePayrollData | null>(null);
+  const [payrollDetailKind, setPayrollDetailKind] =
+    useState<"incentive" | "penalty" | null>(null);
+  const payrollRequestSequenceRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -588,6 +604,41 @@ function MyAttendance() {
   useEffect(() => {
     void loadMonthAttendance({ date: calendarDate });
   }, [calendarDate, loadMonthAttendance]);
+
+  useEffect(() => {
+    let active = true;
+    const requestSequence = ++payrollRequestSequenceRef.current;
+    const { monthKey } = getMonthRange(calendarDate);
+    setPayrollData(null);
+
+    attendanceFetch(`/api/attendance/payroll-summary?month=${monthKey}`)
+      .then(async (response) => {
+        const result = await response.json().catch(() => null);
+        if (
+          active &&
+          requestSequence === payrollRequestSequenceRef.current &&
+          response.ok &&
+          result?.ok
+        ) {
+          setPayrollData(
+            result.summary
+              ? {
+                  summary: result.summary,
+                  incentives: Array.isArray(result.incentives) ? result.incentives : [],
+                  penalties: Array.isArray(result.penalties) ? result.penalties : [],
+                } as AttendancePayrollData
+              : null,
+          );
+        }
+      })
+      .catch((error) =>
+        console.error("attendance payroll summary error:", error),
+      );
+
+    return () => {
+      active = false;
+    };
+  }, [calendarDate]);
 
   const handleCheckIn = async () => {
     if (actionInFlightRef.current || isSubmittingAttendance) return;
@@ -856,6 +907,8 @@ function MyAttendance() {
 
   const lateDisplayColor = attendance.lateMinutes > 0 ? "#f59e0b" : "#10b981";
   const p = profileCopy[lang];
+  const ps = payrollSummaryCopy[lang];
+  const payrollSummary = payrollData?.summary ?? null;
   const nextLevelText = profile?.levelInfo.nextLevelDate
     ? formatNextLevelDate(profile.levelInfo.nextLevelDate, lang)
     : profile?.levelInfo.level === 7
@@ -885,13 +938,20 @@ function MyAttendance() {
             </div>
           </div>
 
-          <div style={profileSummaryStyle}>
-            <div style={nextLevelStyle}>⏳ {p.nextLevel} · {nextLevelText}</div>
+          <div
+            style={{
+              ...profileSummaryStyle,
+              ...(profile?.levelInfo.eligible === false
+                ? profileSummaryCenteredStyle
+                : null),
+            }}
+          >
+            {profile?.levelInfo.eligible === true ? (
+              <div style={nextLevelStyle}>⏳ {p.nextLevel} · {nextLevelText}</div>
+            ) : null}
             <strong style={currentSalaryStyle}>{currentSalaryText}</strong>
           </div>
         </div>
-
-        <div style={todayDateRow}>{formatTodayDate()} · {nowText}</div>
 
         <div style={todayStatusPanel}>
           <TodayInfoBlock label={t.checkInTimeLabel}>
@@ -937,20 +997,17 @@ function MyAttendance() {
             disabled={checkInDisabled}
           >
             <span style={actionButtonIcon}>↪</span>
-            <div style={actionButtonTextWrap}>
-              <div style={actionButtonTitle}>
-                {isLoadingToday
-                  ? c.loading
+            <span style={actionButtonTitle}>
+              {isLoadingToday
+                ? c.loading
+                : actionFeedback.action === "check_in" &&
+                    actionFeedback.phase === "locating"
+                  ? actionCopy.locating
                   : actionFeedback.action === "check_in" &&
-                      actionFeedback.phase === "locating"
-                    ? actionCopy.locating
-                    : actionFeedback.action === "check_in" &&
-                        actionFeedback.phase === "saving"
-                      ? actionCopy.savingCheckIn
-                      : t.checkInButton}
-              </div>
-              <div style={actionButtonSubDark}>{t.checkInButtonDesc}</div>
-            </div>
+                      actionFeedback.phase === "saving"
+                    ? actionCopy.savingCheckIn
+                    : t.checkInButton}
+            </span>
           </button>
 
           <button
@@ -964,20 +1021,17 @@ function MyAttendance() {
             disabled={checkOutDisabled}
           >
             <span style={actionButtonIconDark}>↩</span>
-            <div style={actionButtonTextWrap}>
-              <div style={actionButtonTitleDark}>
-                {isLoadingToday
-                  ? c.loading
+            <span style={actionButtonTitleDark}>
+              {isLoadingToday
+                ? c.loading
+                : actionFeedback.action === "check_out" &&
+                    actionFeedback.phase === "locating"
+                  ? actionCopy.locating
                   : actionFeedback.action === "check_out" &&
-                      actionFeedback.phase === "locating"
-                    ? actionCopy.locating
-                    : actionFeedback.action === "check_out" &&
-                        actionFeedback.phase === "saving"
-                      ? actionCopy.savingCheckOut
-                      : t.checkOutButton}
-              </div>
-              <div style={actionButtonSubDark}>{t.checkOutButtonDesc}</div>
-            </div>
+                      actionFeedback.phase === "saving"
+                    ? actionCopy.savingCheckOut
+                    : t.checkOutButton}
+            </span>
           </button>
         </div>
 
@@ -1011,85 +1065,85 @@ function MyAttendance() {
       />
 
       <div style={cardStyle}>
-        <div style={monthSummaryHeader}>
-          <div style={sectionTitle}>{t.monthSummaryTitle}</div>
+        <div style={payrollSummaryHeaderStyle}>
+          <div style={adjustmentGroupStyle}>
+            <span style={adjustmentGroupLabelStyle}>{ps.adjustments}</span>
+            <div style={adjustmentButtonStackStyle}>
+              <button
+                type="button"
+                style={{
+                  ...incentiveButtonStyle,
+                  opacity: payrollData ? 1 : 0.55,
+                  cursor: payrollData ? "pointer" : "not-allowed",
+                }}
+                onClick={() => setPayrollDetailKind("incentive")}
+                disabled={!payrollData}
+              >
+                <span>{ps.incentive}</span>
+                <strong>
+                  {!payrollSummary || payrollSummary.calculationStatus === "unavailable"
+                    ? "-"
+                    : formatSignedVnd(payrollSummary.incentiveAmount, "+")}
+                </strong>
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...penaltyButtonStyle,
+                  opacity: payrollData ? 1 : 0.55,
+                  cursor: payrollData ? "pointer" : "not-allowed",
+                }}
+                onClick={() => setPayrollDetailKind("penalty")}
+                disabled={!payrollData}
+              >
+                <span>{ps.penalty}</span>
+                <strong>
+                  {!payrollSummary || payrollSummary.calculationStatus === "unavailable"
+                    ? "-"
+                    : formatSignedVnd(payrollSummary.penaltyAmount, "-")}
+                </strong>
+              </button>
+            </div>
+          </div>
+
+          <div style={estimatedPayoutStyle}>
+            <span style={estimatedPayoutLabelStyle}>{ps.estimatedPayout}</span>
+            <strong style={estimatedPayoutValueStyle}>
+              {payrollSummary?.calculationStatus === "unavailable" ||
+              !payrollSummary
+                ? "-"
+                : formatVnd(payrollSummary.netPayoutAmount)}
+            </strong>
+            <span style={estimatedPayoutHelpStyle}>
+              {ps.afterAdjustment}
+              {payrollSummary &&
+              payrollSummary.employeeInsuranceDeductionAmount > 0
+                ? ` · ${ps.insuranceApplied}`
+                : ""}
+            </span>
+            {payrollSummary?.calculationStatus === "requires_review" ? (
+              <span style={reviewBadgeStyle}>{ps.requiresReview}</span>
+            ) : null}
+          </div>
         </div>
 
-        <div style={monthSummaryGrid}>
-          <SummaryStatCard
-            icon="📅"
-            iconBg="#eff6ff"
-            iconColor="#2563eb"
-            label={t.summaryWorkDays}
-            value={
-              lang === "vi"
-                ? `${attendance.monthSummary.workDays} ngày`
-                : `${attendance.monthSummary.workDays}일`
-            }
-            subValue=""
-          />
-          <SummaryStatCard
-            icon="🕒"
-            iconBg="#f3f4f6"
-            iconColor="#6b7280"
-            label={t.summaryTotalWorkTime}
-            value={
-              lang === "vi"
-                ? `${attendance.monthSummary.totalHours} giờ`
-                : `${attendance.monthSummary.totalHours}시간`
-            }
-            subValue={
-              lang === "vi"
-                ? `${attendance.monthSummary.totalMinutes} phút`
-                : `${attendance.monthSummary.totalMinutes}분`
-            }
-          />
-          <SummaryStatCard
-            icon="🟠"
-            iconBg="#fff7ed"
-            iconColor="#f97316"
-            label={t.workLate}
-            value={
-              lang === "vi"
-                ? `${attendance.monthSummary.lateCount} lần`
-                : `${attendance.monthSummary.lateCount}회`
-            }
-            subValue={
-              lang === "vi"
-                ? `${attendance.monthSummary.lateMinutes} phút`
-                : `${attendance.monthSummary.lateMinutes}분`
-            }
-          />
-          <SummaryStatCard
-            icon="⟳"
-            iconBg="#fef2f2"
-            iconColor="#ef4444"
-            label={t.workEarlyLeave}
-            value={
-              lang === "vi"
-                ? `${attendance.monthSummary.earlyLeaveCount} lần`
-                : `${attendance.monthSummary.earlyLeaveCount}회`
-            }
-            subValue={
-              lang === "vi"
-                ? `${attendance.monthSummary.earlyLeaveMinutes} phút`
-                : `${attendance.monthSummary.earlyLeaveMinutes}분`
-            }
-          />
-          <SummaryStatCard
-            icon="💼"
-            iconBg="#f3f4f6"
-            iconColor="#6b7280"
-            label={t.workLeave}
-            value={
-              lang === "vi"
-                ? `${attendance.monthSummary.leaveDays} ngày`
-                : `${attendance.monthSummary.leaveDays}일`
-            }
-            subValue=""
-          />
+        <div style={attendanceSummaryGridStyle}>
+          <AttendanceSummaryItem icon="📅" value={attendance.monthSummary.workDays} label={t.summaryWorkDays} />
+          <AttendanceSummaryItem icon="🌴" value={attendance.monthSummary.leaveDays} label={t.workLeave} />
+          <AttendanceSummaryItem icon="⏰" value={attendance.monthSummary.lateCount} label={t.workLate} />
+          <AttendanceSummaryItem icon="🏃" value={attendance.monthSummary.earlyLeaveCount} label={t.workEarlyLeave} />
         </div>
       </div>
+
+      {payrollDetailKind ? (
+        <PayrollDetailModal
+          kind={payrollDetailKind}
+          month={getMonthRange(calendarDate).monthKey}
+          data={payrollData}
+          lang={lang}
+          onClose={() => setPayrollDetailKind(null)}
+        />
+      ) : null}
 
     </div>
   );
@@ -1124,37 +1178,115 @@ function TodayInfoBlock({
   );
 }
 
-function SummaryStatCard({
+function AttendanceSummaryItem({
   icon,
-  iconBg,
-  iconColor,
-  label,
   value,
-  subValue,
+  label,
 }: {
   icon: string;
-  iconBg: string;
-  iconColor: string;
+  value: number;
   label: string;
-  value: string;
-  subValue?: string;
 }) {
   return (
-    <div style={summaryCardStyle}>
-      <div
-        style={{
-          ...summaryIconWrap,
-          background: iconBg,
-          color: iconColor,
-        }}
-      >
-        {icon}
-      </div>
-
-      <div style={summaryLabelStyle}>{label}</div>
-      <div style={summaryValueStyle}>{value}</div>
-      <div style={summarySubValueStyle}>{subValue || ""}</div>
+    <div style={attendanceSummaryItemStyle}>
+      <span style={attendanceSummaryTopRowStyle}>
+        <span aria-hidden="true">{icon}</span>
+        <strong style={attendanceSummaryValueStyle}>{value}</strong>
+      </span>
+      <span style={attendanceSummaryLabelStyle}>{label}</span>
     </div>
+  );
+}
+
+function PayrollDetailModal({
+  kind,
+  month,
+  data,
+  lang,
+  onClose,
+}: {
+  kind: "incentive" | "penalty";
+  month: string;
+  data: AttendancePayrollData | null;
+  lang: "ko" | "vi";
+  onClose: () => void;
+}) {
+  const text = payrollSummaryCopy[lang];
+  const [year, monthNumber] = month.split("-");
+  const monthLabel =
+    lang === "vi" ? `Tháng ${Number(monthNumber)}/${year}` : `${year}년 ${Number(monthNumber)}월`;
+  const items = kind === "incentive" ? data?.incentives ?? [] : data?.penalties ?? [];
+  const total =
+    kind === "incentive"
+      ? data?.summary.incentiveAmount ?? 0
+      : data?.summary.penaltyAmount ?? 0;
+
+  return (
+    <PayrollModal
+      placement="top"
+      title={kind === "incentive" ? text.incentiveDetails : text.penaltyDetails}
+      closeLabel={text.close}
+      onClose={onClose}
+      footer={
+        <button type="button" style={modalCloseButtonStyle} onClick={onClose}>
+          {text.close}
+        </button>
+      }
+    >
+      <div style={modalMonthStyle}>{monthLabel}</div>
+      {items.length === 0 ? (
+        <div style={modalEmptyStyle}>
+          {kind === "incentive" ? text.noIncentives : text.noPenalties}
+        </div>
+      ) : (
+        <div style={modalListStyle}>
+          {items.map((item, index) => {
+            const isAutomatic = "sourceType" in item && item.sourceType === "automatic";
+            const automaticLabel =
+              "sourceType" in item
+                ? item.category === "late"
+                  ? lang === "vi" ? "Phạt đi muộn" : "지각 패널티"
+                  : item.category === "early_leave"
+                    ? lang === "vi" ? "Phạt về sớm" : "조퇴 패널티"
+                    : lang === "vi" ? "Phạt nghỉ không phép" : "무단결근 패널티"
+                : "";
+            const title = isAutomatic ? automaticLabel : item.category;
+            const detailParts = [
+              isAutomatic && "minutes" in item && item.minutes
+                ? `${item.minutes}${text.minute}`
+                : item.reason,
+              item.note,
+            ].filter(Boolean);
+
+            return (
+              <article
+                key={`${item.businessDate}:${item.category}:${index}`}
+                style={modalItemStyle}
+              >
+                <div style={modalItemMainStyle}>
+                  <span style={modalItemDateStyle}>{item.businessDate.slice(5)}</span>
+                  <strong style={modalItemTitleStyle}>{title}</strong>
+                  <strong
+                    style={kind === "incentive" ? modalIncentiveAmountStyle : modalPenaltyAmountStyle}
+                  >
+                    {formatSignedVnd(item.amount, kind === "incentive" ? "+" : "-")}
+                  </strong>
+                </div>
+                {detailParts.length > 0 ? (
+                  <div style={modalItemDetailStyle}>{detailParts.join(" · ")}</div>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      )}
+      <div style={modalTotalStyle}>
+        <span>{text.total}</span>
+        <strong style={kind === "incentive" ? modalIncentiveAmountStyle : modalPenaltyAmountStyle}>
+          {formatSignedVnd(total, kind === "incentive" ? "+" : "-")}
+        </strong>
+      </div>
+    </PayrollModal>
   );
 }
 
@@ -1323,12 +1455,20 @@ function Calendar({
                 <div>{displayDay}</div>
 
                 {!isMuted && record && (record.status !== ATTENDANCE_STATUS.LEAVE || isApprovedLeave(record)) && (
-                  <div
-                    style={{
-                      ...calendarDotStyle,
-                      background: dotColor,
-                    }}
-                  />
+                  <>
+                    <div
+                      style={{
+                        ...calendarDotStyle,
+                        background: dotColor,
+                      }}
+                    />
+                    {(record.check_in_at || record.check_out_at) && (
+                      <div style={calendarTimeTextStyle}>
+                        <div>{record.check_in_at ? formatTimeForDisplay(record.check_in_at) : "-"}</div>
+                        <div>{record.check_out_at ? formatTimeForDisplay(record.check_out_at) : "-"}</div>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {isMuted && <div style={calendarMutedDotStyle}>·</div>}
@@ -1373,7 +1513,7 @@ function calendarCellStyle({
   isSaturday: boolean;
 }): CSSProperties {
   return {
-    minHeight: 48,
+    minHeight: 54,
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
@@ -1405,12 +1545,6 @@ const cardStyle: CSSProperties = {
 const sectionStyle: CSSProperties = {
   display: "grid",
   gap: 14,
-};
-
-const sectionTitle: CSSProperties = {
-  ...ui.sectionTitle,
-  fontSize: 15,
-  marginBottom: 0,
 };
 
 const todayHeaderRow: CSSProperties = {
@@ -1453,6 +1587,11 @@ const profileSummaryStyle: CSSProperties = {
   textAlign: "right",
 };
 
+const profileSummaryCenteredStyle: CSSProperties = {
+  alignSelf: "stretch",
+  justifyContent: "center",
+};
+
 const nextLevelStyle: CSSProperties = {
   color: "#6b7280",
   fontSize: 11,
@@ -1462,21 +1601,10 @@ const nextLevelStyle: CSSProperties = {
 
 const currentSalaryStyle: CSSProperties = {
   color: "#111827",
-  fontSize: 16,
+  fontSize: 15,
   fontWeight: 900,
   lineHeight: 1.2,
   whiteSpace: "nowrap",
-};
-
-const todayDateRow: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  color: "#6b7280",
-  fontSize: 11,
-  fontWeight: 700,
-  whiteSpace: "nowrap",
-  marginBottom: 10,
 };
 
 const todayStatusPanel: CSSProperties = {
@@ -1487,7 +1615,7 @@ const todayStatusPanel: CSSProperties = {
   border: "1px solid #e5e7eb",
   borderRadius: 16,
   background: "#ffffff",
-  padding: "14px 12px",
+  padding: "11px 6px",
   marginBottom: 12,
 };
 
@@ -1497,17 +1625,17 @@ const todayInfoBlock: CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
   minWidth: 0,
-  padding: "0 6px",
+  padding: "0 3px",
   textAlign: "center",
 };
 
 const todayInfoLabel: CSSProperties = {
-  fontSize: 12,
+  fontSize: 11,
   fontWeight: 700,
   color: "#6b7280",
-  marginBottom: 6,
-  lineHeight: 1.15,
-  minHeight: 28, // 🔥 라벨 2줄 기준 높이 고정
+  marginBottom: 4,
+  lineHeight: 1.1,
+  minHeight: 24,
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -1515,17 +1643,20 @@ const todayInfoLabel: CSSProperties = {
 };
 
 const todayInfoValue: CSSProperties = {
-  fontSize: 13,
+  maxWidth: "100%",
+  fontSize: 12,
   fontWeight: 800,
   color: "#111827",
-  lineHeight: 1.2,
+  lineHeight: 1.1,
+  letterSpacing: -0.2,
+  whiteSpace: "nowrap",
 };
 
 const todayInfoSubValue: CSSProperties = {
-  fontSize: 13,
+  fontSize: 11,
   fontWeight: 700,
-  marginTop: 6,
-  lineHeight: 1.2,
+  marginTop: 4,
+  lineHeight: 1.1,
 };
 
 const todayStatusDivider: CSSProperties = {
@@ -1574,9 +1705,9 @@ const monthFeedbackStyle: CSSProperties = {
 };
 
 const actionButtonBase: CSSProperties = {
-  minHeight: 68,
+  minHeight: 50,
   borderRadius: 14,
-  padding: "12px 14px",
+  padding: "10px 12px",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -1599,55 +1730,48 @@ const checkOutButtonStyle: CSSProperties = {
 };
 
 const actionButtonIcon: CSSProperties = {
-  fontSize: 22,
+  fontSize: 19,
   fontWeight: 700,
   lineHeight: 1,
   color: "#ffffff",
 };
 
 const actionButtonIconDark: CSSProperties = {
-  fontSize: 22,
+  fontSize: 19,
   fontWeight: 700,
   lineHeight: 1,
   color: "#111827",
 };
 
-const actionButtonTextWrap: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "flex-start",
-  textAlign: "left",
-};
-
 const actionButtonTitle: CSSProperties = {
-  fontSize: 15,
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 14,
   fontWeight: 800,
-  lineHeight: 1.2,
+  lineHeight: 1.1,
   color: "#ffffff",
 };
 
 
 const actionButtonTitleDark: CSSProperties = {
-  fontSize: 15,
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontSize: 14,
   fontWeight: 800,
-  lineHeight: 1.2,
+  lineHeight: 1.1,
   color: "#111827",
-};
-
-const actionButtonSubDark: CSSProperties = {
-  fontSize: 13,
-  fontWeight: 700,
-  lineHeight: 1.2,
-  color: "#6b7280",
-  marginTop: 5,
 };
 
 const calendarHeaderRow: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  gap: 12,
-  marginBottom: 14,
+  gap: 8,
+  marginBottom: 12,
 };
 
 const calendarTitleWrap: CSSProperties = {
@@ -1679,24 +1803,29 @@ const calendarMonthButtonStyle: CSSProperties = {
 };
 
 const calendarLegendStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 14,
+  display: "grid",
+  gridTemplateColumns: "repeat(2, max-content)",
+  justifyContent: "end",
+  columnGap: 8,
+  rowGap: 3,
   alignItems: "center",
+  paddingInlineEnd: 6,
 };
 
 const legendItemStyle: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
-  gap: 6,
-  fontSize: 13,
+  gap: 4,
+  fontSize: 11,
+  lineHeight: 1.15,
   color: "#4b5563",
   fontWeight: 700,
+  whiteSpace: "nowrap",
 };
 
 const legendDotStyle: CSSProperties = {
-  width: 8,
-  height: 8,
+  width: 6,
+  height: 6,
   borderRadius: 999,
   flexShrink: 0,
 };
@@ -1740,63 +1869,258 @@ const calendarMutedDotStyle: CSSProperties = {
   marginTop: 2,
 };
 
-const monthSummaryHeader: CSSProperties = {
+const calendarTimeTextStyle: CSSProperties = {
+  fontSize: 9,
+  lineHeight: 1.1,
+  fontWeight: 700,
+  color: "#6b7280",
+  whiteSpace: "nowrap",
+};
+
+const payrollSummaryHeaderStyle: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "stretch",
+  gap: 12,
+};
+
+const estimatedPayoutStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-end",
+  justifyContent: "center",
+  minWidth: 0,
+  textAlign: "right",
+};
+
+const estimatedPayoutLabelStyle: CSSProperties = {
+  color: "#6b7280",
+  fontSize: 11,
+  fontWeight: 750,
+  lineHeight: 1.2,
+};
+
+const estimatedPayoutValueStyle: CSSProperties = {
+  marginTop: 3,
+  color: "#111827",
+  fontSize: 17,
+  fontWeight: 900,
+  lineHeight: 1.15,
+  whiteSpace: "nowrap",
+};
+
+const estimatedPayoutHelpStyle: CSSProperties = {
+  marginTop: 3,
+  color: "#9ca3af",
+  fontSize: 10,
+  fontWeight: 700,
+  lineHeight: 1.2,
+  whiteSpace: "nowrap",
+};
+
+const reviewBadgeStyle: CSSProperties = {
+  marginTop: 4,
+  borderRadius: 999,
+  background: "#fff7ed",
+  color: "#c2410c",
+  padding: "2px 6px",
+  fontSize: 10,
+  fontWeight: 800,
+  lineHeight: 1.2,
+};
+
+const adjustmentGroupStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-start",
+  gap: 4,
+  flexShrink: 0,
+};
+
+const adjustmentGroupLabelStyle: CSSProperties = {
+  color: "#6b7280",
+  fontSize: 10,
+  fontWeight: 750,
+  lineHeight: 1.2,
+  whiteSpace: "nowrap",
+};
+
+const adjustmentButtonStackStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  flexShrink: 0,
+};
+
+const adjustmentButtonBaseStyle: CSSProperties = {
+  minWidth: 142,
+  minHeight: 34,
+  borderRadius: 10,
+  padding: "6px 9px",
   display: "flex",
   alignItems: "center",
-  justifyContent: "flex-start",
-  gap: 12,
-  marginBottom: 12,
-};
-
-const monthSummaryGrid: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+  justifyContent: "space-between",
   gap: 8,
+  fontSize: 11,
+  fontWeight: 750,
+  lineHeight: 1.1,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
 };
 
-const summaryCardStyle: CSSProperties = {
-  border: "1px solid #eef0f3",
-  background: "#f9fafb",
-  borderRadius: 14,
-  padding: "10px 6px",
+const incentiveButtonStyle: CSSProperties = {
+  ...adjustmentButtonBaseStyle,
+  border: "1px solid #86efac",
+  background: "#f0fdf4",
+  color: "#15803d",
+};
+
+const penaltyButtonStyle: CSSProperties = {
+  ...adjustmentButtonBaseStyle,
+  border: "1px solid #fca5a5",
+  background: "#fef2f2",
+  color: "#dc2626",
+};
+
+const attendanceSummaryGridStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  gap: 6,
+  marginTop: 12,
+  paddingTop: 8,
+  borderTop: "1px dashed #e5e7eb",
+};
+
+const attendanceSummaryItemStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   alignItems: "center",
+  justifyContent: "center",
+  minWidth: 0,
+  gap: 2,
+  borderRadius: 10,
+  background: "#f9fafb",
+  border: "1px solid #e5e7eb",
+  padding: "6px 4px",
   textAlign: "center",
-  minHeight: 94,
 };
 
-const summaryIconWrap: CSSProperties = {
-  width: 30,
-  height: 30,
-  borderRadius: 999,
+const attendanceSummaryTopRowStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 3,
+  fontSize: 12,
+  whiteSpace: "nowrap",
+};
+
+const attendanceSummaryValueStyle: CSSProperties = {
+  color: "#111827",
+  fontWeight: 900,
+};
+
+const attendanceSummaryLabelStyle: CSSProperties = {
+  color: "#6b7280",
+  fontSize: 10,
+  fontWeight: 700,
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  maxWidth: "100%",
+};
+
+const modalMonthStyle: CSSProperties = {
+  color: "#6b7280",
+  fontSize: 12,
+  fontWeight: 800,
+};
+
+const modalEmptyStyle: CSSProperties = {
+  borderRadius: 12,
+  background: "#f9fafb",
+  padding: "24px 12px",
+  color: "#6b7280",
+  fontSize: 13,
+  fontWeight: 700,
+  textAlign: "center",
+};
+
+const modalListStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+};
+
+const modalItemStyle: CSSProperties = {
+  border: "1px solid #e5e7eb",
+  borderRadius: 12,
+  padding: "10px 11px",
+  background: "#ffffff",
+};
+
+const modalItemMainStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "42px minmax(0, 1fr) auto",
+  alignItems: "center",
+  gap: 7,
+};
+
+const modalItemDateStyle: CSSProperties = {
+  color: "#6b7280",
+  fontSize: 11,
+  fontWeight: 750,
+};
+
+const modalItemTitleStyle: CSSProperties = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  color: "#111827",
+  fontSize: 12,
+  fontWeight: 800,
+  whiteSpace: "nowrap",
+};
+
+const modalIncentiveAmountStyle: CSSProperties = {
+  color: "#15803d",
+  fontSize: 12,
+  fontWeight: 900,
+  whiteSpace: "nowrap",
+};
+
+const modalPenaltyAmountStyle: CSSProperties = {
+  ...modalIncentiveAmountStyle,
+  color: "#dc2626",
+};
+
+const modalItemDetailStyle: CSSProperties = {
+  marginTop: 5,
+  paddingLeft: 49,
+  color: "#6b7280",
+  fontSize: 11,
+  fontWeight: 650,
+  lineHeight: 1.35,
+  overflowWrap: "anywhere",
+};
+
+const modalTotalStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
-  justifyContent: "center",
-  fontSize: 13,
-  marginBottom: 8,
-};
-
-const summaryLabelStyle: CSSProperties = {
-  fontSize: 12,
-  fontWeight: 700,
-  color: "#6b7280",
-  marginBottom: 6,
-  lineHeight: 1.2,
-};
-
-const summaryValueStyle: CSSProperties = {
+  justifyContent: "space-between",
+  gap: 12,
+  borderTop: "1px dashed #d1d5db",
+  paddingTop: 12,
+  color: "#111827",
   fontSize: 13,
   fontWeight: 900,
-  color: "#111827",
-  lineHeight: 1.2,
 };
 
-const summarySubValueStyle: CSSProperties = {
-  fontSize: 12,
-  fontWeight: 700,
-  color: "#6b7280",
-  marginTop: 6,
-  minHeight: 14,
-  lineHeight: 1.2,
+const modalCloseButtonStyle: CSSProperties = {
+  width: "100%",
+  minHeight: 42,
+  border: "1px solid #d1d5db",
+  borderRadius: 11,
+  background: "#ffffff",
+  color: "#111827",
+  fontSize: 13,
+  fontWeight: 800,
+  cursor: "pointer",
 };

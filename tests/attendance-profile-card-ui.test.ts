@@ -24,21 +24,39 @@ test("profile uses the shared employee level and combined salary sources", () =>
   assert.match(page, /formatContractRate\(/);
 });
 
-test("the first card shows identity, role, next level, salary, and compact clock without the large status badge", () => {
+test("the first card shows identity, role, and salary without the status badge or center clock", () => {
   const firstCard = page.slice(page.indexOf("<div style={cardStyle}>"), page.indexOf("<div style={actionGrid}>"));
   assert.match(firstCard, /<EmployeeNameWithLevel/);
   assert.match(firstCard, /getEmployeeRoleLabel\(profile\.role, lang\)/);
   assert.match(firstCard, /p\.nextLevel/);
   assert.match(firstCard, /currentSalaryText/);
-  assert.match(firstCard, /formatTodayDate\(\).*nowText/s);
-  assert.doesNotMatch(firstCard, /statusBadgeStyle|getStatusLabel/);
+  assert.doesNotMatch(firstCard, /formatTodayDate|nowText|todayDateRow|statusBadgeStyle|getStatusLabel/);
+  assert.doesNotMatch(page, /setInterval\(updateNow|setNowText/);
 });
 
-test("level and salary fallbacks do not invent dates or zero amounts", () => {
+test("next-level row is omitted for ineligible employees and retained for eligible and maximum-level employees", () => {
+  assert.match(page, /profile\?\.levelInfo\.eligible === true \? \([\s\S]*?p\.nextLevel[\s\S]*?\) : null/);
+  assert.match(page, /profile\?\.levelInfo\.eligible === false[\s\S]*?profileSummaryCenteredStyle/);
+  assert.match(page, /const profileSummaryCenteredStyle: CSSProperties = \{[\s\S]*?alignSelf: "stretch",[\s\S]*?justifyContent: "center"/);
   assert.match(page, /profile\?\.levelInfo\.nextLevelDate/);
   assert.match(page, /profile\?\.levelInfo\.level === 7[\s\S]*?p\.maximumLevel[\s\S]*?: "-"/);
   assert.match(page, /const currentSalaryText = profile\?\.currentSalary[\s\S]*?: "-";/);
   assert.doesNotMatch(page, /combinedSalary[^\n]*\|\| 0/);
+});
+
+test("attendance values stay compact and do not wrap Vietnamese Đúng giờ", () => {
+  assert.match(page, /const todayInfoLabel: CSSProperties = \{[\s\S]*?fontSize: 11,[\s\S]*?lineHeight: 1\.1/);
+  assert.match(page, /const todayInfoValue: CSSProperties = \{[\s\S]*?fontSize: 12,[\s\S]*?whiteSpace: "nowrap"/);
+  assert.match(page, /const todayStatusPanel: CSSProperties = \{[\s\S]*?padding: "11px 6px"/);
+});
+
+test("check-in and check-out buttons are single-line icon and title controls without description text", () => {
+  const buttons = page.slice(page.indexOf("<div style={actionGrid}>"), page.indexOf("{actionFeedback.message ? ("));
+  assert.match(buttons, /<span style=\{actionButtonIcon\}>↪<\/span>/);
+  assert.match(buttons, /<span style=\{actionButtonIconDark\}>↩<\/span>/);
+  assert.doesNotMatch(buttons, /checkInButtonDesc|checkOutButtonDesc|actionButtonSubDark|actionButtonTextWrap/);
+  assert.match(page, /const actionButtonBase: CSSProperties = \{[\s\S]*?minHeight: 50/);
+  assert.match(page, /const actionButtonTitle: CSSProperties = \{[\s\S]*?whiteSpace: "nowrap"/);
 });
 
 test("existing attendance metrics and check-in/out handlers remain wired", () => {
