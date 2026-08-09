@@ -1,12 +1,16 @@
 import type { PayrollOverviewEmployee } from "@/lib/payroll/overview";
 
 export type AttendancePayrollSummary = {
-  netPayoutAmount: number;
   employeeInsuranceDeductionAmount: number;
   incentiveAmount: number;
   penaltyAmount: number;
-  calculationStatus: PayrollOverviewEmployee["calculationStatus"];
 };
+
+export function getAttendanceAdjustmentTotal(
+  summary: Pick<AttendancePayrollSummary, "incentiveAmount" | "penaltyAmount">,
+) {
+  return summary.incentiveAmount - summary.penaltyAmount;
+}
 
 export type AttendancePayrollIncentive = {
   businessDate: string;
@@ -74,12 +78,10 @@ export function selectAttendancePayrollSummary(
 
   return {
     summary: {
-      netPayoutAmount: employee.amounts.netPayoutAmount,
       employeeInsuranceDeductionAmount:
         employee.amounts.employeeInsuranceDeductionAmount,
       incentiveAmount: employee.amounts.incentiveAmount,
       penaltyAmount: employee.amounts.penaltyAmount,
-      calculationStatus: employee.calculationStatus,
     },
     incentives,
     penalties,

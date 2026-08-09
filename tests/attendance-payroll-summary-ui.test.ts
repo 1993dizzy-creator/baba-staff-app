@@ -24,45 +24,41 @@ test("monthly payroll request follows the visible calendar month and exposes no 
   assert.doesNotMatch(page, /\/api\/admin\/payroll\/overview/);
 });
 
-test("old five-item attendance summary is replaced by payout and four attendance metrics", () => {
+test("salary totals are replaced by adjustment total and four attendance metrics", () => {
   assert.doesNotMatch(page, /<SummaryStatCard|monthSummaryTitle|summaryTotalWorkTime/);
-  assert.match(page, /estimatedPayout: "현재 예상 지급액"/);
-  assert.match(page, /insuranceApplied: "보험 반영"/);
+  assert.match(page, /adjustmentTotal: "조정 합계"/);
+  assert.match(page, /insuranceDeduction: "보험 예상 공제"/);
   assert.match(page, /adjustments: "조정 내역"/);
-  assert.match(page, /afterAdjustment: "조정 후"/);
-  assert.match(page, /estimatedPayout: "Dự tính nhận"/);
-  assert.match(page, /insuranceApplied: "Đã trừ BH"/);
+  assert.match(page, /adjustmentTotal: "Tổng điều chỉnh"/);
+  assert.match(page, /insuranceDeduction: "BH dự kiến"/);
   assert.match(page, /adjustments: "Điều chỉnh"/);
-  assert.match(page, /afterAdjustment: "Sau điều chỉnh"/);
-  assert.doesNotMatch(page, /조정·보험 반영|Khoản chi trả ước tính|Đã gồm điều chỉnh và bảo hiểm/);
-  assert.match(page, /formatVnd\(payrollSummary\.netPayoutAmount\)/);
+  assert.doesNotMatch(page, /현재 예상 지급액|Dự tính nhận|netPayoutAmount|combinedSalary|currentSalary/);
+  assert.match(page, /getAttendanceAdjustmentTotal\(payrollSummary\)/);
+  assert.match(page, /formatAdjustmentAmount\(adjustmentTotal\)/);
   assert.match(page, /formatSignedVnd\(payrollSummary\.incentiveAmount, "\+"\)/);
   assert.match(page, /formatSignedVnd\(payrollSummary\.penaltyAmount, "-"\)/);
-  assert.match(page, /calculationStatus === "requires_review"/);
-  assert.match(page, /calculationStatus === "unavailable"/);
   assert.equal((page.match(/<AttendanceSummaryItem /g) ?? []).length, 4);
   for (const metric of ["workDays", "leaveDays", "lateCount", "earlyLeaveCount"]) {
     assert.match(page, new RegExp(`attendance\\.monthSummary\\.${metric}`));
   }
 });
 
-test("payout area is vertically centered and insurance help is conditional", () => {
+test("adjustment result is centered and insurance deduction is conditional", () => {
   assert.match(page, /const payrollSummaryHeaderStyle: CSSProperties = \{[\s\S]*?alignItems: "stretch"/);
-  assert.match(page, /const estimatedPayoutStyle: CSSProperties = \{[\s\S]*?justifyContent: "center"/);
-  assert.match(page, /const estimatedPayoutStyle: CSSProperties = \{[\s\S]*?alignItems: "flex-end"[\s\S]*?textAlign: "right"/);
+  assert.match(page, /const adjustmentResultStyle: CSSProperties = \{[\s\S]*?justifyContent: "center"/);
+  assert.match(page, /const adjustmentResultStyle: CSSProperties = \{[\s\S]*?alignItems: "flex-end"[\s\S]*?textAlign: "right"/);
   assert.match(page, /payrollSummary\.employeeInsuranceDeductionAmount > 0/);
-  assert.match(page, /ps\.afterAdjustment/);
-  assert.match(page, /ps\.insuranceApplied/);
-  assert.doesNotMatch(page, /Math\.max\([^\n]*netPayoutAmount|netPayoutAmount[^\n]*\? 0/);
+  assert.match(page, /ps\.insuranceDeduction/);
+  assert.match(page, /formatSignedVnd\([\s\S]*?employeeInsuranceDeductionAmount,[\s\S]*?"-"/);
 });
 
 test("summary card omits profile identity and uses two stacked adjustment buttons", () => {
   const start = page.indexOf("<div style={payrollSummaryHeaderStyle}>");
   const summaryHeader = page.slice(start, page.indexOf("<div style={attendanceSummaryGridStyle}>", start));
   assert.doesNotMatch(summaryHeader, /EmployeeNameWithLevel|getEmployeeRoleLabel/);
-  assert.match(summaryHeader, /estimatedPayoutLabelStyle/);
+  assert.match(summaryHeader, /adjustmentResultLabelStyle/);
   assert.match(summaryHeader, /adjustmentGroupLabelStyle/);
-  assert.ok(summaryHeader.indexOf("adjustmentGroupStyle") < summaryHeader.indexOf("estimatedPayoutStyle"));
+  assert.ok(summaryHeader.indexOf("adjustmentGroupStyle") < summaryHeader.indexOf("adjustmentResultStyle"));
   assert.match(summaryHeader, /setPayrollDetailKind\("incentive"\)/);
   assert.match(summaryHeader, /setPayrollDetailKind\("penalty"\)/);
   assert.match(page, /const adjustmentButtonStackStyle: CSSProperties = \{[\s\S]*?flexDirection: "column"/);

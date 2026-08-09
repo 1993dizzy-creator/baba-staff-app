@@ -18,16 +18,24 @@ import PayrollModal from "@/components/payroll/PayrollModal";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
 import {
-  formatContractRate,
   formatSignedVnd,
   formatVnd,
 } from "@/lib/payroll/payroll-page-money";
-import type { AttendancePayrollData } from "@/lib/payroll/attendance-self-summary";
+import {
+  getAttendanceAdjustmentTotal,
+  type AttendancePayrollData,
+} from "@/lib/payroll/attendance-self-summary";
 
 
 function formatNextLevelDate(value: string, lang: "ko" | "vi") {
   const [, month, day] = value.split("-");
   return lang === "vi" ? `${day}/${month}` : `${month}-${day}`;
+}
+
+function formatAdjustmentAmount(value: number) {
+  if (value > 0) return formatSignedVnd(value, "+");
+  if (value < 0) return formatSignedVnd(Math.abs(value), "-");
+  return formatVnd(0);
 }
 
 function formatCalendarTitle(lang: "ko" | "vi", date: Date) {
@@ -92,26 +100,20 @@ type AttendanceProfile = {
   name: string;
   role: string | null;
   levelInfo: EmployeeLevelInfo;
-  currentSalary: {
-    payType: "monthly" | "daily" | "hourly";
-    combinedSalary: number;
-  } | null;
 };
 
 const profileCopy = {
-  ko: { nextLevel: "다음 레벨", maximumLevel: "최고 레벨" },
-  vi: { nextLevel: "Cấp tiếp theo", maximumLevel: "Cấp cao nhất" },
+  ko: { nextLevel: "다음 레벨", maximumLevel: "최고 레벨", levelBonus: "레벨 보너스" },
+  vi: { nextLevel: "Cấp tiếp theo", maximumLevel: "Cấp cao nhất", levelBonus: "Thưởng cấp" },
 } as const;
 
 const payrollSummaryCopy = {
   ko: {
     adjustments: "조정 내역",
-    estimatedPayout: "현재 예상 지급액",
-    afterAdjustment: "조정 후",
-    insuranceApplied: "보험 반영",
+    adjustmentTotal: "조정 합계",
+    insuranceDeduction: "보험 예상 공제",
     incentive: "인센티브",
     penalty: "패널티",
-    requiresReview: "검토 필요",
     incentiveDetails: "인센티브 내역",
     penaltyDetails: "패널티 내역",
     noIncentives: "등록된 인센티브 내역이 없습니다.",
@@ -122,12 +124,10 @@ const payrollSummaryCopy = {
   },
   vi: {
     adjustments: "Điều chỉnh",
-    estimatedPayout: "Dự tính nhận",
-    afterAdjustment: "Sau điều chỉnh",
-    insuranceApplied: "Đã trừ BH",
+    adjustmentTotal: "Tổng điều chỉnh",
+    insuranceDeduction: "BH dự kiến",
     incentive: "Thưởng",
     penalty: "Phạt",
-    requiresReview: "Cần kiểm tra",
     incentiveDetails: "Chi tiết thưởng",
     penaltyDetails: "Chi tiết phạt",
     noIncentives: "Chưa có khoản thưởng nào được đăng ký.",
@@ -909,18 +909,14 @@ function MyAttendance() {
   const p = profileCopy[lang];
   const ps = payrollSummaryCopy[lang];
   const payrollSummary = payrollData?.summary ?? null;
+  const adjustmentTotal = payrollSummary
+    ? getAttendanceAdjustmentTotal(payrollSummary)
+    : null;
   const nextLevelText = profile?.levelInfo.nextLevelDate
     ? formatNextLevelDate(profile.levelInfo.nextLevelDate, lang)
     : profile?.levelInfo.level === 7
       ? p.maximumLevel
       : "-";
-  const currentSalaryText = profile?.currentSalary
-    ? formatContractRate(
-        profile.currentSalary.combinedSalary,
-        profile.currentSalary.payType,
-        lang,
-      )
-    : "-";
 
   return (
     <div style={sectionStyle}>
@@ -938,19 +934,15 @@ function MyAttendance() {
             </div>
           </div>
 
-          <div
-            style={{
-              ...profileSummaryStyle,
-              ...(profile?.levelInfo.eligible === false
-                ? profileSummaryCenteredStyle
-                : null),
-            }}
-          >
-            {profile?.levelInfo.eligible === true ? (
+          {profile?.levelInfo.eligible === true ? (
+            <div style={profileSummaryStyle}>
               <div style={nextLevelStyle}>⏳ {p.nextLevel} · {nextLevelText}</div>
-            ) : null}
-            <strong style={currentSalaryStyle}>{currentSalaryText}</strong>
-          </div>
+              <strong style={levelBonusValueStyle}>
+                {formatSignedVnd(profile.levelInfo.cumulativeRaiseAmount, "+")}
+              </strong>
+              <span style={levelBonusLabelStyle}>{p.levelBonus}</span>
+            </div>
+          ) : null}
         </div>
 
         <div style={todayStatusPanel}>
@@ -1081,9 +1073,9 @@ function MyAttendance() {
               >
                 <span>{ps.incentive}</span>
                 <strong>
-                  {!payrollSummary || payrollSummary.calculationStatus === "unavailable"
-                    ? "-"
-                    : formatSignedVnd(payrollSummary.incentiveAmount, "+")}
+                  {payrollSummary
+                    ? formatSignedVnd(payrollSummary.incentiveAmount, "+")
+                    : "-"}
                 </strong>
               </button>
               <button
@@ -1098,31 +1090,40 @@ function MyAttendance() {
               >
                 <span>{ps.penalty}</span>
                 <strong>
-                  {!payrollSummary || payrollSummary.calculationStatus === "unavailable"
-                    ? "-"
-                    : formatSignedVnd(payrollSummary.penaltyAmount, "-")}
+                  {payrollSummary
+                    ? formatSignedVnd(payrollSummary.penaltyAmount, "-")
+                    : "-"}
                 </strong>
               </button>
             </div>
           </div>
 
-          <div style={estimatedPayoutStyle}>
-            <span style={estimatedPayoutLabelStyle}>{ps.estimatedPayout}</span>
-            <strong style={estimatedPayoutValueStyle}>
-              {payrollSummary?.calculationStatus === "unavailable" ||
-              !payrollSummary
-                ? "-"
-                : formatVnd(payrollSummary.netPayoutAmount)}
+          <div style={adjustmentResultStyle}>
+            <span style={adjustmentResultLabelStyle}>{ps.adjustmentTotal}</span>
+            <strong
+              style={{
+                ...adjustmentResultValueStyle,
+                color:
+                  adjustmentTotal === null || adjustmentTotal === 0
+                    ? "#111827"
+                    : adjustmentTotal > 0
+                      ? "#15803d"
+                      : "#dc2626",
+              }}
+            >
+              {adjustmentTotal === null ? "-" : formatAdjustmentAmount(adjustmentTotal)}
             </strong>
-            <span style={estimatedPayoutHelpStyle}>
-              {ps.afterAdjustment}
-              {payrollSummary &&
-              payrollSummary.employeeInsuranceDeductionAmount > 0
-                ? ` · ${ps.insuranceApplied}`
-                : ""}
-            </span>
-            {payrollSummary?.calculationStatus === "requires_review" ? (
-              <span style={reviewBadgeStyle}>{ps.requiresReview}</span>
+            {payrollSummary &&
+            payrollSummary.employeeInsuranceDeductionAmount > 0 ? (
+              <div style={insuranceDeductionStyle}>
+                <span style={insuranceDeductionLabelStyle}>{ps.insuranceDeduction}</span>
+                <strong style={insuranceDeductionValueStyle}>
+                  {formatSignedVnd(
+                    payrollSummary.employeeInsuranceDeductionAmount,
+                    "-",
+                  )}
+                </strong>
+              </div>
             ) : null}
           </div>
         </div>
@@ -1587,11 +1588,6 @@ const profileSummaryStyle: CSSProperties = {
   textAlign: "right",
 };
 
-const profileSummaryCenteredStyle: CSSProperties = {
-  alignSelf: "stretch",
-  justifyContent: "center",
-};
-
 const nextLevelStyle: CSSProperties = {
   color: "#6b7280",
   fontSize: 11,
@@ -1599,11 +1595,19 @@ const nextLevelStyle: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-const currentSalaryStyle: CSSProperties = {
+const levelBonusValueStyle: CSSProperties = {
   color: "#111827",
   fontSize: 15,
   fontWeight: 900,
   lineHeight: 1.2,
+  whiteSpace: "nowrap",
+};
+
+const levelBonusLabelStyle: CSSProperties = {
+  color: "#6b7280",
+  fontSize: 10,
+  fontWeight: 700,
+  lineHeight: 1.1,
   whiteSpace: "nowrap",
 };
 
@@ -1884,7 +1888,7 @@ const payrollSummaryHeaderStyle: CSSProperties = {
   gap: 12,
 };
 
-const estimatedPayoutStyle: CSSProperties = {
+const adjustmentResultStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   alignItems: "flex-end",
@@ -1893,40 +1897,42 @@ const estimatedPayoutStyle: CSSProperties = {
   textAlign: "right",
 };
 
-const estimatedPayoutLabelStyle: CSSProperties = {
+const adjustmentResultLabelStyle: CSSProperties = {
   color: "#6b7280",
   fontSize: 11,
   fontWeight: 750,
   lineHeight: 1.2,
 };
 
-const estimatedPayoutValueStyle: CSSProperties = {
+const adjustmentResultValueStyle: CSSProperties = {
   marginTop: 3,
-  color: "#111827",
   fontSize: 17,
   fontWeight: 900,
   lineHeight: 1.15,
   whiteSpace: "nowrap",
 };
 
-const estimatedPayoutHelpStyle: CSSProperties = {
-  marginTop: 3,
-  color: "#9ca3af",
+const insuranceDeductionStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-end",
+  marginTop: 8,
+};
+
+const insuranceDeductionLabelStyle: CSSProperties = {
+  color: "#6b7280",
   fontSize: 10,
   fontWeight: 700,
   lineHeight: 1.2,
-  whiteSpace: "nowrap",
 };
 
-const reviewBadgeStyle: CSSProperties = {
-  marginTop: 4,
-  borderRadius: 999,
-  background: "#fff7ed",
-  color: "#c2410c",
-  padding: "2px 6px",
-  fontSize: 10,
-  fontWeight: 800,
+const insuranceDeductionValueStyle: CSSProperties = {
+  marginTop: 2,
+  color: "#4b5563",
+  fontSize: 12,
+  fontWeight: 850,
   lineHeight: 1.2,
+  whiteSpace: "nowrap",
 };
 
 const adjustmentGroupStyle: CSSProperties = {

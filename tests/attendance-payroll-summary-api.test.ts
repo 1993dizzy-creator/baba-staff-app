@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { selectAttendancePayrollSummary } from "../lib/payroll/attendance-self-summary.ts";
+import {
+  getAttendanceAdjustmentTotal,
+  selectAttendancePayrollSummary,
+} from "../lib/payroll/attendance-self-summary.ts";
 import type { PayrollOverviewEmployee } from "../lib/payroll/overview.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
@@ -32,11 +35,9 @@ test("self payroll summary projects only the authenticated employee amounts", ()
   const employees = [employee(11), employee(22, { netPayoutAmount: 9_999_999 })];
   assert.deepEqual(selectAttendancePayrollSummary(employees, 11), {
     summary: {
-      netPayoutAmount: 2_850_000,
       employeeInsuranceDeductionAmount: 0,
       incentiveAmount: 120_000,
       penaltyAmount: 35_000,
-      calculationStatus: "calculable",
     },
     incentives: [],
     penalties: [],
@@ -44,7 +45,7 @@ test("self payroll summary projects only the authenticated employee amounts", ()
   assert.equal(selectAttendancePayrollSummary(employees, 33), null);
 });
 
-test("self payroll summary preserves requires-review and unavailable results without recalculation", () => {
+test("self payroll summary does not expose internal calculation status", () => {
   for (const status of ["requires_review", "unavailable"] as const) {
     const source = employee(11, {
       netPayoutAmount: 777,
@@ -53,15 +54,14 @@ test("self payroll summary preserves requires-review and unavailable results wit
     }, status);
     assert.deepEqual(selectAttendancePayrollSummary([source], 11), {
       summary: {
-        netPayoutAmount: 777,
         employeeInsuranceDeductionAmount: 0,
         incentiveAmount: 22,
         penaltyAmount: 11,
-        calculationStatus: status,
       },
       incentives: [],
       penalties: [],
     });
+    assert.doesNotMatch(JSON.stringify(selectAttendancePayrollSummary([source], 11)), /calculationStatus/);
   }
 });
 
@@ -85,15 +85,20 @@ test("self projection exposes only display DTOs and preserves incentive and comb
   assert.doesNotMatch(JSON.stringify(result), /attendanceRecordId|createdAt|"id"|999|private/);
 });
 
-test("self projection exposes only the insurance deduction amount and preserves negative payout", () => {
+test("self projection removes net payout and exposes only the employee insurance deduction", () => {
   const source = employee(11, {
     netPayoutAmount: -300_000,
     employeeInsuranceDeductionAmount: 300_000,
   });
   const result = selectAttendancePayrollSummary([source], 11);
-  assert.equal(result?.summary.netPayoutAmount, -300_000);
   assert.equal(result?.summary.employeeInsuranceDeductionAmount, 300_000);
-  assert.doesNotMatch(JSON.stringify(result), /insuranceSnapshot|insuranceEnrolled|insuranceBaseAmount|employerInsuranceAmount/);
+  assert.doesNotMatch(JSON.stringify(result), /netPayoutAmount|insuranceSnapshot|insuranceEnrolled|insuranceBaseAmount|employerInsuranceAmount/);
+});
+
+test("adjustment total is incentive minus the positive penalty amount", () => {
+  assert.equal(getAttendanceAdjustmentTotal({ incentiveAmount: 0, penaltyAmount: 30_000 }), -30_000);
+  assert.equal(getAttendanceAdjustmentTotal({ incentiveAmount: 100_000, penaltyAmount: 30_000 }), 70_000);
+  assert.equal(getAttendanceAdjustmentTotal({ incentiveAmount: 0, penaltyAmount: 0 }), 0);
 });
 
 test("attendance payroll route is actor-only, validates month, and reuses the unified overview", () => {
@@ -107,5 +112,6 @@ test("attendance payroll route is actor-only, validates month, and reuses the un
   assert.match(route, /penalties: data\?\.penalties \?\? \[\]/);
   assert.doesNotMatch(route, /searchParams\.get\("userId"\)|body\.userId|requirePayrollActor/);
   assert.doesNotMatch(route, /insuranceSnapshot/);
+  assert.doesNotMatch(route + read("lib/payroll/attendance-self-summary.ts"), /netPayoutAmount/);
   assert.doesNotMatch(route, /attendanceJson\(\{ ok: true, month, employees/);
 });
