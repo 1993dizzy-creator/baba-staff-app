@@ -10,16 +10,20 @@ import { applyEmployeeLevelProgramVersion, loadEmployeeLevelProgramVersions, wit
 
 const BASE_USER_FIELDS =
   "id,username,name,role,is_active,part,position,work_start_time,work_end_time,hire_date,termination_date,is_system_account,level_program_enabled,level_base_date_override,attendance_tracking_enabled";
+const USER_FIELDS_WITH_BIRTH_DATE = `${BASE_USER_FIELDS},birth_date`;
+
+function birthdayMonthDay(value: unknown): string | null {
+  return typeof value === "string" && /^\d{4}-(0[1-9]|1[0-2])-([012]\d|3[01])$/.test(value)
+    ? value.slice(5)
+    : null;
+}
 
 export async function GET(request: Request) {
   try {
     const auth = await requireAttendanceActor();
     if (!auth.ok) return attendanceAuthFailure(auth);
 
-    const fields =
-      auth.actor.role === "owner" || auth.actor.role === "master"
-        ? `${BASE_USER_FIELDS},birth_date`
-        : BASE_USER_FIELDS;
+    const canViewFullBirthDate = auth.actor.role === "owner" || auth.actor.role === "master";
     const search = new URL(request.url).searchParams;
     const mode = search.get("mode") === "month" ? "month" : "current";
     const month = search.get("month");
@@ -28,7 +32,7 @@ export async function GET(request: Request) {
     }
     const { data, error } = await supabaseServer
       .from("users")
-      .select(fields)
+      .select(USER_FIELDS_WITH_BIRTH_DATE)
       .eq("is_system_account", false)
       .order("part", { ascending: true })
       .order("position", { ascending: true })
@@ -45,10 +49,20 @@ export async function GET(request: Request) {
       );
     }
 
-    const rows = (data ?? []) as unknown as Array<EmployeeLevelUser & {id:number;is_active:boolean;attendance_tracking_enabled:boolean}>;
+    const rows = (data ?? []) as unknown as Array<EmployeeLevelUser & {id:number;is_active:boolean;attendance_tracking_enabled:boolean;birth_date:string|null}>;
     const withLevels = async (users: typeof rows, asOfDate: string) => {
       const versions = await loadEmployeeLevelProgramVersions(users.map((user) => Number(user.id)), asOfDate);
       return users.map((user) => withEmployeeLevelInfo(applyEmployeeLevelProgramVersion(user, versions.get(Number(user.id))), asOfDate));
+    };
+    const serializeUsers = async (users: typeof rows, asOfDate: string) => {
+      const leveled = await withLevels(users, asOfDate);
+      return leveled.map((user) => {
+        const monthDay = birthdayMonthDay(user.birth_date);
+        if (canViewFullBirthDate) return { ...user, birthdayMonthDay: monthDay };
+        const { birth_date: _privateBirthDate, ...publicUser } = user;
+        void _privateBirthDate;
+        return { ...publicUser, birthdayMonthDay: monthDay };
+      });
     };
     const levelAsOfDate = getAttendanceWorkDate();
     if (mode === "current") {
@@ -57,7 +71,7 @@ export async function GET(request: Request) {
       // 미사용 직원은 여기서 제외한다. 과거 기록 조회는 mode=month가 별도로 처리한다.
       return attendanceJson({
         ok: true,
-        users: await withLevels(
+        users: await serializeUsers(
           rows.filter(
             (user) =>
               user.is_active === true &&
@@ -74,7 +88,7 @@ export async function GET(request: Request) {
     const { data: attendance, error: attendanceError } = await supabaseServer.from("attendance_records").select("user_id").gte("work_date", first).lte("work_date", last);
     if (attendanceError) throw new Error(`Failed to load monthly attendance users: ${attendanceError.message}`);
     const recordedIds = new Set((attendance ?? []).map(row => Number(row.user_id)));
-    return attendanceJson({ ok: true, users: await withLevels(rows.filter(user => shouldIncludeMonthlyEmployee(user, month!, recordedIds.has(Number(user.id)))), last) });
+    return attendanceJson({ ok: true, users: await serializeUsers(rows.filter(user => shouldIncludeMonthlyEmployee(user, month!, recordedIds.has(Number(user.id)))), last) });
   } catch (err) {
     console.error("attendance users exception:", err);
     return attendanceJson(

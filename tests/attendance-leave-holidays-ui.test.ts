@@ -15,7 +15,7 @@ const page = read("app/(protected)/attendance/leave/page.tsx");
 // 선택한 날짜만 서버 단계에서 걸러 반환한다(store_holidays 전체가 아님) — 그래서
 // 이 페이지는 응답을 그대로 믿고 추가 클라이언트 필터링을 하지 않는다. 아래 7개
 // 시나리오는 이 계약을 명시적으로 검증한다:
-//   1) 법정공휴일 + BABA 선택 → API가 반환 → 🇻🇳 마커 표시
+//   1) 법정공휴일 + BABA 선택 → API가 반환 → 2X 마커 표시
 //   2) 법정공휴일 + BABA 미선택 → API가 반환하지 않음 → 마커 없음
 //   3) 평범한 날짜 → 마커 없음
 //   4) 선택된 공휴일 + 승인된 휴무 → 마커와 승인 배지가 함께 표시
@@ -51,10 +51,11 @@ test("[scenarios 1+2] holidayByDate trusts the API response as-is (every returne
   assert.doesNotMatch(memoBlock, /internalPayMultiplier|isEmployerSelected/);
 });
 
-test("[scenario 3] calendar cell: a non-holiday day never renders the 🇻🇳 marker", () => {
+test("[scenario 3] calendar cell: only an effective holiday renders the 2X marker (the old VN flag is gone)", () => {
   const cellBlock = page.slice(page.indexOf("const isHoliday = holidayByDate.has"), page.indexOf("</button>\n              );\n            })}"));
   assert.match(cellBlock, /\{isHoliday && \(/);
-  assert.match(cellBlock, /🇻🇳/);
+  assert.match(cellBlock, />\s*2X\s*</);
+  assert.doesNotMatch(cellBlock, /🇻🇳|\bVN\b/);
 });
 
 test("[scenario 1] calendar cell: holiday date number turns red and shares the same red as Sunday (no conflicting color rule), Saturday blue is overridden on a holiday", () => {
@@ -75,7 +76,7 @@ test("calendar cell: active (selected date, black background) always wins over t
   assert.ok(pendingIdx > -1 && holidayIdx > -1 && pendingIdx < holidayIdx);
 });
 
-test("[scenarios 4+5] the 🇻🇳 marker and the approved/pending count badges are two independent sibling elements in the same cell — neither is gated by the other, so a selected holiday with an approved or pending leave shows both at once", () => {
+test("[scenarios 4+5] the 2X marker and approved/pending count badges remain independent sibling elements", () => {
   const cellBlock = page.slice(page.indexOf("const isHoliday = holidayByDate.has"), page.indexOf("</button>\n              );\n            })}"));
   const markerBlock = cellBlock.slice(cellBlock.indexOf("<span>"), cellBlock.indexOf("{(hasApproved || hasPending) && ("));
   assert.match(markerBlock, /\{isHoliday && \(/);
@@ -86,26 +87,27 @@ test("[scenarios 4+5] the 🇻🇳 marker and the approved/pending count badges 
 });
 
 test("holiday marker style keeps the 34px cell height — small font, no extra block/line added", () => {
-  assert.match(page, /const holidayFlagStyle: CSSProperties = \{\s*\n\s*fontSize: 8,\s*\n\s*lineHeight: 1,/);
+  assert.match(page, /const holidayFlagStyle: CSSProperties = \{\s*\n\s*fontSize: 8\.5,\s*\n\s*lineHeight: 1,/);
   assert.match(page, /const emptyCalendarCellStyle: CSSProperties = \{\s*\n\s*height: 34,/);
-  assert.match(page, /const calendarCellStyle: CSSProperties = \{\s*\n\s*height: 34,/);
+  assert.match(page, /const calendarCellStyle: CSSProperties = \{[\s\S]*?height: 34,/);
 });
 
-test("[scenario 1] selected-date detail: a two-line holiday notice (🇻🇳 + localized name, then the BABA internal premium line) renders right after the date title, and is visually/semantically separate from leave request cards", () => {
+test("[scenario 1] selected-date header uses one wrapping row with the localized 200% holiday badge and no separate holiday-name line", () => {
   const detailBlock = page.slice(
-    page.indexOf("{copy.selectedDate} · {selectedDate}"),
+    page.indexOf("<div style={selectedDateHeaderStyle}>"),
     page.indexOf("{isInitialLoading ? (")
   );
+  assert.match(detailBlock, /<div style=\{selectedDateHeaderStyle\}>/);
   assert.match(detailBlock, /\{selectedHoliday && \(/);
-  assert.match(detailBlock, /<div>🇻🇳 \{lang === "vi" \? selectedHoliday\.nameVi : selectedHoliday\.nameKo\}<\/div>/);
-  assert.match(detailBlock, /<div style=\{holidayPremiumLineStyle\}>\{copy\.holidayPremiumNotice\}<\/div>/);
+  assert.match(detailBlock, /<span style=\{selectedHolidayBadgeStyle\}>\{copy\.holidayPremiumNotice\}<\/span>/);
+  assert.doesNotMatch(detailBlock, /selectedHoliday\.nameKo|selectedHoliday\.nameVi|holidayNoticeStyle|holidayPremiumLineStyle/);
 });
 
-test("holidayPremiumNotice copy (ko/vi) states the BABA-internal premium, never a legal/statutory rate name — checked on the actual copy values, not the design-rationale comments which legitimately explain what it is NOT", () => {
-  assert.match(page, /holidayPremiumNotice: "매장 영업 · 200%"/);
-  assert.match(page, /holidayPremiumNotice: "Mở cửa · 200%"/);
-  const koLine = page.slice(page.indexOf('holidayPremiumNotice: "매장'), page.indexOf('holidayPremiumNotice: "매장') + 60);
-  const viLine = page.slice(page.indexOf('holidayPremiumNotice: "Mở'), page.indexOf('holidayPremiumNotice: "Mở') + 60);
+test("holidayPremiumNotice copy is concise and localized in ko/vi", () => {
+  assert.match(page, /holidayPremiumNotice: "공휴일 \(200%\)"/);
+  assert.match(page, /holidayPremiumNotice: "Ngày lễ \(200%\)"/);
+  const koLine = page.slice(page.indexOf('holidayPremiumNotice: "공휴일'), page.indexOf('holidayPremiumNotice: "공휴일') + 60);
+  const viLine = page.slice(page.indexOf('holidayPremiumNotice: "Ngày lễ'), page.indexOf('holidayPremiumNotice: "Ngày lễ') + 60);
   for (const forbidden of ["statutoryPayRate", "legalPayMultiplier", "legallyPaid", "statutory200", "법정"]) {
     assert.doesNotMatch(koLine, new RegExp(forbidden, "i"));
     assert.doesNotMatch(viLine, new RegExp(forbidden, "i"));

@@ -17,6 +17,8 @@ import { getBusinessDate } from "@/lib/common/business-time";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
+import { isDateKey, isEmployedOn } from "@/lib/employment/eligibility";
+import { isAttendanceTrackingUser } from "@/lib/attendance/tracking-policy";
 
 type UserRow = {
   id: string | number;
@@ -26,6 +28,11 @@ type UserRow = {
   position: string | null;
   role: string | null;
   is_active: boolean;
+  hire_date: string | null;
+  termination_date: string | null;
+  is_system_account: boolean;
+  attendance_tracking_enabled: boolean;
+  birthdayMonthDay: string | null;
   levelInfo?: EmployeeLevelInfo;
 };
 
@@ -272,12 +279,9 @@ export default function AttendanceLeavePage() {
             cancelApprovalFirst: "Vui lòng hủy phê duyệt trước, sau đó hủy đơn đăng ký.",
             cancelNotFound: "Đơn đăng ký đã bị hủy hoặc không còn tồn tại.",
             refreshing: "Đang cập nhật...",
-            total: "Tổng số đơn",
-            pending: "Chờ duyệt",
-            approved: "Đã duyệt",
             selectedDate: "Ngày đã chọn",
             reason: "Lý do",
-            holidayPremiumNotice: "Mở cửa · 200%",
+            holidayPremiumNotice: "Ngày lễ (200%)",
           }
         : {
             loadError: "휴무 정보를 불러오지 못했습니다. 다시 시도해 주세요.",
@@ -290,12 +294,9 @@ export default function AttendanceLeavePage() {
             cancelApprovalFirst: "승인을 먼저 취소한 후 신청을 취소해 주세요.",
             cancelNotFound: "이미 취소되었거나 존재하지 않는 신청입니다.",
             refreshing: "갱신 중...",
-            total: "전체 신청",
-            pending: "승인 대기",
-            approved: "승인 완료",
             selectedDate: "선택 날짜",
             reason: "사유",
-            holidayPremiumNotice: "매장 영업 · 200%",
+            holidayPremiumNotice: "공휴일 (200%)",
           },
     [lang]
   );
@@ -639,6 +640,11 @@ export default function AttendanceLeavePage() {
         position: currentUser.position ?? null,
         role: currentUser.role ?? null,
         is_active: true,
+        hire_date: null,
+        termination_date: null,
+        is_system_account: false,
+        attendance_tracking_enabled: true,
+        birthdayMonthDay: null,
       });
     }
     return map;
@@ -694,6 +700,25 @@ export default function AttendanceLeavePage() {
     return map;
   }, [holidays]);
 
+  const birthdayUsersByDate = useMemo(() => {
+    const usersByDate = new Map<string, UserRow[]>();
+    const calendarYear = calendarDate.getFullYear();
+    users.forEach((user) => {
+      if (
+        isOwnerOrMasterRole(user.role) ||
+        !isAttendanceTrackingUser(user) ||
+        !user.birthdayMonthDay
+      ) return;
+      const birthdayDate = `${calendarYear}-${user.birthdayMonthDay}`;
+      // 02/29처럼 해당 연도에 존재하지 않는 날짜는 다른 날로 보정하지 않고 제외한다.
+      if (!isDateKey(birthdayDate) || !isEmployedOn(user, birthdayDate)) return;
+      const birthdayUsers = usersByDate.get(birthdayDate) ?? [];
+      birthdayUsers.push(user);
+      usersByDate.set(birthdayDate, birthdayUsers);
+    });
+    return usersByDate;
+  }, [calendarDate, users]);
+
   const staffSummaryGroups = useMemo(() => {
     const summaryMap = new Map<string, { count: number; dates: string[] }>();
 
@@ -740,6 +765,7 @@ export default function AttendanceLeavePage() {
 
   const calendarCells = useMemo(() => getCalendarCells(calendarDate), [calendarDate]);
   const selectedHoliday = holidayByDate.get(selectedDate);
+  const selectedBirthdayUsers = birthdayUsersByDate.get(selectedDate) ?? [];
 
   const mySelectedRecord = visibleLeaveRecords.find(
     (record) =>
@@ -750,22 +776,6 @@ export default function AttendanceLeavePage() {
   const leaveRequestButtonLabel = getLeaveRequestButtonLabel(
     lang,
     hasMySelectedLeave
-  );
-  const summary = useMemo(
-    () =>
-      visibleLeaveRecords.reduce(
-        (result, record) => {
-          result.total += 1;
-          if (getApprovalStatus(record) === APPROVAL_STATUS.APPROVED) {
-            result.approved += 1;
-          } else {
-            result.pending += 1;
-          }
-          return result;
-        },
-        { total: 0, pending: 0, approved: 0 }
-      ),
-    [visibleLeaveRecords]
   );
   const isInitialLoading =
     (isLoadingUsers && users.length === 0) ||
@@ -794,14 +804,6 @@ export default function AttendanceLeavePage() {
             {feedback.message}
           </div>
         )}
-
-        <div style={summaryCardsStyle}>
-          <SummaryCard label={copy.total} value={summary.total} color="#111827" />
-          <SummaryCard label={copy.pending} value={summary.pending} color="#d97706" />
-          <SummaryCard label={copy.approved} value={summary.approved} color="#059669" />
-        </div>
-
-        <SectionTitle title={t.monthCalendar} />
 
         <div style={cardStyle}>
           <div style={calendarHeaderStyle}>
@@ -867,6 +869,7 @@ export default function AttendanceLeavePage() {
               const hasApproved = leaveCount.approved > 0;
               const hasPending = leaveCount.pending > 0;
               const isHoliday = holidayByDate.has(cell.dateKey || "");
+              const hasBirthday = birthdayUsersByDate.has(cell.dateKey || "");
 
               return (
                 <button
@@ -909,7 +912,7 @@ export default function AttendanceLeavePage() {
                     {cell.day}
                     {isHoliday && (
                       <span style={holidayFlagStyle} aria-hidden="true">
-                        🇻🇳
+                        2X
                       </span>
                     )}
                   </span>
@@ -939,22 +942,31 @@ export default function AttendanceLeavePage() {
                       )}
                     </span>
                   )}
+                  {hasBirthday && (
+                    <span style={birthdayMarkerStyle} aria-hidden="true">🎂</span>
+                  )}
                 </button>
               );
             })}
           </div>
 
           <div style={selectedListStyle}>
-            <div style={selectedDateTitleStyle}>
-              {copy.selectedDate} · {selectedDate}
-            </div>
-
-            {selectedHoliday && (
-              <div style={holidayNoticeStyle}>
-                <div>🇻🇳 {lang === "vi" ? selectedHoliday.nameVi : selectedHoliday.nameKo}</div>
-                <div style={holidayPremiumLineStyle}>{copy.holidayPremiumNotice}</div>
+            <div style={selectedDateHeaderStyle}>
+              <div style={selectedDateTitleStyle}>
+                {copy.selectedDate} · {selectedDate.slice(5)}
               </div>
-            )}
+              {(selectedHoliday || selectedBirthdayUsers.length > 0) && (
+                <span style={selectedDateIndicatorsStyle}>
+                  {selectedHoliday && (
+                    <span style={selectedHolidayBadgeStyle}>{copy.holidayPremiumNotice}</span>
+                  )}
+                  {selectedHoliday && selectedBirthdayUsers.length > 0 ? <span>·</span> : null}
+                  {selectedBirthdayUsers.length > 0 ? (
+                    <span>🎂 {selectedBirthdayUsers.map((user) => user.name).join(", ")}</span>
+                  ) : null}
+                </span>
+              )}
+            </div>
 
             {isInitialLoading ? (
               <div style={selectedEmptyStyle}>{c.loading}</div>
@@ -1163,23 +1175,6 @@ function Empty({ text }: { text: string }) {
   return <div style={emptyStyle}>{text}</div>;
 }
 
-function SummaryCard({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: number;
-  color: string;
-}) {
-  return (
-    <div style={summaryCardStyle}>
-      <span style={summaryCardLabelStyle}>{label}</span>
-      <strong style={{ ...summaryCardValueStyle, color }}>{value}</strong>
-    </div>
-  );
-}
-
 function getLeaveRequestButtonLabel(
   lang: "ko" | "vi",
   hasSelectedLeave: boolean
@@ -1208,37 +1203,6 @@ const feedbackStyle: CSSProperties = {
   fontSize: 13,
   fontWeight: 700,
   overflowWrap: "anywhere",
-};
-
-const summaryCardsStyle: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))",
-  gap: 8,
-};
-
-const summaryCardStyle: CSSProperties = {
-  minWidth: 0,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: 8,
-  padding: "10px 12px",
-  border: "1px solid #e5e7eb",
-  borderRadius: 12,
-  background: "#ffffff",
-};
-
-const summaryCardLabelStyle: CSSProperties = {
-  minWidth: 0,
-  fontSize: 12,
-  fontWeight: 800,
-  color: "#6b7280",
-};
-
-const summaryCardValueStyle: CSSProperties = {
-  flexShrink: 0,
-  fontSize: 20,
-  lineHeight: 1,
 };
 
 const sectionStyle: CSSProperties = {
@@ -1324,6 +1288,7 @@ const emptyCalendarCellStyle: CSSProperties = {
 };
 
 const calendarCellStyle: CSSProperties = {
+  position: "relative",
   height: 34,
   border: "1px solid #e5e7eb",
   borderRadius: 9,
@@ -1345,9 +1310,20 @@ const countGroupStyle: CSSProperties = {
 
 // 공휴일 표시 — 셀 높이(34px)를 늘리지 않도록 아주 작은 폰트로 day 숫자 옆에만 붙인다.
 const holidayFlagStyle: CSSProperties = {
-  fontSize: 8,
+  fontSize: 8.5,
   lineHeight: 1,
-  marginLeft: 1,
+  marginLeft: 2,
+  fontWeight: 800,
+  opacity: 0.82,
+};
+
+const birthdayMarkerStyle: CSSProperties = {
+  position: "absolute",
+  top: 2,
+  right: 2,
+  fontSize: 10,
+  lineHeight: 1,
+  pointerEvents: "none",
 };
 
 const countDotStyle: CSSProperties = {
@@ -1373,20 +1349,34 @@ const selectedDateTitleStyle: CSSProperties = {
   color: "#374151",
 };
 
-// 휴무 신청 카드/승인 버튼과 의미적으로 섞이지 않도록 별도 블록으로만 표시한다.
-const holidayNoticeStyle: CSSProperties = {
-  marginTop: 4,
-  fontSize: 12,
-  fontWeight: 700,
-  color: "#b91c1c",
+const selectedDateHeaderStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 6,
+  flexWrap: "wrap",
 };
 
-// BABA 내부 운영 지침(200% 적용) 안내 — 법정 지급률이 아니라는 점을 문구 자체에서
-// "내부"로 구분한다. 공휴일 이름 줄보다 한 단계 옅게 표시한다.
-const holidayPremiumLineStyle: CSSProperties = {
-  marginTop: 2,
-  fontWeight: 600,
-  color: "#92400e",
+const selectedDateIndicatorsStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 5,
+  flexWrap: "wrap",
+  justifyContent: "flex-end",
+  color: "#374151",
+  fontSize: 11,
+  fontWeight: 800,
+};
+
+const selectedHolidayBadgeStyle: CSSProperties = {
+  borderRadius: 999,
+  padding: "3px 7px",
+  background: "#fef2f2",
+  color: "#b91c1c",
+  fontSize: 11,
+  fontWeight: 800,
+  lineHeight: 1.2,
+  whiteSpace: "nowrap",
 };
 
 const selectedEmptyStyle: CSSProperties = {
