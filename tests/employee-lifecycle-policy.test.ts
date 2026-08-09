@@ -46,11 +46,49 @@ test("termination saves force account deactivation and reject future Vietnam dat
   );
 });
 
-test("clearing termination does not reactivate an account",()=>{
+test("ordinary termination clearing does not reactivate an account",()=>{
   const result=enforceTerminationAccountPolicy({
     update:{termination_date:null,is_active:true},
     current:{termination_date:"2026-07-10",is_active:false},
     today:"2026-07-28"
+  });
+  assert.equal(result.ok,true);
+  if(result.ok)assert.equal(result.update.is_active,false);
+});
+
+test("validated termination cancellation honors an explicitly requested reactivation",()=>{
+  const result=enforceTerminationAccountPolicy({
+    update:{termination_date:null,is_active:true,attendance_tracking_enabled:true,app_login_enabled:true},
+    current:{termination_date:"2026-07-10",is_active:false},
+    today:"2026-07-28",
+    allowExplicitReactivationOnClear:true,
+  });
+  assert.equal(result.ok,true);
+  if(result.ok)assert.deepEqual(result.update,{
+    termination_date:null,
+    is_active:true,
+    attendance_tracking_enabled:true,
+    app_login_enabled:true,
+  });
+});
+
+test("termination cancellation without an explicit active value preserves the inactive state",()=>{
+  const result=enforceTerminationAccountPolicy({
+    update:{termination_date:null},
+    current:{termination_date:"2026-07-10",is_active:false},
+    today:"2026-07-28",
+    allowExplicitReactivationOnClear:true,
+  });
+  assert.equal(result.ok,true);
+  if(result.ok)assert.equal(result.update.is_active,false);
+});
+
+test("a terminated account cannot be activated while its termination date remains",()=>{
+  const result=enforceTerminationAccountPolicy({
+    update:{is_active:true},
+    current:{termination_date:"2026-07-10",is_active:false},
+    today:"2026-07-28",
+    allowExplicitReactivationOnClear:true,
   });
   assert.equal(result.ok,true);
   if(result.ok)assert.equal(result.update.is_active,false);
@@ -156,6 +194,22 @@ test("employee UI separates account access, termination and explicit rehire conf
   assert.match(page,/flexWrap: "wrap"/);
   assert.match(api,/isPayrollOwnerRole\(target\.role\)/);
   for(const label of ["퇴사일","계정 사용 가능","복귀 처리","Ngày nghỉ việc","Cho phép sử dụng tài khoản","Cho làm lại"])assert.match(text,new RegExp(label));
+});
+
+test("termination cancellation is explicit, preserves hire date, and does not bypass rehire v3",()=>{
+  const page=read("app/(protected)/admin/users/page.tsx");
+  const api=read("app/api/admin/users/route.ts");
+  const policy=read("lib/employment/termination-policy.ts");
+  assert.match(page,/original\.termination_date[\s\S]*draft\.termination_date === null[\s\S]*draft\.is_active !== false[\s\S]*"cancel_termination"/);
+  assert.match(api,/const isCancelTermination = body\.action === "cancel_termination"/);
+  assert.match(api,/update\.termination_date === null/);
+  assert.match(api,/update\.is_active === true/);
+  assert.match(api,/update\.hire_date === target\.hire_date/);
+  assert.match(api,/allowExplicitReactivationOnClear: isCancelTermination/);
+  assert.match(policy,/hasExplicitActiveUpdate/);
+  assert.match(api,/body\.action === "rehire"[\s\S]*employee_rehire_with_level_policy_v3/);
+  assert.doesNotMatch(policy,/hire_date|level_program|payroll/);
+  assert.match(api,/if \(target\.termination_date && levelPolicyChanged\)/);
 });
 
 test("terminated accounts remain blocked by the login active-user filter",()=>{

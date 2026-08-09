@@ -27,10 +27,12 @@ export function enforceTerminationAccountPolicy({
   update,
   current,
   today = getVietnamDateKey(),
+  allowExplicitReactivationOnClear = false,
 }: {
   update: TerminationPolicyUpdate;
   current: CurrentAccountState;
   today?: string;
+  allowExplicitReactivationOnClear?: boolean;
 }): TerminationPolicyResult {
   const hasTerminationUpdate = Object.prototype.hasOwnProperty.call(
     update,
@@ -49,8 +51,18 @@ export function enforceTerminationAccountPolicy({
   if (finalTerminationDate) {
     enforcedUpdate.is_active = false;
   } else if (hasTerminationUpdate) {
-    // Clearing the date is not a rehire action. Preserve the current account state.
-    enforcedUpdate.is_active = current.is_active === true;
+    const hasExplicitActiveUpdate = Object.prototype.hasOwnProperty.call(
+      update,
+      "is_active"
+    );
+    // A validated cancellation may explicitly restore access. Ordinary date
+    // clearing remains non-reactivating and preserves the current state.
+    enforcedUpdate.is_active =
+      allowExplicitReactivationOnClear &&
+      hasExplicitActiveUpdate &&
+      update.is_active === true
+        ? true
+        : current.is_active === true;
   }
 
   return { ok: true, update: enforcedUpdate };

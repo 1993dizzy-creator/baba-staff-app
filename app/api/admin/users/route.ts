@@ -303,6 +303,7 @@ export async function PATCH(req: Request) {
     }
 
     const inputUpdates = (body.updates || {}) as JsonObject;
+    const isCancelTermination = body.action === "cancel_termination";
     if (body.action === "rehire") {
       const rehireDate = body.rehireDate;
       const rehireLevelEnabled = body.levelProgramEnabled;
@@ -382,6 +383,36 @@ export async function PATCH(req: Request) {
       );
     }
 
+    if (isCancelTermination) {
+      const explicitlyClearsTermination =
+        Object.prototype.hasOwnProperty.call(update, "termination_date") &&
+        update.termination_date === null;
+      const explicitlyReactivates =
+        Object.prototype.hasOwnProperty.call(update, "is_active") &&
+        update.is_active === true;
+      const preservesHireDate =
+        !Object.prototype.hasOwnProperty.call(update, "hire_date") ||
+        update.hire_date === target.hire_date;
+      if (
+        !target.termination_date ||
+        target.is_active !== false ||
+        !explicitlyClearsTermination ||
+        !explicitlyReactivates ||
+        !preservesHireDate
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              lang === "vi"
+                ? "Không thể hủy thông tin nghỉ việc với các giá trị đã nhập."
+                : "입력한 값으로 퇴사 처리를 취소할 수 없습니다.",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const hasPayrollOverrideUpdate = Object.prototype.hasOwnProperty.call(
       inputUpdates,
       "payroll_eligible_override"
@@ -424,6 +455,7 @@ export async function PATCH(req: Request) {
         termination_date: target.termination_date,
         is_active: target.is_active,
       },
+      allowExplicitReactivationOnClear: isCancelTermination,
     });
     if (!terminationPolicy.ok) {
       return NextResponse.json(

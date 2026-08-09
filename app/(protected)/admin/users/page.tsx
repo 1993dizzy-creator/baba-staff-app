@@ -755,6 +755,12 @@ export default function AdminUsersPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          action:
+            original.termination_date &&
+            draft.termination_date === null &&
+            draft.is_active !== false
+              ? "cancel_termination"
+              : undefined,
           lang,
           id: original.id,
           updates,

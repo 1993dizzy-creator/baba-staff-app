@@ -13,20 +13,22 @@ import { getUser } from "@/lib/supabase/auth";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { attendanceFetch } from "@/lib/auth/client-session";
+import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
+import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
+import { getEmployeeRoleLabel } from "@/lib/common/roles";
+import { formatContractRate } from "@/lib/payroll/payroll-page-money";
 
 
-function formatTodayDate(lang: "ko" | "vi") {
+function formatTodayDate() {
   const date = new Date();
-
-  const dateText = date.toLocaleDateString(lang === "vi" ? "vi-VN" : "ko-KR", {
+  return date.toLocaleDateString("sv-SE", {
     timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-  });
+  }).replaceAll("-", ".");
+}
 
-  return dateText;
+function formatNextLevelDate(value: string, lang: "ko" | "vi") {
+  const [, month, day] = value.split("-");
+  return lang === "vi" ? `${day}/${month}` : `${month}-${day}`;
 }
 
 function formatCalendarTitle(lang: "ko" | "vi", date: Date) {
@@ -86,6 +88,21 @@ type AttendanceActionFeedback = {
   phase: AttendanceActionPhase;
   message: string;
 };
+
+type AttendanceProfile = {
+  name: string;
+  role: string | null;
+  levelInfo: EmployeeLevelInfo;
+  currentSalary: {
+    payType: "monthly" | "daily" | "hourly";
+    combinedSalary: number;
+  } | null;
+};
+
+const profileCopy = {
+  ko: { nextLevel: "다음 레벨", maximumLevel: "최고 레벨" },
+  vi: { nextLevel: "Cấp tiếp theo", maximumLevel: "Cấp cao nhất" },
+} as const;
 
 const initialActionFeedback: AttendanceActionFeedback = {
   action: null,
@@ -357,24 +374,6 @@ function requestMonthlyAttendance(input: {
 }
 
 
-function getStatusLabel(
-  status: AttendanceStatus,
-  t: (typeof attendanceText)["ko"] | (typeof attendanceText)["vi"],
-  checkInTime: string,
-  checkOutTime: string
-) {
-  if (status === "before") return t.workBefore;
-  if (status === ATTENDANCE_STATUS.LEAVE) return t.workLeave;
-  if (checkOutTime !== "-") {
-    return status === ATTENDANCE_STATUS.EARLY_LEAVE
-      ? t.workEarlyLeave
-      : t.workDone;
-  }
-  if (checkInTime !== "-") return t.working;
-  if (status === ATTENDANCE_STATUS.DONE) return t.workDone;
-  return t.working;
-}
-
 export default function AttendancePage() {
   const { lang } = useLanguage();
   const pathname = usePathname();
@@ -433,6 +432,22 @@ function MyAttendance() {
   const [attendance, setAttendance] =
     useState<AttendanceState>(initialAttendanceState);
   const [hasPendingLeaveToday, setHasPendingLeaveToday] = useState(false);
+  const [profile, setProfile] = useState<AttendanceProfile | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    attendanceFetch("/api/attendance/profile")
+      .then(async (response) => {
+        const result = await response.json().catch(() => null);
+        if (active && response.ok && result?.ok) {
+          setProfile(result.employee as AttendanceProfile);
+        }
+      })
+      .catch((error) => console.error("attendance profile error:", error));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -840,27 +855,43 @@ function MyAttendance() {
       : t.workNormal;
 
   const lateDisplayColor = attendance.lateMinutes > 0 ? "#f59e0b" : "#10b981";
+  const p = profileCopy[lang];
+  const nextLevelText = profile?.levelInfo.nextLevelDate
+    ? formatNextLevelDate(profile.levelInfo.nextLevelDate, lang)
+    : profile?.levelInfo.level === 7
+      ? p.maximumLevel
+      : "-";
+  const currentSalaryText = profile?.currentSalary
+    ? formatContractRate(
+        profile.currentSalary.combinedSalary,
+        profile.currentSalary.payType,
+        lang,
+      )
+    : "-";
 
   return (
     <div style={sectionStyle}>
       <div style={cardStyle}>
         <div style={todayHeaderRow}>
-          <div style={statusBadgeStyle(attendance.status)}>
-            ● {getStatusLabel(
-              attendance.status,
-              t,
-              attendance.checkInTime,
-              attendance.checkOutTime
-            )}
+          <div style={profileIdentityStyle}>
+            <EmployeeNameWithLevel
+              name={profile?.name || "-"}
+              levelInfo={profile?.levelInfo}
+              lang={lang}
+              nameStyle={profileNameStyle}
+            />
+            <div style={profileRoleStyle}>
+              {profile?.role ? getEmployeeRoleLabel(profile.role, lang) : "-"}
+            </div>
           </div>
 
-          <div style={todayDateRow}>
-            <span>
-              {formatTodayDate(lang)} · {nowText}
-            </span>
-            <span style={{ fontSize: 15, lineHeight: 1 }}>🗓️</span>
+          <div style={profileSummaryStyle}>
+            <div style={nextLevelStyle}>⏳ {p.nextLevel} · {nextLevelText}</div>
+            <strong style={currentSalaryStyle}>{currentSalaryText}</strong>
           </div>
         </div>
+
+        <div style={todayDateRow}>{formatTodayDate()} · {nowText}</div>
 
         <div style={todayStatusPanel}>
           <TodayInfoBlock label={t.checkInTimeLabel}>
@@ -1330,58 +1361,6 @@ function LegendItem({
   );
 }
 
-function statusBadgeStyle(status: AttendanceStatus): CSSProperties {
-
-  const map = {
-    before: {
-      background: "#fef3c7",
-      color: "#92400e",
-      border: "#fde68a",
-    },
-    [ATTENDANCE_STATUS.WORKING]: {
-      background: "#dcfce7",
-      color: "#16a34a",
-      border: "#bbf7d0",
-    },
-    [ATTENDANCE_STATUS.DONE]: {
-      background: "#e5e7eb",
-      color: "#374151",
-      border: "#d1d5db",
-    },
-    [ATTENDANCE_STATUS.EARLY_LEAVE]: {
-      background: "#fee2e2",
-      color: "#dc2626",
-      border: "#fecaca",
-    },
-    [ATTENDANCE_STATUS.LEAVE]: {
-      background: "#f3f4f6",
-      color: "#374151",
-      border: "#d1d5db",
-    },
-    [ATTENDANCE_STATUS.LATE]: {
-      background: "#fffbeb",
-      color: "#d97706",
-      border: "#fde68a",
-    },
-  };
-
-  const color = map[status] || map.before;
-
-  return {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "8px 14px",
-    borderRadius: 999,
-    fontSize: 13,
-    fontWeight: 800,
-    background: color.background,
-    color: color.color,
-    border: `1px solid ${color.border}`,
-    whiteSpace: "nowrap",
-  };
-}
-
 function calendarCellStyle({
   isToday,
   isMuted,
@@ -1439,18 +1418,65 @@ const todayHeaderRow: CSSProperties = {
   justifyContent: "space-between",
   alignItems: "flex-start",
   gap: 12,
-  marginBottom: 12,
+  marginBottom: 8,
 };
 
+const profileIdentityStyle: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-start",
+  gap: 4,
+};
+
+const profileNameStyle: CSSProperties = {
+  fontSize: 17,
+  fontWeight: 900,
+  color: "#111827",
+};
+
+const profileRoleStyle: CSSProperties = {
+  paddingLeft: 2,
+  fontSize: 12,
+  fontWeight: 700,
+  color: "#6b7280",
+};
+
+const profileSummaryStyle: CSSProperties = {
+  flexShrink: 0,
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-end",
+  gap: 4,
+  textAlign: "right",
+};
+
+const nextLevelStyle: CSSProperties = {
+  color: "#6b7280",
+  fontSize: 11,
+  fontWeight: 750,
+  whiteSpace: "nowrap",
+};
+
+const currentSalaryStyle: CSSProperties = {
+  color: "#111827",
+  fontSize: 16,
+  fontWeight: 900,
+  lineHeight: 1.2,
+  whiteSpace: "nowrap",
+};
 
 const todayDateRow: CSSProperties = {
   display: "flex",
   alignItems: "center",
-  gap: 8,
+  justifyContent: "center",
   color: "#6b7280",
-  fontSize: 13,
+  fontSize: 11,
   fontWeight: 700,
   whiteSpace: "nowrap",
+  marginBottom: 10,
 };
 
 const todayStatusPanel: CSSProperties = {
