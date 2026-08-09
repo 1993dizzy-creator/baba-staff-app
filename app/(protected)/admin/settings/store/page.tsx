@@ -25,6 +25,11 @@ import {
   getHolidayGroupLabel,
 } from "@/lib/store-settings/holidays-data";
 import { countHolidayGroupSizes, isBabaPremiumHoliday } from "@/lib/store-settings/holidays-policy";
+import {
+  getVietnamHolidayChoices,
+  type NationalDayOption,
+  type TetOption,
+} from "@/lib/store-settings/vietnam-holiday-calendar";
 
 type Tab = "hours" | "attendance" | "holidays";
 type ApiData = {
@@ -148,13 +153,12 @@ const copy = {
     reminderSuffix: "년 공휴일 설정이 아직 없습니다.",
     prepareModalTitle: "공휴일 준비",
     hungKingsLabel: "흥왕기념일",
-    tetStartLabel: "음력설 시작일",
-    tetPreviewLabel: "음력설 5일",
-    nationalDayAdjacentLabel: "국경일 추가 휴일",
-    nationalDayOptionBefore: "9/1 (국경일 전날)",
-    nationalDayOptionAfter: "9/3 (국경일 다음날)",
-    sourceUrlLabel: "공식 발표 출처 URL (선택)",
-    sourcePublishedAtLabel: "발표일 (선택)",
+    tetStartLabel: "음력설 5일 선택",
+    tetPreviewLabel: "설 전 {before}일 + 설날 및 이후 {after}일",
+    nationalDayAdjacentLabel: "국경일 2일 선택",
+    nationalDayOptionBefore: "09/01 + 09/02",
+    nationalDayOptionAfter: "09/02 + 09/03",
+    calculatedNotice: "음력 날짜를 베트남 표준시 기준으로 자동 계산한 사전 설정입니다. 추후 정부 공식 발표와 비교해 확인하세요.",
     prepareSubmit: "준비 완료",
     prepareSaving: "저장 중…",
     prepareCancel: "취소",
@@ -244,13 +248,12 @@ const copy = {
     reminderSuffix: ".",
     prepareModalTitle: "Chuẩn bị ngày lễ",
     hungKingsLabel: "Giỗ Tổ Hùng Vương",
-    tetStartLabel: "Ngày bắt đầu Tết",
-    tetPreviewLabel: "5 ngày nghỉ Tết",
-    nationalDayAdjacentLabel: "Ngày nghỉ thêm dịp Quốc khánh",
-    nationalDayOptionBefore: "1/9 (trước Quốc khánh)",
-    nationalDayOptionAfter: "3/9 (sau Quốc khánh)",
-    sourceUrlLabel: "Link thông báo chính thức (không bắt buộc)",
-    sourcePublishedAtLabel: "Ngày công bố (không bắt buộc)",
+    tetStartLabel: "Chọn 5 ngày nghỉ Tết",
+    tetPreviewLabel: "{before} ngày trước Tết + ngày Tết và {after} ngày sau",
+    nationalDayAdjacentLabel: "Chọn 2 ngày Quốc khánh",
+    nationalDayOptionBefore: "01/09 + 02/09",
+    nationalDayOptionAfter: "02/09 + 03/09",
+    calculatedNotice: "Đây là lịch dự kiến được tự động tính theo giờ Việt Nam. Vui lòng đối chiếu với thông báo chính thức của Chính phủ sau này.",
     prepareSubmit: "Hoàn tất chuẩn bị",
     prepareSaving: "Đang lưu…",
     prepareCancel: "Hủy",
@@ -838,18 +841,6 @@ function monthDay(dateKey: string) {
   return dateKey.length === 10 ? dateKey.slice(5) : dateKey;
 }
 
-// "YYYY-MM-DD" 날짜 문자열에 일수를 더한다 — 음력설 시작일 1개 입력만 받고 나머지
-// 4일을 자동 계산하는 "연도 준비" 모달 전용. 시간대 경계에서 하루가 밀리지 않도록
-// 정오(T12:00:00) 기준으로 계산한다.
-function addDaysToDateKey(dateKey: string, days: number) {
-  const date = new Date(`${dateKey}T12:00:00`);
-  date.setDate(date.getDate() + days);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 // 공휴일은 store_setting_versions와 완전히 독립된 원본(store_holiday_calendars/
 // store_holidays)이라, 이 탭은 페이지 상단의 data/load()와 별도로 자체 fetch를
 // 관리한다 — 다른 탭의 로딩 실패가 이 탭에 영향을 주지 않고, 반대도 마찬가지다.
@@ -1030,8 +1021,9 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
         {loading ? (
           <p style={styles.muted}>{t.loading}</p>
         ) : !data?.calendar ? (
-          <div>
-            <p style={styles.muted}>
+          <div style={styles.holidayEmptyState}>
+            <div aria-hidden="true" style={styles.holidayEmptyIcon}>🗓️</div>
+            <p style={{ ...styles.muted, margin: 0 }}>
               {t.notPreparedPrefix}
               {year}
               {t.notPreparedSuffix}
@@ -1116,10 +1108,8 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
   );
 }
 
-// 다음 연도(예: 2027) 공휴일 원본을 owner/master가 직접 만드는 모달. 고정 날짜 4개는
-// FIXED_HOLIDAY_DEFINITIONS에서 자동 계산해 미리보기만 하고(입력 없음), 매년
-// 바뀌는 흥왕기념일/음력설/국경일 추가 휴일만 입력받는다. 음력설은 시작일 1개만
-// 입력받아 5일 연속으로 자동 계산한다(개별 5개 입력보다 단순하고 안전).
+// 연도만으로 고정일/음력일을 계산하고, 법적으로 가능한 Tet/국경일 구성만 선택한다.
+// 같은 순수 helper를 API에서도 다시 실행하므로 클라이언트 계산값은 저장에 신뢰하지 않는다.
 function PrepareHolidayYearModal(props: {
   lang: "ko" | "vi";
   year: number;
@@ -1127,35 +1117,21 @@ function PrepareHolidayYearModal(props: {
   onSuccess: (year: number) => void;
 }) {
   const t = copy[props.lang];
-  const [hungKingsDate, setHungKingsDate] = useState("");
-  const [tetStartDate, setTetStartDate] = useState("");
-  const [nationalDayOption, setNationalDayOption] = useState<"before" | "after" | "">("");
-  const [sourceUrl, setSourceUrl] = useState("");
-  const [sourcePublishedAt, setSourcePublishedAt] = useState("");
+  const choices = getVietnamHolidayChoices(props.year);
+  const automaticHolidays = [
+    ...FIXED_HOLIDAY_DEFINITIONS.map((definition) => ({
+      code: definition.code,
+      date: `${props.year}-${definition.monthDay}`,
+      name: props.lang === "vi" ? definition.nameVi : definition.nameKo,
+    })),
+    { code: "HUNG_KINGS", date: choices.hungKingsDate, name: t.hungKingsLabel },
+  ].sort((left, right) => left.date.localeCompare(right.date));
+  const [tetOption, setTetOption] = useState<TetOption | "">("");
+  const [nationalDayOption, setNationalDayOption] = useState<NationalDayOption | "">("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const minDate = `${props.year}-01-01`;
-  const maxDate = `${props.year}-12-31`;
-
-  const tetDates =
-    tetStartDate.length === 10
-      ? Array.from({ length: 5 }, (_, index) => addDaysToDateKey(tetStartDate, index))
-      : [];
-
-  const nationalDayAdjacentDate =
-    nationalDayOption === "before"
-      ? `${props.year}-09-01`
-      : nationalDayOption === "after"
-        ? `${props.year}-09-03`
-        : "";
-
-  const canSubmit =
-    hungKingsDate.length === 10 &&
-    tetDates.length === 5 &&
-    tetDates.every((date) => date.startsWith(String(props.year))) &&
-    nationalDayAdjacentDate.length === 10 &&
-    !submitting;
+  const canSubmit = tetOption !== "" && nationalDayOption !== "" && !submitting;
 
   async function submit() {
     if (!canSubmit) return;
@@ -1167,11 +1143,8 @@ function PrepareHolidayYearModal(props: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           year: props.year,
-          hungKingsDate,
-          tetDates,
-          nationalDayAdjacentDate,
-          sourceUrl: sourceUrl.trim() || null,
-          sourcePublishedAt: sourcePublishedAt || null,
+          tetOption,
+          nationalDayOption,
         }),
       });
       const json = await response.json();
@@ -1206,48 +1179,34 @@ function PrepareHolidayYearModal(props: {
         <h2 style={styles.modalTitle}>
           {t.prepareModalTitle} · {props.year}
         </h2>
+        <p style={styles.notice}>{t.calculatedNotice}</p>
 
         {error ? <p style={styles.error}>{error}</p> : null}
 
         <h3 style={styles.modalSectionTitle}>{t.holidaysTitle}</h3>
         <ul style={styles.holidayList}>
-          {FIXED_HOLIDAY_DEFINITIONS.map((def) => (
-            <li key={def.code} style={styles.holidayItem}>
-              <span style={styles.holidayDate}>{def.monthDay.replace("-", "/")}</span>
-              <span>{props.lang === "vi" ? def.nameVi : def.nameKo}</span>
+          {automaticHolidays.map((holiday) => (
+            <li key={holiday.code} style={styles.holidayItem}>
+              <span style={styles.holidayDate}>{monthDay(holiday.date).replace("-", "/")}</span>
+              <span>{holiday.name}</span>
             </li>
           ))}
         </ul>
 
         <div style={styles.effectiveField}>
-          <Field label={t.hungKingsLabel}>
-            <input
-              type="date"
-              style={styles.input}
-              min={minDate}
-              max={maxDate}
-              value={hungKingsDate}
-              onChange={(event) => setHungKingsDate(event.target.value)}
-            />
-          </Field>
-        </div>
-
-        <div style={styles.effectiveField}>
-          <Field label={t.tetStartLabel}>
-            <input
-              type="date"
-              style={styles.input}
-              min={minDate}
-              max={maxDate}
-              value={tetStartDate}
-              onChange={(event) => setTetStartDate(event.target.value)}
-            />
-          </Field>
-          {tetDates.length === 5 ? (
-            <p style={styles.help}>
-              {t.tetPreviewLabel}: {tetDates.map((date) => monthDay(date)).join(", ")}
-            </p>
-          ) : null}
+          <h3 style={styles.modalSectionTitle}>{t.tetStartLabel}</h3>
+          <div style={styles.holidayChoiceGrid}>
+            {choices.tetOptions.map((option, index) => (
+              <button key={option.id} type="button" onClick={() => setTetOption(option.id)}
+                style={{ ...styles.holidayChoiceButton, ...(tetOption === option.id ? styles.holidayToggleButtonActive : null) }}>
+                <span style={styles.holidayChoiceSummary}>
+                  <strong style={styles.holidayChoiceTitle}>{index + 1}{props.lang === "ko" ? "안" : ""}</strong>
+                  <span style={styles.holidayChoiceDate}>{monthDay(option.dates[0]).replace("-", "/")} ~ {monthDay(option.dates[4]).replace("-", "/")}</span>
+                </span>
+                <small style={styles.holidayChoiceDescription}>{t.tetPreviewLabel.replace("{before}", String(option.daysBefore)).replace("{after}", String(4 - option.daysBefore))}</small>
+              </button>
+            ))}
+          </div>
         </div>
 
         <h3 style={styles.modalSectionTitle}>{t.nationalDayAdjacentLabel}</h3>
@@ -1272,27 +1231,6 @@ function PrepareHolidayYearModal(props: {
           >
             {t.nationalDayOptionAfter}
           </button>
-        </div>
-
-        <div style={styles.effectiveField}>
-          <Field label={t.sourceUrlLabel}>
-            <input
-              type="url"
-              style={styles.input}
-              value={sourceUrl}
-              onChange={(event) => setSourceUrl(event.target.value)}
-            />
-          </Field>
-        </div>
-        <div style={styles.effectiveField}>
-          <Field label={t.sourcePublishedAtLabel}>
-            <input
-              type="date"
-              style={styles.input}
-              value={sourcePublishedAt}
-              onChange={(event) => setSourcePublishedAt(event.target.value)}
-            />
-          </Field>
         </div>
 
         <div style={styles.modalActions}>
@@ -1985,4 +1923,31 @@ const styles: Record<string, CSSProperties> = {
     background: "#111827",
     color: "#fff",
   },
+  holidayEmptyState: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 14,
+    padding: "28px 12px 12px",
+    textAlign: "center",
+  },
+  holidayEmptyIcon: { fontSize: 30, lineHeight: 1 },
+  holidayChoiceGrid: { display: "grid", gap: 5 },
+  holidayChoiceButton: {
+    display: "grid",
+    gap: 2,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    borderRadius: 10,
+    minHeight: 48,
+    padding: "7px 10px",
+    color: "#374151",
+    textAlign: "left",
+    cursor: "pointer",
+    lineHeight: 1.2,
+  },
+  holidayChoiceSummary: { display: "flex", alignItems: "baseline", gap: 8 },
+  holidayChoiceTitle: { minWidth: 22, fontSize: 12.5, lineHeight: 1.15 },
+  holidayChoiceDate: { fontSize: 12, fontWeight: 700, lineHeight: 1.15 },
+  holidayChoiceDescription: { fontSize: 10.5, lineHeight: 1.2 },
 };

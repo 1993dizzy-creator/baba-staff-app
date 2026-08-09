@@ -46,9 +46,11 @@ test("StoreHolidayCalendar is now just { year, countryCode } — no status/tetOp
   assert.doesNotMatch(typeDef, /status|tetOption|confirmedBy|confirmedAt|nationalDayAdjacentDate/i);
 });
 
-test("the old Tet bundle-selection contract is completely gone from the page (no TET_OPTIONS/getTetOptionDates import, no tetOption anywhere)", () => {
-  assert.doesNotMatch(page, /TET_OPTIONS|getTetOptionDates|TetOption|isTetOption/);
-  assert.doesNotMatch(page, /tetOption/i);
+test("the old persisted Tet bundle-selection contract is gone; the new TetOption is only a prepare-year candidate", () => {
+  assert.doesNotMatch(page, /TET_OPTIONS|getTetOptionDates|isTetOption/);
+  const calendarType = page.slice(page.indexOf("type StoreHolidayCalendar"), page.indexOf("type HolidaysApiData"));
+  assert.doesNotMatch(calendarType, /tetOption/i);
+  assert.match(page, /type TetOption/);
 });
 
 test("page imports the shared holidays-policy judge functions (isBabaPremiumHoliday/countHolidayGroupSizes) instead of reimplementing the effective-premium decision, and the FIXED_HOLIDAY_DEFINITIONS common definition for the prepare-year preview", () => {
@@ -266,48 +268,47 @@ test("handlePrepareSuccess reloads the currently browsed year only if it matches
 // PrepareHolidayYearModal — 다음 연도 공휴일 준비
 // ---------------------------------------------------------------------------
 
-test("modal previews the 4 fixed holidays from FIXED_HOLIDAY_DEFINITIONS (no input needed for them) and only collects the 3 variable inputs (Hung Kings date, Tet start date, national day adjacent choice)", () => {
+test("modal calculates Hung Kings/Tet from the shared helper and only collects Tet and national-day choices", () => {
   const fn = prepareModalFn();
-  assert.match(fn, /FIXED_HOLIDAY_DEFINITIONS\.map\(\(def\) => \(/);
-  assert.match(fn, /const \[hungKingsDate, setHungKingsDate\] = useState\(""\);/);
-  assert.match(fn, /const \[tetStartDate, setTetStartDate\] = useState\(""\);/);
-  assert.match(fn, /const \[nationalDayOption, setNationalDayOption\] = useState<"before" \| "after" \| "">\(""\);/);
+  assert.match(fn, /FIXED_HOLIDAY_DEFINITIONS\.map\(\(definition\) => \(/);
+  assert.match(fn, /automaticHolidays\.map\(\(holiday\) => \(/);
+  assert.match(fn, /const choices = getVietnamHolidayChoices\(props\.year\);/);
+  assert.match(fn, /useState<TetOption \| "">\(""\)/);
+  assert.match(fn, /useState<NationalDayOption \| "">\(""\)/);
+  assert.doesNotMatch(fn, /setHungKingsDate|setTetStartDate|type="date"[\s\S]*hungKings/i);
 });
 
-test("Tet is entered as a single start date and the other 4 dates are auto-computed via addDaysToDateKey — not 5 separate date inputs", () => {
+test("Tet renders the three calculated five-day choices with their actual start/end dates", () => {
   const fn = prepareModalFn();
-  assert.match(
-    fn,
-    /const tetDates =\s*\n\s*tetStartDate\.length === 10\s*\n\s*\? Array\.from\(\{ length: 5 \}, \(_, index\) => addDaysToDateKey\(tetStartDate, index\)\)\s*\n\s*: \[\];/
-  );
-  assert.doesNotMatch(fn, /tetDates\[1\]|tetDates\[2\]|tetDates\[3\]|tetDates\[4\]/);
+  assert.match(fn, /choices\.tetOptions\.map\(\(option, index\) => \(/);
+  assert.match(fn, /option\.dates\[0\]/);
+  assert.match(fn, /option\.dates\[4\]/);
 });
 
-test("national day adjacent date is a binary choice (year-09-01 or year-09-03), 09-02 itself is always fixed and never asked", () => {
+test("national day is a binary before/after option and both localized labels show the complete two-day pair", () => {
   const fn = prepareModalFn();
-  assert.match(fn, /nationalDayOption === "before"\s*\n\s*\? `\$\{props\.year\}-09-01`/);
-  assert.match(fn, /: nationalDayOption === "after"\s*\n\s*\? `\$\{props\.year\}-09-03`/);
-  assert.doesNotMatch(fn, /09-02/);
+  assert.match(fn, /setNationalDayOption\("before"\)/);
+  assert.match(fn, /setNationalDayOption\("after"\)/);
+  assert.match(page, /nationalDayOptionBefore: "09\/01 \+ 09\/02"/);
+  assert.match(page, /nationalDayOptionAfter: "09\/02 \+ 09\/03"/);
 });
 
-test("submit is disabled unless Hung Kings date, all 5 Tet dates (within the target year), and a national day choice are all present", () => {
+test("submit is disabled until one Tet option and one national-day option are selected", () => {
   const fn = prepareModalFn();
-  assert.match(fn, /const canSubmit =\s*\n\s*hungKingsDate\.length === 10 &&\s*\n\s*tetDates\.length === 5 &&/);
-  assert.match(fn, /tetDates\.every\(\(date\) => date\.startsWith\(String\(props\.year\)\)\)/);
-  assert.match(fn, /nationalDayAdjacentDate\.length === 10 &&/);
+  assert.match(fn, /const canSubmit = tetOption !== "" && nationalDayOption !== "" && !submitting;/);
   assert.match(fn, /disabled=\{!canSubmit\}/);
 });
 
-test("submit posts to /api/admin/store-settings/holidays/prepare-year with the full payload (year/hungKingsDate/tetDates/nationalDayAdjacentDate/sourceUrl/sourcePublishedAt) and calls onSuccess on ok", () => {
+test("submit posts option identifiers, not client-calculated final dates, and calls onSuccess on ok", () => {
   const fn = prepareModalFn();
   assert.match(fn, /fetch\("\/api\/admin\/store-settings\/holidays\/prepare-year", \{/);
   assert.match(fn, /method: "POST",/);
   assert.match(fn, /year: props\.year,/);
-  assert.match(fn, /hungKingsDate,/);
-  assert.match(fn, /tetDates,/);
-  assert.match(fn, /nationalDayAdjacentDate,/);
-  assert.match(fn, /sourceUrl: sourceUrl\.trim\(\) \|\| null,/);
-  assert.match(fn, /sourcePublishedAt: sourcePublishedAt \|\| null,/);
+  assert.match(fn, /tetOption,/);
+  assert.match(fn, /nationalDayOption,/);
+  const requestBody = fn.slice(fn.indexOf("body: JSON.stringify({"), fn.indexOf("}),", fn.indexOf("body: JSON.stringify({")));
+  assert.doesNotMatch(requestBody, /hungKingsDate|tetDates|nationalDayAdjacentDate/);
+  assert.doesNotMatch(requestBody, /sourceUrl|sourcePublishedAt/);
   assert.match(fn, /props\.onSuccess\(props\.year\);/);
 });
 
@@ -319,10 +320,21 @@ test("YEAR_ALREADY_EXISTS is mapped to a distinct, clear conflict message (not t
   );
 });
 
-test("source URL/published-at are optional fields (never required for canSubmit)", () => {
+test("prepare modal has no source URL/published-at inputs in either language", () => {
   const fn = prepareModalFn();
-  const canSubmitBlock = fn.slice(fn.indexOf("const canSubmit ="), fn.indexOf("async function submit"));
-  assert.doesNotMatch(canSubmitBlock, /sourceUrl|sourcePublishedAt/);
+  assert.doesNotMatch(fn, /sourceUrl|sourcePublishedAt|type="url"|type="date"/);
+  assert.doesNotMatch(page, /sourceUrlLabel|sourcePublishedAtLabel|공식 발표 출처 URL|Link thông báo chính thức/);
+});
+
+test("Tet candidate cards keep a comfortable touch target while using compact two-line spacing", () => {
+  const fn = prepareModalFn();
+  assert.match(fn, /styles\.holidayChoiceSummary/);
+  assert.match(fn, /styles\.holidayChoiceTitle/);
+  assert.match(fn, /styles\.holidayChoiceDate/);
+  assert.match(fn, /styles\.holidayChoiceDescription/);
+  assert.match(page, /holidayChoiceGrid: \{ display: "grid", gap: 5 \}/);
+  assert.match(page, /minHeight: 48/);
+  assert.match(page, /padding: "7px 10px"/);
 });
 
 test("modal never touches attendance_records/leave/payroll and never creates a store_holiday_operation_policies row from the client (that stays server/RPC-only)", () => {
