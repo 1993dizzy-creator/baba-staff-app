@@ -17,6 +17,8 @@ import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import PayrollModal from "@/components/payroll/PayrollModal";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
+import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
+import { useMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
 import {
   formatSignedVnd,
   formatVnd,
@@ -97,6 +99,7 @@ type AttendanceActionFeedback = {
 };
 
 type AttendanceProfile = {
+  id: number;
   name: string;
   role: string | null;
   levelInfo: EmployeeLevelInfo;
@@ -445,6 +448,7 @@ function MyAttendance() {
     useState<AttendanceState>(initialAttendanceState);
   const [hasPendingLeaveToday, setHasPendingLeaveToday] = useState(false);
   const [profile, setProfile] = useState<AttendanceProfile | null>(null);
+  const perfectSummary = useMonthlyAttendanceSummary(getMonthRange(calendarDate).monthKey);
   const [payrollData, setPayrollData] = useState<AttendancePayrollData | null>(null);
   const [payrollDetailKind, setPayrollDetailKind] =
     useState<"incentive" | "penalty" | null>(null);
@@ -929,6 +933,7 @@ function MyAttendance() {
               lang={lang}
               nameStyle={profileNameStyle}
             />
+            <AttendancePerfectScoreBadge show={perfectSummary.get(Number(profile?.id))?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
             <div style={profileRoleStyle}>
               {profile?.role ? getEmployeeRoleLabel(profile.role, lang) : "-"}
             </div>
@@ -1245,7 +1250,9 @@ function PayrollDetailModal({
             const isAutomatic = "sourceType" in item && item.sourceType === "automatic";
             const automaticLabel =
               "sourceType" in item
-                ? item.category === "late"
+                ? item.category === "attendance_bonus"
+                  ? lang === "vi" ? "Thưởng chuyên cần" : "💯 개근 보너스"
+                : item.category === "late"
                   ? lang === "vi" ? "Phạt đi muộn" : "지각 패널티"
                   : item.category === "early_leave"
                     ? lang === "vi" ? "Phạt về sớm" : "조퇴 패널티"
@@ -1265,7 +1272,7 @@ function PayrollDetailModal({
                 style={modalItemStyle}
               >
                 <div style={modalItemMainStyle}>
-                  <span style={modalItemDateStyle}>{item.businessDate.slice(5)}</span>
+                  <span style={modalItemDateStyle}>{item.businessDate ? item.businessDate.slice(5) : (lang === "vi" ? "Tự động" : "자동")}</span>
                   <strong style={modalItemTitleStyle}>{title}</strong>
                   <strong
                     style={kind === "incentive" ? modalIncentiveAmountStyle : modalPenaltyAmountStyle}

@@ -112,6 +112,40 @@ export function buildPosCollectionWindow(
   };
 }
 
+export function isStoreClosedOnBusinessDate(
+  businessDate: string,
+  hours: readonly StoreBusinessHour[],
+) {
+  const weekday = weekdayForDateKey(businessDate);
+  const hour = hours.find((item) => item.weekday === weekday);
+  return hour?.isClosed ?? true;
+}
+
+export function resolveStoreClosedByDate(
+  dates: readonly string[],
+  timeline: ReadonlyArray<{
+    id: number;
+    effectiveFromBusinessDate: string;
+    hours: StoreBusinessHour[];
+  }>,
+) {
+  const sorted = [...timeline].sort((a, b) =>
+    a.effectiveFromBusinessDate === b.effectiveFromBusinessDate
+      ? a.id - b.id
+      : a.effectiveFromBusinessDate.localeCompare(b.effectiveFromBusinessDate),
+  );
+  const result = new Map<string, boolean>();
+  for (const date of dates) {
+    let current: (typeof sorted)[number] | null = null;
+    for (const row of sorted) {
+      if (row.effectiveFromBusinessDate > date) break;
+      current = row;
+    }
+    result.set(date, current ? isStoreClosedOnBusinessDate(date, current.hours) : false);
+  }
+  return result;
+}
+
 export function calculateBusinessTimeContext(
   timestamp: Date | string,
   snapshot: BusinessTimeSnapshot

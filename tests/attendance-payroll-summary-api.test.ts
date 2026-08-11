@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import {
-  getAttendanceAdjustmentTotal,
-  selectAttendancePayrollSummary,
-} from "../lib/payroll/attendance-self-summary.ts";
+// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
+import { getAttendanceAdjustmentTotal, selectAttendancePayrollSummary } from "../lib/payroll/attendance-self-summary.ts";
 import type { PayrollOverviewEmployee } from "../lib/payroll/overview.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
@@ -15,20 +13,89 @@ function employee(
   userId: number,
   values: Partial<PayrollOverviewEmployee["amounts"]> = {},
   calculationStatus: PayrollOverviewEmployee["calculationStatus"] = "calculable",
-) {
+) : PayrollOverviewEmployee {
   return {
     userId,
+    name: `Employee ${userId}`,
+    username: `employee-${userId}`,
+    birthDate: null,
+    part: null,
+    position: null,
+    role: "staff",
+    levelInfo: {
+      eligible: false,
+      reason: "PROGRAM_DISABLED",
+      level: null,
+      displayLabel: null,
+      baseDate: null,
+      baseDateSource: null,
+      calculationDate: null,
+      completedQuarterCount: 0,
+      earnedRaiseCount: 0,
+      raiseAmountPerStep: 500_000,
+      cumulativeRaiseAmount: 0,
+      nextLevelDate: null,
+      negotiationEligibleAt: null,
+      negotiationEligible: false,
+    },
     calculationStatus,
+    recognizedWorkdays: 0,
+    recognizedMinutes: 0,
+    insuranceEnrolled: false,
+    contract: null,
+    levelApplication: {
+      currentLevel: null,
+      earnedRaiseCount: 0,
+      raiseAmountPerStep: 500_000,
+      accruedRaiseAmount: null,
+      status: "not_applicable",
+    },
     adjustments: [],
     automaticPenalties: [],
+    automaticIncentives: [],
+    unresolvedAttendanceCount: 0,
+    attendanceMetrics: {
+      lateCount: 0,
+      lateMinutes: 0,
+      earlyLeaveCount: 0,
+      earlyLeaveMinutes: 0,
+    },
+    reviewCount: 0,
+    blockingCount: 0,
+    warningCodes: [],
+    attendanceStanding: null,
     amounts: {
+      contractSalary: null,
+      fixedRaiseAmount: null,
+      combinedSalary: null,
+      contractMonthlyEquivalent: null,
+      contractBaseSalary: null,
+      accruedWorkAmount: 0,
+      levelRaiseAmount: null,
+      paidLeaveAmount: 0,
+      overtimeAmount: 0,
+      latePenaltyAmount: 0,
+      earlyLeavePenaltyAmount: 0,
+      otherAdditionAmount: 0,
+      otherDeductionAmount: 0,
+      currentAmount: 2_850_000,
+      workAppliedAmount: 0,
       netPayoutAmount: 2_850_000,
       employeeInsuranceDeductionAmount: 0,
       incentiveAmount: 120_000,
+      manualIncentiveAmount: 120_000,
+      automaticIncentiveAmount: 0,
+      incentiveCount: 0,
+      automaticPenaltyAmount: 0,
+      manualPenaltyAmount: 35_000,
       penaltyAmount: 35_000,
+      penaltyCount: 0,
+      insuranceBaseAmount: 0,
+      preInsurancePayoutAmount: 2_850_000,
+      employerInsuranceAmount: 0,
       ...values,
     },
-  } as PayrollOverviewEmployee;
+  };
 }
 
 test("self payroll summary projects only the authenticated employee amounts", () => {
@@ -79,7 +146,7 @@ test("self projection exposes only display DTOs and preserves incentive and comb
   assert.equal(result.incentives.reduce((sum, item) => sum + item.amount, 0), result.summary.incentiveAmount);
   assert.equal(result.penalties.reduce((sum, item) => sum + item.amount, 0), result.summary.penaltyAmount);
   assert.deepEqual(result.incentives[0], {
-    businessDate: "2026-08-03", category: "sales", reason: "Sales", note: "August", amount: 120_000,
+    sourceType: "manual", businessDate: "2026-08-03", category: "sales", reason: "Sales", note: "August", amount: 120_000,
   });
   assert.deepEqual(result.penalties.map((item) => item.sourceType), ["automatic", "manual"]);
   assert.doesNotMatch(JSON.stringify(result), /attendanceRecordId|createdAt|"id"|999|private/);

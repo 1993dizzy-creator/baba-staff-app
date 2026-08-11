@@ -44,6 +44,7 @@ export async function GET() {
     return attendanceJson({
       ok: true,
       employee: {
+        id: employee.id,
         name: employee.name || employee.full_name || employee.username,
         role: employee.role,
         levelInfo: employee.levelInfo,

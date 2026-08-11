@@ -17,6 +17,7 @@ import { formatPositiveIntegerInput, normalizePositiveIntegerInput } from "@/lib
 import { formatRecognizedWork, getPayrollHeaderAmount } from "@/lib/payroll/payroll-page-display";
 import { payrollOverviewText } from "@/lib/text/payroll-overview";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
+import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
 // /admin/users의 🍚 배지와 동일한 문구를 쓴다 — 식대는 회사 부담 비용이며 net pay에 추가
 // 지급되는 항목이 아니므로, "지급"이 아니라 "대상"이라는 중립적 표현으로 통일한다.
 export function mealAllowanceBadgeLabel(lang: "ko" | "vi") {
@@ -84,6 +85,7 @@ export function CompensationCard({
             lang={lang}
             nameStyle={s.name}
           />
+          <AttendancePerfectScoreBadge show={employee.attendanceStanding?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
           {mealAllowanceEligible ? (
             <span style={s.mealBadge} title={mealAllowanceBadgeLabel(lang)} aria-label={mealAllowanceBadgeLabel(lang)}>🍚</span>
           ) : null}

@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // @ts-expect-error Node's test runner requires the explicit TypeScript extension.
-import {
-  resolvePayrollAttendancePolicyByDate,
-  type PayrollStoreSettingTimelineRow,
-} from "../lib/payroll/store-setting-timeline.ts";
+import { resolvePayrollAttendancePolicyByDate, type PayrollStoreSettingTimelineRow } from "../lib/payroll/store-setting-timeline.ts";
 
 // ---------------------------------------------------------------------------
 // /admin/payroll 로딩 성능 최적화 1차 B — loadPayrollMonthSnapshot()이 계산 대상

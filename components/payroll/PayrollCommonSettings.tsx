@@ -6,6 +6,7 @@ import {
   percentToBasisPoints,
 } from "@/lib/payroll/insurance";
 import { formatIntegerInput, integerInputDigits } from "@/lib/payroll/contract-form";
+import AttendanceBonusPolicySettings from "@/components/payroll/AttendanceBonusPolicySettings";
 
 type ApiSettings = {
   payment_day: number;
@@ -404,6 +405,8 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
           ))}
         </details>
       </SettingsGroup>
+
+      <AttendanceBonusPolicySettings vi={vi} />
 
       {error ? <p role="alert" style={s.error}>{errorText}</p> : null}
       {message ? <p role="status" style={s.success}>{message}</p> : null}

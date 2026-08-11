@@ -12,13 +12,15 @@ import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { useSearchParams } from "next/navigation";
 import { APPROVAL_STATUS, LEAVE_ACTION, } from "@/lib/attendance/status";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
-import { getEmployeeRoleLabel, getEmployeeRoleRank, isOwnerOrMasterRole } from "@/lib/common/roles";
+import { getEmployeeRoleRank, isOwnerOrMasterRole } from "@/lib/common/roles";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { isDateKey, isEmployedOn } from "@/lib/employment/eligibility";
 import { isAttendanceTrackingUser } from "@/lib/attendance/tracking-policy";
+import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
+import { useMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
 
 type UserRow = {
   id: string | number;
@@ -248,6 +250,7 @@ export default function AttendanceLeavePage() {
     : todayWorkDate;
 
   const [calendarDate, setCalendarDate] = useState(initialCalendarDate);
+  const perfectSummary = useMonthlyAttendanceSummary(formatDateKey(calendarDate).slice(0, 7));
   const [users, setUsers] = useState<UserRow[]>([]);
   const [leaveRecords, setLeaveRecords] = useState<AttendanceRecord[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
@@ -1002,9 +1005,7 @@ export default function AttendanceLeavePage() {
                           {meta.emoji}
                         </span>
                         <EmployeeNameWithLevel name={`${index + 1}. ${user.name}`} levelInfo={user.levelInfo} lang={lang} nameStyle={userNameStyle} showDisabledBadge />
-                        <span style={userMetaStyle}>
-                          {user.role ? getEmployeeRoleLabel(user.role, lang) : user.username}
-                        </span>
+                        <span style={userMetaStyle}><AttendancePerfectScoreBadge show={perfectSummary.get(Number(user.id))?.perfectAttendanceCurrent===true} vi={lang==="vi"}/></span>
                       </div>
 
                       <div style={leaveActionRowStyle}>
@@ -1125,7 +1126,7 @@ export default function AttendanceLeavePage() {
                     <div key={item.user.id} style={summaryRowStyle}>
                       <EmployeeNameWithLevel name={item.user.name} levelInfo={item.user.levelInfo} lang={lang} nameStyle={userNameStyle} showDisabledBadge />
                       <span style={userMetaStyle}>
-                        {item.user.role ? getEmployeeRoleLabel(item.user.role, lang) : item.user.username}
+                        <AttendancePerfectScoreBadge show={perfectSummary.get(Number(item.user.id))?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
                       </span>
                       <span style={summaryCountStyle}>
                         {item.count}

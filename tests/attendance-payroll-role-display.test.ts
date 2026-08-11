@@ -14,7 +14,6 @@ const compensationCard = read("components/payroll/CompensationCard.tsx");
 
 const pagesWithRoleLabelAndRank = [
   ["attendance/staff", staffPage],
-  ["attendance/leave", leavePage],
   ["admin/payroll/attendance", payrollAttendancePage],
 ] as const;
 
@@ -31,6 +30,12 @@ for (const [name, source] of pagesWithRoleLabelAndRank) {
     assert.match(source, /getEmployeeRoleLabel\(/);
   });
 }
+
+test("attendance/leave: replaces the position label with the shared perfect-attendance badge", () => {
+  assert.doesNotMatch(leavePage, /getEmployeeRoleLabel\(/);
+  assert.match(leavePage, /AttendancePerfectScoreBadge/);
+  assert.match(leavePage, /perfectAttendanceCurrent/);
+});
 
 test("admin/payroll/attendance/[userId]: header title is role-based, not t.positions[user.position]", () => {
   assert.doesNotMatch(payrollAttendanceUserPage, /t\.positions\?\.\[/);

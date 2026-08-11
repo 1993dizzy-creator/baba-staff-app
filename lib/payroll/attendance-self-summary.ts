@@ -13,7 +13,8 @@ export function getAttendanceAdjustmentTotal(
 }
 
 export type AttendancePayrollIncentive = {
-  businessDate: string;
+  sourceType: "automatic" | "manual";
+  businessDate: string | null;
   category: string;
   reason: string;
   note: string | null;
@@ -43,16 +44,25 @@ export function selectAttendancePayrollSummary(
   const employee = employees.find((item) => item.userId === actorId);
   if (!employee) return null;
 
-  const incentives = employee.adjustments
-    .filter((item) => item.kind === "incentive")
+  const incentives = [
+    ...(employee.automaticIncentives ?? []).map((item) => ({
+      sourceType: "automatic" as const,
+      businessDate: item.businessDate,
+      category: item.category,
+      reason: item.description,
+      note: null,
+      amount: item.amount,
+    })),
+    ...employee.adjustments.filter((item) => item.kind === "incentive")
     .map((item) => ({
+      sourceType: "manual" as const,
       businessDate: item.businessDate,
       category: item.category,
       reason: item.reason,
       note: item.note,
       amount: item.amount,
-    }))
-    .sort((left, right) => left.businessDate.localeCompare(right.businessDate));
+    })),
+  ].sort((left, right) => (left.businessDate ?? "").localeCompare(right.businessDate ?? ""));
   const penalties = [
     ...employee.automaticPenalties.map((item) => ({
       sourceType: "automatic" as const,

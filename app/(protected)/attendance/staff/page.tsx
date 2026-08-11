@@ -17,6 +17,8 @@ import { isLongShiftRecord } from "@/lib/attendance/time";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
+import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
+import { currentVietnamMonth, useMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
 
 
 type UserRow = {
@@ -104,6 +106,7 @@ export default function AttendanceStaffPage() {
   const tabs = getAttendanceTabs(pathname, lang);
   const t = attendanceText[lang];
   const c = commonText[lang];
+  const perfectSummary = useMonthlyAttendanceSummary(currentVietnamMonth());
 
   const [users, setUsers] = useState<UserRow[]>([]);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
@@ -551,6 +554,7 @@ export default function AttendanceStaffPage() {
                           <EmployeeNameWithLevel name={user.name} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} showDisabledBadge />
                           <span style={staffMetaStyle}>
                             {user.role ? getEmployeeRoleLabel(user.role, lang) : user.username}
+                            <AttendancePerfectScoreBadge show={perfectSummary.get(Number(user.id))?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
                           </span>
                         </div>
 

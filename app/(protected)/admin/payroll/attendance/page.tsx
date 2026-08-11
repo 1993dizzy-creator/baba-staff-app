@@ -14,6 +14,8 @@ import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { getNextLevelSchedule } from "@/lib/employee-level/next-level-schedule";
 import { employeeLevelScheduleText } from "@/lib/text/employee-level-schedule";
+import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
+import { useMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
 import {
     ATTENDANCE_STATUS_COLORS,
     getAttendanceDisplayStatus,
@@ -174,6 +176,8 @@ export default function AttendanceOverviewPage() {
     const [currentMonth, setCurrentMonth] = useState(() =>
         getMonthFromParam(searchParams.get("month"))
     );
+    const selectedMonthKey = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth()+1).padStart(2,"0")}`;
+    const perfectSummary = useMonthlyAttendanceSummary(selectedMonthKey);
     const [users, setUsers] = useState<UserRow[]>([]);
     const [records, setRecords] = useState<AttendanceRecord[]>([]);
     const [expandedUserId, setExpandedUserId] = useState<number | null>(null);
@@ -616,6 +620,7 @@ export default function AttendanceOverviewPage() {
                                             >
                                                 <div style={staffLeftStyle}>
                                                     <EmployeeNameWithLevel name={`${user.name}${age ? ` (${age})` : ""}`} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} showDisabledBadge />
+                                                    <AttendancePerfectScoreBadge show={perfectSummary.get(user.id)?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
                                                     <span style={staffSeparatorStyle}>·</span>
                                                     <span style={staffMetaStyle}>
                                                         {user.role ? getEmployeeRoleLabel(user.role, lang) : user.username}
