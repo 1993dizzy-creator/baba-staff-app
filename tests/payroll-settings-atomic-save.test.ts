@@ -42,9 +42,9 @@ test("PUT treats mealDailyAmount/mealEffectiveFrom as both-null (no meal change)
   assert.match(putBody, /if \(!mealBothBlank && !mealBothFilled\) \{\s*\n\s*return payrollJson\(\{ ok:false, code:"INVALID_MEAL_ALLOWANCE_POLICY" \}, 400\);/);
 });
 
-test("PUT calls the single atomic RPC with the server-derived actor id, never a client-sent actor/role", () => {
+test("PUT calls the v2 atomic RPC with the server-derived actor id, never a client-sent actor/role", () => {
   const putBody = route.slice(route.indexOf("export async function PUT"));
-  assert.match(putBody, /rpc\("payroll_update_common_settings_v1", \{/);
+  assert.match(putBody, /rpc\("payroll_update_common_settings_v2", \{/);
   assert.match(putBody, /p_actor_user_id: auth\.actor\.id,/);
   assert.doesNotMatch(putBody, /body\.actorId|body\.role/);
   // PUT은 정확히 한 번만 supabaseServer.rpc를 호출한다(payroll_settings update와 식대 revision
@@ -52,6 +52,7 @@ test("PUT calls the single atomic RPC with the server-derived actor id, never a 
   assert.equal((putBody.match(/supabaseServer\.rpc\(/g) ?? []).length, 1);
   assert.doesNotMatch(putBody, /supabaseServer\.from\("payroll_settings"\)\.update/);
   assert.doesNotMatch(putBody, /supabaseServer\.from\("payroll_meal_allowance_policy_versions"\)/);
+  assert.doesNotMatch(putBody, /supabaseServer\.from\("payroll_attendance_bonus_policy_versions"\)/);
 });
 
 test("PUT maps RPC failure to distinct error codes without ever silently succeeding on a partial write", () => {
@@ -64,6 +65,8 @@ test("PUT maps RPC failure to distinct error codes without ever silently succeed
     "INVALID_PENALTY_SETTINGS",
     "MEAL_ALLOWANCE_INVALID_AMOUNT",
     "INVALID_MEAL_ALLOWANCE_POLICY",
+    "ATTENDANCE_BONUS_INVALID_EFFECTIVE_MONTH",
+    "INVALID_ATTENDANCE_BONUS_POLICY",
   ]) {
     assert.ok(putBody.includes(`"${code}"`), `expected error code mapping for ${code}`);
   }

@@ -115,7 +115,7 @@ test("common settings: failure keeps the draft untouched and shows exactly one e
 
 test("common settings: mismatched meal amount/date (only one filled) blocks the whole save via mealValid, with an inline bilingual warning", () => {
   assert.match(commonSettings, /const mealPairValid = mealBothBlank \|\| mealBothFilled;/);
-  assert.match(commonSettings, /const valid = payload !== null && mealValid;/);
+  assert.match(commonSettings, /const valid = payload !== null && mealValid && bonusValid;/);
   assert.match(commonSettings, /금액과 적용일을 함께 입력하거나, 둘 다 비워두세요\./);
   assert.match(commonSettings, /Vui lòng nhập cả số tiền và ngày áp dụng, hoặc để trống cả hai\./);
 });

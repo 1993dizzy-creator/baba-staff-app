@@ -6,7 +6,6 @@ import {
   percentToBasisPoints,
 } from "@/lib/payroll/insurance";
 import { formatIntegerInput, integerInputDigits } from "@/lib/payroll/contract-form";
-import AttendanceBonusPolicySettings from "@/components/payroll/AttendanceBonusPolicySettings";
 
 type ApiSettings = {
   payment_day: number;
@@ -95,6 +94,52 @@ type MealAllowancePolicy = {
   note: string | null;
 };
 
+type AttendanceBonusPolicy = {
+  id: number;
+  effectiveMonth: string;
+  minimumActualWorkdays: number;
+  allowedLateCount: number;
+  allowedEarlyLeaveCount: number;
+  bonusAmount: number;
+  revision: number;
+  note: string | null;
+};
+
+type AttendanceBonusDraft = {
+  effectiveMonth: string;
+  minimumActualWorkdays: string;
+  allowedLateCount: string;
+  allowedEarlyLeaveCount: string;
+  bonusAmount: string;
+  note: string;
+};
+
+function currentMonth() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+  }).format(new Date()).slice(0, 7);
+}
+
+function toAttendanceBonusDraft(policy: AttendanceBonusPolicy | null): AttendanceBonusDraft {
+  return policy ? {
+    effectiveMonth: policy.effectiveMonth,
+    minimumActualWorkdays: String(policy.minimumActualWorkdays),
+    allowedLateCount: String(policy.allowedLateCount),
+    allowedEarlyLeaveCount: String(policy.allowedEarlyLeaveCount),
+    bonusAmount: String(policy.bonusAmount),
+    note: policy.note ?? "",
+  } : {
+    effectiveMonth: "",
+    minimumActualWorkdays: "",
+    allowedLateCount: "",
+    allowedEarlyLeaveCount: "",
+    bonusAmount: "",
+    note: "",
+  };
+}
+
 export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [snapshot, setSnapshot] = useState<Draft | null>(null);
@@ -108,6 +153,10 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
   const [mealEffectiveFromSnapshot, setMealEffectiveFromSnapshot] = useState("");
   const [mealCurrent, setMealCurrent] = useState<MealAllowancePolicy | null>(null);
   const [mealHistory, setMealHistory] = useState<MealAllowancePolicy[]>([]);
+  const [bonusDraft, setBonusDraft] = useState<AttendanceBonusDraft | null>(null);
+  const [bonusSnapshot, setBonusSnapshot] = useState<AttendanceBonusDraft | null>(null);
+  const [bonusCurrent, setBonusCurrent] = useState<AttendanceBonusPolicy | null>(null);
+  const [bonusHistory, setBonusHistory] = useState<AttendanceBonusPolicy[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -123,9 +172,14 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
         ok: response.ok,
         data: await response.json(),
       })),
-    ]).then(([settingsResult, mealResult]) => {
+      fetch("/api/admin/payroll/attendance-bonus/policy", { cache: "no-store", signal }).then(async (response) => ({
+        ok: response.ok,
+        data: await response.json(),
+      })),
+    ]).then(([settingsResult, mealResult, bonusResult]) => {
       if (!settingsResult.ok || !settingsResult.data.settings) throw new Error("PAYROLL_SETTINGS_READ_FAILED");
       if (!mealResult.ok) throw new Error("MEAL_ALLOWANCE_POLICY_READ_FAILED");
+      if (!bonusResult.ok) throw new Error("ATTENDANCE_BONUS_POLICY_READ_FAILED");
       const next = toDraft(settingsResult.data.settings);
       setDraft(next);
       setSnapshot(next);
@@ -138,6 +192,14 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
       setMealEffectiveFromDraft(effectiveFrom);
       setMealAmountSnapshot(amount);
       setMealEffectiveFromSnapshot(effectiveFrom);
+      const bonusCurrentPolicy: AttendanceBonusPolicy | null = bonusResult.data.current ?? null;
+      const bonusPolicyHistory: AttendanceBonusPolicy[] = bonusResult.data.history ?? [];
+      const bonusLatest = bonusPolicyHistory[0] ?? bonusCurrentPolicy;
+      const nextBonusDraft = toAttendanceBonusDraft(bonusLatest);
+      setBonusCurrent(bonusCurrentPolicy);
+      setBonusHistory(bonusPolicyHistory);
+      setBonusDraft(nextBonusDraft);
+      setBonusSnapshot(nextBonusDraft);
     });
   }, []);
 
@@ -167,7 +229,7 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
   if (loading) {
     return <section style={s.card}>{vi ? "Đang tải cài đặt chung…" : "공통 설정을 불러오는 중입니다…"}</section>;
   }
-  if (!draft || !snapshot) {
+  if (!draft || !snapshot || !bonusDraft || !bonusSnapshot) {
     return <section role="alert" style={{ ...s.card, ...s.error }}>{errorText}</section>;
   }
 
@@ -198,13 +260,26 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
   const mealValid = mealPairValid && mealAmountValid && mealDateValid;
   const mealDirty = mealAmountDraft !== mealAmountSnapshot || mealEffectiveFromDraft !== mealEffectiveFromSnapshot;
 
-  const valid = payload !== null && mealValid;
-  const dirty = settingsDirty || mealDirty;
+  const bonusMinimumActualWorkdays = Number(bonusDraft.minimumActualWorkdays);
+  const bonusAllowedLateCount = Number(bonusDraft.allowedLateCount);
+  const bonusAllowedEarlyLeaveCount = Number(bonusDraft.allowedEarlyLeaveCount);
+  const bonusAmount = Number(bonusDraft.bonusAmount);
+  const bonusDirty = JSON.stringify(bonusDraft) !== JSON.stringify(bonusSnapshot);
+  const bonusValuesValid = Number.isSafeInteger(bonusMinimumActualWorkdays) && bonusMinimumActualWorkdays > 0
+    && Number.isSafeInteger(bonusAllowedLateCount) && bonusAllowedLateCount >= 0
+    && Number.isSafeInteger(bonusAllowedEarlyLeaveCount) && bonusAllowedEarlyLeaveCount >= 0
+    && Number.isSafeInteger(bonusAmount) && bonusAmount > 0
+    && /^\d{4}-\d{2}$/.test(bonusDraft.effectiveMonth)
+    && bonusDraft.effectiveMonth >= currentMonth();
+  const bonusValid = !bonusDirty || bonusValuesValid;
+
+  const valid = payload !== null && mealValid && bonusValid;
+  const dirty = settingsDirty || mealDirty || bonusDirty;
 
   async function save() {
-    if (!draft) return;
+    if (!draft || !bonusDraft) return;
     const nextPayload = toPayload(draft);
-    if (!nextPayload || !mealValid) return;
+    if (!nextPayload || !mealValid || !bonusValid) return;
     setSaving(true);
     setMessage("");
     setError("");
@@ -215,6 +290,12 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
         ...nextPayload,
         mealDailyAmount: mealBothFilled ? mealAmountNumber : null,
         mealEffectiveFrom: mealBothFilled ? mealEffectiveFromDraft : null,
+        attendanceBonusMinimumActualWorkdays: bonusDirty ? bonusMinimumActualWorkdays : null,
+        attendanceBonusAllowedLateCount: bonusDirty ? bonusAllowedLateCount : null,
+        attendanceBonusAllowedEarlyLeaveCount: bonusDirty ? bonusAllowedEarlyLeaveCount : null,
+        attendanceBonusAmount: bonusDirty ? bonusAmount : null,
+        attendanceBonusEffectiveMonth: bonusDirty ? bonusDraft.effectiveMonth : null,
+        attendanceBonusNote: bonusDirty ? bonusDraft.note : null,
       }),
     });
     if (!response.ok) {
@@ -406,7 +487,76 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
         </details>
       </SettingsGroup>
 
-      <AttendanceBonusPolicySettings vi={vi} />
+      <SettingsGroup title={`✨ ${vi ? "Thưởng chuyên cần" : "개근 보너스"}`}>
+        <SettingRow label={vi ? "Hiện đang áp dụng" : "현재 적용 중"}>
+          <span style={s.inlineValue}>
+            {bonusCurrent
+              ? `${bonusCurrent.bonusAmount.toLocaleString("en-US")} VND · ${bonusCurrent.effectiveMonth}`
+              : vi ? "Chưa thiết lập" : "미설정"}
+          </span>
+        </SettingRow>
+        <SettingRow label={vi ? "Số ngày làm việc tối thiểu" : "최소 실제 근무일수"}>
+          <NumberInput
+            value={bonusDraft.minimumActualWorkdays}
+            label={vi ? "Số ngày làm việc tối thiểu" : "최소 실제 근무일수"}
+            suffix={vi ? "ngày" : "일"}
+            change={(value) => setBonusDraft({ ...bonusDraft, minimumActualWorkdays: value })}
+          />
+        </SettingRow>
+        <SettingRow label={vi ? "Số lần đi muộn cho phép" : "허용 지각 횟수"}>
+          <CountInput value={bonusDraft.allowedLateCount} label={vi ? "Số lần đi muộn cho phép" : "허용 지각 횟수"} suffix={vi ? "lần" : "회"} change={(value) => setBonusDraft({ ...bonusDraft, allowedLateCount: value })} />
+        </SettingRow>
+        <SettingRow label={vi ? "Số lần về sớm cho phép" : "허용 조퇴 횟수"}>
+          <CountInput value={bonusDraft.allowedEarlyLeaveCount} label={vi ? "Số lần về sớm cho phép" : "허용 조퇴 횟수"} suffix={vi ? "lần" : "회"} change={(value) => setBonusDraft({ ...bonusDraft, allowedEarlyLeaveCount: value })} />
+        </SettingRow>
+        <SettingRow label={vi ? "Tiền thưởng (VND)" : "보너스 금액 (VND)"}>
+          <span style={s.percent}>
+            <input
+              style={s.moneyInput}
+              aria-label={vi ? "Tiền thưởng chuyên cần" : "개근 보너스 금액"}
+              type="text"
+              inputMode="numeric"
+              value={formatIntegerInput(bonusDraft.bonusAmount)}
+              onChange={(event) => setBonusDraft({ ...bonusDraft, bonusAmount: integerInputDigits(event.target.value) })}
+            />
+            VND
+          </span>
+        </SettingRow>
+        <SettingRow label={vi ? "Tháng áp dụng" : "적용 월"}>
+          <input
+            style={s.dateInput}
+            aria-label={vi ? "Tháng áp dụng thưởng chuyên cần" : "개근 보너스 적용 월"}
+            type="month"
+            min={currentMonth()}
+            value={bonusDraft.effectiveMonth}
+            onChange={(event) => setBonusDraft({ ...bonusDraft, effectiveMonth: event.target.value })}
+          />
+        </SettingRow>
+        <SettingRow label={vi ? "Ghi chú" : "메모"} last>
+          <input
+            style={s.dateInput}
+            aria-label={vi ? "Ghi chú thưởng chuyên cần" : "개근 보너스 메모"}
+            value={bonusDraft.note}
+            onChange={(event) => setBonusDraft({ ...bonusDraft, note: event.target.value })}
+          />
+        </SettingRow>
+        {!bonusValid ? (
+          <p role="alert" style={s.error}>
+            {vi
+              ? "Kiểm tra số ngày, số lần cho phép, tiền thưởng và tháng áp dụng."
+              : "최소 근무일수, 허용 횟수, 보너스 금액과 적용 월을 확인하세요."}
+          </p>
+        ) : null}
+        <details style={s.details}>
+          <summary>{vi ? `Lịch sử ${bonusHistory.length} mục` : `변경 이력 ${bonusHistory.length}건`}</summary>
+          {bonusHistory.map((item) => (
+            <article key={item.id} style={s.mealHistory}>
+              <b>{item.effectiveMonth} · #{item.revision}</b>
+              <span>{item.bonusAmount.toLocaleString("en-US")} VND</span>
+            </article>
+          ))}
+        </details>
+      </SettingsGroup>
 
       {error ? <p role="alert" style={s.error}>{errorText}</p> : null}
       {message ? <p role="status" style={s.success}>{message}</p> : null}
@@ -473,6 +623,10 @@ function PercentInput({
 
 function NumberInput({value,label,suffix,change}:{value:string;label:string;suffix:string;change:(value:string)=>void}) {
   return <span style={s.percent}><input style={s.shortInput} aria-label={label} type="number" inputMode="numeric" min="1" step="1" value={value} onChange={(event)=>change(event.target.value)}/>{suffix}</span>;
+}
+
+function CountInput({value,label,suffix,change}:{value:string;label:string;suffix:string;change:(value:string)=>void}) {
+  return <span style={s.percent}><input style={s.shortInput} aria-label={label} type="number" inputMode="numeric" min="0" step="1" value={value} onChange={(event)=>change(event.target.value)}/>{suffix}</span>;
 }
 
 const s = {

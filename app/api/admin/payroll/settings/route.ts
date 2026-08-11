@@ -58,6 +58,11 @@ export async function PUT(request: Request) {
   const unauthorizedAbsencePenaltyDays = Number(body.unauthorizedAbsencePenaltyDays);
   const mealDailyAmountRaw = body.mealDailyAmount;
   const mealEffectiveFromRaw = body.mealEffectiveFrom;
+  const bonusMinimumActualWorkdaysRaw = body.attendanceBonusMinimumActualWorkdays;
+  const bonusAllowedLateCountRaw = body.attendanceBonusAllowedLateCount;
+  const bonusAllowedEarlyLeaveCountRaw = body.attendanceBonusAllowedEarlyLeaveCount;
+  const bonusAmountRaw = body.attendanceBonusAmount;
+  const bonusEffectiveMonthRaw = body.attendanceBonusEffectiveMonth;
 
   if (
     !Number.isInteger(paymentDay) || paymentDay < 1 || paymentDay > 28 ||
@@ -86,7 +91,32 @@ export async function PUT(request: Request) {
     return payrollJson({ ok:false, code:"MEAL_ALLOWANCE_INVALID_AMOUNT" }, 400);
   }
 
-  const { data, error } = await supabaseServer.rpc("payroll_update_common_settings_v1", {
+  const bonusValues = [
+    bonusMinimumActualWorkdaysRaw,
+    bonusAllowedLateCountRaw,
+    bonusAllowedEarlyLeaveCountRaw,
+    bonusAmountRaw,
+    bonusEffectiveMonthRaw,
+  ];
+  const bonusUntouched = bonusValues.every((value) => value === null || value === undefined || value === "");
+  const bonusComplete = bonusValues.every((value) => value !== null && value !== undefined && value !== "");
+  if (!bonusUntouched && !bonusComplete) {
+    return payrollJson({ ok:false, code:"INVALID_ATTENDANCE_BONUS_POLICY" }, 400);
+  }
+  const bonusMinimumActualWorkdays = bonusComplete ? Number(bonusMinimumActualWorkdaysRaw) : null;
+  const bonusAllowedLateCount = bonusComplete ? Number(bonusAllowedLateCountRaw) : null;
+  const bonusAllowedEarlyLeaveCount = bonusComplete ? Number(bonusAllowedEarlyLeaveCountRaw) : null;
+  const bonusAmount = bonusComplete ? Number(bonusAmountRaw) : null;
+  const bonusEffectiveMonth = bonusComplete ? String(bonusEffectiveMonthRaw) : null;
+  if (bonusComplete && (
+    !Number.isSafeInteger(bonusMinimumActualWorkdays) || bonusMinimumActualWorkdays! <= 0 ||
+    !Number.isSafeInteger(bonusAllowedLateCount) || bonusAllowedLateCount! < 0 ||
+    !Number.isSafeInteger(bonusAllowedEarlyLeaveCount) || bonusAllowedEarlyLeaveCount! < 0 ||
+    !Number.isSafeInteger(bonusAmount) || bonusAmount! <= 0 ||
+    !/^\d{4}-\d{2}$/.test(bonusEffectiveMonth!)
+  )) return payrollJson({ ok:false, code:"INVALID_ATTENDANCE_BONUS_POLICY" }, 400);
+
+  const { data, error } = await supabaseServer.rpc("payroll_update_common_settings_v2", {
     p_actor_user_id: auth.actor.id,
     p_payment_day: paymentDay,
     p_employee_insurance_rate_bp: employeeInsuranceRateBp,
@@ -100,6 +130,12 @@ export async function PUT(request: Request) {
     p_unauthorized_absence_penalty_days: unauthorizedAbsencePenaltyDays,
     p_meal_daily_amount: mealDailyAmount,
     p_meal_effective_from: mealEffectiveFrom,
+    p_bonus_minimum_actual_workdays: bonusMinimumActualWorkdays,
+    p_bonus_allowed_late_count: bonusAllowedLateCount,
+    p_bonus_allowed_early_leave_count: bonusAllowedEarlyLeaveCount,
+    p_bonus_amount: bonusAmount,
+    p_bonus_effective_month: bonusEffectiveMonth ? `${bonusEffectiveMonth}-01` : null,
+    p_bonus_note: bonusComplete && typeof body.attendanceBonusNote === "string" ? body.attendanceBonusNote.trim() || null : null,
   });
   if (error) {
     const status = error.message.includes("PAYROLL_FORBIDDEN") ? 403 : 400;
@@ -109,9 +145,11 @@ export async function PUT(request: Request) {
       : error.message.includes("INVALID_PENALTY_SETTINGS") ? "INVALID_PENALTY_SETTINGS"
       : error.message.includes("MEAL_ALLOWANCE_INVALID_AMOUNT") ? "MEAL_ALLOWANCE_INVALID_AMOUNT"
       : error.message.includes("INVALID_MEAL_ALLOWANCE_POLICY") ? "INVALID_MEAL_ALLOWANCE_POLICY"
+      : error.message.includes("ATTENDANCE_BONUS_INVALID_EFFECTIVE_MONTH") ? "ATTENDANCE_BONUS_INVALID_EFFECTIVE_MONTH"
+      : error.message.includes("INVALID_ATTENDANCE_BONUS_POLICY") ? "INVALID_ATTENDANCE_BONUS_POLICY"
       : "PAYROLL_SETTINGS_UPDATE_FAILED";
     return payrollJson({ ok:false, code }, status);
   }
-  const result = data as { settings: Record<string, unknown>; mealPolicyChanged: boolean; mealPolicy: Record<string, unknown> | null };
-  return payrollJson({ ok:true, settings: result.settings, mealPolicyChanged: result.mealPolicyChanged, mealPolicy: result.mealPolicy });
+  const result = data as { settings: Record<string, unknown>; mealPolicyChanged: boolean; mealPolicy: Record<string, unknown> | null; attendanceBonusPolicyChanged: boolean; attendanceBonusPolicy: Record<string, unknown> | null };
+  return payrollJson({ ok:true, ...result });
 }
