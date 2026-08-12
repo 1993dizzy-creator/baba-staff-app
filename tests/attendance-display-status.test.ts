@@ -41,6 +41,7 @@ test("attendance status follows calendar priority and handles missing records", 
   assert.equal(getAttendanceDisplayStatus({ status: "done" }), "normal");
   assert.equal(getAttendanceDisplayStatus({ status: "done", late_minutes: 5 }), "late");
   assert.equal(getAttendanceDisplayStatus({ status: "early_leave" }), "early_leave");
+  assert.equal(getAttendanceDisplayStatus({ status: "unauthorized_absence" }), "unauthorized_absence");
   assert.equal(
     getAttendanceDisplayStatus({ status: "leave", approval_status: "approved" }),
     "approved_leave"

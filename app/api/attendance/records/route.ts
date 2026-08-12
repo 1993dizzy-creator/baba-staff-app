@@ -63,7 +63,43 @@ export async function GET(req: Request) {
       );
     }
 
-    return attendanceJson({ ok: true, records: data ?? [] });
+    let records = (data ?? []) as unknown as Array<Record<string, unknown>>;
+    if (policy.scope === "admin_user_month") {
+      const unauthorizedIds = records
+        .filter((record) => record.status === "unauthorized_absence")
+        .map((record) => Number(record.id));
+      if (unauthorizedIds.length > 0) {
+        const { data: logs, error: logError } = await supabaseServer
+          .from("attendance_record_audit_logs")
+          .select("attendance_record_id,actor_user_id,reason,created_at")
+          .eq("action", "set_unauthorized_absence")
+          .in("attendance_record_id", unauthorizedIds)
+          .order("created_at", { ascending: false });
+        if (logError) throw new Error(`UNAUTHORIZED_ABSENCE_AUDIT_READ_FAILED:${logError.code}`);
+        const actorIds = [...new Set((logs ?? []).map((log) => Number(log.actor_user_id)).filter(Number.isSafeInteger))];
+        const { data: actors, error: actorError } = actorIds.length
+          ? await supabaseServer.from("users").select("id,name,username").in("id", actorIds)
+          : { data: [], error: null };
+        if (actorError) throw new Error(`UNAUTHORIZED_ABSENCE_ACTOR_READ_FAILED:${actorError.code}`);
+        const actorsById = new Map((actors ?? []).map((actor) => [Number(actor.id), actor.name || actor.username]));
+        const latestByRecord = new Map<number, { actorUserId: number; actorName: string | null; reason: string | null; createdAt: string }>();
+        for (const log of logs ?? []) {
+          const recordId = Number(log.attendance_record_id);
+          if (!latestByRecord.has(recordId)) latestByRecord.set(recordId, {
+            actorUserId: Number(log.actor_user_id),
+            actorName: actorsById.get(Number(log.actor_user_id)) ?? null,
+            reason: log.reason,
+            createdAt: log.created_at,
+          });
+        }
+        records = records.map((record) => ({
+          ...record,
+          unauthorized_absence_audit: latestByRecord.get(Number(record.id)) ?? null,
+        }));
+      }
+    }
+
+    return attendanceJson({ ok: true, records });
   } catch (err) {
     console.error("attendance records exception:", err);
     return attendanceJson(

@@ -36,7 +36,9 @@ type Action =
   | "delete_orphan_record"
   | "cancel_check_in"
   | "cancel_check_out"
-  | "cancel_leave";
+  | "cancel_leave"
+  | "set_unauthorized_absence"
+  | "cancel_unauthorized_absence";
 
 const MUTATION_RECORD_FIELDS =
   "id,user_id,work_date,status,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,note,approval_status,approved_by,approved_at,is_staff_direct_leave,created_at,updated_at";
@@ -210,6 +212,63 @@ export async function POST(req: Request) {
         },
         { status: 403 }
       );
+    }
+
+    if (action === "set_unauthorized_absence" || action === "cancel_unauthorized_absence") {
+      const reason = typeof note === "string" ? note.trim() : "";
+      if (!reason) {
+        return NextResponse.json({
+          ok: false,
+          code: "UNAUTHORIZED_ABSENCE_REASON_REQUIRED",
+          message: lang === "vi" ? "Vui lòng nhập lý do." : "사유를 입력해주세요.",
+        }, { status: 400 });
+      }
+
+      const { data, error } = await supabaseServer.rpc(
+        "attendance_admin_unauthorized_absence_v1",
+        {
+          p_action: action,
+          p_target_user_id: Number(user_id),
+          p_work_date: work_date,
+          p_actor_user_id: auth.actor.id,
+          p_reason: reason,
+        }
+      );
+      if (error) {
+        console.error("[attendance-admin] unauthorized absence RPC failed", { code: error.code, message: error.message });
+        return NextResponse.json({
+          ok: false,
+          message: lang === "vi" ? "Lỗi khi xử lý vắng không phép." : "무단결근 처리 중 오류가 발생했습니다.",
+        }, { status: 500 });
+      }
+
+      const result = data as { status?: string; record?: Record<string, unknown>; deletedId?: number } | null;
+      const status = result?.status ?? "unknown";
+      if (status === "ok") {
+        return NextResponse.json({ ok: true, record: result?.record ?? null, deleted_id: result?.deletedId ?? null });
+      }
+      const messages: Record<string, { ko: string; vi: string; http: number }> = {
+        forbidden: { ko: "권한이 없습니다.", vi: "Không có quyền.", http: 403 },
+        reason_required: { ko: "사유를 입력해주세요.", vi: "Vui lòng nhập lý do.", http: 400 },
+        invalid_work_date: { ko: "날짜를 다시 확인해주세요.", vi: "Vui lòng kiểm tra lại ngày.", http: 400 },
+        user_not_found: { ko: "직원 정보를 찾을 수 없습니다.", vi: "Không tìm thấy nhân viên.", http: 404 },
+        attendance_tracking_disabled: { ko: "근태를 사용하지 않는 직원입니다.", vi: "Nhân viên này không sử dụng chấm công.", http: 409 },
+        before_hire_date: { ko: "입사일 이전 날짜입니다.", vi: "Ngày này trước ngày vào làm.", http: 409 },
+        after_termination_date: { ko: "퇴사일 이후 날짜입니다.", vi: "Ngày này sau ngày nghỉ việc.", http: 409 },
+        future_date: { ko: "미래 날짜는 무단결근으로 지정할 수 없습니다.", vi: "Không thể xác nhận vắng không phép cho ngày trong tương lai.", http: 409 },
+        business_day_not_completed: { ko: "아직 완료되지 않은 영업일입니다.", vi: "Ngày kinh doanh này chưa kết thúc.", http: 409 },
+        work_schedule_not_found: { ko: "해당 날짜의 유효한 근무 스케줄이 없습니다.", vi: "Không có lịch làm việc hợp lệ cho ngày này.", http: 409 },
+        store_settings_not_found: { ko: "해당 날짜의 매장 설정을 확인할 수 없습니다.", vi: "Không thể xác định cài đặt cửa hàng cho ngày này.", http: 409 },
+        store_closed: { ko: "매장 휴무일에는 무단결근을 지정할 수 없습니다.", vi: "Không thể xác nhận vắng không phép vào ngày cửa hàng nghỉ.", http: 409 },
+        payroll_paid_locked: { ko: "이미 급여 지급이 완료된 직원의 근태는 변경할 수 없습니다.", vi: "Không thể sửa chấm công của nhân viên đã được thanh toán lương.", http: 409 },
+        already_unauthorized_absence: { ko: "이미 무단결근으로 지정된 날짜입니다.", vi: "Ngày này đã được xác nhận vắng không phép.", http: 409 },
+        leave_conflict: { ko: "휴무 기록이 있어 무단결근으로 지정할 수 없습니다.", vi: "Ngày này có dữ liệu nghỉ nên không thể xác nhận vắng không phép.", http: 409 },
+        attendance_conflict: { ko: "출퇴근 또는 근무 기록이 있어 무단결근으로 지정할 수 없습니다.", vi: "Ngày này đã có dữ liệu chấm công nên không thể xác nhận vắng không phép.", http: 409 },
+        record_changed: { ko: "근태 기록이 변경되었습니다. 새로고침 후 다시 시도해주세요.", vi: "Dữ liệu chấm công đã thay đổi. Vui lòng tải lại và thử lại.", http: 409 },
+        unauthorized_absence_cannot_be_cancelled: { ko: "현재 기록은 무단결근 취소 대상이 아닙니다.", vi: "Bản ghi hiện tại không thể hủy vắng không phép.", http: 409 },
+      };
+      const failure = messages[status] ?? { ko: "무단결근 처리에 실패했습니다.", vi: "Không thể xử lý vắng không phép.", http: 400 };
+      return NextResponse.json({ ok: false, code: status.toUpperCase(), message: failure[lang] }, { status: failure.http });
     }
 
     // 지각 정상처리는 일반 보정 폼과 분리한다. 이전 화면 버전이 update_record와
@@ -574,6 +633,16 @@ export async function POST(req: Request) {
       }
 
       existing = recordById;
+    }
+
+    if (existing?.status === ATTENDANCE_STATUS.UNAUTHORIZED_ABSENCE) {
+      return NextResponse.json({
+        ok: false,
+        code: "UNAUTHORIZED_ABSENCE_MUST_BE_CANCELLED_FIRST",
+        message: lang === "vi"
+          ? "Vui lòng hủy vắng không phép trước khi chỉnh sửa chấm công."
+          : "무단결근을 먼저 취소한 후 근태를 수정해주세요.",
+      }, { status: 409 });
     }
 
     const nowIso = new Date().toISOString();

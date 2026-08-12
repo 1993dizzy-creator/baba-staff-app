@@ -32,3 +32,10 @@ export function calculateLatePenalty(input: {
     amount: Math.round((input.dayRate * input.majorPenaltyRateBp) / 10_000),
   };
 }
+
+export function calculateUnauthorizedAbsencePenalty(input: {
+  dayRate: number;
+  penaltyDays: number;
+}) {
+  return Math.round(Math.max(0, input.dayRate) * Math.max(0, input.penaltyDays));
+}

@@ -4,6 +4,7 @@ export type MonthlyAttendanceStanding = {
   actualWorkDays: number;
   lateCount: number;
   earlyLeaveCount: number;
+  unauthorizedAbsenceCount: number;
   blockingCount: number;
   perfectAttendanceCurrent: boolean;
   blockingReasons?: Array<{
@@ -50,6 +51,7 @@ export function evaluateMonthlyAttendanceStanding(input: {
   const seenWorkedDates = new Set<string>();
   let lateCount = 0;
   let earlyLeaveCount = 0;
+  let unauthorizedAbsenceCount = 0;
   type BlockingReason = NonNullable<MonthlyAttendanceStanding["blockingReasons"]>[number];
   const blockingByDate = new Map<string, BlockingReason>();
 
@@ -66,6 +68,7 @@ export function evaluateMonthlyAttendanceStanding(input: {
     }
     if (facts.lateMinutes > 0) lateCount += 1;
     if (facts.earlyLeaveMinutes > 0) earlyLeaveCount += 1;
+    if (facts.attendanceStatus === "unauthorized_absence") unauthorizedAbsenceCount += 1;
     const worked = facts.actualMinutes !== null && facts.actualMinutes > 0 &&
       facts.attendanceStatus !== "leave" && facts.attendanceStatus !== "unresolved";
     if (worked) seenWorkedDates.add(day.date);
@@ -91,9 +94,10 @@ export function evaluateMonthlyAttendanceStanding(input: {
     actualWorkDays,
     lateCount,
     earlyLeaveCount,
+    unauthorizedAbsenceCount,
     blockingCount,
     perfectAttendanceCurrent: input.attendanceTrackingEnabled && actualWorkDays >= 1 &&
-      lateCount === 0 && earlyLeaveCount === 0 && blockingCount === 0,
+      lateCount === 0 && earlyLeaveCount === 0 && unauthorizedAbsenceCount === 0 && blockingCount === 0,
     blockingReasons,
   };
 }

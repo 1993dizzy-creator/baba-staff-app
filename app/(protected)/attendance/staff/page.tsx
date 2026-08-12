@@ -82,6 +82,7 @@ function getStatusText(
   record?: AttendanceRecord
 ) {
   if (!record) return t.workBefore;
+  if (record.status === ATTENDANCE_STATUS.UNAUTHORIZED_ABSENCE) return t.unauthorizedAbsence;
 
   if (isApprovedLeave(record)) return t.workLeave;
   if (record.check_out_at) return t.workDone;
@@ -93,6 +94,7 @@ function getStatusText(
 
 function getStatusColor(record?: AttendanceRecord) {
   if (!record) return "#6b7280";
+  if (record.status === ATTENDANCE_STATUS.UNAUTHORIZED_ABSENCE) return "#7c3aed";
   if (isApprovedLeave(record)) return "#6b7280";
   if (record.check_out_at) return "#2563eb";
   if (record.check_in_at) return "#10b981";

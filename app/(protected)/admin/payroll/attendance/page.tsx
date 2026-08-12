@@ -667,13 +667,15 @@ export default function AttendanceOverviewPage() {
                                                     <div style={recentGridStyle}>
                                                         {recentDateKeys.map((dateKey) => {
                                                             const status = getAttendanceDisplayStatus(recordsByDate?.get(dateKey));
-                                                            const label = status === "early_leave"
+                                                             const label = status === "early_leave"
                                                                 ? t.workEarlyLeave
                                                                 : status === "late"
                                                                     ? t.workLate
-                                                                    : status === "approved_leave"
-                                                                        ? t.workLeave
-                                                                        : status === "normal"
+                                                                 : status === "approved_leave"
+                                                                     ? t.workLeave
+                                                                     : status === "unauthorized_absence"
+                                                                         ? t.unauthorizedAbsence
+                                                                     : status === "normal"
                                                                             ? t.workNormal
                                                                             : c.noData;
 

@@ -3,6 +3,7 @@ export type AttendanceDisplayStatus =
   | "late"
   | "early_leave"
   | "approved_leave"
+  | "unauthorized_absence"
   | "none";
 
 export type AttendanceStatusRecord = {
@@ -17,12 +18,15 @@ export const ATTENDANCE_STATUS_COLORS: Record<Exclude<AttendanceDisplayStatus, "
   late: "#f59e0b",
   early_leave: "#ef4444",
   approved_leave: "#6b7280",
+  unauthorized_absence: "#7c3aed",
 };
 
 export function getAttendanceDisplayStatus(
   record: AttendanceStatusRecord | null | undefined
 ): AttendanceDisplayStatus {
   if (!record) return "none";
+
+  if (record.status === "unauthorized_absence") return "unauthorized_absence";
 
   if (Number(record.early_leave_minutes || 0) > 0 || record.status === "early_leave") {
     return "early_leave";

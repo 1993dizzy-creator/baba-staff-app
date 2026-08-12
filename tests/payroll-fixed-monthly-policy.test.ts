@@ -125,7 +125,9 @@ test("fixed monthly payroll creates one month item before attendance processing"
   assert.match(monthly, /days:\[\]/);
   assert.ok(monthly.indexOf("fixedContractMatches") < monthly.indexOf("for(const date of eligibleDates)"));
   const fixedBranch = monthly.slice(monthly.indexOf("if(calculationDate&&fixedContractMatches.length===1)"), monthly.indexOf("for(const date of eligibleDates)"));
-  assert.doesNotMatch(fixedBranch, /normalizeAttendanceDayFacts|scheduleMatches|calculateLatePenalty|applyPayrollWorkPolicy/);
+  assert.doesNotMatch(fixedBranch, /normalizeAttendanceDayFacts|calculateLatePenalty|applyPayrollWorkPolicy/);
+  assert.match(fixedBranch, /row\.status==="unauthorized_absence"/);
+  assert.match(fixedBranch, /item\("unauthorized_absence_deduction","deduction"/);
   assert.match(fixedBranch, /insurance_employee_deduction/);
 });
 

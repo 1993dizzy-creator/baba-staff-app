@@ -142,6 +142,7 @@ export async function POST(req: Request) {
         ATTENDANCE_STATUS.DONE,
         ATTENDANCE_STATUS.LATE,
         ATTENDANCE_STATUS.EARLY_LEAVE,
+        ATTENDANCE_STATUS.UNAUTHORIZED_ABSENCE,
       ];
 
       if (

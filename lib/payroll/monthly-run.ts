@@ -11,7 +11,7 @@ import { applyUnifiedPayrollWorkPolicy as applyPayrollWorkPolicy, calculatePayro
 import { isPayrollUserCandidate } from "./eligibility";
 import type { PayrollContract, WorkScheduleVersion } from "./types";
 import { buildEmployeeInsuranceSnapshot, calculateDirectorInsurance, selectInsuranceSetting, type PayrollInsuranceGlobalSettings, type PayrollInsuranceSettingVersion } from "./insurance";
-import { calculateLatePenalty, type PayrollPenaltySettings } from "./penalties";
+import { calculateLatePenalty, calculateUnauthorizedAbsencePenalty, type PayrollPenaltySettings } from "./penalties";
 import { getLastCompletedBusinessDate, getPayrollOverviewPeriod } from "./overview-period";
 import { addStoreDays } from "@/lib/store-settings/business-time-core";
 import { isMissingAttendanceCandidateDate } from "./missing-attendance";
@@ -86,7 +86,15 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
     const levelInfo=getEmployeeLevelInfo(user,calculationDate);
     const fixed=calculateFixedMonthlyPayroll(contract,levelInfo,calculationDate);
     if(!fixed)reviews.push(review("EMPLOYEE_LEVEL_BASE_DATE_REQUIRED",null,{contractRevision:contract.revision,calculationDate}));
-    else items.push(item("base_work","addition",fixed.amount,null,"월 고정급여 / Lương cố định hàng tháng",{contractRevision:contract.revision,calculationBasis:"fixed_monthly",contractSalary:contract.baseSalary,fixedRaiseAmount:contract.fixedRaiseAmount,...fixed.levelSnapshot,levelProgramEnabled:user.level_program_enabled,levelProgramVersionId:user.levelProgramVersion?.id??null,levelProgramRevision:user.levelProgramVersion?.revision??null,levelProgramEffectiveFrom:user.levelProgramVersion?.effectiveFrom??null,levelBaseDate:user.level_base_date_override}));
+    else {
+      items.push(item("base_work","addition",fixed.amount,null,"월 고정급여 / Lương cố định hàng tháng",{contractRevision:contract.revision,calculationBasis:"fixed_monthly",contractSalary:contract.baseSalary,fixedRaiseAmount:contract.fixedRaiseAmount,...fixed.levelSnapshot,levelProgramEnabled:user.level_program_enabled,levelProgramVersionId:user.levelProgramVersion?.id??null,levelProgramRevision:user.levelProgramVersion?.revision??null,levelProgramEffectiveFrom:user.levelProgramVersion?.effectiveFrom??null,levelBaseDate:user.level_base_date_override}));
+      const rate=calculatePayrollRates(contract,fixed.amount);
+      for(const record of records.filter(row=>row.status==="unauthorized_absence"&&eligibleDates.includes(row.work_date))){
+        const scheduleMatches=activeOn(schedules,record.work_date);const schedule=scheduleMatches.length===1?scheduleMatches[0]:null;const settings=input.settingsByDate.get(record.work_date)??{revision:null,lateGraceMinutes:0,earlyLeaveGraceMinutes:0};
+        const amount=calculateUnauthorizedAbsencePenalty({dayRate:rate.dayRate,penaltyDays:input.penaltySettings.unauthorizedAbsencePenaltyDays});
+        items.push(item("unauthorized_absence_deduction","deduction",amount,record.work_date,"무단결근 패널티 / Phạt vắng không phép",{attendanceRecordId:record.id,businessDate:record.work_date,dayRate:rate.dayRate,penaltyDays:input.penaltySettings.unauthorizedAbsencePenaltyDays,calculatedAmount:amount,contractRevision:contract.revision,scheduleRevision:schedule?.revision??null,storeSettingsRevision:settings.revision,engineVersion:PAYROLL_RUN_ENGINE_VERSION}));
+      }
+    }
     const insuranceSetting=selectInsuranceSetting(input.insuranceVersionsByUser.get(user.id)??[],input.month);const insuranceSnapshot=buildEmployeeInsuranceSnapshot(insuranceSetting,input.insuranceGlobal);
     if(insuranceSnapshot.isEnrolled)items.push(item("insurance_employee_deduction","deduction",insuranceSnapshot.employeeDeductionAmount,null,"직원 보험 공제",{insuranceSettingVersionId:insuranceSnapshot.settingVersionId,insuranceSettingRevision:insuranceSnapshot.revision,effectiveMonth:insuranceSnapshot.effectiveMonth,insuranceBaseAmount:insuranceSnapshot.insuranceBaseAmount,employeeRateBp:insuranceSnapshot.employeeRateBp,employerRateBp:insuranceSnapshot.employerRateBp,employeeDeductionAmount:insuranceSnapshot.employeeDeductionAmount,employerContributionAmount:insuranceSnapshot.employerAmount}));
     return{userId:user.id,employeeName:employeeName(user),contractSnapshot:contracts,attendanceSnapshot:{month:input.month,engineVersion:PAYROLL_RUN_ENGINE_VERSION,calculationBasis:"fixed_monthly",calculationDate,levelSnapshot:fixed?.levelSnapshot??null,days:[]},insuranceSnapshot,recognizedWorkdays:0,recognizedMinutes:0,lateMinutes:0,earlyLeaveMinutes:0,overtimeCandidateMinutes:0,items,reviews};
@@ -109,6 +117,11 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
       if(record.approval_status!=="approved"){days.push({date,facts,contractRevision:contract.revision,scheduleRevision:schedule.revision});continue;}
       // No per-record paid-leave marker exists yet, so approved leave remains unpaid by default.
       days.push({date,facts,contractRevision:contract.revision,scheduleRevision:schedule.revision});continue;
+    }
+    if(record?.status==="unauthorized_absence"){
+      const amount=calculateUnauthorizedAbsencePenalty({dayRate:rate.dayRate,penaltyDays:input.penaltySettings.unauthorizedAbsencePenaltyDays});
+      items.push(item("unauthorized_absence_deduction","deduction",amount,date,"무단결근 패널티 / Phạt vắng không phép",{attendanceRecordId:record.id,businessDate:date,dayRate:rate.dayRate,penaltyDays:input.penaltySettings.unauthorizedAbsencePenaltyDays,calculatedAmount:amount,contractRevision:contract.revision,scheduleRevision:schedule.revision,storeSettingsRevision:settings.revision,engineVersion:PAYROLL_RUN_ENGINE_VERSION}));
+      days.push({date,facts,contractRevision:contract.revision,scheduleRevision:schedule.revision,recognizedMinutes:0});continue;
     }
     if(blocking||facts.actualMinutes===null){days.push({date,facts,contractRevision:contract.revision,scheduleRevision:schedule.revision});continue;}
     const actualRecognizedMinutes=selectUnifiedRecognizedMinutes({scheduledMinutes:facts.scheduledMinutes??facts.actualMinutes,scheduledOverlapMinutes:facts.scheduledOverlapMinutes??facts.actualMinutes,actualMinutes:facts.actualMinutes,lateMinutes:facts.lateMinutes,earlyLeaveMinutes:facts.earlyLeaveMinutes,manualLateNormalized:facts.manualLateNormalized});

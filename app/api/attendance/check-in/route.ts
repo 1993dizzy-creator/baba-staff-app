@@ -194,6 +194,12 @@ export async function POST(req: Request) {
         { status: 409 }
       );
     }
+    if (existing?.status === ATTENDANCE_STATUS.UNAUTHORIZED_ABSENCE) {
+      return NextResponse.json(
+        { ok: false, message: lang === "vi" ? "Ngày này đã được xác nhận vắng không phép. Vui lòng liên hệ quản lý để hủy trước." : "무단결근으로 확정된 날짜입니다. 관리자에게 먼저 취소를 요청해주세요." },
+        { status: 409 }
+      );
+    }
 
     // work_date별로 유효한 store_setting_versions/store_attendance_policies/
     // store_business_hours/employee_work_schedule_versions를 조회해 공통 정책

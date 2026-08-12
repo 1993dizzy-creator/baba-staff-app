@@ -75,7 +75,7 @@ export type AttendanceDayFacts = {
   earlyLeaveThresholdMinutes: number;
   isEarlyLeave: boolean;
   overtimeCandidateMinutes: number;
-  attendanceStatus: "no_record" | "working" | "done" | "late" | "early_leave" | "late_and_early_leave" | "leave" | "unresolved";
+  attendanceStatus: "no_record" | "working" | "done" | "late" | "early_leave" | "late_and_early_leave" | "leave" | "unauthorized_absence" | "unresolved";
   payrollStatus: PayrollStatus;
   warningCodes: PayrollWarningCode[];
   stored: {

@@ -4,7 +4,7 @@ import test from "node:test";
 import { attendanceBonusMonthlyStatus } from "../lib/payroll/attendance-bonus-status.ts";
 
 const policy = { minimumActualWorkdays: 26, allowedLateCount: 0, allowedEarlyLeaveCount: 0, bonusAmount: 300000 };
-const standing = { actualWorkDays: 8, lateCount: 0, earlyLeaveCount: 0, blockingCount: 0, perfectAttendanceCurrent: true };
+const standing = { actualWorkDays: 8, lateCount: 0, earlyLeaveCount: 0, unauthorizedAbsenceCount: 0, blockingCount: 0, perfectAttendanceCurrent: true };
 const status = (overrides: Partial<Parameters<typeof attendanceBonusMonthlyStatus>[0]> = {}) => attendanceBonusMonthlyStatus({
   vi: false,
   isEligible: true,

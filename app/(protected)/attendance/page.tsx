@@ -1402,6 +1402,7 @@ function Calendar({
           <LegendItem label={t.workLate} color="#f59e0b" />
           <LegendItem label={t.workEarlyLeave} color="#ef4444" />
           <LegendItem label={t.workLeave} color="#6b7280" />
+          <LegendItem label={t.unauthorizedAbsence} color="#7c3aed" />
         </div>
       </div>
 
@@ -1444,6 +1445,8 @@ function Calendar({
 
             if (record?.status === ATTENDANCE_STATUS.EARLY_LEAVE) {
               dotColor = "#ef4444";
+            } else if (record?.status === ATTENDANCE_STATUS.UNAUTHORIZED_ABSENCE) {
+              dotColor = "#7c3aed";
             } else if (Number(record?.late_minutes || 0) > 0) {
               dotColor = "#f59e0b";
             } else if (isApprovedLeave(record)) {
@@ -1475,6 +1478,9 @@ function Calendar({
                         <div>{record.check_in_at ? formatTimeForDisplay(record.check_in_at) : "-"}</div>
                         <div>{record.check_out_at ? formatTimeForDisplay(record.check_out_at) : "-"}</div>
                       </div>
+                    )}
+                    {record.status === ATTENDANCE_STATUS.UNAUTHORIZED_ABSENCE && (
+                      <div style={calendarTimeTextStyle}>{t.unauthorizedAbsence}</div>
                     )}
                   </>
                 )}

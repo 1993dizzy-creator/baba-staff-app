@@ -9,6 +9,7 @@ export type AttendanceBonusMonthlyStanding = {
   actualWorkDays: number;
   lateCount: number;
   earlyLeaveCount: number;
+  unauthorizedAbsenceCount: number;
   blockingCount: number;
   perfectAttendanceCurrent: boolean;
 };
@@ -34,6 +35,7 @@ export function attendanceBonusMonthlyStatus(input: {
   if (standing.blockingCount > 0) failures.push(vi ? "cần kiểm tra chấm công" : "근태 확인 필요");
   if (standing.lateCount > policy.allowedLateCount) failures.push(vi ? `đi muộn ${standing.lateCount} lần` : `지각 ${standing.lateCount}회`);
   if (standing.earlyLeaveCount > policy.allowedEarlyLeaveCount) failures.push(vi ? `về sớm ${standing.earlyLeaveCount} lần` : `조퇴 ${standing.earlyLeaveCount}회`);
+  if (standing.unauthorizedAbsenceCount > 0) failures.push(vi ? `vắng không phép ${standing.unauthorizedAbsenceCount} lần` : `무단결근 ${standing.unauthorizedAbsenceCount}회`);
   const workdaysMet = standing.actualWorkDays >= policy.minimumActualWorkdays;
 
   if (input.monthClosed) {

@@ -43,5 +43,6 @@ export function qualifiesForAttendanceBonus(input: {
   return Boolean(input.monthClosed && input.attendanceTrackingEnabled && policy &&
     eligibility?.isEligible === true && standing.actualWorkDays >= policy.minimumActualWorkdays &&
     standing.lateCount <= policy.allowedLateCount &&
-    standing.earlyLeaveCount <= policy.allowedEarlyLeaveCount && standing.blockingCount === 0);
+    standing.earlyLeaveCount <= policy.allowedEarlyLeaveCount &&
+    standing.unauthorizedAbsenceCount === 0 && standing.blockingCount === 0);
 }

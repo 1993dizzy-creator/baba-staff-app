@@ -4,6 +4,7 @@ export const ATTENDANCE_STATUS = {
   LATE: "late",
   EARLY_LEAVE: "early_leave",
   LEAVE: "leave",
+  UNAUTHORIZED_ABSENCE: "unauthorized_absence",
 } as const;
 
 export const APPROVAL_STATUS = {

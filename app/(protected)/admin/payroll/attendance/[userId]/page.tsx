@@ -49,6 +49,12 @@ type AttendanceRecord = {
     note: string | null;
     approval_status: "pending" | "approved" | null;
     updated_at?: string | null;
+    unauthorized_absence_audit?: {
+        actorUserId: number;
+        actorName: string | null;
+        reason: string | null;
+        createdAt: string;
+    } | null;
 };
 
 function getMonthFromParam(monthParam: string | null) {
@@ -207,6 +213,7 @@ export default function AttendanceUserDetailPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [message, setMessage] = useState("");
     const [isSaving, setIsSaving] = useState(false);
+    const [unauthorizedAbsencePenaltyDays, setUnauthorizedAbsencePenaltyDays] = useState<number | null>(null);
 
     useEffect(() => {
         const loginUser = getUser();
@@ -226,8 +233,18 @@ export default function AttendanceUserDetailPage() {
             const { startText } = getMonthRange(currentMonth);
             const month = startText.slice(0, 7);
 
-            const userRes = await attendanceFetch(`/api/attendance/users?mode=month&month=${month}`);
-            const userResult = await userRes.json();
+            const [userRes, recordRes, settingsRes] = await Promise.all([
+                attendanceFetch(`/api/attendance/users?mode=month&month=${month}`),
+                attendanceFetch(
+                    `/api/attendance/records?scope=admin_user_month&user_id=${encodeURIComponent(String(userId))}&month=${month}`
+                ),
+                attendanceFetch("/api/admin/payroll/settings"),
+            ]);
+            const [userResult, recordResult, settingsResult] = await Promise.all([
+                userRes.json(),
+                recordRes.json(),
+                settingsRes.json(),
+            ]);
 
             if (!userRes.ok || !userResult.ok) {
                 console.log("fetch user detail error:", userResult);
@@ -245,18 +262,16 @@ export default function AttendanceUserDetailPage() {
                 console.log("user not found in active list, loading records anyway:", userId);
             }
 
-            const recordRes = await attendanceFetch(
-                `/api/attendance/records?scope=admin_user_month&user_id=${encodeURIComponent(String(userId))}&month=${month}`
-            );
-
-            const recordResult = await recordRes.json();
-
             if (!recordRes.ok || !recordResult.ok) {
                 console.log("fetch user attendance error:", recordResult);
                 return;
             }
 
             const recordData = recordResult.records || [];
+
+            if (settingsRes.ok && settingsResult.ok) {
+                setUnauthorizedAbsencePenaltyDays(Number(settingsResult.settings?.unauthorized_absence_penalty_days));
+            }
 
             setUser(userData || null);
             setRecords(recordData || []);
@@ -428,6 +443,27 @@ export default function AttendanceUserDetailPage() {
         }
     };
 
+    const handleUnauthorizedAbsence = async (action: "set_unauthorized_absence" | "cancel_unauthorized_absence", reason: string) => {
+        if (!user) return;
+        setIsSaving(true);
+        setMessage("");
+        try {
+            const res = await attendanceFetch("/api/attendance/admin", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action, user_id: user.id, work_date: selectedDate, note: reason, lang }),
+            });
+            const result = await res.json();
+            if (!res.ok || !result.ok) throw new Error(result.message || t.correctionFailed);
+            await fetchDetail();
+            setMessage(t.correctionDone);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : t.correctionFailed);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
 
     const summary = useMemo(() => {
         const workRecords = records.filter((record) =>
@@ -446,6 +482,7 @@ export default function AttendanceUserDetailPage() {
         const pendingLeaveRecords = records.filter((record) =>
             record.status === "leave" && record.approval_status === "pending"
         );
+        const unauthorizedAbsenceRecords = records.filter((record) => record.status === "unauthorized_absence");
 
         const lateCount = workRecords.filter((record) =>
             Number(record.late_minutes || 0) > 0
@@ -466,6 +503,7 @@ export default function AttendanceUserDetailPage() {
             pendingLeaveCount: pendingLeaveRecords.length,
             lateCount,
             earlyLeaveCount,
+            unauthorizedAbsenceCount: unauthorizedAbsenceRecords.length,
             totalWorkMinutes,
         };
     }, [records]);
@@ -499,6 +537,7 @@ export default function AttendanceUserDetailPage() {
                         <StatChip icon="🌴" label={t.workLeave} value={`${summary.leaveDays}`} />
                         <StatChip icon="⏰" label={t.workLate} value={`${summary.lateCount}`} />
                         <StatChip icon="🏃" label={t.workEarlyLeave} value={`${summary.earlyLeaveCount}`} />
+                        <StatChip icon="⛔" label={t.unauthorizedAbsence} value={`${summary.unauthorizedAbsenceCount}`} />
                     </div>
                 )}
             </div>
@@ -526,6 +565,8 @@ export default function AttendanceUserDetailPage() {
                         onSave={handleSaveRecord}
                         onNormalizeLate={handleNormalizeLate}
                         onSaveLeave={handleSaveLeave}
+                        onUnauthorizedAbsence={handleUnauthorizedAbsence}
+                        unauthorizedAbsencePenaltyDays={unauthorizedAbsencePenaltyDays}
                     />
 
                 </>
@@ -605,6 +646,7 @@ function Calendar({
                     <LegendItem label={t.workLate} color="#f59e0b" />
                     <LegendItem label={t.workEarlyLeave} color="#ef4444" />
                     <LegendItem label={t.workLeave} color="#6b7280" />
+                    <LegendItem label={t.unauthorizedAbsence} color={ATTENDANCE_STATUS_COLORS.unauthorized_absence} />
                 </div>
             </div>
 
@@ -682,6 +724,9 @@ function Calendar({
                                                 <div>{record.check_out_at ? formatTime(record.check_out_at) : "-"}</div>
                                             </div>
                                         )}
+                                        {displayStatus === "unauthorized_absence" && (
+                                            <div style={calendarTimeTextStyle}>{t.unauthorizedAbsence}</div>
+                                        )}
 
                                         {isLongShiftRecord(record.check_in_at, record.check_out_at) && (
                                             <div style={calendarWarningIconStyle} title={t.longShiftWarning}>
@@ -726,6 +771,8 @@ function RecordDetailPanel({
     onSave,
     onNormalizeLate,
     onSaveLeave,
+    onUnauthorizedAbsence,
+    unauthorizedAbsencePenaltyDays,
 }: {
     selectedDate: string;
     record: AttendanceRecord | null;
@@ -736,12 +783,14 @@ function RecordDetailPanel({
     onSave: (input: SaveRecordInput) => void;
     onNormalizeLate: (recordId: number) => void;
     onSaveLeave: (input: { note: string; isNew?: boolean }) => void;
+    onUnauthorizedAbsence: (action: "set_unauthorized_absence" | "cancel_unauthorized_absence", reason: string) => void;
+    unauthorizedAbsencePenaltyDays: number | null;
 }) {
     const { lang } = useLanguage();
     const c = commonText[lang];
     const t = attendanceText[lang];
     const [note, setNote] = useState(record?.note || "");
-    const [blankMode, setBlankMode] = useState<"work" | "leave">("work");
+    const [blankMode, setBlankMode] = useState<"work" | "leave" | "unauthorized_absence">("work");
 
     const baseWorkDate = record?.work_date || selectedDate;
     // 빈 출근/퇴근 입력의 기본값은 브라우저의 "오늘 날짜"가 아니라
@@ -759,7 +808,7 @@ function RecordDetailPanel({
     const [checkInDateTime, setCheckInDateTime] = useState(baselineCheckInValue);
     const [checkOutDateTime, setCheckOutDateTime] = useState(baselineCheckOutValue);
 
-    const canEdit = !!record && record.status !== "leave";
+    const canEdit = !!record && record.status !== "leave" && record.status !== "unauthorized_absence";
     const isUnresolved = record ? isOpenRecordUnresolved(record) : false;
     const isCurrentlyWorking = !!record?.check_in_at && !record?.check_out_at && !isUnresolved;
     const isLongShift = record ? isLongShiftRecord(record.check_in_at, record.check_out_at) : false;
@@ -793,6 +842,7 @@ function RecordDetailPanel({
         if (status === "late") return t.workLate;
         if (status === "early_leave") return t.workEarlyLeave;
         if (status === "leave") return t.workLeave;
+        if (status === "unauthorized_absence") return t.unauthorizedAbsence;
         return status || "-";
     }
 
@@ -822,6 +872,13 @@ function RecordDetailPanel({
                         >
                             {t.createLeaveTab}
                         </button>
+                        <button
+                            type="button"
+                            style={blankMode === "unauthorized_absence" ? blankModeActiveButtonStyle : blankModeInactiveButtonStyle}
+                            onClick={() => setBlankMode("unauthorized_absence")}
+                        >
+                            {t.createUnauthorizedAbsenceTab}
+                        </button>
                     </div>
 
                     {blankMode === "work" ? (
@@ -833,8 +890,15 @@ function RecordDetailPanel({
                             message={message}
                             onCreate={onSave}
                         />
-                    ) : (
+                    ) : blankMode === "leave" ? (
                         <CreateLeaveForm isSaving={isSaving} message={message} onCreate={onSaveLeave} />
+                    ) : (
+                        <UnauthorizedAbsenceForm
+                            isSaving={isSaving}
+                            message={message}
+                            penaltyDays={unauthorizedAbsencePenaltyDays}
+                            onConfirm={(reason) => onUnauthorizedAbsence("set_unauthorized_absence", reason)}
+                        />
                     )}
                 </div>
             ) : (
@@ -880,15 +944,25 @@ function RecordDetailPanel({
                     ) : null}
 
                     <div style={editBlockStyle}>
-                        <label style={fieldStyle}>
-                            <span style={fieldLabelStyle}>{t.note}</span>
-                            <textarea
-                                value={note}
-                                onChange={(event) => setNote(event.target.value)}
-                                style={textareaStyle}
-                                rows={2}
+                        {record.status === "unauthorized_absence" ? (
+                            <UnauthorizedAbsenceDetail
+                                record={record}
+                                isSaving={isSaving}
+                                penaltyDays={unauthorizedAbsencePenaltyDays}
+                                onCancel={(reason) => onUnauthorizedAbsence("cancel_unauthorized_absence", reason)}
                             />
-                        </label>
+                        ) : null}
+                        {record.status !== "unauthorized_absence" ? (
+                            <label style={fieldStyle}>
+                                <span style={fieldLabelStyle}>{t.note}</span>
+                                <textarea
+                                    value={note}
+                                    onChange={(event) => setNote(event.target.value)}
+                                    style={textareaStyle}
+                                    rows={2}
+                                />
+                            </label>
+                        ) : null}
 
                         {canEdit ? (
                             <>
@@ -920,7 +994,7 @@ function RecordDetailPanel({
                             </>
                         ) : null}
 
-                        <div style={actionRowStyle}>
+                        {record.status !== "unauthorized_absence" ? <div style={actionRowStyle}>
                             <button
                                 type="button"
                                 style={secondaryActionButtonStyle}
@@ -956,7 +1030,7 @@ function RecordDetailPanel({
                                     {t.markNormal}
                                 </button>
                             ) : null}
-                        </div>
+                        </div> : null}
 
                         {message ? <div style={messageStyle}>{message}</div> : null}
                     </div>
@@ -1092,6 +1166,78 @@ function CreateLeaveForm({
             </div>
 
             {message ? <div style={messageStyle}>{message}</div> : null}
+        </div>
+    );
+}
+
+function UnauthorizedAbsenceForm({
+    isSaving,
+    message,
+    penaltyDays,
+    onConfirm,
+}: {
+    isSaving: boolean;
+    message: string;
+    penaltyDays: number | null;
+    onConfirm: (reason: string) => void;
+}) {
+    const { lang } = useLanguage();
+    const c = commonText[lang];
+    const t = attendanceText[lang];
+    const [reason, setReason] = useState("");
+    return (
+        <div style={editBlockStyle}>
+            <strong>{t.unauthorizedAbsenceTitle}</strong>
+            <div style={scheduleNoticeStyle}>{t.unauthorizedAbsenceDescription}</div>
+            <div style={scheduleNoticeStyle}>
+                {penaltyDays === null ? c.loading : t.unauthorizedAbsenceCurrentPolicy.replace("{days}", String(penaltyDays))}
+            </div>
+            <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>{t.unauthorizedAbsenceReason}</span>
+                <textarea value={reason} onChange={(event) => setReason(event.target.value)} style={textareaStyle} rows={3} />
+            </label>
+            <div style={actionRowStyle}>
+                <button type="button" style={primaryActionButtonStyle} disabled={isSaving || !reason.trim()} onClick={() => onConfirm(reason.trim())}>
+                    {isSaving ? c.saving : t.unauthorizedAbsenceConfirm}
+                </button>
+            </div>
+            {message ? <div style={messageStyle}>{message}</div> : null}
+        </div>
+    );
+}
+
+function UnauthorizedAbsenceDetail({
+    record,
+    isSaving,
+    penaltyDays,
+    onCancel,
+}: {
+    record: AttendanceRecord;
+    isSaving: boolean;
+    penaltyDays: number | null;
+    onCancel: (reason: string) => void;
+}) {
+    const { lang } = useLanguage();
+    const c = commonText[lang];
+    const t = attendanceText[lang];
+    const [cancelReason, setCancelReason] = useState("");
+    const audit = record.unauthorized_absence_audit;
+    return (
+        <div style={unauthorizedAbsenceDetailStyle}>
+            <strong>{t.unauthorizedAbsenceTitle}</strong>
+            <div>{t.unauthorizedAbsenceCurrentPolicy.replace("{days}", penaltyDays === null ? "-" : String(penaltyDays))}</div>
+            <div>{t.unauthorizedAbsenceReason}: {audit?.reason || record.note || "-"}</div>
+            <div>{t.unauthorizedAbsenceActor}: {audit?.actorName || (audit ? `#${audit.actorUserId}` : "-")}</div>
+            <div>{t.unauthorizedAbsenceProcessedAt}: {audit?.createdAt ? new Date(audit.createdAt).toLocaleString(lang === "vi" ? "vi-VN" : "ko-KR", { timeZone: "Asia/Ho_Chi_Minh" }) : "-"}</div>
+            <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>{t.unauthorizedAbsenceCancelReason}</span>
+                <textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} style={textareaStyle} rows={2} />
+            </label>
+            <div style={actionRowStyle}>
+                <button type="button" style={secondaryActionButtonStyle} disabled={isSaving || !cancelReason.trim()} onClick={() => onCancel(cancelReason.trim())}>
+                    {isSaving ? c.saving : t.unauthorizedAbsenceCancel}
+                </button>
+            </div>
         </div>
     );
 }
@@ -1550,17 +1696,29 @@ const emptyStateWrapStyle: CSSProperties = {
 
 const blankModeToggleRowStyle: CSSProperties = {
     display: "flex",
+    flexWrap: "wrap",
     gap: 6,
 };
 
 const blankModeButtonBaseStyle: CSSProperties = {
-    flex: 1,
+    flex: "1 1 120px",
     textAlign: "center",
     padding: "8px 10px",
     borderRadius: 10,
     fontSize: 12,
     fontWeight: 900,
     cursor: "pointer",
+};
+
+const unauthorizedAbsenceDetailStyle: CSSProperties = {
+    display: "grid",
+    gap: 8,
+    padding: 12,
+    border: "1px solid #c4b5fd",
+    borderRadius: 10,
+    background: "#f5f3ff",
+    color: "#4c1d95",
+    fontSize: 13,
 };
 
 const blankModeActiveButtonStyle: CSSProperties = {

@@ -79,6 +79,9 @@ export function normalizeAttendanceDayFacts(input: {
         if (overtime > 0) warnings.push("OVERTIME_APPROVAL_UNAVAILABLE");
       }
     }
+  } else if (record?.status === "unauthorized_absence") {
+    actualMinutes = 0;
+    overlap = 0;
   } else if (record?.checkInAt) {
     warnings.push("MISSING_CHECK_OUT");
   } else if ((record && record.status !== "leave") || (!record && input.schedule)) {
@@ -92,6 +95,8 @@ export function normalizeAttendanceDayFacts(input: {
 
   const attendanceStatus: AttendanceDayFacts["attendanceStatus"] = !record
     ? "no_record"
+    : record.status === "unauthorized_absence"
+      ? "unauthorized_absence"
     : record.status === "leave"
       ? "leave"
       : record.checkInAt && !record.checkOutAt
