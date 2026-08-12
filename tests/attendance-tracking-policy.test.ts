@@ -76,10 +76,10 @@ test("admin route only gates the record-creating branches (isCreating / !existin
   assert.equal(occurrences.length, 3);
   assert.match(route, /isCreating && !isAttendanceTrackingUser\(user\)/);
   assert.match(route, /!existing && !isAttendanceTrackingUser\(user\)/g);
-  // force_check_out / auto_close_at_01 / cancel_* / normalize_late는 기존 기록만 다루므로
+  // force_check_out / auto_close_missing_checkout / cancel_* / normalize_late는 기존 기록만 다루므로
   // 게이트가 없어야 한다.
   const forceCheckOutStart = route.indexOf('action === "force_check_out"');
-  const autoCloseStart = route.indexOf('action === "auto_close_at_01"');
+  const autoCloseStart = route.indexOf('action === "auto_close_missing_checkout"');
   assert.ok(forceCheckOutStart > 0 && autoCloseStart > 0);
 });
 

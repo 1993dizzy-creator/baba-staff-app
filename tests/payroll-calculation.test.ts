@@ -13,6 +13,30 @@ test('normalizes facts in integer minutes and separates out-of-schedule work',()
 test('warns instead of backfilling schedules before automation start',()=>{const facts=normalizeAttendanceDayFacts({userId:7,businessDate:'2026-07-31',schedule:null,attendanceRecord:null});assert.ok(facts.warningCodes.includes('SCHEDULE_HISTORY_UNAVAILABLE'));assert.equal(facts.payrollStatus,'requires_review');});
 test('hour block rounding stays in integer minutes',()=>{assert.equal(roundMinutes(539,60,'floor'),480);assert.equal(roundMinutes(539,60,'ceil'),540);assert.equal(roundMinutes(511,60,'nearest'),540);});
 test('missing checkout and contract never produce an estimated amount',()=>{const facts=normalizeAttendanceDayFacts({userId:7,businessDate:'2026-08-03',schedule,attendanceRecord:{id:4,status:'working',checkInAt:'2026-08-03T09:00:00.000Z',checkOutAt:null,approvalStatus:'approved'}});const result=projectPayrollAttendanceDay(facts,null,'minute');assert.equal(result.payrollStatus,'requires_review');assert.equal(result.estimatedAmount,null);assert.ok(result.warningCodes.includes('MISSING_CHECK_OUT'));assert.ok(result.warningCodes.includes('NO_PAYROLL_CONTRACT'));});
+
+test('schedule-based auto-close clears missing checkout without stored policy mismatches',()=>{
+  for(const [startTime,endTime,minutes] of [['16:00','17:00',60],['17:00','23:00',360],['18:00','23:00',300],['16:00','01:00',540]] as const){
+    const checkOutDate=endTime<'03:00'?'2026-08-04':'2026-08-03';
+    const facts=normalizeAttendanceDayFacts({
+      userId:7,
+      businessDate:'2026-08-03',
+      schedule:{...schedule,startTime,endTime},
+      attendanceRecord:{
+        id:4,
+        status:'done',
+        checkInAt:`2026-08-03T${startTime}:00+07:00`,
+        checkOutAt:`${checkOutDate}T${endTime}:00+07:00`,
+        approvalStatus:'approved',
+        storedLateMinutes:0,
+        storedEarlyLeaveMinutes:0,
+        storedWorkMinutes:minutes,
+      },
+    });
+    assert.equal(facts.actualMinutes,minutes);
+    assert.equal(facts.attendanceStatus,'done');
+    assert.doesNotMatch(facts.warningCodes.join(','),/MISSING_CHECK_OUT|STORED_.*_MISMATCH/);
+  }
+});
 test('minute and hour projections consume the exact same facts object',()=>{const facts=normalizeAttendanceDayFacts({userId:7,businessDate:'2026-08-03',schedule,attendanceRecord:{id:4,status:'done',checkInAt:'2026-08-03T09:00:00.000Z',checkOutAt:'2026-08-03T18:00:00.000Z',approvalStatus:'approved'}});const results=(['minute','hour'] as const).map(b=>projectPayrollAttendanceDay(facts,contract,b));assert.equal(results[0].recognizedMinutes,540);assert.equal(results[1].recognizedMinutes,540);assert.equal(facts.source.engineVersion,'attendance-facts-v1');});
 
 test('Asia/Ho_Chi_Minh overnight schedule keeps late grace exclusive and early grace deducted, not thresholded',()=>{const facts=normalizeAttendanceDayFacts({userId:7,businessDate:'2026-08-03',schedule,lateGraceMinutes:10,earlyLeaveGraceMinutes:10,attendanceRecord:{id:4,status:'done',checkInAt:'2026-08-03T09:10:00.000Z',checkOutAt:'2026-08-03T17:50:00.000Z',approvalStatus:'approved'}});assert.equal(facts.scheduledMinutes,540);assert.equal(facts.lateMinutes,0);assert.equal(facts.rawEarlyLeaveMinutes,10);assert.equal(facts.earlyLeaveMinutes,0);const minute=projectPayrollAttendanceDay(facts,contract,'minute');assert.equal(minute.adjustmentMinutes,0);});

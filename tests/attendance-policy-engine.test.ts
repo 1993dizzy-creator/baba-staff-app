@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // @ts-expect-error Node's direct TypeScript tests require an explicit extension.
-import { calculateAttendanceBusinessDate, evaluateAttendancePolicy, type AttendancePolicyInput } from "../lib/attendance/policy-engine.ts";
+import { calculateAttendanceBusinessDate, evaluateAttendancePolicy, getAdminMissingCheckoutReviewAt, isAdminMissingCheckoutReviewAvailable, type AttendancePolicyInput } from "../lib/attendance/policy-engine.ts";
 
 const base: AttendancePolicyInput = {
   businessDate: "2026-07-24",
@@ -108,6 +108,71 @@ test("special close overrides the store close and can win or lose against the em
   });
   assert.equal(employeeWinsAnyway.normalCheckoutThresholdAt, "2026-07-24T15:00:00.000Z");
   assert.equal(employeeWinsAnyway.source.close, "override");
+});
+
+test("admin missing-checkout review waits for store close plus 30 minutes regardless of employee schedule", () => {
+  for (const scheduledEndTime of ["17:00", "23:00", "01:00"]) {
+    const policy = evaluate({ scheduledEndTime, storeCloseTime: "01:00" });
+    assert.equal(policy.effectiveStoreCloseAt, "2026-07-24T18:00:00.000Z");
+    assert.equal(
+      getAdminMissingCheckoutReviewAt(policy.effectiveStoreCloseAt),
+      "2026-07-24T18:30:00.000Z"
+    );
+    assert.equal(isAdminMissingCheckoutReviewAvailable({
+      checkInAt: base.checkInAt,
+      checkOutAt: null,
+      effectiveStoreCloseAt: policy.effectiveStoreCloseAt,
+      now: "2026-07-25T01:29:59+07:00",
+    }), false);
+    assert.equal(isAdminMissingCheckoutReviewAvailable({
+      checkInAt: base.checkInAt,
+      checkOutAt: null,
+      effectiveStoreCloseAt: policy.effectiveStoreCloseAt,
+      now: "2026-07-25T01:30:00+07:00",
+    }), true);
+  }
+});
+
+test("admin review threshold follows a special early store close, while auto-close uses the earlier schedule/store instant", () => {
+  const policy = evaluate({
+    scheduledEndTime: "01:00",
+    storeCloseTime: "01:00",
+    overrideCloseTime: "23:30",
+  });
+  assert.equal(policy.normalCheckoutThresholdAt, "2026-07-24T16:30:00.000Z");
+  assert.equal(policy.effectiveStoreCloseAt, "2026-07-24T16:30:00.000Z");
+  assert.equal(getAdminMissingCheckoutReviewAt(policy.effectiveStoreCloseAt), "2026-07-24T17:00:00.000Z");
+});
+
+test("schedule-based auto-close produces no early leave or open-record status", () => {
+  for (const [scheduledStartTime, scheduledEndTime, expectedMinutes] of [
+    ["16:00", "17:00", 60],
+    ["17:00", "23:00", 360],
+    ["18:00", "23:00", 300],
+    ["16:00", "01:00", 540],
+  ] as const) {
+    const open = evaluate({
+      scheduledStartTime,
+      scheduledEndTime,
+      storeCloseTime: "01:00",
+      checkInAt: `2026-07-24T${scheduledStartTime}:00+07:00`,
+      checkOutAt: null,
+    });
+    const closed = evaluate({
+      scheduledStartTime,
+      scheduledEndTime,
+      storeCloseTime: "01:00",
+      checkInAt: `2026-07-24T${scheduledStartTime}:00+07:00`,
+      checkOutAt: open.normalCheckoutThresholdAt,
+    });
+    assert.equal(closed.status, "done");
+    assert.equal(closed.earlyLeaveMinutes, 0);
+    assert.equal(closed.unresolved, false);
+    assert.equal(
+      Math.floor((new Date(open.normalCheckoutThresholdAt!).getTime() - new Date(`2026-07-24T${scheduledStartTime}:00+07:00`).getTime()) / 60_000),
+      expectedMinutes
+    );
+  }
 });
 
 test("missing employee end time falls back to the effective store close", () => {

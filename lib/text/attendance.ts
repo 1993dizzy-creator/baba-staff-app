@@ -113,7 +113,8 @@ export const attendanceText = {
     unresolvedOpenRecordAutoButton: "자동보정",
     unresolvedOpenRecordAutoProcessing: "자동보정 중...",
     unresolvedOpenRecordAutoConfirm:
-      "이 기록의 퇴근시간을 다음 날 01:00으로 자동 보정하시겠습니까?",
+      "퇴근시간을 {time}으로 자동 보정하시겠습니까?",
+    unresolvedOpenRecordAutoTarget: "자동보정 → {time}",
     unresolvedOpenRecordAutoFailed: "자동보정에 실패했습니다.",
 
     inactiveUserSuffix: "비활성",
@@ -249,7 +250,8 @@ export const attendanceText = {
     unresolvedOpenRecordAutoButton: "Tự động điều chỉnh",
     unresolvedOpenRecordAutoProcessing: "Đang điều chỉnh...",
     unresolvedOpenRecordAutoConfirm:
-      "Bạn có muốn tự động điều chỉnh giờ tan ca của bản ghi này thành 01:00 ngày hôm sau không?",
+      "Bạn có muốn tự động điều chỉnh giờ tan ca thành {time} không?",
+    unresolvedOpenRecordAutoTarget: "Tự động điều chỉnh → {time}",
     unresolvedOpenRecordAutoFailed: "Tự động điều chỉnh thất bại.",
 
     inactiveUserSuffix: "Đã ngừng hoạt động",

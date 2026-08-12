@@ -97,30 +97,6 @@ export function addDaysToDateKey(dateKey: string, days: number) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-// BABA 매장의 정상 마감시각(영업일 다음 날 01:00)을 ISO로 계산한다.
-// 자동보정 및 "근무 중" ↔ "퇴근 미처리" 판정에 공통으로 사용한다.
-export function getShiftAutoCloseIso(workDate: string) {
-  const nextDate = addDaysToDateKey(workDate, 1);
-  return new Date(`${nextDate}T01:00:00${TIMEZONE_OFFSET}`).toISOString();
-}
-
-// 현재 영업일의 미퇴근 기록은 마감시각(다음 날 01:00) 전까지는 "근무 중"으로 보고,
-// 이전 영업일이거나 마감시각이 지난 기록만 "퇴근 미처리"로 판단하는 공통 함수.
-export function isOpenRecordUnresolved(
-  record: { check_in_at?: string | null; check_out_at?: string | null; work_date: string },
-  now = new Date()
-) {
-  if (!record.check_in_at || record.check_out_at) return false;
-
-  const currentBusinessDate = getAttendanceWorkDate(now);
-
-  if (record.work_date !== currentBusinessDate) {
-    return true;
-  }
-
-  return now.getTime() >= new Date(getShiftAutoCloseIso(record.work_date)).getTime();
-}
-
 // 과거 근무일을 보정할 때, 비어 있는 출근/퇴근 datetime-local 입력의 기본값을
 // 브라우저의 "오늘 날짜"가 아니라 관리자가 선택한 근무일 기준으로 만든다.
 // 00:00~02:59 시간은 영업일 경계(ATTENDANCE_BUSINESS_END_HOUR)를 넘는 야간 근무이므로

@@ -35,10 +35,12 @@ test("getLateMinutes itself no longer exists anywhere in time.ts — it was full
   assert.doesNotMatch(time, /getLateMinutes/);
 });
 
-test("update_record, force_check_in, force_check_out, and auto_close_at_01 all resolve through the shared date-scoped policy engine", () => {
+test("admin reads and mutations, including schedule-based missing-checkout auto-close, resolve through the shared date-scoped policy engine", () => {
   const occurrences = admin.match(/resolveAttendanceRecordPolicy\(/g) ?? [];
-  // update_record, force_check_in, force_check_out, auto_close_at_01
-  assert.equal(occurrences.length, 4);
+  assert.ok(occurrences.length >= 6);
+  assert.match(admin, /action === "auto_close_missing_checkout"/);
+  assert.match(admin, /const autoCheckOutIso = openPolicy\.normalCheckoutThresholdAt/);
+  assert.doesNotMatch(admin, /getShiftAutoCloseIso/);
 });
 
 test("employee self checkout resolves through the same shared policy engine", () => {
@@ -65,6 +67,14 @@ test("admin mutation paths write before/after/actor/reason/work_date audit log e
   // matching the existing attendance_record_audit_logs action enum.
   assert.match(admin, /action: "manual_update"/);
   assert.match(admin, /action: "auto_close"/);
+});
+
+test("missing-checkout auto-close enforces server timing, record ownership, and compare-and-set race protection", () => {
+  assert.match(admin, /BUSINESS_CLOSE_NOT_REACHED/);
+  assert.match(admin, /isAdminMissingCheckoutReviewAvailable\(/);
+  assert.match(admin, /\.eq\("id", attendance_id\)[\s\S]*?Number\(recordById\.user_id\) !== Number\(user_id\)/);
+  assert.match(admin, /\.eq\("id", existing\.id\)\s*\.is\("check_out_at", null\)/);
+  assert.match(admin, /\.maybeSingle\(\)[\s\S]*?if \(!data\)/);
 });
 
 test("the normalize_late (지각 정상처리) RPC path is untouched by the early-leave fix", () => {

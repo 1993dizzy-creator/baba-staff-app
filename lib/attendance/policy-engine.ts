@@ -3,6 +3,8 @@ const TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const VIETNAM_TIMEZONE = "Asia/Ho_Chi_Minh";
 const VIETNAM_OFFSET = "+07:00";
 
+export const ADMIN_MISSING_CHECKOUT_REVIEW_GRACE_MINUTES = 30;
+
 export type AttendancePolicyStatus =
   | "working"
   | "done"
@@ -106,6 +108,33 @@ function earlierInstant(left: string | null, right: string | null) {
   if (!left) return right;
   if (!right) return left;
   return new Date(left).getTime() <= new Date(right).getTime() ? left : right;
+}
+
+export function getAdminMissingCheckoutReviewAt(
+  effectiveStoreCloseAt: string | null
+) {
+  if (!effectiveStoreCloseAt) return null;
+  const closeAt = new Date(effectiveStoreCloseAt);
+  if (!Number.isFinite(closeAt.getTime())) {
+    throw new Error("Invalid effective store close time");
+  }
+  return new Date(
+    closeAt.getTime() + ADMIN_MISSING_CHECKOUT_REVIEW_GRACE_MINUTES * 60_000
+  ).toISOString();
+}
+
+export function isAdminMissingCheckoutReviewAvailable(input: {
+  checkInAt: string | null;
+  checkOutAt: string | null;
+  effectiveStoreCloseAt: string | null;
+  now?: string | Date;
+}) {
+  if (!input.checkInAt || input.checkOutAt) return false;
+  const reviewAt = getAdminMissingCheckoutReviewAt(input.effectiveStoreCloseAt);
+  if (!reviewAt) return false;
+  const now = input.now instanceof Date ? input.now : new Date(input.now ?? Date.now());
+  if (!Number.isFinite(now.getTime())) throw new Error("Invalid now");
+  return now.getTime() >= new Date(reviewAt).getTime();
 }
 
 export function calculateAttendanceBusinessDate(input: {

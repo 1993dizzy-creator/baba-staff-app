@@ -5,6 +5,8 @@ import {
   requireAttendanceActor,
 } from "@/lib/attendance/server-api";
 import { supabaseServer } from "@/lib/supabase/server";
+import { resolveAttendanceRecordPolicy } from "@/lib/attendance/policy-resolution-adapter";
+import { isAdminMissingCheckoutReviewAvailable } from "@/lib/attendance/policy-engine";
 
 export async function GET(req: Request) {
   try {
@@ -20,10 +22,11 @@ export async function GET(req: Request) {
       return attendanceJson({ ok: false, code: policy.code }, policy.status);
     }
 
+    let adminTarget: { id: number; work_start_time: string | null; work_end_time: string | null } | null = null;
     if (policy.scope === "admin_user_month") {
       const { data: target, error: targetError } = await supabaseServer
         .from("users")
-        .select("id")
+        .select("id,work_start_time,work_end_time")
         .eq("id", policy.userId!)
         .maybeSingle();
       if (targetError) {
@@ -39,6 +42,7 @@ export async function GET(req: Request) {
           400
         );
       }
+      adminTarget = target;
     }
 
     let query = supabaseServer
@@ -65,6 +69,30 @@ export async function GET(req: Request) {
 
     let records = (data ?? []) as unknown as Array<Record<string, unknown>>;
     if (policy.scope === "admin_user_month") {
+      const targetUser = adminTarget!;
+      const now = new Date();
+      records = await Promise.all(records.map(async (record) => {
+        if (!record.check_in_at || record.check_out_at) return record;
+        const resolved = await resolveAttendanceRecordPolicy({
+          userId: targetUser.id,
+          workDate: String(record.work_date),
+          fallbackScheduledStartTime: targetUser.work_start_time,
+          fallbackScheduledEndTime: targetUser.work_end_time,
+          checkInAt: String(record.check_in_at),
+          checkOutAt: null,
+          now: now.toISOString(),
+        });
+        return {
+          ...record,
+          admin_unresolved: isAdminMissingCheckoutReviewAvailable({
+            checkInAt: String(record.check_in_at),
+            checkOutAt: null,
+            effectiveStoreCloseAt: resolved.effectiveStoreCloseAt,
+            now,
+          }),
+          auto_close_at: resolved.normalCheckoutThresholdAt,
+        };
+      }));
       const unauthorizedIds = records
         .filter((record) => record.status === "unauthorized_absence")
         .map((record) => Number(record.id));

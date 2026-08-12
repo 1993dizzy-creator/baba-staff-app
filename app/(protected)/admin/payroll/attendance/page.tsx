@@ -61,6 +61,8 @@ type UnresolvedOpenRecord = {
     user_id: number;
     work_date: string;
     check_in_at: string;
+    auto_close_at: string;
+    admin_review_at: string;
     user: UnresolvedOpenRecordUser | null;
 };
 
@@ -218,7 +220,8 @@ export default function AttendanceOverviewPage() {
 
     const handleAutoCorrect = async (record: UnresolvedOpenRecord) => {
         if (processingRecordId) return;
-        if (!window.confirm(t.unresolvedOpenRecordAutoConfirm)) return;
+        const autoCloseTime = formatCheckInTime(record.auto_close_at);
+        if (!window.confirm(t.unresolvedOpenRecordAutoConfirm.replace("{time}", autoCloseTime))) return;
 
         setProcessingRecordId(record.id);
         setProcessingAction("auto");
@@ -230,7 +233,7 @@ export default function AttendanceOverviewPage() {
                     "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                    action: "auto_close_at_01",
+                    action: "auto_close_missing_checkout",
                     attendance_id: record.id,
                     user_id: record.user_id,
                     work_date: record.work_date,
@@ -505,6 +508,15 @@ export default function AttendanceOverviewPage() {
                                                         formatElapsedSince(record.check_in_at, c)
                                                     )}
                                             </span>
+
+                                            {!isOrphan && (
+                                                <span style={unresolvedAutoTargetStyle}>
+                                                    {t.unresolvedOpenRecordAutoTarget.replace(
+                                                        "{time}",
+                                                        formatCheckInTime(record.auto_close_at)
+                                                    )}
+                                                </span>
+                                            )}
 
                                             <div style={unresolvedItemButtonsRowStyle}>
                                                 {isOrphan ? (
@@ -857,6 +869,13 @@ const unresolvedItemMetaStyle: CSSProperties = {
     fontSize: 11,
     color: "#6b7280",
     minWidth: 0,
+};
+
+const unresolvedAutoTargetStyle: CSSProperties = {
+    fontSize: 11,
+    color: "#1d4ed8",
+    fontWeight: 700,
+    whiteSpace: "nowrap",
 };
 
 const unresolvedItemButtonsRowStyle: CSSProperties = {

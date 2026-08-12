@@ -11,7 +11,6 @@ import { commonText, attendanceText } from "@/lib/text";
 import {
     getDefaultShiftDateTimeValue,
     isLongShiftRecord,
-    isOpenRecordUnresolved,
 } from "@/lib/attendance/time";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
@@ -49,6 +48,8 @@ type AttendanceRecord = {
     note: string | null;
     approval_status: "pending" | "approved" | null;
     updated_at?: string | null;
+    admin_unresolved?: boolean;
+    auto_close_at?: string | null;
     unauthorized_absence_audit?: {
         actorUserId: number;
         actorName: string | null;
@@ -734,7 +735,7 @@ function Calendar({
                                             </div>
                                         )}
 
-                                        {isOpenRecordUnresolved(record) && (
+                                        {record.admin_unresolved === true && (
                                             <div style={calendarWarningIconStyle} title={t.unresolvedOpenRecordBadge}>
                                                 ⚠
                                             </div>
@@ -809,7 +810,7 @@ function RecordDetailPanel({
     const [checkOutDateTime, setCheckOutDateTime] = useState(baselineCheckOutValue);
 
     const canEdit = !!record && record.status !== "leave" && record.status !== "unauthorized_absence";
-    const isUnresolved = record ? isOpenRecordUnresolved(record) : false;
+    const isUnresolved = record?.admin_unresolved === true;
     const isCurrentlyWorking = !!record?.check_in_at && !record?.check_out_at && !isUnresolved;
     const isLongShift = record ? isLongShiftRecord(record.check_in_at, record.check_out_at) : false;
 

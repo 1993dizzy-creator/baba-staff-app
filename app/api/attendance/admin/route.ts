@@ -3,8 +3,6 @@ import { supabaseServer } from "@/lib/supabase/server";
 import {
   getAttendanceWorkDate,
   getMinutesDiff,
-  getShiftAutoCloseIso,
-  isOpenRecordUnresolved,
   makeCheckInIso,
   makeCheckOutIso,
   makeIsoFromLocalDateTime,
@@ -19,6 +17,10 @@ import {
   requireAttendanceActor,
 } from "@/lib/attendance/server-api";
 import { resolveAttendanceRecordPolicy } from "@/lib/attendance/policy-resolution-adapter";
+import {
+  getAdminMissingCheckoutReviewAt,
+  isAdminMissingCheckoutReviewAvailable,
+} from "@/lib/attendance/policy-engine";
 import { recordAttendanceAuditLog } from "@/lib/attendance/audit-log";
 import {
   ATTENDANCE_TRACKING_DISABLED_CODE,
@@ -32,7 +34,7 @@ type Action =
   | "set_leave"
   | "update_record"
   | "normalize_late"
-  | "auto_close_at_01"
+  | "auto_close_missing_checkout"
   | "delete_orphan_record"
   | "cancel_check_in"
   | "cancel_check_out"
@@ -63,9 +65,9 @@ export async function GET(req: Request) {
 
     const businessDate = getAttendanceWorkDate();
 
-    // 이전 영업일 기록뿐 아니라 "현재 영업일이지만 마감시각(다음 날 01:00)이 지난" 기록도
+    // 이전 영업일 기록뿐 아니라 현재 영업일에서 실제 매장 마감 + 30분이 지난 기록도
     // 후보에 포함해야 하므로 DB에서는 work_date <= 현재 영업일까지 넓게 가져온 뒤,
-    // 상세 화면과 동일한 공통 함수 isOpenRecordUnresolved()로 서버에서 최종 필터링한다.
+    // 각 영업일의 실제 매장 마감 + 관리자 확인 유예 30분을 서버에서 최종 판정한다.
     // 특정 시점에 열려 있는 미퇴근 기록 수는 매장 재직 인원 규모로 자연히 제한되므로
     // 이 범위 확장이 조회량을 과도하게 늘리지 않는다.
     const { data: candidates, error } = await supabaseServer
@@ -89,28 +91,20 @@ export async function GET(req: Request) {
       );
     }
 
-    const now = new Date();
-    const unresolvedRecords = (candidates ?? []).filter((record) =>
-      isOpenRecordUnresolved(
-        { check_in_at: record.check_in_at, check_out_at: null, work_date: record.work_date },
-        now
-      )
-    );
-
     // 활성 직원만 반환하는 /api/attendance/users에 의존하지 않고, 미퇴근 기록에 등장하는
     // user_id만 모아 한 번에 조회한다(N+1 방지). 비활성 사용자와, users row 자체가 없는
     // orphan 기록(연결된 직원 정보 없음)을 명확히 구분해 카드 표시 정보로 함께 내려준다.
-    const userIds = Array.from(new Set(unresolvedRecords.map((record) => record.user_id)));
+    const userIds = Array.from(new Set((candidates ?? []).map((record) => record.user_id)));
 
     const usersById = new Map<
       number,
-      { id: number; username: string | null; name: string | null; is_active: boolean | null }
+      { id: number; username: string | null; name: string | null; is_active: boolean | null; work_start_time: string | null; work_end_time: string | null }
     >();
 
     if (userIds.length > 0) {
       const { data: userRows, error: userRowsError } = await supabaseServer
         .from("users")
-        .select("id, username, name, is_active")
+        .select("id, username, name, is_active, work_start_time, work_end_time")
         .in("id", userIds);
 
       if (userRowsError) {
@@ -129,10 +123,33 @@ export async function GET(req: Request) {
       (userRows ?? []).forEach((row) => usersById.set(row.id, row));
     }
 
-    const enrichedRecords = unresolvedRecords.map((record) => ({
-      ...record,
-      user: usersById.get(record.user_id) ?? null,
+    const now = new Date();
+    const evaluatedCandidates = await Promise.all((candidates ?? []).map(async (record) => {
+      const user = usersById.get(record.user_id) ?? null;
+      const policy = await resolveAttendanceRecordPolicy({
+        userId: record.user_id,
+        workDate: record.work_date,
+        fallbackScheduledStartTime: user?.work_start_time ?? null,
+        fallbackScheduledEndTime: user?.work_end_time ?? null,
+        checkInAt: record.check_in_at,
+        checkOutAt: null,
+        now: now.toISOString(),
+      });
+      return { record, user, policy };
     }));
+    const enrichedRecords = evaluatedCandidates
+      .filter(({ record, policy }) => isAdminMissingCheckoutReviewAvailable({
+        checkInAt: record.check_in_at,
+        checkOutAt: null,
+        effectiveStoreCloseAt: policy.effectiveStoreCloseAt,
+        now,
+      }))
+      .map(({ record, user, policy }) => ({
+        ...record,
+        user,
+        auto_close_at: policy.normalCheckoutThresholdAt,
+        admin_review_at: getAdminMissingCheckoutReviewAt(policy.effectiveStoreCloseAt),
+      }));
 
     return NextResponse.json({
       ok: true,
@@ -569,6 +586,15 @@ export async function POST(req: Request) {
       );
     }
 
+    if (action === "auto_close_missing_checkout" && !attendance_id) {
+      return NextResponse.json({
+        ok: false,
+        message: lang === "vi"
+          ? "Thiếu mã bản ghi chấm công."
+          : "근태 기록 ID가 없습니다.",
+      }, { status: 400 });
+    }
+
     // 🔥 기존 기록 조회 (user_id + work_date 기준, force_check_in/force_check_out/set_leave용 upsert 대상)
     const { data: existingByDate, error: existingError } = await supabaseServer
       .from("attendance_records")
@@ -592,13 +618,13 @@ export async function POST(req: Request) {
 
     let existing = existingByDate;
 
-    // update_record / auto_close_at_01은 클라이언트가 전달한 user_id + work_date를 신뢰하지 않고
+    // update_record / auto_close_missing_checkout은 클라이언트가 전달한 user_id + work_date를 신뢰하지 않고
     // 화면에서 선택한 정확한 attendance_id로 다시 조회한다. 같은 직원·같은 날짜에 레거시 중복
     // 기록이 있어도 엉뚱한 행을 건드리지 않기 위함이다. work_date 등 이후 계산에 쓰이는 값도
     // 이 조회 결과(=DB의 실제 값)를 기준으로 삼는다.
     if (
       attendance_id &&
-      (action === "update_record" || action === "auto_close_at_01")
+      (action === "update_record" || action === "auto_close_missing_checkout")
     ) {
       const { data: recordById, error: recordByIdError } = await supabaseServer
         .from("attendance_records")
@@ -1149,8 +1175,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, record: data });
     }
 
-    // 🔥 미퇴근 기록 자동보정: 퇴근시각을 영업일 다음 날 01:00(정상 마감시각)으로 확정한다.
-    if (action === "auto_close_at_01") {
+    // 미퇴근 기록 자동보정: 당시 예정 퇴근과 실제 매장 마감 중 이른 시각으로 확정한다.
+    if (action === "auto_close_missing_checkout") {
       if (!existing || !existing.check_in_at || existing.check_out_at) {
         return NextResponse.json(
           {
@@ -1164,9 +1190,53 @@ export async function POST(req: Request) {
         );
       }
 
-      // getShiftAutoCloseIso("다음 날 01:00")는 상세 화면 기본값(getDefaultShiftDateTimeValue)과
-      // 동일한 계산이므로, 자동보정과 상세 화면에서 기본값을 그대로 저장하는 경우 결과가 일치한다.
-      const autoCheckOutIso = getShiftAutoCloseIso(existing.work_date);
+      // 자동보정 시각은 당시 직원 스케줄과 실제 매장 마감을 반영한 공통 정책 결과를 사용한다.
+      let openPolicy;
+      try {
+        openPolicy = await resolveAttendanceRecordPolicy({
+          userId: Number(existing.user_id),
+          workDate: existing.work_date,
+          fallbackScheduledStartTime: user.work_start_time,
+          fallbackScheduledEndTime: user.work_end_time,
+          checkInAt: existing.check_in_at,
+          checkOutAt: null,
+          now: nowIso,
+        });
+      } catch (policyError) {
+        console.error("[attendance-admin] auto-close eligibility evaluation failed", policyError);
+        return NextResponse.json({
+          ok: false,
+          message: lang === "vi"
+            ? "Lỗi khi tính toán chính sách chấm công."
+            : "근태 정책 계산 중 오류가 발생했습니다.",
+        }, { status: 500 });
+      }
+
+      if (!isAdminMissingCheckoutReviewAvailable({
+        checkInAt: existing.check_in_at,
+        checkOutAt: existing.check_out_at,
+        effectiveStoreCloseAt: openPolicy.effectiveStoreCloseAt,
+        now: nowIso,
+      })) {
+        return NextResponse.json({
+          ok: false,
+          code: "BUSINESS_CLOSE_NOT_REACHED",
+          message: lang === "vi"
+            ? "Chưa đến thời gian kiểm tra chung các ca chưa ghi nhận giờ tan ca."
+            : "아직 미퇴근 일괄 확인 시간이 되지 않았습니다.",
+        }, { status: 409 });
+      }
+
+      const autoCheckOutIso = openPolicy.normalCheckoutThresholdAt;
+      if (!autoCheckOutIso) {
+        return NextResponse.json({
+          ok: false,
+          code: "AUTO_CLOSE_TIME_NOT_RESOLVED",
+          message: lang === "vi"
+            ? "Không thể xác định giờ tan ca tự động. Vui lòng chỉnh sửa thủ công."
+            : "자동보정 퇴근시간을 확인할 수 없습니다. 수동으로 보정해주세요.",
+        }, { status: 409 });
+      }
 
       if (
         new Date(autoCheckOutIso).getTime() <= new Date(existing.check_in_at).getTime()
@@ -1186,7 +1256,7 @@ export async function POST(req: Request) {
       let policyResult;
       try {
         policyResult = await resolveAttendanceRecordPolicy({
-          userId: Number(user_id),
+          userId: Number(existing.user_id),
           workDate: existing.work_date,
           fallbackScheduledStartTime: user.work_start_time,
           fallbackScheduledEndTime: user.work_end_time,
@@ -1267,7 +1337,7 @@ export async function POST(req: Request) {
       await recordAttendanceAuditLog({
         attendanceRecordId: data.id,
         sourceAttendanceRecordId: existing.id,
-        targetUserId: Number(user_id),
+        targetUserId: Number(existing.user_id),
         workDate: existing.work_date,
         action: "auto_close",
         actorUserId: auth.actor.id,
