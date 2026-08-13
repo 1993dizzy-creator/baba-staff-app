@@ -737,7 +737,18 @@ export async function POST(req: Request) {
       }
 
       if (cancellation?.status !== "ok") {
-        const failures: Record<string, { code: string; ko: string; vi: string }> = {
+        const failures: Record<string, { code: string; ko: string; vi: string; http?: number }> = {
+          forbidden: {
+            code: "ATTENDANCE_CANCEL_FORBIDDEN",
+            ko: "권한이 없습니다.",
+            vi: "Không có quyền.",
+            http: 403,
+          },
+          payroll_paid_locked: {
+            code: "PAYROLL_PAID_LOCKED",
+            ko: "이미 지급 완료된 급여 기간은 휴무를 변경할 수 없습니다.",
+            vi: "Không thể thay đổi ngày nghỉ trong kỳ lương đã thanh toán.",
+          },
           check_out_must_be_cancelled_first: {
             code: "CHECK_OUT_MUST_BE_CANCELLED_FIRST",
             ko: "퇴근 기록이 있습니다. 퇴근취소 후 출근취소해주세요.",
@@ -753,10 +764,10 @@ export async function POST(req: Request) {
             ko: "현재 상태에서는 퇴근취소를 할 수 없습니다.",
             vi: "Không thể hủy giờ ra ở trạng thái hiện tại.",
           },
-          direct_leave_cannot_be_cancelled: {
-            code: "DIRECT_LEAVE_CANNOT_BE_CANCELLED",
-            ko: "출근명부에서 직접 처리한 휴무만 취소할 수 있습니다.",
-            vi: "Chỉ có thể hủy ngày nghỉ được tạo trực tiếp từ danh sách chấm công.",
+          leave_cannot_be_cancelled: {
+            code: "LEAVE_CANNOT_BE_CANCELLED",
+            ko: "현재 상태에서는 휴무를 취소할 수 없습니다.",
+            vi: "Không thể hủy ngày nghỉ ở trạng thái hiện tại.",
           },
           record_changed: {
             code: "ATTENDANCE_RECORD_CHANGED",
@@ -772,7 +783,7 @@ export async function POST(req: Request) {
             code: failure.code,
             message: lang === "vi" ? failure.vi : failure.ko,
           },
-          { status: 409 }
+          { status: failure.http ?? 409 }
         );
       }
 

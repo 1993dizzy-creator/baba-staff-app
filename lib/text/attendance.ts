@@ -65,6 +65,7 @@ export const attendanceText = {
     leaveRequest: "휴무신청",
     leaveCancel: "휴무취소",
     leaveCancelConfirm: "이 휴무 신청을 취소할까요?",
+    leaveCancelDone: "휴무가 취소되었습니다.",
     leaveReasonRequired: "금/토요일 휴무는 사유를 입력해주세요.",
     leaveBlockedByWork:
       "이미 출근 또는 근무 기록이 있는 날짜에는 휴무를 신청할 수 없습니다. 관리자에게 근태 보정을 요청해주세요.",
@@ -202,6 +203,7 @@ export const attendanceText = {
     leaveRequest: "Đăng ký nghỉ",
     leaveCancel: "Hủy ngày nghỉ",
     leaveCancelConfirm: "Hủy yêu cầu nghỉ này?",
+    leaveCancelDone: "Đã hủy ngày nghỉ.",
     leaveReasonRequired: "Vui lòng nhập lý do khi đăng ký nghỉ vào thứ Sáu hoặc thứ Bảy.",
     leaveBlockedByWork:
       "Không thể đăng ký nghỉ vào ngày đã có dữ liệu chấm công hoặc đang làm việc. Vui lòng liên hệ quản lý để điều chỉnh chấm công.",

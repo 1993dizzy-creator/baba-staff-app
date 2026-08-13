@@ -465,6 +465,37 @@ export default function AttendanceUserDetailPage() {
         }
     };
 
+    const handleCancelLeave = async () => {
+        if (!user || !window.confirm(t.leaveCancelConfirm)) return;
+
+        setIsSaving(true);
+        setMessage("");
+
+        try {
+            const res = await attendanceFetch("/api/attendance/admin", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "cancel_leave",
+                    user_id: user.id,
+                    work_date: selectedDate,
+                    lang,
+                }),
+            });
+            const result = await res.json();
+            if (!res.ok || !result.ok) {
+                throw new Error(result.message || t.correctionFailed);
+            }
+
+            await fetchDetail();
+            setMessage(t.leaveCancelDone);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : t.correctionFailed);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
 
     const summary = useMemo(() => {
         const workRecords = records.filter((record) =>
@@ -566,6 +597,7 @@ export default function AttendanceUserDetailPage() {
                         onSave={handleSaveRecord}
                         onNormalizeLate={handleNormalizeLate}
                         onSaveLeave={handleSaveLeave}
+                        onCancelLeave={handleCancelLeave}
                         onUnauthorizedAbsence={handleUnauthorizedAbsence}
                         unauthorizedAbsencePenaltyDays={unauthorizedAbsencePenaltyDays}
                     />
@@ -772,6 +804,7 @@ function RecordDetailPanel({
     onSave,
     onNormalizeLate,
     onSaveLeave,
+    onCancelLeave,
     onUnauthorizedAbsence,
     unauthorizedAbsencePenaltyDays,
 }: {
@@ -784,6 +817,7 @@ function RecordDetailPanel({
     onSave: (input: SaveRecordInput) => void;
     onNormalizeLate: (recordId: number) => void;
     onSaveLeave: (input: { note: string; isNew?: boolean }) => void;
+    onCancelLeave: () => void;
     onUnauthorizedAbsence: (action: "set_unauthorized_absence" | "cancel_unauthorized_absence", reason: string) => void;
     unauthorizedAbsencePenaltyDays: number | null;
 }) {
@@ -1029,6 +1063,17 @@ function RecordDetailPanel({
                                     onClick={() => onNormalizeLate(record.id)}
                                 >
                                     {t.markNormal}
+                                </button>
+                            ) : null}
+
+                            {record.status === "leave" && record.approval_status === "approved" ? (
+                                <button
+                                    type="button"
+                                    style={secondaryActionButtonStyle}
+                                    disabled={isSaving}
+                                    onClick={onCancelLeave}
+                                >
+                                    {t.leaveCancel}
                                 </button>
                             ) : null}
                         </div> : null}
