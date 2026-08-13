@@ -105,7 +105,6 @@ test("sales deduction browser calls use shared 401 handling without actor spoof 
   const client = read("lib/sales/client-auth.ts");
 
   for (const endpoint of [
-    "/api/admin/sales/inventory-deductions/preview",
     "/api/admin/sales/inventory-deductions/unified-preview",
     "/api/admin/sales/inventory-deductions/unified-execute",
   ]) {

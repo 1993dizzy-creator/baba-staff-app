@@ -527,6 +527,8 @@ export async function buildUnifiedInventoryDeductionPreview(input: {
   businessDateFrom: string;
   businessDateTo: string;
   receiptIds?: number[];
+}, options?: {
+  rawPreview?: InventoryDeductionPreview | Promise<InventoryDeductionPreview>;
 }) {
   if (!isBusinessDate(input.businessDateFrom) || !isBusinessDate(input.businessDateTo)) {
     throw new Error("businessDateFrom and businessDateTo must use YYYY-MM-DD format.");
@@ -543,7 +545,9 @@ export async function buildUnifiedInventoryDeductionPreview(input: {
   });
   const fetchedReceiptIds = receipts.map((receipt) => Number(receipt.id));
   const previewPromise =
-    fetchedReceiptIds.length > 0
+    options?.rawPreview
+      ? Promise.resolve(options.rawPreview)
+      : fetchedReceiptIds.length > 0
       ? buildInventoryDeductionPreview({
           businessDateFrom: input.businessDateFrom,
           businessDateTo: input.businessDateTo,

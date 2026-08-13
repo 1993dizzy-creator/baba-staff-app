@@ -538,17 +538,6 @@ type InventoryDeductionPreview = {
   }>;
 };
 
-type InventoryPreviewResponse = {
-  ok: boolean;
-  error?: string;
-  preview?: InventoryDeductionPreview;
-  batch?: {
-    batchId: number;
-    savedReceiptCount: number;
-    savedCandidateCount: number;
-  } | null;
-};
-
 type BatchApplyResult = {
   batchId: number;
   status: "applied" | "partially_applied";
@@ -632,6 +621,7 @@ type UnifiedPreviewResponse = {
   ok: boolean;
   error?: string;
   preview?: UnifiedPreview;
+  rawPreviewReceipts?: InventoryDeductionPreview["receipts"];
 };
 
 type UnifiedExecuteResult = {
@@ -2125,44 +2115,27 @@ export default function SalesReceiptsPage() {
 
     async function fetchReceiptDeductionPreview() {
       try {
-        const res = await fetchSalesApi("/api/admin/sales/inventory-deductions/preview", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            receiptIds,
-          }),
-          signal: controller.signal,
-          cache: "no-store",
-        });
-        const result = (await res.json().catch(() => null)) as
-          | InventoryPreviewResponse
-          | null;
-
-        if (!res.ok || !result?.ok || !result.preview) {
-          if (!controller.signal.aborted) setReceiptDeductionPreview(null);
-          return;
-        }
-
-        setReceiptDeductionPreview(result.preview.receipts);
-
-        const unifiedRes = await fetchSalesApi(
+        const res = await fetchSalesApi(
           "/api/admin/sales/inventory-deductions/unified-preview",
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               receiptIds,
+              includeRawReceiptPreview: true,
             }),
             signal: controller.signal,
             cache: "no-store",
           }
         );
-        const unifiedResult = (await unifiedRes.json().catch(() => null)) as
+        const result = (await res.json().catch(() => null)) as
           | UnifiedPreviewResponse
           | null;
+        if (controller.signal.aborted) return;
+        setReceiptDeductionPreview(result?.rawPreviewReceipts ?? null);
         setReceiptUnifiedPreview(
-          unifiedRes.ok && unifiedResult?.ok && unifiedResult.preview
-            ? unifiedResult.preview.receipts
+          res.ok && result?.ok && result.preview
+            ? result.preview.receipts
             : null
         );
       } catch (error) {

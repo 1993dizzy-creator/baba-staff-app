@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/server-auth";
 import { buildUnifiedInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-unified-preview";
+import { buildInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-preview";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,6 +25,7 @@ function getReceiptIds(value: unknown) {
 }
 
 export async function POST(req: Request) {
+  let rawPreviewPromise: ReturnType<typeof buildInventoryDeductionPreview> | null = null;
   try {
     const auth = await requireRole(["owner", "master", "manager", "leader"]);
     if (!auth.ok) {
@@ -68,23 +70,42 @@ export async function POST(req: Request) {
 
     const dateFrom = businessDateFrom ?? "1970-01-01";
     const dateTo = businessDateTo ?? "2999-12-31";
+    if (dateFrom > dateTo) {
+      throw new Error("businessDateFrom cannot be later than businessDateTo.");
+    }
+    const includeRawReceiptPreview = body.includeRawReceiptPreview === true;
+    if (includeRawReceiptPreview) {
+      rawPreviewPromise = buildInventoryDeductionPreview({
+        businessDateFrom: dateFrom,
+        businessDateTo: dateTo,
+        receiptIds,
+      });
+      void rawPreviewPromise.catch(() => undefined);
+    }
 
     const preview = await buildUnifiedInventoryDeductionPreview({
       businessDateFrom: dateFrom,
       businessDateTo: dateTo,
       receiptIds,
-    });
+    }, rawPreviewPromise ? { rawPreview: rawPreviewPromise } : undefined);
 
     return NextResponse.json({
       ok: true,
       preview,
+      ...(rawPreviewPromise
+        ? { rawPreviewReceipts: (await rawPreviewPromise).receipts }
+        : {}),
     });
   } catch (error) {
     console.error("[ADMIN_SALES_UNIFIED_INVENTORY_PREVIEW_ERROR]", error);
+    const rawPreviewReceipts = rawPreviewPromise
+      ? await rawPreviewPromise.then((preview) => preview.receipts).catch(() => null)
+      : null;
     return NextResponse.json(
       {
         ok: false,
         error: "Failed to build unified inventory deduction preview.",
+        ...(rawPreviewReceipts ? { rawPreviewReceipts } : {}),
       },
       { status: 500 }
     );
