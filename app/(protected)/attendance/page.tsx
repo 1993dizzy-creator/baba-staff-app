@@ -18,7 +18,6 @@ import PayrollModal from "@/components/payroll/PayrollModal";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
 import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
-import { useMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
 import {
   formatSignedVnd,
   formatVnd,
@@ -448,7 +447,6 @@ function MyAttendance() {
     useState<AttendanceState>(initialAttendanceState);
   const [hasPendingLeaveToday, setHasPendingLeaveToday] = useState(false);
   const [profile, setProfile] = useState<AttendanceProfile | null>(null);
-  const perfectSummary = useMonthlyAttendanceSummary(getMonthRange(calendarDate).monthKey);
   const [payrollData, setPayrollData] = useState<AttendancePayrollData | null>(null);
   const [payrollDetailKind, setPayrollDetailKind] =
     useState<"incentive" | "penalty" | null>(null);
@@ -627,6 +625,8 @@ function MyAttendance() {
           setPayrollData(
             result.summary
               ? {
+                  perfectAttendanceCurrent:
+                    result.perfectAttendanceCurrent === true,
                   summary: result.summary,
                   incentives: Array.isArray(result.incentives) ? result.incentives : [],
                   penalties: Array.isArray(result.penalties) ? result.penalties : [],
@@ -933,7 +933,10 @@ function MyAttendance() {
               lang={lang}
               nameStyle={profileNameStyle}
             />
-            <AttendancePerfectScoreBadge show={perfectSummary.get(Number(profile?.id))?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
+            <AttendancePerfectScoreBadge
+              show={profile !== null && payrollData?.perfectAttendanceCurrent === true}
+              vi={lang === "vi"}
+            />
             <div style={profileRoleStyle}>
               {profile?.role ? getEmployeeRoleLabel(profile.role, lang) : "-"}
             </div>

@@ -32,6 +32,7 @@ export type AttendancePayrollPenalty = {
 };
 
 export type AttendancePayrollData = {
+  perfectAttendanceCurrent: boolean;
   summary: AttendancePayrollSummary;
   incentives: AttendancePayrollIncentive[];
   penalties: AttendancePayrollPenalty[];
@@ -87,6 +88,8 @@ export function selectAttendancePayrollSummary(
   ].sort((left, right) => left.businessDate.localeCompare(right.businessDate));
 
   return {
+    perfectAttendanceCurrent:
+      employee.attendanceStanding?.perfectAttendanceCurrent === true,
     summary: {
       employeeInsuranceDeductionAmount:
         employee.amounts.employeeInsuranceDeductionAmount,

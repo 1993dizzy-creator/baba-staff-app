@@ -26,6 +26,7 @@ export async function GET(request: Request) {
     return attendanceJson({
       ok: true,
       month,
+      perfectAttendanceCurrent: data?.perfectAttendanceCurrent ?? false,
       summary: data?.summary ?? null,
       incentives: data?.incentives ?? [],
       penalties: data?.penalties ?? [],

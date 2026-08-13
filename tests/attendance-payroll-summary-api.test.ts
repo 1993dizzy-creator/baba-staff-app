@@ -101,6 +101,7 @@ function employee(
 test("self payroll summary projects only the authenticated employee amounts", () => {
   const employees = [employee(11), employee(22, { netPayoutAmount: 9_999_999 })];
   assert.deepEqual(selectAttendancePayrollSummary(employees, 11), {
+    perfectAttendanceCurrent: false,
     summary: {
       employeeInsuranceDeductionAmount: 0,
       incentiveAmount: 120_000,
@@ -120,6 +121,7 @@ test("self payroll summary does not expose internal calculation status", () => {
       penaltyAmount: 11,
     }, status);
     assert.deepEqual(selectAttendancePayrollSummary([source], 11), {
+      perfectAttendanceCurrent: false,
       summary: {
         employeeInsuranceDeductionAmount: 0,
         incentiveAmount: 22,
@@ -130,6 +132,29 @@ test("self payroll summary does not expose internal calculation status", () => {
     });
     assert.doesNotMatch(JSON.stringify(selectAttendancePayrollSummary([source], 11)), /calculationStatus/);
   }
+});
+
+test("self payroll summary reuses the employee monthly standing result", () => {
+  const source = employee(11);
+  source.attendanceStanding = {
+    actualWorkDays: 26,
+    lateCount: 0,
+    earlyLeaveCount: 0,
+    unauthorizedAbsenceCount: 0,
+    blockingCount: 0,
+    perfectAttendanceCurrent: true,
+  };
+
+  assert.equal(
+    selectAttendancePayrollSummary([source], 11)?.perfectAttendanceCurrent,
+    true,
+  );
+
+  source.attendanceStanding = null;
+  assert.equal(
+    selectAttendancePayrollSummary([source], 11)?.perfectAttendanceCurrent,
+    false,
+  );
 });
 
 test("self projection exposes only display DTOs and preserves incentive and combined penalty totals", () => {
@@ -174,6 +199,7 @@ test("attendance payroll route is actor-only, validates month, and reuses the un
   assert.match(route, /code: "INVALID_MONTH"[\s\S]*400/);
   assert.match(route, /loadPayrollOverview\(month\)/);
   assert.match(route, /selectAttendancePayrollSummary\([\s\S]*overview\.employees,[\s\S]*auth\.actor\.id/);
+  assert.match(route, /perfectAttendanceCurrent: data\?\.perfectAttendanceCurrent \?\? false/);
   assert.match(route, /summary: data\?\.summary \?\? null/);
   assert.match(route, /incentives: data\?\.incentives \?\? \[\]/);
   assert.match(route, /penalties: data\?\.penalties \?\? \[\]/);

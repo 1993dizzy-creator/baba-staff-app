@@ -24,6 +24,19 @@ test("monthly payroll request follows the visible calendar month and exposes no 
   assert.doesNotMatch(page, /\/api\/admin\/payroll\/overview/);
 });
 
+test("perfect attendance badge reuses the self payroll response without a monthly summary request", () => {
+  assert.doesNotMatch(page, /useMonthlyAttendanceSummary/);
+  assert.doesNotMatch(page, /\/api\/attendance\/monthly-summary/);
+  assert.match(
+    page,
+    /perfectAttendanceCurrent:\s*result\.perfectAttendanceCurrent === true/,
+  );
+  assert.match(
+    page,
+    /show=\{profile !== null && payrollData\?\.perfectAttendanceCurrent === true\}/,
+  );
+});
+
 test("salary totals are replaced by adjustment total and four attendance metrics", () => {
   assert.doesNotMatch(page, /<SummaryStatCard|monthSummaryTitle|summaryTotalWorkTime/);
   assert.match(page, /adjustmentTotal: "조정 합계"/);
