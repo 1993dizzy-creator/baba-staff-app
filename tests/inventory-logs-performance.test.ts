@@ -32,7 +32,7 @@ test("page mode runs logs and notes together after authentication", () => {
   assert.ok(authIndex >= 0 && pageIndex > authIndex && readsIndex > pageIndex);
   assert.match(
     getRoute.slice(pageIndex, getRoute.indexOf('if (mode === "logs")')),
-    /asPageResult\(loadInventoryLogs\(\)\)[\s\S]*?asPageResult\(loadInventoryNotes\(\)\)/
+    /asPageResult\(loadInventoryLogs\(\{ includeKegSalesBreakdown: false \}\)\)[\s\S]*?asPageResult\(loadInventoryNotes\(\)\)/
   );
 });
 
@@ -48,6 +48,18 @@ test("logs retain Keg enrichment and notes retain their exact projection", () =>
   assert.match(route, /fetchPreviousKegSummariesByLogId\([\s\S]*?kegReplaceLogIds/);
   assert.match(route, /previousKegSummary: previousKegSummaryByLogId\.get\(log\.id\)/);
   assert.match(route, /\.select\("id, part, code, item_name, item_name_vi, note"\)/);
+});
+
+test("page mode uses session-only Keg summaries while logs mode keeps full enrichment", () => {
+  assert.match(
+    route,
+    /loadInventoryLogs\(\{ includeKegSalesBreakdown: false \}\)/
+  );
+  assert.match(
+    route,
+    /options\.includeKegSalesBreakdown === false[\s\S]*?fetchPreviousKegSessionSummariesByLogId[\s\S]*?: await fetchPreviousKegSummariesByLogId/
+  );
+  assert.match(route, /const result = await loadInventoryLogs\(\{\s*businessDate,\s*reason,\s*itemId: parsedItemId,/);
 });
 
 test("filtering and grouping are memoized without a redundant group sort", () => {

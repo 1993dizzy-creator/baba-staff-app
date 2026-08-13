@@ -49,6 +49,60 @@ type ClosedKegSessionRow = {
   loss_quantity: number | string | null;
 };
 
+const getSafeLogIds = (logIds: Array<number | string>) =>
+  Array.from(
+    new Set(
+      logIds
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    )
+  );
+
+const fetchClosedKegSessionsByLogId = async (
+  supabase: SupabaseClientLike,
+  logIds: Array<number | string>
+) => {
+  const safeLogIds = getSafeLogIds(logIds);
+  if (safeLogIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("inventory_keg_sessions")
+    .select(
+      "id, inventory_item_id, ended_log_id, started_at, ended_at, capacity_quantity, sold_quantity, loss_quantity"
+    )
+    .eq("status", "closed")
+    .in("ended_log_id", safeLogIds);
+
+  if (error) throw error;
+  return (data || []) as ClosedKegSessionRow[];
+};
+
+const buildPreviousKegSessionSummary = (
+  row: ClosedKegSessionRow
+): PreviousKegSummary | null => {
+  if (row.sold_quantity === null || row.capacity_quantity === null) return null;
+
+  const capacityMl = asNumber(row.capacity_quantity);
+  const soldMl = asNumber(row.sold_quantity);
+  const lossMl =
+    row.loss_quantity === null
+      ? Math.max(capacityMl - soldMl, 0)
+      : asNumber(row.loss_quantity);
+
+  return {
+    sessionId: Number(row.id),
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    capacityMl,
+    soldMl,
+    lossMl,
+    overageMl: Math.max(soldMl - capacityMl, 0),
+    usagePercent: capacityMl > 0 ? roundDecimal((soldMl / capacityMl) * 100) : 0,
+    lossPercent: capacityMl > 0 ? roundDecimal((lossMl / capacityMl) * 100) : 0,
+    salesBreakdownMismatch: false,
+  };
+};
+
 type KegTrackingMappingRow = {
   pos_product_id: number | string | null;
   quantity_per_pos_unit: number | string | null;
@@ -512,69 +566,53 @@ export async function fetchPreviousKegSummariesByLogId(
   logIds: Array<number | string>
 ): Promise<Map<number, PreviousKegSummary>> {
   const summaryByLogId = new Map<number, PreviousKegSummary>();
+  const rows = await fetchClosedKegSessionsByLogId(supabase, logIds);
 
-  const safeLogIds = Array.from(
-    new Set(
-      logIds
-        .map((id) => Number(id))
-        .filter((id) => Number.isInteger(id) && id > 0)
-    )
-  );
-
-  if (safeLogIds.length === 0) return summaryByLogId;
-
-  const { data, error } = await supabase
-    .from("inventory_keg_sessions")
-    .select(
-      "id, inventory_item_id, ended_log_id, started_at, ended_at, capacity_quantity, sold_quantity, loss_quantity"
-    )
-    .eq("status", "closed")
-    .in("ended_log_id", safeLogIds);
-
-  if (error) throw error;
-
-  for (const row of (data || []) as ClosedKegSessionRow[]) {
+  for (const row of rows) {
     const endedLogId = Number(row.ended_log_id);
     if (!Number.isFinite(endedLogId) || endedLogId <= 0) continue;
-    if (row.sold_quantity === null || row.capacity_quantity === null) continue;
-
-    const capacityMl = asNumber(row.capacity_quantity);
-    const soldMl = asNumber(row.sold_quantity);
-    const lossMl =
-      row.loss_quantity === null
-        ? Math.max(capacityMl - soldMl, 0)
-        : asNumber(row.loss_quantity);
+    const summary = buildPreviousKegSessionSummary(row);
+    if (!summary) continue;
 
     let salesBreakdown: KegSalesBreakdown | undefined;
     let salesBreakdownMismatch = false;
-    if (soldMl > 0 && row.started_at && row.ended_at) {
+    if (summary.soldMl > 0 && row.started_at && row.ended_at) {
       const breakdown = await computeKegSalesBreakdown(supabase, {
         inventoryItemId: Number(row.inventory_item_id),
         startedAt: row.started_at,
         endedAt: row.ended_at,
-        capacityMl,
+        capacityMl: summary.capacityMl,
       });
       if (breakdown) {
         salesBreakdown = breakdown;
         salesBreakdownMismatch =
           roundDecimal(Number(breakdown.expectedTotalMl ?? 0)) !==
-          roundDecimal(soldMl);
+          roundDecimal(summary.soldMl);
       }
     }
 
     summaryByLogId.set(endedLogId, {
-      sessionId: Number(row.id),
-      startedAt: row.started_at,
-      endedAt: row.ended_at,
-      capacityMl,
-      soldMl,
-      lossMl,
-      overageMl: Math.max(soldMl - capacityMl, 0),
-      usagePercent: capacityMl > 0 ? roundDecimal((soldMl / capacityMl) * 100) : 0,
-      lossPercent: capacityMl > 0 ? roundDecimal((lossMl / capacityMl) * 100) : 0,
+      ...summary,
       salesBreakdown,
       salesBreakdownMismatch,
     });
+  }
+
+  return summaryByLogId;
+}
+
+export async function fetchPreviousKegSessionSummariesByLogId(
+  supabase: SupabaseClientLike,
+  logIds: Array<number | string>
+): Promise<Map<number, PreviousKegSummary>> {
+  const summaryByLogId = new Map<number, PreviousKegSummary>();
+  const rows = await fetchClosedKegSessionsByLogId(supabase, logIds);
+
+  for (const row of rows) {
+    const endedLogId = Number(row.ended_log_id);
+    if (!Number.isFinite(endedLogId) || endedLogId <= 0) continue;
+    const summary = buildPreviousKegSessionSummary(row);
+    if (summary) summaryByLogId.set(endedLogId, summary);
   }
 
   return summaryByLogId;

@@ -4,7 +4,10 @@ import {
   QUICK_REASON_VALUES,
   normalizeInventoryReason,
 } from "@/lib/inventory/reasons";
-import { fetchPreviousKegSummariesByLogId } from "@/lib/inventory/keg-replacement-summary";
+import {
+  fetchPreviousKegSessionSummariesByLogId,
+  fetchPreviousKegSummariesByLogId,
+} from "@/lib/inventory/keg-replacement-summary";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const getErrorMessage = (error: unknown) =>
@@ -40,6 +43,7 @@ type InventoryLogsQueryOptions = {
   businessDate?: string | null;
   reason?: string | null;
   itemId?: number | null;
+  includeKegSalesBreakdown?: boolean;
 };
 
 const loadInventoryLogs = async (options: InventoryLogsQueryOptions = {}) => {
@@ -73,10 +77,15 @@ const loadInventoryLogs = async (options: InventoryLogsQueryOptions = {}) => {
   const kegReplaceLogIds = logs
     .filter((log) => log.source === "keg_replace")
     .map((log) => log.id);
-  const previousKegSummaryByLogId = await fetchPreviousKegSummariesByLogId(
-    supabaseServer,
-    kegReplaceLogIds
-  );
+  const previousKegSummaryByLogId = options.includeKegSalesBreakdown === false
+    ? await fetchPreviousKegSessionSummariesByLogId(
+        supabaseServer,
+        kegReplaceLogIds
+      )
+    : await fetchPreviousKegSummariesByLogId(
+        supabaseServer,
+        kegReplaceLogIds
+      );
   const enrichedLogs = logs.map((log) =>
     previousKegSummaryByLogId.has(log.id)
       ? { ...log, previousKegSummary: previousKegSummaryByLogId.get(log.id) }
@@ -157,7 +166,7 @@ export async function GET(req: Request) {
 
     if (mode === "page") {
       const [logsResult, notesResult] = await Promise.all([
-        asPageResult(loadInventoryLogs()),
+        asPageResult(loadInventoryLogs({ includeKegSalesBreakdown: false })),
         asPageResult(loadInventoryNotes()),
       ]);
 
