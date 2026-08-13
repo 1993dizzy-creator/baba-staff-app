@@ -535,32 +535,36 @@ export async function GET(req: Request) {
       );
     }
 
-    const { data: receipts, error: receiptsError } = await supabaseServer
-      .from("pos_sales_receipts")
-      .select(
-        "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary, tax_override_mode"
-      )
-      .eq("business_date", businessDate);
+    const [
+      { data: receipts, error: receiptsError },
+      { data: lines, error: linesError },
+      { data: payments, error: paymentsError },
+    ] = await Promise.all([
+      supabaseServer
+        .from("pos_sales_receipts")
+        .select(
+          "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary, tax_override_mode"
+        )
+        .eq("business_date", businessDate),
+      supabaseServer
+        .from("pos_sales_receipt_lines")
+        .select(
+          "id, receipt_id, business_date, payment_status, is_canceled, is_option, is_excluded, mapping_status, item_code, item_name, quantity, amount, final_amount, tax_rate, tax_amount"
+        )
+        .eq("business_date", businessDate),
+      supabaseServer
+        .from("pos_sales_receipt_payments")
+        .select("receipt_id, payment_type, payment_name, card_name, amount")
+        .eq("business_date", businessDate),
+    ]);
 
     if (receiptsError) {
       throw new Error(`Failed to fetch sales receipts: ${receiptsError.message}`);
     }
 
-    const { data: lines, error: linesError } = await supabaseServer
-      .from("pos_sales_receipt_lines")
-      .select(
-        "id, receipt_id, business_date, payment_status, is_canceled, is_option, is_excluded, mapping_status, item_code, item_name, quantity, amount, final_amount, tax_rate, tax_amount"
-      )
-      .eq("business_date", businessDate);
-
     if (linesError) {
       throw new Error(`Failed to fetch sales lines: ${linesError.message}`);
     }
-
-    const { data: payments, error: paymentsError } = await supabaseServer
-      .from("pos_sales_receipt_payments")
-      .select("receipt_id, payment_type, payment_name, card_name, amount")
-      .eq("business_date", businessDate);
 
     if (paymentsError) {
       throw new Error(`Failed to fetch sales payments: ${paymentsError.message}`);

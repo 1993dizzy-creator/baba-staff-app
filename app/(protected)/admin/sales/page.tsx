@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
@@ -217,6 +217,9 @@ export default function SalesPage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
+  const loadFailedTextRef = useRef(dailyText.loadFailed);
+  const resolvedBusinessDateSkipRef = useRef("");
+  loadFailedTextRef.current = dailyText.loadFailed;
 
   const tabs = salesTabs.map((tab) => {
     const href = `${tab.href}?businessDate=${encodeURIComponent(businessDate)}`;
@@ -247,12 +250,13 @@ export default function SalesPage() {
         const result = (await res.json()) as SalesTodayResponse;
 
         if (!res.ok || !result.ok) {
-          throw new Error(result.error || dailyText.loadFailed);
+          throw new Error(result.error || loadFailedTextRef.current);
         }
 
         setSalesData(result);
 
         if (!businessDate && result.businessDate) {
+          resolvedBusinessDateSkipRef.current = result.businessDate;
           setBusinessDate(result.businessDate);
           router.replace(
             `${pathname}?businessDate=${encodeURIComponent(result.businessDate)}`,
@@ -267,7 +271,7 @@ export default function SalesPage() {
         setErrorMessage(
           error instanceof Error
             ? error.message
-            : dailyText.loadFailed
+            : loadFailedTextRef.current
         );
         setSalesData(null);
       } finally {
@@ -276,7 +280,7 @@ export default function SalesPage() {
         }
       }
     },
-    [businessDate, dailyText.loadFailed, pathname, router]
+    [businessDate, pathname, router]
   );
 
   useEffect(() => {
@@ -287,12 +291,20 @@ export default function SalesPage() {
   }, [router]);
 
   useEffect(() => {
+    if (
+      businessDate &&
+      resolvedBusinessDateSkipRef.current === businessDate
+    ) {
+      resolvedBusinessDateSkipRef.current = "";
+      return;
+    }
+
     const controller = new AbortController();
 
     fetchSalesToday(controller.signal);
 
     return () => controller.abort();
-  }, [fetchSalesToday]);
+  }, [businessDate, fetchSalesToday]);
 
   function handleBusinessDateChange(value: string) {
     setBusinessDate(value);
