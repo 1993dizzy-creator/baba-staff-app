@@ -251,7 +251,7 @@ test("profile save and rehire report success and validation failures with alerts
   assert.match(rehire,/window\.alert\(text\.saveSuccess\)/);
   assert.match(rehire,/window\.alert\(error instanceof Error\?error\.message:text\.saveFailed\)/);
   assert.doesNotMatch(rehire,/setMessage\(text\.saveSuccess\)|setMessage\(error instanceof Error/);
-  assert.match(page,/setMessage\(error instanceof Error \? error\.message : text\.loadFailed\)/);
+  assert.match(page,/setMessage\([\s\S]*?error instanceof Error \? error\.message : loadFailedTextRef\.current[\s\S]*?\)/);
 });
 
 test("terminated accounts remain blocked by the login active-user filter",()=>{

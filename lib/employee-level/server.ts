@@ -3,6 +3,10 @@ import "server-only";
 import { supabaseServer } from "@/lib/supabase/server";
 import { calculateEmployeeLevel } from "./calculate";
 import type { EmployeeLevelInfo, EmployeeLevelProgramVersion } from "./types";
+import {
+  selectEmployeeLevelProgramVersionsForDates,
+  type EmployeeLevelProgramVersionRow,
+} from "./version-selection";
 
 export type EmployeeLevelUser = {
   role: string | null;
@@ -63,6 +67,35 @@ export async function loadEmployeeLevelProgramVersions(
     });
   }
   return versions;
+}
+
+export async function loadEmployeeLevelProgramVersionsForDates(
+  userIds: number[],
+  asOfDates: string[],
+) {
+  const dates = Array.from(new Set(asOfDates)).sort();
+  const empty = new Map(
+    dates.map((date) => [date, new Map<number, EmployeeLevelProgramVersion>()])
+  );
+  if (userIds.length === 0 || dates.length === 0) return empty;
+
+  const minDate = dates[0];
+  const maxDate = dates[dates.length - 1];
+  const { data, error } = await supabaseServer
+    .from("employee_level_program_versions")
+    .select("id,user_id,enabled,effective_from,effective_to,base_date,base_date_mode,revision")
+    .in("user_id", userIds)
+    .lte("effective_from", maxDate)
+    .or(`effective_to.is.null,effective_to.gt.${minDate}`)
+    .order("revision", { ascending: false });
+  if (error) {
+    throw new Error(`EMPLOYEE_LEVEL_PROGRAM_READ_FAILED: ${error.message}`);
+  }
+
+  return selectEmployeeLevelProgramVersionsForDates(
+    (data ?? []) as EmployeeLevelProgramVersionRow[],
+    dates,
+  );
 }
 
 export function applyEmployeeLevelProgramVersion<T extends EmployeeLevelUser>(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Container from "@/components/Container";
@@ -640,6 +640,8 @@ export default function AdminUsersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [savingId, setSavingId] = useState<number | string | null>(null);
   const [message, setMessage] = useState("");
+  const loadFailedTextRef = useRef(text.loadFailed);
+  loadFailedTextRef.current = text.loadFailed;
 
   useEffect(() => {
     const user = getUser();
@@ -665,7 +667,7 @@ export default function AdminUsersPage() {
         const result = (await res.json()) as UsersResponse;
 
         if (!res.ok || !result.ok) {
-          throw new Error(result.error || text.loadFailed);
+          throw new Error(result.error || loadFailedTextRef.current);
         }
 
         if (!cancelled) {
@@ -673,7 +675,9 @@ export default function AdminUsersPage() {
         }
       } catch (error) {
         if (!cancelled) {
-          setMessage(error instanceof Error ? error.message : text.loadFailed);
+          setMessage(
+            error instanceof Error ? error.message : loadFailedTextRef.current
+          );
         }
       } finally {
         if (!cancelled) {
@@ -687,7 +691,7 @@ export default function AdminUsersPage() {
     return () => {
       cancelled = true;
     };
-  }, [canAccess, checked, text.loadFailed]);
+  }, [canAccess, checked]);
 
   const activeEmployeeCount = useMemo(
     () =>

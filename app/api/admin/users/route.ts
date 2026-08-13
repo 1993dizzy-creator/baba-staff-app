@@ -6,7 +6,7 @@ import { enforceTerminationAccountPolicy, getVietnamDateKey } from "@/lib/employ
 import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
 import { getEmployeeRoleRank, toLegacyEmployeePosition } from "@/lib/common/roles";
 import { isMasterGeneralEditBlocked, isPayrollOverrideOnlyUpdate } from "@/lib/employee/profile-update-policy";
-import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLevelProgramVersions, withEmployeeLevelInfo } from "@/lib/employee-level/server";
+import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLevelProgramVersions, loadEmployeeLevelProgramVersionsForDates, withEmployeeLevelInfo } from "@/lib/employee-level/server";
 import { loadMealAllowanceEligibilityAt } from "@/lib/payroll/meal-allowance-eligibility-server";
 import { validateEmployeeLevelConfiguration } from "@/lib/employee-level/validation";
 import {
@@ -261,11 +261,13 @@ export async function GET(req: Request) {
     const users = sortUsers((data || []).map(sanitizePublicEmployeeUser));
     const today = getVietnamDateKey();
     const userIds = users.map((user) => Number(user.id));
-    const [versions, nextVersions, mealAllowanceEligibility] = await Promise.all([
-      loadEmployeeLevelProgramVersions(userIds, today),
-      loadEmployeeLevelProgramVersions(userIds, nextMonthStart(today)),
+    const nextDate = nextMonthStart(today);
+    const [versionsByDate, mealAllowanceEligibility] = await Promise.all([
+      loadEmployeeLevelProgramVersionsForDates(userIds, [today, nextDate]),
       loadMealAllowanceEligibilityAt(userIds, today),
     ]);
+    const versions = versionsByDate.get(today) ?? new Map();
+    const nextVersions = versionsByDate.get(nextDate) ?? new Map();
     return NextResponse.json({
       ok: true,
       users: users.map((user) => withMealAllowanceEligibility(
