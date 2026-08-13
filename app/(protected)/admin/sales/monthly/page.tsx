@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
@@ -335,6 +335,9 @@ export default function SalesMonthlyPage() {
   const [savingCategoryName, setSavingCategoryName] = useState("");
   const [categoryGroupMessage, setCategoryGroupMessage] = useState("");
   const [categoryGroupError, setCategoryGroupError] = useState("");
+  const loadFailedTextRef = useRef(monthlyText.loadFailed);
+  const resolvedMonthSkipRef = useRef("");
+  loadFailedTextRef.current = monthlyText.loadFailed;
   const currentRole =
     typeof currentUser?.role === "string"
       ? currentUser.role.trim().toLowerCase()
@@ -377,12 +380,13 @@ export default function SalesMonthlyPage() {
         const result = (await res.json()) as SalesMonthlyResponse;
 
         if (!res.ok || !result.ok) {
-          throw new Error(result.error || monthlyText.loadFailed);
+          throw new Error(result.error || loadFailedTextRef.current);
         }
 
         setMonthlyData(result);
 
         if (!month && result.month) {
+          resolvedMonthSkipRef.current = result.month;
           setMonth(result.month);
           const params = new URLSearchParams();
           params.set("month", result.month);
@@ -394,14 +398,14 @@ export default function SalesMonthlyPage() {
         setErrorMessage(
           error instanceof Error
             ? error.message
-            : monthlyText.loadFailed
+            : loadFailedTextRef.current
         );
         setMonthlyData(null);
       } finally {
         if (!signal?.aborted) setIsLoading(false);
       }
     },
-    [month, monthlyText.loadFailed, pathname, router, sharedBusinessDate]
+    [month, pathname, router, sharedBusinessDate]
   );
 
   useEffect(() => {
@@ -420,12 +424,17 @@ export default function SalesMonthlyPage() {
   }, [activeDetailTab, isLeader]);
 
   useEffect(() => {
+    if (month && resolvedMonthSkipRef.current === month) {
+      resolvedMonthSkipRef.current = "";
+      return;
+    }
+
     const controller = new AbortController();
 
     fetchMonthlySales(controller.signal);
 
     return () => controller.abort();
-  }, [fetchMonthlySales]);
+  }, [fetchMonthlySales, month]);
 
   function handleMonthChange(nextMonth: string) {
     setMonth(nextMonth);

@@ -1054,29 +1054,33 @@ export async function GET(req: Request) {
 
     const { fromDate, toDate } = getMonthRange(month);
 
-    const { data: receipts, error: receiptsError } = await supabaseServer
-      .from("pos_sales_receipts")
-      .select(
-        "id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary, tax_override_mode"
-      )
-      .gte("business_date", fromDate)
-      .lte("business_date", toDate);
+    const [
+      { data: receipts, error: receiptsError },
+      lines,
+      productCategories,
+      categoryGroupMappings,
+      { data: payments, error: paymentsError },
+    ] = await Promise.all([
+      supabaseServer
+        .from("pos_sales_receipts")
+        .select(
+          "id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary, tax_override_mode"
+        )
+        .gte("business_date", fromDate)
+        .lte("business_date", toDate),
+      fetchMonthlyLines(fromDate, toDate),
+      fetchProductCategories(),
+      fetchCategoryGroupMappings(),
+      supabaseServer
+        .from("pos_sales_receipt_payments")
+        .select("receipt_id, business_date, payment_type, payment_name, card_name, amount")
+        .gte("business_date", fromDate)
+        .lte("business_date", toDate),
+    ]);
 
     if (receiptsError) {
       throw new Error(`Failed to fetch monthly sales receipts: ${receiptsError.message}`);
     }
-
-    const [lines, productCategories, categoryGroupMappings] = await Promise.all([
-      fetchMonthlyLines(fromDate, toDate),
-      fetchProductCategories(),
-      fetchCategoryGroupMappings(),
-    ]);
-
-    const { data: payments, error: paymentsError } = await supabaseServer
-      .from("pos_sales_receipt_payments")
-      .select("receipt_id, business_date, payment_type, payment_name, card_name, amount")
-      .gte("business_date", fromDate)
-      .lte("business_date", toDate);
 
     if (paymentsError) {
       throw new Error(`Failed to fetch monthly sales payments: ${paymentsError.message}`);
