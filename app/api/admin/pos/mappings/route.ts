@@ -331,41 +331,24 @@ async function fetchInventorySummaries(inventoryIds: number[]) {
   );
 }
 
-async function fetchReferenceCounts(mappingIds: number[]) {
-  const counts = new Map<
-    number,
-    { recipeCount: number; deductionCount: number }
-  >(
-    mappingIds.map((id) => [
-      id,
-      { recipeCount: 0, deductionCount: 0 },
-    ])
-  );
+async function fetchDeductionReferenceCounts(mappingIds: number[]) {
+  const counts = new Map<number, number>(mappingIds.map((id) => [id, 0]));
   if (mappingIds.length === 0) return counts;
 
   for (let offset = 0; offset < mappingIds.length; offset += 500) {
     const ids = mappingIds.slice(offset, offset + 500);
-    const [recipeResult, deductionResult] = await Promise.all([
-      supabaseServer
-        .from("pos_item_mapping_recipes")
-        .select("mapping_id")
-        .in("mapping_id", ids),
-      supabaseServer
-        .from("pos_inventory_deductions")
-        .select("mapping_id")
-        .in("mapping_id", ids),
-    ]);
+    const deductionResult = await supabaseServer
+      .from("pos_inventory_deductions")
+      .select("mapping_id")
+      .in("mapping_id", ids);
 
-    if (recipeResult.error) throw recipeResult.error;
     if (deductionResult.error) throw deductionResult.error;
 
-    for (const row of recipeResult.data || []) {
-      const value = counts.get(Number(row.mapping_id));
-      if (value) value.recipeCount += 1;
-    }
     for (const row of deductionResult.data || []) {
-      const value = counts.get(Number(row.mapping_id));
-      if (value) value.deductionCount += 1;
+      const mappingId = Number(row.mapping_id);
+      if (counts.has(mappingId)) {
+        counts.set(mappingId, (counts.get(mappingId) ?? 0) + 1);
+      }
     }
   }
 
@@ -674,29 +657,83 @@ export async function GET(req: Request) {
       );
     }
 
-    const [products, mappings, kegTrackingMappings] = await Promise.all([
-      fetchAllProducts(),
-      fetchAllMappings(),
-      fetchActiveKegTrackingMappings(),
-    ]);
-    const recipes = await fetchRecipes(mappings.map((mapping) => mapping.id));
-    const inventoryById = await fetchInventorySummaries(
-      Array.from(
-        new Set(
-          [
-            ...mappings.map((mapping) => mapping.inventory_item_id),
-            ...recipes.map((recipe) => recipe.inventory_item_id),
-            ...kegTrackingMappings.map((mapping) => mapping.inventory_item_id),
-          ]
-            .map(Number)
-            .filter((id) => Number.isInteger(id) && id > 0)
+    const productsPromise = fetchAllProducts();
+    const mappingsPromise = fetchAllMappings();
+    const kegTrackingMappingsPromise = fetchActiveKegTrackingMappings();
+    const recipesPromise = mappingsPromise.then((mappings) =>
+      fetchRecipes(mappings.map((mapping) => mapping.id))
+    );
+    const orphanedMappingsPromise = Promise.all([
+      productsPromise,
+      mappingsPromise,
+    ]).then(([products, mappings]) => {
+      const productsById = new Map(
+        products.map((product) => [Number(product.id), product])
+      );
+      const productsByCode = groupProductsByCode(products);
+      return mappings
+        .filter(
+          (mapping) =>
+            !mapping.archived_at && mapping.target_type === "product"
+        )
+        .filter((mapping) => {
+          if (
+            mapping.pos_product_id &&
+            productsById.has(Number(mapping.pos_product_id))
+          ) {
+            return false;
+          }
+          const code = getCatalogCode(mapping.pos_item_code);
+          return !code || (productsByCode.get(code)?.length ?? 0) === 0;
+        });
+    });
+    const deductionReferenceCountsPromise = orphanedMappingsPromise.then(
+      (orphanedMappings) =>
+        fetchDeductionReferenceCounts(
+          orphanedMappings.map((mapping) => Number(mapping.id))
+        )
+    );
+    const inventoryByIdPromise = Promise.all([
+      mappingsPromise,
+      recipesPromise,
+      kegTrackingMappingsPromise,
+    ]).then(([mappings, recipes, kegTrackingMappings]) =>
+      fetchInventorySummaries(
+        Array.from(
+          new Set(
+            [
+              ...mappings.map((mapping) => mapping.inventory_item_id),
+              ...recipes.map((recipe) => recipe.inventory_item_id),
+              ...kegTrackingMappings.map(
+                (mapping) => mapping.inventory_item_id
+              ),
+            ]
+              .map(Number)
+              .filter((id) => Number.isInteger(id) && id > 0)
+          )
         )
       )
     );
+    const [
+      products,
+      mappings,
+      kegTrackingMappings,
+      recipes,
+      inventoryById,
+      orphanedMappings,
+      deductionReferenceCounts,
+    ] = await Promise.all([
+      productsPromise,
+      mappingsPromise,
+      kegTrackingMappingsPromise,
+      recipesPromise,
+      inventoryByIdPromise,
+      orphanedMappingsPromise,
+      deductionReferenceCountsPromise,
+    ]);
     const productsById = new Map(
       products.map((product) => [Number(product.id), product])
     );
-    const productsByCode = groupProductsByCode(products);
     const recipesByMappingId = new Map<number, PosItemMappingRecipeRow[]>();
 
     for (const recipe of recipes) {
@@ -802,19 +839,25 @@ export async function GET(req: Request) {
           };
         });
 
-    const orphanedMappings = productMappings.filter((mapping) => {
-      if (
-        mapping.pos_product_id &&
-        productsById.has(Number(mapping.pos_product_id))
-      ) {
-        return false;
-      }
-      const code = getCatalogCode(mapping.pos_item_code);
-      return !code || (productsByCode.get(code)?.length ?? 0) === 0;
-    });
-    const referenceCounts = await fetchReferenceCounts(
+    const orphanedMappingIds = new Set(
       orphanedMappings.map((mapping) => Number(mapping.id))
     );
+    const referenceCounts = new Map(
+      orphanedMappings.map((mapping) => [
+        Number(mapping.id),
+        {
+          recipeCount: 0,
+          deductionCount:
+            deductionReferenceCounts.get(Number(mapping.id)) ?? 0,
+        },
+      ])
+    );
+    for (const recipe of recipes) {
+      const mappingId = Number(recipe.mapping_id);
+      if (!orphanedMappingIds.has(mappingId)) continue;
+      const counts = referenceCounts.get(mappingId);
+      if (counts) counts.recipeCount += 1;
+    }
 
     const productItems = products.map((product) => {
       const linkedCandidates =

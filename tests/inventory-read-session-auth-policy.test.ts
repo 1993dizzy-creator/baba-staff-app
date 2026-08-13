@@ -120,7 +120,7 @@ test("all browser callers use the shared inventory 401 wrapper", () => {
   assert.match(snapshotsPage, /fetchInventoryApi\(url/);
   assert.match(
     mappingsPage,
-    /fetchInventoryApi\("\/api\/inventory\/items"/
+    /fetchInventoryApi\(\s*"\/api\/inventory\/items\?includeKegProgress=false"/
   );
   assert.match(client, /response\.status === 401/);
   assert.match(client, /handleSessionUnauthorized\(response\)/);

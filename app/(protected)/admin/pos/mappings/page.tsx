@@ -1620,9 +1620,12 @@ export default function AdminPosMappingsPage() {
   }, []);
 
   const loadInventory = useCallback(async () => {
-    const response = await fetchInventoryApi("/api/inventory/items", {
-      cache: "no-store",
-    });
+    const response = await fetchInventoryApi(
+      "/api/inventory/items?includeKegProgress=false",
+      {
+        cache: "no-store",
+      }
+    );
     const payload = (await getJson(response)) as {
       data?: InventoryItem[];
     };
@@ -1668,16 +1671,20 @@ export default function AdminPosMappingsPage() {
   useEffect(() => {
     if (!actorUsername) return;
 
-    void Promise.all([loadMappings(), loadInventory()]).catch(
-      (loadError: unknown) => {
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : mappingPageText[lang].loadAdminError
-        );
-      }
-    );
-  }, [actorUsername, lang, loadInventory, loadMappings]);
+    void loadMappings();
+  }, [actorUsername, loadMappings]);
+
+  useEffect(() => {
+    if (!actorUsername) return;
+
+    void loadInventory().catch((loadError: unknown) => {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : mappingPageText[lang].loadAdminError
+      );
+    });
+  }, [actorUsername, lang, loadInventory]);
 
   const inventoryById = useMemo(
     () =>
