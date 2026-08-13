@@ -11,11 +11,21 @@ import { isClosedPayrollMonth } from "@/lib/payroll/payment-period";
 import { PAYROLL_RUN_ENGINE_VERSION } from "@/lib/payroll/monthly-run";
 
 export async function loadPayrollOverview(month: string) {
-  const period=await resolvePayrollOverviewPeriod(month);
-  const [snapshot,adjustmentResult,attendanceStanding]=await Promise.all([
-    loadPayrollMonthSnapshot(month,{calculationEndDate:period.calculationEndDate}),
+  const adjustmentPromise=Promise.resolve(
     supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,kind,category,amount,business_date,reason,note,created_at").eq("payroll_month",`${month}-01`).is("cancelled_at",null),
-    loadMonthlyAttendanceStandings(month),
+  );
+  void adjustmentPromise.catch(()=>undefined);
+  const period=await resolvePayrollOverviewPeriod(month);
+  const snapshotPromise=loadPayrollMonthSnapshot(month,{calculationEndDate:period.calculationEndDate});
+  const attendanceStandingPromise=loadMonthlyAttendanceStandings(month,{period});
+  const bonusVersionsPromise=snapshotPromise.then(snapshot=>
+    loadAttendanceBonusVersions(month,snapshot.employees.map(employee=>employee.userId)),
+  );
+  const [snapshot,adjustmentResult,attendanceStanding,bonusVersions]=await Promise.all([
+    snapshotPromise,
+    adjustmentPromise,
+    attendanceStandingPromise,
+    bonusVersionsPromise,
   ]);
   if(adjustmentResult.error)throw new Error("PAYROLL_ADJUSTMENT_READ_FAILED");
   const adjustmentsByUser=new Map<number,PayrollMonthlyAdjustment[]>();
@@ -25,7 +35,6 @@ export async function loadPayrollOverview(month: string) {
   for(const contract of snapshot.context.contracts){const list=contractsByUser.get(contract.userId)??[];list.push(contract);contractsByUser.set(contract.userId,list);}
   const rawByUser=new Map(snapshot.employees.map(employee=>[employee.userId,employee]));
   const attendanceUsersById=new Map(attendanceStanding.users.map(user=>[Number(user.id),user]));
-  const bonusVersions=await loadAttendanceBonusVersions(month,snapshot.employees.map(employee=>employee.userId));
   const bonusPolicy=selectAttendanceBonusPolicyAt(bonusVersions.policies,month);
   for(const employee of snapshot.employees){
     const standing=attendanceStanding.standings.get(employee.userId);

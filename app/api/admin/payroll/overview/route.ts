@@ -15,9 +15,22 @@ export async function GET(request: Request) {
   if (!month) return payrollJson({ ok: false, code: "INVALID_MONTH" }, 400);
 
   try {
-    const overview=await loadPayrollOverview(month);
-    const {data:run,error:runError}=await supabaseServer.from("payroll_payment_batches").select("*").eq("payroll_month",`${month}-01`).maybeSingle();if(runError)throw runError;
-    const{data:payments,error:paymentError}=run?await supabaseServer.from("payroll_employee_payments").select("user_id,payment_status,calculated_net_amount,actual_paid_amount,difference_amount,difference_reason,payment_date,paid_at,paid_by,paid_actor:users!payroll_employee_payments_paid_by_fkey(name,full_name,username)").eq("payroll_batch_id",run.id):{data:[],error:null};if(paymentError)throw paymentError;
+    const overviewPromise=loadPayrollOverview(month);
+    const paymentBatchPromise=Promise.resolve(
+      supabaseServer.from("payroll_payment_batches").select("*").eq("payroll_month",`${month}-01`).maybeSingle(),
+    );
+    const [overview,{data:run,error:runError}]=await Promise.all([overviewPromise,paymentBatchPromise]);if(runError)throw runError;
+    const paymentsPromise=run
+      ? Promise.resolve(supabaseServer.from("payroll_employee_payments").select("user_id,payment_status,calculated_net_amount,actual_paid_amount,difference_amount,difference_reason,payment_date,paid_at,paid_by,paid_actor:users!payroll_employee_payments_paid_by_fkey(name,full_name,username)").eq("payroll_batch_id",run.id))
+      : Promise.resolve({data:[],error:null});
+    const mealAllowancePromise=loadMealAllowanceCostSummary(month,{
+      calculationEndDate:overview.period.calculationEndDate,
+      users:overview.snapshot.context.users,
+      contracts:overview.snapshot.context.contracts,
+      attendance:overview.snapshot.context.attendance,
+      payrollUserIds:overview.employees.map(employee=>employee.userId),
+    });
+    const [{data:payments,error:paymentError},mealAllowance]=await Promise.all([paymentsPromise,mealAllowancePromise]);if(paymentError)throw paymentError;
     const paymentByUser=new Map((payments??[]).map(row=>[Number(row.user_id),row]));
     const employees=overview.employees.map(employee=>{const raw=overview.rawByUser.get(employee.userId);const calculationHash=raw?payrollPaymentSnapshotHash(buildEmployeePaymentSnapshot(employee,raw,overview.snapshot.sourceSnapshot as Record<string,unknown>)):null;return{...employee,payment:paymentByUser.get(employee.userId)??null,batchStatus:run?.status??null,batchId:run?.id??null,calculationHash}});
     // 식대비용은 지급 snapshot/hash(위 employees[].calculationHash, payrollPaymentSnapshotHash)와
@@ -31,13 +44,6 @@ export async function GET(request: Request) {
     // 섞지 않고 이 한 번의 호출 안에서 함께 계산해 응답 최상위에 별도 필드로만 내려준다 — 이
     // 화면은 과거·미래 월을 자유롭게 넘나들며 조회할 수 있으므로, 오늘 날짜를 쓰면 이후에
     // 등록된 eligibility 변경 때문에 과거 급여장부의 배지가 바뀌어 버린다.
-    const mealAllowance=await loadMealAllowanceCostSummary(month,{
-      calculationEndDate:overview.period.calculationEndDate,
-      users:overview.snapshot.context.users,
-      contracts:overview.snapshot.context.contracts,
-      attendance:overview.snapshot.context.attendance,
-      payrollUserIds:overview.employees.map(employee=>employee.userId),
-    });
     const summary={...overview.summary,mealAllowanceAmount:mealAllowance.currentAmount,totalCompanyCostAmount:overview.summary.totalCompanyCostAmount+mealAllowance.currentAmount};
     const projectedSummary=overview.projectedSummary?{...overview.projectedSummary,mealAllowanceAmount:mealAllowance.projectedAmount,totalCompanyCostAmount:overview.projectedSummary.totalCompanyCostAmount+mealAllowance.projectedAmount}:null;
     const mealAllowanceEligibleUserIds=mealAllowance.eligibleUserIds;

@@ -9,6 +9,7 @@ import { resolvePayrollAttendancePolicyByDate, type PayrollStoreSettingTimelineR
 import type { WorkScheduleVersion } from "@/lib/payroll/types";
 import { resolveStoreClosedByDate } from "@/lib/store-settings/business-time-adapter-core";
 import { countHolidayGroupSizes, isBabaPremiumHoliday } from "@/lib/store-settings/holidays-policy";
+import type { PayrollOverviewPeriod } from "@/lib/payroll/overview-period";
 
 export type MonthlyStandingUser = {
   id: number;
@@ -18,12 +19,15 @@ export type MonthlyStandingUser = {
   is_system_account: boolean;
 };
 
-export async function loadMonthlyAttendanceStandings(month: string): Promise<{
+export async function loadMonthlyAttendanceStandings(
+  month: string,
+  options?: { period?: PayrollOverviewPeriod },
+): Promise<{
   asOfDate: string;
   users: MonthlyStandingUser[];
   standings: Map<number, MonthlyAttendanceStanding>;
 }> {
-  const period = await resolvePayrollOverviewPeriod(month);
+  const period = options?.period ?? await resolvePayrollOverviewPeriod(month);
   const allDates = payrollMonthDates(month);
   const calculationEndDate = period.calculationEndDate;
   const dates = calculationEndDate ? allDates.filter((date) => date <= calculationEndDate) : [];

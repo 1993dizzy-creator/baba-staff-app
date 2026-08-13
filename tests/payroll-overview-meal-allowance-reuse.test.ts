@@ -106,7 +106,7 @@ test("loadMealAllowanceCostSummary: contract/attendance reuse applies only an in
 // ---------------------------------------------------------------------------
 
 test("overview route: passes the already-loaded snapshot context (users/contracts/attendance) into loadMealAllowanceCostSummary instead of letting it re-query", () => {
-  const callSite = overviewRoute.slice(overviewRoute.indexOf("const mealAllowance=await loadMealAllowanceCostSummary("));
+  const callSite = overviewRoute.slice(overviewRoute.indexOf("const mealAllowancePromise=loadMealAllowanceCostSummary("));
   const callBody = callSite.slice(0, callSite.indexOf("});") + 3);
   assert.match(callBody, /calculationEndDate:overview\.period\.calculationEndDate,/);
   assert.match(callBody, /users:overview\.snapshot\.context\.users,/);

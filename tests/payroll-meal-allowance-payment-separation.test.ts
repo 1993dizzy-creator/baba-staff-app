@@ -34,12 +34,16 @@ test("monthly-run.ts (the payroll fact-calculation engine) never references meal
   assert.doesNotMatch(monthlyRun, /mealAllowance/i);
 });
 
-test("overview route: meal allowance is computed strictly AFTER employees[].calculationHash is built, proving the hash cannot depend on it", () => {
-  const employeesIndex = overviewRoute.indexOf("const employees=overview.employees.map");
-  const calculationHashIndex = overviewRoute.indexOf("calculationHash");
-  const mealAllowanceIndex = overviewRoute.indexOf("loadMealAllowanceCostSummary(");
-  assert.ok(employeesIndex > -1 && calculationHashIndex > -1 && mealAllowanceIndex > -1);
-  assert.ok(calculationHashIndex < mealAllowanceIndex, "calculationHash must be computed before meal allowance is loaded");
+test("overview route: meal allowance may load in parallel but never enters employees[].calculationHash", () => {
+  assert.match(
+    overviewRoute,
+    /payrollPaymentSnapshotHash\(buildEmployeePaymentSnapshot\(employee,raw,overview\.snapshot\.sourceSnapshot as Record<string,unknown>\)\)/,
+  );
+  const employeeMapping = overviewRoute.slice(
+    overviewRoute.indexOf("const employees=overview.employees.map"),
+    overviewRoute.indexOf("const summary="),
+  );
+  assert.doesNotMatch(employeeMapping, /mealAllowance/);
 });
 
 test("overview route: employees[] payload passed to the client is the same array used for calculationHash — meal allowance is only merged into summary/projectedSummary, never into employees[]", () => {
