@@ -85,7 +85,7 @@ function requestUsers(date: Date) {
   const existing = usersRequests.get(requestKey);
   if (existing) return existing;
 
-  const request = attendanceFetch(`/api/attendance/users?mode=month&month=${month}`)
+  const request = attendanceFetch(`/api/attendance/users?mode=leave_month&month=${month}`)
     .then(async (response) => {
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.ok) {
@@ -263,6 +263,7 @@ export default function AttendanceLeavePage() {
   const [feedback, setFeedback] = useState<Feedback>(null);
   const mountedRef = useRef(true);
   const hasLoadedRecordsRef = useRef(false);
+  const usersRequestSequenceRef = useRef(0);
   const recordsRequestSequenceRef = useRef(0);
   const pendingActionKeysRef = useRef(new Set<string>());
   const calendarDateRef = useRef(calendarDate);
@@ -305,17 +306,31 @@ export default function AttendanceLeavePage() {
   );
 
   const loadUsers = useCallback(async () => {
+    const requestSequence = ++usersRequestSequenceRef.current;
     setIsLoadingUsers(true);
     try {
       const data = await requestUsers(calendarDate);
-      if (mountedRef.current) setUsers(data);
+      if (
+        mountedRef.current &&
+        requestSequence === usersRequestSequenceRef.current
+      ) {
+        setUsers(data);
+      }
     } catch (error) {
       console.error("fetch users error:", error);
-      if (mountedRef.current) {
+      if (
+        mountedRef.current &&
+        requestSequence === usersRequestSequenceRef.current
+      ) {
         setFeedback({ type: "error", message: copy.loadError });
       }
     } finally {
-      if (mountedRef.current) setIsLoadingUsers(false);
+      if (
+        mountedRef.current &&
+        requestSequence === usersRequestSequenceRef.current
+      ) {
+        setIsLoadingUsers(false);
+      }
     }
   }, [calendarDate, copy.loadError]);
 

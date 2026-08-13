@@ -45,6 +45,22 @@ export function shouldIncludeMonthlyEmployee(
   );
 }
 
+export function shouldIncludeLeaveMonthlyEmployee(
+  user: EmploymentDates & {
+    is_system_account?: boolean;
+    attendance_tracking_enabled?: boolean;
+  },
+  month: string,
+  leaveExists: boolean,
+) {
+  if (user.is_system_account === true) return false;
+  if (leaveExists) return true;
+  return (
+    user.attendance_tracking_enabled === true &&
+    employmentIntersectsMonth(user, month)
+  );
+}
+
 export function validateEmploymentDates(user: EmploymentDates) {
   return !user.hire_date || !user.termination_date || user.termination_date >= user.hire_date;
 }

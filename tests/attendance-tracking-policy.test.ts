@@ -5,7 +5,7 @@ import test from "node:test";
 // @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { ATTENDANCE_TRACKING_DISABLED_CODE, getAttendanceTrackingDisabledMessage, isAttendanceTrackingUser } from "../lib/attendance/tracking-policy.ts";
 // @ts-expect-error Node's direct TypeScript tests require an explicit extension.
-import { shouldIncludeMonthlyEmployee } from "../lib/employment/eligibility.ts";
+import { shouldIncludeLeaveMonthlyEmployee, shouldIncludeMonthlyEmployee } from "../lib/employment/eligibility.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 
@@ -40,6 +40,20 @@ test("system accounts are always excluded from the monthly listing regardless of
 test("a terminated employee's historical month keeps showing via employment-period intersection, unaffected by the new flag", () => {
   const terminatedTracked = { hire_date: "2026-06-01", termination_date: "2026-06-30", is_system_account: false, attendance_tracking_enabled: true };
   assert.equal(shouldIncludeMonthlyEmployee(terminatedTracked, "2026-06", false), true);
+});
+
+test("leave-month listing includes tracked employees in the month and employees with leave records only", () => {
+  const trackedInMonth = { hire_date: "2026-08-01", termination_date: null, is_system_account: false, attendance_tracking_enabled: true };
+  const trackingOff = { hire_date: "2026-08-01", termination_date: null, is_system_account: false, attendance_tracking_enabled: false };
+  const terminated = { hire_date: "2026-06-01", termination_date: "2026-06-30", is_system_account: false, attendance_tracking_enabled: false };
+  const systemAccount = { hire_date: null, termination_date: null, is_system_account: true, attendance_tracking_enabled: true };
+
+  assert.equal(shouldIncludeLeaveMonthlyEmployee(trackedInMonth, "2026-08", false), true);
+  assert.equal(shouldIncludeLeaveMonthlyEmployee(trackingOff, "2026-08", true), true);
+  assert.equal(shouldIncludeLeaveMonthlyEmployee(terminated, "2026-08", true), true);
+  assert.equal(shouldIncludeLeaveMonthlyEmployee(trackingOff, "2026-08", false), false);
+  assert.equal(shouldIncludeLeaveMonthlyEmployee(terminated, "2026-08", false), false);
+  assert.equal(shouldIncludeLeaveMonthlyEmployee(systemAccount, "2026-08", true), false);
 });
 
 test("/api/attendance/users selects attendance_tracking_enabled and excludes disabled users only from the current-month roster", () => {
