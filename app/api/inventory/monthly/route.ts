@@ -610,65 +610,65 @@ export async function GET(request: Request) {
     const isCurrentMonth = month === currentMonth;
     const toDate = isCurrentMonth ? currentBusinessDate : monthEnd;
 
-    const baselineBatchQuery = supabaseAdmin
-      .from("inventory_snapshot_batches")
-      .select("id, snapshot_date")
-      .lt("snapshot_date", monthStart)
-      .order("snapshot_date", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const baselineWithItemsPromise = Promise.resolve(
+      supabaseAdmin
+        .from("inventory_snapshot_batches")
+        .select("id, snapshot_date")
+        .lt("snapshot_date", monthStart)
+        .order("snapshot_date", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    ).then(async ({ data, error }) => {
+      if (error) throw error;
+      const batch = (data ?? null) as SnapshotBatch | null;
+      return getSnapshotItems(batch?.id ?? null);
+    });
 
-    const latestBatchQuery = isCurrentMonth
-      ? Promise.resolve({ data: null, error: null })
-      : supabaseAdmin
-          .from("inventory_snapshot_batches")
-          .select("id, snapshot_date")
-          .gte("snapshot_date", monthStart)
-          .lte("snapshot_date", monthEnd)
-          .order("snapshot_date", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+    const latestWithItemsPromise = isCurrentMonth
+      ? getCurrentInventoryItems()
+      : Promise.resolve(
+          supabaseAdmin
+            .from("inventory_snapshot_batches")
+            .select("id, snapshot_date")
+            .gte("snapshot_date", monthStart)
+            .lte("snapshot_date", monthEnd)
+            .order("snapshot_date", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        ).then(async ({ data, error }) => {
+          if (error) throw error;
+          const batch = (data ?? null) as SnapshotBatch | null;
+          return getSnapshotItems(batch?.id ?? null);
+        });
 
     const [
-      { data: baselineBatch, error: baselineError },
-      latestBatchResult,
-    ] = await Promise.all([baselineBatchQuery, latestBatchQuery]);
-
-    if (baselineError) throw baselineError;
-    if (latestBatchResult.error) throw latestBatchResult.error;
-
-    const baseline = (baselineBatch ?? null) as SnapshotBatch | null;
-    const latest = (latestBatchResult.data ?? null) as SnapshotBatch | null;
-
-    const [baselineItems, latestItems] = await Promise.all([
-      getSnapshotItems(baseline?.id ?? null),
-      isCurrentMonth
-        ? getCurrentInventoryItems()
-        : getSnapshotItems(latest?.id ?? null),
+      baselineItems,
+      latestItems,
+      allLogs,
+      { data: priceLogs, error: priceLogsError },
+    ] = await Promise.all([
+      baselineWithItemsPromise,
+      latestWithItemsPromise,
+      fetchMonthlyInventoryLogs(monthStart, toDate),
+      supabaseAdmin
+        .from("inventory_price_logs")
+        .select(
+          `
+            id,
+            item_id,
+            old_price,
+            new_price,
+            diff,
+            business_date,
+            source,
+            reason
+          `
+        )
+        .gte("business_date", monthStart)
+        .lte("business_date", toDate)
+        .order("business_date", { ascending: true })
+        .order("id", { ascending: true }),
     ]);
-
-    const [allLogs, { data: priceLogs, error: priceLogsError }] =
-      await Promise.all([
-        fetchMonthlyInventoryLogs(monthStart, toDate),
-        supabaseAdmin
-          .from("inventory_price_logs")
-          .select(
-            `
-              id,
-              item_id,
-              old_price,
-              new_price,
-              diff,
-              business_date,
-              source,
-              reason
-            `
-          )
-          .gte("business_date", monthStart)
-          .lte("business_date", toDate)
-          .order("business_date", { ascending: true })
-          .order("id", { ascending: true }),
-      ]);
 
     if (priceLogsError) throw priceLogsError;
 

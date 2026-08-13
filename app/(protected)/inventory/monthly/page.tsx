@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
@@ -508,8 +508,16 @@ export default function InventoryMonthlyPage() {
   const [expandedSupplierKeys, setExpandedSupplierKeys] = useState<Record<string, boolean>>({});
   const [expandedParts, setExpandedParts] = useState<Record<string, boolean>>({});
   const [expandedItemIds, setExpandedItemIds] = useState<Record<string, boolean>>({});
+  const loadFailedTextRef = useRef(c.loadFailed);
+  const resolvedMonthSkipRef = useRef("");
+  loadFailedTextRef.current = c.loadFailed;
 
   useEffect(() => {
+    if (selectedMonth && resolvedMonthSkipRef.current === selectedMonth) {
+      resolvedMonthSkipRef.current = "";
+      return;
+    }
+
     let ignore = false;
 
     const fetchMonthly = async () => {
@@ -526,7 +534,7 @@ export default function InventoryMonthlyPage() {
         if (!res.ok || !json.ok) {
           if (!ignore) {
             setData(null);
-            setError("message" in json && json.message ? json.message : c.loadFailed);
+            setError("message" in json && json.message ? json.message : loadFailedTextRef.current);
           }
           return;
         }
@@ -538,6 +546,7 @@ export default function InventoryMonthlyPage() {
           setExpandedItemIds({});
 
           if (!selectedMonth && json.month) {
+            resolvedMonthSkipRef.current = json.month;
             setSelectedMonth(json.month);
           }
         }
@@ -545,7 +554,7 @@ export default function InventoryMonthlyPage() {
         console.error(fetchError);
         if (!ignore) {
           setData(null);
-          setError(c.loadFailed);
+          setError(loadFailedTextRef.current);
         }
       } finally {
         if (!ignore) {
@@ -559,7 +568,7 @@ export default function InventoryMonthlyPage() {
     return () => {
       ignore = true;
     };
-  }, [selectedMonth, c.loadFailed]);
+  }, [selectedMonth]);
 
   const supplierGroups = useMemo<SupplierGroup[]>(() => {
     if (!data) return [];
