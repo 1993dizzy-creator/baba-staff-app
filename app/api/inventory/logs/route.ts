@@ -36,6 +36,84 @@ type CurrentInventoryItem = {
   purchase_price: string | number | null;
 };
 
+type InventoryLogsQueryOptions = {
+  businessDate?: string | null;
+  reason?: string | null;
+  itemId?: number | null;
+};
+
+const loadInventoryLogs = async (options: InventoryLogsQueryOptions = {}) => {
+  let query = supabaseServer
+    .from("inventory_logs")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (options.businessDate) {
+    query = query.eq("business_date", options.businessDate);
+  }
+
+  if (options.reason) {
+    query = query.eq("reason", normalizeInventoryReason(options.reason));
+  }
+
+  if (options.itemId) {
+    query = query.eq("item_id", options.itemId);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    return {
+      ok: false as const,
+      error: "inventory_logs_query_failed",
+      message: error.message,
+    };
+  }
+
+  const logs = data || [];
+  const kegReplaceLogIds = logs
+    .filter((log) => log.source === "keg_replace")
+    .map((log) => log.id);
+  const previousKegSummaryByLogId = await fetchPreviousKegSummariesByLogId(
+    supabaseServer,
+    kegReplaceLogIds
+  );
+  const enrichedLogs = logs.map((log) =>
+    previousKegSummaryByLogId.has(log.id)
+      ? { ...log, previousKegSummary: previousKegSummaryByLogId.get(log.id) }
+      : log
+  );
+
+  return { ok: true as const, data: enrichedLogs };
+};
+
+const loadInventoryNotes = async () => {
+  const { data, error } = await supabaseServer
+    .from("inventory")
+    .select("id, part, code, item_name, item_name_vi, note");
+
+  if (error) {
+    return {
+      ok: false as const,
+      error: "inventory_notes_query_failed",
+      message: error.message,
+    };
+  }
+
+  return { ok: true as const, data: data || [] };
+};
+
+const asPageResult = async <T,>(promise: Promise<T>) => {
+  try {
+    return await promise;
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: "inventory_logs_fetch_failed",
+      message: getErrorMessage(error),
+    };
+  }
+};
+
 const normalizeText = (value: unknown) =>
   String(value ?? "").replace(/\s+/g, " ").trim();
 
@@ -77,22 +155,19 @@ export async function GET(req: Request) {
     const reason = searchParams.get("reason");
     const itemId = searchParams.get("itemId");
 
+    if (mode === "page") {
+      const [logsResult, notesResult] = await Promise.all([
+        asPageResult(loadInventoryLogs()),
+        asPageResult(loadInventoryNotes()),
+      ]);
+
+      return NextResponse.json({ ok: true, logsResult, notesResult });
+    }
+
     if (mode === "logs") {
-      let query = supabaseServer
-        .from("inventory_logs")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (businessDate) {
-        query = query.eq("business_date", businessDate);
-      }
-
-      if (reason) {
-        query = query.eq("reason", normalizeInventoryReason(reason));
-      }
-
+      let parsedItemId: number | null = null;
       if (itemId) {
-        const parsedItemId = Number(itemId);
+        parsedItemId = Number(itemId);
 
         if (!Number.isFinite(parsedItemId) || parsedItemId <= 0) {
           return NextResponse.json(
@@ -105,38 +180,25 @@ export async function GET(req: Request) {
           );
         }
 
-        query = query.eq("item_id", parsedItemId);
       }
 
-      const { data, error } = await query;
-
-      if (error) {
+      const result = await loadInventoryLogs({
+        businessDate,
+        reason,
+        itemId: parsedItemId,
+      });
+      if (!result.ok) {
         return NextResponse.json(
           {
             ok: false,
-            error: "inventory_logs_query_failed",
-            message: error.message,
+            error: result.error,
+            message: result.message,
           },
           { status: 500 }
         );
       }
 
-      const logs = data || [];
-      const kegReplaceLogIds = logs
-        .filter((log) => log.source === "keg_replace")
-        .map((log) => log.id);
-      const previousKegSummaryByLogId = await fetchPreviousKegSummariesByLogId(
-        supabaseServer,
-        kegReplaceLogIds
-      );
-
-      const enrichedLogs = logs.map((log) =>
-        previousKegSummaryByLogId.has(log.id)
-          ? { ...log, previousKegSummary: previousKegSummaryByLogId.get(log.id) }
-          : log
-      );
-
-      return NextResponse.json({ ok: true, data: enrichedLogs });
+      return NextResponse.json({ ok: true, data: result.data });
     }
 
     if (mode === "recent") {
@@ -161,22 +223,19 @@ export async function GET(req: Request) {
     }
 
     if (mode === "notes") {
-      const { data, error } = await supabaseServer
-        .from("inventory")
-        .select("id, part, code, item_name, item_name_vi, note");
-
-      if (error) {
+      const result = await loadInventoryNotes();
+      if (!result.ok) {
         return NextResponse.json(
           {
             ok: false,
-            error: "inventory_notes_query_failed",
-            message: error.message,
+            error: result.error,
+            message: result.message,
           },
           { status: 500 }
         );
       }
 
-      return NextResponse.json({ ok: true, data: data || [] });
+      return NextResponse.json({ ok: true, data: result.data });
     }
 
     return NextResponse.json(

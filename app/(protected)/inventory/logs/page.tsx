@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import { PART_META } from "@/lib/common/parts";
 import { commonText, inventoryText } from "@/lib/text";
@@ -38,6 +38,42 @@ type InventoryNote = {
     note?: string | null;
 };
 
+const buildInventoryNoteMap = (notes: InventoryNote[]) => {
+    const nextMap: Record<string, string> = {};
+
+    notes.forEach((item) => {
+        const keyById =
+            item.id !== null && item.id !== undefined ? `item-${item.id}` : null;
+        const keyByFallback = [
+            item.part || "",
+            item.code || "",
+            item.item_name || "",
+            item.item_name_vi || "",
+        ].join("|");
+
+        if (keyById) nextMap[keyById] = item.note || "-";
+        nextMap[keyByFallback] = item.note || "-";
+    });
+
+    return nextMap;
+};
+
+const getLogTime = (value?: string | null) =>
+    value ? new Date(value).getTime() : 0;
+
+const getInventoryLogGroupKey = (log: InventoryLog) => {
+    if (log.item_id !== null && log.item_id !== undefined) {
+        return `item-${log.item_id}`;
+    }
+
+    return [
+        log.part || "",
+        log.code || "",
+        log.item_name || "",
+        log.item_name_vi || "",
+    ].join("|");
+};
+
 export default function InventoryLogsPage() {
     const [logs, setLogs] = useState<InventoryLog[]>([]);
     const [filterType, setFilterType] = useState<"all" | "create" | "update" | "delete">("all");
@@ -59,6 +95,30 @@ export default function InventoryLogsPage() {
         }
 
         setLogs(result.data || []);
+    };
+
+    const fetchPageData = async () => {
+        const res = await fetch("/api/inventory/logs?mode=page", {
+            cache: "no-store",
+        });
+        const result = await res.json();
+
+        if (!res.ok || !result.ok) {
+            console.error(result);
+            return;
+        }
+
+        if (result.logsResult?.ok) {
+            setLogs(result.logsResult.data || []);
+        } else {
+            console.error(result.logsResult);
+        }
+
+        if (result.notesResult?.ok) {
+            setInventoryNoteMap(buildInventoryNoteMap(result.notesResult.data || []));
+        } else {
+            console.error(result.notesResult);
+        }
     };
 
     const handleDeleteSingleLog = async (logId: number) => {
@@ -96,46 +156,9 @@ export default function InventoryLogsPage() {
         await fetchLogs();
     };
 
-    const fetchInventoryNotes = async () => {
-        const res = await fetch("/api/inventory/logs?mode=notes", {
-            cache: "no-store",
-        });
-
-        const result = await res.json();
-
-        if (!res.ok || !result.ok) {
-            console.error(result);
-            return;
-        }
-
-        const nextMap: Record<string, string> = {};
-
-        (result.data || []).forEach((item: InventoryNote) => {
-            const keyById =
-                item.id !== null && item.id !== undefined ? `item-${item.id}` : null;
-
-            const keyByFallback = [
-                item.part || "",
-                item.code || "",
-                item.item_name || "",
-                item.item_name_vi || "",
-            ].join("|");
-
-            if (keyById) {
-                nextMap[keyById] = item.note || "-";
-            }
-
-            nextMap[keyByFallback] = item.note || "-";
-        });
-
-        setInventoryNoteMap(nextMap);
-    };
-
     // Fetch initial log data once when the page mounts.
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        fetchLogs();
-        fetchInventoryNotes();
+        fetchPageData();
     }, []);
 
 
@@ -193,81 +216,43 @@ export default function InventoryLogsPage() {
         return `${yy}.${mm}.${dd} ${hh}:${min}`;
     };
 
-    const getTime = (value?: string | null) =>
-        value ? new Date(value).getTime() : 0;
+    const { filteredLogs, visibleGroups } = useMemo(() => {
+        const keyword = search.trim().toLowerCase();
+        const nextFilteredLogs = logs
+            .filter((log) => {
+                const matchType = filterType === "all" || log.action === filterType;
+                const displayItemName = (lang === "vi"
+                    ? log.item_name_vi || log.item_name || "-"
+                    : log.item_name || log.item_name_vi || "-").toLowerCase();
+                const displayCategory = (lang === "vi"
+                    ? log.category_vi || log.category || "-"
+                    : log.category || log.category_vi || "-").toLowerCase();
+                const displayCode = String(log.code || "").toLowerCase();
+                const matchSearch =
+                    !keyword ||
+                    displayItemName.includes(keyword) ||
+                    displayCategory.includes(keyword) ||
+                    displayCode.includes(keyword);
+                const matchPart = partFilter === "all" || log.part === partFilter;
+                return matchType && matchSearch && matchPart;
+            })
+            .sort((a, b) => getLogTime(b.created_at) - getLogTime(a.created_at));
 
-    const getGroupKey = (log: InventoryLog) => {
-        if (log.item_id !== null && log.item_id !== undefined) {
-            return `item-${log.item_id}`;
-        }
+        const groupedLogsMap: Record<string, InventoryLog[]> = {};
+        nextFilteredLogs.forEach((log) => {
+            const key = getInventoryLogGroupKey(log);
+            (groupedLogsMap[key] ||= []).push(log);
+        });
 
-        return [
-            log.part || "",
-            log.code || "",
-            log.item_name || "",
-            log.item_name_vi || "",
-        ].join("|");
-    };
-
-
-    const filteredLogs = logs
-        .filter((log) => {
-            const keyword = search.trim().toLowerCase();
-
-            const matchType = filterType === "all" || log.action === filterType;
-
-            const displayItemName = getDisplayLogItemName(log).toLowerCase();
-            const displayCategory = getDisplayLogCategory(log).toLowerCase();
-            const displayCode = String(log.code || "").toLowerCase();
-
-            const matchSearch =
-                !keyword ||
-                displayItemName.includes(keyword) ||
-                displayCategory.includes(keyword) ||
-                displayCode.includes(keyword);
-
-            const matchPart =
-                partFilter === "all" || log.part === partFilter;
-
-            return matchType && matchSearch && matchPart;
-        })
-        .sort(
-            (a, b) =>
-                getTime(b.created_at) - getTime(a.created_at)
-        );
-
-    const groupedLogsMap: Record<string, InventoryLog[]> = filteredLogs.reduce(
-        (acc: Record<string, InventoryLog[]>, log) => {
-            const key = getGroupKey(log);
-
-            if (!acc[key]) {
-                acc[key] = [];
-            }
-
-            acc[key].push(log);
-            return acc;
-        },
-        {}
-    );
-
-    const groupedLogs = Object.entries(groupedLogsMap).map(
-        ([groupKey, items]: [string, InventoryLog[]]) => {
-            const sortedItems = [...items].sort(
-                (a, b) =>
-                    getTime(b.created_at) - getTime(a.created_at)
-            );
-
-            const latest = sortedItems[0];
-
-            return {
+        return {
+            filteredLogs: nextFilteredLogs,
+            visibleGroups: Object.entries(groupedLogsMap).map(([groupKey, items]) => ({
                 groupKey,
-                latest,
-                logs: sortedItems,
-            };
-        }
-    );
-
-    const visibleGroups = groupedLogs;
+                latest: items[0],
+                logs: items,
+            })),
+        };
+    }, [logs, filterType, search, partFilter, lang]);
 
     type ChangeFieldType = "number" | "price" | "text";
 
