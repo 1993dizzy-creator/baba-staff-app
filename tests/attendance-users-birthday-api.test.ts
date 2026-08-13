@@ -18,7 +18,8 @@ test("ordinary actors never receive full birth_date while owner/master retain th
   assert.match(route, /return \{ \.\.\.publicUser, birthdayMonthDay: monthDay \};/);
 });
 
-test("birthday support reuses the existing users request and adds no endpoint or client fetch", () => {
-  assert.equal((route.match(/\.from\("users"\)/g) ?? []).length, 1);
+test("birthday support reuses both scoped users requests and adds no endpoint or client fetch", () => {
+  assert.equal((route.match(/\.from\("users"\)/g) ?? []).length, 2);
+  assert.equal((route.match(/const serializeUsers =/g) ?? []).length, 1);
   assert.doesNotMatch(route, /birthday.*fetch|fetch.*birthday/i);
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
@@ -216,6 +216,9 @@ export default function AttendanceUserDetailPage() {
     const [message, setMessage] = useState("");
     const [isSaving, setIsSaving] = useState(false);
     const [unauthorizedAbsencePenaltyDays, setUnauthorizedAbsencePenaltyDays] = useState<number | null>(null);
+    const detailRequestSequenceRef = useRef(0);
+    const payrollSettingsResultRef = useRef<Record<string, unknown> | null>(null);
+    const payrollSettingsRequestRef = useRef<Promise<Record<string, unknown> | null> | null>(null);
 
     useEffect(() => {
         const loginUser = getUser();
@@ -229,23 +232,41 @@ export default function AttendanceUserDetailPage() {
     }, [currentMonth, userId]);
 
     const fetchDetail = async () => {
+        const requestSequence = ++detailRequestSequenceRef.current;
         setIsLoading(true);
 
         try {
             const { startText } = getMonthRange(currentMonth);
             const month = startText.slice(0, 7);
 
-            const [userRes, recordRes, settingsRes] = await Promise.all([
-                attendanceFetch(`/api/attendance/users?mode=month&month=${month}`),
+            const settingsRequest = payrollSettingsResultRef.current
+                ? Promise.resolve(payrollSettingsResultRef.current)
+                : payrollSettingsRequestRef.current ?? (() => {
+                    const request = attendanceFetch("/api/admin/payroll/settings")
+                        .then(async (response) => {
+                            const result = await response.json();
+                            if (!response.ok || !result.ok) return null;
+                            payrollSettingsResultRef.current = result;
+                            return result as Record<string, unknown>;
+                        })
+                        .finally(() => {
+                            if (payrollSettingsRequestRef.current === request) {
+                                payrollSettingsRequestRef.current = null;
+                            }
+                        });
+                    payrollSettingsRequestRef.current = request;
+                    return request;
+                })();
+            const [userRes, recordRes, settingsResult] = await Promise.all([
+                attendanceFetch(`/api/attendance/users?mode=admin_user_month&month=${month}&user_id=${encodeURIComponent(String(userId))}`),
                 attendanceFetch(
                     `/api/attendance/records?scope=admin_user_month&user_id=${encodeURIComponent(String(userId))}&month=${month}`
                 ),
-                attendanceFetch("/api/admin/payroll/settings"),
+                settingsRequest,
             ]);
-            const [userResult, recordResult, settingsResult] = await Promise.all([
+            const [userResult, recordResult] = await Promise.all([
                 userRes.json(),
                 recordRes.json(),
-                settingsRes.json(),
             ]);
 
             if (!userRes.ok || !userResult.ok) {
@@ -253,9 +274,7 @@ export default function AttendanceUserDetailPage() {
                 return;
             }
 
-            const userData = ((userResult.users || []) as UserRow[]).find(
-                (item) => Number(item.id) === Number(userId)
-            );
+            const userData = userResult.user as UserRow | null;
 
             // /api/attendance/users는 활성 직원만 반환한다. 비활성 직원의 과거 기록도
             // 관리자가 확인·보정할 수 있어야 하므로, 목록에 없다는 이유로 근태 조회 자체를
@@ -271,14 +290,19 @@ export default function AttendanceUserDetailPage() {
 
             const recordData = recordResult.records || [];
 
-            if (settingsRes.ok && settingsResult.ok) {
-                setUnauthorizedAbsencePenaltyDays(Number(settingsResult.settings?.unauthorized_absence_penalty_days));
+            if (requestSequence !== detailRequestSequenceRef.current) return;
+
+            const settings = settingsResult?.settings as Record<string, unknown> | undefined;
+            if (settingsResult?.ok && settings) {
+                setUnauthorizedAbsencePenaltyDays(Number(settings.unauthorized_absence_penalty_days));
             }
 
             setUser(userData || null);
             setRecords(recordData || []);
         } finally {
-            setIsLoading(false);
+            if (requestSequence === detailRequestSequenceRef.current) {
+                setIsLoading(false);
+            }
         }
     };
 

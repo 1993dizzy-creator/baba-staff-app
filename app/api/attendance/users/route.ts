@@ -5,6 +5,7 @@ import {
 } from "@/lib/attendance/server-api";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getAttendanceWorkDate } from "@/lib/attendance/time";
+import { isAttendanceAdminRole, parsePositiveUserId } from "@/lib/attendance/api-policy";
 import {
   isEmployedOn,
   shouldIncludeLeaveMonthlyEmployee,
@@ -15,6 +16,12 @@ import { applyEmployeeLevelProgramVersion, loadEmployeeLevelProgramVersions, wit
 const BASE_USER_FIELDS =
   "id,username,name,role,is_active,part,position,work_start_time,work_end_time,hire_date,termination_date,is_system_account,level_program_enabled,level_base_date_override,attendance_tracking_enabled";
 const USER_FIELDS_WITH_BIRTH_DATE = `${BASE_USER_FIELDS},birth_date`;
+type AttendanceUserRow = EmployeeLevelUser & {
+  id: number;
+  is_active: boolean;
+  attendance_tracking_enabled: boolean;
+  birth_date: string | null;
+};
 
 function birthdayMonthDay(value: unknown): string | null {
   return typeof value === "string" && /^\d{4}-(0[1-9]|1[0-2])-([012]\d|3[01])$/.test(value)
@@ -28,14 +35,68 @@ export async function GET(request: Request) {
     if (!auth.ok) return attendanceAuthFailure(auth);
 
     const canViewFullBirthDate = auth.actor.role === "owner" || auth.actor.role === "master";
+    const withLevels = async (users: AttendanceUserRow[], asOfDate: string) => {
+      const versions = await loadEmployeeLevelProgramVersions(users.map((user) => Number(user.id)), asOfDate);
+      return users.map((user) => withEmployeeLevelInfo(applyEmployeeLevelProgramVersion(user, versions.get(Number(user.id))), asOfDate));
+    };
+    const serializeUsers = async (users: AttendanceUserRow[], asOfDate: string) => {
+      const leveled = await withLevels(users, asOfDate);
+      return leveled.map((user) => {
+        const monthDay = birthdayMonthDay(user.birth_date);
+        if (canViewFullBirthDate) return { ...user, birthdayMonthDay: monthDay };
+        const { birth_date: _privateBirthDate, ...publicUser } = user;
+        void _privateBirthDate;
+        return { ...publicUser, birthdayMonthDay: monthDay };
+      });
+    };
     const search = new URL(request.url).searchParams;
     const requestedMode = search.get("mode");
-    const mode = requestedMode === "month" || requestedMode === "leave_month"
+    const mode = requestedMode === "month" || requestedMode === "leave_month" || requestedMode === "admin_user_month"
       ? requestedMode
       : "current";
     const month = search.get("month");
     if (mode !== "current" && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month || "")) {
       return attendanceJson({ ok: false, code: "INVALID_MONTH" }, 400);
+    }
+    const first = mode === "current" ? "" : `${month}-01`;
+    const next = first ? new Date(`${first}T00:00:00Z`) : null;
+    next?.setUTCMonth(next.getUTCMonth() + 1);
+    next?.setUTCDate(0);
+    const last = next?.toISOString().slice(0, 10) ?? "";
+    if (mode === "admin_user_month") {
+      if (!isAttendanceAdminRole(auth.actor.role)) {
+        return attendanceJson({ ok: false, code: "FORBIDDEN" }, 403);
+      }
+      const targetUserId = parsePositiveUserId(search.get("user_id"));
+      if (!targetUserId) {
+        return attendanceJson({ ok: false, code: "INVALID_USER_ID" }, 400);
+      }
+      const [targetResult, attendanceResult] = await Promise.all([
+        supabaseServer
+          .from("users")
+          .select(USER_FIELDS_WITH_BIRTH_DATE)
+          .eq("id", targetUserId)
+          .eq("is_system_account", false)
+          .maybeSingle(),
+        supabaseServer
+          .from("attendance_records")
+          .select("id")
+          .eq("user_id", targetUserId)
+          .gte("work_date", first)
+          .lte("work_date", last)
+          .limit(1),
+      ]);
+      if (targetResult.error) throw new Error(`Failed to load attendance target user: ${targetResult.error.message}`);
+      if (attendanceResult.error) throw new Error(`Failed to check target monthly attendance: ${attendanceResult.error.message}`);
+      if (!targetResult.data) return attendanceJson({ ok: true, user: null });
+      const target = targetResult.data as unknown as AttendanceUserRow;
+      const included = shouldIncludeMonthlyEmployee(
+        target,
+        month!,
+        (attendanceResult.data ?? []).length > 0,
+      );
+      const serialized = included ? await serializeUsers([target], last) : [];
+      return attendanceJson({ ok: true, user: serialized[0] ?? null });
     }
     const usersQuery = supabaseServer
       .from("users")
@@ -44,12 +105,6 @@ export async function GET(request: Request) {
       .order("part", { ascending: true })
       .order("position", { ascending: true })
       .order("name", { ascending: true });
-
-    const first = mode === "current" ? "" : `${month}-01`;
-    const next = first ? new Date(`${first}T00:00:00Z`) : null;
-    next?.setUTCMonth(next.getUTCMonth() + 1);
-    next?.setUTCDate(0);
-    const last = next?.toISOString().slice(0, 10) ?? "";
     const leaveIdsQuery = mode === "leave_month"
       ? supabaseServer
           .from("attendance_records")
@@ -74,21 +129,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const rows = (data ?? []) as unknown as Array<EmployeeLevelUser & {id:number;is_active:boolean;attendance_tracking_enabled:boolean;birth_date:string|null}>;
-    const withLevels = async (users: typeof rows, asOfDate: string) => {
-      const versions = await loadEmployeeLevelProgramVersions(users.map((user) => Number(user.id)), asOfDate);
-      return users.map((user) => withEmployeeLevelInfo(applyEmployeeLevelProgramVersion(user, versions.get(Number(user.id))), asOfDate));
-    };
-    const serializeUsers = async (users: typeof rows, asOfDate: string) => {
-      const leveled = await withLevels(users, asOfDate);
-      return leveled.map((user) => {
-        const monthDay = birthdayMonthDay(user.birth_date);
-        if (canViewFullBirthDate) return { ...user, birthdayMonthDay: monthDay };
-        const { birth_date: _privateBirthDate, ...publicUser } = user;
-        void _privateBirthDate;
-        return { ...publicUser, birthdayMonthDay: monthDay };
-      });
-    };
+    const rows = (data ?? []) as unknown as AttendanceUserRow[];
     const levelAsOfDate = getAttendanceWorkDate();
     if (mode === "current") {
       const date = levelAsOfDate;
