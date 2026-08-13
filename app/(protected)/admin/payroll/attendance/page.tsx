@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
@@ -188,22 +188,11 @@ export default function AttendanceOverviewPage() {
     const [isUnresolvedOpen, setIsUnresolvedOpen] = useState(false);
     const [processingRecordId, setProcessingRecordId] = useState<number | null>(null);
     const [processingAction, setProcessingAction] = useState<"auto" | "delete" | null>(null);
+    const monthlyOverviewRequestRef = useRef(0);
 
-    useEffect(() => {
-        const loginUser = getUser();
-
-        if (!isAdmin(loginUser)) {
-            window.location.href = "/attendance";
-            return;
-        }
-
-        fetchMonthlyOverview();
-        fetchUnresolvedOpenRecords();
-    }, [currentMonth]);
-
-    const fetchUnresolvedOpenRecords = async () => {
+    const fetchUnresolvedOpenRecords = useCallback(async () => {
         try {
-            const res = await attendanceFetch(`/api/attendance/admin?lang=${lang}`);
+            const res = await attendanceFetch("/api/attendance/admin");
 
             const result = await res.json();
 
@@ -216,7 +205,61 @@ export default function AttendanceOverviewPage() {
         } catch (err) {
             console.log("fetch unresolved open records exception:", err);
         }
-    };
+    }, []);
+
+    const fetchMonthlyOverview = useCallback(async () => {
+        const requestId = ++monthlyOverviewRequestRef.current;
+        setIsLoading(true);
+
+        try {
+            const { startText } = getMonthRange(currentMonth);
+            const month = startText.slice(0, 7);
+            const [userRes, recordRes] = await Promise.all([
+                attendanceFetch(`/api/attendance/users?mode=month&month=${month}`),
+                attendanceFetch(`/api/attendance/records?scope=admin_overview&month=${month}`),
+            ]);
+            const [userResult, recordResult] = await Promise.all([
+                userRes.json(),
+                recordRes.json(),
+            ]);
+
+            if (!userRes.ok || !userResult.ok) {
+                console.log("fetch users error:", userResult);
+                return;
+            }
+            if (!recordRes.ok || !recordResult.ok) {
+                console.log("fetch attendance records error:", recordResult);
+                return;
+            }
+            if (requestId !== monthlyOverviewRequestRef.current) return;
+
+            const userData = (userResult.users || []) as UserRow[];
+            const recordData = recordResult.records || [];
+            setUsers(userData.filter((user) => !isAdmin(user)));
+            setRecords(recordData);
+        } finally {
+            if (requestId === monthlyOverviewRequestRef.current) {
+                setIsLoading(false);
+            }
+        }
+    }, [currentMonth]);
+
+    useEffect(() => {
+        const loginUser = getUser();
+        if (!isAdmin(loginUser)) {
+            window.location.href = "/attendance";
+            return;
+        }
+        void fetchUnresolvedOpenRecords();
+    }, [fetchUnresolvedOpenRecords]);
+
+    useEffect(() => {
+        if (!isAdmin(getUser())) return;
+        void fetchMonthlyOverview();
+        return () => {
+            monthlyOverviewRequestRef.current += 1;
+        };
+    }, [fetchMonthlyOverview]);
 
     const handleAutoCorrect = async (record: UnresolvedOpenRecord) => {
         if (processingRecordId) return;
@@ -298,50 +341,14 @@ export default function AttendanceOverviewPage() {
         }
     };
 
-    const fetchMonthlyOverview = async () => {
-        setIsLoading(true);
-
-        try {
-            const { startText } = getMonthRange(currentMonth);
-            const month = startText.slice(0, 7);
-
-            const userRes = await attendanceFetch(`/api/attendance/users?mode=month&month=${month}`);
-            const userResult = await userRes.json();
-
-            if (!userRes.ok || !userResult.ok) {
-                console.log("fetch users error:", userResult);
-                return;
-            }
-
-            const userData = (userResult.users || []) as UserRow[];
-
-            const recordRes = await attendanceFetch(
-                `/api/attendance/records?scope=admin_overview&month=${month}`
-            );
-
-            const recordResult = await recordRes.json();
-
-            if (!recordRes.ok || !recordResult.ok) {
-                console.log("fetch attendance records error:", recordResult);
-                return;
-            }
-
-            const recordData = recordResult.records || [];
-
-            setUsers(userData.filter((user) => !isAdmin(user)));
-            setRecords(recordData || []);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
     const recordsByUser = useMemo(() => {
         const map = new Map<number, AttendanceRecord[]>();
 
         records.forEach((record) => {
             const key = record.user_id;
-            const prev = map.get(key) || [];
-            map.set(key, [...prev, record]);
+            const userRecords = map.get(key);
+            if (userRecords) userRecords.push(record);
+            else map.set(key, [record]);
         });
 
         return map;
