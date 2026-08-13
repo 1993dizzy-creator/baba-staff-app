@@ -290,6 +290,8 @@ export default function StoreSettingsPage() {
   const [error, setError] = useState("");
   const [logs, setLogs] = useState<StoreSettingAuditLog[] | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const failedTextRef = useRef(t.failed);
+  failedTextRef.current = t.failed;
 
   const load = useCallback(async () => {
     setError("");
@@ -324,9 +326,9 @@ export default function StoreSettingsPage() {
       );
       setEffective(addStoreDays(json.overview.businessDate, 1));
     } catch {
-      setError(t.failed);
+      setError(failedTextRef.current);
     }
-  }, [t.failed]);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -855,6 +857,8 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
   // 11월 이후에만 확인하는 "다음 연도 준비 안내" — 지금 보고 있는 연도(year)와는
   // 독립적이다(관리자가 2026년을 보고 있어도 2027년 데이터가 없으면 안내가 뜬다).
   const [reminderYear, setReminderYear] = useState<number | null>(null);
+  const holidaysFailedTextRef = useRef(t.holidaysFailed);
+  holidaysFailedTextRef.current = t.holidaysFailed;
 
   const load = useCallback(
     async (targetYear: number) => {
@@ -870,12 +874,12 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
         if (!response.ok || !json.ok) throw new Error(json.code || "failed");
         setData(json);
       } catch {
-        setError(t.holidaysFailed);
+        setError(holidaysFailedTextRef.current);
       } finally {
         setLoading(false);
       }
     },
-    [t.holidaysFailed]
+    []
   );
 
   useEffect(() => {
