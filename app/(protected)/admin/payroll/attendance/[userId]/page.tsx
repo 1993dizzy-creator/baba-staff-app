@@ -14,6 +14,7 @@ import {
 } from "@/lib/attendance/time";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
+import PayrollModal from "@/components/payroll/PayrollModal";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
 import {
@@ -1239,11 +1240,11 @@ function UnauthorizedAbsenceForm({
                 {penaltyDays === null ? c.loading : t.unauthorizedAbsenceCurrentPolicy.replace("{days}", String(penaltyDays))}
             </div>
             <label style={fieldStyle}>
-                <span style={fieldLabelStyle}>{t.unauthorizedAbsenceReason}</span>
+                <span style={fieldLabelStyle}>{t.unauthorizedAbsenceReasonOptional}</span>
                 <textarea value={reason} onChange={(event) => setReason(event.target.value)} style={textareaStyle} rows={3} />
             </label>
             <div style={actionRowStyle}>
-                <button type="button" style={primaryActionButtonStyle} disabled={isSaving || !reason.trim()} onClick={() => onConfirm(reason.trim())}>
+                <button type="button" style={primaryActionButtonStyle} disabled={isSaving} onClick={() => onConfirm(reason.trim())}>
                     {isSaving ? c.saving : t.unauthorizedAbsenceConfirm}
                 </button>
             </div>
@@ -1266,8 +1267,14 @@ function UnauthorizedAbsenceDetail({
     const { lang } = useLanguage();
     const c = commonText[lang];
     const t = attendanceText[lang];
+    const [isCancelOpen, setIsCancelOpen] = useState(false);
     const [cancelReason, setCancelReason] = useState("");
     const audit = record.unauthorized_absence_audit;
+    const closeCancelModal = () => {
+        if (isSaving) return;
+        setIsCancelOpen(false);
+        setCancelReason("");
+    };
     return (
         <div style={unauthorizedAbsenceDetailStyle}>
             <strong>{t.unauthorizedAbsenceTitle}</strong>
@@ -1275,15 +1282,34 @@ function UnauthorizedAbsenceDetail({
             <div>{t.unauthorizedAbsenceReason}: {audit?.reason || record.note || "-"}</div>
             <div>{t.unauthorizedAbsenceActor}: {audit?.actorName || (audit ? `#${audit.actorUserId}` : "-")}</div>
             <div>{t.unauthorizedAbsenceProcessedAt}: {audit?.createdAt ? new Date(audit.createdAt).toLocaleString(lang === "vi" ? "vi-VN" : "ko-KR", { timeZone: "Asia/Ho_Chi_Minh" }) : "-"}</div>
-            <label style={fieldStyle}>
-                <span style={fieldLabelStyle}>{t.unauthorizedAbsenceCancelReason}</span>
-                <textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} style={textareaStyle} rows={2} />
-            </label>
             <div style={actionRowStyle}>
-                <button type="button" style={secondaryActionButtonStyle} disabled={isSaving || !cancelReason.trim()} onClick={() => onCancel(cancelReason.trim())}>
-                    {isSaving ? c.saving : t.unauthorizedAbsenceCancel}
+                <button type="button" style={secondaryActionButtonStyle} disabled={isSaving} onClick={() => setIsCancelOpen(true)}>
+                    {t.unauthorizedAbsenceCancel}
                 </button>
             </div>
+            {isCancelOpen ? (
+                <PayrollModal
+                    placement="top"
+                    title={t.unauthorizedAbsenceCancelConfirm}
+                    closeLabel={c.close}
+                    onClose={closeCancelModal}
+                    footer={(
+                        <div style={actionRowStyle}>
+                            <button type="button" style={secondaryActionButtonStyle} disabled={isSaving} onClick={closeCancelModal}>
+                                {c.close}
+                            </button>
+                            <button type="button" style={primaryActionButtonStyle} disabled={isSaving} onClick={() => onCancel(cancelReason.trim())}>
+                                {isSaving ? c.saving : t.unauthorizedAbsenceCancel}
+                            </button>
+                        </div>
+                    )}
+                >
+                    <label style={fieldStyle}>
+                        <span style={fieldLabelStyle}>{t.unauthorizedAbsenceCancelReasonOptional}</span>
+                        <textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} style={textareaStyle} rows={3} />
+                    </label>
+                </PayrollModal>
+            ) : null}
         </div>
     );
 }

@@ -232,14 +232,7 @@ export async function POST(req: Request) {
     }
 
     if (action === "set_unauthorized_absence" || action === "cancel_unauthorized_absence") {
-      const reason = typeof note === "string" ? note.trim() : "";
-      if (!reason) {
-        return NextResponse.json({
-          ok: false,
-          code: "UNAUTHORIZED_ABSENCE_REASON_REQUIRED",
-          message: lang === "vi" ? "Vui lòng nhập lý do." : "사유를 입력해주세요.",
-        }, { status: 400 });
-      }
+      const reason = typeof note === "string" ? note.trim() || null : null;
 
       const { data, error } = await supabaseServer.rpc(
         "attendance_admin_unauthorized_absence_v1",
@@ -266,7 +259,6 @@ export async function POST(req: Request) {
       }
       const messages: Record<string, { ko: string; vi: string; http: number }> = {
         forbidden: { ko: "권한이 없습니다.", vi: "Không có quyền.", http: 403 },
-        reason_required: { ko: "사유를 입력해주세요.", vi: "Vui lòng nhập lý do.", http: 400 },
         invalid_work_date: { ko: "날짜를 다시 확인해주세요.", vi: "Vui lòng kiểm tra lại ngày.", http: 400 },
         user_not_found: { ko: "직원 정보를 찾을 수 없습니다.", vi: "Không tìm thấy nhân viên.", http: 404 },
         attendance_tracking_disabled: { ko: "근태를 사용하지 않는 직원입니다.", vi: "Nhân viên này không sử dụng chấm công.", http: 409 },

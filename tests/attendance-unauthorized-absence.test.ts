@@ -8,9 +8,10 @@ import { normalizeAttendanceDayFacts } from "../lib/payroll/attendance-facts.ts"
 import { calculateUnauthorizedAbsencePenalty } from "../lib/payroll/penalties.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
-const migration = read("supabase/migrations/20260812162019_add_unauthorized_absence_attendance.sql");
+const migration = read("supabase/migrations/20260813183928_make_unauthorized_absence_reason_optional.sql");
 const payroll = read("lib/payroll/monthly-run.ts");
 const admin = read("app/api/attendance/admin/route.ts");
+const page = read("app/(protected)/admin/payroll/attendance/[userId]/page.tsx");
 
 test("confirmed unauthorized absence is a calculable zero-minute fact without missing or mismatch warnings", () => {
   const facts = normalizeAttendanceDayFacts({
@@ -37,7 +38,7 @@ test("RPC validates every mutation condition and writes attendance plus audit at
   for (const marker of [
     "attendance_tracking_disabled", "before_hire_date", "after_termination_date", "future_date",
     "business_day_not_completed", "work_schedule_not_found", "store_closed", "payroll_paid_locked",
-    "already_unauthorized_absence", "leave_conflict", "attendance_conflict", "reason_required",
+    "already_unauthorized_absence", "leave_conflict", "attendance_conflict",
     "unauthorized_absence_cannot_be_cancelled",
   ]) assert.match(migration, new RegExp(marker));
   assert.match(migration, /payment_status = 'paid'/);
@@ -45,7 +46,9 @@ test("RPC validates every mutation condition and writes attendance plus audit at
   assert.match(migration, /delete from public\.attendance_records/);
   assert.match(migration, /'set_unauthorized_absence', 'cancel_unauthorized_absence'/);
   assert.match(migration, /security invoker/);
-  assert.match(migration, /revoke all on function[\s\S]*from public[\s\S]*from anon[\s\S]*from authenticated[\s\S]*grant execute[\s\S]*service_role/);
+  assert.match(migration, /v_reason text := nullif\(btrim\(p_reason\), ''\)/);
+  assert.doesNotMatch(migration, /return jsonb_build_object\('status', 'reason_required'\)/);
+  assert.match(migration, /revoke all on function[\s\S]*from public, anon, authenticated[\s\S]*grant execute[\s\S]*service_role/);
   assert.doesNotMatch(migration, /payroll_run_reviews|confirm_unauthorized_absence|payroll_runs/);
 });
 
@@ -53,6 +56,26 @@ test("admin API delegates both actions to the transactional RPC", () => {
   assert.match(admin, /action === "set_unauthorized_absence" \|\| action === "cancel_unauthorized_absence"/);
   assert.match(admin, /attendance_admin_unauthorized_absence_v1/);
   assert.match(admin, /payroll_paid_locked/);
+  assert.match(admin, /const reason = typeof note === "string" \? note\.trim\(\) \|\| null : null/);
+  assert.match(admin, /p_reason: reason/);
+  assert.doesNotMatch(admin, /UNAUTHORIZED_ABSENCE_REASON_REQUIRED/);
+});
+
+test("unauthorized absence reasons are optional and cancellation input only appears in the modal", () => {
+  const form = page.slice(page.indexOf("function UnauthorizedAbsenceForm"), page.indexOf("function UnauthorizedAbsenceDetail"));
+  const detail = page.slice(page.indexOf("function UnauthorizedAbsenceDetail"), page.indexOf("function DetailItem"));
+
+  assert.match(form, /unauthorizedAbsenceReasonOptional/);
+  assert.match(form, /disabled=\{isSaving\}/);
+  assert.doesNotMatch(form, /!reason\.trim\(\)/);
+  assert.match(form, /onConfirm\(reason\.trim\(\)\)/);
+
+  assert.match(detail, /setIsCancelOpen\(true\)/);
+  assert.match(detail, /<PayrollModal/);
+  assert.match(detail, /unauthorizedAbsenceCancelReasonOptional/);
+  assert.match(detail, /onCancel\(cancelReason\.trim\(\)\)/);
+  assert.doesNotMatch(detail, /!cancelReason\.trim\(\)/);
+  assert.ok(detail.indexOf("unauthorizedAbsenceCancelReasonOptional") > detail.indexOf("<PayrollModal"));
 });
 
 test("monthly payroll creates only the unauthorized deduction on that day in regular and fixed-monthly paths", () => {
