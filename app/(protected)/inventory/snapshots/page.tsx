@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
@@ -277,6 +277,8 @@ export default function InventorySnapshotsPage() {
     const [activeBusinessDateKey, setActiveBusinessDateKey] = useState("");
     const [calendarMonth, setCalendarMonth] = useState("");
     const [purchaseDateMap, setPurchaseDateMap] = useState<Record<string, boolean>>({});
+    const resolvedMonthSkipRef = useRef("");
+    const batchesRequestSequenceRef = useRef(0);
     const [supplierTab, setSupplierTab] = useState("all");
     const [movementItems, setMovementItems] = useState<SnapshotItem[]>([]);
     const [movementReasonTab, setMovementReasonTab] =
@@ -504,6 +506,7 @@ export default function InventorySnapshotsPage() {
 
 
     const fetchBatches = useCallback(async (month: string) => {
+        const requestSequence = ++batchesRequestSequenceRef.current;
         setLoadingBatches(true);
         const url = `/api/inventory/snapshot/list${
             month ? `?month=${encodeURIComponent(month)}` : ""
@@ -544,42 +547,50 @@ export default function InventorySnapshotsPage() {
                     bodyPreview,
                     parseError: parseErrorMessage,
                 });
-                setBatchList([]);
-                setSelectedBatchId(null);
-                setPurchaseDateMap({});
+                if (requestSequence === batchesRequestSequenceRef.current) {
+                    setBatchList([]);
+                    setSelectedBatchId(null);
+                    setPurchaseDateMap({});
+                }
                 return;
             }
 
             const nextBatches = (json.batches || []) as SnapshotBatch[];
+            if (requestSequence !== batchesRequestSequenceRef.current) return;
 
             setBatchList(nextBatches);
             setSelectedBatchId(null);
             setPurchaseDateMap(json.purchaseDateMap || {});
 
-            if (!activeBusinessDateKey && json.currentBusinessDate) {
-                setActiveBusinessDateKey(json.currentBusinessDate);
+            if (json.currentBusinessDate) {
+                setActiveBusinessDateKey((current) => current || json.currentBusinessDate || "");
             }
 
-            if (!calendarMonth) {
-                if (json.currentBusinessDate) {
-                    setCalendarMonth(json.currentBusinessDate.slice(0, 7));
-                } else if (nextBatches[0]?.snapshot_date) {
-                    setCalendarMonth(nextBatches[0].snapshot_date.slice(0, 7));
-                }
-            }
+            setCalendarMonth((current) => {
+                if (current) return current;
+                const resolvedMonth = json.currentBusinessDate?.slice(0, 7)
+                    || nextBatches[0]?.snapshot_date?.slice(0, 7)
+                    || "";
+                resolvedMonthSkipRef.current = resolvedMonth;
+                return resolvedMonth;
+            });
         } catch (error) {
             console.warn("[inventory/snapshots] fetchBatches exception", {
                 url,
                 error,
                 message: error instanceof Error ? error.message : String(error),
             });
-            setBatchList([]);
-            setSelectedBatchId(null);
-            setPurchaseDateMap({});
+            if (requestSequence === batchesRequestSequenceRef.current) {
+                setBatchList([]);
+                setSelectedBatchId(null);
+                setPurchaseDateMap({});
+            }
         } finally {
-            setLoadingBatches(false);
+            if (requestSequence === batchesRequestSequenceRef.current) {
+                setLoadingBatches(false);
+            }
         }
-    }, [calendarMonth, activeBusinessDateKey]);
+    }, []);
 
     const fetchSnapshotItems = async (
         batchId: number | string | null | undefined
@@ -1043,7 +1054,14 @@ export default function InventorySnapshotsPage() {
     };
 
     useEffect(() => {
+        if (calendarMonth && resolvedMonthSkipRef.current === calendarMonth) {
+            resolvedMonthSkipRef.current = "";
+            return;
+        }
         fetchBatches(calendarMonth);
+        return () => {
+            batchesRequestSequenceRef.current += 1;
+        };
     }, [calendarMonth, fetchBatches]);
 
     useEffect(() => {

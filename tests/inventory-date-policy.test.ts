@@ -85,7 +85,10 @@ test("monthly and snapshots pages default to an empty month/businessDate and syn
   assert.match(monthlyPage, /if \(!selectedMonth && json\.month\) \{/);
   assert.match(snapshotsPage, /const \[activeBusinessDateKey, setActiveBusinessDateKey\] = useState\(""\);/);
   assert.match(snapshotsPage, /const \[calendarMonth, setCalendarMonth\] = useState\(""\);/);
-  assert.match(snapshotsPage, /if \(!activeBusinessDateKey && json\.currentBusinessDate\) \{/);
+  assert.match(
+    snapshotsPage,
+    /setActiveBusinessDateKey\(\(current\) => current \|\| json\.currentBusinessDate \|\| ""\);/
+  );
 });
 
 test("sales-deductions cron internal businessDate handling was already store-settings-integrated (no change needed)", () => {

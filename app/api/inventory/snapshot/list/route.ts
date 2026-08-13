@@ -63,12 +63,34 @@ export async function GET(req: Request) {
     }
 
     const supabase = createSupabaseAdmin();
-    const { businessDate: currentBusinessDate } = await resolveInventoryBusinessDate();
-
-    const { data: batches, error: batchError } = await supabase
+    const businessDatePromise = resolveInventoryBusinessDate();
+    const batchesPromise = supabase
       .from("inventory_snapshot_batches")
       .select("id, snapshot_date, created_at, note")
       .order("id", { ascending: false });
+    const purchaseLogsPromise = (month
+      ? Promise.resolve(month)
+      : businessDatePromise.then(({ businessDate }) => businessDate.slice(0, 7))
+    ).then((purchaseMonth) => {
+      const { fromDate, toDate } = getMonthRange(purchaseMonth);
+      return supabase
+        .from("inventory_logs")
+        .select("business_date")
+        .eq("reason", "purchase")
+        .gt("change_quantity", 0)
+        .gte("business_date", fromDate)
+        .lte("business_date", toDate);
+    });
+
+    const [
+      { businessDate: currentBusinessDate },
+      { data: batches, error: batchError },
+      { data: purchaseLogs, error: purchaseLogError },
+    ] = await Promise.all([
+      businessDatePromise,
+      batchesPromise,
+      purchaseLogsPromise,
+    ]);
 
     if (batchError) {
       return NextResponse.json(
@@ -81,35 +103,23 @@ export async function GET(req: Request) {
       );
     }
 
-    const purchaseDateMap: Record<string, boolean> = {};
-
-    if (month) {
-      const { fromDate, toDate } = getMonthRange(month);
-      const { data: purchaseLogs, error: purchaseLogError } = await supabase
-        .from("inventory_logs")
-        .select("business_date")
-        .eq("reason", "purchase")
-        .gt("change_quantity", 0)
-        .gte("business_date", fromDate)
-        .lte("business_date", toDate);
-
-      if (purchaseLogError) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "snapshot_purchase_logs_query_failed",
-            message: "Failed to load snapshot data",
-          },
-          { status: 500 }
-        );
-      }
-
-      (purchaseLogs || []).forEach((row) => {
-        if (row.business_date) {
-          purchaseDateMap[String(row.business_date)] = true;
-        }
-      });
+    if (purchaseLogError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "snapshot_purchase_logs_query_failed",
+          message: "Failed to load snapshot data",
+        },
+        { status: 500 }
+      );
     }
+
+    const purchaseDateMap: Record<string, boolean> = {};
+    (purchaseLogs || []).forEach((row) => {
+      if (row.business_date) {
+        purchaseDateMap[String(row.business_date)] = true;
+      }
+    });
 
     return NextResponse.json({
       ok: true,
