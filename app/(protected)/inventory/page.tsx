@@ -7,6 +7,7 @@ import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { fetchInventoryApi } from "@/lib/inventory/client-auth";
+import { readInventoryBootstrapStream } from "@/lib/inventory/bootstrap-stream";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import { usePathname, useSearchParams } from "next/navigation";
 import SubNav from "@/components/SubNav";
@@ -438,6 +439,8 @@ export default function InventoryPage() {
     const lowStockThresholdRef = useRef<HTMLInputElement>(null);
     const hasMountedInventoryFetchRef = useRef(false);
     const stockStatusRequestIdRef = useRef(0);
+    const inventoryAbortControllerRef = useRef<AbortController | null>(null);
+    const inventoryUnmountAbortTimerRef = useRef<number | null>(null);
     const itemCardRefs = useRef<Record<number, HTMLDivElement | null>>({});
     const pendingCardRestoreRef = useRef<{ itemId: number; cardTop: number } | null>(null);
 
@@ -939,7 +942,10 @@ export default function InventoryPage() {
         return changes;
     };
 
-    const getKegProgressCandidateIds = (items: InventoryItem[]) =>
+    const getKegProgressCandidateIds = (
+        items: InventoryItem[],
+        requireActiveTracking = true
+    ) =>
         items
             .filter((item) => {
                 const unit = String(item.unit || "").trim().toLowerCase();
@@ -949,7 +955,7 @@ export default function InventoryPage() {
                 const packageQuantity = Number(item.package_content_quantity ?? 0);
 
                 return (
-                    item.has_active_keg_tracking === true &&
+                    (!requireActiveTracking || item.has_active_keg_tracking === true) &&
                     unit === "keg" &&
                     packageUnit === "ml" &&
                     Number.isFinite(packageQuantity) &&
@@ -966,9 +972,9 @@ export default function InventoryPage() {
         }
 
         const url = params.size
-            ? `/api/inventory/bootstrap?${params.toString()}`
-            : "/api/inventory/bootstrap";
-        const requestKey = `bootstrap:includeInactive=${showInactiveItems && canToggleInventoryActive}`;
+            ? `/api/inventory/bootstrap-stream?${params.toString()}`
+            : "/api/inventory/bootstrap-stream";
+        const requestKey = `bootstrap-stream:includeInactive=${showInactiveItems && canToggleInventoryActive}`;
         const requestId = stockStatusRequestIdRef.current + 1;
         stockStatusRequestIdRef.current = requestId;
         const loadingKegItemIds = getKegProgressCandidateIds(inventoryList);
@@ -979,68 +985,93 @@ export default function InventoryPage() {
         );
 
         try {
+            if (options.force) inventoryAbortControllerRef.current?.abort();
             const bootstrap = await runDedupeRequest<{
                 items: InventoryItem[];
                 statusMap: Record<string, InventoryStatus>;
                 kegProgressMap: Record<string, KegProgress>;
+                activeKegTrackingItemIds: number[];
             }>(requestKey, async () => {
+                const controller = new AbortController();
+                inventoryAbortControllerRef.current = controller;
                 const res = await fetchInventoryApi(url, {
                     cache: "no-store",
+                    signal: controller.signal,
                 });
                 const contentType = res.headers.get("content-type") || "";
-                const bodyText = await res.text();
-                const bodyPreview = bodyText.slice(0, 1000);
-                let parseErrorMessage: string | null = null;
-                let parsedJson: unknown = {};
-
-                try {
-                    parsedJson = bodyText ? JSON.parse(bodyText) : {};
-                } catch (error) {
-                    parseErrorMessage = error instanceof Error ? error.message : String(error);
-                }
-
-                const result = parsedJson && typeof parsedJson === "object"
-                    ? parsedJson as {
-                        ok?: boolean;
-                        items?: InventoryItem[];
-                        statusMap?: Record<string, InventoryStatus>;
-                        kegProgressMap?: Record<string, KegProgress>;
-                        error?: string;
-                        message?: string;
+                if (!res.ok) {
+                    const bodyText = await res.text();
+                    let result: { error?: string; message?: string } = {};
+                    try {
+                        result = bodyText ? JSON.parse(bodyText) : {};
+                    } catch {
+                        // Preserve the status and content type diagnostics below.
                     }
-                    : {};
-
-                if (!res.ok || !result.ok) {
-                    console.warn("[inventory] fetchBootstrap failed", {
+                    console.warn("[inventory] fetchBootstrapStream failed", {
                         status: res.status,
                         statusText: res.statusText,
                         url,
                         contentType,
                         error: result.error,
                         message: result.message,
-                        json: result,
-                        bodyPreview,
-                        parseError: parseErrorMessage,
                     });
                     throw new Error(result.message || "Failed to bootstrap inventory");
                 }
 
-                return {
-                    items: result.items || [],
-                    statusMap: result.statusMap || {},
-                    kegProgressMap: result.kegProgressMap || {},
-                };
+                try {
+                    return await readInventoryBootstrapStream<
+                        InventoryItem,
+                        InventoryStatus,
+                        KegProgress
+                    >(res, {
+                        onItems: (items) => {
+                            if (stockStatusRequestIdRef.current !== requestId) return;
+                            setInventoryList(items);
+                            setKegProgressLoadingIds(
+                                Object.fromEntries(
+                                    getKegProgressCandidateIds(items, false).map((id) => [id, true])
+                                )
+                            );
+                        },
+                        onEnrichment: (event) => {
+                            if (stockStatusRequestIdRef.current !== requestId) return;
+                            const activeKegIds = new Set(event.activeKegTrackingItemIds);
+                            setInventoryList((items) =>
+                                items.map((item) => {
+                                    const status = event.statusMap[String(item.id)];
+                                    return {
+                                        ...item,
+                                        has_active_keg_tracking: activeKegIds.has(item.id),
+                                        lastStockCheckDate: status?.lastStockCheckDate ?? null,
+                                        daysSinceStockCheck: status?.daysSinceStockCheck ?? null,
+                                        needsStockCheck: status?.needsStockCheck === true,
+                                        kegProgress:
+                                            event.kegProgressMap[String(item.id)] ?? null,
+                                    };
+                                })
+                            );
+                            setKegProgressLoadingIds({});
+                            setHasStockStatusHydrated(true);
+                        },
+                    }, controller.signal);
+                } finally {
+                    if (inventoryAbortControllerRef.current === controller) {
+                        inventoryAbortControllerRef.current = null;
+                    }
+                }
             }, {
                 force: options.force ?? true,
             });
 
             if (stockStatusRequestIdRef.current !== requestId) return;
 
+            const activeKegIds = new Set(bootstrap.activeKegTrackingItemIds);
             setInventoryList(
                 bootstrap.items.map((item) => {
                     const status = bootstrap.statusMap[String(item.id)];
                     return {
                         ...item,
+                        has_active_keg_tracking: activeKegIds.has(item.id),
                         lastStockCheckDate: status?.lastStockCheckDate ?? null,
                         daysSinceStockCheck: status?.daysSinceStockCheck ?? null,
                         needsStockCheck: status?.needsStockCheck === true,
@@ -1052,8 +1083,9 @@ export default function InventoryPage() {
             setHasStockStatusHydrated(true);
         } catch (error) {
             if (stockStatusRequestIdRef.current !== requestId) return;
+            if (error instanceof DOMException && error.name === "AbortError") return;
 
-            console.warn("[inventory] fetchBootstrap exception", {
+            console.warn("[inventory] fetchBootstrapStream exception", {
                 url,
                 error,
                 message: error instanceof Error ? error.message : String(error),
@@ -2540,11 +2572,22 @@ export default function InventoryPage() {
     };
 
     useEffect(() => {
+        if (inventoryUnmountAbortTimerRef.current !== null) {
+            window.clearTimeout(inventoryUnmountAbortTimerRef.current);
+            inventoryUnmountAbortTimerRef.current = null;
+        }
         void Promise.all([
             fetchInventory({ force: false }),
             fetchRecentLogs({ force: false }),
             fetchLatestSnapshot({ force: false }),
         ]);
+        return () => {
+            inventoryUnmountAbortTimerRef.current = window.setTimeout(() => {
+                stockStatusRequestIdRef.current += 1;
+                inventoryAbortControllerRef.current?.abort();
+                inventoryAbortControllerRef.current = null;
+            }, 0);
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 

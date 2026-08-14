@@ -9,6 +9,7 @@ const readRoutes = [
   "app/api/inventory/items/route.ts",
   "app/api/inventory/items/status/route.ts",
   "app/api/inventory/bootstrap/route.ts",
+  "app/api/inventory/bootstrap-stream/route.ts",
   "app/api/inventory/keg-progress/route.ts",
   "app/api/inventory/monthly/route.ts",
   "app/api/inventory/snapshot/latest/route.ts",
@@ -41,7 +42,7 @@ test("all inventory read APIs require the active signed session before data acce
       authIndex < requestDataIndex,
       `${path} must authenticate before request-driven database work`
     );
-    if (path.endsWith("/bootstrap/route.ts")) {
+    if (path.includes("/bootstrap")) {
       assert.match(source, /errorResponse\(timing, auth\.code, auth\.status\)/);
     } else {
       assert.match(source, /error: auth\.code, code: auth\.code/);
@@ -111,7 +112,7 @@ test("all browser callers use the shared inventory 401 wrapper", () => {
   const mappingsPage = read("app/(protected)/admin/pos/mappings/page.tsx");
   const client = read("lib/inventory/client-auth.ts");
 
-  assert.match(inventoryPage, /\/api\/inventory\/bootstrap/);
+  assert.match(inventoryPage, /\/api\/inventory\/bootstrap-stream/);
   assert.match(inventoryPage, /fetchInventoryApi\(url/);
   assert.match(
     inventoryPage,
