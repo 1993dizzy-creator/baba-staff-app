@@ -171,12 +171,17 @@ test("the status route uses one RPC and runs independent reads in parallel", () 
     new URL("../app/api/inventory/items/status/route.ts", import.meta.url),
     "utf8"
   );
+  const helper = readFileSync(
+    new URL("../lib/inventory/stock-check-status-server.ts", import.meta.url),
+    "utf8"
+  );
 
-  assert.match(route, /rpc\("inventory_latest_stock_checks_v1"/);
+  assert.match(route, /fetchInventoryStatusByItemId/);
+  assert.match(helper, /rpc\("inventory_latest_stock_checks_v1"/);
   assert.match(
-    route,
+    helper,
     /Promise\.all\(\[\s*fetchRecentSaleDeductionItemIds[\s\S]*fetchLatestStockChecks/
   );
-  assert.doesNotMatch(route, /\.eq\("reason", "stock_check"\)/);
-  assert.doesNotMatch(route, /select\("item_id, business_date, created_at"\)/);
+  assert.doesNotMatch(helper, /\.eq\("reason", "stock_check"\)/);
+  assert.doesNotMatch(helper, /select\("item_id, business_date, created_at"\)/);
 });

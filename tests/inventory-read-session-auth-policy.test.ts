@@ -8,6 +8,7 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const readRoutes = [
   "app/api/inventory/items/route.ts",
   "app/api/inventory/items/status/route.ts",
+  "app/api/inventory/bootstrap/route.ts",
   "app/api/inventory/keg-progress/route.ts",
   "app/api/inventory/monthly/route.ts",
   "app/api/inventory/snapshot/latest/route.ts",
@@ -40,8 +41,12 @@ test("all inventory read APIs require the active signed session before data acce
       authIndex < requestDataIndex,
       `${path} must authenticate before request-driven database work`
     );
-    assert.match(source, /error: auth\.code, code: auth\.code/);
-    assert.match(source, /status: auth\.status/);
+    if (path.endsWith("/bootstrap/route.ts")) {
+      assert.match(source, /errorResponse\(timing, auth\.code, auth\.status\)/);
+    } else {
+      assert.match(source, /error: auth\.code, code: auth\.code/);
+      assert.match(source, /status: auth\.status/);
+    }
     assert.doesNotMatch(
       route,
       /searchParams\.get\("(?:actor|username|userId)|body\??\.(?:actor|username|userId)/
@@ -106,15 +111,15 @@ test("all browser callers use the shared inventory 401 wrapper", () => {
   const mappingsPage = read("app/(protected)/admin/pos/mappings/page.tsx");
   const client = read("lib/inventory/client-auth.ts");
 
-  for (const endpoint of [
-    "/api/inventory/keg-progress",
-    "/api/inventory/items/status",
-    "/api/inventory/snapshot/latest",
-  ]) {
-    const endpointIndex = inventoryPage.indexOf(endpoint);
-    const callStart = inventoryPage.lastIndexOf("fetchInventoryApi(", endpointIndex);
-    assert.ok(callStart >= 0 && endpointIndex > callStart, `${endpoint} must use the wrapper`);
-  }
+  assert.match(inventoryPage, /\/api\/inventory\/bootstrap/);
+  assert.match(inventoryPage, /fetchInventoryApi\(url/);
+  assert.match(
+    inventoryPage,
+    /fetchInventoryApi\("\/api\/inventory\/snapshot\/latest"/
+  );
+
+  assert.doesNotMatch(inventoryPage, /fetchInventoryApi\("\/api\/inventory\/items\/status"/);
+  assert.doesNotMatch(inventoryPage, /fetchInventoryApi\(`\/api\/inventory\/keg-progress/);
 
   assert.match(monthlyPage, /fetchInventoryApi\(`\/api\/inventory\/monthly/);
   assert.match(snapshotsPage, /fetchInventoryApi\(url/);

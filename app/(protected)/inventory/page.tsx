@@ -958,165 +958,32 @@ export default function InventoryPage() {
             })
             .map((item) => item.id);
 
-    const getKegProgressKey = (itemIds: number[]) =>
-        `keg-progress:${[...itemIds].sort((a, b) => a - b).join(",")}`;
-
-    const applyKegProgress = (
-        itemIds: number[],
-        progressMap: Record<string, KegProgress>
-    ) => {
-        setInventoryList((prev) =>
-            prev.map((item) =>
-                itemIds.includes(item.id)
-                    ? {
-                        ...item,
-                        kegProgress: progressMap[String(item.id)] ?? null,
-                    }
-                    : item
-            )
-        );
-    };
-
-    const fetchKegProgress = async (
-        items: InventoryItem[],
-        options: { force?: boolean } = {}
-    ) => {
-        const itemIds = getKegProgressCandidateIds(items);
-        if (itemIds.length === 0) return;
-        const sortedItemIds = [...itemIds].sort((a, b) => a - b);
-        const requestKey = getKegProgressKey(sortedItemIds);
-
-        setKegProgressLoadingIds((prev) => {
-            const next = { ...prev };
-            sortedItemIds.forEach((id) => {
-                next[id] = true;
-            });
-            return next;
-        });
-
-        try {
-            const progressMap = await runDedupeRequest<Record<string, KegProgress>>(requestKey, async () => {
-                const params = new URLSearchParams({
-                    itemIds: sortedItemIds.join(","),
-                });
-                const res = await fetchInventoryApi(`/api/inventory/keg-progress?${params.toString()}`, {
-                    cache: "no-store",
-                });
-                const result = await res.json() as {
-                    ok?: boolean;
-                    progressMap?: Record<string, KegProgress>;
-                    message?: string;
-                };
-
-                if (!res.ok || !result.ok) {
-                    throw new Error(result.message || "Failed to fetch keg progress");
-                }
-
-                return result.progressMap || {};
-            }, {
-                force: options.force ?? true,
-                cacheTtlMs: Number.POSITIVE_INFINITY,
-            });
-
-            applyKegProgress(sortedItemIds, progressMap);
-        } catch (error) {
-            console.warn("[inventory] fetchKegProgress exception", {
-                error,
-                message: error instanceof Error ? error.message : String(error),
-            });
-        } finally {
-            setKegProgressLoadingIds((prev) => {
-                const next = { ...prev };
-                sortedItemIds.forEach((id) => {
-                    delete next[id];
-                });
-                return next;
-            });
-        }
-    };
-
-    const fetchInventoryStatus = async (items: InventoryItem[]) => {
-        const itemIds = items
-            .filter((item) => item.is_active !== false)
-            .map((item) => item.id)
-            .filter((id) => Number.isInteger(id) && id > 0);
-        const requestId = stockStatusRequestIdRef.current + 1;
-        stockStatusRequestIdRef.current = requestId;
-        setIsStockStatusHydrating(true);
-        setHasStockStatusHydrated(false);
-
-        if (itemIds.length === 0) {
-            setIsStockStatusHydrating(false);
-            setHasStockStatusHydrated(true);
-            return;
-        }
-
-        try {
-            const res = await fetchInventoryApi("/api/inventory/items/status", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ itemIds }),
-                cache: "no-store",
-            });
-            const result = await res.json() as {
-                ok?: boolean;
-                statusMap?: Record<string, InventoryStatus>;
-                message?: string;
-            };
-
-            if (!res.ok || !result.ok) {
-                throw new Error(result.message || "Failed to fetch inventory status");
-            }
-
-            if (stockStatusRequestIdRef.current !== requestId) return;
-
-            const statusMap = result.statusMap || {};
-            setInventoryList((prev) =>
-                prev.map((item) => {
-                    const status = statusMap[String(item.id)];
-                    if (!status) return item;
-
-                    return {
-                        ...item,
-                        lastStockCheckDate: status.lastStockCheckDate ?? null,
-                        daysSinceStockCheck: status.daysSinceStockCheck ?? null,
-                        needsStockCheck: status.needsStockCheck === true,
-                    };
-                })
-            );
-            setHasStockStatusHydrated(true);
-        } catch (error) {
-            if (stockStatusRequestIdRef.current !== requestId) return;
-
-            console.error("[inventory] fetchInventoryStatus exception", {
-                error,
-                message: error instanceof Error ? error.message : String(error),
-            });
-            setHasStockStatusHydrated(false);
-        } finally {
-            if (stockStatusRequestIdRef.current === requestId) {
-                setIsStockStatusHydrating(false);
-            }
-        }
-    };
-
     const fetchInventory = async (options: { force?: boolean } = {}) => {
         const params = new URLSearchParams();
-        params.set("includeKegProgress", "false");
 
         if (canToggleInventoryActive && showInactiveItems) {
             params.set("includeInactive", "true");
         }
 
         const url = params.size
-            ? `/api/inventory/items?${params.toString()}`
-            : "/api/inventory/items";
-        const requestKey = `items:includeInactive=${showInactiveItems && canToggleInventoryActive}`;
+            ? `/api/inventory/bootstrap?${params.toString()}`
+            : "/api/inventory/bootstrap";
+        const requestKey = `bootstrap:includeInactive=${showInactiveItems && canToggleInventoryActive}`;
+        const requestId = stockStatusRequestIdRef.current + 1;
+        stockStatusRequestIdRef.current = requestId;
+        const loadingKegItemIds = getKegProgressCandidateIds(inventoryList);
+        setIsStockStatusHydrating(true);
+        setHasStockStatusHydrated(false);
+        setKegProgressLoadingIds(
+            Object.fromEntries(loadingKegItemIds.map((id) => [id, true]))
+        );
 
         try {
-            const nextItems = await runDedupeRequest<InventoryItem[]>(requestKey, async () => {
+            const bootstrap = await runDedupeRequest<{
+                items: InventoryItem[];
+                statusMap: Record<string, InventoryStatus>;
+                kegProgressMap: Record<string, KegProgress>;
+            }>(requestKey, async () => {
                 const res = await fetchInventoryApi(url, {
                     cache: "no-store",
                 });
@@ -1135,14 +1002,16 @@ export default function InventoryPage() {
                 const result = parsedJson && typeof parsedJson === "object"
                     ? parsedJson as {
                         ok?: boolean;
-                        data?: InventoryItem[];
+                        items?: InventoryItem[];
+                        statusMap?: Record<string, InventoryStatus>;
+                        kegProgressMap?: Record<string, KegProgress>;
                         error?: string;
                         message?: string;
                     }
                     : {};
 
                 if (!res.ok || !result.ok) {
-                    console.warn("[inventory] fetchInventory failed", {
+                    console.warn("[inventory] fetchBootstrap failed", {
                         status: res.status,
                         statusText: res.statusText,
                         url,
@@ -1153,23 +1022,48 @@ export default function InventoryPage() {
                         bodyPreview,
                         parseError: parseErrorMessage,
                     });
-                    throw new Error(result.message || "Failed to fetch inventory");
+                    throw new Error(result.message || "Failed to bootstrap inventory");
                 }
 
-                return result.data || [];
+                return {
+                    items: result.items || [],
+                    statusMap: result.statusMap || {},
+                    kegProgressMap: result.kegProgressMap || {},
+                };
             }, {
                 force: options.force ?? true,
             });
 
-            setInventoryList(nextItems);
-            void fetchInventoryStatus(nextItems);
-            void fetchKegProgress(nextItems, { force: options.force ?? true });
+            if (stockStatusRequestIdRef.current !== requestId) return;
+
+            setInventoryList(
+                bootstrap.items.map((item) => {
+                    const status = bootstrap.statusMap[String(item.id)];
+                    return {
+                        ...item,
+                        lastStockCheckDate: status?.lastStockCheckDate ?? null,
+                        daysSinceStockCheck: status?.daysSinceStockCheck ?? null,
+                        needsStockCheck: status?.needsStockCheck === true,
+                        kegProgress:
+                            bootstrap.kegProgressMap[String(item.id)] ?? null,
+                    };
+                })
+            );
+            setHasStockStatusHydrated(true);
         } catch (error) {
-            console.warn("[inventory] fetchInventory exception", {
+            if (stockStatusRequestIdRef.current !== requestId) return;
+
+            console.warn("[inventory] fetchBootstrap exception", {
                 url,
                 error,
                 message: error instanceof Error ? error.message : String(error),
             });
+            setHasStockStatusHydrated(false);
+        } finally {
+            if (stockStatusRequestIdRef.current === requestId) {
+                setIsStockStatusHydrating(false);
+                setKegProgressLoadingIds({});
+            }
         }
     };
 

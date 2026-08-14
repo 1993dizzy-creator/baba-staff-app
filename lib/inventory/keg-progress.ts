@@ -11,10 +11,11 @@ const POS_RECEIPT_ID_CHUNK_SIZE = 500;
 
 type SupabaseClientLike = Pick<SupabaseClient, "from">;
 
-type KegTrackingMappingRow = {
+export type KegTrackingMappingRow = {
   inventory_item_id: number | string | null;
   pos_product_id: number | string | null;
   quantity_per_pos_unit: number | string | null;
+  unit?: string | null;
 };
 
 type ActiveKegSessionRow = {
@@ -148,30 +149,43 @@ export async function fetchKegProgressByItemId(params: {
   supabase: SupabaseClientLike;
   inventoryItems: Array<Record<string, unknown>>;
   kegCandidateIds: number[];
+  preloadedMappings?: KegTrackingMappingRow[];
   timing?: KegProgressTiming;
 }) {
-  const { supabase, inventoryItems, kegCandidateIds, timing } = params;
+  const {
+    supabase,
+    inventoryItems,
+    kegCandidateIds,
+    preloadedMappings,
+    timing,
+  } = params;
   const progressByItemId = new Map<number, KegProgress>();
   if (kegCandidateIds.length === 0) return progressByItemId;
 
-  const mappingStartedAt = performance.now();
-  let mappingResult;
-  try {
-    mappingResult = await supabase
-      .from("inventory_keg_tracking_mappings")
-      .select("inventory_item_id, pos_product_id, quantity_per_pos_unit")
-      .in("inventory_item_id", kegCandidateIds)
-      .eq("is_active", true)
-      .eq("target_type", "product")
-      .eq("unit", "ml");
-  } finally {
-    timing?.("mapping", performance.now() - mappingStartedAt);
+  let mappings: KegTrackingMappingRow[];
+  if (preloadedMappings) {
+    mappings = preloadedMappings.filter(
+      (mapping) => String(mapping.unit || "").trim().toLowerCase() === "ml"
+    );
+  } else {
+    const mappingStartedAt = performance.now();
+    let mappingResult;
+    try {
+      mappingResult = await supabase
+        .from("inventory_keg_tracking_mappings")
+        .select("inventory_item_id, pos_product_id, quantity_per_pos_unit")
+        .in("inventory_item_id", kegCandidateIds)
+        .eq("is_active", true)
+        .eq("target_type", "product")
+        .eq("unit", "ml");
+    } finally {
+      timing?.("mapping", performance.now() - mappingStartedAt);
+    }
+    const { data: mappingsData, error: mappingError } = mappingResult;
+
+    if (mappingError) throw mappingError;
+    mappings = (mappingsData || []) as KegTrackingMappingRow[];
   }
-  const { data: mappingsData, error: mappingError } = mappingResult;
-
-  if (mappingError) throw mappingError;
-
-  const mappings = (mappingsData || []) as KegTrackingMappingRow[];
   if (mappings.length === 0) return progressByItemId;
 
   const activeTrackingItemIds = Array.from(

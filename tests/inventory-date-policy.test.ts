@@ -8,6 +8,7 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const shared = read("lib/inventory/inventory-business-time.ts");
 const itemsApi = read("app/api/inventory/items/route.ts");
 const statusApi = read("app/api/inventory/items/status/route.ts");
+const statusHelper = read("lib/inventory/stock-check-status-server.ts");
 const photoApi = read("app/api/inventory/items/[id]/photo/route.ts");
 const monthlyApi = read("app/api/inventory/monthly/route.ts");
 const snapshotCronApi = read("app/api/inventory/snapshot/route.ts");
@@ -57,17 +58,18 @@ test("a settings lookup failure falls back to the legacy calculation and logs on
 });
 
 test("the stock-check created_at fallback stays in the aggregate RPC without per-row lookups", () => {
-  assert.match(statusApi, /inventory_latest_stock_checks_v1/);
-  assert.doesNotMatch(statusApi, /getStockCheckDateKey/);
+  assert.match(statusApi, /fetchInventoryStatusByItemId/);
+  assert.match(statusHelper, /inventory_latest_stock_checks_v1/);
+  assert.doesNotMatch(statusHelper, /getStockCheckDateKey/);
   assert.match(latestStockChecksMigration, /at time zone 'Asia\/Ho_Chi_Minh'/);
   assert.match(latestStockChecksMigration, /- interval '3 hours'/);
   assert.match(latestStockChecksMigration, /group by logs\.item_id/);
 });
 
 test("the 60-day lookback window uses the shared addStoreDays helper, not a redundant local reimplementation", () => {
-  assert.match(statusApi, /from "@\/lib\/store-settings\/business-time-core"/);
-  assert.match(statusApi, /addStoreDays\(\s*currentBusinessDate,\s*-SALE_DEDUCTION_ACTIVE_LOOKBACK_DAYS/);
-  assert.doesNotMatch(statusApi, /function addDaysToBusinessDateKey/);
+  assert.match(statusHelper, /from "@\/lib\/store-settings\/business-time-core"/);
+  assert.match(statusHelper, /addStoreDays\(\s*params\.currentBusinessDate,\s*-SALE_DEDUCTION_ACTIVE_LOOKBACK_DAYS/);
+  assert.doesNotMatch(statusHelper, /function addDaysToBusinessDateKey/);
 });
 
 test("snapshot list API exposes currentBusinessDate once per request for the client to sync from", () => {

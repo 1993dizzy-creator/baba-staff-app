@@ -10,6 +10,13 @@ import {
   type KegProgress,
 } from "@/lib/inventory/keg-progress";
 import {
+  buildInventoryItemsResponse,
+  canToggleInventoryItemActiveStatus,
+  fetchActiveKegTrackingMappings,
+  fetchInventoryItems,
+  getInventoryKegCandidateIds,
+} from "@/lib/inventory/items-server";
+import {
   normalizeInventoryCode,
   normalizeInventoryName,
 } from "@/lib/inventory/normalize";
@@ -41,29 +48,6 @@ const INVENTORY_RELATED_HISTORY_FK_TARGETS = [
   "inventory_price_logs",
   "inventory_snapshot_items",
 ];
-const INVENTORY_ITEM_SELECT = `
-  id,
-  item_name,
-  item_name_vi,
-  part,
-  category,
-  category_vi,
-  quantity,
-  unit,
-  note,
-  purchase_price,
-  supplier,
-  code,
-  low_stock_threshold,
-  low_stock_enabled,
-  package_content_quantity,
-  package_content_unit,
-  is_active,
-  image_path,
-  updated_at,
-  updated_by_name
-`;
-
 const jsonError = (
   error: string,
   message: string,
@@ -82,12 +66,6 @@ const jsonError = (
 
 const canDeleteInventoryItem = (role: unknown) =>
   role === "owner" || role === "master";
-
-const canToggleInventoryItemActiveStatus = (role: unknown) =>
-  role === "owner" ||
-  role === "master" ||
-  role === "manager" ||
-  role === "leader";
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -378,69 +356,31 @@ export async function GET(req: Request) {
       canIncludeInactive = true;
     }
 
-    let query = supabaseAdmin
-      .from("inventory")
-      .select(INVENTORY_ITEM_SELECT)
-      .order("updated_at", { ascending: false });
-
-    if (!canIncludeInactive) {
-      query = query.eq("is_active", true);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-
-    const items = data || [];
-    const kegCandidateIds = items
-      .filter((item) => {
-        const unit = String(item.unit || "").trim().toLowerCase();
-        const packageUnit = String(item.package_content_unit || "")
-          .trim()
-          .toLowerCase();
-        const packageQuantity = Number(item.package_content_quantity ?? 0);
-
-        return unit === "keg" && packageUnit === "ml" && packageQuantity > 0;
-      })
-      .map((item) => Number(item.id))
-      .filter((id) => Number.isFinite(id) && id > 0);
-    const activeKegTrackingIds = new Set<number>();
+    const items = await fetchInventoryItems({
+      supabase: supabaseAdmin,
+      includeInactive: canIncludeInactive,
+    });
+    const kegCandidateIds = getInventoryKegCandidateIds(items);
+    const activeMappings = await fetchActiveKegTrackingMappings({
+      supabase: supabaseAdmin,
+      kegCandidateIds,
+    });
     const kegProgressByItemId = includeKegProgress
       ? await fetchKegProgressByItemId({
           supabase: supabaseAdmin,
           inventoryItems: items,
           kegCandidateIds,
+          preloadedMappings: activeMappings,
         })
       : new Map<number, KegProgress>();
 
-    if (kegCandidateIds.length > 0) {
-      const { data: mappings, error: mappingError } = await supabaseAdmin
-        .from("inventory_keg_tracking_mappings")
-        .select("inventory_item_id")
-        .in("inventory_item_id", kegCandidateIds)
-        .eq("is_active", true)
-        .eq("target_type", "product");
-
-      if (mappingError) throw mappingError;
-
-      (mappings || []).forEach((mapping) => {
-        const id = Number(mapping.inventory_item_id);
-        if (Number.isFinite(id) && id > 0) {
-          activeKegTrackingIds.add(id);
-        }
-      });
-    }
-
     return NextResponse.json({
       ok: true,
-      data: items.map((item) => ({
-        ...item,
-        has_active_keg_tracking: activeKegTrackingIds.has(Number(item.id)),
-        kegProgress: kegProgressByItemId.get(Number(item.id)) ?? null,
-        lastStockCheckDate: null,
-        daysSinceStockCheck: null,
-        needsStockCheck: false,
-      })),
+      data: buildInventoryItemsResponse({
+        items,
+        activeMappings,
+        kegProgressByItemId,
+      }),
     });
   } catch (error) {
     console.error("[INVENTORY_ITEMS_GET_ERROR]", error);
