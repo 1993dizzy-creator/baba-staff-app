@@ -70,6 +70,21 @@ export type KegProgress = {
 
 export type { KegSalesBreakdown } from "@/lib/inventory/keg-progress-core";
 
+export type KegProgressTimingMetric =
+  | "mapping"
+  | "session_product"
+  | "receipts"
+  | "receipt_lines"
+  | "timestamp_lines"
+  | "line_queries_wall"
+  | "missing_receipts"
+  | "compute";
+
+type KegProgressTiming = (
+  name: KegProgressTimingMetric,
+  durationMs: number
+) => void;
+
 const asPositiveNumber = (value: unknown) => {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -133,18 +148,26 @@ export async function fetchKegProgressByItemId(params: {
   supabase: SupabaseClientLike;
   inventoryItems: Array<Record<string, unknown>>;
   kegCandidateIds: number[];
+  timing?: KegProgressTiming;
 }) {
-  const { supabase, inventoryItems, kegCandidateIds } = params;
+  const { supabase, inventoryItems, kegCandidateIds, timing } = params;
   const progressByItemId = new Map<number, KegProgress>();
   if (kegCandidateIds.length === 0) return progressByItemId;
 
-  const { data: mappingsData, error: mappingError } = await supabase
-    .from("inventory_keg_tracking_mappings")
-    .select("inventory_item_id, pos_product_id, quantity_per_pos_unit")
-    .in("inventory_item_id", kegCandidateIds)
-    .eq("is_active", true)
-    .eq("target_type", "product")
-    .eq("unit", "ml");
+  const mappingStartedAt = performance.now();
+  let mappingResult;
+  try {
+    mappingResult = await supabase
+      .from("inventory_keg_tracking_mappings")
+      .select("inventory_item_id, pos_product_id, quantity_per_pos_unit")
+      .in("inventory_item_id", kegCandidateIds)
+      .eq("is_active", true)
+      .eq("target_type", "product")
+      .eq("unit", "ml");
+  } finally {
+    timing?.("mapping", performance.now() - mappingStartedAt);
+  }
+  const { data: mappingsData, error: mappingError } = mappingResult;
 
   if (mappingError) throw mappingError;
 
@@ -166,21 +189,31 @@ export async function fetchKegProgressByItemId(params: {
         .filter((id) => Number.isFinite(id) && id > 0)
     )
   );
-  const [sessionResult, productResults] = await Promise.all([
-    supabase
-      .from("inventory_keg_sessions")
-      .select("id, inventory_item_id, started_at, capacity_quantity, capacity_unit")
-      .in("inventory_item_id", activeTrackingItemIds)
-      .eq("status", "active"),
-    Promise.all(
-      chunkArray(mappedProductIds, 500).map((ids) =>
-        supabase
-          .from("pos_products")
-          .select("id, pos_item_id, item_id, item_code, item_name, unit_name")
-          .in("id", ids)
-      )
-    ),
-  ]);
+  const sessionProductStartedAt = performance.now();
+  let sessionProductResult;
+  try {
+    sessionProductResult = await Promise.all([
+      supabase
+        .from("inventory_keg_sessions")
+        .select("id, inventory_item_id, started_at, capacity_quantity, capacity_unit")
+        .in("inventory_item_id", activeTrackingItemIds)
+        .eq("status", "active"),
+      Promise.all(
+        chunkArray(mappedProductIds, 500).map((ids) =>
+          supabase
+            .from("pos_products")
+            .select("id, pos_item_id, item_id, item_code, item_name, unit_name")
+            .in("id", ids)
+        )
+      ),
+    ]);
+  } finally {
+    timing?.(
+      "session_product",
+      performance.now() - sessionProductStartedAt
+    );
+  }
+  const [sessionResult, productResults] = sessionProductResult;
   const { data: sessionsData, error: sessionError } = sessionResult;
 
   if (sessionError) throw sessionError;
@@ -235,6 +268,7 @@ export async function fetchKegProgressByItemId(params: {
   );
 
   const receiptRows: PosReceiptRow[] = [];
+  const receiptsStartedAt = performance.now();
   for (let from = 0; ; from += POS_SALES_PAGE_SIZE) {
     const { data, error } = await supabase
       .from("pos_sales_receipts")
@@ -250,6 +284,7 @@ export async function fetchKegProgressByItemId(params: {
     receiptRows.push(...((data || []) as PosReceiptRow[]));
     if (!data || data.length < POS_SALES_PAGE_SIZE) break;
   }
+  timing?.("receipts", performance.now() - receiptsStartedAt);
 
   const lineRowsById = new Map<string, PosReceiptLineRow>();
   const receiptIds = receiptRows
@@ -260,33 +295,57 @@ export async function fetchKegProgressByItemId(params: {
   const lineTimeFilter =
     `ref_date.gte.${earliestStartedAt},synced_at.gte.${earliestStartedAt},updated_at.gte.${earliestStartedAt}`;
   const lineRequests: Array<Promise<PosReceiptLineRow[]>> = [];
+  const lineQueriesStartedAt = performance.now();
+  const receiptLinesStartedAt = performance.now();
+  let receiptLineRequestCount = 0;
+  let completedReceiptLineRequestCount = 0;
 
   if (lineMatchFilter) {
     for (const receiptIdChunk of chunkArray(receiptIds, POS_RECEIPT_ID_CHUNK_SIZE)) {
-      lineRequests.push(fetchLinePages((from, to) =>
+      receiptLineRequestCount += 1;
+      lineRequests.push(
+        fetchLinePages((from, to) =>
+          supabase
+            .from("pos_sales_receipt_lines")
+            .select(lineSelect)
+            .in("receipt_id", receiptIdChunk)
+            .eq("payment_status", 3)
+            .or(lineMatchFilter)
+            .order("id", { ascending: true })
+            .range(from, to)
+        ).finally(() => {
+          completedReceiptLineRequestCount += 1;
+          if (completedReceiptLineRequestCount === receiptLineRequestCount) {
+            timing?.(
+              "receipt_lines",
+              performance.now() - receiptLinesStartedAt
+            );
+          }
+        })
+      );
+    }
+    const timestampLinesStartedAt = performance.now();
+    lineRequests.push(
+      fetchLinePages((from, to) =>
         supabase
           .from("pos_sales_receipt_lines")
           .select(lineSelect)
-          .in("receipt_id", receiptIdChunk)
           .eq("payment_status", 3)
           .or(lineMatchFilter)
+          .or(lineTimeFilter)
           .order("id", { ascending: true })
           .range(from, to)
-      ));
-    }
-    lineRequests.push(fetchLinePages((from, to) =>
-      supabase
-        .from("pos_sales_receipt_lines")
-        .select(lineSelect)
-        .eq("payment_status", 3)
-        .or(lineMatchFilter)
-        .or(lineTimeFilter)
-        .order("id", { ascending: true })
-        .range(from, to)
-    ));
+      ).finally(() => {
+        timing?.(
+          "timestamp_lines",
+          performance.now() - timestampLinesStartedAt
+        );
+      })
+    );
   }
 
   const matchingLineGroups = await Promise.all(lineRequests);
+  timing?.("line_queries_wall", performance.now() - lineQueriesStartedAt);
   for (const line of matchingLineGroups.flat()) {
     lineRowsById.set(String(line.id), line);
   }
@@ -300,6 +359,7 @@ export async function fetchKegProgressByItemId(params: {
         .filter((id) => !receiptIds.includes(id))
     )
   );
+  const missingReceiptsStartedAt = performance.now();
   for (const ids of chunkArray(missingReceiptIds, 500)) {
     const { data, error } = await supabase
       .from("pos_sales_receipts")
@@ -309,7 +369,12 @@ export async function fetchKegProgressByItemId(params: {
     if (error) throw error;
     receiptRows.push(...((data || []) as PosReceiptRow[]));
   }
+  timing?.(
+    "missing_receipts",
+    performance.now() - missingReceiptsStartedAt
+  );
 
+  const computeStartedAt = performance.now();
   for (const itemId of activeTrackingItemIds) {
     const session = activeSessionByItemId.get(itemId);
     const inventoryItem = inventoryById.get(itemId);
@@ -341,6 +406,7 @@ export async function fetchKegProgressByItemId(params: {
       })
     );
   }
+  timing?.("compute", performance.now() - computeStartedAt);
 
   return progressByItemId;
 }

@@ -1,12 +1,53 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getAuthenticatedActor } from "@/lib/auth/server-auth";
-import { fetchKegProgressByItemId } from "@/lib/inventory/keg-progress";
+import {
+  fetchKegProgressByItemId,
+  type KegProgressTimingMetric,
+} from "@/lib/inventory/keg-progress";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+const SERVER_TIMING_METRICS = [
+  "auth",
+  "inventory",
+  "mapping",
+  "session_product",
+  "receipts",
+  "receipt_lines",
+  "timestamp_lines",
+  "line_queries_wall",
+  "missing_receipts",
+  "compute",
+  "total",
+] as const;
+
+type ServerTimingMetric =
+  | "auth"
+  | "inventory"
+  | KegProgressTimingMetric
+  | "total";
+
+const createServerTiming = () => {
+  const routeStartedAt = performance.now();
+  const durations = new Map<ServerTimingMetric, number>(
+    SERVER_TIMING_METRICS.map((name) => [name, 0])
+  );
+  const record = (name: ServerTimingMetric, durationMs: number) => {
+    durations.set(name, Math.max(0, durationMs));
+  };
+  const header = () => {
+    record("total", performance.now() - routeStartedAt);
+    return SERVER_TIMING_METRICS.map(
+      (name) => `${name};dur=${(durations.get(name) || 0).toFixed(1)}`
+    ).join(", ");
+  };
+
+  return { record, header };
+};
 
 const parseItemIds = (value: string | null) => {
   if (!value) return [];
@@ -22,10 +63,29 @@ const parseItemIds = (value: string | null) => {
 };
 
 export async function GET(req: Request) {
+  const timing = createServerTiming();
+  const json = (
+    body: Parameters<typeof NextResponse.json>[0],
+    init?: Parameters<typeof NextResponse.json>[1]
+  ) =>
+    NextResponse.json(body, {
+      ...init,
+      headers: {
+        ...init?.headers,
+        "Server-Timing": timing.header(),
+      },
+    });
+
   try {
-    const auth = await getAuthenticatedActor();
+    const authStartedAt = performance.now();
+    let auth;
+    try {
+      auth = await getAuthenticatedActor();
+    } finally {
+      timing.record("auth", performance.now() - authStartedAt);
+    }
     if (!auth.ok) {
-      return NextResponse.json(
+      return json(
         { ok: false, error: auth.code, code: auth.code },
         { status: auth.status }
       );
@@ -35,13 +95,20 @@ export async function GET(req: Request) {
     const itemIds = parseItemIds(searchParams.get("itemIds"));
 
     if (itemIds.length === 0) {
-      return NextResponse.json({ ok: true, progressMap: {} });
+      return json({ ok: true, progressMap: {} });
     }
 
-    const { data: inventoryItems, error: inventoryError } = await supabaseAdmin
-      .from("inventory")
-      .select("id, unit, package_content_quantity, package_content_unit")
-      .in("id", itemIds);
+    const inventoryStartedAt = performance.now();
+    let inventoryResult;
+    try {
+      inventoryResult = await supabaseAdmin
+        .from("inventory")
+        .select("id, unit, package_content_quantity, package_content_unit")
+        .in("id", itemIds);
+    } finally {
+      timing.record("inventory", performance.now() - inventoryStartedAt);
+    }
+    const { data: inventoryItems, error: inventoryError } = inventoryResult;
 
     if (inventoryError) throw inventoryError;
 
@@ -62,6 +129,7 @@ export async function GET(req: Request) {
       supabase: supabaseAdmin,
       inventoryItems: inventoryItems || [],
       kegCandidateIds,
+      timing: timing.record,
     });
 
     const progressMap = Object.fromEntries(
@@ -71,11 +139,11 @@ export async function GET(req: Request) {
       ])
     );
 
-    return NextResponse.json({ ok: true, progressMap });
+    return json({ ok: true, progressMap });
   } catch (error) {
     console.error("[INVENTORY_KEG_PROGRESS_GET_ERROR]", error);
 
-    return NextResponse.json(
+    return json(
       { ok: false, error: "inventory_keg_progress_load_failed" },
       { status: 500 }
     );

@@ -173,3 +173,35 @@ test("Keg progress queries narrow both receipt and timestamp paths before transf
     /\.eq\("payment_status", 3\)\s*\.or\(\s*`ref_date\.gte[^]*?\.range/
   );
 });
+
+test("Keg progress exposes numeric Server-Timing metrics without changing JSON", () => {
+  const route = readFileSync(
+    join(process.cwd(), "app/api/inventory/keg-progress/route.ts"),
+    "utf8"
+  );
+  const source = readFileSync(
+    join(process.cwd(), "lib/inventory/keg-progress.ts"),
+    "utf8"
+  );
+  const metrics = [
+    "auth",
+    "inventory",
+    "mapping",
+    "session_product",
+    "receipts",
+    "receipt_lines",
+    "timestamp_lines",
+    "line_queries_wall",
+    "missing_receipts",
+    "compute",
+    "total",
+  ];
+
+  assert.match(route, /"Server-Timing": timing\.header\(\)/);
+  assert.match(route, /return json\(\{ ok: true, progressMap \}\)/);
+  assert.doesNotMatch(route, /progressMap[^}]*timing/);
+  for (const metric of metrics) {
+    assert.match(route + source, new RegExp(`"${metric}"`));
+  }
+  assert.match(route, /\.toFixed\(1\)/);
+});
