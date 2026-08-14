@@ -4694,6 +4694,8 @@ function ReceiptEditPanel({
                       onClick={() => {
                         setSelectedProduct(product);
                         setSelectedOptions({});
+                        setProductQuery("");
+                        setProductResults([]);
                       }}
                       style={{
                         ...productResultButtonStyle,

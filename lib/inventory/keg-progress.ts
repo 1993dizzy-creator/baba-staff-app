@@ -1,7 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { roundDecimal } from "@/lib/inventory/number";
+import {
+  calculateKegSalesForSession,
+  type KegSalesBreakdown,
+} from "@/lib/inventory/keg-progress-core";
+import { buildKegLineMatchFilter } from "@/lib/inventory/keg-replacement-summary";
 
 const POS_SALES_PAGE_SIZE = 1000;
+const POS_RECEIPT_ID_CHUNK_SIZE = 500;
 
 type SupabaseClientLike = Pick<SupabaseClient, "from">;
 
@@ -62,81 +68,11 @@ export type KegProgress = {
   salesBreakdown?: KegSalesBreakdown;
 };
 
-export type KegSalesBreakdown = {
-  totalUnits: number;
-  regularUnits: number;
-  regularSoldMl: number;
-  regularAverageMl: number | null;
-  towerUnits: number;
-  towerSoldMl: number;
-  towerAverageMl: number | null;
-  otherUnits: number;
-  otherSoldMl: number;
-};
+export type { KegSalesBreakdown } from "@/lib/inventory/keg-progress-core";
 
 const asPositiveNumber = (value: unknown) => {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-};
-
-const asOptionalKey = (value: unknown) => {
-  const text = String(value ?? "").trim();
-  return text ? text : null;
-};
-
-const normalizeClassifyText = (value: unknown) =>
-  String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d")
-    .replace(/Đ/g, "d");
-
-const classifyKegProduct = (
-  product: PosProductRow | undefined
-): "regular" | "tower" | "other" => {
-  const unitName = normalizeClassifyText(product?.unit_name);
-  if (unitName) {
-    return unitName.includes("thap") ||
-      unitName.includes("tower") ||
-      unitName.includes("타워")
-      ? "tower"
-      : "regular";
-  }
-
-  const itemName = normalizeClassifyText(product?.item_name);
-  if (itemName) {
-    return itemName.includes("thap") ||
-      itemName.includes("tower") ||
-      itemName.includes("타워")
-      ? "tower"
-      : "regular";
-  }
-
-  return "other";
-};
-
-const getLineReferenceTime = (
-  line: PosReceiptLineRow,
-  receipt: PosReceiptRow | undefined
-) => {
-  const candidates = [
-    line.ref_date,
-    receipt?.ref_date,
-    line.synced_at,
-    receipt?.synced_at,
-    line.updated_at,
-    receipt?.updated_at,
-  ];
-
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    const time = Date.parse(candidate);
-    if (Number.isFinite(time)) return time;
-  }
-
-  return null;
 };
 
 const chunkArray = <T,>(values: T[], size: number) => {
@@ -145,6 +81,31 @@ const chunkArray = <T,>(values: T[], size: number) => {
     chunks.push(values.slice(index, index + size));
   }
   return chunks;
+};
+
+const fetchLinePages = async (
+  fetchPage: (
+    from: number,
+    to: number
+  ) => PromiseLike<{ data: unknown[] | null; error: unknown }>
+) => {
+  const linesById = new Map<string, PosReceiptLineRow>();
+
+  for (let from = 0; ; from += POS_SALES_PAGE_SIZE) {
+    const { data, error } = await fetchPage(
+      from,
+      from + POS_SALES_PAGE_SIZE - 1
+    );
+    if (error) throw error;
+
+    const lines = (data || []) as PosReceiptLineRow[];
+    for (const line of lines) {
+      linesById.set(String(line.id), line);
+    }
+    if (lines.length < POS_SALES_PAGE_SIZE) break;
+  }
+
+  return Array.from(linesById.values());
 };
 
 const buildKegProgress = (params: {
@@ -198,13 +159,36 @@ export async function fetchKegProgressByItemId(params: {
     )
   );
 
-  const { data: sessionsData, error: sessionError } = await supabase
-    .from("inventory_keg_sessions")
-    .select("id, inventory_item_id, started_at, capacity_quantity, capacity_unit")
-    .in("inventory_item_id", activeTrackingItemIds)
-    .eq("status", "active");
+  const mappedProductIds = Array.from(
+    new Set(
+      mappings
+        .map((mapping) => Number(mapping.pos_product_id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    )
+  );
+  const [sessionResult, productResults] = await Promise.all([
+    supabase
+      .from("inventory_keg_sessions")
+      .select("id, inventory_item_id, started_at, capacity_quantity, capacity_unit")
+      .in("inventory_item_id", activeTrackingItemIds)
+      .eq("status", "active"),
+    Promise.all(
+      chunkArray(mappedProductIds, 500).map((ids) =>
+        supabase
+          .from("pos_products")
+          .select("id, pos_item_id, item_id, item_code, item_name, unit_name")
+          .in("id", ids)
+      )
+    ),
+  ]);
+  const { data: sessionsData, error: sessionError } = sessionResult;
 
   if (sessionError) throw sessionError;
+  const productRows: PosProductRow[] = [];
+  for (const { data, error } of productResults) {
+    if (error) throw error;
+    productRows.push(...((data || []) as PosProductRow[]));
+  }
 
   const activeSessionByItemId = new Map<number, ActiveKegSessionRow>();
   for (const session of (sessionsData || []) as ActiveKegSessionRow[]) {
@@ -219,13 +203,6 @@ export async function fetchKegProgressByItemId(params: {
   const activeSessionItemIds = Array.from(activeSessionByItemId.keys());
   const activeSessionMappings = mappings.filter((mapping) =>
     activeSessionByItemId.has(Number(mapping.inventory_item_id))
-  );
-  const productIds = Array.from(
-    new Set(
-      activeSessionMappings
-        .map((mapping) => Number(mapping.pos_product_id))
-        .filter((id) => Number.isFinite(id) && id > 0)
-    )
   );
   const inventoryById = new Map(
     inventoryItems.map((item) => [Number(item.id), item])
@@ -248,22 +225,9 @@ export async function fetchKegProgressByItemId(params: {
     );
   }
 
-  if (productIds.length === 0) return progressByItemId;
+  if (mappedProductIds.length === 0) return progressByItemId;
 
-  const productRows: PosProductRow[] = [];
-  for (const ids of chunkArray(productIds, 500)) {
-    const { data, error } = await supabase
-      .from("pos_products")
-      .select("id, pos_item_id, item_id, item_code, item_name, unit_name")
-      .in("id", ids);
-
-    if (error) throw error;
-    productRows.push(...((data || []) as PosProductRow[]));
-  }
-
-  const productById = new Map(
-    productRows.map((product) => [Number(product.id), product])
-  );
+  const lineMatchFilter = buildKegLineMatchFilter(productRows);
   const earliestStartedAt = Array.from(activeSessionByItemId.values()).reduce(
     (earliest, session) =>
       !earliest || session.started_at < earliest ? session.started_at : earliest,
@@ -291,40 +255,40 @@ export async function fetchKegProgressByItemId(params: {
   const receiptIds = receiptRows
     .map((receipt) => Number(receipt.id))
     .filter((id) => Number.isFinite(id) && id > 0);
+  const lineSelect =
+    "id, receipt_id, item_id, item_code, quantity, is_option, is_excluded, is_canceled, payment_status, ref_date, synced_at, updated_at";
+  const lineTimeFilter =
+    `ref_date.gte.${earliestStartedAt},synced_at.gte.${earliestStartedAt},updated_at.gte.${earliestStartedAt}`;
+  const lineRequests: Array<Promise<PosReceiptLineRow[]>> = [];
 
-  for (const ids of chunkArray(receiptIds, 500)) {
-    const { data, error } = await supabase
-      .from("pos_sales_receipt_lines")
-      .select(
-        "id, receipt_id, item_id, item_code, quantity, is_option, is_excluded, is_canceled, payment_status, ref_date, synced_at, updated_at"
-      )
-      .in("receipt_id", ids)
-      .eq("payment_status", 3);
-
-    if (error) throw error;
-    for (const line of (data || []) as PosReceiptLineRow[]) {
-      lineRowsById.set(String(line.id), line);
+  if (lineMatchFilter) {
+    for (const receiptIdChunk of chunkArray(receiptIds, POS_RECEIPT_ID_CHUNK_SIZE)) {
+      lineRequests.push(fetchLinePages((from, to) =>
+        supabase
+          .from("pos_sales_receipt_lines")
+          .select(lineSelect)
+          .in("receipt_id", receiptIdChunk)
+          .eq("payment_status", 3)
+          .or(lineMatchFilter)
+          .order("id", { ascending: true })
+          .range(from, to)
+      ));
     }
+    lineRequests.push(fetchLinePages((from, to) =>
+      supabase
+        .from("pos_sales_receipt_lines")
+        .select(lineSelect)
+        .eq("payment_status", 3)
+        .or(lineMatchFilter)
+        .or(lineTimeFilter)
+        .order("id", { ascending: true })
+        .range(from, to)
+    ));
   }
 
-  for (let from = 0; ; from += POS_SALES_PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from("pos_sales_receipt_lines")
-      .select(
-        "id, receipt_id, item_id, item_code, quantity, is_option, is_excluded, is_canceled, payment_status, ref_date, synced_at, updated_at"
-      )
-      .eq("payment_status", 3)
-      .or(
-        `ref_date.gte.${earliestStartedAt},synced_at.gte.${earliestStartedAt},updated_at.gte.${earliestStartedAt}`
-      )
-      .order("ref_date", { ascending: false, nullsFirst: false })
-      .range(from, from + POS_SALES_PAGE_SIZE - 1);
-
-    if (error) throw error;
-    for (const line of (data || []) as PosReceiptLineRow[]) {
-      lineRowsById.set(String(line.id), line);
-    }
-    if (!data || data.length < POS_SALES_PAGE_SIZE) break;
+  const matchingLineGroups = await Promise.all(lineRequests);
+  for (const line of matchingLineGroups.flat()) {
+    lineRowsById.set(String(line.id), line);
   }
 
   const lineRows = Array.from(lineRowsById.values());
@@ -346,44 +310,6 @@ export async function fetchKegProgressByItemId(params: {
     receiptRows.push(...((data || []) as PosReceiptRow[]));
   }
 
-  const receiptById = new Map(
-    receiptRows.map((receipt) => [Number(receipt.id), receipt])
-  );
-  const linesByKey = new Map<string, PosReceiptLineRow[]>();
-
-  for (const line of lineRows) {
-    if (
-      line.is_option === true ||
-      line.is_excluded === true ||
-      line.is_canceled === true ||
-      Number(line.payment_status) !== 3
-    ) {
-      continue;
-    }
-
-    const receipt = receiptById.get(Number(line.receipt_id));
-    if (
-      !receipt ||
-      receipt.is_canceled === true ||
-      Number(receipt.payment_status) !== 3
-    ) {
-      continue;
-    }
-
-    const itemId = asOptionalKey(line.item_id);
-    const itemCode = asOptionalKey(line.item_code);
-    const keys = [
-      itemId ? `item_id:${itemId}` : null,
-      itemCode ? `item_code:${itemCode}` : null,
-    ].filter((key): key is string => Boolean(key));
-
-    for (const key of keys) {
-      const existing = linesByKey.get(key) || [];
-      existing.push(line);
-      linesByKey.set(key, existing);
-    }
-  }
-
   for (const itemId of activeTrackingItemIds) {
     const session = activeSessionByItemId.get(itemId);
     const inventoryItem = inventoryById.get(itemId);
@@ -395,94 +321,23 @@ export async function fetchKegProgressByItemId(params: {
       asPositiveNumber(inventoryItem.package_content_quantity);
     if (!Number.isFinite(sessionStartTime) || capacityMl <= 0) continue;
 
-    let soldMl = 0;
-    let regularUnits = 0;
-    let regularSoldMl = 0;
-    let towerUnits = 0;
-    let towerSoldMl = 0;
-    let otherUnits = 0;
-    let otherSoldMl = 0;
     const itemMappings = activeSessionMappings.filter(
       (mapping) => Number(mapping.inventory_item_id) === itemId
     );
-
-    for (const mapping of itemMappings) {
-      const product = productById.get(Number(mapping.pos_product_id));
-      const category = classifyKegProduct(product);
-      const quantityPerPosUnit = asPositiveNumber(
-        mapping.quantity_per_pos_unit
-      );
-      if (!product || quantityPerPosUnit <= 0) continue;
-
-      const posItemId = asOptionalKey(product.pos_item_id);
-      const itemIdKey = asOptionalKey(product.item_id);
-      const itemCode = asOptionalKey(product.item_code);
-      const productKeys = [
-        posItemId ? `item_id:${posItemId}` : null,
-        itemIdKey ? `item_id:${itemIdKey}` : null,
-        itemCode ? `item_code:${itemCode}` : null,
-      ].filter((key): key is string => Boolean(key));
-
-      const countedLineIds = new Set<string>();
-      for (const key of productKeys) {
-        for (const line of linesByKey.get(key) || []) {
-          const lineId = String(line.id);
-          if (countedLineIds.has(lineId)) continue;
-          const receipt = receiptById.get(Number(line.receipt_id));
-          const referenceTime = getLineReferenceTime(line, receipt);
-          if (referenceTime === null || referenceTime < sessionStartTime) {
-            continue;
-          }
-
-          countedLineIds.add(lineId);
-          const quantity = asPositiveNumber(line.quantity);
-          const lineSoldMl = quantity * quantityPerPosUnit;
-          soldMl += lineSoldMl;
-          if (category === "tower") {
-            towerUnits += quantity;
-            towerSoldMl += lineSoldMl;
-          } else if (category === "other") {
-            otherUnits += quantity;
-            otherSoldMl += lineSoldMl;
-          } else {
-            regularUnits += quantity;
-            regularSoldMl += lineSoldMl;
-          }
-        }
-      }
-    }
-
-    const roundedRegularUnits = roundDecimal(regularUnits);
-    const roundedTowerUnits = roundDecimal(towerUnits);
-    const roundedOtherUnits = roundDecimal(otherUnits);
-    const roundedRegularSoldMl = roundDecimal(regularSoldMl);
-    const roundedTowerSoldMl = roundDecimal(towerSoldMl);
-    const roundedOtherSoldMl = roundDecimal(otherSoldMl);
+    const sales = calculateKegSalesForSession({
+      mappings: itemMappings,
+      products: productRows,
+      receipts: receiptRows,
+      lines: lineRows,
+      startedAt: session.started_at,
+    });
     progressByItemId.set(
       itemId,
       buildKegProgress({
         session,
         capacityMl,
-        soldMl,
-        salesBreakdown: {
-          totalUnits: roundDecimal(
-            roundedRegularUnits + roundedTowerUnits + roundedOtherUnits
-          ),
-          regularUnits: roundedRegularUnits,
-          regularSoldMl: roundedRegularSoldMl,
-          regularAverageMl:
-            roundedRegularUnits > 0
-              ? Math.round(roundedRegularSoldMl / roundedRegularUnits)
-              : null,
-          towerUnits: roundedTowerUnits,
-          towerSoldMl: roundedTowerSoldMl,
-          towerAverageMl:
-            roundedTowerUnits > 0
-              ? Math.round(roundedTowerSoldMl / roundedTowerUnits)
-              : null,
-          otherUnits: roundedOtherUnits,
-          otherSoldMl: roundedOtherSoldMl,
-        },
+        soldMl: sales.soldMl,
+        salesBreakdown: sales.salesBreakdown,
       })
     );
   }

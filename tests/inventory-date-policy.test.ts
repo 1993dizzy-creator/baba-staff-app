@@ -18,6 +18,9 @@ const mainPage = read("app/(protected)/inventory/page.tsx");
 const monthlyPage = read("app/(protected)/inventory/monthly/page.tsx");
 const snapshotsPage = read("app/(protected)/inventory/snapshots/page.tsx");
 const logsPage = read("app/(protected)/inventory/logs/page.tsx");
+const latestStockChecksMigration = read(
+  "supabase/migrations/202608140001_add_inventory_latest_stock_checks_rpc.sql"
+);
 
 test("inventory log/photo default business dates resolve through the store-settings module", () => {
   assert.match(itemsApi, /from "@\/lib\/inventory\/inventory-business-time"/);
@@ -53,14 +56,12 @@ test("a settings lookup failure falls back to the legacy calculation and logs on
   assert.match(shared, /return \{ businessDate: getBusinessDate\(timestamp\), source: "error_fallback" \};/);
 });
 
-test("the stock-check created_at fallback is a documented, deliberate synchronous exception (per-row loop)", () => {
-  // getStockCheckDateKey runs once per legacy log row inside a loop; doing an
-  // async settings lookup there would violate the "no per-row lookup" rule,
-  // so it intentionally keeps the plain legacy calculation for that one
-  // narrow, historical-data-only fallback path.
-  assert.match(statusApi, /getStockCheckDateKey/);
-  assert.match(statusApi, /deliberately uses the plain legacy cutoff calculation/);
-  assert.match(statusApi, /return getBusinessDate\(createdAt\);/);
+test("the stock-check created_at fallback stays in the aggregate RPC without per-row lookups", () => {
+  assert.match(statusApi, /inventory_latest_stock_checks_v1/);
+  assert.doesNotMatch(statusApi, /getStockCheckDateKey/);
+  assert.match(latestStockChecksMigration, /at time zone 'Asia\/Ho_Chi_Minh'/);
+  assert.match(latestStockChecksMigration, /- interval '3 hours'/);
+  assert.match(latestStockChecksMigration, /group by logs\.item_id/);
 });
 
 test("the 60-day lookback window uses the shared addStoreDays helper, not a redundant local reimplementation", () => {
