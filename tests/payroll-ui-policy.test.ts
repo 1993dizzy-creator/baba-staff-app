@@ -100,7 +100,7 @@ test("employee insurance form is collapsed and resets from the current setting p
   assert.match(employeeInsurance, /setNote\(""\)/);
   assert.match(employeeInsurance, /setFormOpen\(false\)/);
   assert.match(employeeInsurance, /resetForm\(null\)/);
-  assert.match(employeeInsurance, /\[load, resetForm, userId, vi\]/);
+  assert.match(employeeInsurance, /\[onLoadStateChange, resetForm, userId, vi\]/);
   assert.match(employeeInsurance, /<details/);
   assert.match(employeeInsurance, /`설정 이력 \$\{history\.length\}건`/);
 });
@@ -113,7 +113,10 @@ test("employee payroll requests ignore aborts without allowing stale state", () 
     assert.match(source, /mounted\.current|setContracts\(\[\]\)/);
   }
   assert.match(settings, /setContracts\(\[\]\)/);
-  assert.match(settings, /if \(!response\.ok\) \{[\s\S]*setSelectedInsuranceError\(true\)/);
+  assert.doesNotMatch(settings, /\/api\/admin\/payroll\/insurance\?userId=/);
+  assert.equal(employeeInsurance.match(/\/api\/admin\/payroll\/insurance\?userId=/g)?.length, 1);
+  assert.match(employeeInsurance, /onLoadStateChange\?\.\(userId/);
+  assert.match(settings, /selectedInsuranceState\?\.userId === selectedId/);
 });
 
 test("employee insurance remounts per employee without the removed schedule editor", () => {

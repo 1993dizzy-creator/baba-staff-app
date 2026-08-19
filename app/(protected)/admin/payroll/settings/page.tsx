@@ -13,7 +13,9 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import PayrollCommonSettings from "@/components/payroll/PayrollCommonSettings";
-import EmployeeInsuranceSettings from "@/components/payroll/EmployeeInsuranceSettings";
+import EmployeeInsuranceSettings, {
+  type EmployeeInsuranceLoadState,
+} from "@/components/payroll/EmployeeInsuranceSettings";
 import EmployeeMealAllowanceSettings from "@/components/payroll/EmployeeMealAllowanceSettings";
 import EmployeeAttendanceBonusSettings from "@/components/payroll/EmployeeAttendanceBonusSettings";
 import PayrollModal from "@/components/payroll/PayrollModal";
@@ -49,6 +51,12 @@ type InsuranceCurrent = {
   insuranceBaseAmount: number;
   effectiveMonth: string;
   revision: number;
+};
+type SelectedInsuranceState = {
+  userId: number;
+  current: InsuranceCurrent | null;
+  error: boolean;
+  loading: boolean;
 };
 type Contract = {
   id: number;
@@ -159,10 +167,8 @@ export default function PayrollSettingsPage() {
   const [error, setError] = useState("");
   const [modalError, setModalError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [selectedInsurance, setSelectedInsurance] =
-    useState<InsuranceCurrent | null>(null);
-  const [selectedInsuranceError, setSelectedInsuranceError] = useState(false);
-  const [selectedInsuranceLoading, setSelectedInsuranceLoading] = useState(false);
+  const [selectedInsuranceState, setSelectedInsuranceState] =
+    useState<SelectedInsuranceState | null>(null);
   const employeeSettingsRef = useRef<HTMLDivElement>(null);
   const pendingScrollUserIdRef = useRef<number | null>(null);
   const load = useCallback(
@@ -254,43 +260,18 @@ export default function PayrollSettingsPage() {
     });
     return () => controller.abort();
   }, [activeTab, userId, load]);
-  useEffect(() => {
-    if (activeTab !== "employee" || !userId) {
-      setSelectedInsurance(null);
-      setSelectedInsuranceError(false);
-      setSelectedInsuranceLoading(false);
-      return;
-    }
-    const controller = new AbortController();
-    setSelectedInsurance(null);
-    setSelectedInsuranceError(false);
-    setSelectedInsuranceLoading(true);
-    void (async () => {
-      try {
-        const response = await fetch(`/api/admin/payroll/insurance?userId=${userId}`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (controller.signal.aborted) return;
-        const data = await response.json();
-        if (controller.signal.aborted) return;
-        if (!response.ok) {
-          setSelectedInsuranceError(true);
-          return;
-        }
-        setSelectedInsurance(data.current ?? null);
-      } catch (insuranceError: unknown) {
-        if (
-          controller.signal.aborted ||
-          (insuranceError instanceof Error && insuranceError.name === "AbortError")
-        ) return;
-        setSelectedInsuranceError(true);
-      }
-    })().catch(() => undefined).finally(() => {
-      if (!controller.signal.aborted) setSelectedInsuranceLoading(false);
-    });
-    return () => controller.abort();
-  }, [activeTab, userId]);
+  const handleInsuranceLoadStateChange = useCallback(
+    (loadedUserId: number, state: EmployeeInsuranceLoadState) => {
+      setSelectedInsuranceState((previous) => ({
+        userId: loadedUserId,
+        current:
+          state.loading && previous?.userId === loadedUserId ? previous.current : state.current,
+        error: state.error,
+        loading: state.loading,
+      }));
+    },
+    [],
+  );
   const positionLabel = useCallback(
     (user: User) => (user.role ? getEmployeeRoleLabel(user.role, l) : user.username),
     [l],
@@ -312,6 +293,13 @@ export default function PayrollSettingsPage() {
   );
   const selected = users.find((user) => user.id === userId);
   const selectedId = selected?.id ?? null;
+  const selectedInsuranceStateForUser =
+    selectedId && selectedInsuranceState?.userId === selectedId ? selectedInsuranceState : null;
+  const selectedInsurance = selectedInsuranceStateForUser?.current ?? null;
+  const selectedInsuranceError = selectedInsuranceStateForUser?.error ?? false;
+  const selectedInsuranceLoading = Boolean(
+    selectedId && selected?.username !== "mjk" && (selectedInsuranceStateForUser?.loading ?? true),
+  );
   const selectedIsOwner = isPayrollOwnerRole(selected?.role ?? null);
   // owner/master이거나 근태 기록을 쓰지 않는 직원(attendance_tracking_enabled=false)은
   // 근무시간 없이 월 고정급(monthly + fixed_monthly) 계약만 쓴다. role 자체는 바뀌지 않는다
@@ -606,7 +594,12 @@ export default function PayrollSettingsPage() {
               </section>
 
               {selected.username !== "mjk" ? (
-                <EmployeeInsuranceSettings key={`insurance-${selected.id}`} userId={selected.id} vi={vi} />
+                <EmployeeInsuranceSettings
+                  key={`insurance-${selected.id}`}
+                  userId={selected.id}
+                  vi={vi}
+                  onLoadStateChange={handleInsuranceLoadStateChange}
+                />
               ) : (
                 <aside style={s.directorNotice}>
                   {vi

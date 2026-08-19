@@ -23,12 +23,20 @@ function currentMonth() {
     .slice(0, 7);
 }
 
+export type EmployeeInsuranceLoadState = {
+  current: PayrollInsuranceSettingVersion | null;
+  error: boolean;
+  loading: boolean;
+};
+
 export default function EmployeeInsuranceSettings({
   userId,
   vi,
+  onLoadStateChange,
 }: {
   userId: number;
   vi: boolean;
+  onLoadStateChange?: (userId: number, state: EmployeeInsuranceLoadState) => void;
 }) {
   const mounted = useRef(true);
   const [history, setHistory] = useState<PayrollInsuranceSettingVersion[]>([]);
@@ -55,6 +63,7 @@ export default function EmployeeInsuranceSettings({
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
+      onLoadStateChange?.(userId, { current: null, error: false, loading: true });
       try {
         const response = await fetch(
           `/api/admin/payroll/insurance?userId=${userId}`,
@@ -69,12 +78,14 @@ export default function EmployeeInsuranceSettings({
               ? "Không thể tải cài đặt bảo hiểm."
               : "보험 설정을 불러오지 못했습니다.",
           );
+          onLoadStateChange?.(userId, { current: null, error: true, loading: false });
           return;
         }
         const nextCurrent = data.current ?? null;
         setHistory(data.history ?? []);
         setCurrent(nextCurrent);
         resetForm(nextCurrent);
+        onLoadStateChange?.(userId, { current: nextCurrent, error: false, loading: false });
       } catch (loadError: unknown) {
         if (
           signal?.aborted ||
@@ -86,9 +97,10 @@ export default function EmployeeInsuranceSettings({
             ? "Không thể tải cài đặt bảo hiểm."
             : "보험 설정을 불러오지 못했습니다.",
         );
+        onLoadStateChange?.(userId, { current: null, error: true, loading: false });
       }
     },
-    [resetForm, userId, vi],
+    [onLoadStateChange, resetForm, userId, vi],
   );
 
   useEffect(() => {
