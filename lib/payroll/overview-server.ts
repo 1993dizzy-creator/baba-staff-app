@@ -10,14 +10,13 @@ import { qualifiesForAttendanceBonus, selectAttendanceBonusEligibilityAt, select
 import { isClosedPayrollMonth } from "@/lib/payroll/payment-period";
 import { PAYROLL_RUN_ENGINE_VERSION } from "@/lib/payroll/monthly-run";
 
-export async function loadPayrollOverview(month: string) {
-  const adjustmentPromise=Promise.resolve(
-    supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,kind,category,amount,business_date,reason,note,created_at").eq("payroll_month",`${month}-01`).is("cancelled_at",null),
-  );
+export async function loadPayrollOverview(month: string,options?:{userId?:number}) {
+  const adjustmentQuery=supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,kind,category,amount,business_date,reason,note,created_at").eq("payroll_month",`${month}-01`).is("cancelled_at",null);
+  const adjustmentPromise=Promise.resolve(options?.userId===undefined?adjustmentQuery:adjustmentQuery.eq("user_id",options.userId));
   void adjustmentPromise.catch(()=>undefined);
   const period=await resolvePayrollOverviewPeriod(month);
-  const snapshotPromise=loadPayrollMonthSnapshot(month,{calculationEndDate:period.calculationEndDate});
-  const attendanceStandingPromise=loadMonthlyAttendanceStandings(month,{period});
+  const snapshotPromise=loadPayrollMonthSnapshot(month,{calculationEndDate:period.calculationEndDate,userId:options?.userId});
+  const attendanceStandingPromise=loadMonthlyAttendanceStandings(month,{period,userId:options?.userId});
   const bonusVersionsPromise=snapshotPromise.then(snapshot=>
     loadAttendanceBonusVersions(month,snapshot.employees.map(employee=>employee.userId)),
   );

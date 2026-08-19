@@ -197,7 +197,7 @@ test("attendance payroll route is actor-only, validates month, and reuses the un
   assert.match(route, /const auth = await requireAttendanceActor\(\)/);
   assert.match(route, /validPayrollMonth\(new URL\(request\.url\)\.searchParams\.get\("month"\)\)/);
   assert.match(route, /code: "INVALID_MONTH"[\s\S]*400/);
-  assert.match(route, /loadPayrollOverview\(month\)/);
+  assert.match(route, /loadPayrollOverview\(month, \{[\s\S]*userId: auth\.actor\.id,[\s\S]*\}\)/);
   assert.match(route, /selectAttendancePayrollSummary\([\s\S]*overview\.employees,[\s\S]*auth\.actor\.id/);
   assert.match(route, /perfectAttendanceCurrent: data\?\.perfectAttendanceCurrent \?\? false/);
   assert.match(route, /summary: data\?\.summary \?\? null/);

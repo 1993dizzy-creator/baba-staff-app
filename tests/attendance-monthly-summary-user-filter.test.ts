@@ -32,7 +32,7 @@ test("full consumers stay unfiltered while payroll employee settings requests on
   assert.match(employeeBonus, /monthly-summary\?month=\$\{payrollMonth\}&userId=\$\{userId\}/);
   assert.match(fullSummaryHook, /monthly-summary\?month=\$\{month\}`/);
   assert.doesNotMatch(fullSummaryHook, /userId=/);
-  assert.match(payrollOverview, /loadMonthlyAttendanceStandings\(month,\{period\}\)/);
+  assert.match(payrollOverview, /loadMonthlyAttendanceStandings\(month,\{period,userId:options\?\.userId\}\)/);
 });
 
 test("full and targeted paths share one calculation implementation", () => {

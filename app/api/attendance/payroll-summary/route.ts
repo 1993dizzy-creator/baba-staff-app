@@ -17,7 +17,9 @@ export async function GET(request: Request) {
   if (!month) return attendanceJson({ ok: false, code: "INVALID_MONTH" }, 400);
 
   try {
-    const overview = await loadPayrollOverview(month);
+    const overview = await loadPayrollOverview(month, {
+      userId: auth.actor.id,
+    });
     const data = selectAttendancePayrollSummary(
       overview.employees,
       auth.actor.id,

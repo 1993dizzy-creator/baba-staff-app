@@ -146,14 +146,21 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
   return{userId:user.id,employeeName:employeeName(user),contractSnapshot:contracts,attendanceSnapshot:{month:input.month,engineVersion:PAYROLL_RUN_ENGINE_VERSION,days},insuranceSnapshot,recognizedWorkdays,recognizedMinutes,lateMinutes,earlyLeaveMinutes,overtimeCandidateMinutes,items,reviews:deduped};
 }
 
-export async function loadPayrollMonthSnapshot(month:string,options?:{calculationEndDate?:string|null}){
+export async function loadPayrollMonthSnapshot(month:string,options?:{calculationEndDate?:string|null;userId?:number}){
   const monthDates=payrollMonthDates(month);const start=monthDates[0];const calculationEndDate=options&&"calculationEndDate" in options?options.calculationEndDate:(await resolvePayrollOverviewPeriod(month)).calculationEndDate;const dates=calculationEndDate?monthDates.filter(date=>date<=calculationEndDate):[];const dayBeforeMonth=new Date(`${start}T00:00:00Z`);dayBeforeMonth.setUTCDate(dayBeforeMonth.getUTCDate()-1);const attendanceEnd=dates.at(-1)??dayBeforeMonth.toISOString().slice(0,10);const nextMonth=new Date(`${start}T00:00:00Z`);nextMonth.setUTCMonth(nextMonth.getUTCMonth()+1);const endExclusive=nextMonth.toISOString().slice(0,10);const lastDate=dates.at(-1)??null;
+  const userQuery=supabaseServer.from("users").select("id,name,full_name,username,is_active,role,part,position,birth_date,hire_date,termination_date,is_system_account,payroll_eligible_override,level_program_enabled,level_base_date_override").order("id");
+  const attendanceQuery=supabaseServer.from("attendance_records").select("id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,updated_at").gte("work_date",start).lte("work_date",attendanceEnd);
+  const contractQuery=supabaseServer.from("payroll_contract_versions").select("id,user_id,pay_type,calculation_basis,base_salary,fixed_raise_amount,standard_workdays,standard_minutes_per_day,time_block_minutes,rounding_mode,late_adjustment_mode,early_leave_adjustment_mode,overtime_mode,paid_leave_mode,effective_from,effective_to,revision").lt("effective_from",endExclusive).or(`effective_to.is.null,effective_to.gt.${start}`);
+  const scheduleQuery=supabaseServer.from("employee_work_schedule_versions").select("id,user_id,start_time,end_time,unpaid_break_minutes,effective_from,effective_to,revision,change_reason").lt("effective_from",endExclusive).or(`effective_to.is.null,effective_to.gt.${start}`);
+  const insuranceQuery=supabaseServer.from("payroll_insurance_setting_versions").select("id,user_id,is_enrolled,insurance_base_amount,effective_month,revision,created_by,created_at,note").lte("effective_month",start).order("effective_month",{ascending:false}).order("revision",{ascending:false});
+  const levelProgramQuery=supabaseServer.from("employee_level_program_versions").select("id,user_id,enabled,effective_from,effective_to,base_date,base_date_mode,revision").lte("effective_from",start).or(`effective_to.is.null,effective_to.gt.${start}`).order("revision",{ascending:false});
+  const targetUserId=options?.userId;
   const[userResult,attendanceResult,overrideResult,contractResult,scheduleResult,settingTimelineResult,insuranceResult,payrollSettingsResult,levelProgramResult]=await Promise.all([
-    supabaseServer.from("users").select("id,name,full_name,username,is_active,role,part,position,birth_date,hire_date,termination_date,is_system_account,payroll_eligible_override,level_program_enabled,level_base_date_override").order("id"),
-    supabaseServer.from("attendance_records").select("id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,updated_at").gte("work_date",start).lte("work_date",attendanceEnd),
+    targetUserId===undefined?userQuery:userQuery.eq("id",targetUserId),
+    targetUserId===undefined?attendanceQuery:attendanceQuery.eq("user_id",targetUserId),
     supabaseServer.from("attendance_record_manual_overrides").select("attendance_record_id").eq("override_metric","late").eq("override_action","normalize").is("revoked_at",null),
-    supabaseServer.from("payroll_contract_versions").select("id,user_id,pay_type,calculation_basis,base_salary,fixed_raise_amount,standard_workdays,standard_minutes_per_day,time_block_minutes,rounding_mode,late_adjustment_mode,early_leave_adjustment_mode,overtime_mode,paid_leave_mode,effective_from,effective_to,revision").lt("effective_from",endExclusive).or(`effective_to.is.null,effective_to.gt.${start}`),
-    supabaseServer.from("employee_work_schedule_versions").select("id,user_id,start_time,end_time,unpaid_break_minutes,effective_from,effective_to,revision,change_reason").lt("effective_from",endExclusive).or(`effective_to.is.null,effective_to.gt.${start}`),
+    targetUserId===undefined?contractQuery:contractQuery.eq("user_id",targetUserId),
+    targetUserId===undefined?scheduleQuery:scheduleQuery.eq("user_id",targetUserId),
     // 계산 대상 날짜마다 store_get_settings_overview_v1을 반복 호출하던 것을, active
     // store_setting_versions timeline을 한 번만 읽는 것으로 대체한다(dates=[]이면 조회
     // 자체를 하지 않는다). payroll이 쓰는 값은 revision과 store_attendance_policies의
@@ -165,9 +172,9 @@ export async function loadPayrollMonthSnapshot(month:string,options?:{calculatio
     lastDate
       ? supabaseServer.from("store_setting_versions").select("id,revision,effective_from_business_date,store_attendance_policies(late_grace_minutes,early_leave_grace_minutes)").eq("state","active").lte("effective_from_business_date",lastDate).order("effective_from_business_date",{ascending:true}).order("id",{ascending:true})
       : Promise.resolve({data:[],error:null}),
-    supabaseServer.from("payroll_insurance_setting_versions").select("id,user_id,is_enrolled,insurance_base_amount,effective_month,revision,created_by,created_at,note").lte("effective_month",start).order("effective_month",{ascending:false}).order("revision",{ascending:false}),
+    targetUserId===undefined?insuranceQuery:insuranceQuery.eq("user_id",targetUserId),
     supabaseServer.from("payroll_settings").select("employee_insurance_rate_bp,employer_insurance_rate_bp,director_insurance_enabled,director_insurance_base_amount,director_insurance_rate_bp,late_major_threshold_minutes,late_minor_penalty_minutes,late_major_penalty_rate_bp,unauthorized_absence_penalty_days,updated_at").eq("id",1).single(),
-    supabaseServer.from("employee_level_program_versions").select("id,user_id,enabled,effective_from,effective_to,base_date,base_date_mode,revision").lte("effective_from",start).or(`effective_to.is.null,effective_to.gt.${start}`).order("revision",{ascending:false}),
+    targetUserId===undefined?levelProgramQuery:levelProgramQuery.eq("user_id",targetUserId),
   ]);
   if(userResult.error||attendanceResult.error||overrideResult.error||contractResult.error||scheduleResult.error||settingTimelineResult.error||insuranceResult.error||payrollSettingsResult.error||levelProgramResult.error)throw new Error("PAYROLL_MONTH_SNAPSHOT_READ_FAILED");
   const settingTimeline:PayrollStoreSettingTimelineRow[]=((settingTimelineResult.data??[]) as Record<string,unknown>[]).map(row=>{const rawPolicy=row.store_attendance_policies as Record<string,unknown>|Record<string,unknown>[]|null;const policy=Array.isArray(rawPolicy)?rawPolicy[0]??null:rawPolicy;return{id:Number(row.id),revision:Number(row.revision),effectiveFromBusinessDate:String(row.effective_from_business_date),lateGraceMinutes:policy?.late_grace_minutes==null?null:Number(policy.late_grace_minutes),earlyLeaveGraceMinutes:policy?.early_leave_grace_minutes==null?null:Number(policy.early_leave_grace_minutes)};});

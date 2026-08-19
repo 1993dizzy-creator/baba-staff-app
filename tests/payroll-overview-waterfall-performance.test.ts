@@ -20,7 +20,7 @@ test("payroll overview overlaps adjustments with period resolution and shares th
   const periodIndex = overview.indexOf("const period=await resolvePayrollOverviewPeriod(month)");
   assert.ok(adjustmentIndex > -1 && adjustmentIndex < periodIndex);
   assert.match(overview, /void adjustmentPromise\.catch\(\(\)=>undefined\)/);
-  assert.match(overview, /loadMonthlyAttendanceStandings\(month,\{period\}\)/);
+  assert.match(overview, /loadMonthlyAttendanceStandings\(month,\{period,userId:options\?\.userId\}\)/);
   assert.equal((overview.match(/resolvePayrollOverviewPeriod\(month\)/g) ?? []).length, 1);
 });
 
