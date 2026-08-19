@@ -34,28 +34,23 @@ export async function getBarZones(): Promise<BarZoneRecord[]> {
 
   const rows = (data ?? []) as ZoneRow[];
   const assigneeIds = [...new Set(rows.flatMap((row) => row.assignee_user_id == null ? [] : [row.assignee_user_id]))];
-  const [usersResult, profilesResult] = await Promise.all([
+  const imagePaths = [...new Set(rows.flatMap((row) => row.image_path ? [row.image_path] : []))];
+  const levelAsOfDate = getVietnamDateKey();
+  const [usersResult, profilesResult, versions, signedUrls] = await Promise.all([
     assigneeIds.length
       ? supabaseServer.from("users").select("id, username, name, full_name, role, hire_date, termination_date, is_active, is_system_account, level_program_enabled, level_base_date_override").in("id", assigneeIds)
       : Promise.resolve({ data: [], error: null }),
     assigneeIds.length
       ? supabaseServer.from("bar_staff_profiles").select("user_id, color_key").in("user_id", assigneeIds)
       : Promise.resolve({ data: [], error: null }),
+    loadEmployeeLevelProgramVersions(assigneeIds, levelAsOfDate),
+    createBarZoneSignedUrls(imagePaths),
   ]);
   if (usersResult.error) throw new Error(`Failed to load BAR assignees: ${usersResult.error.message}`);
   if (profilesResult.error) throw new Error(`Failed to load BAR colors: ${profilesResult.error.message}`);
 
   const users = new Map((usersResult.data ?? []).map((user) => [Number(user.id), user]));
   const colors = new Map((profilesResult.data ?? []).map((profile) => [Number(profile.user_id), isBarColorKey(profile.color_key) ? profile.color_key : null]));
-  const levelAsOfDate = getVietnamDateKey();
-  const versions = await loadEmployeeLevelProgramVersions(assigneeIds, levelAsOfDate);
-  const signedUrls = new Map<string, string>();
-  await Promise.all(rows.flatMap((row) => !row.image_path ? [] : [
-    supabaseServer.storage.from("bar-zone-images").createSignedUrl(row.image_path, 3600).then(({ data: signed, error: signedError }) => {
-      if (signedError) console.error("[BAR_SIGNED_URL_ERROR]", row.code, signedError.message);
-      if (signed?.signedUrl) signedUrls.set(row.image_path as string, signed.signedUrl);
-    }),
-  ]));
 
   const order = new Map(BAR_ZONE_CODES.map((code, index) => [code, index]));
   return rows.map((row) => {
@@ -83,4 +78,30 @@ export async function getBarZones(): Promise<BarZoneRecord[]> {
       updatedAt: row.updated_at,
     };
   }).sort((a, b) => (order.get(a.code) ?? 999) - (order.get(b.code) ?? 999));
+}
+
+async function createBarZoneSignedUrls(paths: string[]) {
+  const signedUrls = new Map<string, string>();
+  if (paths.length === 0) return signedUrls;
+
+  try {
+    const { data, error } = await supabaseServer.storage
+      .from("bar-zone-images")
+      .createSignedUrls(paths, 3600);
+    if (error) {
+      console.error("[BAR_SIGNED_URL_ERROR]", "batch", error.message);
+      return signedUrls;
+    }
+    for (const signed of data ?? []) {
+      if (signed.error || !signed.path || !signed.signedUrl) {
+        console.error("[BAR_SIGNED_URL_ERROR]", signed.path ?? "unknown", signed.error ?? "Missing signed URL");
+        continue;
+      }
+      signedUrls.set(signed.path, signed.signedUrl);
+    }
+  } catch (error) {
+    console.error("[BAR_SIGNED_URL_ERROR]", "batch", error instanceof Error ? error.message : String(error));
+  }
+
+  return signedUrls;
 }
