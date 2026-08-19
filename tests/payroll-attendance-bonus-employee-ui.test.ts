@@ -29,7 +29,7 @@ test("employee attendance bonus loads eligibility, common policy and the batch m
   assert.match(source, /const \[eligibilityResponse, policyResponse, summaryResponse\] = await Promise\.all\(\[/);
   assert.match(source, /fetch\(`\/api\/admin\/payroll\/attendance-bonus\/eligibility\?userId=\$\{userId\}`/);
   assert.match(source, /fetch\("\/api\/admin\/payroll\/attendance-bonus\/policy"/);
-  assert.match(source, /fetch\(`\/api\/attendance\/monthly-summary\?month=\$\{payrollMonth\}`/);
+  assert.match(source, /fetch\(`\/api\/attendance\/monthly-summary\?month=\$\{payrollMonth\}&userId=\$\{userId\}`/);
   assert.match(source, /fetch\("\/api\/admin\/payroll\/attendance-bonus\/eligibility", \{/);
   assert.match(source, /body: JSON\.stringify\(\{ userId, isEligible, effectiveMonth, note \}\)/);
 });

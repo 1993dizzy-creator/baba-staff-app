@@ -9,7 +9,7 @@ const overview = read("lib/payroll/overview-server.ts");
 const route = read("app/api/admin/payroll/overview/route.ts");
 
 test("monthly standing accepts a resolved period while preserving the existing fallback", () => {
-  assert.match(standing, /options\?: \{ period\?: PayrollOverviewPeriod \}/);
+  assert.match(standing, /options\?: \{ period\?: PayrollOverviewPeriod; userId\?: number \}/);
   assert.match(standing, /const period = options\?\.period \?\? await resolvePayrollOverviewPeriod\(month\)/);
   assert.match(standing, /const calculationEndDate = period\.calculationEndDate/);
   assert.match(standing, /return \{ asOfDate: period\.asOfDate, users, standings \}/);

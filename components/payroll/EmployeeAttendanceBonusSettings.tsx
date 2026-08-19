@@ -81,7 +81,7 @@ export default function EmployeeAttendanceBonusSettings({
       const [eligibilityResponse, policyResponse, summaryResponse] = await Promise.all([
         fetch(`/api/admin/payroll/attendance-bonus/eligibility?userId=${userId}`, { cache: "no-store", signal }),
         fetch("/api/admin/payroll/attendance-bonus/policy", { cache: "no-store", signal }),
-        fetch(`/api/attendance/monthly-summary?month=${payrollMonth}`, { cache: "no-store", signal }),
+        fetch(`/api/attendance/monthly-summary?month=${payrollMonth}&userId=${userId}`, { cache: "no-store", signal }),
       ]);
       if (signal?.aborted || !mounted.current) return;
       const [eligibilityData, policyData, summaryData] = await Promise.all([
