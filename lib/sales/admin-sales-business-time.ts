@@ -2,8 +2,8 @@ import "server-only";
 
 import { getBusinessDate } from "@/lib/common/business-time";
 import {
-  loadBusinessTimeAdapter,
   loadBusinessTimeSnapshotsForDates,
+  resolveConfiguredBusinessDate,
 } from "@/lib/store-settings/business-time-adapter";
 
 export type ResolvedBusinessDate = {
@@ -22,6 +22,13 @@ function logLookupFailed(error: unknown) {
 // given): /admin/sales pages and APIs must not each compute "today" with
 // their own 03:00/Asia-Ho_Chi_Minh logic. Explicit values always pass through
 // unchanged and never trigger a settings lookup.
+//
+// Uses resolveConfiguredBusinessDate (store_business_date_for_timestamp_v1
+// only), not the full loadBusinessTimeAdapter: Sales only ever reads
+// databaseBusinessDate and never touched the adapter's snapshot/context, so
+// the extra store_get_settings_overview_v1 round trip was pure overhead. A
+// failure of that overview RPC can no longer affect Sales business-date
+// resolution as a result — only the date RPC's success/failure matters here.
 export async function resolveAdminSalesBusinessDate(
   explicit: string | null | undefined
 ): Promise<ResolvedBusinessDate> {
@@ -30,8 +37,8 @@ export async function resolveAdminSalesBusinessDate(
   }
 
   try {
-    const adapter = await loadBusinessTimeAdapter(new Date());
-    return { businessDate: adapter.databaseBusinessDate, source: "configured" };
+    const businessDate = await resolveConfiguredBusinessDate(new Date());
+    return { businessDate, source: "configured" };
   } catch (error) {
     logLookupFailed(error);
     return { businessDate: getBusinessDate(), source: "error_fallback" };
