@@ -19,7 +19,7 @@ test("monthly summary keeps the full path and adds an optional positive safe use
 });
 
 test("targeted standing filters only employee-scoped database inputs", () => {
-  assert.match(server, /options\?: \{ period\?: PayrollOverviewPeriod; userId\?: number \}/);
+  assert.match(server, /options\?: \{ period\?: PayrollOverviewPeriod; userId\?: number; attendancePromise\?: Promise<\{ data: AttendanceRow\[\] \| null; error: unknown \}> \}/);
   assert.match(server, /baseUserQuery\.eq\("id", options\.userId\)/);
   assert.match(server, /baseAttendanceQuery\.eq\("user_id", options\.userId\)/);
   assert.match(server, /baseScheduleQuery\.eq\("user_id", options\.userId\)/);
@@ -32,7 +32,7 @@ test("full consumers stay unfiltered while payroll employee settings requests on
   assert.match(employeeBonus, /monthly-summary\?month=\$\{payrollMonth\}&userId=\$\{userId\}/);
   assert.match(fullSummaryHook, /monthly-summary\?month=\$\{month\}`/);
   assert.doesNotMatch(fullSummaryHook, /userId=/);
-  assert.match(payrollOverview, /loadMonthlyAttendanceStandings\(month,\{period,userId:options\?\.userId\}\)/);
+  assert.match(payrollOverview, /loadMonthlyAttendanceStandings\(month,\{period,userId:options\?\.userId,attendancePromise\}\)/);
 });
 
 test("full and targeted paths share one calculation implementation", () => {

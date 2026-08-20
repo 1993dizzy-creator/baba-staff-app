@@ -146,7 +146,7 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
   return{userId:user.id,employeeName:employeeName(user),contractSnapshot:contracts,attendanceSnapshot:{month:input.month,engineVersion:PAYROLL_RUN_ENGINE_VERSION,days},insuranceSnapshot,recognizedWorkdays,recognizedMinutes,lateMinutes,earlyLeaveMinutes,overtimeCandidateMinutes,items,reviews:deduped};
 }
 
-export async function loadPayrollMonthSnapshot(month:string,options?:{calculationEndDate?:string|null;userId?:number}){
+export async function loadPayrollMonthSnapshot(month:string,options?:{calculationEndDate?:string|null;userId?:number;attendancePromise?:Promise<{data:AttendanceRow[]|null;error:unknown}>}){
   const monthDates=payrollMonthDates(month);const start=monthDates[0];const calculationEndDate=options&&"calculationEndDate" in options?options.calculationEndDate:(await resolvePayrollOverviewPeriod(month)).calculationEndDate;const dates=calculationEndDate?monthDates.filter(date=>date<=calculationEndDate):[];const dayBeforeMonth=new Date(`${start}T00:00:00Z`);dayBeforeMonth.setUTCDate(dayBeforeMonth.getUTCDate()-1);const attendanceEnd=dates.at(-1)??dayBeforeMonth.toISOString().slice(0,10);const nextMonth=new Date(`${start}T00:00:00Z`);nextMonth.setUTCMonth(nextMonth.getUTCMonth()+1);const endExclusive=nextMonth.toISOString().slice(0,10);const lastDate=dates.at(-1)??null;
   const userQuery=supabaseServer.from("users").select("id,name,full_name,username,is_active,role,part,position,birth_date,hire_date,termination_date,is_system_account,payroll_eligible_override,level_program_enabled,level_base_date_override").order("id");
   const attendanceQuery=supabaseServer.from("attendance_records").select("id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,updated_at").gte("work_date",start).lte("work_date",attendanceEnd);
@@ -157,7 +157,14 @@ export async function loadPayrollMonthSnapshot(month:string,options?:{calculatio
   const targetUserId=options?.userId;
   const[userResult,attendanceResult,overrideResult,contractResult,scheduleResult,settingTimelineResult,insuranceResult,payrollSettingsResult,levelProgramResult]=await Promise.all([
     targetUserId===undefined?userQuery:userQuery.eq("id",targetUserId),
-    targetUserId===undefined?attendanceQuery:attendanceQuery.eq("user_id",targetUserId),
+    // When the caller (overview-server.ts) already started an identical
+    // attendance_records read — only true for calculationEndDate!==null, see
+    // that call site — reuse it instead of firing a second, redundant query.
+    // It is already filtered by the same userId there, so it is used as-is,
+    // never re-.eq()'d. Falls back to this loader's own query (unchanged,
+    // still filtered here) whenever no shared promise is supplied, e.g.
+    // calculationEndDate===null or any other caller.
+    options?.attendancePromise??(targetUserId===undefined?attendanceQuery:attendanceQuery.eq("user_id",targetUserId)),
     supabaseServer.from("attendance_record_manual_overrides").select("attendance_record_id").eq("override_metric","late").eq("override_action","normalize").is("revoked_at",null),
     targetUserId===undefined?contractQuery:contractQuery.eq("user_id",targetUserId),
     targetUserId===undefined?scheduleQuery:scheduleQuery.eq("user_id",targetUserId),

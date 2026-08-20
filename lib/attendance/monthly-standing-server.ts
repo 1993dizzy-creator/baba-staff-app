@@ -21,7 +21,7 @@ export type MonthlyStandingUser = {
 
 export async function loadMonthlyAttendanceStandings(
   month: string,
-  options?: { period?: PayrollOverviewPeriod; userId?: number },
+  options?: { period?: PayrollOverviewPeriod; userId?: number; attendancePromise?: Promise<{ data: AttendanceRow[] | null; error: unknown }> },
 ): Promise<{
   asOfDate: string;
   users: MonthlyStandingUser[];
@@ -37,7 +37,11 @@ export async function loadMonthlyAttendanceStandings(
   const baseUserQuery = supabaseServer.from("users").select("id,hire_date,termination_date,attendance_tracking_enabled,is_system_account").eq("is_system_account", false);
   const userQuery = options?.userId === undefined ? baseUserQuery : baseUserQuery.eq("id", options.userId);
   const baseAttendanceQuery = supabaseServer.from("attendance_records").select("id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,updated_at").gte("work_date", start).lte("work_date", lastDate ?? start);
-  const attendanceQuery = options?.userId === undefined ? baseAttendanceQuery : baseAttendanceQuery.eq("user_id", options.userId);
+  // Reuse the caller's already-in-flight attendance_records read when one was
+  // provided — only true for calculationEndDate!==null (see overview-
+  // server.ts). Otherwise this loader's own query (unchanged) runs exactly as
+  // before, so the calculationEndDate===null query shape here is untouched.
+  const attendanceQuery = options?.attendancePromise ?? (options?.userId === undefined ? baseAttendanceQuery : baseAttendanceQuery.eq("user_id", options.userId));
   const baseScheduleQuery = supabaseServer.from("employee_work_schedule_versions").select("id,user_id,start_time,end_time,unpaid_break_minutes,effective_from,effective_to,revision,change_reason").lte("effective_from", end).or(`effective_to.is.null,effective_to.gte.${start}`);
   const scheduleQuery = options?.userId === undefined ? baseScheduleQuery : baseScheduleQuery.eq("user_id", options.userId);
   const [userResult, attendanceResult, scheduleResult, settingResult, holidayResult] = await Promise.all([

@@ -9,7 +9,10 @@ const overview = read("lib/payroll/overview-server.ts");
 const route = read("app/api/admin/payroll/overview/route.ts");
 
 test("monthly standing accepts a resolved period while preserving the existing fallback", () => {
-  assert.match(standing, /options\?: \{ period\?: PayrollOverviewPeriod; userId\?: number \}/);
+  // options widened (Phase 2) to also accept the shared attendancePromise —
+  // period/userId acceptance and the resolvePayrollOverviewPeriod fallback
+  // are unchanged.
+  assert.match(standing, /options\?: \{ period\?: PayrollOverviewPeriod; userId\?: number; attendancePromise\?: Promise<\{ data: AttendanceRow\[\] \| null; error: unknown \}> \}/);
   assert.match(standing, /const period = options\?\.period \?\? await resolvePayrollOverviewPeriod\(month\)/);
   assert.match(standing, /const calculationEndDate = period\.calculationEndDate/);
   assert.match(standing, /return \{ asOfDate: period\.asOfDate, users, standings \}/);
@@ -20,7 +23,9 @@ test("payroll overview overlaps adjustments with period resolution and shares th
   const periodIndex = overview.indexOf("const period=await resolvePayrollOverviewPeriod(month)");
   assert.ok(adjustmentIndex > -1 && adjustmentIndex < periodIndex);
   assert.match(overview, /void adjustmentPromise\.catch\(\(\)=>undefined\)/);
-  assert.match(overview, /loadMonthlyAttendanceStandings\(month,\{period,userId:options\?\.userId\}\)/);
+  // Phase 2: standing now also receives the shared attendancePromise, still
+  // invoked directly from period (not chained off snapshotPromise).
+  assert.match(overview, /loadMonthlyAttendanceStandings\(month,\{period,userId:options\?\.userId,attendancePromise\}\)/);
   assert.equal((overview.match(/resolvePayrollOverviewPeriod\(month\)/g) ?? []).length, 1);
 });
 

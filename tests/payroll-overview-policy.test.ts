@@ -26,7 +26,7 @@ test("overview is one owner-master authenticated monthly endpoint", () => {
 });
 
 test("official batch engine receives the overview cutoff without mutating a payroll run", () => {
-  assert.match(overviewServer, /loadPayrollMonthSnapshot\(month,\{calculationEndDate:period\.calculationEndDate,userId:options\?\.userId\}\)/);
+  assert.match(overviewServer, /loadPayrollMonthSnapshot\(month,\{calculationEndDate:period\.calculationEndDate,userId:options\?\.userId,attendancePromise\}\)/);
   assert.match(monthly, /calculatePayrollBatch\(input\)/);
   assert.doesNotMatch(route, /payroll_create_run|\.rpc\(/);
 });

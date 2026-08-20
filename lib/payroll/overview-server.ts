@@ -1,7 +1,7 @@
 import "server-only";
 
 import { supabaseServer } from "@/lib/supabase/server";
-import { loadPayrollMonthSnapshot, resolvePayrollOverviewPeriod } from "@/lib/payroll/monthly-run";
+import { loadPayrollMonthSnapshot, resolvePayrollOverviewPeriod, type AttendanceRow } from "@/lib/payroll/monthly-run";
 import { buildPayrollOverviewEmployee, buildPayrollOverviewSummary, type PayrollMonthlyAdjustment } from "@/lib/payroll/overview";
 import { buildPayrollOverviewProjectedSummary } from "@/lib/payroll/overview-projection";
 import { loadMonthlyAttendanceStandings } from "@/lib/attendance/monthly-standing-server";
@@ -15,8 +15,28 @@ export async function loadPayrollOverview(month: string,options?:{userId?:number
   const adjustmentPromise=Promise.resolve(options?.userId===undefined?adjustmentQuery:adjustmentQuery.eq("user_id",options.userId));
   void adjustmentPromise.catch(()=>undefined);
   const period=await resolvePayrollOverviewPeriod(month);
-  const snapshotPromise=loadPayrollMonthSnapshot(month,{calculationEndDate:period.calculationEndDate,userId:options?.userId});
-  const attendanceStandingPromise=loadMonthlyAttendanceStandings(month,{period,userId:options?.userId});
+  // Shared attendance_records read for snapshot+standing — ONLY when
+  // calculationEndDate is non-null (current/completed period). In that case
+  // both loaders' own query construction reduces to the exact same
+  // gte(monthStart).lte(calculationEndDate) with the same columns/userId
+  // filter (proved in the Phase 2 audit), so one read safely serves both.
+  // Started here, right after period resolves — same moment snapshot/standing
+  // would otherwise each start their own — and handed to both as an
+  // unresolved promise so neither loader waits on the other; each still
+  // awaits it alongside its own other queries in its own Promise.all.
+  //
+  // For calculationEndDate === null (future month), attendancePromise stays
+  // undefined on purpose: snapshot and standing fall back to their existing,
+  // independently-shaped queries exactly as before this change. Their future-
+  // month query shapes are NOT identical (see monthly-run.ts / monthly-
+  // standing-server.ts), so they must not be unified here.
+  const attendancePromise=period.calculationEndDate?Promise.resolve((()=>{
+    const query=supabaseServer.from("attendance_records").select("id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,updated_at").gte("work_date",`${month}-01`).lte("work_date",period.calculationEndDate as string);
+    return options?.userId===undefined?query:query.eq("user_id",options.userId);
+  })()):undefined;
+  if(attendancePromise)void attendancePromise.catch(()=>undefined);
+  const snapshotPromise=loadPayrollMonthSnapshot(month,{calculationEndDate:period.calculationEndDate,userId:options?.userId,attendancePromise});
+  const attendanceStandingPromise=loadMonthlyAttendanceStandings(month,{period,userId:options?.userId,attendancePromise});
   const bonusVersionsPromise=snapshotPromise.then(snapshot=>
     loadAttendanceBonusVersions(month,snapshot.employees.map(employee=>employee.userId)),
   );
