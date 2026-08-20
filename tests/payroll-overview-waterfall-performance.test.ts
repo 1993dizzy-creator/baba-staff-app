@@ -37,15 +37,33 @@ test("snapshot and standing remain parallel and bonus versions start from snapsh
 });
 
 test("overview route overlaps overview with its payment batch query", () => {
-  assert.match(route, /const overviewPromise=loadPayrollOverview\(month\)/);
+  // Phase 2 (meal-allowance early start): the call now carries an
+  // onSnapshotReady options object instead of being argument-less, but
+  // paymentBatchPromise is still built independently and still only
+  // overlaps with overviewPromise via the same Promise.all below.
+  assert.match(route, /const overviewPromise=loadPayrollOverview\(month,\{/);
   assert.match(route, /const paymentBatchPromise=Promise\.resolve\([\s\S]*?payroll_payment_batches/);
   assert.match(route, /Promise\.all\(\[overviewPromise,paymentBatchPromise\]\)/);
+  // paymentBatchPromise is constructed textually after the onSnapshotReady
+  // hook body, and the hook body (up to that point) never references
+  // paymentBatchPromise/run — confirming no dependency either direction.
+  const onSnapshotReadyBody = route.slice(
+    route.indexOf("onSnapshotReady:({snapshot,period})=>{"),
+    route.indexOf("const paymentBatchPromise="),
+  );
+  assert.doesNotMatch(onSnapshotReadyBody, /paymentBatchPromise|\brun\b/);
 });
 
-test("employee payments and meal allowance run together without changing response inputs", () => {
+test("employee payments and meal allowance are awaited together at the end, without changing response inputs", () => {
   assert.match(route, /const paymentsPromise=run[\s\S]*?: Promise\.resolve\(\{data:\[\],error:null\}\)/);
-  assert.match(route, /const mealAllowancePromise=loadMealAllowanceCostSummary\(month,\{[\s\S]*?users:overview\.snapshot\.context\.users,[\s\S]*?contracts:overview\.snapshot\.context\.contracts,[\s\S]*?attendance:overview\.snapshot\.context\.attendance,[\s\S]*?payrollUserIds:overview\.employees\.map/);
-  assert.match(route, /Promise\.all\(\[paymentsPromise,mealAllowancePromise\]\)/);
+  // Phase 2 (meal-allowance early start): mealAllowancePromise is now built
+  // inside onSnapshotReady, from snapshot.context.*/snapshot.employees —
+  // not overview.snapshot.context.*/overview.employees — see
+  // payroll-overview-meal-allowance-early-start.test.ts for the full
+  // dependency-graph coverage of that change. This test only re-confirms
+  // the two promises are still awaited together in one Promise.all here.
+  assert.match(route, /mealAllowancePromise=loadMealAllowanceCostSummary\(month,\{[\s\S]*?users:snapshot\.context\.users,[\s\S]*?contracts:snapshot\.context\.contracts,[\s\S]*?attendance:snapshot\.context\.attendance,[\s\S]*?payrollUserIds:snapshot\.employees\.map/);
+  assert.match(route, /Promise\.all\(\[paymentsPromise,mealAllowancePromise!\]\)/);
   assert.match(route, /payrollPaymentSnapshotHash\(buildEmployeePaymentSnapshot/);
   assert.match(route, /PAYROLL_OVERVIEW_READ_FAILED/);
 });

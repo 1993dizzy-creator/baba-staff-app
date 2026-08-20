@@ -106,13 +106,19 @@ test("loadMealAllowanceCostSummary: contract/attendance reuse applies only an in
 // ---------------------------------------------------------------------------
 
 test("overview route: passes the already-loaded snapshot context (users/contracts/attendance) into loadMealAllowanceCostSummary instead of letting it re-query", () => {
-  const callSite = overviewRoute.slice(overviewRoute.indexOf("const mealAllowancePromise=loadMealAllowanceCostSummary("));
+  // Phase 2 (meal-allowance early start) moved this call site inside
+  // onSnapshotReady, sourcing from the (snapshot, period) the hook receives
+  // directly rather than the finalized `overview` object — see
+  // payroll-overview-meal-allowance-early-start.test.ts for full coverage
+  // of why that userId set is unchanged. This test only re-confirms the
+  // reuse contract (no re-query of users/contracts/attendance) still holds.
+  const callSite = overviewRoute.slice(overviewRoute.indexOf("mealAllowancePromise=loadMealAllowanceCostSummary("));
   const callBody = callSite.slice(0, callSite.indexOf("});") + 3);
-  assert.match(callBody, /calculationEndDate:overview\.period\.calculationEndDate,/);
-  assert.match(callBody, /users:overview\.snapshot\.context\.users,/);
-  assert.match(callBody, /contracts:overview\.snapshot\.context\.contracts,/);
-  assert.match(callBody, /attendance:overview\.snapshot\.context\.attendance,/);
-  assert.match(callBody, /payrollUserIds:overview\.employees\.map\(employee=>employee\.userId\),/);
+  assert.match(callBody, /calculationEndDate:period\.calculationEndDate,/);
+  assert.match(callBody, /users:snapshot\.context\.users,/);
+  assert.match(callBody, /contracts:snapshot\.context\.contracts,/);
+  assert.match(callBody, /attendance:snapshot\.context\.attendance,/);
+  assert.match(callBody, /payrollUserIds:snapshot\.employees\.map\(employee=>employee\.userId\),/);
 });
 
 test("overview route: no longer imports the eligibility-server module — the badge is produced by the single combined call", () => {

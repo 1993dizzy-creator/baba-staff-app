@@ -80,9 +80,13 @@ test("overview route: eligibility is computed inside the same meal-allowance-cos
   assert.doesNotMatch(overviewRoute, /getVietnamDateKey/);
 });
 
-test("overview route: eligibility is bulk-loaded once from overview.employees (pre-payment-merge array) scoped to the *browsed* payroll month, not today — a past/future month browse must never depend on today's date", () => {
+test("overview route: eligibility is bulk-loaded once from snapshot.employees (pre-payment-merge array, sourced via onSnapshotReady) scoped to the *browsed* payroll month, not today — a past/future month browse must never depend on today's date", () => {
+  // Phase 2 (meal-allowance early start) moved this to snapshot.employees
+  // instead of overview.employees — provably the same userId set (see
+  // payroll-overview-meal-allowance-early-start.test.ts) and still entirely
+  // derived from the browsed month's snapshot, never from today's date.
   assert.equal((overviewRoute.match(/loadMealAllowanceCostSummary\(/g) ?? []).length, 1);
-  assert.match(overviewRoute, /payrollUserIds:overview\.employees\.map\(employee=>employee\.userId\),/);
+  assert.match(overviewRoute, /payrollUserIds:snapshot\.employees\.map\(employee=>employee\.userId\),/);
   assert.match(overviewRoute, /const mealAllowanceEligibleUserIds=mealAllowance\.eligibleUserIds;/);
 });
 

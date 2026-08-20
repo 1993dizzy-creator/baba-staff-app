@@ -9,8 +9,11 @@ import { loadAttendanceBonusVersions } from "@/lib/payroll/attendance-bonus-serv
 import { qualifiesForAttendanceBonus, selectAttendanceBonusEligibilityAt, selectAttendanceBonusPolicyAt } from "@/lib/payroll/attendance-bonus";
 import { isClosedPayrollMonth } from "@/lib/payroll/payment-period";
 import { PAYROLL_RUN_ENGINE_VERSION } from "@/lib/payroll/monthly-run";
+import type { PayrollOverviewPeriod } from "@/lib/payroll/overview-period";
 
-export async function loadPayrollOverview(month: string,options?:{userId?:number}) {
+export type PayrollMonthSnapshot = Awaited<ReturnType<typeof loadPayrollMonthSnapshot>>;
+
+export async function loadPayrollOverview(month: string,options?:{userId?:number;onSnapshotReady?:(input:{snapshot:PayrollMonthSnapshot;period:PayrollOverviewPeriod})=>void}) {
   const adjustmentQuery=supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,kind,category,amount,business_date,reason,note,created_at").eq("payroll_month",`${month}-01`).is("cancelled_at",null);
   const adjustmentPromise=Promise.resolve(options?.userId===undefined?adjustmentQuery:adjustmentQuery.eq("user_id",options.userId));
   void adjustmentPromise.catch(()=>undefined);
@@ -36,6 +39,17 @@ export async function loadPayrollOverview(month: string,options?:{userId?:number
   })()):undefined;
   if(attendancePromise)void attendancePromise.catch(()=>undefined);
   const snapshotPromise=loadPayrollMonthSnapshot(month,{calculationEndDate:period.calculationEndDate,userId:options?.userId,attendancePromise});
+  // Fires as soon as snapshot resolves successfully — before standing/bonus/
+  // adjustments are awaited below — so a caller (the overview route) can
+  // start snapshot-only work (meal allowance) without waiting for the rest
+  // of this function. Never fires on a snapshot failure: the .then() has no
+  // onRejected branch, so a rejected snapshotPromise skips straight past it
+  // and is still surfaced normally by the Promise.all await below. The
+  // derived .then() chain gets its own no-op .catch() purely to avoid an
+  // unhandled-rejection warning on that (separate, unused) chain — the
+  // original snapshotPromise's rejection is untouched and still propagates.
+  const onSnapshotReady=options?.onSnapshotReady;
+  if(onSnapshotReady){void snapshotPromise.then(snapshot=>{onSnapshotReady({snapshot,period});}).catch(()=>undefined);}
   const attendanceStandingPromise=loadMonthlyAttendanceStandings(month,{period,userId:options?.userId,attendancePromise});
   const bonusVersionsPromise=snapshotPromise.then(snapshot=>
     loadAttendanceBonusVersions(month,snapshot.employees.map(employee=>employee.userId)),

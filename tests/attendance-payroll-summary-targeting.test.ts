@@ -15,12 +15,19 @@ test("attendance payroll summary targets only the server-authenticated actor", (
 });
 
 test("payroll overview forwards the optional target without changing the full default", () => {
-  assert.match(overview, /options\?:\{userId\?:number\}/);
+  assert.match(overview, /options\?:\{userId\?:number;onSnapshotReady\?:/);
   assert.match(overview, /options\?\.userId===undefined\?adjustmentQuery:adjustmentQuery\.eq\("user_id",options\.userId\)/);
   assert.match(overview, /loadPayrollMonthSnapshot\(month,\{calculationEndDate:period\.calculationEndDate,userId:options\?\.userId,attendancePromise\}\)/);
   assert.match(overview, /loadMonthlyAttendanceStandings\(month,\{period,userId:options\?\.userId,attendancePromise\}\)/);
-  assert.match(adminOverviewRoute, /loadPayrollOverview\(month\)/);
-  assert.doesNotMatch(adminOverviewRoute, /loadPayrollOverview\(month,\s*\{/);
+  // Phase 2 (meal-allowance early start) added an onSnapshotReady hook to
+  // this call site, so it now passes an options object — but still never a
+  // userId, so this route remains the full/unfiltered consumer.
+  assert.match(adminOverviewRoute, /loadPayrollOverview\(month,\{/);
+  const overviewCallSite = adminOverviewRoute.slice(
+    adminOverviewRoute.indexOf("const overviewPromise=loadPayrollOverview(month,{"),
+  );
+  const overviewCallBody = overviewCallSite.slice(0, overviewCallSite.indexOf("});") + 3);
+  assert.doesNotMatch(overviewCallBody, /userId:/);
 });
 
 test("targeted snapshot filters only employee-scoped queries", () => {

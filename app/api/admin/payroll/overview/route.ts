@@ -15,7 +15,36 @@ export async function GET(request: Request) {
   if (!month) return payrollJson({ ok: false, code: "INVALID_MONTH" }, 400);
 
   try {
-    const overviewPromise=loadPayrollOverview(month);
+    // mealAllowancePromise starts as soon as the payroll snapshot resolves
+    // (via onSnapshotReady), not after the full overview (standing/bonus/
+    // adjustments) or paymentBatch — meal allowance never reads any of
+    // those, only snapshot.context.{users,contracts,attendance} and
+    // snapshot.employees' userIds (see lib/payroll/overview-server.ts for
+    // why that userId set is provably identical to overview.employees').
+    // Assigned exactly once, before loadPayrollOverview's own internal
+    // Promise.all resolves, so it is always set by the time it is awaited
+    // below — the non-null assertion there reflects that guarantee, not a
+    // gap: if snapshot itself fails, onSnapshotReady never runs, but then
+    // overviewPromise also rejects (same snapshotPromise, awaited inside
+    // loadPayrollOverview) and this catch block returns before reaching the
+    // mealAllowancePromise await at all.
+    let mealAllowancePromise: ReturnType<typeof loadMealAllowanceCostSummary> | undefined;
+    const overviewPromise=loadPayrollOverview(month,{
+      onSnapshotReady:({snapshot,period})=>{
+        mealAllowancePromise=loadMealAllowanceCostSummary(month,{
+          calculationEndDate:period.calculationEndDate,
+          users:snapshot.context.users,
+          contracts:snapshot.context.contracts,
+          attendance:snapshot.context.attendance,
+          payrollUserIds:snapshot.employees.map(employee=>employee.userId),
+        });
+        // No-op catch on a separate derived chain only, purely to prevent a
+        // Node unhandled-rejection warning for the stretch of time before
+        // this is awaited below — mealAllowancePromise itself is untouched
+        // and still rejects (and is still awaited) normally.
+        void mealAllowancePromise.catch(()=>undefined);
+      },
+    });
     const paymentBatchPromise=Promise.resolve(
       supabaseServer.from("payroll_payment_batches").select("*").eq("payroll_month",`${month}-01`).maybeSingle(),
     );
@@ -23,14 +52,7 @@ export async function GET(request: Request) {
     const paymentsPromise=run
       ? Promise.resolve(supabaseServer.from("payroll_employee_payments").select("user_id,payment_status,calculated_net_amount,actual_paid_amount,difference_amount,difference_reason,payment_date,paid_at,paid_by,paid_actor:users!payroll_employee_payments_paid_by_fkey(name,full_name,username)").eq("payroll_batch_id",run.id))
       : Promise.resolve({data:[],error:null});
-    const mealAllowancePromise=loadMealAllowanceCostSummary(month,{
-      calculationEndDate:overview.period.calculationEndDate,
-      users:overview.snapshot.context.users,
-      contracts:overview.snapshot.context.contracts,
-      attendance:overview.snapshot.context.attendance,
-      payrollUserIds:overview.employees.map(employee=>employee.userId),
-    });
-    const [{data:payments,error:paymentError},mealAllowance]=await Promise.all([paymentsPromise,mealAllowancePromise]);if(paymentError)throw paymentError;
+    const [{data:payments,error:paymentError},mealAllowance]=await Promise.all([paymentsPromise,mealAllowancePromise!]);if(paymentError)throw paymentError;
     const paymentByUser=new Map((payments??[]).map(row=>[Number(row.user_id),row]));
     const employees=overview.employees.map(employee=>{const raw=overview.rawByUser.get(employee.userId);const calculationHash=raw?payrollPaymentSnapshotHash(buildEmployeePaymentSnapshot(employee,raw,overview.snapshot.sourceSnapshot as Record<string,unknown>)):null;return{...employee,payment:paymentByUser.get(employee.userId)??null,batchStatus:run?.status??null,batchId:run?.id??null,calculationHash}});
     // 식대비용은 지급 snapshot/hash(위 employees[].calculationHash, payrollPaymentSnapshotHash)와

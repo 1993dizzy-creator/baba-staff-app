@@ -132,7 +132,10 @@ test("overview and employee payment share the same monthly snapshot calculation"
   const overviewRoute=fs.readFileSync(path.join(process.cwd(),"app/api/admin/payroll/overview/route.ts"),"utf8");
   const overviewServer=fs.readFileSync(path.join(process.cwd(),"lib/payroll/overview-server.ts"),"utf8");
   const payments=fs.readFileSync(path.join(process.cwd(),"app/api/admin/payroll/payments/route.ts"),"utf8");
-  assert.match(overviewRoute,/loadPayrollOverview\(month\)/);
+  // overview route now also passes an onSnapshotReady options object
+  // (Phase 2, meal-allowance early start), but still calls the same shared
+  // loadPayrollOverview(month, ...) — payments/route.ts is untouched.
+  assert.match(overviewRoute,/loadPayrollOverview\(month,\{/);
   assert.match(payments,/loadPayrollOverview\(month\)/);
   assert.match(overviewServer,/loadPayrollMonthSnapshot\(month/);
   assert.match(payments,/p_calculation_snapshot:calculationSnapshot/);
