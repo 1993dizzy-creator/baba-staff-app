@@ -48,9 +48,12 @@ test("eligibility badge logic: no version at all → not eligible", () => {
 // lib/payroll/meal-allowance-eligibility-server.ts — bulk 조회, N+1 없음, 분리 유지
 // ---------------------------------------------------------------------------
 
-test("eligibility server helper: each exported loader issues exactly one bulk query using .in(userIds), not one query per user", () => {
-  // 파일 전체에는 두 함수(오늘 기준 / 급여월 기준) 각각 1건씩, 총 2건의 .from() 호출만 있어야 한다.
-  assert.equal((eligibilityServer.match(/supabaseServer\s*\n?\s*\.from\(/g) ?? []).length, 2);
+test("eligibility server helper: each exported loader issues exactly one bulk query, not one query per user", () => {
+  // 파일 전체에는 세 함수(오늘 기준 / 급여월 기준 / 오늘 기준·candidate-userId 없는 prefetch 변형)
+  // 각각 1건씩, 총 3건의 .from() 호출만 있어야 한다.
+  assert.equal((eligibilityServer.match(/supabaseServer\s*\n?\s*\.from\(/g) ?? []).length, 3);
+  // .in("user_id", userIds)는 candidate-scoped 두 함수(오늘 기준 / 급여월 기준)에만 있고,
+  // parallel-prefetch 변형(loadMealAllowanceEligibilityVersionsAt)에는 의도적으로 없다.
   assert.equal((eligibilityServer.match(/\.in\("user_id", userIds\)/g) ?? []).length, 2);
 });
 
@@ -81,18 +84,26 @@ test("eligibility server helper stays decoupled from the /admin/payroll cost agg
 // app/api/admin/users/route.ts — bulk 병합, N+1 없음, 세 응답 경로(GET/PATCH/rehire) 일관성
 // ---------------------------------------------------------------------------
 
-test("users route: imports the lightweight eligibility helper, not the heavy payroll cost summary", () => {
-  assert.match(usersRoute, /import \{ loadMealAllowanceEligibilityAt \} from "@\/lib\/payroll\/meal-allowance-eligibility-server";/);
+test("users route: imports the lightweight eligibility helpers, not the heavy payroll cost summary", () => {
+  // Parallel-prefetch optimization (GET only): loadMealAllowanceEligibilityVersionsAt
+  // is the new date-scoped-without-candidate-userIds variant used by GET;
+  // loadMealAllowanceEligibilityAt (userId-scoped) is still imported and
+  // still used by PATCH/rehire below — see
+  // admin-users-parallel-prefetch.test.ts for full coverage of the new
+  // loader's own semantics.
+  assert.match(usersRoute, /import \{ loadMealAllowanceEligibilityAt, loadMealAllowanceEligibilityVersionsAt \} from "@\/lib\/payroll\/meal-allowance-eligibility-server";/);
   assert.doesNotMatch(usersRoute, /loadMealAllowanceCostSummary/);
 });
 
-test("users route GET: eligibility is bulk-loaded once for all userIds inside the same Promise.all as the level-program lookups (no N+1)", () => {
+test("users route GET: eligibility is bulk-loaded once (date-scoped, no candidate-userId prefilter) inside the same Promise.all as users and level-program lookups (no N+1, no waterfall)", () => {
   const getFn = usersRoute.slice(usersRoute.indexOf("export async function GET"), usersRoute.indexOf("export async function PATCH"));
-  assert.match(getFn, /loadMealAllowanceEligibilityAt\(userIds, today\)/);
-  assert.equal((getFn.match(/loadMealAllowanceEligibilityAt\(/g) ?? []).length, 1);
+  assert.match(getFn, /loadMealAllowanceEligibilityVersionsAt\(today\)/);
+  assert.equal((getFn.match(/loadMealAllowanceEligibilityVersionsAt\(/g) ?? []).length, 1);
+  // GET never calls the userId-scoped variant (that would reintroduce the waterfall).
+  assert.doesNotMatch(getFn, /loadMealAllowanceEligibilityAt\(/);
   // users.map(...) 콜백 본문 안에서는 조회를 다시 호출하지 않는다(호출은 Promise.all 안에서 1회뿐).
   const mapCallback = getFn.slice(getFn.indexOf("users: users.map("));
-  assert.doesNotMatch(mapCallback, /loadMealAllowanceEligibilityAt\(/);
+  assert.doesNotMatch(mapCallback, /loadMealAllowanceEligibilityVersionsAt\(/);
 });
 
 test("users route GET: response merges mealAllowanceEligible onto every user via withMealAllowanceEligibility", () => {

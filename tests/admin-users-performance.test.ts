@@ -30,10 +30,17 @@ test("admin users fetch is independent of translated load errors", () => {
   assert.match(page, /setUsers\(\(current\) =>[\s\S]*?result\.user/);
 });
 
-test("admin users GET uses one multi-date level query alongside meal eligibility", () => {
-  assert.match(route, /loadEmployeeLevelProgramVersionsForDates\(userIds, \[today, nextDate\]\)/);
+test("admin users GET uses one multi-date level query (unscoped prefetch variant) alongside meal eligibility, both started in parallel with the users query", () => {
+  // Parallel-prefetch optimization: GET no longer waits for users/userIds
+  // before starting the level-versions read — see
+  // admin-users-parallel-prefetch.test.ts for full dependency-graph
+  // coverage of that change. This test only re-confirms which loader
+  // variant is used and that the date-bound semantics in server.ts are
+  // unchanged.
+  assert.match(route, /loadEmployeeLevelProgramVersionsForDatesUnscoped\(\[today, nextDate\]\)/);
   const getHandler = route.slice(route.indexOf("export async function GET"), route.indexOf("export async function PATCH"));
   assert.doesNotMatch(getHandler, /loadEmployeeLevelProgramVersions\(userIds/);
+  assert.doesNotMatch(getHandler, /loadEmployeeLevelProgramVersionsForDates\(userIds/);
   assert.match(server, /\.lte\("effective_from", maxDate\)/);
   assert.match(server, /effective_to\.is\.null,effective_to\.gt\.\$\{minDate\}/);
 });

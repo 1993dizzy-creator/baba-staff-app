@@ -71,6 +71,30 @@ export async function loadMealAllowanceEligibilityAt(
   return result;
 }
 
+// Narrow variant for callers (currently only GET /api/admin/users) that need
+// to start this read in parallel with their own users query, before any
+// candidate user id list exists yet. Same effective_from <= asOfDate bound
+// as loadMealAllowanceEligibilityAt above (future-dated versions are still
+// excluded at the DB level) — the only difference is the absence of the
+// candidate-user_id filter that function applies. Returns the raw per-user
+// version list (not a resolved boolean) so the caller can run
+// selectMealAllowanceEligibilityAt itself, only for ids from its own
+// already-filtered user list. This function does not scope by
+// is_system_account or any other user property,
+// so unrelated rows (system accounts, other employees) can be present in
+// the underlying read and must be ignored by never being looked up.
+export async function loadMealAllowanceEligibilityVersionsAt(
+  asOfDate: string,
+): Promise<Map<number, MealAllowanceEligibilityVersion[]>> {
+  const { data, error } = await supabaseServer
+    .from("payroll_meal_allowance_eligibility_versions")
+    .select("id,user_id,is_eligible,effective_from,revision")
+    .lte("effective_from", asOfDate);
+  if (error) throw new Error(`MEAL_ALLOWANCE_ELIGIBILITY_READ_FAILED: ${error.message}`);
+
+  return groupByUser(data ?? []);
+}
+
 // 특정 급여월(payroll month) 동안 한 번이라도 식대 대상이었는지 — /admin/payroll(overview)·
 // [runId] 급여장부처럼 과거·미래 월을 넘나들며 조회하는 화면 전용. "오늘" 날짜는 전혀 쓰지
 // 않는다: 그 달 이후(effective_from >= monthEndExclusive)에 등록된 eligibility 변경은 DB

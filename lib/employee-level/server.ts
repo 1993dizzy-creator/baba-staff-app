@@ -98,6 +98,46 @@ export async function loadEmployeeLevelProgramVersionsForDates(
   );
 }
 
+// Narrow variant for callers (currently only GET /api/admin/users) that need
+// to start this read in parallel with their own users query, before any
+// candidate user id list exists yet. Same columns, same min/max date bounds,
+// same effective_to overlap logic, same revision ordering as
+// loadEmployeeLevelProgramVersionsForDates above — the only difference is
+// the absence of that function's candidate-user_id filter. Reuses the same
+// pure selectEmployeeLevelProgramVersionsForDates selector, which already groups
+// by whatever user_id appears in the rows and never required a pre-known
+// candidate list. Callers MUST look up results only by ids from their own
+// already-filtered user list — this function does not scope by
+// is_system_account or any other user property, so unrelated rows (system
+// accounts, other employees) can be present in the underlying read and must
+// be ignored by never being looked up.
+export async function loadEmployeeLevelProgramVersionsForDatesUnscoped(
+  asOfDates: string[],
+) {
+  const dates = Array.from(new Set(asOfDates)).sort();
+  const empty = new Map(
+    dates.map((date) => [date, new Map<number, EmployeeLevelProgramVersion>()])
+  );
+  if (dates.length === 0) return empty;
+
+  const minDate = dates[0];
+  const maxDate = dates[dates.length - 1];
+  const { data, error } = await supabaseServer
+    .from("employee_level_program_versions")
+    .select("id,user_id,enabled,effective_from,effective_to,base_date,base_date_mode,revision")
+    .lte("effective_from", maxDate)
+    .or(`effective_to.is.null,effective_to.gt.${minDate}`)
+    .order("revision", { ascending: false });
+  if (error) {
+    throw new Error(`EMPLOYEE_LEVEL_PROGRAM_READ_FAILED: ${error.message}`);
+  }
+
+  return selectEmployeeLevelProgramVersionsForDates(
+    (data ?? []) as EmployeeLevelProgramVersionRow[],
+    dates,
+  );
+}
+
 export function applyEmployeeLevelProgramVersion<T extends EmployeeLevelUser>(
   user: T,
   version?: EmployeeLevelProgramVersion,

@@ -6,8 +6,9 @@ import { enforceTerminationAccountPolicy, getVietnamDateKey } from "@/lib/employ
 import { isPayrollOwnerRole } from "@/lib/payroll/eligibility";
 import { getEmployeeRoleRank, toLegacyEmployeePosition } from "@/lib/common/roles";
 import { isMasterGeneralEditBlocked, isPayrollOverrideOnlyUpdate } from "@/lib/employee/profile-update-policy";
-import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLevelProgramVersions, loadEmployeeLevelProgramVersionsForDates, withEmployeeLevelInfo } from "@/lib/employee-level/server";
-import { loadMealAllowanceEligibilityAt } from "@/lib/payroll/meal-allowance-eligibility-server";
+import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLevelProgramVersions, loadEmployeeLevelProgramVersionsForDatesUnscoped, withEmployeeLevelInfo } from "@/lib/employee-level/server";
+import { loadMealAllowanceEligibilityAt, loadMealAllowanceEligibilityVersionsAt } from "@/lib/payroll/meal-allowance-eligibility-server";
+import { selectMealAllowanceEligibilityAt } from "@/lib/payroll/meal-allowance";
 import { validateEmployeeLevelConfiguration } from "@/lib/employee-level/validation";
 import {
   isEmployeeLevelEligibleRole,
@@ -252,22 +253,35 @@ export async function GET(req: Request) {
     const auth = await requireRole(["owner", "master"]);
     if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
 
-    const { data, error } = await supabaseServer.from("users").select(USER_SELECT).eq("is_system_account", false);
+    // today/nextDate don't depend on the users query, so all three reads can
+    // start together right after auth — level and meal are read broadly
+    // (date-scoped only, no candidate-userId prefilter) instead of waiting
+    // for the users query to resolve first. Extra rows belonging to system
+    // accounts or any other user are never a problem: the final mapping
+    // below only ever looks values up by ids taken from `users` (already
+    // filtered to is_system_account=false), so anything else in the broader
+    // reads is simply never read.
+    const today = getVietnamDateKey();
+    const nextDate = nextMonthStart(today);
+    const [usersResult, versionsByDate, mealVersionsByUser] = await Promise.all([
+      supabaseServer.from("users").select(USER_SELECT).eq("is_system_account", false),
+      loadEmployeeLevelProgramVersionsForDatesUnscoped([today, nextDate]),
+      loadMealAllowanceEligibilityVersionsAt(today),
+    ]);
 
-    if (error) {
-      throw new Error(`Failed to fetch users: ${error.message}`);
+    if (usersResult.error) {
+      throw new Error(`Failed to fetch users: ${usersResult.error.message}`);
     }
 
-    const users = sortUsers((data || []).map(sanitizePublicEmployeeUser));
-    const today = getVietnamDateKey();
-    const userIds = users.map((user) => Number(user.id));
-    const nextDate = nextMonthStart(today);
-    const [versionsByDate, mealAllowanceEligibility] = await Promise.all([
-      loadEmployeeLevelProgramVersionsForDates(userIds, [today, nextDate]),
-      loadMealAllowanceEligibilityAt(userIds, today),
-    ]);
+    const users = sortUsers((usersResult.data || []).map(sanitizePublicEmployeeUser));
     const versions = versionsByDate.get(today) ?? new Map();
     const nextVersions = versionsByDate.get(nextDate) ?? new Map();
+    const mealAllowanceEligibility = new Map<number, boolean>(
+      users.map((user) => {
+        const userId = Number(user.id);
+        return [userId, selectMealAllowanceEligibilityAt(mealVersionsByUser.get(userId) ?? [], today)];
+      }),
+    );
     return NextResponse.json({
       ok: true,
       users: users.map((user) => withMealAllowanceEligibility(
