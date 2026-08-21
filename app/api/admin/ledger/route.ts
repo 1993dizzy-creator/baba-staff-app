@@ -1,0 +1,67 @@
+import { supabaseServer } from "@/lib/supabase/server";
+import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
+
+export const dynamic = "force-dynamic";
+
+const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+const TYPES = new Set(["expense", "income", "transfer", "balance_adjustment"]);
+
+export async function GET(request: Request) {
+  const auth = await requireLedgerActor();
+  if (auth.response) return auth.response;
+  const month = new URL(request.url).searchParams.get("month") ?? "";
+  if (!MONTH.test(month)) return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400);
+  const monthStart = `${month}-01`;
+  const next = new Date(`${monthStart}T00:00:00Z`);
+  next.setUTCMonth(next.getUTCMonth() + 1);
+  const nextMonth = next.toISOString().slice(0, 10);
+
+  try {
+    const accountsPromise = supabaseServer.from("ledger_fund_accounts").select("id,code,type,holder_name,display_name,is_active,sort_order").order("sort_order");
+    const categoriesPromise = supabaseServer.from("ledger_categories").select("id,name,kind,cost_behavior,is_active").eq("is_active", true).order("kind").order("name");
+    const partiesPromise = supabaseServer.from("ledger_parties").select("id,name,type,is_active").eq("is_active", true).order("name");
+    const transactionsPromise = supabaseServer.from("ledger_transactions").select("id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_synced_at,memo,category:ledger_categories(name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,display_name)),corrections:ledger_transactions!correction_of_id(id,business_date,amount,economic_effect_sign,memo)").eq("status", "confirmed").order("business_date", { ascending: false }).order("id", { ascending: false }).limit(50);
+    const profitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales"]);
+    const recognitionProfitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).eq("type", "expense_recognition");
+    const movementsPromise = supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status,occurred_at)").eq("transaction.status", "confirmed").lte("transaction.occurred_at", new Date().toISOString());
+    const [accountsResult, categoriesResult, partiesResult, transactionsResult, profitResult, recognitionProfitResult, movementsResult] = await Promise.all([accountsPromise,categoriesPromise,partiesPromise,transactionsPromise,profitPromise,recognitionProfitPromise,movementsPromise]);
+    for (const result of [accountsResult,categoriesResult,partiesResult,transactionsResult,profitResult,recognitionProfitResult,movementsResult]) if (result.error) throw result.error;
+    const profitRows=[...(profitResult.data??[]),...(recognitionProfitResult.data??[])];
+    const income = profitRows.filter((row) => row.type === "income" || row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
+    const expense = profitRows.filter((row) => row.type === "expense" || row.type === "expense_recognition").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
+    const balanceByAccount = new Map<number,number>();
+    for (const row of movementsResult.data ?? []) balanceByAccount.set(Number(row.fund_account_id),(balanceByAccount.get(Number(row.fund_account_id)) ?? 0) + Number(row.amount));
+    const accounts = (accountsResult.data ?? []).map((account) => ({ ...account, balance: balanceByAccount.get(Number(account.id)) ?? 0 }));
+    return ledgerJson({ ok: true, month, summary: { income, expense, operatingProfit: income - expense }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], transactions: transactionsResult.data ?? [] });
+  } catch (error) {
+    console.error("[LEDGER_GET_FAILED]", error);
+    return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);
+  }
+}
+
+export async function POST(request: Request) {
+  const auth = await requireLedgerActor();
+  if (auth.response || !auth.actor) return auth.response;
+  const body = await request.json().catch(() => null) as Record<string,unknown> | null;
+  if (!body) return ledgerJson({ ok: false, code: "INVALID_BODY" }, 400);
+  const allowed = new Set(["type","occurredAt","recognitionMonth","amount","categoryId","partyId","fromAccountId","toAccountId","memo","reason","sourceKey"]);
+  if (Object.keys(body).some((key) => !allowed.has(key)) || !TYPES.has(String(body.type))) return ledgerJson({ ok: false, code: "INVALID_BODY" }, 400);
+  try {
+    const { data, error } = await supabaseServer.rpc("ledger_create_manual_transaction_v1", {
+      p_type: body.type, p_occurred_at: body.occurredAt, p_recognition_month: body.recognitionMonth || null,
+      p_amount: body.amount, p_category_id: body.categoryId || null, p_party_id: body.partyId || null,
+      p_from_account_id: body.fromAccountId || null, p_to_account_id: body.toAccountId || null,
+      p_memo: body.memo || null, p_reason: body.reason || null, p_actor_user_id: auth.actor.id, p_source_key: body.sourceKey || null,
+    });
+    if (error) throw error;
+    const result = data as { status?: string };
+    if (result.status !== "created") {
+      const conflict = result.status === "duplicate_source";
+      return ledgerJson({ ok: false, code: String(result.status ?? "LEDGER_CREATE_FAILED").toUpperCase() }, conflict ? 409 : result.status === "forbidden" ? 403 : 400);
+    }
+    return ledgerJson({ ok: true, result }, 201);
+  } catch (error) {
+    console.error("[LEDGER_POST_FAILED]", error);
+    return ledgerJson({ ok: false, code: "LEDGER_CREATE_FAILED" }, 500);
+  }
+}

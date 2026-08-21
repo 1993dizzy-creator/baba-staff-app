@@ -1,0 +1,3 @@
+export type OutstandingPayable={id:number;businessDate:string;outstandingAmount:number};
+export type PayableAllocation={payableId:number;allocatedAmount:number};
+export function buildOldestFirstAllocations(payables:OutstandingPayable[],amount:number){let remaining=amount;const allocations:PayableAllocation[]=[];for(const payable of [...payables].sort((a,b)=>a.businessDate.localeCompare(b.businessDate)||a.id-b.id)){if(remaining<=0)break;const allocatedAmount=Math.min(remaining,payable.outstandingAmount);if(allocatedAmount>0)allocations.push({payableId:payable.id,allocatedAmount});remaining=Math.round((remaining-allocatedAmount)*1000)/1000}return{allocations,unallocatedAmount:remaining}}

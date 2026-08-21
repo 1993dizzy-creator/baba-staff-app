@@ -1,0 +1,4 @@
+import { ledgerJson,requireLedgerActor } from "@/lib/ledger/server";
+import { loadPosDrilldown } from "@/lib/ledger/pos-sales";
+export const dynamic="force-dynamic";
+export async function GET(_request:Request,context:{params:Promise<{id:string}>}){const auth=await requireLedgerActor();if(auth.response)return auth.response;const {id}=await context.params;const transactionId=Number(id);if(!Number.isSafeInteger(transactionId)||transactionId<1)return ledgerJson({ok:false,code:"INVALID_TRANSACTION_ID"},400);try{const drilldown=await loadPosDrilldown(transactionId);return drilldown?ledgerJson({ok:true,drilldown}):ledgerJson({ok:false,code:"POS_LEDGER_TRANSACTION_NOT_FOUND"},404)}catch(error){console.error("[LEDGER_POS_DRILLDOWN_FAILED]",error);return ledgerJson({ok:false,code:"LEDGER_POS_DRILLDOWN_FAILED"},500)}}

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveAdminSalesMonth } from "@/lib/sales/admin-sales-business-time";
 import { supabaseServer } from "@/lib/supabase/server";
+import { buildPaymentSummary, filterPaidPayments, type PosPaymentRow } from "@/lib/sales/payment-summary";
 
 type ReceiptRow = {
   id: number;
@@ -41,14 +42,7 @@ type LineRow = {
   raw_json: unknown;
 };
 
-type PaymentRow = {
-  receipt_id: number | null;
-  business_date: string;
-  payment_type: number | null;
-  payment_name: string | null;
-  card_name: string | null;
-  amount: number | string | null;
-};
+type PaymentRow = PosPaymentRow;
 
 type ProductCategoryRow = {
   id: number;
@@ -84,13 +78,6 @@ type AmountSummarySnapshot = {
   paymentTotalAmount: number;
 };
 
-type PaymentSummary = {
-  cashAmount: number;
-  transferAmount: number;
-  cardAmount: number;
-  otherAmount: number;
-  paymentTotalAmount: number;
-};
 
 type MenuSalesOption = {
   key: string;
@@ -336,75 +323,6 @@ function getLineCategoryName(
   return null;
 }
 
-function normalizePaymentName(value: string | null | undefined) {
-  return (value || "").trim().toLowerCase();
-}
-
-function isCashPayment(paymentName: string, cardName: string) {
-  return paymentName === "tiền mặt" || cardName === "tiền mặt";
-}
-
-function isTransferPayment(paymentName: string, cardName: string) {
-  return paymentName === "chuyển khoản" || cardName === "chuyển khoản";
-}
-
-function isCardLikePayment(payment: PaymentRow, paymentName: string, cardName: string) {
-  if (isCashPayment(paymentName, cardName) || isTransferPayment(paymentName, cardName)) {
-    return false;
-  }
-
-  return (
-    payment.payment_type === 2 ||
-    Boolean(cardName) ||
-    paymentName.includes("visa") ||
-    paymentName.includes("master") ||
-    paymentName.includes("card") ||
-    cardName.includes("visa") ||
-    cardName.includes("master") ||
-    cardName.includes("card")
-  );
-}
-
-function isOtherPayment(paymentName: string, cardName: string) {
-  return (
-    paymentName === "khác" ||
-    paymentName === "khac" ||
-    cardName === "khác" ||
-    cardName === "khac"
-  );
-}
-
-function buildPaymentSummary(payments: PaymentRow[]): PaymentSummary {
-  return payments.reduce<PaymentSummary>(
-    (summary, payment) => {
-      const amount = toNumber(payment.amount);
-      const paymentName = normalizePaymentName(payment.payment_name);
-      const cardName = normalizePaymentName(payment.card_name);
-
-      summary.paymentTotalAmount += amount;
-
-      if (isCashPayment(paymentName, cardName)) {
-        summary.cashAmount += amount;
-      } else if (isTransferPayment(paymentName, cardName)) {
-        summary.transferAmount += amount;
-      } else if (isCardLikePayment(payment, paymentName, cardName)) {
-        summary.cardAmount += amount;
-      } else if (isOtherPayment(paymentName, cardName)) {
-        summary.otherAmount += amount;
-      }
-
-      return summary;
-    },
-    {
-      cashAmount: 0,
-      transferAmount: 0,
-      cardAmount: 0,
-      otherAmount: 0,
-      paymentTotalAmount: 0,
-    }
-  );
-}
-
 function normalizeTaxSummary(value: unknown): TaxSummarySnapshot | null {
   if (!value || typeof value !== "object") return null;
 
@@ -625,18 +543,6 @@ function buildMonthlySummary(receipts: ReceiptRow[]) {
     averageReceiptAmount:
       receiptCount > 0 ? Math.round(totalSales / receiptCount) : 0,
   };
-}
-
-function filterPaidPayments(receipts: ReceiptRow[], payments: PaymentRow[]) {
-  const paidReceiptIds = new Set(
-    receipts
-      .filter((receipt) => isPaid(receipt.payment_status))
-      .map((receipt) => receipt.id)
-  );
-
-  return payments.filter(
-    (payment) => payment.receipt_id !== null && paidReceiptIds.has(payment.receipt_id)
-  );
 }
 
 function buildMenuSales(

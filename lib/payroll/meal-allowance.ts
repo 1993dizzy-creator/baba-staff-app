@@ -73,7 +73,14 @@ export function selectMealAllowanceEligibilityAt(
   versions: readonly MealAllowanceEligibilityVersion[],
   date: string,
 ): boolean {
-  return latestVersionAt(versions, date)?.isEligible === true;
+  return selectMealAllowanceEligibilityVersionAt(versions, date)?.isEligible === true;
+}
+
+export function selectMealAllowanceEligibilityVersionAt(
+  versions: readonly MealAllowanceEligibilityVersion[],
+  date: string,
+): MealAllowanceEligibilityVersion | null {
+  return latestVersionAt(versions, date);
 }
 
 // 특정 급여월 동안 "한 번이라도" 식대 대상이었는지 판정한다(단일 시점 스냅샷이 아님).

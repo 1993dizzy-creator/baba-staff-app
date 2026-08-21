@@ -6,6 +6,7 @@ import {
   type InventoryReasonValue,
   normalizeInventoryReason,
 } from "@/lib/inventory/reasons";
+import { calculateInventoryPurchaseAmount } from "@/lib/inventory/purchase-cost";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -450,8 +451,7 @@ const buildSupplierSummary = (
       } satisfies SupplierSummaryAccumulator);
 
     const purchasePrice = toNullableNumber(log.new_purchase_price);
-    const purchaseAmount =
-      purchasePrice === null ? null : roundDecimal(changeQuantity * purchasePrice);
+    const purchaseAmount = calculateInventoryPurchaseAmount(changeQuantity,purchasePrice);
     const itemKey =
       log.item_id !== null && log.item_id !== undefined
         ? String(log.item_id)

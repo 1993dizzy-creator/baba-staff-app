@@ -1,0 +1,2 @@
+export const roundInventoryDecimal=(value:number)=>Math.round(value*1000)/1000;
+export function calculateInventoryPurchaseAmount(changeQuantity:unknown,purchasePrice:unknown){const quantity=Number(changeQuantity);if(!Number.isFinite(quantity)||quantity<=0)return null;if(purchasePrice===null||purchasePrice===undefined||purchasePrice==="")return null;const price=Number(purchasePrice);if(!Number.isFinite(price)||price<0)return null;const amount=roundInventoryDecimal(quantity*price);return amount>0?amount:null}

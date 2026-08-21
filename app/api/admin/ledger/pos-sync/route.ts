@@ -1,0 +1,8 @@
+import { ledgerJson,requireLedgerActor } from "@/lib/ledger/server";
+import { loadPosLedgerParity,loadPosLedgerSource,validLedgerMonth } from "@/lib/ledger/pos-sales";
+import { supabaseServer } from "@/lib/supabase/server";
+export const dynamic="force-dynamic";
+
+export async function GET(request:Request){const auth=await requireLedgerActor();if(auth.response)return auth.response;const month=new URL(request.url).searchParams.get("month");if(!validLedgerMonth(month))return ledgerJson({ok:false,code:"INVALID_MONTH"},400);try{return ledgerJson({ok:true,month,parity:await loadPosLedgerParity(month)})}catch(error){console.error("[LEDGER_POS_PARITY_FAILED]",error);return ledgerJson({ok:false,code:"LEDGER_POS_PARITY_FAILED"},500)}}
+
+export async function POST(request:Request){const auth=await requireLedgerActor();if(auth.response||!auth.actor)return auth.response;const body=await request.json().catch(()=>null) as Record<string,unknown>|null;if(!body||Object.keys(body).some(key=>key!=="month")||!validLedgerMonth(body.month))return ledgerJson({ok:false,code:"INVALID_MONTH"},400);try{const source=await loadPosLedgerSource(body.month);const {data,error}=await supabaseServer.rpc("ledger_sync_pos_sales_v2",{p_rows:source.rows,p_actor_user_id:auth.actor.id});if(error)throw error;const result=data as Record<string,unknown>;if(result.status!=="ok")return ledgerJson({ok:false,code:String(result.status??"POS_SYNC_FAILED").toUpperCase(),result},result.status==="forbidden"?403:400);return ledgerJson({ok:true,month:body.month,...result,totalsByBucket:source.totalsByBucket,parity:await loadPosLedgerParity(body.month)})}catch(error){console.error("[LEDGER_POS_SYNC_FAILED]",error);return ledgerJson({ok:false,code:"LEDGER_POS_SYNC_FAILED"},500)}}

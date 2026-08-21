@@ -92,6 +92,12 @@ const adminMenus = [
     emoji: "⚙️",
     access: "all-admin" as AdminMenuAccess,
   },
+  {
+    title: { ko: "가게 장부", vi: "Sổ cửa hàng" },
+    description: { ko: "수입, 비용과 자금계정 잔액을 관리합니다.", vi: "Quản lý thu, chi và số dư tài khoản." },
+    href: "/admin/ledger", badge: "LEDGER", emoji: "📒",
+    access: "admin" as AdminMenuAccess,
+  },
 ];
 
 const adminPageText = {
