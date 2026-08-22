@@ -1,0 +1,4 @@
+.balanceGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.balanceGrid article { display: grid; gap: 5px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 12px; }
+.balanceGrid span { color: #6b7280; font-size: 12px; }
+.textButton { width: fit-content; padding: 0; border: 0; background: transparent; color: #2563eb; font-size: 12px; font-weight: 750; cursor: pointer; }
