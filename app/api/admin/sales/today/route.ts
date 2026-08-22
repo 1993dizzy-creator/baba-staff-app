@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { calculateModifiedReceiptTaxSaving } from "@/lib/sales/tax-saving";
 import { resolveAdminSalesBusinessDate } from "@/lib/sales/admin-sales-business-time";
 import { supabaseServer } from "@/lib/supabase/server";
 
@@ -497,12 +498,14 @@ function buildTaxSavingAmount(
     .reduce((sum, receipt) => {
       const receiptLines = linesByReceiptId.get(receipt.id) || [];
       const originalTaxAmount = getOriginalTaxAmount(receipt);
-      if (receipt.tax_override_mode !== null) {
-        return sum + Math.max(0, originalTaxAmount - getReceiptTaxAmount(receipt));
-      }
       const adjustedTaxAmount = getAdjustedTaxAmount(receiptLines);
 
-      return sum + Math.max(0, adjustedTaxAmount - originalTaxAmount);
+      return sum + calculateModifiedReceiptTaxSaving({
+        taxOverrideMode: receipt.tax_override_mode,
+        originalTaxAmount,
+        adjustedTaxAmount,
+        appliedTaxAmount: getReceiptTaxAmount(receipt),
+      });
     }, 0);
 }
 

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { calculateModifiedReceiptTaxSaving } from "@/lib/sales/tax-saving";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   calculateReceiptFinancials,
@@ -639,9 +640,12 @@ export async function GET(
         : savedOriginalTaxSummary?.taxByRate || adjustedTaxSummary.taxByRate,
       taxSavingAmount:
         receiptRow.is_modified === true
-          ? hasExplicitTaxMode
-            ? Math.max(0, originalTaxAmount - appliedTaxAmount)
-            : Math.max(0, adjustedTaxSummary.totalTaxAmount - originalTaxAmount)
+          ? calculateModifiedReceiptTaxSaving({
+              taxOverrideMode: receiptRow.tax_override_mode,
+              originalTaxAmount,
+              adjustedTaxAmount: adjustedTaxSummary.totalTaxAmount,
+              appliedTaxAmount,
+            })
           : 0,
       amountDifferenceAmount:
         receiptRow.is_modified === true
