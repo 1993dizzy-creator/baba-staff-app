@@ -55,6 +55,8 @@ type InventoryItem = {
     note?: string | null;
     purchase_price?: string | number | null;
     supplier?: string | null;
+    supplier_partner_id?: number | null;
+    supplier_partner_name?: string | null;
     code?: string | null;
     low_stock_threshold?: string | number | null;
     low_stock_enabled?: boolean | null;
@@ -80,6 +82,8 @@ type InventoryItem = {
 };
 
 type KegProgress = NonNullable<InventoryItem["kegProgress"]>;
+type SupplierPartnerOption = { id: number; name: string };
+type SupplierAliasOption = { id: number; supplierName: string; status: "pending" | "linked" | "ignored"; businessPartnerId: number | null };
 
 type KegTimeModalState = {
     mode: "replace" | "edit-start";
@@ -363,6 +367,9 @@ export default function InventoryPage() {
     const [isCustomSupplier, setIsCustomSupplier] = useState(false);
     const [purchasePrice, setPurchasePrice] = useState("");
     const [supplier, setSupplier] = useState("");
+    const [supplierPartnerId, setSupplierPartnerId] = useState<number | null>(null);
+    const [supplierPartners, setSupplierPartners] = useState<SupplierPartnerOption[]>([]);
+    const [supplierAliases, setSupplierAliases] = useState<SupplierAliasOption[]>([]);
     const [lowStockThreshold, setLowStockThreshold] = useState("");
     const [lowStockEnabled, setLowStockEnabled] = useState(false);
     const [packageContentQuantity, setPackageContentQuantity] = useState("");
@@ -401,6 +408,7 @@ export default function InventoryPage() {
     >(null);
     const [quickSaveOtherText, setQuickSaveOtherText] = useState("");
     const [quickPurchaseSupplier, setQuickPurchaseSupplier] = useState("");
+    const [quickPurchasePartnerId, setQuickPurchasePartnerId] = useState<number | null>(null);
     const [quickPurchasePrice, setQuickPurchasePrice] = useState("");
     const [isQuickPurchaseCustomSupplier, setIsQuickPurchaseCustomSupplier] =
         useState(false);
@@ -493,23 +501,6 @@ export default function InventoryPage() {
                 })),
         ],
         [categoryOptions, customCategoryOptions, lang]
-    );
-
-    const customSupplierOptions = useMemo(
-        () =>
-            Array.from(
-                new Set(
-                    inventoryList
-                        .map((item) => (item.supplier || "").trim())
-                        .filter(Boolean)
-                )
-            ),
-        [inventoryList]
-    );
-
-    const mergedSupplierOptions = useMemo(
-        () => [...customSupplierOptions].sort((a, b) => a.localeCompare(b, "vi")),
-        [customSupplierOptions]
     );
 
     const getDisplayItemName = useCallback(
@@ -991,6 +982,8 @@ export default function InventoryPage() {
                 statusMap: Record<string, InventoryStatus>;
                 kegProgressMap: Record<string, KegProgress>;
                 activeKegTrackingItemIds: number[];
+                supplierPartners: SupplierPartnerOption[];
+                supplierAliases: SupplierAliasOption[];
             }>(requestKey, async () => {
                 const controller = new AbortController();
                 inventoryAbortControllerRef.current = controller;
@@ -1024,9 +1017,11 @@ export default function InventoryPage() {
                         InventoryStatus,
                         KegProgress
                     >(res, {
-                        onItems: (items) => {
+                        onItems: (items, suppliers) => {
                             if (stockStatusRequestIdRef.current !== requestId) return;
                             setInventoryList(items);
+                            setSupplierPartners(suppliers.supplierPartners);
+                            setSupplierAliases(suppliers.supplierAliases);
                             setKegProgressLoadingIds(
                                 Object.fromEntries(
                                     getKegProgressCandidateIds(items, false).map((id) => [id, true])
@@ -1066,6 +1061,8 @@ export default function InventoryPage() {
             if (stockStatusRequestIdRef.current !== requestId) return;
 
             const activeKegIds = new Set(bootstrap.activeKegTrackingItemIds);
+            setSupplierPartners(bootstrap.supplierPartners);
+            setSupplierAliases(bootstrap.supplierAliases);
             setInventoryList(
                 bootstrap.items.map((item) => {
                     const status = bootstrap.statusMap[String(item.id)];
@@ -1234,6 +1231,7 @@ export default function InventoryPage() {
         setCategory("");
         setPurchasePrice("");
         setSupplier("");
+        setSupplierPartnerId(null);
         setCode("");
         setLowStockThreshold("");
         setLowStockEnabled(false);
@@ -1605,14 +1603,13 @@ export default function InventoryPage() {
         setUnit(item.unit || "");
         setNote(item.note || "");
         setPurchasePrice(formatNumber(item.purchase_price));
-        setSupplier(item.supplier || "");
+        setSupplier(item.supplier_partner_name || item.supplier || "");
+        setSupplierPartnerId(item.supplier_partner_id ?? null);
 
         setIsCustomSupplier(
             !!item.supplier &&
-            !mergedSupplierOptions.some(
-                (option) =>
-                    option.trim().toLowerCase() === String(item.supplier || "").trim().toLowerCase()
-            )
+            !item.supplier_partner_id &&
+            !supplierAliases.some((alias) => alias.status === "pending" && alias.supplierName.trim().toLowerCase() === String(item.supplier).trim().toLowerCase())
         );
         setCode(item.code || "");
         setLowStockThreshold(String(item.low_stock_threshold ?? 1));
@@ -1724,6 +1721,7 @@ export default function InventoryPage() {
                     parseDecimal(targetItem.quantity ?? 0) !== nextQuantity ||
                     (targetItem.purchase_price ?? null) !== nextPurchasePrice ||
                     normalizeText(targetItem.supplier || "") !== normalizedSupplier ||
+                    (targetItem.supplier_partner_id ?? null) !== supplierPartnerId ||
                     normalizeText(targetItem.code || "") !== normalizedCode ||
                     (targetItem.package_content_quantity === null ||
                     targetItem.package_content_quantity === undefined
@@ -1756,6 +1754,7 @@ export default function InventoryPage() {
                             note: normalizedNote,
                             part,
                             supplier: normalizedSupplier,
+                            supplierPartnerId,
                             code: normalizedCode,
                             updated_at: new Date().toISOString(),
                         }
@@ -1773,6 +1772,7 @@ export default function InventoryPage() {
                             note: normalizedNote,
                             part,
                             supplier: normalizedSupplier,
+                            supplierPartnerId,
                             code: normalizedCode,
                             updated_at: new Date().toISOString(),
                         };
@@ -1799,6 +1799,7 @@ export default function InventoryPage() {
                             part,
                             purchase_price: nextPurchasePrice,
                             supplier: normalizedSupplier,
+                            supplierPartnerId,
                             code: normalizedCode,
                             low_stock_threshold: nextLowStock,
                             low_stock_enabled: nextLowStockEnabled,
@@ -1817,6 +1818,7 @@ export default function InventoryPage() {
                             part,
                             purchase_price: nextPurchasePrice,
                             supplier: normalizedSupplier,
+                            supplierPartnerId,
                             code: normalizedCode,
                             low_stock_threshold: nextLowStock,
                             low_stock_enabled: nextLowStockEnabled,
@@ -1898,6 +1900,7 @@ export default function InventoryPage() {
         setQuickSaveReason("stock_check");
         setQuickSaveOtherText("");
         setQuickPurchaseSupplier(item.supplier || "");
+        setQuickPurchasePartnerId(item.supplier_partner_id ?? null);
         setQuickPurchasePrice(formatNumber(item.purchase_price));
         setIsQuickPurchaseCustomSupplier(false);
     };
@@ -1907,6 +1910,7 @@ export default function InventoryPage() {
         setQuickSaveReason(null);
         setQuickSaveOtherText("");
         setQuickPurchaseSupplier("");
+        setQuickPurchasePartnerId(null);
         setQuickPurchasePrice("");
         setIsQuickPurchaseCustomSupplier(false);
         setIsKegReplacing(false);
@@ -2245,15 +2249,13 @@ export default function InventoryPage() {
         if (!quickSaveItem || isKegReplacing) return;
 
         setQuickSaveReason("purchase");
-        setQuickPurchaseSupplier(quickSaveItem.supplier || "");
+        setQuickPurchaseSupplier(quickSaveItem.supplier_partner_name || quickSaveItem.supplier || "");
+        setQuickPurchasePartnerId(quickSaveItem.supplier_partner_id ?? null);
         setQuickPurchasePrice(formatNumber(quickSaveItem.purchase_price));
         setIsQuickPurchaseCustomSupplier(
             !!quickSaveItem.supplier &&
-            !mergedSupplierOptions.some(
-                (option) =>
-                    option.trim().toLowerCase() ===
-                    String(quickSaveItem.supplier || "").trim().toLowerCase()
-            )
+            !quickSaveItem.supplier_partner_id &&
+            !supplierAliases.some((alias) => alias.status === "pending" && alias.supplierName.trim().toLowerCase() === String(quickSaveItem.supplier).trim().toLowerCase())
         );
     };
 
@@ -2315,6 +2317,7 @@ export default function InventoryPage() {
                 ...(reason === "purchase"
                     ? {
                         supplier: normalizedQuickSupplier,
+                        supplierPartnerId: quickPurchasePartnerId,
                         purchase_price: nextPurchasePrice,
                     }
                     : {}),
@@ -2878,6 +2881,7 @@ export default function InventoryPage() {
                     displayCategory,
                     item.category,
                     item.category_vi,
+                    item.supplier_partner_name,
                     item.supplier,
                     item.unit,
                 ];
@@ -3438,7 +3442,7 @@ export default function InventoryPage() {
                                                             minWidth: 0,
                                                         }}
                                                     >
-                                                        {item.supplier ? (
+                                                        {item.supplier_partner_name || item.supplier ? (
                                                             <>
                                                                 <span
                                                                     style={{
@@ -3451,7 +3455,7 @@ export default function InventoryPage() {
                                                                         whiteSpace: "nowrap",
                                                                     }}
                                                                 >
-                                                                    {item.supplier}
+                                                                    {item.supplier_partner_name || item.supplier}
                                                                 </span>
                                                                 <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>· {formatMoneyDisplay(item.purchase_price)}</span>
                                                             </>
@@ -4009,7 +4013,7 @@ export default function InventoryPage() {
 
                                                     <div style={ui.detailGrid}>
                                                         <div style={ui.detailLabel}>{c.supplier}</div>
-                                                        <div style={{ ...ui.detailValue, overflowWrap: "anywhere" }}>{item.supplier || "-"}</div>
+                                                        <div style={{ ...ui.detailValue, overflowWrap: "anywhere" }}>{item.supplier_partner_name || item.supplier || "-"}</div>
 
                                                         <div style={ui.detailLabel}>{c.update}</div>
                                                         <div style={ui.detailValue}>
@@ -4607,28 +4611,47 @@ export default function InventoryPage() {
                             </div>
 
                             <select
-                                value={isCustomSupplier ? "__custom__" : supplier}
+                                value={isCustomSupplier
+                                    ? "__custom__"
+                                    : supplierPartnerId
+                                      ? `partner:${supplierPartnerId}`
+                                      : supplierAliases.find((alias) => alias.status === "pending" && alias.supplierName.trim().toLowerCase() === supplier.trim().toLowerCase())
+                                        ? `alias:${supplierAliases.find((alias) => alias.status === "pending" && alias.supplierName.trim().toLowerCase() === supplier.trim().toLowerCase())?.id}`
+                                        : ""}
                                 onChange={(e) => {
                                     const value = e.target.value;
 
                                     if (value === "__custom__") {
                                         setIsCustomSupplier(true);
                                         setSupplier("");
+                                        setSupplierPartnerId(null);
                                         return;
                                     }
 
                                     setIsCustomSupplier(false);
-                                    setSupplier(value);
+                                    if (value.startsWith("partner:")) {
+                                        const partner = supplierPartners.find((row) => row.id === Number(value.slice(8)));
+                                        setSupplierPartnerId(partner?.id ?? null);
+                                        setSupplier(partner?.name ?? "");
+                                    } else if (value.startsWith("alias:")) {
+                                        const alias = supplierAliases.find((row) => row.id === Number(value.slice(6)));
+                                        setSupplierPartnerId(null);
+                                        setSupplier(alias?.supplierName ?? "");
+                                    } else {
+                                        setSupplierPartnerId(null);
+                                        setSupplier("");
+                                    }
                                 }}
                                 style={ui.input}
                             >
                                 <option value="">{c.supplier}</option>
 
-                                {mergedSupplierOptions.map((option) => (
-                                    <option key={option} value={option}>
-                                        {option}
-                                    </option>
-                                ))}
+                                <optgroup label={lang === "vi" ? "Đối tác chính thức" : "정규 거래처"}>
+                                    {supplierPartners.map((option) => <option key={option.id} value={`partner:${option.id}`}>{option.name}</option>)}
+                                </optgroup>
+                                <optgroup label={lang === "vi" ? "Cần xác nhận" : "확인 필요"}>
+                                    {supplierAliases.filter((alias) => alias.status === "pending").map((alias) => <option key={alias.id} value={`alias:${alias.id}`}>{alias.supplierName} ({lang === "vi" ? "cần xác nhận" : "확인 필요"})</option>)}
+                                </optgroup>
 
                                 <option value="__custom__">
                                     {c.directInput}
@@ -4645,7 +4668,7 @@ export default function InventoryPage() {
                                     type="text"
                                     placeholder={t.newSupplierPlaceholder}
                                     value={supplier}
-                                    onChange={(e) => setSupplier(e.target.value)}
+                                    onChange={(e) => { setSupplier(e.target.value); setSupplierPartnerId(null); }}
                                     style={ui.input}
                                     ref={supplierRef}
                                     onKeyDown={(e) => handleKeyDown(e, priceRef)}
@@ -5776,7 +5799,11 @@ export default function InventoryPage() {
                                     value={
                                         isQuickPurchaseCustomSupplier
                                             ? "__custom__"
-                                            : quickPurchaseSupplier
+                                            : quickPurchasePartnerId
+                                              ? `partner:${quickPurchasePartnerId}`
+                                              : supplierAliases.find((alias) => alias.status === "pending" && alias.supplierName.trim().toLowerCase() === quickPurchaseSupplier.trim().toLowerCase())
+                                                ? `alias:${supplierAliases.find((alias) => alias.status === "pending" && alias.supplierName.trim().toLowerCase() === quickPurchaseSupplier.trim().toLowerCase())?.id}`
+                                                : ""
                                     }
                                     onChange={(e) => {
                                         const value = e.target.value;
@@ -5784,20 +5811,33 @@ export default function InventoryPage() {
                                         if (value === "__custom__") {
                                             setIsQuickPurchaseCustomSupplier(true);
                                             setQuickPurchaseSupplier("");
+                                            setQuickPurchasePartnerId(null);
                                             return;
                                         }
 
                                         setIsQuickPurchaseCustomSupplier(false);
-                                        setQuickPurchaseSupplier(value);
+                                        if (value.startsWith("partner:")) {
+                                            const partner = supplierPartners.find((row) => row.id === Number(value.slice(8)));
+                                            setQuickPurchasePartnerId(partner?.id ?? null);
+                                            setQuickPurchaseSupplier(partner?.name ?? "");
+                                        } else if (value.startsWith("alias:")) {
+                                            const alias = supplierAliases.find((row) => row.id === Number(value.slice(6)));
+                                            setQuickPurchasePartnerId(null);
+                                            setQuickPurchaseSupplier(alias?.supplierName ?? "");
+                                        } else {
+                                            setQuickPurchasePartnerId(null);
+                                            setQuickPurchaseSupplier("");
+                                        }
                                     }}
                                     style={ui.input}
                                 >
                                     <option value="">{c.supplier}</option>
-                                    {mergedSupplierOptions.map((option) => (
-                                        <option key={option} value={option}>
-                                            {option}
-                                        </option>
-                                    ))}
+                                    <optgroup label={lang === "vi" ? "Đối tác chính thức" : "정규 거래처"}>
+                                        {supplierPartners.map((option) => <option key={option.id} value={`partner:${option.id}`}>{option.name}</option>)}
+                                    </optgroup>
+                                    <optgroup label={lang === "vi" ? "Cần xác nhận" : "확인 필요"}>
+                                        {supplierAliases.filter((alias) => alias.status === "pending").map((alias) => <option key={alias.id} value={`alias:${alias.id}`}>{alias.supplierName} ({lang === "vi" ? "cần xác nhận" : "확인 필요"})</option>)}
+                                    </optgroup>
                                     <option value="__custom__">{c.directInput}</option>
                                 </select>
 
@@ -5805,7 +5845,7 @@ export default function InventoryPage() {
                                     <input
                                         type="text"
                                         value={quickPurchaseSupplier}
-                                        onChange={(e) => setQuickPurchaseSupplier(e.target.value)}
+                                        onChange={(e) => { setQuickPurchaseSupplier(e.target.value); setQuickPurchasePartnerId(null); }}
                                         placeholder={t.newSupplierPlaceholder}
                                         style={ui.input}
                                     />

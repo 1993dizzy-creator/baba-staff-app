@@ -17,6 +17,7 @@ export const INVENTORY_ITEM_SELECT = `
   note,
   purchase_price,
   supplier,
+  supplier_partner_id,
   code,
   low_stock_threshold,
   low_stock_enabled,
@@ -95,6 +96,7 @@ export async function fetchActiveKegTrackingMappings(params: {
 export function buildInventoryItemsResponse(params: {
   items: InventoryReadItem[];
   activeMappings: KegTrackingMappingRow[];
+  supplierPartnerNames?: Map<number, string>;
   kegProgressByItemId?: Map<number, KegProgress>;
 }) {
   const activeKegTrackingIds = new Set(
@@ -105,6 +107,8 @@ export function buildInventoryItemsResponse(params: {
 
   return params.items.map((item) => ({
     ...item,
+    supplier_partner_name:
+      params.supplierPartnerNames?.get(Number(item.supplier_partner_id)) ?? null,
     has_active_keg_tracking: activeKegTrackingIds.has(Number(item.id)),
     kegProgress: params.kegProgressByItemId?.get(Number(item.id)) ?? null,
     lastStockCheckDate: null,

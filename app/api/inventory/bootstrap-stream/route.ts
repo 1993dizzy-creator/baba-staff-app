@@ -83,7 +83,10 @@ export async function GET(request: Request) {
           return;
         }
 
-        controller.enqueue(encodeEvent({ type: "items", items: initialItems }));
+        controller.enqueue(encodeEvent({ type: "items", items: initialItems,
+          supplierPartners: base.supplierPartners,
+          supplierAliases: base.supplierAliases,
+        }));
 
         void fetchInventoryBootstrapEnrichment({
           supabase: supabaseAdmin,

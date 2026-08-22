@@ -1,7 +1,12 @@
 export type InventoryBootstrapStreamTiming = Record<string, number>;
 
 export type InventoryBootstrapStreamEvent<TItem, TStatus, TKeg> =
-  | { type: "items"; items: TItem[] }
+  | {
+      type: "items";
+      items: TItem[];
+      supplierPartners?: Array<{ id: number; name: string }>;
+      supplierAliases?: Array<{ id: number; supplierName: string; status: "pending" | "linked" | "ignored"; businessPartnerId: number | null }>;
+    }
   | {
       type: "enrichment";
       statusMap: Record<string, TStatus>;
@@ -21,6 +26,8 @@ export type InventoryBootstrapStreamResult<TItem, TStatus, TKeg> = {
   statusMap: Record<string, TStatus>;
   kegProgressMap: Record<string, TKeg>;
   activeKegTrackingItemIds: number[];
+  supplierPartners: Array<{ id: number; name: string }>;
+  supplierAliases: Array<{ id: number; supplierName: string; status: "pending" | "linked" | "ignored"; businessPartnerId: number | null }>;
   timing: InventoryBootstrapStreamTiming | null;
 };
 
@@ -62,7 +69,10 @@ export function parseInventoryBootstrapStreamEvent<TItem, TStatus, TKeg>(
 export async function readInventoryBootstrapStream<TItem, TStatus, TKeg>(
   response: Response,
   handlers: {
-    onItems: (items: TItem[]) => void;
+    onItems: (items: TItem[], suppliers: {
+      supplierPartners: Array<{ id: number; name: string }>;
+      supplierAliases: Array<{ id: number; supplierName: string; status: "pending" | "linked" | "ignored"; businessPartnerId: number | null }>;
+    }) => void;
     onEnrichment: (event: {
       statusMap: Record<string, TStatus>;
       kegProgressMap: Record<string, TKeg>;
@@ -86,6 +96,8 @@ export async function readInventoryBootstrapStream<TItem, TStatus, TKeg>(
     statusMap: {},
     kegProgressMap: {},
     activeKegTrackingItemIds: [],
+    supplierPartners: [],
+    supplierAliases: [],
     timing: null,
   };
 
@@ -98,8 +110,16 @@ export async function readInventoryBootstrapStream<TItem, TStatus, TKeg>(
     if (event.type === "items") {
       if (sawItems) throw new Error("Duplicate inventory items stream event");
       sawItems = true;
-      result = { ...result, items: event.items };
-      handlers.onItems(event.items);
+      result = {
+        ...result,
+        items: event.items,
+        supplierPartners: event.supplierPartners ?? [],
+        supplierAliases: event.supplierAliases ?? [],
+      };
+      handlers.onItems(event.items, {
+        supplierPartners: event.supplierPartners ?? [],
+        supplierAliases: event.supplierAliases ?? [],
+      });
       return;
     }
     if (event.type === "enrichment") {

@@ -47,6 +47,9 @@ export type InventoryBootstrapTiming = ReturnType<
 
 export type InventoryBootstrapBase = {
   inventoryItems: InventoryReadItem[];
+  supplierPartners: Array<{ id: number; name: string }>;
+  supplierAliases: Array<{ id: number; supplierName: string; status: "pending" | "linked" | "ignored"; businessPartnerId: number | null }>;
+  supplierPartnerNames: Map<number, string>;
   activeItemIds: number[];
   kegCandidateIds: number[];
 };
@@ -92,17 +95,28 @@ export async function fetchInventoryBootstrapBase(params: {
 }) {
   const itemsStartedAt = performance.now();
   let inventoryItems: InventoryReadItem[];
+  let partnerRows: Array<{ id: number | string; name: string }>;
+  let aliasRows: Array<{ id: number | string; supplier_name: string; status: "pending" | "linked" | "ignored"; business_partner_id: number | string | null }>;
   try {
-    inventoryItems = await fetchInventoryItems({
-      supabase: params.supabase,
-      includeInactive: params.includeInactive,
-    });
+    const [items, partners, aliases] = await Promise.all([
+      fetchInventoryItems({ supabase: params.supabase, includeInactive: params.includeInactive }),
+      params.supabase.from("business_partners").select("id,name").eq("is_active", true).order("name"),
+      params.supabase.from("business_partner_supplier_aliases").select("id,supplier_name,status,business_partner_id").in("status", ["pending", "linked", "ignored"]).order("supplier_name"),
+    ]);
+    if (partners.error) throw partners.error;
+    if (aliases.error) throw aliases.error;
+    inventoryItems = items;
+    partnerRows = (partners.data ?? []) as typeof partnerRows;
+    aliasRows = (aliases.data ?? []) as typeof aliasRows;
   } finally {
     params.timing.record("items", performance.now() - itemsStartedAt);
   }
 
   return {
     inventoryItems,
+    supplierPartners: partnerRows.map(row => ({ id: Number(row.id), name: row.name })),
+    supplierAliases: aliasRows.map(row => ({ id: Number(row.id), supplierName: row.supplier_name, status: row.status, businessPartnerId: row.business_partner_id === null ? null : Number(row.business_partner_id) })),
+    supplierPartnerNames: new Map(partnerRows.map(row => [Number(row.id), row.name])),
     activeItemIds: inventoryItems
       .filter((item) => item.is_active !== false)
       .map((item) => Number(item.id))
@@ -168,7 +182,10 @@ export const buildInventoryBootstrapResponse = (params: {
   items: buildInventoryItemsResponse({
     items: params.base.inventoryItems,
     activeMappings: params.enrichment.activeMappings,
+    supplierPartnerNames: params.base.supplierPartnerNames,
   }),
+  supplierPartners: params.base.supplierPartners,
+  supplierAliases: params.base.supplierAliases,
   statusMap: inventoryStatusMapToRecord(params.enrichment.statusByItemId),
   kegProgressMap: Object.fromEntries(
     Array.from(params.enrichment.kegProgressByItemId.entries()).map(
@@ -183,6 +200,7 @@ export const buildInventoryBootstrapInitialItems = (
   buildInventoryItemsResponse({
     items: base.inventoryItems,
     activeMappings: [],
+    supplierPartnerNames: base.supplierPartnerNames,
   });
 
 export const buildInventoryBootstrapEnrichmentEvent = (

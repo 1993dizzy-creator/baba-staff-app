@@ -74,6 +74,12 @@ const adminMenus = [
     access: "admin" as AdminMenuAccess,
   },
   {
+    title: { ko: "거래처 관리", vi: "Quản lý đối tác" },
+    description: { ko: "거래처, 결제조건과 공급정보를 관리합니다.", vi: "Quản lý đối tác, điều khoản thanh toán và thông tin cung ứng." },
+    href: "/admin/partners", badge: "PARTNER", emoji: "🤝",
+    access: "admin" as AdminMenuAccess,
+  },
+  {
     title: {
       ko: "POS 설정",
       vi: "Cài đặt POS",

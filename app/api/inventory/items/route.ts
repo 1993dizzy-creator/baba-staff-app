@@ -22,6 +22,7 @@ import {
 } from "@/lib/inventory/normalize";
 import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
+import { applyResolvedInventorySupplier, resolveInventorySupplier } from "@/lib/inventory/supplier-partners-server";
 import {
   type InventoryReasonValue,
   type InventorySourceValue,
@@ -356,10 +357,12 @@ export async function GET(req: Request) {
       canIncludeInactive = true;
     }
 
-    const items = await fetchInventoryItems({
-      supabase: supabaseAdmin,
-      includeInactive: canIncludeInactive,
-    });
+    const [items, partnerResult] = await Promise.all([
+      fetchInventoryItems({ supabase: supabaseAdmin, includeInactive: canIncludeInactive }),
+      supabaseAdmin.from("business_partners").select("id,name").eq("is_active", true),
+    ]);
+    if (partnerResult.error) throw partnerResult.error;
+    const supplierPartnerNames = new Map((partnerResult.data ?? []).map(row => [Number(row.id), row.name]));
     const kegCandidateIds = getInventoryKegCandidateIds(items);
     const activeMappings = await fetchActiveKegTrackingMappings({
       supabase: supabaseAdmin,
@@ -380,6 +383,7 @@ export async function GET(req: Request) {
         items,
         activeMappings,
         kegProgressByItemId,
+        supplierPartnerNames,
       }),
     });
   } catch (error) {
@@ -423,7 +427,15 @@ export async function POST(req: Request) {
     });
     if (partValidationError) return partValidationError;
 
-    const serverPayload = withServerActorMetadata(payload, actor);
+    const supplierResolution = await resolveInventorySupplier({
+      supabase: supabaseAdmin,
+      payload,
+      actorUserId: actor.id,
+    });
+    const serverPayload = applyResolvedInventorySupplier(
+      withServerActorMetadata(payload, actor),
+      supplierResolution
+    );
 
     const duplicateItem = await findDuplicateInventoryItem(
       serverPayload.item_name_vi,
@@ -566,7 +578,15 @@ export async function PATCH(req: Request) {
     });
     if (partValidationError) return partValidationError;
 
-    const serverPayload = withServerActorMetadata(payload, actor);
+    const supplierResolution = await resolveInventorySupplier({
+      supabase: supabaseAdmin,
+      payload,
+      actorUserId: actor.id,
+    });
+    const serverPayload = applyResolvedInventorySupplier(
+      withServerActorMetadata(payload, actor),
+      supplierResolution
+    );
 
     if (mode === "active-status") {
       if (!canToggleInventoryItemActiveStatus(actor.role)) {
@@ -637,6 +657,7 @@ export async function PATCH(req: Request) {
     unit,
     code,
     supplier,
+    supplier_partner_id,
     low_stock_threshold,
     low_stock_enabled,
     package_content_quantity,
@@ -743,6 +764,7 @@ export async function PATCH(req: Request) {
     unit,
     code,
     supplier,
+    supplier_partner_id,
     low_stock_threshold,
     low_stock_enabled,
     package_content_quantity,
