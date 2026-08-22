@@ -1,16 +1,38 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Container from "@/components/Container";
-import PartnerForm, { type PartnerFormValue } from "@/components/PartnerForm";
+import CandidatePartnerReviewForm from "@/components/CandidatePartnerReviewForm";
+import { BarField, BarSection, BarSegmentedControl, keepingFormCardStyle, keepingInputStyle, primaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
+import type { PartnerFormValue } from "@/components/PartnerForm";
+import type { InventoryCategoryGroup } from "@/lib/inventory/category-groups";
 import { useLanguage } from "@/lib/language-context";
 import styles from "../../partners.module.css";
 
-type Alias = { id: number; supplierName: string; status: "pending" | "linked" | "ignored"; businessPartnerId: number | null; inventoryCount: number; activeInventoryCount: number };
+type Alias = { id: number; supplierName: string; status: "pending" | "linked" | "ignored"; businessPartnerId: number | null; inventoryCount: number; activeInventoryCount: number; dominantInventoryGroup: InventoryCategoryGroup | null };
 type Partner = { id: number; name: string; isActive: boolean };
+type InventoryItem = { id: number; supplier: string | null; itemName: string | null; itemNameVi: string | null; part: string | null; category: string | null; categoryVi: string | null; isActive: boolean };
 type Action = "create_partner" | "link_existing" | "ignore";
+
+function CandidateIdentity({ alias, inventoryItems, lang, statusLabel }: { alias: Alias; inventoryItems: InventoryItem[]; lang: "ko" | "vi"; statusLabel: string }) {
+  return <>
+    <div className={styles.candidateIdentity}>
+      <div className={styles.candidateIdentityName}>
+        {alias.dominantInventoryGroup ? <span className={styles.groupBadge}>{alias.dominantInventoryGroup[lang]}</span> : null}
+        <strong>{alias.supplierName}</strong>
+      </div>
+      <span className={styles.badge}>{statusLabel}</span>
+    </div>
+    <div className={styles.candidateItems} role="list">
+      {inventoryItems.length > 0 ? inventoryItems.map(item => {
+        const category = lang === "vi" ? item.categoryVi || item.category : item.category || item.categoryVi;
+        const name = lang === "vi" ? item.itemNameVi || item.itemName : item.itemName || item.itemNameVi;
+        return <div className={styles.candidateItem} key={item.id} role="listitem"><span className={styles.candidateItemCategory}>{category || "-"}</span><span className={styles.candidateItemName}>{name || "-"}</span></div>;
+      }) : <p className={styles.candidateItemsEmpty}>{lang === "vi" ? "Không có mặt hàng liên kết" : "연결된 품목이 없습니다."}</p>}
+    </div>
+  </>;
+}
 
 export default function SupplierCandidatePage() {
   const { id } = useParams<{ id: string }>();
@@ -18,6 +40,7 @@ export default function SupplierCandidatePage() {
   const { lang } = useLanguage();
   const [alias, setAlias] = useState<Alias | null>(null);
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [action, setAction] = useState<Action>("create_partner");
   const [existingPartnerId, setExistingPartnerId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,18 +49,16 @@ export default function SupplierCandidatePage() {
     const response = await fetch(`/api/admin/partners/aliases/${id}`, { cache: "no-store" });
     const body = await response.json();
     if (!response.ok) throw new Error(body.code);
-    setAlias(body.alias); setPartners(body.partners);
+    setAlias(body.alias); setPartners(body.partners); setInventoryItems(body.inventoryItems ?? []);
   }, [id]);
   useEffect(() => { void load().catch(error => setError(String(error))); }, [load]);
 
   const labels = lang === "vi" ? {
-    back: "Đăng ký", pending: "Chờ duyệt", raw: "Tên đang dùng", linked: "Hàng tồn kho liên kết",
-    create: "Đăng ký đối tác mới", existing: "Liên kết đối tác hiện có", ignore: "Không đăng ký",
-    choose: "Chọn đối tác", save: "Lưu xử lý", reopen: "Đưa về chờ duyệt",
+    pending: "Chờ duyệt", linked: "Đã liên kết", create: "Tạo đối tác mới", existing: "Liên kết đối tác hiện có", ignore: "Không đăng ký",
+    choose: "Chọn đối tác", save: "Lưu xử lý", reopen: "Đưa về chờ duyệt", review: "Xét duyệt đăng ký", info: "Thông tin đăng ký", reviewAgain: "Xét duyệt lại",
   } : {
-    back: "등록", pending: "등록 대기", raw: "현재 사용 이름", linked: "연결 재고",
-    create: "새 정규 거래처로 등록", existing: "기존 정규 거래처에 연결", ignore: "등록하지 않음",
-    choose: "거래처 선택", save: "처리 저장", reopen: "등록 대기로 되돌리기",
+    pending: "등록 대기", linked: "연결 완료", create: "새 정규 거래처로 등록", existing: "기존 정규 거래처에 연결", ignore: "등록하지 않음",
+    choose: "거래처 선택", save: "처리 저장", reopen: "등록 대기로 되돌리기", review: "등록 검토", info: "등록 정보", reviewAgain: "다시 검토",
   };
 
   async function review(payload: Record<string, unknown>) {
@@ -51,21 +72,22 @@ export default function SupplierCandidatePage() {
     } finally { setBusy(false); }
   }
   async function createPartner(partner: PartnerFormValue) { return review({ action: "create_partner", partner }); }
+  if (!alias) return <Container>{error ? <p className={styles.error}>{error}</p> : null}</Container>;
 
-  if (!alias) return <Container><main className={styles.page}>{error ? <p className={styles.error}>{error}</p> : null}</main></Container>;
-  if (alias.status === "linked" && alias.businessPartnerId) return <Container><main className={styles.page}><Link className={styles.backLink} href="/admin/partners">← {labels.back}</Link><header className={styles.detailTop}><h1>{alias.supplierName}</h1><span className={styles.badge}>{lang === "vi" ? "Đã liên kết" : "연결 완료"}</span></header></main></Container>;
-  if (alias.status === "ignored") return <Container><main className={styles.page}><Link className={styles.backLink} href="/admin/partners">← {labels.back}</Link><header className={styles.detailTop}><h1>{alias.supplierName}</h1><span className={styles.badge}>{labels.ignore}</span></header><button className={styles.primary} disabled={busy} onClick={() => void review({ action: "reopen" })}>{labels.reopen}</button></main></Container>;
+  const page = (content: ReactNode) => <Container noPaddingTop><div className={styles.candidatePage}>{content}</div></Container>;
+  const identity = (statusLabel: string) => <CandidateIdentity alias={alias} inventoryItems={inventoryItems} lang={lang} statusLabel={statusLabel} />;
+  if (alias.status === "linked" && alias.businessPartnerId) return page(<div style={keepingFormCardStyle}><BarSection title={labels.info} icon="📎" first>{identity(labels.linked)}</BarSection></div>);
+  if (alias.status === "ignored") return page(<div style={keepingFormCardStyle}><BarSection title={labels.info} icon="📎" first>{identity(labels.ignore)}</BarSection><BarSection title={labels.reviewAgain}><button disabled={busy} onClick={() => void review({ action: "reopen" })} style={{ ...primaryButtonStyle, width: "100%", opacity: busy ? .6 : 1 }}>{labels.reopen}</button></BarSection></div>);
 
   const initial: PartnerFormValue = { name: alias.supplierName, partnerType: "other", paymentMode: "immediate", defaultPaymentTermDays: null, contactName: null, phone: null, memo: null, isActive: true, ledgerPartyId: null };
-  return <Container><main className={`${styles.page} ${styles.candidatePage}`}>
-    <Link className={styles.backLink} href="/admin/partners">← {labels.back}</Link>
-    <header className={styles.detailTop}><h1>{alias.supplierName}</h1><span className={styles.badge}>{labels.pending}</span></header>
-    <p className={styles.candidateSummary}>{lang === "vi" ? `Kho ${alias.inventoryCount} · đang dùng ${alias.activeInventoryCount}` : `재고 ${alias.inventoryCount} · 사용 ${alias.activeInventoryCount}`}</p>
-    <section className={styles.candidateReviewCard}><section className={styles.reviewSection}><h2>{lang === "vi" ? "Cách xét duyệt" : "검토 방식"}</h2><div className={styles.reviewChoices}>{(["create_partner", "link_existing", "ignore"] as Action[]).map(value => <label key={value}><input type="radio" name="reviewAction" checked={action === value} onChange={() => setAction(value)} />{value === "create_partner" ? labels.create : value === "link_existing" ? labels.existing : labels.ignore}</label>)}</div></section>
-      {action === "create_partner" ? <PartnerForm lang={lang} initial={initial} ledgerParties={[]} submitLabel={labels.save} showLedgerParty={false} showActive={false} layout="page" onSubmit={createPartner} /> : null}
-      {action === "link_existing" ? <div className={styles.inlineAction}><select value={existingPartnerId} onChange={event => setExistingPartnerId(event.target.value)}><option value="">{labels.choose}</option>{partners.filter(row => row.isActive).map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select><button className={styles.primary} disabled={busy || !existingPartnerId} onClick={() => void review({ action: "link_existing", existingPartnerId: Number(existingPartnerId) })}>{labels.save}</button></div> : null}
-      {action === "ignore" ? <button className={styles.primary} disabled={busy} onClick={() => void review({ action: "ignore" })}>{labels.ignore}</button> : null}
-      {error ? <p className={styles.error} role="alert">{error}</p> : null}
-    </section>
-  </main></Container>;
+  return page(<div style={keepingFormCardStyle}>
+    <BarSection title={labels.review} icon="📋" first>
+      {identity(labels.pending)}
+      <BarSegmentedControl<Action> label={lang === "vi" ? "Cách xét duyệt" : "검토 방식"} value={action} disabled={busy} onChange={setAction} options={lang === "vi" ? [{ value: "create_partner", label: "Tạo mới" }, { value: "link_existing", label: "Liên kết" }, { value: "ignore", label: "Bỏ qua" }] : [{ value: "create_partner", label: "새 거래처" }, { value: "link_existing", label: "기존 거래처" }, { value: "ignore", label: "등록 안 함" }]} />
+    </BarSection>
+    {action === "create_partner" ? <CandidatePartnerReviewForm lang={lang} initial={initial} submitLabel={labels.save} onSubmit={createPartner} /> : null}
+    {action === "link_existing" ? <BarSection title={labels.existing} icon="🔗"><BarField label={labels.choose}>{({ id }) => <select id={id} value={existingPartnerId} onChange={event => setExistingPartnerId(event.target.value)} style={keepingInputStyle}><option value="">{labels.choose}</option>{partners.filter(row => row.isActive).map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select>}</BarField><button disabled={busy || !existingPartnerId} onClick={() => void review({ action: "link_existing", existingPartnerId: Number(existingPartnerId) })} style={{ ...primaryButtonStyle, width: "100%", opacity: busy || !existingPartnerId ? .6 : 1 }}>{labels.save}</button></BarSection> : null}
+    {action === "ignore" ? <BarSection title={labels.ignore} icon="🚫"><button disabled={busy} onClick={() => void review({ action: "ignore" })} style={{ ...primaryButtonStyle, width: "100%", opacity: busy ? .6 : 1 }}>{labels.ignore}</button></BarSection> : null}
+    {error ? <p className={styles.error} role="alert">{error}</p> : null}
+  </div>);
 }

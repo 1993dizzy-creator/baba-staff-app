@@ -12,6 +12,7 @@ const bootstrapRoute = read("app/api/inventory/bootstrap-stream/route.ts");
 const resolver = read("lib/inventory/supplier-partners-server.ts");
 const inventoryUi = read("app/(protected)/inventory/page.tsx");
 const adminApi = read("app/api/admin/partners/aliases/[id]/route.ts");
+const partnerServer = read("lib/partners/server.ts");
 const adminPage = read("app/(protected)/admin/partners/page.tsx");
 const infoPage = read("app/(protected)/admin/partners/info/page.tsx");
 const partnerTabs = read("lib/navigation/partner-tabs.ts");
@@ -19,6 +20,8 @@ const partnerSubNav = read("components/PartnerSubNav.tsx");
 const partnerLayout = read("app/(protected)/admin/partners/layout.tsx");
 const partnerStyles = read("app/(protected)/admin/partners/partners.module.css");
 const candidatePage = read("app/(protected)/admin/partners/candidates/[id]/page.tsx");
+const candidateForm = read("components/CandidatePartnerReviewForm.tsx");
+const keepingUi = read("components/bar/keeping/KeepingUi.tsx");
 const partnerDetail = read("app/(protected)/admin/partners/[id]/page.tsx");
 const partnerForm = read("components/PartnerForm.tsx");
 const nextConfig = read("next.config.ts");
@@ -143,9 +146,9 @@ test("partner detail renders real linked inventory instead of placeholders", () 
 
 test("new partner forms hide Ledger linking while partner detail keeps it", () => {
   assert.match(adminPage, /showLedgerParty={false}/);
-  assert.match(candidatePage, /showLedgerParty={false}/);
   assert.match(adminPage, /showActive={false}/);
-  assert.match(candidatePage, /showActive={false}/);
+  assert.doesNotMatch(candidateForm, /ledgerPartyId[^:]/);
+  assert.match(candidatePage, /isActive: true, ledgerPartyId: null/);
   assert.doesNotMatch(partnerDetail, /showLedgerParty={false}/);
   assert.match(partnerForm, /showLedgerParty = true/);
   assert.match(partnerForm, /showActive = true/);
@@ -206,16 +209,54 @@ test("partner form keeps the BAR section and control language without a nested o
 });
 
 test("candidate review uses a BAR-style page card and native document scrolling", () => {
-  assert.match(candidatePage, /className={styles\.candidateReviewCard}/);
-  assert.match(candidatePage, /className={styles\.reviewSection}/);
-  assert.match(candidatePage, /layout="page"/);
-  assert.match(candidatePage, /검토 방식/);
-  assert.match(partnerStyles, /\.candidateReviewCard\{padding:15px 15px 16px;border:1px solid #dcdfe4;border-radius:18px;background:#fff;box-shadow:0 6px 20px rgba\(0,0,0,\.04\)\}/);
-  assert.doesNotMatch(partnerStyles, /\.pagePartnerForm[^}]*overflow:hidden/);
-  assert.doesNotMatch(partnerStyles, /\.pagePartnerForm[^}]*overflow-y:auto/);
+  assert.match(candidatePage, /style={keepingFormCardStyle}/);
+  assert.match(candidatePage, /<BarSection title={labels\.review}/);
+  assert.match(candidatePage, /<BarSegmentedControl<Action>/);
+  assert.match(candidatePage, /<CandidatePartnerReviewForm/);
+  for (const shared of ["BarSection", "BarField", "BarSegmentedControl", "keepingInputStyle", "primaryButtonStyle"]) assert.match(candidateForm + candidatePage, new RegExp(shared));
+  assert.match(keepingUi, /keepingFormCardStyle: React\.CSSProperties = \{ padding:"15px 15px 16px",border:"1px solid #dcdfe4",borderRadius:18,background:"#fff",boxShadow:"0 6px 20px rgba\(0,0,0,\.04\)" \}/);
+  assert.doesNotMatch(candidatePage + candidateForm, /position:\s*"fixed"|overflowY|document\.body\.style\.overflow|onTouchMove/);
+  assert.doesNotMatch(candidateForm, /styles\.formGrid|styles\.basicGrid/);
+  assert.match(keepingUi, /width:"100%",minWidth:0,minHeight:40/);
+});
+
+test("candidate detail includes matched inventory items without changing review writes", () => {
+  assert.match(adminApi, /loadSupplierAliasInventory\(alias\.supplierName\)/);
+  assert.match(adminApi, /partnerJson\(\{ ok: true, alias, partners: partnerData\.partners, inventoryItems \}\)/);
+  assert.match(partnerServer, /select\("id,supplier,item_name,item_name_vi,part,category,category_vi,is_active"\)/);
+  assert.match(partnerServer, /filter\(row => normalizeSupplierName\(row\.supplier\) === normalizedName\)/);
+  assert.match(partnerServer, /String\(value \?\? ""\)\.trim\(\)\.toLowerCase\(\)/);
+  assert.match(adminApi, /business_partner_review_supplier_alias_v1/);
+  assert.doesNotMatch(adminApi, /inventoryItems[\s\S]*PATCH[\s\S]*inventoryItems/);
+});
+
+test("candidate identity reuses the dominant group and renders a bounded item list", () => {
+  assert.match(candidatePage, /alias\.dominantInventoryGroup\[lang\]/);
+  assert.match(candidatePage, /className={styles\.groupBadge}/);
+  assert.match(candidatePage, /className={styles\.candidateItems}/);
+  assert.match(candidatePage, /item\.categoryVi \|\| item\.category/);
+  assert.match(candidatePage, /item\.itemNameVi \|\| item\.itemName/);
+  assert.match(partnerStyles, /\.candidateItems\{max-height:158px;overflow-y:auto/);
+  assert.match(partnerStyles, /\.candidateItemName\{color:#111827\}/);
+  assert.doesNotMatch(candidatePage, /<Link|styles\.backLink|재고 \$\{|사용 \$\{|품목 \$\{/);
+});
+
+test("BAR section isolates emoji fallback while inheriting the app font for text", () => {
+  assert.match(keepingUi, /h2 style=\{\{margin:0,fontFamily:"Arial, Helvetica, sans-serif",fontSize:15,fontWeight:700,lineHeight:1\.35,letterSpacing:"normal",fontStyle:"normal"/);
+  assert.match(keepingUi, /aria-hidden="true" style=\{\{fontFamily:'"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif',fontSize:14,fontWeight:400,lineHeight:1\}\}/);
+  assert.match(keepingUi, /<span style=\{\{fontFamily:"Arial, Helvetica, sans-serif",fontSize:15,fontWeight:700,lineHeight:1\.35,letterSpacing:"normal",fontStyle:"normal"\}\}>\{title\}<\/span>/);
+});
+
+test("candidate partner fields stay in compact two-column grids at mobile widths", () => {
+  assert.match(candidateForm, /candidateBasicGrid[\s\S]*minmax\(0, 1\.65fr\) minmax\(110px, 1fr\)/);
+  assert.match(candidateForm, /candidateTwoColumnGrid[\s\S]*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(candidateForm, /<div style=\{candidateBasicGrid\}>[\s\S]*<BarField label=\{t\.name\}[\s\S]*<BarField label=\{t\.type\}/);
+  assert.match(candidateForm, /<div style=\{candidateTwoColumnGrid\}>[\s\S]*<BarField label=\{t\.contact\}[\s\S]*<BarField label=\{t\.phone\}/);
+  assert.doesNotMatch(candidateForm, /@media|gridTemplateColumns:\s*"1fr"/);
 });
 
 test("new partner memo keeps only the section heading as its visible label", () => {
   assert.match(partnerForm, /showActive \? t\.memo : <span className={styles\.srOnly}>{t\.memo}<\/span>/);
   assert.match(partnerForm, /<textarea rows=\{2\}/);
+  assert.match(candidateForm, /<BarSection title={labels\.memo} icon="📝">[\s\S]*<textarea aria-label={labels\.memo}/);
 });

@@ -1,5 +1,5 @@
 import { parsePartnerInput } from "@/lib/partners/policy";
-import { loadPartnerData, loadSupplierAliases, partnerJson, requirePartnerManager } from "@/lib/partners/server";
+import { loadPartnerData, loadSupplierAliasInventory, loadSupplierAliases, partnerJson, requirePartnerManager } from "@/lib/partners/server";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const parseId = (value: string) => {
@@ -16,7 +16,8 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     const [aliases, partnerData] = await Promise.all([loadSupplierAliases(), loadPartnerData()]);
     const alias = aliases.find(row => row.id === id);
     if (!alias) return partnerJson({ ok: false, code: "ALIAS_NOT_FOUND" }, 404);
-    return partnerJson({ ok: true, alias, partners: partnerData.partners });
+    const inventoryItems = await loadSupplierAliasInventory(alias.supplierName);
+    return partnerJson({ ok: true, alias, partners: partnerData.partners, inventoryItems });
   } catch (error) {
     console.error("[SUPPLIER_ALIAS_LOAD_FAILED]", error);
     return partnerJson({ ok: false, code: "ALIAS_LOAD_FAILED" }, 500);

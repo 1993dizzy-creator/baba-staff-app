@@ -6,6 +6,8 @@ import { getDominantInventoryCategoryGroup } from "@/lib/inventory/category-grou
 import { PARTNER_MANAGER_ROLES } from "@/lib/partners/policy";
 import { supabaseServer } from "@/lib/supabase/server";
 
+const normalizeSupplierName = (value: unknown) => String(value ?? "").trim().toLowerCase();
+
 export function partnerJson(body: Record<string, unknown>, status = 200) {
   return NextResponse.json(body, { status });
 }
@@ -83,7 +85,7 @@ export async function loadSupplierAliases() {
   if (aliasResult.error || inventoryResult.error) throw aliasResult.error ?? inventoryResult.error;
   const counts = new Map<string, { total: number; active: number; activeItems: Array<{ part: string | null; category: string | null; categoryVi: string | null }> }>();
   for (const row of inventoryResult.data ?? []) {
-    const key = String(row.supplier ?? "").trim().toLowerCase();
+    const key = normalizeSupplierName(row.supplier);
     if (!key) continue;
     const current = counts.get(key) ?? { total: 0, active: 0, activeItems: [] };
     current.total += 1;
@@ -94,7 +96,7 @@ export async function loadSupplierAliases() {
     counts.set(key, current);
   }
   return (aliasResult.data ?? []).map(row => {
-    const usage = counts.get(String(row.supplier_name).trim().toLowerCase()) ?? { total: 0, active: 0, activeItems: [] };
+    const usage = counts.get(normalizeSupplierName(row.supplier_name)) ?? { total: 0, active: 0, activeItems: [] };
     return {
       id: Number(row.id), supplierName: row.supplier_name, status: row.status,
       businessPartnerId: row.business_partner_id === null ? null : Number(row.business_partner_id),
@@ -103,6 +105,28 @@ export async function loadSupplierAliases() {
       dominantInventoryGroup: getDominantInventoryCategoryGroup(usage.activeItems),
     };
   });
+}
+
+export async function loadSupplierAliasInventory(supplierName: string) {
+  const { data, error } = await supabaseServer.from("inventory")
+    .select("id,supplier,item_name,item_name_vi,part,category,category_vi,is_active")
+    .not("supplier", "is", null)
+    .order("is_active", { ascending: false })
+    .order("item_name_vi");
+  if (error) throw error;
+  const normalizedName = normalizeSupplierName(supplierName);
+  return (data ?? [])
+    .filter(row => normalizeSupplierName(row.supplier) === normalizedName)
+    .map(row => ({
+      id: Number(row.id),
+      supplier: row.supplier,
+      itemName: row.item_name,
+      itemNameVi: row.item_name_vi,
+      part: row.part,
+      category: row.category,
+      categoryVi: row.category_vi,
+      isActive: row.is_active,
+    }));
 }
 
 export async function loadLinkedPartnerInventory(partnerId: number) {
