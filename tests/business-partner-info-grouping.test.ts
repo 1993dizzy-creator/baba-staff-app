@@ -46,7 +46,7 @@ test("info page reuses localized partner type labels and removes row category ba
   assert.match(infoPage, /groupPartnersByType\(partners, filter === "active", lang\)/);
   assert.match(infoPage, /partnerTypeLabels\[group\.type\]\[lang\]/);
   assert.doesNotMatch(infoPage, /dominantInventoryGroup|styles\.groupBadge/);
-  assert.match(infoPage, /formatPartnerPaymentPolicy\(partner, lang\)/);
+  assert.match(infoPage, /formatPartnerPaymentSummary\(partner, lang\)/);
   assert.match(infoPage, /formatInventoryItemCount\(partner\.inventoryCount, partner\.activeInventoryCount, lang\)/);
   assert.match(text, /food: \{ ko: "식자재", vi: "Thực phẩm" \}/);
 });

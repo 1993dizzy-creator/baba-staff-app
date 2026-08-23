@@ -3,7 +3,7 @@
 import { BarSegmentedControl, keepingInputStyle } from "@/components/bar/keeping/KeepingUi";
 import type { FundAccount, PartnerFormValue } from "@/components/PartnerForm";
 import type { PaymentMode } from "@/lib/partners/policy";
-import { partnerText } from "@/lib/partners/text";
+import { formatPartnerFundAccount, partnerText } from "@/lib/partners/text";
 
 type Props = {
   lang: "ko" | "vi";
@@ -28,13 +28,13 @@ export default function PartnerSettlementFields({ lang, value, fundAccounts, dis
   });
 
   return <div style={{ display: "grid", gap: 10 }}>
-    <PolicySegmentedField label={t.paymentMode} value={value.paymentMode} disabled={disabled} onChange={setPaymentMode} options={[{ value: "immediate", label: t.immediate }, { value: "postpaid", label: t.postpaid }]} />
     <div style={{ display: "grid", gap: 5 }}>
       <span style={{ color: "#4b5563", fontSize: 12, fontWeight: 700, lineHeight: 1.35 }}>{t.defaultFundAccount}</span>
       <select disabled={disabled} value={value.defaultFundAccountId ?? ""} onChange={event => onChange({ ...value, defaultFundAccountId: event.target.value ? Number(event.target.value) : null })} style={keepingInputStyle}>
         <option value="">{t.noFundAccount}</option>
-        {fundAccounts.map(account => <option key={account.id} value={account.id}>{account.displayName}</option>)}
+        {fundAccounts.map(account => <option key={account.id} value={account.id}>{formatPartnerFundAccount(account.code, lang, "full")}</option>)}
       </select>
     </div>
+    <PolicySegmentedField label={t.paymentMode} value={value.paymentMode} disabled={disabled} onChange={setPaymentMode} options={[{ value: "immediate", label: t.immediate }, { value: "postpaid", label: t.postpaid }]} />
   </div>;
 }

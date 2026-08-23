@@ -8,10 +8,10 @@ import type { PartnerFormValue } from "@/components/PartnerForm";
 import { formatInventoryItemCount } from "@/lib/inventory/category-groups";
 import { useLanguage } from "@/lib/language-context";
 import { groupPartnersByType, type PartnerType } from "@/lib/partners/policy";
-import { formatPartnerPaymentPolicy, partnerText, partnerTypeLabels } from "@/lib/partners/text";
+import { formatPartnerPaymentSummary, partnerText, partnerTypeLabels } from "@/lib/partners/text";
 import styles from "../partners.module.css";
 
-type Partner = PartnerFormValue & { id: number; inventoryCount: number; activeInventoryCount: number };
+type Partner = PartnerFormValue & { id: number; inventoryCount: number; activeInventoryCount: number; defaultFundAccountCode: string | null; displayTag: string | null };
 type Filter = "active" | "inactive";
 
 const partnerTypeIcons: Record<PartnerType, string> = {
@@ -39,7 +39,7 @@ export default function PartnerInfoPage() {
   const counts = { active: partners.filter(row => row.isActive).length, inactive: partners.filter(row => !row.isActive).length };
   const groups = useMemo(() => groupPartnersByType(partners, filter === "active", lang), [filter, lang, partners]);
 
-  return <Container><main className={styles.compactPage}>
+  return <Container noPaddingTop><main className={styles.compactPage}>
     <div className={styles.compactFilters} role="tablist" aria-label={t.status}>{(["active", "inactive"] as Filter[]).map(key => <button role="tab" aria-selected={filter === key} className={filter === key ? styles.filterActive : ""} key={key} type="button" onClick={() => setFilter(key)}>{labels[key]} {counts[key]}</button>)}</div>
     {error ? <p className={styles.error} role="alert">{error}</p> : null}
     {groups.length === 0 ? <section className={styles.compactList}><p className={styles.compactEmpty}>{labels.empty}</p></section> : <div className={styles.partnerGroups}>{groups.map(group => <section className={styles.partnerGroup} key={group.type}>
@@ -49,8 +49,15 @@ export default function PartnerInfoPage() {
         <span className={styles.partnerGroupCount}>{group.partners.length}</span>
       </header>
       <div className={styles.compactList}>{group.partners.map(partner => {
-        const payment = formatPartnerPaymentPolicy(partner, lang);
-        return <Link className={`${styles.compactRow} ${styles.partnerInfoRow}`} href={`/admin/partners/${partner.id}`} key={partner.id}><strong className={styles.rowName}>{partner.name}</strong><span className={styles.rowMeta}>{payment} · {formatInventoryItemCount(partner.inventoryCount, partner.activeInventoryCount, lang)}</span><span className={styles.chevron} aria-hidden="true">›</span></Link>;
+        const payment = formatPartnerPaymentSummary(partner, lang);
+        return <Link className={`${styles.compactRow} ${styles.partnerInfoRow}`} href={`/admin/partners/${partner.id}`} key={partner.id}>
+          <span className={styles.rowNameGroup}>
+            <strong className={styles.rowName}>{partner.name}</strong>
+            {partner.displayTag ? <span className={styles.tagBadge}>{partner.displayTag}</span> : null}
+          </span>
+          <span className={styles.rowMeta}>{payment} · {formatInventoryItemCount(partner.inventoryCount, partner.activeInventoryCount, lang)}</span>
+          <span className={styles.chevron} aria-hidden="true">›</span>
+        </Link>;
       })}</div>
     </section>)}</div>}
   </main></Container>;

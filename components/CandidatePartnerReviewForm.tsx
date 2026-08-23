@@ -21,8 +21,8 @@ const candidateTwoColumnGrid: React.CSSProperties = { display: "grid", gridTempl
 export default function CandidatePartnerReviewForm({ lang, initial, fundAccounts, submitLabel, onSubmit }: Props) {
   const t = partnerText[lang];
   const labels = lang === "vi"
-    ? { basic: "Thông tin cơ bản", payment: "Hình thức thanh toán", contact: "Liên hệ", memo: "Ghi chú" }
-    : { basic: "기본 정보", payment: "결제 방식", contact: "연락처", memo: "메모" };
+    ? { basic: "Thông tin cơ bản", payment: "Thông tin thanh toán", contact: "Liên hệ", memo: "Ghi chú" }
+    : { basic: "기본 정보", payment: "결제 정보", contact: "연락처", memo: "메모" };
   const [value, setValue] = useState(initial);
   const [saving, setSaving] = useState(false);
 

@@ -90,5 +90,5 @@ test("V3 create/update/review keep calling the helper by name, so the fix applie
 });
 
 test("the app-facing selectable fund account list requires is_business_fund too, matching the RPC fix", () => {
-  assert.match(partnerServer, /from\("ledger_fund_accounts"\)\.select\("id,type,display_name,is_active,is_business_fund,sort_order"\)\.eq\("is_active", true\)\.eq\("is_business_fund", true\)\.neq\("type", "card_clearing"\)/);
+  assert.match(partnerServer, /from\("ledger_fund_accounts"\)\.select\("id,code,type,display_name,is_active,is_business_fund,sort_order"\)\.eq\("is_active", true\)\.eq\("is_business_fund", true\)\.neq\("type", "card_clearing"\)/);
 });

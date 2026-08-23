@@ -144,65 +144,66 @@ test("partner detail renders real linked inventory instead of placeholders", () 
   assert.doesNotMatch(partnerDetail, /noHistory/);
 });
 
-test("new partner forms hide Ledger linking while partner detail keeps it", () => {
-  assert.match(adminPage, /showLedgerParty={false}/);
-  assert.match(adminPage, /showActive={false}/);
+test("Ledger linking selection is removed from every user-facing partner form, but the bridge field survives", () => {
+  assert.doesNotMatch(partnerForm, /showLedgerParty|ledgerParties|LedgerParty|t\.ledger|t\.noLedger/);
+  assert.match(partnerForm, /ledgerPartyId is a backend-compatibility field only/);
+  assert.doesNotMatch(adminPage, /ledgerParties|LedgerParty|showLedgerParty/);
+  assert.doesNotMatch(partnerDetail, /ledgerParties|LedgerParty|showLedgerParty/);
+  // edit still reads the existing bridge id from the API so it round-trips unedited
+  assert.match(partnerDetail, /ledgerPartyId: body\.partner\.ledgerParty\?\.id \?\? null/);
+  assert.match(partnerDetail, /ledgerPartyId is preserved from the API response/);
   assert.doesNotMatch(candidateForm, /ledgerPartyId[^:]/);
   assert.match(candidatePage, /isActive: true, ledgerPartyId: null/);
-  assert.doesNotMatch(partnerDetail, /showLedgerParty={false}/);
-  assert.match(partnerForm, /showLedgerParty = true/);
+  assert.match(adminPage, /showActive={false}/);
   assert.match(partnerForm, /showActive = true/);
   assert.match(partnerForm, /isActive: true/);
-  assert.match(partnerForm, /showLedgerParty \? <section[\s\S]*t\.ledger/);
 });
 
-test("partner add popover has a compact closable header and sectioned form", () => {
-  assert.match(adminPage, /className={styles\.modalHeader}/);
-  assert.match(adminPage, /aria-label={lang === "vi" \? "Đóng" : "닫기"}/);
-  assert.match(adminPage, /event\.key === "Escape"/);
-  for (const heading of ["기본 정보", "결제 방식", "연락처", "기타"]) assert.match(partnerForm, new RegExp(heading));
-  assert.match(partnerStyles, /\.modalHeader button\{[\s\S]*width:42px;height:42px/);
-  assert.match(partnerStyles, /\.modalHeader h2\{margin:0;font-family:inherit;font-size:15px;font-weight:700;line-height:normal\}/);
+test("partner add dialog reuses the shared BarSheet chrome instead of a details popover", () => {
+  assert.doesNotMatch(adminPage, /<details|addPopoverRef|removeAttribute\("open"\)/);
+  assert.match(adminPage, /import \{ BarSheet \} from "@\/components\/bar\/keeping\/KeepingUi"/);
+  assert.match(adminPage, /<BarSheet kind="full" compact title={labels\.addTitle} closeLabel={labels\.close} saving={addSaving} onClose={\(\) => setShowAdd\(false\)} returnFocusRef={addButtonRef}/);
+  for (const heading of ["기본 정보", "결제 정보", "연락처", "기타"]) assert.match(partnerForm, new RegExp(heading));
   assert.match(adminPage, /layout="modal"/);
-  assert.match(partnerStyles, /\.formSections\{display:flex;flex-direction:column\}/);
-  assert.match(partnerStyles, /\.modalPartnerForm\{flex:1 1 auto;min-height:0;overflow:hidden\}/);
+  assert.match(adminPage, /onSavingChange={setAddSaving}/);
+  assert.doesNotMatch(partnerStyles, /\.addPopover|\.addForm\{|\.modalHeader/);
+  // the old CSS-module form scaffolding is gone now that PartnerForm renders real BarSections
+  assert.doesNotMatch(partnerStyles, /\.formSections|\.formBody|\.formSection\{|\.formFooter/);
 });
 
-test("partner form keeps header and submit visible around a scrollable two-column body", () => {
-  assert.match(partnerForm, /className={styles\.formBody}/);
-  assert.match(partnerForm, /<footer className={styles\.formFooter}>/);
-  for (const value of ["📋", "기본 정보", "💳", "결제 방식", "☎️", "연락처", "📝", "기타"]) assert.match(partnerForm, new RegExp(value));
-  assert.match(partnerStyles, /\.modalPartnerForm \.formBody\{[\s\S]*min-height:0[\s\S]*overflow-y:auto/);
-  assert.match(partnerStyles, /\.pagePartnerForm \.formBody\{padding:0;overflow:visible\}/);
-  assert.match(partnerStyles, /\.formFooter\{flex:0 0 auto/);
-  assert.match(partnerStyles, /100dvh/);
-  assert.match(partnerStyles, /\.formGrid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
-  assert.match(partnerStyles, /z-index:1400/);
+test("partner form is built from real BarSection/BarField, with a self-contained button on the page layout and none in a BarSheet modal", () => {
+  assert.doesNotMatch(partnerForm, /styles\.form|className={styles\./);
+  assert.match(partnerForm, /import \{ BarField, BarSection, BarSegmentedControl, keepingInputStyle, primaryButtonStyle \} from "@\/components\/bar\/keeping\/KeepingUi"/);
+  assert.match(partnerForm, /layout === "modal" \? null : <button style={\{ \.\.\.primaryButtonStyle, width: "100%"/);
+  for (const value of ["📌", "기본 정보", "💳", "결제 정보", "☎️", "연락처", "📝", "기타"]) assert.match(partnerForm, new RegExp(value));
+  // the modal's scroll/footer/backdrop/Escape mechanics are inherited from the shared BarSheet shell
+  assert.match(keepingUi, /zIndex:1400/);
+  assert.match(keepingUi, /min\(92vh,92dvh\)/);
 });
 
 test("390px partner create dialog is compact over a dimmed app with proportional fields", () => {
-  assert.match(adminPage, /role="dialog" aria-modal="true"/);
-  assert.match(partnerStyles, /\.addPopover\[open\]::before\{[\s\S]*position:fixed;inset:0;z-index:1399;background:rgba\(15,23,42,\.68\)/);
-  assert.match(partnerStyles, /\.addForm\{position:fixed;z-index:1400;top:50%;left:50%;display:flex;width:min\(460px,calc\(100vw - 32px\)\);max-height:calc\(100dvh - 32px\)/);
-  assert.doesNotMatch(partnerStyles, /height:100dvh|max-width:none|background:#fff\}\.addForm\{position:fixed;inset:0/);
-  assert.match(partnerStyles, /\.basicGrid\{grid-template-columns:minmax\(0,1\.65fr\) minmax\(110px,1fr\)/);
+  // dialog role/backdrop dim/z-index/Escape/focus are BarSheet's contract, reused verbatim
+  assert.match(keepingUi, /role="dialog" aria-modal="true"/);
+  assert.match(keepingUi, /background:"rgba\(15,23,42,\.68\)"/);
+  assert.match(adminPage, /<BarSheet kind="full" compact/);
+  assert.match(partnerForm, /basicGridStyle: React\.CSSProperties = \{ display: "grid", gridTemplateColumns: "minmax\(0, 1\.65fr\) minmax\(110px, 1fr\)"/);
   assert.match(partnerForm, /PartnerSettlementFields/);
-  assert.match(partnerForm, /showActive \? <label className={styles\.toggle}/);
-  assert.match(partnerStyles, /\.formSections textarea\{height:64px;min-height:60px;max-height:68px/);
-  assert.match(partnerStyles, /grid-auto-rows:max-content;align-content:start/);
-  assert.match(partnerStyles, /\.formGrid \.full\{grid-column:1\/-1\}/);
+  assert.doesNotMatch(partnerForm, /type="checkbox"/);
+  assert.match(partnerForm, /BarSegmentedControl/);
+  assert.match(keepingUi, /width:"100%",minWidth:0,minHeight:44/);
   assert.match(nextConfig, /devIndicators: false/);
 });
 
-test("partner form keeps the BAR section and control language without a nested outer card", () => {
-  assert.doesNotMatch(partnerForm, /className={styles\.formCard}/);
-  assert.doesNotMatch(partnerStyles, /\.formCard\{/);
-  assert.match(partnerStyles, /\.formSection\{display:grid;gap:11px[\s\S]*padding:16px 0;border-top:1px solid #e5e7eb/);
-  assert.match(partnerStyles, /\.formSection h3\{display:flex;align-items:center;gap:6px[\s\S]*font-size:15px/);
-  assert.match(partnerStyles, /\.formSections input,\.formSections select\{height:44px;padding:0 12px\}/);
+test("partner form actually reuses BarSection/BarField/keepingInputStyle -- not just CSS numbers made to look similar", () => {
+  assert.doesNotMatch(partnerForm, /styles\.formSection|styles\.formBody|styles\.formGrid|styles\.basicGrid|styles\.toggle|styles\.srOnly|styles\.formFooter|partners\.module\.css/);
+  assert.match(partnerForm, /<BarSection title={sectionLabels\.basic} icon="📌" first={first}>/);
+  assert.match(partnerForm, /<BarField label={t\.name} required>/);
+  assert.match(partnerForm, /style={keepingInputStyle}/);
   assert.match(partnerForm, /<PartnerSettlementFields/);
-  assert.match(partnerForm, /payment: "결제 방식"/);
-  assert.match(partnerForm, /payment: "Hình thức thanh toán"/);
+  assert.match(partnerForm, /payment: "결제 정보"/);
+  assert.match(partnerForm, /payment: "Thông tin thanh toán"/);
+  assert.match(candidateForm, /payment: "결제 정보"/);
+  assert.match(candidateForm, /payment: "Thông tin thanh toán"/);
   assert.doesNotMatch(partnerForm, /defaultPaymentTermDays \?\? 30/);
 });
 
@@ -254,7 +255,7 @@ test("candidate partner fields stay in compact two-column grids at mobile widths
 });
 
 test("new partner memo keeps only the section heading as its visible label", () => {
-  assert.match(partnerForm, /showActive \? t\.memo : <span className={styles\.srOnly}>{t\.memo}<\/span>/);
-  assert.match(partnerForm, /<textarea rows=\{2\}/);
+  assert.match(partnerForm, /\{showActive\s*\n\s*\? <BarField label=\{t\.memo\}>\{\(\{ id \}\) => <textarea id=\{id\} rows=\{2\}/);
+  assert.match(partnerForm, /: <textarea aria-label=\{t\.memo\} rows=\{2\}/);
   assert.match(candidateForm, /<BarSection title={labels\.memo} icon="📝">[\s\S]*<textarea aria-label={labels\.memo}/);
 });

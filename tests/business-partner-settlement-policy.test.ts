@@ -6,7 +6,7 @@ import test from "node:test";
 // @ts-expect-error Node strips TypeScript extensions in tests.
 import { parsePartnerInput } from "../lib/partners/policy.ts";
 // @ts-expect-error Node strips TypeScript extensions in tests.
-import { formatPartnerPaymentPolicy } from "../lib/partners/text.ts";
+import { formatPartnerPaymentMode } from "../lib/partners/text.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const sha256 = (path: string) => createHash("sha256").update(read(path)).digest("hex");
@@ -52,11 +52,12 @@ test("legacy database states remain schema-compatible while mutations canonicali
 });
 
 test("payment labels depend only on payment mode", () => {
-  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "immediate" }, "ko"), "즉시결제");
-  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "postpaid" }, "ko"), "후불결제");
-  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "immediate" }, "vi"), "Thanh toán ngay");
-  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "postpaid" }, "vi"), "Thanh toán sau");
-  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_twice", defaultPaymentTermDays: 30 }, "ko"), "후불결제");
+  assert.equal(formatPartnerPaymentMode("immediate", "ko"), "선불결제");
+  assert.equal(formatPartnerPaymentMode("postpaid", "ko"), "후불결제");
+  assert.equal(formatPartnerPaymentMode("immediate", "vi"), "Thanh toán trước");
+  assert.equal(formatPartnerPaymentMode("postpaid", "vi"), "Thanh toán sau");
+  assert.equal(formatPartnerPaymentMode("immediate", "ko", "compact"), "선불");
+  assert.equal(formatPartnerPaymentMode("postpaid", "ko", "compact"), "후불");
 });
 
 test("migration preserves existing data and models exact valid combinations", () => {
@@ -130,5 +131,5 @@ test("both forms expose only the shared immediate or postpaid control", () => {
 
 test("candidate defaults to immediate and list formatter is wired", () => {
   assert.match(read("app/(protected)/admin/partners/candidates/[id]/page.tsx"), /paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null/);
-  assert.match(infoPage, /formatPartnerPaymentPolicy\(partner, lang\)/);
+  assert.match(infoPage, /formatPartnerPaymentSummary\(partner, lang\)/);
 });

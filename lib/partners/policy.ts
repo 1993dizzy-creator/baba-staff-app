@@ -43,6 +43,12 @@ const optionalText = (value: unknown, max: number) => {
   return normalized.length <= max ? normalized || null : undefined;
 };
 
+// Optional single user-facing display tag (e.g. "공식 공급처"), independent of the main
+// Partner mutation contract. null/undefined -> null; blank -> null; >30 chars -> undefined (invalid).
+export function parseDisplayTag(value: unknown): string | null | undefined {
+  return optionalText(value, 30);
+}
+
 export function parsePartnerInput(value: unknown): PartnerInput | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;

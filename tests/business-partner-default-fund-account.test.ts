@@ -52,7 +52,7 @@ test("DB-side eligibility excludes card_clearing and inactive accounts, not just
 });
 
 test("server only offers active, non-card-clearing fund accounts and includes them via the existing Promise.all", () => {
-  assert.match(partnerServer, /from\("ledger_fund_accounts"\)\.select\("id,type,display_name,is_active,is_business_fund,sort_order"\)\.eq\("is_active", true\)\.eq\("is_business_fund", true\)\.neq\("type", "card_clearing"\)/);
+  assert.match(partnerServer, /from\("ledger_fund_accounts"\)\.select\("id,code,type,display_name,is_active,is_business_fund,sort_order"\)\.eq\("is_active", true\)\.eq\("is_business_fund", true\)\.neq\("type", "card_clearing"\)/);
   assert.match(partnerServer, /fundAccounts: \(fundAccountResult\.data \?\? \[\]\)\.map/);
   assert.doesNotMatch(partnerServer, /for \([^)]*\)[\s\S]{0,200}await supabaseServer/);
 });
@@ -130,8 +130,8 @@ test("registration, detail and candidate pages all load and thread fundAccounts 
 
 test("Korean and Vietnamese labels exist for the default fund account field, unset choice is not a forced value", () => {
   const text = read("lib/partners/text.ts");
-  assert.match(text, /defaultFundAccount: "기본 결제수단"/);
+  assert.match(text, /defaultFundAccount: "결제수단"/);
   assert.match(text, /noFundAccount: "미지정"/);
-  assert.match(text, /defaultFundAccount: "Phương thức thanh toán mặc định"/);
+  assert.match(text, /defaultFundAccount: "Phương thức thanh toán"/);
   assert.match(text, /noFundAccount: "Chưa chọn"/);
 });
