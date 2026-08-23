@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { BarField, BarSection, keepingInputStyle, primaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
-import type { PartnerFormValue } from "@/components/PartnerForm";
+import type { FundAccount, PartnerFormValue } from "@/components/PartnerForm";
 import PartnerSettlementFields from "@/components/PartnerSettlementFields";
 import { PARTNER_TYPES, type PartnerType } from "@/lib/partners/policy";
 import { partnerText, partnerTypeLabels } from "@/lib/partners/text";
@@ -10,6 +10,7 @@ import { partnerText, partnerTypeLabels } from "@/lib/partners/text";
 type Props = {
   lang: "ko" | "vi";
   initial: PartnerFormValue;
+  fundAccounts: FundAccount[];
   submitLabel: string;
   onSubmit: (value: PartnerFormValue) => Promise<boolean>;
 };
@@ -17,7 +18,7 @@ type Props = {
 const candidateBasicGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "minmax(0, 1.65fr) minmax(110px, 1fr)", gap: 10, alignItems: "start" };
 const candidateTwoColumnGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, alignItems: "start" };
 
-export default function CandidatePartnerReviewForm({ lang, initial, submitLabel, onSubmit }: Props) {
+export default function CandidatePartnerReviewForm({ lang, initial, fundAccounts, submitLabel, onSubmit }: Props) {
   const t = partnerText[lang];
   const labels = lang === "vi"
     ? { basic: "Thông tin cơ bản", payment: "Hình thức thanh toán", contact: "Liên hệ", memo: "Ghi chú" }
@@ -39,7 +40,7 @@ export default function CandidatePartnerReviewForm({ lang, initial, submitLabel,
       </div>
     </BarSection>
     <BarSection title={labels.payment} icon="💳">
-      <PartnerSettlementFields lang={lang} value={value} disabled={saving} onChange={setValue} />
+      <PartnerSettlementFields lang={lang} value={value} fundAccounts={fundAccounts} disabled={saving} onChange={setValue} />
     </BarSection>
     <BarSection title={labels.contact} icon="☎️">
       <div style={candidateTwoColumnGrid}>

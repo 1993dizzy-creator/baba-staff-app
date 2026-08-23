@@ -62,7 +62,7 @@ test("partner list search is removed and add form lives on registration", () => 
   assert.match(registration, /<PartnerForm/);
   assert.doesNotMatch(info, /<PartnerForm/);
   assert.match(registration, /dominantInventoryGroup/);
-  assert.match(info, /dominantInventoryGroup/);
+  assert.doesNotMatch(info, /dominantInventoryGroup/);
   assert.match(registration, /alias\.dominantInventoryGroup \? <span className={styles\.groupBadge}/);
-  assert.match(info, /partner\.dominantInventoryGroup \? <span className={styles\.groupBadge}/);
+  assert.doesNotMatch(info, /partner\.dominantInventoryGroup \? <span className={styles\.groupBadge}/);
 });

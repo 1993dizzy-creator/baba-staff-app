@@ -15,7 +15,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   try {
     const [data, linkedInventory] = await Promise.all([loadPartnerData(id), loadLinkedPartnerInventory(id)]);
     if (data.partners.length === 0) return partnerJson({ ok: false, code: "PARTNER_NOT_FOUND" }, 404);
-    return partnerJson({ ok: true, partner: data.partners[0], ledgerParties: data.ledgerParties, linkedInventory });
+    return partnerJson({ ok: true, partner: data.partners[0], ledgerParties: data.ledgerParties, fundAccounts: data.fundAccounts, linkedInventory });
   } catch (error) {
     console.error("[BUSINESS_PARTNER_LOAD_FAILED]", error);
     return partnerJson({ ok: false, code: "PARTNER_LOAD_FAILED" }, 500);
@@ -29,7 +29,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const input = parsePartnerInput(await request.json().catch(() => null));
   if (id === null || !input) return partnerJson({ ok: false, code: "INVALID_BODY" }, 400);
   try {
-    const { data, error } = await supabaseServer.rpc("business_partner_update_v2", {
+    const { data, error } = await supabaseServer.rpc("business_partner_update_v3", {
       p_partner_id: id,
       p_name: input.name,
       p_partner_type: input.partnerType,
@@ -37,6 +37,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       p_settlement_mode: input.settlementMode,
       p_settlement_rule: input.settlementRule,
       p_default_payment_term_days: input.defaultPaymentTermDays,
+      p_default_fund_account_id: input.defaultFundAccountId,
       p_phone: input.phone,
       p_contact_name: input.contactName,
       p_memo: input.memo,

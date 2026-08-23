@@ -12,20 +12,18 @@ const detailApi = read("app/api/admin/partners/[id]/route.ts");
 const layout = read("app/(protected)/admin/partners/layout.tsx");
 const admin = read("app/(protected)/admin/page.tsx");
 
-const base = { name: "Fresh Foods", partnerType: "food", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, phone: "090", contactName: "Lan", memo: "", isActive: true, ledgerPartyId: null };
+const base = { name: "Fresh Foods", partnerType: "food", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, phone: "090", contactName: "Lan", memo: "", isActive: true, ledgerPartyId: null };
 
-test("partner input supports a strict immediate policy", () => {
+test("partner input canonicalizes immediate policy", () => {
   assert.deepEqual(parsePartnerInput(base), { ...base, phone: "090", contactName: "Lan", memo: null });
-  assert.equal(parsePartnerInput({ ...base, defaultPaymentTermDays: 30 }), null);
-  assert.equal(parsePartnerInput({ ...base, settlementMode: "scheduled", settlementRule: "monthly_twice" }), null);
+  assert.deepEqual(parsePartnerInput({ ...base, settlementMode: "scheduled", settlementRule: "monthly_twice", defaultPaymentTermDays: 30 }), { ...base, phone: "090", contactName: "Lan", memo: null });
 });
 
-test("postpaid policy combinations are explicit", () => {
-  assert.equal(parsePartnerInput({ ...base, paymentMode: "postpaid" }), null);
+test("postpaid policy is always canonical ad hoc", () => {
+  assert.equal(parsePartnerInput({ ...base, paymentMode: "postpaid" })?.settlementMode, "ad_hoc");
   assert.equal(parsePartnerInput({ ...base, paymentMode: "postpaid", settlementMode: "ad_hoc" })?.settlementMode, "ad_hoc");
-  assert.equal(parsePartnerInput({ ...base, paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 })?.defaultPaymentTermDays, 30);
-  assert.equal(parsePartnerInput({ ...base, paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_once" })?.defaultPaymentTermDays, null);
-  assert.equal(parsePartnerInput({ ...base, paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_twice" })?.defaultPaymentTermDays, null);
+  const stale = parsePartnerInput({ ...base, paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 });
+  assert.deepEqual({ settlementMode: stale?.settlementMode, settlementRule: stale?.settlementRule, defaultPaymentTermDays: stale?.defaultPaymentTermDays }, { settlementMode: "ad_hoc", settlementRule: null, defaultPaymentTermDays: null });
 });
 
 test("V1 supports update deactivate and reactivate without DELETE", () => {

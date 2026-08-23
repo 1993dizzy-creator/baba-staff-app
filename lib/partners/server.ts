@@ -23,19 +23,20 @@ export async function requirePartnerManager() {
 export async function loadPartnerData(partnerId?: number) {
   let partnerQuery = supabaseServer
     .from("business_partners")
-    .select("id,name,partner_type,payment_mode,settlement_mode,settlement_rule,default_payment_term_days,phone,contact_name,memo,is_active,created_at,updated_at")
+    .select("id,name,partner_type,payment_mode,settlement_mode,settlement_rule,default_payment_term_days,default_fund_account_id,phone,contact_name,memo,is_active,created_at,updated_at")
     .order("is_active", { ascending: false })
     .order("name");
   if (partnerId !== undefined) partnerQuery = partnerQuery.eq("id", partnerId);
 
-  const [partnerResult, mappingResult, ledgerResult, inventoryResult] = await Promise.all([
+  const [partnerResult, mappingResult, ledgerResult, inventoryResult, fundAccountResult] = await Promise.all([
     partnerQuery,
     supabaseServer.from("business_partner_ledger_parties").select("business_partner_id,ledger_party_id"),
     supabaseServer.from("ledger_parties").select("id,name,is_active").order("name"),
     supabaseServer.from("inventory").select("supplier_partner_id,is_active,part,category,category_vi").not("supplier_partner_id", "is", null),
+    supabaseServer.from("ledger_fund_accounts").select("id,type,display_name,is_active,is_business_fund,sort_order").eq("is_active", true).eq("is_business_fund", true).neq("type", "card_clearing").order("sort_order"),
   ]);
-  if (partnerResult.error || mappingResult.error || ledgerResult.error || inventoryResult.error) {
-    throw partnerResult.error ?? mappingResult.error ?? ledgerResult.error ?? inventoryResult.error;
+  if (partnerResult.error || mappingResult.error || ledgerResult.error || inventoryResult.error || fundAccountResult.error) {
+    throw partnerResult.error ?? mappingResult.error ?? ledgerResult.error ?? inventoryResult.error ?? fundAccountResult.error;
   }
   const ledgerById = new Map((ledgerResult.data ?? []).map(row => [Number(row.id), row]));
   const mappingByPartner = new Map((mappingResult.data ?? []).map(row => [Number(row.business_partner_id), Number(row.ledger_party_id)]));
@@ -60,6 +61,7 @@ export async function loadPartnerData(partnerId?: number) {
       settlementMode: row.settlement_mode,
       settlementRule: row.settlement_rule,
       defaultPaymentTermDays: row.default_payment_term_days,
+      defaultFundAccountId: row.default_fund_account_id === null ? null : Number(row.default_fund_account_id),
       phone: row.phone,
       contactName: row.contact_name,
       memo: row.memo,
@@ -76,6 +78,7 @@ export async function loadPartnerData(partnerId?: number) {
   return {
     partners,
     ledgerParties: (ledgerResult.data ?? []).map(row => ({ id: Number(row.id), name: row.name, isActive: row.is_active })),
+    fundAccounts: (fundAccountResult.data ?? []).map(row => ({ id: Number(row.id), displayName: row.display_name, type: row.type })),
   };
 }
 

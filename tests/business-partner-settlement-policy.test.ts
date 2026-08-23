@@ -27,52 +27,36 @@ const settlementFields = read("components/PartnerSettlementFields.tsx");
 const partnerServer = read("lib/partners/server.ts");
 const infoPage = read("app/(protected)/admin/partners/info/page.tsx");
 
-const base = { name: "Fresh Foods", partnerType: "food", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, phone: null, contactName: null, memo: null, isActive: true, ledgerPartyId: null };
+const base = { name: "Fresh Foods", partnerType: "food", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, phone: null, contactName: null, memo: null, isActive: true, ledgerPartyId: null };
 const parse = (changes: Record<string, unknown>) => parsePartnerInput({ ...base, ...changes });
 
-test("immediate accepts only empty settlement fields", () => {
-  assert.ok(parse({}));
-  assert.equal(parse({ settlementMode: "ad_hoc" }), null);
-  assert.equal(parse({ settlementRule: "monthly_twice" }), null);
-  assert.equal(parse({ defaultPaymentTermDays: 30 }), null);
+test("immediate canonicalizes all internal settlement fields to null", () => {
+  assert.deepEqual(parse({ settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 }), {
+    ...base,
+  });
 });
 
-test("postpaid ad hoc accepts no rule or term", () => {
-  assert.ok(parse({ paymentMode: "postpaid", settlementMode: "ad_hoc" }));
-  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "ad_hoc", settlementRule: "net_days", defaultPaymentTermDays: 30 }), null);
+test("postpaid needs no settlement selection and canonicalizes stale policy input", () => {
+  const expected = { ...base, paymentMode: "postpaid", settlementMode: "ad_hoc" };
+  assert.deepEqual(parse({ paymentMode: "postpaid" }), expected);
+  assert.deepEqual(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_twice", defaultPaymentTermDays: 30 }), expected);
+  assert.deepEqual(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 }), expected);
 });
 
-test("scheduled net days validates the integer range", () => {
-  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days" }), null);
-  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: -1 }), null);
-  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 3651 }), null);
-  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 1.5 }), null);
-  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 0 })?.defaultPaymentTermDays, 0);
-  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 3650 })?.defaultPaymentTermDays, 3650);
-});
-
-test("monthly rules reject stale term values", () => {
-  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_once" })?.defaultPaymentTermDays, null);
-  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_twice" })?.defaultPaymentTermDays, null);
-  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_twice", defaultPaymentTermDays: 30 }), null);
-  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "scheduled" }), null);
-});
-
-test("legacy postpaid remains a database read state but is rejected for new mutations", () => {
+test("legacy database states remain schema-compatible while mutations canonicalize them", () => {
   const legacyBranch = settlementConstraint.match(/payment_mode = 'postpaid'\s+and settlement_mode is null[\s\S]*?\n    \)/)?.[0] ?? "";
   assert.match(legacyBranch, /settlement_rule is null/);
   assert.match(legacyBranch, /default_payment_term_days between 0 and 3650/);
   assert.doesNotMatch(legacyBranch, /default_payment_term_days is not null/);
-  assert.equal(parse({ paymentMode: "postpaid", defaultPaymentTermDays: 30 }), null);
-  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "postpaid", settlementMode: null, settlementRule: null, defaultPaymentTermDays: 30 }, "ko"), "후불 · 정책 미설정");
-  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "postpaid", settlementMode: null, settlementRule: null, defaultPaymentTermDays: 30 }, "vi"), "Trả sau · Chưa đặt chính sách");
+  assert.deepEqual(parse({ paymentMode: "postpaid", defaultPaymentTermDays: 30 }), { ...base, paymentMode: "postpaid", settlementMode: "ad_hoc" });
 });
 
-test("monthly frequency labels never invent cutoff dates", () => {
-  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_once", defaultPaymentTermDays: null }, "ko"), "후불 · 월 1회 정산");
-  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_twice", defaultPaymentTermDays: null }, "ko"), "후불 · 월 2회 정산");
-  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 }, "ko"), "후불 · Net 30");
-  assert.doesNotMatch(migration + settlementFields, /settlement_cutoff|15일|말일|1~15|16~말일/);
+test("payment labels depend only on payment mode", () => {
+  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "immediate" }, "ko"), "즉시결제");
+  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "postpaid" }, "ko"), "후불결제");
+  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "immediate" }, "vi"), "Thanh toán ngay");
+  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "postpaid" }, "vi"), "Thanh toán sau");
+  assert.equal(formatPartnerPaymentPolicy({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_twice", defaultPaymentTermDays: 30 }, "ko"), "후불결제");
 });
 
 test("migration preserves existing data and models exact valid combinations", () => {
@@ -123,10 +107,10 @@ test("V2 audits snapshot the complete partner row", () => {
   assert.match(migration, /settlement_rule = p_settlement_rule/);
 });
 
-test("all app mutations use V2 and API reads expose settlement fields", () => {
-  assert.match(collectionApi, /business_partner_create_v2/);
-  assert.match(detailApi, /business_partner_update_v2/);
-  assert.match(aliasApi, /business_partner_review_supplier_alias_v2/);
+test("all app mutations carry settlement fields through to their active RPC and API reads expose settlement fields", () => {
+  assert.match(collectionApi, /business_partner_create_v3/);
+  assert.match(detailApi, /business_partner_update_v3/);
+  assert.match(aliasApi, /business_partner_review_supplier_alias_v3/);
   for (const source of [collectionApi, detailApi, aliasApi]) {
     assert.match(source, /p_settlement_mode/);
     assert.match(source, /p_settlement_rule/);
@@ -135,14 +119,16 @@ test("all app mutations use V2 and API reads expose settlement fields", () => {
   assert.match(partnerServer, /settlementMode: row\.settlement_mode/);
 });
 
-test("both forms share policy UI and no longer inject 30", () => {
+test("both forms expose only the shared immediate or postpaid control", () => {
   assert.match(partnerForm, /PartnerSettlementFields/);
   assert.match(candidateForm, /PartnerSettlementFields/);
   assert.doesNotMatch(partnerForm + candidateForm + settlementFields, /\?\? 30|defaultPaymentTermDays: 30/);
-  for (const label of ["수시정산", "정기정산", "N일 후 지급", "월 1회", "월 2회", "입고\/청구 후 N일"]) assert.match(read("lib/partners/text.ts"), new RegExp(label));
+  assert.match(settlementFields, /paymentMode === "postpaid" \? "ad_hoc" : null/);
+  assert.doesNotMatch(settlementFields, /BarField|SettlementMode|SettlementRule|legacySettlement|paymentDeadline|monthlyOnce|monthlyTwice|netDays|adHoc|scheduled/);
+  assert.doesNotMatch(read("lib/partners/text.ts"), /수시정산|정기정산|N일 후 지급|월 1회|월 2회|지급기한|정책 미설정|기존 후불 설정/);
 });
 
-test("legacy edit warning and policy list formatter are wired", () => {
-  assert.match(settlementFields, /value\.settlementMode === null[\s\S]*t\.legacySettlement/);
+test("candidate defaults to immediate and list formatter is wired", () => {
+  assert.match(read("app/(protected)/admin/partners/candidates/[id]/page.tsx"), /paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null/);
   assert.match(infoPage, /formatPartnerPaymentPolicy\(partner, lang\)/);
 });

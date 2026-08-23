@@ -4,14 +4,14 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Container from "@/components/Container";
-import PartnerForm, { type PartnerFormValue } from "@/components/PartnerForm";
+import PartnerForm, { type FundAccount, type PartnerFormValue } from "@/components/PartnerForm";
 import { formatInventoryItemCount, type InventoryCategoryGroup } from "@/lib/inventory/category-groups";
 import { useLanguage } from "@/lib/language-context";
 import { partnerText } from "@/lib/partners/text";
 import { ui } from "@/lib/styles/ui";
 import styles from "./partners.module.css";
 
-type Alias = { id: number; supplierName: string; status: "pending" | "linked" | "ignored"; inventoryCount: number; activeInventoryCount: number; dominantInventoryGroup: InventoryCategoryGroup | null };
+type Alias = { id: number; supplierName: string; status: "pending" | "linked" | "ignored" | "archived"; inventoryCount: number; activeInventoryCount: number; dominantInventoryGroup: InventoryCategoryGroup | null };
 type LedgerParty = { id: number; name: string; isActive: boolean };
 type Filter = "pending" | "ignored";
 
@@ -20,6 +20,7 @@ export default function PartnerRegistrationPage() {
   const t = partnerText[lang];
   const [aliases, setAliases] = useState<Alias[]>([]);
   const [ledgerParties, setLedgerParties] = useState<LedgerParty[]>([]);
+  const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([]);
   const [filter, setFilter] = useState<Filter>("pending");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -30,6 +31,7 @@ export default function PartnerRegistrationPage() {
     if (!response.ok) throw new Error(body.code);
     setAliases(body.supplierAliases);
     setLedgerParties(body.ledgerParties);
+    setFundAccounts(body.fundAccounts);
   }, []);
   useEffect(() => { void load().catch(error => setError(String(error))); }, [load]);
 
@@ -48,7 +50,7 @@ export default function PartnerRegistrationPage() {
   }
 
   return <Container noPaddingTop><main className={styles.compactPage}>
-    <details ref={addPopoverRef} className={styles.addPopover} onKeyDown={event => { if (event.key === "Escape") addPopoverRef.current?.removeAttribute("open"); }}><summary style={{ ...ui.button, width: "100%", padding: "10px 12px" }}>{labels.add}</summary><div className={styles.addForm} role="dialog" aria-modal="true" aria-label={lang === "vi" ? "Thêm đối tác" : "거래처 추가"}><header className={styles.modalHeader}><h2>{lang === "vi" ? "Thêm đối tác" : "거래처 추가"}</h2><button type="button" aria-label={lang === "vi" ? "Đóng" : "닫기"} onClick={() => addPopoverRef.current?.removeAttribute("open")}>×</button></header><PartnerForm lang={lang} ledgerParties={ledgerParties} submitLabel={t.add} showLedgerParty={false} showActive={false} layout="modal" onSubmit={create} /></div></details>
+    <details ref={addPopoverRef} className={styles.addPopover} onKeyDown={event => { if (event.key === "Escape") addPopoverRef.current?.removeAttribute("open"); }}><summary style={{ ...ui.button, width: "100%", padding: "10px 12px" }}>{labels.add}</summary><div className={styles.addForm} role="dialog" aria-modal="true" aria-label={lang === "vi" ? "Thêm đối tác" : "거래처 추가"}><header className={styles.modalHeader}><h2>{lang === "vi" ? "Thêm đối tác" : "거래처 추가"}</h2><button type="button" aria-label={lang === "vi" ? "Đóng" : "닫기"} onClick={() => addPopoverRef.current?.removeAttribute("open")}>×</button></header><PartnerForm lang={lang} ledgerParties={ledgerParties} fundAccounts={fundAccounts} submitLabel={t.add} showLedgerParty={false} showActive={false} layout="modal" onSubmit={create} /></div></details>
     <div className={styles.compactFilters} role="tablist" aria-label={labels.filter}>{(["pending", "ignored"] as Filter[]).map(key => <button role="tab" aria-selected={filter === key} className={filter === key ? styles.filterActive : ""} key={key} type="button" onClick={() => setFilter(key)}>{labels[key]} {counts[key]}</button>)}</div>
     {message ? <p className={styles.notice} role="status">{message}</p> : null}{error ? <p className={styles.error} role="alert">{error}</p> : null}
     <section className={styles.compactList}>{rows.map(alias => <Link className={styles.compactRow} href={`/admin/partners/candidates/${alias.id}`} key={alias.id}><strong className={styles.rowName}>{alias.supplierName}</strong>{alias.dominantInventoryGroup ? <span className={styles.groupBadge}>{alias.dominantInventoryGroup[lang]}</span> : null}<span className={styles.rowMeta}>{formatInventoryItemCount(alias.inventoryCount, alias.activeInventoryCount, lang)}</span><span className={styles.chevron} aria-hidden="true">›</span></Link>)}{rows.length === 0 ? <p className={styles.compactEmpty}>{labels.empty}</p> : null}</section>

@@ -101,7 +101,7 @@ test("candidate review is atomic for new existing ignore and reopen", () => {
   assert.match(migration, /business_partner_review_supplier_alias_v1/);
   for (const action of ["create_partner", "link_existing", "ignore", "reopen"]) assert.match(migration, new RegExp(`p_action = '${action}'`));
   assert.match(migration, /update public\.inventory set supplier_partner_id=v_partner_id where lower\(btrim\(supplier\)\)=v_alias\.normalized_name/);
-  assert.match(adminApi, /business_partner_review_supplier_alias_v2/);
+  assert.match(adminApi, /business_partner_review_supplier_alias_v3/);
 });
 
 test("candidate review is owner/master only and browser table mutation is denied", () => {
@@ -132,7 +132,7 @@ test("partner routes share the common two-tab SubNav", () => {
 
 test("candidate and partner lists use one-line compact rows", () => {
   assert.match(adminPage, /className={styles\.compactRow}/);
-  assert.match(infoPage, /className={styles\.compactRow}/);
+  assert.match(infoPage, /styles\.compactRow[\s\S]*styles\.partnerInfoRow/);
   assert.match(partnerStyles, /grid-template-columns:minmax\(0,1fr\) auto auto auto/);
   assert.match(partnerStyles, /text-overflow:ellipsis;white-space:nowrap/);
   assert.doesNotMatch(adminPage, /lastSeenAt|최근 사용/);
@@ -220,11 +220,11 @@ test("candidate review uses a BAR-style page card and native document scrolling"
 
 test("candidate detail includes matched inventory items without changing review writes", () => {
   assert.match(adminApi, /loadSupplierAliasInventory\(alias\.supplierName\)/);
-  assert.match(adminApi, /partnerJson\(\{ ok: true, alias, partners: partnerData\.partners, inventoryItems \}\)/);
+  assert.match(adminApi, /partnerJson\(\{ ok: true, alias, partners: partnerData\.partners, fundAccounts: partnerData\.fundAccounts, inventoryItems \}\)/);
   assert.match(partnerServer, /select\("id,supplier,item_name,item_name_vi,part,category,category_vi,is_active"\)/);
   assert.match(partnerServer, /filter\(row => normalizeSupplierName\(row\.supplier\) === normalizedName\)/);
   assert.match(partnerServer, /String\(value \?\? ""\)\.trim\(\)\.toLowerCase\(\)/);
-  assert.match(adminApi, /business_partner_review_supplier_alias_v2/);
+  assert.match(adminApi, /business_partner_review_supplier_alias_v3/);
   assert.doesNotMatch(adminApi, /inventoryItems[\s\S]*PATCH[\s\S]*inventoryItems/);
 });
 
