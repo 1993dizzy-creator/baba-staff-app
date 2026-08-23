@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { BarField, BarSection, BarSegmentedControl, keepingInputStyle, primaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
+import { BarField, BarSection, keepingInputStyle, primaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
 import type { PartnerFormValue } from "@/components/PartnerForm";
-import { PARTNER_TYPES, type PartnerType, type PaymentMode } from "@/lib/partners/policy";
+import PartnerSettlementFields from "@/components/PartnerSettlementFields";
+import { PARTNER_TYPES, type PartnerType } from "@/lib/partners/policy";
 import { partnerText, partnerTypeLabels } from "@/lib/partners/text";
 
 type Props = {
@@ -38,7 +39,7 @@ export default function CandidatePartnerReviewForm({ lang, initial, submitLabel,
       </div>
     </BarSection>
     <BarSection title={labels.payment} icon="💳">
-      <BarSegmentedControl label={t.paymentMode} value={value.paymentMode} disabled={saving} onChange={(mode: PaymentMode) => setValue({ ...value, paymentMode: mode, defaultPaymentTermDays: mode === "immediate" ? null : value.defaultPaymentTermDays ?? 30 })} options={[{ value: "immediate", label: t.immediate }, { value: "postpaid", label: t.postpaid }]} />
+      <PartnerSettlementFields lang={lang} value={value} disabled={saving} onChange={setValue} />
     </BarSection>
     <BarSection title={labels.contact} icon="☎️">
       <div style={candidateTwoColumnGrid}>

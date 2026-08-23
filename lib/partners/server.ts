@@ -23,7 +23,7 @@ export async function requirePartnerManager() {
 export async function loadPartnerData(partnerId?: number) {
   let partnerQuery = supabaseServer
     .from("business_partners")
-    .select("id,name,partner_type,payment_mode,default_payment_term_days,phone,contact_name,memo,is_active,created_at,updated_at")
+    .select("id,name,partner_type,payment_mode,settlement_mode,settlement_rule,default_payment_term_days,phone,contact_name,memo,is_active,created_at,updated_at")
     .order("is_active", { ascending: false })
     .order("name");
   if (partnerId !== undefined) partnerQuery = partnerQuery.eq("id", partnerId);
@@ -57,6 +57,8 @@ export async function loadPartnerData(partnerId?: number) {
       name: row.name,
       partnerType: row.partner_type,
       paymentMode: row.payment_mode,
+      settlementMode: row.settlement_mode,
+      settlementRule: row.settlement_rule,
       defaultPaymentTermDays: row.default_payment_term_days,
       phone: row.phone,
       contactName: row.contact_name,

@@ -101,7 +101,7 @@ test("candidate review is atomic for new existing ignore and reopen", () => {
   assert.match(migration, /business_partner_review_supplier_alias_v1/);
   for (const action of ["create_partner", "link_existing", "ignore", "reopen"]) assert.match(migration, new RegExp(`p_action = '${action}'`));
   assert.match(migration, /update public\.inventory set supplier_partner_id=v_partner_id where lower\(btrim\(supplier\)\)=v_alias\.normalized_name/);
-  assert.match(adminApi, /business_partner_review_supplier_alias_v1/);
+  assert.match(adminApi, /business_partner_review_supplier_alias_v2/);
 });
 
 test("candidate review is owner/master only and browser table mutation is denied", () => {
@@ -186,8 +186,7 @@ test("390px partner create dialog is compact over a dimmed app with proportional
   assert.match(partnerStyles, /\.addForm\{position:fixed;z-index:1400;top:50%;left:50%;display:flex;width:min\(460px,calc\(100vw - 32px\)\);max-height:calc\(100dvh - 32px\)/);
   assert.doesNotMatch(partnerStyles, /height:100dvh|max-width:none|background:#fff\}\.addForm\{position:fixed;inset:0/);
   assert.match(partnerStyles, /\.basicGrid\{grid-template-columns:minmax\(0,1\.65fr\) minmax\(110px,1fr\)/);
-  assert.match(partnerForm, /className={styles\.paymentSegments}/);
-  assert.match(partnerForm, /styles\.paymentSelected/);
+  assert.match(partnerForm, /PartnerSettlementFields/);
   assert.match(partnerForm, /showActive \? <label className={styles\.toggle}/);
   assert.match(partnerStyles, /\.formSections textarea\{height:64px;min-height:60px;max-height:68px/);
   assert.match(partnerStyles, /grid-auto-rows:max-content;align-content:start/);
@@ -201,11 +200,10 @@ test("partner form keeps the BAR section and control language without a nested o
   assert.match(partnerStyles, /\.formSection\{display:grid;gap:11px[\s\S]*padding:16px 0;border-top:1px solid #e5e7eb/);
   assert.match(partnerStyles, /\.formSection h3\{display:flex;align-items:center;gap:6px[\s\S]*font-size:15px/);
   assert.match(partnerStyles, /\.formSections input,\.formSections select\{height:44px;padding:0 12px\}/);
-  assert.match(partnerStyles, /\.paymentSegments \.paymentSelected\{background:#111827;color:#fff\}/);
+  assert.match(partnerForm, /<PartnerSettlementFields/);
   assert.match(partnerForm, /payment: "결제 방식"/);
   assert.match(partnerForm, /payment: "Hình thức thanh toán"/);
-  assert.doesNotMatch(partnerForm, /styles\.termField|styles\.termInput|type="number"/);
-  assert.match(partnerForm, /defaultPaymentTermDays: mode === "immediate" \? null : value\.defaultPaymentTermDays \?\? 30/);
+  assert.doesNotMatch(partnerForm, /defaultPaymentTermDays \?\? 30/);
 });
 
 test("candidate review uses a BAR-style page card and native document scrolling", () => {
@@ -226,7 +224,7 @@ test("candidate detail includes matched inventory items without changing review 
   assert.match(partnerServer, /select\("id,supplier,item_name,item_name_vi,part,category,category_vi,is_active"\)/);
   assert.match(partnerServer, /filter\(row => normalizeSupplierName\(row\.supplier\) === normalizedName\)/);
   assert.match(partnerServer, /String\(value \?\? ""\)\.trim\(\)\.toLowerCase\(\)/);
-  assert.match(adminApi, /business_partner_review_supplier_alias_v1/);
+  assert.match(adminApi, /business_partner_review_supplier_alias_v2/);
   assert.doesNotMatch(adminApi, /inventoryItems[\s\S]*PATCH[\s\S]*inventoryItems/);
 });
 

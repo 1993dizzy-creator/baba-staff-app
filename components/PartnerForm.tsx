@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { PARTNER_TYPES, type PartnerType, type PaymentMode } from "@/lib/partners/policy";
+import PartnerSettlementFields from "@/components/PartnerSettlementFields";
+import { PARTNER_TYPES, type PartnerType, type PaymentMode, type SettlementMode, type SettlementRule } from "@/lib/partners/policy";
 import { partnerText, partnerTypeLabels } from "@/lib/partners/text";
 import styles from "@/app/(protected)/admin/partners/partners.module.css";
 
-export type PartnerFormValue = { name: string; partnerType: PartnerType; paymentMode: PaymentMode; defaultPaymentTermDays: number | null; contactName: string | null; phone: string | null; memo: string | null; isActive: boolean; ledgerPartyId: number | null };
+export type PartnerFormValue = { name: string; partnerType: PartnerType; paymentMode: PaymentMode; settlementMode: SettlementMode | null; settlementRule: SettlementRule | null; defaultPaymentTermDays: number | null; contactName: string | null; phone: string | null; memo: string | null; isActive: boolean; ledgerPartyId: number | null };
 type LedgerParty = { id: number; name: string; isActive: boolean };
 type Props = {
   lang: "ko" | "vi";
@@ -23,7 +24,7 @@ export default function PartnerForm({ lang, initial, ledgerParties, submitLabel,
   const sectionLabels = lang === "vi"
     ? { basic: "Thông tin cơ bản", payment: "Hình thức thanh toán", contact: "Liên hệ", memo: "Ghi chú", other: "Khác", ledger: "Liên kết sổ sách" }
     : { basic: "기본 정보", payment: "결제 방식", contact: "연락처", memo: "메모", other: "기타", ledger: "장부 연동" };
-  const emptyValue: PartnerFormValue = { name: "", partnerType: "other", paymentMode: "immediate", defaultPaymentTermDays: null, contactName: null, phone: null, memo: null, isActive: true, ledgerPartyId: null };
+  const emptyValue: PartnerFormValue = { name: "", partnerType: "other", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, contactName: null, phone: null, memo: null, isActive: true, ledgerPartyId: null };
   const [value, setValue] = useState<PartnerFormValue>(initial ?? emptyValue);
   const [saving, setSaving] = useState(false);
   async function submit(event: FormEvent) { event.preventDefault(); setSaving(true); try { const ok = await onSubmit(value); if (ok && !initial) setValue(emptyValue); } finally { setSaving(false); } }
@@ -40,7 +41,7 @@ export default function PartnerForm({ lang, initial, ledgerParties, submitLabel,
     <section className={styles.formSection} aria-labelledby="partner-payment-heading">
       <h3 id="partner-payment-heading"><span aria-hidden="true">💳</span><span>{sectionLabels.payment}</span></h3>
       <div className={styles.paymentFields}>
-        <fieldset><legend className={styles.srOnly}>{t.paymentMode} *</legend><div className={styles.paymentSegments}>{(["immediate", "postpaid"] as PaymentMode[]).map(mode => <label className={value.paymentMode === mode ? styles.paymentSelected : ""} key={mode}><input type="radio" name="paymentMode" checked={value.paymentMode === mode} onChange={() => setValue({ ...value, paymentMode: mode, defaultPaymentTermDays: mode === "immediate" ? null : value.defaultPaymentTermDays ?? 30 })} />{t[mode]}</label>)}</div></fieldset>
+        <PartnerSettlementFields lang={lang} value={value} disabled={saving} onChange={setValue} />
       </div>
     </section>
     <section className={styles.formSection} aria-labelledby="partner-contact-heading">

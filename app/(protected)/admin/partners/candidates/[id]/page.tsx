@@ -79,7 +79,7 @@ export default function SupplierCandidatePage() {
   if (alias.status === "linked" && alias.businessPartnerId) return page(<div style={keepingFormCardStyle}><BarSection title={labels.info} icon="📎" first>{identity(labels.linked)}</BarSection></div>);
   if (alias.status === "ignored") return page(<div style={keepingFormCardStyle}><BarSection title={labels.info} icon="📎" first>{identity(labels.ignore)}</BarSection><BarSection title={labels.reviewAgain}><button disabled={busy} onClick={() => void review({ action: "reopen" })} style={{ ...primaryButtonStyle, width: "100%", opacity: busy ? .6 : 1 }}>{labels.reopen}</button></BarSection></div>);
 
-  const initial: PartnerFormValue = { name: alias.supplierName, partnerType: "other", paymentMode: "immediate", defaultPaymentTermDays: null, contactName: null, phone: null, memo: null, isActive: true, ledgerPartyId: null };
+  const initial: PartnerFormValue = { name: alias.supplierName, partnerType: "other", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, contactName: null, phone: null, memo: null, isActive: true, ledgerPartyId: null };
   return page(<div style={keepingFormCardStyle}>
     <BarSection title={labels.review} icon="📋" first>
       {identity(labels.pending)}

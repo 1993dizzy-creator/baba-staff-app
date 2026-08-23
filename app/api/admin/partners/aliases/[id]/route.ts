@@ -38,10 +38,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const existingPartnerId = action === "link_existing" ? Number(body.existingPartnerId) : null;
   if (action === "link_existing" && (!Number.isSafeInteger(existingPartnerId) || Number(existingPartnerId) < 1)) return partnerJson({ ok: false, code: "INVALID_PARTNER" }, 400);
   try {
-    const { data, error } = await supabaseServer.rpc("business_partner_review_supplier_alias_v1", {
+    const { data, error } = await supabaseServer.rpc("business_partner_review_supplier_alias_v2", {
       p_alias_id: id, p_action: action, p_existing_partner_id: existingPartnerId,
       p_name: partnerInput?.name ?? null, p_partner_type: partnerInput?.partnerType ?? null,
       p_payment_mode: partnerInput?.paymentMode ?? null,
+      p_settlement_mode: partnerInput?.settlementMode ?? null,
+      p_settlement_rule: partnerInput?.settlementRule ?? null,
       p_default_payment_term_days: partnerInput?.defaultPaymentTermDays ?? null,
       p_phone: partnerInput?.phone ?? null, p_contact_name: partnerInput?.contactName ?? null,
       p_memo: partnerInput?.memo ?? null, p_actor_user_id: auth.actor.id,
