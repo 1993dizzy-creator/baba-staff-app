@@ -2,15 +2,16 @@
 
 import { useState, type FormEvent } from "react";
 import { BarField, BarSection, keepingInputStyle, primaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
-import type { FundAccount, PartnerFormValue } from "@/components/PartnerForm";
+import type { FundAccount, PartnerFormValue, PartnerSubtype } from "@/components/PartnerForm";
 import PartnerSettlementFields from "@/components/PartnerSettlementFields";
 import { PARTNER_TYPES, type PartnerType } from "@/lib/partners/policy";
-import { partnerText, partnerTypeLabels } from "@/lib/partners/text";
+import { formatPartnerSubtypeName, partnerText, partnerTypeLabels } from "@/lib/partners/text";
 
 type Props = {
   lang: "ko" | "vi";
   initial: PartnerFormValue;
   fundAccounts: FundAccount[];
+  partnerSubtypes: PartnerSubtype[];
   submitLabel: string;
   onSubmit: (value: PartnerFormValue) => Promise<boolean>;
 };
@@ -18,7 +19,7 @@ type Props = {
 const candidateBasicGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "minmax(0, 1.65fr) minmax(110px, 1fr)", gap: 10, alignItems: "start" };
 const candidateTwoColumnGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, alignItems: "start" };
 
-export default function CandidatePartnerReviewForm({ lang, initial, fundAccounts, submitLabel, onSubmit }: Props) {
+export default function CandidatePartnerReviewForm({ lang, initial, fundAccounts, partnerSubtypes, submitLabel, onSubmit }: Props) {
   const t = partnerText[lang];
   const labels = lang === "vi"
     ? { basic: "Thông tin cơ bản", payment: "Thông tin thanh toán", contact: "Liên hệ", memo: "Ghi chú" }
@@ -32,12 +33,27 @@ export default function CandidatePartnerReviewForm({ lang, initial, fundAccounts
     try { await onSubmit(value); } finally { setSaving(false); }
   }
 
+  // Never auto-selected from dominantInventoryGroup -- a Candidate's subtype always
+  // starts null and is a purely manual choice, same as PartnerForm's own rule.
+  const subtypeOptions = partnerSubtypes
+    .filter(subtype => subtype.partnerType === value.partnerType && (subtype.isActive || subtype.id === value.partnerSubtypeId))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+
+  function changePartnerType(partnerType: PartnerType) {
+    const stillValid = value.partnerSubtypeId !== null && partnerSubtypes.some(subtype => subtype.id === value.partnerSubtypeId && subtype.partnerType === partnerType);
+    setValue({ ...value, partnerType, partnerSubtypeId: stillValid ? value.partnerSubtypeId : null });
+  }
+
   return <form onSubmit={submit}>
     <BarSection title={labels.basic} icon="📌">
       <div style={candidateBasicGrid}>
         <BarField label={t.name} required>{({ id }) => <input id={id} required maxLength={200} value={value.name} onChange={event => setValue({ ...value, name: event.target.value })} style={keepingInputStyle} />}</BarField>
-        <BarField label={t.type}>{({ id }) => <select id={id} value={value.partnerType} onChange={event => setValue({ ...value, partnerType: event.target.value as PartnerType })} style={keepingInputStyle}>{PARTNER_TYPES.map(type => <option key={type} value={type}>{partnerTypeLabels[type][lang]}</option>)}</select>}</BarField>
+        <BarField label={t.type}>{({ id }) => <select id={id} value={value.partnerType} onChange={event => changePartnerType(event.target.value as PartnerType)} style={keepingInputStyle}>{PARTNER_TYPES.map(type => <option key={type} value={type}>{partnerTypeLabels[type][lang]}</option>)}</select>}</BarField>
       </div>
+      <BarField label={t.subtype}>{({ id }) => <select id={id} value={value.partnerSubtypeId ?? ""} onChange={event => setValue({ ...value, partnerSubtypeId: event.target.value ? Number(event.target.value) : null })} style={keepingInputStyle}>
+        <option value="">{formatPartnerSubtypeName(null, lang)}</option>
+        {subtypeOptions.map(subtype => <option key={subtype.id} value={subtype.id}>{formatPartnerSubtypeName(subtype, lang)}</option>)}
+      </select>}</BarField>
     </BarSection>
     <BarSection title={labels.payment} icon="💳">
       <PartnerSettlementFields lang={lang} value={value} fundAccounts={fundAccounts} disabled={saving} onChange={setValue} />

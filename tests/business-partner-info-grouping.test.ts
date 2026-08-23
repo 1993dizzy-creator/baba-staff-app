@@ -43,7 +43,7 @@ test("partner groups follow the canonical partner type order", () => {
 });
 
 test("info page reuses localized partner type labels and removes row category badges", () => {
-  assert.match(infoPage, /groupPartnersByType\(partners, filter === "active", lang\)/);
+  assert.match(infoPage, /groupPartnersByTypeAndSubtype\(partners, filter === "active", lang, partnerSubtypes\)/);
   assert.match(infoPage, /partnerTypeLabels\[group\.type\]\[lang\]/);
   assert.doesNotMatch(infoPage, /dominantInventoryGroup|styles\.groupBadge/);
   assert.match(infoPage, /formatPartnerPaymentSummary\(partner, lang\)/);

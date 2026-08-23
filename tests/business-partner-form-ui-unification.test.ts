@@ -78,7 +78,11 @@ test("candidate create_partner form keeps its field order and fixed isActive=tru
   assert.ok(nameIdx < typeIdx && typeIdx < paymentIdx && paymentIdx < contactIdx && contactIdx < memoIdx);
   assert.match(candidatePage, /paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null/);
   assert.match(candidatePage, /isActive: true, ledgerPartyId: null/);
-  assert.doesNotMatch(candidateForm, /isActive/);
+  // No user-facing active/inactive status control on the Candidate form (isActive is fixed
+  // true and never rendered as a toggle) -- subtype.isActive is a plain filter predicate
+  // for which subtype options to list, not a status control, so it's explicitly allowed.
+  assert.doesNotMatch(candidateForm, /showActive|BarSegmentedControl|value\.isActive/);
+  assert.match(candidateForm, /subtype\.isActive \|\| subtype\.id === value\.partnerSubtypeId/);
 });
 
 // 8. KO/VI 모두 정상

@@ -12,7 +12,7 @@ const detailApi = read("app/api/admin/partners/[id]/route.ts");
 const layout = read("app/(protected)/admin/partners/layout.tsx");
 const admin = read("app/(protected)/admin/page.tsx");
 
-const base = { name: "Fresh Foods", partnerType: "food", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, phone: "090", contactName: "Lan", memo: "", isActive: true, ledgerPartyId: null };
+const base = { name: "Fresh Foods", partnerType: "food", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, partnerSubtypeId: null, phone: "090", contactName: "Lan", memo: "", isActive: true, ledgerPartyId: null };
 
 test("partner input canonicalizes immediate policy", () => {
   assert.deepEqual(parsePartnerInput(base), { ...base, phone: "090", contactName: "Lan", memo: null });

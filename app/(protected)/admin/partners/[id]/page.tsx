@@ -4,17 +4,17 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Container from "@/components/Container";
 import { BarSection, keepingFormCardStyle, keepingInputStyle, primaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
-import PartnerForm, { type FundAccount, type PartnerFormValue } from "@/components/PartnerForm";
+import PartnerForm, { type FundAccount, type PartnerFormValue, type PartnerSubtype } from "@/components/PartnerForm";
 import { useLanguage } from "@/lib/language-context";
-import { partnerText, partnerTypeLabels } from "@/lib/partners/text";
+import { formatPartnerSubtypeName, partnerText, partnerTypeLabels } from "@/lib/partners/text";
 import styles from "../partners.module.css";
 
-type Partner = PartnerFormValue & { id: number; displayTag: string | null };
+type Partner = PartnerFormValue & { id: number; displayTag: string | null; partnerSubtype: { nameKo: string | null; nameVi: string | null } | null };
 type LinkedInventory = { id: number; itemName: string | null; itemNameVi: string | null; part: string | null; category: string | null; categoryVi: string | null; purchasePrice: number | string | null; isActive: boolean; rawSupplier: string | null };
 
 export default function PartnerDetailPage() {
   const params = useParams<{ id: string }>(); const { lang } = useLanguage(); const t = partnerText[lang];
-  const [partner, setPartner] = useState<Partner | null>(null); const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([]); const [linkedInventory, setLinkedInventory] = useState<LinkedInventory[]>([]); const [message, setMessage] = useState(""); const [error, setError] = useState("");
+  const [partner, setPartner] = useState<Partner | null>(null); const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([]); const [partnerSubtypes, setPartnerSubtypes] = useState<PartnerSubtype[]>([]); const [linkedInventory, setLinkedInventory] = useState<LinkedInventory[]>([]); const [message, setMessage] = useState(""); const [error, setError] = useState("");
   const [tagInput, setTagInput] = useState(""); const [tagSaving, setTagSaving] = useState(false); const [tagError, setTagError] = useState("");
   // ledgerPartyId is preserved from the API response (backend bridge field) even though
   // the form no longer renders a control for it, so an existing link is never dropped on save.
@@ -24,6 +24,7 @@ export default function PartnerDetailPage() {
     if (!response.ok) throw new Error(body.code);
     setPartner({ ...body.partner, ledgerPartyId: body.partner.ledgerParty?.id ?? null });
     setFundAccounts(body.fundAccounts);
+    setPartnerSubtypes(body.partnerSubtypes);
     setLinkedInventory(body.linkedInventory);
     setTagInput(body.partner.displayTag ?? "");
   }, [params.id]);
@@ -57,6 +58,7 @@ export default function PartnerDetailPage() {
         <div className={styles.candidateIdentity}>
           <div className={styles.candidateIdentityName}>
             <span className={styles.groupBadge}>{partnerTypeLabels[partner.partnerType][lang]}</span>
+            {partner.partnerSubtypeId ? <span className={styles.groupBadge}>{formatPartnerSubtypeName(partner.partnerSubtype, lang)}</span> : null}
             <strong>{partner.name}</strong>
             {partner.displayTag ? <span className={styles.tagBadge}>{partner.displayTag}</span> : null}
           </div>
@@ -74,7 +76,7 @@ export default function PartnerDetailPage() {
           }) : <p className={styles.candidateItemsEmpty}>{supplyEmpty}</p>}
         </div>
       </BarSection>
-      <PartnerForm key={`${partner.id}-${partner.name}-${partner.isActive}`} lang={lang} initial={partner} fundAccounts={fundAccounts} first={false} onSubmit={update} />
+      <PartnerForm key={`${partner.id}-${partner.name}-${partner.isActive}`} lang={lang} initial={partner} fundAccounts={fundAccounts} partnerSubtypes={partnerSubtypes} first={false} onSubmit={update} />
       <BarSection title={tagLabels.title} icon="🏷️">
         <div style={{ display: "flex", gap: 8 }}>
           <input value={tagInput} maxLength={30} placeholder={tagLabels.placeholder} onChange={event => setTagInput(event.target.value)} style={{ ...keepingInputStyle, flex: 1 }} />

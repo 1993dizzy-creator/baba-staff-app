@@ -22,7 +22,7 @@ export async function POST(request: Request) {
   const input = parsePartnerInput(await request.json().catch(() => null));
   if (!input) return partnerJson({ ok: false, code: "INVALID_BODY" }, 400);
   try {
-    const { data, error } = await supabaseServer.rpc("business_partner_create_v3", {
+    const { data, error } = await supabaseServer.rpc("business_partner_create_v4", {
       p_name: input.name,
       p_partner_type: input.partnerType,
       p_payment_mode: input.paymentMode,
@@ -30,6 +30,7 @@ export async function POST(request: Request) {
       p_settlement_rule: input.settlementRule,
       p_default_payment_term_days: input.defaultPaymentTermDays,
       p_default_fund_account_id: input.defaultFundAccountId,
+      p_partner_subtype_id: input.partnerSubtypeId,
       p_phone: input.phone,
       p_contact_name: input.contactName,
       p_memo: input.memo,

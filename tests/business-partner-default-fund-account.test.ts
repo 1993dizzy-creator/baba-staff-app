@@ -21,7 +21,7 @@ const registrationPage = read("app/(protected)/admin/partners/page.tsx");
 const detailPage = read("app/(protected)/admin/partners/[id]/page.tsx");
 const candidatePage = read("app/(protected)/admin/partners/candidates/[id]/page.tsx");
 
-const base = { name: "Fresh Foods", partnerType: "food", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, phone: null, contactName: null, memo: null, isActive: true, ledgerPartyId: null };
+const base = { name: "Fresh Foods", partnerType: "food", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, partnerSubtypeId: null, phone: null, contactName: null, memo: null, isActive: true, ledgerPartyId: null };
 const parse = (changes: Record<string, unknown>) => parsePartnerInput({ ...base, ...changes });
 
 test("default_fund_account_id reuses ledger_fund_accounts as the single source of truth", () => {
@@ -95,10 +95,10 @@ test("candidate create_partner action validates the fund account only for the cr
   assert.match(createPartnerBranch, /invalid_fund_account/);
 });
 
-test("app mutations call V3 and forward the fund account field", () => {
-  assert.match(collectionApi, /business_partner_create_v3/);
-  assert.match(detailApi, /business_partner_update_v3/);
-  assert.match(aliasApi, /business_partner_review_supplier_alias_v3/);
+test("app mutations call the active V4 RPC (V3 added the fund account field; V4 layers subtype on top) and forward the fund account field", () => {
+  assert.match(collectionApi, /business_partner_create_v4/);
+  assert.match(detailApi, /business_partner_update_v4/);
+  assert.match(aliasApi, /business_partner_review_supplier_alias_v4/);
   for (const source of [collectionApi, detailApi, aliasApi]) assert.match(source, /p_default_fund_account_id/);
 });
 

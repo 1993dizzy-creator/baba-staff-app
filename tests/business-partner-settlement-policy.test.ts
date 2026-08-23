@@ -27,7 +27,7 @@ const settlementFields = read("components/PartnerSettlementFields.tsx");
 const partnerServer = read("lib/partners/server.ts");
 const infoPage = read("app/(protected)/admin/partners/info/page.tsx");
 
-const base = { name: "Fresh Foods", partnerType: "food", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, phone: null, contactName: null, memo: null, isActive: true, ledgerPartyId: null };
+const base = { name: "Fresh Foods", partnerType: "food", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, partnerSubtypeId: null, phone: null, contactName: null, memo: null, isActive: true, ledgerPartyId: null };
 const parse = (changes: Record<string, unknown>) => parsePartnerInput({ ...base, ...changes });
 
 test("immediate canonicalizes all internal settlement fields to null", () => {
@@ -109,9 +109,9 @@ test("V2 audits snapshot the complete partner row", () => {
 });
 
 test("all app mutations carry settlement fields through to their active RPC and API reads expose settlement fields", () => {
-  assert.match(collectionApi, /business_partner_create_v3/);
-  assert.match(detailApi, /business_partner_update_v3/);
-  assert.match(aliasApi, /business_partner_review_supplier_alias_v3/);
+  assert.match(collectionApi, /business_partner_create_v4/);
+  assert.match(detailApi, /business_partner_update_v4/);
+  assert.match(aliasApi, /business_partner_review_supplier_alias_v4/);
   for (const source of [collectionApi, detailApi, aliasApi]) {
     assert.match(source, /p_settlement_mode/);
     assert.match(source, /p_settlement_rule/);

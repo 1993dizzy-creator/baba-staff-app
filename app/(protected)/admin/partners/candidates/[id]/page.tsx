@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Container from "@/components/Container";
 import CandidatePartnerReviewForm from "@/components/CandidatePartnerReviewForm";
 import { BarField, BarSection, BarSegmentedControl, dangerButtonStyle, keepingFormCardStyle, keepingInputStyle, primaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
-import type { FundAccount, PartnerFormValue } from "@/components/PartnerForm";
+import type { FundAccount, PartnerFormValue, PartnerSubtype } from "@/components/PartnerForm";
 import type { InventoryCategoryGroup } from "@/lib/inventory/category-groups";
 import { useLanguage } from "@/lib/language-context";
 import styles from "../../partners.module.css";
@@ -41,6 +41,7 @@ export default function SupplierCandidatePage() {
   const [alias, setAlias] = useState<Alias | null>(null);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([]);
+  const [partnerSubtypes, setPartnerSubtypes] = useState<PartnerSubtype[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [action, setAction] = useState<Action>("create_partner");
   const [existingPartnerId, setExistingPartnerId] = useState("");
@@ -50,7 +51,7 @@ export default function SupplierCandidatePage() {
     const response = await fetch(`/api/admin/partners/aliases/${id}`, { cache: "no-store" });
     const body = await response.json();
     if (!response.ok) throw new Error(body.code);
-    setAlias(body.alias); setPartners(body.partners); setFundAccounts(body.fundAccounts); setInventoryItems(body.inventoryItems ?? []);
+    setAlias(body.alias); setPartners(body.partners); setFundAccounts(body.fundAccounts); setPartnerSubtypes(body.partnerSubtypes); setInventoryItems(body.inventoryItems ?? []);
   }, [id]);
   useEffect(() => { void load().catch(error => setError(String(error))); }, [load]);
 
@@ -95,13 +96,13 @@ export default function SupplierCandidatePage() {
   if (alias.status === "linked" && alias.businessPartnerId) return page(<div style={keepingFormCardStyle}><BarSection title={labels.info} icon="📎" first>{identity(labels.linked)}</BarSection></div>);
   if (alias.status === "ignored") return page(<div style={keepingFormCardStyle}><BarSection title={labels.info} icon="📎" first>{identity(labels.ignore)}</BarSection><BarSection title={labels.reviewAgain}><button disabled={busy} onClick={() => void review({ action: "reopen" })} style={{ ...primaryButtonStyle, width: "100%", opacity: busy ? .6 : 1 }}>{labels.reopen}</button></BarSection></div>);
 
-  const initial: PartnerFormValue = { name: alias.supplierName, partnerType: "other", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, contactName: null, phone: null, memo: null, isActive: true, ledgerPartyId: null };
+  const initial: PartnerFormValue = { name: alias.supplierName, partnerType: "other", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, partnerSubtypeId: null, contactName: null, phone: null, memo: null, isActive: true, ledgerPartyId: null };
   return page(<div style={keepingFormCardStyle}>
     <BarSection title={labels.review} icon="📋" first>
       {identity(labels.pending)}
       <BarSegmentedControl<Action> label={lang === "vi" ? "Cách xét duyệt" : "검토 방식"} value={action} disabled={busy} onChange={setAction} options={lang === "vi" ? [{ value: "create_partner", label: "Tạo mới" }, { value: "link_existing", label: "Liên kết" }, { value: "ignore", label: "Bỏ qua" }] : [{ value: "create_partner", label: "새 거래처" }, { value: "link_existing", label: "기존 거래처" }, { value: "ignore", label: "등록 안 함" }]} />
     </BarSection>
-    {action === "create_partner" ? <CandidatePartnerReviewForm lang={lang} initial={initial} fundAccounts={fundAccounts} submitLabel={labels.save} onSubmit={createPartner} /> : null}
+    {action === "create_partner" ? <CandidatePartnerReviewForm lang={lang} initial={initial} fundAccounts={fundAccounts} partnerSubtypes={partnerSubtypes} submitLabel={labels.save} onSubmit={createPartner} /> : null}
     {action === "link_existing" ? <BarSection title={labels.existing} icon="🔗"><BarField label={labels.choose}>{({ id }) => <select id={id} value={existingPartnerId} onChange={event => setExistingPartnerId(event.target.value)} style={keepingInputStyle}><option value="">{labels.choose}</option>{partners.filter(row => row.isActive).map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select>}</BarField><button disabled={busy || !existingPartnerId} onClick={() => void review({ action: "link_existing", existingPartnerId: Number(existingPartnerId) })} style={{ ...primaryButtonStyle, width: "100%", opacity: busy || !existingPartnerId ? .6 : 1 }}>{labels.save}</button></BarSection> : null}
     {action === "ignore" ? <BarSection title={labels.ignore} icon="🚫"><button disabled={busy} onClick={() => void review({ action: "ignore" })} style={{ ...primaryButtonStyle, width: "100%", opacity: busy ? .6 : 1 }}>{labels.ignore}</button></BarSection> : null}
     {alias.inventoryCount === 0 ? <BarSection title={labels.removeSection} icon="🗑️"><button disabled={busy} onClick={() => void removeCandidate()} style={{ ...dangerButtonStyle, width: "100%", opacity: busy ? .6 : 1 }}>{labels.remove}</button></BarSection> : null}

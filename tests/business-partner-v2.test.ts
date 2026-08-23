@@ -101,7 +101,7 @@ test("candidate review is atomic for new existing ignore and reopen", () => {
   assert.match(migration, /business_partner_review_supplier_alias_v1/);
   for (const action of ["create_partner", "link_existing", "ignore", "reopen"]) assert.match(migration, new RegExp(`p_action = '${action}'`));
   assert.match(migration, /update public\.inventory set supplier_partner_id=v_partner_id where lower\(btrim\(supplier\)\)=v_alias\.normalized_name/);
-  assert.match(adminApi, /business_partner_review_supplier_alias_v3/);
+  assert.match(adminApi, /business_partner_review_supplier_alias_v4/);
 });
 
 test("candidate review is owner/master only and browser table mutation is denied", () => {
@@ -221,11 +221,11 @@ test("candidate review uses a BAR-style page card and native document scrolling"
 
 test("candidate detail includes matched inventory items without changing review writes", () => {
   assert.match(adminApi, /loadSupplierAliasInventory\(alias\.supplierName\)/);
-  assert.match(adminApi, /partnerJson\(\{ ok: true, alias, partners: partnerData\.partners, fundAccounts: partnerData\.fundAccounts, inventoryItems \}\)/);
+  assert.match(adminApi, /partnerJson\(\{ ok: true, alias, partners: partnerData\.partners, fundAccounts: partnerData\.fundAccounts, partnerSubtypes: partnerData\.partnerSubtypes, inventoryItems \}\)/);
   assert.match(partnerServer, /select\("id,supplier,item_name,item_name_vi,part,category,category_vi,is_active"\)/);
   assert.match(partnerServer, /filter\(row => normalizeSupplierName\(row\.supplier\) === normalizedName\)/);
   assert.match(partnerServer, /String\(value \?\? ""\)\.trim\(\)\.toLowerCase\(\)/);
-  assert.match(adminApi, /business_partner_review_supplier_alias_v3/);
+  assert.match(adminApi, /business_partner_review_supplier_alias_v4/);
   assert.doesNotMatch(adminApi, /inventoryItems[\s\S]*PATCH[\s\S]*inventoryItems/);
 });
 
