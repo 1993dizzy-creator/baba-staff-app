@@ -11,6 +11,8 @@ import { formatPartnerSubtypeName } from "../lib/partners/text.ts";
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const sha256 = (path: string) => createHash("sha256").update(read(path)).digest("hex");
 const migration = read("supabase/migrations/202608240002_add_business_partner_subtypes.sql");
+const deleteMigration = read("supabase/migrations/202608240003_add_business_partner_subtype_delete.sql");
+const foodSubtypeMigration = read("supabase/migrations/202608240004_update_food_partner_subtypes.sql");
 const partnerServer = read("lib/partners/server.ts");
 const partnerForm = read("components/PartnerForm.tsx");
 const candidateForm = read("components/CandidatePartnerReviewForm.tsx");
@@ -242,7 +244,7 @@ test("21: app mutations call the V4 RPC and forward p_partner_subtype_id", () =>
 // ===================== D. UI =====================
 
 test("21/22/23: PartnerForm renders a full-width 중분류 select scoped to the current partnerType, resetting on partnerType change", () => {
-  assert.match(partnerForm, /<BarField label={t\.subtype}>/);
+  assert.match(partnerForm, /<BarField compact={slim} label={t\.subtype}>/);
   assert.match(partnerForm, /const subtypeOptions = partnerSubtypes\s*\n\s*\.filter\(subtype => subtype\.partnerType === value\.partnerType && \(subtype\.isActive \|\| subtype\.id === value\.partnerSubtypeId\)\)/);
   assert.match(partnerForm, /function changePartnerType\(partnerType: PartnerType\) \{/);
   assert.match(partnerForm, /partnerSubtypeId: stillValid \? value\.partnerSubtypeId : null/);
@@ -255,7 +257,7 @@ test("11: 거래처명/대분류 stay on one row, 중분류 is its own full-widt
   const typeFieldIdx = basicSection.indexOf("t.type");
   const subtypeFieldIdx = basicSection.indexOf("t.subtype");
   assert.ok(nameFieldIdx < typeFieldIdx && typeFieldIdx < subtypeFieldIdx);
-  assert.match(basicSection, /<div style={basicGridStyle}>[\s\S]*<\/div>\s*\n\s*<BarField label={t\.subtype}>/);
+  assert.match(basicSection, /<div style=\{\{ \.\.\.basicGridStyle, gap: slim \? 8 : 10 \}\}>[\s\S]*<\/div>\s*\n\s*<BarField compact={slim} label={t\.subtype}>/);
 });
 
 test("13: KO/VI select labels show one language with fallback, never both languages concatenated", () => {
@@ -361,10 +363,37 @@ test("36: deactivate goes through the same update RPC (isActive:false), not a se
   assert.deepEqual(parsePartnerSubtypeUpdateInput({ nameKo: "생맥주", nameVi: null, sortOrder: 10, isActive: false }), { nameKo: "생맥주", nameVi: null, sortOrder: 10, isActive: false });
 });
 
-test("37: no physical delete -- no DROP/DELETE RPC or DELETE route for subtypes", () => {
+test("37: physical delete is added only in a follow-up migration and route", () => {
   assert.doesNotMatch(migration, /drop function public\.business_partner_subtype/i);
   assert.doesNotMatch(migration, /delete from public\.business_partner_subtypes/i);
-  assert.doesNotMatch(subtypeUpdateApi, /export async function DELETE/);
+  assert.match(deleteMigration, /create function public\.business_partner_subtype_delete_v1\(\s*\n\s*p_subtype_id bigint,\s*\n\s*p_actor_user_id bigint/);
+  assert.match(subtypeUpdateApi, /export async function DELETE/);
+});
+
+test("unused subtype delete is race-safe and never nulls or rewrites Partner references", () => {
+  assert.match(deleteMigration, /from public\.business_partner_subtypes[\s\S]*for update/);
+  assert.match(deleteMigration, /if exists \(\s*\n\s*select 1 from public\.business_partners\s*\n\s*where partner_subtype_id = p_subtype_id/);
+  assert.match(deleteMigration, /delete from public\.business_partner_subtypes\s*\n\s*where id = p_subtype_id/);
+  assert.match(deleteMigration, /when foreign_key_violation then\s*\n\s*return jsonb_build_object\('status', 'in_use'\)/);
+  assert.doesNotMatch(deleteMigration, /update public\.business_partners|partner_subtype_id\s*=\s*null/);
+});
+
+test("delete RPC handles authorization, missing rows, usage, and restricted execution deterministically", () => {
+  assert.match(deleteMigration, /coalesce\(v_role, ''\) not in \('owner', 'master'\)[\s\S]*'status', 'forbidden'/);
+  assert.match(deleteMigration, /v_subtype_id is null[\s\S]*'status', 'not_found'/);
+  assert.match(deleteMigration, /'status', 'in_use'/);
+  assert.match(deleteMigration, /'status', 'deleted'/);
+  assert.match(deleteMigration, /security definer/);
+  assert.match(deleteMigration, /set search_path = pg_catalog, public/);
+  assert.match(deleteMigration, /owner to postgres/);
+  assert.match(deleteMigration, /revoke all on function public\.business_partner_subtype_delete_v1\(bigint,bigint\) from public, anon, authenticated, service_role/);
+  assert.match(deleteMigration, /grant execute on function public\.business_partner_subtype_delete_v1\(bigint,bigint\) to postgres, service_role/);
+});
+
+test("delete API performs an early reference check but delegates the final decision to the RPC", () => {
+  assert.match(subtypeUpdateApi, /from\("business_partners"\)[\s\S]*count: "exact", head: true[\s\S]*eq\("partner_subtype_id", id\)/);
+  assert.match(subtypeUpdateApi, /business_partner_subtype_delete_v1/);
+  assert.match(subtypeUpdateApi, /SUBTYPE_IN_USE/);
 });
 
 test("23: code is server-generated (custom_<id>), never accepted as free client input", () => {
@@ -392,8 +421,41 @@ test("subtype management RPCs are owner/master gated with the same security patt
 
 test("subtype management UI reuses the shared BarSheet chrome, same as the existing add-partner dialog", () => {
   assert.match(subtypeManager, /import \{ BarField, BarSection, BarSegmentedControl, BarSheet, keepingInputStyle, primaryButtonStyle, secondaryButtonStyle \} from "@\/components\/bar\/keeping\/KeepingUi"/);
-  assert.match(adminPage, /import PartnerSubtypeManager from "@\/components\/PartnerSubtypeManager"/);
-  assert.match(adminPage, /<PartnerSubtypeManager lang={lang} open={showSubtypeManager} partnerSubtypes={partnerSubtypes} onClose={\(\) => setShowSubtypeManager\(false\)} onReload={load}/);
+  assert.doesNotMatch(adminPage, /PartnerSubtypeManager|manageSubtypes|중분류 관리/);
+  assert.match(infoPage, /import PartnerSubtypeManager from "@\/components\/PartnerSubtypeManager"/);
+  assert.match(infoPage, /<PartnerSubtypeManager lang={lang} open={showSubtypeManager} partnerSubtypes={partnerSubtypes} onClose={\(\) => setShowSubtypeManager\(false\)} onReload={load}/);
+  assert.match(infoPage, /중분류 관리/);
+});
+
+test("info-page subtype manager entry is a full-width mobile-safe action with an icon", () => {
+  assert.match(infoPage, /<span aria-hidden="true">🗂️<\/span>/);
+  assert.match(partnerStyles, /\.infoActions\{width:100%;min-width:0\}/);
+  assert.match(partnerStyles, /\.infoActions button\{[^}]*box-sizing:border-box[^}]*grid-template-columns:auto minmax\(0,1fr\) auto[^}]*width:100%[^}]*min-width:0/);
+});
+
+test("partner create and detail update use an immediate success alert instead of a trailing success banner", () => {
+  const partnerDetailPage = read("app/(protected)/admin/partners/[id]/page.tsx");
+  for (const page of [adminPage, partnerDetailPage]) {
+    assert.match(page, /alert\(t\.saved\)/);
+    assert.doesNotMatch(page, /setMessage\(|styles\.notice/);
+  }
+});
+
+test("food subtype labels are updated additively while stable identities remain intact", () => {
+  assert.match(foodSubtypeMigration, /where lower\(btrim\(code\)\) = 'dry_food'/);
+  assert.match(foodSubtypeMigration, /name_ko = '건어물'/);
+  assert.match(foodSubtypeMigration, /name_vi = 'Đồ khô'/);
+  assert.doesNotMatch(foodSubtypeMigration, /set\s+code\s*=/i);
+  assert.match(foodSubtypeMigration, /select 'general_food', 'food', '종합 식자재', 'Thực phẩm tổng hợp', 75, true/);
+  assert.match(foodSubtypeMigration, /where not exists \([\s\S]*lower\(btrim\(code\)\) = 'general_food'/);
+});
+
+test("delete UI has a separate confirmation danger area, localized errors, and reloads without closing on failure", () => {
+  assert.match(subtypeManager, /dangerTitle: "중분류 삭제"/);
+  assert.match(subtypeManager, /deleteConfirm: "정말 이 중분류를 삭제하시겠습니까\?"/);
+  assert.match(subtypeManager, /Không thể xóa vì có đối tác đang sử dụng danh mục phụ này/);
+  assert.match(subtypeManager, /method: "DELETE"/);
+  assert.match(subtypeManager, /if \(!response\.ok\) \{[\s\S]*setError[\s\S]*return;[\s\S]*\}\s*\n\s*await onReload\(\);\s*\n\s*setEditing\(null\)/);
 });
 
 // ===================== G. compatibility =====================
@@ -407,6 +469,7 @@ test("previously applied partner migrations remain byte-for-byte unchanged", () 
   assert.equal(sha256("supabase/migrations/202608230003_add_business_partner_default_fund_account.sql"), "bd4f41eff8f1decd3c6e37a65cafd833e69a7683bd2bb649a3bee750cae6d598");
   assert.equal(sha256("supabase/migrations/202608230004_fix_business_partner_fund_account_eligibility.sql"), "ccc6ea8e2086102f63fe5a39d66fd3febed541920e9306b8bbb20744cc1e9e2d");
   assert.equal(sha256("supabase/migrations/202608240001_add_business_partner_display_tag.sql"), "5560fd11011bb980647ef13d3401f45e3abd51e6e076529c42f66a98cd4692c3");
+  assert.equal(sha256("supabase/migrations/202608240002_add_business_partner_subtypes.sql"), "5c0decda9e0109645da398aa5296035bf562832f8bcb05c16559c6333cf3db2e");
 });
 
 test("39: display_tag stays independent -- role separation from partner_subtype_id is preserved everywhere", () => {

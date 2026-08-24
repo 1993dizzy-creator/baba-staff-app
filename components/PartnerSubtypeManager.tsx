@@ -16,13 +16,12 @@ type Props = {
 };
 
 const labels = {
-  ko: { title: "중분류 관리", close: "닫기", groupLabel: "대분류", listLabel: "중분류 목록", add: "+ 중분류 추가", edit: "중분류 수정", nameKo: "한국어", nameVi: "Tiếng Việt", sortOrder: "정렬순서", status: "사용 여부", active: "사용 중", inactive: "사용 안 함", cancel: "취소", save: "저장", saving: "저장 중…", empty: "등록된 중분류가 없습니다.", nameRequired: "한국어 또는 베트남어 중 하나는 입력해야 합니다." },
-  vi: { title: "Quản lý danh mục phụ", close: "Đóng", groupLabel: "Ngành / loại", listLabel: "Danh sách danh mục phụ", add: "+ Thêm danh mục phụ", edit: "Sửa danh mục phụ", nameKo: "Tiếng Hàn", nameVi: "Tiếng Việt", sortOrder: "Thứ tự", status: "Trạng thái", active: "Đang dùng", inactive: "Ngừng dùng", cancel: "Hủy", save: "Lưu", saving: "Đang lưu…", empty: "Chưa có danh mục phụ nào.", nameRequired: "Cần nhập ít nhất tiếng Hàn hoặc tiếng Việt." },
+  ko: { title: "중분류 관리", close: "닫기", groupLabel: "대분류", listLabel: "중분류 목록", add: "+ 중분류 추가", edit: "중분류 수정", nameKo: "한국어", nameVi: "Tiếng Việt", sortOrder: "정렬순서", status: "사용 여부", active: "사용 중", inactive: "사용 안 함", cancel: "취소", save: "저장", saving: "저장 중…", empty: "등록된 중분류가 없습니다.", nameRequired: "한국어 또는 베트남어 중 하나는 입력해야 합니다.", dangerTitle: "중분류 삭제", delete: "삭제", deleting: "삭제 중…", deleteConfirm: "정말 이 중분류를 삭제하시겠습니까?", deleteCancel: "삭제 취소", inUse: "이 중분류를 사용 중인 거래처가 있어 삭제할 수 없습니다. 먼저 거래처의 중분류를 변경해주세요.", notFound: "이미 삭제되었거나 존재하지 않는 중분류입니다.", deleteFailed: "중분류를 삭제하지 못했습니다." },
+  vi: { title: "Quản lý danh mục phụ", close: "Đóng", groupLabel: "Ngành / loại", listLabel: "Danh sách danh mục phụ", add: "+ Thêm danh mục phụ", edit: "Sửa danh mục phụ", nameKo: "Tiếng Hàn", nameVi: "Tiếng Việt", sortOrder: "Thứ tự", status: "Trạng thái", active: "Đang dùng", inactive: "Ngừng dùng", cancel: "Hủy", save: "Lưu", saving: "Đang lưu…", empty: "Chưa có danh mục phụ nào.", nameRequired: "Cần nhập ít nhất tiếng Hàn hoặc tiếng Việt.", dangerTitle: "Xóa danh mục phụ", delete: "Xóa", deleting: "Đang xóa…", deleteConfirm: "Bạn có chắc muốn xóa danh mục phụ này không?", deleteCancel: "Hủy xóa", inUse: "Không thể xóa vì có đối tác đang sử dụng danh mục phụ này. Vui lòng đổi danh mục phụ của đối tác trước.", notFound: "Danh mục phụ không tồn tại hoặc đã bị xóa.", deleteFailed: "Không thể xóa danh mục phụ." },
 } as const;
 
 // Reuses the shared BarSheet chrome (same pattern as the "+ 거래처 추가" dialog on this
-// page) instead of a separate large management screen. No physical delete: deactivate is
-// the only removal path, since a subtype may already be referenced by a Partner.
+// page) instead of a separate large management screen.
 export default function PartnerSubtypeManager({ lang, open, partnerSubtypes, onClose, onReload, returnFocusRef }: Props) {
   const t = labels[lang];
   const [groupType, setGroupType] = useState<PartnerType>("alcohol");
@@ -32,15 +31,34 @@ export default function PartnerSubtypeManager({ lang, open, partnerSubtypes, onC
   const [sortOrder, setSortOrder] = useState("0");
   const [isActive, setIsActive] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState("");
 
   const rows = partnerSubtypes.filter(subtype => subtype.partnerType === groupType).sort((a, b) => a.sortOrder - b.sortOrder);
 
   function startCreate() {
-    setEditing("new"); setNameKo(""); setNameVi(""); setSortOrder("0"); setIsActive(true); setError("");
+    setEditing("new"); setNameKo(""); setNameVi(""); setSortOrder("0"); setIsActive(true); setConfirmingDelete(false); setError("");
   }
   function startEdit(subtype: PartnerSubtype) {
-    setEditing(subtype); setNameKo(subtype.nameKo ?? ""); setNameVi(subtype.nameVi ?? ""); setSortOrder(String(subtype.sortOrder)); setIsActive(subtype.isActive); setError("");
+    setEditing(subtype); setNameKo(subtype.nameKo ?? ""); setNameVi(subtype.nameVi ?? ""); setSortOrder(String(subtype.sortOrder)); setIsActive(subtype.isActive); setConfirmingDelete(false); setError("");
+  }
+
+  async function remove() {
+    if (!editing || editing === "new") return;
+    setSaving(true); setError("");
+    try {
+      const response = await fetch(`/api/admin/partners/subtypes/${editing.id}`, { method: "DELETE" });
+      const result = await response.json();
+      if (!response.ok) {
+        setError(result.code === "SUBTYPE_IN_USE" ? t.inUse : result.code === "SUBTYPE_NOT_FOUND" ? t.notFound : t.deleteFailed);
+        return;
+      }
+      await onReload();
+      setEditing(null);
+      setConfirmingDelete(false);
+    } catch {
+      setError(t.deleteFailed);
+    } finally { setSaving(false); }
   }
 
   async function save() {
@@ -62,7 +80,7 @@ export default function PartnerSubtypeManager({ lang, open, partnerSubtypes, onC
   if (!open) return null;
   return <BarSheet kind="full" title={t.title} closeLabel={t.close} saving={saving} onClose={onClose} returnFocusRef={returnFocusRef} footer={editing
     ? <div style={{ display: "flex", gap: 8 }}>
-        <button type="button" style={{ ...secondaryButtonStyle, flex: 1 }} disabled={saving} onClick={() => setEditing(null)}>{t.cancel}</button>
+        <button type="button" style={{ ...secondaryButtonStyle, flex: 1 }} disabled={saving} onClick={() => { setEditing(null); setConfirmingDelete(false); }}>{t.cancel}</button>
         <button type="button" style={{ ...primaryButtonStyle, flex: 1 }} disabled={saving} onClick={() => void save()}>{saving ? t.saving : t.save}</button>
       </div>
     : <button type="button" style={{ ...primaryButtonStyle, width: "100%" }} onClick={startCreate}>{t.add}</button>}>
@@ -78,6 +96,16 @@ export default function PartnerSubtypeManager({ lang, open, partnerSubtypes, onC
       {editing !== "new" ? <div style={{ display: "grid", gap: 5 }}>
         <span style={{ color: "#4b5563", fontSize: 12, fontWeight: 700 }}>{t.status}</span>
         <BarSegmentedControl label={t.status} value={isActive ? "active" : "inactive"} onChange={next => setIsActive(next === "active")} options={[{ value: "active", label: t.active }, { value: "inactive", label: t.inactive }]} />
+      </div> : null}
+      {editing !== "new" ? <div style={{ display: "grid", gap: 8, marginTop: 8, padding: 12, border: "1px solid #fecaca", borderRadius: 10, background: "#fff7f7" }}>
+        <strong style={{ color: "#991b1b", fontSize: 13 }}>{t.dangerTitle}</strong>
+        {confirmingDelete ? <>
+          <p style={{ margin: 0, color: "#7f1d1d", fontSize: 12 }}>{t.deleteConfirm}</p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" style={{ ...secondaryButtonStyle, flex: 1 }} disabled={saving} onClick={() => setConfirmingDelete(false)}>{t.deleteCancel}</button>
+            <button type="button" style={{ ...primaryButtonStyle, flex: 1, borderColor: "#b91c1c", background: "#b91c1c" }} disabled={saving} onClick={() => void remove()}>{saving ? t.deleting : t.delete}</button>
+          </div>
+        </> : <button type="button" style={{ ...secondaryButtonStyle, width: "100%", borderColor: "#fca5a5", color: "#b91c1c" }} disabled={saving} onClick={() => setConfirmingDelete(true)}>{t.delete}</button>}
       </div> : null}
       {error ? <p role="alert" style={{ margin: 0, color: "#b91c1c", fontSize: 12 }}>{error}</p> : null}
     </BarSection> : <BarSection title={t.listLabel} icon="📋">

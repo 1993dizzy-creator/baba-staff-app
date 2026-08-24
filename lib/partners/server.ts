@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/server-auth";
 import { getDominantInventoryCategoryGroup } from "@/lib/inventory/category-groups";
 import { PARTNER_MANAGER_ROLES } from "@/lib/partners/policy";
+import { buildPartnerPriceChanges } from "@/lib/partners/price-changes";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const normalizeSupplierName = (value: unknown) => String(value ?? "").trim().toLowerCase();
@@ -168,4 +169,25 @@ export async function loadLinkedPartnerInventory(partnerId: number) {
     category: row.category, categoryVi: row.category_vi, purchasePrice: row.purchase_price,
     isActive: row.is_active, rawSupplier: row.supplier,
   }));
+}
+
+export async function loadLinkedPartnerInventoryDetail(partnerId: number) {
+  const linkedInventory = await loadLinkedPartnerInventory(partnerId);
+  if (linkedInventory.length === 0) return { linkedInventory, priceChanges: [] };
+
+  // A single bounded history query for every linked item; calculation is grouped in memory,
+  // avoiding both an unbounded detail payload and an item-by-item N+1 query.
+  const { data, error } = await supabaseServer.from("inventory_logs")
+    .select("id,item_id,new_purchase_price,business_date,created_at")
+    .in("item_id", linkedInventory.map(item => item.id))
+    .eq("reason", "purchase")
+    .gt("change_quantity", 0)
+    .not("new_purchase_price", "is", null)
+    .order("business_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(200);
+  if (error) throw error;
+
+  return { linkedInventory, priceChanges: buildPartnerPriceChanges(data ?? [], linkedInventory, 20) };
 }

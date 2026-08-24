@@ -1,5 +1,5 @@
 import { parsePartnerInput } from "@/lib/partners/policy";
-import { loadLinkedPartnerInventory, loadPartnerData, partnerJson, requirePartnerManager } from "@/lib/partners/server";
+import { loadLinkedPartnerInventoryDetail, loadPartnerData, partnerJson, requirePartnerManager } from "@/lib/partners/server";
 import { supabaseServer } from "@/lib/supabase/server";
 
 function parseId(raw: string) {
@@ -13,9 +13,9 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const id = parseId((await context.params).id);
   if (id === null) return partnerJson({ ok: false, code: "INVALID_PARTNER_ID" }, 400);
   try {
-    const [data, linkedInventory] = await Promise.all([loadPartnerData(id), loadLinkedPartnerInventory(id)]);
+    const [data, inventoryDetail] = await Promise.all([loadPartnerData(id), loadLinkedPartnerInventoryDetail(id)]);
     if (data.partners.length === 0) return partnerJson({ ok: false, code: "PARTNER_NOT_FOUND" }, 404);
-    return partnerJson({ ok: true, partner: data.partners[0], ledgerParties: data.ledgerParties, fundAccounts: data.fundAccounts, partnerSubtypes: data.partnerSubtypes, linkedInventory });
+    return partnerJson({ ok: true, partner: data.partners[0], ledgerParties: data.ledgerParties, fundAccounts: data.fundAccounts, partnerSubtypes: data.partnerSubtypes, ...inventoryDetail });
   } catch (error) {
     console.error("[BUSINESS_PARTNER_LOAD_FAILED]", error);
     return partnerJson({ ok: false, code: "PARTNER_LOAD_FAILED" }, 500);

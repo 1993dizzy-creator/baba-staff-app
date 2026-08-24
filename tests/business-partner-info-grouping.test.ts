@@ -56,3 +56,8 @@ test("group headers and compact info rows have dedicated responsive styles", () 
   assert.match(styles, /\.partnerGroupCount\{/);
   assert.match(styles, /\.partnerInfoRow\{grid-template-columns:minmax\(0,1fr\) auto auto\}/);
 });
+
+test("subtype groups use spacing without a separator border", () => {
+  assert.match(styles, /\.subtypeGroup\+\.subtypeGroup\{margin-top:8px\}/);
+  assert.doesNotMatch(styles, /\.subtypeGroup\+\.subtypeGroup\{[^}]*border-top/);
+});

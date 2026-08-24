@@ -54,7 +54,7 @@ test("row name/tag group is overflow-safe: flex + min-width:0 wrapper, name elli
 // B9: fund account renders before payment mode in the shared control
 test("fund account select renders before the payment mode segmented control", () => {
   const fundIdx = settlementFields.indexOf("t.defaultFundAccount");
-  const modeIdx = settlementFields.indexOf("PolicySegmentedField label={t.paymentMode}");
+  const modeIdx = settlementFields.indexOf("PolicySegmentedField compact={compact} label={t.paymentMode}");
   assert.ok(fundIdx >= 0 && modeIdx >= 0 && fundIdx < modeIdx);
 });
 

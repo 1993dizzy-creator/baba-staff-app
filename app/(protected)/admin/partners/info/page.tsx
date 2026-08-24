@@ -2,9 +2,10 @@
 
 /* eslint-disable react-hooks/set-state-in-effect -- authenticated API bootstrap. */
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Container from "@/components/Container";
 import type { PartnerFormValue, PartnerSubtype } from "@/components/PartnerForm";
+import PartnerSubtypeManager from "@/components/PartnerSubtypeManager";
 import { formatInventoryItemCount } from "@/lib/inventory/category-groups";
 import { useLanguage } from "@/lib/language-context";
 import { groupPartnersByTypeAndSubtype, type PartnerType } from "@/lib/partners/policy";
@@ -38,6 +39,8 @@ export default function PartnerInfoPage() {
   const [partnerSubtypes, setPartnerSubtypes] = useState<PartnerSubtype[]>([]);
   const [filter, setFilter] = useState<Filter>("active");
   const [error, setError] = useState("");
+  const [showSubtypeManager, setShowSubtypeManager] = useState(false);
+  const subtypeManagerButtonRef = useRef<HTMLButtonElement>(null);
   const load = useCallback(async () => {
     const response = await fetch("/api/admin/partners", { cache: "no-store" });
     const body = await response.json();
@@ -48,13 +51,21 @@ export default function PartnerInfoPage() {
   useEffect(() => { void load().catch(() => setError(t.loadFailed)); }, [load, t.loadFailed]);
 
   const labels = lang === "vi"
-    ? { active: "Đang dùng", inactive: "Ngừng dùng", empty: "Không có đối tác phù hợp." }
-    : { active: "사용 중", inactive: "사용 안 함", empty: "조건에 맞는 거래처가 없습니다." };
+    ? { active: "Đang dùng", inactive: "Ngừng dùng", empty: "Không có đối tác phù hợp.", manageSubtypes: "Quản lý danh mục phụ" }
+    : { active: "사용 중", inactive: "사용 안 함", empty: "조건에 맞는 거래처가 없습니다.", manageSubtypes: "중분류 관리" };
   const counts = { active: partners.filter(row => row.isActive).length, inactive: partners.filter(row => !row.isActive).length };
   // 대분류 -> 중분류(sort_order) -> Partner(name); unclassified always trails its group.
   const groups = useMemo(() => groupPartnersByTypeAndSubtype(partners, filter === "active", lang, partnerSubtypes), [filter, lang, partners, partnerSubtypes]);
 
   return <Container noPaddingTop><main className={styles.compactPage}>
+    <div className={styles.infoActions}>
+      <button ref={subtypeManagerButtonRef} type="button" onClick={() => setShowSubtypeManager(true)}>
+        <span aria-hidden="true">🗂️</span>
+        <span>{labels.manageSubtypes}</span>
+        <span className={styles.infoActionChevron} aria-hidden="true">›</span>
+      </button>
+    </div>
+    <PartnerSubtypeManager lang={lang} open={showSubtypeManager} partnerSubtypes={partnerSubtypes} onClose={() => setShowSubtypeManager(false)} onReload={load} returnFocusRef={subtypeManagerButtonRef} />
     <div className={styles.compactFilters} role="tablist" aria-label={t.status}>{(["active", "inactive"] as Filter[]).map(key => <button role="tab" aria-selected={filter === key} className={filter === key ? styles.filterActive : ""} key={key} type="button" onClick={() => setFilter(key)}>{labels[key]} {counts[key]}</button>)}</div>
     {error ? <p className={styles.error} role="alert">{error}</p> : null}
     {groups.length === 0 ? <section className={styles.compactList}><p className={styles.compactEmpty}>{labels.empty}</p></section> : <div className={styles.partnerGroups}>{groups.map(group => <section className={styles.partnerGroup} key={group.type}>

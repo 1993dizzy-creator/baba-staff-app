@@ -6,15 +6,18 @@ import Container from "@/components/Container";
 import { BarSection, keepingFormCardStyle, keepingInputStyle, primaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
 import PartnerForm, { type FundAccount, type PartnerFormValue, type PartnerSubtype } from "@/components/PartnerForm";
 import { useLanguage } from "@/lib/language-context";
-import { formatPartnerSubtypeName, partnerText, partnerTypeLabels } from "@/lib/partners/text";
+import { partnerText } from "@/lib/partners/text";
+import type { PartnerPriceChange } from "@/lib/partners/price-changes";
 import styles from "../partners.module.css";
 
 type Partner = PartnerFormValue & { id: number; displayTag: string | null; partnerSubtype: { nameKo: string | null; nameVi: string | null } | null };
 type LinkedInventory = { id: number; itemName: string | null; itemNameVi: string | null; part: string | null; category: string | null; categoryVi: string | null; purchasePrice: number | string | null; isActive: boolean; rawSupplier: string | null };
+type DetailTab = "items" | "priceChanges";
 
 export default function PartnerDetailPage() {
   const params = useParams<{ id: string }>(); const { lang } = useLanguage(); const t = partnerText[lang];
-  const [partner, setPartner] = useState<Partner | null>(null); const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([]); const [partnerSubtypes, setPartnerSubtypes] = useState<PartnerSubtype[]>([]); const [linkedInventory, setLinkedInventory] = useState<LinkedInventory[]>([]); const [message, setMessage] = useState(""); const [error, setError] = useState("");
+  const [partner, setPartner] = useState<Partner | null>(null); const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([]); const [partnerSubtypes, setPartnerSubtypes] = useState<PartnerSubtype[]>([]); const [linkedInventory, setLinkedInventory] = useState<LinkedInventory[]>([]); const [error, setError] = useState("");
+  const [priceChanges, setPriceChanges] = useState<PartnerPriceChange[]>([]); const [detailTab, setDetailTab] = useState<DetailTab>("items");
   const [tagInput, setTagInput] = useState(""); const [tagSaving, setTagSaving] = useState(false); const [tagError, setTagError] = useState("");
   // ledgerPartyId is preserved from the API response (backend bridge field) even though
   // the form no longer renders a control for it, so an existing link is never dropped on save.
@@ -26,10 +29,11 @@ export default function PartnerDetailPage() {
     setFundAccounts(body.fundAccounts);
     setPartnerSubtypes(body.partnerSubtypes);
     setLinkedInventory(body.linkedInventory);
+    setPriceChanges(body.priceChanges);
     setTagInput(body.partner.displayTag ?? "");
   }, [params.id]);
   useEffect(() => { void load().catch(() => setError(t.loadFailed)); }, [load, t.loadFailed]);
-  async function update(value: PartnerFormValue) { setError(""); setMessage(""); const response = await fetch(`/api/admin/partners/${params.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) }); const body = await response.json(); if (!response.ok) { setError(body.code === "DUPLICATE_NAME" ? t.duplicate : body.code); return false; } setMessage(t.saved); await load(); return true; }
+  async function update(value: PartnerFormValue) { setError(""); const response = await fetch(`/api/admin/partners/${params.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) }); const body = await response.json(); if (!response.ok) { setError(body.code === "DUPLICATE_NAME" ? t.duplicate : body.code); return false; } await load(); alert(t.saved); return true; }
 
   // Tag is saved through its own endpoint, never through the main partner update above,
   // so editing a tag can never overwrite payment/contact/settlement fields.
@@ -49,6 +53,7 @@ export default function PartnerDetailPage() {
     : { title: "태그", placeholder: "예: 대체 구매처", save: "저장" };
   const supplyEmpty = lang === "vi" ? "Chưa có mặt hàng được liên kết." : "아직 연결된 품목이 없습니다.";
   const identityTitle = lang === "vi" ? "Thông tin đối tác" : "거래처 정보";
+  const money = (value: number) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(value);
 
   if (!partner) return <Container noPaddingTop><div className={styles.candidatePage}>{error ? <p className={styles.error} role="alert">{error}</p> : null}</div></Container>;
 
@@ -57,14 +62,16 @@ export default function PartnerDetailPage() {
       <BarSection title={identityTitle} icon="📎" first>
         <div className={styles.candidateIdentity}>
           <div className={styles.candidateIdentityName}>
-            <span className={styles.groupBadge}>{partnerTypeLabels[partner.partnerType][lang]}</span>
-            {partner.partnerSubtypeId ? <span className={styles.groupBadge}>{formatPartnerSubtypeName(partner.partnerSubtype, lang)}</span> : null}
             <strong>{partner.name}</strong>
             {partner.displayTag ? <span className={styles.tagBadge}>{partner.displayTag}</span> : null}
           </div>
-          <span className={styles.badge}>{partner.isActive ? t.active : t.inactive}</span>
+          <span className={`${styles.badge} ${partner.isActive ? styles.activeStatusBadge : styles.inactiveStatusBadge}`}>{partner.isActive ? t.active : t.inactive}</span>
         </div>
-        <div className={styles.candidateItems}>
+        <div className={styles.detailTabs} role="tablist">
+          <button type="button" role="tab" aria-selected={detailTab === "items"} className={detailTab === "items" ? styles.detailTabActive : ""} onClick={() => setDetailTab("items")}>{t.itemsTab}</button>
+          <button type="button" role="tab" aria-selected={detailTab === "priceChanges"} className={detailTab === "priceChanges" ? styles.detailTabActive : ""} onClick={() => setDetailTab("priceChanges")}>{t.priceChangesTab}</button>
+        </div>
+        {detailTab === "items" ? <div className={styles.candidateItems} role="tabpanel">
           {linkedInventory.length > 0 ? linkedInventory.map(item => {
             const category = lang === "vi" ? item.categoryVi || item.category : item.category || item.categoryVi;
             const name = lang === "vi" ? item.itemNameVi || item.itemName : item.itemName || item.itemNameVi;
@@ -74,9 +81,20 @@ export default function PartnerDetailPage() {
               <span className={styles.supplyItemPrice}>{item.purchasePrice === null ? "-" : `${new Intl.NumberFormat("vi-VN").format(Number(item.purchasePrice))} ₫`}</span>
             </div>;
           }) : <p className={styles.candidateItemsEmpty}>{supplyEmpty}</p>}
-        </div>
+        </div> : <div className={styles.priceChanges} role="tabpanel">
+          {priceChanges.length > 0 ? priceChanges.map(change => {
+            const itemName = lang === "vi" ? change.itemNameVi || change.itemName : change.itemName || change.itemNameVi;
+            const rising = change.difference > 0;
+            return <div className={styles.priceChangeRow} key={change.id}>
+              <strong>{itemName || "-"}</strong>
+              <span className={styles.priceChangeValues}>{money(change.previousPrice)} → {money(change.newPrice)} ₫</span>
+              <span className={rising ? styles.priceRise : styles.priceFall}>{rising ? "▲" : "▼"} {money(Math.abs(change.difference))} ₫{change.percentage === null ? "" : ` · ${change.percentage.toFixed(1)}%`}</span>
+              <time dateTime={change.businessDate}>{change.businessDate}</time>
+            </div>;
+          }) : <p className={styles.candidateItemsEmpty}>{t.noPriceChanges}</p>}
+        </div>}
       </BarSection>
-      <PartnerForm key={`${partner.id}-${partner.name}-${partner.isActive}`} lang={lang} initial={partner} fundAccounts={fundAccounts} partnerSubtypes={partnerSubtypes} first={false} onSubmit={update} />
+      <PartnerForm key={`${partner.id}-${partner.name}-${partner.isActive}`} lang={lang} initial={partner} fundAccounts={fundAccounts} partnerSubtypes={partnerSubtypes} first={false} slim onSubmit={update} />
       <BarSection title={tagLabels.title} icon="🏷️">
         <div style={{ display: "flex", gap: 8 }}>
           <input value={tagInput} maxLength={30} placeholder={tagLabels.placeholder} onChange={event => setTagInput(event.target.value)} style={{ ...keepingInputStyle, flex: 1 }} />
@@ -85,7 +103,6 @@ export default function PartnerDetailPage() {
         {tagError ? <p className={styles.error} role="alert">{tagError}</p> : null}
       </BarSection>
     </div>
-    {message ? <p className={styles.notice} role="status">{message}</p> : null}
     {error ? <p className={styles.error} role="alert">{error}</p> : null}
   </div></Container>;
 }

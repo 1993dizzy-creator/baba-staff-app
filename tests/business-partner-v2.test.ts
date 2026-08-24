@@ -196,9 +196,9 @@ test("390px partner create dialog is compact over a dimmed app with proportional
 
 test("partner form actually reuses BarSection/BarField/keepingInputStyle -- not just CSS numbers made to look similar", () => {
   assert.doesNotMatch(partnerForm, /styles\.formSection|styles\.formBody|styles\.formGrid|styles\.basicGrid|styles\.toggle|styles\.srOnly|styles\.formFooter|partners\.module\.css/);
-  assert.match(partnerForm, /<BarSection title={sectionLabels\.basic} icon="📌" first={first}>/);
-  assert.match(partnerForm, /<BarField label={t\.name} required>/);
-  assert.match(partnerForm, /style={keepingInputStyle}/);
+  assert.match(partnerForm, /<BarSection title={sectionLabels\.basic} icon="📌" first={first} compact={slim}>/);
+  assert.match(partnerForm, /<BarField compact={slim} label={t\.name} required>/);
+  assert.match(partnerForm, /const inputStyle = slim \? \{ \.\.\.keepingInputStyle/);
   assert.match(partnerForm, /<PartnerSettlementFields/);
   assert.match(partnerForm, /payment: "결제 정보"/);
   assert.match(partnerForm, /payment: "Thông tin thanh toán"/);
@@ -216,7 +216,7 @@ test("candidate review uses a BAR-style page card and native document scrolling"
   assert.match(keepingUi, /keepingFormCardStyle: React\.CSSProperties = \{ padding:"15px 15px 16px",border:"1px solid #dcdfe4",borderRadius:18,background:"#fff",boxShadow:"0 6px 20px rgba\(0,0,0,\.04\)" \}/);
   assert.doesNotMatch(candidatePage + candidateForm, /position:\s*"fixed"|overflowY|document\.body\.style\.overflow|onTouchMove/);
   assert.doesNotMatch(candidateForm, /styles\.formGrid|styles\.basicGrid/);
-  assert.match(keepingUi, /width:"100%",minWidth:0,minHeight:40/);
+  assert.match(keepingUi, /width:"100%",minWidth:0,minHeight:44/);
 });
 
 test("candidate detail includes matched inventory items without changing review writes", () => {
@@ -255,7 +255,7 @@ test("candidate partner fields stay in compact two-column grids at mobile widths
 });
 
 test("new partner memo keeps only the section heading as its visible label", () => {
-  assert.match(partnerForm, /\{showActive\s*\n\s*\? <BarField label=\{t\.memo\}>\{\(\{ id \}\) => <textarea id=\{id\} rows=\{2\}/);
+  assert.match(partnerForm, /\{showActive\s*\n\s*\? <BarField compact=\{slim\} label=\{t\.memo\}>\{\(\{ id \}\) => <textarea id=\{id\} rows=\{2\}/);
   assert.match(partnerForm, /: <textarea aria-label=\{t\.memo\} rows=\{2\}/);
   assert.match(candidateForm, /<BarSection title={labels\.memo} icon="📝">[\s\S]*<textarea aria-label={labels\.memo}/);
 });
