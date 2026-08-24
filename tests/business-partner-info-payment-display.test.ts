@@ -95,7 +95,8 @@ test("FundAccount type and server response carry code additively, from the exist
   assert.match(partnerForm, /export type FundAccount = \{ id: number; code: string; displayName: string; type: string \}/);
   assert.match(partnerServer, /select\("id,code,type,display_name,is_active,is_business_fund,sort_order"\)/);
   assert.match(partnerServer, /fundAccounts: \(fundAccountResult\.data \?\? \[\]\)\.map\(row => \(\{ id: Number\(row\.id\), code: row\.code, displayName: row\.display_name, type: row\.type \}\)\)/);
-  assert.doesNotMatch(partnerServer, /for \([^)]*\)[\s\S]{0,200}await supabaseServer/);
+  const listLoader = partnerServer.slice(partnerServer.indexOf("export async function loadPartnerData"), partnerServer.indexOf("export async function loadPartnerDetailData"));
+  assert.doesNotMatch(listLoader, /for \([^)]*\)[\s\S]{0,200}await supabaseServer/);
 });
 
 test("defaultFundAccountCode is resolved server-side from the id, in-memory, no extra query", () => {

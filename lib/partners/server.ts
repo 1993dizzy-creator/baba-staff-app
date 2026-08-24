@@ -107,6 +107,60 @@ export async function loadPartnerData(partnerId?: number) {
   };
 }
 
+export async function loadPartnerDetailData(partnerId: number) {
+  const [partnerResult, mappingResult, fundAccountResult, subtypeResult] = await Promise.all([
+    supabaseServer.from("business_partners")
+      .select("id,name,partner_type,payment_mode,settlement_mode,settlement_rule,default_payment_term_days,default_fund_account_id,partner_subtype_id,display_tag,phone,contact_name,memo,is_active,created_at,updated_at")
+      .eq("id", partnerId).maybeSingle(),
+    supabaseServer.from("business_partner_ledger_parties")
+      .select("ledger_party_id").eq("business_partner_id", partnerId).maybeSingle(),
+    supabaseServer.from("ledger_fund_accounts").select("id,code,type,display_name,is_active,is_business_fund,sort_order")
+      .eq("is_active", true).eq("is_business_fund", true).neq("type", "card_clearing").order("sort_order"),
+    supabaseServer.from("business_partner_subtypes").select("id,code,partner_type,name_ko,name_vi,sort_order,is_active")
+      .order("partner_type").order("sort_order"),
+  ]);
+  if (partnerResult.error || mappingResult.error || fundAccountResult.error || subtypeResult.error) {
+    throw partnerResult.error ?? mappingResult.error ?? fundAccountResult.error ?? subtypeResult.error;
+  }
+  if (!partnerResult.data) return null;
+
+  const ledgerPartyId = mappingResult.data?.ledger_party_id === undefined ? null : Number(mappingResult.data.ledger_party_id);
+  const ledgerResult = ledgerPartyId === null
+    ? { data: null, error: null }
+    : await supabaseServer.from("ledger_parties").select("id,name,is_active").eq("id", ledgerPartyId).maybeSingle();
+  if (ledgerResult.error) throw ledgerResult.error;
+
+  const partnerSubtypes = (subtypeResult.data ?? []).map(row => ({
+    id: Number(row.id), code: row.code as string, partnerType: row.partner_type,
+    nameKo: row.name_ko, nameVi: row.name_vi, sortOrder: Number(row.sort_order), isActive: row.is_active,
+  }));
+  const subtypeById = new Map(partnerSubtypes.map(subtype => [subtype.id, subtype]));
+  const fundAccountCodeById = new Map((fundAccountResult.data ?? []).map(row => [Number(row.id), row.code as string]));
+  const row = partnerResult.data;
+  const defaultFundAccountId = row.default_fund_account_id === null ? null : Number(row.default_fund_account_id);
+  const partnerSubtypeId = row.partner_subtype_id === null ? null : Number(row.partner_subtype_id);
+  const partnerSubtype = partnerSubtypeId === null ? null : subtypeById.get(partnerSubtypeId) ?? null;
+
+  return {
+    partner: {
+      id: Number(row.id), name: row.name, partnerType: row.partner_type, paymentMode: row.payment_mode,
+      settlementMode: row.settlement_mode, settlementRule: row.settlement_rule,
+      defaultPaymentTermDays: row.default_payment_term_days, defaultFundAccountId,
+      defaultFundAccountCode: defaultFundAccountId === null ? null : fundAccountCodeById.get(defaultFundAccountId) ?? null,
+      partnerSubtypeId, partnerSubtypeCode: partnerSubtype?.code ?? null, partnerSubtype,
+      displayTag: row.display_tag, phone: row.phone, contactName: row.contact_name, memo: row.memo,
+      isActive: row.is_active, createdAt: row.created_at, updatedAt: row.updated_at, ledgerPartyId,
+      ledgerParty: ledgerResult.data === null ? null : {
+        id: Number(ledgerResult.data.id), name: ledgerResult.data.name, isActive: ledgerResult.data.is_active,
+      },
+    },
+    fundAccounts: (fundAccountResult.data ?? []).map(account => ({
+      id: Number(account.id), code: account.code, displayName: account.display_name, type: account.type,
+    })),
+    partnerSubtypes,
+  };
+}
+
 export async function loadSupplierAliases() {
   const [aliasResult, inventoryResult] = await Promise.all([
     supabaseServer.from("business_partner_supplier_aliases").select("id,supplier_name,status,business_partner_id,first_seen_at,last_seen_at,reviewed_at").order("last_seen_at", { ascending: false }),
@@ -171,23 +225,34 @@ export async function loadLinkedPartnerInventory(partnerId: number) {
   }));
 }
 
-export async function loadLinkedPartnerInventoryDetail(partnerId: number) {
+const PRICE_HISTORY_PAGE_SIZE = 1000;
+const PRICE_HISTORY_MAX_PAGES = 1000;
+
+export async function loadLinkedPartnerPriceChanges(partnerId: number) {
   const linkedInventory = await loadLinkedPartnerInventory(partnerId);
-  if (linkedInventory.length === 0) return { linkedInventory, priceChanges: [] };
+  if (linkedInventory.length === 0) return [];
 
-  // A single bounded history query for every linked item; calculation is grouped in memory,
-  // avoiding both an unbounded detail payload and an item-by-item N+1 query.
-  const { data, error } = await supabaseServer.from("inventory_logs")
-    .select("id,item_id,new_purchase_price,business_date,created_at")
-    .in("item_id", linkedInventory.map(item => item.id))
-    .eq("reason", "purchase")
-    .gt("change_quantity", 0)
-    .not("new_purchase_price", "is", null)
-    .order("business_date", { ascending: false })
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(200);
-  if (error) throw error;
-
-  return { linkedInventory, priceChanges: buildPartnerPriceChanges(data ?? [], linkedInventory, 20) };
+  const logs: Array<{
+    id: number; item_id: number | string; new_purchase_price: number | string | null;
+    business_date: string | null; created_at: string | null;
+  }> = [];
+  for (let page = 0; page < PRICE_HISTORY_MAX_PAGES; page += 1) {
+    const from = page * PRICE_HISTORY_PAGE_SIZE;
+    const { data, error } = await supabaseServer.from("inventory_logs")
+      .select("id,item_id,new_purchase_price,business_date,created_at")
+      .in("item_id", linkedInventory.map(item => item.id))
+      .eq("reason", "purchase")
+      .gt("change_quantity", 0)
+      .not("new_purchase_price", "is", null)
+      .order("business_date", { ascending: true })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + PRICE_HISTORY_PAGE_SIZE - 1);
+    if (error) throw error;
+    logs.push(...(data ?? []));
+    if ((data?.length ?? 0) < PRICE_HISTORY_PAGE_SIZE) {
+      return buildPartnerPriceChanges(logs, linkedInventory, 20);
+    }
+  }
+  throw new Error("PARTNER_PRICE_HISTORY_SAFETY_LIMIT_EXCEEDED");
 }

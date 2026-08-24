@@ -81,8 +81,10 @@ test("detail card exposes localized items and price-change tabs with an empty st
   assert.match(partnerDetail, /role="tab" aria-selected={detailTab === "items"}/);
   assert.match(partnerDetail, /role="tab" aria-selected={detailTab === "priceChanges"}/);
   assert.match(partnerDetail, /priceChanges\.length > 0 \? priceChanges\.map/);
-  assert.match(text, /itemsTab: "품목", priceChangesTab: "가격변동", noPriceChanges: "최근 가격변동 내역이 없습니다\."/);
-  assert.match(text, /itemsTab: "Mặt hàng", priceChangesTab: "Biến động giá", noPriceChanges: "Không có biến động giá gần đây\."/);
+  assert.match(text, /itemsTab: "품목", priceChangesTab: "가격변동", priceChangesLoading: "가격변동 내역을 불러오는 중입니다\."/);
+  assert.match(text, /priceChangesLoadFailed: "가격변동 내역을 불러오지 못했습니다\. 다시 시도해주세요\.", noPriceChanges: "최근 가격변동 내역이 없습니다\."/);
+  assert.match(text, /itemsTab: "Mặt hàng", priceChangesTab: "Biến động giá", priceChangesLoading: "Đang tải lịch sử biến động giá\."/);
+  assert.match(text, /priceChangesLoadFailed: "Không thể tải lịch sử biến động giá\. Vui lòng thử lại\.", noPriceChanges: "Không có biến động giá gần đây\."/);
 });
 
 test("detail-only slim form keeps 40px inputs and compact section/control spacing", () => {

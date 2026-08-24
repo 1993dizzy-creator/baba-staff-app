@@ -13,11 +13,12 @@ import styles from "../partners.module.css";
 type Partner = PartnerFormValue & { id: number; displayTag: string | null; partnerSubtype: { nameKo: string | null; nameVi: string | null } | null };
 type LinkedInventory = { id: number; itemName: string | null; itemNameVi: string | null; part: string | null; category: string | null; categoryVi: string | null; purchasePrice: number | string | null; isActive: boolean; rawSupplier: string | null };
 type DetailTab = "items" | "priceChanges";
+type PriceChangesStatus = "idle" | "loading" | "loaded" | "error";
 
 export default function PartnerDetailPage() {
   const params = useParams<{ id: string }>(); const { lang } = useLanguage(); const t = partnerText[lang];
   const [partner, setPartner] = useState<Partner | null>(null); const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([]); const [partnerSubtypes, setPartnerSubtypes] = useState<PartnerSubtype[]>([]); const [linkedInventory, setLinkedInventory] = useState<LinkedInventory[]>([]); const [error, setError] = useState("");
-  const [priceChanges, setPriceChanges] = useState<PartnerPriceChange[]>([]); const [detailTab, setDetailTab] = useState<DetailTab>("items");
+  const [priceChanges, setPriceChanges] = useState<PartnerPriceChange[]>([]); const [priceChangesStatus, setPriceChangesStatus] = useState<PriceChangesStatus>("idle"); const [detailTab, setDetailTab] = useState<DetailTab>("items");
   const [tagInput, setTagInput] = useState(""); const [tagSaving, setTagSaving] = useState(false); const [tagError, setTagError] = useState("");
   // ledgerPartyId is preserved from the API response (backend bridge field) even though
   // the form no longer renders a control for it, so an existing link is never dropped on save.
@@ -29,11 +30,25 @@ export default function PartnerDetailPage() {
     setFundAccounts(body.fundAccounts);
     setPartnerSubtypes(body.partnerSubtypes);
     setLinkedInventory(body.linkedInventory);
-    setPriceChanges(body.priceChanges);
     setTagInput(body.partner.displayTag ?? "");
   }, [params.id]);
   useEffect(() => { void load().catch(() => setError(t.loadFailed)); }, [load, t.loadFailed]);
   async function update(value: PartnerFormValue) { setError(""); const response = await fetch(`/api/admin/partners/${params.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) }); const body = await response.json(); if (!response.ok) { setError(body.code === "DUPLICATE_NAME" ? t.duplicate : body.code); return false; } await load(); alert(t.saved); return true; }
+
+  async function openPriceChanges() {
+    setDetailTab("priceChanges");
+    if (priceChangesStatus === "loading" || priceChangesStatus === "loaded") return;
+    setPriceChangesStatus("loading");
+    try {
+      const response = await fetch(`/api/admin/partners/${params.id}/price-changes`, { cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.code);
+      setPriceChanges(body.priceChanges);
+      setPriceChangesStatus("loaded");
+    } catch {
+      setPriceChangesStatus("error");
+    }
+  }
 
   // Tag is saved through its own endpoint, never through the main partner update above,
   // so editing a tag can never overwrite payment/contact/settlement fields.
@@ -69,7 +84,7 @@ export default function PartnerDetailPage() {
         </div>
         <div className={styles.detailTabs} role="tablist">
           <button type="button" role="tab" aria-selected={detailTab === "items"} className={detailTab === "items" ? styles.detailTabActive : ""} onClick={() => setDetailTab("items")}>{t.itemsTab}</button>
-          <button type="button" role="tab" aria-selected={detailTab === "priceChanges"} className={detailTab === "priceChanges" ? styles.detailTabActive : ""} onClick={() => setDetailTab("priceChanges")}>{t.priceChangesTab}</button>
+          <button type="button" role="tab" aria-selected={detailTab === "priceChanges"} className={detailTab === "priceChanges" ? styles.detailTabActive : ""} onClick={() => void openPriceChanges()}>{t.priceChangesTab}</button>
         </div>
         {detailTab === "items" ? <div className={styles.candidateItems} role="tabpanel">
           {linkedInventory.length > 0 ? linkedInventory.map(item => {
@@ -82,7 +97,9 @@ export default function PartnerDetailPage() {
             </div>;
           }) : <p className={styles.candidateItemsEmpty}>{supplyEmpty}</p>}
         </div> : <div className={styles.priceChanges} role="tabpanel">
-          {priceChanges.length > 0 ? priceChanges.map(change => {
+          {priceChangesStatus === "loading" ? <p className={styles.candidateItemsEmpty}>{t.priceChangesLoading}</p>
+            : priceChangesStatus === "error" ? <p className={styles.error} role="alert">{t.priceChangesLoadFailed}</p>
+            : priceChanges.length > 0 ? priceChanges.map(change => {
             const itemName = lang === "vi" ? change.itemNameVi || change.itemName : change.itemName || change.itemNameVi;
             const rising = change.difference > 0;
             return <div className={styles.priceChangeRow} key={change.id}>

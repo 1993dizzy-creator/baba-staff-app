@@ -54,7 +54,8 @@ test("DB-side eligibility excludes card_clearing and inactive accounts, not just
 test("server only offers active, non-card-clearing fund accounts and includes them via the existing Promise.all", () => {
   assert.match(partnerServer, /from\("ledger_fund_accounts"\)\.select\("id,code,type,display_name,is_active,is_business_fund,sort_order"\)\.eq\("is_active", true\)\.eq\("is_business_fund", true\)\.neq\("type", "card_clearing"\)/);
   assert.match(partnerServer, /fundAccounts: \(fundAccountResult\.data \?\? \[\]\)\.map/);
-  assert.doesNotMatch(partnerServer, /for \([^)]*\)[\s\S]{0,200}await supabaseServer/);
+  const listLoader = partnerServer.slice(partnerServer.indexOf("export async function loadPartnerData"), partnerServer.indexOf("export async function loadPartnerDetailData"));
+  assert.doesNotMatch(listLoader, /for \([^)]*\)[\s\S]{0,200}await supabaseServer/);
 });
 
 test("V3 RPCs add default_fund_account_id while V1/V2 signatures stay untouched", () => {

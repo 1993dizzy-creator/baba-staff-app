@@ -86,11 +86,12 @@ test("PATCH /api/admin/partners/[id]/tag exists as its own route, requires the k
 });
 
 // 31: GET list/detail expose displayTag
-test("GET list and detail expose displayTag via the shared loadPartnerData mapping", () => {
+test("GET list and scoped detail loaders both expose displayTag", () => {
   assert.match(partnerServer, /displayTag: row\.display_tag,/);
   assert.match(partnerServer, /select\("id,name,partner_type,payment_mode,settlement_mode,settlement_rule,default_payment_term_days,default_fund_account_id,partner_subtype_id,display_tag,phone,contact_name,memo,is_active,created_at,updated_at"\)/);
   assert.match(collectionApi, /partnerJson\(\{ ok: true, \.\.\.partnerData, supplierAliases \}\)/);
-  assert.match(detailApi, /partner: data\.partners\[0\]/);
+  assert.match(detailApi, /partner: data\.partner/);
+  assert.match(detailApi, /loadPartnerDetailData\(id\)/);
 });
 
 // 32: tag update never touches other Partner fields (also proven client-side: separate endpoint/state)
