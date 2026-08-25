@@ -11,6 +11,7 @@ const page = read("app/(protected)/admin/ledger/entries/page.tsx");
 const pageCompact = page.replace(/\s+/g, "");
 const css = read("app/(protected)/admin/ledger/entries/entries.module.css");
 const keepingUi = read("components/bar/keeping/KeepingUi.tsx");
+const bottomNav = read("components/BottomNav.tsx");
 const route = read("app/api/admin/ledger/route.ts");
 const autoLink = read("supabase/migrations/20260824152518_auto_link_business_partners_to_ledger.sql");
 const categories = read("supabase/migrations/20260824152948_ledger_category_v1.sql");
@@ -60,6 +61,37 @@ test("opening balances and the four business funds match the production policy",
   assert.match(page, /당월 시재/);
   assert.match(page, /현재 보유금/);
   assert.match(css, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+});
+
+test("current balance panel is collapsed, nav-safe and expandable", () => {
+  assert.match(pageCompact, /\[balanceExpanded,setBalanceExpanded\]=useState\(false\)/);
+  assert.match(pageCompact, /businessAccounts\.reduce\(\(sum,account\)=>sum\+account\.balance,0\)/);
+  assert.match(pageCompact, /balanceDeltaByCode=useMemo\(\(\)=>newMap\(businessAccounts\.map/);
+  assert.match(pageCompact, /account\.balance-account\.openingBalance/);
+  assert.match(pageCompact, /aria-expanded=\{balanceExpanded\}/);
+  assert.match(pageCompact, /aria-controls="ledger-current-balance-detail"/);
+  assert.match(pageCompact, /balanceExpanded\?<divclassName=\{styles\.balanceDetail\}id="ledger-current-balance-detail"/);
+  assert.match(page, /Tiền hiện có/);assert.match(page, /현재 보유금/);
+  assert.match(css, /\.balanceBar\{bottom:calc\(60px \+ env\(safe-area-inset-bottom\)\)\}/);
+  assert.match(css, /\.page\{padding-bottom:calc\(122px \+ env\(safe-area-inset-bottom\)\)\}/);
+  assert.match(css, /\.balanceToggle\{[^}]*min-height:46px/);
+  assert.match(css, /\.balanceInner>\.balanceDetail\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(css, /\.balanceInner\{[^}]*border:1px solid #cbd5e1;[^}]*border-radius:14px 14px 0 0;[^}]*background:rgba\(255,255,255,\.995\);[^}]*box-shadow:0 -2px 10px/);
+  assert.match(css, /\.balanceInner::before\{[^}]*height:2px;background:#374151/);
+  assert.match(pageCompact, /delta>0\?styles\.balanceDeltaPositive:delta<0\?styles\.balanceDeltaNegative:styles\.balanceDeltaZero/);
+  assert.match(pageCompact, /\(\{delta>0\?"\+":""\}\{money\(delta\)\}\)/);
+  assert.match(css, /\.balanceAmounts\{[^}]*display:flex;[^}]*flex-wrap:wrap/);
+  assert.match(css, /\.balanceDeltaPositive\{color:#16805a\}/);
+  assert.match(css, /\.balanceDeltaNegative\{color:#b4493e\}/);
+  assert.match(css, /\.balanceDeltaZero\{color:#6b7280\}/);
+  assert.match(css, /\.balanceInner>\.balanceDetail\{[^}]*padding:4px 8px 30px/);
+  assert.match(css, /\.balanceExpandedPage\{padding-bottom:calc\(242px \+ env\(safe-area-inset-bottom\)\)\}/);
+  assert.match(css, /@media\(max-width:560px\)[\s\S]*\.balanceToggle/);
+  assert.match(css, /@media\(max-width:340px\)[\s\S]*\.balanceToggle>strong\{font-size:11px\}/);
+  assert.match(bottomNav,/height: 60/);assert.match(bottomNav,/marginTop: -22/);assert.match(bottomNav,/zIndex: 1000/);
+  assert.match(page,/vuong_personal_custody: "개인\(Vương\)"/);
+  assert.match(page,/cho_personal_custody: "개인\(Cho\)"/);
+  assert.match(page,/return "Vương"/);assert.match(page,/return "Cho"/);
 });
 
 test("business partners are the user-facing party source and defaults stay one-way", () => {

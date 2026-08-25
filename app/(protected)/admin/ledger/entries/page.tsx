@@ -183,6 +183,7 @@ export default function LedgerEntriesPage() {
     [selected, setSelected] = useState<LedgerEntry | null>(null),
     [candidateDraft, setCandidateDraft] = useState<CandidateDraft | null>(null),
     [openingExpanded, setOpeningExpanded] = useState(false),
+    [balanceExpanded, setBalanceExpanded] = useState(false),
     [payables, setPayables] = useState<PayablesSummary | null>(null),
     [payableParty, setPayableParty] = useState<PayableParty | null>(null);
   const [saving, setSaving] = useState(false),
@@ -284,6 +285,20 @@ export default function LedgerEntriesPage() {
       businessAccounts.reduce(
         (sum, account) => sum + account.openingBalance,
         0,
+      ),
+    [businessAccounts],
+  );
+  const currentBalanceTotal = useMemo(
+    () => businessAccounts.reduce((sum, account) => sum + account.balance, 0),
+    [businessAccounts],
+  );
+  const balanceDeltaByCode = useMemo(
+    () =>
+      new Map(
+        businessAccounts.map((account) => [
+          account.code,
+          account.balance - account.openingBalance,
+        ]),
       ),
     [businessAccounts],
   );
@@ -397,7 +412,7 @@ export default function LedgerEntriesPage() {
   }
   return (
     <Container noPaddingTop>
-      <main className={styles.page}>
+      <main className={`${styles.page} ${balanceExpanded ? styles.balanceExpandedPage : ""}`}>
         <button
           ref={addButtonRef}
           type="button"
@@ -657,15 +672,38 @@ export default function LedgerEntriesPage() {
         {data ? (
           <aside className={styles.balanceBar}>
             <div className={styles.balanceInner}>
-              <strong>{vi ? "Tiền hiện có" : "현재 보유금"}</strong>
-              <div>
-                {businessAccounts.map((account) => (
-                  <span key={account.id}>
-                    <small>{localizedAccountName(account, lang)}</small>
-                    <b>{money(account.balance)}</b>
-                  </span>
-                ))}
-              </div>
+              <button
+                type="button"
+                className={styles.balanceToggle}
+                aria-expanded={balanceExpanded}
+                aria-controls="ledger-current-balance-detail"
+                onClick={() => setBalanceExpanded((value) => !value)}
+              >
+                <span>{vi ? "Tiền hiện có" : "현재 보유금"}</span>
+                <strong>{money(currentBalanceTotal)}</strong>
+                <i aria-hidden>{balanceExpanded ? "⌃" : "⌄"}</i>
+              </button>
+              {balanceExpanded ? <div className={styles.balanceDetail} id="ledger-current-balance-detail">
+                {businessAccounts.map((account) => {
+                  const delta = balanceDeltaByCode.get(account.code) ?? 0;
+                  const deltaClass = delta > 0
+                    ? styles.balanceDeltaPositive
+                    : delta < 0
+                      ? styles.balanceDeltaNegative
+                      : styles.balanceDeltaZero;
+                  return (
+                    <span key={account.id}>
+                      <small>{localizedAccountName(account, lang)}</small>
+                      <span className={styles.balanceAmounts}>
+                        <b>{money(account.balance)}</b>
+                        <em className={`${styles.balanceDelta} ${deltaClass}`}>
+                          ({delta > 0 ? "+" : ""}{money(delta)})
+                        </em>
+                      </span>
+                    </span>
+                  );
+                })}
+              </div> : null}
             </div>
           </aside>
         ) : null}
