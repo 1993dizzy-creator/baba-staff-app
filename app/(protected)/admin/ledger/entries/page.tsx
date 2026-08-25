@@ -122,8 +122,8 @@ const formatLedgerDecimalAmount = (input: string) => {
 };
 const accountShortName: Record<string, string> = {
   store_cash: "현금",
-  vuong_personal_custody: "Vương 개인",
-  cho_personal_custody: "Cho 개인",
+  vuong_personal_custody: "개인(Vương)",
+  cho_personal_custody: "개인(Cho)",
   baba_corporate_bank: "법인",
 };
 const accountOrder: Record<string, number> = {
