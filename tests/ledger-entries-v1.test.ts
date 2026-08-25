@@ -110,6 +110,32 @@ test("ledger entries UI keeps the compact chronological accordion contract", () 
   assert.match(css, /\.entryMain\{[^}]*text-overflow:ellipsis;white-space:nowrap/);
 });
 
+test("ledger entries header mirrors the monthly summary card hierarchy", () => {
+  assert.match(pageCompact, /style=\{monthNoticeCardStyle\}/);
+  assert.match(pageCompact, /<divstyle=\{monthControlStyle\}>/);
+  assert.match(pageCompact, /type="month"value=\{month\}onChange=\{\(event\)=>setMonth\(event\.target\.value\)\}/);
+  assert.match(pageCompact, /style=\{monthButtonStyle\}>\{vi\?"Trước":"이전"\}/);
+  assert.match(pageCompact, /style=\{monthButtonStyle\}>\{vi\?"Sau":"다음"\}/);
+  assert.match(pageCompact, /style=\{monthInputStyle\}/);
+  assert.match(pageCompact, /padding:"10px12px",borderRadius:10,background:"#f9fafb",border:"1pxsolid#e5e7eb"/);
+  assert.match(pageCompact, /marginTop:8,display:"grid",gridTemplateColumns:"auto1frauto",gap:8/);
+  assert.match(pageCompact, /\.\.\.ui\.button,padding:"9px10px",borderRadius:10,fontSize:12,fontWeight:800/);
+  assert.match(pageCompact, /\.\.\.ui\.input,width:"100%",minWidth:0,padding:"9px10px",fontSize:13,borderRadius:10/);
+  assert.match(pageCompact, /data\?\.entries\?\?\[\]\)\.reduce/);
+  assert.match(pageCompact, /entry\.direction==="income"\)totals\.income\+=entry\.amount/);
+  assert.match(pageCompact, /entry\.direction==="expense"\)totals\.expense\+=entry\.amount/);
+  for (const label of ["월 장부 요약", "당월 장부 기준", "Theo sổ tháng này", "시재 합계", "Tổng số dư đầu tháng"]) {
+    assert.match(page, new RegExp(label));
+  }
+  assert.match(pageCompact, /className=\{styles\.openingTotal\}>\s*<span>/);
+  assert.match(css, /\.summaryGrid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(css, /\.openingTotal\{[^}]*background:#111827;display:flex/);
+  assert.match(css, /\.openingSection\{padding:14px;border-color:#e5e7eb;background:#fff;box-shadow:/);
+  assert.match(css, /\.sectionTitle h2\{display:flex;align-items:center;gap:6px;font-size:16px;font-weight:900/);
+  assert.match(pageCompact, /<spanaria-hidden="true">🏦<\/span>/);
+  assert.match(page, /className=\{styles\.balanceBar\}/);
+});
+
 test("manual entry uses its own canonical expense whitelist", () => {
   assert.deepEqual(MANUAL_EXPENSE_CATEGORY_NAMES, [
     "직원 식대", "전기료", "수도료", "가스비", "인터넷·통신비", "청소·위생비",

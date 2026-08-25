@@ -6,10 +6,12 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
 } from "react";
 import Container from "@/components/Container";
 import { useLanguage } from "@/lib/language-context";
+import { ui } from "@/lib/styles/ui";
 import {
   BarField,
   BarSegmentedControl,
@@ -110,6 +112,34 @@ const todayDate = () =>
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
+
+const monthNoticeCardStyle: CSSProperties = {
+  padding: "10px 12px",
+  borderRadius: 10,
+  background: "#f9fafb",
+  border: "1px solid #e5e7eb",
+};
+const monthControlStyle: CSSProperties = {
+  marginTop: 8,
+  display: "grid",
+  gridTemplateColumns: "auto 1fr auto",
+  gap: 8,
+};
+const monthButtonStyle: CSSProperties = {
+  ...ui.button,
+  padding: "9px 10px",
+  borderRadius: 10,
+  fontSize: 12,
+  fontWeight: 800,
+};
+const monthInputStyle: CSSProperties = {
+  ...ui.input,
+  width: "100%",
+  minWidth: 0,
+  padding: "9px 10px",
+  fontSize: 13,
+  borderRadius: 10,
+};
 
 export default function LedgerEntriesPage() {
   const { lang } = useLanguage(),
@@ -221,6 +251,18 @@ export default function LedgerEntriesPage() {
       ),
     [businessAccounts],
   );
+  const monthlyTotals = useMemo(
+    () =>
+      (data?.entries ?? []).reduce(
+        (totals, entry) => {
+          if (entry.direction === "income") totals.income += entry.amount;
+          if (entry.direction === "expense") totals.expense += entry.amount;
+          return totals;
+        },
+        { income: 0, expense: 0 },
+      ),
+    [data?.entries],
+  );
   useEffect(() => {
     if (!data || data.month !== month || initializedMonthRef.current === month)
       return;
@@ -327,27 +369,36 @@ export default function LedgerEntriesPage() {
         >
           {vi ? "Thêm giao dịch" : "장부 내역 추가"}
         </button>
-        <div className={styles.monthPicker}>
-          <button
-            type="button"
-            onClick={() => shiftMonth(-1)}
-            aria-label={vi ? "Tháng trước" : "이전 달"}
-          >
-            ‹
-          </button>
-          <strong>
-            {vi
-              ? `Tháng ${Number(month.slice(5))}, ${Number(month.slice(0, 4))}`
-              : `${Number(month.slice(0, 4))}년 ${Number(month.slice(5))}월`}
-          </strong>
-          <button
-            type="button"
-            onClick={() => shiftMonth(1)}
-            aria-label={vi ? "Tháng sau" : "다음 달"}
-          >
-            ›
-          </button>
-        </div>
+        <section
+          style={monthNoticeCardStyle}
+          aria-label={vi ? "Chọn tháng" : "월 선택"}
+        >
+          <div style={monthControlStyle}>
+            <button
+              type="button"
+              onClick={() => shiftMonth(-1)}
+              aria-label={vi ? "Tháng trước" : "이전 달"}
+              style={monthButtonStyle}
+            >
+              {vi ? "Trước" : "이전"}
+            </button>
+            <input
+              type="month"
+              value={month}
+              onChange={(event) => setMonth(event.target.value)}
+              aria-label={vi ? "Chọn tháng" : "월 선택"}
+              style={monthInputStyle}
+            />
+            <button
+              type="button"
+              onClick={() => shiftMonth(1)}
+              aria-label={vi ? "Tháng sau" : "다음 달"}
+              style={monthButtonStyle}
+            >
+              {vi ? "Sau" : "다음"}
+            </button>
+          </div>
+        </section>
         {error ? (
           <p className={styles.error} role="alert">
             {error}
@@ -356,18 +407,37 @@ export default function LedgerEntriesPage() {
         {data ? (
           <>
             <section
+              className={styles.summaryGrid}
+              aria-label={vi ? "Tổng hợp sổ tháng" : "월 장부 요약"}
+            >
+              <article className={`${styles.summaryCard} ${styles.incomeCard}`}>
+                <span className={styles.summaryLabel}>
+                  <i aria-hidden="true">💰</i>
+                  {vi ? "Thu" : "수입"}
+                </span>
+                <strong>{money(monthlyTotals.income)}</strong>
+                <small>{vi ? "Theo sổ tháng này" : "당월 장부 기준"}</small>
+              </article>
+              <article className={`${styles.summaryCard} ${styles.expenseCard}`}>
+                <span className={styles.summaryLabel}>
+                  <i aria-hidden="true">💸</i>
+                  {vi ? "Chi" : "지출"}
+                </span>
+                <strong>{money(monthlyTotals.expense)}</strong>
+                <small>{vi ? "Theo sổ tháng này" : "당월 장부 기준"}</small>
+              </article>
+            </section>
+            <section
               className={styles.openingSection}
               aria-labelledby="opening-title"
             >
               <div className={styles.sectionTitle}>
                 <h2 id="opening-title">
+                  <span aria-hidden="true">🏦</span>
                   {vi ? "Số dư đầu tháng" : "당월 시재"}
                 </h2>
                 <span>{vi ? "Cố định đầu tháng" : "월초 고정"}</span>
               </div>
-              <strong className={styles.openingTotal}>
-                {money(openingTotal)}
-              </strong>
               <div className={styles.openingGrid}>
                 {businessAccounts.map((account) => (
                   <article key={account.id}>
@@ -375,6 +445,12 @@ export default function LedgerEntriesPage() {
                     <strong>{money(account.openingBalance)}</strong>
                   </article>
                 ))}
+              </div>
+              <div className={styles.openingTotal}>
+                <span>
+                  {vi ? "Tổng số dư đầu tháng" : "시재 합계"}
+                </span>
+                <strong>{money(openingTotal)}</strong>
               </div>
             </section>
             <section
