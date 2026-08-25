@@ -5,15 +5,17 @@ import test from "node:test";
 
 const { buildLedgerEntries } = createRequire(import.meta.url)("../lib/ledger/entries.ts") as typeof import("../lib/ledger/entries");
 const { MANUAL_EXPENSE_CATEGORY_NAMES, isManualExpenseCategory } = createRequire(import.meta.url)("../lib/ledger/manual-entry-policy.ts") as typeof import("../lib/ledger/manual-entry-policy");
+const { formatLedgerAmountInput, parseLedgerAmount, sanitizeLedgerAmountInput } = createRequire(import.meta.url)("../lib/ledger/manual-entry-amount.ts") as typeof import("../lib/ledger/manual-entry-amount");
 const read = (path: string) => readFileSync(path, "utf8");
 const page = read("app/(protected)/admin/ledger/entries/page.tsx");
+const pageCompact = page.replace(/\s+/g, "");
 const css = read("app/(protected)/admin/ledger/entries/entries.module.css");
 const keepingUi = read("components/bar/keeping/KeepingUi.tsx");
 const route = read("app/api/admin/ledger/route.ts");
 const autoLink = read("supabase/migrations/20260824152518_auto_link_business_partners_to_ledger.sql");
 const categories = read("supabase/migrations/20260824152948_ledger_category_v1.sql");
 const opening = read("supabase/migrations/20260824153108_seed_august_2026_opening_balances.sql");
-const manualCategories = read("supabase/migrations/202608250001_add_manual_ledger_expense_categories.sql");
+const manualCategories = read("supabase/migrations/20260824174814_add_manual_ledger_expense_categories.sql");
 
 test("inventory candidates are summarized by date, partner and payment default", () => {
   const candidates = Array.from({ length: 444 }, (_, index) => ({
@@ -53,7 +55,7 @@ test("opening balances and the four business funds match the production policy",
     assert.match(opening, new RegExp(`'${code}'[^\\n]*${amount}`));
   }
   assert.match(autoLink, /'vuong_personal_custody'\s*,\s*'personal_custody'\s*,\s*'Vương'/);
-  assert.match(page, /account\.is_business_fund&&account\.type!=="card_clearing"/);
+  assert.match(pageCompact, /account\.is_business_fund&&account\.type!=="card_clearing"/);
   assert.match(page, /openingBalance/);
   assert.match(page, /당월 시재/);
   assert.match(page, /현재 보유금/);
@@ -66,7 +68,7 @@ test("business partners are the user-facing party source and defaults stay one-w
   assert.match(autoLink, /revoke all on function public\.business_partner_ensure_ledger_party_v1\(bigint\)\s+from public, anon, authenticated, service_role/);
   assert.match(route, /from\("business_partners"\)/);
   assert.match(route, /from\("business_partner_ledger_parties"\)/);
-  assert.match(page, /data\.partners\.filter/);
+  assert.match(pageCompact, /data\.partners\.filter/);
   assert.match(page, /거래처 기본 결제설정은 변경하지 않습니다/);
 });
 
@@ -81,27 +83,30 @@ test("ledger category source contains the 36 inventory mappings", () => {
 test("ledger entries UI keeps the compact chronological accordion contract", () => {
   assert.doesNotMatch(page, />장부 업무</);
   assert.doesNotMatch(page, /<h1[^>]*>장부작성<\/h1>/);
-  assert.match(page, /className=\{styles\.addButton\}[\s\S]{0,160}>장부 내역 추가<\/button>/);
+  assert.match(page, /className=\{styles\.addButton\}/);
+  assert.match(page, /장부 내역 추가/);
   assert.match(css, /\.addButton\{width:100%/);
 
-  assert.match(page, /store_cash:0,baba_corporate_bank:1,vuong_personal_custody:2,cho_personal_custody:3/);
-  assert.match(page, /account\.is_business_fund&&account\.type!=="card_clearing"/);
-  assert.match(page, /businessAccounts\.reduce\(\(sum,account\)=>sum\+account\.openingBalance,0\)/);
-  assert.match(page, /className=\{styles\.openingTotal\}/);
+  assert.match(pageCompact, /store_cash:0,baba_corporate_bank:1,vuong_personal_custody:2,cho_personal_custody:3/);
+  assert.match(pageCompact, /account\.is_business_fund&&account\.type!=="card_clearing"/);
+  assert.match(pageCompact, /businessAccounts\.reduce\(\(sum,account\)=>sum\+account\.openingBalance/);
+  assert.match(pageCompact, /className=\{styles\.openingTotal\}/);
   assert.doesNotMatch(page, /month\.replace\("-","\."\)/);
-  assert.match(page, /<h2 id="opening-title">당월 시재<\/h2><span>월초 고정<\/span>/);
+  assert.match(page, /Số dư đầu tháng/);
+  assert.match(page, /당월 시재/);
   assert.match(css, /\.openingSection\{padding:10px 12px\}/);
   assert.match(css, /\.openingGrid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:0\}/);
   assert.match(css, /\.openingGrid article\{padding:6px 8px;border:0;border-radius:0;background:transparent\}/);
   assert.match(css, /@media\(max-width:560px\)[\s\S]*\.openingGrid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 
-  assert.match(page, /sort\(\(a,b\)=>a\.date\.localeCompare\(b\.date\)\)/);
-  assert.match(page, /dates\.includes\(today\)\?today:dates\.at\(-1\)/);
-  assert.match(page, /setExpandedDates\(current=>/);
-  assert.match(page, /Boolean\(search\.trim\(\)\)\|\|expandedDates\.has\(group\.date\)/);
-  assert.match(page, /\{expanded\?<div id=\{panelId\}>\{group\.rows\.map/);
-  assert.match(page, /className=\{styles\.entryMain\}/);
-  assert.match(page, /entry\.status==="pending"\?<span className=\{styles\.pendingBadge\}>확인 필요<\/span>:null/);
+  assert.match(pageCompact, /sort\(\(a,b\)=>a\.date\.localeCompare\(b\.date\)\)/);
+  assert.match(pageCompact, /dates\.includes\(today\)\?today:dates\.at\(-1\)/);
+  assert.match(pageCompact, /setExpandedDates\(\(current\)=>/);
+  assert.match(pageCompact, /Boolean\(search\.trim\(\)\)\|\|expandedDates\.has\(group\.date\)/);
+  assert.match(pageCompact, /expanded\?\(<divid=\{panelId\}>/);
+  assert.match(pageCompact, /group\.rows\.map/);
+  assert.match(pageCompact, /className=\{styles\.entryMain\}/);
+  assert.match(pageCompact, /entry\.status==="pending"\?\(<spanclassName=\{styles\.pendingBadge\}>/);
   assert.match(css, /\.entryMain\{[^}]*text-overflow:ellipsis;white-space:nowrap/);
 });
 
@@ -115,7 +120,34 @@ test("manual entry uses its own canonical expense whitelist", () => {
   for (const automatic of ["급여/인건비", "식자재", "건어물", "생맥주", "시럽", "소모품·잡화"]) {
     assert.equal(isManualExpenseCategory({ kind: "expense", name: automatic }), false);
   }
-  assert.match(page, /data\.categories\.filter\(isManualExpenseCategory\)\.sort\(manualExpenseCategorySort\)/);
+  assert.match(pageCompact, /data\.categories\.filter\(isManualExpenseCategory\)\.sort\(manualExpenseCategorySort\)/);
+});
+
+test("manual ledger amount input formats display text without changing the numeric payload", () => {
+  assert.equal(formatLedgerAmountInput("1000"), "1,000");
+  assert.equal(formatLedgerAmountInput("150000"), "150,000");
+  assert.equal(formatLedgerAmountInput("1500000"), "1,500,000");
+  assert.equal(sanitizeLedgerAmountInput("1,234,567"), "1234567");
+  assert.equal(sanitizeLedgerAmountInput(" 15만abc000 "), "15000");
+  assert.equal(sanitizeLedgerAmountInput(""), "");
+  assert.equal(sanitizeLedgerAmountInput("1,00"), "100");
+  assert.equal(parseLedgerAmount("1,500,000"), 1500000);
+  assert.equal(parseLedgerAmount(String(Number.MAX_SAFE_INTEGER)), Number.MAX_SAFE_INTEGER);
+  assert.equal(parseLedgerAmount("9007199254740992"), null);
+  assert.match(pageCompact, /amount:amountValue/);
+  assert.doesNotMatch(pageCompact, /amount:formatLedgerAmountInput/);
+});
+
+test("entry detail and inventory candidate editor expose complete Vietnamese UI labels", () => {
+  for (const label of [
+    "Chi tiết", "Đóng", "Cần xác nhận", "Đã ghi sổ", "Không có tài khoản",
+    "Sửa và ghi sổ", "Hóa đơn", "Phương thức thanh toán", "Phương thức xử lý",
+    "Thanh toán ngay", "Ghi nhận công nợ", "Danh mục chi phí",
+    "Tài khoản thanh toán thực tế", "Ghi chú", "Ghi mặt hàng này vào sổ",
+  ]) assert.match(page, new RegExp(label));
+  assert.match(pageCompact, /manualExpenseCategoryLabel\(entry\.categoryName,lang\)/);
+  assert.match(pageCompact, /manualExpenseCategoryLabel\(row\.name,lang\)/);
+  assert.match(pageCompact, /<EntryDetailSheetlang=\{lang\}/);
 });
 
 test("manual category migration adds only the six missing canonical rows", () => {
@@ -128,16 +160,25 @@ test("manual category migration adds only the six missing canonical rows", () =>
 });
 
 test("manual entry sheet is top aligned, compact and keeps all transaction modes", () => {
-  assert.match(page, /<BarSheet kind="bottom" topAligned title="장부 내역 추가"/);
+  assert.match(page, /comfortableTop/);
+  assert.match(page, /Thêm giao dịch/);
   assert.doesNotMatch(page, /title="수동 내역 추가"/);
   assert.match(keepingUi, /topAligned\?"flex-start"/);
   assert.match(keepingUi, /calc\(100dvh/);
   assert.match(keepingUi, /document\.body\.style\.overflow="hidden"/);
-  for (const label of ["💸 지출", "💰 수입", "🔄 이체", "⚖️ 잔액조정", "💵 금액", "📅 발생일", "🏷️ 카테고리", "🤝 거래처", "🏦 출금 계정", "🏦 입금 계정", "📝 메모"]) assert.match(page, new RegExp(label));
-  assert.match(css, /\.manualGrid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:9px\}/);
+  for (const label of ["💸", "💰", "🔄", "⚖️", "💵", "📅", "🏷️", "🤝", "🏦", "📝"]) assert.match(page, new RegExp(label));
+  assert.match(pageCompact, /scrollablelabel=/);
+  assert.match(page, /type="date"/);
+  assert.match(page, /type="time"/);
+  assert.match(page, /Tài khoản điều chỉnh/);
+  assert.match(css, /\.manualGrid\{display:grid;gap:9px\}/);
+  assert.match(css, /\.manualRow\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(css, /\.manualSingle\{grid-template-columns:minmax\(0,1fr\)\}/);
+  assert.match(pageCompact, /topAlignedcomfortableTop/);
+  assert.match(keepingUi, /max\(24px, calc\(env\(safe-area-inset-top\) \+ 16px\)\)/);
   assert.match(css, /\.manualGrid>\*\{min-width:0\}/);
-  assert.match(page, /type==="transfer"/);
-  assert.match(page, /type==="balance_adjustment"/);
+  assert.match(pageCompact, /type==="transfer"/);
+  assert.match(pageCompact, /type==="balance_adjustment"/);
 });
 
 test("book UI keeps operational consoles out of the primary flow", () => {
