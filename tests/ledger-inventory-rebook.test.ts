@@ -14,6 +14,7 @@ const css=read("app/(protected)/admin/ledger/entries/entries.module.css");
 const keeping=read("components/bar/keeping/KeepingUi.tsx");
 const entries=read("lib/ledger/entries.ts");
 const ledgerApi=read("app/api/admin/ledger/route.ts");
+const payablesApi=read("app/api/admin/ledger/payables/route.ts");
 
 test("payable status card and contained sheet use the requested hierarchy",()=>{
   assert.match(page,/미납금 현황/);assert.match(page,/Tình hình công nợ/);assert.doesNotMatch(page,/미납금 요약/);
@@ -124,4 +125,33 @@ test("edit API whitelists input and maps safe application codes",()=>{
   for(const field of ["paymentMode","categoryId","fundAccountId","dueDate","amount","memo","reason"])assert.match(api,new RegExp(`"${field}"`));
   assert.match(api,/requireLedgerActor/);assert.match(api,/INVALID_BODY/);assert.match(api,/INVENTORY_EDIT_FAILED/);
   assert.match(api,/forbidden" \? 403/);assert.match(api,/not_found" \? 404/);assert.match(api,/payable_already_paid/);
+});
+
+test("payables summary joins partner type without N plus one queries",()=>{
+  assert.match(payablesApi,/business_partner_ledger_parties/);
+  assert.match(payablesApi,/business_partners/);
+  assert.match(payablesApi,/partnerType:string\|null/);
+  assert.match(payablesApi,/businessPartnerByLedgerParty/);
+  assert.match(payablesApi,/partnerTypeByBusinessPartner/);
+  assert.equal((payablesApi.match(/from\("business_partner_ledger_parties"\)/g)??[]).length,1);
+  assert.equal((payablesApi.match(/from\("business_partners"\)/g)??[]).length,1);
+});
+
+test("payable and account mini badges are bilingual and compact",()=>{
+  for(const label of ["주류","식자재","음료","기타","Rượu","Thực phẩm","Đồ uống","Khác"])assert.match(page,new RegExp(label));
+  for(const label of ["현금","법인","미지급","미지정","Tiền mặt","Công ty","Công nợ","Chưa rõ","Vương","Cho"])assert.match(page,new RegExp(label));
+  assert.match(page,/partnerTypeLabel\(party\.partnerType,lang\)/);
+  assert.match(page,/accountBadgeLabel\(entry\.accountName,lang\)/);
+  assert.match(css,/\.entryRow\{grid-template-columns:38px auto minmax\(0,1fr\) auto auto 12px/);
+  assert.match(css,/@media\(max-width:560px\)[\s\S]*\.entryRow\{grid-template-columns:35px auto minmax\(0,1fr\) auto auto 9px/);
+  assert.match(css,/\.accountBadge\{[^}]*font-size:9px/);
+  assert.match(css,/\.accountBadgePayable\{/);
+  assert.match(css,/\.payablePartyMain>\.partnerTypeBadge\{[^}]*font-size:8px/);
+});
+
+test("account leaves list metadata but remains searchable and visible in detail",()=>{
+  const meta=page.slice(page.indexOf("function entryMeta"),page.indexOf("function partnerTypeLabel"));
+  assert.doesNotMatch(meta,/entry\.accountName/);
+  assert.match(page,/entry\.title} \$\{entry\.subtitle} \$\{entry\.accountName/);
+  assert.match(page,/entry\.accountName \?\? \(vi \? "Không có tài khoản" : "계정 없음"\)/);
 });

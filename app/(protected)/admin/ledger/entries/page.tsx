@@ -90,7 +90,7 @@ type DateGroup = {
   income: number;
   expense: number;
 };
-type PayableParty = { partyId:number; partyName:string; outstandingAmount:number; openCount:number };
+type PayableParty = { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; openCount:number };
 type PayablesSummary = { totalOutstanding:number; parties:PayableParty[] };
 type PayableRow = { id:number; original_amount:number; outstandingAmount:number; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null}|null };
 type PayableDetail = { party:{id:number;name:string}; payables:PayableRow[]; totalOutstanding:number };
@@ -498,7 +498,7 @@ export default function LedgerEntriesPage() {
             </section>
             <section className={styles.payableSummary} aria-labelledby="payable-summary-title">
               <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tình hình công nợ" : "미납금 현황"}</h2><strong>{money(payables?.totalOutstanding ?? 0)}</strong></div>
-              {(payables?.parties ?? []).length ? <div className={styles.payableParties}>{payables!.parties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty(party)}><span>{party.partyName}</span><strong>{money(party.outstandingAmount)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i></button>)}</div> : <p className={styles.payableEmpty}>{vi ? "Không có công nợ chưa thanh toán." : "미납금이 없습니다."}</p>}
+              {(payables?.parties ?? []).length ? <div className={styles.payableParties}>{payables!.parties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty(party)}><span className={styles.payablePartyMain}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><span className={styles.payablePartyName}>{party.partyName}</span></span><strong>{money(party.outstandingAmount)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i></button>)}</div> : <p className={styles.payableEmpty}>{vi ? "Không có công nợ chưa thanh toán." : "미납금이 없습니다."}</p>}
             </section>
             <section
               className={styles.filters}
@@ -607,6 +607,9 @@ export default function LedgerEntriesPage() {
                                     : vi
                                       ? "Chuyển"
                                       : "이체"}
+                              </span>
+                              <span className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""}`}>
+                                {accountBadgeLabel(entry.accountName,lang)}
                               </span>
                               <span className={styles.entryMain}>
                                 <strong>{entry.title}</strong>
@@ -1391,11 +1394,28 @@ function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
     subtitle = entry.subtitle.replace(/\s*·\s*확인 필요/g, "");
   return [
     subtitle,
-    entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음"),
     entry.origin === "manual" ? (vi ? "Thủ công" : "수동") : null,
   ]
     .filter(Boolean)
     .join(" · ");
+}
+function partnerTypeLabel(partnerType: string | null, lang: "ko" | "vi") {
+  const labels = lang === "vi"
+    ? { alcohol: "Rượu", food: "Thực phẩm", beverage: "Đồ uống", other: "Khác" }
+    : { alcohol: "주류", food: "식자재", beverage: "음료", other: "기타" };
+  return labels[partnerType as keyof typeof labels] ?? labels.other;
+}
+function isPayableAccount(accountName: string | null) {
+  return accountName === "미지급";
+}
+function accountBadgeLabel(accountName: string | null, lang: "ko" | "vi") {
+  if (!accountName) return lang === "vi" ? "Chưa rõ" : "미지정";
+  if (accountName === "매장 현금") return lang === "vi" ? "Tiền mặt" : "현금";
+  if (accountName === "BABA 법인계좌") return lang === "vi" ? "Công ty" : "법인";
+  if (accountName === "미지급") return lang === "vi" ? "Công nợ" : "미지급";
+  if (accountName === "개인(Vương)" || accountName === "Vương 개인계좌 (BABA 소유분)") return "Vương";
+  if (accountName === "개인(Cho)" || accountName === "Cho 개인계좌 (BABA 소유분)") return "Cho";
+  return accountName;
 }
 function directionEmoji(direction: LedgerEntry["direction"]) {
   return direction === "income" ? "💰" : direction === "expense" ? "💸" : "🔄";
