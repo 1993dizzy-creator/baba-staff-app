@@ -74,6 +74,16 @@ type CandidateDraft = {
   fundAccountId: string;
   memo: string;
 };
+type ConfirmedEditDraft = {
+  item: LedgerEntryItem;
+  paymentMode: "immediate" | "payable";
+  categoryId: string;
+  fundAccountId: string;
+  dueDate: string;
+  amount: string;
+  memo: string;
+  reason: string;
+};
 type DateGroup = {
   date: string;
   rows: LedgerEntry[];
@@ -97,6 +107,19 @@ const localTime = () =>
   new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 16);
 const money = (amount: number) =>
   `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(amount))} ₫`;
+const sanitizeLedgerDecimalAmount = (input: string) => {
+  const normalized = input.replace(/,/g, "").replace(/[^\d.]/g, "");
+  const dot = normalized.indexOf(".");
+  const integerSource = dot < 0 ? normalized : normalized.slice(0, dot);
+  const integer = integerSource.replace(/^0+(?=\d)/, "");
+  if (dot < 0) return integer;
+  return `${integer || "0"}.${normalized.slice(dot + 1).replace(/\./g, "").slice(0, 3)}`;
+};
+const formatLedgerDecimalAmount = (input: string) => {
+  const [integer = "", fraction] = input.split(".");
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return fraction === undefined ? grouped : `${grouped}.${fraction}`;
+};
 const accountShortName: Record<string, string> = {
   store_cash: "현금",
   vuong_personal_custody: "Vương 개인",
@@ -194,6 +217,7 @@ export default function LedgerEntriesPage() {
         setData(ledgerBody);
         setPayables(payableBody);
         setClosed(closeBody.state === "closed");
+        return ledgerBody as LedgerData;
       } catch (cause) {
         if ((cause as Error).name !== "AbortError")
           setError(
@@ -201,6 +225,7 @@ export default function LedgerEntriesPage() {
               ? "Không thể tải sổ. Vui lòng thử lại sau."
               : "장부를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
           );
+        return null;
       } finally {
         if (!signal?.aborted) setLoading(false);
       }
@@ -472,7 +497,7 @@ export default function LedgerEntriesPage() {
               </div> : null}
             </section>
             <section className={styles.payableSummary} aria-labelledby="payable-summary-title">
-              <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tổng hợp công nợ" : "미납금 요약"}</h2><strong>{money(payables?.totalOutstanding ?? 0)}</strong></div>
+              <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tình hình công nợ" : "미납금 현황"}</h2><strong>{money(payables?.totalOutstanding ?? 0)}</strong></div>
               {(payables?.parties ?? []).length ? <div className={styles.payableParties}>{payables!.parties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty(party)}><span>{party.partyName}</span><strong>{money(party.outstandingAmount)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i></button>)}</div> : <p className={styles.payableEmpty}>{vi ? "Không có công nợ chưa thanh toán." : "미납금이 없습니다."}</p>}
             </section>
             <section
@@ -669,6 +694,15 @@ export default function LedgerEntriesPage() {
             saving={saving}
             message={detailMessage}
             posDetail={posDetail}
+            onConfirmedEdited={async (transactionId) => {
+              const fresh = await load();
+              const refreshed = fresh?.entries.find((entry) =>
+                entry.items.some((item) => item.transactionId === transactionId),
+              );
+              if (refreshed) setSelected(refreshed);
+              else setSelected(null);
+              setNotice(vi ? "Đã cập nhật giao dịch." : "거래를 수정했습니다.");
+            }}
             onClose={() => {
               setSelected(null);
               setCandidateDraft(null);
@@ -693,6 +727,7 @@ function EntryDetailSheet({
   saving,
   message,
   posDetail,
+  onConfirmedEdited,
   onClose,
 }: {
   lang: "ko" | "vi";
@@ -706,9 +741,12 @@ function EntryDetailSheet({
   saving: boolean;
   message: string;
   posDetail: Record<string, unknown> | null;
+  onConfirmedEdited: (transactionId: number) => Promise<void>;
   onClose: () => void;
 }) {
   const vi = lang === "vi";
+  const confirmedInventory = entry.drilldown === "inventory" && entry.status === "confirmed";
+  const [editMode,setEditMode]=useState(false),[editDraft,setEditDraft]=useState<ConfirmedEditDraft|null>(null),[editError,setEditError]=useState(""),[editSaving,setEditSaving]=useState(false);
   const payments = (posDetail?.payments ?? []) as Array<
     Record<string, unknown>
   >;
@@ -720,13 +758,14 @@ function EntryDetailSheet({
       comfortableTop
       title={vi ? "Chi tiết giao dịch" : "거래 상세"}
       closeLabel={vi ? "Đóng" : "닫기"}
-      saving={saving}
+      saving={saving||editSaving}
       onClose={onClose}
       footer={
         <div className={styles.detailFooter}>
+          {confirmedInventory ? <button type="button" disabled={saving||editSaving} onClick={()=>{setEditMode(value=>!value);setEditDraft(null);setEditError("")}} style={{...primaryButtonStyle,width:"100%"}}>{editMode?(vi?"Kết thúc chỉnh sửa":"수정 종료"):(vi?"Sửa":"수정")}</button>:null}
           <button
             type="button"
-            disabled={saving}
+            disabled={saving||editSaving}
             onClick={onClose}
             style={{ ...secondaryButtonStyle, width: "100%" }}
           >
@@ -781,11 +820,11 @@ function EntryDetailSheet({
                   {item.unitPrice == null ? "" : ` × ${money(item.unitPrice)}`}
               </span>
               <b>{money(item.amount)}</b>
-              {entry.status === "pending" ? (
+              {entry.status === "pending" || (confirmedInventory && editMode) ? (
                 <button
                   className={styles.itemAction}
                   type="button"
-                  onClick={() => editCandidate(item)}
+                  onClick={() => entry.status === "pending" ? editCandidate(item) : setEditDraft({item,paymentMode:item.paymentMode??"immediate",categoryId:String(item.categoryId??""),fundAccountId:String(item.fundAccountId??""),dueDate:item.dueDate??"",amount:String(item.amount),memo:item.memo??"",reason:""})}
                 >
                   {vi ? "Sửa" : "수정"}
                 </button>
@@ -937,6 +976,11 @@ function EntryDetailSheet({
           </button>
         </div>
       ) : null}
+      {editDraft ? <ConfirmedInventoryEditor lang={lang} draft={editDraft} setDraft={setEditDraft} accounts={accounts} categories={categories} saving={editSaving} error={editError} onSave={async()=>{
+        if(!editDraft.item.transactionId)return;
+        setEditSaving(true);setEditError("");
+        try{const response=await fetch(`/api/admin/ledger/transactions/${editDraft.item.transactionId}/edit`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paymentMode:editDraft.paymentMode,categoryId:Number(editDraft.categoryId),fundAccountId:editDraft.paymentMode==="immediate"?Number(editDraft.fundAccountId):null,dueDate:editDraft.paymentMode==="payable"?(editDraft.dueDate||null):null,amount:editDraft.amount,memo:editDraft.memo||null,reason:editDraft.reason})}),body=await response.json();if(!response.ok)throw new Error(body.code??"INVENTORY_EDIT_FAILED");setEditDraft(null);await onConfirmedEdited(Number(body.result.transactionId))}catch(cause){setEditError(`${vi?"Không thể sửa giao dịch.":"거래를 수정하지 못했습니다."} ${(cause as Error).message}`)}finally{setEditSaving(false)}
+      }}/>:null}
       {entry.status === "confirmed" && entry.origin === "auto" ? (
         <p className={styles.policyNote}>
           {vi
@@ -946,6 +990,21 @@ function EntryDetailSheet({
       ) : null}
     </BarSheet>
   );
+}
+
+function ConfirmedInventoryEditor({lang,draft,setDraft,accounts,categories,saving,error,onSave}:{lang:"ko"|"vi";draft:ConfirmedEditDraft;setDraft:(draft:ConfirmedEditDraft|null)=>void;accounts:Account[];categories:Category[];saving:boolean;error:string;onSave:()=>Promise<void>}){
+  const vi=lang==="vi",paid=(draft.item.paidAmount??0)>0;
+  return <div className={styles.candidateEditor}>
+    <div className={styles.editorTitle}><h3>✏️ {draft.item.name}</h3><button type="button" disabled={saving} onClick={()=>setDraft(null)}>{vi?"Hủy":"취소"}</button></div>
+    <BarSegmentedControl label={vi?"Phân loại thanh toán":"결제 구분"} value={draft.paymentMode} disabled={saving||paid} onChange={paymentMode=>setDraft({...draft,paymentMode})} options={[{value:"immediate",label:vi?"Trả trước":"선결제"},{value:"payable",label:vi?"Trả sau":"후불"}]}/>
+    {paid?<p className={styles.error}>{vi?"Khoản công nợ đã được thanh toán một phần hoặc toàn bộ nên không thể sửa.":"일부 또는 전액 결제된 미납 거래는 수정할 수 없습니다."}</p>:null}
+    <div className={styles.candidateFields}><BarField label={vi?"Danh mục":"카테고리"} required compact>{({id})=><select id={id} value={draft.categoryId} onChange={event=>setDraft({...draft,categoryId:event.target.value})} style={keepingInputStyle}>{categories.filter(row=>row.kind==="expense").map(row=><option key={row.id} value={row.id}>{manualExpenseCategoryLabel(row.name,lang)}</option>)}</select>}</BarField><BarField label={vi?"Số tiền":"금액"} required compact>{({id})=><input id={id} inputMode="decimal" value={formatLedgerDecimalAmount(draft.amount)} onChange={event=>setDraft({...draft,amount:sanitizeLedgerDecimalAmount(event.target.value)})} style={keepingInputStyle}/>}</BarField></div>
+    {draft.paymentMode==="immediate"?<div className={styles.candidateSingle}><AccountField lang={lang} label={`🏦 ${vi?"Tài khoản chi":"출금 계정"}`} value={draft.fundAccountId} setValue={fundAccountId=>setDraft({...draft,fundAccountId})} accounts={accounts.filter(row=>row.is_active&&row.is_business_fund&&row.type!=="card_clearing")}/></div>:<div className={styles.candidateSingle}><BarField label={vi?"Ngày đến hạn":"지급 기한"} compact>{({id})=><input id={id} type="date" value={draft.dueDate} onChange={event=>setDraft({...draft,dueDate:event.target.value})} style={keepingInputStyle}/>}</BarField></div>}
+    <BarField label={vi?"Ghi chú":"메모"} compact>{({id})=><input id={id} value={draft.memo} onChange={event=>setDraft({...draft,memo:event.target.value})} style={keepingInputStyle}/>}</BarField>
+    <BarField label={vi?"Lý do chỉnh sửa":"수정 사유"} required compact>{({id})=><input id={id} required value={draft.reason} onChange={event=>setDraft({...draft,reason:event.target.value})} style={keepingInputStyle}/>}</BarField>
+    {error?<p className={styles.error} role="alert">{error}</p>:null}
+    <button type="button" disabled={saving||paid||!draft.categoryId||!draft.amount||!draft.reason.trim()||(draft.paymentMode==="immediate"&&!draft.fundAccountId)} onClick={()=>void onSave()} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang lưu…":"저장 중…"):(vi?"Lưu chỉnh sửa":"수정 저장")}</button>
+  </div>
 }
 
 function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
@@ -958,12 +1017,14 @@ function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
   const groups=useMemo(()=>{const map=new Map<string,PayableRow[]>();for(const row of detail?.payables??[]){if(row.outstandingAmount<=0)continue;const key=row.expense?.business_date??"";map.set(key,[...(map.get(key)??[]),row])}return [...map.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([businessDate,rows])=>({businessDate,rows,total:rows.reduce((sum,row)=>sum+row.outstandingAmount,0)}))},[detail]);
   const selectedGroups=groups.filter(group=>selectedDates.has(group.businessDate)),selectedTotal=selectedGroups.reduce((sum,group)=>sum+group.total,0),selectedPayables=selectedGroups.flatMap(group=>group.rows);
   async function pay(){if(saving||!accountId||!selectedPayables.length)return;setSaving(true);setError("");try{const response=await fetch("/api/admin/ledger/payables/pay",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({partyId:party.partyId,fundAccountId:Number(accountId),occurredAt:`${date}T${time}:00+07:00`,amount:selectedTotal,allocations:selectedPayables.map(row=>({payableId:row.id,allocatedAmount:row.outstandingAmount})),memo:memo||null})}),body=await response.json();if(!response.ok)throw new Error(body.code);setSelectedDates(new Set());await onPaid()}catch(cause){setError(`${vi?"Không thể thanh toán.":"결제하지 못했습니다."} ${(cause as Error).message}`)}finally{setSaving(false)}}
-  return <BarSheet kind="full" compact topAligned comfortableTop title={vi?"Chi tiết công nợ":"미납금 상세"} closeLabel={vi?"Đóng":"닫기"} saving={saving} onClose={onClose} footer={<div className={styles.detailFooter}><button type="button" disabled={saving||!accountId||!selectedPayables.length} onClick={()=>void pay()} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang thanh toán…":"결제 중…"):(vi?`Thanh toán ${selectedDates.size} ngày đã chọn`:`선택 일자 ${selectedDates.size}건 결제`)}</button><button type="button" disabled={saving} onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button></div>}>
+  return <BarSheet kind="full" compact topAligned comfortableTop fillAvailable containedBody title={vi?"Chi tiết công nợ":"미납금 상세"} closeLabel={vi?"Đóng":"닫기"} saving={saving} onClose={onClose} footer={<div className={styles.detailFooter}><button type="button" disabled={saving||!accountId||!selectedPayables.length} onClick={()=>void pay()} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang thanh toán…":"결제 중…"):(vi?`Thanh toán ${selectedDates.size} ngày đã chọn`:`선택 일자 ${selectedDates.size}건 결제`)}</button><button type="button" disabled={saving} onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button></div>}>
+    <div className={styles.payableSheetBody}>
     <div className={styles.payableDetailHeader}><strong>🤝 {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(detail?.totalOutstanding??party.outstandingAmount)}</b></span></div>
     {error?<p className={styles.error} role="alert">{error}</p>:null}
     <div className={styles.payableDates}>{groups.map(group=>{const open=expanded.has(group.businessDate),checked=selectedDates.has(group.businessDate);return <article key={group.businessDate}><div className={styles.payableDateRow}><input type="checkbox" checked={checked} aria-label={`${formatDate(group.businessDate,lang)} ${vi?"chọn":"선택"}`} onChange={()=>setSelectedDates(current=>{const next=new Set(current);if(next.has(group.businessDate))next.delete(group.businessDate);else next.add(group.businessDate);return next})}/><button type="button" aria-expanded={open} onClick={()=>setExpanded(current=>{const next=new Set(current);if(next.has(group.businessDate))next.delete(group.businessDate);else next.add(group.businessDate);return next})}><span>📅 {formatDate(group.businessDate,lang)}</span><small>{group.rows.length}{vi?" khoản":"건"}</small><strong>{money(group.total)}</strong><i aria-hidden>›</i></button></div>{open?<div className={styles.payableItems}>{group.rows.map(row=><span key={row.id}><em>📦 {payableItemLabel(row,vi)}</em><b>{money(row.outstandingAmount)}</b></span>)}</div>:null}</article>})}</div>
     {!groups.length&&!error?<p className={styles.payableEmpty}>{vi?"Không có công nợ chưa thanh toán.":"미납금이 없습니다."}</p>:null}
     <div className={styles.paymentForm}><div className={styles.selectedTotal}><span>{vi?"Công nợ đã chọn":"선택 미납금"}</span><strong>{money(selectedTotal)}</strong></div><div className={styles.manualSingle}><AccountField lang={lang} label={`🏦 ${vi?"Tài khoản chi":"출금 계정"}`} value={accountId} setValue={setAccountId} accounts={accounts}/></div><div className={styles.manualRow}><BarField label={`📅 ${vi?"Ngày thanh toán":"결제일"}`} required compact>{({id})=><input id={id} type="date" value={date} onChange={event=>setDate(event.target.value)} style={keepingInputStyle}/>}</BarField><BarField label={`🕒 ${vi?"Thời gian":"시간"}`} required compact>{({id})=><input id={id} type="time" value={time} onChange={event=>setTime(event.target.value)} style={keepingInputStyle}/>}</BarField></div><BarField label={`📝 ${vi?"Ghi chú":"메모"}`} compact>{({id})=><input id={id} value={memo} onChange={event=>setMemo(event.target.value)} style={keepingInputStyle}/>}</BarField></div>
+    </div>
   </BarSheet>
 }
 

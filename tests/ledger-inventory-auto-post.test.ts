@@ -102,5 +102,5 @@ test("opening balance and payable selection UI preserve one-request allocation p
   assert.match(page,/allocations:selectedPayables\.map/);
   assert.match(page,/allocatedAmount:row\.outstandingAmount/);
   assert.doesNotMatch(page,/for\s*\([^)]*payable[^)]*\)[\s\S]{0,120}fetch/);
-  for(const label of ["미납금 요약","Tổng hợp công nợ","선택 미납금","Công nợ đã chọn","출금 계정","Tài khoản chi"]) assert.match(page,new RegExp(label));
+  for(const label of ["미납금 현황","Tình hình công nợ","선택 미납금","Công nợ đã chọn","출금 계정","Tài khoản chi"]) assert.match(page,new RegExp(label));
 });

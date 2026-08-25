@@ -7,6 +7,12 @@ export type LedgerEntryItem = {
   amount: number;
   categoryId?: number | null;
   categoryName?: string | null;
+  paymentMode?: "immediate" | "payable";
+  fundAccountId?: number | null;
+  dueDate?: string | null;
+  payableStatus?: string | null;
+  paidAmount?: number;
+  memo?: string | null;
 };
 
 export type LedgerEntry = {
@@ -31,10 +37,12 @@ export type LedgerEntry = {
 export type TransactionRow = {
   id: number | string; type: string; business_date: string; amount: number | string;
   party_id?: number | string | null;
+  correction_of_id?: number | string | null;
   economic_effect_sign?: number | string | null; source_type: string; source_key?: string | null;
-  memo?: string | null; category?: { name?: string | null } | null; party?: { name?: string | null } | null;
+  memo?: string | null; category?: { id?: number | string; name?: string | null } | null; party?: { name?: string | null } | null;
   source_snapshot?: Record<string, unknown> | null;
   movements?: Array<{ amount?: number | string; fund_account?: { id?: number | string; display_name?: string | null } | null }>;
+  payable?: { id?: number|string; due_date?:string|null; status?:string|null; allocations?:Array<{allocated_amount?:number|string}> }|null;
 };
 
 export type CandidateRow = {
@@ -59,8 +67,16 @@ const inventoryItem = (row: CandidateRow | TransactionRow): LedgerEntryItem => {
     quantity: snapshot.change_quantity == null ? null : value(snapshot.change_quantity),
     unitPrice: snapshot.purchase_price == null ? null : value(snapshot.purchase_price),
     amount: Object.hasOwn(row, "proposed_amount") ? value((row as CandidateRow).proposed_amount) : value((row as TransactionRow).amount),
-    categoryId: Object.hasOwn(row, "proposed_category_id") ? ((row as CandidateRow).proposed_category_id == null ? null : value((row as CandidateRow).proposed_category_id)) : null,
+    categoryId: Object.hasOwn(row, "proposed_category_id") ? ((row as CandidateRow).proposed_category_id == null ? null : value((row as CandidateRow).proposed_category_id)) : ((row as TransactionRow).category?.id == null ? null : value((row as TransactionRow).category?.id)),
     categoryName: row.category?.name ?? (snapshot.category ? String(snapshot.category) : null),
+    ...(!Object.hasOwn(row, "proposed_amount") ? {
+      paymentMode: (row as TransactionRow).payable ? "payable" as const : "immediate" as const,
+      fundAccountId: (row as TransactionRow).movements?.find(item=>value(item.amount)<0)?.fund_account?.id == null ? null : value((row as TransactionRow).movements?.find(item=>value(item.amount)<0)?.fund_account?.id),
+      dueDate: (row as TransactionRow).payable?.due_date ?? null,
+      payableStatus: (row as TransactionRow).payable?.status ?? null,
+      paidAmount: ((row as TransactionRow).payable?.allocations??[]).reduce((sum,item)=>sum+value(item.allocated_amount),0),
+      memo: (row as TransactionRow).memo ?? null,
+    } : {}),
   };
 };
 
@@ -82,9 +98,18 @@ export function buildLedgerEntries(
 ): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
   const inventoryGroups = new Map<string, LedgerEntry>();
+  const reversedInventoryIds = new Set(
+    transactions
+      .filter(row => row.source_type === "inventory_purchase_reversal" && row.correction_of_id != null)
+      .map(row => value(row.correction_of_id)),
+  );
 
   for (const row of transactions) {
     if (row.type === "opening") continue;
+    if (row.source_type === "inventory_purchase_reversal") continue;
+    if (row.source_type === "inventory_purchase_candidate" || row.source_type === "inventory_purchase_rebook") {
+      if (reversedInventoryIds.has(value(row.id))) continue;
+    }
     const transactionId = value(row.id);
     const amount = value(row.amount);
     const expense = value(row.economic_effect_sign) < 0 || row.type === "expense" || row.type === "expense_recognition" || row.type === "payable_payment";
@@ -93,7 +118,7 @@ export function buildLedgerEntries(
     const accountName = movement?.fund_account?.display_name ?? null;
     const automatic = row.source_type !== "manual";
 
-    if (row.source_type === "inventory_purchase_candidate") {
+    if (row.source_type === "inventory_purchase_candidate" || row.source_type === "inventory_purchase_rebook") {
       const partyName = row.party?.name ?? "거래처 미지정";
       const key = `confirmed-inventory:${row.business_date}:${row.party_id ?? partyName}:${accountName ?? "payable"}`;
       const group = inventoryGroups.get(key) ?? {

@@ -67,7 +67,7 @@ async function loadMonthTransactions(start: string, end: string) {
   const pageSize = 1000;
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer.from("ledger_transactions")
-      .select("id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,source_synced_at,memo,party_id,category:ledger_categories(name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,display_name)),corrections:ledger_transactions!correction_of_id(id,business_date,amount,economic_effect_sign,memo)")
+      .select("id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,source_synced_at,memo,party_id,category:ledger_categories(id,name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,display_name)),payable:ledger_payables(id,due_date,status,allocations:ledger_payable_allocations(allocated_amount))")
       .eq("status", "confirmed").gte("business_date", start).lt("business_date", end)
       .order("business_date", { ascending: false }).order("id", { ascending: false }).range(from, from + pageSize - 1);
     if (error) throw error;
