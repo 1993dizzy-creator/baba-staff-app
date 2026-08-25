@@ -167,13 +167,23 @@ test("manual ledger amount input formats display text without changing the numer
 test("entry detail and inventory candidate editor expose complete Vietnamese UI labels", () => {
   for (const label of [
     "Chi tiết", "Đóng", "Cần xác nhận", "Đã ghi sổ", "Không có tài khoản",
-    "Sửa và ghi sổ", "Hóa đơn", "Phương thức thanh toán", "Phương thức xử lý",
+    "Sửa", "Hóa đơn", "Phương thức thanh toán", "Phương thức xử lý",
     "Thanh toán ngay", "Ghi nhận công nợ", "Danh mục chi phí",
     "Tài khoản thanh toán thực tế", "Ghi chú", "Ghi mặt hàng này vào sổ",
   ]) assert.match(page, new RegExp(label));
   assert.match(pageCompact, /manualExpenseCategoryLabel\(entry\.categoryName,lang\)/);
   assert.match(pageCompact, /manualExpenseCategoryLabel\(row\.name,lang\)/);
   assert.match(pageCompact, /<EntryDetailSheetlang=\{lang\}/);
+  assert.match(pageCompact, /kind="full"compacttopAlignedcomfortableTop/);
+  assert.match(page, /Chi tiết giao dịch/);
+  assert.match(page, /거래 상세/);
+  assert.match(pageCompact, /entry\.status==="pending"\?"⚠️":"✅"/);
+  assert.match(pageCompact, /direction==="income"\?"💰":direction==="expense"\?"💸":"🔄"/);
+  assert.match(pageCompact, /className=\{styles\.itemDescription\}/);
+  assert.match(pageCompact, /className=\{`\$\{styles\.candidateFields\}/);
+  assert.match(css, /\.detailSummary\{display:grid;gap:5px;padding:10px 11px/);
+  assert.match(css, /\.itemLine\{[^}]*grid-template-columns:minmax\(0,1fr\) auto/);
+  assert.match(css, /\.candidateFields\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 });
 
 test("manual category migration adds only the six missing canonical rows", () => {
