@@ -51,6 +51,63 @@ test("confirmed inventory and POS rows retain source detail while grouping", () 
   assert.equal(pos?.accountName, "카드 정산대기");
 });
 
+test("inventory groups use provenance time ranges and latest item time for sorting", () => {
+  const inventory = (
+    id: number,
+    partyId: number,
+    partyName: string,
+    sourceTime: string,
+    sourceType = "inventory_purchase_candidate",
+  ) => ({
+    id, party_id: partyId, type: "expense", business_date: "2026-08-01",
+    occurred_at: "2026-08-01T20:00:00Z", amount: 100, economic_effect_sign: 1,
+    source_type: sourceType, party: { name: partyName }, category: { name: "식자재 매입" },
+    source_snapshot: { item_name: `품목 ${id}`, inventory_log_created_at: sourceTime },
+    movements: [{ amount: -100, fund_account: { id: 4, display_name: "법인계좌" } }],
+  });
+  const rows = [
+    inventory(1, 1, "Ok Mart", "2026-08-01T11:39:00.754531Z"),
+    inventory(2, 1, "Ok Mart", "2026-08-01T11:39:15.163987Z"),
+    inventory(3, 1, "Ok Mart", "2026-08-01T11:39:44.763669Z"),
+    inventory(4, 1, "Ok Mart", "2026-08-01T11:40:09.912270Z"),
+    inventory(5, 1, "Ok Mart", "2026-08-01T11:40:23.246658Z"),
+    inventory(6, 2, "Late", "2026-08-01T11:12:00Z"),
+    inventory(7, 3, "Early", "2026-08-01T09:30:00Z", "inventory_purchase_rebook"),
+  ];
+  const entries = buildLedgerEntries(rows, [], new Map());
+  assert.deepEqual(entries.map(entry => entry.title), ["Ok Mart", "Late", "Early"]);
+  const okMart = entries.find(entry => entry.title === "Ok Mart");
+  assert.equal(okMart?.displayTime, "18:39 ~ 18:40");
+  assert.deepEqual(okMart?.items.map(item => item.displayTime), ["18:39", "18:39", "18:39", "18:40", "18:40"]);
+  assert.equal(entries.find(entry => entry.title === "Late")?.displayTime, "18:12");
+  assert.equal(entries.find(entry => entry.title === "Early")?.displayTime, "16:30");
+});
+
+test("pending inventory uses provenance time and invalid confirmed provenance safely falls back", () => {
+  const pending = buildLedgerEntries([], [{
+    id: 30, business_date: "2026-08-01", proposed_amount: 100,
+    proposed_party_id: 7, source_snapshot: {
+      item_name: "pending",
+      inventory_log_created_at: "2026-08-01T11:39:00Z",
+    },
+    party: { name: "Pending Mart" },
+  }], new Map())[0];
+  assert.equal(pending.displayTime, "18:39");
+  assert.equal(pending.items[0].displayTime, "18:39");
+
+  const fallback = buildLedgerEntries([{
+    id: 31, party_id: 8, type: "expense", business_date: "2026-08-01",
+    occurred_at: "2026-08-01T10:55:00Z", amount: 100, source_type: "inventory_purchase_candidate",
+    source_snapshot: { item_name: "fallback", inventory_log_created_at: "invalid" },
+    party: { name: "Fallback Mart" },
+  }], [], new Map())[0];
+  assert.equal(fallback.displayTime, "17:55");
+  assert.equal(fallback.items[0].sourceUpdatedAt, null);
+  assert.match(page, /item\.displayTime/);
+  assert.match(page, /styles\.itemAmount/);
+  assert.match(css, /\.itemAmount>small\{[^}]*color:#9ca3af[^}]*font-size:9px/);
+});
+
 test("opening balances and the four business funds match the production policy", () => {
   for (const [code, amount] of [["store_cash", "95464986"], ["vuong_personal_custody", "5231310"], ["cho_personal_custody", "95470741"], ["baba_corporate_bank", "104186605"]]) {
     assert.match(opening, new RegExp(`'${code}'[^\\n]*${amount}`));

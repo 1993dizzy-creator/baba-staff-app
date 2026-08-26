@@ -268,6 +268,9 @@ export default function LedgerEntriesPage() {
       if (entry.direction === "expense") group.expense += entry.amount;
       byDate.set(entry.businessDate, group);
     }
+    for (const group of byDate.values()) {
+      group.rows.sort((a, b) => b.sortTimestamp - a.sortTimestamp);
+    }
     return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
   }, [data?.entries, filter, search]);
   const businessAccounts = useMemo(
@@ -639,22 +642,25 @@ export default function LedgerEntriesPage() {
                                   {vi ? "Cần xác nhận" : "확인 필요"}
                                 </span>
                               ) : null}
-                              <strong
-                                className={
-                                  entry.direction === "income"
-                                    ? styles.amountIncome
+                              <span className={styles.amountStack}>
+                                {entry.displayTime ? <small>{entry.displayTime}</small> : null}
+                                <strong
+                                  className={
+                                    entry.direction === "income"
+                                      ? styles.amountIncome
+                                      : entry.direction === "expense"
+                                        ? styles.amountExpense
+                                        : styles.amountTransfer
+                                  }
+                                >
+                                  {entry.direction === "income"
+                                    ? "+"
                                     : entry.direction === "expense"
-                                      ? styles.amountExpense
-                                      : styles.amountTransfer
-                                }
-                              >
-                                {entry.direction === "income"
-                                  ? "+"
-                                  : entry.direction === "expense"
-                                    ? "−"
-                                    : ""}
-                                {money(entry.amount)}
-                              </strong>
+                                      ? "−"
+                                      : ""}
+                                  {money(entry.amount)}
+                                </strong>
+                              </span>
                               <span aria-hidden className={styles.chevron}>
                                 ›
                               </span>
@@ -871,7 +877,10 @@ function EntryDetailSheet({
                     : ` · ${item.quantity.toLocaleString("ko-KR")}`}
                   {item.unitPrice == null ? "" : ` × ${money(item.unitPrice)}`}
               </span>
-              <b>{money(item.amount)}</b>
+              <span className={styles.itemAmount}>
+                {item.displayTime ? <small>{item.displayTime}</small> : null}
+                <b>{money(item.amount)}</b>
+              </span>
               {entry.status === "pending" || (confirmedInventory && editMode) ? (
                 <button
                   className={styles.itemAction}

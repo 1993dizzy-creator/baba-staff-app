@@ -138,10 +138,7 @@ export async function GET(req: Request) {
     if (!account) return jsonError("STORE_CASH_NOT_ACTIVE", 422);
 
     const employeeCount = Number(row.snapshot.employee_count);
-    const dailyAmount = employees.length
-      ? Number((employees[0] as Record<string, unknown>).daily_amount)
-      : 0;
-    const memo = `직원 식대 · ${employeeCount.toLocaleString("en-US")}명 × ${dailyAmount.toLocaleString("en-US")}₫ · 18시 자동집계`;
+    const memo = `직원 식대 · ${employeeCount.toLocaleString("en-US")}명`;
     const { data: resolveData, error: resolveError } = await supabaseServer.rpc(
       "ledger_resolve_candidate_v2",
       {

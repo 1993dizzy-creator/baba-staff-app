@@ -19,13 +19,14 @@ function mealTransaction(id = 10, amount = 270_000): TransactionRow {
     id,
     type: "expense",
     business_date: "2026-08-26",
+    occurred_at: "2026-08-26T03:12:00Z",
     recognition_month: "2026-08-01",
     amount,
     economic_effect_sign: 1,
     source_type: "attendance_meal_daily_candidate",
     source_key: "candidate:77",
     source_snapshot: { employee_count: 9 },
-    memo: "직원 식대 · 9명 × 30,000₫ · 18시 자동집계",
+    memo: "직원 식대 · 9명",
     category: { id: 5, name: "직원 식대" },
     movements: [{ amount: -amount, fund_account: { id: 3, display_name: "매장 현금" } }],
   };
@@ -180,6 +181,34 @@ test("meal corrections are hidden as rows and summed with economic sign", () => 
   assert.match(entriesSource, /adjustment\.amount\) \* value\(adjustment\.economic_effect_sign/);
   assert.match(entriesSource, /source_snapshot\?\.adjustmentType === "employee_meal"[\s\S]*continue/);
   assert.match(entriesSource, /drilldown: "meal"/);
+});
+
+test("meal rows use the short snapshot title and fixed 18:00 display time", () => {
+  const entry = buildLedgerEntries([mealTransaction()], [], new Map())[0];
+  assert.equal(entry.title, "직원 식대 · 9명");
+  assert.equal(entry.displayTime, "18:00");
+});
+
+test("same-day ledger rows sort by Vietnam display time descending", () => {
+  const manual = (id: number, occurredAt: string): TransactionRow => ({
+    id,
+    type: "expense",
+    business_date: "2026-08-26",
+    occurred_at: occurredAt,
+    amount: 10_000,
+    economic_effect_sign: 1,
+    source_type: "manual",
+    memo: `manual-${id}`,
+  });
+  const entries = buildLedgerEntries([
+    manual(21, "2026-08-26T10:30:00Z"),
+    mealTransaction(),
+    manual(22, "2026-08-26T12:15:00Z"),
+  ], [], new Map());
+  assert.deepEqual(entries.map((entry) => entry.displayTime), ["19:15", "18:00", "17:30"]);
+  assert.deepEqual(entries.map((entry) => entry.title), ["manual-22", "직원 식대 · 9명", "manual-21"]);
+  assert.match(page, /entry\.displayTime/);
+  assert.match(page, /b\.sortTimestamp - a\.sortTimestamp/);
 });
 
 test("meal UI asks only for final amount and reason and refreshes original row", () => {

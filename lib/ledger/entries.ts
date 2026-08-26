@@ -13,6 +13,9 @@ export type LedgerEntryItem = {
   payableStatus?: string | null;
   paidAmount?: number;
   memo?: string | null;
+  sourceUpdatedAt?: string | null;
+  displayTime?: string | null;
+  sortTimestamp?: number;
 };
 
 export type LedgerEntry = {
@@ -24,6 +27,10 @@ export type LedgerEntry = {
   title: string;
   subtitle: string;
   amount: number;
+  displayTime: string | null;
+  sortTimestamp: number;
+  inventoryStartAt?: string | null;
+  inventoryEndAt?: string | null;
   originalAmount?: number;
   adjustmentAmount?: number;
   effectiveAmount?: number;
@@ -40,6 +47,7 @@ export type LedgerEntry = {
 
 export type TransactionRow = {
   id: number | string; type: string; business_date: string; amount: number | string;
+  occurred_at?: string | null;
   recognition_month?: string | null;
   party_id?: number | string | null;
   correction_of_id?: number | string | null;
@@ -64,8 +72,81 @@ export type PartnerLedgerDefault = {
 };
 
 const value = (input: unknown) => Number(input ?? 0);
+const vietnamTimeFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Ho_Chi_Minh",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+function transactionTime(row: TransactionRow) {
+  if (row.source_type === "attendance_meal_daily_candidate") {
+    return {
+      displayTime: "18:00",
+      sortTimestamp: Date.parse(`${row.business_date}T18:00:00+07:00`),
+    };
+  }
+  const sortTimestamp = Date.parse(row.occurred_at ?? "");
+  if (!Number.isFinite(sortTimestamp)) {
+    return { displayTime: null, sortTimestamp: 0 };
+  }
+  return {
+    displayTime: vietnamTimeFormatter.format(new Date(sortTimestamp)),
+    sortTimestamp,
+  };
+}
+
+function timestampTime(input: unknown) {
+  const sortTimestamp = Date.parse(typeof input === "string" ? input : "");
+  if (!Number.isFinite(sortTimestamp)) {
+    return { displayTime: null, sortTimestamp: 0 };
+  }
+  return {
+    displayTime: vietnamTimeFormatter.format(new Date(sortTimestamp)),
+    sortTimestamp,
+  };
+}
+
+function inventoryTime(row: CandidateRow | TransactionRow) {
+  const sourceUpdatedAt = row.source_snapshot?.inventory_log_created_at;
+  const sourceTime = timestampTime(sourceUpdatedAt);
+  if (sourceTime.sortTimestamp > 0) {
+    return {
+      ...sourceTime,
+      sourceUpdatedAt: String(sourceUpdatedAt),
+    };
+  }
+  if (!Object.hasOwn(row, "proposed_amount")) {
+    return {
+      ...timestampTime((row as TransactionRow).occurred_at),
+      sourceUpdatedAt: null,
+    };
+  }
+  return { displayTime: null, sortTimestamp: 0, sourceUpdatedAt: null };
+}
+
+function updateInventoryGroupTime(group: LedgerEntry, item: LedgerEntryItem) {
+  const itemTimestamp = item.sortTimestamp ?? 0;
+  if (itemTimestamp <= 0) return;
+  const currentStart = Date.parse(group.inventoryStartAt ?? "");
+  const currentEnd = Date.parse(group.inventoryEndAt ?? "");
+  const startTimestamp = Number.isFinite(currentStart)
+    ? Math.min(currentStart, itemTimestamp)
+    : itemTimestamp;
+  const endTimestamp = Number.isFinite(currentEnd)
+    ? Math.max(currentEnd, itemTimestamp)
+    : itemTimestamp;
+  const startTime = vietnamTimeFormatter.format(new Date(startTimestamp));
+  const endTime = vietnamTimeFormatter.format(new Date(endTimestamp));
+  group.inventoryStartAt = new Date(startTimestamp).toISOString();
+  group.inventoryEndAt = new Date(endTimestamp).toISOString();
+  group.displayTime = startTime === endTime ? startTime : `${startTime} ~ ${endTime}`;
+  group.sortTimestamp = endTimestamp;
+}
+
 const inventoryItem = (row: CandidateRow | TransactionRow): LedgerEntryItem => {
   const snapshot = row.source_snapshot ?? {};
+  const time = inventoryTime(row);
   return {
     ...(Object.hasOwn(row, "proposed_amount") ? { candidateId: value((row as CandidateRow).id) } : { transactionId: value(row.id) }),
     name: String(snapshot.item_name ?? snapshot.item_name_vi ?? "품목"),
@@ -74,6 +155,7 @@ const inventoryItem = (row: CandidateRow | TransactionRow): LedgerEntryItem => {
     amount: Object.hasOwn(row, "proposed_amount") ? value((row as CandidateRow).proposed_amount) : value((row as TransactionRow).amount),
     categoryId: Object.hasOwn(row, "proposed_category_id") ? ((row as CandidateRow).proposed_category_id == null ? null : value((row as CandidateRow).proposed_category_id)) : ((row as TransactionRow).category?.id == null ? null : value((row as TransactionRow).category?.id)),
     categoryName: row.category?.name ?? (snapshot.category ? String(snapshot.category) : null),
+    ...time,
     ...(!Object.hasOwn(row, "proposed_amount") ? {
       paymentMode: (row as TransactionRow).payable ? "payable" as const : "immediate" as const,
       fundAccountId: (row as TransactionRow).movements?.find(item=>value(item.amount)<0)?.fund_account?.id == null ? null : value((row as TransactionRow).movements?.find(item=>value(item.amount)<0)?.fund_account?.id),
@@ -137,17 +219,21 @@ export function buildLedgerEntries(
     const movement = row.movements?.find(item => direction === "income" ? value(item.amount) > 0 : value(item.amount) < 0) ?? row.movements?.[0];
     const accountName = movement?.fund_account?.display_name ?? null;
     const automatic = row.source_type !== "manual";
+    const time = transactionTime(row);
 
     if (row.source_type === "inventory_purchase_candidate" || row.source_type === "inventory_purchase_rebook") {
       const partyName = row.party?.name ?? "거래처 미지정";
       const key = `confirmed-inventory:${row.business_date}:${row.party_id ?? partyName}:${accountName ?? "payable"}`;
       const group = inventoryGroups.get(key) ?? {
         id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "confirmed",
-        title: partyName, subtitle: "0품목", amount: 0, accountName: accountName ?? "미지급",
+        title: partyName, subtitle: "0품목", amount: 0, displayTime: null, sortTimestamp: 0,
+        inventoryStartAt: null, inventoryEndAt: null, accountName: accountName ?? "미지급",
         categoryName: row.category?.name ?? null, transactionId, drilldown: "inventory", items: [],
       } satisfies LedgerEntry;
+      const item = inventoryItem(row);
       group.amount += amount;
-      group.items.push(inventoryItem(row));
+      group.items.push(item);
+      updateInventoryGroupTime(group, item);
       group.subtitle = `${group.items.length}품목`;
       inventoryGroups.set(key, group);
       continue;
@@ -162,15 +248,19 @@ export function buildLedgerEntries(
         0,
       );
       const effectiveAmount = originalAmount + adjustmentAmount;
+      const employeeCount = value(row.source_snapshot?.employee_count);
       entries.push({
         id: `transaction:${transactionId}`,
         businessDate: row.business_date,
         direction: "expense",
         origin: "auto",
         status: "confirmed",
-        title: row.memo || row.category?.name || "직원 식대",
+        title: employeeCount > 0
+          ? `직원 식대 · ${employeeCount.toLocaleString("en-US")}명`
+          : row.memo || row.category?.name || "직원 식대",
         subtitle: row.category?.name ?? "직원 식대",
         amount: effectiveAmount,
+        ...time,
         originalAmount,
         adjustmentAmount,
         effectiveAmount,
@@ -192,7 +282,7 @@ export function buildLedgerEntries(
       origin: automatic ? "auto" : "manual", status: "confirmed",
       title: pos ? posTitle(paymentBucket(row.source_key)) : payroll ? "급여 · 인건비" : row.memo || row.party?.name || row.category?.name || "장부 거래",
       subtitle: pos ? `영수증 ${value(snapshot.receiptCount)}건` : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력"),
-      amount, accountName, categoryName: row.category?.name ?? null, transactionId,
+      amount, ...time, accountName, categoryName: row.category?.name ?? null, transactionId,
       drilldown: pos ? "pos" : payroll ? "payroll" : "generic", items: [],
     });
   }
@@ -206,17 +296,25 @@ export function buildLedgerEntries(
     const key = `pending-inventory:${row.business_date}:${partyId ?? "none"}:${resolution}:${defaults?.defaultFundAccountId ?? "none"}`;
     const group = inventoryGroups.get(key) ?? {
       id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "pending",
-      title: partyName, subtitle: "0품목 · 확인 필요", amount: 0, accountName,
+      title: partyName, subtitle: "0품목 · 확인 필요", amount: 0,
+      displayTime: null, sortTimestamp: 0, inventoryStartAt: null, inventoryEndAt: null, accountName,
       categoryName: row.category?.name ?? null, transactionId: null, drilldown: "inventory",
       defaultResolution: resolution, defaultFundAccountId: defaults?.defaultFundAccountId ?? null,
       partyId, items: [],
     } satisfies LedgerEntry;
+    const item = inventoryItem(row);
     group.amount += value(row.proposed_amount);
-    group.items.push(inventoryItem(row));
+    group.items.push(item);
+    updateInventoryGroupTime(group, item);
     group.subtitle = `${group.items.length}품목 · 확인 필요`;
     inventoryGroups.set(key, group);
   }
 
   entries.push(...inventoryGroups.values());
-  return entries.sort((a, b) => b.businessDate.localeCompare(a.businessDate) || Number(b.status === "pending") - Number(a.status === "pending") || b.amount - a.amount);
+  return entries.sort((a, b) =>
+    b.businessDate.localeCompare(a.businessDate) ||
+    b.sortTimestamp - a.sortTimestamp ||
+    Number(b.status === "pending") - Number(a.status === "pending") ||
+    a.id.localeCompare(b.id)
+  );
 }

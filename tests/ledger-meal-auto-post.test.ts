@@ -6,6 +6,7 @@ import { calculateCurrentMealAllowanceCost } from "../lib/payroll/meal-allowance
 
 const route = readFileSync("app/api/cron/ledger-meal-auto-post/route.ts", "utf8");
 const source = readFileSync("lib/ledger/employee-costs.ts", "utf8");
+const memoBackfill = readFileSync("supabase/migrations/20260826191856_shorten_employee_meal_memos.sql", "utf8");
 const vercel = JSON.parse(readFileSync("vercel.json", "utf8"));
 
 const datedMealInput = {
@@ -79,7 +80,25 @@ test("cash resolution uses stable account code, category, immediate mode and mem
   assert.match(route, /\.lte\("active_from", businessDate\)/);
   assert.match(route, /candidate\.proposed_category_id \?\? row\.categoryId/);
   assert.match(route, /p_resolution: "immediate"/);
-  assert.match(route, /직원 식대 · \$\{employeeCount[\s\S]*18시 자동집계/);
+  assert.match(route, /const memo = `직원 식대 · \$\{employeeCount\.toLocaleString\("en-US"\)\}명`/);
+  assert.doesNotMatch(route, /const memo = `[^`]*(?:dailyAmount|18시 자동집계)/);
+});
+
+test("historical meal memo backfill changes only confirmed original meal memos", () => {
+  assert.match(memoBackfill, /update public\.ledger_transactions\s+set memo =/);
+  assert.match(memoBackfill, /type = 'expense'/);
+  assert.match(memoBackfill, /source_type = 'attendance_meal_daily_candidate'/);
+  assert.match(memoBackfill, /status = 'confirmed'/);
+  assert.match(memoBackfill, /correction_of_id is null/);
+  assert.match(memoBackfill, /business_date between date '2026-08-01' and date '2026-08-26'/);
+  assert.match(memoBackfill, /source_snapshot->>'employee_count'/);
+  assert.match(memoBackfill, /source_key ~ '\^candidate:\[0-9\]\+\$'/);
+  assert.match(memoBackfill, /candidate\.candidate_type = 'employee_meal'/);
+  assert.match(memoBackfill, /candidate\.source_type = 'attendance_meal_daily'/);
+  assert.match(memoBackfill, /candidate\.resolved_transaction_id = ledger_transactions\.id/);
+  const setClause = memoBackfill.match(/set ([\s\S]+?)\nwhere /)?.[1] ?? "";
+  assert.match(setClause, /^memo = /);
+  assert.doesNotMatch(setClause, /,/);
 });
 
 test("concurrent second resolution is a successful no-op", () => {
