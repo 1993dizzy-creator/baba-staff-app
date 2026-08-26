@@ -24,10 +24,14 @@ export type LedgerEntry = {
   title: string;
   subtitle: string;
   amount: number;
+  originalAmount?: number;
+  adjustmentAmount?: number;
+  effectiveAmount?: number;
+  adjustmentCount?: number;
   accountName: string | null;
   categoryName: string | null;
   transactionId: number | null;
-  drilldown: "inventory" | "pos" | "payroll" | "generic";
+  drilldown: "inventory" | "pos" | "payroll" | "meal" | "generic";
   defaultResolution?: "immediate" | "payable";
   defaultFundAccountId?: number | null;
   partyId?: number | null;
@@ -36,6 +40,7 @@ export type LedgerEntry = {
 
 export type TransactionRow = {
   id: number | string; type: string; business_date: string; amount: number | string;
+  recognition_month?: string | null;
   party_id?: number | string | null;
   correction_of_id?: number | string | null;
   economic_effect_sign?: number | string | null; source_type: string; source_key?: string | null;
@@ -98,6 +103,17 @@ export function buildLedgerEntries(
 ): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
   const inventoryGroups = new Map<string, LedgerEntry>();
+  const mealAdjustmentsByOriginal = new Map<number, TransactionRow[]>();
+  for (const row of transactions) {
+    if (
+      row.source_type !== "ledger_correction" || row.correction_of_id == null ||
+      row.source_snapshot?.adjustmentType !== "employee_meal"
+    ) continue;
+    const originalId = value(row.correction_of_id);
+    const linked = mealAdjustmentsByOriginal.get(originalId) ?? [];
+    linked.push(row);
+    mealAdjustmentsByOriginal.set(originalId, linked);
+  }
   const reversedInventoryIds = new Set(
     transactions
       .filter(row => row.source_type === "inventory_purchase_reversal" && row.correction_of_id != null)
@@ -106,6 +122,10 @@ export function buildLedgerEntries(
 
   for (const row of transactions) {
     if (row.type === "opening") continue;
+    if (
+      row.source_type === "ledger_correction" &&
+      row.source_snapshot?.adjustmentType === "employee_meal"
+    ) continue;
     if (row.source_type === "inventory_purchase_reversal") continue;
     if (row.source_type === "inventory_purchase_candidate" || row.source_type === "inventory_purchase_rebook") {
       if (reversedInventoryIds.has(value(row.id))) continue;
@@ -130,6 +150,37 @@ export function buildLedgerEntries(
       group.items.push(inventoryItem(row));
       group.subtitle = `${group.items.length}품목`;
       inventoryGroups.set(key, group);
+      continue;
+    }
+
+    if (row.source_type === "attendance_meal_daily_candidate") {
+      const linked = mealAdjustmentsByOriginal.get(transactionId) ?? [];
+      const originalAmount = amount * value(row.economic_effect_sign ?? 1);
+      const adjustmentAmount = linked.reduce(
+        (sum, adjustment) =>
+          sum + value(adjustment.amount) * value(adjustment.economic_effect_sign ?? 1),
+        0,
+      );
+      const effectiveAmount = originalAmount + adjustmentAmount;
+      entries.push({
+        id: `transaction:${transactionId}`,
+        businessDate: row.business_date,
+        direction: "expense",
+        origin: "auto",
+        status: "confirmed",
+        title: row.memo || row.category?.name || "직원 식대",
+        subtitle: row.category?.name ?? "직원 식대",
+        amount: effectiveAmount,
+        originalAmount,
+        adjustmentAmount,
+        effectiveAmount,
+        adjustmentCount: linked.length,
+        accountName,
+        categoryName: row.category?.name ?? null,
+        transactionId,
+        drilldown: "meal",
+        items: [],
+      });
       continue;
     }
 

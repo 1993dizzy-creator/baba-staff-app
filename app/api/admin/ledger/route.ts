@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const TYPES = new Set(["expense", "income", "transfer", "balance_adjustment"]);
+const TRANSACTION_SELECT = "id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,source_synced_at,memo,party_id,category:ledger_categories(id,name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,display_name)),payable:ledger_payables(id,due_date,status,allocations:ledger_payable_allocations(allocated_amount))";
 
 export async function GET(request: Request) {
   const auth = await requireLedgerActor();
@@ -67,13 +68,41 @@ async function loadMonthTransactions(start: string, end: string) {
   const pageSize = 1000;
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer.from("ledger_transactions")
-      .select("id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,source_synced_at,memo,party_id,category:ledger_categories(id,name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,display_name)),payable:ledger_payables(id,due_date,status,allocations:ledger_payable_allocations(allocated_amount))")
+      .select(TRANSACTION_SELECT)
       .eq("status", "confirmed").gte("business_date", start).lt("business_date", end)
       .order("business_date", { ascending: false }).order("id", { ascending: false }).range(from, from + pageSize - 1);
     if (error) throw error;
     rows.push(...((data ?? []) as TransactionRow[]));
-    if ((data?.length ?? 0) < pageSize) return rows;
+    if ((data?.length ?? 0) < pageSize) break;
   }
+
+  // A meal can be adjusted after a calendar-month boundary while its original
+  // recognition month is still open. Fetch only corrections linked to meal
+  // originals in this page set; never scan unrelated correction history.
+  const mealOriginalIds = rows
+    .filter((row) => row.source_type === "attendance_meal_daily_candidate")
+    .map((row) => Number(row.id));
+  const linked: TransactionRow[] = [];
+  const idChunkSize = 200;
+  for (let offset = 0; offset < mealOriginalIds.length; offset += idChunkSize) {
+    const ids = mealOriginalIds.slice(offset, offset + idChunkSize);
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await supabaseServer.from("ledger_transactions")
+        .select(TRANSACTION_SELECT)
+        .eq("status", "confirmed")
+        .eq("source_type", "ledger_correction")
+        .eq("source_snapshot->>adjustmentType", "employee_meal")
+        .in("correction_of_id", ids)
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      linked.push(...((data ?? []) as TransactionRow[]));
+      if ((data?.length ?? 0) < pageSize) break;
+    }
+  }
+  const byId = new Map(rows.map((row) => [Number(row.id), row]));
+  for (const row of linked) byId.set(Number(row.id), row);
+  return [...byId.values()];
 }
 
 async function loadPendingInventoryCandidates(start: string, end: string) {

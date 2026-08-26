@@ -84,6 +84,10 @@ type ConfirmedEditDraft = {
   memo: string;
   reason: string;
 };
+type MealAdjustDraft = {
+  finalAmount: string;
+  reason: string;
+};
 type DateGroup = {
   date: string;
   rows: LedgerEntry[];
@@ -735,9 +739,11 @@ export default function LedgerEntriesPage() {
             saving={saving}
             message={detailMessage}
             posDetail={posDetail}
+            closed={closed}
             onConfirmedEdited={async (transactionId) => {
               const fresh = await load();
               const refreshed = fresh?.entries.find((entry) =>
+                entry.transactionId === transactionId ||
                 entry.items.some((item) => item.transactionId === transactionId),
               );
               if (refreshed) setSelected(refreshed);
@@ -768,6 +774,7 @@ function EntryDetailSheet({
   saving,
   message,
   posDetail,
+  closed,
   onConfirmedEdited,
   onClose,
 }: {
@@ -782,12 +789,15 @@ function EntryDetailSheet({
   saving: boolean;
   message: string;
   posDetail: Record<string, unknown> | null;
+  closed: boolean;
   onConfirmedEdited: (transactionId: number) => Promise<void>;
   onClose: () => void;
 }) {
   const vi = lang === "vi";
   const confirmedInventory = entry.drilldown === "inventory" && entry.status === "confirmed";
+  const confirmedMeal = entry.drilldown === "meal" && entry.status === "confirmed";
   const [editMode,setEditMode]=useState(false),[editDraft,setEditDraft]=useState<ConfirmedEditDraft|null>(null),[editError,setEditError]=useState(""),[editSaving,setEditSaving]=useState(false);
+  const [mealDraft,setMealDraft]=useState<MealAdjustDraft|null>(null),[mealError,setMealError]=useState("");
   const payments = (posDetail?.payments ?? []) as Array<
     Record<string, unknown>
   >;
@@ -804,6 +814,7 @@ function EntryDetailSheet({
       footer={
         <div className={styles.detailFooter}>
           {confirmedInventory ? <button type="button" disabled={saving||editSaving} onClick={()=>{setEditMode(value=>!value);setEditDraft(null);setEditError("")}} style={{...primaryButtonStyle,width:"100%"}}>{editMode?(vi?"Kết thúc chỉnh sửa":"수정 종료"):(vi?"Sửa":"수정")}</button>:null}
+          {confirmedMeal ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setMealDraft(value=>value?null:{finalAmount:String(entry.effectiveAmount??entry.amount),reason:""});setMealError("")}} style={{...primaryButtonStyle,width:"100%"}}>{mealDraft?(vi?"Đóng chỉnh sửa":"수정 닫기"):(vi?"Sửa tiền ăn":"식대 수정")}</button>:null}
           <button
             type="button"
             disabled={saving||editSaving}
@@ -898,6 +909,11 @@ function EntryDetailSheet({
           ))}
         </div>
       ) : null}
+      {confirmedMeal ? <div className={styles.itemList}>
+        <article><span className={styles.itemDescription}>{vi?"Số tiền tổng hợp tự động":"자동집계 원본"}</span><b>{money(entry.originalAmount??entry.amount)}</b></article>
+        <article><span className={styles.itemDescription}>{vi?"Tổng điều chỉnh thủ công":"수동 정정 합계"}</span><b>{(entry.adjustmentAmount??0)>0?"+":""}{money(entry.adjustmentAmount??0)}</b></article>
+        <article><span className={styles.itemDescription}><strong>{vi?"Số tiền hiện áp dụng":"현재 반영 금액"}</strong></span><b>{money(entry.effectiveAmount??entry.amount)}</b></article>
+      </div>:null}
       {candidateDraft ? (
         <div className={styles.candidateEditor}>
           <h3>{candidateDraft.item.name}</h3>
@@ -1022,6 +1038,12 @@ function EntryDetailSheet({
         setEditSaving(true);setEditError("");
         try{const response=await fetch(`/api/admin/ledger/transactions/${editDraft.item.transactionId}/edit`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paymentMode:editDraft.paymentMode,categoryId:Number(editDraft.categoryId),fundAccountId:editDraft.paymentMode==="immediate"?Number(editDraft.fundAccountId):null,dueDate:editDraft.paymentMode==="payable"?(editDraft.dueDate||null):null,amount:editDraft.amount,memo:editDraft.memo||null,reason:editDraft.reason})}),body=await response.json();if(!response.ok)throw new Error(body.code??"INVENTORY_EDIT_FAILED");setEditDraft(null);await onConfirmedEdited(Number(body.result.transactionId))}catch(cause){setEditError(`${vi?"Không thể sửa giao dịch.":"거래를 수정하지 못했습니다."} ${(cause as Error).message}`)}finally{setEditSaving(false)}
       }}/>:null}
+      {mealDraft ? <MealAdjustmentEditor lang={lang} draft={mealDraft} setDraft={setMealDraft} saving={editSaving} error={mealError} onSave={async()=>{
+        if(!entry.transactionId)return;
+        setEditSaving(true);setMealError("");
+        try{const response=await fetch(`/api/admin/ledger/transactions/${entry.transactionId}/meal-adjust`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({finalAmount:mealDraft.finalAmount,reason:mealDraft.reason})}),body=await response.json();if(!response.ok)throw new Error(body.code??"MEAL_ADJUST_FAILED");setMealDraft(null);await onConfirmedEdited(entry.transactionId)}catch(cause){const code=(cause as Error).message;setMealError(code==="ORIGINAL_MONTH_CLOSED"?(vi?"Không thể sửa giao dịch của tháng đã khóa.":"마감된 월의 거래는 일반 수정할 수 없습니다."):`${vi?"Không thể sửa tiền ăn.":"식대를 수정하지 못했습니다."} ${code}`)}finally{setEditSaving(false)}
+      }}/>:null}
+      {confirmedMeal&&closed?<p className={styles.policyNote}>{vi?"Không thể sửa giao dịch của tháng đã khóa.":"마감된 월의 거래는 일반 수정할 수 없습니다."}</p>:null}
       {entry.status === "confirmed" && entry.origin === "auto" ? (
         <p className={styles.policyNote}>
           {vi
@@ -1031,6 +1053,18 @@ function EntryDetailSheet({
       ) : null}
     </BarSheet>
   );
+}
+
+function MealAdjustmentEditor({lang,draft,setDraft,saving,error,onSave}:{lang:"ko"|"vi";draft:MealAdjustDraft;setDraft:(draft:MealAdjustDraft|null)=>void;saving:boolean;error:string;onSave:()=>Promise<void>}){
+  const vi=lang==="vi";
+  return <div className={styles.candidateEditor}>
+    <div className={styles.editorTitle}><h3>✏️ {vi?"Sửa tiền ăn nhân viên":"직원 식대 수정"}</h3><button type="button" disabled={saving} onClick={()=>setDraft(null)}>{vi?"Hủy":"취소"}</button></div>
+    <BarField label={vi?"Số tiền ăn cuối cùng":"최종 식대 금액"} required compact>{({id})=><input id={id} inputMode="decimal" value={formatLedgerDecimalAmount(draft.finalAmount)} onChange={event=>setDraft({...draft,finalAmount:sanitizeLedgerDecimalAmount(event.target.value)})} style={keepingInputStyle}/>}</BarField>
+    <BarField label={vi?"Lý do chỉnh sửa":"수정 사유"} required compact>{({id})=><input id={id} value={draft.reason} onChange={event=>setDraft({...draft,reason:event.target.value})} style={keepingInputStyle} placeholder={vi?"Ví dụ: thêm 1 nhân viên đến muộn":"예: 18시 이후 추가 출근 1명"}/>}</BarField>
+    <p className={styles.editorHelp}>{vi?"Hệ thống tự tính phần chênh lệch và điều chỉnh tiền mặt cửa hàng.":"차액과 매장 현금 조정은 자동으로 계산됩니다."}</p>
+    {error?<p className={styles.error} role="alert">{error}</p>:null}
+    <button type="button" disabled={saving||!draft.finalAmount||!draft.reason.trim()} onClick={()=>void onSave()} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang lưu…":"저장 중…"):(vi?"Lưu":"저장")}</button>
+  </div>
 }
 
 function ConfirmedInventoryEditor({lang,draft,setDraft,accounts,categories,saving,error,onSave}:{lang:"ko"|"vi";draft:ConfirmedEditDraft;setDraft:(draft:ConfirmedEditDraft|null)=>void;accounts:Account[];categories:Category[];saving:boolean;error:string;onSave:()=>Promise<void>}){
