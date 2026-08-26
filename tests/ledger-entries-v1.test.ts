@@ -51,7 +51,7 @@ test("confirmed inventory and POS rows retain source detail while grouping", () 
   assert.equal(pos?.accountName, "카드 정산대기");
 });
 
-test("inventory groups use provenance time ranges and latest item time for sorting", () => {
+test("inventory groups use provenance time ranges and earliest item time for sorting", () => {
   const inventory = (
     id: number,
     partyId: number,
@@ -81,6 +81,58 @@ test("inventory groups use provenance time ranges and latest item time for sorti
   assert.deepEqual(okMart?.items.map(item => item.displayTime), ["18:39", "18:39", "18:39", "18:40", "18:40"]);
   assert.equal(entries.find(entry => entry.title === "Late")?.displayTime, "18:12");
   assert.equal(entries.find(entry => entry.title === "Early")?.displayTime, "16:30");
+  // Representative sort time is the group's earliest item, not its latest.
+  assert.equal(okMart?.sortTimestamp, Date.parse("2026-08-01T11:39:00.754531Z"));
+});
+
+test("inventory group sort timestamp is earliest-first even when it reverses the latest-time ranking", () => {
+  const inventory = (id: number, partyId: number, partyName: string, sourceTime: string) => ({
+    id, party_id: partyId, type: "expense", business_date: "2026-08-01",
+    amount: 100, economic_effect_sign: 1, source_type: "inventory_purchase_candidate",
+    party: { name: partyName }, category: { name: "식자재 매입" },
+    source_snapshot: { item_name: `품목 ${id}`, inventory_log_created_at: sourceTime },
+    movements: [{ amount: -100, fund_account: { id: 4, display_name: "법인계좌" } }],
+  });
+  const rows = [
+    // Group A (Vietnam time): starts 18:30, ends 20:00 — earliest start, but latest end.
+    inventory(1, 1, "A", "2026-08-01T11:30:00Z"),
+    inventory(2, 1, "A", "2026-08-01T13:00:00Z"),
+    // Group B (Vietnam time): starts 19:00, ends 19:10 — later start, but earlier end than A.
+    inventory(3, 2, "B", "2026-08-01T12:00:00Z"),
+    inventory(4, 2, "B", "2026-08-01T12:10:00Z"),
+  ];
+  const entries = buildLedgerEntries(rows, [], new Map());
+  const a = entries.find(entry => entry.title === "A");
+  const b = entries.find(entry => entry.title === "B");
+  assert.equal(a?.displayTime, "18:30 ~ 20:00");
+  assert.equal(b?.displayTime, "19:00 ~ 19:10");
+  // Earliest-time ranking: A starts before B, so A's sortTimestamp is smaller.
+  assert.ok((a?.sortTimestamp ?? 0) < (b?.sortTimestamp ?? 0));
+  // This is the opposite of what a latest-time ranking would have produced (A's end is after B's end).
+  assert.ok(Date.parse(a?.inventoryEndAt ?? "") > Date.parse(b?.inventoryEndAt ?? ""));
+});
+
+test("inventory item order sorts earliest-time-first, pushes timeless items to the back, and keeps ties stable", () => {
+  const inventory = (id: number, itemName: string, sourceTime: string | null) => ({
+    id, party_id: 1, type: "expense", business_date: "2026-08-01",
+    amount: 100, economic_effect_sign: 1, source_type: "inventory_purchase_candidate",
+    party: { name: "Mixed Mart" }, category: { name: "식자재 매입" },
+    source_snapshot: sourceTime ? { item_name: itemName, inventory_log_created_at: sourceTime } : { item_name: itemName },
+    movements: [{ amount: -100, fund_account: { id: 4, display_name: "법인계좌" } }],
+  });
+  const rows = [
+    inventory(1, "품목-없음-A", null),
+    inventory(2, "품목-18:40-A", "2026-08-01T11:40:00Z"),
+    inventory(3, "품목-18:39-A", "2026-08-01T11:39:00Z"),
+    inventory(4, "품목-18:39-B", "2026-08-01T11:39:00Z"),
+    inventory(5, "품목-없음-B", null),
+    inventory(6, "품목-18:40-B", "2026-08-01T11:40:00Z"),
+  ];
+  const entries = buildLedgerEntries(rows, [], new Map());
+  const group = entries.find(entry => entry.drilldown === "inventory");
+  assert.deepEqual(group?.items.map(item => item.name), [
+    "품목-18:39-A", "품목-18:39-B", "품목-18:40-A", "품목-18:40-B", "품목-없음-A", "품목-없음-B",
+  ]);
 });
 
 test("pending inventory uses provenance time and invalid confirmed provenance safely falls back", () => {
@@ -149,6 +201,21 @@ test("current balance panel is collapsed, nav-safe and expandable", () => {
   assert.match(page,/vuong_personal_custody: "개인\(Vương\)"/);
   assert.match(page,/cho_personal_custody: "개인\(Cho\)"/);
   assert.match(page,/return "Vương"/);assert.match(page,/return "Cho"/);
+});
+
+test("payable outstanding card defaults to collapsed, stays expandable, and keeps party drilldown", () => {
+  assert.match(pageCompact, /\[payableExpanded,setPayableExpanded\]=useState\(false\)/);
+  assert.match(pageCompact, /className=\{styles\.payableToggle\}/);
+  assert.match(pageCompact, /aria-expanded=\{payableExpanded\}/);
+  assert.match(pageCompact, /aria-controls="payable-parties-list"/);
+  assert.match(pageCompact, /onClick=\{\(\)=>setPayableExpanded\(\(value\)=>!value\)\}/);
+  assert.match(pageCompact, /payableExpanded\?<divclassName=\{styles\.payableParties\}id="payable-parties-list">/);
+  // Party rows keep opening PayablePartySheet regardless of the collapse toggle.
+  assert.match(pageCompact, /onClick=\{\(\)=>setPayableParty\(party\)\}/);
+  // Zero-outstanding-party edge case: heading/total render without a toggle button.
+  assert.match(pageCompact, /payableParties\.length\?\(<buttontype="button"className=\{styles\.payableToggle\}/);
+  assert.match(pageCompact, /\):\(<divclassName=\{styles\.payableHeading\}>/);
+  assert.match(page, /미납금이 없습니다/);assert.match(page, /Không có công nợ chưa thanh toán/);
 });
 
 test("business partners are the user-facing party source and defaults stay one-way", () => {
@@ -260,7 +327,13 @@ test("entry detail and inventory candidate editor expose complete Vietnamese UI 
     "Thanh toán ngay", "Ghi nhận công nợ", "Danh mục chi phí",
     "Tài khoản thanh toán thực tế", "Ghi chú", "Ghi mặt hàng này vào sổ",
   ]) assert.match(page, new RegExp(label));
-  assert.match(pageCompact, /manualExpenseCategoryLabel\(entry\.categoryName,lang\)/);
+  // Detail summary top no longer renders a separate source/category line, but the
+  // candidate/edit category picker still uses the label helper.
+  assert.doesNotMatch(pageCompact, /manualExpenseCategoryLabel\(entry\.categoryName,lang\)/);
+  assert.doesNotMatch(page, /sourceLabel\(entry, ?lang\)/);
+  assert.doesNotMatch(page, /function sourceLabel/);
+  // categoryName data itself must stay alive for search/filter.
+  assert.match(pageCompact, /entry\.categoryName\?\?""/);
   assert.match(pageCompact, /manualExpenseCategoryLabel\(row\.name,lang\)/);
   assert.match(pageCompact, /<EntryDetailSheetlang=\{lang\}/);
   assert.match(pageCompact, /kind="full"compacttopAlignedcomfortableTop/);

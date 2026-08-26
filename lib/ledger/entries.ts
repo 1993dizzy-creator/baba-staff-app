@@ -141,7 +141,18 @@ function updateInventoryGroupTime(group: LedgerEntry, item: LedgerEntryItem) {
   group.inventoryStartAt = new Date(startTimestamp).toISOString();
   group.inventoryEndAt = new Date(endTimestamp).toISOString();
   group.displayTime = startTime === endTime ? startTime : `${startTime} ~ ${endTime}`;
-  group.sortTimestamp = endTimestamp;
+  // 정렬 대표 시간은 묶음의 최초 발생 시각을 기준으로 한다 (표시 범위는 start~end 그대로 유지).
+  group.sortTimestamp = startTimestamp;
+}
+
+// inventory 품목을 "시간 있는 항목은 오름차순, 시간 없는 항목은 뒤"로 정렬한다.
+// Array.prototype.sort는 안정 정렬이므로 동일 시간(또는 둘 다 시간 없음)끼리는 기존 순서가 유지된다.
+function compareItemsByEarliestTimeFirst(a: LedgerEntryItem, b: LedgerEntryItem) {
+  const aHasTime = (a.sortTimestamp ?? 0) > 0;
+  const bHasTime = (b.sortTimestamp ?? 0) > 0;
+  if (aHasTime && bHasTime) return (a.sortTimestamp ?? 0) - (b.sortTimestamp ?? 0);
+  if (aHasTime !== bHasTime) return aHasTime ? -1 : 1;
+  return 0;
 }
 
 const inventoryItem = (row: CandidateRow | TransactionRow): LedgerEntryItem => {
@@ -310,6 +321,9 @@ export function buildLedgerEntries(
     inventoryGroups.set(key, group);
   }
 
+  for (const group of inventoryGroups.values()) {
+    group.items.sort(compareItemsByEarliestTimeFirst);
+  }
   entries.push(...inventoryGroups.values());
   return entries.sort((a, b) =>
     b.businessDate.localeCompare(a.businessDate) ||

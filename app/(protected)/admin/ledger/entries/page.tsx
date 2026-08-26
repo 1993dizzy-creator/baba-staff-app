@@ -188,6 +188,7 @@ export default function LedgerEntriesPage() {
     [candidateDraft, setCandidateDraft] = useState<CandidateDraft | null>(null),
     [openingExpanded, setOpeningExpanded] = useState(false),
     [balanceExpanded, setBalanceExpanded] = useState(false),
+    [payableExpanded, setPayableExpanded] = useState(false),
     [payables, setPayables] = useState<PayablesSummary | null>(null),
     [payableParty, setPayableParty] = useState<PayableParty | null>(null);
   const [saving, setSaving] = useState(false),
@@ -269,7 +270,7 @@ export default function LedgerEntriesPage() {
       byDate.set(entry.businessDate, group);
     }
     for (const group of byDate.values()) {
-      group.rows.sort((a, b) => b.sortTimestamp - a.sortTimestamp);
+      group.rows.sort((a, b) => a.sortTimestamp - b.sortTimestamp);
     }
     return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
   }, [data?.entries, filter, search]);
@@ -321,6 +322,7 @@ export default function LedgerEntriesPage() {
       ),
     [data?.entries],
   );
+  const payableParties = payables?.parties ?? [];
   useEffect(() => {
     if (!data || data.month !== month || initializedMonthRef.current === month)
       return;
@@ -519,8 +521,16 @@ export default function LedgerEntriesPage() {
               </div> : null}
             </section>
             <section className={styles.payableSummary} aria-labelledby="payable-summary-title">
-              <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tình hình công nợ" : "미납금 현황"}</h2><strong>{money(payables?.totalOutstanding ?? 0)}</strong></div>
-              {(payables?.parties ?? []).length ? <div className={styles.payableParties}>{payables!.parties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty(party)}><span className={styles.payablePartyMain}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><span className={styles.payablePartyName}>{party.partyName}</span></span><strong>{money(party.outstandingAmount)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i></button>)}</div> : <p className={styles.payableEmpty}>{vi ? "Không có công nợ chưa thanh toán." : "미납금이 없습니다."}</p>}
+              {payableParties.length ? (
+                <button type="button" className={styles.payableToggle} aria-expanded={payableExpanded} aria-controls="payable-parties-list" onClick={() => setPayableExpanded((value) => !value)}>
+                  <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tình hình công nợ" : "미납금 현황"}</h2><strong>{money(payables?.totalOutstanding ?? 0)} <i aria-hidden>{payableExpanded ? "⌃" : "⌄"}</i></strong></div>
+                </button>
+              ) : (
+                <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tình hình công nợ" : "미납금 현황"}</h2><strong>{money(payables?.totalOutstanding ?? 0)}</strong></div>
+              )}
+              {payableParties.length ? (
+                payableExpanded ? <div className={styles.payableParties} id="payable-parties-list">{payableParties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty(party)}><span className={styles.payablePartyMain}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><span className={styles.payablePartyName}>{party.partyName}</span></span><strong>{money(party.outstandingAmount)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i></button>)}</div> : null
+              ) : <p className={styles.payableEmpty}>{vi ? "Không có công nợ chưa thanh toán." : "미납금이 없습니다."}</p>}
             </section>
             <section
               className={styles.filters}
@@ -848,15 +858,7 @@ function EntryDetailSheet({
         </div>
         <span className={styles.detailMeta}>
           📅 {formatDate(entry.businessDate, lang)} · 🏦{" "}
-          {entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")} ·{" "}
-          {sourceLabel(entry, lang)}
-        </span>
-        <span className={styles.detailCategory}>
-          {entry.categoryName
-            ? manualExpenseCategoryLabel(entry.categoryName, lang)
-            : vi
-              ? "Nhiều danh mục"
-              : "분류 혼합"}
+          {entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}
         </span>
       </div>
       {message ? (
@@ -1508,12 +1510,6 @@ function directionLabel(
   if (direction === "income") return lang === "vi" ? "Thu" : "수입";
   if (direction === "expense") return lang === "vi" ? "Chi" : "지출";
   return lang === "vi" ? "Chuyển tiền" : "이체";
-}
-function sourceLabel(entry: LedgerEntry, lang: "ko" | "vi") {
-  if (entry.drilldown === "inventory") return `📦 ${lang === "vi" ? "Kho" : "재고"}`;
-  if (entry.drilldown === "pos") return "🧾 POS";
-  if (entry.origin === "manual") return `✍️ ${lang === "vi" ? "Thủ công" : "수동"}`;
-  return `⚙️ ${lang === "vi" ? "Tự động" : "자동"}`;
 }
 function formatDate(date: string, lang: "ko" | "vi" = "ko") {
   const [, month, day] = date.split("-").map(Number);

@@ -189,7 +189,7 @@ test("meal rows use the short snapshot title and fixed 18:00 display time", () =
   assert.equal(entry.displayTime, "18:00");
 });
 
-test("same-day ledger rows sort by Vietnam display time descending", () => {
+test("same-day ledger rows build in Vietnam display time descending order, while the date-group UI sorts them ascending", () => {
   const manual = (id: number, occurredAt: string): TransactionRow => ({
     id,
     type: "expense",
@@ -205,10 +205,12 @@ test("same-day ledger rows sort by Vietnam display time descending", () => {
     mealTransaction(),
     manual(22, "2026-08-26T12:15:00Z"),
   ], [], new Map());
+  // buildLedgerEntries itself still returns entries in descending time order (unchanged API contract).
   assert.deepEqual(entries.map((entry) => entry.displayTime), ["19:15", "18:00", "17:30"]);
   assert.deepEqual(entries.map((entry) => entry.title), ["manual-22", "직원 식대 · 9명", "manual-21"]);
   assert.match(page, /entry\.displayTime/);
-  assert.match(page, /b\.sortTimestamp - a\.sortTimestamp/);
+  // The ledger entries page re-groups by date and sorts each date's rows ascending (earliest time first).
+  assert.match(page, /a\.sortTimestamp - b\.sortTimestamp/);
 });
 
 test("meal UI asks only for final amount and reason and refreshes original row", () => {
