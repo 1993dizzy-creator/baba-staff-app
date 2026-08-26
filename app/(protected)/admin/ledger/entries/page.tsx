@@ -194,7 +194,8 @@ export default function LedgerEntriesPage() {
   const [saving, setSaving] = useState(false),
     [detailMessage, setDetailMessage] = useState(""),
     [posDetail, setPosDetail] = useState<Record<string, unknown> | null>(null),
-    [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set());
+    [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set()),
+    [historyExpanded, setHistoryExpanded] = useState(false);
   const addButtonRef = useRef<HTMLButtonElement>(null),
     initializedMonthRef = useRef("");
   const load = useCallback(
@@ -323,6 +324,17 @@ export default function LedgerEntriesPage() {
     [data?.entries],
   );
   const payableParties = payables?.parties ?? [];
+  const todayKey = todayDate();
+  const pastGroups = useMemo(
+    () => groups.filter((group) => group.date < todayKey),
+    [groups, todayKey],
+  );
+  const remainingGroups = useMemo(
+    () => groups.filter((group) => group.date >= todayKey),
+    [groups, todayKey],
+  );
+  const historyOpen =
+    (Boolean(search.trim()) && pastGroups.length > 0) || historyExpanded;
   useEffect(() => {
     if (!data || data.month !== month || initializedMonthRef.current === month)
       return;
@@ -332,6 +344,7 @@ export default function LedgerEntriesPage() {
       today = todayDate(),
       defaultDate = dates.includes(today) ? today : dates.at(-1);
     setExpandedDates(defaultDate ? new Set([defaultDate]) : new Set());
+    setHistoryExpanded(false);
     initializedMonthRef.current = month;
   }, [data, month]);
   function shiftMonth(delta: number) {
@@ -418,6 +431,105 @@ export default function LedgerEntriesPage() {
       else next.add(date);
       return next;
     });
+  }
+  function renderDateGroup(group: DateGroup) {
+    const expanded =
+        Boolean(search.trim()) || expandedDates.has(group.date),
+      panelId = `ledger-date-${group.date}`;
+    return (
+      <section className={styles.dateGroup} key={group.date}>
+        <button
+          type="button"
+          className={styles.dateHeader}
+          aria-expanded={expanded}
+          aria-controls={panelId}
+          onClick={() => toggleDate(group.date)}
+        >
+          <strong>{formatDate(group.date, lang)}</strong>
+          <span>
+            {group.rows.length} {vi ? "giao dịch" : "건"}
+            {group.income > 0
+              ? ` · ${vi ? "Thu" : "수입"} ${money(group.income)}`
+              : ""}
+            {group.expense > 0
+              ? ` · ${vi ? "Chi" : "지출"} ${money(group.expense)}`
+              : ""}
+          </span>
+          <i
+            aria-hidden
+            className={
+              expanded
+                ? styles.dateChevronOpen
+                : styles.dateChevron
+            }
+          >
+            ›
+          </i>
+        </button>
+        {expanded ? (
+          <div id={panelId}>
+            {group.rows.map((entry) => (
+              <button
+                type="button"
+                className={styles.entryRow}
+                key={entry.id}
+                onClick={() => void openEntry(entry)}
+              >
+                <span
+                  className={`${styles.direction} ${styles[entry.direction]}`}
+                >
+                  {entry.direction === "income"
+                    ? vi
+                      ? "Thu"
+                      : "수입"
+                    : entry.direction === "expense"
+                      ? vi
+                        ? "Chi"
+                        : "지출"
+                      : vi
+                        ? "Chuyển"
+                        : "이체"}
+                </span>
+                <span className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""}`}>
+                  {accountBadgeLabel(entry.accountName,lang)}
+                </span>
+                <span className={styles.entryMain}>
+                  <strong>{entry.title}</strong>
+                  <span> · {entryMeta(entry, lang)}</span>
+                </span>
+                {entry.status === "pending" ? (
+                  <span className={styles.pendingBadge}>
+                    {vi ? "Cần xác nhận" : "확인 필요"}
+                  </span>
+                ) : null}
+                <span className={styles.amountStack}>
+                  {entry.displayTime ? <small>{entry.displayTime}</small> : null}
+                  <strong
+                    className={
+                      entry.direction === "income"
+                        ? styles.amountIncome
+                        : entry.direction === "expense"
+                          ? styles.amountExpense
+                          : styles.amountTransfer
+                    }
+                  >
+                    {entry.direction === "income"
+                      ? "+"
+                      : entry.direction === "expense"
+                        ? "−"
+                        : ""}
+                    {money(entry.amount)}
+                  </strong>
+                </span>
+                <span aria-hidden className={styles.chevron}>
+                  ›
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    );
   }
   return (
     <Container noPaddingTop>
@@ -582,33 +694,26 @@ export default function LedgerEntriesPage() {
                     : "조건에 맞는 내역이 없습니다."}
                 </p>
               ) : (
-                groups.map((group) => {
-                  const expanded =
-                      Boolean(search.trim()) || expandedDates.has(group.date),
-                    panelId = `ledger-date-${group.date}`;
-                  return (
-                    <section className={styles.dateGroup} key={group.date}>
+                <>
+                  {pastGroups.length ? (
+                    <section className={styles.dateGroup}>
                       <button
                         type="button"
                         className={styles.dateHeader}
-                        aria-expanded={expanded}
-                        aria-controls={panelId}
-                        onClick={() => toggleDate(group.date)}
+                        aria-expanded={historyOpen}
+                        aria-controls="ledger-history-panel"
+                        onClick={() => setHistoryExpanded((value) => !value)}
                       >
-                        <strong>{formatDate(group.date, lang)}</strong>
+                        <strong>{vi ? "Lịch sử trước đó" : "지난 내역"}</strong>
                         <span>
-                          {group.rows.length} {vi ? "giao dịch" : "건"}
-                          {group.income > 0
-                            ? ` · ${vi ? "Thu" : "수입"} ${money(group.income)}`
-                            : ""}
-                          {group.expense > 0
-                            ? ` · ${vi ? "Chi" : "지출"} ${money(group.expense)}`
-                            : ""}
+                          {formatDateRange(pastGroups[0].date, pastGroups.at(-1)!.date, lang)}
+                          {" · "}
+                          {pastGroups.length}{vi ? " ngày" : "일"}
                         </span>
                         <i
                           aria-hidden
                           className={
-                            expanded
+                            historyOpen
                               ? styles.dateChevronOpen
                               : styles.dateChevron
                           }
@@ -616,71 +721,15 @@ export default function LedgerEntriesPage() {
                           ›
                         </i>
                       </button>
-                      {expanded ? (
-                        <div id={panelId}>
-                          {group.rows.map((entry) => (
-                            <button
-                              type="button"
-                              className={styles.entryRow}
-                              key={entry.id}
-                              onClick={() => void openEntry(entry)}
-                            >
-                              <span
-                                className={`${styles.direction} ${styles[entry.direction]}`}
-                              >
-                                {entry.direction === "income"
-                                  ? vi
-                                    ? "Thu"
-                                    : "수입"
-                                  : entry.direction === "expense"
-                                    ? vi
-                                      ? "Chi"
-                                      : "지출"
-                                    : vi
-                                      ? "Chuyển"
-                                      : "이체"}
-                              </span>
-                              <span className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""}`}>
-                                {accountBadgeLabel(entry.accountName,lang)}
-                              </span>
-                              <span className={styles.entryMain}>
-                                <strong>{entry.title}</strong>
-                                <span> · {entryMeta(entry, lang)}</span>
-                              </span>
-                              {entry.status === "pending" ? (
-                                <span className={styles.pendingBadge}>
-                                  {vi ? "Cần xác nhận" : "확인 필요"}
-                                </span>
-                              ) : null}
-                              <span className={styles.amountStack}>
-                                {entry.displayTime ? <small>{entry.displayTime}</small> : null}
-                                <strong
-                                  className={
-                                    entry.direction === "income"
-                                      ? styles.amountIncome
-                                      : entry.direction === "expense"
-                                        ? styles.amountExpense
-                                        : styles.amountTransfer
-                                  }
-                                >
-                                  {entry.direction === "income"
-                                    ? "+"
-                                    : entry.direction === "expense"
-                                      ? "−"
-                                      : ""}
-                                  {money(entry.amount)}
-                                </strong>
-                              </span>
-                              <span aria-hidden className={styles.chevron}>
-                                ›
-                              </span>
-                            </button>
-                          ))}
+                      {historyOpen ? (
+                        <div id="ledger-history-panel" className={styles.historyPanel}>
+                          {pastGroups.map(renderDateGroup)}
                         </div>
                       ) : null}
                     </section>
-                  );
-                })
+                  ) : null}
+                  {remainingGroups.map(renderDateGroup)}
+                </>
               )}
             </section>
           </>
@@ -1514,6 +1563,17 @@ function directionLabel(
 function formatDate(date: string, lang: "ko" | "vi" = "ko") {
   const [, month, day] = date.split("-").map(Number);
   return lang === "vi" ? `${day}/${month}` : `${month}월 ${day}일`;
+}
+function formatDateRange(startDate: string, endDate: string, lang: "ko" | "vi" = "ko") {
+  const [, startMonth, startDay] = startDate.split("-").map(Number),
+    [, endMonth, endDay] = endDate.split("-").map(Number);
+  if (lang === "vi")
+    return startMonth === endMonth
+      ? `${startDay} ~ ${endDay}/${endMonth}`
+      : `${startDay}/${startMonth} ~ ${endDay}/${endMonth}`;
+  return startMonth === endMonth
+    ? `${startMonth}월 ${startDay}일 ~ ${endDay}일`
+    : `${startMonth}월 ${startDay}일 ~ ${endMonth}월 ${endDay}일`;
 }
 function localizedAccountName(account: Account, lang: "ko" | "vi") {
   if (lang === "ko")

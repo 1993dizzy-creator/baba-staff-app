@@ -218,6 +218,38 @@ test("payable outstanding card defaults to collapsed, stays expandable, and keep
   assert.match(page, /미납금이 없습니다/);assert.match(page, /Không có công nợ chưa thanh toán/);
 });
 
+test("past-history group wraps dates before today, collapses by default, and reuses the date-card renderer", () => {
+  // historyExpanded is an independent state from expandedDates and defaults to collapsed.
+  assert.match(pageCompact, /\[historyExpanded,setHistoryExpanded\]=useState\(false\)/);
+  // pastGroups/remainingGroups split groups purely by comparing each date string against today's key —
+  // no month-based branching, so a past month naturally yields an empty remainingGroups.
+  assert.match(pageCompact, /pastGroups=useMemo\(\(\)=>groups\.filter\(\(group\)=>group\.date<todayKey\)/);
+  assert.match(pageCompact, /remainingGroups=useMemo\(\(\)=>groups\.filter\(\(group\)=>group\.date>=todayKey\)/);
+  // historyOpen is a derived value (search override OR the manual toggle) — never mutates historyExpanded.
+  assert.match(pageCompact, /historyOpen=\(Boolean\(search\.trim\(\)\)&&pastGroups\.length>0\)\|\|historyExpanded/);
+  // historyExpanded resets to collapsed on every month change, alongside the existing expandedDates seeding.
+  assert.match(pageCompact, /setHistoryExpanded\(false\);initializedMonthRef\.current=month/);
+  // The history card only renders when there is at least one past-date group.
+  assert.match(pageCompact, /pastGroups\.length\?\(<section/);
+  assert.match(pageCompact, /aria-expanded=\{historyOpen\}/);
+  assert.match(pageCompact, /aria-controls="ledger-history-panel"/);
+  assert.match(pageCompact, /onClick=\{\(\)=>setHistoryExpanded\(\(value\)=>!value\)\}/);
+  assert.match(page, /지난 내역/);assert.match(page, /Lịch sử trước đó/);
+  // Range + count only, no income/expense totals on the history header.
+  assert.match(pageCompact, /formatDateRange\(pastGroups\[0\]\.date,pastGroups\.at\(-1\)!\.date,lang\)/);
+  // The expanded panel is its own sibling <div>, not nested inside the toggle <button> (no button nesting).
+  assert.match(pageCompact, /historyOpen\?\(<divid="ledger-history-panel"className=\{styles\.historyPanel\}>\{pastGroups\.map\(renderDateGroup\)\}/);
+  assert.match(pageCompact, /\{remainingGroups\.map\(renderDateGroup\)\}/);
+  // Individual date cards are rendered by one shared function reused for both past and remaining groups.
+  assert.match(pageCompact, /functionrenderDateGroup\(group:DateGroup\)/);
+  assert.match(pageCompact, /functionformatDateRange\(startDate:string,endDate:string,lang:"ko"\|"vi"="ko"\)/);
+  assert.match(css, /\.historyPanel\{display:grid;gap:8px;padding:8px;border-top:1px solid #e5e7eb;background:#f9fafb\}/);
+  // The date-card contract itself (ascending date/time sort, expandedDates, search override) is unchanged.
+  assert.match(pageCompact, /sort\(\(a,b\)=>a\.date\.localeCompare\(b\.date\)\)/);
+  assert.match(pageCompact, /group\.rows\.sort\(\(a,b\)=>a\.sortTimestamp-b\.sortTimestamp\)/);
+  assert.match(pageCompact, /Boolean\(search\.trim\(\)\)\|\|expandedDates\.has\(group\.date\)/);
+});
+
 test("business partners are the user-facing party source and defaults stay one-way", () => {
   assert.match(autoLink, /business_partner_ensure_ledger_party_v1\(\s*p_business_partner_id bigint\s*\)/);
   assert.match(autoLink, /after insert or update of name,\s*default_payment_term_days,\s*is_active/);
