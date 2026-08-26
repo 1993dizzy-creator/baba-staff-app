@@ -58,8 +58,17 @@ type Partner = {
   defaultFundAccountId: number | null;
   isActive: boolean;
 };
+type LedgerSummary = {
+  income: number;
+  expense: number;
+  operatingProfit: number;
+  paidExpense: number;
+  cardGrossSales: number;
+  actualCardDeposits: number;
+};
 type LedgerData = {
   month: string;
+  summary: LedgerSummary;
   accounts: Account[];
   categories: Category[];
   partners: Partner[];
@@ -266,8 +275,11 @@ export default function LedgerEntriesPage() {
         expense: 0,
       };
       group.rows.push(entry);
-      if (entry.direction === "income") group.income += entry.amount;
-      if (entry.direction === "expense") group.expense += entry.amount;
+      // Net corrections/reversals into the day subtotal via economicEffectSign
+      // without touching the row's own displayed (always-positive) amount.
+      const signedAmount = entry.amount * entry.economicEffectSign;
+      if (entry.direction === "income") group.income += signedAmount;
+      if (entry.direction === "expense") group.expense += signedAmount;
       byDate.set(entry.businessDate, group);
     }
     for (const group of byDate.values()) {
@@ -310,18 +322,6 @@ export default function LedgerEntriesPage() {
         ]),
       ),
     [businessAccounts],
-  );
-  const monthlyTotals = useMemo(
-    () =>
-      (data?.entries ?? []).reduce(
-        (totals, entry) => {
-          if (entry.direction === "income") totals.income += entry.amount;
-          if (entry.direction === "expense") totals.expense += entry.amount;
-          return totals;
-        },
-        { income: 0, expense: 0 },
-      ),
-    [data?.entries],
   );
   const payableParties = payables?.parties ?? [];
   const todayKey = todayDate();
@@ -594,16 +594,23 @@ export default function LedgerEntriesPage() {
                   <i aria-hidden="true">💰</i>
                   {vi ? "Thu" : "수입"}
                 </span>
-                <strong>{money(monthlyTotals.income)}</strong>
-                <small>{vi ? "Theo sổ tháng này" : "당월 장부 기준"}</small>
+                <strong>{money(data.summary.income)}</strong>
+                <small>{vi ? "Tổng doanh thu" : "전체 수입"}</small>
+                <div className={styles.summarySubRows}>
+                  <span>{vi ? "Đã nhận thực tế" : "실제 입금액"}<b>{money(data.summary.actualCardDeposits)}</b></span>
+                  <span>{vi ? "Doanh thu thẻ" : "카드결제액"}<b>{money(data.summary.cardGrossSales)}</b></span>
+                </div>
               </article>
               <article className={`${styles.summaryCard} ${styles.expenseCard}`}>
                 <span className={styles.summaryLabel}>
                   <i aria-hidden="true">💸</i>
                   {vi ? "Chi" : "지출"}
                 </span>
-                <strong>{money(monthlyTotals.expense)}</strong>
-                <small>{vi ? "Theo sổ tháng này" : "당월 장부 기준"}</small>
+                <strong>{money(data.summary.paidExpense)}</strong>
+                <small>{vi ? "Đã thanh toán" : "지급완료"}</small>
+                <div className={styles.summarySubRows}>
+                  <span>{vi ? "Công nợ hiện tại (toàn bộ)" : "현재 미납금(전체)"}<b>{money(payables?.totalOutstanding ?? 0)}</b></span>
+                </div>
               </article>
             </section>
             <section

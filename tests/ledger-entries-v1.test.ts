@@ -309,10 +309,15 @@ test("ledger entries header mirrors the monthly summary card hierarchy", () => {
   assert.match(pageCompact, /marginTop:8,display:"grid",gridTemplateColumns:"auto1frauto",gap:8/);
   assert.match(pageCompact, /\.\.\.ui\.button,padding:"9px10px",borderRadius:10,fontSize:12,fontWeight:800/);
   assert.match(pageCompact, /\.\.\.ui\.input,width:"100%",minWidth:0,padding:"9px10px",fontSize:13,borderRadius:10/);
-  assert.match(pageCompact, /data\?\.entries\?\?\[\]\)\.reduce/);
-  assert.match(pageCompact, /entry\.direction==="income"\)totals\.income\+=entry\.amount/);
-  assert.match(pageCompact, /entry\.direction==="expense"\)totals\.expense\+=entry\.amount/);
-  for (const label of ["월 장부 요약", "당월 장부 기준", "Theo sổ tháng này", "시재 합계", "Tổng số dư đầu tháng"]) {
+  // Summary cards are authoritative-source-driven (recognition_month + economic_effect_sign
+  // based API summary), not a client-side re-reduction of data.entries.
+  assert.match(pageCompact, /money\(data\.summary\.income\)/);
+  assert.match(pageCompact, /money\(data\.summary\.paidExpense\)/);
+  assert.match(pageCompact, /money\(data\.summary\.actualCardDeposits\)/);
+  assert.match(pageCompact, /money\(data\.summary\.cardGrossSales\)/);
+  assert.match(pageCompact, /money\(payables\?\.totalOutstanding\?\?0\)/);
+  assert.doesNotMatch(pageCompact, /entry\.direction==="income"\)totals\.income\+=entry\.amount/);
+  for (const label of ["월 장부 요약", "전체 수입", "지급완료", "Tổng doanh thu", "Đã thanh toán", "시재 합계", "Tổng số dư đầu tháng"]) {
     assert.match(page, new RegExp(label));
   }
   assert.match(pageCompact, /className=\{styles\.openingTotal\}>\s*<span>/);

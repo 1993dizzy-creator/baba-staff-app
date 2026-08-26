@@ -27,6 +27,9 @@ export type LedgerEntry = {
   title: string;
   subtitle: string;
   amount: number;
+  // Signed multiplier (+1/-1) for netting corrections/reversals into date-group P&L
+  // subtotals without changing the displayed (always-positive) row amount.
+  economicEffectSign: number;
   displayTime: string | null;
   sortTimestamp: number;
   inventoryStartAt?: string | null;
@@ -70,6 +73,11 @@ export type PartnerLedgerDefault = {
   defaultFundAccountId: number | null;
   defaultFundAccountName: string | null;
 };
+
+// Types that can ever carry a recognition_month per the DB's own
+// ledger_transaction_recognition_policy check constraint — i.e. types that
+// represent a real profit/loss event rather than a pure fund movement.
+const PROFIT_TYPES = new Set(["income", "expense", "sales", "expense_recognition"]);
 
 const value = (input: unknown) => Number(input ?? 0);
 const vietnamTimeFormatter = new Intl.DateTimeFormat("en-GB", {
@@ -225,8 +233,16 @@ export function buildLedgerEntries(
     }
     const transactionId = value(row.id);
     const amount = value(row.amount);
-    const expense = value(row.economic_effect_sign) < 0 || row.type === "expense" || row.type === "expense_recognition" || row.type === "payable_payment";
-    const direction = row.type === "transfer" || row.type === "card_settlement" ? "transfer" : expense ? "expense" : "income";
+    // A transaction only carries a P&L direction when it can be recognized at all
+    // (mirrors the DB's own ledger_transaction_recognition_policy check: only
+    // income/expense/sales/expense_recognition ever get a recognition_month).
+    // Everything else (card_settlement_deposit, payable_payment, payroll_payment,
+    // transfer, investment, owner_settlement, balance_adjustment, ...) is a pure
+    // fund movement, never a new profit/loss event, so it is shown as "transfer".
+    const participatesInProfit = PROFIT_TYPES.has(row.type);
+    const expense = participatesInProfit && (row.type === "expense" || row.type === "expense_recognition");
+    const direction = !participatesInProfit ? "transfer" : expense ? "expense" : "income";
+    const economicEffectSign = value(row.economic_effect_sign) || 1;
     const movement = row.movements?.find(item => direction === "income" ? value(item.amount) > 0 : value(item.amount) < 0) ?? row.movements?.[0];
     const accountName = movement?.fund_account?.display_name ?? null;
     const automatic = row.source_type !== "manual";
@@ -237,7 +253,7 @@ export function buildLedgerEntries(
       const key = `confirmed-inventory:${row.business_date}:${row.party_id ?? partyName}:${accountName ?? "payable"}`;
       const group = inventoryGroups.get(key) ?? {
         id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "confirmed",
-        title: partyName, subtitle: "0품목", amount: 0, displayTime: null, sortTimestamp: 0,
+        title: partyName, subtitle: "0품목", amount: 0, economicEffectSign: 1, displayTime: null, sortTimestamp: 0,
         inventoryStartAt: null, inventoryEndAt: null, accountName: accountName ?? "미지급",
         categoryName: row.category?.name ?? null, transactionId, drilldown: "inventory", items: [],
       } satisfies LedgerEntry;
@@ -271,6 +287,7 @@ export function buildLedgerEntries(
           : row.memo || row.category?.name || "직원 식대",
         subtitle: row.category?.name ?? "직원 식대",
         amount: effectiveAmount,
+        economicEffectSign: 1,
         ...time,
         originalAmount,
         adjustmentAmount,
@@ -293,7 +310,7 @@ export function buildLedgerEntries(
       origin: automatic ? "auto" : "manual", status: "confirmed",
       title: pos ? posTitle(paymentBucket(row.source_key)) : payroll ? "급여 · 인건비" : row.memo || row.party?.name || row.category?.name || "장부 거래",
       subtitle: pos ? `영수증 ${value(snapshot.receiptCount)}건` : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력"),
-      amount, ...time, accountName, categoryName: row.category?.name ?? null, transactionId,
+      amount, economicEffectSign, ...time, accountName, categoryName: row.category?.name ?? null, transactionId,
       drilldown: pos ? "pos" : payroll ? "payroll" : "generic", items: [],
     });
   }
@@ -307,7 +324,7 @@ export function buildLedgerEntries(
     const key = `pending-inventory:${row.business_date}:${partyId ?? "none"}:${resolution}:${defaults?.defaultFundAccountId ?? "none"}`;
     const group = inventoryGroups.get(key) ?? {
       id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "pending",
-      title: partyName, subtitle: "0품목 · 확인 필요", amount: 0,
+      title: partyName, subtitle: "0품목 · 확인 필요", amount: 0, economicEffectSign: 1,
       displayTime: null, sortTimestamp: 0, inventoryStartAt: null, inventoryEndAt: null, accountName,
       categoryName: row.category?.name ?? null, transactionId: null, drilldown: "inventory",
       defaultResolution: resolution, defaultFundAccountId: defaults?.defaultFundAccountId ?? null,
