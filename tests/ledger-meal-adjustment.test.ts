@@ -191,6 +191,39 @@ test("meal rows retain semantic employee count and fixed 18:00 display time", ()
   assert.match(page, /người/);
 });
 
+test("confirmed meal rows use the latest candidate source count and expose amount drift without overwriting the original", () => {
+  const entry = buildLedgerEntries(
+    [mealTransaction()],
+    [],
+    new Map(),
+    [{
+      resolvedTransactionId: 10,
+      sourceSnapshot: { employee_count: 9, total_amount: 270_000 },
+      sourceDriftSnapshot: { employee_count: 10, total_amount: 300_000 },
+    }],
+  )[0];
+  assert.deepEqual(entry.systemDisplay, { kind: "meal", employeeCount: 10 });
+  assert.equal(entry.originalAmount, 270_000);
+  assert.equal(entry.effectiveAmount, 270_000);
+  assert.equal(entry.sourceAmount, 300_000);
+  assert.equal(entry.requiresCorrection, true);
+});
+
+test("a meal corrected to the latest source amount no longer requires correction", () => {
+  const entry = buildLedgerEntries(
+    [mealTransaction(), adjustment(11, 10, 30_000, 1)],
+    [],
+    new Map(),
+    [{
+      resolvedTransactionId: 10,
+      sourceSnapshot: { employee_count: 9, total_amount: 270_000 },
+      sourceDriftSnapshot: { employee_count: 10, total_amount: 300_000 },
+    }],
+  )[0];
+  assert.equal(entry.effectiveAmount, 300_000);
+  assert.equal(entry.requiresCorrection, false);
+});
+
 test("same-day ledger rows build in Vietnam display time descending order, while the date-group UI sorts them ascending", () => {
   const manual = (id: number, occurredAt: string): TransactionRow => ({
     id,

@@ -376,7 +376,7 @@ test("manual ledger amount input formats display text without changing the numer
 
 test("entry detail and inventory candidate editor expose complete Vietnamese UI labels", () => {
   for (const label of [
-    "Chi tiết", "Đóng", "Cần xác nhận", "Đã ghi sổ", "Không có tài khoản",
+    "Chi tiết", "Đóng", "Cần xác nhận", "Cần điều chỉnh", "Đã ghi sổ", "Không có tài khoản",
     "Sửa", "Hóa đơn", "Phương thức thanh toán", "Phương thức xử lý",
     "Thanh toán ngay", "Ghi nhận công nợ", "Danh mục chi phí",
     "Tài khoản thanh toán thực tế", "Ghi chú", "Ghi mặt hàng này vào sổ",
@@ -393,7 +393,7 @@ test("entry detail and inventory candidate editor expose complete Vietnamese UI 
   assert.match(pageCompact, /kind="full"compacttopAlignedcomfortableTop/);
   assert.match(page, /Chi tiết giao dịch/);
   assert.match(page, /거래 상세/);
-  assert.match(pageCompact, /entry\.status==="pending"\?"⚠️":"✅"/);
+  assert.match(pageCompact, /entry\.status==="pending"\|\|entry\.requiresCorrection\?"⚠️":"✅"/);
   assert.match(pageCompact, /direction==="income"\?"💰":direction==="expense"\?"💸":"🔄"/);
   assert.match(pageCompact, /className=\{styles\.itemDescription\}/);
   assert.match(pageCompact, /className=\{`\$\{styles\.candidateFields\}/);

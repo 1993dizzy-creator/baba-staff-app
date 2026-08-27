@@ -38,6 +38,8 @@ export type LedgerEntry = {
   adjustmentAmount?: number;
   effectiveAmount?: number;
   adjustmentCount?: number;
+  sourceAmount?: number;
+  requiresCorrection?: boolean;
   accountName: string | null;
   categoryName: string | null;
   transactionId: number | null;
@@ -77,6 +79,12 @@ export type PartnerLedgerDefault = {
   paymentMode: "immediate" | "postpaid";
   defaultFundAccountId: number | null;
   defaultFundAccountName: string | null;
+};
+
+export type MealCandidateSource = {
+  resolvedTransactionId: number;
+  sourceSnapshot: Record<string, unknown> | null;
+  sourceDriftSnapshot: Record<string, unknown> | null;
 };
 
 // Types that can ever carry a recognition_month per the DB's own
@@ -200,10 +208,14 @@ export function buildLedgerEntries(
   transactions: readonly TransactionRow[],
   candidates: readonly CandidateRow[],
   partnerDefaultsByParty: ReadonlyMap<number, PartnerLedgerDefault>,
+  mealCandidateSources: readonly MealCandidateSource[] = [],
 ): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
   const inventoryGroups = new Map<string, LedgerEntry>();
   const mealAdjustmentsByOriginal = new Map<number, TransactionRow[]>();
+  const mealSourceByTransaction = new Map(
+    mealCandidateSources.map((candidate) => [candidate.resolvedTransactionId, candidate]),
+  );
   for (const row of transactions) {
     if (
       row.source_type !== "ledger_correction" || row.correction_of_id == null ||
@@ -276,7 +288,13 @@ export function buildLedgerEntries(
         0,
       );
       const effectiveAmount = originalAmount + adjustmentAmount;
-      const employeeCount = value(row.source_snapshot?.employee_count);
+      const candidateSource = mealSourceByTransaction.get(transactionId);
+      const latestSourceSnapshot = candidateSource?.sourceDriftSnapshot ??
+        candidateSource?.sourceSnapshot ?? row.source_snapshot ?? {};
+      const employeeCount = value(latestSourceSnapshot.employee_count);
+      const sourceAmount = value(latestSourceSnapshot.total_amount);
+      const requiresCorrection = candidateSource?.sourceDriftSnapshot != null &&
+        sourceAmount !== effectiveAmount;
       entries.push({
         id: `transaction:${transactionId}`,
         businessDate: row.business_date,
@@ -292,6 +310,8 @@ export function buildLedgerEntries(
         adjustmentAmount,
         effectiveAmount,
         adjustmentCount: linked.length,
+        sourceAmount,
+        requiresCorrection,
         accountName,
         categoryName: row.category?.name ?? null,
         transactionId,

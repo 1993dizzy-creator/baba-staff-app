@@ -507,6 +507,11 @@ export default function LedgerEntriesPage() {
                     {vi ? "Cần xác nhận" : "확인 필요"}
                   </span>
                 ) : null}
+                {entry.requiresCorrection ? (
+                  <span className={styles.correctionBadge}>
+                    {vi ? "Cần điều chỉnh" : "정정 필요"}
+                  </span>
+                ) : null}
                 <span className={styles.amountStack}>
                   {entry.displayTime ? <small>{entry.displayTime}</small> : null}
                   <strong
@@ -915,10 +920,12 @@ function EntryDetailSheet({
         <div className={styles.detailTop}>
           <strong>🤝 {entryDisplayTitle(entry, lang)}</strong>
           <span className={styles.detailStatus}>
-            {entry.status === "pending" ? "⚠️" : "✅"}{" "}
+            {entry.status === "pending" || entry.requiresCorrection ? "⚠️" : "✅"}{" "}
             {entry.status === "pending"
               ? vi ? "Cần xác nhận" : "확인 필요"
-              : vi ? "Đã ghi sổ" : "반영 완료"}
+              : entry.requiresCorrection
+                ? vi ? "Cần điều chỉnh" : "정정 필요"
+                : vi ? "Đã ghi sổ" : "반영 완료"}
           </span>
         </div>
         <div className={styles.detailMain}>
@@ -993,6 +1000,7 @@ function EntryDetailSheet({
         <article><span className={styles.itemDescription}>{vi?"Số tiền tổng hợp tự động":"자동집계 원본"}</span><b>{money(entry.originalAmount??entry.amount)}</b></article>
         <article><span className={styles.itemDescription}>{vi?"Tổng điều chỉnh thủ công":"수동 정정 합계"}</span><b>{(entry.adjustmentAmount??0)>0?"+":""}{money(entry.adjustmentAmount??0)}</b></article>
         <article><span className={styles.itemDescription}><strong>{vi?"Số tiền hiện áp dụng":"현재 반영 금액"}</strong></span><b>{money(entry.effectiveAmount??entry.amount)}</b></article>
+        {entry.requiresCorrection ? <article><span className={styles.itemDescription}><strong>{vi?"Nguồn mới nhất · cần điều chỉnh":"최신 원천 · 정정 필요"}</strong></span><b>{money(entry.sourceAmount??0)}</b></article>:null}
       </div>:null}
       {candidateDraft ? (
         <div className={styles.candidateEditor}>

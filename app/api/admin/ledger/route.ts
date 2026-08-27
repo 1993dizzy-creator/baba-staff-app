@@ -1,5 +1,5 @@
 import { supabaseServer } from "@/lib/supabase/server";
-import { buildLedgerEntries, type CandidateRow, type PartnerLedgerDefault, type TransactionRow } from "@/lib/ledger/entries";
+import { buildLedgerEntries, type CandidateRow, type MealCandidateSource, type PartnerLedgerDefault, type TransactionRow } from "@/lib/ledger/entries";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { computePaidExpenseTotal } from "@/lib/ledger/payables";
 import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
@@ -45,12 +45,17 @@ export async function GET(request: Request) {
     // always books a correction into a different, later month than its — closed — original, so a
     // correction of this month's root can itself be recognized in any later open month).
     const paidExpenseCorrectionsPromise = supabaseServer.from("ledger_transactions").select("correction_of_id,amount,economic_effect_sign").eq("status", "confirmed").eq("source_type", "ledger_correction").not("correction_of_id", "is", null);
-    const [accountsResult, categoriesResult, partiesResult, partnerResult, bridgeResult, profitResult, recognitionProfitResult, movementsResult, openingResult, cardGrossSalesResult, actualCardDepositsResult, reservesResult, paidExpenseRootsResult, paidExpenseCorrectionsResult, transactions, candidates] = await Promise.all([
+    const confirmedMealCandidatesPromise = supabaseServer.from("ledger_candidates")
+      .select("resolved_transaction_id,source_snapshot,source_drift_snapshot")
+      .eq("candidate_type", "employee_meal").eq("source_type", "attendance_meal_daily")
+      .eq("status", "confirmed").gte("business_date", monthStart).lt("business_date", nextMonth)
+      .not("resolved_transaction_id", "is", null);
+    const [accountsResult, categoriesResult, partiesResult, partnerResult, bridgeResult, profitResult, recognitionProfitResult, movementsResult, openingResult, cardGrossSalesResult, actualCardDepositsResult, reservesResult, paidExpenseRootsResult, paidExpenseCorrectionsResult, confirmedMealCandidatesResult, transactions, candidates] = await Promise.all([
       accountsPromise, categoriesPromise, partiesPromise, partnerPromise, bridgePromise, profitPromise,
       recognitionProfitPromise, movementsPromise, openingPromise, cardGrossSalesPromise, actualCardDepositsPromise, reservesPromise, paidExpenseRootsPromise, paidExpenseCorrectionsPromise,
-      loadMonthTransactions(monthStart, nextMonth), loadPendingInventoryCandidates(monthStart, nextMonth),
+      confirmedMealCandidatesPromise, loadMonthTransactions(monthStart, nextMonth), loadPendingInventoryCandidates(monthStart, nextMonth),
     ]);
-    for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,cardGrossSalesResult,actualCardDepositsResult,reservesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult]) if (result.error) throw result.error;
+    for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,cardGrossSalesResult,actualCardDepositsResult,reservesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
     const profitRows=[...(profitResult.data??[]),...(recognitionProfitResult.data??[])];
     const recognizedIncome = profitRows.filter((row) => row.type === "income" || row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const expense = profitRows.filter((row) => row.type === "expense" || row.type === "expense_recognition").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
@@ -99,7 +104,12 @@ export async function GET(request: Request) {
       });
       return [{ id: Number(partner.id), name: partner.name, ledgerPartyId: Number(bridge.ledger_party_id), paymentMode: partner.payment_mode, defaultFundAccountId, isActive: partner.is_active }];
     });
-    const entries = buildLedgerEntries(transactions, candidates, partnerDefaultsByParty);
+    const mealCandidateSources: MealCandidateSource[] = (confirmedMealCandidatesResult.data ?? []).map((candidate) => ({
+      resolvedTransactionId: Number(candidate.resolved_transaction_id),
+      sourceSnapshot: candidate.source_snapshot as Record<string, unknown> | null,
+      sourceDriftSnapshot: candidate.source_drift_snapshot as Record<string, unknown> | null,
+    }));
+    const entries = buildLedgerEntries(transactions, candidates, partnerDefaultsByParty, mealCandidateSources);
     return ledgerJson({ ok: true, month, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, cardGrossSales, actualCardDeposits }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
