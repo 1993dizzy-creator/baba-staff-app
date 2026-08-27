@@ -183,10 +183,12 @@ test("meal corrections are hidden as rows and summed with economic sign", () => 
   assert.match(entriesSource, /drilldown: "meal"/);
 });
 
-test("meal rows use the short snapshot title and fixed 18:00 display time", () => {
+test("meal rows retain semantic employee count and fixed 18:00 display time", () => {
   const entry = buildLedgerEntries([mealTransaction()], [], new Map())[0];
-  assert.equal(entry.title, "직원 식대 · 9명");
+  assert.deepEqual(entry.systemDisplay, { kind: "meal", employeeCount: 9 });
   assert.equal(entry.displayTime, "18:00");
+  assert.match(page, /Suất ăn nhân viên/);
+  assert.match(page, /người/);
 });
 
 test("same-day ledger rows build in Vietnam display time descending order, while the date-group UI sorts them ascending", () => {
@@ -207,7 +209,7 @@ test("same-day ledger rows build in Vietnam display time descending order, while
   ], [], new Map());
   // buildLedgerEntries itself still returns entries in descending time order (unchanged API contract).
   assert.deepEqual(entries.map((entry) => entry.displayTime), ["19:15", "18:00", "17:30"]);
-  assert.deepEqual(entries.map((entry) => entry.title), ["manual-22", "직원 식대 · 9명", "manual-21"]);
+  assert.deepEqual(entries.map((entry) => entry.systemDisplay?.kind ?? entry.title), ["manual-22", "meal", "manual-21"]);
   assert.match(page, /entry\.displayTime/);
   // The ledger entries page re-groups by date and sorts each date's rows ascending (earliest time first).
   assert.match(page, /a\.sortTimestamp - b\.sortTimestamp/);

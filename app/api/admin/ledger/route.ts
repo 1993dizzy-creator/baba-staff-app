@@ -2,6 +2,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { buildLedgerEntries, type CandidateRow, type PartnerLedgerDefault, type TransactionRow } from "@/lib/ledger/entries";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { computePaidExpenseTotal } from "@/lib/ledger/payables";
+import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,9 @@ export async function GET(request: Request) {
     const cardGrossSalesPromise = supabaseServer.from("ledger_transactions").select("amount").eq("status", "confirmed").eq("source_type", "pos_sales_daily_payment").like("source_key", "pos:%:card").gte("business_date", monthStart).lt("business_date", nextMonth);
     // Actual card deposits: this month's real bank deposits from the card company (deposit_date scoped, not the sale's month).
     const actualCardDepositsPromise = supabaseServer.from("ledger_card_reconciliations").select("deposit_amount").neq("status", "cancelled").gte("deposit_date", monthStart).lt("deposit_date", nextMonth);
+    const reservesPromise = supabaseServer.from("ledger_reserve_plans")
+      .select("id,name,is_active,fund_account_id,linked_recurring_plan:ledger_recurring_expense_plans(source_key_prefix),entries:ledger_reserve_entries(entry_type,amount)")
+      .order("id");
     // Root expense/expense_recognition transactions recognized this month, with their
     // linked payable (if any) — the base population for the paidExpense formula below.
     const paidExpenseRootsPromise = supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,source_type,correction_of_id,payable:ledger_payables(status,allocations:ledger_payable_allocations(allocated_amount))").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["expense", "expense_recognition"]);
@@ -40,12 +44,12 @@ export async function GET(request: Request) {
     // always books a correction into a different, later month than its — closed — original, so a
     // correction of this month's root can itself be recognized in any later open month).
     const paidExpenseCorrectionsPromise = supabaseServer.from("ledger_transactions").select("correction_of_id,amount,economic_effect_sign").eq("status", "confirmed").eq("source_type", "ledger_correction").not("correction_of_id", "is", null);
-    const [accountsResult, categoriesResult, partiesResult, partnerResult, bridgeResult, profitResult, recognitionProfitResult, movementsResult, openingResult, cardGrossSalesResult, actualCardDepositsResult, paidExpenseRootsResult, paidExpenseCorrectionsResult, transactions, candidates] = await Promise.all([
+    const [accountsResult, categoriesResult, partiesResult, partnerResult, bridgeResult, profitResult, recognitionProfitResult, movementsResult, openingResult, cardGrossSalesResult, actualCardDepositsResult, reservesResult, paidExpenseRootsResult, paidExpenseCorrectionsResult, transactions, candidates] = await Promise.all([
       accountsPromise, categoriesPromise, partiesPromise, partnerPromise, bridgePromise, profitPromise,
-      recognitionProfitPromise, movementsPromise, openingPromise, cardGrossSalesPromise, actualCardDepositsPromise, paidExpenseRootsPromise, paidExpenseCorrectionsPromise,
+      recognitionProfitPromise, movementsPromise, openingPromise, cardGrossSalesPromise, actualCardDepositsPromise, reservesPromise, paidExpenseRootsPromise, paidExpenseCorrectionsPromise,
       loadMonthTransactions(monthStart, nextMonth), loadPendingInventoryCandidates(monthStart, nextMonth),
     ]);
-    for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,cardGrossSalesResult,actualCardDepositsResult,paidExpenseRootsResult,paidExpenseCorrectionsResult]) if (result.error) throw result.error;
+    for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,cardGrossSalesResult,actualCardDepositsResult,reservesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult]) if (result.error) throw result.error;
     const profitRows=[...(profitResult.data??[]),...(recognitionProfitResult.data??[])];
     const income = profitRows.filter((row) => row.type === "income" || row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const expense = profitRows.filter((row) => row.type === "expense" || row.type === "expense_recognition").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
@@ -73,7 +77,13 @@ export async function GET(request: Request) {
     for (const row of movementsResult.data ?? []) balanceByAccount.set(Number(row.fund_account_id),(balanceByAccount.get(Number(row.fund_account_id)) ?? 0) + Number(row.amount));
     const openingByAccount = new Map<number,number>();
     for (const row of openingResult.data ?? []) openingByAccount.set(Number(row.fund_account_id),(openingByAccount.get(Number(row.fund_account_id)) ?? 0) + Number(row.amount));
-    const accounts = (accountsResult.data ?? []).map((account) => ({ ...account, balance: balanceByAccount.get(Number(account.id)) ?? 0, openingBalance: openingByAccount.get(Number(account.id)) ?? 0 }));
+    const accountReserves = reservesByFundAccount(reservesResult.data ?? []);
+    const accounts = (accountsResult.data ?? []).map((account) => {
+      const balance = balanceByAccount.get(Number(account.id)) ?? 0;
+      const reserves = accountReserves.get(Number(account.id)) ?? [];
+      const reserveTotal = reserves.reduce((sum, reserve) => sum + reserve.currentAmount, 0);
+      return { ...account, balance, openingBalance: openingByAccount.get(Number(account.id)) ?? 0, reserves, reserveTotal, availableBalance: balance - reserveTotal };
+    });
     const accountById = new Map(accounts.map(account => [Number(account.id), account]));
     const partnerById = new Map((partnerResult.data ?? []).map(partner => [Number(partner.id), partner]));
     const partnerDefaultsByParty = new Map<number, PartnerLedgerDefault>();

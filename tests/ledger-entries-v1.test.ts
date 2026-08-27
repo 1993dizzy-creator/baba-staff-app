@@ -43,12 +43,28 @@ test("confirmed inventory and POS rows retain source detail while grouping", () 
   assert.equal(entries.length, 2);
   const inventory = entries.find(entry => entry.drilldown === "inventory");
   const pos = entries.find(entry => entry.drilldown === "pos");
-  assert.equal(inventory?.subtitle, "2품목");
+  assert.deepEqual(inventory?.systemDisplay, { kind: "inventory", itemCount: 2, partyMissing: false, needsConfirmation: false });
   assert.equal(inventory?.amount, 800);
   assert.deepEqual(inventory?.items.map(item => item.name), ["치즈", "소스"]);
-  assert.equal(pos?.title, "POS 카드매출");
-  assert.equal(pos?.subtitle, "영수증 19건");
+  assert.deepEqual(pos?.systemDisplay, { kind: "pos", paymentBucket: "card", receiptCount: 19 });
   assert.equal(pos?.accountName, "카드 정산대기");
+  assert.match(page, /POS tiền mặt/);
+  assert.match(page, /POS chuyển khoản/);
+  assert.match(page, /POS thẻ/);
+  assert.match(page, /hóa đơn/);
+  assert.match(page, /return lang === "vi" \? "Thẻ" : "카드"/);
+});
+
+test("system recurring rent keeps semantic localization metadata without translating user text", () => {
+  const [rent, manual] = buildLedgerEntries([
+    { id: 1, type: "expense_recognition", business_date: "2026-08-01", amount: 60_000_000, source_type: "recurring_expense", source_key: "recurring:8:2026-08", memo: "매장 임대료", category: { name: "임대료" }, source_snapshot: { planName: "매장 임대료" } },
+    { id: 2, type: "expense", business_date: "2026-08-01", amount: 1, source_type: "manual", memo: "매장 임대료" },
+  ], [], new Map()).sort((a, b) => Number(a.transactionId) - Number(b.transactionId));
+  assert.deepEqual(rent.systemDisplay, { kind: "rent" });
+  assert.equal(manual.systemDisplay, undefined);
+  assert.equal(manual.title, "매장 임대료");
+  assert.match(page, /Tiền thuê mặt bằng/);
+  assert.match(page, /Tiền thuê/);
 });
 
 test("inventory groups use provenance time ranges and earliest item time for sorting", () => {

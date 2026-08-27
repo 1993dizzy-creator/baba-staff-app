@@ -1,6 +1,6 @@
 import test from"node:test";import assert from"node:assert/strict";import{readFileSync}from"node:fs";// @ts-expect-error Node direct TS tests use explicit extension.
 import{calculateBep}from"../lib/ledger/bep-core.ts";
-const migration=readFileSync("supabase/migrations/202608210007_add_recurring_reserves_bep.sql","utf8"),bepSource=readFileSync("lib/ledger/bep.ts","utf8"),reserveApi=readFileSync("app/api/admin/ledger/reserves/route.ts","utf8"),ui=readFileSync("app/(protected)/admin/ledger/RecurringReserveBepPanel.tsx","utf8"),foundation=readFileSync("tests/ledger-v1-foundation.test.ts","utf8"),pos=readFileSync("tests/ledger-pos-sales.test.ts","utf8"),inventory=readFileSync("tests/ledger-inventory-candidates.test.ts","utf8"),payable=readFileSync("tests/ledger-payable-payments.test.ts","utf8"),meal=readFileSync("tests/ledger-meal-payroll.test.ts","utf8"),card=readFileSync("tests/ledger-card-settlements.test.ts","utf8");
+const migration=readFileSync("supabase/migrations/202608210007_add_recurring_reserves_bep.sql","utf8"),bepSource=readFileSync("lib/ledger/bep.ts","utf8"),reserveApi=readFileSync("app/api/admin/ledger/reserves/route.ts","utf8"),reserveCore=readFileSync("lib/ledger/reserve-balances.ts","utf8"),ui=readFileSync("app/(protected)/admin/ledger/RecurringReserveBepPanel.tsx","utf8"),foundation=readFileSync("tests/ledger-v1-foundation.test.ts","utf8"),pos=readFileSync("tests/ledger-pos-sales.test.ts","utf8"),inventory=readFileSync("tests/ledger-inventory-candidates.test.ts","utf8"),payable=readFileSync("tests/ledger-payable-payments.test.ts","utf8"),meal=readFileSync("tests/ledger-meal-payroll.test.ts","utf8"),card=readFileSync("tests/ledger-card-settlements.test.ts","utf8");
 test("monthly rent plan is seeded",()=>assert.match(migration,/'매장 임대료'.*60000000.*'monthly'/));
 test("rent category is fixed",()=>assert.match(migration,/values\('임대료','expense','fixed'\)/));
 test("60M monthly recognition uses plan amount",()=>assert.match(migration,/v_plan\.amount.*v_plan\.category_id/));
@@ -18,11 +18,11 @@ test("reserve consume subtracts",()=>assert.match(migration,/when'consume'then-a
 test("reserve adjustment keeps signed amount",()=>assert.match(migration,/else amount end/));
 test("reserve creates no fund movement",()=>assert.doesNotMatch(migration,/ledger_create_reserve_entry_v1[\s\S]*?insert into public\.ledger_movements/));
 test("reserve creates no profit transaction",()=>assert.doesNotMatch(migration,/ledger_create_reserve_entry_v1[\s\S]*?insert into public\.ledger_transactions/));
-test("current reserve derives from entries",()=>assert.match(reserveApi,/entry_type==="allocate"/));
-test("target remaining is derived",()=>assert.match(reserveApi,/Math\.max\(0,targetAmount-currentAmount\)/));
+test("current reserve derives from entries",()=>assert.match(reserveCore,/entry\.entry_type === "allocate"/));
+test("target remaining is derived",()=>assert.match(reserveApi,/Math\.max\(0, targetAmount - currentAmount\)/));
 test("target date is nullable",()=>assert.match(migration,/target_date date null/));
-test("free cash subtracts active reserves",()=>assert.match(reserveApi,/freeCash:liquidFunds-activeReserve/));
-test("card clearing is excluded from liquid funds",()=>assert.match(reserveApi,/a\.code!=="card_clearing"/));
+test("free cash subtracts active reserves",()=>assert.match(reserveApi,/freeCash: liquidFunds - activeReserve/));
+test("card clearing is excluded from liquid funds",()=>assert.match(reserveApi,/account\.code !== "card_clearing"/));
 test("reserve is not double counted in P and L",()=>assert.doesNotMatch(bepSource,/ledger_reserve_entries/));
 test("fixed cost uses fixed categories",()=>assert.match(bepSource,/cost_behavior==="fixed"/));
 test("variable cost uses variable categories",()=>assert.match(bepSource,/cost_behavior==="variable"/));

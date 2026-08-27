@@ -45,6 +45,11 @@ export type LedgerEntry = {
   defaultResolution?: "immediate" | "payable";
   defaultFundAccountId?: number | null;
   partyId?: number | null;
+  systemDisplay?:
+    | { kind: "pos"; paymentBucket: "cash" | "transfer" | "card" | "other"; receiptCount: number }
+    | { kind: "meal"; employeeCount: number }
+    | { kind: "inventory"; itemCount: number; partyMissing: boolean; needsConfirmation: boolean }
+    | { kind: "rent" };
   items: LedgerEntryItem[];
 };
 
@@ -187,14 +192,8 @@ const inventoryItem = (row: CandidateRow | TransactionRow): LedgerEntryItem => {
 };
 
 function paymentBucket(sourceKey: string | null | undefined) {
-  return sourceKey?.split(":").at(-1) ?? "other";
-}
-
-function posTitle(bucket: string) {
-  if (bucket === "cash") return "POS 현금매출";
-  if (bucket === "card") return "POS 카드매출";
-  if (bucket === "transfer") return "POS 계좌이체 매출";
-  return "POS 기타매출";
+  const bucket = sourceKey?.split(":").at(-1);
+  return bucket === "cash" || bucket === "transfer" || bucket === "card" ? bucket : "other";
 }
 
 export function buildLedgerEntries(
@@ -249,19 +248,21 @@ export function buildLedgerEntries(
     const time = transactionTime(row);
 
     if (row.source_type === "inventory_purchase_candidate" || row.source_type === "inventory_purchase_rebook") {
-      const partyName = row.party?.name ?? "거래처 미지정";
-      const key = `confirmed-inventory:${row.business_date}:${row.party_id ?? partyName}:${accountName ?? "payable"}`;
+      const partyMissing = !row.party?.name;
+      const partyName = row.party?.name ?? "";
+      const key = `confirmed-inventory:${row.business_date}:${row.party_id ?? "none"}:${accountName ?? "payable"}`;
       const group = inventoryGroups.get(key) ?? {
         id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "confirmed",
-        title: partyName, subtitle: "0품목", amount: 0, economicEffectSign: 1, displayTime: null, sortTimestamp: 0,
+        title: partyName, subtitle: "", amount: 0, economicEffectSign: 1, displayTime: null, sortTimestamp: 0,
         inventoryStartAt: null, inventoryEndAt: null, accountName: accountName ?? "미지급",
-        categoryName: row.category?.name ?? null, transactionId, drilldown: "inventory", items: [],
+        categoryName: row.category?.name ?? null, transactionId, drilldown: "inventory",
+        systemDisplay: { kind: "inventory", itemCount: 0, partyMissing, needsConfirmation: false }, items: [],
       } satisfies LedgerEntry;
       const item = inventoryItem(row);
       group.amount += amount;
       group.items.push(item);
       updateInventoryGroupTime(group, item);
-      group.subtitle = `${group.items.length}품목`;
+      if (group.systemDisplay?.kind === "inventory") group.systemDisplay.itemCount = group.items.length;
       inventoryGroups.set(key, group);
       continue;
     }
@@ -282,10 +283,8 @@ export function buildLedgerEntries(
         direction: "expense",
         origin: "auto",
         status: "confirmed",
-        title: employeeCount > 0
-          ? `직원 식대 · ${employeeCount.toLocaleString("en-US")}명`
-          : row.memo || row.category?.name || "직원 식대",
-        subtitle: row.category?.name ?? "직원 식대",
+        title: "",
+        subtitle: "",
         amount: effectiveAmount,
         economicEffectSign: 1,
         ...time,
@@ -297,6 +296,7 @@ export function buildLedgerEntries(
         categoryName: row.category?.name ?? null,
         transactionId,
         drilldown: "meal",
+        systemDisplay: { kind: "meal", employeeCount },
         items: [],
       });
       continue;
@@ -304,14 +304,20 @@ export function buildLedgerEntries(
 
     const snapshot = row.source_snapshot ?? {};
     const pos = row.source_type === "pos_sales_daily_payment";
+    const posPaymentBucket = paymentBucket(row.source_key);
+    const rent = row.source_type === "recurring_expense" &&
+      (row.category?.name === "임대료" || snapshot.planName === "매장 임대료");
     const payroll = row.source_type.includes("payroll");
     entries.push({
       id: `transaction:${transactionId}`, businessDate: row.business_date, direction,
       origin: automatic ? "auto" : "manual", status: "confirmed",
-      title: pos ? posTitle(paymentBucket(row.source_key)) : payroll ? "급여 · 인건비" : row.memo || row.party?.name || row.category?.name || "장부 거래",
-      subtitle: pos ? `영수증 ${value(snapshot.receiptCount)}건` : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력"),
+      title: pos || rent ? "" : payroll ? "급여 · 인건비" : row.memo || row.party?.name || row.category?.name || "장부 거래",
+      subtitle: pos || rent ? "" : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력"),
       amount, economicEffectSign, ...time, accountName, categoryName: row.category?.name ?? null, transactionId,
-      drilldown: pos ? "pos" : payroll ? "payroll" : "generic", items: [],
+      drilldown: pos ? "pos" : payroll ? "payroll" : "generic",
+      ...(pos ? { systemDisplay: { kind: "pos" as const, paymentBucket: posPaymentBucket, receiptCount: value(snapshot.receiptCount) } } : {}),
+      ...(rent ? { systemDisplay: { kind: "rent" as const } } : {}),
+      items: [],
     });
   }
 
@@ -319,22 +325,23 @@ export function buildLedgerEntries(
     const partyId = row.proposed_party_id == null ? null : value(row.proposed_party_id);
     const defaults = partyId === null ? undefined : partnerDefaultsByParty.get(partyId);
     const resolution = defaults?.paymentMode === "postpaid" ? "payable" : "immediate";
-    const partyName = row.party?.name ?? "거래처 미지정";
+    const partyMissing = !row.party?.name;
+    const partyName = row.party?.name ?? "";
     const accountName = resolution === "payable" ? "미지급" : defaults?.defaultFundAccountName ?? "결제계정 확인 필요";
     const key = `pending-inventory:${row.business_date}:${partyId ?? "none"}:${resolution}:${defaults?.defaultFundAccountId ?? "none"}`;
     const group = inventoryGroups.get(key) ?? {
       id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "pending",
-      title: partyName, subtitle: "0품목 · 확인 필요", amount: 0, economicEffectSign: 1,
+      title: partyName, subtitle: "", amount: 0, economicEffectSign: 1,
       displayTime: null, sortTimestamp: 0, inventoryStartAt: null, inventoryEndAt: null, accountName,
       categoryName: row.category?.name ?? null, transactionId: null, drilldown: "inventory",
       defaultResolution: resolution, defaultFundAccountId: defaults?.defaultFundAccountId ?? null,
-      partyId, items: [],
+      partyId, systemDisplay: { kind: "inventory", itemCount: 0, partyMissing, needsConfirmation: true }, items: [],
     } satisfies LedgerEntry;
     const item = inventoryItem(row);
     group.amount += value(row.proposed_amount);
     group.items.push(item);
     updateInventoryGroupTime(group, item);
-    group.subtitle = `${group.items.length}품목 · 확인 필요`;
+    if (group.systemDisplay?.kind === "inventory") group.systemDisplay.itemCount = group.items.length;
     inventoryGroups.set(key, group);
   }
 

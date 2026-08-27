@@ -6,7 +6,7 @@ import { calculateCurrentMealAllowanceCost } from "../lib/payroll/meal-allowance
 
 const route = readFileSync("app/api/cron/ledger-meal-auto-post/route.ts", "utf8");
 const source = readFileSync("lib/ledger/employee-costs.ts", "utf8");
-const memoBackfill = readFileSync("supabase/migrations/20260826191856_shorten_employee_meal_memos.sql", "utf8");
+const memoBackfill = readFileSync("supabase/migrations/20260826123527_shorten_employee_meal_memos.sql", "utf8");
 const vercel = JSON.parse(readFileSync("vercel.json", "utf8"));
 
 const datedMealInput = {

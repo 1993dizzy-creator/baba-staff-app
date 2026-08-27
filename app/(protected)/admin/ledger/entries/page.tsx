@@ -42,6 +42,14 @@ type Account = {
   is_business_fund: boolean;
   balance: number;
   openingBalance: number;
+  reserveTotal: number;
+  availableBalance: number;
+  reserves: Array<{
+    id: number;
+    name: string;
+    currentAmount: number;
+    linkedRecurringSourceKeyPrefix: string | null;
+  }>;
 };
 type Category = {
   id: number;
@@ -263,7 +271,7 @@ export default function LedgerEntriesPage() {
       if (filter === "pending" && entry.status !== "pending") continue;
       if (
         keyword &&
-        !`${entry.title} ${entry.subtitle} ${entry.accountName ?? ""} ${entry.categoryName ?? ""}`
+        !`${entryDisplayTitle(entry, lang)} ${entryMeta(entry, lang)} ${entry.accountName ?? ""} ${entry.categoryName ?? ""}`
           .toLocaleLowerCase()
           .includes(keyword)
       )
@@ -286,7 +294,7 @@ export default function LedgerEntriesPage() {
       group.rows.sort((a, b) => a.sortTimestamp - b.sortTimestamp);
     }
     return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
-  }, [data?.entries, filter, search]);
+  }, [data?.entries, filter, lang, search]);
   const businessAccounts = useMemo(
     () =>
       (data?.accounts ?? [])
@@ -446,14 +454,10 @@ export default function LedgerEntriesPage() {
           onClick={() => toggleDate(group.date)}
         >
           <strong>{formatDate(group.date, lang)}</strong>
-          <span>
-            {group.rows.length} {vi ? "giao dịch" : "건"}
-            {group.income > 0
-              ? ` · ${vi ? "Thu" : "수입"} ${money(group.income)}`
-              : ""}
-            {group.expense > 0
-              ? ` · ${vi ? "Chi" : "지출"} ${money(group.expense)}`
-              : ""}
+          <span className={styles.dateSummary}>
+            <span>{group.rows.length} {vi ? "giao dịch" : "건"}</span>
+            {group.income > 0 ? <><i aria-hidden>·</i><b className={styles.dateIncome}>{vi ? "Thu" : "수입"} {money(group.income)}</b></> : null}
+            {group.expense > 0 ? <><i aria-hidden>·</i><b className={styles.dateExpense}>{vi ? "Chi" : "지출"} {money(group.expense)}</b></> : null}
           </span>
           <i
             aria-hidden
@@ -491,10 +495,10 @@ export default function LedgerEntriesPage() {
                         : "이체"}
                 </span>
                 <span className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""}`}>
-                  {accountBadgeLabel(entry.accountName,lang)}
+                  {accountBadgeLabel(entry.accountName,lang,entry)}
                 </span>
                 <span className={styles.entryMain}>
-                  <strong>{entry.title}</strong>
+                  <strong>{entryDisplayTitle(entry, lang)}</strong>
                   <span> · {entryMeta(entry, lang)}</span>
                 </span>
                 {entry.status === "pending" ? (
@@ -597,8 +601,8 @@ export default function LedgerEntriesPage() {
                 <strong>{money(data.summary.income)}</strong>
                 <small>{vi ? "Tổng doanh thu" : "전체 수입"}</small>
                 <div className={styles.summarySubRows}>
-                  <span>{vi ? "Đã nhận thực tế" : "실제 입금액"}<b>{money(data.summary.actualCardDeposits)}</b></span>
                   <span>{vi ? "Doanh thu thẻ" : "카드결제액"}<b>{money(data.summary.cardGrossSales)}</b></span>
+                  <span>{vi ? "Đã nhận thực tế" : "실제 입금액"}<b>{money(data.summary.actualCardDeposits)}</b></span>
                 </div>
               </article>
               <article className={`${styles.summaryCard} ${styles.expenseCard}`}>
@@ -762,20 +766,28 @@ export default function LedgerEntriesPage() {
               {balanceExpanded ? <div className={styles.balanceDetail} id="ledger-current-balance-detail">
                 {businessAccounts.map((account) => {
                   const delta = balanceDeltaByCode.get(account.code) ?? 0;
+                  const showReserves = account.code === "baba_corporate_bank" || account.reserves.length > 0;
                   const deltaClass = delta > 0
                     ? styles.balanceDeltaPositive
                     : delta < 0
                       ? styles.balanceDeltaNegative
                       : styles.balanceDeltaZero;
                   return (
-                    <span key={account.id}>
+                    <span className={showReserves ? styles.balanceAccountWithReserves : ""} key={account.id}>
                       <small>{localizedAccountName(account, lang)}</small>
-                      <span className={styles.balanceAmounts}>
-                        <b>{money(account.balance)}</b>
-                        <em className={`${styles.balanceDelta} ${deltaClass}`}>
-                          ({delta > 0 ? "+" : ""}{money(delta)})
-                        </em>
-                      </span>
+                      {showReserves ? <div className={styles.accountReserveDetail}>
+                        <span><small>{vi ? "Tổng số dư" : "총 잔액"}</small><b>{money(account.balance)}</b></span>
+                        <span><small>{vi ? "Tổng quỹ dự phòng" : "준비금 합계"}</small><b>{money(account.reserveTotal)}</b></span>
+                        {account.reserves.map((reserve) => <span className={styles.reserveBreakdown} key={reserve.id}>
+                          <small>{reserveLabel(reserve, lang)}</small><b>{money(reserve.currentAmount)}</b>
+                        </span>)}
+                        <span className={styles.availableBalance}><small>{vi ? "Số dư khả dụng" : "사용 가능 잔액"}</small><b>{money(account.availableBalance)}</b></span>
+                      </div> : <span className={styles.balanceAmounts}>
+                          <b>{money(account.balance)}</b>
+                          <em className={`${styles.balanceDelta} ${deltaClass}`}>
+                            ({delta > 0 ? "+" : ""}{money(delta)})
+                          </em>
+                        </span>}
                     </span>
                   );
                 })}
@@ -900,7 +912,7 @@ function EntryDetailSheet({
     >
       <div className={styles.detailSummary}>
         <div className={styles.detailTop}>
-          <strong>🤝 {entry.title}</strong>
+          <strong>🤝 {entryDisplayTitle(entry, lang)}</strong>
           <span className={styles.detailStatus}>
             {entry.status === "pending" ? "⚠️" : "✅"}{" "}
             {entry.status === "pending"
@@ -1529,6 +1541,18 @@ function AccountField({
   );
 }
 function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
+  if (entry.systemDisplay?.kind === "pos") {
+    return lang === "vi"
+      ? `${entry.systemDisplay.receiptCount.toLocaleString("vi-VN")} hóa đơn`
+      : `영수증 ${entry.systemDisplay.receiptCount.toLocaleString("ko-KR")}건`;
+  }
+  if (entry.systemDisplay?.kind === "meal") return "";
+  if (entry.systemDisplay?.kind === "inventory") {
+    return lang === "vi"
+      ? `${entry.systemDisplay.itemCount.toLocaleString("vi-VN")} mặt hàng`
+      : `${entry.systemDisplay.itemCount.toLocaleString("ko-KR")}품목`;
+  }
+  if (entry.systemDisplay?.kind === "rent") return lang === "vi" ? "Tiền thuê" : "임대료";
   const vi = lang === "vi",
     subtitle = entry.subtitle.replace(/\s*·\s*확인 필요/g, "");
   return [
@@ -1537,6 +1561,35 @@ function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+function entryDisplayTitle(entry: LedgerEntry, lang: "ko" | "vi") {
+  const display = entry.systemDisplay;
+  if (display?.kind === "pos") {
+    const labels = lang === "vi"
+      ? { cash: "POS tiền mặt", transfer: "POS chuyển khoản", card: "POS thẻ", other: "POS khác" }
+      : { cash: "POS 현금매출", transfer: "POS 계좌이체 매출", card: "POS 카드매출", other: "POS 기타매출" };
+    return labels[display.paymentBucket];
+  }
+  if (display?.kind === "meal") {
+    if (display.employeeCount <= 0) return lang === "vi" ? "Suất ăn nhân viên" : "직원 식대";
+    return lang === "vi"
+      ? `Suất ăn nhân viên · ${display.employeeCount.toLocaleString("vi-VN")} người`
+      : `직원 식대 · ${display.employeeCount.toLocaleString("ko-KR")}명`;
+  }
+  if (display?.kind === "inventory" && display.partyMissing) {
+    return lang === "vi" ? "Chưa chỉ định nhà cung cấp" : "거래처 미지정";
+  }
+  if (display?.kind === "rent") return lang === "vi" ? "Tiền thuê mặt bằng" : "매장 임대료";
+  return entry.title;
+}
+function reserveLabel(
+  reserve: Account["reserves"][number],
+  lang: "ko" | "vi",
+) {
+  if (reserve.linkedRecurringSourceKeyPrefix === "rent") {
+    return lang === "vi" ? "Quỹ dự phòng tiền thuê" : "임대료 준비금";
+  }
+  return reserve.name;
 }
 function partnerTypeLabel(partnerType: string | null, lang: "ko" | "vi") {
   const labels = lang === "vi"
@@ -1547,7 +1600,10 @@ function partnerTypeLabel(partnerType: string | null, lang: "ko" | "vi") {
 function isPayableAccount(accountName: string | null) {
   return accountName === "미지급";
 }
-function accountBadgeLabel(accountName: string | null, lang: "ko" | "vi") {
+function accountBadgeLabel(accountName: string | null, lang: "ko" | "vi", entry?: LedgerEntry) {
+  if (entry?.systemDisplay?.kind === "pos" && entry.systemDisplay.paymentBucket === "card") {
+    return lang === "vi" ? "Thẻ" : "카드";
+  }
   if (!accountName) return lang === "vi" ? "Chưa rõ" : "미지정";
   if (accountName === "매장 현금") return lang === "vi" ? "Tiền mặt" : "현금";
   if (accountName === "BABA 법인계좌") return lang === "vi" ? "Công ty" : "법인";
