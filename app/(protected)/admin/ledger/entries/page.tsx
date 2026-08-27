@@ -601,8 +601,8 @@ export default function LedgerEntriesPage() {
                 <strong>{money(data.summary.income)}</strong>
                 <small>{vi ? "Tổng doanh thu" : "전체 수입"}</small>
                 <div className={styles.summarySubRows}>
-                  <span>{vi ? "Doanh thu thẻ" : "카드결제액"}<b>{money(data.summary.cardGrossSales)}</b></span>
-                  <span>{vi ? "Đã nhận thực tế" : "실제 입금액"}<b>{money(data.summary.actualCardDeposits)}</b></span>
+                  <span><small className={styles.summarySubLabel}>{vi ? "Doanh thu thẻ" : "카드결제액"}</small><b>{money(data.summary.cardGrossSales)}</b></span>
+                  <span><small className={styles.summarySubLabel}>{vi ? "Đã nhận thực tế" : "실제 입금액"}</small><b>{money(data.summary.actualCardDeposits)}</b></span>
                 </div>
               </article>
               <article className={`${styles.summaryCard} ${styles.expenseCard}`}>
@@ -613,7 +613,7 @@ export default function LedgerEntriesPage() {
                 <strong>{money(data.summary.paidExpense)}</strong>
                 <small>{vi ? "Đã thanh toán" : "지급완료"}</small>
                 <div className={styles.summarySubRows}>
-                  <span>{vi ? "Công nợ hiện tại (toàn bộ)" : "현재 미납금(전체)"}<b>{money(payables?.totalOutstanding ?? 0)}</b></span>
+                  <span><small className={styles.summarySubLabel}>{vi ? "Công nợ hiện tại (toàn bộ)" : "현재 미납금(전체)"}</small><b>{money(payables?.totalOutstanding ?? 0)}</b></span>
                 </div>
               </article>
             </section>
