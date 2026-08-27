@@ -8,15 +8,24 @@ export async function GET() {
   const auth = await requireLedgerActor();
   if (auth.response) return auth.response;
   try {
-    const [planResult, accountResult, movementResult] = await Promise.all([
+    const [planResult, accountResult, movementResult, scheduleResult] = await Promise.all([
       supabaseServer.from("ledger_reserve_plans")
-        .select("id,name,target_amount,target_date,is_active,memo,linked_recurring_plan_id,fund_account_id,entries:ledger_reserve_entries(id,entry_type,amount,occurred_at,memo)")
+        .select("id,name,target_amount,target_date,is_active,memo,linked_recurring_plan_id,fund_account_id,recurring_monthly_amount,recurring_day,recurring_start_month,recurring_end_month,recurring_auto_generate,entries:ledger_reserve_entries(id,entry_type,amount,occurred_at,memo)")
         .eq("is_active", true).order("id"),
       supabaseServer.from("ledger_fund_accounts").select("id,type,code,display_name,is_active,is_business_fund,sort_order").eq("is_active", true).order("sort_order"),
       supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status)").eq("transaction.status", "confirmed"),
+      supabaseServer.from("ledger_reserve_scheduled_allocations")
+        .select("id,reserve_plan_id,scheduled_month,scheduled_date,planned_amount,status,skip_reason,reserve_entry_id,resolved_at")
+        .order("scheduled_month", { ascending: false }).order("id", { ascending: false }).limit(120),
     ]);
-    if (planResult.error || accountResult.error || movementResult.error) throw planResult.error ?? accountResult.error ?? movementResult.error;
+    if (planResult.error || accountResult.error || movementResult.error || scheduleResult.error) throw planResult.error ?? accountResult.error ?? movementResult.error ?? scheduleResult.error;
     const accountById = new Map((accountResult.data ?? []).map((account) => [Number(account.id), account]));
+    const schedulesByPlan = new Map<number, Array<Record<string, unknown>>>();
+    for (const row of scheduleResult.data ?? []) {
+      const list = schedulesByPlan.get(Number(row.reserve_plan_id)) ?? [];
+      list.push(row);
+      schedulesByPlan.set(Number(row.reserve_plan_id), list);
+    }
     const plans = (planResult.data ?? []).map((plan) => {
       const currentAmount = reserveCurrentAmount(plan.entries ?? []);
       const targetAmount = Number(plan.target_amount);
@@ -33,7 +42,28 @@ export async function GET() {
         ? { id: Number(linked.id), code: linked.code, displayName: linked.display_name }
         : null;
       const entries = [...(plan.entries ?? [])].sort((a, b) => String(b.occurred_at).localeCompare(String(a.occurred_at)));
-      return { ...plan, entries, currentAmount, remainingAmount, remainingMonths, monthlyRequired, fundAccount };
+      const recurring = plan.recurring_monthly_amount == null ? null : {
+        monthlyAmount: Number(plan.recurring_monthly_amount),
+        recurringDay: Number(plan.recurring_day),
+        startMonth: plan.recurring_start_month,
+        endMonth: plan.recurring_end_month,
+        autoGenerate: Boolean(plan.recurring_auto_generate),
+      };
+      const schedules = (schedulesByPlan.get(Number(plan.id)) ?? []).map((row) => ({
+        id: Number(row.id),
+        scheduledMonth: row.scheduled_month,
+        scheduledDate: row.scheduled_date,
+        plannedAmount: Number(row.planned_amount),
+        status: row.status,
+        skipReason: row.skip_reason ?? null,
+        reserveEntryId: row.reserve_entry_id == null ? null : Number(row.reserve_entry_id),
+        resolvedAt: row.resolved_at ?? null,
+      }));
+      const pendingSchedule = schedules
+        .filter((row) => row.status === "pending")
+        .sort((a, b) => String(a.scheduledMonth).localeCompare(String(b.scheduledMonth)))[0] ?? null;
+      const targetReached = currentAmount >= targetAmount;
+      return { ...plan, entries, currentAmount, remainingAmount, remainingMonths, monthlyRequired, fundAccount, recurring, pendingSchedule, recentSchedules: schedules.slice(0, 6), targetReached };
     });
     const eligibleAccounts = (accountResult.data ?? [])
       .filter((account) => isReserveEligibleFundAccount(account))

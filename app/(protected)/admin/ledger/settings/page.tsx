@@ -11,7 +11,9 @@ type Party = { id: number; name: string; type?: string; is_active: boolean };
 type Recurring = { id: number; name: string; category_id: number; amount: number; recognition_day: number; effective_from: string; effective_to: string | null; party_id: number | null; is_active: boolean; source_key_prefix: string; memo: string | null };
 type ReserveEntry = { id: number; entry_type: string; amount: number | string; occurred_at: string; memo: string | null };
 type ReserveFundAccount = { id: number; code: string; displayName: string };
-type Reserve = { id: number; name: string; target_amount: number; target_date: string | null; is_active: boolean; memo: string | null; fund_account_id: number | null; fundAccount: ReserveFundAccount | null; currentAmount: number; remainingAmount: number; entries: ReserveEntry[] | null };
+type ReserveRecurring = { monthlyAmount: number; recurringDay: number; startMonth: string; endMonth: string | null; autoGenerate: boolean };
+type ReserveSchedule = { id: number; scheduledMonth: string; scheduledDate: string; plannedAmount: number; status: string; skipReason: string | null; reserveEntryId: number | null; resolvedAt: string | null };
+type Reserve = { id: number; name: string; target_amount: number; target_date: string | null; is_active: boolean; memo: string | null; fund_account_id: number | null; fundAccount: ReserveFundAccount | null; currentAmount: number; remainingAmount: number; entries: ReserveEntry[] | null; recurring: ReserveRecurring | null; pendingSchedule: ReserveSchedule | null; recentSchedules: ReserveSchedule[] | null; targetReached: boolean };
 type EligibleAccount = { id: number; code: string; displayName: string; type: string };
 type User = { id: number; name?: string; full_name?: string; username?: string };
 type Participant = { id: number; user_id: number; sort_order: number };
@@ -21,7 +23,9 @@ const currentMonth = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho
 const money = (value: number) => `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(value))} ₫`;
 const localDateTime = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 16);
 const RESERVE_ENTRY_LABELS: Record<string, string> = { allocate: "적립", release: "해제", consume: "사용", adjustment: "조정" };
+const RESERVE_SCHEDULE_STATUS_LABELS: Record<string, string> = { pending: "확정 대기", confirmed: "확정됨", skipped: "건너뜀", superseded: "대체됨" };
 const formatReserveDateTime = (value: string) => new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Ho_Chi_Minh", dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+const monthLabel = (value: string) => value.slice(0, 7);
 const toRate = (percent: string) => {
   const [whole = "0", fraction = ""] = percent.trim().split(".");
   const million = BigInt(1_000_000);
@@ -74,6 +78,9 @@ export default function LedgerSettingsPage() {
   async function createReserve(event: FormEvent) { event.preventDefault(); await mutate("/api/admin/ledger/reserves", { name: reserve.name, targetAmount: Number(reserve.targetAmount), targetDate: reserve.targetDate || null, linkedRecurringPlanId: null, fundAccountId: reserve.fundAccountId ? Number(reserve.fundAccountId) : null, memo: reserve.memo }); setReserve({ name: "", targetAmount: "", targetDate: "", fundAccountId: "", memo: "" }); }
   async function saveReservePlan(id: number, body: Record<string, unknown>) { await mutate(`/api/admin/ledger/reserves/${id}`, body, "PATCH"); }
   async function addReserveEntry(id: number, body: Record<string, unknown>) { await mutate(`/api/admin/ledger/reserves/${id}/entries`, body); }
+  async function saveReserveRecurring(id: number, body: Record<string, unknown>) { await mutate(`/api/admin/ledger/reserves/${id}/recurring`, body, "PUT"); }
+  async function generateReserveSchedule() { await mutate("/api/admin/ledger/reserves/schedule", { month }); }
+  async function resolveReserveSchedule(scheduleId: number, body: Record<string, unknown>) { await mutate(`/api/admin/ledger/reserves/schedule/${scheduleId}`, body); }
 
   const expenseCategories = ledger?.categories.filter(row => row.kind === "expense") ?? [];
   return <Container><main className={styles.page}>
@@ -86,7 +93,7 @@ export default function LedgerSettingsPage() {
       <details className={styles.settingsSection}><summary>반복비용</summary><p className={styles.sectionDescription}>월세 등 반복되는 고정비 기준을 관리합니다. 실제 지급은 장부작성에서 처리합니다.</p><div className={styles.dataList}>{recurring.map(row => <div className={styles.dataRow} key={row.id}><strong>{row.name}<br />{money(Number(row.amount))}</strong><span>{row.effective_from} ~ {row.effective_to ?? "계속"}<br />{row.is_active ? "사용 중" : "사용 안 함"}</span></div>)}</div><form className={styles.form} onSubmit={createPlan}><label>반복비용명<input required className={styles.input} value={plan.name} onChange={event => setPlan({ ...plan, name: event.target.value })} /></label><label>비용 카테고리<select required className={styles.input} value={plan.categoryId} onChange={event => setPlan({ ...plan, categoryId: event.target.value })}><option value="">선택</option>{expenseCategories.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label><label>월 금액<input required type="number" min="0.001" step="0.001" className={styles.input} value={plan.amount} onChange={event => setPlan({ ...plan, amount: event.target.value })} /></label><label>매월 인식일<input required type="number" min="1" max="31" className={styles.input} value={plan.recognitionDay} onChange={event => setPlan({ ...plan, recognitionDay: event.target.value })} /></label><label>적용 시작월<input required type="month" className={styles.input} value={plan.effectiveFrom} onChange={event => setPlan({ ...plan, effectiveFrom: event.target.value })} /></label><label>거래처<select className={styles.input} value={plan.partyId} onChange={event => setPlan({ ...plan, partyId: event.target.value })}><option value="">설정 안 함</option>{ledger?.parties.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label><label>반복 항목 코드<input required className={styles.input} placeholder="예: rent" value={plan.sourceKeyPrefix} onChange={event => setPlan({ ...plan, sourceKeyPrefix: event.target.value })} /></label><label>메모<input className={styles.input} value={plan.memo} onChange={event => setPlan({ ...plan, memo: event.target.value })} /></label><button className={styles.primary} disabled={working}>반복비용 추가</button></form></details>
       <details className={`${styles.settingsSection} ${styles.fullWidth}`}><summary>준비금</summary>
         <p className={styles.sectionDescription}>준비금 목표·보관 계좌·적립/해제/사용을 관리합니다. 준비금은 장부 비용이나 실제 계좌 잔액을 바꾸지 않고, 해당 계좌의 <strong>사용 가능 금액</strong>에서만 차감되는 관리 기록입니다. 실제 비용 지급은 기존 장부 거래 흐름으로 별도 기록합니다.</p>
-        <div className={styles.dataList}>{reserves.map(row => <ReservePlanCard key={row.id} row={row} eligibleAccounts={eligibleAccounts} working={working} savePlan={saveReservePlan} addEntry={addReserveEntry} />)}</div>
+        <div className={styles.dataList}>{reserves.map(row => <ReservePlanCard key={row.id} row={row} month={month} eligibleAccounts={eligibleAccounts} working={working} savePlan={saveReservePlan} addEntry={addReserveEntry} saveRecurring={saveReserveRecurring} generateSchedule={generateReserveSchedule} resolveSchedule={resolveReserveSchedule} />)}</div>
         <form className={styles.form} onSubmit={createReserve}>
           <strong>준비금 계획 추가</strong>
           <label>준비금 이름<input required className={styles.input} value={reserve.name} onChange={event => setReserve({ ...reserve, name: event.target.value })} /></label>
@@ -103,12 +110,16 @@ export default function LedgerSettingsPage() {
   </main></Container>;
 }
 
-function ReservePlanCard({ row, eligibleAccounts, working, savePlan, addEntry }: {
+function ReservePlanCard({ row, month, eligibleAccounts, working, savePlan, addEntry, saveRecurring, generateSchedule, resolveSchedule }: {
   row: Reserve;
+  month: string;
   eligibleAccounts: EligibleAccount[];
   working: boolean;
   savePlan: (id: number, body: Record<string, unknown>) => Promise<void>;
   addEntry: (id: number, body: Record<string, unknown>) => Promise<void>;
+  saveRecurring: (id: number, body: Record<string, unknown>) => Promise<void>;
+  generateSchedule: () => Promise<void>;
+  resolveSchedule: (scheduleId: number, body: Record<string, unknown>) => Promise<void>;
 }) {
   const [amount, setAmount] = useState(String(row.target_amount));
   const [date, setDate] = useState(row.target_date ?? "");
@@ -118,7 +129,14 @@ function ReservePlanCard({ row, eligibleAccounts, working, savePlan, addEntry }:
   const [entryAmount, setEntryAmount] = useState("");
   const [entryMemo, setEntryMemo] = useState("");
   const [occurredAt, setOccurredAt] = useState(localDateTime);
+  const [recMonthly, setRecMonthly] = useState(row.recurring ? String(row.recurring.monthlyAmount) : "");
+  const [recDay, setRecDay] = useState(row.recurring ? String(row.recurring.recurringDay) : "1");
+  const [recStart, setRecStart] = useState(row.recurring ? monthLabel(row.recurring.startMonth) : month);
+  const [recEnd, setRecEnd] = useState(row.recurring?.endMonth ? monthLabel(row.recurring.endMonth) : "");
+  const [recAuto, setRecAuto] = useState(row.recurring?.autoGenerate ?? false);
   const entries = row.entries ?? [];
+  const recentSchedules = row.recentSchedules ?? [];
+  const pending = row.pendingSchedule;
   // ledger_reserve_plans_fund_account_guard blocks a fund-account change on a non-empty plan.
   const accountLocked = row.currentAmount !== 0;
   return (
@@ -160,6 +178,45 @@ function ReservePlanCard({ row, eligibleAccounts, working, savePlan, addEntry }:
           ? <p className={styles.notice}>준비금 사용·해제는 실제 장부 지출을 생성하는 기능이 아니며, 묶어둔 준비금을 해제하는 관리 기록입니다. 실제 비용 지급은 기존 장부 거래 흐름으로 별도 기록합니다.</p>
           : null}
         <button className={styles.secondary} disabled={working || !entryAmount} onClick={() => void addEntry(row.id, { entryType, amount: Number(entryAmount), occurredAt: `${occurredAt}:00+07:00`, memo: entryMemo || null }).then(() => { setEntryAmount(""); setEntryMemo(""); })}>{RESERVE_ENTRY_LABELS[entryType]} 기록</button>
+      </div>
+      <div style={{ borderTop: "1px solid #f0f1f3", paddingTop: 10, display: "grid", gap: 10 }}>
+        <strong>정기 적립 설정</strong>
+        <p className={styles.sectionDescription}>매월 일정액을 준비금으로 적립할 계획입니다. 예정은 자동 생성되며, 실제 적립은 관리자가 확정할 때만 실행됩니다(회계 비용 아님).</p>
+        <label>월 적립액<input className={styles.input} type="number" min="0.001" step="0.001" value={recMonthly} onChange={event => setRecMonthly(event.target.value)} /></label>
+        <label>매월 적립일<input className={styles.input} type="number" min="1" max="31" value={recDay} onChange={event => setRecDay(event.target.value)} /></label>
+        <label>시작월<input className={styles.input} type="month" value={recStart} onChange={event => setRecStart(event.target.value)} /></label>
+        <label>종료월(선택)<input className={styles.input} type="month" value={recEnd} onChange={event => setRecEnd(event.target.value)} /></label>
+        <label className={styles.checkLabel}><input type="checkbox" checked={recAuto} onChange={event => setRecAuto(event.target.checked)} />자동 예정 생성 (매일 cron)</label>
+        {recAuto && !row.fundAccount ? <p className={styles.error}>자동 예정 생성은 연결 계좌가 필요합니다. 위에서 계좌를 먼저 연결하세요.</p> : null}
+        <p className={styles.sectionDescription}>자동 예정 생성이 꺼져 있어도 아래 &ldquo;이번 달 예정 생성&rdquo; 버튼으로 수동 생성할 수 있습니다.</p>
+        <div className={styles.buttonRow}>
+          <button className={styles.secondary} disabled={working || !recMonthly || !recDay || !recStart} onClick={() => void saveRecurring(row.id, { monthlyAmount: Number(recMonthly), recurringDay: Number(recDay), startMonth: `${recStart}-01`, endMonth: recEnd ? `${recEnd}-01` : null, autoGenerate: recAuto })}>정기 설정 저장</button>
+          {row.recurring ? <button className={styles.secondary} disabled={working} onClick={() => void saveRecurring(row.id, { monthlyAmount: null })}>정기 설정 해제</button> : null}
+        </div>
+        {row.targetReached
+          ? <p className={styles.notice}>목표 금액을 달성하여 신규 정기 적립 예정이 생성되지 않습니다.</p>
+          : pending
+            ? <div className={styles.notice} style={{ display: "grid", gap: 8 }}>
+                <span>{monthLabel(pending.scheduledMonth)} 적립 예정 · <strong>{money(pending.plannedAmount)}</strong></span>
+                <div className={styles.buttonRow}>
+                  <button className={styles.primary} disabled={working} onClick={() => void resolveSchedule(pending.id, { action: "confirm" })}>확정</button>
+                  <button className={styles.secondary} disabled={working} onClick={() => { const reason = window.prompt("건너뛰기 사유"); if (reason && reason.trim()) void resolveSchedule(pending.id, { action: "skip", reason: reason.trim() }); }}>건너뛰기</button>
+                </div>
+              </div>
+            : row.recurring
+              ? <button className={styles.secondary} disabled={working} onClick={() => void generateSchedule()}>이번 달 예정 생성</button>
+              : null}
+        {recentSchedules.length > 0
+          ? <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ textAlign: "left", color: "#6b7280" }}><th>적립월</th><th>상태</th><th style={{ textAlign: "right" }}>금액</th><th>비고</th></tr></thead>
+              <tbody>{recentSchedules.map(schedule => <tr key={schedule.id} style={{ borderTop: "1px solid #f3f4f6" }}>
+                <td>{monthLabel(schedule.scheduledMonth)}</td>
+                <td>{RESERVE_SCHEDULE_STATUS_LABELS[schedule.status] ?? schedule.status}</td>
+                <td style={{ textAlign: "right" }}>{money(schedule.plannedAmount)}</td>
+                <td>{schedule.skipReason ?? "-"}</td>
+              </tr>)}</tbody>
+            </table>
+          : null}
       </div>
       <div style={{ borderTop: "1px solid #f0f1f3", paddingTop: 10, display: "grid", gap: 6 }}>
         <strong>기록 이력</strong>
