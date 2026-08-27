@@ -5,6 +5,7 @@ import test from "node:test";
 
 const { buildLedgerEntries } = createRequire(import.meta.url)("../lib/ledger/entries.ts") as typeof import("../lib/ledger/entries");
 const { computePaidExpenseTotal } = createRequire(import.meta.url)("../lib/ledger/payables.ts") as typeof import("../lib/ledger/payables");
+const { computeReceivedIncome } = createRequire(import.meta.url)("../lib/ledger/summary.ts") as typeof import("../lib/ledger/summary");
 const read = (path: string) => readFileSync(path, "utf8");
 const route = read("app/api/admin/ledger/route.ts");
 const page = read("app/(protected)/admin/ledger/entries/page.tsx");
@@ -192,8 +193,16 @@ test("I2. a downward correction viewed from its OWN (unrelated) month contribute
 // C. route.ts summary wiring (cardGrossSales / actualCardDeposits / paidExpense)
 // ---------------------------------------------------------------------------
 
-test("summary stays additive: existing income/expense/operatingProfit fields are untouched", () => {
-  assert.match(route, /summary:\s*\{\s*income,\s*expense,\s*operatingProfit:\s*income\s*-\s*expense,\s*paidExpense,\s*cardGrossSales,\s*actualCardDeposits\s*\}/);
+test("received income separates recognized card sales from actual card deposits", () => {
+  assert.equal(computeReceivedIncome(623_163_550, 0, 0), 623_163_550);
+  assert.equal(computeReceivedIncome(623_163_550, 100_000_000, 0), 523_163_550);
+  assert.equal(computeReceivedIncome(623_163_550, 100_000_000, 90_000_000), 613_163_550);
+  assert.equal(computeReceivedIncome(0, 0, 90_000_000), 90_000_000);
+});
+
+test("recognized income and operating profit keep their accounting meaning", () => {
+  assert.match(route, /const recognizedIncome = profitRows[\s\S]*economic_effect_sign/);
+  assert.match(route, /summary:\s*\{\s*income:\s*recognizedIncome,\s*receivedIncome,\s*expense,\s*operatingProfit:\s*recognizedIncome\s*-\s*expense/);
 });
 
 test("cardGrossSales sums this month's POS card-bucket sales by business_date", () => {
@@ -204,6 +213,13 @@ test("cardGrossSales sums this month's POS card-bucket sales by business_date", 
 
 test("actualCardDeposits sums this month's real deposits by deposit_date (policy A), excluding cancelled", () => {
   assert.match(route, /from\("ledger_card_reconciliations"\)\.select\("deposit_amount"\)\.neq\("status",\s*"cancelled"\)\.gte\("deposit_date",\s*monthStart\)\.lt\("deposit_date",\s*nextMonth\)/);
+});
+
+test("a prior-month card sale is received only in the later deposit_date month", () => {
+  const augustReceived = computeReceivedIncome(623_163_550, 195_317_260, 0);
+  const septemberReceived = computeReceivedIncome(0, 0, 190_000_000);
+  assert.equal(augustReceived, 427_846_290);
+  assert.equal(septemberReceived, 190_000_000);
 });
 
 test("paidExpense roots are scoped by the root's own recognition_month, not a payment date", () => {
@@ -231,12 +247,12 @@ test("the summary block itself (GET handler) issues no RPC — the three new fie
 });
 
 test("summary type is modeled on LedgerData so the cards cannot silently fall back to undefined", () => {
-  assert.match(pageCompact, /typeLedgerSummary=\{income:number;expense:number;operatingProfit:number;paidExpense:number;cardGrossSales:number;actualCardDeposits:number;\}/);
+  assert.match(pageCompact, /typeLedgerSummary=\{income:number;receivedIncome:number;expense:number;operatingProfit:number;paidExpense:number;cardGrossSales:number;actualCardDeposits:number;\}/);
   assert.match(pageCompact, /summary:LedgerSummary/);
 });
 
 test("income card shows total income with actual-deposit and card-gross sub-rows", () => {
-  assert.match(pageCompact, /money\(data\.summary\.income\)/);
+  assert.match(pageCompact, /money\(data\.summary\.receivedIncome\)/);
   assert.match(pageCompact, /전체수입/);
   assert.match(pageCompact, /money\(data\.summary\.actualCardDeposits\)/);
   assert.match(pageCompact, /money\(data\.summary\.cardGrossSales\)/);

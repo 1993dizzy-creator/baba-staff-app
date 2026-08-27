@@ -3,6 +3,7 @@ import { buildLedgerEntries, type CandidateRow, type PartnerLedgerDefault, type 
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { computePaidExpenseTotal } from "@/lib/ledger/payables";
 import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
+import { computeReceivedIncome } from "@/lib/ledger/summary";
 
 export const dynamic = "force-dynamic";
 
@@ -51,10 +52,11 @@ export async function GET(request: Request) {
     ]);
     for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,cardGrossSalesResult,actualCardDepositsResult,reservesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult]) if (result.error) throw result.error;
     const profitRows=[...(profitResult.data??[]),...(recognitionProfitResult.data??[])];
-    const income = profitRows.filter((row) => row.type === "income" || row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
+    const recognizedIncome = profitRows.filter((row) => row.type === "income" || row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const expense = profitRows.filter((row) => row.type === "expense" || row.type === "expense_recognition").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const cardGrossSales = (cardGrossSalesResult.data ?? []).reduce((sum, row) => sum + Number(row.amount), 0);
     const actualCardDeposits = (actualCardDepositsResult.data ?? []).reduce((sum, row) => sum + Number(row.deposit_amount), 0);
+    const receivedIncome = computeReceivedIncome(recognizedIncome, cardGrossSales, actualCardDeposits);
     const correctionsByRoot = new Map<number, { amount: number; economicEffectSign: number }[]>();
     for (const row of paidExpenseCorrectionsResult.data ?? []) {
       const key = Number(row.correction_of_id);
@@ -98,7 +100,7 @@ export async function GET(request: Request) {
       return [{ id: Number(partner.id), name: partner.name, ledgerPartyId: Number(bridge.ledger_party_id), paymentMode: partner.payment_mode, defaultFundAccountId, isActive: partner.is_active }];
     });
     const entries = buildLedgerEntries(transactions, candidates, partnerDefaultsByParty);
-    return ledgerJson({ ok: true, month, summary: { income, expense, operatingProfit: income - expense, paidExpense, cardGrossSales, actualCardDeposits }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions, entries });
+    return ledgerJson({ ok: true, month, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, cardGrossSales, actualCardDeposits }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);

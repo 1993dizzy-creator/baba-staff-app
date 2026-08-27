@@ -68,6 +68,7 @@ type Partner = {
 };
 type LedgerSummary = {
   income: number;
+  receivedIncome: number;
   expense: number;
   operatingProfit: number;
   paidExpense: number;
@@ -598,7 +599,7 @@ export default function LedgerEntriesPage() {
                   <i aria-hidden="true">💰</i>
                   {vi ? "Thu" : "수입"}
                 </span>
-                <strong>{money(data.summary.income)}</strong>
+                <strong>{money(data.summary.receivedIncome)}</strong>
                 <small>{vi ? "Tổng doanh thu" : "전체 수입"}</small>
                 <div className={styles.summarySubRows}>
                   <span><small className={styles.summarySubLabel}>{vi ? "Doanh thu thẻ" : "카드결제액"}</small><b>{money(data.summary.cardGrossSales)}</b></span>
