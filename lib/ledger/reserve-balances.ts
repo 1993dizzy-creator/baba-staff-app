@@ -21,6 +21,34 @@ export function reserveCurrentAmount(entries: readonly ReserveEntryAmount[]) {
   }, 0);
 }
 
+// Shortfall between a plan's target and what is actually reserved. Never negative:
+// linking a fund account or raising the target does not create reserved money —
+// only `allocate` entries do — so a freshly linked plan reads target as the shortfall.
+export function reserveShortfall(targetAmount: number, currentAmount: number) {
+  return Math.max(0, targetAmount - currentAmount);
+}
+
+export const RESERVE_FUND_ACCOUNT_TYPES = ["cash", "bank", "personal_custody"] as const;
+
+export type ReserveFundAccountCandidate = {
+  type: string;
+  code: string;
+  is_active?: boolean;
+  is_business_fund?: boolean;
+};
+
+// Mirrors the DB rule enforced by ledger_reserve_plans_fund_account_guard and
+// ledger_create_reserve_plan_v2 / _v1 entry validation: a reserve may only be
+// parked in an active, business-owned liquid fund that is not the card-clearing bucket.
+export function isReserveEligibleFundAccount(account: ReserveFundAccountCandidate) {
+  return (
+    (account.is_active ?? true) &&
+    (account.is_business_fund ?? false) &&
+    account.code !== "card_clearing" &&
+    (RESERVE_FUND_ACCOUNT_TYPES as readonly string[]).includes(account.type)
+  );
+}
+
 export function reservesByFundAccount(plans: readonly AccountReservePlan[]) {
   const byAccount = new Map<number, Array<{ id: number; name: string; currentAmount: number; linkedRecurringSourceKeyPrefix: string | null }>>();
   for (const plan of plans) {
