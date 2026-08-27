@@ -206,6 +206,7 @@ export default function LedgerEntriesPage() {
     [candidateDraft, setCandidateDraft] = useState<CandidateDraft | null>(null),
     [openingExpanded, setOpeningExpanded] = useState(false),
     [balanceExpanded, setBalanceExpanded] = useState(false),
+    [reserveExpanded, setReserveExpanded] = useState<Set<string>>(() => new Set()),
     [payableExpanded, setPayableExpanded] = useState(false),
     [payables, setPayables] = useState<PayablesSummary | null>(null),
     [payableParty, setPayableParty] = useState<PayableParty | null>(null);
@@ -332,6 +333,16 @@ export default function LedgerEntriesPage() {
       ),
     [businessAccounts],
   );
+  // Cash and the corporate bank each take a full-width row; the two personal
+  // custody accounts share a row (see .personalAccounts in the stylesheet).
+  const primaryBalanceAccounts = useMemo(
+    () => businessAccounts.filter((account) => account.type !== "personal_custody"),
+    [businessAccounts],
+  );
+  const personalBalanceAccounts = useMemo(
+    () => businessAccounts.filter((account) => account.type === "personal_custody"),
+    [businessAccounts],
+  );
   const payableParties = payables?.parties ?? [];
   const todayKey = todayDate();
   const pastGroups = useMemo(
@@ -440,6 +451,71 @@ export default function LedgerEntriesPage() {
       else next.add(date);
       return next;
     });
+  }
+  function toggleReserve(code: string) {
+    setReserveExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  }
+  function renderBalanceCard(account: Account) {
+    const delta = balanceDeltaByCode.get(account.code) ?? 0;
+    const deltaClass = delta > 0
+      ? styles.balanceDeltaPositive
+      : delta < 0
+        ? styles.balanceDeltaNegative
+        : styles.balanceDeltaZero;
+    const showReserve = account.code === "baba_corporate_bank" || account.reserves.length > 0;
+    const hasReserve = account.reserveTotal !== 0;
+    const reserveOpen = reserveExpanded.has(account.code);
+    return (
+      <article className={styles.balanceCard} key={account.id}>
+        <small className={styles.balanceCardName}>{localizedAccountName(account, lang)}</small>
+        <b className={styles.balanceCardValue}>{money(account.balance)}</b>
+        <em className={`${styles.balanceDelta} ${deltaClass}`}>
+          {delta > 0 ? "+" : ""}{money(delta)}
+        </em>
+        {showReserve ? (
+          <div className={styles.balanceReserve}>
+            {hasReserve ? (
+              <button
+                type="button"
+                className={styles.balanceReserveToggle}
+                aria-expanded={reserveOpen}
+                onClick={() => toggleReserve(account.code)}
+              >
+                <span>🔒 {vi ? "Tổng quỹ dự phòng" : "준비금 합계"}</span>
+                <b>{money(account.reserveTotal)}</b>
+                <i aria-hidden>{reserveOpen ? "⌃" : "⌄"}</i>
+              </button>
+            ) : (
+              <span className={styles.balanceReserveToggle}>
+                <span>{vi ? "Tổng quỹ dự phòng" : "준비금 합계"}</span>
+                <b>{money(account.reserveTotal)}</b>
+              </span>
+            )}
+            {hasReserve && reserveOpen ? (
+              <div className={styles.balanceReserveList}>
+                {account.reserves
+                  .filter((reserve) => reserve.currentAmount !== 0)
+                  .map((reserve) => (
+                    <span key={reserve.id}>
+                      <small>{reserveLabel(reserve, lang)}</small>
+                      <b>{money(reserve.currentAmount)}</b>
+                    </span>
+                  ))}
+              </div>
+            ) : null}
+            <span className={styles.balanceAvailable}>
+              <small>{vi ? "Số dư khả dụng" : "사용 가능 잔액"}</small>
+              <b>{money(account.availableBalance)}</b>
+            </span>
+          </div>
+        ) : null}
+      </article>
+    );
   }
   function renderDateGroup(group: DateGroup) {
     const expanded =
@@ -770,33 +846,14 @@ export default function LedgerEntriesPage() {
                 <i aria-hidden>{balanceExpanded ? "⌃" : "⌄"}</i>
               </button>
               {balanceExpanded ? <div className={styles.balanceDetail} id="ledger-current-balance-detail">
-                {businessAccounts.map((account) => {
-                  const delta = balanceDeltaByCode.get(account.code) ?? 0;
-                  const showReserves = account.code === "baba_corporate_bank" || account.reserves.length > 0;
-                  const deltaClass = delta > 0
-                    ? styles.balanceDeltaPositive
-                    : delta < 0
-                      ? styles.balanceDeltaNegative
-                      : styles.balanceDeltaZero;
-                  return (
-                    <span className={showReserves ? styles.balanceAccountWithReserves : ""} key={account.id}>
-                      <small>{localizedAccountName(account, lang)}</small>
-                      {showReserves ? <div className={styles.accountReserveDetail}>
-                        <span><small>{vi ? "Tổng số dư" : "총 잔액"}</small><b>{money(account.balance)}</b></span>
-                        <span><small>{vi ? "Tổng quỹ dự phòng" : "준비금 합계"}</small><b>{money(account.reserveTotal)}</b></span>
-                        {account.reserves.map((reserve) => <span className={styles.reserveBreakdown} key={reserve.id}>
-                          <small>{reserveLabel(reserve, lang)}</small><b>{money(reserve.currentAmount)}</b>
-                        </span>)}
-                        <span className={styles.availableBalance}><small>{vi ? "Số dư khả dụng" : "사용 가능 잔액"}</small><b>{money(account.availableBalance)}</b></span>
-                      </div> : <span className={styles.balanceAmounts}>
-                          <b>{money(account.balance)}</b>
-                          <em className={`${styles.balanceDelta} ${deltaClass}`}>
-                            ({delta > 0 ? "+" : ""}{money(delta)})
-                          </em>
-                        </span>}
-                    </span>
-                  );
-                })}
+                <div className={styles.balanceAccounts}>
+                  {primaryBalanceAccounts.map(renderBalanceCard)}
+                  {personalBalanceAccounts.length > 0 ? (
+                    <div className={styles.personalAccounts}>
+                      {personalBalanceAccounts.map(renderBalanceCard)}
+                    </div>
+                  ) : null}
+                </div>
               </div> : null}
             </div>
           </aside>

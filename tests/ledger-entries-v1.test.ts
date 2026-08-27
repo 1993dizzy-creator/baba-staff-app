@@ -197,22 +197,53 @@ test("current balance panel is collapsed, nav-safe and expandable", () => {
   assert.match(pageCompact, /aria-controls="ledger-current-balance-detail"/);
   assert.match(pageCompact, /balanceExpanded\?<divclassName=\{styles\.balanceDetail\}id="ledger-current-balance-detail"/);
   assert.match(page, /Tiền hiện có/);assert.match(page, /현재 보유금/);
+  // The pushed-layout sub-hint was removed; the panel title alone carries the meaning.
+  assert.doesNotMatch(page, /당월 시재 이후 입출금을 반영한/);
+  assert.doesNotMatch(css, /balanceHint/);
   assert.match(css, /\.balanceBar\{bottom:calc\(60px \+ env\(safe-area-inset-bottom\)\)\}/);
   assert.match(css, /\.page\{padding-bottom:calc\(122px \+ env\(safe-area-inset-bottom\)\)\}/);
   assert.match(css, /\.balanceToggle\{[^}]*min-height:46px/);
-  assert.match(css, /\.balanceInner>\.balanceDetail\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  // Every account renders as the same uniform card — no wide/full-width variant.
+  assert.match(pageCompact, /<articleclassName=\{styles\.balanceCard\}key=\{account\.id\}>/);
+  assert.doesNotMatch(css, /balanceCardWide/);
+  assert.doesNotMatch(pageCompact, /wide=account\.code/);
+  // Detail box is a plain block; the outer accounts wrapper is a single column
+  // (cash and the corporate bank each take a full-width row).
+  assert.match(css, /\.balanceInner \.balanceAccounts\{display:grid;grid-template-columns:1fr;gap:8px;width:100%/);
+  assert.match(css, /\.balanceInner \.balanceCard\{min-width:0;width:100%/);
+  assert.match(css, /\.balanceInner>\.balanceDetail\{display:block/);
+  assert.doesNotMatch(css, /max-width:640px/);
+  // The two personal-custody accounts share a row via a dedicated 2-col grid,
+  // falling back to one column only on very narrow screens.
+  assert.match(pageCompact, /businessAccounts\.filter\(\(account\)=>account\.type!=="personal_custody"\)/);
+  assert.match(pageCompact, /businessAccounts\.filter\(\(account\)=>account\.type==="personal_custody"\)/);
+  assert.match(pageCompact, /\{primaryBalanceAccounts\.map\(renderBalanceCard\)\}/);
+  assert.match(pageCompact, /personalBalanceAccounts\.length>0\?\(<divclassName=\{styles\.personalAccounts\}>\{personalBalanceAccounts\.map\(renderBalanceCard\)\}<\/div>\)/);
+  assert.match(css, /\.balanceInner \.personalAccounts\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:8px;width:100%/);
+  assert.match(css, /@media\(max-width:340px\)\{[\s\S]*?\.balanceInner \.personalAccounts\{grid-template-columns:1fr\}/);
+  // No internal scroll on the panel itself; only a very long reserve list is capped.
+  assert.doesNotMatch(css, /\.balanceInner>\.balanceDetail\{[^}]*overflow-y:auto/);
+  assert.match(css, /\.balanceInner \.balanceReserveList\{[^}]*max-height:30vh;overflow-y:auto/);
   assert.match(css, /\.balanceInner\{[^}]*border:1px solid #cbd5e1;[^}]*border-radius:14px 14px 0 0;[^}]*background:rgba\(255,255,255,\.995\);[^}]*box-shadow:0 -2px 10px/);
   assert.match(css, /\.balanceInner::before\{[^}]*height:2px;background:#374151/);
   assert.match(pageCompact, /delta>0\?styles\.balanceDeltaPositive:delta<0\?styles\.balanceDeltaNegative:styles\.balanceDeltaZero/);
-  assert.match(pageCompact, /\(\{delta>0\?"\+":""\}\{money\(delta\)\}\)/);
-  assert.match(css, /\.balanceAmounts\{[^}]*display:flex;[^}]*flex-wrap:wrap/);
+  assert.match(pageCompact, /\{delta>0\?"\+":""\}\{money\(delta\)\}/);
   assert.match(css, /\.balanceDeltaPositive\{color:#16805a\}/);
   assert.match(css, /\.balanceDeltaNegative\{color:#b4493e\}/);
   assert.match(css, /\.balanceDeltaZero\{color:#6b7280\}/);
-  assert.match(css, /\.balanceInner>\.balanceDetail\{[^}]*padding:4px 8px 30px/);
-  assert.match(css, /\.balanceExpandedPage\{padding-bottom:calc\(242px \+ env\(safe-area-inset-bottom\)\)\}/);
+  assert.match(css, /\.balanceInner>\.balanceDetail\{[^}]*padding:8px 10px 30px/);
+  assert.match(css, /\.balanceExpandedPage\{padding-bottom:calc\(430px \+ env\(safe-area-inset-bottom\)\)\}/);
   assert.match(css, /@media\(max-width:560px\)[\s\S]*\.balanceToggle/);
   assert.match(css, /@media\(max-width:340px\)[\s\S]*\.balanceToggle>strong\{font-size:11px\}/);
+  // Reserve/available shown inside the corporate card; per-reserve list is collapsed behind a toggle.
+  assert.match(pageCompact, /showReserve=account\.code==="baba_corporate_bank"\|\|account\.reserves\.length>0/);
+  assert.match(pageCompact, /hasReserve=account\.reserveTotal!==0/);
+  assert.match(pageCompact, /reserveOpen=reserveExpanded\.has\(account\.code\)/);
+  assert.match(pageCompact, /onClick=\{\(\)=>toggleReserve\(account\.code\)\}/);
+  assert.match(pageCompact, /hasReserve&&reserveOpen\?/);
+  assert.match(pageCompact, /account\.availableBalance/);
+  assert.doesNotMatch(page, /"총 잔액"/);
+  assert.match(css, /\.balanceInner \.balanceAvailable small\{[^}]*color:#16805a/);
   assert.match(bottomNav,/height: 60/);assert.match(bottomNav,/marginTop: -22/);assert.match(bottomNav,/zIndex: 1000/);
   assert.match(page,/vuong_personal_custody: "개인\(Vương\)"/);
   assert.match(page,/cho_personal_custody: "개인\(Cho\)"/);
