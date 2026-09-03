@@ -5,7 +5,7 @@ import {
   SOURCE,
   fetchSaInvoiceDetail,
   getDetailsFromInvoicePayload,
-  getPaymentsFromInvoicePayload,
+  getPaymentSnapshotFromInvoicePayload,
   getInvoiceRefId,
   buildReceiptRow,
   buildLineRow,
@@ -271,7 +271,11 @@ export async function POST(
       );
       const lineSaveResult = await saveLines(lineRows);
 
-      const payments = getPaymentsFromInvoicePayload(detailPayload);
+      const paymentSnapshot = getPaymentSnapshotFromInvoicePayload(detailPayload);
+      if (!paymentSnapshot.available) {
+        throw new Error("payment_snapshot_unavailable");
+      }
+      const payments = paymentSnapshot.payments;
       const paymentRows = payments.map((payment) =>
         buildPaymentRow({
           receiptId,
@@ -282,7 +286,7 @@ export async function POST(
           syncedAt,
         })
       );
-      await savePayments(paymentRows);
+      await savePayments(paymentRows, [receiptForSave.ref_id]);
       await markReceiptsInventoryDeductionEligible(
         Array.from(
           new Set([

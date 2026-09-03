@@ -6,6 +6,7 @@ export type PosReceiptPaymentEligibility = {
   id: number;
   payment_status: number | null;
   is_canceled?: boolean | null;
+  final_amount?: number | string | null;
 };
 
 export type PosPaymentRow = {
@@ -79,8 +80,52 @@ export function buildPaymentSummary(payments: PosPaymentRow[]): PosPaymentSummar
 }
 
 export function filterPaidPayments<T extends PosPaymentRow>(receipts: PosReceiptPaymentEligibility[], payments: T[]) {
-  const paidReceiptIds = new Set(receipts.filter((receipt) => receipt.payment_status === PAID_POS_PAYMENT_STATUS).map((receipt) => receipt.id));
+  const paidReceiptIds = new Set(receipts.filter((receipt) => receipt.payment_status === PAID_POS_PAYMENT_STATUS && receipt.is_canceled !== true).map((receipt) => receipt.id));
   return payments.filter((payment) => payment.receipt_id !== null && paidReceiptIds.has(payment.receipt_id));
+}
+
+export function getPaidReceiptTotal(receipts: PosReceiptPaymentEligibility[]) {
+  return receipts.reduce(
+    (total, receipt) =>
+      receipt.payment_status === PAID_POS_PAYMENT_STATUS &&
+      receipt.is_canceled !== true
+        ? total + toPaymentNumber(receipt.final_amount)
+        : total,
+    0
+  );
+}
+
+export type PosPaymentReconciliationMismatch = {
+  receiptId: number;
+  receiptAmount: number;
+  paymentAmount: number;
+};
+
+export function findPaymentReconciliationMismatches(
+  receipts: PosReceiptPaymentEligibility[],
+  payments: PosPaymentRow[]
+) {
+  const paidReceipts = receipts.filter(
+    (receipt) =>
+      receipt.payment_status === PAID_POS_PAYMENT_STATUS &&
+      receipt.is_canceled !== true
+  );
+  const paymentTotals = new Map<number, number>();
+  for (const payment of payments) {
+    if (payment.receipt_id === null) continue;
+    paymentTotals.set(
+      payment.receipt_id,
+      (paymentTotals.get(payment.receipt_id) || 0) + toPaymentNumber(payment.amount)
+    );
+  }
+
+  return paidReceipts.flatMap<PosPaymentReconciliationMismatch>((receipt) => {
+    const receiptAmount = toPaymentNumber(receipt.final_amount);
+    const paymentAmount = paymentTotals.get(receipt.id) || 0;
+    return Math.abs(receiptAmount - paymentAmount) < 0.01
+      ? []
+      : [{ receiptId: receipt.id, receiptAmount, paymentAmount }];
+  });
 }
 
 export function paymentSummaryByBucket(summary: PosPaymentSummary): Record<PosPaymentBucket, number> {

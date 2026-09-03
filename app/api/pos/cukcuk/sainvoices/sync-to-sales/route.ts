@@ -20,6 +20,7 @@ import {
   getInvoiceDate,
   getDetailsFromInvoicePayload,
   getPaymentsFromInvoicePayload,
+  getPaymentSnapshotFromInvoicePayload,
   buildReceiptRow,
   buildLineRow,
   buildPaymentRow,
@@ -27,8 +28,6 @@ import {
   saveLines,
   savePayments,
   markReceiptsInventoryDeductionEligible,
-  getReceiptPaymentSources,
-  dedupePaymentRows,
   stripRawJson,
   type JsonObject,
   type CukcukInvoice,
@@ -613,14 +612,24 @@ export async function POST(req: Request) {
           };
         }
 
+        const detailPayload = await fetchSaInvoiceDetail({
+          accessToken: login.accessToken,
+          companyCode: login.companyCode,
+          refId,
+        });
+        if (getInvoiceRefId(detailPayload) !== refId) {
+          return {
+            invoice,
+            refId,
+            detailPayload: null,
+            error: "Invoice detail refId mismatch",
+          };
+        }
+
         return {
           invoice,
           refId,
-          detailPayload: await fetchSaInvoiceDetail({
-            accessToken: login.accessToken,
-            companyCode: login.companyCode,
-            refId,
-          }),
+          detailPayload,
           error: null,
         };
       })
@@ -675,7 +684,16 @@ export async function POST(req: Request) {
     const lineSaveResult = await saveLines(lineRows);
     markPhase("saveLinesMs");
     const buildPaymentRowsStartedAt = Date.now();
-    const detailPaymentRows = validDetails.flatMap((item) => {
+    const authoritativePaymentDetails = validDetails.filter((item) => {
+      const snapshot = getPaymentSnapshotFromInvoicePayload(item.detailPayload);
+      if (snapshot.available) return true;
+      console.warn("[SALES_SYNC_PAYMENT_SNAPSHOT_UNAVAILABLE]", {
+        refId: item.refId,
+        field: snapshot.field,
+      });
+      return false;
+    });
+    const detailPaymentRows = authoritativePaymentDetails.flatMap((item) => {
       const receiptId = receiptSaveResult.receiptIdMap.get(item.refId) ?? null;
       const receiptRow = receiptRows.find((row) => row.ref_id === item.refId);
       const payments = getPaymentsFromInvoicePayload(item.detailPayload);
@@ -691,38 +709,15 @@ export async function POST(req: Request) {
         })
       );
     });
-    let buildPaymentRowsMs = Date.now() - buildPaymentRowsStartedAt;
+    const buildPaymentRowsMs = Date.now() - buildPaymentRowsStartedAt;
 
-    const getReceiptPaymentSourcesStartedAt = Date.now();
-    const receiptPaymentSources = await getReceiptPaymentSources(
-      receiptRows.map((row) => row.ref_id)
+    const getReceiptPaymentSourcesMs = 0;
+    const paymentRows = detailPaymentRows;
+
+    const paymentSaveResult = await savePayments(
+      paymentRows,
+      authoritativePaymentDetails.map((item) => item.refId)
     );
-    const getReceiptPaymentSourcesMs = Date.now() - getReceiptPaymentSourcesStartedAt;
-
-    const buildPaymentRowsStartedAt2 = Date.now();
-    const storedReceiptPaymentRows = Array.from(receiptPaymentSources.values()).flatMap(
-      (receipt) => {
-        const payments = getPaymentsFromInvoicePayload(receipt.raw_json);
-
-        return payments.map((payment) =>
-          buildPaymentRow({
-            receiptId: receipt.id,
-            receiptRefId: receipt.ref_id,
-            businessDate,
-            refDate: receipt.ref_date,
-            payment,
-            syncedAt,
-          })
-        );
-      }
-    );
-    const paymentRows = dedupePaymentRows([
-      ...storedReceiptPaymentRows,
-      ...detailPaymentRows,
-    ]);
-    buildPaymentRowsMs += Date.now() - buildPaymentRowsStartedAt2;
-
-    const paymentSaveResult = await savePayments(paymentRows);
     await markReceiptsInventoryDeductionEligible(
       Array.from(
         new Set([
@@ -741,7 +736,8 @@ export async function POST(req: Request) {
       lineSaveResult.updatedCount +
       lineSaveResult.staleExcludedCount +
       paymentSaveResult.createdCount +
-      paymentSaveResult.updatedCount;
+      paymentSaveResult.updatedCount +
+      paymentSaveResult.staleDeletedCount;
     const statusChangedCount =
       receiptSaveResult.statusChangedCount + lineSaveResult.statusChangedCount;
     const canceledCount = statusChangedCount;
@@ -762,7 +758,8 @@ export async function POST(req: Request) {
         receiptSaveResult.updatedCount +
         lineSaveResult.updatedCount +
         lineSaveResult.staleExcludedCount +
-        paymentSaveResult.updatedCount,
+        paymentSaveResult.updatedCount +
+        paymentSaveResult.staleDeletedCount,
       canceledCount,
       errorMessage:
         failedDetails.length > 0
@@ -823,12 +820,15 @@ export async function POST(req: Request) {
         lineStaleCandidateCount: lineSaveResult.staleCandidateCount,
         lineStaleExcludedCount: lineSaveResult.staleExcludedCount,
         lineStaleSkippedCount: lineSaveResult.staleSkippedCount,
-        paymentSourceReceiptCount: receiptPaymentSources.size,
+        paymentSourceReceiptCount: authoritativePaymentDetails.length,
         paymentRowsFromDetailPayloadCount: detailPaymentRows.length,
-        paymentRowsFromStoredReceiptCount: storedReceiptPaymentRows.length,
+        paymentRowsFromStoredReceiptCount: 0,
         paymentRowsBuiltCount: paymentRows.length,
+        paymentSnapshotUnavailableCount:
+          validDetails.length - authoritativePaymentDetails.length,
         paymentCreatedCount: paymentSaveResult.createdCount,
         paymentUpdatedCount: paymentSaveResult.updatedCount,
+        paymentStaleDeletedCount: paymentSaveResult.staleDeletedCount,
         paymentUpsertedCount:
           paymentSaveResult.createdCount + paymentSaveResult.updatedCount,
         taxLineUpdatedCount: lineSaveResult.taxLineChangedCount,

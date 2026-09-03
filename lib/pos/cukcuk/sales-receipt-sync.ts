@@ -1,6 +1,8 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { hasInventoryAffectingSalesLineChanged } from "@/lib/pos/cukcuk/sales-receipt-inventory-change";
 import { stripVolatilePosSyncFields } from "@/lib/pos/cukcuk/sales-receipt-sync-compare";
+import { getPaymentSnapshotFromInvoicePayload } from "@/lib/pos/cukcuk/payment-snapshot";
+export { getPaymentSnapshotFromInvoicePayload } from "@/lib/pos/cukcuk/payment-snapshot";
 
 export const CUKCUK_BASE_URL =
   process.env.CUKCUK_BASE_URL || "https://graphapi.cukcuk.vn";
@@ -104,10 +106,6 @@ export type PaymentRow = {
   updated_at: string;
 };
 
-export type ExistingPaymentRow = PaymentRow & {
-  id: number;
-};
-
 export function getString(record: JsonObject | null | undefined, keys: string[]) {
   for (const key of keys) {
     const value = record?.[key];
@@ -184,16 +182,7 @@ export function getRefDetailType(detail: CukcukInvoiceDetail) {
 }
 
 export function getPaymentsFromInvoicePayload(payload: JsonObject): JsonObject[] {
-  const candidates = [
-    payload.SAInvoicePayments,
-    payload.saInvoicePayments,
-    payload.Payments,
-    payload.payments,
-  ];
-
-  const found = candidates.find((item) => Array.isArray(item));
-
-  return Array.isArray(found) ? (found as JsonObject[]) : [];
+  return getPaymentSnapshotFromInvoicePayload(payload).payments;
 }
 
 export function isCashPayment(payment: JsonObject) {
@@ -615,31 +604,30 @@ function getLineFallbackKey(
   ].join("");
 }
 
-function getPaymentKey(row: Pick<PaymentRow, "receipt_ref_id" | "payment_type" | "payment_name" | "card_name">) {
+function getPaymentExternalId(row: Pick<PaymentRow, "raw_json">) {
+  return getString(row.raw_json, [
+    "SAInvoicePaymentID",
+    "SAInvoicePaymentId",
+    "saInvoicePaymentID",
+    "saInvoicePaymentId",
+  ]);
+}
+
+function getPaymentKey(
+  row: Pick<
+    PaymentRow,
+    "receipt_ref_id" | "payment_type" | "payment_name" | "card_name" | "raw_json"
+  >
+) {
+  const externalId = getPaymentExternalId(row);
+  if (externalId) return `${row.receipt_ref_id}::external::${externalId}`;
+
   return [
     row.receipt_ref_id,
     row.payment_type ?? -1,
     row.payment_name || "",
     row.card_name || "",
   ].join("::");
-}
-
-function hasPaymentChanged(existing: ExistingPaymentRow, next: PaymentRow) {
-  const compareKeys: (keyof PaymentRow)[] = [
-    "source",
-    "receipt_id",
-    "receipt_ref_id",
-    "business_date",
-    "ref_date",
-    "payment_type",
-    "payment_name",
-    "card_id",
-    "card_name",
-    "amount",
-    "raw_json",
-  ];
-
-  return compareKeys.some((key) => !isEqualValue(existing[key], next[key]));
 }
 
 export function stripRawJson<T extends { raw_json?: unknown }>(row: T) {
@@ -1090,33 +1078,6 @@ export async function getReceiptPaymentSources(receiptRefIds: string[]) {
   return map;
 }
 
-export async function getExistingPayments(receiptRefIds: string[]) {
-  if (receiptRefIds.length === 0) return new Map<string, ExistingPaymentRow>();
-
-  const { data, error } = await supabaseServer
-    .from("pos_sales_receipt_payments")
-    .select(
-      "id, source, receipt_id, receipt_ref_id, business_date, ref_date, payment_type, payment_name, card_id, card_name, amount, raw_json, synced_at, updated_at"
-    )
-    .eq("source", SOURCE)
-    .in("receipt_ref_id", receiptRefIds);
-
-  if (error) {
-    throw new Error(`Failed to fetch existing sales payments: ${error.message}`);
-  }
-
-  const map = new Map<string, ExistingPaymentRow>();
-
-  ((data || []) as ExistingPaymentRow[]).forEach((row) => {
-    map.set(getPaymentKey(row), {
-      ...row,
-      id: Number(row.id),
-    });
-  });
-
-  return map;
-}
-
 export async function saveReceipts(rows: ReceiptRow[]) {
   const emptyTiming = {
     getExistingReceiptsMs: 0,
@@ -1535,79 +1496,61 @@ export async function saveLines(rows: LineRow[]) {
   };
 }
 
-export async function savePayments(rows: PaymentRow[]) {
+export async function savePayments(
+  rows: PaymentRow[],
+  snapshotReceiptRefIds = Array.from(
+    new Set(rows.map((row) => row.receipt_ref_id))
+  )
+) {
   const emptyTiming = {
-    initialQueriesMs: 0,
-    insertPaymentsMs: 0,
-    updatePaymentsMs: 0,
+    reconcilePaymentsMs: 0,
   };
 
-  if (rows.length === 0) {
+  const receiptRefIds = Array.from(new Set(snapshotReceiptRefIds));
+  if (receiptRefIds.length === 0) {
     return {
       createdCount: 0,
       updatedCount: 0,
+      staleDeletedCount: 0,
       timing: emptyTiming,
     };
   }
 
-  const receiptRefIds = Array.from(
-    new Set(rows.map((row) => row.receipt_ref_id))
-  );
-  // Perf: independent reads, safe to run concurrently (see saveLines above).
-  const initialQueriesStartedAt = Date.now();
-  const [existingMap, modifiedReceiptRefIds] = await Promise.all([
-    getExistingPayments(receiptRefIds),
-    getModifiedReceiptRefIds(receiptRefIds),
-  ]);
-  const initialQueriesMs = Date.now() - initialQueriesStartedAt;
-  const editableRows = rows.filter(
-    (row) => !modifiedReceiptRefIds.has(row.receipt_ref_id)
-  );
-  const inserts = editableRows.filter((row) => !existingMap.has(getPaymentKey(row)));
-  const updates = editableRows.filter((row) => {
-    const existing = existingMap.get(getPaymentKey(row));
-    return existing ? hasPaymentChanged(existing, row) : false;
-  });
-
-  let insertPaymentsMs = 0;
-  if (inserts.length > 0) {
-    const insertStartedAt = Date.now();
-    const { error } = await supabaseServer
-      .from("pos_sales_receipt_payments")
-      .insert(inserts);
-    insertPaymentsMs = Date.now() - insertStartedAt;
-
-    if (error) {
-      throw new Error(`Failed to insert sales payments: ${error.message}`);
+  const rowsByReceiptRefId = new Map<string, PaymentRow[]>();
+  for (const receiptRefId of receiptRefIds) rowsByReceiptRefId.set(receiptRefId, []);
+  for (const row of rows) {
+    const current = rowsByReceiptRefId.get(row.receipt_ref_id);
+    if (!current) {
+      throw new Error(`Payment row is outside authoritative snapshot: ${row.receipt_ref_id}`);
     }
+    current.push(row);
   }
 
-  let updatePaymentsMs = 0;
-  if (updates.length > 0) {
-    const updateStartedAt = Date.now();
-    for (const row of updates) {
-      const id = existingMap.get(getPaymentKey(row))?.id;
-      const { error } = await supabaseServer
-        .from("pos_sales_receipt_payments")
-        .update(row)
-        .eq("id", id);
-
-      if (error) {
-        throw new Error(
-          `Failed to update sales payment ${row.receipt_ref_id}: ${error.message}`
-        );
-      }
-    }
-    updatePaymentsMs = Date.now() - updateStartedAt;
+  const snapshots = receiptRefIds.map((receiptRefId) => ({
+    receiptRefId,
+    payments: rowsByReceiptRefId.get(receiptRefId) || [],
+  }));
+  const reconcileStartedAt = Date.now();
+  const { data, error } = await supabaseServer.rpc(
+    "reconcile_sales_receipt_payments_v1",
+    { p_snapshots: snapshots }
+  );
+  const reconcilePaymentsMs = Date.now() - reconcileStartedAt;
+  if (error) {
+    throw new Error(`Failed to reconcile sales payments: ${error.message}`);
   }
+
+  const result = (data || {}) as Record<string, unknown>;
+  const createdCount = Number(result.createdCount || 0);
+  const updatedCount = Number(result.updatedCount || 0);
+  const staleDeletedCount = Number(result.deletedCount || 0);
 
   return {
-    createdCount: inserts.length,
-    updatedCount: updates.length,
+    createdCount,
+    updatedCount,
+    staleDeletedCount,
     timing: {
-      initialQueriesMs,
-      insertPaymentsMs,
-      updatePaymentsMs,
+      reconcilePaymentsMs,
     },
   };
 }

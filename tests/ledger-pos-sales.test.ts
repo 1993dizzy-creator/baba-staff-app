@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";import {readFileSync} from "node:fs";import {join} from "node:path";import test from "node:test";
 // @ts-expect-error Node strips TypeScript extensions in tests.
-import {buildPaymentSummary,classifyPaymentBucket,filterPaidPayments,paymentSummaryByBucket} from "../lib/sales/payment-summary.ts";
+import {buildPaymentSummary,classifyPaymentBucket,filterPaidPayments,findPaymentReconciliationMismatches,getPaidReceiptTotal,paymentSummaryByBucket} from "../lib/sales/payment-summary.ts";
 const read=(path:string)=>readFileSync(join(process.cwd(),path),"utf8");const salesRoute=read("app/api/admin/sales/monthly/route.ts");const helper=read("lib/sales/payment-summary.ts");const server=read("lib/ledger/pos-sales.ts");const syncRoute=read("app/api/admin/ledger/pos-sync/route.ts");const drillRoute=read("app/api/admin/ledger/transactions/[id]/pos-drilldown/route.ts");const ledgerRoute=read("app/api/admin/ledger/route.ts");const page=read("app/(protected)/admin/ledger/page.tsx");const foundation=read("supabase/migrations/202608210001_create_ledger_v1_foundation.sql");const migration=read("supabase/migrations/202608210002_add_ledger_pos_sales_sync.sql");
 const payment=(name:string|null,type:number|null,amount=100,card:string|null=null)=>({receipt_id:1,business_date:"2026-08-20",payment_type:type,payment_name:name,card_name:card,amount});
 test("cash classification",()=>assert.equal(classifyPaymentBucket(payment("tiền mặt",1)),"cash"));
@@ -9,6 +9,11 @@ test("card classification",()=>assert.equal(classifyPaymentBucket(payment("Visa"
 test("other classification",()=>assert.equal(classifyPaymentBucket(payment("khác",9)),"other"));
 test("canceled payment status is excluded",()=>assert.equal(filterPaidPayments([{id:1,payment_status:4,is_canceled:true}],[payment("tiền mặt",1)]).length,0));
 test("unpaid receipt is excluded",()=>assert.equal(filterPaidPayments([{id:1,payment_status:2}],[payment("tiền mặt",1)]).length,0));
+test("paid but canceled receipt is excluded",()=>assert.equal(filterPaidPayments([{id:1,payment_status:3,is_canceled:true}],[payment("tiền mặt",1)]).length,0));
+test("receipt final amount is the authoritative sales total",()=>assert.equal(getPaidReceiptTotal([{id:1,payment_status:3,is_canceled:false,final_amount:100},{id:2,payment_status:4,is_canceled:true,final_amount:500}]),100));
+test("split payment reconciles to the receipt final amount",()=>assert.deepEqual(findPaymentReconciliationMismatches([{id:1,payment_status:3,is_canceled:false,final_amount:100}],[payment("tiền mặt",1,40),payment("Visa",2,60)]),[]));
+test("stale payment is detected instead of inflating sales",()=>assert.deepEqual(findPaymentReconciliationMismatches([{id:1,payment_status:3,is_canceled:false,final_amount:100}],[payment("tiền mặt",1,100),payment("chuyển khoản",1,100)]),[{receiptId:1,receiptAmount:100,paymentAmount:200}]));
+test("short payment allocation is an explicit mismatch",()=>assert.deepEqual(findPaymentReconciliationMismatches([{id:1,payment_status:3,is_canceled:false,final_amount:100}],[payment("tiền mặt",1,90)]),[{receiptId:1,receiptAmount:100,paymentAmount:90}]));
 test("modified receipt payment rows remain the source of truth",()=>{const rows=[payment("tiền mặt",1,80),payment("Visa",2,20)];assert.deepEqual(buildPaymentSummary(filterPaidPayments([{id:1,payment_status:3}],[...rows])),{cashAmount:80,transferAmount:0,cardAmount:20,otherAmount:0,paymentTotalAmount:100});assert.match(server,/receiptRevision/);assert.match(server,/receiptUpdatedAt/)});
 test("same date and bucket cannot duplicate",()=>{assert.match(migration,/source_type='pos_sales_daily_payment' and source_key=v_key for update/);assert.match(migration,/pg_advisory_xact_lock/);assert.match(foundation,/ledger_transactions_source_key_unique/)});
 test("cash maps to store cash",()=>assert.match(migration,/\('cash','store_cash'\)/));
@@ -17,6 +22,7 @@ test("card maps to card clearing",()=>assert.match(migration,/\('card','card_cle
 test("other maps to Cho custody",()=>assert.match(migration,/\('other','cho_personal_custody'\)/));
 test("POS sales participates in recognition-month profit",()=>{assert.match(migration,/'sales'[\s\S]*recognition_month/);assert.match(ledgerRoute,/\["income", "expense", "sales"\]/);assert.match(ledgerRoute,/row\.type === "income" \|\| row\.type === "sales"/)});
 test("sync reads but never mutates POS tables",()=>{assert.match(server,/\.from\("pos_sales_receipts"\)\.select/);assert.match(server,/\.from\("pos_sales_receipt_payments"\)\.select/);assert.doesNotMatch(server,/\.from\("pos_sales_[^"]+"\)\.(insert|update|delete|upsert)/)});
+test("ledger blocks receipt/payment reconciliation mismatches",()=>{assert.match(server,/findPaymentReconciliationMismatches/);assert.match(server,/POS_PAYMENT_RECONCILIATION_MISMATCH/);assert.match(server,/getPaidReceiptTotal/);assert.match(server,/POS_PAYMENT_BUCKET_ALLOCATION_MISMATCH/)});
 test("automatic rows have no direct edit path",()=>{assert.match(page,/source_type === "pos_sales_daily_payment"/);assert.doesNotMatch(syncRoute,/ledger_create_manual_transaction_v1/);assert.match(migration,/pos_sync_drift_updated/)});
 test("lower roles are rejected by shared owner-master gate",()=>{assert.match(syncRoute,/requireLedgerActor\(\)/);assert.match(drillRoute,/requireLedgerActor\(\)/)});
 test("drill-down total is compared to ledger amount",()=>{assert.match(server,/sourceAmount:total/);assert.match(server,/matches:Number\(transaction\.amount\)===total/);assert.match(page,/POS 영수증 상세/)});
