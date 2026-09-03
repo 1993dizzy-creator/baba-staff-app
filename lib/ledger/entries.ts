@@ -166,6 +166,16 @@ function updateInventoryGroupTime(group: LedgerEntry, item: LedgerEntryItem) {
   group.sortTimestamp = startTimestamp;
 }
 
+function inventorySupplierName(row: CandidateRow | TransactionRow) {
+  return row.party?.name?.trim() || String(row.source_snapshot?.supplier ?? "").trim();
+}
+
+function inventoryPartyIdentity(partyId: number | null, supplierName: string) {
+  if (partyId !== null) return `party:${partyId}`;
+  const normalizedSupplier = supplierName.trim().toLocaleLowerCase();
+  return normalizedSupplier ? `supplier:${normalizedSupplier}` : "supplier:none";
+}
+
 // inventory 품목을 "시간 있는 항목은 오름차순, 시간 없는 항목은 뒤"로 정렬한다.
 // Array.prototype.sort는 안정 정렬이므로 동일 시간(또는 둘 다 시간 없음)끼리는 기존 순서가 유지된다.
 function compareItemsByEarliestTimeFirst(a: LedgerEntryItem, b: LedgerEntryItem) {
@@ -260,9 +270,11 @@ export function buildLedgerEntries(
     const time = transactionTime(row);
 
     if (row.source_type === "inventory_purchase_candidate" || row.source_type === "inventory_purchase_rebook") {
-      const partyMissing = !row.party?.name;
-      const partyName = row.party?.name ?? "";
-      const key = `confirmed-inventory:${row.business_date}:${row.party_id ?? "none"}:${accountName ?? "payable"}`;
+      const partyId = row.party_id == null ? null : value(row.party_id);
+      const partyMissing = !row.party?.name?.trim();
+      const partyName = inventorySupplierName(row);
+      const partyIdentity = inventoryPartyIdentity(partyId, partyName);
+      const key = `confirmed-inventory:${row.business_date}:${partyIdentity}:${accountName ?? "payable"}`;
       const group = inventoryGroups.get(key) ?? {
         id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "confirmed",
         title: partyName, subtitle: "", amount: 0, economicEffectSign: 1, displayTime: null, sortTimestamp: 0,
@@ -345,10 +357,11 @@ export function buildLedgerEntries(
     const partyId = row.proposed_party_id == null ? null : value(row.proposed_party_id);
     const defaults = partyId === null ? undefined : partnerDefaultsByParty.get(partyId);
     const resolution = defaults?.paymentMode === "postpaid" ? "payable" : "immediate";
-    const partyMissing = !row.party?.name;
-    const partyName = row.party?.name ?? "";
+    const partyMissing = !row.party?.name?.trim();
+    const partyName = inventorySupplierName(row);
+    const partyIdentity = inventoryPartyIdentity(partyId, partyName);
     const accountName = resolution === "payable" ? "미지급" : defaults?.defaultFundAccountName ?? "결제계정 확인 필요";
-    const key = `pending-inventory:${row.business_date}:${partyId ?? "none"}:${resolution}:${defaults?.defaultFundAccountId ?? "none"}`;
+    const key = `pending-inventory:${row.business_date}:${partyIdentity}:${resolution}:${defaults?.defaultFundAccountId ?? "none"}`;
     const group = inventoryGroups.get(key) ?? {
       id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "pending",
       title: partyName, subtitle: "", amount: 0, economicEffectSign: 1,

@@ -85,6 +85,11 @@ test("general form and quick purchase share the supplier contract", () => {
   assert.match(inventoryUi, /mode: "quick-save"/);
 });
 
+test("pending supplier optgroups keep their labels without repeating status per option", () => {
+  assert.equal((inventoryUi.match(/lang === "vi" \? "Cần xác nhận" : "확인 필요"/g) ?? []).length, 2);
+  assert.doesNotMatch(inventoryUi, /supplierName\} \(\{lang === "vi" \? "cần xác nhận" : "확인 필요"\}\)/);
+});
+
 test("bootstrap adds minimal supplier options without another client fetch", () => {
   assert.match(bootstrap, /Promise\.all\([\s\S]*business_partners[\s\S]*business_partner_supplier_aliases/);
   assert.match(bootstrapRoute, /supplierPartners: base\.supplierPartners[\s\S]*supplierAliases: base\.supplierAliases/);

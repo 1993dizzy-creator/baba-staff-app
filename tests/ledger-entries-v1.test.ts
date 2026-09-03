@@ -14,6 +14,8 @@ const keepingUi = read("components/bar/keeping/KeepingUi.tsx");
 const bottomNav = read("components/BottomNav.tsx");
 const route = read("app/api/admin/ledger/route.ts");
 const autoLink = read("supabase/migrations/20260824152518_auto_link_business_partners_to_ledger.sql");
+const inventoryCandidateMigration = read("supabase/migrations/202608210003_add_inventory_purchase_candidates.sql");
+const inventoryCandidateSource = read("lib/ledger/inventory-candidates.ts");
 const categories = read("supabase/migrations/20260824152948_ledger_category_v1.sql");
 const opening = read("supabase/migrations/20260824153108_seed_august_2026_opening_balances.sql");
 const manualCategories = read("supabase/migrations/20260824174814_add_manual_ledger_expense_categories.sql");
@@ -31,6 +33,52 @@ test("inventory candidates are summarized by date, partner and payment default",
   assert.equal(entries[0].title, "OK FOOD");
   assert.equal(entries[0].accountName, "BABA 법인계좌");
   assert.equal(entries[0].amount, 40_000);
+});
+
+test("inventory display prefers a fixed party and otherwise preserves one-off supplier identity", () => {
+  const fixed = buildLedgerEntries([], [{
+    id: 1, business_date: "2026-08-31", proposed_amount: 10,
+    proposed_party_id: 7, party: { name: "Fixed Partner" },
+    source_snapshot: { item_name: "fixed", supplier: "ignored source name" },
+  }], new Map([[7, { paymentMode: "immediate", defaultFundAccountId: 4, defaultFundAccountName: "Cash" }]]))[0];
+  assert.equal(fixed.title, "Fixed Partner");
+  assert.match(fixed.id, /:party:7:/);
+
+  const oneOff = buildLedgerEntries([], [
+    { id: 2, business_date: "2026-08-31", proposed_amount: 37_000, proposed_party_id: null, source_snapshot: { item_name: "Kẹp gim", supplier: "Nhà sách" } },
+    { id: 3, business_date: "2026-08-31", proposed_amount: 300_000, proposed_party_id: null, source_snapshot: { item_name: "주류 메뉴판", supplier: "khác" } },
+  ], new Map());
+  assert.deepEqual(oneOff.map(entry => entry.title).sort(), ["Nhà sách", "khác"].sort());
+  assert.equal(oneOff.length, 2);
+  assert.ok(oneOff.some(entry => entry.id.includes(":supplier:nhà sách:")));
+  assert.ok(oneOff.some(entry => entry.id.includes(":supplier:khác:")));
+  assert.ok(oneOff.every(entry => entry.systemDisplay?.kind === "inventory" && entry.systemDisplay.partyMissing));
+});
+
+test("confirmed one-off inventory uses supplier grouping and missing supplier keeps the existing fallback", () => {
+  const transaction = (id: number, supplier?: string) => ({
+    id, party_id: null, type: "expense", business_date: "2026-08-31", amount: 100,
+    source_type: "inventory_purchase_candidate", source_snapshot: { item_name: `item-${id}`, ...(supplier ? { supplier } : {}) },
+    movements: [{ amount: -100, fund_account: { id: 4, display_name: "Cash" } }],
+  });
+  const entries = buildLedgerEntries([
+    transaction(10, "Nhà sách"), transaction(11, "khác"), transaction(12),
+  ], [], new Map());
+  assert.equal(entries.length, 3);
+  assert.ok(entries.some(entry => entry.title === "Nhà sách" && entry.id.includes(":supplier:nhà sách:")));
+  assert.ok(entries.some(entry => entry.title === "khác" && entry.id.includes(":supplier:khác:")));
+  const fallback = entries.find(entry => entry.id.includes(":supplier:none:"));
+  assert.equal(fallback?.title, "");
+  assert.equal(fallback?.systemDisplay?.kind, "inventory");
+  assert.equal(fallback?.systemDisplay?.kind === "inventory" && fallback.systemDisplay.partyMissing, true);
+});
+
+test("one-off inventory display changes do not loosen immediate or payable accounting contracts", () => {
+  assert.match(inventoryCandidateMigration, /p_resolution='payable' and \(p_party_id is null/);
+  assert.match(inventoryCandidateMigration, /p_resolution='immediate' and not exists\(select 1 from public\.ledger_fund_accounts where id=p_fund_account_id/);
+  assert.doesNotMatch(inventoryCandidateMigration, /p_resolution='immediate' and \(p_party_id is null/);
+  assert.match(inventoryCandidateMigration, /values\(v_operation,'expense',[\s\S]*p_category_id,p_party_id,'confirmed'/);
+  assert.match(inventoryCandidateSource, /supplier: log\.new_supplier\?\.trim\(\) \|\| null/);
 });
 
 test("confirmed inventory and POS rows retain source detail while grouping", () => {

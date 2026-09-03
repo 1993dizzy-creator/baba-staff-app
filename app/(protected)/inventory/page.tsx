@@ -4650,7 +4650,7 @@ export default function InventoryPage() {
                                     {supplierPartners.map((option) => <option key={option.id} value={`partner:${option.id}`}>{option.name}</option>)}
                                 </optgroup>
                                 <optgroup label={lang === "vi" ? "Cần xác nhận" : "확인 필요"}>
-                                    {supplierAliases.filter((alias) => alias.status === "pending").map((alias) => <option key={alias.id} value={`alias:${alias.id}`}>{alias.supplierName} ({lang === "vi" ? "cần xác nhận" : "확인 필요"})</option>)}
+                                    {supplierAliases.filter((alias) => alias.status === "pending").map((alias) => <option key={alias.id} value={`alias:${alias.id}`}>{alias.supplierName}</option>)}
                                 </optgroup>
 
                                 <option value="__custom__">
@@ -5836,7 +5836,7 @@ export default function InventoryPage() {
                                         {supplierPartners.map((option) => <option key={option.id} value={`partner:${option.id}`}>{option.name}</option>)}
                                     </optgroup>
                                     <optgroup label={lang === "vi" ? "Cần xác nhận" : "확인 필요"}>
-                                        {supplierAliases.filter((alias) => alias.status === "pending").map((alias) => <option key={alias.id} value={`alias:${alias.id}`}>{alias.supplierName} ({lang === "vi" ? "cần xác nhận" : "확인 필요"})</option>)}
+                                        {supplierAliases.filter((alias) => alias.status === "pending").map((alias) => <option key={alias.id} value={`alias:${alias.id}`}>{alias.supplierName}</option>)}
                                     </optgroup>
                                     <option value="__custom__">{c.directInput}</option>
                                 </select>
