@@ -4,7 +4,7 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
 const migration = readFileSync(
-  "supabase/migrations/20260908103734_add_payroll_advance_adjustment.sql",
+  "supabase/migrations/20260908110641_add_payroll_advance_adjustment.sql",
   "utf8",
 );
 const paymentMigration = readFileSync(

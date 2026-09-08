@@ -18,6 +18,7 @@ import EmployeeInsuranceSettings, {
 } from "@/components/payroll/EmployeeInsuranceSettings";
 import EmployeeMealAllowanceSettings from "@/components/payroll/EmployeeMealAllowanceSettings";
 import EmployeeAttendanceBonusSettings from "@/components/payroll/EmployeeAttendanceBonusSettings";
+import EmployeeTaxSettings from "@/components/payroll/EmployeeTaxSettings";
 import PayrollModal from "@/components/payroll/PayrollModal";
 import { useLanguage } from "@/lib/language-context";
 import {
@@ -607,6 +608,8 @@ export default function PayrollSettingsPage() {
                     : "법인장 보험은 위의 회사 공통 보험 설정에서 관리합니다."}
                 </aside>
               )}
+
+              <EmployeeTaxSettings key={`tax-${selected.id}`} userId={selected.id} employeeName={selected.name ?? selected.username} vi={vi} />
 
               <EmployeeMealAllowanceSettings key={`meal-allowance-${selected.id}`} userId={selected.id} vi={vi} />
               <EmployeeAttendanceBonusSettings key={`attendance-bonus-${selected.id}`} userId={selected.id} vi={vi} />

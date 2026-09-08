@@ -43,6 +43,7 @@ export function calculatePayrollPayoutAmounts(input: {
   manualIncentiveAmount: number;
   manualPenaltyAmount: number;
   employeeInsuranceDeductionAmount: number;
+  employeePitDeductionAmount?: number;
   advanceAmount: number;
 }) {
   const preInsurancePayoutAmount =
@@ -52,6 +53,7 @@ export function calculatePayrollPayoutAmounts(input: {
   const netPayoutAmount =
     preInsurancePayoutAmount
     - input.employeeInsuranceDeductionAmount
+    - (input.employeePitDeductionAmount ?? 0)
     - input.advanceAmount;
 
   return { preInsurancePayoutAmount, netPayoutAmount };

@@ -1,0 +1,91 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const read = (path: string) => readFileSync(path, "utf8");
+const migration = read("supabase/migrations/20260908115312_add_payroll_tax_versions.sql");
+const overview = read("lib/payroll/overview.ts");
+const overviewServer = read("lib/payroll/overview-server.ts");
+const projection = read("lib/payroll/overview-projection.ts");
+const monthlyRun = read("lib/payroll/monthly-run.ts");
+const snapshot = read("lib/payroll/payment-snapshot.ts");
+const payments = read("app/api/admin/payroll/payments/route.ts");
+const profileApi = read("app/api/admin/payroll/tax-settings/route.ts");
+const policyApi = read("app/api/admin/payroll/tax-policy/route.ts");
+const card = read("components/payroll/CompensationCard.tsx");
+const settings = read("components/payroll/EmployeeTaxSettings.tsx");
+const attendance = read("app/(protected)/attendance/page.tsx");
+
+test("migration is append-only, versioned, private, transaction-safe, and seed-free", () => {
+  assert.match(migration, /^begin;/);
+  assert.match(migration, /commit;\s*$/);
+  assert.match(migration, /create table public\.payroll_tax_policy_versions/);
+  assert.match(migration, /create table public\.payroll_tax_setting_versions/);
+  assert.match(migration, /unique \(user_id, revision\)/);
+  assert.match(migration, /enable row level security/g);
+  assert.match(migration, /grant select, insert on table public\.payroll_tax_policy_versions, public\.payroll_tax_setting_versions to service_role/);
+  assert.doesNotMatch(migration, /grant[^;]*(update|delete)[^;]*payroll_tax_(?:policy|setting)_versions/i);
+  assert.doesNotMatch(migration, /\bdo\s+\$\$/i);
+  assert.doesNotMatch(migration, /KIM MIN JAE|Vương|15500000|6200000/);
+});
+
+test("database validates brackets and protects policy/profile versions after payment", () => {
+  assert.match(migration, /payroll_validate_tax_brackets_v1/);
+  assert.match(migration, /v_lower <> v_expected_lower/);
+  assert.match(migration, /v_index = v_count - 1[\s\S]*upperBoundAmount'[\s\S]*'null'::jsonb/);
+  assert.match(migration, /v_rate < 0 or v_rate >= 10000/);
+  assert.match(migration, /PAYROLL_TAX_POLICY_LOCKED_FOR_PAID_MONTH/);
+  assert.match(migration, /PAYROLL_TAX_SETTING_LOCKED_FOR_PAID_EMPLOYEE/);
+  assert.match(migration, /before insert or update on public\.payroll_tax_policy_versions/);
+  assert.match(migration, /before insert or update on public\.payroll_tax_setting_versions/);
+});
+
+test("tax mutations reuse owner/master authorization and private security-definer RPCs", () => {
+  for (const api of [profileApi, policyApi]) assert.match(api, /requirePayrollActor\(\)/);
+  assert.match(migration, /perform public\.payroll_assert_actor_v2\(p_actor_user_id\)/g);
+  assert.match(migration, /security definer\s*set search_path=pg_catalog, public/g);
+  assert.match(migration, /revoke all on function public\.payroll_create_tax_setting_version_v1[\s\S]*from public, anon, authenticated/);
+  assert.match(migration, /grant execute on function public\.payroll_create_tax_setting_version_v1[\s\S]*to service_role/);
+});
+
+test("overview and projection derive taxable compensation independently from payout deductions", () => {
+  assert.match(overviewServer, /loadPayrollTaxVersions\(month,options\?\.userId\)/);
+  assert.match(overview, /calculateTaxableCompensationAmount/);
+  assert.doesNotMatch(overview, /taxableCompensationAmount:preInsurancePayoutAmount/);
+  assert.match(overview, /employeePitDeductionAmount:tax\.employeePitDeductionAmount/);
+  assert.match(overview, /taxTreatment:entry\.taxTreatment/);
+  assert.match(monthlyRun, /payrollTaxTreatmentForItem\(category,direction,normalizedAmount,sourceSnapshot\)/);
+  assert.match(monthlyRun, /unearnedCompensationAmount:vnd\(rate\.dayRate\)/);
+  assert.match(overviewServer, /category:"attendance_bonus"[\s\S]*taxTreatment:"taxable_compensation"/);
+  assert.match(projection, /calculateEmployeePit\(\{/);
+  assert.match(projection, /calculateTaxableCompensationAmount/);
+  assert.doesNotMatch(projection, /taxableCompensationAmount: preInsurancePayoutAmount/);
+  assert.match(projection, /taxableOvertimeAmount/);
+  assert.match(projection, /taxExemptOvertimeAmount/);
+  assert.match(projection, /employeePitDeductionAmounts/);
+  assert.match(projection, /companyPitAmounts/);
+});
+
+test("payment snapshot/hash and v2 payment totals carry every tax input and final net", () => {
+  assert.match(snapshot, /taxSnapshot:employee\.tax/);
+  assert.match(snapshot, /return \{employee,/);
+  assert.match(payments, /payrollPaymentSnapshotHash\(calculationSnapshot\)/);
+  assert.match(payments, /p_calculated_net_amount:employee\.amounts\.netPayoutAmount/);
+  assert.match(payments, /payroll_pay_employee_v2/);
+  assert.match(migration, /employee_pit_total/);
+  assert.match(migration, /company_pit_total/);
+  assert.match(migration, /calculation_snapshot #>> '\{employee,tax,employeePitDeductionAmount\}'/);
+  assert.match(migration, /x\.actual \+ x\.employee_insurance \+ x\.employee_pit \+ x\.advance/);
+});
+
+test("admin and attendance expose exact Korean/Vietnamese PIT labels without identity mutation", () => {
+  for (const phrase of ["개인소득세(TNCN)", "과세소득", "본인공제", "부양가족", "직원 부담", "회사 부담", "회계 명의", "Thuế TNCN", "Thu nhập tính thuế", "Giảm trừ bản thân", "Người phụ thuộc", "Nhân viên chịu", "Công ty chịu", "Tên kế toán"]) assert.ok(card.includes(phrase), phrase);
+  for (const phrase of ["TNCN 적용 여부", "부양가족 수", "부담 방식", "세금 보험공제 방식", "회계/TNCN 명의", "적용 시작월", "Áp dụng TNCN", "Số người phụ thuộc", "Tên kế toán/TNCN"]) assert.ok(settings.includes(phrase), phrase);
+  assert.match(settings, /employeeName/);
+  assert.match(settings, /accountingName/);
+  assert.doesNotMatch(settings, /users\.(?:name|username)|update\(/);
+  assert.ok(attendance.includes("TNCN 예상 공제"));
+  assert.ok(attendance.includes("TNCN 회사 부담"));
+  assert.ok(attendance.includes("Khấu trừ TNCN dự kiến"));
+  assert.ok(attendance.includes("TNCN công ty chịu"));
+});

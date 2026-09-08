@@ -1,6 +1,7 @@
 import { calculatePayrollInsuranceTotals } from "./insurance";
 import { getPayrollHeaderAmount } from "./payroll-page-display";
 import type { PayrollOverviewEmployee } from "./overview";
+import { calculateEmployeePit, calculateTaxableCompensationAmount } from "./tax";
 
 export type PayrollOverviewProjectedSummary = ReturnType<typeof calculatePayrollInsuranceTotals> & {
   includedEmployeeCount: number;
@@ -14,9 +15,8 @@ export function buildPayrollOverviewProjectedSummary(
 ): PayrollOverviewProjectedSummary | null {
   const included = employees.flatMap((employee) => {
     const contractMonthlyAmount = getPayrollHeaderAmount(employee);
-    if (contractMonthlyAmount === null) return [];
-    return [{
-      preInsurancePayoutAmount: Math.max(0,
+    if (contractMonthlyAmount === null || employee.tax.status === "requires_review") return [];
+    const preInsurancePayoutAmount = Math.max(0,
         contractMonthlyAmount
         + employee.amounts.incentiveAmount
         + employee.amounts.overtimeAmount
@@ -24,8 +24,26 @@ export function buildPayrollOverviewProjectedSummary(
         - employee.amounts.automaticPenaltyAmount
         - employee.amounts.manualPenaltyAmount
         - employee.amounts.otherDeductionAmount,
-      ),
+      );
+    const taxableCompensationAmount = calculateTaxableCompensationAmount([
+      { amount: contractMonthlyAmount, taxTreatment: "taxable_compensation" },
+      { amount: employee.amounts.incentiveAmount, taxTreatment: "taxable_compensation" },
+      { amount: employee.amounts.taxableOvertimeAmount, taxTreatment: "taxable_compensation" },
+      { amount: employee.amounts.taxExemptOvertimeAmount, taxTreatment: "tax_exempt_compensation" },
+      { amount: employee.amounts.taxableOtherAdditionAmount, taxTreatment: "taxable_compensation" },
+      { amount: employee.amounts.unearnedCompensationAmount, taxTreatment: "unearned_compensation" },
+    ]);
+    const tax = calculateEmployeePit({
+      taxableCompensationAmount,
       employeeInsuranceDeductionAmount: employee.amounts.employeeInsuranceDeductionAmount,
+      policy: employee.tax.policySnapshot,
+      profile: employee.tax.profileSnapshot,
+    });
+    return [{
+      preInsurancePayoutAmount,
+      employeeInsuranceDeductionAmount: employee.amounts.employeeInsuranceDeductionAmount,
+      employeePitDeductionAmount: tax.employeePitDeductionAmount,
+      companyPitAmount: tax.companyPitAmount,
       advanceAmount: employee.amounts.advanceAmount,
       employerInsuranceAmount: employee.amounts.employerInsuranceAmount,
     }];
@@ -34,6 +52,8 @@ export function buildPayrollOverviewProjectedSummary(
   const totals = calculatePayrollInsuranceTotals({
     preInsurancePayoutAmounts: included.map((item) => item.preInsurancePayoutAmount),
     employeeDeductionAmounts: included.map((item) => item.employeeInsuranceDeductionAmount),
+    employeePitDeductionAmounts: included.map((item) => item.employeePitDeductionAmount),
+    companyPitAmounts: included.map((item) => item.companyPitAmount),
     advanceAmounts: included.map((item) => item.advanceAmount),
     employerAmounts: included.map((item) => item.employerInsuranceAmount),
     directorAmount: directorInsuranceAmount,

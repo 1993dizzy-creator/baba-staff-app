@@ -45,7 +45,7 @@ test("onSnapshotReady fires only after snapshot resolves, and does not gate on s
   // Promise.all await below (attached to the SAME snapshotPromise variable,
   // untouched by the hook's separate derived chain).
   assert.match(fn, /void snapshotPromise\.then\(snapshot=>\{onSnapshotReady\(\{snapshot,period\}\);\}\)\.catch\(\(\)=>undefined\);/);
-  assert.match(fn, /Promise\.all\(\[\s*snapshotPromise,\s*adjustmentPromise,\s*attendanceStandingPromise,\s*bonusVersionsPromise,?\s*\]\)/);
+  assert.match(fn, /Promise\.all\(\[\s*snapshotPromise,\s*adjustmentPromise,\s*attendanceStandingPromise,\s*bonusVersionsPromise,\s*taxVersionsPromise,?\s*\]\)/);
 });
 
 test("route: mealAllowancePromise is created inside onSnapshotReady, not after awaiting overview+paymentBatch", () => {

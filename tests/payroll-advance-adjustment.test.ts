@@ -5,7 +5,7 @@ import test from "node:test";
 import { calculateManualAdjustmentTotals, calculatePayrollPayoutAmounts } from "../lib/payroll/adjustments.ts";
 
 const read = (path: string) => readFileSync(path, "utf8");
-const migration = read("supabase/migrations/20260908103734_add_payroll_advance_adjustment.sql");
+const migration = read("supabase/migrations/20260908110641_add_payroll_advance_adjustment.sql");
 const paymentMigration = read("supabase/migrations/202608050001_add_employee_payment_batches.sql");
 const route = read("app/api/admin/payroll/adjustments/route.ts");
 const overview = read("lib/payroll/overview.ts");

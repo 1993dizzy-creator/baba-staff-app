@@ -114,6 +114,10 @@ const payrollSummaryCopy = {
     adjustments: "조정 내역",
     adjustmentTotal: "조정 합계",
     insuranceDeduction: "보험 예상 공제",
+    employeePit: "TNCN 예상 공제",
+    companyPit: "TNCN 회사 부담",
+    pitNotApplicable: "TNCN 미적용",
+    pitRequiresReview: "TNCN 설정 확인 필요",
     incentive: "인센티브",
     penalty: "패널티&가불",
     advance: "가불",
@@ -130,6 +134,10 @@ const payrollSummaryCopy = {
     adjustments: "Điều chỉnh",
     adjustmentTotal: "Tổng điều chỉnh",
     insuranceDeduction: "BH dự kiến",
+    employeePit: "Khấu trừ TNCN dự kiến",
+    companyPit: "TNCN công ty chịu",
+    pitNotApplicable: "Không áp dụng TNCN",
+    pitRequiresReview: "Cần kiểm tra cài đặt TNCN",
     incentive: "Thưởng",
     penalty: "Phạt & Ứng lương",
     advance: "Ứng lương",
@@ -1137,6 +1145,15 @@ function MyAttendance() {
                   )}
                 </strong>
               </div>
+            ) : null}
+            {payrollSummary?.taxStatus === "requires_review" ? (
+              <div style={insuranceDeductionStyle}><span style={insuranceDeductionLabelStyle}>{ps.pitRequiresReview}</span><strong style={insuranceDeductionValueStyle}>—</strong></div>
+            ) : payrollSummary?.taxMode === "not_applicable" ? (
+              <div style={insuranceDeductionStyle}><span style={insuranceDeductionLabelStyle}>{ps.pitNotApplicable}</span><strong style={insuranceDeductionValueStyle}>0₫</strong></div>
+            ) : payrollSummary && payrollSummary.taxBurdenMode === "company_bears" ? (
+              <div style={insuranceDeductionStyle}><span style={insuranceDeductionLabelStyle}>{ps.companyPit}</span><strong style={insuranceDeductionValueStyle}>{formatSignedVnd(payrollSummary.companyPitAmount, "+")}</strong></div>
+            ) : payrollSummary ? (
+              <div style={insuranceDeductionStyle}><span style={insuranceDeductionLabelStyle}>{ps.employeePit}</span><strong style={insuranceDeductionValueStyle}>{formatSignedVnd(payrollSummary.employeePitDeductionAmount, "-")}</strong></div>
             ) : null}
           </div>
         </div>

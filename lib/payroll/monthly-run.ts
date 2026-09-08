@@ -17,6 +17,7 @@ import { addStoreDays } from "@/lib/store-settings/business-time-core";
 import { isMissingAttendanceCandidateDate } from "./missing-attendance";
 import { calculateFixedMonthlyPayroll } from "./fixed-monthly";
 import { resolvePayrollAttendancePolicyByDate, type PayrollStoreSettingTimelineRow } from "./store-setting-timeline";
+import { payrollTaxReviewCodeForItem, payrollTaxTreatmentForItem, type PayrollTaxTreatment } from "./tax";
 
 export const PAYROLL_RUN_ENGINE_VERSION = "monthly-payroll-v7";
 export const PAYROLL_RUN_START_MONTH = "2026-07";
@@ -37,7 +38,7 @@ type CriticalWarning = typeof CRITICAL_WARNING_CODES[number];
 export type PayrollSnapshotUserRow={id:number;name:string|null;full_name:string|null;username:string;is_active:boolean;role:string;part:string|null;position:string|null;birth_date:string|null;hire_date:string|null;termination_date:string|null;is_system_account:boolean;payroll_eligible_override:boolean|null;level_program_enabled:boolean|null;level_base_date_override:string|null;levelProgramVersion?:EmployeeLevelProgramVersion};
 export type AttendanceRow={id:number;user_id:number;status:string;work_date:string;check_in_at:string|null;check_out_at:string|null;late_minutes:number|null;early_leave_minutes:number|null;work_minutes:number|null;approval_status:string|null;updated_at:string|null};
 type AutoCategory="base_work"|"paid_leave"|"overtime"|"late_deduction"|"early_leave_deduction"|"unauthorized_absence_deduction"|"insurance_employee_deduction";
-export type PayrollRunItemInput={itemType:"automatic"|"manual"|"review_adjustment";category:AutoCategory|string;direction:"addition"|"deduction";amount:number;originalAmount:number|null;businessDate:string|null;description:string;sourceSnapshot:Record<string,unknown>};
+export type PayrollRunItemInput={itemType:"automatic"|"manual"|"review_adjustment";category:AutoCategory|string;direction:"addition"|"deduction";amount:number;originalAmount:number|null;businessDate:string|null;description:string;taxTreatment:PayrollTaxTreatment;taxReviewCode:string|null;sourceSnapshot:Record<string,unknown>};
 export type PayrollRunReviewInput={warningCode:CriticalWarning;reviewLevel:"blocking"|"actionable"|"advisory";businessDate:string|null;sourceSnapshot:Record<string,unknown>};
 export type PayrollRunEmployeeInput={userId:number;employeeName:string;contractSnapshot:PayrollContract[];attendanceSnapshot:Record<string,unknown>;insuranceSnapshot:ReturnType<typeof buildEmployeeInsuranceSnapshot>;recognizedWorkdays:number;recognizedMinutes:number;lateMinutes:number;earlyLeaveMinutes:number;overtimeCandidateMinutes:number;items:PayrollRunItemInput[];reviews:PayrollRunReviewInput[]};
 type BatchInput={month:string;dates:string[];users:PayrollSnapshotUserRow[];attendance:AttendanceRow[];lateNormalizedRecordIds:Set<number>;contracts:PayrollContract[];schedules:WorkScheduleVersion[];settingsByDate:Map<string,{revision:number|null;lateGraceMinutes:number;earlyLeaveGraceMinutes:number}>;insuranceVersionsByUser:Map<number,PayrollInsuranceSettingVersion[]>;insuranceGlobal:PayrollInsuranceGlobalSettings;penaltySettings:PayrollPenaltySettings};
@@ -50,7 +51,7 @@ function activeOn<T extends{effectiveFrom:string;effectiveTo:string|null}>(rows:
 function intersectsMonth(row:{effectiveFrom:string;effectiveTo:string|null},start:string,endExclusive:string){return row.effectiveFrom<endExclusive&&(!row.effectiveTo||row.effectiveTo>start);}
 function employeeName(user:PayrollSnapshotUserRow){return user.name||user.full_name||user.username;}
 function vnd(value:number){return Math.round(value);}
-function item(category:AutoCategory,direction:"addition"|"deduction",amount:number,date:string|null,description:string,sourceSnapshot:Record<string,unknown>):PayrollRunItemInput{return{itemType:"automatic",category,direction,amount:vnd(Math.max(0,amount)),originalAmount:vnd(Math.max(0,amount)),businessDate:date,description,sourceSnapshot};}
+function item(category:AutoCategory,direction:"addition"|"deduction",amount:number,date:string|null,description:string,sourceSnapshot:Record<string,unknown>):PayrollRunItemInput{const normalizedAmount=vnd(Math.max(0,amount));const taxTreatment=payrollTaxTreatmentForItem(category,direction,normalizedAmount,sourceSnapshot);const taxReviewCode=payrollTaxReviewCodeForItem(category,direction,normalizedAmount,sourceSnapshot);return{itemType:"automatic",category,direction,amount:normalizedAmount,originalAmount:normalizedAmount,businessDate:date,description,taxTreatment,taxReviewCode,sourceSnapshot};}
 function review(warningCode:CriticalWarning,businessDate:string|null,sourceSnapshot:Record<string,unknown>,reviewLevel?:PayrollRunReviewInput["reviewLevel"]):PayrollRunReviewInput{return{warningCode,reviewLevel:reviewLevel??(BLOCKING_WARNING_CODES.has(warningCode)?"blocking":ACTIONABLE_WARNING_CODES.has(warningCode)?"actionable":"advisory"),businessDate,sourceSnapshot};}
 function isCritical(code:string):code is CriticalWarning{return(CRITICAL_WARNING_CODES as readonly string[]).includes(code);}
 
@@ -92,7 +93,7 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
       for(const record of records.filter(row=>row.status==="unauthorized_absence"&&eligibleDates.includes(row.work_date))){
         const scheduleMatches=activeOn(schedules,record.work_date);const schedule=scheduleMatches.length===1?scheduleMatches[0]:null;const settings=input.settingsByDate.get(record.work_date)??{revision:null,lateGraceMinutes:0,earlyLeaveGraceMinutes:0};
         const amount=calculateUnauthorizedAbsencePenalty({dayRate:rate.dayRate,penaltyDays:input.penaltySettings.unauthorizedAbsencePenaltyDays});
-        items.push(item("unauthorized_absence_deduction","deduction",amount,record.work_date,"무단결근 패널티 / Phạt vắng không phép",{attendanceRecordId:record.id,businessDate:record.work_date,dayRate:rate.dayRate,penaltyDays:input.penaltySettings.unauthorizedAbsencePenaltyDays,calculatedAmount:amount,contractRevision:contract.revision,scheduleRevision:schedule?.revision??null,storeSettingsRevision:settings.revision,engineVersion:PAYROLL_RUN_ENGINE_VERSION}));
+        items.push(item("unauthorized_absence_deduction","deduction",amount,record.work_date,"무단결근 패널티 / Phạt vắng không phép",{attendanceRecordId:record.id,businessDate:record.work_date,dayRate:rate.dayRate,penaltyDays:input.penaltySettings.unauthorizedAbsencePenaltyDays,calculatedAmount:amount,unearnedCompensationAmount:vnd(rate.dayRate),contractRevision:contract.revision,scheduleRevision:schedule?.revision??null,storeSettingsRevision:settings.revision,engineVersion:PAYROLL_RUN_ENGINE_VERSION}));
       }
     }
     const insuranceSetting=selectInsuranceSetting(input.insuranceVersionsByUser.get(user.id)??[],input.month);const insuranceSnapshot=buildEmployeeInsuranceSnapshot(insuranceSetting,input.insuranceGlobal);

@@ -17,7 +17,7 @@ function fail(message:string){
   if(message.includes("BATCH_PREFLIGHT_FAILED"))return payrollJson({ok:false,code:"PAYROLL_BATCH_PREFLIGHT_FAILED"},409);
   return payrollJson({ok:false,code:"PAYROLL_PAYMENT_FAILED"},500);
 }
-function paymentFailureCodes(employee:Awaited<ReturnType<typeof loadPayrollOverview>>["employees"][number],activeContractCount:number,blockingCodes:string[]){const codes:string[]=[];if(activeContractCount===0)codes.push("MISSING_CONTRACT");if(activeContractCount>1)codes.push("CONTRACT_OVERLAP");if(employee.amounts.currentAmount===null||!Number.isSafeInteger(employee.amounts.netPayoutAmount))codes.push("NET_AMOUNT_UNAVAILABLE");codes.push(...blockingCodes);return[...new Set(codes)]}
+function paymentFailureCodes(employee:Awaited<ReturnType<typeof loadPayrollOverview>>["employees"][number],activeContractCount:number,blockingCodes:string[]){const codes:string[]=[];if(activeContractCount===0)codes.push("MISSING_CONTRACT");if(activeContractCount>1)codes.push("CONTRACT_OVERLAP");if(employee.amounts.currentAmount===null||employee.calculationStatus!=="calculable"||!Number.isSafeInteger(employee.amounts.netPayoutAmount))codes.push("NET_AMOUNT_UNAVAILABLE");codes.push(...blockingCodes,...employee.tax.warningCodes);return[...new Set(codes)]}
 
 export async function POST(request:Request){
   const auth=await requirePayrollActor();if(auth.response||!auth.actor)return auth.response;
@@ -35,7 +35,7 @@ export async function POST(request:Request){
     if(calculationHash!==expectedHash)return payrollJson({ok:false,code:"PAYROLL_CALCULATION_STALE",message:"급여 계산 결과가 변경되었습니다. 다시 확인해주세요.",messageVi:"Kết quả tính lương đã thay đổi. Vui lòng kiểm tra lại."},409);
     if(actualPaidAmount!==employee.amounts.netPayoutAmount&&!differenceReason)return payrollJson({ok:false,code:"PAYROLL_PAYMENT_REASON_REQUIRED"},400);
     const targets=overview.employees.map(item=>({userId:item.userId,employeeName:item.name,part:item.part,position:item.position,isPayable:true,failureCodes:[]}));
-    const{data,error}=await supabaseServer.rpc("payroll_pay_employee_v1",{p_month:`${month}-01`,p_targets:targets,p_user_id:userId,p_calculation_snapshot:calculationSnapshot,p_calculation_hash:calculationHash,p_calculated_net_amount:employee.amounts.netPayoutAmount,p_actual_paid_amount:actualPaidAmount,p_difference_reason:differenceReason||null,p_payment_date:paymentDate,p_actor_user_id:auth.actor.id,p_engine_version:overview.snapshot.sourceSnapshot.engineVersion,p_common_settings_snapshot:overview.snapshot.sourceSnapshot,p_director_insurance_amount:overview.directorInsuranceAmount});
+    const{data,error}=await supabaseServer.rpc("payroll_pay_employee_v2",{p_month:`${month}-01`,p_targets:targets,p_user_id:userId,p_calculation_snapshot:calculationSnapshot,p_calculation_hash:calculationHash,p_calculated_net_amount:employee.amounts.netPayoutAmount,p_actual_paid_amount:actualPaidAmount,p_difference_reason:differenceReason||null,p_payment_date:paymentDate,p_actor_user_id:auth.actor.id,p_engine_version:overview.snapshot.sourceSnapshot.engineVersion,p_common_settings_snapshot:overview.snapshot.sourceSnapshot,p_director_insurance_amount:overview.directorInsuranceAmount});
     return error?fail(error.message):payrollJson({ok:true,result:data});
   }catch(error){return fail(error instanceof Error?error.message:"PAYROLL_PAYMENT_FAILED")}
 }
@@ -44,6 +44,6 @@ export async function PATCH(request:Request){
   const auth=await requirePayrollActor();if(auth.response||!auth.actor)return auth.response;
   const body=await request.json().catch(()=>null) as Record<string,unknown>|null;const runId=validId(body?.runId);const userId=validId(body?.userId);const reason=String(body?.reason??"").trim();
   if(!runId||!userId||!reason)return payrollJson({ok:false,code:"INVALID_PAYMENT_CANCELLATION"},400);
-  const{data,error}=await supabaseServer.rpc("payroll_cancel_employee_payment_v1",{p_run_id:runId,p_user_id:userId,p_reason:reason,p_actor_user_id:auth.actor.id});
+  const{data,error}=await supabaseServer.rpc("payroll_cancel_employee_payment_v2",{p_run_id:runId,p_user_id:userId,p_reason:reason,p_actor_user_id:auth.actor.id});
   return error?fail(error.message):payrollJson({ok:true,result:data});
 }

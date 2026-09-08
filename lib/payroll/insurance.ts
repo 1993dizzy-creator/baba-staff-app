@@ -74,6 +74,8 @@ export function calculateDirectorInsurance(global: PayrollInsuranceGlobalSetting
 export function calculatePayrollInsuranceTotals(input: {
   preInsurancePayoutAmounts: number[];
   employeeDeductionAmounts: number[];
+  employeePitDeductionAmounts?: number[];
+  companyPitAmounts?: number[];
   advanceAmounts?: number[];
   employerAmounts: number[];
   directorAmount: number;
@@ -81,16 +83,20 @@ export function calculatePayrollInsuranceTotals(input: {
   const totalPreInsurancePayoutAmount = input.preInsurancePayoutAmounts.reduce((sum, value) => sum + value, 0);
   const totalEmployeeInsuranceDeductionAmount = input.employeeDeductionAmounts.reduce((sum, value) => sum + value, 0);
   const totalEmployerInsuranceAmount = input.employerAmounts.reduce((sum, value) => sum + value, 0);
+  const totalEmployeePitDeductionAmount = (input.employeePitDeductionAmounts ?? []).reduce((sum, value) => sum + value, 0);
+  const totalCompanyPitAmount = (input.companyPitAmounts ?? []).reduce((sum, value) => sum + value, 0);
   const totalAdvanceAmount = (input.advanceAmounts ?? []).reduce((sum, value) => sum + value, 0);
-  const totalNetAmount = totalPreInsurancePayoutAmount - totalEmployeeInsuranceDeductionAmount - totalAdvanceAmount;
+  const totalNetAmount = totalPreInsurancePayoutAmount - totalEmployeeInsuranceDeductionAmount - totalEmployeePitDeductionAmount - totalAdvanceAmount;
   return {
     totalPreInsurancePayoutAmount,
     totalEmployeeInsuranceDeductionAmount,
+    totalEmployeePitDeductionAmount,
+    totalCompanyPitAmount,
     totalAdvanceAmount,
     totalNetAmount,
     totalEmployerInsuranceAmount,
     directorInsuranceAmount: input.directorAmount,
     totalInsuranceRemittanceAmount: totalEmployeeInsuranceDeductionAmount + totalEmployerInsuranceAmount + input.directorAmount,
-    totalCompanyCostAmount: totalPreInsurancePayoutAmount + totalEmployerInsuranceAmount + input.directorAmount,
+    totalCompanyCostAmount: totalPreInsurancePayoutAmount + totalEmployerInsuranceAmount + input.directorAmount + totalCompanyPitAmount,
   };
 }

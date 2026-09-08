@@ -60,6 +60,9 @@ export function CompensationCard({
   const detailText = lang === "vi"
     ? { salaryComposition: "Cấu thành lương", monthApplication: "Áp dụng tháng này", insuranceAndNet: "Khấu trừ và thực nhận", recognizedWork: "Chấm công được ghi nhận", adjustmentManage: "Thêm · hủy", finalPayout: "Thực nhận", monthlyEquivalent: "Quy đổi lương tháng", monthlyEquivalentHelp: "Theo điều kiện làm đủ theo hợp đồng" }
     : { salaryComposition: "급여 구성", monthApplication: "이번 달 반영", insuranceAndNet: "공제 및 최종 지급", recognizedWork: "인정 근무", adjustmentManage: "추가·취소", finalPayout: "최종 지급액", monthlyEquivalent: "월급여 환산", monthlyEquivalentHelp: "계약 기준 풀근무 시" };
+  const taxText = lang === "vi"
+    ? { title:"Thuế TNCN",mode:"Cách áp dụng",notApplicable:"Không áp dụng TNCN",resident:"Cá nhân cư trú · lũy tiến",dependent:"Người phụ thuộc",personal:"Giảm trừ bản thân",dependentDeduction:"Giảm trừ người phụ thuộc",insurance:"Bảo hiểm được khấu trừ",taxableCompensation:"Thu nhập chịu thuế",taxableIncome:"Thu nhập tính thuế",calculated:"Thuế đã tính",employee:"Nhân viên chịu",company:"Công ty chịu",accountingName:"Tên kế toán",policyRevision:"Phiên bản chính sách",requiresReview:"Cần hoàn thiện hồ sơ/chính sách TNCN trước khi trả lương.",settings:"Mở cài đặt TNCN" }
+    : { title:"개인소득세(TNCN)",mode:"적용 방식",notApplicable:"TNCN 미적용",resident:"거주자 누진세",dependent:"부양가족",personal:"본인공제",dependentDeduction:"부양가족공제",insurance:"세금 계산상 보험공제",taxableCompensation:"과세대상 급여",taxableIncome:"과세소득",calculated:"계산세액",employee:"직원 부담",company:"회사 부담",accountingName:"회계 명의",policyRevision:"정책 revision",requiresReview:"지급 전에 TNCN profile/policy 확인이 필요합니다.",settings:"TNCN 설정 열기" };
   const [modal, setModal] = useState<"incentive" | "penalty" | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const combined = employee.amounts.combinedSalary;
@@ -176,7 +179,25 @@ export function CompensationCard({
                 {employee.amounts.employerInsuranceAmount > 0 && <small style={s.help}>{t.employerInsuranceHelp}</small>}
                 {employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
               </DetailSection>}
-              {!future && <><button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (!monthClosed || employee.calculationStatus === "unavailable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus === "unavailable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Chỉ có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월이 종료된 후 지급할 수 있습니다."}</small>}</>}
+              <DetailSection icon="🧾" title={taxText.title}>
+                {employee.tax.status === "requires_review" ? <><p role="alert" style={s.error}>{taxText.requiresReview} ({employee.tax.warningCodes.join(", ")})</p><Link href={`/admin/payroll/settings?tab=employee&userId=${employee.userId}`}>{taxText.settings}</Link></> : <>
+                  <Row label={taxText.mode} value={employee.tax.taxMode === "not_applicable" ? taxText.notApplicable : taxText.resident} />
+                  {employee.tax.taxMode === "resident_progressive" ? <>
+                    <Row label={taxText.dependent} value={String(employee.tax.dependentCount)} />
+                    <Row label={taxText.personal} value={formatVnd(employee.tax.personalDeductionAmount)} />
+                    <Row label={taxText.dependentDeduction} value={formatVnd(employee.tax.dependentDeductionAmount)} />
+                    <Row label={taxText.insurance} value={formatVnd(employee.tax.deductibleInsuranceAmount)} />
+                    <Row label={taxText.taxableCompensation} value={formatVnd(employee.tax.taxableCompensationAmount)} />
+                    <Row label={taxText.taxableIncome} value={formatVnd(employee.tax.taxableIncomeAmount)} />
+                    <Row label={taxText.calculated} value={formatVnd(employee.tax.calculatedPitAmount)} />
+                    <Row label={taxText.employee} value={formatVnd(employee.tax.employeePitDeductionAmount)} />
+                    <Row label={taxText.company} value={formatVnd(employee.tax.companyPitAmount)} />
+                    <Row label={taxText.accountingName} value={employee.tax.accountingName ?? "—"} />
+                    <Row label={taxText.policyRevision} value={`#${employee.tax.taxPolicyRevision ?? "—"}`} />
+                  </> : null}
+                </>}
+              </DetailSection>
+              {!future && <><button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (!monthClosed || employee.calculationStatus !== "calculable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus !== "calculable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Chỉ có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월이 종료된 후 지급할 수 있습니다."}</small>}</>}
             </>
           )}
         </div>

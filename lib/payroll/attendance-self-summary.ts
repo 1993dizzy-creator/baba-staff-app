@@ -5,6 +5,12 @@ export type AttendancePayrollSummary = {
   incentiveAmount: number;
   penaltyAmount: number;
   advanceAmount: number;
+  taxStatus: PayrollOverviewEmployee["tax"]["status"];
+  taxMode: PayrollOverviewEmployee["tax"]["taxMode"];
+  taxBurdenMode: PayrollOverviewEmployee["tax"]["taxBurdenMode"];
+  calculatedPitAmount: number;
+  employeePitDeductionAmount: number;
+  companyPitAmount: number;
 };
 
 export function getAttendanceAdjustmentTotal(
@@ -118,6 +124,12 @@ export function selectAttendancePayrollSummary(
       incentiveAmount: employee.amounts.incentiveAmount,
       penaltyAmount: employee.amounts.penaltyAmount,
       advanceAmount: employee.amounts.advanceAmount,
+      taxStatus: employee.tax.status,
+      taxMode: employee.tax.taxMode,
+      taxBurdenMode: employee.tax.taxBurdenMode,
+      calculatedPitAmount: employee.tax.calculatedPitAmount,
+      employeePitDeductionAmount: employee.tax.employeePitDeductionAmount,
+      companyPitAmount: employee.tax.companyPitAmount,
     },
     incentives,
     penalties,
