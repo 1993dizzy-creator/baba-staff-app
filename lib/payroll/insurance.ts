@@ -74,16 +74,19 @@ export function calculateDirectorInsurance(global: PayrollInsuranceGlobalSetting
 export function calculatePayrollInsuranceTotals(input: {
   preInsurancePayoutAmounts: number[];
   employeeDeductionAmounts: number[];
+  advanceAmounts?: number[];
   employerAmounts: number[];
   directorAmount: number;
 }) {
   const totalPreInsurancePayoutAmount = input.preInsurancePayoutAmounts.reduce((sum, value) => sum + value, 0);
   const totalEmployeeInsuranceDeductionAmount = input.employeeDeductionAmounts.reduce((sum, value) => sum + value, 0);
   const totalEmployerInsuranceAmount = input.employerAmounts.reduce((sum, value) => sum + value, 0);
-  const totalNetAmount = totalPreInsurancePayoutAmount - totalEmployeeInsuranceDeductionAmount;
+  const totalAdvanceAmount = (input.advanceAmounts ?? []).reduce((sum, value) => sum + value, 0);
+  const totalNetAmount = totalPreInsurancePayoutAmount - totalEmployeeInsuranceDeductionAmount - totalAdvanceAmount;
   return {
     totalPreInsurancePayoutAmount,
     totalEmployeeInsuranceDeductionAmount,
+    totalAdvanceAmount,
     totalNetAmount,
     totalEmployerInsuranceAmount,
     directorInsuranceAmount: input.directorAmount,

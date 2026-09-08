@@ -4,12 +4,13 @@ export type AttendancePayrollSummary = {
   employeeInsuranceDeductionAmount: number;
   incentiveAmount: number;
   penaltyAmount: number;
+  advanceAmount: number;
 };
 
 export function getAttendanceAdjustmentTotal(
-  summary: Pick<AttendancePayrollSummary, "incentiveAmount" | "penaltyAmount">,
+  summary: Pick<AttendancePayrollSummary, "incentiveAmount" | "penaltyAmount" | "advanceAmount">,
 ) {
-  return summary.incentiveAmount - summary.penaltyAmount;
+  return summary.incentiveAmount - summary.penaltyAmount - summary.advanceAmount;
 }
 
 export type AttendancePayrollIncentive = {
@@ -31,11 +32,21 @@ export type AttendancePayrollPenalty = {
   amount: number;
 };
 
+export type AttendancePayrollAdvance = {
+  sourceType: "manual";
+  businessDate: string;
+  category: "advance";
+  reason: string;
+  note: string | null;
+  amount: number;
+};
+
 export type AttendancePayrollData = {
   perfectAttendanceCurrent: boolean;
   summary: AttendancePayrollSummary;
   incentives: AttendancePayrollIncentive[];
   penalties: AttendancePayrollPenalty[];
+  advances: AttendancePayrollAdvance[];
 };
 
 export function selectAttendancePayrollSummary(
@@ -86,6 +97,17 @@ export function selectAttendancePayrollSummary(
         amount: item.amount,
       })),
   ].sort((left, right) => left.businessDate.localeCompare(right.businessDate));
+  const advances = employee.adjustments
+    .filter((item) => item.kind === "advance")
+    .map((item) => ({
+      sourceType: "manual" as const,
+      businessDate: item.businessDate,
+      category: "advance" as const,
+      reason: item.reason,
+      note: item.note,
+      amount: item.amount,
+    }))
+    .sort((left, right) => left.businessDate.localeCompare(right.businessDate));
 
   return {
     perfectAttendanceCurrent:
@@ -95,8 +117,10 @@ export function selectAttendancePayrollSummary(
         employee.amounts.employeeInsuranceDeductionAmount,
       incentiveAmount: employee.amounts.incentiveAmount,
       penaltyAmount: employee.amounts.penaltyAmount,
+      advanceAmount: employee.amounts.advanceAmount,
     },
     incentives,
     penalties,
+    advances,
   };
 }

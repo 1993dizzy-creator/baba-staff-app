@@ -115,9 +115,11 @@ const payrollSummaryCopy = {
     adjustmentTotal: "조정 합계",
     insuranceDeduction: "보험 예상 공제",
     incentive: "인센티브",
-    penalty: "패널티",
+    penalty: "패널티&가불",
+    advance: "가불",
+    manualPenalty: "수동 패널티",
     incentiveDetails: "인센티브 내역",
-    penaltyDetails: "패널티 내역",
+    penaltyDetails: "패널티&가불 내역",
     noIncentives: "등록된 인센티브 내역이 없습니다.",
     noPenalties: "등록된 패널티 내역이 없습니다.",
     total: "합계",
@@ -129,9 +131,11 @@ const payrollSummaryCopy = {
     adjustmentTotal: "Tổng điều chỉnh",
     insuranceDeduction: "BH dự kiến",
     incentive: "Thưởng",
-    penalty: "Phạt",
+    penalty: "Phạt & Ứng lương",
+    advance: "Ứng lương",
+    manualPenalty: "Phạt thủ công",
     incentiveDetails: "Chi tiết thưởng",
-    penaltyDetails: "Chi tiết phạt",
+    penaltyDetails: "Chi tiết phạt & ứng lương",
     noIncentives: "Chưa có khoản thưởng nào được đăng ký.",
     noPenalties: "Chưa có khoản phạt nào được đăng ký.",
     total: "Tổng",
@@ -630,6 +634,7 @@ function MyAttendance() {
                   summary: result.summary,
                   incentives: Array.isArray(result.incentives) ? result.incentives : [],
                   penalties: Array.isArray(result.penalties) ? result.penalties : [],
+                  advances: Array.isArray(result.advances) ? result.advances : [],
                 } as AttendancePayrollData
               : null,
           );
@@ -1099,7 +1104,7 @@ function MyAttendance() {
                 <span>{ps.penalty}</span>
                 <strong>
                   {payrollSummary
-                    ? formatSignedVnd(payrollSummary.penaltyAmount, "-")
+                    ? formatSignedVnd(payrollSummary.penaltyAmount + payrollSummary.advanceAmount, "-")
                     : "-"}
                 </strong>
               </button>
@@ -1224,11 +1229,14 @@ function PayrollDetailModal({
   const [year, monthNumber] = month.split("-");
   const monthLabel =
     lang === "vi" ? `Tháng ${Number(monthNumber)}/${year}` : `${year}년 ${Number(monthNumber)}월`;
-  const items = kind === "incentive" ? data?.incentives ?? [] : data?.penalties ?? [];
+  const items = kind === "incentive"
+    ? data?.incentives ?? []
+    : [...(data?.penalties ?? []), ...(data?.advances ?? [])]
+      .sort((left, right) => left.businessDate.localeCompare(right.businessDate));
   const total =
     kind === "incentive"
       ? data?.summary.incentiveAmount ?? 0
-      : data?.summary.penaltyAmount ?? 0;
+      : (data?.summary.penaltyAmount ?? 0) + (data?.summary.advanceAmount ?? 0);
 
   return (
     <PayrollModal
@@ -1261,7 +1269,11 @@ function PayrollDetailModal({
                     ? lang === "vi" ? "Phạt về sớm" : "조퇴 패널티"
                     : lang === "vi" ? "Phạt nghỉ không phép" : "무단결근 패널티"
                 : "";
-            const title = isAutomatic ? automaticLabel : item.category;
+            const title = kind === "incentive"
+              ? isAutomatic ? automaticLabel : item.category
+              : item.category === "advance"
+                ? text.advance
+                : isAutomatic ? automaticLabel : text.manualPenalty;
             const detailParts = [
               isAutomatic && "minutes" in item && item.minutes
                 ? `${item.minutes}${text.minute}`

@@ -56,6 +56,7 @@ test("projected summary uses monthly contract amount and only registered adjustm
   assert.deepEqual(result,{
     totalPreInsurancePayoutAmount:8_110_000,
     totalEmployeeInsuranceDeductionAmount:100_000,
+    totalAdvanceAmount:0,
     totalNetAmount:8_010_000,
     totalEmployerInsuranceAmount:200_000,
     directorInsuranceAmount:300_000,

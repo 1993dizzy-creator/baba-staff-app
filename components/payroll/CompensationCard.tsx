@@ -58,8 +58,8 @@ export function CompensationCard({
 }) {
   const t = payrollOverviewText[lang];
   const detailText = lang === "vi"
-    ? { salaryComposition: "Cấu thành lương", monthApplication: "Áp dụng tháng này", insuranceAndNet: "Bảo hiểm và thực nhận", recognizedWork: "Chấm công được ghi nhận", adjustmentManage: "Thêm · hủy", finalPayout: "Thực nhận", preInsurancePayoutWithInsurance: "Thu nhập trước khấu trừ bảo hiểm", monthlyEquivalent: "Quy đổi lương tháng", monthlyEquivalentHelp: "Theo điều kiện làm đủ theo hợp đồng" }
-    : { salaryComposition: "급여 구성", monthApplication: "이번 달 반영", insuranceAndNet: "보험 및 최종 지급", recognizedWork: "인정 근무", adjustmentManage: "추가·취소", finalPayout: "최종 지급액", preInsurancePayoutWithInsurance: "보험 공제 전 금액", monthlyEquivalent: "월급여 환산", monthlyEquivalentHelp: "계약 기준 풀근무 시" };
+    ? { salaryComposition: "Cấu thành lương", monthApplication: "Áp dụng tháng này", insuranceAndNet: "Khấu trừ và thực nhận", recognizedWork: "Chấm công được ghi nhận", adjustmentManage: "Thêm · hủy", finalPayout: "Thực nhận", monthlyEquivalent: "Quy đổi lương tháng", monthlyEquivalentHelp: "Theo điều kiện làm đủ theo hợp đồng" }
+    : { salaryComposition: "급여 구성", monthApplication: "이번 달 반영", insuranceAndNet: "공제 및 최종 지급", recognizedWork: "인정 근무", adjustmentManage: "추가·취소", finalPayout: "최종 지급액", monthlyEquivalent: "월급여 환산", monthlyEquivalentHelp: "계약 기준 풀근무 시" };
   const [modal, setModal] = useState<"incentive" | "penalty" | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const combined = employee.amounts.combinedSalary;
@@ -155,23 +155,24 @@ export function CompensationCard({
                   kind="penalty"
                   label={t.penalty}
                   manageLabel={detailText.adjustmentManage}
-                  value={`${formatSignedVnd(employee.amounts.penaltyAmount, "-")} · ${employee.amounts.penaltyCount}${t.count}`}
+                  value={`${formatSignedVnd(employee.amounts.penaltyAmount + employee.amounts.advanceAmount, "-")} · ${employee.amounts.penaltyCount + employee.amounts.advanceCount}${t.count}`}
                   onClick={() => setModal("penalty")}
                   disabled={employee.payment?.payment_status === "paid"}
                 />
-                <Row label={employee.insuranceEnrolled ? detailText.preInsurancePayoutWithInsurance : detailText.finalPayout} value={formatVnd(employee.amounts.preInsurancePayoutAmount)} highlight={employee.insuranceEnrolled ? "subtotal" : "net"} />
+                <Row label={t.preInsurancePayout} value={formatVnd(employee.amounts.preInsurancePayoutAmount)} highlight={employee.insuranceEnrolled || employee.amounts.advanceAmount > 0 ? "subtotal" : "net"} />
                 {!employee.insuranceEnrolled && employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
               </DetailSection>
 
-              {employee.insuranceEnrolled && <DetailSection icon="🛡️" title={detailText.insuranceAndNet}>
-                <Row label={t.insuranceBase} value={formatVnd(employee.amounts.insuranceBaseAmount)} />
-                <Row label={t.employeeInsuranceDeduction} value={formatSignedVnd(employee.amounts.employeeInsuranceDeductionAmount, "-")} />
+              {(employee.insuranceEnrolled || employee.amounts.advanceAmount > 0) && <DetailSection icon="🛡️" title={detailText.insuranceAndNet}>
+                {employee.insuranceEnrolled && <><Row label={t.insuranceBase} value={formatVnd(employee.amounts.insuranceBaseAmount)} />
+                <Row label={t.employeeInsuranceDeduction} value={formatSignedVnd(employee.amounts.employeeInsuranceDeductionAmount, "-")} /></>}
+                {employee.amounts.advanceAmount > 0 && <Row label={t.advance} value={formatSignedVnd(employee.amounts.advanceAmount, "-")} />}
                 <Row
                   label={t.netPayout}
                   value={employee.amounts.currentAmount === null ? t.settingsRequired : formatVnd(employee.amounts.netPayoutAmount)}
                   highlight="net"
                 />
-                <Row label={t.employerInsurance} value={formatVnd(employee.amounts.employerInsuranceAmount)} muted />
+                {employee.insuranceEnrolled && <Row label={t.employerInsurance} value={formatVnd(employee.amounts.employerInsuranceAmount)} muted />}
                 {employee.amounts.employerInsuranceAmount > 0 && <small style={s.help}>{t.employerInsuranceHelp}</small>}
                 {employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
               </DetailSection>}
@@ -249,13 +250,15 @@ function AdjustmentModal({
   const [date, setDate] = useState(`${month}-01`);
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
+  const [adjustmentKind, setAdjustmentKind] = useState<"penalty" | "advance">("penalty");
   const [cancelTarget, setCancelTarget] =
     useState<PayrollMonthlyAdjustment | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [mutationCompleted, setMutationCompleted] = useState(false);
-  const list = employee.adjustments.filter((item) => item.kind === kind);
+  const selectedKind = kind === "incentive" ? "incentive" : adjustmentKind;
+  const list = employee.adjustments.filter((item) => kind === "incentive" ? item.kind === "incentive" : item.kind === "penalty" || item.kind === "advance");
   const saveError =
     lang === "vi"
       ? "Không thể thêm điều chỉnh lương."
@@ -292,8 +295,8 @@ function AdjustmentModal({
         body: JSON.stringify({
           userId: employee.userId,
           month,
-          kind,
-          category: "manual",
+          kind: selectedKind,
+          category: selectedKind === "advance" ? "advance" : "manual",
           amount: Number(amount),
           businessDate: date,
           reason,
@@ -371,7 +374,7 @@ function AdjustmentModal({
             disabled={busy || mutationCompleted || !reason || Number(amount) < 1}
             onClick={save}
           >
-            {kind === "incentive" ? t.addIncentive : t.addPenalty}
+            {selectedKind === "incentive" ? t.addIncentive : selectedKind === "advance" ? t.addAdvance : t.addPenalty}
           </button>
         )}</div>}
     >
@@ -396,7 +399,7 @@ function AdjustmentModal({
         {list.map((item) => (
           <article key={item.id} style={s.item}>
             <span style={s.itemText}>
-              {item.businessDate.slice(5)} · {item.category}
+              {item.businessDate.slice(5)} · {item.kind === "advance" ? t.advance : item.kind === "penalty" ? t.manualPenalty : item.category}
             </span>
             <b style={s.itemAmount}>
               {formatSignedVnd(item.amount, kind === "incentive" ? "+" : "-")}
@@ -437,6 +440,13 @@ function AdjustmentModal({
         </label>
       ) : (
         <>
+          {kind === "penalty" && <label style={s.field}>
+            <span style={s.fieldLabel}>⚖️ {lang === "vi" ? "Loại điều chỉnh" : "조정 종류"}</span>
+            <select style={s.input} value={adjustmentKind} onChange={(e) => setAdjustmentKind(e.target.value as "penalty" | "advance")}>
+              <option value="penalty">{lang === "vi" ? "Phạt" : "패널티"}</option>
+              <option value="advance">{t.advance}</option>
+            </select>
+          </label>}
           <label style={s.field}>
             <span style={s.fieldLabel}>💰 {lang === "vi" ? "Số tiền" : "금액"}</span>
             <input
@@ -447,9 +457,11 @@ function AdjustmentModal({
               value={formatPositiveIntegerInput(amount)}
               onChange={(e) => setAmount(normalizePositiveIntegerInput(e.target.value))}
             />
-            <small style={s.fieldHelp}>{kind === "incentive"
+            <small style={s.fieldHelp}>{selectedKind === "incentive"
               ? (lang === "vi" ? "Nhập số nguyên dương. Số tiền nhập sẽ được cộng vào lương." : "양수 정수로 입력하세요. 입력 금액은 급여에 추가됩니다.")
-              : (lang === "vi" ? "Nhập số nguyên dương. Khoản phạt sẽ tự động được trừ." : "양수 정수로 입력하세요. 입력 금액은 급여에서 자동 차감됩니다.")}</small>
+              : selectedKind === "advance"
+                ? (lang === "vi" ? "Số tiền đã ứng sẽ được trừ khỏi khoản thực nhận cuối cùng." : "이미 선지급한 가불액은 최종 실수령액에서 차감됩니다.")
+                : (lang === "vi" ? "Nhập số nguyên dương. Khoản phạt sẽ tự động được trừ." : "양수 정수로 입력하세요. 입력 금액은 급여에서 자동 차감됩니다.")}</small>
           </label>
           <label style={s.field}>
             <span style={s.fieldLabel}>📅 {lang === "vi" ? "Ngày áp dụng" : "적용일"}</span>
@@ -466,9 +478,11 @@ function AdjustmentModal({
               style={s.input}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder={kind === "incentive"
+              placeholder={selectedKind === "incentive"
                 ? (lang === "vi" ? "Thưởng đạt mục tiêu doanh thu" : "매출 목표 달성 보너스")
-                : (lang === "vi" ? "Làm hỏng vật dụng" : "비품 파손")}
+                : selectedKind === "advance"
+                  ? (lang === "vi" ? "Ứng trước một phần lương" : "급여 일부 선지급")
+                  : (lang === "vi" ? "Làm hỏng vật dụng" : "비품 파손")}
             />
           </label>
           <label style={s.field}>

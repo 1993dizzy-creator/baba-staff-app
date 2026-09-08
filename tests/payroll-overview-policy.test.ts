@@ -71,17 +71,16 @@ test("UI keeps grouped compact cards, non-owner part totals, details, and ledger
 test("employee detail groups salary, month application, insurance, and adjustment controls", () => {
   assert.match(compensationCard, /salaryComposition: "급여 구성"/);
   assert.match(compensationCard, /monthApplication: "이번 달 반영"/);
-  assert.match(compensationCard, /insuranceAndNet: "보험 및 최종 지급"/);
+  assert.match(compensationCard, /insuranceAndNet: "공제 및 최종 지급"/);
   assert.match(compensationCard, /salaryComposition: "Cấu thành lương"/);
   assert.match(compensationCard, /monthApplication: "Áp dụng tháng này"/);
-  assert.match(compensationCard, /insuranceAndNet: "Bảo hiểm và thực nhận"/);
+  assert.match(compensationCard, /insuranceAndNet: "Khấu trừ và thực nhận"/);
   assert.match(compensationCard, /finalPayout: "최종 지급액"/);
   assert.match(compensationCard, /finalPayout: "Thực nhận"/);
-  assert.match(compensationCard, /preInsurancePayoutWithInsurance: "보험 공제 전 금액"/);
-  assert.match(compensationCard, /preInsurancePayoutWithInsurance: "Thu nhập trước khấu trừ bảo hiểm"/);
+  assert.match(compensationCard, /<Row label=\{t\.preInsurancePayout\}/);
   assert.match(compensationCard, /paddingLeft: 10/);
   assert.match(compensationCard, /fontVariantNumeric: "tabular-nums"/);
-  assert.match(compensationCard, /highlight=\{employee\.insuranceEnrolled \? "subtotal" : "net"\}/);
+  assert.match(compensationCard, /highlight=\{employee\.insuranceEnrolled \|\| employee\.amounts\.advanceAmount > 0 \? "subtotal" : "net"\}/);
   assert.match(compensationCard, /formatContractRate\(employee\.amounts\.contractSalary/);
   assert.match(compensationCard, /monthlyEquivalent: "월급여 환산"/);
   assert.match(compensationCard, /monthlyEquivalent: "Quy đổi lương tháng"/);
@@ -96,7 +95,7 @@ test("overview exposes resolved insurance enrollment and source recognized minut
   assert.match(overview, /contractMonthlyEquivalent: contract && compensation && compensation\.combinedSalary !== null/);
   assert.match(overview, /insuranceEnrolled: employee\.insuranceSnapshot\.isEnrolled/);
   assert.doesNotMatch(compensationCard, /insuranceEnrolled\s*=.*(?:insuranceBaseAmount|InsuranceDeductionAmount|employerInsuranceAmount)/);
-  assert.match(compensationCard, /employee\.insuranceEnrolled && <DetailSection icon="🛡️"/);
+  assert.match(compensationCard, /\(employee\.insuranceEnrolled \|\| employee\.amounts\.advanceAmount > 0\) && <DetailSection/);
   assert.match(compensationCard, /!employee\.insuranceEnrolled && employee\.unresolvedAttendanceCount/);
 });
 

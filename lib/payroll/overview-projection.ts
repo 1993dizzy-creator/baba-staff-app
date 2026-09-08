@@ -26,6 +26,7 @@ export function buildPayrollOverviewProjectedSummary(
         - employee.amounts.otherDeductionAmount,
       ),
       employeeInsuranceDeductionAmount: employee.amounts.employeeInsuranceDeductionAmount,
+      advanceAmount: employee.amounts.advanceAmount,
       employerInsuranceAmount: employee.amounts.employerInsuranceAmount,
     }];
   });
@@ -33,6 +34,7 @@ export function buildPayrollOverviewProjectedSummary(
   const totals = calculatePayrollInsuranceTotals({
     preInsurancePayoutAmounts: included.map((item) => item.preInsurancePayoutAmount),
     employeeDeductionAmounts: included.map((item) => item.employeeInsuranceDeductionAmount),
+    advanceAmounts: included.map((item) => item.advanceAmount),
     employerAmounts: included.map((item) => item.employerInsuranceAmount),
     directorAmount: directorInsuranceAmount,
   });

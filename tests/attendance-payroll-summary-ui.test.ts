@@ -49,7 +49,10 @@ test("salary totals are replaced by adjustment total and four attendance metrics
   assert.match(page, /getAttendanceAdjustmentTotal\(payrollSummary\)/);
   assert.match(page, /formatAdjustmentAmount\(adjustmentTotal\)/);
   assert.match(page, /formatSignedVnd\(payrollSummary\.incentiveAmount, "\+"\)/);
-  assert.match(page, /formatSignedVnd\(payrollSummary\.penaltyAmount, "-"\)/);
+  assert.match(page, /formatSignedVnd\(payrollSummary\.penaltyAmount \+ payrollSummary\.advanceAmount, "-"\)/);
+  assert.match(page, /payrollSummary\.penaltyAmount \+ payrollSummary\.advanceAmount/);
+  assert.match(page, /penalty: "패널티&가불"/);
+  assert.match(page, /penalty: "Phạt & Ứng lương"/);
   assert.equal((page.match(/<AttendanceSummaryItem /g) ?? []).length, 4);
   for (const metric of ["workDays", "leaveDays", "lateCount", "earlyLeaveCount"]) {
     assert.match(page, new RegExp(`attendance\\.monthSummary\\.${metric}`));
@@ -83,12 +86,14 @@ test("detail modal is localized, scrollable through the shared modal, and handle
   assert.match(page, /<PayrollModal[\s\S]*?placement="top"/);
   assert.match(page, /data\?\.incentives \?\? \[\]/);
   assert.match(page, /data\?\.penalties \?\? \[\]/);
+  assert.match(page, /data\?\.advances \?\? \[\]/);
   assert.match(page, /noIncentives: "등록된 인센티브 내역이 없습니다\."/);
   assert.match(page, /noPenalties: "등록된 패널티 내역이 없습니다\."/);
   assert.match(page, /incentiveDetails: "Chi tiết thưởng"/);
-  assert.match(page, /penaltyDetails: "Chi tiết phạt"/);
+  assert.match(page, /penaltyDetails: "Chi tiết phạt & ứng lương"/);
   assert.match(page, /data\?\.summary\.incentiveAmount \?\? 0/);
   assert.match(page, /data\?\.summary\.penaltyAmount \?\? 0/);
+  assert.match(page, /data\?\.summary\.advanceAmount \?\? 0/);
   assert.match(page, /item\.businessDate\.slice\(5\)/);
   assert.match(page, /item\.note/);
   assert.match(page, /item\.minutes/);

@@ -90,6 +90,8 @@ function employee(
       manualPenaltyAmount: 35_000,
       penaltyAmount: 35_000,
       penaltyCount: 0,
+      advanceAmount: 0,
+      advanceCount: 0,
       insuranceBaseAmount: 0,
       preInsurancePayoutAmount: 2_850_000,
       employerInsuranceAmount: 0,
@@ -106,9 +108,11 @@ test("self payroll summary projects only the authenticated employee amounts", ()
       employeeInsuranceDeductionAmount: 0,
       incentiveAmount: 120_000,
       penaltyAmount: 35_000,
+      advanceAmount: 0,
     },
     incentives: [],
     penalties: [],
+    advances: [],
   });
   assert.equal(selectAttendancePayrollSummary(employees, 33), null);
 });
@@ -126,9 +130,11 @@ test("self payroll summary does not expose internal calculation status", () => {
         employeeInsuranceDeductionAmount: 0,
         incentiveAmount: 22,
         penaltyAmount: 11,
+        advanceAmount: 0,
       },
       incentives: [],
       penalties: [],
+      advances: [],
     });
     assert.doesNotMatch(JSON.stringify(selectAttendancePayrollSummary([source], 11)), /calculationStatus/);
   }
@@ -162,6 +168,7 @@ test("self projection exposes only display DTOs and preserves incentive and comb
   source.adjustments = [
     { id: 1, kind: "incentive", category: "sales", amount: 120_000, businessDate: "2026-08-03", reason: "Sales", note: "August", createdAt: "private" },
     { id: 2, kind: "penalty", category: "manual", amount: 20_000, businessDate: "2026-08-07", reason: "Manual", note: null, createdAt: "private" },
+    { id: 3, kind: "advance", category: "advance", amount: 50_000, businessDate: "2026-08-09", reason: "Advance", note: "August advance", createdAt: "private" },
   ];
   source.automaticPenalties = [
     { sourceType: "automatic", category: "late", businessDate: "2026-08-02", minutes: 12, amount: 15_000, attendanceRecordId: 999, description: "Late" },
@@ -174,6 +181,9 @@ test("self projection exposes only display DTOs and preserves incentive and comb
     sourceType: "manual", businessDate: "2026-08-03", category: "sales", reason: "Sales", note: "August", amount: 120_000,
   });
   assert.deepEqual(result.penalties.map((item) => item.sourceType), ["automatic", "manual"]);
+  assert.deepEqual(result.advances, [{
+    sourceType: "manual", businessDate: "2026-08-09", category: "advance", reason: "Advance", note: "August advance", amount: 50_000,
+  }]);
   assert.doesNotMatch(JSON.stringify(result), /attendanceRecordId|createdAt|"id"|999|private/);
 });
 
@@ -187,10 +197,10 @@ test("self projection removes net payout and exposes only the employee insurance
   assert.doesNotMatch(JSON.stringify(result), /netPayoutAmount|insuranceSnapshot|insuranceEnrolled|insuranceBaseAmount|employerInsuranceAmount/);
 });
 
-test("adjustment total is incentive minus the positive penalty amount", () => {
-  assert.equal(getAttendanceAdjustmentTotal({ incentiveAmount: 0, penaltyAmount: 30_000 }), -30_000);
-  assert.equal(getAttendanceAdjustmentTotal({ incentiveAmount: 100_000, penaltyAmount: 30_000 }), 70_000);
-  assert.equal(getAttendanceAdjustmentTotal({ incentiveAmount: 0, penaltyAmount: 0 }), 0);
+test("adjustment total is incentive minus penalty and advance", () => {
+  assert.equal(getAttendanceAdjustmentTotal({ incentiveAmount: 0, penaltyAmount: 30_000, advanceAmount: 0 }), -30_000);
+  assert.equal(getAttendanceAdjustmentTotal({ incentiveAmount: 100_000, penaltyAmount: 30_000, advanceAmount: 20_000 }), 50_000);
+  assert.equal(getAttendanceAdjustmentTotal({ incentiveAmount: 0, penaltyAmount: 0, advanceAmount: 40_000 }), -40_000);
 });
 
 test("attendance payroll route is actor-only, validates month, and reuses the unified overview", () => {
@@ -203,6 +213,7 @@ test("attendance payroll route is actor-only, validates month, and reuses the un
   assert.match(route, /summary: data\?\.summary \?\? null/);
   assert.match(route, /incentives: data\?\.incentives \?\? \[\]/);
   assert.match(route, /penalties: data\?\.penalties \?\? \[\]/);
+  assert.match(route, /advances: data\?\.advances \?\? \[\]/);
   assert.doesNotMatch(route, /searchParams\.get\("userId"\)|body\.userId|requirePayrollActor/);
   assert.doesNotMatch(route, /insuranceSnapshot/);
   assert.doesNotMatch(route + read("lib/payroll/attendance-self-summary.ts"), /netPayoutAmount/);

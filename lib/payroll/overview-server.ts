@@ -62,7 +62,7 @@ export async function loadPayrollOverview(month: string,options?:{userId?:number
   ]);
   if(adjustmentResult.error)throw new Error("PAYROLL_ADJUSTMENT_READ_FAILED");
   const adjustmentsByUser=new Map<number,PayrollMonthlyAdjustment[]>();
-  for(const row of adjustmentResult.data??[]){const list=adjustmentsByUser.get(Number(row.user_id))??[];list.push({id:Number(row.id),kind:row.kind as "incentive"|"penalty",category:String(row.category),amount:Number(row.amount),businessDate:String(row.business_date),reason:String(row.reason),note:row.note?String(row.note):null,createdAt:String(row.created_at)});adjustmentsByUser.set(Number(row.user_id),list);}
+  for(const row of adjustmentResult.data??[]){const list=adjustmentsByUser.get(Number(row.user_id))??[];list.push({id:Number(row.id),kind:row.kind as PayrollMonthlyAdjustment["kind"],category:String(row.category),amount:Number(row.amount),businessDate:String(row.business_date),reason:String(row.reason),note:row.note?String(row.note):null,createdAt:String(row.created_at)});adjustmentsByUser.set(Number(row.user_id),list);}
   const userById=new Map(snapshot.context.users.map(user=>[user.id,user]));
   const contractsByUser=new Map<number,typeof snapshot.context.contracts>();
   for(const contract of snapshot.context.contracts){const list=contractsByUser.get(contract.userId)??[];list.push(contract);contractsByUser.set(contract.userId,list);}

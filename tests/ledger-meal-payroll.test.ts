@@ -39,4 +39,4 @@ test("candidate UI includes all three source filters and syncs",()=>{for(const v
 test("existing POS parity remains",()=>assert.match(pos,/export function buildPaymentSummary/));
 test("existing Inventory candidate remains",()=>assert.match(inventory,/ledger_resolve_inventory_candidate_v1/));
 test("existing Payable payment remains",()=>assert.match(payable,/ledger_pay_payables_v1/));
-test("meal is not part of payroll net payout calculation",()=>{assert.doesNotMatch(overview,/mealAllowance.*netPayoutAmount/);assert.match(overview,/netPayoutAmount=preInsurancePayoutAmount-employeeInsuranceDeductionAmount/)});
+test("meal is not part of payroll net payout calculation",()=>{assert.doesNotMatch(overview,/mealAllowance.*netPayoutAmount/);assert.match(overview,/calculatePayrollPayoutAmounts/)});

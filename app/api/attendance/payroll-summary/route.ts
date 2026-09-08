@@ -32,6 +32,7 @@ export async function GET(request: Request) {
       summary: data?.summary ?? null,
       incentives: data?.incentives ?? [],
       penalties: data?.penalties ?? [],
+      advances: data?.advances ?? [],
     });
   } catch (error) {
     console.error("attendance payroll summary exception:", error);
