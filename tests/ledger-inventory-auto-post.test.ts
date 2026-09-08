@@ -32,10 +32,10 @@ test("incomplete mappings remain pending and same-fingerprint pending rows reach
   assert.match(sql,/v_latest\.status = 'confirmed'[\s\S]*source_fingerprint = v_fingerprint[\s\S]*v_unchanged[\s\S]*continue/);
 });
 
-test("changed confirmed source aborts the whole sync and API maps it to conflict",()=>{
+test("legacy confirmed-source guard is retained while recovery uses source-only projection",()=>{
   assert.match(sql,/v_latest\.status = 'confirmed'[\s\S]*raise exception using\s+errcode = '55000',\s+message = 'SOURCE_CHANGED_AFTER_POST'/);
-  assert.match(syncRoute,/inventorySyncDbError\(error\)[\s\S]*mapped\.code[\s\S]*mapped\.status/);
-  assert.match(syncRoute,/messages\.includes\("SOURCE_CHANGED_AFTER_POST"\)[\s\S]*code: "SOURCE_CHANGED_AFTER_POST", status: 409/);
+  assert.match(syncRoute,/ledger_reconcile_inventory_month_v1/);
+  assert.match(syncRoute,/p_request_actor_user_id: auth\.actor\.id/);
   assert.match(syncRoute,/INVENTORY_CANDIDATE_SYNC_FAILED/);
 });
 
@@ -76,7 +76,7 @@ test("invalid input raises instead of returning after earlier row mutations",()=
   assert.match(sql,/p_rows is null[\s\S]*errcode = '22023',[\s\S]*message = 'INVALID_ROWS'/);
   assert.match(sql,/exception when others then\s+raise exception using\s+errcode = '22023',\s+message = 'INVALID_ROWS'/);
   assert.match(sql,/or v_amount <= 0 then\s+raise exception using\s+errcode = '22023',\s+message = 'INVALID_ROWS'/);
-  assert.match(syncRoute,/messages\.includes\("INVALID_ROWS"\)[\s\S]*code: "INVALID_ROWS", status: 400/);
+  assert.match(syncRoute,/Object\.keys\(body\)[\s\S]*INVALID_MONTH/);
 });
 
 test("every required inventory source field has an explicit null guard",()=>{

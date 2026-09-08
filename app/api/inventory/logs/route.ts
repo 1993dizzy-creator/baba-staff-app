@@ -9,6 +9,10 @@ import {
   fetchPreviousKegSummariesByLogId,
 } from "@/lib/inventory/keg-replacement-summary";
 import { supabaseServer } from "@/lib/supabase/server";
+import { inventoryLogDisplayUpdate } from "@/lib/inventory/ledger-sync-contract";
+import { projectInventoryPurchaseLogs } from "@/lib/ledger/inventory-projection";
+import { resolveInventorySupplier } from "@/lib/inventory/supplier-partners-server";
+import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -35,8 +39,6 @@ type CurrentInventoryItem = {
   category: string | null;
   category_vi: string | null;
   unit: string | null;
-  supplier: string | null;
-  purchase_price: string | number | null;
 };
 
 type InventoryLogsQueryOptions = {
@@ -129,23 +131,7 @@ const normalizeText = (value: unknown) =>
 const buildInventoryLogSyncPayload = (
   currentItem: CurrentInventoryItem
 ): Record<string, string | number | null> => {
-  const supplier = normalizeText(currentItem.supplier);
-
-  return {
-    item_name: currentItem.item_name ?? null,
-    item_name_vi: currentItem.item_name_vi ?? null,
-
-    category: currentItem.category ?? null,
-    category_vi: currentItem.category_vi ?? null,
-    new_category: currentItem.category ?? null,
-    new_category_vi: currentItem.category_vi ?? null,
-
-    unit: currentItem.unit ?? null,
-    new_unit: currentItem.unit ?? null,
-
-    new_supplier: supplier || null,
-    new_purchase_price: toNullableNumber(currentItem.purchase_price),
-  };
+  return inventoryLogDisplayUpdate(currentItem);
 };
 
 export async function GET(req: Request) {
@@ -316,7 +302,7 @@ export async function PATCH(req: Request) {
 
     const { data: existingRows, error: findError } = await supabaseServer
       .from("inventory_logs")
-      .select("id, item_id, reason, source, change_quantity, business_date")
+      .select("id, item_id, reason, source, change_quantity, business_date, new_purchase_price, item_name, code")
       .in("id", targetLogIds);
 
     if (findError) throw findError;
@@ -379,7 +365,7 @@ export async function PATCH(req: Request) {
 
       const { data: currentItem, error: currentItemError } = await supabaseServer
         .from("inventory")
-        .select("item_name, item_name_vi, category, category_vi, unit, supplier, purchase_price")
+        .select("item_name, item_name_vi, category, category_vi, unit")
         .eq("id", Number(existing.item_id))
         .maybeSingle();
 
@@ -410,7 +396,10 @@ export async function PATCH(req: Request) {
 
     if (hasNewSupplier) {
       const supplier = normalizeText(body.new_supplier);
-      updatePayload.new_supplier = supplier || null;
+      const resolved = await resolveInventorySupplier({ supabase: supabaseServer,
+        payload: { supplier: supplier || null }, actorUserId: auth.actor.id });
+      updatePayload.new_supplier = resolved?.supplier ?? null;
+      updatePayload.purchase_supplier_partner_id = resolved?.supplier_partner_id ?? null;
     }
 
     if (hasNewPurchasePrice) {
@@ -465,6 +454,7 @@ export async function PATCH(req: Request) {
 
         if (hasNewSupplier) {
           itemUpdatePayload.supplier = updatePayload.new_supplier;
+          itemUpdatePayload.supplier_partner_id = updatePayload.purchase_supplier_partner_id;
         }
 
         if (hasNewPurchasePrice) {
@@ -478,13 +468,25 @@ export async function PATCH(req: Request) {
             .eq("id", Number(existing.item_id));
 
           if (itemUpdateError) throw itemUpdateError;
+          if (hasNewPurchasePrice) {
+            await insertInventoryPriceLog({ supabase: supabaseServer, itemId: existing.item_id,
+              itemName: existing.item_name, itemCode: existing.code, oldPrice: existing.new_purchase_price,
+              newPrice: updatePayload.new_purchase_price, businessDate: existing.business_date,
+              source: "edit_form", reason: "manual_price_update", actorUsername: auth.actor.username });
+          }
         }
       }
     }
 
+    const purchaseSourceIds = existingRows.filter(row =>
+      normalizeInventoryReason(row.reason) === "purchase" ||
+      updatedRows.some(updated => updated.id === row.id && normalizeInventoryReason(updated.reason) === "purchase")
+    ).map(row => Number(row.id));
+    const ledgerSync = await projectInventoryPurchaseLogs(purchaseSourceIds, auth.actor.id);
     return NextResponse.json({
       ok: true,
       data: targetLogIds.length === 1 ? updatedRows[0] : updatedRows,
+      ledgerSync,
     });
   } catch (error) {
     console.error("[INVENTORY_LOGS_PATCH_ERROR]", error);

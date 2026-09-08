@@ -1,5 +1,6 @@
 "use client";
 
+import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import Container from "@/components/Container";
@@ -843,6 +844,8 @@ export default function InventorySnapshotsPage() {
                     item.id === log.id ? { ...item, reason: result.data.reason } : item
                 )
             );
+            const ledgerNotice = ledgerSyncNotice(result.ledgerSync, lang === "vi");
+            if (ledgerNotice) alert(ledgerNotice);
 
             if (logModalItem) {
                 await fetchItemLogs(logModalItem);
@@ -931,6 +934,8 @@ export default function InventorySnapshotsPage() {
                 return;
             }
 
+            const ledgerNotice = ledgerSyncNotice(result.ledgerSync, lang === "vi");
+            if (ledgerNotice) alert(ledgerNotice);
             const syncedLogs = Array.isArray(result.data) ? result.data : [result.data];
             const syncedById = new Map<number, InventoryLog>(
                 syncedLogs.map((log: InventoryLog) => [Number(log.id), log])

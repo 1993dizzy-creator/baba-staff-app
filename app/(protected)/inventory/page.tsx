@@ -1,5 +1,6 @@
 "use client";
 
+import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
 import { type ChangeEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import { commonText, inventoryText } from "@/lib/text";
@@ -1281,7 +1282,9 @@ export default function InventoryPage() {
         action: "save" | "edit"
     ): Promise<InventoryItemMutationResult | null> => {
         try {
-            return await res.json();
+            const result = await res.json();
+            if (res.ok && result.ok) { const notice = ledgerSyncNotice(result.ledgerSync, lang === "vi"); if (notice) alert(notice); }
+            return result;
         } catch (error) {
             console.error(`inventory ${action} invalid json response`, {
                 status: res.status,
@@ -2359,6 +2362,8 @@ export default function InventoryPage() {
                 return;
             }
 
+            const ledgerNotice = ledgerSyncNotice(result.ledgerSync, lang === "vi");
+            if (ledgerNotice) alert(ledgerNotice);
             setQuantityDrafts((prev) => ({
                 ...prev,
                 [savedItemId]: String(nextQty),

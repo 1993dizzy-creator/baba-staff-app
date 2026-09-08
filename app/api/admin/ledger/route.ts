@@ -1,4 +1,5 @@
 import { supabaseServer } from "@/lib/supabase/server";
+import { withInventoryDisplay, loadInventoryProjectionIssues } from "@/lib/ledger/inventory-display";
 import { buildLedgerEntries, type CandidateRow, type MealCandidateSource, type PartnerLedgerDefault, type TransactionRow } from "@/lib/ledger/entries";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { computePaidExpenseTotal } from "@/lib/ledger/payables";
@@ -109,8 +110,11 @@ export async function GET(request: Request) {
       sourceSnapshot: candidate.source_snapshot as Record<string, unknown> | null,
       sourceDriftSnapshot: candidate.source_drift_snapshot as Record<string, unknown> | null,
     }));
-    const entries = buildLedgerEntries(transactions, candidates, partnerDefaultsByParty, mealCandidateSources);
-    return ledgerJson({ ok: true, month, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, cardGrossSales, actualCardDeposits }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions, entries });
+    const [displayTransactions, inventoryProjectionIssues] = await Promise.all([
+      withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
+    ]);
+    const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources);
+    return ledgerJson({ ok: true, month, inventoryProjectionIssues, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, cardGrossSales, actualCardDeposits }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);

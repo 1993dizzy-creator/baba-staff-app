@@ -32,7 +32,7 @@ test("inventory item role policy remains unchanged after authentication migratio
     /canDeleteInventoryItem[\s\S]*role === "owner" \|\| role === "master"/
   );
   assert.match(
-    itemsRoute,
+    read("lib/inventory/items-server.ts"),
     /canToggleInventoryItemActiveStatus[\s\S]*role === "owner"[\s\S]*role === "master"[\s\S]*role === "manager"[\s\S]*role === "leader"/
   );
   assert.match(itemsRoute, /mode === "active-status"/);

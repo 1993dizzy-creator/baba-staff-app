@@ -76,6 +76,7 @@ type LedgerSummary = {
   actualCardDeposits: number;
 };
 type LedgerData = {
+  inventoryProjectionIssues?: Array<{ inventoryLogId: number; status: string; code: string }>;
   month: string;
   summary: LedgerSummary;
   accounts: Account[];
@@ -114,7 +115,7 @@ type DateGroup = {
 };
 type PayableParty = { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; openCount:number };
 type PayablesSummary = { totalOutstanding:number; parties:PayableParty[] };
-type PayableRow = { id:number; original_amount:number; outstandingAmount:number; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null}|null };
+type PayableRow = { id:number; original_amount:number; outstandingAmount:number; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null}|null };
 type PayableDetail = { party:{id:number;name:string}; payables:PayableRow[]; totalOutstanding:number };
 
 const currentMonth = () =>
@@ -664,6 +665,12 @@ export default function LedgerEntriesPage() {
             {error}
           </p>
         ) : null}
+        {data?.inventoryProjectionIssues?.length ? <div role="status">
+          <strong>{vi ? "Các giao dịch nhập kho cần kiểm tra" : "입고 장부 반영 확인 필요"}</strong>
+          {data.inventoryProjectionIssues.map(issue => <p key={issue.inventoryLogId}>
+            {vi ? "Nhập kho" : "입고 기록"} #{issue.inventoryLogId}: {issue.code}
+          </p>)}
+        </div> : null}
         {notice ? (
           <p className={styles.success} role="status">
             {notice}
@@ -1006,7 +1013,8 @@ function EntryDetailSheet({
               key={item.candidateId ?? item.transactionId}
             >
               <span className={styles.itemDescription}>
-                  <strong>📦 {item.name}</strong>
+                  <strong>📦 {lang === "vi" ? item.nameVi || item.name : item.name}</strong>
+                  <small>{[lang === "vi" ? item.inventoryCategoryVi || item.inventoryCategory : item.inventoryCategory, item.unit].filter(Boolean).join(" · ")}</small>
                   {item.quantity == null
                     ? ""
                     : ` · ${item.quantity.toLocaleString("ko-KR")}`}
@@ -1248,7 +1256,7 @@ function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
   </BarSheet>
 }
 
-function payableItemLabel(row:PayableRow,vi:boolean){const snapshot=row.expense?.source_snapshot;return String(snapshot?.item_name??snapshot?.itemName??snapshot?.name??(vi?"Mặt hàng tồn kho":"재고 품목"))}
+function payableItemLabel(row:PayableRow,vi:boolean){const snapshot=row.expense?.display_snapshot??row.expense?.source_snapshot;return String((vi?snapshot?.item_name_vi:null)??snapshot?.item_name??snapshot?.itemName??snapshot?.name??(vi?"Mặt hàng tồn kho":"재고 품목"))}
 
 function ManualEntrySheet({
   lang,

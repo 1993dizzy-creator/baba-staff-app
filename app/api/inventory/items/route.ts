@@ -22,6 +22,7 @@ import {
 } from "@/lib/inventory/normalize";
 import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
+import { projectInventoryPurchaseLog } from "@/lib/ledger/inventory-projection";
 import { applyResolvedInventorySupplier, resolveInventorySupplier } from "@/lib/inventory/supplier-partners-server";
 import {
   type InventoryReasonValue,
@@ -461,9 +462,11 @@ export async function POST(req: Request) {
 
     const businessDate = (await resolveInventoryBusinessDate()).businessDate;
 
-    await insertInventoryLog(
+    const purchaseLog = await insertInventoryLog(
       {
         item_id: insertedData.id,
+        source_actor_user_id: actor.id,
+        purchase_supplier_partner_id: insertedData.supplier_partner_id ?? null,
         item_name: insertedData.item_name ?? null,
         item_name_vi: insertedData.item_name_vi ?? null,
         action: "create",
@@ -529,7 +532,10 @@ export async function POST(req: Request) {
       actorUsername: actor.username,
     });
 
-    return NextResponse.json({ ok: true, data: insertedData });
+    const ledgerSync = logReason === "purchase"
+      ? await projectInventoryPurchaseLog(Number(purchaseLog.id), actor.id)
+      : undefined;
+    return NextResponse.json({ ok: true, data: insertedData, ledgerSync });
   } catch (error) {
     console.error("[INVENTORY_POST_ERROR]", error);
     return NextResponse.json(
@@ -789,9 +795,11 @@ export async function PATCH(req: Request) {
 
     const businessDate = (await resolveInventoryBusinessDate()).businessDate;
 
-    await insertInventoryLog(
+    const purchaseLog = await insertInventoryLog(
       {
         item_id: updatedItem.id,
+        source_actor_user_id: actor.id,
+        purchase_supplier_partner_id: updatedItem.supplier_partner_id ?? null,
         item_name: updatedItem.item_name ?? null,
         item_name_vi: updatedItem.item_name_vi ?? null,
         action: "update",
@@ -877,7 +885,10 @@ export async function PATCH(req: Request) {
       });
     }
 
-    return NextResponse.json({ ok: true, mode });
+    const ledgerSync = logReason === "purchase"
+      ? await projectInventoryPurchaseLog(Number(purchaseLog.id), actor.id)
+      : undefined;
+    return NextResponse.json({ ok: true, mode, ledgerSync });
   } catch (error) {
     console.error("[INVENTORY_PATCH_ERROR]", error);
     return NextResponse.json(

@@ -2,6 +2,10 @@ export type LedgerEntryItem = {
   candidateId?: number;
   transactionId?: number;
   name: string;
+  nameVi?: string | null;
+  inventoryCategory?: string | null;
+  inventoryCategoryVi?: string | null;
+  unit?: string | null;
   quantity?: number | null;
   unitPrice?: number | null;
   amount: number;
@@ -56,6 +60,7 @@ export type LedgerEntry = {
 };
 
 export type TransactionRow = {
+  display_snapshot?: Record<string, unknown> | null;
   id: number | string; type: string; business_date: string; amount: number | string;
   occurred_at?: string | null;
   recognition_month?: string | null;
@@ -188,10 +193,15 @@ function compareItemsByEarliestTimeFirst(a: LedgerEntryItem, b: LedgerEntryItem)
 
 const inventoryItem = (row: CandidateRow | TransactionRow): LedgerEntryItem => {
   const snapshot = row.source_snapshot ?? {};
+  const display = (row as TransactionRow).display_snapshot ?? snapshot;
   const time = inventoryTime(row);
   return {
     ...(Object.hasOwn(row, "proposed_amount") ? { candidateId: value((row as CandidateRow).id) } : { transactionId: value(row.id) }),
-    name: String(snapshot.item_name ?? snapshot.item_name_vi ?? "품목"),
+    name: String(display.item_name ?? display.item_name_vi ?? "품목"),
+    nameVi: display.item_name_vi == null ? null : String(display.item_name_vi),
+    inventoryCategory: display.category == null ? null : String(display.category),
+    inventoryCategoryVi: display.category_vi == null ? null : String(display.category_vi),
+    unit: display.unit == null ? null : String(display.unit),
     quantity: snapshot.change_quantity == null ? null : value(snapshot.change_quantity),
     unitPrice: snapshot.purchase_price == null ? null : value(snapshot.purchase_price),
     amount: Object.hasOwn(row, "proposed_amount") ? value((row as CandidateRow).proposed_amount) : value((row as TransactionRow).amount),

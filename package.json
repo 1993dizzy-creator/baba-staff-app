@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:inventory-ledger": "node --experimental-strip-types --test tests/inventory-ledger-projection.test.ts tests/inventory-ledger-projection-api.test.mjs tests/inventory-ledger-projection-db.test.mjs tests/ledger-inventory*.test.ts tests/inventory-mutation-session-auth-policy.test.ts tests/ledger-entries-v1.test.ts tests/ledger-payable-payments.test.ts tests/ledger-month-close-corrections.test.ts",
+    "test:inventory-ledger:concurrency": "node tests/inventory-ledger-concurrency.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.1",
@@ -15,12 +17,14 @@
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
+    "pg": "8.16.3",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
