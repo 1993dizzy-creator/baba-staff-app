@@ -119,7 +119,7 @@ test("no other query (users/schedules/store_setting_versions/manual overrides/ho
 });
 
 test("failure semantics: attendanceQuery failures still surface through the same error paths as before (no new try/catch introduced, no error suppression)", () => {
-  assert.match(snapshot, /if\(userResult\.error\|\|attendanceResult\.error\|\|overrideResult\.error\|\|contractResult\.error\|\|scheduleResult\.error\|\|settingTimelineResult\.error\|\|insuranceResult\.error\|\|payrollSettingsResult\.error\|\|levelProgramResult\.error\)throw new Error\("PAYROLL_MONTH_SNAPSHOT_READ_FAILED"\);/);
+  assert.match(snapshot, /if\(userResult\.error\|\|attendanceResult\.error\|\|overrideResult\.error\|\|contractResult\.error\|\|scheduleResult\.error\|\|settingTimelineResult\.error\|\|decisionResult\.error\|\|insuranceResult\.error\|\|payrollSettingsResult\.error\|\|levelProgramResult\.error\)throw new Error\("PAYROLL_MONTH_SNAPSHOT_READ_FAILED"\);/);
   assert.match(standing, /if \(userResult\.error \|\| attendanceResult\.error \|\| scheduleResult\.error \|\| settingResult\.error \|\| holidayResult\.error\) \{\s*throw new Error\("MONTHLY_ATTENDANCE_STANDING_READ_FAILED"\);/);
   // Route-level catch-all is unchanged: any thrown error from either loader
   // still collapses to the same PAYROLL_OVERVIEW_READ_FAILED 500 response.

@@ -78,6 +78,7 @@ function employee(
     adjustments: [],
     automaticPenalties: [],
     automaticIncentives: [],
+    partTimeExtraWork: [],
     unresolvedAttendanceCount: 0,
     attendanceMetrics: {
       lateCount: 0,
@@ -99,6 +100,7 @@ function employee(
       levelRaiseAmount: null,
       paidLeaveAmount: 0,
       overtimeAmount: 0,
+      partTimeExtraWorkAmount: 0,
       taxableOvertimeAmount: 0,
       taxExemptOvertimeAmount: 0,
       taxableOtherAdditionAmount: 0,

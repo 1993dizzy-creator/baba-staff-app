@@ -24,7 +24,7 @@ test("monthly-run.ts now queries store_setting_versions exactly once (with the s
   assert.equal((monthlyRun.match(/\.from\("store_setting_versions"\)/g) ?? []).length, 1);
   assert.match(
     monthlyRun,
-    /\.from\("store_setting_versions"\)\.select\("id,revision,effective_from_business_date,store_attendance_policies\(late_grace_minutes,early_leave_grace_minutes\)"\)\.eq\("state","active"\)\.lte\("effective_from_business_date",lastDate\)\.order\("effective_from_business_date",\{ascending:true\}\)\.order\("id",\{ascending:true\}\)/,
+    /\.from\("store_setting_versions"\)\.select\("id,revision,effective_from_business_date,store_attendance_policies\(late_grace_minutes,early_leave_grace_minutes\),store_business_hours\(weekday,is_closed,open_time,close_time\)"\)\.eq\("state","active"\)\.lte\("effective_from_business_date",lastDate\)\.order\("effective_from_business_date",\{ascending:true\}\)\.order\("id",\{ascending:true\}\)/,
   );
 });
 
@@ -54,7 +54,7 @@ test("a missing store_attendance_policies embed (null grace columns) maps to nul
 test("settingTimelineResult participates in the same combined error check as every other snapshot query (no silent partial failure)", () => {
   assert.match(
     monthlyRun,
-    /if\(userResult\.error\|\|attendanceResult\.error\|\|overrideResult\.error\|\|contractResult\.error\|\|scheduleResult\.error\|\|settingTimelineResult\.error\|\|insuranceResult\.error\|\|payrollSettingsResult\.error\|\|levelProgramResult\.error\)throw new Error\("PAYROLL_MONTH_SNAPSHOT_READ_FAILED"\);/,
+    /if\(userResult\.error\|\|attendanceResult\.error\|\|overrideResult\.error\|\|contractResult\.error\|\|scheduleResult\.error\|\|settingTimelineResult\.error\|\|decisionResult\.error\|\|insuranceResult\.error\|\|payrollSettingsResult\.error\|\|levelProgramResult\.error\)throw new Error\("PAYROLL_MONTH_SNAPSHOT_READ_FAILED"\);/,
   );
 });
 

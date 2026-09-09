@@ -18,6 +18,7 @@ import { formatRecognizedWork, getPayrollHeaderAmount } from "@/lib/payroll/payr
 import { payrollOverviewText } from "@/lib/text/payroll-overview";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
 import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
+import PartTimeExtraWorkSection from "@/components/payroll/PartTimeExtraWorkSection";
 // /admin/users의 🍚 배지와 동일한 문구를 쓴다 — 식대는 회사 부담 비용이며 net pay에 추가
 // 지급되는 항목이 아니므로, "지급"이 아니라 "대상"이라는 중립적 표현으로 통일한다.
 export function mealAllowanceBadgeLabel(lang: "ko" | "vi") {
@@ -61,8 +62,8 @@ export function CompensationCard({
     ? { salaryComposition: "Cấu thành lương", monthApplication: "Áp dụng tháng này", insuranceAndNet: "Khấu trừ và thực nhận", recognizedWork: "Chấm công được ghi nhận", adjustmentManage: "Thêm · hủy", finalPayout: "Thực nhận", monthlyEquivalent: "Quy đổi lương tháng", monthlyEquivalentHelp: "Theo điều kiện làm đủ theo hợp đồng" }
     : { salaryComposition: "급여 구성", monthApplication: "이번 달 반영", insuranceAndNet: "공제 및 최종 지급", recognizedWork: "인정 근무", adjustmentManage: "추가·취소", finalPayout: "최종 지급액", monthlyEquivalent: "월급여 환산", monthlyEquivalentHelp: "계약 기준 풀근무 시" };
   const taxText = lang === "vi"
-    ? { title:"Thuế TNCN",mode:"Cách áp dụng",notApplicable:"Không áp dụng TNCN",resident:"Cá nhân cư trú · lũy tiến",dependent:"Người phụ thuộc",personal:"Giảm trừ bản thân",dependentDeduction:"Giảm trừ người phụ thuộc",insurance:"Bảo hiểm được khấu trừ",taxableCompensation:"Thu nhập chịu thuế",taxableIncome:"Thu nhập tính thuế",calculated:"Thuế đã tính",employee:"Nhân viên chịu",company:"Công ty chịu",accountingName:"Tên kế toán",policyRevision:"Phiên bản chính sách",requiresReview:"Cần hoàn thiện hồ sơ/chính sách TNCN trước khi trả lương.",settings:"Mở cài đặt TNCN" }
-    : { title:"개인소득세(TNCN)",mode:"적용 방식",notApplicable:"TNCN 미적용",resident:"거주자 누진세",dependent:"부양가족",personal:"본인공제",dependentDeduction:"부양가족공제",insurance:"세금 계산상 보험공제",taxableCompensation:"과세대상 급여",taxableIncome:"과세소득",calculated:"계산세액",employee:"직원 부담",company:"회사 부담",accountingName:"회계 명의",policyRevision:"정책 revision",requiresReview:"지급 전에 TNCN profile/policy 확인이 필요합니다.",settings:"TNCN 설정 열기" };
+    ? { title:"Thuế TNCN",dependent:"Số người phụ thuộc",personal:"Giảm trừ bản thân",dependentDeduction:"Giảm trừ người phụ thuộc",insurance:"Khấu trừ bảo hiểm",taxableCompensation:"Thu nhập chịu thuế",taxableIncome:"Thu nhập tính thuế",calculated:"Thuế đã tính",employee:"Nhân viên chịu",company:"Công ty chịu",accountingName:"Tên kế toán",policyRevision:"Phiên bản chính sách",details:"Chi tiết tính thuế",requiresReview:"Cần hoàn thiện hồ sơ/chính sách TNCN trước khi trả lương.",settings:"Mở cài đặt TNCN" }
+    : { title:"개인소득세(TNCN)",dependent:"부양가족 수",personal:"본인공제",dependentDeduction:"부양가족공제",insurance:"보험공제",taxableCompensation:"과세대상 급여",taxableIncome:"과세소득",calculated:"계산된 세액",employee:"직원 공제",company:"회사 부담",accountingName:"회계 명의",policyRevision:"정책 revision",details:"계산 상세",requiresReview:"지급 전에 TNCN profile/policy 확인이 필요합니다.",settings:"TNCN 설정 열기" };
   const [modal, setModal] = useState<"incentive" | "penalty" | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const combined = employee.amounts.combinedSalary;
@@ -166,6 +167,8 @@ export function CompensationCard({
                 {!employee.insuranceEnrolled && employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
               </DetailSection>
 
+              {employee.contract.payType === "hourly" && <PartTimeExtraWorkSection employee={employee} month={month} lang={lang} refresh={refresh} />}
+
               {(employee.insuranceEnrolled || employee.amounts.advanceAmount > 0) && <DetailSection icon="🛡️" title={detailText.insuranceAndNet}>
                 {employee.insuranceEnrolled && <><Row label={t.insuranceBase} value={formatVnd(employee.amounts.insuranceBaseAmount)} />
                 <Row label={t.employeeInsuranceDeduction} value={formatSignedVnd(employee.amounts.employeeInsuranceDeductionAmount, "-")} /></>}
@@ -179,24 +182,27 @@ export function CompensationCard({
                 {employee.amounts.employerInsuranceAmount > 0 && <small style={s.help}>{t.employerInsuranceHelp}</small>}
                 {employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
               </DetailSection>}
-              <DetailSection icon="🧾" title={taxText.title}>
+              {(employee.tax.status === "requires_review" || employee.tax.taxMode === "resident_progressive") && <DetailSection icon="🧾" title={taxText.title}>
                 {employee.tax.status === "requires_review" ? <><p role="alert" style={s.error}>{taxText.requiresReview} ({employee.tax.warningCodes.join(", ")})</p><Link href={`/admin/payroll/settings?tab=employee&userId=${employee.userId}`}>{taxText.settings}</Link></> : <>
-                  <Row label={taxText.mode} value={employee.tax.taxMode === "not_applicable" ? taxText.notApplicable : taxText.resident} />
-                  {employee.tax.taxMode === "resident_progressive" ? <>
-                    <Row label={taxText.dependent} value={String(employee.tax.dependentCount)} />
-                    <Row label={taxText.personal} value={formatVnd(employee.tax.personalDeductionAmount)} />
-                    <Row label={taxText.dependentDeduction} value={formatVnd(employee.tax.dependentDeductionAmount)} />
-                    <Row label={taxText.insurance} value={formatVnd(employee.tax.deductibleInsuranceAmount)} />
-                    <Row label={taxText.taxableCompensation} value={formatVnd(employee.tax.taxableCompensationAmount)} />
-                    <Row label={taxText.taxableIncome} value={formatVnd(employee.tax.taxableIncomeAmount)} />
-                    <Row label={taxText.calculated} value={formatVnd(employee.tax.calculatedPitAmount)} />
-                    <Row label={taxText.employee} value={formatVnd(employee.tax.employeePitDeductionAmount)} />
-                    <Row label={taxText.company} value={formatVnd(employee.tax.companyPitAmount)} />
-                    <Row label={taxText.accountingName} value={employee.tax.accountingName ?? "—"} />
-                    <Row label={taxText.policyRevision} value={`#${employee.tax.taxPolicyRevision ?? "—"}`} />
-                  </> : null}
+                  <div style={s.taxSummary}>
+                    <span>{taxText.taxableIncome} <b>{formatVnd(employee.tax.taxableIncomeAmount)}</b></span>
+                    <span aria-hidden="true">·</span>
+                    <span>{employee.tax.taxBurdenMode === "company_bears" ? taxText.company : taxText.employee} <b>{formatVnd(employee.tax.taxBurdenMode === "company_bears" ? employee.tax.companyPitAmount : employee.tax.employeePitDeductionAmount)}</b></span>
+                  </div>
+                  <details style={s.taxDetails}>
+                    <summary style={s.taxDetailsSummary}>{taxText.details}</summary>
+                    <div style={s.taxDetailsRows}>
+                      <Row label={taxText.dependent} value={String(employee.tax.dependentCount)} />
+                      <Row label={taxText.personal} value={formatVnd(employee.tax.personalDeductionAmount)} />
+                      <Row label={taxText.dependentDeduction} value={formatVnd(employee.tax.dependentDeductionAmount)} />
+                      <Row label={taxText.insurance} value={formatVnd(employee.tax.deductibleInsuranceAmount)} />
+                      <Row label={taxText.taxableCompensation} value={formatVnd(employee.tax.taxableCompensationAmount)} />
+                      <Row label={taxText.accountingName} value={employee.tax.accountingName ?? "—"} />
+                      <Row label={taxText.policyRevision} value={`#${employee.tax.taxPolicyRevision ?? "—"}`} />
+                    </div>
+                  </details>
                 </>}
-              </DetailSection>
+              </DetailSection>}
               {!future && <><button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (!monthClosed || employee.calculationStatus !== "calculable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus !== "calculable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Chỉ có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월이 종료된 후 지급할 수 있습니다."}</small>}</>}
             </>
           )}
@@ -708,6 +714,10 @@ const s = {
   sectionTitle: { margin: 0, display: "flex", alignItems: "center", gap: 5, fontSize: 12, lineHeight: 1.25, fontWeight: 900, color: "#475569", letterSpacing: ".01em" },
   sectionIcon: { width: 14, fontSize: 12, lineHeight: 1, textAlign: "center", opacity: .82 },
   sectionRows: { width: "100%", boxSizing: "border-box", display: "grid", gap: 6, paddingLeft: 10 },
+  taxSummary: { display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: "3px 6px", padding: "7px 8px", borderRadius: 8, background: "#fff", color: "#334155", fontSize: 11.5, lineHeight: 1.35 },
+  taxDetails: { fontSize: 10.5, color: "#64748b" },
+  taxDetailsSummary: { cursor: "pointer", fontWeight: 700 },
+  taxDetailsRows: { display: "grid", gap: 5, marginTop: 6, padding: "7px 8px", borderRadius: 8, background: "#fff" },
   adjustmentButton: { width: "100%", minWidth: 0, minHeight: 36, display: "grid", gridTemplateColumns: "minmax(0,1fr) auto 9px", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 8, textAlign: "left", cursor: "pointer" },
   incentiveButton: { border: "1px solid #dcfce7", background: "#f7fcf8", color: "#166534" },
   penaltyButton: { border: "1px solid #fee2e2", background: "#fff8f8", color: "#991b1b" },

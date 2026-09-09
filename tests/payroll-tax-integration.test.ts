@@ -79,7 +79,7 @@ test("payment snapshot/hash and v2 payment totals carry every tax input and fina
 });
 
 test("admin and attendance expose exact Korean/Vietnamese PIT labels without identity mutation", () => {
-  for (const phrase of ["개인소득세(TNCN)", "과세소득", "본인공제", "부양가족", "직원 부담", "회사 부담", "회계 명의", "Thuế TNCN", "Thu nhập tính thuế", "Giảm trừ bản thân", "Người phụ thuộc", "Nhân viên chịu", "Công ty chịu", "Tên kế toán"]) assert.ok(card.includes(phrase), phrase);
+  for (const phrase of ["개인소득세(TNCN)", "과세소득", "본인공제", "부양가족", "직원 공제", "회사 부담", "회계 명의", "Thuế TNCN", "Thu nhập tính thuế", "Giảm trừ bản thân", "Số người phụ thuộc", "Nhân viên chịu", "Công ty chịu", "Tên kế toán"]) assert.ok(card.includes(phrase), phrase);
   for (const phrase of ["TNCN 적용 여부", "부양가족 수", "부담 방식", "세금 보험공제 방식", "회계/TNCN 명의", "적용 시작월", "Áp dụng TNCN", "Số người phụ thuộc", "Tên kế toán/TNCN"]) assert.ok(settings.includes(phrase), phrase);
   assert.match(settings, /employeeName/);
   assert.match(settings, /accountingName/);
@@ -88,4 +88,22 @@ test("admin and attendance expose exact Korean/Vietnamese PIT labels without ide
   assert.ok(attendance.includes("TNCN 회사 부담"));
   assert.ok(attendance.includes("Khấu trừ TNCN dự kiến"));
   assert.ok(attendance.includes("TNCN công ty chịu"));
+});
+
+test("admin PIT UI hides not-applicable tax and keeps only taxable income plus the actual burden on the default calculated view", () => {
+  assert.match(card, /employee\.tax\.status === "requires_review" \|\| employee\.tax\.taxMode === "resident_progressive"/);
+  assert.doesNotMatch(card, /taxText\.(?:mode|notApplicable|resident)/);
+  assert.match(card, /taxText\.taxableIncome[\s\S]*employee\.tax\.taxableIncomeAmount/);
+  assert.match(card, /employee\.tax\.taxBurdenMode === "company_bears" \? taxText\.company : taxText\.employee/);
+  assert.match(card, /employee\.tax\.taxBurdenMode === "company_bears" \? employee\.tax\.companyPitAmount : employee\.tax\.employeePitDeductionAmount/);
+});
+
+test("admin PIT UI keeps review warnings visible and moves secondary calculated fields into bilingual details", () => {
+  assert.match(card, /employee\.tax\.status === "requires_review" \? <>\s*<p role="alert"/);
+  assert.match(card, /employee\.tax\.warningCodes\.join\(", "\)/);
+  assert.match(card, /\/admin\/payroll\/settings\?tab=employee&userId=/);
+  assert.match(card, /<details style=\{s\.taxDetails\}>/);
+  assert.match(card, /계산 상세/);
+  assert.match(card, /Chi tiết tính thuế/);
+  for (const field of ["dependentCount", "personalDeductionAmount", "dependentDeductionAmount", "deductibleInsuranceAmount", "taxableCompensationAmount", "accountingName", "taxPolicyRevision"]) assert.ok(card.includes(`employee.tax.${field}`), field);
 });

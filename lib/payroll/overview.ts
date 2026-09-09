@@ -13,6 +13,7 @@ import { calculateCombinedSalary } from "@/lib/payroll/compensation";
 import { calculatePayrollInsuranceTotals } from "@/lib/payroll/insurance";
 import { calculateContractMonthlyEquivalent } from "@/lib/payroll/work-policy";
 import type { MonthlyAttendanceStanding } from "@/lib/attendance/monthly-standing";
+import type { PartTimeExtraWorkCandidate } from "@/lib/payroll/part-time-extra-work";
 import {
   calculateManualAdjustmentTotals,
   calculatePayrollPayoutAmounts,
@@ -60,6 +61,7 @@ export type PayrollOverviewEmployee = {
     levelRaiseAmount: number | null;
     paidLeaveAmount: number;
     overtimeAmount: number;
+    partTimeExtraWorkAmount: number;
     taxableOvertimeAmount: number;
     taxExemptOvertimeAmount: number;
     taxableOtherAdditionAmount: number;
@@ -91,6 +93,7 @@ export type PayrollOverviewEmployee = {
   adjustments: PayrollMonthlyAdjustment[];
   automaticPenalties: Array<{sourceType:"automatic";category:"late"|"early_leave"|"unauthorized_absence";businessDate:string;minutes:number;amount:number;attendanceRecordId:number|null;description:string}>;
   automaticIncentives?: Array<{sourceType:"automatic";category:"attendance_bonus";businessDate:null;amount:number;description:string;sourceSnapshot:Record<string,unknown>}>;
+  partTimeExtraWork: PartTimeExtraWorkCandidate[];
   unresolvedAttendanceCount: number;
   attendanceMetrics: {
     lateCount: number;
@@ -144,6 +147,7 @@ export function buildPayrollOverviewEmployee(input: {
   const accruedWorkAmount = sum(items, "base_work", "addition");
   const paidLeaveAmount = sum(items, "paid_leave", "addition");
   const overtimeAmount = sum(items, "overtime", "addition");
+  const partTimeExtraWorkAmount = sum(items, "part_time_extra_work", "addition");
   const taxableOvertimeAmount = items.filter(entry=>entry.category==="overtime"&&entry.direction==="addition"&&entry.taxTreatment==="taxable_compensation").reduce((total,entry)=>total+entry.amount,0);
   const taxExemptOvertimeAmount = items.filter(entry=>entry.category==="overtime"&&entry.direction==="addition"&&entry.taxTreatment==="tax_exempt_compensation").reduce((total,entry)=>total+entry.amount,0);
   const latePenaltyAmount = sum(items, "late_deduction", "deduction");
@@ -154,7 +158,7 @@ export function buildPayrollOverviewEmployee(input: {
   const manualAdjustmentTotals=calculateManualAdjustmentTotals(adjustments);
   const {manualIncentiveAmount,manualPenaltyAmount,advanceAmount}=manualAdjustmentTotals;
   const automaticIncentives=items.filter(entry=>entry.direction==="addition"&&entry.category==="attendance_bonus");const automaticIncentiveAmount=automaticIncentives.reduce((total,entry)=>total+entry.amount,0);const incentiveAmount=manualIncentiveAmount+automaticIncentiveAmount;const automaticPenaltyAmount=latePenaltyAmount+earlyLeavePenaltyAmount+unauthorizedAbsencePenaltyAmount;const penaltyAmount=automaticPenaltyAmount+manualPenaltyAmount;const workAppliedAmount=accruedWorkAmount+paidLeaveAmount;
-  const knownCategories = new Set(["base_work", "paid_leave", "overtime", "attendance_bonus", "late_deduction", "early_leave_deduction", "unauthorized_absence_deduction", "insurance_employee_deduction"]);
+  const knownCategories = new Set(["base_work", "paid_leave", "overtime", "part_time_extra_work", "attendance_bonus", "late_deduction", "early_leave_deduction", "unauthorized_absence_deduction", "insurance_employee_deduction"]);
   const otherAdditionAmount = items.filter((entry) => entry.direction === "addition" && !knownCategories.has(entry.category)).reduce((total, entry) => total + entry.amount, 0);
   const taxableOtherAdditionAmount = items.filter((entry) => entry.direction === "addition" && !knownCategories.has(entry.category) && entry.taxTreatment === "taxable_compensation").reduce((total, entry) => total + entry.amount, 0);
   const otherDeductionAmount = items.filter((entry) => entry.direction === "deduction" && !knownCategories.has(entry.category)).reduce((total, entry) => total + entry.amount, 0);
@@ -210,6 +214,7 @@ export function buildPayrollOverviewEmployee(input: {
       levelRaiseAmount: compensation?.levelRaiseAmount ?? null,
       paidLeaveAmount,
       overtimeAmount,
+      partTimeExtraWorkAmount,
       taxableOvertimeAmount,
       taxExemptOvertimeAmount,
       taxableOtherAdditionAmount,
@@ -229,6 +234,7 @@ export function buildPayrollOverviewEmployee(input: {
       earlyLeaveCount: days.filter((day) => Number(day.facts?.earlyLeaveMinutes || 0) > 0).length,
       earlyLeaveMinutes: employee.earlyLeaveMinutes,
     },
+    partTimeExtraWork: employee.partTimeExtraWork,
     reviewCount: employee.reviews.length,
     blockingCount,
     warningCodes: [...new Set([...warningCodes, ...tax.warningCodes])],
