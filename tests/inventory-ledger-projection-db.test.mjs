@@ -10,6 +10,25 @@ async function project(db,id=100,actor=1) {
 }
 async function one(db,sql) { return (await db.query(sql)).rows[0]; }
 
+test('confirmed latest purchase reprojects while an older purchase amount stays unchanged', async () => {
+  const db=await database();
+  try {
+    await db.exec("update inventory_logs set change_quantity=3,new_purchase_price=20000,business_date='2026-08-10' where id=100");
+    assert.equal((await project(db)).status,'synced');
+    await db.exec(`insert into inventory_logs(id,item_id,item_name,item_name_vi,category,category_vi,unit,change_quantity,new_purchase_price,new_supplier,business_date,created_at,source,reason,actor_username,source_actor_user_id,purchase_supplier_partner_id)
+      select 200,item_id,item_name,item_name_vi,category,category_vi,unit,3,23333,new_supplier,'2026-09-10','2026-09-10T10:00:00Z',source,reason,actor_username,source_actor_user_id,purchase_supplier_partner_id from inventory_logs where id=100`);
+    assert.equal((await project(db,200)).status,'synced');
+    assert.equal(Number((await one(db,"select sum(amount*economic_effect_sign) as amount from ledger_transactions where (source_snapshot->>'inventory_log_id')::bigint=100")).amount),60000);
+    assert.equal(Number((await one(db,"select sum(amount*economic_effect_sign) as amount from ledger_transactions where (source_snapshot->>'inventory_log_id')::bigint=200")).amount),69999);
+
+    await db.exec("update inventory_logs set new_purchase_price=19000,new_supplier='OK FOOD',purchase_supplier_partner_id=11 where id=200");
+    assert.equal((await project(db,200)).code,'REBOOKED');
+    assert.equal(Number((await one(db,"select sum(amount*economic_effect_sign) as amount from ledger_transactions where (source_snapshot->>'inventory_log_id')::bigint=100")).amount),60000);
+    assert.equal(Number((await one(db,"select sum(amount*economic_effect_sign) as amount from ledger_transactions where (source_snapshot->>'inventory_log_id')::bigint=200")).amount),57000);
+    assert.equal(Number((await one(db,'select party_id from ledger_transactions order by id desc limit 1')).party_id),11);
+  } finally {await db.close();}
+});
+
 test('source-only projection, metadata, corrections, payment guards, permissions and retries', async () => {
   const db=await database();
   try {

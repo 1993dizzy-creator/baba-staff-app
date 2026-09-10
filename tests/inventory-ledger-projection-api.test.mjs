@@ -13,10 +13,11 @@ function load(path, dependencies = {}) {
   return testModule.exports;
 }
 
-function setup({ ledgerFailure = false, latestLogId = 101 } = {}) {
+function setup({ ledgerFailure = false, logId = 100, latestLogId = logId, reason = 'purchase', businessDate = '2026-09-10', purchasePrice = 23333 } = {}) {
   const calls = [];
-  const log = { id: 100, item_id: 1, item_name: 'Coca', reason: 'purchase', source: 'create', change_quantity: 10, business_date: '2026-09-01', new_supplier: 'Won Mart', new_purchase_price: 20000 };
-  const item = { item_name: 'Coca-Cola', item_name_vi: 'Cola moi', category: 'Soda', category_vi: 'Nuoc', unit: 'can', supplier: 'OK FOOD', purchase_price: 18000 };
+  const projectedAmounts = [];
+  const log = { id: logId, item_id: 1, item_name: 'Coca', reason, source: 'create', change_quantity: 3, business_date: businessDate, new_supplier: 'Old supplier', new_purchase_price: purchasePrice, purchase_supplier_partner_id: 7 };
+  const item = { item_name: 'Coca-Cola', item_name_vi: 'Cola moi', category: 'Soda', category_vi: 'Nuoc', unit: 'can', supplier: 'Shopee', purchase_price: 19000, supplier_partner_id: 42 };
   const supabase = {
     from(table) {
       let patch, single = false;
@@ -40,9 +41,10 @@ function setup({ ledgerFailure = false, latestLogId = 101 } = {}) {
     },
     async rpc(name, args) {
       assert.equal(name, 'ledger_project_inventory_purchase_log_v1');
-      assert.deepEqual(args, { p_inventory_log_id: 100, p_request_actor_user_id: 7 });
+      assert.deepEqual(args, { p_inventory_log_id: log.id, p_request_actor_user_id: 7 });
       assert.ok(calls.includes('source-commit'));
       calls.push('ledger-projection');
+      projectedAmounts.push(log.change_quantity * log.new_purchase_price);
       if (ledgerFailure) throw { code: 'NETWORK_TEST_FAILURE' };
       return { data: { status: 'synced' }, error: null };
     },
@@ -62,33 +64,62 @@ function setup({ ledgerFailure = false, latestLogId = 101 } = {}) {
     '@/lib/inventory/supplier-partners-server': { resolveInventorySupplier: async ({ payload }) => ({ supplier: payload.supplier, supplier_partner_id: 11 }) },
     '@/lib/inventory/price-logs': { insertInventoryPriceLog: async () => { calls.push('price-history'); } },
   });
-  return { log, item, calls, patch: body => route.PATCH(new Request('http://test/api/inventory/logs', { method: 'PATCH', body: JSON.stringify(body) })) };
+  return { log, item, calls, projectedAmounts, patch: body => route.PATCH(new Request('http://test/api/inventory/logs', { method: 'PATCH', body: JSON.stringify(body) })) };
 }
 
-test('daily HTTP sync preserves historical supplier/price and reports Ledger network failure separately', async () => {
-  const state = setup({ ledgerFailure: true });
-  const response = await state.patch({ id: 100, logIds: [100], businessDate: '2026-09-01', syncCurrentItem: true });
+test('explicit purchase sync updates current economics and reports Ledger failure separately', async () => {
+  const state = setup({ ledgerFailure: true, logId: 200, latestLogId: 200 });
+  const response = await state.patch({ id: 200, logIds: [200], businessDate: '2026-09-10', syncCurrentItem: true });
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.ok, true);
   assert.equal(body.data.item_name, 'Coca-Cola');
-  assert.equal(body.data.new_supplier, 'Won Mart');
-  assert.equal(body.data.new_purchase_price, 20000);
+  assert.equal(body.data.change_quantity, 3);
+  assert.equal(body.data.new_supplier, 'Shopee');
+  assert.equal(body.data.new_purchase_price, 19000);
+  assert.equal(body.data.purchase_supplier_partner_id, 42);
   assert.equal(body.ledgerSync.status, 'failed');
   assert.equal(body.ledgerSync.code, 'NETWORK_TEST_FAILURE');
+  assert.deepEqual(state.projectedAmounts, [57000]);
   assert.deepEqual(state.calls, ['source-commit', 'ledger-projection']);
 });
 
+test('explicit sync on an older purchase keeps its economics and Ledger amount', async () => {
+  const state = setup({ logId: 100, latestLogId: 200, businessDate: '2026-08-10', purchasePrice: 20000 });
+  const response = await state.patch({ id: 100, logIds: [100], businessDate: '2026-08-10', syncCurrentItem: true });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.data.item_name, 'Coca-Cola');
+  assert.equal(body.data.new_supplier, 'Old supplier');
+  assert.equal(body.data.new_purchase_price, 20000);
+  assert.equal(body.data.purchase_supplier_partner_id, 7);
+  assert.deepEqual(state.projectedAmounts, [60000]);
+  assert.deepEqual(state.calls, ['source-commit', 'ledger-projection']);
+});
+
+test('explicit current-item sync keeps non-purchase economics unchanged', async () => {
+  const state = setup({ reason: 'stock_check' });
+  const response = await state.patch({ id: 100, logIds: [100], businessDate: '2026-09-10', syncCurrentItem: true });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.data.item_name, 'Coca-Cola');
+  assert.equal(body.data.new_supplier, 'Old supplier');
+  assert.equal(body.data.new_purchase_price, 23333);
+  assert.equal(body.data.purchase_supplier_partner_id, 7);
+  assert.equal(body.ledgerSync.status, 'synced');
+  assert.deepEqual(state.calls, ['source-commit']);
+});
+
 test('explicit historical price/supplier correction does not overwrite a newer purchase master', async () => {
-  const state = setup();
+  const state = setup({ latestLogId: 101 });
   const response = await state.patch({ id: 100, new_purchase_price: 21000, new_supplier: 'Corrected supplier' });
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.data.new_purchase_price, 21000);
   assert.equal(body.data.purchase_supplier_partner_id, 11);
   assert.equal(body.ledgerSync.status, 'synced');
-  assert.equal(state.item.purchase_price, 18000);
-  assert.equal(state.item.supplier, 'OK FOOD');
+  assert.equal(state.item.purchase_price, 19000);
+  assert.equal(state.item.supplier, 'Shopee');
 });
 
 test('latest purchase correction updates supplier binding and price history before projection', async () => {

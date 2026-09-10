@@ -22,6 +22,21 @@ export function inventoryLogDisplayUpdate(item: Record<string, unknown>): Record
   return { ...fields, new_category: fields.category, new_category_vi: fields.category_vi, new_unit: fields.unit };
 }
 
+export function inventoryPurchaseLogCurrentItemSyncUpdate(
+  item: Record<string, unknown>
+): Record<string, string | number | null> {
+  return {
+    ...inventoryLogDisplayUpdate(item),
+    new_purchase_price:
+      typeof item.purchase_price === "number" ? item.purchase_price : null,
+    new_supplier: typeof item.supplier === "string" ? item.supplier : null,
+    purchase_supplier_partner_id:
+      typeof item.supplier_partner_id === "number"
+        ? item.supplier_partner_id
+        : null,
+  };
+}
+
 export function ledgerSyncNotice(result: LedgerSyncResult | undefined, vi: boolean): string | null {
   if (!result || result.status === "synced") return null;
   const state = result.status === "pending" ? (vi ? "chờ xác nhận" : "확정 대기")

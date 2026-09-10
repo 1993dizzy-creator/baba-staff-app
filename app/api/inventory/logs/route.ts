@@ -9,7 +9,10 @@ import {
   fetchPreviousKegSummariesByLogId,
 } from "@/lib/inventory/keg-replacement-summary";
 import { supabaseServer } from "@/lib/supabase/server";
-import { inventoryLogDisplayUpdate } from "@/lib/inventory/ledger-sync-contract";
+import {
+  inventoryLogDisplayUpdate,
+  inventoryPurchaseLogCurrentItemSyncUpdate,
+} from "@/lib/inventory/ledger-sync-contract";
 import { projectInventoryPurchaseLogs } from "@/lib/ledger/inventory-projection";
 import { resolveInventorySupplier } from "@/lib/inventory/supplier-partners-server";
 import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
@@ -39,6 +42,9 @@ type CurrentInventoryItem = {
   category: string | null;
   category_vi: string | null;
   unit: string | null;
+  purchase_price: number | null;
+  supplier: string | null;
+  supplier_partner_id: number | null;
 };
 
 type InventoryLogsQueryOptions = {
@@ -129,9 +135,29 @@ const normalizeText = (value: unknown) =>
   String(value ?? "").replace(/\s+/g, " ").trim();
 
 const buildInventoryLogSyncPayload = (
-  currentItem: CurrentInventoryItem
+  currentItem: CurrentInventoryItem,
+  syncPurchaseEconomics: boolean
 ): Record<string, string | number | null> => {
-  return inventoryLogDisplayUpdate(currentItem);
+  return syncPurchaseEconomics
+    ? inventoryPurchaseLogCurrentItemSyncUpdate(currentItem)
+    : inventoryLogDisplayUpdate(currentItem);
+};
+
+const findLatestPurchaseLogId = async (itemId: number) => {
+  const { data, error } = await supabaseServer
+    .from("inventory_logs")
+    .select("id")
+    .eq("item_id", itemId)
+    .eq("reason", "purchase")
+    .gt("change_quantity", 0)
+    .order("business_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data?.id ? Number(data.id) : null;
 };
 
 export async function GET(req: Request) {
@@ -334,6 +360,8 @@ export async function PATCH(req: Request) {
     const existing = existingRows[0];
 
     const updatePayload: Record<string, string | number | null> = {};
+    let currentItem: CurrentInventoryItem | null = null;
+    let latestPurchaseLogId: number | null = null;
 
     if (syncCurrentItem) {
       if (!existing.item_id) {
@@ -363,22 +391,33 @@ export async function PATCH(req: Request) {
         );
       }
 
-      const { data: currentItem, error: currentItemError } = await supabaseServer
+      const { data, error: currentItemError } = await supabaseServer
         .from("inventory")
-        .select("item_name, item_name_vi, category, category_vi, unit")
+        .select(
+          "item_name, item_name_vi, category, category_vi, unit, purchase_price, supplier, supplier_partner_id"
+        )
         .eq("id", Number(existing.item_id))
         .maybeSingle();
 
       if (currentItemError) throw currentItemError;
 
-      if (!currentItem) {
+      if (!data) {
         return NextResponse.json(
           { ok: false, message: "Item not found" },
           { status: 404 }
         );
       }
 
-      Object.assign(updatePayload, buildInventoryLogSyncPayload(currentItem));
+      currentItem = data;
+      if (
+        existingRows.some(
+          (row) => normalizeInventoryReason(row.reason) === "purchase"
+        )
+      ) {
+        latestPurchaseLogId = await findLatestPurchaseLogId(
+          Number(existing.item_id)
+        );
+      }
     }
 
     if (hasReason) {
@@ -419,15 +458,56 @@ export async function PATCH(req: Request) {
       updatePayload.new_purchase_price = purchasePrice;
     }
 
-    const { data, error } = await supabaseServer
-      .from("inventory_logs")
-      .update(updatePayload)
-      .in("id", targetLogIds)
-      .select("id, item_id, item_name, item_name_vi, category, category_vi, new_category, new_category_vi, unit, new_unit, reason, business_date, change_quantity, new_supplier, new_purchase_price")
-      .order("id", { ascending: true });
+    const updatedRowSelect =
+      "id, item_id, item_name, item_name_vi, category, category_vi, new_category, new_category_vi, unit, new_unit, reason, business_date, change_quantity, new_supplier, new_purchase_price, purchase_supplier_partner_id";
+    const updateLogRows = async (
+      ids: number[],
+      payload: Record<string, string | number | null>
+    ) => {
+      if (ids.length === 0) return [];
 
-    if (error) throw error;
-    const updatedRows = data || [];
+      const { data, error } = await supabaseServer
+        .from("inventory_logs")
+        .update(payload)
+        .in("id", ids)
+        .select(updatedRowSelect)
+        .order("id", { ascending: true });
+
+      if (error) throw error;
+      return data || [];
+    };
+
+    let updatedRows;
+    if (syncCurrentItem && currentItem) {
+      const purchaseLogIds = existingRows
+        .filter(
+          (row) =>
+            normalizeInventoryReason(row.reason) === "purchase" &&
+            Number(row.id) === latestPurchaseLogId
+        )
+        .map((row) => Number(row.id));
+      const displayOnlyLogIds = existingRows
+        .filter(
+          (row) => !purchaseLogIds.includes(Number(row.id))
+        )
+        .map((row) => Number(row.id));
+
+      const [purchaseRows, displayOnlyRows] = await Promise.all([
+        updateLogRows(purchaseLogIds, {
+          ...buildInventoryLogSyncPayload(currentItem, true),
+          ...updatePayload,
+        }),
+        updateLogRows(displayOnlyLogIds, {
+          ...buildInventoryLogSyncPayload(currentItem, false),
+          ...updatePayload,
+        }),
+      ]);
+      updatedRows = [...purchaseRows, ...displayOnlyRows].sort(
+        (left, right) => Number(left.id) - Number(right.id)
+      );
+    } else {
+      updatedRows = await updateLogRows(targetLogIds, updatePayload);
+    }
 
     const updatesPurchaseInfo = hasNewSupplier || hasNewPurchasePrice;
     const isPurchaseLog =
@@ -435,21 +515,11 @@ export async function PATCH(req: Request) {
       Number(existing.change_quantity ?? 0) > 0;
 
     if (!syncCurrentItem && updatesPurchaseInfo && isPurchaseLog && existing.item_id) {
-      const { data: latestPurchaseLog, error: latestError } = await supabaseServer
-        .from("inventory_logs")
-        .select("id")
-        .eq("item_id", Number(existing.item_id))
-        .eq("reason", "purchase")
-        .gt("change_quantity", 0)
-        .order("business_date", { ascending: false })
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const latestPurchaseLogId = await findLatestPurchaseLogId(
+        Number(existing.item_id)
+      );
 
-      if (latestError) throw latestError;
-
-      if (latestPurchaseLog?.id === id) {
+      if (latestPurchaseLogId === id) {
         const itemUpdatePayload: Record<string, string | number | null> = {};
 
         if (hasNewSupplier) {
