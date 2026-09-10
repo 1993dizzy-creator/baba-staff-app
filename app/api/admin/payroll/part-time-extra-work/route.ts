@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   if (!month || (rawUserId !== null && userId === undefined)) return payrollJson({ ok: false, code: "INVALID_EXTRA_WORK_QUERY" }, 400);
   try {
     const [overview, paid] = await Promise.all([loadPayrollOverview(month, { userId }), paidUserIds(month)]);
-    const employees = overview.employees.filter(employee => employee.contract?.payType === "hourly").map(employee => ({
+    const employees = overview.employees.filter(employee => employee.contract && employee.contract.calculationBasis !== "fixed_monthly").map(employee => ({
       userId: employee.userId,
       name: employee.name,
       paid: paid.has(employee.userId),

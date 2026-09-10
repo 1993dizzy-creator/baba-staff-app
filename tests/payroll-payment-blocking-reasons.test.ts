@@ -21,7 +21,7 @@ test("reviewLabel maps every payment-blocking code to friendly bilingual copy, n
   const codes = [
     "NO_PAYROLL_CONTRACT", "MISSING_CHECK_IN", "MISSING_CHECK_OUT", "INVALID_TIME_RANGE",
     "SCHEDULE_HISTORY_UNAVAILABLE", "CONTRACT_OVERLAP", "CALCULATION_FAILED",
-    "PENDING_LEAVE_APPROVAL", "LEAVE_PAYROLL_TREATMENT_UNSPECIFIED", "OVERTIME_APPROVAL_UNAVAILABLE",
+    "PENDING_LEAVE_APPROVAL", "LEAVE_PAYROLL_TREATMENT_UNSPECIFIED",
     "EMPLOYEE_LEVEL_BASE_DATE_REQUIRED",
     "PART_TIME_EXTRA_WORK_REVIEW_REQUIRED", "PART_TIME_EXTRA_WORK_DECISION_STALE",
     "TAX_PROFILE_REQUIRES_REVIEW", "TAX_POLICY_MISSING", "TAX_POLICY_INVALID",
@@ -39,4 +39,9 @@ test("reviewLabel maps every payment-blocking code to friendly bilingual copy, n
 test("the technical part-time stale code is shown as a re-review sentence, not the code name", () => {
   assert.equal(reviewLabel("ko", "PART_TIME_EXTRA_WORK_DECISION_STALE"), "추가근무 원천정보가 변경되어 재검토가 필요합니다.");
   assert.notEqual(reviewLabel("vi", "PART_TIME_EXTRA_WORK_DECISION_STALE"), "PART_TIME_EXTRA_WORK_DECISION_STALE");
+});
+
+test("the common extra-work review copy no longer calls the feature part-time", () => {
+  assert.equal(reviewLabel("ko", "PART_TIME_EXTRA_WORK_REVIEW_REQUIRED"), "추가근무 승인이 필요합니다.");
+  assert.equal(reviewLabel("vi", "PART_TIME_EXTRA_WORK_REVIEW_REQUIRED"), "Cần duyệt làm thêm giờ.");
 });

@@ -82,7 +82,7 @@ export function CompensationCard({
     : employee.username;
   const extraWorkCount = employee.partTimeExtraWork.length;
   const extraWorkNeedsReview = employee.partTimeExtraWork.some(row => row.status === "review_required" || row.status === "stale");
-  const extraWorkBadgeLabel = lang === "vi" ? `Làm thêm part-time: ${extraWorkCount} mục` : `파트타임 추가근무 내역 ${extraWorkCount}건`;
+  const extraWorkBadgeLabel = lang === "vi" ? `Làm thêm giờ: ${extraWorkCount} mục` : `추가근무 내역 ${extraWorkCount}건`;
   // 지급 불가 상태일 때, 급여카드를 만드는 과정에서 이미 확보한 지급 차단 원인(review/tax
   // warning code)을 사용자 친화적인 문구로 보여준다. 새로운 Source Export 요청은 하지 않는다.
   const paymentBlocked = !future && monthClosed && employee.payment?.payment_status !== "paid" && (employee.calculationStatus !== "calculable" || !employee.calculationHash);
@@ -183,7 +183,7 @@ export function CompensationCard({
                 {!employee.insuranceEnrolled && employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
               </DetailSection>
 
-              {employee.contract.payType === "hourly" && <PartTimeExtraWorkSection employee={employee} month={month} lang={lang} refresh={refresh} />}
+              {employee.contract.calculationBasis !== "fixed_monthly" && <PartTimeExtraWorkSection employee={employee} month={month} lang={lang} refresh={refresh} />}
 
               {(employee.insuranceEnrolled || employee.amounts.advanceAmount > 0) && <DetailSection icon="🛡️" title={detailText.insuranceAndNet}>
                 {employee.insuranceEnrolled && <><Row label={t.insuranceBase} value={formatVnd(employee.amounts.insuranceBaseAmount)} />

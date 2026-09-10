@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import type { PayrollContract } from "./types";
 
 const STORE_OFFSET = "+07:00";
+export const EXTRA_WORK_MINIMUM_CANDIDATE_MINUTES = 30;
 
 export type PartTimeExtraWorkDecision = {
   id: number;
@@ -20,6 +22,9 @@ export type PartTimeExtraWorkCandidate = {
   checkOutAt: string;
   contractId: number;
   contractRevision: number;
+  minuteRateAmount: number;
+  // Existing DB/RPC compatibility field. For non-hourly contracts this is the
+  // calculated minute rate converted to a rounded hourly equivalent.
   hourlyRateAmount: number;
   scheduleId: number;
   scheduleRevision: number;
@@ -41,7 +46,10 @@ export type PartTimeExtraWorkCandidate = {
   status: "review_required" | "stale" | "approved" | "rejected";
 };
 
-export function isPartTimeExtraWorkEligible(payType: string) { return payType === "hourly"; }
+export function isExtraWorkEligible(contract: Pick<PayrollContract, "payType" | "calculationBasis">) {
+  return contract.calculationBasis !== "fixed_monthly"
+    && (contract.payType === "hourly" || contract.payType === "daily" || contract.payType === "monthly");
+}
 
 export function partTimeExtraWorkDecisionEffect(candidate: PartTimeExtraWorkCandidate) {
   if (candidate.status === "approved") return { amount: candidate.candidateAmount, warningCode: null } as const;
@@ -78,6 +86,7 @@ export function calculatePartTimeExtraWork(input: {
   checkOutAt: string;
   contractId: number;
   contractRevision: number;
+  minuteRateAmount: number;
   hourlyRateAmount: number;
   scheduleId: number;
   scheduleRevision: number;
@@ -105,8 +114,8 @@ export function calculatePartTimeExtraWork(input: {
   const excludedBeforeOpenMinutes = overlapMinutes(actualStart, actualEnd, actualStart, Math.min(store.start, actualEnd));
   const excludedAfterCloseMinutes = overlapMinutes(actualStart, actualEnd, Math.max(store.end, actualStart), actualEnd);
   const candidateMinutes = beforeScheduleMinutes + afterScheduleMinutes;
-  if (candidateMinutes === 0) return null;
-  const candidateAmount = Math.round(candidateMinutes * input.hourlyRateAmount / 60);
+  if (candidateMinutes < EXTRA_WORK_MINIMUM_CANDIDATE_MINUTES) return null;
+  const candidateAmount = Math.round(candidateMinutes * input.minuteRateAmount);
   const sourceSnapshot = {
     attendanceRecordId: input.attendanceRecordId,
     checkInAt: input.checkInAt,
@@ -115,6 +124,7 @@ export function calculatePartTimeExtraWork(input: {
     businessDate: input.businessDate,
     contractId: input.contractId,
     contractRevision: input.contractRevision,
+    minuteRateAmount: input.minuteRateAmount,
     hourlyRateAmount: input.hourlyRateAmount,
     scheduleId: input.scheduleId,
     scheduleRevision: input.scheduleRevision,

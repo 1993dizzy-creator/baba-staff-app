@@ -14,10 +14,11 @@ const v7Migration=read("supabase/migrations/202608020002_add_unified_payroll_eng
 test("v6 settings and immutable penalty snapshot are constrained",()=>{for(const field of ["late_major_threshold_minutes","late_minor_penalty_minutes","late_major_penalty_rate_bp","unauthorized_absence_penalty_days","penalty_settings_snapshot"])assert.match(migration,new RegExp(field));assert.match(migration,/default 20/);assert.match(migration,/default 60/);assert.match(migration,/default 5000/);assert.match(migration,/default 3/);assert.match(migration,/PAYROLL_PENALTY_SNAPSHOT_STALE/);assert.match(migration,/p_action in\('finalize','force_finalize'\)/);assert.doesNotMatch(migration,/drop function public\.payroll_.*_v[23]/);});
 test("v6 RPCs are private and preserve v3 insurance transition",()=>{for(const fn of ["payroll_create_run_v4","payroll_recalculate_run_v4","payroll_mutate_item_v4","payroll_resolve_review_v4","payroll_transition_run_v4"])assert.match(migration,new RegExp(`create function public\\.${fn}`));assert.match(migration,/from public,anon,authenticated/);assert.match(migration,/to service_role/);assert.match(migration,/perform public\.payroll_transition_run_v3/);assert.match(migration,/monthly-payroll-v6/);});
 test("missing attendance stays a warning while only an explicit unauthorized status creates the deduction",()=>{assert.match(engine,/const recordsByDate=new Map/);assert.match(engine,/if\(!record&&!schedule\)continue/);assert.match(engine,/MISSING_CHECK_IN/);assert.match(engine,/record\?\.status==="unauthorized_absence"[\s\S]*item\("unauthorized_absence_deduction","deduction"/);});
-test("v8 pays the full scheduled day; general late keeps the settings minor/major tier, only normalized-late and early-leave use the 30-minute block",()=>{
+test("v9 keeps the full scheduled day and independent v8 late/early-leave penalty policy",()=>{
   assert.match(engine,/selectUnifiedRecognizedMinutes/);
-  assert.match(engine,/contract\.overtimeMode==="requires_approval"/);
-  assert.match(engine,/monthly-payroll-v8/);
+  assert.match(engine,/isExtraWorkEligible\(contract\)/);
+  assert.doesNotMatch(engine,/OVERTIME_APPROVAL_UNAVAILABLE/);
+  assert.match(engine,/monthly-payroll-v9/);
   // 일반 지각(manualLateNormalized=false) → /admin/payroll/settings 의 minor/major tier
   assert.match(engine,/if\(facts\.manualLateNormalized\)\{/);
   assert.match(engine,/calculateLatePenalty\(\{lateMinutes:facts\.effectiveLateMinutes,minuteRate:rate\.minuteRate,dayRate:rate\.dayRate,thresholdMinutes:input\.penaltySettings\.lateMajorThresholdMinutes/);

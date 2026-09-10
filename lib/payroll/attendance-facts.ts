@@ -81,7 +81,6 @@ export function normalizeAttendanceDayFacts(input: {
         // 조퇴 유예는 threshold가 아니라 공제되는 허용 시간이다(정책 엔진과 동일한 의미).
         early = Math.max(0, rawEarly - (input.earlyLeaveGraceMinutes ?? 0));
         overtime = minutes(actualStart, Math.min(actualEnd, scheduledStart)) + minutes(Math.max(actualStart, scheduledEnd), actualEnd);
-        if (overtime > 0) warnings.push("OVERTIME_APPROVAL_UNAVAILABLE");
       }
     }
   } else if (record?.status === "unauthorized_absence") {
@@ -123,7 +122,7 @@ export function normalizeAttendanceDayFacts(input: {
     if (record.storedEarlyLeaveMinutes !== undefined && Number(record.storedEarlyLeaveMinutes || 0) !== early) warnings.push("STORED_EARLY_LEAVE_MINUTES_MISMATCH");
     if (actualMinutes !== null && record.storedWorkMinutes !== undefined && Number(record.storedWorkMinutes || 0) !== actualMinutes) warnings.push("STORED_WORK_MINUTES_MISMATCH");
   }
-  const review = warnings.some((code) => code !== "OVERTIME_APPROVAL_UNAVAILABLE");
+  const review = warnings.length > 0;
   return {
     userId: input.userId,
     businessDate: input.businessDate,

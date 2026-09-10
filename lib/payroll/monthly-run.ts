@@ -17,19 +17,21 @@ import { isMissingAttendanceCandidateDate } from "./missing-attendance";
 import { calculateFixedMonthlyPayroll } from "./fixed-monthly";
 import { resolvePayrollAttendancePolicyByDate, type PayrollStoreSettingTimelineRow } from "./store-setting-timeline";
 import { payrollTaxReviewCodeForItem, payrollTaxTreatmentForItem, type PayrollTaxTreatment } from "./tax";
-import { calculatePartTimeExtraWork, isPartTimeExtraWorkEligible, partTimeExtraWorkDecisionEffect, type PartTimeExtraWorkCandidate, type PartTimeExtraWorkDecision } from "./part-time-extra-work";
+import { calculatePartTimeExtraWork, isExtraWorkEligible, partTimeExtraWorkDecisionEffect, type PartTimeExtraWorkCandidate, type PartTimeExtraWorkDecision } from "./part-time-extra-work";
 import { classifyPayrollAttendanceSource } from "./source-facts/attendance";
 
-// v8 (2026-09): 기본급을 정상근무일 1일 전액으로 고정하고, 지각·조퇴를 기본급과 분리된
+// v9 (2026-09): v8 기본급·지각·조퇴 정책을 유지하면서, 추가근무 승인을 근태 기반 계약 전체로
+// 확장하고 하루 합산 30분 이상만 전 시간을 별도 addition으로 처리한다.
+// v8: 기본급을 정상근무일 1일 전액으로 고정하고, 지각·조퇴를 기본급과 분리된
 // 30분 단위 deduction(late_deduction / early_leave_deduction)으로 처리. 수동 지각 정상화는
 // 지각 패널티 면제가 아니라 "정상근무일 인정"으로 의미 변경(패널티는 effective 지각분 기준 유지).
-export const PAYROLL_RUN_ENGINE_VERSION = "monthly-payroll-v8";
+export const PAYROLL_RUN_ENGINE_VERSION = "monthly-payroll-v9";
 export const PAYROLL_RUN_START_MONTH = "2026-07";
 
 export const CRITICAL_WARNING_CODES = [
   "NO_PAYROLL_CONTRACT", "MISSING_CHECK_IN", "MISSING_CHECK_OUT", "INVALID_TIME_RANGE",
   "SCHEDULE_HISTORY_UNAVAILABLE", "PENDING_LEAVE_APPROVAL", "LEAVE_PAYROLL_TREATMENT_UNSPECIFIED",
-  "OVERTIME_APPROVAL_UNAVAILABLE", "CONTRACT_OVERLAP", "CALCULATION_FAILED",
+  "CONTRACT_OVERLAP", "CALCULATION_FAILED",
   "STORED_STATUS_POLICY_MISMATCH", "STORED_LATE_MINUTES_MISMATCH",
   "STORED_EARLY_LEAVE_MINUTES_MISMATCH", "STORED_WORK_MINUTES_MISMATCH",
   "LATE_POLICY_REVIEW", "EARLY_LEAVE_POLICY_REVIEW",
@@ -37,7 +39,7 @@ export const CRITICAL_WARNING_CODES = [
   "PART_TIME_EXTRA_WORK_REVIEW_REQUIRED", "PART_TIME_EXTRA_WORK_DECISION_STALE",
 ] as const;
 const BLOCKING_WARNING_CODES=new Set<string>(["NO_PAYROLL_CONTRACT","MISSING_CHECK_IN","MISSING_CHECK_OUT","INVALID_TIME_RANGE","SCHEDULE_HISTORY_UNAVAILABLE","CONTRACT_OVERLAP","CALCULATION_FAILED","EMPLOYEE_LEVEL_BASE_DATE_REQUIRED","PART_TIME_EXTRA_WORK_REVIEW_REQUIRED","PART_TIME_EXTRA_WORK_DECISION_STALE"]);
-const ACTIONABLE_WARNING_CODES=new Set<string>(["PENDING_LEAVE_APPROVAL","LEAVE_PAYROLL_TREATMENT_UNSPECIFIED","OVERTIME_APPROVAL_UNAVAILABLE"]);
+const ACTIONABLE_WARNING_CODES=new Set<string>(["PENDING_LEAVE_APPROVAL","LEAVE_PAYROLL_TREATMENT_UNSPECIFIED"]);
 
 type CriticalWarning = typeof CRITICAL_WARNING_CODES[number];
 export type PayrollSnapshotUserRow={id:number;name:string|null;full_name:string|null;username:string;is_active:boolean;role:string;part:string|null;position:string|null;birth_date:string|null;hire_date:string|null;termination_date:string|null;is_system_account:boolean;payroll_eligible_override:boolean|null;level_program_enabled:boolean|null;level_base_date_override:string|null;levelProgramVersion?:EmployeeLevelProgramVersion};
@@ -111,7 +113,7 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
     if(contractMatches.length>1&&!facts.warningCodes.includes("CONTRACT_OVERLAP"))facts.warningCodes.push("CONTRACT_OVERLAP");
     if(!contract&&!facts.warningCodes.includes("NO_PAYROLL_CONTRACT"))facts.warningCodes.push("NO_PAYROLL_CONTRACT");
     const sourceFact=classifyPayrollAttendanceSource({businessDate:date,facts,attendanceRecord:record?{id:Number(record.id),status:record.status,checkInAt:record.check_in_at,checkOutAt:record.check_out_at,approvalStatus:record.approval_status,updatedAt:record.updated_at}:null,schedule,storePolicyRevision:settings.revision});
-    for(const code of facts.warningCodes){if(code==="OVERTIME_APPROVAL_UNAVAILABLE")continue;if(isCritical(code)&&!(code==="LEAVE_PAYROLL_TREATMENT_UNSPECIFIED"&&contract?.paidLeaveMode!=="manual_review")){const missingCandidate=code==="MISSING_CHECK_IN"&&isMissingAttendanceCandidateDate({date,hireDate:user.hire_date,terminationDate:user.termination_date,calculationEndDate:input.dates.at(-1)??null,hasActiveSchedule:Boolean(schedule),hasAttendanceRecord:Boolean(record)});reviews.push(review(code,date,{attendanceRecordId:record?.id??null,stored:facts.stored,recalculated:{status:facts.attendanceStatus,lateMinutes:facts.lateMinutes,earlyLeaveMinutes:facts.earlyLeaveMinutes,workMinutes:facts.actualMinutes},candidateMinutes:facts.overtimeCandidateMinutes,approvedLeave:record?.status==="leave"&&record.approval_status==="approved",missingAttendanceCandidate:missingCandidate,requiresDayOffOrMissingEntryConfirmation:missingCandidate},missingCandidate?"actionable":undefined));}}
+    for(const code of facts.warningCodes){if(isCritical(code)&&!(code==="LEAVE_PAYROLL_TREATMENT_UNSPECIFIED"&&contract?.paidLeaveMode!=="manual_review")){const missingCandidate=code==="MISSING_CHECK_IN"&&isMissingAttendanceCandidateDate({date,hireDate:user.hire_date,terminationDate:user.termination_date,calculationEndDate:input.dates.at(-1)??null,hasActiveSchedule:Boolean(schedule),hasAttendanceRecord:Boolean(record)});reviews.push(review(code,date,{attendanceRecordId:record?.id??null,stored:facts.stored,recalculated:{status:facts.attendanceStatus,lateMinutes:facts.lateMinutes,earlyLeaveMinutes:facts.earlyLeaveMinutes,workMinutes:facts.actualMinutes},candidateMinutes:facts.overtimeCandidateMinutes,approvedLeave:record?.status==="leave"&&record.approval_status==="approved",missingAttendanceCandidate:missingCandidate,requiresDayOffOrMissingEntryConfirmation:missingCandidate},missingCandidate?"actionable":undefined));}}
     if(!contract||!schedule||contractMatches.length!==1||scheduleMatches.length!==1){days.push({date,facts,sourceFact,contractRevision:contract?.revision??null,scheduleRevision:schedule?.revision??null});continue;}
     const scheduleMinutes=facts.scheduledMinutes;if(scheduleMinutes===null){days.push({date,facts,sourceFact,contractRevision:contract.revision,scheduleRevision:schedule.revision});continue;}const dailyContract={...contract,standardMinutesPerDay:scheduleMinutes};
     const levelInfo=getEmployeeLevelInfo(user,date);const compensation=calculateCombinedSalary(contract,levelInfo);if(compensation.combinedSalary===null){reviews.push(review("EMPLOYEE_LEVEL_BASE_DATE_REQUIRED",date,{contractRevision:contract.revision}));continue;}const rate=calculatePayrollRates(dailyContract,compensation.combinedSalary);const levelProgramSnapshot={levelProgramEnabled:user.level_program_enabled,levelProgramVersionId:user.levelProgramVersion?.id??null,levelProgramRevision:user.levelProgramVersion?.revision??null,levelProgramEffectiveFrom:user.levelProgramVersion?.effectiveFrom??null,levelBaseDate:user.level_base_date_override};
@@ -132,11 +134,11 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
       days.push({date,facts,sourceFact,contractRevision:contract.revision,scheduleRevision:schedule.revision,recognizedMinutes:0});continue;
     }
     if(blocking||facts.actualMinutes===null){days.push({date,facts,sourceFact,contractRevision:contract.revision,scheduleRevision:schedule.revision});continue;}
-    if(isPartTimeExtraWorkEligible(contract.payType)&&record?.check_in_at&&record.check_out_at){
+    if(isExtraWorkEligible(contract)&&record?.check_in_at&&record.check_out_at){
       const store=input.extraWorkSettingsByDate.get(date);
       if(store){
-        const candidate=calculatePartTimeExtraWork({attendanceRecordId:record.id,userId:user.id,businessDate:date,checkInAt:record.check_in_at,checkOutAt:record.check_out_at,contractId:contract.id,contractRevision:contract.revision,hourlyRateAmount:compensation.combinedSalary,scheduleId:schedule.id,scheduleRevision:schedule.revision,scheduleStartTime:schedule.startTime,scheduleEndTime:schedule.endTime,storeSettingId:store.id,storeSettingRevision:store.revision,storeOpenTime:store.openTime,storeCloseTime:store.closeTime,decision:input.decisionsByAttendanceId.get(record.id)??null});
-        if(candidate){const effect=partTimeExtraWorkDecisionEffect(candidate);partTimeExtraWork.push(candidate);if(effect.amount>0)items.push(item("part_time_extra_work","addition",effect.amount,date,"파트타임 추가근무 / Làm thêm part-time",{...candidate.sourceSnapshot,sourceHash:candidate.sourceHash,decisionId:candidate.decision?.id??null,decision:"approved",decidedAt:candidate.decision?.decidedAt??null}));if(effect.warningCode)reviews.push(review(effect.warningCode,date,{attendanceRecordId:record.id,sourceHash:candidate.sourceHash,decisionSourceHash:candidate.decision?.sourceHash??null,candidateMinutes:candidate.candidateMinutes,candidateAmount:candidate.candidateAmount}));}
+        const candidate=calculatePartTimeExtraWork({attendanceRecordId:record.id,userId:user.id,businessDate:date,checkInAt:record.check_in_at,checkOutAt:record.check_out_at,contractId:contract.id,contractRevision:contract.revision,minuteRateAmount:rate.minuteRate,hourlyRateAmount:vnd(rate.minuteRate*60),scheduleId:schedule.id,scheduleRevision:schedule.revision,scheduleStartTime:schedule.startTime,scheduleEndTime:schedule.endTime,storeSettingId:store.id,storeSettingRevision:store.revision,storeOpenTime:store.openTime,storeCloseTime:store.closeTime,decision:input.decisionsByAttendanceId.get(record.id)??null});
+        if(candidate){const effect=partTimeExtraWorkDecisionEffect(candidate);partTimeExtraWork.push(candidate);if(effect.amount>0)items.push(item("part_time_extra_work","addition",effect.amount,date,"추가근무 / Làm thêm giờ",{...candidate.sourceSnapshot,sourceHash:candidate.sourceHash,decisionId:candidate.decision?.id??null,decision:"approved",decidedAt:candidate.decision?.decidedAt??null}));if(effect.warningCode)reviews.push(review(effect.warningCode,date,{attendanceRecordId:record.id,sourceHash:candidate.sourceHash,decisionSourceHash:candidate.decision?.sourceHash??null,candidateMinutes:candidate.candidateMinutes,candidateAmount:candidate.candidateAmount}));}
       }
     }
     const actualRecognizedMinutes=selectUnifiedRecognizedMinutes({scheduledMinutes:facts.scheduledMinutes??facts.actualMinutes,scheduledOverlapMinutes:facts.scheduledOverlapMinutes??facts.actualMinutes,actualMinutes:facts.actualMinutes,lateMinutes:facts.lateMinutes,earlyLeaveMinutes:facts.earlyLeaveMinutes,manualLateNormalized:facts.manualLateNormalized});
@@ -158,7 +160,6 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
     if(earlyLeavePenalty.amount>0)items.push(item("early_leave_deduction","deduction",earlyLeavePenalty.amount,date,"조퇴 패널티 / Phạt về sớm",{type:"early_leave",attendanceRecordId:record?.id??null,businessDate:date,rawEarlyLeaveMinutes:facts.rawEarlyLeaveMinutes,effectiveEarlyLeaveMinutes:facts.earlyLeaveMinutes,penaltyMinutes:earlyLeavePenalty.penaltyMinutes,penaltyBlockMinutes:TIME_PENALTY_BLOCK_MINUTES,earlyLeaveThresholdMinutes:facts.earlyLeaveThresholdMinutes,minutes:earlyLeavePenalty.penaltyMinutes,minuteRate:rate.minuteRate,dayRate:rate.dayRate,calculatedAmount:earlyLeavePenalty.amount,contractRevision:contract.revision,scheduleVersionId:schedule.id,scheduleRevision:schedule.revision,storeSettingsRevision:settings.revision,storePolicyRevision:settings.revision,engineVersion:PAYROLL_RUN_ENGINE_VERSION}));
     const earlyLeaveSource={rawEarlyLeaveMinutes:facts.rawEarlyLeaveMinutes,earlyLeaveThresholdMinutes:facts.earlyLeaveThresholdMinutes,isEarlyLeave:facts.isEarlyLeave,deductionEarlyLeaveMinutes:workPolicy.deductionEarlyLeaveMinutes,calculationBasis:contract.calculationBasis,minuteRate:rate.minuteRate,calculatedAmount:vnd(workPolicy.automaticEarlyLeavePenalty),attendanceRecordId:record?.id??null,scheduleRevision:schedule.revision,storeSettingsRevision:settings.revision,engineVersion:PAYROLL_RUN_ENGINE_VERSION};
     for(const entry of reviews){if(entry.businessDate===date&&entry.warningCode==="STORED_EARLY_LEAVE_MINUTES_MISMATCH")entry.sourceSnapshot={...entry.sourceSnapshot,...earlyLeaveSource};}
-    if(contract.payType!=="hourly"&&facts.overtimeCandidateMinutes>0&&contract.overtimeMode==="requires_approval")reviews.push(review("OVERTIME_APPROVAL_UNAVAILABLE",date,{candidateMinutes:facts.overtimeCandidateMinutes,minuteRate:rate.minuteRate,suggestedAmount:vnd(rate.minuteRate*facts.overtimeCandidateMinutes)}));
     const recalculatedAutomaticItems=items.filter(entry=>entry.itemType==="automatic"&&entry.businessDate===date);
     // STORED_*_MISMATCH 리뷰의 amountDelta(진단용) — 재계산 측과 동일한 새 정책(1일 전액 기본급 +
     // 30분 단위 지각/조퇴 deduction)으로, 저장된 late/early_leave 값을 기준으로 다시 계산한다.

@@ -8,7 +8,9 @@ const route = read("app/api/admin/payroll/part-time-extra-work/route.ts");
 const monthly = read("lib/payroll/monthly-run.ts");
 const overview = read("lib/payroll/overview.ts");
 const ui = read("components/payroll/PartTimeExtraWorkSection.tsx");
+const uiStyles = read("components/payroll/PartTimeExtraWorkSection.module.css");
 const card = read("components/payroll/CompensationCard.tsx");
+const payrollPage = read("app/(protected)/admin/payroll/page.tsx");
 
 test("three production-history migration files define the decision ledger, strict grants, and RPCs", () => {
   const table = read("supabase/migrations/20260909064418_add_part_time_extra_work_decisions.sql");
@@ -42,62 +44,89 @@ test("payroll integration uses a separate taxable automatic item and blocking re
   assert.match(overview, /"part_time_extra_work"/);
 });
 
-test("hourly-only bilingual UI uses compact rows, collapsible history, state summaries, and paid lock", () => {
-  assert.match(card, /employee\.contract\.payType === "hourly"/);
-  for (const label of ["파트타임 추가근무", "Làm thêm part-time", "출퇴근", "근무시간", "추가", "Chấm công", "Giờ làm", "Làm thêm", "계산 상세", "Chi tiết tính", "급여 지급 불가"]) assert.match(ui, new RegExp(label));
-  assert.doesNotMatch(ui, /가게 영업시간|Giờ hoạt động cửa hàng|개인 스케줄|Lịch cá nhân/);
-  assert.match(ui, /const formatDate = \(value: string\) => value\.slice\(5\)\.replace\("-", "\."\)/);
-  assert.match(ui, /<details style=\{s\.details\}>/);
-  assert.match(ui, /beforeScheduleMinutes.*afterScheduleMinutes.*excludedBeforeOpenMinutes.*excludedAfterCloseMinutes/);
-  assert.match(ui, /출근 전 추가.*퇴근 후 추가.*제외/);
-  assert.match(ui, /Làm thêm trước giờ vào ca.*Làm thêm sau giờ tan ca.*Loại trừ/);
-  assert.doesNotMatch(ui, /`스케줄 전 .*스케줄 후/);
-  assert.match(ui, /gridTemplateColumns: "36px minmax\(0,1fr\) auto auto"/);
-  assert.match(ui, /flexWrap: "wrap"/);
-  assert.match(ui, /padding: "3px 7px"/);
-  assert.doesNotMatch(ui, /Thời gian ứng viên|후보 시간|candidateMinutes = rows\.reduce/);
-  assert.match(ui, /reviewRequiredCount = rows\.filter\(row => row\.status === "review_required"\)\.length/);
-  assert.match(ui, /staleCount = rows\.filter\(row => row\.status === "stale"\)\.length/);
-  assert.match(ui, /reviewRequiredCount > 0 && <Metric label=\{vi \? "Chưa duyệt" : "미검토"\}/);
-  assert.match(ui, /staleCount > 0 && <Metric label=\{vi \? "Cần duyệt lại" : "재검토"\}/);
-  assert.doesNotMatch(ui, /미검토·재검토|Chưa xử lý \/ cần xem lại/);
+test("extra-work UI uses compact one-line summaries with one expanded row", () => {
+  assert.doesNotMatch(card, /employee\.contract\.payType === "hourly" && <PartTimeExtraWorkSection/);
+  assert.match(ui, /const \[expandedAttendanceId, setExpandedAttendanceId\] = useState<number \| null>\(null\)/);
+  assert.match(ui, /setExpandedAttendanceId\(current => current === attendanceRecordId \? null : attendanceRecordId\)/);
+  assert.match(ui, /const rowExpanded = expandedAttendanceId === row\.attendanceRecordId/);
+  assert.match(ui, /className=\{styles\.summaryToggle\}[\s\S]*?formatDate\(row\.businessDate\)[\s\S]*?row\.candidateMinutes[\s\S]*?formatVnd\(row\.candidateAmount\)/);
+  assert.match(ui, /rowExpanded && <div id=\{detailId\} className=\{styles\.info\}/);
+  assert.doesNotMatch(ui, /<details className=\{styles\.details\}/);
+  assert.match(ui, /beforeScheduleMinutes/);
+  assert.match(ui, /afterScheduleMinutes/);
+  assert.match(ui, /excludedBeforeOpenMinutes \+ row\.excludedAfterCloseMinutes/);
+  assert.match(uiStyles, /grid-template-areas:\s*"summary controls"\s*"detail detail"/);
+  assert.match(uiStyles, /\.summaryToggle\s*\{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto/);
+  assert.match(uiStyles, /\.summaryMain\s*\{[\s\S]*?display: flex;[\s\S]*?gap: 10px;[\s\S]*?white-space: nowrap/);
+  assert.match(uiStyles, /\.extra\s*\{[\s\S]*?white-space: nowrap/);
+  assert.match(uiStyles, /\.controls\s*\{[\s\S]*?white-space: nowrap/);
   assert.match(ui, /const \[isExpanded, setIsExpanded\] = useState\(false\)/);
-  assert.match(ui, /rows\.length === 0 \? <small[\s\S]*?isExpanded && <div id=\{listId\}/);
-  for (const label of ["전체 내역 펼치기", "전체 내역 접기", "Xem toàn bộ", "Thu gọn toàn bộ"]) assert.match(ui, new RegExp(label));
-  assert.match(ui, /aria-expanded=\{isExpanded\}/);
-  assert.match(ui, /aria-controls=\{listId\}/);
-  assert.match(ui, /maxHeight: 360, overflowY: "auto"/);
+  assert.match(ui, /rows\.length === 0 \? <small[\s\S]*?isExpanded && <div ref=\{listRef\} id=\{listId\}/);
+  assert.match(ui, /data-extra-work-list[\s\S]*?data-extra-work-item[\s\S]*?data-extra-work-controls[\s\S]*?data-extra-work-info/);
+  assert.match(uiStyles, /\.list\s*\{[\s\S]*?grid-auto-rows: max-content;[\s\S]*?max-height: 360px;[\s\S]*?overflow-y: auto/);
   assert.match(ui, /const disabled = paid \|\| busyId === row\.attendanceRecordId/);
-  assert.match(ui, /enabledButton: \{ cursor: "pointer" \}/);
-  assert.match(ui, /disabledButton: \{ cursor: "not-allowed", opacity: 0\.55 \}/);
-  assert.match(ui, /disabled=\{disabled\}/);
+  assert.match(uiStyles, /\.disabledButton\s*\{[\s\S]*?opacity: 0\.42/);
+});
+
+test("expanded details wrap into available space and omit empty facts", () => {
+  assert.match(uiStyles, /\.info\s*\{[\s\S]*?display: flex;[\s\S]*?flex-wrap: wrap;[\s\S]*?gap: 3px 14px/);
+  assert.match(uiStyles, /\.detailLine\s*\{[\s\S]*?flex: 1 1 145px/);
+  assert.match(uiStyles, /@media \(max-width: 480px\)[\s\S]*?\.summaryMain\s*\{[\s\S]*?gap: 8px/);
+  assert.match(ui, /hasValidDateTime\(row\.checkInAt\) && hasValidDateTime\(row\.checkOutAt\)/);
+  assert.match(ui, /row\.scheduleStartTime && row\.scheduleEndTime/);
+  assert.match(ui, /row\.beforeScheduleMinutes > 0 && <DetailLine accent/);
+  assert.match(ui, /row\.afterScheduleMinutes > 0 && <DetailLine accent/);
+  assert.match(ui, /excludedMinutes > 0 && <DetailLine wide/);
+  assert.match(ui, /excludedParts\.join\(" · "\)/);
+});
+
+test("extra-work action clicks do not toggle row details", () => {
+  assert.match(ui, /onClick=\{\(\) => toggleRow\(row\.attendanceRecordId\)\}/);
+  assert.match(ui, /className=\{styles\.actions\} onClick=\{\(event\) => event\.stopPropagation\(\)\}/);
+  assert.ok((ui.match(/event\.stopPropagation\(\)/g) ?? []).length >= 4);
+  assert.match(ui, /void decide\(row\.attendanceRecordId, "approved", row\.sourceHash\)/);
+  assert.match(ui, /void decide\(row\.attendanceRecordId, "rejected", row\.sourceHash\)/);
+  assert.match(ui, /void cancel\(row\.attendanceRecordId\)/);
+  assert.match(ui, /method: "POST"/);
   assert.match(ui, /method: "DELETE"/);
 });
 
-test("extra-work review calculation and UI stay hourly-only, including the fixed-monthly early return", () => {
-  assert.match(monthly, /if\(isPartTimeExtraWorkEligible\(contract\.payType\)&&record\?\.check_in_at&&record\.check_out_at\)/);
-  assert.match(monthly, /calculationBasis:"fixed_monthly"[\s\S]*?partTimeExtraWork:\[\]/);
-  assert.match(card, /employee\.contract\.payType === "hourly" && <PartTimeExtraWorkSection/);
-  assert.match(monthly, /PART_TIME_EXTRA_WORK_REVIEW_REQUIRED/);
-  assert.match(monthly, /PART_TIME_EXTRA_WORK_DECISION_STALE/);
+test("extra-work actions preserve open UI and scroll through background refresh", () => {
+  assert.match(payrollPage, /loading&&!overview\?<div style=\{styles\.state\}/);
+  assert.match(payrollPage, /error&&!overview\?<div role="alert"/);
+  assert.match(payrollPage, /<CompensationCard key=\{employee\.userId\}/);
+  assert.match(ui, /captureScrollPosition\(\);[\s\S]*?setBusyId\(attendanceRecordId\)/);
+  assert.match(ui, /listScrollTop: listRef\.current\?\.scrollTop \?\? 0/);
+  assert.match(ui, /windowScrollY: window\.scrollY/);
+  assert.match(ui, /useLayoutEffect\(\(\) => \{[\s\S]*?listRef\.current\.scrollTop = saved\.listScrollTop[\s\S]*?window\.scrollTo\([\s\S]*?saved\.windowScrollY[\s\S]*?requestAnimationFrame/);
+  assert.match(ui, /\}, \[rows\]\)/);
+  assert.match(ui, /pendingScrollRestoreRef\.current = null/);
 });
 
-test("employee card header shows a compact extra-work badge only for non-empty rows and highlights unresolved work", () => {
+test("mobile summary stays compact and keeps the established action palette", () => {
+  assert.match(uiStyles, /@media \(max-width: 480px\)/);
+  assert.match(uiStyles, /@media \(max-width: 480px\)[\s\S]*?\.item\s*\{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) max-content;[\s\S]*?min-height: 31px/);
+  assert.match(uiStyles, /@media \(max-width: 480px\)[\s\S]*?\.actionButton\s*\{[\s\S]*?min-height: 23px;[\s\S]*?font-size: 8\.5px/);
+  assert.match(uiStyles, /\.approve\s*\{[\s\S]*?border: 1px solid #dcfce7;[\s\S]*?background: #f7fcf8;[\s\S]*?color: #166534/);
+  assert.match(uiStyles, /\.reject\s*\{[\s\S]*?border: 1px solid #fee2e2;[\s\S]*?background: #fff8f8;[\s\S]*?color: #991b1b/);
+  assert.doesNotMatch(uiStyles, /\.approve\s*\{[^}]*background: #166534|\.reject\s*\{[^}]*background: #b91c1c/);
+});
+
+test("extra-work review calculation covers attendance-based contracts while fixed-monthly stays excluded", () => {
+  assert.match(monthly, /if\(isExtraWorkEligible\(contract\)&&record\?\.check_in_at&&record\.check_out_at\)/);
+  assert.match(monthly, /minuteRateAmount:rate\.minuteRate/);
+  assert.match(monthly, /hourlyRateAmount:vnd\(rate\.minuteRate\*60\)/);
+  assert.doesNotMatch(monthly, /hourlyRateAmount:compensation\.combinedSalary/);
+  assert.match(monthly, /calculationBasis:"fixed_monthly"[\s\S]*?partTimeExtraWork:\[\]/);
+  assert.match(card, /employee\.contract\.calculationBasis !== "fixed_monthly" && <PartTimeExtraWorkSection/);
+  assert.doesNotMatch(monthly, /reviews\.push\(review\("OVERTIME_APPROVAL_UNAVAILABLE"/);
+  assert.doesNotMatch(read("lib/payroll/attendance-facts.ts"), /warnings\.push\("OVERTIME_APPROVAL_UNAVAILABLE"\)/);
+});
+
+test("employee card keeps a stable user key and shows the extra-work badge only for non-empty rows", () => {
+  assert.match(payrollPage, /<CompensationCard key=\{employee\.userId\}/);
   assert.match(card, /const extraWorkCount = employee\.partTimeExtraWork\.length/);
   assert.match(card, /employee\.partTimeExtraWork\.some\(row => row\.status === "review_required" \|\| row\.status === "stale"\)/);
   assert.match(card, /extraWorkCount > 0 \? \(/);
   assert.doesNotMatch(card, /contract\.payType[^\n]*extraWorkBadge/);
-  assert.match(card, /`파트타임 추가근무 내역 \$\{extraWorkCount\}건`/);
-  assert.match(card, /`Làm thêm part-time: \$\{extraWorkCount\} mục`/);
-  assert.match(card, /title=\{extraWorkBadgeLabel\} aria-label=\{extraWorkBadgeLabel\}>⏱️<\/span>/);
-  assert.match(card, /extraWorkNeedsReview \? s\.extraWorkBadgeAlert : \{\}/);
-  assert.match(card, /extraWorkBadgeAlert: \{ background: "#ffedd5"/);
-
-  const identityIndex = card.indexOf("<span style={s.identity}>");
-  const attendanceIndex = card.indexOf("<AttendancePerfectScoreBadge", identityIndex);
-  const mealIndex = card.indexOf("mealAllowanceEligible ? (", identityIndex);
-  const extraWorkIndex = card.indexOf("extraWorkCount > 0 ? (", identityIndex);
-  const separatorIndex = card.indexOf("s.separator", identityIndex);
-  assert.ok(identityIndex > -1 && attendanceIndex > -1 && mealIndex > -1 && extraWorkIndex > -1 && separatorIndex > -1);
-  assert.ok(attendanceIndex < mealIndex && mealIndex < extraWorkIndex && extraWorkIndex < separatorIndex);
 });
