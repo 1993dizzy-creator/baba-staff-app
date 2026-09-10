@@ -20,6 +20,7 @@ export type MealAllowanceCostSummary = {
   policyMissing: boolean;
   /** payrollUserIds 중 그 달에 한 번이라도 식대 대상이었던 user id 목록(배지 전용). */
   eligibleUserIds: number[];
+  currentByUser: Array<{ userId: number; eligibleDays: number; referenceAmount: number }>;
 };
 
 // loadPayrollMonthSnapshot(monthly-run.ts)가 이미 읽어 둔 users/contracts/attendance를
@@ -116,10 +117,10 @@ export async function loadMealAllowanceCostSummary(
   );
 
   if (policyMissing) {
-    return { currentAmount: 0, projectedAmount: 0, policyMissing: true, eligibleUserIds };
+    return { currentAmount: 0, projectedAmount: 0, policyMissing: true, eligibleUserIds, currentByUser: [] };
   }
   if (candidateUserIds.length === 0) {
-    return { currentAmount: 0, projectedAmount: 0, policyMissing: false, eligibleUserIds };
+    return { currentAmount: 0, projectedAmount: 0, policyMissing: false, eligibleUserIds, currentByUser: [] };
   }
 
   const candidateSet = new Set(candidateUserIds);
@@ -173,5 +174,6 @@ export async function loadMealAllowanceCostSummary(
     projectedAmount += result.amount;
   }
 
-  return { currentAmount: current.totalAmount, projectedAmount, policyMissing: false, eligibleUserIds };
+  const currentByUser=[...current.byUser.entries()].map(([userId,referenceAmount])=>({userId,eligibleDays:current.eligibleDaysByUser.get(userId)??0,referenceAmount})).sort((left,right)=>left.userId-right.userId);
+  return { currentAmount: current.totalAmount, projectedAmount, policyMissing: false, eligibleUserIds, currentByUser };
 }

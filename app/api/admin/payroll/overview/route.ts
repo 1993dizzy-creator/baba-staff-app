@@ -5,6 +5,9 @@ import { loadPayrollOverview } from "@/lib/payroll/overview-server";
 import { buildEmployeePaymentSnapshot, payrollPaymentSnapshotHash } from "@/lib/payroll/payment-snapshot";
 import { isClosedPayrollMonth } from "@/lib/payroll/payment-period";
 import { loadMealAllowanceCostSummary } from "@/lib/payroll/meal-allowance-server";
+// NOTE: Source Export(buildPayrollSourceExport)는 향후 APP↔T8 교차검증에서 다시 쓰므로
+// 코드는 보존하되, 급여관리 메인 화면 진입 경로에서는 계산하지 않는다.
+// 원천 자료가 필요하면 /api/admin/payroll/source-export 를 별도로 호출한다.
 
 export const dynamic = "force-dynamic";
 

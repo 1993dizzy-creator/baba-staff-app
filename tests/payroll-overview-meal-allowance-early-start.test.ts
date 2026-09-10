@@ -123,6 +123,6 @@ test("response shape and other route logic (payments, employees, summary, projec
 test("loadPayrollOverview return shape is unchanged (period, snapshot, employees, rawByUser, directorInsuranceAmount, summary, projectedSummary)", () => {
   assert.match(
     overview,
-    /return \{period,snapshot,employees,rawByUser,directorInsuranceAmount,summary:buildPayrollOverviewSummary\(employees,directorInsuranceAmount\),projectedSummary:buildPayrollOverviewProjectedSummary\(employees,directorInsuranceAmount\)\};/,
+    /return \{period,snapshot,employees,rawByUser,adjustmentLedgerByUser,directorInsuranceAmount,summary:buildPayrollOverviewSummary\(employees,directorInsuranceAmount\),projectedSummary:buildPayrollOverviewProjectedSummary\(employees,directorInsuranceAmount\)\};/,
   );
 });

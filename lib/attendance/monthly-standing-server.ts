@@ -36,7 +36,7 @@ export async function loadMonthlyAttendanceStandings(
   const lastDate = dates.at(-1) ?? null;
   const baseUserQuery = supabaseServer.from("users").select("id,hire_date,termination_date,attendance_tracking_enabled,is_system_account").eq("is_system_account", false);
   const userQuery = options?.userId === undefined ? baseUserQuery : baseUserQuery.eq("id", options.userId);
-  const baseAttendanceQuery = supabaseServer.from("attendance_records").select("id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,updated_at").gte("work_date", start).lte("work_date", lastDate ?? start);
+  const baseAttendanceQuery = supabaseServer.from("attendance_records").select("id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,note,approval_status,updated_at").gte("work_date", start).lte("work_date", lastDate ?? start);
   // Reuse the caller's already-in-flight attendance_records read when one was
   // provided — only true for calculationEndDate!==null (see overview-
   // server.ts). Otherwise this loader's own query (unchanged) runs exactly as

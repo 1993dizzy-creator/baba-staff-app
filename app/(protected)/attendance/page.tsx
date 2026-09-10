@@ -129,6 +129,9 @@ const payrollSummaryCopy = {
     total: "합계",
     close: "닫기",
     minute: "분",
+    sourceReady: "이번 달 급여 계산 준비 완료",
+    sourceBlocked: "이번 달 급여 확인 필요",
+    sourceHelp: "표시 금액은 이번 달 근무 기록으로 계산한 예상 급여입니다. 최종 급여는 급여 확정 절차를 거쳐 지급됩니다.",
   },
   vi: {
     adjustments: "Điều chỉnh",
@@ -149,6 +152,9 @@ const payrollSummaryCopy = {
     total: "Tổng",
     close: "Đóng",
     minute: "phút",
+    sourceReady: "Đã sẵn sàng tính lương tháng này",
+    sourceBlocked: "Cần kiểm tra lương tháng này",
+    sourceHelp: "Số tiền hiển thị là lương dự kiến được tính từ dữ liệu chấm công tháng này. Lương cuối cùng được chi trả sau khi hoàn tất quy trình chốt lương.",
   },
 } as const;
 
@@ -643,6 +649,7 @@ function MyAttendance() {
                   incentives: Array.isArray(result.incentives) ? result.incentives : [],
                   penalties: Array.isArray(result.penalties) ? result.penalties : [],
                   advances: Array.isArray(result.advances) ? result.advances : [],
+                  sourceReadiness: result.sourceReadiness ?? { readyForAccounting: false, blockingCodes: [] },
                 } as AttendancePayrollData
               : null,
           );
@@ -1078,6 +1085,10 @@ function MyAttendance() {
       />
 
       <div style={cardStyle}>
+        {payrollData ? <div style={payrollData.sourceReadiness.readyForAccounting?payrollSourceReadyStyle:payrollSourceBlockedStyle} role="status">
+          <strong>{payrollData.sourceReadiness.readyForAccounting?ps.sourceReady:ps.sourceBlocked}</strong>
+          <small>{ps.sourceHelp}</small>
+        </div> : null}
         <div style={payrollSummaryHeaderStyle}>
           <div style={adjustmentGroupStyle}>
             <span style={adjustmentGroupLabelStyle}>{ps.adjustments}</span>
@@ -1924,6 +1935,23 @@ const calendarTimeTextStyle: CSSProperties = {
   fontWeight: 700,
   color: "#6b7280",
   whiteSpace: "nowrap",
+};
+
+const payrollSourceReadyStyle: CSSProperties = {
+  display: "grid",
+  gap: 3,
+  marginBottom: 10,
+  padding: "8px 10px",
+  borderRadius: 10,
+  background: "#f0fdf4",
+  color: "#166534",
+  fontSize: 11,
+};
+
+const payrollSourceBlockedStyle: CSSProperties = {
+  ...payrollSourceReadyStyle,
+  background: "#fff7ed",
+  color: "#9a3412",
 };
 
 const payrollSummaryHeaderStyle: CSSProperties = {

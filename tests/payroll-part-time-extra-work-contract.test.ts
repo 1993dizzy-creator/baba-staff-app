@@ -42,7 +42,7 @@ test("payroll integration uses a separate taxable automatic item and blocking re
   assert.match(overview, /"part_time_extra_work"/);
 });
 
-test("hourly-only bilingual UI uses compact rows, small actions, a details toggle, blocking reason, and paid lock", () => {
+test("hourly-only bilingual UI uses compact rows, collapsible history, state summaries, and paid lock", () => {
   assert.match(card, /employee\.contract\.payType === "hourly"/);
   for (const label of ["파트타임 추가근무", "Làm thêm part-time", "출퇴근", "근무시간", "추가", "Chấm công", "Giờ làm", "Làm thêm", "계산 상세", "Chi tiết tính", "급여 지급 불가"]) assert.match(ui, new RegExp(label));
   assert.doesNotMatch(ui, /가게 영업시간|Giờ hoạt động cửa hàng|개인 스케줄|Lịch cá nhân/);
@@ -55,7 +55,22 @@ test("hourly-only bilingual UI uses compact rows, small actions, a details toggl
   assert.match(ui, /gridTemplateColumns: "36px minmax\(0,1fr\) auto auto"/);
   assert.match(ui, /flexWrap: "wrap"/);
   assert.match(ui, /padding: "3px 7px"/);
-  assert.match(ui, /disabled=\{paid \|\|/);
+  assert.doesNotMatch(ui, /Thời gian ứng viên|후보 시간|candidateMinutes = rows\.reduce/);
+  assert.match(ui, /reviewRequiredCount = rows\.filter\(row => row\.status === "review_required"\)\.length/);
+  assert.match(ui, /staleCount = rows\.filter\(row => row\.status === "stale"\)\.length/);
+  assert.match(ui, /reviewRequiredCount > 0 && <Metric label=\{vi \? "Chưa duyệt" : "미검토"\}/);
+  assert.match(ui, /staleCount > 0 && <Metric label=\{vi \? "Cần duyệt lại" : "재검토"\}/);
+  assert.doesNotMatch(ui, /미검토·재검토|Chưa xử lý \/ cần xem lại/);
+  assert.match(ui, /const \[isExpanded, setIsExpanded\] = useState\(false\)/);
+  assert.match(ui, /rows\.length === 0 \? <small[\s\S]*?isExpanded && <div id=\{listId\}/);
+  for (const label of ["전체 내역 펼치기", "전체 내역 접기", "Xem toàn bộ", "Thu gọn toàn bộ"]) assert.match(ui, new RegExp(label));
+  assert.match(ui, /aria-expanded=\{isExpanded\}/);
+  assert.match(ui, /aria-controls=\{listId\}/);
+  assert.match(ui, /maxHeight: 360, overflowY: "auto"/);
+  assert.match(ui, /const disabled = paid \|\| busyId === row\.attendanceRecordId/);
+  assert.match(ui, /enabledButton: \{ cursor: "pointer" \}/);
+  assert.match(ui, /disabledButton: \{ cursor: "not-allowed", opacity: 0\.55 \}/);
+  assert.match(ui, /disabled=\{disabled\}/);
   assert.match(ui, /method: "DELETE"/);
 });
 
@@ -65,4 +80,24 @@ test("extra-work review calculation and UI stay hourly-only, including the fixed
   assert.match(card, /employee\.contract\.payType === "hourly" && <PartTimeExtraWorkSection/);
   assert.match(monthly, /PART_TIME_EXTRA_WORK_REVIEW_REQUIRED/);
   assert.match(monthly, /PART_TIME_EXTRA_WORK_DECISION_STALE/);
+});
+
+test("employee card header shows a compact extra-work badge only for non-empty rows and highlights unresolved work", () => {
+  assert.match(card, /const extraWorkCount = employee\.partTimeExtraWork\.length/);
+  assert.match(card, /employee\.partTimeExtraWork\.some\(row => row\.status === "review_required" \|\| row\.status === "stale"\)/);
+  assert.match(card, /extraWorkCount > 0 \? \(/);
+  assert.doesNotMatch(card, /contract\.payType[^\n]*extraWorkBadge/);
+  assert.match(card, /`파트타임 추가근무 내역 \$\{extraWorkCount\}건`/);
+  assert.match(card, /`Làm thêm part-time: \$\{extraWorkCount\} mục`/);
+  assert.match(card, /title=\{extraWorkBadgeLabel\} aria-label=\{extraWorkBadgeLabel\}>⏱️<\/span>/);
+  assert.match(card, /extraWorkNeedsReview \? s\.extraWorkBadgeAlert : \{\}/);
+  assert.match(card, /extraWorkBadgeAlert: \{ background: "#ffedd5"/);
+
+  const identityIndex = card.indexOf("<span style={s.identity}>");
+  const attendanceIndex = card.indexOf("<AttendancePerfectScoreBadge", identityIndex);
+  const mealIndex = card.indexOf("mealAllowanceEligible ? (", identityIndex);
+  const extraWorkIndex = card.indexOf("extraWorkCount > 0 ? (", identityIndex);
+  const separatorIndex = card.indexOf("s.separator", identityIndex);
+  assert.ok(identityIndex > -1 && attendanceIndex > -1 && mealIndex > -1 && extraWorkIndex > -1 && separatorIndex > -1);
+  assert.ok(attendanceIndex < mealIndex && mealIndex < extraWorkIndex && extraWorkIndex < separatorIndex);
 });

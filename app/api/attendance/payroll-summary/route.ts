@@ -33,6 +33,7 @@ export async function GET(request: Request) {
       incentives: data?.incentives ?? [],
       penalties: data?.penalties ?? [],
       advances: data?.advances ?? [],
+      sourceReadiness: data?.sourceReadiness ?? null,
     });
   } catch (error) {
     console.error("attendance payroll summary exception:", error);

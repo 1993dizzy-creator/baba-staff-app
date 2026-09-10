@@ -16,6 +16,7 @@ import {
 import { formatPositiveIntegerInput, normalizePositiveIntegerInput } from "@/lib/payroll/positive-integer-input";
 import { formatRecognizedWork, getPayrollHeaderAmount } from "@/lib/payroll/payroll-page-display";
 import { payrollOverviewText } from "@/lib/text/payroll-overview";
+import { reviewLabel } from "@/lib/payroll/ui-labels";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
 import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
 import PartTimeExtraWorkSection from "@/components/payroll/PartTimeExtraWorkSection";
@@ -79,6 +80,18 @@ export function CompensationCard({
   const positionLabel = employee.role
     ? getEmployeeRoleLabel(employee.role, lang)
     : employee.username;
+  const extraWorkCount = employee.partTimeExtraWork.length;
+  const extraWorkNeedsReview = employee.partTimeExtraWork.some(row => row.status === "review_required" || row.status === "stale");
+  const extraWorkBadgeLabel = lang === "vi" ? `Làm thêm part-time: ${extraWorkCount} mục` : `파트타임 추가근무 내역 ${extraWorkCount}건`;
+  // 지급 불가 상태일 때, 급여카드를 만드는 과정에서 이미 확보한 지급 차단 원인(review/tax
+  // warning code)을 사용자 친화적인 문구로 보여준다. 새로운 Source Export 요청은 하지 않는다.
+  const paymentBlocked = !future && monthClosed && employee.payment?.payment_status !== "paid" && (employee.calculationStatus !== "calculable" || !employee.calculationHash);
+  const blockingReasonLabels = paymentBlocked
+    ? (() => {
+        const labels = [...new Set(employee.warningCodes.map((code) => reviewLabel(lang, code)))];
+        return labels.length > 0 ? labels : [lang === "vi" ? "Chưa thể xác định kết quả tính lương." : "급여 계산 결과를 확정할 수 없습니다."];
+      })()
+    : [];
   return (
     <article style={{ ...s.card, ...(expanded ? s.expandedCard : {}) }}>
       <button style={s.head} onClick={toggle} aria-expanded={expanded}>
@@ -92,6 +105,9 @@ export function CompensationCard({
           <AttendancePerfectScoreBadge show={employee.attendanceStanding?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
           {mealAllowanceEligible ? (
             <span style={s.mealBadge} title={mealAllowanceBadgeLabel(lang)} aria-label={mealAllowanceBadgeLabel(lang)}>🍚</span>
+          ) : null}
+          {extraWorkCount > 0 ? (
+            <span style={{ ...s.extraWorkBadge, ...(extraWorkNeedsReview ? s.extraWorkBadgeAlert : {}) }} title={extraWorkBadgeLabel} aria-label={extraWorkBadgeLabel}>⏱️</span>
           ) : null}
           <span style={s.separator}>·</span>
           <span style={s.position}>{positionLabel}</span>
@@ -203,7 +219,7 @@ export function CompensationCard({
                   </details>
                 </>}
               </DetailSection>}
-              {!future && <><button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (!monthClosed || employee.calculationStatus !== "calculable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus !== "calculable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Chỉ có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월이 종료된 후 지급할 수 있습니다."}</small>}</>}
+              {!future && <><button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (!monthClosed || employee.calculationStatus !== "calculable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus !== "calculable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Chỉ có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월이 종료된 후 지급할 수 있습니다."}</small>}{blockingReasonLabels.length>0&&<div role="alert" style={s.blockingReasons}><b style={s.blockingReasonsTitle}>{lang==="vi"?"Lý do chưa thể chi trả":"지급 불가 사유"}</b><ul style={s.blockingReasonList}>{blockingReasonLabels.map(label=><li key={label}>{label}</li>)}</ul></div>}</>}
             </>
           )}
         </div>
@@ -415,9 +431,11 @@ function AdjustmentModal({
               <span style={s.itemText}>
                 {item.businessDate.slice(5)} · {item.category === "late"
                   ? (lang === "vi" ? "Phạt đi muộn" : "지각 패널티")
-                  : item.category === "unauthorized_absence"
-                    ? (lang === "vi" ? "Phạt nghỉ không phép" : "무단결근 패널티")
-                    : item.description}
+                  : item.category === "early_leave"
+                    ? (lang === "vi" ? "Phạt về sớm" : "조퇴 패널티")
+                    : item.category === "unauthorized_absence"
+                      ? (lang === "vi" ? "Phạt nghỉ không phép" : "무단결근 패널티")
+                      : item.description}
                 {item.category !== "unauthorized_absence" ? ` ${item.minutes}${t.minutes}` : ""}
               </span>
               <b style={s.itemAmount}>{formatSignedVnd(item.amount, "-")}</b>
@@ -657,6 +675,8 @@ const s = {
     minWidth: 0,
   },
   mealBadge: { fontSize: 12, lineHeight: 1, flexShrink: 0 },
+  extraWorkBadge: { padding: "1px 4px", borderRadius: 999, background: "#f1f5f9", fontSize: 11, lineHeight: 1.2, flexShrink: 0 },
+  extraWorkBadgeAlert: { background: "#ffedd5", boxShadow: "inset 0 0 0 1px #fed7aa" },
   separator: { color: "#9ca3af", flexShrink: 0 },
   position: {
     fontSize: 11,
@@ -759,6 +779,9 @@ const s = {
   modalFooter: { display: "flex", justifyContent: "center", alignItems: "center", width: "100%" },
   modalAction: { minWidth: 148, maxWidth: "100%" },
   paymentButton: { minHeight:42, border:0, borderRadius:10, background:"#111827", color:"#fff", fontWeight:800 },
+  blockingReasons: { display:"grid", gap:4, marginTop:2, padding:"8px 10px", borderRadius:9, background:"#fef2f2", border:"1px solid #fecaca", color:"#991b1b" },
+  blockingReasonsTitle: { fontSize:11.5, fontWeight:900 },
+  blockingReasonList: { margin:0, paddingLeft:16, display:"grid", gap:2, fontSize:11, lineHeight:1.4 },
   paymentSummary: { display:"grid", gap:6, padding:10, borderRadius:9, background:"#f8fafc" },
   primary: {
     minHeight: 42,

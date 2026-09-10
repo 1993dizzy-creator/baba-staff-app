@@ -46,8 +46,9 @@ test("loadMealAllowanceCostSummary: input now requires the reused snapshot conte
   assert.match(mealAllowanceServer, /input: MealAllowanceOverviewInput,/);
 });
 
-test("loadMealAllowanceCostSummary: return type gains eligibleUserIds alongside the pre-existing currentAmount/projectedAmount/policyMissing fields", () => {
+test("loadMealAllowanceCostSummary: return type exposes badge ids and per-employee source-export references", () => {
   assert.match(mealAllowanceServer, /eligibleUserIds: number\[\];/);
+  assert.match(mealAllowanceServer, /currentByUser: Array<\{ userId: number; eligibleDays: number; referenceAmount: number \}>;/);
 });
 
 test("loadMealAllowanceCostSummary: queries exactly two tables (policy + eligibility) — users/payroll_contract_versions/attendance_records are no longer re-fetched here", () => {
@@ -85,7 +86,7 @@ test("loadMealAllowanceCostSummary: eligibleUserIds is computed from payrollUser
   const policyMissingReturnIndex = fn.indexOf("if (policyMissing) {");
   assert.ok(eligibleUserIdsIndex > -1 && policyMissingReturnIndex > -1);
   assert.ok(eligibleUserIdsIndex < policyMissingReturnIndex, "eligibleUserIds must be computed before the policyMissing early return");
-  assert.match(fn, /if \(policyMissing\) \{\s*\n\s*return \{ currentAmount: 0, projectedAmount: 0, policyMissing: true, eligibleUserIds \};/);
+  assert.match(fn, /if \(policyMissing\) \{\s*\n\s*return \{ currentAmount: 0, projectedAmount: 0, policyMissing: true, eligibleUserIds, currentByUser: \[\] \};/);
 });
 
 test("loadMealAllowanceCostSummary: reuses the shared pure resolver (selectMealAllowanceEligibilityDuringMonth) for the badge instead of re-deriving latest-version logic", () => {

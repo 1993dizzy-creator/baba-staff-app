@@ -221,11 +221,12 @@ test("fixed monthly date failures alert inside the open modal flow", () => {
   assert.match(settings, /finally \{\s*setSaving\(false\)/);
 });
 
-test("v7 retains early-leave audit inputs without creating a separate deduction", () => {
+test("v8 creates a separate 30-minute early-leave deduction while keeping the early-leave audit inputs", () => {
   const run = read("lib/payroll/monthly-run.ts");
   for (const field of ["rawEarlyLeaveMinutes", "earlyLeaveThresholdMinutes", "isEarlyLeave", "deductionEarlyLeaveMinutes", "calculationBasis", "minuteRate", "calculatedAmount", "scheduleRevision", "storeSettingsRevision"])
     assert.match(run, new RegExp(field));
-  assert.doesNotMatch(run, /item\("early_leave_deduction"/);
+  assert.match(run, /item\("early_leave_deduction","deduction"/);
+  assert.match(run, /calculateTimePenalty\(\{effectiveMinutes:facts\.earlyLeaveMinutes,minuteRate:rate\.minuteRate\}\)/);
   assert.match(run, /STORED_EARLY_LEAVE_MINUTES_MISMATCH/);
 });
 

@@ -27,7 +27,7 @@ import {
   type PayrollTaxSettingVersion,
 } from "@/lib/payroll/tax";
 
-export type PayrollMonthlyAdjustment = { id:number;kind:PayrollAdjustmentKind;category:string;amount:number;businessDate:string;reason:string;note:string|null;createdAt:string };
+export type PayrollMonthlyAdjustment = { id:number;kind:PayrollAdjustmentKind;category:string;amount:number;businessDate:string;reason:string;note:string|null;createdAt:string;cancelledAt?:string|null;cancelledBy?:number|null;cancellationReason?:string|null };
 
 export type PayrollOverviewEmployee = {
   userId: number;
@@ -153,7 +153,7 @@ export function buildPayrollOverviewEmployee(input: {
   const latePenaltyAmount = sum(items, "late_deduction", "deduction");
   const earlyLeavePenaltyAmount = sum(items, "early_leave_deduction", "deduction");
   const unauthorizedAbsencePenaltyAmount=sum(items,"unauthorized_absence_deduction","deduction");
-  const automaticPenalties=items.filter(entry=>entry.direction==="deduction"&&["late_deduction","early_leave_deduction","unauthorized_absence_deduction"].includes(entry.category)).map(entry=>({sourceType:"automatic" as const,category:entry.category==="late_deduction"?"late" as const:entry.category==="early_leave_deduction"?"early_leave" as const:"unauthorized_absence" as const,businessDate:entry.businessDate??"",minutes:Number(entry.sourceSnapshot.lateMinutes??entry.sourceSnapshot.minutes??0),amount:entry.amount,attendanceRecordId:entry.sourceSnapshot.attendanceRecordId===null||entry.sourceSnapshot.attendanceRecordId===undefined?null:Number(entry.sourceSnapshot.attendanceRecordId),description:entry.description}));
+  const automaticPenalties=items.filter(entry=>entry.direction==="deduction"&&["late_deduction","early_leave_deduction","unauthorized_absence_deduction"].includes(entry.category)).map(entry=>({sourceType:"automatic" as const,category:entry.category==="late_deduction"?"late" as const:entry.category==="early_leave_deduction"?"early_leave" as const:"unauthorized_absence" as const,businessDate:entry.businessDate??"",minutes:Number(entry.sourceSnapshot.penaltyMinutes??entry.sourceSnapshot.lateMinutes??entry.sourceSnapshot.minutes??0),amount:entry.amount,attendanceRecordId:entry.sourceSnapshot.attendanceRecordId===null||entry.sourceSnapshot.attendanceRecordId===undefined?null:Number(entry.sourceSnapshot.attendanceRecordId),description:entry.description}));
   const adjustments=input.adjustments??[];
   const manualAdjustmentTotals=calculateManualAdjustmentTotals(adjustments);
   const {manualIncentiveAmount,manualPenaltyAmount,advanceAmount}=manualAdjustmentTotals;

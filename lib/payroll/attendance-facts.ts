@@ -59,6 +59,9 @@ export function normalizeAttendanceDayFacts(input: {
   let late = 0;
   let early = 0;
   let rawEarly = 0;
+  let rawLateMinutes = 0;
+  let effectiveLate = 0;
+  const lateThresholdMinutes = input.lateGraceMinutes ?? 0;
 
   if (record?.checkInAt && record.checkOutAt) {
     const actualStart = new Date(record.checkInAt).getTime();
@@ -69,10 +72,12 @@ export function normalizeAttendanceDayFacts(input: {
       actualMinutes = minutes(actualStart, actualEnd);
       if (scheduledStart !== null && scheduledEnd !== null) {
         overlap = Math.max(0, minutes(Math.max(actualStart, scheduledStart), Math.min(actualEnd, scheduledEnd)) - (input.schedule?.unpaidBreakMinutes ?? 0));
-        const rawLate = minutes(scheduledStart, Math.min(actualStart, scheduledEnd));
+        rawLateMinutes = minutes(scheduledStart, Math.min(actualStart, scheduledEnd));
         rawEarly = minutes(Math.max(actualEnd, scheduledStart), scheduledEnd);
-        late = rawLate > (input.lateGraceMinutes ?? 0) ? rawLate : 0;
-        if (input.manualLateNormalized) late = 0;
+        // 정책 grace 적용 후 실제 지각분 — 급여 지각 패널티 산정 기준(정상화 여부와 무관).
+        effectiveLate = rawLateMinutes > lateThresholdMinutes ? rawLateMinutes : 0;
+        // 표시/개근 판정용 late — 수동 지각 정상화 시 0으로 덮어쓴다(기존 의미 유지).
+        late = input.manualLateNormalized ? 0 : effectiveLate;
         // 조퇴 유예는 threshold가 아니라 공제되는 허용 시간이다(정책 엔진과 동일한 의미).
         early = Math.max(0, rawEarly - (input.earlyLeaveGraceMinutes ?? 0));
         overtime = minutes(actualStart, Math.min(actualEnd, scheduledStart)) + minutes(Math.max(actualStart, scheduledEnd), actualEnd);
@@ -127,6 +132,9 @@ export function normalizeAttendanceDayFacts(input: {
     scheduledOverlapMinutes: overlap,
     manualLateNormalized: input.manualLateNormalized === true,
     lateMinutes: late,
+    rawLateMinutes,
+    effectiveLateMinutes: effectiveLate,
+    lateThresholdMinutes,
     earlyLeaveMinutes: early,
     rawEarlyLeaveMinutes: rawEarly,
     earlyLeaveThresholdMinutes: input.earlyLeaveGraceMinutes ?? 0,

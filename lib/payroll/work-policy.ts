@@ -64,5 +64,10 @@ export function applyUnifiedPayrollWorkPolicy(input: Parameters<typeof applyPayr
 }
 
 export function selectUnifiedRecognizedMinutes(input:{scheduledMinutes:number;scheduledOverlapMinutes:number;actualMinutes:number;lateMinutes:number;earlyLeaveMinutes:number;manualLateNormalized:boolean}) {
-  return !input.manualLateNormalized && input.lateMinutes === 0 && input.earlyLeaveMinutes === 0 ? input.scheduledMinutes : input.scheduledOverlapMinutes;
+  // BABA 확정 정책(2026-09): 정상근무로 인정된 날은 그날 스케줄 근무시간(scheduledMinutes) 전액을
+  // 기본급으로 인정한다. 지각·조퇴·수동 지각정상화는 기본급을 분 단위로 깎지 않고, 각각 독립된
+  // 30분 단위 deduction(late_deduction / early_leave_deduction)으로만 처리한다.
+  // scheduledOverlapMinutes / actualMinutes / lateMinutes / earlyLeaveMinutes / manualLateNormalized는
+  // 더 이상 기본급 인정분에 영향을 주지 않는다(하위호환·호출부 안정성을 위해 시그니처만 유지).
+  return input.scheduledMinutes;
 }

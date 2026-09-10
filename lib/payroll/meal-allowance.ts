@@ -125,10 +125,11 @@ export function calculateCurrentMealAllowanceCost(input: {
   users: ReadonlyMap<number, MealAllowanceEmploymentWindow>;
   eligibilityVersionsByUser: ReadonlyMap<number, readonly MealAllowanceEligibilityVersion[]>;
   policyVersions: readonly MealAllowancePolicyVersion[];
-}): { totalAmount: number; byUser: Map<number, number> } {
+}): { totalAmount: number; byUser: Map<number, number>; eligibleDaysByUser: Map<number, number> } {
   const seen = new Set<string>();
   let totalAmount = 0;
   const byUser = new Map<number, number>();
+  const eligibleDaysByUser = new Map<number, number>();
 
   for (const day of input.attendanceDays) {
     // 같은 user_id + work_date는 최대 1회만 인정한다(방어적 dedup — DB에서 이미
@@ -153,9 +154,10 @@ export function calculateCurrentMealAllowanceCost(input: {
 
     totalAmount += policy.dailyAmount;
     byUser.set(day.userId, (byUser.get(day.userId) ?? 0) + policy.dailyAmount);
+    eligibleDaysByUser.set(day.userId, (eligibleDaysByUser.get(day.userId) ?? 0) + 1);
   }
 
-  return { totalAmount, byUser };
+  return { totalAmount, byUser, eligibleDaysByUser };
 }
 
 // 예상 식대비용(직원 1명) = Σ(월 내 하위 기간) standardWorkdays × (하위 기간 일수 / 월 전체

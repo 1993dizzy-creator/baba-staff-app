@@ -9,7 +9,7 @@ import { normalizeAttendanceDayFacts } from "../lib/payroll/attendance-facts.ts"
 // @ts-expect-error Node test execution requires explicit TypeScript extensions.
 import { selectUnifiedRecognizedMinutes } from "../lib/payroll/work-policy.ts";
 // @ts-expect-error Node test execution requires explicit TypeScript extensions.
-import { calculateLatePenalty } from "../lib/payroll/penalties.ts";
+import { calculateLatePenalty, calculateTimePenalty } from "../lib/payroll/penalties.ts";
 import type { PayrollContract, WorkScheduleVersion } from "../lib/payroll/types.ts";
 import fs from "node:fs";
 import path from "node:path";
@@ -60,72 +60,86 @@ test("normal and grace-qualified attendance receives the full scheduled day",()=
   assert.equal(recognized("2026-08-03T16:05:00+07:00","2026-08-04T00:55:00+07:00",10,10).minutes,540);
 });
 
-test("late and early leave recognize only overlap inside the schedule",()=>{
-  assert.equal(recognized("2026-08-03T18:00:00+07:00","2026-08-04T01:00:00+07:00").minutes,420);
-  assert.equal(recognized("2026-08-03T16:00:00+07:00","2026-08-03T23:00:00+07:00").minutes,420);
-  assert.equal(recognized("2026-08-03T18:00:00+07:00","2026-08-03T23:00:00+07:00").minutes,300);
+test("a late-only day recognizes the full scheduled day and preserves the effective late minutes",()=>{
+  // 2시간 지각, 정시 퇴근 → 기본급은 스케줄 전액(540), 지각은 별도 deduction에서만.
+  const late=recognized("2026-08-03T18:00:00+07:00","2026-08-04T01:00:00+07:00");
+  assert.equal(late.facts.lateMinutes,120);
+  assert.equal(late.facts.effectiveLateMinutes,120);
+  assert.equal(late.facts.earlyLeaveMinutes,0);
+  assert.equal(late.minutes,540);
 });
 
-test("v7 applies the configured late penalty after reducing base work to scheduled overlap",()=>{
-  const settings={thresholdMinutes:20,minorPenaltyMinutes:60,majorPenaltyRateBp:5000};
-  for(const [late,expectedTier] of [[0,"none"],[10,"minor"],[20,"minor"],[21,"major"],[200,"major"]] as const){
-    const minutes=540-late;
-    const penalty=calculateLatePenalty({lateMinutes:late,minuteRate:500,dayRate:270000,...settings});
-    assert.equal(penalty.tier,expectedTier);
-    assert.equal(penalty.amount,late===0?0:late<=20?30000:135000);
-    assert.equal(500*minutes-penalty.amount,270000-(500*late)-penalty.amount);
+test("an early-leave day now also recognizes the full scheduled day (base pay is not reduced)",()=>{
+  // 정시 출근, 2시간 조퇴 → 기본급은 스케줄 전액(540), 조퇴는 별도 deduction에서만.
+  const early=recognized("2026-08-03T16:00:00+07:00","2026-08-03T23:00:00+07:00");
+  assert.equal(early.facts.earlyLeaveMinutes,120);
+  assert.equal(early.facts.lateMinutes,0);
+  assert.equal(early.minutes,540);
+  // 지각 + 조퇴가 함께 있는 날도 기본급은 전액. 두 지연을 각각 독립적으로 보존한다.
+  const both=recognized("2026-08-03T18:00:00+07:00","2026-08-03T23:00:00+07:00");
+  assert.equal(both.facts.lateMinutes,120);
+  assert.equal(both.facts.earlyLeaveMinutes,120);
+  assert.equal(both.minutes,540);
+});
+
+test("calculateTimePenalty rounds effective minutes up to 30-minute blocks and charges the day's minute rate",()=>{
+  for(const [effective,penaltyMinutes] of [[0,0],[1,30],[17,30],[28,30],[30,30],[31,60],[47,60],[60,60],[61,90],[90,90],[200,210]] as const){
+    const result=calculateTimePenalty({effectiveMinutes:effective,minuteRate:583.3333333333334});
+    assert.equal(result.penaltyMinutes,penaltyMinutes);
+    assert.equal(result.amount,Math.round(583.3333333333334*penaltyMinutes));
   }
+  // 예: 1일 급여 350,000 / 기준근무 600분 → 분급 583.33, 17분 지각 → 30분 → 17,500 VND
+  assert.equal(calculateTimePenalty({effectiveMinutes:17,minuteRate:350_000/600}).amount,17_500);
 });
 
-test("monthly, daily, and hourly penalties use their current day and minute rates",()=>{
-  const examples=[
-    calculatePayrollRates({...contract,payType:"monthly",baseSalary:8_000_000,fixedRaiseAmount:500_000,standardWorkdays:26,standardMinutesPerDay:540},9_500_000),
-    calculatePayrollRates({...contract,payType:"daily",baseSalary:300_000,standardMinutesPerDay:540}),
-    calculatePayrollRates({...contract,payType:"hourly",baseSalary:30_000,standardMinutesPerDay:540}),
-  ];
-  assert.equal(examples[0].dayRate,9_500_000/26);
-  assert.equal(examples[0].minuteRate,(9_500_000/26)/540);
-  assert.equal(examples[1].dayRate,300_000);
-  assert.equal(examples[2].minuteRate,500);
-  for(const rates of examples){
-    assert.equal(calculateLatePenalty({lateMinutes:20,minuteRate:rates.minuteRate,dayRate:rates.dayRate,thresholdMinutes:20,minorPenaltyMinutes:60,majorPenaltyRateBp:5000}).amount,Math.round(rates.minuteRate*60));
-    assert.equal(calculateLatePenalty({lateMinutes:21,minuteRate:rates.minuteRate,dayRate:rates.dayRate,thresholdMinutes:20,minorPenaltyMinutes:60,majorPenaltyRateBp:5000}).amount,Math.round(rates.dayRate*.5));
-  }
+test("general late still uses the settings minor/major tier; only normalized late and early leave use the 30-minute block",()=>{
+  const engine=fs.readFileSync(path.join(process.cwd(),"lib/payroll/monthly-run.ts"),"utf8");
+  // 일반 지각(manualLateNormalized=false) 경로는 /admin/payroll/settings 값을 실제로 사용한다.
+  assert.match(engine,/if\(facts\.manualLateNormalized\)\{/);
+  assert.match(engine,/calculateLatePenalty\(\{lateMinutes:facts\.effectiveLateMinutes,minuteRate:rate\.minuteRate,dayRate:rate\.dayRate,thresholdMinutes:input\.penaltySettings\.lateMajorThresholdMinutes,minorPenaltyMinutes:input\.penaltySettings\.lateMinorPenaltyMinutes,majorPenaltyRateBp:input\.penaltySettings\.lateMajorPenaltyRateBp\}\)/);
+  assert.match(engine,/calculateTimePenalty\(\{effectiveMinutes:facts\.effectiveLateMinutes,minuteRate:rate\.minuteRate\}\)/);
+  assert.match(engine,/calculateTimePenalty\(\{effectiveMinutes:facts\.earlyLeaveMinutes,minuteRate:rate\.minuteRate\}\)/);
+  // minor/major tier 순수 함수 계약은 그대로.
+  assert.deepEqual(calculateLatePenalty({lateMinutes:20,minuteRate:1_000,dayRate:480_000,thresholdMinutes:20,minorPenaltyMinutes:60,majorPenaltyRateBp:5000}),{tier:"minor",amount:60_000});
+  assert.deepEqual(calculateLatePenalty({lateMinutes:21,minuteRate:1_000,dayRate:480_000,thresholdMinutes:20,minorPenaltyMinutes:60,majorPenaltyRateBp:5000}),{tier:"major",amount:240_000});
 });
 
-test("Diep-equivalent 200-minute late shift pays 319 minutes then deducts half a day",()=>{
+test("Diep-equivalent 200-minute GENERAL late shift pays the full day, then applies the settings major-tier penalty (not the 30-minute block)",()=>{
   const monthly={...contract,payType:"monthly" as const,baseSalary:8_500_000,standardWorkdays:26,standardMinutesPerDay:540};
-  const attendance=recognized("2026-08-03T19:20:00+07:00","2026-08-04T00:39:00+07:00",0,90);
+  const attendance=recognized("2026-08-03T19:20:00+07:00","2026-08-04T00:39:00+07:00",0,90); // manualLateNormalized=false
   const rates=calculatePayrollRates(monthly,8_500_000);
   const work=applyPayrollWorkPolicy({contract:monthly,actualRecognizedMinutes:attendance.minutes,dayRate:rates.dayRate,minuteRate:rates.minuteRate,lateMinutes:attendance.facts.lateMinutes,earlyLeaveMinutes:attendance.facts.earlyLeaveMinutes});
-  const penalty=calculateLatePenalty({lateMinutes:attendance.facts.lateMinutes,minuteRate:rates.minuteRate,dayRate:rates.dayRate,thresholdMinutes:20,minorPenaltyMinutes:60,majorPenaltyRateBp:5000});
-  assert.equal(attendance.facts.lateMinutes,200);
-  assert.equal(attendance.minutes,319);
-  assert.equal(Math.round(work.workAmount),193127);
-  assert.deepEqual(penalty,{tier:"major",amount:163462});
-  assert.equal(Math.round(work.workAmount)-penalty.amount,29665);
+  const penalty=calculateLatePenalty({lateMinutes:attendance.facts.effectiveLateMinutes,minuteRate:rates.minuteRate,dayRate:rates.dayRate,thresholdMinutes:20,minorPenaltyMinutes:60,majorPenaltyRateBp:5000});
+  assert.equal(attendance.facts.manualLateNormalized,false);
+  assert.equal(attendance.facts.effectiveLateMinutes,200);
+  assert.equal(attendance.facts.earlyLeaveMinutes,0);
+  // 지각 200분이어도 기본 근무급여는 스케줄 전액(1일 기준급여) 그대로.
+  assert.equal(attendance.minutes,540);
+  assert.equal(Math.round(work.workAmount),Math.round(rates.dayRate));
+  assert.equal(Math.round(work.workAmount),326923);
+  // 20분 초과 → major tier = dayRate × 0.5
+  assert.deepEqual(penalty,{tier:"major",amount:Math.round(rates.dayRate*0.5)});
+  assert.equal(penalty.amount,163462);
 });
 
-test("normalized late keeps actual overlap and produces no late deduction",()=>{
+test("manual late normalization: full-day base pay recognised, display late zeroed, but effective late (from check-in) still drives a 30-minute-block penalty",()=>{
   const schedule:WorkScheduleVersion={id:1,userId:5,startTime:"16:00",endTime:"01:00",unpaidBreakMinutes:0,effectiveFrom:"2026-08-01",effectiveTo:null,revision:1,changeReason:null};
-  const record={id:1197,status:"done",checkInAt:"2026-08-03T19:20:00+07:00",checkOutAt:"2026-08-04T00:39:00+07:00",approvalStatus:"approved",storedLateMinutes:0,storedEarlyLeaveMinutes:0,storedWorkMinutes:319};
-  const facts=normalizeAttendanceDayFacts({userId:5,businessDate:"2026-08-03",schedule,lateGraceMinutes:0,earlyLeaveGraceMinutes:90,manualLateNormalized:true,attendanceRecord:record});
+  // attendance_admin_normalize_late_v1 은 late_minutes 를 0으로 덮지만 check_in_at 은 그대로 둔다.
+  const record={id:1197,status:"done",checkInAt:"2026-08-03T16:17:00+07:00",checkOutAt:"2026-08-04T01:00:00+07:00",approvalStatus:"approved",storedLateMinutes:0,storedEarlyLeaveMinutes:0,storedWorkMinutes:523};
+  const facts=normalizeAttendanceDayFacts({userId:5,businessDate:"2026-08-03",schedule,lateGraceMinutes:0,earlyLeaveGraceMinutes:0,manualLateNormalized:true,attendanceRecord:record});
   const minutes=selectUnifiedRecognizedMinutes({scheduledMinutes:facts.scheduledMinutes!,scheduledOverlapMinutes:facts.scheduledOverlapMinutes!,actualMinutes:facts.actualMinutes!,lateMinutes:facts.lateMinutes,earlyLeaveMinutes:facts.earlyLeaveMinutes,manualLateNormalized:facts.manualLateNormalized});
   const normalizedContract={...contract,payType:"monthly" as const,baseSalary:8_000_000,fixedRaiseAmount:500_000,standardWorkdays:26,standardMinutesPerDay:540};
   const rates=calculatePayrollRates(normalizedContract,9_500_000);
   const work=applyPayrollWorkPolicy({contract:normalizedContract,actualRecognizedMinutes:minutes,dayRate:rates.dayRate,minuteRate:rates.minuteRate,lateMinutes:facts.lateMinutes,earlyLeaveMinutes:facts.earlyLeaveMinutes});
-  const penalty=calculateLatePenalty({lateMinutes:facts.lateMinutes,minuteRate:rates.minuteRate,dayRate:rates.dayRate,thresholdMinutes:20,minorPenaltyMinutes:60,majorPenaltyRateBp:5000});
+  const penalty=calculateTimePenalty({effectiveMinutes:facts.effectiveLateMinutes,minuteRate:rates.minuteRate});
   assert.equal(facts.manualLateNormalized,true);
-  assert.equal(facts.lateMinutes,0);
-  assert.equal(facts.actualMinutes,319);
-  assert.equal(facts.stored.workMinutes,319);
-  assert.equal(record.checkInAt,"2026-08-03T19:20:00+07:00");
-  assert.equal(record.checkOutAt,"2026-08-04T00:39:00+07:00");
-  assert.equal(minutes,319);
-  assert.notEqual(minutes,540);
-  assert.equal(minutes/540,319/540);
-  assert.equal(Math.round(work.workAmount),215848);
-  assert.deepEqual(penalty,{tier:"none",amount:0});
+  assert.equal(facts.lateMinutes,0);            // 표시/개근용은 0
+  assert.equal(facts.rawLateMinutes,17);        // check-in 16:17 → 스케줄 16:00 대비 17분
+  assert.equal(facts.effectiveLateMinutes,17);  // grace 0 → effective 17분 (정상화되어도 유지)
+  assert.equal(minutes,540);                    // 기본급은 정상근무 1일 전액
+  assert.equal(Math.round(work.workAmount),Math.round(rates.dayRate));
+  assert.equal(penalty.penaltyMinutes,30);      // 17 → 30분 올림
+  assert.ok(penalty.amount>0);                  // 정상화가 지각 벌금 면제는 아니다
 });
 
 test("overview and employee payment share the same monthly snapshot calculation",()=>{
@@ -141,11 +155,15 @@ test("overview and employee payment share the same monthly snapshot calculation"
   assert.match(payments,/p_calculation_snapshot:calculationSnapshot/);
 });
 
-test("late deduction snapshot keeps all inputs while early-leave deduction remains absent",()=>{
+test("late and early-leave deduction snapshots carry the full T8 cross-check trail",()=>{
   const engine=fs.readFileSync(path.join(process.cwd(),"lib/payroll/monthly-run.ts"),"utf8");
-  for(const field of ["attendanceRecordId","lateMinutes","penaltyTier","thresholdMinutes","minorPenaltyMinutes","majorPenaltyRateBp","minuteRate","dayRate","calculatedAmount","contractRevision","scheduleRevision","storeSettingsRevision","engineVersion"]) assert.match(engine,new RegExp(field));
+  // 지각/조퇴 deduction item metadata에 남아야 하는 근거들.
+  for(const field of ["attendanceRecordId","businessDate","rawLateMinutes","effectiveLateMinutes","penaltyMinutes","penaltyBlockMinutes","lateThresholdMinutes","manualLateNormalized","minuteRate","dayRate","calculatedAmount","contractRevision","scheduleVersionId","scheduleRevision","storeSettingsRevision","storePolicyRevision","engineVersion"]) assert.match(engine,new RegExp(field));
+  for(const field of ["rawEarlyLeaveMinutes","effectiveEarlyLeaveMinutes","earlyLeaveThresholdMinutes"]) assert.match(engine,new RegExp(field));
   assert.match(engine,/item\("late_deduction","deduction"/);
-  assert.doesNotMatch(engine,/item\("early_leave_deduction"/);
+  assert.match(engine,/item\("early_leave_deduction","deduction"/);
+  assert.match(engine,/type:"late"/);
+  assert.match(engine,/type:"early_leave"/);
   assert.match(engine,/penaltySettings:\{\.\.\.penaltySettings,capturedAt:/);
 });
 

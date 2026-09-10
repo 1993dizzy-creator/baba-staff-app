@@ -53,6 +53,10 @@ export type AttendancePayrollData = {
   incentives: AttendancePayrollIncentive[];
   penalties: AttendancePayrollPenalty[];
   advances: AttendancePayrollAdvance[];
+  sourceReadiness: {
+    readyForAccounting: boolean;
+    blockingCodes: string[];
+  };
 };
 
 export function selectAttendancePayrollSummary(
@@ -134,5 +138,11 @@ export function selectAttendancePayrollSummary(
     incentives,
     penalties,
     advances,
+    sourceReadiness: {
+      readyForAccounting: employee.blockingCount === 0 && employee.tax.status !== "requires_review",
+      blockingCodes: employee.blockingCount === 0 && employee.tax.status !== "requires_review"
+        ? []
+        : [...new Set(employee.warningCodes)].sort(),
+    },
   };
 }

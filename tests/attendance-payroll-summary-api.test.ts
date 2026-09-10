@@ -152,6 +152,10 @@ test("self payroll summary projects only the authenticated employee amounts", ()
     incentives: [],
     penalties: [],
     advances: [],
+    sourceReadiness: {
+      readyForAccounting: true,
+      blockingCodes: [],
+    },
   });
   assert.equal(selectAttendancePayrollSummary(employees, 33), null);
 });
@@ -180,6 +184,10 @@ test("self payroll summary does not expose internal calculation status", () => {
       incentives: [],
       penalties: [],
       advances: [],
+      sourceReadiness: {
+        readyForAccounting: true,
+        blockingCodes: [],
+      },
     });
     assert.doesNotMatch(JSON.stringify(selectAttendancePayrollSummary([source], 11)), /calculationStatus/);
   }
@@ -259,6 +267,7 @@ test("attendance payroll route is actor-only, validates month, and reuses the un
   assert.match(route, /incentives: data\?\.incentives \?\? \[\]/);
   assert.match(route, /penalties: data\?\.penalties \?\? \[\]/);
   assert.match(route, /advances: data\?\.advances \?\? \[\]/);
+  assert.match(route, /sourceReadiness: data\?\.sourceReadiness/);
   assert.doesNotMatch(route, /searchParams\.get\("userId"\)|body\.userId|requirePayrollActor/);
   assert.doesNotMatch(route, /insuranceSnapshot/);
   assert.doesNotMatch(route + read("lib/payroll/attendance-self-summary.ts"), /netPayoutAmount/);

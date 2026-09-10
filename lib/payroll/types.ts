@@ -1,5 +1,7 @@
 export const PAYROLL_AUTOMATION_START_DATE = "2026-07-01";
-export const PAYROLL_FACTS_ENGINE_VERSION = "attendance-facts-v1";
+// v2 (2026-09): rawLateMinutes / effectiveLateMinutes / lateThresholdMinutes 추가.
+// effectiveLateMinutes는 수동 지각 정상화와 무관하게 정책 grace 적용 후 실제 지각분을 담는다.
+export const PAYROLL_FACTS_ENGINE_VERSION = "attendance-facts-v2";
 export const PAYROLL_PROJECTION_ENGINE_VERSION = "payroll-projection-v1";
 
 export type PayType = "monthly" | "daily" | "hourly";
@@ -71,7 +73,13 @@ export type AttendanceDayFacts = {
   actualMinutes: number | null;
   scheduledOverlapMinutes: number | null;
   manualLateNormalized: boolean;
+  // lateMinutes: 표시/개근 판정용. 정책 grace 적용 후 값이며, 수동 지각 정상화(manualLateNormalized) 시 0.
   lateMinutes: number;
+  // rawLateMinutes: 스케줄 시작 대비 실제 check-in 지연(분). grace 적용 전, 정상화 여부와 무관.
+  rawLateMinutes: number;
+  // effectiveLateMinutes: 정책 grace 적용 후 실제 지각분. 급여의 지각 패널티 산정 기준(정상화되어도 유지).
+  effectiveLateMinutes: number;
+  lateThresholdMinutes: number;
   earlyLeaveMinutes: number;
   rawEarlyLeaveMinutes: number;
   earlyLeaveThresholdMinutes: number;

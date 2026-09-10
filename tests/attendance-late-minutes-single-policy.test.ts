@@ -121,16 +121,16 @@ test("employee attendance screen and admin staff attendance screen just read the
 //    비교(감사) 기능 자체는 유지한다.
 // ---------------------------------------------------------------------------
 
-test("payroll attendance-facts recompute logic and its stored-vs-recalculated mismatch warning are untouched by this phase", () => {
+test("payroll attendance-facts recompute logic and its stored-vs-recalculated mismatch warning still apply the store grace policy", () => {
+  // 2026-09 지각/조퇴 패널티 정책 정리(v8)로 지각 계산은 rawLateMinutes/effectiveLateMinutes로
+  // 분리됐지만, store grace(lateGraceMinutes) 적용 규칙과 stored-vs-recalculated 감사 경고는 유지된다.
   assert.match(attendanceFacts, /STORED_LATE_MINUTES_MISMATCH/);
-  assert.match(attendanceFacts, /late = rawLate > \(input\.lateGraceMinutes \?\? 0\) \? rawLate : 0;/);
+  assert.match(attendanceFacts, /effectiveLate = rawLateMinutes > lateThresholdMinutes \? rawLateMinutes : 0;/);
+  assert.match(attendanceFacts, /const lateThresholdMinutes = input\.lateGraceMinutes \?\? 0;/);
 });
 
-test("no payroll calculation/snapshot/penalty file was modified by this phase", () => {
-  // This phase's diff must not touch payroll formula files at all — verified via
-  // git status separately, but this static check pins the specific formula line
-  // above so an accidental future edit to the threshold itself would fail loudly.
-  assert.match(attendanceFacts, /if \(input\.manualLateNormalized\) late = 0;/);
+test("manual late normalization still zeroes the display late field (but no longer implies a payroll penalty exemption)", () => {
+  assert.match(attendanceFacts, /late = input\.manualLateNormalized \? 0 : effectiveLate;/);
 });
 
 // ---------------------------------------------------------------------------

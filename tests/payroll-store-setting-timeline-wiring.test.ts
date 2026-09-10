@@ -88,8 +88,10 @@ test("store-setting-timeline.ts exports the exact Map value shape monthly-run.ts
 // scope discipline — nothing else about the snapshot/payment/hash pipeline changed
 // ---------------------------------------------------------------------------
 
-test("scope discipline: monthly-payroll-v7 engine version, calculatePayrollBatch/calculateEmployee formulas, and store_get_settings_overview_v1 itself (the RPC/migration) are all untouched by this change", () => {
-  assert.match(monthlyRun, /export const PAYROLL_RUN_ENGINE_VERSION = "monthly-payroll-v7";/);
+test("scope discipline: the payroll run engine version constant, calculatePayrollBatch/calculateEmployee formulas, and store_get_settings_overview_v1 itself (the RPC/migration) are all untouched by this change", () => {
+  // NOTE: engine version bumped to v8 by the 2026-09 late/early-leave penalty policy cleanup,
+  // which is a separate change from this store-setting-timeline wiring phase.
+  assert.match(monthlyRun, /export const PAYROLL_RUN_ENGINE_VERSION = "monthly-payroll-v8";/);
   assert.match(monthlyRun, /export function calculatePayrollBatch\(input:BatchInput\):PayrollRunEmployeeInput\[\]\{/);
   // No new/modified migration file for this phase — the RPC's own SQL definition is not part of this diff.
   assert.doesNotMatch(monthlyRun, /create (or replace )?function/);

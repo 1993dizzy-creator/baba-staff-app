@@ -11,7 +11,7 @@ const standing = read("lib/attendance/monthly-standing-server.ts");
 const route = read("app/api/admin/payroll/overview/route.ts");
 
 const ATTENDANCE_COLUMNS =
-  "id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,updated_at";
+  "id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,note,approval_status,updated_at";
 
 function extractFunctionBody(source: string, signature: string) {
   const start = source.indexOf(signature);

@@ -16,7 +16,7 @@ export type PayrollMonthSnapshot = Awaited<ReturnType<typeof loadPayrollMonthSna
 
 export async function loadPayrollOverview(month: string,options?:{userId?:number;onSnapshotReady?:(input:{snapshot:PayrollMonthSnapshot;period:PayrollOverviewPeriod})=>void}) {
   const taxVersionsPromise=loadPayrollTaxVersions(month,options?.userId);
-  const adjustmentQuery=supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,kind,category,amount,business_date,reason,note,created_at").eq("payroll_month",`${month}-01`).is("cancelled_at",null);
+  const adjustmentQuery=supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,kind,category,amount,business_date,reason,note,created_at,cancelled_at,cancelled_by,cancellation_reason").eq("payroll_month",`${month}-01`).order("id");
   const adjustmentPromise=Promise.resolve(options?.userId===undefined?adjustmentQuery:adjustmentQuery.eq("user_id",options.userId));
   void adjustmentPromise.catch(()=>undefined);
   const period=await resolvePayrollOverviewPeriod(month);
@@ -36,7 +36,7 @@ export async function loadPayrollOverview(month: string,options?:{userId?:number
   // month query shapes are NOT identical (see monthly-run.ts / monthly-
   // standing-server.ts), so they must not be unified here.
   const attendancePromise=period.calculationEndDate?Promise.resolve((()=>{
-    const query=supabaseServer.from("attendance_records").select("id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,approval_status,updated_at").gte("work_date",`${month}-01`).lte("work_date",period.calculationEndDate as string);
+    const query=supabaseServer.from("attendance_records").select("id,user_id,status,work_date,check_in_at,check_out_at,late_minutes,early_leave_minutes,work_minutes,note,approval_status,updated_at").gte("work_date",`${month}-01`).lte("work_date",period.calculationEndDate as string);
     return options?.userId===undefined?query:query.eq("user_id",options.userId);
   })()):undefined;
   if(attendancePromise)void attendancePromise.catch(()=>undefined);
@@ -64,8 +64,9 @@ export async function loadPayrollOverview(month: string,options?:{userId?:number
     taxVersionsPromise,
   ]);
   if(adjustmentResult.error)throw new Error("PAYROLL_ADJUSTMENT_READ_FAILED");
-  const adjustmentsByUser=new Map<number,PayrollMonthlyAdjustment[]>();
-  for(const row of adjustmentResult.data??[]){const list=adjustmentsByUser.get(Number(row.user_id))??[];list.push({id:Number(row.id),kind:row.kind as PayrollMonthlyAdjustment["kind"],category:String(row.category),amount:Number(row.amount),businessDate:String(row.business_date),reason:String(row.reason),note:row.note?String(row.note):null,createdAt:String(row.created_at)});adjustmentsByUser.set(Number(row.user_id),list);}
+  const adjustmentLedgerByUser=new Map<number,PayrollMonthlyAdjustment[]>();
+  for(const row of adjustmentResult.data??[]){const list=adjustmentLedgerByUser.get(Number(row.user_id))??[];list.push({id:Number(row.id),kind:row.kind as PayrollMonthlyAdjustment["kind"],category:String(row.category),amount:Number(row.amount),businessDate:String(row.business_date),reason:String(row.reason),note:row.note?String(row.note):null,createdAt:String(row.created_at),cancelledAt:row.cancelled_at?String(row.cancelled_at):null,cancelledBy:row.cancelled_by==null?null:Number(row.cancelled_by),cancellationReason:row.cancellation_reason?String(row.cancellation_reason):null});adjustmentLedgerByUser.set(Number(row.user_id),list);}
+  const adjustmentsByUser=new Map([...adjustmentLedgerByUser].map(([userId,rows])=>[userId,rows.filter(row=>!row.cancelledAt)]));
   const userById=new Map(snapshot.context.users.map(user=>[user.id,user]));
   const contractsByUser=new Map<number,typeof snapshot.context.contracts>();
   for(const contract of snapshot.context.contracts){const list=contractsByUser.get(contract.userId)??[];list.push(contract);contractsByUser.set(contract.userId,list);}
@@ -83,5 +84,5 @@ export async function loadPayrollOverview(month: string,options?:{userId?:number
   const employees=snapshot.employees.flatMap(employee=>{const user=userById.get(employee.userId);return user?[buildPayrollOverviewEmployee({employee,user,contracts:contractsByUser.get(employee.userId)??[],adjustments:adjustmentsByUser.get(employee.userId)??[],taxPolicy:taxVersions.currentPolicy,taxSetting:taxVersions.currentByUser.get(employee.userId)??null,period})]:[];});
   for(const employee of employees){employee.attendanceStanding=attendanceStanding.standings.get(employee.userId)??null;}
   const directorInsuranceAmount=Number(((snapshot.sourceSnapshot.insuranceSettings as {director?:{calculatedAmount?:number}}|undefined)?.director?.calculatedAmount)??0);
-  return {period,snapshot,employees,rawByUser,directorInsuranceAmount,summary:buildPayrollOverviewSummary(employees,directorInsuranceAmount),projectedSummary:buildPayrollOverviewProjectedSummary(employees,directorInsuranceAmount)};
+  return {period,snapshot,employees,rawByUser,adjustmentLedgerByUser,directorInsuranceAmount,summary:buildPayrollOverviewSummary(employees,directorInsuranceAmount),projectedSummary:buildPayrollOverviewProjectedSummary(employees,directorInsuranceAmount)};
 }
