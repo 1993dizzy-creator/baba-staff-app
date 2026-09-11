@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 // @ts-expect-error Node test execution requires the explicit TypeScript extension.
-import { calculateEmployeePit, calculateProgressivePit, calculateTaxableCompensationAmount, grossUpNetTaxableIncome, payrollTaxReviewCodeForItem, payrollTaxTreatmentForItem, selectEmployeeTaxSetting, selectTaxPolicy, validateTaxBrackets } from "../lib/payroll/tax.ts";
+import { calculateAccountingTaxableCompensationAmount, calculateEmployeePit, calculateProgressivePit, calculateTaxableCompensationAmount, grossUpNetTaxableIncome, payrollTaxReviewCodeForItem, payrollTaxTreatmentForItem, selectEmployeeTaxSetting, selectTaxPolicy, validateTaxBrackets } from "../lib/payroll/tax.ts";
 // @ts-expect-error Node test execution requires the explicit TypeScript extension.
 import { calculatePayrollPayoutAmounts } from "../lib/payroll/adjustments.ts";
 // @ts-expect-error Node test execution requires the explicit TypeScript extension.
@@ -57,6 +57,61 @@ function pit(input: { compensation: number; insurance?: number; profile?: Return
     profile: input.profile ?? profile(),
   });
 }
+
+function accountingCompensation(input: {
+  payout: number;
+  exempt?: number;
+  companyPaidInsurance?: number;
+}) {
+  return calculateAccountingTaxableCompensationAmount({
+    preInsurancePayoutAmount: input.payout,
+    taxExemptCompensationAmount: input.exempt ?? 0,
+    companyPaidInsuranceTaxableAmount: input.companyPaidInsurance ?? 0,
+  });
+}
+
+test("Bảng lương fixtures reproduce KIM, Quyen, and Linh PIT exactly", () => {
+  const kimCompensation = accountingCompensation({ payout: 23_000_000, companyPaidInsurance: 855_000 });
+  const kim = pit({
+    compensation: kimCompensation,
+    profile: profile({ dependentCount: 1, burdenMode: "company_bears", insuranceDeductionMode: "none" }),
+  });
+  assert.equal(kimCompensation, 23_855_000);
+  assert.equal(kim.taxableIncomeAmount, 2_155_000);
+  assert.equal(kim.calculatedPitAmount, 107_750);
+  assert.equal(kim.employeePitDeductionAmount, 0);
+  assert.equal(kim.companyPitAmount, 107_750);
+
+  const quyen = pit({ compensation: accountingCompensation({ payout: 17_988_334 }), insurance: 525_000 });
+  assert.equal(quyen.taxableIncomeAmount, 1_963_334);
+  assert.equal(quyen.calculatedPitAmount, 98_167);
+  assert.equal(quyen.employeePitDeductionAmount, 98_167);
+
+  const linh = pit({ compensation: accountingCompensation({ payout: 16_025_641 }), insurance: 525_000 });
+  assert.equal(linh.taxableIncomeAmount, 641);
+  assert.equal(linh.calculatedPitAmount, 32);
+  assert.equal(linh.employeePitDeductionAmount, 32);
+});
+
+test("accounting compensation starts from J so automatic and manual penalties reduce tax", () => {
+  const withoutPenalty = accountingCompensation({ payout: 20_000_000 });
+  const afterAutomaticLatePenalty = accountingCompensation({ payout: 19_900_000 });
+  const afterManualPenalty = accountingCompensation({ payout: 19_500_000 });
+  assert.equal(withoutPenalty, 20_000_000);
+  assert.equal(afterAutomaticLatePenalty, 19_900_000);
+  assert.equal(afterManualPenalty, 19_500_000);
+  assert.ok(pit({ compensation: afterAutomaticLatePenalty }).calculatedPitAmount < pit({ compensation: withoutPenalty }).calculatedPitAmount);
+  assert.ok(pit({ compensation: afterManualPenalty }).calculatedPitAmount < pit({ compensation: withoutPenalty }).calculatedPitAmount);
+});
+
+test("advance stays outside J while tax-exempt compensation remains excluded", () => {
+  const withoutAdvance = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: 20_000_000, manualIncentiveAmount: 0, manualPenaltyAmount: 0, employeeInsuranceDeductionAmount: 0, advanceAmount: 0 });
+  const withAdvance = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: 20_000_000, manualIncentiveAmount: 0, manualPenaltyAmount: 0, employeeInsuranceDeductionAmount: 0, advanceAmount: 2_000_000 });
+  assert.equal(withoutAdvance.preInsurancePayoutAmount, withAdvance.preInsurancePayoutAmount);
+  assert.equal(accountingCompensation({ payout: withAdvance.preInsurancePayoutAmount }), 20_000_000);
+  assert.equal(accountingCompensation({ payout: 21_000_000, exempt: 1_000_000 }), 20_000_000);
+  assert.equal(accountingCompensation({ payout: -100_000 }), 0);
+});
 
 test("2026 resident progressive engine calculates every statutory example", () => {
   assert.equal(calculateProgressivePit(0, brackets), 0);
@@ -119,39 +174,34 @@ test("advance never changes taxable income or PIT, only final payout", () => {
   assert.equal(tax.taxableCompensationAmount, 25_675_300);
 });
 
-test("manual discipline penalty reduces payout without reducing taxable compensation or PIT", () => {
+test("manual discipline penalty keeps payout metadata and reduces tax through J", () => {
   assert.equal(payrollTaxTreatmentForItem("penalty", "deduction"), "payout_deduction");
   assert.equal(payrollTaxTreatmentForItem("damage", "deduction"), "payout_deduction");
   assert.equal(payrollTaxTreatmentForItem("late_deduction", "deduction"), "payout_deduction");
   assert.equal(payrollTaxTreatmentForItem("unauthorized_absence_deduction", "deduction"), "payout_deduction");
   assert.equal(payrollTaxTreatmentForItem("insurance_employee_deduction", "deduction"), "statutory_deduction");
   assert.equal(payrollTaxTreatmentForItem("advance", "deduction"), "advance_settlement");
-  const taxableCompensationAmount = calculateTaxableCompensationAmount([
-    { amount: 25_000_000, taxTreatment: "taxable_compensation" },
-  ]);
-  const tax = pit({ compensation: taxableCompensationAmount });
-  const withoutPenalty = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: 25_000_000, manualIncentiveAmount: 0, manualPenaltyAmount: 0, employeeInsuranceDeductionAmount: 0, employeePitDeductionAmount: tax.employeePitDeductionAmount, advanceAmount: 0 });
-  const withPenalty = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: 25_000_000, manualIncentiveAmount: 0, manualPenaltyAmount: 500_000, employeeInsuranceDeductionAmount: 0, employeePitDeductionAmount: tax.employeePitDeductionAmount, advanceAmount: 0 });
-  assert.equal(taxableCompensationAmount, 25_000_000);
-  assert.equal(pit({ compensation: taxableCompensationAmount }).taxableIncomeAmount, tax.taxableIncomeAmount);
-  assert.equal(pit({ compensation: taxableCompensationAmount }).calculatedPitAmount, tax.calculatedPitAmount);
-  assert.notEqual(tax.calculatedPitAmount, pit({ compensation: 24_500_000 }).calculatedPitAmount);
+  const withoutPenalty = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: 25_000_000, manualIncentiveAmount: 0, manualPenaltyAmount: 0, employeeInsuranceDeductionAmount: 0, advanceAmount: 0 });
+  const withPenalty = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: 25_000_000, manualIncentiveAmount: 0, manualPenaltyAmount: 500_000, employeeInsuranceDeductionAmount: 0, advanceAmount: 0 });
+  const withoutPenaltyTax = pit({ compensation: accountingCompensation({ payout: withoutPenalty.preInsurancePayoutAmount }) });
+  const withPenaltyTax = pit({ compensation: accountingCompensation({ payout: withPenalty.preInsurancePayoutAmount }) });
+  assert.ok(withPenaltyTax.calculatedPitAmount < withoutPenaltyTax.calculatedPitAmount);
   assert.equal(withoutPenalty.netPayoutAmount - withPenalty.netPayoutAmount, 500_000);
 });
 
-test("damage and other payout deductions never become statutory tax deductions", () => {
+test("damage deductions stay nonstatutory while their reduced J lowers tax", () => {
   const taxableCompensationAmount = calculateTaxableCompensationAmount([
     { amount: 25_000_000, taxTreatment: "taxable_compensation" },
     { amount: 500_000, taxTreatment: "payout_deduction" },
   ]);
-  const tax = pit({ compensation: taxableCompensationAmount });
-  const payout = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: 24_500_000, manualIncentiveAmount: 0, manualPenaltyAmount: 0, employeeInsuranceDeductionAmount: 0, employeePitDeductionAmount: tax.employeePitDeductionAmount, advanceAmount: 0 });
   assert.equal(taxableCompensationAmount, 25_000_000);
-  assert.equal(tax.calculatedPitAmount, pit({ compensation: 25_000_000 }).calculatedPitAmount);
+  const tax = pit({ compensation: accountingCompensation({ payout: 24_500_000 }) });
+  const payout = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: 24_500_000, manualIncentiveAmount: 0, manualPenaltyAmount: 0, employeeInsuranceDeductionAmount: 0, employeePitDeductionAmount: tax.employeePitDeductionAmount, advanceAmount: 0 });
+  assert.ok(tax.calculatedPitAmount < pit({ compensation: 25_000_000 }).calculatedPitAmount);
   assert.equal(payout.preInsurancePayoutAmount, 24_500_000);
 });
 
-test("unauthorized absence excludes only unearned work while the three-day disciplinary penalty stays outside the tax base", () => {
+test("unauthorized absence payout penalty lowers J without reclassifying item metadata", () => {
   const dayRate = 1_000_000;
   const earnedWorkAmount = 25 * dayRate;
   const disciplinaryPenalty = 3 * dayRate;
@@ -160,13 +210,14 @@ test("unauthorized absence excludes only unearned work while the three-day disci
     { amount: disciplinaryPenalty, taxTreatment: "payout_deduction" },
   ]);
   assert.equal(taxableCompensationAmount, 25_000_000);
-  assert.notEqual(taxableCompensationAmount, earnedWorkAmount - disciplinaryPenalty);
-  assert.notEqual(pit({ compensation: taxableCompensationAmount }).calculatedPitAmount, pit({ compensation: earnedWorkAmount - disciplinaryPenalty }).calculatedPitAmount);
-  const payout = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: earnedWorkAmount - disciplinaryPenalty, manualIncentiveAmount: 0, manualPenaltyAmount: 0, employeeInsuranceDeductionAmount: 0, employeePitDeductionAmount: pit({ compensation: taxableCompensationAmount }).employeePitDeductionAmount, advanceAmount: 0 });
+  const accountingTaxableCompensation = accountingCompensation({ payout: earnedWorkAmount - disciplinaryPenalty });
+  assert.equal(accountingTaxableCompensation, 22_000_000);
+  assert.ok(pit({ compensation: accountingTaxableCompensation }).calculatedPitAmount < pit({ compensation: taxableCompensationAmount }).calculatedPitAmount);
+  const payout = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: earnedWorkAmount - disciplinaryPenalty, manualIncentiveAmount: 0, manualPenaltyAmount: 0, employeeInsuranceDeductionAmount: 0, employeePitDeductionAmount: pit({ compensation: accountingTaxableCompensation }).employeePitDeductionAmount, advanceAmount: 0 });
   assert.equal(payout.preInsurancePayoutAmount, 22_000_000);
 });
 
-test("late major multiplier does not reduce taxable compensation beyond actually unearned minutes", () => {
+test("late payout penalty lowers taxable compensation through final J", () => {
   const otherEarnedCompensation = 25_000_000;
   const earnedAfterTwentyMissingMinutes = 280_000;
   const majorPolicyPenalty = 150_000;
@@ -177,24 +228,26 @@ test("late major multiplier does not reduce taxable compensation beyond actually
   ]);
   const payoutCompensationAmount = otherEarnedCompensation + earnedAfterTwentyMissingMinutes - majorPolicyPenalty;
   assert.equal(taxableCompensationAmount, 25_280_000);
-  assert.notEqual(pit({ compensation: taxableCompensationAmount }).calculatedPitAmount, pit({ compensation: payoutCompensationAmount }).calculatedPitAmount);
+  assert.equal(accountingCompensation({ payout: payoutCompensationAmount }), 25_130_000);
+  assert.ok(pit({ compensation: payoutCompensationAmount }).calculatedPitAmount < pit({ compensation: taxableCompensationAmount }).calculatedPitAmount);
   const payout = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: payoutCompensationAmount, manualIncentiveAmount: 0, manualPenaltyAmount: 0, employeeInsuranceDeductionAmount: 0, advanceAmount: 0 });
   assert.equal(payout.preInsurancePayoutAmount, 25_130_000);
 });
 
-test("taxable incentive, disciplinary penalty, and advance remain independent in one fixture", () => {
+test("taxable incentive and penalty flow into J while advance remains cash-only", () => {
   const taxableCompensationAmount = calculateTaxableCompensationAmount([
     { amount: 25_000_000, taxTreatment: "taxable_compensation" },
     { amount: 675_300, taxTreatment: "taxable_compensation" },
     { amount: 500_000, taxTreatment: "payout_deduction" },
     { amount: 2_000_000, taxTreatment: "advance_settlement" },
   ]);
-  const tax = pit({ compensation: taxableCompensationAmount });
+  const accountingTaxableCompensation = accountingCompensation({ payout: 25_175_300 });
+  const tax = pit({ compensation: accountingTaxableCompensation });
   const baseTax = pit({ compensation: 25_000_000 });
   const payout = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: 25_000_000, manualIncentiveAmount: 675_300, manualPenaltyAmount: 500_000, employeeInsuranceDeductionAmount: 0, employeePitDeductionAmount: tax.employeePitDeductionAmount, advanceAmount: 2_000_000 });
   assert.equal(taxableCompensationAmount, 25_675_300);
+  assert.equal(accountingTaxableCompensation, 25_175_300);
   assert.ok(tax.taxableIncomeAmount > baseTax.taxableIncomeAmount);
-  assert.ok(tax.calculatedPitAmount > baseTax.calculatedPitAmount);
   assert.equal(payout.preInsurancePayoutAmount, 25_175_300);
   assert.equal(payout.netPayoutAmount, payout.preInsurancePayoutAmount - tax.employeePitDeductionAmount - 2_000_000);
 });
@@ -259,7 +312,7 @@ test("unproven overtime remains taxable and explicitly requires tax review", () 
   assert.equal(reviewed.status, "requires_review");
 });
 
-test("fixed monthly unauthorized absence removes one unearned day from tax, not the full three-day payout deduction", () => {
+test("fixed monthly unauthorized absence uses the final three-day-reduced J for tax", () => {
   const contract = { id:1,userId:7,payType:"monthly" as const,calculationBasis:"fixed_monthly" as const,baseSalary:9_000_000,fixedRaiseAmount:0,standardWorkdays:30,standardMinutesPerDay:480,timeBlockMinutes:60,roundingMode:"nearest" as const,lateAdjustmentMode:"separate" as const,earlyLeaveAdjustmentMode:"separate" as const,overtimeMode:"requires_approval" as const,paidLeaveMode:"manual_review" as const,effectiveFrom:"2026-01-01",effectiveTo:null,revision:1 };
   const dayRate = calculatePayrollRates(contract, 9_000_000).dayRate;
   const threeDayPayoutDeduction = dayRate * 3;
@@ -272,11 +325,10 @@ test("fixed monthly unauthorized absence removes one unearned day from tax, not 
   assert.equal(dayRate, 300_000);
   assert.equal(taxableCompensationAmount, 8_700_000);
   assert.equal(payout.preInsurancePayoutAmount, 8_100_000);
-  assert.notEqual(taxableCompensationAmount, 9_000_000);
-  assert.notEqual(taxableCompensationAmount, payout.preInsurancePayoutAmount);
+  assert.equal(accountingCompensation({ payout: payout.preInsurancePayoutAmount }), 8_100_000);
 });
 
-test("company bears uses an exact finite progressive gross-up across brackets", () => {
+test("gross-up helper remains available but company-bears payroll uses the same PIT base", () => {
   const lowest = grossUpNetTaxableIncome(1_000_000, brackets);
   assert.deepEqual(lowest, { grossTaxableIncomeAmount: 1_052_632, pitAmount: 52_632 });
   assert.notEqual(lowest.pitAmount, 50_000);
@@ -289,7 +341,10 @@ test("company bears uses an exact finite progressive gross-up across brackets", 
   }
   const company = pit({ compensation: 20_000_000, profile: profile({ burdenMode: "company_bears" }) });
   assert.equal(company.employeePitDeductionAmount, 0);
-  assert.ok(company.companyPitAmount > 0);
+  assert.equal(company.taxableIncomeBeforeGrossUpAmount, 4_500_000);
+  assert.equal(company.taxableIncomeAmount, 4_500_000);
+  assert.equal(company.calculatedPitAmount, 225_000);
+  assert.equal(company.companyPitAmount, 225_000);
   const payout = calculatePayrollPayoutAmounts({ automaticPreInsuranceAmount: 20_000_000, manualIncentiveAmount: 0, manualPenaltyAmount: 0, employeeInsuranceDeductionAmount: 0, employeePitDeductionAmount: 0, advanceAmount: 2_000_000 });
   assert.equal(payout.netPayoutAmount, 18_000_000);
   const totals = calculatePayrollInsuranceTotals({ preInsurancePayoutAmounts: [20_000_000], employeeDeductionAmounts: [0], employeePitDeductionAmounts: [0], companyPitAmounts: [company.companyPitAmount], advanceAmounts: [2_000_000], employerAmounts: [0], directorAmount: 0 });

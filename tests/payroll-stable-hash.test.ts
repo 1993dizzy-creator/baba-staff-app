@@ -37,6 +37,30 @@ for (const [name, changed] of [
   });
 }
 
+test("director insurance mapping and employee rate change the calculation hash", () => {
+  const mapped = {
+    ...source,
+    insuranceSettings: {
+      director: {
+        enabled: true,
+        userId: 2,
+        baseAmount: 9_000_000,
+        rateBp: 3_000,
+        employeeRateBp: 950,
+        companyPaidInsuranceTaxableAmount: 855_000,
+      },
+    },
+  };
+  assert.notEqual(
+    stablePayrollSourceHash(mapped),
+    stablePayrollSourceHash({ ...mapped, insuranceSettings: { director: { ...mapped.insuranceSettings.director, userId: 3 } } }),
+  );
+  assert.notEqual(
+    stablePayrollSourceHash(mapped),
+    stablePayrollSourceHash({ ...mapped, insuranceSettings: { director: { ...mapped.insuranceSettings.director, employeeRateBp: 1_050 } } }),
+  );
+});
+
 // v8 지각/조퇴 deduction item metadata는 payment snapshot(automaticItemsSnapshot)에 그대로 들어가
 // stablePayrollSourceHash로 해싱된다 — APP↔T8 교차검증 시 근거 값이 바뀌면 hash도 바뀌어야 한다.
 const withLate = {

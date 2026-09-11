@@ -1,7 +1,7 @@
 import { calculatePayrollInsuranceTotals } from "./insurance";
 import { getPayrollHeaderAmount } from "./payroll-page-display";
 import type { PayrollOverviewEmployee } from "./overview";
-import { calculateEmployeePit, calculateTaxableCompensationAmount } from "./tax";
+import { calculateAccountingTaxableCompensationAmount, calculateEmployeePit } from "./tax";
 
 export type PayrollOverviewProjectedSummary = ReturnType<typeof calculatePayrollInsuranceTotals> & {
   includedEmployeeCount: number;
@@ -25,14 +25,11 @@ export function buildPayrollOverviewProjectedSummary(
         - employee.amounts.manualPenaltyAmount
         - employee.amounts.otherDeductionAmount,
       );
-    const taxableCompensationAmount = calculateTaxableCompensationAmount([
-      { amount: contractMonthlyAmount, taxTreatment: "taxable_compensation" },
-      { amount: employee.amounts.incentiveAmount, taxTreatment: "taxable_compensation" },
-      { amount: employee.amounts.taxableOvertimeAmount, taxTreatment: "taxable_compensation" },
-      { amount: employee.amounts.taxExemptOvertimeAmount, taxTreatment: "tax_exempt_compensation" },
-      { amount: employee.amounts.taxableOtherAdditionAmount, taxTreatment: "taxable_compensation" },
-      { amount: employee.amounts.unearnedCompensationAmount, taxTreatment: "unearned_compensation" },
-    ]);
+    const taxableCompensationAmount = calculateAccountingTaxableCompensationAmount({
+      preInsurancePayoutAmount,
+      taxExemptCompensationAmount: employee.amounts.taxExemptCompensationAmount,
+      companyPaidInsuranceTaxableAmount: employee.amounts.companyPaidInsuranceTaxableAmount,
+    });
     const tax = calculateEmployeePit({
       taxableCompensationAmount,
       employeeInsuranceDeductionAmount: employee.amounts.employeeInsuranceDeductionAmount,

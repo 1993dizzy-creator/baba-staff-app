@@ -66,6 +66,23 @@ export function calculateTaxableCompensationAmount(
   return Math.max(0, total);
 }
 
+export function calculateAccountingTaxableCompensationAmount(input: {
+  preInsurancePayoutAmount: number;
+  taxExemptCompensationAmount: number;
+  companyPaidInsuranceTaxableAmount: number;
+}) {
+  if (!Number.isSafeInteger(input.preInsurancePayoutAmount)
+    || !isNonNegativeInteger(input.taxExemptCompensationAmount)
+    || !isNonNegativeInteger(input.companyPaidInsuranceTaxableAmount)) {
+    throw new RangeError("INVALID_ACCOUNTING_TAXABLE_COMPENSATION_INPUT");
+  }
+  const amount = input.preInsurancePayoutAmount
+    - input.taxExemptCompensationAmount
+    + input.companyPaidInsuranceTaxableAmount;
+  if (!Number.isSafeInteger(amount)) throw new RangeError("TAXABLE_COMPENSATION_OVERFLOW");
+  return Math.max(0, amount);
+}
+
 export type PayrollTaxBracket = {
   lowerBoundAmount: number;
   upperBoundAmount: number | null;
@@ -292,14 +309,9 @@ export function calculateEmployeePit(input: {
       - policy.personalDeductionAmount
       - dependentDeductionAmount,
   );
-  const grossed = profile.burdenMode === "company_bears"
-    ? grossUpNetTaxableIncome(taxableIncomeBeforeGrossUpAmount, policy.brackets)
-    : {
-        grossTaxableIncomeAmount: taxableIncomeBeforeGrossUpAmount,
-        pitAmount: calculateProgressivePit(taxableIncomeBeforeGrossUpAmount, policy.brackets),
-      };
-  const employeePitDeductionAmount = profile.burdenMode === "employee_deducted" ? grossed.pitAmount : 0;
-  const companyPitAmount = profile.burdenMode === "company_bears" ? grossed.pitAmount : 0;
+  const calculatedPitAmount = calculateProgressivePit(taxableIncomeBeforeGrossUpAmount, policy.brackets);
+  const employeePitDeductionAmount = profile.burdenMode === "employee_deducted" ? calculatedPitAmount : 0;
+  const companyPitAmount = profile.burdenMode === "company_bears" ? calculatedPitAmount : 0;
   const reviewWarningCodes = [...new Set(input.reviewWarningCodes ?? [])];
   return {
     status: reviewWarningCodes.length > 0 ? "requires_review" : "calculated",
@@ -316,8 +328,8 @@ export function calculateEmployeePit(input: {
     taxableCompensationAmount,
     deductibleInsuranceAmount,
     taxableIncomeBeforeGrossUpAmount,
-    taxableIncomeAmount: grossed.grossTaxableIncomeAmount,
-    calculatedPitAmount: grossed.pitAmount,
+    taxableIncomeAmount: taxableIncomeBeforeGrossUpAmount,
+    calculatedPitAmount,
     employeePitDeductionAmount,
     companyPitAmount,
     accountingName: profile.accountingName.trim(),

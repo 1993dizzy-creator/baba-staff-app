@@ -4,10 +4,12 @@ import test from "node:test";
 
 const read = (path: string) => readFileSync(path, "utf8");
 const migration = read("supabase/migrations/20260908115312_add_payroll_tax_versions.sql");
+const directorMigration = read("supabase/migrations/20260911102823_add_director_insurance_tax_mapping.sql");
 const overview = read("lib/payroll/overview.ts");
 const overviewServer = read("lib/payroll/overview-server.ts");
 const projection = read("lib/payroll/overview-projection.ts");
 const monthlyRun = read("lib/payroll/monthly-run.ts");
+const insurance = read("lib/payroll/insurance.ts");
 const snapshot = read("lib/payroll/payment-snapshot.ts");
 const payments = read("app/api/admin/payroll/payments/route.ts");
 const profileApi = read("app/api/admin/payroll/tax-settings/route.ts");
@@ -48,22 +50,41 @@ test("tax mutations reuse owner/master authorization and private security-define
   assert.match(migration, /grant execute on function public\.payroll_create_tax_setting_version_v1[\s\S]*to service_role/);
 });
 
-test("overview and projection derive taxable compensation independently from payout deductions", () => {
+test("overview and projection share the Bảng J-based taxable compensation formula", () => {
   assert.match(overviewServer, /loadPayrollTaxVersions\(month,options\?\.userId\)/);
-  assert.match(overview, /calculateTaxableCompensationAmount/);
-  assert.doesNotMatch(overview, /taxableCompensationAmount:preInsurancePayoutAmount/);
+  assert.match(overview, /calculateAccountingTaxableCompensationAmount\(\{preInsurancePayoutAmount,taxExemptCompensationAmount,companyPaidInsuranceTaxableAmount\}\)/);
   assert.match(overview, /employeePitDeductionAmount:tax\.employeePitDeductionAmount/);
-  assert.match(overview, /taxTreatment:entry\.taxTreatment/);
+  assert.match(overview, /entry\.direction==="addition"&&entry\.taxTreatment==="tax_exempt_compensation"/);
   assert.match(monthlyRun, /payrollTaxTreatmentForItem\(category,direction,normalizedAmount,sourceSnapshot\)/);
   assert.match(monthlyRun, /unearnedCompensationAmount:vnd\(rate\.dayRate\)/);
   assert.match(overviewServer, /category:"attendance_bonus"[\s\S]*taxTreatment:"taxable_compensation"/);
   assert.match(projection, /calculateEmployeePit\(\{/);
-  assert.match(projection, /calculateTaxableCompensationAmount/);
-  assert.doesNotMatch(projection, /taxableCompensationAmount: preInsurancePayoutAmount/);
-  assert.match(projection, /taxableOvertimeAmount/);
-  assert.match(projection, /taxExemptOvertimeAmount/);
+  assert.match(projection, /calculateAccountingTaxableCompensationAmount\(\{/);
+  assert.match(projection, /taxExemptCompensationAmount: employee\.amounts\.taxExemptCompensationAmount/);
+  assert.match(projection, /companyPaidInsuranceTaxableAmount: employee\.amounts\.companyPaidInsuranceTaxableAmount/);
   assert.match(projection, /employeePitDeductionAmounts/);
   assert.match(projection, /companyPitAmounts/);
+});
+
+test("director insurance mapping migration is mirrored locally without touching payment history", () => {
+  assert.match(directorMigration, /director_insurance_user_id bigint/);
+  assert.match(directorMigration, /director_employee_insurance_rate_bp smallint not null default 0/);
+  assert.match(directorMigration, /director_insurance_user_id = 2/);
+  assert.match(directorMigration, /director_employee_insurance_rate_bp = 950/);
+  assert.match(directorMigration, /foreign key \(director_insurance_user_id\)[\s\S]*references public\.users\(id\)[\s\S]*on delete restrict/);
+  assert.doesNotMatch(directorMigration, /payroll_employee_payments|payroll_payment_batches/);
+});
+
+test("director mapping and employee rate are captured in calculation source and hash inputs", () => {
+  assert.match(monthlyRun, /director_insurance_user_id/);
+  assert.match(monthlyRun, /director_employee_insurance_rate_bp/);
+  assert.match(monthlyRun, /userId:insuranceGlobal\.directorUserId/);
+  assert.match(monthlyRun, /employeeRateBp:insuranceGlobal\.directorEmployeeRateBp/);
+  assert.match(monthlyRun, /companyPaidInsuranceTaxableAmount:calculateDirectorEmployeeInsurance/);
+  assert.match(insurance, /userId === global\.directorUserId/);
+  assert.doesNotMatch(insurance, /KIM|Vuong|Vương|owner/);
+  assert.match(snapshot, /insuranceSnapshot:raw\.insuranceSnapshot/);
+  assert.match(snapshot, /sourceSnapshot/);
 });
 
 test("payment snapshot/hash and v2 payment totals carry every tax input and final net", () => {

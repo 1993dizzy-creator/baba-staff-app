@@ -2,8 +2,10 @@ export type PayrollInsuranceGlobalSettings = {
   employeeRateBp: number;
   employerRateBp: number;
   directorEnabled: boolean;
+  directorUserId: number | null;
   directorBaseAmount: number;
   directorRateBp: number;
+  directorEmployeeRateBp: number;
   settingsUpdatedAt: string | null;
 };
 
@@ -29,6 +31,8 @@ export type PayrollEmployeeInsuranceSnapshot = {
   employerRateBp: number;
   employeeDeductionAmount: number;
   employerAmount: number;
+  isDirectorInsuranceMapped: boolean;
+  companyPaidInsuranceTaxableAmount: number;
 };
 
 export function calculateInsuranceAmount(baseAmount: number, rateBp: number) {
@@ -51,7 +55,29 @@ export function selectInsuranceSetting(
 export function buildEmployeeInsuranceSnapshot(
   setting: PayrollInsuranceSettingVersion | null,
   global: PayrollInsuranceGlobalSettings,
+  userId?: number,
 ): PayrollEmployeeInsuranceSnapshot {
+  const isDirectorInsuranceMapped = global.directorEnabled
+    && global.directorUserId !== null
+    && userId === global.directorUserId;
+  if (isDirectorInsuranceMapped) {
+    return {
+      settingVersionId: setting?.id ?? null,
+      revision: setting?.revision ?? null,
+      effectiveMonth: setting?.effectiveMonth ?? null,
+      isEnrolled: true,
+      insuranceBaseAmount: global.directorBaseAmount,
+      employeeRateBp: global.directorEmployeeRateBp,
+      employerRateBp: Math.max(0, global.directorRateBp - global.directorEmployeeRateBp),
+      employeeDeductionAmount: 0,
+      employerAmount: 0,
+      isDirectorInsuranceMapped: true,
+      companyPaidInsuranceTaxableAmount: calculateInsuranceAmount(
+        global.directorBaseAmount,
+        global.directorEmployeeRateBp,
+      ),
+    };
+  }
   const enrolled = setting?.isEnrolled === true;
   const baseAmount = enrolled ? setting.insuranceBaseAmount : 0;
   return {
@@ -64,11 +90,19 @@ export function buildEmployeeInsuranceSnapshot(
     employerRateBp: global.employerRateBp,
     employeeDeductionAmount: calculateInsuranceAmount(baseAmount, global.employeeRateBp),
     employerAmount: calculateInsuranceAmount(baseAmount, global.employerRateBp),
+    isDirectorInsuranceMapped: false,
+    companyPaidInsuranceTaxableAmount: 0,
   };
 }
 
 export function calculateDirectorInsurance(global: PayrollInsuranceGlobalSettings) {
   return global.directorEnabled ? calculateInsuranceAmount(global.directorBaseAmount, global.directorRateBp) : 0;
+}
+
+export function calculateDirectorEmployeeInsurance(global: PayrollInsuranceGlobalSettings) {
+  return global.directorEnabled
+    ? calculateInsuranceAmount(global.directorBaseAmount, global.directorEmployeeRateBp)
+    : 0;
 }
 
 export function calculatePayrollInsuranceTotals(input: {
