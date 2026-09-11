@@ -36,6 +36,13 @@ test("cost card is a compact three-column bilingual grouped table",()=>{
   assert.match(page,/CostGroup title=\{table\.payrollGroup\}/);
   assert.match(page,/CostGroup title=\{table\.companyGroup\}/);
   assert.doesNotMatch(page,/auxiliary\/\>|paddingLeft:24/);
+  assert.doesNotMatch(page,/TaxSummaryCard/);
+  assert.match(page,/current=\{amount\(current,"totalEmployeePitDeductionAmount"\)\} projected=\{amount\(projected,"totalEmployeePitDeductionAmount"\)\}/);
+  assert.match(page,/current=\{amount\(current,"totalCompanyPitAmount"\)\} projected=\{amount\(projected,"totalCompanyPitAmount"\)\}/);
+  assert.ok(page.indexOf("table.employeeInsuranceDeduction") < page.indexOf("table.employeePitDeduction"));
+  assert.ok(page.indexOf("table.employeePitDeduction") < page.indexOf("table.advance"));
+  assert.ok(page.indexOf("table.directorInsurance") < page.indexOf("table.companyPit"));
+  assert.ok(page.indexOf("table.companyPit") < page.indexOf("table.insuranceRemittance"));
   for(const phrase of ["설명","현재","예상","급여내용","회사지출","Nội dung","Hiện tại","Dự kiến","Chi phí công ty"]) assert.match(copy,new RegExp(phrase));
 });
 
@@ -85,8 +92,19 @@ test("adjustment fields distinguish required reasons from optional internal note
 });
 
 test("cost table uses concise bilingual labels and uniform row alignment",()=>{
-  for(const phrase of ["지급대상액","직원 보험공제","실수령액","회사 보험부담","법인장 보험비","보험기관 납부액","총인건비","Khoản chi trả","BH nhân viên","Thực nhận","BH công ty","BH giám đốc","Nộp bảo hiểm","Tổng nhân sự"]) assert.ok(copy.includes(phrase),phrase);
+  for(const phrase of ["지급대상액","직원 보험공제","직원 TNCN 공제","실수령액","회사 보험부담","법인장 보험비","회사 TNCN 부담","보험기관 납부액","총인건비","Khoản chi trả","BH nhân viên","TNCN nhân viên","Thực nhận","BH công ty","BH giám đốc","TNCN công ty","Nộp bảo hiểm","Tổng nhân sự"]) assert.ok(copy.includes(phrase),phrase);
   assert.match(page,/descriptionHeader:\{textAlign:"left"\}/);
   assert.doesNotMatch(page,/auxiliary|paddingLeft:16|paddingLeft:24/);
   assert.match(page,/fontSize:10\.5[\s\S]+fontVariantNumeric:"tabular-nums",fontSize:10\.5/);
+});
+
+test("payment status card keeps only progress and three payment totals",()=>{
+  for(const phrase of ["💳","지급 현황","Tình trạng chi trả","지급 중","지급완료","Đang chi trả","Đã trả","계산 실수령 합계","실제 지급 합계","차액 합계"]) assert.ok(page.includes(phrase),phrase);
+  for(const field of ["calculated_net_total","actual_paid_total","difference_total"]) assert.match(page,new RegExp(`run\\.${field}`));
+  for(const duplicatedField of ["employee_pit_total","company_pit_total","advance_total","employer_insurance_total","director_insurance_amount","insurance_remittance_total","actual_company_cost_total"]) assert.doesNotMatch(page,new RegExp(`run\\.${duplicatedField}`));
+  assert.match(page,/run\.status==="completed"&&run\.completed_at/);
+  assert.match(page,/gridTemplateColumns:"minmax\(0,1fr\) minmax\(0,auto\)"/);
+  assert.match(page,/width:"100%",minWidth:0,boxSizing:"border-box",overflow:"hidden"/);
+  assert.doesNotMatch(page,/fontFamily/);
+  assert.doesNotMatch(page,/href=\{`\/admin\/payroll\/\$\{run\.id\}`\}/);
 });

@@ -54,7 +54,7 @@ test("level raise comes only from employee-management level data", () => {
   assert.doesNotMatch(overview, /cumulativeRaiseAmount/);
 });
 
-test("UI keeps grouped compact cards, non-owner part totals, details, and ledger last", () => {
+test("UI keeps grouped compact cards, non-owner part totals, details, and payment status last", () => {
   assert.match(page, /getPartKey\(employee\.part\)/);
   assert.match(page, /employees\.sort\(comparePayrollEmployees\)/);
   assert.match(page, /sortPayrollEmployeesByHeaderAmount\(employees\.sort\(comparePayrollEmployees\),overview\?\.future===true\)/);
