@@ -20,6 +20,7 @@ export function buildPayrollOverviewProjectedSummary(
         contractMonthlyAmount
         + employee.amounts.incentiveAmount
         + employee.amounts.overtimeAmount
+        + employee.amounts.holidayWorkPremiumAmount
         + employee.amounts.otherAdditionAmount
         - employee.amounts.automaticPenaltyAmount
         - employee.amounts.manualPenaltyAmount

@@ -1,7 +1,7 @@
 import type { CalculationBasis, PayType } from "../types";
 import type { PayrollTaxBurdenMode, PayrollTaxMode } from "../tax";
 
-export const PAYROLL_SOURCE_EXPORT_SCHEMA_VERSION = "payroll-source-export-v1" as const;
+export const PAYROLL_SOURCE_EXPORT_SCHEMA_VERSION = "payroll-source-export-v2" as const;
 
 export type PayrollSourceAttendanceSchedule = {
   id: number;
@@ -41,6 +41,17 @@ export type PayrollSourceExtraWorkItem = {
   decidedBy: number | null;
   decidedAt: string | null;
   sourceHash: string;
+};
+
+export type PayrollSourceHolidayWorkPremiumItem = {
+  businessDate: string;
+  holidayId: number;
+  holidayCode: string;
+  holidayGroup: string;
+  internalPayMultiplier: number | null;
+  effectiveMultiplier: number;
+  premiumCalculationBaseAmount: number;
+  premiumAmount: number;
 };
 
 export type PayrollSourceAdjustment = {
@@ -108,6 +119,10 @@ export type PayrollSourceEmployee = {
   attendanceBonus: {
     eligible: boolean;
     referenceAmount: number;
+  };
+  holidayWorkPremium: {
+    referenceAmount: number;
+    items: PayrollSourceHolidayWorkPremiumItem[];
   };
   insurance: {
     settingVersionId: number | null;

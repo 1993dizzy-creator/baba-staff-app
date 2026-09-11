@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -143,17 +143,9 @@ test("Holiday type carries internalPayMultiplier (may be null even for a returne
   assert.doesNotMatch(typeBlock, /approval_status|work_date|user_id/);
 });
 
-test("[scenario 7] payroll calculation modules never reference holidays or the internal premium — the holiday feature stays a display-only layer, no payroll regression from this change", () => {
-  const payrollDir = join(process.cwd(), "lib/payroll");
-  let files: string[];
-  try {
-    files = readdirSync(payrollDir).filter((name) => name.endsWith(".ts"));
-  } catch {
-    files = [];
-  }
-  assert.ok(files.length > 0, "expected lib/payroll to contain modules");
-  for (const file of files) {
-    const content = read(`lib/payroll/${file}`);
-    assert.doesNotMatch(content, /internalPayMultiplier|holiday/i, `${file} must not reference holidays`);
-  }
+test("[scenario 7] attendance stays display-only while payroll consumes the shared effective holiday policy separately", () => {
+  const payroll = read("lib/payroll/monthly-run.ts");
+  assert.doesNotMatch(page, /attendance_records[^\n]*(?:insert|update)|(?:insert|update)[^\n]*attendance_records/i);
+  assert.match(payroll, /loadPayrollHolidayPremiumPoliciesForMonth/);
+  assert.doesNotMatch(payroll, /is_paid_holiday|internal_pay_multiplier/);
 });

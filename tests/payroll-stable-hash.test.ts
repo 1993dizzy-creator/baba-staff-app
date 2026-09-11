@@ -61,6 +61,31 @@ test("director insurance mapping and employee rate change the calculation hash",
   );
 });
 
+test("holiday premium policy source changes the payment hash", () => {
+  const withHolidayPremium = {
+    ...source,
+    automaticItemsSnapshot: [{
+      category: "holiday_work_premium",
+      direction: "addition",
+      amount: 350_000,
+      businessDate: "2026-09-02",
+      sourceSnapshot: {
+        holidayId: 81,
+        holidayDate: "2026-09-02",
+        holidayCode: "NATIONAL_DAY",
+        holidayGroup: "NATIONAL_DAY_2026",
+        internalPayMultiplier: 2,
+        effectiveMultiplier: 2,
+        premiumCalculationBaseAmount: 350_000,
+        premiumAmount: 350_000,
+      },
+    }],
+  };
+  const changed = structuredClone(withHolidayPremium);
+  changed.automaticItemsSnapshot[0].sourceSnapshot.effectiveMultiplier = 2.5;
+  assert.notEqual(stablePayrollSourceHash(withHolidayPremium), stablePayrollSourceHash(changed));
+});
+
 // v8 지각/조퇴 deduction item metadata는 payment snapshot(automaticItemsSnapshot)에 그대로 들어가
 // stablePayrollSourceHash로 해싱된다 — APP↔T8 교차검증 시 근거 값이 바뀌면 hash도 바뀌어야 한다.
 const withLate = {

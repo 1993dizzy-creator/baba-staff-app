@@ -151,8 +151,17 @@ test("loadHolidaysForMonth still narrows to the requested month's date range (ye
 test("holidays-server.ts imports the shared policy helpers from holidays-policy.ts instead of reimplementing the effective-premium decision", () => {
   assert.match(
     server,
-    /import \{ countHolidayGroupSizes, isBabaPremiumHoliday \} from "@\/lib\/store-settings\/holidays-policy";/
+    /countHolidayGroupSizes,[\s\S]*getEffectiveHolidayMultiplier,[\s\S]*isBabaPremiumHoliday,[\s\S]*from "@\/lib\/store-settings\/holidays-policy";/
   );
+});
+
+test("payroll holiday loader reuses the single year query and derives only effective monthly premiums", () => {
+  const fn = server.slice(server.indexOf("export async function loadPayrollHolidayPremiumPoliciesForMonth"));
+  assert.match(fn, /const yearHolidays = await loadYearHolidays\(year\);/);
+  assert.match(fn, /const groupSizes = countHolidayGroupSizes\(yearHolidays\);/);
+  assert.match(fn, /getEffectiveHolidayMultiplier\(holiday, holidayGroupSize\)/);
+  assert.match(fn, /effectivePayMultiplier === null/);
+  assert.doesNotMatch(fn, /\.from\("store_holidays"\)/);
 });
 
 test("PostgREST embed extraction defensively handles either a single-object or array embed shape for store_holiday_operation_policies (cardinality is not hard-assumed), matching the same defensive pattern already used elsewhere in this codebase", () => {

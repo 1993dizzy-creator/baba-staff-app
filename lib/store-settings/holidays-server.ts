@@ -1,7 +1,11 @@
 import "server-only";
 
 import { supabaseServer } from "@/lib/supabase/server";
-import { countHolidayGroupSizes, isBabaPremiumHoliday } from "@/lib/store-settings/holidays-policy";
+import {
+  countHolidayGroupSizes,
+  getEffectiveHolidayMultiplier,
+  isBabaPremiumHoliday,
+} from "@/lib/store-settings/holidays-policy";
 
 // 베트남 법정공휴일 1차 기반 — store_setting_versions와 완전히 분리된 독립 모듈이다.
 // store_holidays(법정공휴일 원본, 절대 삭제하지 않음)와 store_holiday_operation_policies
@@ -180,6 +184,35 @@ export async function loadHolidaysForMonth(month: string): Promise<StoreHoliday[
       holiday.holidayDate < endExclusive &&
       isBabaPremiumHoliday(holiday, groupSizes.get(holiday.holidayGroup) ?? 0)
   );
+}
+
+export type PayrollHolidayPremiumPolicy = StoreHoliday & {
+  holidayGroupSize: number;
+  effectivePayMultiplier: number;
+};
+
+// payroll 월 snapshot 전용 읽기. 연도 전체 목록을 한 번만 읽어 기존 effective
+// 판정 함수를 적용한 뒤 월 범위로 좁힌다. null multiplier는 오류가 아니며,
+// 여러 날짜 그룹의 미선택일은 자연스럽게 결과에서 제외된다.
+export async function loadPayrollHolidayPremiumPoliciesForMonth(
+  month: string
+): Promise<PayrollHolidayPremiumPolicy[]> {
+  const year = Number(month.slice(0, 4));
+  const start = `${month}-01`;
+  const next = new Date(`${start}T00:00:00Z`);
+  next.setUTCMonth(next.getUTCMonth() + 1);
+  const endExclusive = next.toISOString().slice(0, 10);
+  const yearHolidays = await loadYearHolidays(year);
+  const groupSizes = countHolidayGroupSizes(yearHolidays);
+
+  return yearHolidays.flatMap((holiday) => {
+    if (holiday.holidayDate < start || holiday.holidayDate >= endExclusive) return [];
+    const holidayGroupSize = groupSizes.get(holiday.holidayGroup) ?? 0;
+    const effectivePayMultiplier = getEffectiveHolidayMultiplier(holiday, holidayGroupSize);
+    return effectivePayMultiplier === null
+      ? []
+      : [{ ...holiday, holidayGroupSize, effectivePayMultiplier }];
+  });
 }
 
 export type PrepareHolidayCalendarInput = {

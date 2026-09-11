@@ -101,6 +101,7 @@ function employee(
       paidLeaveAmount: 0,
       overtimeAmount: 0,
       partTimeExtraWorkAmount: 0,
+      holidayWorkPremiumAmount: 0,
       taxableOvertimeAmount: 0,
       taxExemptOvertimeAmount: 0,
       taxExemptCompensationAmount: 0,

@@ -168,6 +168,7 @@ export function CompensationCard({
                   label={t.accruedWork}
                   value={employee.amounts.workAppliedAmount === null ? t.settingsRequired : formatVnd(employee.amounts.workAppliedAmount)}
                 />
+                {employee.amounts.holidayWorkPremiumAmount > 0 && <Row label={t.holidayWorkPremium} value={formatSignedVnd(employee.amounts.holidayWorkPremiumAmount, "+")} />}
                 <AdjustmentButton
                   kind="incentive"
                   label={t.incentive}

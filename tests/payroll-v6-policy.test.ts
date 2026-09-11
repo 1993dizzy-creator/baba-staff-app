@@ -18,7 +18,7 @@ test("v9 keeps the full scheduled day and independent v8 late/early-leave penalt
   assert.match(engine,/selectUnifiedRecognizedMinutes/);
   assert.match(engine,/isExtraWorkEligible\(contract\)/);
   assert.doesNotMatch(engine,/OVERTIME_APPROVAL_UNAVAILABLE/);
-  assert.match(engine,/monthly-payroll-v10/);
+  assert.match(engine,/monthly-payroll-v11/);
   // 일반 지각(manualLateNormalized=false) → /admin/payroll/settings 의 minor/major tier
   assert.match(engine,/if\(facts\.manualLateNormalized\)\{/);
   assert.match(engine,/calculateLatePenalty\(\{lateMinutes:facts\.effectiveLateMinutes,minuteRate:rate\.minuteRate,dayRate:rate\.dayRate,thresholdMinutes:input\.penaltySettings\.lateMajorThresholdMinutes/);
