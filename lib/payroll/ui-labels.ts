@@ -1,5 +1,22 @@
 export type PayrollUiLang="ko"|"vi";
 
+export function getPaymentBadgePresentation(
+  lang: PayrollUiLang,
+  differenceAmount: number | null | undefined,
+) {
+  const adjusted = (differenceAmount ?? 0) !== 0;
+  return {
+    adjusted,
+    label: adjusted
+      ? lang === "vi" ? "Trả điều chỉnh" : "조정지급"
+      : lang === "vi" ? "Đã trả" : "지급완료",
+  };
+}
+
+export function shouldShowPaymentDifferenceReason(differenceAmount: number) {
+  return differenceAmount !== 0;
+}
+
 const labels={
  ko:{monthly:"월급",daily:"일급",hourly:"시간급",minute:"분 단위",hour:"시간 단위",day:"일 단위",none:"반올림 안 함",floor:"내림",ceil:"올림",nearest:"가까운 단위",ignore:"반영하지 않음",deduct_minutes:"분 단위 공제",separate:"별도 확인",requires_approval:"승인 후 반영",manual_review:"직접 확인",paid:"유급",unpaid:"무급",draft:"작성 중",finalized:"확정",paid_status:"지급 완료",cancelled:"취소",calculated:"계산 완료",requires_review:"확인 필요"},
  vi:{monthly:"Lương tháng",daily:"Lương ngày",hourly:"Lương giờ",minute:"Theo phút",hour:"Theo giờ",day:"Theo ngày",none:"Không làm tròn",floor:"Làm tròn xuống",ceil:"Làm tròn lên",nearest:"Làm tròn gần nhất",ignore:"Không điều chỉnh",deduct_minutes:"Khấu trừ theo phút",separate:"Kiểm tra riêng",requires_approval:"Chỉ tính sau khi duyệt",manual_review:"Kiểm tra thủ công",paid:"Có lương",unpaid:"Không lương",draft:"Đang soạn",finalized:"Đã chốt",paid_status:"Đã thanh toán",cancelled:"Đã hủy",calculated:"Đã tính",requires_review:"Cần kiểm tra"}

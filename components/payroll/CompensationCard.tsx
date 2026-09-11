@@ -16,7 +16,11 @@ import {
 import { formatPositiveIntegerInput, normalizePositiveIntegerInput } from "@/lib/payroll/positive-integer-input";
 import { formatRecognizedWork, getPayrollHeaderAmount } from "@/lib/payroll/payroll-page-display";
 import { payrollOverviewText } from "@/lib/text/payroll-overview";
-import { reviewLabel } from "@/lib/payroll/ui-labels";
+import {
+  getPaymentBadgePresentation,
+  reviewLabel,
+  shouldShowPaymentDifferenceReason,
+} from "@/lib/payroll/ui-labels";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
 import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
 import PartTimeExtraWorkSection from "@/components/payroll/PartTimeExtraWorkSection";
@@ -83,6 +87,7 @@ export function CompensationCard({
   const extraWorkCount = employee.partTimeExtraWork.length;
   const extraWorkNeedsReview = employee.partTimeExtraWork.some(row => row.status === "review_required" || row.status === "stale");
   const extraWorkBadgeLabel = lang === "vi" ? `Làm thêm giờ: ${extraWorkCount} mục` : `추가근무 내역 ${extraWorkCount}건`;
+  const paymentBadge = getPaymentBadgePresentation(lang, employee.payment?.difference_amount);
   // 지급 불가 상태일 때, 급여카드를 만드는 과정에서 이미 확보한 지급 차단 원인(review/tax
   // warning code)을 사용자 친화적인 문구로 보여준다. 새로운 Source Export 요청은 하지 않는다.
   const paymentBlocked = !future && monthClosed && employee.payment?.payment_status !== "paid" && (employee.calculationStatus !== "calculable" || !employee.calculationHash);
@@ -119,7 +124,7 @@ export function CompensationCard({
         >
           {header}
         </b>
-        {employee.payment?.payment_status === "paid" && <span style={s.paymentBadge}>{employee.payment.difference_amount ? (lang === "vi" ? "Trả điều chỉnh" : "조정지급") : (lang === "vi" ? "Đã trả" : "지급완료")}</span>}
+        {employee.payment?.payment_status === "paid" && <span style={{ ...s.paymentBadge, ...(paymentBadge.adjusted ? s.adjustedPaymentBadge : {}) }}>{paymentBadge.label}</span>}
         {!future && employee.payment?.payment_status !== "paid" && <span style={s.unpaidBadge}>{lang === "vi" ? "Chưa trả" : "미지급"}</span>}
         </span>
         <span style={s.expandIcon} aria-hidden="true">
@@ -551,10 +556,184 @@ function PaymentModal({employee,month,lang,close,refresh}:{employee:PayrollOverv
   async function submit(){if(busy||actualNumber<1||(difference!==0&&!reason.trim())||!employee.calculationHash)return;setBusy(true);setError("");try{const response=await fetch("/api/admin/payroll/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({month,userId:employee.userId,calculationHash:employee.calculationHash,actualPaidAmount:actualNumber,differenceReason:reason,paymentDate:date})});const data=await response.json();if(!response.ok){if(data.code==="PAYROLL_CALCULATION_STALE")await refresh();const preflight=data.code==="PAYROLL_BATCH_PREFLIGHT_FAILED"&&Array.isArray(data.employees)?data.employees.map((item:{employeeName:string;reasonCodes:string[]})=>`${item.employeeName}: ${item.reasonCodes.join(", ")}`).join("\n"):null;throw new Error(preflight?`${vi?data.messageVi:data.message}\n${preflight}`:data.code==="PAYROLL_MONTH_NOT_CLOSED"?(vi?data.messageVi:data.message):data.code==="PAYROLL_CALCULATION_STALE"?(vi?data.messageVi:data.message):(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}await refresh();close()}catch(cause){setError(cause instanceof Error?cause.message:(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}finally{setBusy(false)}}
   async function cancelPayment(){if(busy||!cancelReason.trim()||!employee.batchId)return;setBusy(true);setError("");try{const response=await fetch("/api/admin/payroll/payments",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({runId:employee.batchId,userId:employee.userId,reason:cancelReason})});if(!response.ok)throw new Error(vi?"Không thể hủy chi trả.":"지급을 취소하지 못했습니다.");await refresh();close()}catch(cause){setError(cause instanceof Error?cause.message:(vi?"Không thể hủy chi trả.":"지급을 취소하지 못했습니다."))}finally{setBusy(false)}}
   return <PayrollModal placement="top" title={payment?.payment_status==="paid"?(vi?"Chi tiết chi trả":"지급 내역"):(vi?"Chi trả lương":"급여 지급")} closeLabel={vi?"Đóng":"닫기"} onClose={()=>{if(!busy)close()}} footer={<div style={s.modalFooter}>{payment?.payment_status==="paid"?(employee.batchStatus==="paying"?<button type="button" style={{...s.danger,...s.modalAction}} disabled={busy||cancelMode&&!cancelReason.trim()} onClick={()=>cancelMode?void cancelPayment():setCancelMode(true)}>{cancelMode?(vi?"Xác nhận hủy":"지급 취소 실행"):(vi?"Hủy chi trả":"지급 취소")}</button>:null):<button type="button" style={{...s.primary,...s.modalAction}} disabled={busy||actualNumber<1||(difference!==0&&!reason.trim())} onClick={()=>void submit()}>{vi?"Chi trả":"지급"}</button>}</div>}>
-    <div style={s.paymentSummary}><Row label={vi?"Nhân viên":"직원"} value={employee.name}/><Row label={vi?"Tháng lương":"급여 대상 월"} value={month}/><Row label={vi?"Lương thực nhận tính toán":"계산 최종 실수령액"} value={formatVnd(payment?.calculated_net_amount??calculated)}/></div>
-    {payment?.payment_status==="paid"?<><Row label={vi?"Thực trả":"실제 지급액"} value={formatVnd(payment.actual_paid_amount??0)} strong/><Row label={vi?"Chênh lệch":"차액"} value={formatVnd(payment.difference_amount??0)}/>{payment.difference_reason&&<Row label={vi?"Lý do chênh lệch":"차액 사유"} value={payment.difference_reason}/>}<Row label={vi?"Ngày trả":"지급일"} value={payment.payment_date??"—"}/><Row label={vi?"Người xử lý":"지급 처리자"} value={actorLabel}/><Row label={vi?"Thời gian xử lý":"지급 시각"} value={payment.paid_at?new Date(payment.paid_at).toLocaleString(vi?"vi-VN":"ko-KR"):"—"}/>{cancelMode&&<label style={s.field}><span>{vi?"Lý do hủy (bắt buộc)":"취소 사유 (필수)"}</span><textarea style={s.input} value={cancelReason} onChange={event=>setCancelReason(event.target.value)}/></label>}</>:<><label style={s.field}><span>{vi?"Số tiền thực trả":"실제 지급액"}</span><input style={s.input} type="text" inputMode="numeric" value={formatPositiveIntegerInput(actual)} onChange={event=>setActual(normalizePositiveIntegerInput(event.target.value))}/></label><Row label={vi?"Chênh lệch":"차액"} value={formatVnd(difference)}/><label style={s.field}><span>{vi?"Ngày trả":"지급일"}</span><input style={s.input} type="date" value={date} onChange={event=>setDate(event.target.value)}/></label>{difference!==0&&<label style={s.field}><span>{vi?"Lý do thay đổi (bắt buộc)":"변경 사유 (필수)"}</span><textarea style={s.input} value={reason} onChange={event=>setReason(event.target.value)}/></label>}</>}
-    {error&&<p role="alert" style={s.error}>{error}</p>}
+    <div style={s.paymentLayout}>
+      <PaymentSalarySummary
+        employeeName={employee.name}
+        month={month}
+        calculatedAmount={payment?.payment_status === "paid" ? payment.calculated_net_amount ?? calculated : calculated}
+        lang={lang}
+      />
+
+      {payment?.payment_status === "paid" ? (
+        <PaidPaymentDetails
+          actualAmount={payment.actual_paid_amount ?? 0}
+          differenceAmount={payment.difference_amount ?? 0}
+          differenceReason={payment.difference_reason}
+          paymentDate={payment.payment_date}
+          actorLabel={actorLabel}
+          paidAt={payment.paid_at}
+          lang={lang}
+        />
+      ) : (
+        <UnpaidPaymentForm
+          actual={actual}
+          difference={difference}
+          date={date}
+          reason={reason}
+          lang={lang}
+          onActualChange={setActual}
+          onDateChange={setDate}
+          onReasonChange={setReason}
+        />
+      )}
+
+      {cancelMode ? (
+        <PaymentSection icon="📝" title={vi ? "Lý do hủy" : "지급 취소 사유"}>
+          <PaymentCard>
+            <PaymentField label={vi ? "Lý do hủy (bắt buộc)" : "취소 사유 (필수)"}>
+              <textarea style={{ ...s.paymentInput, ...s.paymentTextarea }} value={cancelReason} onChange={event=>setCancelReason(event.target.value)} />
+            </PaymentField>
+          </PaymentCard>
+        </PaymentSection>
+      ) : null}
+      {error&&<p role="alert" style={s.error}>{error}</p>}
+    </div>
   </PayrollModal>;
+}
+
+function PaymentSalarySummary({ employeeName, month, calculatedAmount, lang }: {
+  employeeName: string;
+  month: string;
+  calculatedAmount: number;
+  lang: "ko" | "vi";
+}) {
+  const vi = lang === "vi";
+  return (
+    <PaymentSection icon="💰" title={vi ? "Thông tin lương" : "급여 정보"}>
+      <PaymentCard summary>
+        <PaymentKeyValue label={vi ? "Nhân viên" : "직원"} value={employeeName} wrap />
+        <PaymentKeyValue label={vi ? "Tháng lương" : "급여 대상 월"} value={month} />
+        <PaymentKeyValue label={vi ? "Lương thực nhận tính toán" : "계산 최종 실수령액"} value={formatVnd(calculatedAmount)} />
+      </PaymentCard>
+    </PaymentSection>
+  );
+}
+
+function PaidPaymentDetails({
+  actualAmount,
+  differenceAmount,
+  differenceReason,
+  paymentDate,
+  actorLabel,
+  paidAt,
+  lang,
+}: {
+  actualAmount: number;
+  differenceAmount: number;
+  differenceReason: string | null;
+  paymentDate: string | null;
+  actorLabel: string;
+  paidAt: string | null;
+  lang: "ko" | "vi";
+}) {
+  const vi = lang === "vi";
+  return (
+    <>
+      <PaymentSection icon="💳" title={vi ? "Kết quả chi trả" : "지급 결과"}>
+        <PaymentCard>
+          <PaymentKeyValue label={vi ? "Thực trả" : "실제 지급액"} value={formatVnd(actualAmount)} emphasized />
+          <PaymentKeyValue label={vi ? "Chênh lệch" : "차액"} value={formatVnd(differenceAmount)} />
+        </PaymentCard>
+      </PaymentSection>
+
+      {differenceReason ? (
+        <PaymentSection icon="📝" title={vi ? "Lý do chênh lệch" : "차액 사유"}>
+          <PaymentReasonBlock>{differenceReason}</PaymentReasonBlock>
+        </PaymentSection>
+      ) : null}
+
+      <PaymentSection icon="🕒" title={vi ? "Thông tin xử lý" : "처리 정보"}>
+        <PaymentCard>
+        <PaymentKeyValue label={vi ? "Ngày trả" : "지급일"} value={paymentDate ?? "—"} />
+        <PaymentKeyValue label={vi ? "Người xử lý" : "지급 처리자"} value={actorLabel} wrap />
+        <PaymentKeyValue label={vi ? "Thời gian xử lý" : "지급 시각"} value={paidAt ? new Date(paidAt).toLocaleString(vi ? "vi-VN" : "ko-KR") : "—"} wrap />
+        </PaymentCard>
+      </PaymentSection>
+    </>
+  );
+}
+
+function UnpaidPaymentForm({ actual, difference, date, reason, lang, onActualChange, onDateChange, onReasonChange }: {
+  actual: string;
+  difference: number;
+  date: string;
+  reason: string;
+  lang: "ko" | "vi";
+  onActualChange: (value: string) => void;
+  onDateChange: (value: string) => void;
+  onReasonChange: (value: string) => void;
+}) {
+  const vi = lang === "vi";
+  return (
+    <>
+      <PaymentSection icon="💳" title={vi ? "Số tiền chi trả" : "지급 금액"}>
+        <PaymentCard>
+          <PaymentField label={vi ? "Số tiền thực trả" : "실제 지급액"}>
+            <input style={s.paymentInput} type="text" inputMode="numeric" value={formatPositiveIntegerInput(actual)} onChange={event=>onActualChange(normalizePositiveIntegerInput(event.target.value))} />
+          </PaymentField>
+          <PaymentKeyValue label={vi ? "Chênh lệch" : "차액"} value={formatVnd(difference)} />
+        </PaymentCard>
+      </PaymentSection>
+
+      <PaymentSection icon="📅" title={vi ? "Thông tin chi trả" : "지급 정보"}>
+        <PaymentCard>
+          <PaymentField label={vi ? "Ngày trả" : "지급일"}>
+            <input style={s.paymentInput} type="date" value={date} onChange={event=>onDateChange(event.target.value)} />
+          </PaymentField>
+        </PaymentCard>
+      </PaymentSection>
+
+      {shouldShowPaymentDifferenceReason(difference) ? (
+        <PaymentSection icon="📝" title={vi ? "Lý do thay đổi" : "변경 사유"}>
+          <PaymentCard>
+            <PaymentField label={vi ? "Lý do thay đổi (bắt buộc)" : "변경 사유 (필수)"}>
+              <textarea style={{ ...s.paymentInput, ...s.paymentTextarea }} value={reason} onChange={event=>onReasonChange(event.target.value)} />
+            </PaymentField>
+          </PaymentCard>
+        </PaymentSection>
+      ) : null}
+    </>
+  );
+}
+
+function PaymentSection({ icon, title, children }: { icon: string; title: string; children: ReactNode }) {
+  return (
+    <section style={s.paymentSection}>
+      <h4 style={s.paymentSectionTitle}><span aria-hidden="true">{icon}</span>{title}</h4>
+      {children}
+    </section>
+  );
+}
+
+function PaymentCard({ children, summary = false }: { children: ReactNode; summary?: boolean }) {
+  return <div style={{ ...s.paymentCard, ...(summary ? s.paymentSummaryCard : {}) }}>{children}</div>;
+}
+
+function PaymentField({ label, children }: { label: string; children: ReactNode }) {
+  return <label style={s.paymentField}><span style={s.paymentFieldLabel}>{label}</span>{children}</label>;
+}
+
+function PaymentReasonBlock({ children }: { children: string }) {
+  return <div style={{ ...s.paymentCard, ...s.paymentReasonBlock }}><p style={s.paymentReasonText}>{children}</p></div>;
+}
+
+function PaymentKeyValue({ label, value, wrap = false, emphasized = false }: { label: string; value: string; wrap?: boolean; emphasized?: boolean }) {
+  return (
+    <div style={s.paymentKeyValue}>
+      <span style={s.paymentKey}>{label}</span>
+      <b style={{ ...s.paymentValue, ...(wrap ? s.paymentValueWrap : {}), ...(emphasized ? s.paymentValueEmphasized : {}) }}>{value}</b>
+    </div>
+  );
 }
 function Row({
   label,
@@ -689,6 +868,7 @@ const s = {
   amount: { fontSize: 12, fontWeight: 900, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" },
   headerPayment: { display:"flex", alignItems:"center", justifyContent:"flex-end", gap:4, minWidth:0 },
   paymentBadge: { padding:"2px 6px", borderRadius:999, background:"#dcfce7", color:"#166534", fontSize:9, fontWeight:800, whiteSpace:"nowrap" },
+  adjustedPaymentBadge: { background:"#fef3c7", color:"#92400e" },
   unpaidBadge: { padding:"2px 6px", borderRadius:999, background:"#f1f5f9", color:"#475569", fontSize:9, fontWeight:800, whiteSpace:"nowrap" },
   expandIcon: {
     fontSize: 13,
@@ -782,7 +962,22 @@ const s = {
   blockingReasons: { display:"grid", gap:4, marginTop:2, padding:"8px 10px", borderRadius:9, background:"#fef2f2", border:"1px solid #fecaca", color:"#991b1b" },
   blockingReasonsTitle: { fontSize:11.5, fontWeight:900 },
   blockingReasonList: { margin:0, paddingLeft:16, display:"grid", gap:2, fontSize:11, lineHeight:1.4 },
-  paymentSummary: { display:"grid", gap:6, padding:10, borderRadius:9, background:"#f8fafc" },
+  paymentLayout: { width:"100%", maxWidth:"100%", minWidth:0, display:"grid", gap:13, overflow:"hidden" },
+  paymentSection: { width:"100%", maxWidth:"100%", minWidth:0, display:"grid", gap:6 },
+  paymentSectionTitle: { margin:0, display:"flex", alignItems:"center", gap:6, color:"#475569", fontSize:12, lineHeight:1.3, fontWeight:900 },
+  paymentCard: { width:"100%", maxWidth:"100%", minWidth:0, boxSizing:"border-box", display:"grid", gap:9, padding:12, border:"1px solid #e5e7eb", borderRadius:11, background:"#fff" },
+  paymentSummaryCard: { background:"#f8fafc" },
+  paymentReasonBlock: { background:"#f8fafc" },
+  paymentReasonText: { margin:0, minWidth:0, color:"#334155", fontSize:13, lineHeight:1.55, whiteSpace:"normal", overflowWrap:"anywhere", wordBreak:"break-word" },
+  paymentKeyValue: { minHeight:28, display:"grid", gridTemplateColumns:"minmax(90px, 1fr) minmax(0, auto)", alignItems:"center", columnGap:12, minWidth:0 },
+  paymentKey: { minWidth:0, color:"#475569", fontSize:12, lineHeight:1.45, fontWeight:700, whiteSpace:"normal", wordBreak:"keep-all" },
+  paymentValue: { minWidth:0, maxWidth:"100%", color:"#111827", fontSize:12, lineHeight:1.45, fontWeight:800, textAlign:"right", whiteSpace:"nowrap", fontVariantNumeric:"tabular-nums" },
+  paymentValueWrap: { whiteSpace:"normal", overflowWrap:"anywhere", wordBreak:"break-word" },
+  paymentValueEmphasized: { fontSize:16, fontWeight:900 },
+  paymentField: { minWidth:0, display:"grid", gap:7 },
+  paymentFieldLabel: { minWidth:0, color:"#475569", fontSize:12, lineHeight:1.45, fontWeight:700, wordBreak:"keep-all" },
+  paymentInput: { width:"100%", maxWidth:"100%", minWidth:0, minHeight:42, boxSizing:"border-box", padding:"9px 10px", border:"1px solid #d1d5db", borderRadius:10, background:"#fff", color:"#111827", font:"inherit", fontSize:13 },
+  paymentTextarea: { minHeight:88, resize:"vertical" },
   primary: {
     minHeight: 42,
     padding: "9px 13px",
