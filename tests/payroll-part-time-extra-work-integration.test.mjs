@@ -98,7 +98,7 @@ test("local DB compatibility migration preserves legacy rows and accepts after-o
       cancelled_at timestamptz,
       constraint payroll_part_time_extra_work_minutes_check check (candidate_minutes = before_schedule_minutes + after_schedule_minutes)
     ); insert into payroll_part_time_extra_work_decisions values (65, 5, 60, null), (118, 114, 4, null);`);
-    await db.exec(readFileSync(resolve("supabase/migrations/20260912065754_fix_extra_work_after_schedule_compatibility.sql"), "utf8"));
+    await db.exec(readFileSync(resolve("supabase/migrations/20260912070744_fix_extra_work_after_schedule_compatibility.sql"), "utf8"));
     assert.equal((await db.query("select count(*)::int as count from payroll_part_time_extra_work_decisions")).rows[0].count, 2);
     await db.exec("insert into payroll_part_time_extra_work_decisions values (60, 5, 60, null); update payroll_part_time_extra_work_decisions set cancelled_at = now() where candidate_minutes = 65;");
     await assert.rejects(db.exec("insert into payroll_part_time_extra_work_decisions values (64, 5, 60, null)"), /payroll_part_time_extra_work_minutes_check/);

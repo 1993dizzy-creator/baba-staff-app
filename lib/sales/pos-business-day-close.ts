@@ -59,7 +59,8 @@ async function closeWithActor(businessDate: string, actorId: number, options: {
   if (!time.allowed) throw new Error("POS_CLOSE_BEFORE_CONFIGURED_CLOSE_TIME");
   const source = await loadPosBusinessDaySource(businessDate);
   if (options.expectedSourceFingerprint !== undefined && options.expectedSourceFingerprint !== source.sourceFingerprint) throw new Error("POS_CLOSE_SOURCE_CHANGED_SINCE_REVIEW");
-  const { data, error } = await supabaseServer.rpc("sales_close_business_day_v1", {
+  const { data, error } = await supabaseServer.rpc(options.method === "manual" && options.syncRunId !== undefined
+    ? "sales_close_business_day_after_sync_v1" : "sales_close_business_day_v1", {
     p_business_date: businessDate, p_source_fingerprint: source.sourceFingerprint,
     p_source_snapshot: source.sourceSnapshot, p_rows: source.rows, p_actor_user_id: actorId,
     p_close_method: options.method, p_manual_reclose: options.reclose, p_sync_run_id: options.syncRunId ?? null,

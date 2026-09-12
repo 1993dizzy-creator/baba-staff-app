@@ -1,6 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["sin1"],
+  "regions": [
+    "sin1"
+  ],
   "crons": [
     {
       "path": "/api/inventory/snapshot",
@@ -29,6 +31,10 @@
     {
       "path": "/api/cron/ledger-reserve-schedule",
       "schedule": "17 20 * * *"
+    },
+    {
+      "path": "/api/cron/sales-close-final",
+      "schedule": "5 20 * * *"
     }
   ]
 }

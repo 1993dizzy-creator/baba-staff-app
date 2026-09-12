@@ -2,15 +2,15 @@ import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 import { buildPosBusinessDaySource } from '../../lib/ledger/pos-sales-source.ts';
 
-export const closeMigration = readFileSync('supabase/migrations/20260912101212_add_pos_business_day_closures.sql', 'utf8');
+export const closeMigration = readFileSync('supabase/migrations/20260912105916_add_pos_business_day_closures.sql', 'utf8');
 const read = name => readFileSync(`supabase/migrations/${name}`, 'utf8');
 
 export async function initializePosCloseDatabase(db) {
   await db.exec(`create role anon; create role authenticated; create role service_role;
     create table public.users(id bigint primary key, username text unique, role text, is_active boolean, app_login_enabled boolean);
     insert into users values (1,'owner','owner',true,true),(2,'pos','master',true,true),(3,'manager','manager',true,true),(4,'inactive','owner',false,true);
-    create table public.pos_sales_sync_runs(id bigint primary key,business_date date,status text);
-    insert into pos_sales_sync_runs values (1,'2026-08-20','success'),(2,'2026-08-20','failed');
+    create table public.pos_sales_sync_runs(id bigint primary key,business_date date,status text,source text default 'cukcuk',started_at timestamptz,finished_at timestamptz,error_message text);
+    insert into pos_sales_sync_runs(id,business_date,status) values (1,'2026-08-20','success'),(2,'2026-08-20','failed');
     create table public.pos_sales_receipts(id bigint primary key,ref_no text,business_date date,ref_date timestamptz,
       payment_status integer,is_canceled boolean,final_amount numeric,revision integer,updated_at timestamptz);
     create table public.pos_sales_receipt_payments(id bigint primary key,receipt_id bigint references pos_sales_receipts(id),

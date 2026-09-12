@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import PosBusinessDayClosePanel from "@/components/sales/PosBusinessDayClosePanel";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
@@ -215,6 +216,8 @@ export default function SalesPage() {
   const [salesData, setSalesData] = useState<SalesTodayResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [closeRefreshKey, setCloseRefreshKey] = useState(0);
+  const [isClosing, setIsClosing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
   const loadFailedTextRef = useRef(dailyText.loadFailed);
@@ -383,6 +386,7 @@ export default function SalesPage() {
       );
 
       await fetchSalesToday();
+      setCloseRefreshKey(key => key + 1);
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -480,6 +484,7 @@ export default function SalesPage() {
             <label style={dateInputWrapStyle}>
               <input
                 type="date"
+                disabled={isClosing}
                 value={businessDate}
                 onChange={(event) => handleBusinessDateChange(event.target.value)}
                 style={dateInputStyle}
@@ -488,7 +493,7 @@ export default function SalesPage() {
             <button
               type="button"
               onClick={handleSyncSales}
-              disabled={isSyncing}
+              disabled={isSyncing || isClosing}
               style={{
                 ...syncButtonStyle,
                 ...(isSyncing ? syncButtonDisabledStyle : null),
@@ -500,6 +505,8 @@ export default function SalesPage() {
           {syncMessage ? <p style={successTextStyle}>{syncMessage}</p> : null}
           {errorMessage ? <p style={errorTextStyle}>{errorMessage}</p> : null}
         </section>
+
+        {businessDate ? <PosBusinessDayClosePanel key={businessDate} businessDate={businessDate} refreshKey={closeRefreshKey} onClosed={fetchSalesToday} onBusyChange={setIsClosing} disabled={isSyncing} /> : null}
 
         <section style={summaryGridStyle}>
           {summaryCards.map((card) => (

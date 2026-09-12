@@ -33,6 +33,9 @@ import {
   type CukcukInvoice,
 } from "@/lib/pos/cukcuk/sales-receipt-sync";
 
+import { isSalesSyncSourceComplete, syncRunCompletionEvidence } from "@/lib/pos/cukcuk/sales-sync-completeness";
+import { loadPosBusinessDaySource } from "@/lib/ledger/pos-sales";
+
 export const runtime = "nodejs";
 
 const DEFAULT_BRANCH_ID = "c39228ba-a452-4cf9-bf34-424ffb151fb8";
@@ -267,6 +270,7 @@ async function expireStaleSyncRuns(params: {
     .from("pos_sales_sync_runs")
     .update({
       status: "failed",
+      source_complete: false,
       finished_at: now.toISOString(),
       error_message: "Sync lock expired before this request started.",
     })
@@ -430,6 +434,7 @@ async function acquireSyncRun(params: {
 async function finishSyncRun(params: {
   runId: number;
   status: "success" | "failed";
+  sourceComplete?: boolean;
   receiptCount?: number;
   lineCount?: number;
   createdCount?: number;
@@ -441,13 +446,13 @@ async function finishSyncRun(params: {
     .from("pos_sales_sync_runs")
     .update({
       status: params.status,
+      ...syncRunCompletionEvidence(params.status, params.sourceComplete, params.errorMessage),
       finished_at: new Date().toISOString(),
       receipt_count: params.receiptCount ?? 0,
       line_count: params.lineCount ?? 0,
       created_count: params.createdCount ?? 0,
       updated_count: params.updatedCount ?? 0,
       canceled_count: params.canceledCount ?? 0,
-      error_message: params.errorMessage ?? null,
     })
     .eq("id", params.runId);
 
@@ -588,8 +593,8 @@ export async function POST(req: Request) {
       limit,
     });
     markPhase("invoiceListMs");
-    const warning =
-      invoices.length >= limit ? CUKCUK_LIMIT_REACHED_WARNING : undefined;
+    const limitReached = invoices.length >= limit;
+    const warning = limitReached ? CUKCUK_LIMIT_REACHED_WARNING : undefined;
 
     const invoicesInRange = invoices.filter((invoice) =>
       isInvoiceInRequestedRange({
@@ -744,10 +749,33 @@ export async function POST(req: Request) {
     const noChange =
       changedCount === 0 && statusChangedCount === 0 && failedDetails.length === 0;
 
+    let receiptPaymentSourceComplete =
+      validDetails.length === invoicesInRange.length && receiptRows.length === validDetails.length
+      && validDetails.every((item) => receiptSaveResult.receiptIdMap.has(item.refId))
+      && authoritativePaymentDetails.length === validDetails.length;
+    if (receiptPaymentSourceComplete && !limitReached) {
+      try {
+        // Reuse the counted/paginated close source and its receipt/payment/bucket checks.
+        // Reading source never projects Ledger or closes the day.
+        await loadPosBusinessDaySource(businessDate);
+      } catch {
+        receiptPaymentSourceComplete = false;
+        console.warn("[SALES_SYNC_CLOSE_SOURCE_INCOMPLETE]", { businessDate, syncRunId });
+      }
+    }
     const finishStartedAt = Date.now();
     await finishSyncRun({
       runId: syncRunId,
       status: "success",
+      sourceComplete: isSalesSyncSourceComplete({
+        status: "success",
+        limitReached,
+        skippedDetailCount: failedDetails.length,
+        paymentSnapshotUnavailableCount: validDetails.length - authoritativePaymentDetails.length,
+        receiptPaymentSourceComplete,
+        partial: failedDetails.length > 0 || authoritativePaymentDetails.length !== validDetails.length,
+        errorMessage: failedDetails.length > 0 ? "INVOICE_DETAIL_SKIPPED" : null,
+      }),
       receiptCount: receiptRows.length,
       lineCount: lineRows.length,
       createdCount:
