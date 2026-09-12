@@ -1,0 +1,314 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.12.1
+2 info using node@v24.15.0
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:C:\workspace\baba-membership\.npmrc
+5 silly config load:file:C:\Users\한근형\.npmrc
+6 silly config load:file:C:\Users\한근형\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm exec supabase@2.81.3 migration new fix_extra_work_after_schedule_compatibility
+8 verbose argv "exec" "--cache" "C:/workspace/baba-membership/.cache/npm" "--yes" "--" "supabase@2.81.3" "migration" "new" "fix_extra_work_after_schedule_compatibility"
+9 verbose logfile logs-max:10 dir:C:\workspace\baba-membership\.cache\npm\_logs\2026-09-12T06_57_43_544Z-
+10 verbose logfile C:\workspace\baba-membership\.cache\npm\_logs\2026-09-12T06_57_43_544Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 http fetch GET 200 https://registry.npmjs.org/supabase 835ms (cache revalidated)
+14 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+15 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+16 silly idealTree buildDeps
+17 silly fetch manifest supabase@2.81.3
+18 silly packumentCache full:https://registry.npmjs.org/supabase cache-miss
+19 http cache https://registry.npmjs.org/supabase 10ms (cache hit)
+20 silly packumentCache full:https://registry.npmjs.org/supabase set size:4867824 disposed:false
+21 silly placeDep ROOT supabase@2.81.3 OK for:  want: 2.81.3
+22 silly fetch manifest tar@7.5.11
+23 silly packumentCache full:https://registry.npmjs.org/tar cache-miss
+24 silly fetch manifest bin-links@^6.0.0
+25 silly packumentCache full:https://registry.npmjs.org/bin-links cache-miss
+26 silly fetch manifest node-fetch@^3.3.2
+27 silly packumentCache full:https://registry.npmjs.org/node-fetch cache-miss
+28 silly fetch manifest https-proxy-agent@^7.0.2
+29 silly packumentCache full:https://registry.npmjs.org/https-proxy-agent cache-miss
+30 http fetch GET 200 https://registry.npmjs.org/tar 95ms (cache miss)
+31 silly packumentCache full:https://registry.npmjs.org/tar set size:undefined disposed:false
+32 http fetch GET 200 https://registry.npmjs.org/bin-links 152ms (cache miss)
+33 silly packumentCache full:https://registry.npmjs.org/bin-links set size:undefined disposed:false
+34 http fetch GET 200 https://registry.npmjs.org/https-proxy-agent 154ms (cache miss)
+35 silly packumentCache full:https://registry.npmjs.org/https-proxy-agent set size:undefined disposed:false
+36 http fetch GET 200 https://registry.npmjs.org/node-fetch 226ms (cache miss)
+37 silly packumentCache full:https://registry.npmjs.org/node-fetch set size:undefined disposed:false
+38 silly placeDep ROOT bin-links@6.0.2 OK for: supabase@2.81.3 want: ^6.0.0
+39 silly placeDep ROOT https-proxy-agent@7.0.6 OK for: supabase@2.81.3 want: ^7.0.2
+40 silly placeDep ROOT node-fetch@3.3.2 OK for: supabase@2.81.3 want: ^3.3.2
+41 silly placeDep ROOT tar@7.5.11 OK for: supabase@2.81.3 want: 7.5.11
+42 silly fetch manifest cmd-shim@^8.0.0
+43 silly packumentCache full:https://registry.npmjs.org/cmd-shim cache-miss
+44 silly fetch manifest proc-log@^6.0.0
+45 silly packumentCache full:https://registry.npmjs.org/proc-log cache-miss
+46 silly fetch manifest read-cmd-shim@^6.0.0
+47 silly packumentCache full:https://registry.npmjs.org/read-cmd-shim cache-miss
+48 silly fetch manifest write-file-atomic@^7.0.0
+49 silly packumentCache full:https://registry.npmjs.org/write-file-atomic cache-miss
+50 silly fetch manifest npm-normalize-package-bin@^5.0.0
+51 silly packumentCache full:https://registry.npmjs.org/npm-normalize-package-bin cache-miss
+52 silly fetch manifest debug@4
+53 silly packumentCache full:https://registry.npmjs.org/debug cache-miss
+54 silly fetch manifest agent-base@^7.1.2
+55 silly packumentCache full:https://registry.npmjs.org/agent-base cache-miss
+56 silly fetch manifest data-uri-to-buffer@^4.0.0
+57 silly packumentCache full:https://registry.npmjs.org/data-uri-to-buffer cache-miss
+58 silly fetch manifest fetch-blob@^3.1.4
+59 silly packumentCache full:https://registry.npmjs.org/fetch-blob cache-miss
+60 silly fetch manifest formdata-polyfill@^4.0.10
+61 silly packumentCache full:https://registry.npmjs.org/formdata-polyfill cache-miss
+62 silly fetch manifest chownr@^3.0.0
+63 silly packumentCache full:https://registry.npmjs.org/chownr cache-miss
+64 silly fetch manifest yallist@^5.0.0
+65 silly packumentCache full:https://registry.npmjs.org/yallist cache-miss
+66 silly fetch manifest minipass@^7.1.2
+67 silly packumentCache full:https://registry.npmjs.org/minipass cache-miss
+68 silly fetch manifest minizlib@^3.1.0
+69 silly packumentCache full:https://registry.npmjs.org/minizlib cache-miss
+70 silly fetch manifest @isaacs/fs-minipass@^4.0.0
+71 silly packumentCache full:https://registry.npmjs.org/@isaacs%2ffs-minipass cache-miss
+72 http fetch GET 200 https://registry.npmjs.org/cmd-shim 54ms (cache miss)
+73 silly packumentCache full:https://registry.npmjs.org/cmd-shim set size:undefined disposed:false
+74 http fetch GET 200 https://registry.npmjs.org/write-file-atomic 60ms (cache miss)
+75 silly packumentCache full:https://registry.npmjs.org/write-file-atomic set size:undefined disposed:false
+76 http fetch GET 200 https://registry.npmjs.org/proc-log 62ms (cache miss)
+77 silly packumentCache full:https://registry.npmjs.org/proc-log set size:undefined disposed:false
+78 http fetch GET 200 https://registry.npmjs.org/read-cmd-shim 66ms (cache miss)
+79 silly packumentCache full:https://registry.npmjs.org/read-cmd-shim set size:undefined disposed:false
+80 http fetch GET 200 https://registry.npmjs.org/npm-normalize-package-bin 130ms (cache miss)
+81 silly packumentCache full:https://registry.npmjs.org/npm-normalize-package-bin set size:undefined disposed:false
+82 http fetch GET 200 https://registry.npmjs.org/data-uri-to-buffer 142ms (cache miss)
+83 silly packumentCache full:https://registry.npmjs.org/data-uri-to-buffer set size:undefined disposed:false
+84 http fetch GET 200 https://registry.npmjs.org/chownr 145ms (cache miss)
+85 silly packumentCache full:https://registry.npmjs.org/chownr set size:undefined disposed:false
+86 http fetch GET 200 https://registry.npmjs.org/agent-base 150ms (cache miss)
+87 silly packumentCache full:https://registry.npmjs.org/agent-base set size:undefined disposed:false
+88 http fetch GET 200 https://registry.npmjs.org/minizlib 153ms (cache miss)
+89 silly packumentCache full:https://registry.npmjs.org/minizlib set size:undefined disposed:false
+90 http fetch GET 200 https://registry.npmjs.org/fetch-blob 163ms (cache miss)
+91 silly packumentCache full:https://registry.npmjs.org/fetch-blob set size:undefined disposed:false
+92 http fetch GET 200 https://registry.npmjs.org/minipass 163ms (cache miss)
+93 silly packumentCache full:https://registry.npmjs.org/minipass set size:undefined disposed:false
+94 http fetch GET 200 https://registry.npmjs.org/formdata-polyfill 167ms (cache miss)
+95 silly packumentCache full:https://registry.npmjs.org/formdata-polyfill set size:undefined disposed:false
+96 http fetch GET 200 https://registry.npmjs.org/@isaacs%2ffs-minipass 167ms (cache miss)
+97 silly packumentCache full:https://registry.npmjs.org/@isaacs%2ffs-minipass set size:undefined disposed:false
+98 http fetch GET 200 https://registry.npmjs.org/yallist 168ms (cache miss)
+99 silly packumentCache full:https://registry.npmjs.org/yallist set size:undefined disposed:false
+100 http fetch GET 200 https://registry.npmjs.org/debug 173ms (cache miss)
+101 silly packumentCache full:https://registry.npmjs.org/debug set size:undefined disposed:false
+102 silly placeDep ROOT cmd-shim@8.0.0 OK for: bin-links@6.0.2 want: ^8.0.0
+103 silly placeDep ROOT npm-normalize-package-bin@5.0.0 OK for: bin-links@6.0.2 want: ^5.0.0
+104 silly placeDep ROOT proc-log@6.1.0 OK for: bin-links@6.0.2 want: ^6.0.0
+105 silly placeDep ROOT read-cmd-shim@6.0.0 OK for: bin-links@6.0.2 want: ^6.0.0
+106 silly placeDep ROOT write-file-atomic@7.0.1 OK for: bin-links@6.0.2 want: ^7.0.0
+107 silly fetch manifest signal-exit@^4.0.1
+108 silly packumentCache full:https://registry.npmjs.org/signal-exit cache-miss
+109 http fetch GET 200 https://registry.npmjs.org/signal-exit 48ms (cache miss)
+110 silly packumentCache full:https://registry.npmjs.org/signal-exit set size:undefined disposed:false
+111 silly placeDep ROOT agent-base@7.1.4 OK for: https-proxy-agent@7.0.6 want: ^7.1.2
+112 silly placeDep ROOT debug@4.4.3 OK for: https-proxy-agent@7.0.6 want: 4
+113 silly fetch manifest ms@^2.1.3
+114 silly packumentCache full:https://registry.npmjs.org/ms cache-miss
+115 http fetch GET 200 https://registry.npmjs.org/ms 59ms (cache miss)
+116 silly packumentCache full:https://registry.npmjs.org/ms set size:undefined disposed:false
+117 silly placeDep ROOT ms@2.1.3 OK for: debug@4.4.3 want: ^2.1.3
+118 silly placeDep ROOT data-uri-to-buffer@4.0.1 OK for: node-fetch@3.3.2 want: ^4.0.0
+119 silly placeDep ROOT fetch-blob@3.2.0 OK for: node-fetch@3.3.2 want: ^3.1.4
+120 silly placeDep ROOT formdata-polyfill@4.0.10 OK for: node-fetch@3.3.2 want: ^4.0.10
+121 silly fetch manifest node-domexception@^1.0.0
+122 silly packumentCache full:https://registry.npmjs.org/node-domexception cache-miss
+123 silly fetch manifest web-streams-polyfill@^3.0.3
+124 silly packumentCache full:https://registry.npmjs.org/web-streams-polyfill cache-miss
+125 http fetch GET 200 https://registry.npmjs.org/node-domexception 56ms (cache miss)
+126 silly packumentCache full:https://registry.npmjs.org/node-domexception set size:undefined disposed:false
+127 http fetch GET 200 https://registry.npmjs.org/web-streams-polyfill 58ms (cache miss)
+128 silly packumentCache full:https://registry.npmjs.org/web-streams-polyfill set size:undefined disposed:false
+129 silly placeDep ROOT node-domexception@1.0.0 OK for: fetch-blob@3.2.0 want: ^1.0.0
+130 silly placeDep ROOT web-streams-polyfill@3.3.3 OK for: fetch-blob@3.2.0 want: ^3.0.3
+131 silly placeDep ROOT @isaacs/fs-minipass@4.0.1 OK for: tar@7.5.11 want: ^4.0.0
+132 silly placeDep ROOT chownr@3.0.0 OK for: tar@7.5.11 want: ^3.0.0
+133 silly placeDep ROOT minipass@7.1.3 OK for: tar@7.5.11 want: ^7.1.2
+134 silly placeDep ROOT minizlib@3.1.0 OK for: tar@7.5.11 want: ^3.1.0
+135 silly placeDep ROOT yallist@5.0.0 OK for: tar@7.5.11 want: ^5.0.0
+136 silly fetch manifest minipass@^7.0.4
+137 silly packumentCache full:https://registry.npmjs.org/minipass cache-miss
+138 http cache https://registry.npmjs.org/minipass 2ms (cache hit)
+139 silly packumentCache full:https://registry.npmjs.org/minipass set size:276925 disposed:false
+140 silly placeDep ROOT signal-exit@4.1.0 OK for: write-file-atomic@7.0.1 want: ^4.0.1
+141 silly reify moves {}
+142 silly audit bulk request {
+142 silly audit   supabase: [ '2.81.3' ],
+142 silly audit   'bin-links': [ '6.0.2' ],
+142 silly audit   'https-proxy-agent': [ '7.0.6' ],
+142 silly audit   'node-fetch': [ '3.3.2' ],
+142 silly audit   tar: [ '7.5.11' ],
+142 silly audit   'cmd-shim': [ '8.0.0' ],
+142 silly audit   'npm-normalize-package-bin': [ '5.0.0' ],
+142 silly audit   'proc-log': [ '6.1.0' ],
+142 silly audit   'read-cmd-shim': [ '6.0.0' ],
+142 silly audit   'write-file-atomic': [ '7.0.1' ],
+142 silly audit   'agent-base': [ '7.1.4' ],
+142 silly audit   debug: [ '4.4.3' ],
+142 silly audit   ms: [ '2.1.3' ],
+142 silly audit   'data-uri-to-buffer': [ '4.0.1' ],
+142 silly audit   'fetch-blob': [ '3.2.0' ],
+142 silly audit   'formdata-polyfill': [ '4.0.10' ],
+142 silly audit   'node-domexception': [ '1.0.0' ],
+142 silly audit   'web-streams-polyfill': [ '3.3.3' ],
+142 silly audit   '@isaacs/fs-minipass': [ '4.0.1' ],
+142 silly audit   chownr: [ '3.0.0' ],
+142 silly audit   minipass: [ '7.1.3' ],
+142 silly audit   minizlib: [ '3.1.0' ],
+142 silly audit   yallist: [ '5.0.0' ],
+142 silly audit   'signal-exit': [ '4.1.0' ]
+142 silly audit }
+143 http cache signal-exit@https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz 0ms (cache hit)
+144 http cache minizlib@https://registry.npmjs.org/minizlib/-/minizlib-3.1.0.tgz 0ms (cache hit)
+145 http cache yallist@https://registry.npmjs.org/yallist/-/yallist-5.0.0.tgz 0ms (cache hit)
+146 http cache chownr@https://registry.npmjs.org/chownr/-/chownr-3.0.0.tgz 0ms (cache hit)
+147 http cache @isaacs/fs-minipass@https://registry.npmjs.org/@isaacs/fs-minipass/-/fs-minipass-4.0.1.tgz 0ms (cache hit)
+148 http cache minipass@https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz 0ms (cache hit)
+149 http cache web-streams-polyfill@https://registry.npmjs.org/web-streams-polyfill/-/web-streams-polyfill-3.3.3.tgz 0ms (cache hit)
+150 http cache fetch-blob@https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz 0ms (cache hit)
+151 http cache node-domexception@https://registry.npmjs.org/node-domexception/-/node-domexception-1.0.0.tgz 0ms (cache hit)
+152 http cache data-uri-to-buffer@https://registry.npmjs.org/data-uri-to-buffer/-/data-uri-to-buffer-4.0.1.tgz 0ms (cache hit)
+153 http cache ms@https://registry.npmjs.org/ms/-/ms-2.1.3.tgz 0ms (cache hit)
+154 http cache write-file-atomic@https://registry.npmjs.org/write-file-atomic/-/write-file-atomic-7.0.1.tgz 0ms (cache hit)
+155 http cache formdata-polyfill@https://registry.npmjs.org/formdata-polyfill/-/formdata-polyfill-4.0.10.tgz 0ms (cache hit)
+156 http cache debug@https://registry.npmjs.org/debug/-/debug-4.4.3.tgz 0ms (cache hit)
+157 http cache tar@https://registry.npmjs.org/tar/-/tar-7.5.11.tgz 0ms (cache hit)
+158 http cache agent-base@https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz 0ms (cache hit)
+159 http cache proc-log@https://registry.npmjs.org/proc-log/-/proc-log-6.1.0.tgz 0ms (cache hit)
+160 http cache npm-normalize-package-bin@https://registry.npmjs.org/npm-normalize-package-bin/-/npm-normalize-package-bin-5.0.0.tgz 0ms (cache hit)
+161 http cache read-cmd-shim@https://registry.npmjs.org/read-cmd-shim/-/read-cmd-shim-6.0.0.tgz 0ms (cache hit)
+162 http cache cmd-shim@https://registry.npmjs.org/cmd-shim/-/cmd-shim-8.0.0.tgz 0ms (cache hit)
+163 http cache https-proxy-agent@https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz 0ms (cache hit)
+164 silly tarball no local data for signal-exit@https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz. Extracting by manifest.
+165 silly tarball no local data for minizlib@https://registry.npmjs.org/minizlib/-/minizlib-3.1.0.tgz. Extracting by manifest.
+166 silly tarball no local data for yallist@https://registry.npmjs.org/yallist/-/yallist-5.0.0.tgz. Extracting by manifest.
+167 silly tarball no local data for chownr@https://registry.npmjs.org/chownr/-/chownr-3.0.0.tgz. Extracting by manifest.
+168 silly tarball no local data for @isaacs/fs-minipass@https://registry.npmjs.org/@isaacs/fs-minipass/-/fs-minipass-4.0.1.tgz. Extracting by manifest.
+169 http cache supabase@https://registry.npmjs.org/supabase/-/supabase-2.81.3.tgz 0ms (cache hit)
+170 silly tarball no local data for minipass@https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz. Extracting by manifest.
+171 silly tarball no local data for web-streams-polyfill@https://registry.npmjs.org/web-streams-polyfill/-/web-streams-polyfill-3.3.3.tgz. Extracting by manifest.
+172 http cache node-fetch@https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz 0ms (cache hit)
+173 silly tarball no local data for fetch-blob@https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz. Extracting by manifest.
+174 silly tarball no local data for node-domexception@https://registry.npmjs.org/node-domexception/-/node-domexception-1.0.0.tgz. Extracting by manifest.
+175 silly tarball no local data for data-uri-to-buffer@https://registry.npmjs.org/data-uri-to-buffer/-/data-uri-to-buffer-4.0.1.tgz. Extracting by manifest.
+176 silly tarball no local data for ms@https://registry.npmjs.org/ms/-/ms-2.1.3.tgz. Extracting by manifest.
+177 silly tarball no local data for write-file-atomic@https://registry.npmjs.org/write-file-atomic/-/write-file-atomic-7.0.1.tgz. Extracting by manifest.
+178 silly tarball no local data for formdata-polyfill@https://registry.npmjs.org/formdata-polyfill/-/formdata-polyfill-4.0.10.tgz. Extracting by manifest.
+179 silly tarball no local data for debug@https://registry.npmjs.org/debug/-/debug-4.4.3.tgz. Extracting by manifest.
+180 http cache bin-links@https://registry.npmjs.org/bin-links/-/bin-links-6.0.2.tgz 0ms (cache hit)
+181 silly tarball no local data for tar@https://registry.npmjs.org/tar/-/tar-7.5.11.tgz. Extracting by manifest.
+182 silly tarball no local data for agent-base@https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz. Extracting by manifest.
+183 silly tarball no local data for proc-log@https://registry.npmjs.org/proc-log/-/proc-log-6.1.0.tgz. Extracting by manifest.
+184 silly tarball no local data for npm-normalize-package-bin@https://registry.npmjs.org/npm-normalize-package-bin/-/npm-normalize-package-bin-5.0.0.tgz. Extracting by manifest.
+185 silly tarball no local data for read-cmd-shim@https://registry.npmjs.org/read-cmd-shim/-/read-cmd-shim-6.0.0.tgz. Extracting by manifest.
+186 silly tarball no local data for cmd-shim@https://registry.npmjs.org/cmd-shim/-/cmd-shim-8.0.0.tgz. Extracting by manifest.
+187 silly tarball no local data for https-proxy-agent@https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz. Extracting by manifest.
+188 silly tarball no local data for supabase@https://registry.npmjs.org/supabase/-/supabase-2.81.3.tgz. Extracting by manifest.
+189 silly tarball no local data for node-fetch@https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz. Extracting by manifest.
+190 silly tarball no local data for bin-links@https://registry.npmjs.org/bin-links/-/bin-links-6.0.2.tgz. Extracting by manifest.
+191 http fetch GET 200 https://registry.npmjs.org/ms/-/ms-2.1.3.tgz 87ms (cache miss)
+192 http fetch GET 200 https://registry.npmjs.org/write-file-atomic/-/write-file-atomic-7.0.1.tgz 88ms (cache miss)
+193 http fetch GET 200 https://registry.npmjs.org/data-uri-to-buffer/-/data-uri-to-buffer-4.0.1.tgz 97ms (cache miss)
+194 http fetch GET 200 https://registry.npmjs.org/debug/-/debug-4.4.3.tgz 99ms (cache miss)
+195 http fetch GET 200 https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz 110ms (cache miss)
+196 http fetch GET 200 https://registry.npmjs.org/formdata-polyfill/-/formdata-polyfill-4.0.10.tgz 114ms (cache miss)
+197 http fetch GET 200 https://registry.npmjs.org/proc-log/-/proc-log-6.1.0.tgz 115ms (cache miss)
+198 http fetch GET 200 https://registry.npmjs.org/npm-normalize-package-bin/-/npm-normalize-package-bin-5.0.0.tgz 120ms (cache miss)
+199 http fetch GET 200 https://registry.npmjs.org/supabase/-/supabase-2.81.3.tgz 122ms (cache miss)
+200 http fetch GET 200 https://registry.npmjs.org/read-cmd-shim/-/read-cmd-shim-6.0.0.tgz 125ms (cache miss)
+201 http fetch GET 200 https://registry.npmjs.org/cmd-shim/-/cmd-shim-8.0.0.tgz 132ms (cache miss)
+202 http fetch GET 200 https://registry.npmjs.org/chownr/-/chownr-3.0.0.tgz 145ms (cache miss)
+203 http fetch GET 200 https://registry.npmjs.org/yallist/-/yallist-5.0.0.tgz 152ms (cache miss)
+204 http fetch GET 200 https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz 147ms (cache miss)
+205 http fetch GET 200 https://registry.npmjs.org/@isaacs/fs-minipass/-/fs-minipass-4.0.1.tgz 153ms (cache miss)
+206 http fetch GET 200 https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz 149ms (cache miss)
+207 http fetch GET 200 https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz 166ms (cache miss)
+208 http fetch GET 200 https://registry.npmjs.org/bin-links/-/bin-links-6.0.2.tgz 161ms (cache miss)
+209 http fetch GET 200 https://registry.npmjs.org/minizlib/-/minizlib-3.1.0.tgz 178ms (cache miss)
+210 http fetch GET 200 https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz 171ms (cache miss)
+211 http fetch GET 200 https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz 188ms (cache miss)
+212 http fetch GET 200 https://registry.npmjs.org/node-domexception/-/node-domexception-1.0.0.tgz 187ms (cache miss)
+213 warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+214 http fetch POST 200 https://registry.npmjs.org/-/npm/v1/security/advisories/bulk 225ms
+215 silly audit report {
+215 silly audit report   tar: [
+215 silly audit report     {
+215 silly audit report       id: 1120782,
+215 silly audit report       url: 'https://github.com/advisories/GHSA-vmf3-w455-68vh',
+215 silly audit report       title: 'node-tar applies PAX size override to intermediary GNU long-name/long-link headers, causing tar parser interpretation differential (file smuggling)',
+215 silly audit report       severity: 'moderate',
+215 silly audit report       vulnerable_versions: '<=7.5.15',
+215 silly audit report       cwe: [Array],
+215 silly audit report       cvss: [Object]
+215 silly audit report     },
+215 silly audit report     {
+215 silly audit report       id: 1123939,
+215 silly audit report       url: 'https://github.com/advisories/GHSA-w8wr-v893-vjvp',
+215 silly audit report       title: 'node-tar: Process crash via PAX numeric path type confusion',
+215 silly audit report       severity: 'moderate',
+215 silly audit report       vulnerable_versions: '<=7.5.17',
+215 silly audit report       cwe: [Array],
+215 silly audit report       cvss: [Object]
+215 silly audit report     },
+215 silly audit report     {
+215 silly audit report       id: 1123940,
+215 silly audit report       url: 'https://github.com/advisories/GHSA-23hp-3jrh-7fpw',
+215 silly audit report       title: 'node-tar: Decompression/parse DoS via unlimited input',
+215 silly audit report       severity: 'critical',
+215 silly audit report       vulnerable_versions: '<=7.5.18',
+215 silly audit report       cwe: [Array],
+215 silly audit report       cvss: [Object]
+215 silly audit report     },
+215 silly audit report     {
+215 silly audit report       id: 1123941,
+215 silly audit report       url: 'https://github.com/advisories/GHSA-8x88-c5mf-7j5w',
+215 silly audit report       title: 'node-tar: Negative tar entry size causes infinite loop in archive replace',
+215 silly audit report       severity: 'high',
+215 silly audit report       vulnerable_versions: '<=7.5.17',
+215 silly audit report       cwe: [Array],
+215 silly audit report       cvss: [Object]
+215 silly audit report     },
+215 silly audit report     {
+215 silly audit report       id: 1123942,
+215 silly audit report       url: 'https://github.com/advisories/GHSA-gvwx-54wh-qm9j',
+215 silly audit report       title: 'node-tar: Uncaught Exception DoS via NUL byte in PAX path/linkpath records',
+215 silly audit report       severity: 'moderate',
+215 silly audit report       vulnerable_versions: '<=7.5.16',
+215 silly audit report       cwe: [Array],
+215 silly audit report       cvss: [Object]
+215 silly audit report     },
+215 silly audit report     {
+215 silly audit report       id: 1145647,
+215 silly audit report       url: 'https://github.com/advisories/GHSA-r292-9mhp-454m',
+215 silly audit report       title: 'node-tar: Uncontrolled recursion in mapHas/filesFilter allows uncatchable stack-overflow DoS via crafted long-path tar with member selection',
+215 silly audit report       severity: 'high',
+215 silly audit report       vulnerable_versions: '<=7.5.20',
+215 silly audit report       cwe: [Array],
+215 silly audit report       cvss: [Object]
+215 silly audit report     }
+215 silly audit report   ]
+215 silly audit report }
+216 silly packumentCache corgi:https://registry.npmjs.org/tar cache-miss
+217 http fetch GET 200 https://registry.npmjs.org/tar 66ms (cache miss)
+218 silly packumentCache corgi:https://registry.npmjs.org/tar set size:undefined disposed:false
+219 silly packumentCache corgi:https://registry.npmjs.org/supabase cache-miss
+220 http cache https://registry.npmjs.org/supabase 7ms (cache hit)
+221 silly packumentCache corgi:https://registry.npmjs.org/supabase set size:2262269 disposed:false
+222 http fetch GET 200 https://registry.npmjs.org/web-streams-polyfill/-/web-streams-polyfill-3.3.3.tgz 445ms (cache miss)
+223 http fetch GET 200 https://registry.npmjs.org/tar/-/tar-7.5.11.tgz 552ms (cache miss)
+224 info run supabase@2.81.3 postinstall node_modules/supabase node scripts/postinstall.js
+225 info run supabase@2.81.3 postinstall { code: 0, signal: null }
+226 verbose cwd C:\workspace\baba-membership
+227 verbose os Windows_NT 10.0.26200
+228 verbose node v24.15.0
+229 verbose npm  v11.12.1
+230 verbose exit 0
+231 info ok

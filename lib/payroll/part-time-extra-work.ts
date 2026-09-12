@@ -113,7 +113,9 @@ export function calculatePartTimeExtraWork(input: {
     : 0;
   const excludedBeforeOpenMinutes = overlapMinutes(actualStart, actualEnd, actualStart, Math.min(store.start, actualEnd));
   const excludedAfterCloseMinutes = overlapMinutes(actualStart, actualEnd, Math.max(store.end, actualStart), actualEnd);
-  const candidateMinutes = beforeScheduleMinutes + afterScheduleMinutes;
+  // Early arrival is audit metadata only. Pay and the minimum threshold use
+  // exclusively work after the scheduled end, already clipped to store close.
+  const candidateMinutes = afterScheduleMinutes;
   if (candidateMinutes < EXTRA_WORK_MINIMUM_CANDIDATE_MINUTES) return null;
   const candidateAmount = Math.round(candidateMinutes * input.minuteRateAmount);
   const sourceSnapshot = {

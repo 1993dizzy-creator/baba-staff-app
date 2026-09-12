@@ -1,0 +1,152 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.12.1
+2 info using node@v24.15.0
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:C:\workspace\baba-membership\.npmrc
+5 silly config load:file:C:\Users\한근형\.npmrc
+6 silly config load:file:C:\Users\한근형\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm exec supabase migration new fix_extra_work_after_schedule_compatibility
+8 verbose argv "exec" "--cache" "C:/workspace/baba-membership/.cache/npm" "--yes" "--" "supabase" "migration" "new" "fix_extra_work_after_schedule_compatibility"
+9 verbose logfile logs-max:10 dir:C:\workspace\baba-membership\.cache\npm\_logs\2026-09-12T06_57_04_436Z-
+10 verbose logfile C:\workspace\baba-membership\.cache\npm\_logs\2026-09-12T06_57_04_436Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 http fetch GET 200 https://registry.npmjs.org/npm 1119ms
+14 http fetch GET 200 https://registry.npmjs.org/supabase 1100ms (cache miss)
+15 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+16 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+17 silly idealTree buildDeps
+18 silly fetch manifest supabase@2.117.0
+19 silly packumentCache full:https://registry.npmjs.org/supabase cache-miss
+20 http fetch GET 200 https://registry.npmjs.org/supabase 467ms (cache miss)
+21 silly packumentCache full:https://registry.npmjs.org/supabase set size:undefined disposed:false
+22 silly placeDep ROOT supabase@2.117.0 OK for:  want: 2.117.0
+23 silly fetch manifest jose@^6.2.10
+24 silly packumentCache full:https://registry.npmjs.org/jose cache-miss
+25 silly fetch manifest eciesjs@^0.5.0
+26 silly packumentCache full:https://registry.npmjs.org/eciesjs cache-miss
+27 silly fetch manifest @supabase/cli-linux-x64@2.117.0
+28 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-linux-x64 cache-miss
+29 silly fetch manifest @supabase/cli-darwin-x64@2.117.0
+30 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-darwin-x64 cache-miss
+31 silly fetch manifest @supabase/cli-linux-arm64@2.117.0
+32 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-linux-arm64 cache-miss
+33 silly fetch manifest @supabase/cli-windows-x64@2.117.0
+34 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-windows-x64 cache-miss
+35 silly fetch manifest @supabase/cli-darwin-arm64@2.117.0
+36 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-darwin-arm64 cache-miss
+37 silly fetch manifest @supabase/cli-windows-arm64@2.117.0
+38 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-windows-arm64 cache-miss
+39 silly fetch manifest @supabase/cli-linux-x64-musl@2.117.0
+40 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-linux-x64-musl cache-miss
+41 silly fetch manifest @supabase/cli-linux-arm64-musl@2.117.0
+42 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-linux-arm64-musl cache-miss
+43 http fetch GET 200 https://registry.npmjs.org/eciesjs 62ms (cache miss)
+44 silly packumentCache full:https://registry.npmjs.org/eciesjs set size:undefined disposed:false
+45 http fetch GET 200 https://registry.npmjs.org/jose 97ms (cache miss)
+46 silly packumentCache full:https://registry.npmjs.org/jose set size:undefined disposed:false
+47 http fetch GET 200 https://registry.npmjs.org/@supabase%2fcli-darwin-x64 418ms (cache miss)
+48 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-darwin-x64 set size:undefined disposed:false
+49 http fetch GET 200 https://registry.npmjs.org/@supabase%2fcli-darwin-arm64 438ms (cache miss)
+50 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-darwin-arm64 set size:undefined disposed:false
+51 http fetch GET 200 https://registry.npmjs.org/@supabase%2fcli-linux-arm64-musl 459ms (cache miss)
+52 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-linux-arm64-musl set size:undefined disposed:false
+53 http fetch GET 200 https://registry.npmjs.org/@supabase%2fcli-windows-x64 462ms (cache miss)
+54 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-windows-x64 set size:undefined disposed:false
+55 http fetch GET 200 https://registry.npmjs.org/@supabase%2fcli-windows-arm64 544ms (cache miss)
+56 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-windows-arm64 set size:undefined disposed:false
+57 http fetch GET 200 https://registry.npmjs.org/@supabase%2fcli-linux-arm64 555ms (cache miss)
+58 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-linux-arm64 set size:undefined disposed:false
+59 http fetch GET 200 https://registry.npmjs.org/@supabase%2fcli-linux-x64 573ms (cache miss)
+60 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-linux-x64 set size:undefined disposed:false
+61 http fetch GET 200 https://registry.npmjs.org/@supabase%2fcli-linux-x64-musl 594ms (cache miss)
+62 silly packumentCache full:https://registry.npmjs.org/@supabase%2fcli-linux-x64-musl set size:undefined disposed:false
+63 silly placeDep ROOT @supabase/cli-darwin-arm64@2.117.0 OK for: supabase@2.117.0 want: 2.117.0
+64 silly placeDep ROOT @supabase/cli-darwin-x64@2.117.0 OK for: supabase@2.117.0 want: 2.117.0
+65 silly placeDep ROOT @supabase/cli-linux-arm64@2.117.0 OK for: supabase@2.117.0 want: 2.117.0
+66 silly placeDep ROOT @supabase/cli-linux-arm64-musl@2.117.0 OK for: supabase@2.117.0 want: 2.117.0
+67 silly placeDep ROOT @supabase/cli-linux-x64@2.117.0 OK for: supabase@2.117.0 want: 2.117.0
+68 silly placeDep ROOT @supabase/cli-linux-x64-musl@2.117.0 OK for: supabase@2.117.0 want: 2.117.0
+69 silly placeDep ROOT @supabase/cli-windows-arm64@2.117.0 OK for: supabase@2.117.0 want: 2.117.0
+70 silly placeDep ROOT @supabase/cli-windows-x64@2.117.0 OK for: supabase@2.117.0 want: 2.117.0
+71 silly placeDep ROOT eciesjs@0.5.0 OK for: supabase@2.117.0 want: ^0.5.0
+72 silly placeDep ROOT jose@6.2.12 OK for: supabase@2.117.0 want: ^6.2.10
+73 silly fetch manifest @ecies/ciphers@^0.2.6
+74 silly packumentCache full:https://registry.npmjs.org/@ecies%2fciphers cache-miss
+75 silly fetch manifest @noble/ciphers@^1.3.0
+76 silly packumentCache full:https://registry.npmjs.org/@noble%2fciphers cache-miss
+77 silly fetch manifest @noble/curves@^1.9.7
+78 silly packumentCache full:https://registry.npmjs.org/@noble%2fcurves cache-miss
+79 silly fetch manifest @noble/hashes@^1.8.0
+80 silly packumentCache full:https://registry.npmjs.org/@noble%2fhashes cache-miss
+81 http fetch GET 200 https://registry.npmjs.org/@noble%2fhashes 72ms (cache miss)
+82 silly packumentCache full:https://registry.npmjs.org/@noble%2fhashes set size:undefined disposed:false
+83 http fetch GET 200 https://registry.npmjs.org/@noble%2fcurves 79ms (cache miss)
+84 silly packumentCache full:https://registry.npmjs.org/@noble%2fcurves set size:undefined disposed:false
+85 http fetch GET 200 https://registry.npmjs.org/@noble%2fciphers 82ms (cache miss)
+86 silly packumentCache full:https://registry.npmjs.org/@noble%2fciphers set size:undefined disposed:false
+87 http fetch GET 200 https://registry.npmjs.org/@ecies%2fciphers 391ms (cache miss)
+88 silly packumentCache full:https://registry.npmjs.org/@ecies%2fciphers set size:undefined disposed:false
+89 silly placeDep ROOT @ecies/ciphers@0.2.6 OK for: eciesjs@0.5.0 want: ^0.2.6
+90 silly placeDep ROOT @noble/ciphers@1.3.0 OK for: @ecies/ciphers@0.2.6 want: ^1.0.0
+91 silly placeDep ROOT @noble/curves@1.9.7 OK for: eciesjs@0.5.0 want: ^1.9.7
+92 silly placeDep ROOT @noble/hashes@1.8.0 OK for: eciesjs@0.5.0 want: ^1.8.0
+93 silly fetch manifest @noble/hashes@1.8.0
+94 silly packumentCache full:https://registry.npmjs.org/@noble%2fhashes cache-miss
+95 http cache https://registry.npmjs.org/@noble%2fhashes 8ms (cache hit)
+96 silly packumentCache full:https://registry.npmjs.org/@noble%2fhashes set size:220000 disposed:false
+97 silly reify moves {}
+98 silly audit bulk request {
+98 silly audit   supabase: [ '2.117.0' ],
+98 silly audit   '@supabase/cli-darwin-arm64': [ '2.117.0' ],
+98 silly audit   '@supabase/cli-darwin-x64': [ '2.117.0' ],
+98 silly audit   '@supabase/cli-linux-arm64': [ '2.117.0' ],
+98 silly audit   '@supabase/cli-linux-arm64-musl': [ '2.117.0' ],
+98 silly audit   '@supabase/cli-linux-x64': [ '2.117.0' ],
+98 silly audit   '@supabase/cli-linux-x64-musl': [ '2.117.0' ],
+98 silly audit   '@supabase/cli-windows-arm64': [ '2.117.0' ],
+98 silly audit   '@supabase/cli-windows-x64': [ '2.117.0' ],
+98 silly audit   eciesjs: [ '0.5.0' ],
+98 silly audit   jose: [ '6.2.12' ],
+98 silly audit   '@ecies/ciphers': [ '0.2.6' ],
+98 silly audit   '@noble/ciphers': [ '1.3.0' ],
+98 silly audit   '@noble/curves': [ '1.9.7' ],
+98 silly audit   '@noble/hashes': [ '1.8.0' ]
+98 silly audit }
+99 http cache @ecies/ciphers@https://registry.npmjs.org/@ecies/ciphers/-/ciphers-0.2.6.tgz 0ms (cache hit)
+100 http cache eciesjs@https://registry.npmjs.org/eciesjs/-/eciesjs-0.5.0.tgz 0ms (cache hit)
+101 http cache @noble/ciphers@https://registry.npmjs.org/@noble/ciphers/-/ciphers-1.3.0.tgz 0ms (cache hit)
+102 http cache @noble/curves@https://registry.npmjs.org/@noble/curves/-/curves-1.9.7.tgz 0ms (cache hit)
+103 http cache @noble/hashes@https://registry.npmjs.org/@noble/hashes/-/hashes-1.8.0.tgz 0ms (cache hit)
+104 silly tarball no local data for @ecies/ciphers@https://registry.npmjs.org/@ecies/ciphers/-/ciphers-0.2.6.tgz. Extracting by manifest.
+105 silly tarball no local data for eciesjs@https://registry.npmjs.org/eciesjs/-/eciesjs-0.5.0.tgz. Extracting by manifest.
+106 http cache jose@https://registry.npmjs.org/jose/-/jose-6.2.12.tgz 0ms (cache hit)
+107 silly tarball no local data for @noble/ciphers@https://registry.npmjs.org/@noble/ciphers/-/ciphers-1.3.0.tgz. Extracting by manifest.
+108 silly tarball no local data for @noble/curves@https://registry.npmjs.org/@noble/curves/-/curves-1.9.7.tgz. Extracting by manifest.
+109 silly tarball no local data for @noble/hashes@https://registry.npmjs.org/@noble/hashes/-/hashes-1.8.0.tgz. Extracting by manifest.
+110 http cache @supabase/cli-windows-x64@https://registry.npmjs.org/@supabase/cli-windows-x64/-/cli-windows-x64-2.117.0.tgz 0ms (cache hit)
+111 http cache supabase@https://registry.npmjs.org/supabase/-/supabase-2.117.0.tgz 0ms (cache hit)
+112 silly tarball no local data for jose@https://registry.npmjs.org/jose/-/jose-6.2.12.tgz. Extracting by manifest.
+113 silly tarball no local data for @supabase/cli-windows-x64@https://registry.npmjs.org/@supabase/cli-windows-x64/-/cli-windows-x64-2.117.0.tgz. Extracting by manifest.
+114 silly tarball no local data for supabase@https://registry.npmjs.org/supabase/-/supabase-2.117.0.tgz. Extracting by manifest.
+115 http fetch GET 200 https://registry.npmjs.org/supabase/-/supabase-2.117.0.tgz 62ms (cache miss)
+116 http fetch GET 200 https://registry.npmjs.org/eciesjs/-/eciesjs-0.5.0.tgz 111ms (cache miss)
+117 http fetch POST 200 https://registry.npmjs.org/-/npm/v1/security/advisories/bulk 193ms
+118 silly audit report {}
+119 http fetch GET 200 https://registry.npmjs.org/@ecies/ciphers/-/ciphers-0.2.6.tgz 229ms (cache miss)
+120 http fetch GET 200 https://registry.npmjs.org/jose/-/jose-6.2.12.tgz 244ms (cache miss)
+121 http fetch GET 200 https://registry.npmjs.org/@noble/ciphers/-/ciphers-1.3.0.tgz 253ms (cache miss)
+122 http fetch GET 200 https://registry.npmjs.org/@noble/hashes/-/hashes-1.8.0.tgz 444ms (cache miss)
+123 http fetch GET 200 https://registry.npmjs.org/@noble/curves/-/curves-1.9.7.tgz 501ms (cache miss)
+124 http fetch GET 200 https://registry.npmjs.org/@supabase/cli-windows-x64/-/cli-windows-x64-2.117.0.tgz 1347ms (cache miss)
+125 verbose cwd C:\workspace\baba-membership
+126 verbose os Windows_NT 10.0.26200
+127 verbose node v24.15.0
+128 verbose npm  v11.12.1
+129 notice
+129 notice New major version of npm available! 11.12.1 -> 12.0.2
+129 notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.2
+129 notice To update run: npm install -g npm@12.0.2
+129 notice  { force: true, Symbol(proc-log.meta): true }
+130 verbose exit 1
+131 verbose code 1
