@@ -1,0 +1,1 @@
+C:/workspace/baba-membership/.cache/pos-close-pg/package/native/bin/postgres.exe "-D" "C:/workspace/baba-membership/.cache/pos-close-pg/data" "-h" "127.0.0.1" "-p" "55479" "-c" "timezone=UTC"

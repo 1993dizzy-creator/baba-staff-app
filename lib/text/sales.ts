@@ -40,8 +40,7 @@ export const salesText = {
     daily: {
       badge: "TODAY",
       title: "일간현황",
-      syncButton: "POS 데이터 불러오기",
-      forceSyncButton: "강제 새로고침",
+      syncButton: "POS 최신 데이터 불러오기",
       syncing: "불러오는 중",
       syncSuccess: "POS 데이터 동기화 완료",
       syncSkipped: "최근 동기화가 완료되어 다시 불러오지 않았습니다",
@@ -241,8 +240,7 @@ export const salesText = {
     daily: {
       badge: "TODAY",
       title: "Doanh thu ngày",
-      syncButton: "Tải dữ liệu POS",
-      forceSyncButton: "Làm mới bắt buộc",
+      syncButton: "Tải dữ liệu POS mới nhất",
       syncing: "Đang tải",
       syncSuccess: "Đã đồng bộ POS",
       syncSkipped: "Đã đồng bộ gần đây nên không tải lại",

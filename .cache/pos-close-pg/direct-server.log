@@ -1,0 +1,14 @@
+2026-09-12 17:22:40.592 +07 [10876] LOG:  starting PostgreSQL 17.6 on x86_64-windows, compiled by msvc-19.44.35213, 64-bit
+2026-09-12 17:22:40.593 +07 [10876] LOG:  listening on IPv4 address "127.0.0.1", port 55479
+2026-09-12 17:22:40.701 +07 [10876] LOG:  database system is ready to accept connections
+2026-09-12 17:29:04.228 +07 [10876] LOG:  received fast shutdown request
+2026-09-12 17:29:04.229 +07 [10876] LOG:  aborting any active transactions
+2026-09-12 17:29:04.234 +07 [10876] LOG:  background worker "logical replication launcher" (PID 17908) exited with exit code 1
+2026-09-12 17:29:04.247 +07 [10876] LOG:  database system is shut down
+2026-09-12 17:41:28.570 +07 [15592] LOG:  starting PostgreSQL 17.6 on x86_64-windows, compiled by msvc-19.44.35213, 64-bit
+2026-09-12 17:41:28.571 +07 [15592] LOG:  listening on IPv4 address "127.0.0.1", port 55479
+2026-09-12 17:41:28.680 +07 [15592] LOG:  database system is ready to accept connections
+2026-09-12 17:45:11.516 +07 [15592] LOG:  received fast shutdown request
+2026-09-12 17:45:11.517 +07 [15592] LOG:  aborting any active transactions
+2026-09-12 17:45:11.522 +07 [15592] LOG:  background worker "logical replication launcher" (PID 23596) exited with exit code 1
+2026-09-12 17:45:11.536 +07 [15592] LOG:  database system is shut down
