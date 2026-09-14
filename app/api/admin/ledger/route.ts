@@ -1,3 +1,5 @@
+import { calculateCardGross, sumCardMoney } from "@/lib/ledger/card-settlements";
+import { loadCardRows, loadCardSales, loadCardAllocationLines } from "@/lib/ledger/card-settlement-data";
 import { supabaseServer } from "@/lib/supabase/server";
 import { withInventoryDisplay, loadInventoryProjectionIssues } from "@/lib/ledger/inventory-display";
 import { buildLedgerEntries, type CandidateRow, type MealCandidateSource, type PartnerLedgerDefault, type TransactionRow } from "@/lib/ledger/entries";
@@ -33,9 +35,9 @@ export async function GET(request: Request) {
     const movementsPromise = supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status,occurred_at)").eq("transaction.status", "confirmed").lte("transaction.occurred_at", new Date().toISOString());
     const openingPromise = supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status,type,business_date,source_type)").eq("transaction.status", "confirmed").eq("transaction.type", "opening").eq("transaction.business_date", monthStart);
     // Card gross sales: this month's POS card-bucket sales (business_date scoped), before card-company fees.
-    const cardGrossSalesPromise = supabaseServer.from("ledger_transactions").select("amount").eq("status", "confirmed").eq("source_type", "pos_sales_daily_payment").like("source_key", "pos:%:card").gte("business_date", monthStart).lt("business_date", nextMonth);
+    const cardGrossSalesPromise = loadCardSales(monthStart, nextMonth);
     // Actual card deposits: this month's real bank deposits from the card company (deposit_date scoped, not the sale's month).
-    const actualCardDepositsPromise = supabaseServer.from("ledger_card_reconciliations").select("deposit_amount").neq("status", "cancelled").gte("deposit_date", monthStart).lt("deposit_date", nextMonth);
+    const actualCardDepositsPromise = loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("deposit_amount").neq("status", "cancelled").gte("deposit_date", monthStart).lt("deposit_date", nextMonth).order("id").range(from, to));
     const reservesPromise = supabaseServer.from("ledger_reserve_plans")
       .select("id,name,is_active,fund_account_id,linked_recurring_plan:ledger_recurring_expense_plans(source_key_prefix),entries:ledger_reserve_entries(entry_type,amount)")
       .order("id");
@@ -56,12 +58,17 @@ export async function GET(request: Request) {
       recognitionProfitPromise, movementsPromise, openingPromise, cardGrossSalesPromise, actualCardDepositsPromise, reservesPromise, paidExpenseRootsPromise, paidExpenseCorrectionsPromise,
       confirmedMealCandidatesPromise, loadMonthTransactions(monthStart, nextMonth), loadPendingInventoryCandidates(monthStart, nextMonth),
     ]);
-    for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,cardGrossSalesResult,actualCardDepositsResult,reservesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
+    for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,reservesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
     const profitRows=[...(profitResult.data??[]),...(recognitionProfitResult.data??[])];
     const recognizedIncome = profitRows.filter((row) => row.type === "income" || row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const expense = profitRows.filter((row) => row.type === "expense" || row.type === "expense_recognition").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
-    const cardGrossSales = (cardGrossSalesResult.data ?? []).reduce((sum, row) => sum + Number(row.amount), 0);
-    const actualCardDeposits = (actualCardDepositsResult.data ?? []).reduce((sum, row) => sum + Number(row.deposit_amount), 0);
+    const lines = await loadCardAllocationLines(cardGrossSalesResult.map(row => Number(row.id)));
+    const cardGross = calculateCardGross(cardGrossSalesResult, lines, monthStart, nextMonth);
+    const cardGrossSales = cardGross.monthlyCardGross;
+    const reconciledCardGross = cardGross.monthlyReconciledGross;
+    const unreconciledCardGross = cardGross.monthlyUnreconciledGross;
+    const actualCardDeposits = sumCardMoney(actualCardDepositsResult.map(row => row.deposit_amount));
+    const unsettledCardGross = unreconciledCardGross;
     const receivedIncome = computeReceivedIncome(recognizedIncome, cardGrossSales, actualCardDeposits);
     const correctionsByRoot = new Map<number, { amount: number; economicEffectSign: number }[]>();
     for (const row of paidExpenseCorrectionsResult.data ?? []) {
@@ -114,7 +121,7 @@ export async function GET(request: Request) {
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
     ]);
     const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources);
-    return ledgerJson({ ok: true, month, inventoryProjectionIssues, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, cardGrossSales, actualCardDeposits }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
+    return ledgerJson({ ok: true, month, inventoryProjectionIssues, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, cardGrossSales, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);

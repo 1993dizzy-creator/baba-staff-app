@@ -1,4 +1,52 @@
 export type OutstandingPayable={id:number;businessDate:string;outstandingAmount:number};
+export function payableMonthBounds(month:string){
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))throw new Error("INVALID_MONTH");
+  const [year,value]=month.split("-").map(Number);
+  return {monthStart:`${month}-01`,nextMonthStart:`${String(value===12?year+1:year).padStart(4,"0")}-${String(value===12?1:value+1).padStart(2,"0")}-01`};
+}
+
+// DB numeric(16,3): accumulate integer thousandths, including above Number's
+// safe integer range. Convert only the final API values to numbers.
+function amountUnits(value:number|string):bigint{
+  const [whole,fraction=""]=String(value).split(".");
+  return BigInt(whole)*BigInt(1000)+BigInt(fraction.padEnd(3,"0").slice(0,3))*(whole.startsWith("-")?BigInt(-1):BigInt(1));
+}
+const amountValue=(units:bigint)=>Number(units)/1000;
+export const sumPayableAmounts=(values:readonly (number|string)[])=>amountValue(values.reduce<bigint>((sum,value)=>sum+amountUnits(value),BigInt(0)));
+export type PayableBalanceSource={id:number;party_id:number;original_amount:number|string;status:string;expense:{business_date:string;status:string}|null};
+export type DatedPayableAllocation={payable_id:number;allocated_amount:number|string;payment:{business_date:string;status:string}|null};
+export function calculatePayableBalances<T extends PayableBalanceSource>(sources:readonly T[],allocations:readonly DatedPayableAllocation[],month?:string){
+  const bounds=month===undefined?null:payableMonthBounds(month);
+  const byPayable=new Map<number,DatedPayableAllocation[]>();
+  for(const allocation of allocations){
+    if(allocation.payment?.status!=="confirmed")continue;
+    const items=byPayable.get(allocation.payable_id)??[];items.push(allocation);byPayable.set(allocation.payable_id,items);
+  }
+  let opening=BigInt(0),purchases=BigInt(0),payments=BigInt(0),closing=BigInt(0);
+  const payables:Array<T & {allocatedAmount:number;outstandingAmount:number}>=[];
+  for(const source of sources){
+    if(source.status==="cancelled"||source.expense?.status!=="confirmed")continue;
+    const date=source.expense.business_date;
+    if(bounds&&date>=bounds.nextMonthStart)continue;
+    const original=amountUnits(source.original_amount);
+    let before=BigInt(0),through=BigInt(0),inPeriod=BigInt(0);
+    for(const allocation of byPayable.get(source.id)??[]){
+      const paymentDate=allocation.payment!.business_date,amount=amountUnits(allocation.allocated_amount);
+      if(!bounds||paymentDate<bounds.nextMonthStart)through+=amount;
+      if(bounds&&paymentDate<bounds.monthStart)before+=amount;
+      if(bounds&&paymentDate>=bounds.monthStart&&paymentDate<bounds.nextMonthStart)inPeriod+=amount;
+    }
+    const outstanding=original>through?original-through:BigInt(0);
+    closing+=outstanding;
+    if(bounds){
+      if(date<bounds.monthStart)opening+=original>before?original-before:BigInt(0);
+      else purchases+=original;
+      payments+=inPeriod;
+    }
+    if(outstanding>BigInt(0))payables.push({...source,allocatedAmount:amountValue(through),outstandingAmount:amountValue(outstanding)});
+  }
+  return {payables,totalOutstanding:amountValue(closing),...(bounds?{summary:{openingOutstanding:amountValue(opening),periodPurchases:amountValue(purchases),periodPayments:amountValue(payments),closingOutstanding:amountValue(closing)}}:{})};
+}
 export type PayableAllocation={payableId:number;allocatedAmount:number};
 export function buildOldestFirstAllocations(payables:OutstandingPayable[],amount:number){let remaining=amount;const allocations:PayableAllocation[]=[];for(const payable of [...payables].sort((a,b)=>a.businessDate.localeCompare(b.businessDate)||a.id-b.id)){if(remaining<=0)break;const allocatedAmount=Math.min(remaining,payable.outstandingAmount);if(allocatedAmount>0)allocations.push({payableId:payable.id,allocatedAmount});remaining=Math.round((remaining-allocatedAmount)*1000)/1000}return{allocations,unallocatedAmount:remaining}}
 

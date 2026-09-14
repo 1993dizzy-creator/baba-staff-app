@@ -74,6 +74,7 @@ type LedgerSummary = {
   paidExpense: number;
   cardGrossSales: number;
   actualCardDeposits: number;
+  unsettledCardGross: number;
 };
 type LedgerData = {
   inventoryProjectionIssues?: Array<{ inventoryLogId: number; status: string; code: string }>;
@@ -113,7 +114,7 @@ type DateGroup = {
   income: number;
   expense: number;
 };
-type PayableParty = { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; openCount:number };
+type PayableParty = { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number };
 type PayablesSummary = { totalOutstanding:number; parties:PayableParty[] };
 type PayableRow = { id:number; original_amount:number; outstandingAmount:number; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null}|null };
 type PayableDetail = { party:{id:number;name:string}; payables:PayableRow[]; totalOutstanding:number };
@@ -130,6 +131,8 @@ const localTime = () =>
   new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 16);
 const money = (amount: number) =>
   `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(amount))} ₫`;
+const payableNumber = (amount: number) =>
+  new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.round(amount));
 const sanitizeLedgerDecimalAmount = (input: string) => {
   const normalized = input.replace(/,/g, "").replace(/[^\d.]/g, "");
   const dot = normalized.indexOf(".");
@@ -687,11 +690,11 @@ export default function LedgerEntriesPage() {
                   <i aria-hidden="true">💰</i>
                   {vi ? "Thu" : "수입"}
                 </span>
-                <strong>{money(data.summary.receivedIncome)}</strong>
+                <strong>{money(data.summary.income)}</strong>
                 <small>{vi ? "Tổng doanh thu" : "전체 수입"}</small>
                 <div className={styles.summarySubRows}>
                   <span><small className={styles.summarySubLabel}>{vi ? "Doanh thu thẻ" : "카드결제액"}</small><b>{money(data.summary.cardGrossSales)}</b></span>
-                  <span><small className={styles.summarySubLabel}>{vi ? "Đã nhận thực tế" : "실제 입금액"}</small><b>{money(data.summary.actualCardDeposits)}</b></span>
+                  <span><small className={styles.summarySubLabel}>{vi ? "Thẻ chưa quyết toán" : "미정산 카드"}</small><b>{money(data.summary.unsettledCardGross)}</b></span>
                 </div>
               </article>
               <article className={`${styles.summaryCard} ${styles.expenseCard}`}>
@@ -699,10 +702,11 @@ export default function LedgerEntriesPage() {
                   <i aria-hidden="true">💸</i>
                   {vi ? "Chi" : "지출"}
                 </span>
-                <strong>{money(data.summary.paidExpense)}</strong>
-                <small>{vi ? "Đã thanh toán" : "지급완료"}</small>
+                <strong>{money(data.summary.expense)}</strong>
+                <small>{vi ? "Tổng chi phí" : "전체 지출"}</small>
                 <div className={styles.summarySubRows}>
-                  <span><small className={styles.summarySubLabel}>{vi ? "Công nợ hiện tại (toàn bộ)" : "현재 미납금(전체)"}</small><b>{money(payables?.totalOutstanding ?? 0)}</b></span>
+                  <span><small className={styles.summarySubLabel}>{vi ? "Đã thanh toán" : "지급완료"}</small><b>{money(data.summary.paidExpense)}</b></span>
+                  <span><small className={styles.summarySubLabel}>{vi ? "Công nợ" : "미납금"}</small><b>{money(payables?.totalOutstanding ?? 0)}</b></span>
                 </div>
               </article>
             </section>
@@ -741,7 +745,7 @@ export default function LedgerEntriesPage() {
                 <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tình hình công nợ" : "미납금 현황"}</h2><strong>{money(payables?.totalOutstanding ?? 0)}</strong></div>
               )}
               {payableParties.length ? (
-                payableExpanded ? <div className={styles.payableParties} id="payable-parties-list">{payableParties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty(party)}><span className={styles.payablePartyMain}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><span className={styles.payablePartyName}>{party.partyName}</span></span><strong>{money(party.outstandingAmount)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i></button>)}</div> : null
+                payableExpanded ? <div className={styles.payableParties} id="payable-parties-list">{payableParties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty(party)}><span className={styles.payablePartyMain}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><span className={styles.payablePartyName}>{party.partyName}</span>{party.partialPaidAmount > 0 && <small className={styles.payablePartialPayment} role="group" aria-label={vi ? `Đã thanh toán một phần ${payableNumber(party.partialPaidAmount)}, tổng nợ gốc chưa tất toán ${payableNumber(party.totalOpenAmount)}` : `부분결제 ${payableNumber(party.partialPaidAmount)}, 총 미납원금 ${payableNumber(party.totalOpenAmount)}`}><span className={styles.payablePartialPaid}>{payableNumber(party.partialPaidAmount)}</span><span className={styles.payablePartialSeparator}> / </span><span className={styles.payableOpenPrincipal}>{payableNumber(party.totalOpenAmount)}</span></small>}</span><strong>{money(party.outstandingAmount)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i></button>)}</div> : null
               ) : <p className={styles.payableEmpty}>{vi ? "Không có công nợ chưa thanh toán." : "미납금이 없습니다."}</p>}
             </section>
             <section

@@ -206,9 +206,11 @@ test("recognized income and operating profit keep their accounting meaning", () 
 });
 
 test("cardGrossSales sums this month's POS card-bucket sales by business_date", () => {
-  assert.match(route, /eq\("source_type",\s*"pos_sales_daily_payment"\)/);
-  assert.match(route, /like\("source_key",\s*"pos:%:card"\)/);
-  assert.match(route, /cardGrossSalesPromise[\s\S]*gte\("business_date",\s*monthStart\)\.lt\("business_date",\s*nextMonth\)/);
+  const data = read("lib/ledger/card-settlement-data.ts");
+  assert.match(data, /eq\("source_type",\s*"pos_sales_daily_payment"\)/);
+  assert.match(data, /like\("source_key",\s*"pos:%:card"\)/);
+  assert.match(data, /gte\("business_date",\s*start\)\.lt\("business_date",\s*end\)/);
+  assert.match(route, /cardGrossSalesPromise = loadCardSales\(monthStart, nextMonth\)/);
 });
 
 test("actualCardDeposits sums this month's real deposits by deposit_date (policy A), excluding cancelled", () => {
@@ -247,22 +249,40 @@ test("the summary block itself (GET handler) issues no RPC — the three new fie
 });
 
 test("summary type is modeled on LedgerData so the cards cannot silently fall back to undefined", () => {
-  assert.match(pageCompact, /typeLedgerSummary=\{income:number;receivedIncome:number;expense:number;operatingProfit:number;paidExpense:number;cardGrossSales:number;actualCardDeposits:number;\}/);
+  assert.match(pageCompact, /typeLedgerSummary=\{income:number;receivedIncome:number;expense:number;operatingProfit:number;paidExpense:number;cardGrossSales:number;actualCardDeposits:number;unsettledCardGross:number;\}/);
   assert.match(pageCompact, /summary:LedgerSummary/);
 });
 
-test("income card shows total income with actual-deposit and card-gross sub-rows", () => {
-  assert.match(pageCompact, /money\(data\.summary\.receivedIncome\)/);
-  assert.match(pageCompact, /전체수입/);
-  assert.match(pageCompact, /money\(data\.summary\.actualCardDeposits\)/);
-  assert.match(pageCompact, /money\(data\.summary\.cardGrossSales\)/);
+test("income card shows accounting income with exactly card-gross and unsettled-gross sub-rows", () => {
+  const card = pageCompact.slice(pageCompact.indexOf("styles.incomeCard"), pageCompact.indexOf("styles.expenseCard"));
+  assert.match(card, /<strong>\{money\(data\.summary\.income\)\}/);
+  assert.match(card, /전체수입/);
+  assert.match(card, /money\(data\.summary\.unsettledCardGross\)/);
+  assert.match(card, /money\(data\.summary\.cardGrossSales\)/);
+  assert.doesNotMatch(card, /receivedIncome|actualCardDeposits/);
+  assert.equal((card.match(/styles.summarySubLabel/g) ?? []).length, 2);
 });
 
-test("expense card shows paidExpense with the reused (not recomputed) totalOutstanding sub-row", () => {
-  assert.match(pageCompact, /money\(data\.summary\.paidExpense\)/);
-  assert.match(pageCompact, /지급완료/);
-  assert.match(pageCompact, /현재미납금\(전체\)/);
-  assert.match(pageCompact, /money\(payables\?\.totalOutstanding\?\?0\)/);
+test("expense card shows accounting expense with paid-expense and unchanged payable sub-rows", () => {
+  const card = pageCompact.slice(pageCompact.indexOf("styles.expenseCard"), pageCompact.indexOf("styles.openingSection"));
+  assert.match(card, /<strong>\{money\(data\.summary\.expense\)\}/);
+  assert.match(card, /전체지출/);
+  assert.match(card, /money\(data\.summary\.paidExpense\)/);
+  assert.match(card, /지급완료/);
+  assert.match(card, /money\(payables\?\.totalOutstanding\?\?0\)/);
+  assert.doesNotMatch(card, /현재|hiện/);
+  assert.equal((card.match(/styles.summarySubLabel/g) ?? []).length, 2);
+});
+
+test("payable partial-payment UI keeps numbers-only spans and bilingual accessible labels", () => {
+  const row = page.slice(page.indexOf("payableExpanded ? <div className={styles.payableParties}"), page.indexOf("payableExpanded ? <div className={styles.payableParties}") + 2200);
+  assert.match(row, /party\.partialPaidAmount > 0 &&/);
+  assert.match(row, /role="group" aria-label=/);
+  assert.match(row, /부분결제.*총 미납원금/);
+  assert.match(row, /Đã thanh toán một phần/);
+  assert.match(row, /styles\.payablePartialPaid.*payableNumber\(party\.partialPaidAmount\)/);
+  assert.match(row, /styles\.payableOpenPrincipal.*payableNumber\(party\.totalOpenAmount\)/);
+  assert.match(row, /<strong>\{money\(party\.outstandingAmount\)\}/);
 });
 
 // ---------------------------------------------------------------------------
