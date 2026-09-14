@@ -57,7 +57,12 @@ test('August and September render different closing with month-only payments and
   const august=entriesFixture('2026-08').html,september=entriesFixture('2026-09').html;
   assert.match(august,/월말 미납<\/dt><dd>600 ₫/);assert.match(september,/월말 미납<\/dt><dd>1\.100 ₫/);
   assert.match(august,/당월 지급<\/dt><dd>400 ₫/);assert.match(september,/당월 지급<\/dt><dd>0 ₫/);
-  assert.match(september,/당월 지급[^<]*: 0/);assert.match(september,/누적 부분결제/);
+  assert.match(september,/당월 지급[^<]*: 0/);
+  for(const html of [august,september]) {
+    assert.doesNotMatch(html,/누적 부분결제|class="payablePartialPayment"/);
+    assert.match(html,/당월 외상 발생[^<]*:/);
+    assert.match(html,/aria-label="월말 미납"/);
+  }
   assert.match(september,/9\.999 ₫/);assert.match(september,/7\.777 ₫/);
 });
 test('historical drilldown renders month-end sources with no current payment controls or current detail read',()=>{

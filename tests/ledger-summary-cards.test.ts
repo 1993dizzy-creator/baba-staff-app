@@ -274,17 +274,17 @@ test("expense card shows accounting expense with paid-expense and unchanged paya
   assert.equal((card.match(/styles.summarySubLabel/g) ?? []).length, 2);
 });
 
-test("payable partial-payment UI keeps numbers-only spans and bilingual accessible labels", () => {
-  const row = page.slice(page.indexOf("className={styles.payableParties}"), page.indexOf("className={styles.payableParties}") + 2200);
-  assert.match(row, /party\.partialPaidAmount > 0 &&/);
-  assert.match(row, /role="group" aria-label=/);
-  assert.match(row, /부분결제.*총 미납원금/);
-  assert.match(row, /Đã thanh toán một phần/);
-  assert.match(row, /styles\.payablePartialPaid.*payableNumber\(party\.partialPaidAmount\)/);
-  assert.match(row, /styles\.payableOpenPrincipal.*payableNumber\(party\.totalOpenAmount\)/);
+test("payable rows hide cumulative partial-payment UI and retain monthly purchase/payment/closing fields", () => {
+  const start = page.indexOf("className={styles.payableParties}");
+  const row = page.slice(start, page.indexOf("</button>)}</div>", start));
+  assert.doesNotMatch(row, /partialPaidAmount|payablePartialPayment|누적 부분결제|Lũy kế/);
+  assert.match(page, /partialPaidAmount:number/);
   assert.match(row, /<strong[^>]*>\{money\(party\.closingOutstanding\)\}/);
-  assert.match(row, /누적 부분결제/);
+  assert.match(row, /당월 외상 발생/);
+  assert.match(row, /party\.periodPurchases/);
+  assert.match(row, /당월 지급/);
   assert.match(row, /party\.periodPayments/);
+  assert.match(row, /aria-label=\{vi \? "Công nợ cuối tháng" : "월말 미납"\}/);
 });
 
 // ---------------------------------------------------------------------------
