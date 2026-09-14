@@ -213,36 +213,114 @@ test('once the new month\'s data arrives (data.month matches the selected month 
   assert.match(state,/<button type="button" class="addButton">/);
 });
 
+// ---------------------------------------------------------------------------
+// Investment status card (entries page). slot 25 = investmentExpanded,
+// 26 = investments, 27 = investmentsError.
+// ---------------------------------------------------------------------------
+const zeroInvestmentSummary={openingCumulative:0,periodOpening:0,periodContribution:0,periodAdjustment:0,periodNetChange:0,closingCumulative:0};
+
+test('investment card sends the selected month to the investments API as part of the main load()',async()=>{
+  for(const month of ['2026-08','2026-09']){
+    const state=entriesFixture(month,{fetcher:async(url)=>Response.json(
+      url.includes('month-close')?{state:'open'}:
+      url.includes('/investments')?{month,configured:false,summary:zeroInvestmentSummary,events:[]}:
+      url.includes('/payables')?payableFixture(month):ledgerFixture(month),
+    )});
+    const cleanup=state.effects[0]();await new Promise(resolve=>setImmediate(resolve));cleanup();
+    assert.ok(state.requests.includes(`/api/admin/ledger/investments?month=${month}`));
+    assert.ok(state.updates.some(update=>update.slot===26&&update.value.month===month));
+  }
+});
+
+test('investment card distinguishes "not configured" from "configured with zero period activity" — never a misleading 0 ₫ either way',()=>{
+  const unconfigured=pageFixture(entriesPath,{
+    0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:true,
+    26:{month:'2026-09',configured:false,summary:zeroInvestmentSummary,events:[]},
+  }).html;
+  assert.match(unconfigured,/투자금 기준이 아직 설정되지 않았습니다/);
+  assert.doesNotMatch(unconfigured,/이번 달 투자금 변동이 없습니다/);
+  assert.match(unconfigured,/href="\/admin\/ledger\/owners"/);
+  const header=unconfigured.slice(unconfigured.indexOf('id="investment-title"'),unconfigured.indexOf('id="investment-title"')+400);
+  assert.match(header,/미설정/);
+  assert.doesNotMatch(header,/0 ₫/);
+
+  const configuredZero=pageFixture(entriesPath,{
+    0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:true,
+    26:{month:'2026-09',configured:true,summary:{...zeroInvestmentSummary,openingCumulative:12_000_000,closingCumulative:12_000_000},events:[]},
+  }).html;
+  assert.match(configuredZero,/이번 달 투자금 변동이 없습니다/);
+  assert.doesNotMatch(configuredZero,/투자금 기준이 아직 설정되지 않았습니다/);
+  assert.match(configuredZero,/12\.000\.000 ₫/); // a real cumulative figure, not hidden behind an "unconfigured" message
+});
+
+test('investment card never paints a stale month\'s numbers — it falls back to the loading hint until investments.month matches the selected month',()=>{
+  const stale=pageFixture(entriesPath,{
+    0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:true,
+    26:{month:'2026-08',configured:true,summary:{...zeroInvestmentSummary,periodContribution:5_000_000,periodNetChange:5_000_000,closingCumulative:5_000_000},events:[]},
+  }).html;
+  assert.doesNotMatch(stale,/5\.000\.000 ₫/);
+  assert.match(stale,/투자금 현황을 불러오는 중입니다/);
+  const header=stale.slice(stale.indexOf('id="investment-title"'),stale.indexOf('id="investment-title"')+400);
+  assert.doesNotMatch(header,/5\.000\.000/);
+});
+
+test('an investments fetch failure for the current month shows its own error, never stale or empty-looking numbers',()=>{
+  const state=pageFixture(entriesPath,{
+    0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:true,
+    26:null,27:{month:'2026-09',message:'투자금 현황을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.'},
+  }).html;
+  assert.match(state,/투자금 현황을 불러오지 못했습니다/);
+  assert.doesNotMatch(state,/이번 달 투자금 변동이 없습니다|투자금 기준이 아직 설정되지 않았습니다/);
+});
+
+test('investment events render entry-type label, contribution account or "no fund movement", and +/- colored amounts',()=>{
+  const state=pageFixture(entriesPath,{
+    0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:true,
+    26:{month:'2026-09',configured:true,summary:{...zeroInvestmentSummary,periodContribution:10_000_000,periodAdjustment:-2_000_000,periodNetChange:8_000_000,closingCumulative:8_000_000},events:[
+      {investmentId:1,participantId:1,participantName:'HAN',entryType:'contribution',amount:10_000_000,businessDate:'2026-09-05',occurredAt:'2026-09-05T08:00:00Z',fundAccountId:4,fundAccountName:'BABA 법인계좌',reason:null},
+      {investmentId:2,participantId:2,participantName:'Vuong',entryType:'adjustment',amount:-2_000_000,businessDate:'2026-09-12',occurredAt:'2026-09-12T08:00:00Z',fundAccountId:null,fundAccountName:null,reason:'정정'},
+    ]},
+  }).html;
+  assert.match(state,/HAN/);assert.match(state,/추가 투자/);assert.match(state,/법인/);assert.match(state,/\+10\.000\.000 ₫/);
+  assert.match(state,/Vuong/);assert.match(state,/투자금 조정/);assert.match(state,/자금이동 없음/);assert.match(state,/정정/);assert.match(state,/-2\.000\.000 ₫/);
+});
+
 test('a load() call superseded by a newer one can never write state, even if its response resolves later (stale-response sequence guard)',async()=>{
   const deferreds=[];
   let fetchIndex=0;
   const fetcher=async(url)=>{
     const record={url};
     record.promise=new Promise(resolve=>{record.resolve=resolve;});
-    record.batch=fetchIndex<3?'first':'second';
+    record.batch=fetchIndex<4?'first':'second'; // 4 parallel fetches per load(): ledger, month-close, payables, investments
     fetchIndex++;
     deferreds.push(record);
     return record.promise;
   };
-  const respond=url=>url.includes('month-close')?{state:'open'}:url.includes('payables')?payableFixture('2026-09'):ledgerFixture('2026-09');
+  const respond=url=>{
+    if(url.includes('month-close'))return{state:'open'};
+    if(url.includes('/investments'))return{month:'2026-09',configured:false,summary:{openingCumulative:0,periodOpening:0,periodContribution:0,periodAdjustment:0,periodNetChange:0,closingCumulative:0},events:[]};
+    if(url.includes('/payables'))return payableFixture('2026-09');
+    return ledgerFixture('2026-09');
+  };
   const state=entriesFixture('2026-09',{fetcher});
   // Fire load() twice back-to-back without an intervening cleanup/abort — the harness's
   // useRef-backed sequence counter is the only thing standing between this and a stale write.
   const cleanupFirst=state.effects[0]();
   const cleanupSecond=state.effects[0]();
-  assert.equal(deferreds.length,6);
-  // Resolve the SECOND (latest) call's three requests first...
+  assert.equal(deferreds.length,8);
+  // Resolve the SECOND (latest) call's four requests first...
   for(const record of deferreds.filter(r=>r.batch==='second')) record.resolve(Response.json(respond(record.url)));
   await new Promise(resolve=>setImmediate(resolve));
-  // ...then resolve the FIRST (now-superseded) call's three requests, arriving last.
+  // ...then resolve the FIRST (now-superseded) call's four requests, arriving last.
   for(const record of deferreds.filter(r=>r.batch==='first')) record.resolve(Response.json(respond(record.url)));
   await new Promise(resolve=>setImmediate(resolve));
   cleanupFirst();cleanupSecond();
-  // Only the later-started call is ever allowed to reach setData/setPayables/setClosed,
+  // Only the later-started call is ever allowed to reach setData/setPayables/setClosed/setInvestments,
   // regardless of which one's network response actually completed first.
   assert.equal(state.updates.filter(update=>update.slot===1).length,1);
   assert.equal(state.updates.filter(update=>update.slot===15).length,1);
   assert.equal(state.updates.filter(update=>update.slot===5).length,1);
+  assert.equal(state.updates.filter(update=>update.slot===26).length,1);
 });
 
 test('a card-settlement response for a month the user has already navigated away from is dropped even without abort (body.month guard)',async()=>{
@@ -264,13 +342,13 @@ test('a card-settlement response for a month the user has already navigated away
 function raceLoadFetcher(makeError) {
   const deferreds = []; let fetchIndex = 0;
   const fetcher = async (url) => {
-    const record = { url, batch: fetchIndex < 3 ? 'A' : 'B' };
+    const record = { url, batch: fetchIndex < 4 ? 'A' : 'B' }; // 4 parallel fetches per load(): ledger, month-close, payables, investments
     fetchIndex++;
     record.promise = new Promise((resolve, reject) => { record.resolve = resolve; record.reject = reject; });
     deferreds.push(record);
     return record.promise;
   };
-  const respondOk = url => url.includes('month-close') ? { state: 'open' } : url.includes('payables') ? payableFixture('2026-09') : ledgerFixture('2026-09');
+  const respondOk = url => url.includes('month-close') ? { state: 'open' } : url.includes('/investments') ? { month: '2026-09', configured: false, summary: { openingCumulative: 0, periodOpening: 0, periodContribution: 0, periodAdjustment: 0, periodNetChange: 0, closingCumulative: 0 }, events: [] } : url.includes('/payables') ? payableFixture('2026-09') : ledgerFixture('2026-09');
   const settleBatch = (letter, ok) => {
     for (const record of deferreds.filter(r => r.batch === letter)) {
       if (ok) record.resolve(Response.json(respondOk(record.url)));

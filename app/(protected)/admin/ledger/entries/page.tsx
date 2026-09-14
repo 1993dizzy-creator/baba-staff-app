@@ -121,6 +121,10 @@ type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutsta
 type PayableRow = { id:number; party_id:number; original_amount:number; outstandingAmount:number; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null}|null };
 type PayableDetail = { party:{id:number;name:string}; payables:PayableRow[]; totalOutstanding:number };
 type CardSettlementSummary = { monthlyCardGross:number; monthlySettledGross:number; monthlyUnreconciledGross:number; totalUnreconciledGross:number; cardPendingBalance:number };
+type InvestmentEntryType = "opening" | "contribution" | "adjustment";
+type InvestmentEvent = { investmentId:number; participantId:number; participantName:string; entryType:InvestmentEntryType; amount:number; businessDate:string; occurredAt:string; fundAccountId:number|null; fundAccountName:string|null; reason:string|null };
+type InvestmentSummary = { openingCumulative:number; periodOpening:number; periodContribution:number; periodAdjustment:number; periodNetChange:number; closingCumulative:number };
+type InvestmentsData = { month:string; configured:boolean; summary:InvestmentSummary; events:InvestmentEvent[] };
 const accountEmoji = (code:string,type:string) => code === "card_clearing" || type === "card_clearing" ? "💳" : code === "store_cash" ? "💵" : type === "personal_custody" || code.endsWith("_personal_custody") ? "👤" : "🏦";
 
 const currentMonth = () =>
@@ -226,6 +230,9 @@ export default function LedgerEntriesPage() {
   const [cardSettlementExpanded,setCardSettlementExpanded]=useState(false),
     [cardSettlement,setCardSettlement]=useState<{month:string;summary:CardSettlementSummary}|null>(null),
     [cardSettlementError,setCardSettlementError]=useState<{month:string;message:string}|null>(null);
+  const [investmentExpanded,setInvestmentExpanded]=useState(false),
+    [investments,setInvestments]=useState<InvestmentsData|null>(null),
+    [investmentsError,setInvestmentsError]=useState<{month:string;message:string}|null>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null),
     initializedMonthRef = useRef(""),
     loadRequestSequenceRef = useRef(0);
@@ -236,7 +243,19 @@ export default function LedgerEntriesPage() {
       setLoading(true);
       setError("");
       try {
-        const [ledgerResponse, closeResponse, payableResponse] = await Promise.all([
+        // Investments never fails the whole load(): its fetch/parse is wrapped so a
+        // rejection (network error, abort) resolves to a sentinel instead of
+        // propagating into the Promise.all below and taking data/payables/closed
+        // down with it — its success/failure is applied independently, further down.
+        const investmentPromise = (async () => {
+          try {
+            const response = await fetch(`/api/admin/ledger/investments?month=${requestedMonth}`, { cache: "no-store", signal });
+            return { ok: response.ok, body: await response.json(), aborted: false };
+          } catch (cause) {
+            return { ok: false, body: null, aborted: (cause as Error).name === "AbortError" };
+          }
+        })();
+        const [ledgerResponse, closeResponse, payableResponse, investmentResult] = await Promise.all([
           fetch(`/api/admin/ledger?month=${requestedMonth}`, {
             cache: "no-store",
             signal,
@@ -246,6 +265,7 @@ export default function LedgerEntriesPage() {
             signal,
           }),
           fetch(`/api/admin/ledger/payables?month=${requestedMonth}`, { cache: "no-store", signal }),
+          investmentPromise,
         ]);
         const [ledgerBody, closeBody, payableBody] = await Promise.all([
           ledgerResponse.json(),
@@ -268,6 +288,25 @@ export default function LedgerEntriesPage() {
         setData(ledgerBody);
         setPayables(payableBody);
         setClosed(closeBody.state === "closed");
+        // Investments: same requestedMonth this call already validated itself against
+        // (we're past the sequence/abort guard above, so this call is the current one).
+        // A body.month mismatch is treated as a stale/no-op sub-response, not an error.
+        const investmentBody = investmentResult.body as InvestmentsData & { code?: string };
+        const investmentMonthMismatch = investmentResult.ok && investmentBody?.month && investmentBody.month !== requestedMonth;
+        if (!investmentMonthMismatch) {
+          if (investmentResult.ok && investmentBody && typeof investmentBody.configured === "boolean") {
+            setInvestments(investmentBody);
+            setInvestmentsError(null);
+          } else if (!investmentResult.aborted) {
+            setInvestments(null);
+            setInvestmentsError({
+              month: requestedMonth,
+              message: vi
+                ? "Không thể tải tình hình vốn góp. Vui lòng thử lại sau."
+                : "투자금 현황을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
+            });
+          }
+        }
         return ledgerBody as LedgerData;
       } catch (cause) {
         if ((cause as Error).name !== "AbortError" && requestSequence === loadRequestSequenceRef.current)
@@ -392,6 +431,7 @@ export default function LedgerEntriesPage() {
     [businessAccounts],
   );
   const payableParties = payables?.parties ?? [];
+  const activeInvestments = investments && investments.month === month ? investments : null;
   const todayKey = todayDate();
   const pastGroups = useMemo(
     () => groups.filter((group) => group.date < todayKey),
@@ -818,6 +858,58 @@ export default function LedgerEntriesPage() {
                 {cardSettlementError?.month===month?<p role="alert" className={styles.error}>{cardSettlementError.message}</p>:cardSettlement?.month!==month?<p className={styles.statusHint}>{vi?"Đang tải tình hình thẻ…":"카드 정산 현황을 불러오는 중입니다…"}</p>:null}
                 <div className={styles.statusActions}><p className={styles.statusHint}>{vi?"Đăng ký tiền vào và kết nối doanh thu tại trang chi tiết.":"입금 등록과 매출 연결은 상세 페이지에서 진행합니다."}</p><Link href="/admin/ledger/card-settlements" className={styles.statusDetailLink}>{vi?"Xem chi tiết":"상세 보기"} ›</Link></div>
               </div>:null}
+            </section>
+            <section className={styles.statusCard} aria-labelledby="investment-title">
+              <button type="button" className={styles.payableToggle} aria-expanded={investmentExpanded} aria-controls="investment-body" onClick={()=>setInvestmentExpanded(value=>!value)}>
+                <div className={styles.payableHeading}>
+                  <h2 id="investment-title">💼 {vi?"Tình hình vốn góp":"투자금 현황"} ({vi?`T${Number(month.slice(5,7))}`:`${Number(month.slice(5,7))}월`})</h2>
+                  <strong aria-label={vi?"Lũy kế vốn góp cuối tháng":"월말 누적 투자금"}>
+                    {activeInvestments ? (activeInvestments.configured ? money(activeInvestments.summary.closingCumulative) : (vi?"Chưa thiết lập":"미설정")) : "-"}
+                    {" "}<i aria-hidden>{investmentExpanded?"⌃":"⌄"}</i>
+                  </strong>
+                </div>
+              </button>
+              {investmentExpanded ? <div className={styles.statusBody} id="investment-body">
+                {!activeInvestments ? (
+                  investmentsError?.month===month
+                    ? <p role="alert" className={styles.error}>{investmentsError.message}</p>
+                    : <p className={styles.statusHint}>{vi?"Đang tải tình hình vốn góp…":"투자금 현황을 불러오는 중입니다…"}</p>
+                ) : !activeInvestments.configured ? (
+                  <>
+                    <p className={styles.payableEmpty}>{vi?"Chưa thiết lập cơ sở vốn góp.":"투자금 기준이 아직 설정되지 않았습니다."}</p>
+                    <div className={styles.statusActions}>
+                      <p className={styles.statusHint}>{vi?"Thiết lập người góp vốn tại trang quản lý sổ sách của chủ sở hữu.":"참여자와 투자금 기준은 사장 정산 관리 화면에서 설정합니다."}</p>
+                      <Link href="/admin/ledger/owners" className={styles.statusDetailLink}>{vi?"Quản lý":"관리"} ›</Link>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <dl className={styles.payableMonthTotals}>
+                      <div><dt>🏁 {vi?"Lũy kế đầu tháng":"월초 누적"}</dt><dd>{money(activeInvestments.summary.openingCumulative)}</dd></div>
+                      <div><dt>➕ {vi?"Góp vốn tháng này":"당월 추가투자"}</dt><dd>{activeInvestments.summary.periodContribution>0?"+":""}{money(activeInvestments.summary.periodContribution)}</dd></div>
+                      <div><dt>🛠️ {vi?"Điều chỉnh tháng này":"당월 조정"}</dt><dd>{activeInvestments.summary.periodAdjustment>0?"+":""}{money(activeInvestments.summary.periodAdjustment)}</dd></div>
+                      <div><dt>💼 {vi?"Lũy kế cuối tháng":"월말 누적"}</dt><dd>{money(activeInvestments.summary.closingCumulative)}</dd></div>
+                    </dl>
+                    {activeInvestments.events.length ? (
+                      <div className={styles.itemList}>
+                        {activeInvestments.events.map((event) => (
+                          <article key={event.investmentId}>
+                            <span className={styles.itemDescription}>
+                              <strong>{formatDate(event.businessDate, lang)} · {event.participantName}</strong>
+                              <span> · {investmentEntryTypeLabel(event.entryType, lang)}{investmentEventAccountSuffix(event, lang)}</span>
+                            </span>
+                            <span className={styles.itemAmount}>
+                              <b className={event.amount < 0 ? styles.amountExpense : styles.amountIncome}>
+                                {event.amount > 0 ? "+" : ""}{money(event.amount)}
+                              </b>
+                            </span>
+                          </article>
+                        ))}
+                      </div>
+                    ) : <p className={styles.payableEmpty}>{vi?"Không có thay đổi vốn góp trong tháng này.":"이번 달 투자금 변동이 없습니다."}</p>}
+                  </>
+                )}
+              </div> : null}
             </section>
             <section
               className={styles.filters}
@@ -1780,6 +1872,18 @@ function accountBadgeLabel(accountName: string | null, lang: "ko" | "vi", entry?
   if (accountName === "개인(Vương)" || accountName === "Vương 개인계좌 (BABA 소유분)") return "Vương";
   if (accountName === "개인(Cho)" || accountName === "Cho 개인계좌 (BABA 소유분)") return "Cho";
   return accountName;
+}
+function investmentEntryTypeLabel(entryType: InvestmentEntryType, lang: "ko" | "vi") {
+  if (entryType === "opening") return lang === "vi" ? "Vốn góp ban đầu" : "기초 등록";
+  if (entryType === "contribution") return lang === "vi" ? "Góp vốn thêm" : "추가 투자";
+  return lang === "vi" ? "Điều chỉnh vốn góp" : "투자금 조정";
+}
+// contribution moves real funds, so it shows the account; opening/adjustment never
+// create a movement (existing RPC contract) and must never appear to have one.
+function investmentEventAccountSuffix(event: InvestmentEvent, lang: "ko" | "vi") {
+  if (event.entryType === "contribution") return ` · ${accountBadgeLabel(event.fundAccountName, lang)}`;
+  const noMovement = lang === "vi" ? "Không dịch chuyển quỹ" : "자금이동 없음";
+  return event.reason ? ` · ${noMovement} · ${event.reason}` : ` · ${noMovement}`;
 }
 function directionEmoji(direction: LedgerEntry["direction"]) {
   return direction === "income" ? "💰" : direction === "expense" ? "💸" : "🔄";
