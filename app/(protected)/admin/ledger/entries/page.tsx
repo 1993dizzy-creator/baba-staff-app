@@ -227,22 +227,25 @@ export default function LedgerEntriesPage() {
     [cardSettlement,setCardSettlement]=useState<{month:string;summary:CardSettlementSummary}|null>(null),
     [cardSettlementError,setCardSettlementError]=useState<{month:string;message:string}|null>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null),
-    initializedMonthRef = useRef("");
+    initializedMonthRef = useRef(""),
+    loadRequestSequenceRef = useRef(0);
   const load = useCallback(
     async (signal?: AbortSignal) => {
+      const requestedMonth = month;
+      const requestSequence = ++loadRequestSequenceRef.current;
       setLoading(true);
       setError("");
       try {
         const [ledgerResponse, closeResponse, payableResponse] = await Promise.all([
-          fetch(`/api/admin/ledger?month=${month}`, {
+          fetch(`/api/admin/ledger?month=${requestedMonth}`, {
             cache: "no-store",
             signal,
           }),
-          fetch(`/api/admin/ledger/month-close?month=${month}`, {
+          fetch(`/api/admin/ledger/month-close?month=${requestedMonth}`, {
             cache: "no-store",
             signal,
           }),
-          fetch(`/api/admin/ledger/payables?month=${month}`, { cache: "no-store", signal }),
+          fetch(`/api/admin/ledger/payables?month=${requestedMonth}`, { cache: "no-store", signal }),
         ]);
         const [ledgerBody, closeBody, payableBody] = await Promise.all([
           ledgerResponse.json(),
@@ -251,13 +254,23 @@ export default function LedgerEntriesPage() {
         ]);
         if (!ledgerResponse.ok || !closeResponse.ok || !payableResponse.ok)
           throw new Error(ledgerBody.code ?? closeBody.code ?? payableBody.code ?? "LOAD_FAILED");
-        if (signal?.aborted) return null;
+        // Stale-response guard: this response is applied only if (a) its own fetch
+        // wasn't aborted, (b) no newer load() call has started since (sequence ref,
+        // covers both AbortController-cancelled and plain manual reloads), and
+        // (c) each API body's own `month` — when present — still matches what we asked for.
+        if (signal?.aborted || requestSequence !== loadRequestSequenceRef.current) return null;
+        if (
+          (ledgerBody.month && ledgerBody.month !== requestedMonth) ||
+          (closeBody.month && closeBody.month !== requestedMonth) ||
+          (payableBody.month && payableBody.month !== requestedMonth)
+        )
+          return null;
         setData(ledgerBody);
         setPayables(payableBody);
         setClosed(closeBody.state === "closed");
         return ledgerBody as LedgerData;
       } catch (cause) {
-        if ((cause as Error).name !== "AbortError")
+        if ((cause as Error).name !== "AbortError" && requestSequence === loadRequestSequenceRef.current)
           setError(
             vi
               ? "Không thể tải sổ. Vui lòng thử lại sau."
@@ -265,7 +278,7 @@ export default function LedgerEntriesPage() {
           );
         return null;
       } finally {
-        if (!signal?.aborted) setLoading(false);
+        if (!signal?.aborted && requestSequence === loadRequestSequenceRef.current) setLoading(false);
       }
     },
     [month, vi],
@@ -273,21 +286,27 @@ export default function LedgerEntriesPage() {
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      // Invalidate this in-flight request (and any concurrent manual load() call,
+      // e.g. from a save handler) so its response can never land after a newer one.
+      loadRequestSequenceRef.current += 1;
+    };
   }, [load]);
   useEffect(() => {
     if (!cardSettlementExpanded) return;
+    const requestedMonth = month;
     const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch(`/api/admin/ledger/card-settlements?month=${month}`, {cache:"no-store",signal:controller.signal});
+        const response = await fetch(`/api/admin/ledger/card-settlements?month=${requestedMonth}`, {cache:"no-store",signal:controller.signal});
         const body = await response.json();
         if (!response.ok) throw new Error(body.code);
-        if (controller.signal.aborted) return;
-        setCardSettlement({month,summary:body.summary});
+        if (controller.signal.aborted || (body.month && body.month !== requestedMonth)) return;
+        setCardSettlement({month:requestedMonth,summary:body.summary});
         setCardSettlementError(null);
       } catch {
-        if (!controller.signal.aborted) setCardSettlementError({month,message:vi?"Không thể tải tình hình thẻ. Hãy mở trang chi tiết.":"카드 정산 현황을 불러오지 못했습니다. 상세 페이지에서 다시 확인해주세요."});
+        if (!controller.signal.aborted) setCardSettlementError({month:requestedMonth,message:vi?"Không thể tải tình hình thẻ. Hãy mở trang chi tiết.":"카드 정산 현황을 불러오지 못했습니다. 상세 페이지에서 다시 확인해주세요."});
       }
     })();
     return () => controller.abort();
@@ -399,6 +418,10 @@ export default function LedgerEntriesPage() {
   function shiftMonth(delta: number) {
     const date = new Date(`${month}-01T00:00:00Z`);
     date.setUTCMonth(date.getUTCMonth() + delta);
+    // Flip to the loading UI in the same render as the month switch itself (batched
+    // with setMonth), so there is no in-between frame where the new month's title
+    // could paint next to the previous month's still-attached numbers.
+    setLoading(true);
     setMonth(date.toISOString().slice(0, 7));
   }
   async function openEntry(entry: LedgerEntry) {
@@ -652,7 +675,7 @@ export default function LedgerEntriesPage() {
         <button
           ref={addButtonRef}
           type="button"
-          disabled={closed}
+          disabled={closed || data?.month !== month}
           className={styles.addButton}
           onClick={() => setManualOpen(true)}
         >
@@ -674,7 +697,10 @@ export default function LedgerEntriesPage() {
             <input
               type="month"
               value={month}
-              onChange={(event) => setMonth(event.target.value)}
+              onChange={(event) => {
+                setLoading(true);
+                setMonth(event.target.value);
+              }}
               aria-label={vi ? "Chọn tháng" : "월 선택"}
               style={monthInputStyle}
             />
@@ -693,7 +719,7 @@ export default function LedgerEntriesPage() {
             {error}
           </p>
         ) : null}
-        {data?.inventoryProjectionIssues?.length ? <div role="status">
+        {data && data.month === month && data.inventoryProjectionIssues?.length ? <div role="status">
           <strong>{vi ? "Các giao dịch nhập kho cần kiểm tra" : "입고 장부 반영 확인 필요"}</strong>
           {data.inventoryProjectionIssues.map(issue => <p key={issue.inventoryLogId}>
             {vi ? "Nhập kho" : "입고 기록"} #{issue.inventoryLogId}: {issue.code}
@@ -704,7 +730,7 @@ export default function LedgerEntriesPage() {
             {notice}
           </p>
         ) : null}
-        {data ? (
+        {data && data.month === month ? (
           <>
             <section
               className={styles.summaryGrid}
@@ -887,7 +913,7 @@ export default function LedgerEntriesPage() {
             {vi ? "Đang tải sổ..." : "장부를 불러오는 중입니다."}
           </p>
         ) : null}
-        {data ? (
+        {data && data.month === month ? (
           <aside className={styles.balanceBar}>
             <div className={styles.balanceInner}>
               <button

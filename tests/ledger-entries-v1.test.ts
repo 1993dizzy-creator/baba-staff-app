@@ -437,7 +437,7 @@ test("ledger entries UI keeps the compact chronological accordion contract", () 
 test("ledger entries header mirrors the monthly summary card hierarchy", () => {
   assert.match(pageCompact, /style=\{monthNoticeCardStyle\}/);
   assert.match(pageCompact, /<divstyle=\{monthControlStyle\}>/);
-  assert.match(pageCompact, /type="month"value=\{month\}onChange=\{\(event\)=>setMonth\(event\.target\.value\)\}/);
+  assert.match(pageCompact, /type="month"value=\{month\}onChange=\{\(event\)=>\{setLoading\(true\);setMonth\(event\.target\.value\);\}\}/);
   assert.match(pageCompact, /style=\{monthButtonStyle\}>\{vi\?"Trước":"이전"\}/);
   assert.match(pageCompact, /style=\{monthButtonStyle\}>\{vi\?"Sau":"다음"\}/);
   assert.match(pageCompact, /style=\{monthInputStyle\}/);
@@ -559,4 +559,34 @@ test("book UI keeps operational consoles out of the primary flow", () => {
   assert.match(route, /loadMonthTransactions/);
   assert.match(route, /loadPendingInventoryCandidates/);
   assert.match(route, /pageSize = 1000/);
+});
+
+test("month switch clears stale-month content immediately and stale network responses can never win a race", () => {
+  // 1) The loading flag flips in the SAME render as the month change (batched with
+  //    setMonth), so there is no in-between frame where the old month's numbers could
+  //    still be attached while the header already shows the new month.
+  assert.match(pageCompact, /functionshiftMonth\(delta:number\)\{[\s\S]*?setLoading\(true\);setMonth\(date\.toISOString\(\)\.slice\(0,7\)\);\}/);
+  assert.match(pageCompact, /onChange=\{\(event\)=>\{setLoading\(true\);setMonth\(event\.target\.value\);\}\}/);
+  // 2) Every place that renders the month's numbers is gated on data.month===month, not
+  //    just data being non-null — a stale (previous month's) payload falls through to
+  //    the existing loading placeholder instead of painting under the new month's title.
+  assert.match(pageCompact, /\{data&&data\.month===month\?\(/);
+  assert.match(pageCompact, /\{data&&data\.month===month&&data\.inventoryProjectionIssues\?\.length\?/);
+  // The add-transaction button can't be used against a month the loaded data doesn't match yet.
+  assert.match(pageCompact, /disabled=\{closed\|\|data\?\.month!==month\}/);
+  // 3) load() guards every response with a monotonic sequence ref in addition to the
+  //    existing AbortController, so a slower, superseded request's response — aborted
+  //    or not — can never overwrite state a newer request already produced.
+  assert.match(pageCompact, /loadRequestSequenceRef=useRef\(0\)/);
+  assert.match(pageCompact, /constrequestSequence=\+\+loadRequestSequenceRef\.current/);
+  assert.match(pageCompact, /signal\?\.aborted\|\|requestSequence!==loadRequestSequenceRef\.current\)returnnull/);
+  assert.match(pageCompact, /loadRequestSequenceRef\.current\+=1/);
+  // 4) Each API body's own `month` (when present) is cross-checked against what was
+  //    actually requested, as a second, independent layer under the sequence guard.
+  assert.match(pageCompact, /ledgerBody\.month&&ledgerBody\.month!==requestedMonth/);
+  assert.match(pageCompact, /closeBody\.month&&closeBody\.month!==requestedMonth/);
+  assert.match(pageCompact, /payableBody\.month&&payableBody\.month!==requestedMonth/);
+  // 5) The card-settlement effect (its own independent fetch) applies the same
+  //    body.month cross-check, on top of the AbortController it already had.
+  assert.match(pageCompact, /controller\.signal\.aborted\|\|\(body\.month&&body\.month!==requestedMonth\)\)return/);
 });

@@ -189,6 +189,144 @@ test('sheet submit preserves card deposit POST fields and closes only after loca
   assert.ok(state.updates.some(update=>update.slot===14&&update.value===false));
 });
 
+// ---------------------------------------------------------------------------
+// Month-transition stale-data regression (entries page)
+// ---------------------------------------------------------------------------
+
+test('a previous month\'s ledger/payables payload never paints under the newly selected month — the loading placeholder shows instead',()=>{
+  // Simulates the one render that exists between the user picking a new month and that
+  // month's fetch resolving: month has already moved to '2026-09' but data/payables are
+  // still whatever the (now stale) '2026-08' load last produced, and loading is true
+  // (set synchronously alongside setMonth, before any effect runs).
+  const state=pageFixture(entriesPath,{0:'2026-09',1:ledgerFixture('2026-08'),2:true,14:true,15:payableFixture('2026-08')});
+  assert.doesNotMatch(state.html,/class="summaryGrid"|class="payableSummary"|class="statusCard"|class="book"/);
+  assert.match(state.html,/class="empty">장부를 불러오는 중입니다\./);
+  // The add-transaction button must not accept new entries while the shown data
+  // doesn't yet belong to the selected month.
+  assert.match(state.html,/<button type="button" disabled="" class="addButton">/);
+});
+
+test('once the new month\'s data arrives (data.month matches the selected month again) the content renders normally',()=>{
+  const state=entriesFixture('2026-09').html;
+  assert.match(state,/class="summaryGrid"/);
+  assert.doesNotMatch(state,/class="empty">장부를 불러오는 중입니다\./);
+  assert.match(state,/<button type="button" class="addButton">/);
+});
+
+test('a load() call superseded by a newer one can never write state, even if its response resolves later (stale-response sequence guard)',async()=>{
+  const deferreds=[];
+  let fetchIndex=0;
+  const fetcher=async(url)=>{
+    const record={url};
+    record.promise=new Promise(resolve=>{record.resolve=resolve;});
+    record.batch=fetchIndex<3?'first':'second';
+    fetchIndex++;
+    deferreds.push(record);
+    return record.promise;
+  };
+  const respond=url=>url.includes('month-close')?{state:'open'}:url.includes('payables')?payableFixture('2026-09'):ledgerFixture('2026-09');
+  const state=entriesFixture('2026-09',{fetcher});
+  // Fire load() twice back-to-back without an intervening cleanup/abort — the harness's
+  // useRef-backed sequence counter is the only thing standing between this and a stale write.
+  const cleanupFirst=state.effects[0]();
+  const cleanupSecond=state.effects[0]();
+  assert.equal(deferreds.length,6);
+  // Resolve the SECOND (latest) call's three requests first...
+  for(const record of deferreds.filter(r=>r.batch==='second')) record.resolve(Response.json(respond(record.url)));
+  await new Promise(resolve=>setImmediate(resolve));
+  // ...then resolve the FIRST (now-superseded) call's three requests, arriving last.
+  for(const record of deferreds.filter(r=>r.batch==='first')) record.resolve(Response.json(respond(record.url)));
+  await new Promise(resolve=>setImmediate(resolve));
+  cleanupFirst();cleanupSecond();
+  // Only the later-started call is ever allowed to reach setData/setPayables/setClosed,
+  // regardless of which one's network response actually completed first.
+  assert.equal(state.updates.filter(update=>update.slot===1).length,1);
+  assert.equal(state.updates.filter(update=>update.slot===15).length,1);
+  assert.equal(state.updates.filter(update=>update.slot===5).length,1);
+});
+
+test('a card-settlement response for a month the user has already navigated away from is dropped even without abort (body.month guard)',async()=>{
+  const state=entriesFixture('2026-09',{cardExpanded:true,fetcher:async()=>Response.json({month:'2026-08',summary:cardSummary})});
+  state.effects[1]();
+  await new Promise(resolve=>setImmediate(resolve));
+  // slot 23 is cardSettlement — a body whose own month disagrees with the requested
+  // month must never be written, independent of the AbortController.
+  assert.equal(state.updates.filter(update=>update.slot===23).length,0);
+});
+
+// load()'s catch/finally must respect the same sequence guard as its success path — a
+// stale (superseded) call must not flip loading off or surface its own error while a
+// newer call is still in flight. Both calls below go through the same AbortController
+// path (effects[0]), but neither cleanup is invoked before the assertions run, so
+// signal.aborted stays false throughout — exactly like a signal-less manual reload
+// (onSaved/resolveCandidate/onPaid) racing a newer load(): only loadRequestSequenceRef
+// distinguishes them.
+function raceLoadFetcher(makeError) {
+  const deferreds = []; let fetchIndex = 0;
+  const fetcher = async (url) => {
+    const record = { url, batch: fetchIndex < 3 ? 'A' : 'B' };
+    fetchIndex++;
+    record.promise = new Promise((resolve, reject) => { record.resolve = resolve; record.reject = reject; });
+    deferreds.push(record);
+    return record.promise;
+  };
+  const respondOk = url => url.includes('month-close') ? { state: 'open' } : url.includes('payables') ? payableFixture('2026-09') : ledgerFixture('2026-09');
+  const settleBatch = (letter, ok) => {
+    for (const record of deferreds.filter(r => r.batch === letter)) {
+      if (ok) record.resolve(Response.json(respondOk(record.url)));
+      else record.reject(makeError ? makeError() : new Error('network down'));
+    }
+  };
+  return { fetcher, settleBatch };
+}
+
+test('Case A — a stale successful response cannot end loading or write data/payables/closed while a newer request is still pending', async () => {
+  const { fetcher, settleBatch } = raceLoadFetcher();
+  const state = entriesFixture('2026-09', { fetcher });
+  const cleanupA = state.effects[0](); // request A
+  const cleanupB = state.effects[0](); // request B, started after A — A is now stale
+  settleBatch('A', true); // A completes (success) first, while B is still pending
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(state.updates.filter(u => u.slot === 1).length, 0, 'stale A must not call setData');
+  assert.equal(state.updates.filter(u => u.slot === 15).length, 0, 'stale A must not call setPayables');
+  assert.equal(state.updates.filter(u => u.slot === 5).length, 0, 'stale A must not call setClosed');
+  assert.equal(state.updates.filter(u => u.slot === 2 && u.value === false).length, 0, 'stale A must not end loading — B is still pending');
+  settleBatch('B', true); // now B (the latest request) completes
+  await new Promise(resolve => setImmediate(resolve));
+  cleanupA(); cleanupB();
+  assert.equal(state.updates.filter(u => u.slot === 1).length, 1, 'only B writes data');
+  assert.equal(state.updates.filter(u => u.slot === 15).length, 1, 'only B writes payables');
+  assert.equal(state.updates.filter(u => u.slot === 5).length, 1, 'only B writes closed');
+  assert.equal(state.updates.filter(u => u.slot === 2 && u.value === false).length, 1, 'loading ends exactly once, by B');
+});
+
+test('Case B — a stale failed response cannot surface its error or end loading while a newer request is still pending', async () => {
+  const { fetcher, settleBatch } = raceLoadFetcher();
+  const state = entriesFixture('2026-09', { fetcher });
+  const cleanupA = state.effects[0](); // request A
+  const cleanupB = state.effects[0](); // request B, started after A — A is now stale
+  settleBatch('A', false); // A fails first, while B is still pending
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(state.updates.filter(u => u.slot === 3 && u.value !== '').length, 0, 'stale A\'s failure must not set an error message');
+  assert.equal(state.updates.filter(u => u.slot === 2 && u.value === false).length, 0, 'stale A must not end loading — B is still pending');
+  settleBatch('B', true); // B (the latest request) then succeeds normally
+  await new Promise(resolve => setImmediate(resolve));
+  cleanupA(); cleanupB();
+  assert.equal(state.updates.filter(u => u.slot === 3 && u.value !== '').length, 0, 'no error ever surfaces from the stale failure');
+  assert.equal(state.updates.filter(u => u.slot === 2 && u.value === false).length, 1, 'loading ends exactly once, by B\'s success');
+  assert.equal(state.updates.filter(u => u.slot === 1).length, 1, 'B still writes data normally');
+});
+
+test('Case C — when the latest (non-stale) request itself fails, the error banner is set and loading ends normally', async () => {
+  const state = entriesFixture('2026-09', { fetcher: async () => { throw new Error('network down'); } });
+  const cleanup = state.effects[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  cleanup();
+  assert.ok(state.updates.some(u => u.slot === 3 && u.value !== ''), 'a genuinely-latest failure must still show the error message');
+  assert.ok(state.updates.some(u => u.slot === 2 && u.value === false), 'loading must still end after a genuinely-latest failure');
+  assert.equal(state.updates.filter(u => u.slot === 1).length, 0, 'no stale/partial data is written on failure');
+});
+
 test('sheet recommendation, manual allocation and partial/confirm actions retain their contracts',async()=>{
   const sale={id:1,business_date:'2026-08-02',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000};
   const rec={id:10,deposit_date:'2026-09-03',deposit_amount:982,matched_gross_amount:0,difference_amount:0,status:'partial',memo:null,destination:null};
