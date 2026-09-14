@@ -35,5 +35,13 @@ export async function GET(request: Request) {
   for(const row of payables){const partyRelation=row.party as unknown as {name:string}|null;const partyId=Number(row.party_id);const expense=row.expense as unknown as {business_date:string}|null;const businessPartnerId=businessPartnerByLedgerParty.get(partyId);const current=map.get(partyId)??{partyId,partyName:partyRelation?.name??"-",partnerType:businessPartnerId===undefined?null:partnerTypeByBusinessPartner.get(businessPartnerId)??null,outstandingAmount:0,partialPaidAmount:0,totalOpenAmount:0,openCount:0,oldestDate:expense?.business_date??"",nearestDueDate:null,recentPaymentDate:recent.get(partyId)??null};current.outstandingAmount+=row.outstandingAmount;current.partialPaidAmount+=row.allocatedAmount;current.totalOpenAmount+=Number(row.original_amount);current.openCount+=1;if(expense?.business_date&&(!current.oldestDate||expense.business_date<current.oldestDate))current.oldestDate=expense.business_date;if(row.due_date&&(!current.nearestDueDate||row.due_date<current.nearestDueDate))current.nearestDueDate=row.due_date;map.set(partyId,current)}
   // Sum each party independently in thousandths, preserving exact 3-digit precision.
   for(const party of map.values()){const rows=payables.filter(row=>Number(row.party_id)===party.partyId);party.outstandingAmount=sumPayableAmounts(rows.map(row=>row.outstandingAmount));party.partialPaidAmount=sumPayableAmounts(rows.map(row=>row.allocatedAmount));party.totalOpenAmount=sumPayableAmounts(rows.map(row=>row.original_amount))}
-  return ledgerJson({ok:true,totalOutstanding:balances.totalOutstanding,...(month!==null?{month,summary:balances.summary}:{}),payables,parties:[...map.values()].sort((a,b)=>b.outstandingAmount-a.outstandingAmount)});
+  const currentParties=[...map.values()];
+  const parties=month===null?currentParties:(balances.partySummaries??[]).map(summary=>{
+    const source=sources.find(row=>Number(row.party_id)===summary.partyId);
+    const partyRelation=source?.party as unknown as {name:string}|null;
+    const businessPartnerId=businessPartnerByLedgerParty.get(summary.partyId);
+    const metadata=map.get(summary.partyId)??{partyId:summary.partyId,partyName:partyRelation?.name??"-",partnerType:businessPartnerId===undefined?null:partnerTypeByBusinessPartner.get(businessPartnerId)??null,partialPaidAmount:0,totalOpenAmount:0,openCount:0,oldestDate:"",nearestDueDate:null,recentPaymentDate:recent.get(summary.partyId)??null};
+    return {...metadata,...summary,outstandingAmount:summary.closingOutstanding};
+  });
+  return ledgerJson({ok:true,totalOutstanding:balances.totalOutstanding,...(month!==null?{month,summary:balances.summary}:{}),payables,parties:parties.sort((a,b)=>b.outstandingAmount-a.outstandingAmount)});
 }

@@ -26,10 +26,14 @@ export async function GET(request: Request) {
     return ledgerJson({
       ok: true, month, accounts: accounts.filter(account => account.is_active),
       reconciliations: reconciliations.filter(row => row.deposit_date >= start && row.deposit_date < end),
+      totalReconciliationCount: reconciliations.length,
       sales: gross.sales.filter(sale => sale.outstandingGrossAmount > 0),
+      monthlySales: gross.sales.filter(sale => sale.business_date >= start && sale.business_date < end),
+      priorUnreconciledSales: gross.sales.filter(sale => sale.business_date < start && sale.outstandingGrossAmount > 0),
       summary: {
         monthlyCardGross: gross.monthlyCardGross,
         monthlyReconciledGross: gross.monthlyReconciledGross,
+        monthlySettledGross: gross.monthlySettledGross,
         monthlyUnreconciledGross: gross.monthlyUnreconciledGross,
         totalUnreconciledGross: gross.totalUnreconciledGross,
         cardPendingBalance: sumCardMoney(movements.map(row => row.amount)),

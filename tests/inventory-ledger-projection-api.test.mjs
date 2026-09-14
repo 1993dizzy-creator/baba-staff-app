@@ -131,7 +131,7 @@ test('latest purchase correction updates supplier binding and price history befo
   assert.deepEqual(state.calls, ['source-commit', 'master-update', 'price-history', 'ledger-projection']);
 });
 
-function itemSetup() {
+function itemSetup({correctionFailure=false}={}) {
   const calls = [], logs = [];
   const item = { id: 1, item_name: 'Coca', item_name_vi: 'Cola', quantity: 10, purchase_price: 20000, supplier: 'Won Mart', supplier_partner_id: 10, part: 'bar' };
   const supabase = {
@@ -156,10 +156,17 @@ function itemSetup() {
       return query;
     },
     async rpc(name, args) {
+      if(name==='inventory_apply_purchase_correction_v1') {
+        assert.equal(args.p_purchase_log_id,99);assert.equal(args.p_expected_quantity,10);
+        assert.equal(args.p_actor_user_id,7);calls.push('atomic-correction');
+        if(correctionFailure)return {data:{status:'invalid_purchase_reference'},error:null};
+        Object.assign(item,args.p_payload);logs.push({id:100,correction_of_inventory_log_id:99,change_quantity:-4,reason:'purchase'});
+        return {data:{status:'ok',inventory:{...item},inventoryLogId:100},error:null};
+      }
       assert.equal(name, 'ledger_project_inventory_purchase_log_v1');
       assert.equal(args.p_inventory_log_id, logs.at(-1).id);
       assert.equal(args.p_request_actor_user_id, 7);
-      assert.ok(calls.indexOf('inventory-commit') < calls.indexOf('source-commit'));
+      assert.ok(calls.includes('atomic-correction') || calls.indexOf('inventory-commit') < calls.indexOf('source-commit'));
       calls.push('ledger-projection');
       return { error: { code: 'LEDGER_TEST_UNAVAILABLE' }, data: null };
     },
@@ -216,4 +223,18 @@ test('additional quick-save purchases get independent source IDs and preserve mo
   const before = state.logs.length;
   const retry = await state.invoke('PATCH', { id: 1, mode: 'quick-save', expectedQuantity: 15, reason: 'purchase', payload: { quantity: 20 } });
   assert.equal(retry.status, 409); assert.equal(state.logs.length, before);
+});
+
+test('explicit purchase edit commits Inventory and linked log atomically before projection and reports projection failure separately',async()=>{
+  const state=itemSetup();const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',correction_of_inventory_log_id:99,expectedQuantity:10,payload:{quantity:6}});
+  assert.equal(response.status,200);assert.equal(state.item.quantity,6);assert.equal(state.logs[0].correction_of_inventory_log_id,99);
+  assert.equal((await response.json()).ledgerSync.status,'failed');assert.deepEqual(state.calls,['atomic-correction','ledger-projection']);
+});
+
+test('invalid explicit purchase reference or missing expected quantity never falls back to an ordinary Inventory update',async()=>{
+  const failed=itemSetup({correctionFailure:true});
+  const response=await failed.invoke('PATCH',{id:1,reason:'purchase',correction_of_inventory_log_id:99,expectedQuantity:10,payload:{quantity:6}});
+  assert.equal(response.status,400);assert.equal(failed.item.quantity,10);assert.equal(failed.logs.length,0);
+  const state=itemSetup();assert.equal((await state.invoke('PATCH',{id:1,reason:'purchase',correction_of_inventory_log_id:99,payload:{quantity:6}})).status,400);
+  assert.equal(state.item.quantity,10);assert.equal(state.calls.length,0);
 });

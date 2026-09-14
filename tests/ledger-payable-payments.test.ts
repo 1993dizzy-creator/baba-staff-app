@@ -106,3 +106,19 @@ test("dashboard queries selected month while payment page keeps current endpoint
   assert.match(read("app/(protected)/admin/ledger/page.tsx"),/\/api\/admin\/ledger\/payables\?month=\$\{month\}/);
   assert.match(page,/fetch\("\/api\/admin\/ledger\/payables",/);assert.doesNotMatch(page,/payables\?month=/);
 });
+test("party period payments include fully settled payables and never use cumulative allocations",async()=>{
+  const rows=[source(1,"2026-08-01",1000,"paid",10),source(2,"2026-08-05",500,"partially_paid",10),source(3,"2026-09-01",600,"unpaid",20)];
+  const payments=[allocation("2026-08-10",1000,1),allocation("2026-08-15",200,2)];
+  const api=payableApi(rows,payments);
+  const august=await(await api.get("?month=2026-08")).json();
+  assert.equal(august.parties[0].periodPurchases,1500);assert.equal(august.parties[0].periodPayments,1200);assert.equal(august.parties[0].closingOutstanding,300);
+  const september=await(await api.get("?month=2026-09")).json();
+  assert.equal(september.parties.find((row:{partyId:number})=>row.partyId===10).periodPayments,0);
+  assert.equal(september.parties.find((row:{partyId:number})=>row.partyId===10).partialPaidAmount,200);
+  assert.equal(sumPayableAmounts(september.parties.map((row:{closingOutstanding:number})=>row.closingOutstanding)),september.summary.closingOutstanding);
+});
+test("monthly parties retain purchase and payment activity with zero closing; current mode remains open-only",async()=>{
+  const api=payableApi([source(1,"2026-08-01",1000,"paid",10)],[allocation("2026-08-31",1000)]);
+  const monthly=await(await api.get("?month=2026-08")).json();assert.equal(monthly.parties.length,1);assert.equal(monthly.parties[0].periodPayments,1000);assert.equal(monthly.parties[0].closingOutstanding,0);assert.equal(monthly.payables.length,0);
+  const current=await(await api.get()).json();assert.equal(current.parties.length,0);assert.equal(current.totalOutstanding,0);
+});

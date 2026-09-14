@@ -10,6 +10,8 @@ import {
   type FormEvent,
 } from "react";
 import Container from "@/components/Container";
+import Link from "next/link";
+import type { PayablePeriodSummary } from "@/lib/ledger/payables";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
 import {
@@ -114,10 +116,12 @@ type DateGroup = {
   income: number;
   expense: number;
 };
-type PayableParty = { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number };
-type PayablesSummary = { totalOutstanding:number; parties:PayableParty[] };
-type PayableRow = { id:number; original_amount:number; outstandingAmount:number; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null}|null };
+type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number };
+type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[] };
+type PayableRow = { id:number; party_id:number; original_amount:number; outstandingAmount:number; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null}|null };
 type PayableDetail = { party:{id:number;name:string}; payables:PayableRow[]; totalOutstanding:number };
+type CardSettlementSummary = { monthlyCardGross:number; monthlySettledGross:number; monthlyUnreconciledGross:number; totalUnreconciledGross:number; cardPendingBalance:number };
+const accountEmoji = (code:string,type:string) => code === "card_clearing" || type === "card_clearing" ? "💳" : code === "store_cash" ? "💵" : type === "personal_custody" || code.endsWith("_personal_custody") ? "👤" : "🏦";
 
 const currentMonth = () =>
   new Intl.DateTimeFormat("en-CA", {
@@ -213,12 +217,15 @@ export default function LedgerEntriesPage() {
     [reserveExpanded, setReserveExpanded] = useState<Set<string>>(() => new Set()),
     [payableExpanded, setPayableExpanded] = useState(false),
     [payables, setPayables] = useState<PayablesSummary | null>(null),
-    [payableParty, setPayableParty] = useState<PayableParty | null>(null);
+    [payableParty, setPayableParty] = useState<(PayableParty & {viewMonth:string}) | null>(null);
   const [saving, setSaving] = useState(false),
     [detailMessage, setDetailMessage] = useState(""),
     [posDetail, setPosDetail] = useState<Record<string, unknown> | null>(null),
     [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set()),
     [historyExpanded, setHistoryExpanded] = useState(false);
+  const [cardSettlementExpanded,setCardSettlementExpanded]=useState(false),
+    [cardSettlement,setCardSettlement]=useState<{month:string;summary:CardSettlementSummary}|null>(null),
+    [cardSettlementError,setCardSettlementError]=useState<{month:string;message:string}|null>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null),
     initializedMonthRef = useRef("");
   const load = useCallback(
@@ -235,7 +242,7 @@ export default function LedgerEntriesPage() {
             cache: "no-store",
             signal,
           }),
-          fetch("/api/admin/ledger/payables", { cache: "no-store", signal }),
+          fetch(`/api/admin/ledger/payables?month=${month}`, { cache: "no-store", signal }),
         ]);
         const [ledgerBody, closeBody, payableBody] = await Promise.all([
           ledgerResponse.json(),
@@ -244,6 +251,7 @@ export default function LedgerEntriesPage() {
         ]);
         if (!ledgerResponse.ok || !closeResponse.ok || !payableResponse.ok)
           throw new Error(ledgerBody.code ?? closeBody.code ?? payableBody.code ?? "LOAD_FAILED");
+        if (signal?.aborted) return null;
         setData(ledgerBody);
         setPayables(payableBody);
         setClosed(closeBody.state === "closed");
@@ -267,6 +275,23 @@ export default function LedgerEntriesPage() {
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+  useEffect(() => {
+    if (!cardSettlementExpanded) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(`/api/admin/ledger/card-settlements?month=${month}`, {cache:"no-store",signal:controller.signal});
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.code);
+        if (controller.signal.aborted) return;
+        setCardSettlement({month,summary:body.summary});
+        setCardSettlementError(null);
+      } catch {
+        if (!controller.signal.aborted) setCardSettlementError({month,message:vi?"Không thể tải tình hình thẻ. Hãy mở trang chi tiết.":"카드 정산 현황을 불러오지 못했습니다. 상세 페이지에서 다시 확인해주세요."});
+      }
+    })();
+    return () => controller.abort();
+  }, [cardSettlementExpanded,month,vi]);
   const groups = useMemo(() => {
     const keyword = search.trim().toLocaleLowerCase(),
       byDate = new Map<string, DateGroup>();
@@ -730,23 +755,44 @@ export default function LedgerEntriesPage() {
               {openingExpanded ? <div className={styles.openingGrid}>
                 {businessAccounts.map((account) => (
                   <article key={account.id}>
-                    <span>{localizedAccountName(account, lang)}</span>
+                    <span><i className={styles.accountEmoji} aria-hidden="true">{accountEmoji(account.code,account.type)}</i> {localizedAccountName(account, lang)}</span>
                     <strong>{money(account.openingBalance)}</strong>
                   </article>
                 ))}
               </div> : null}
             </section>
             <section className={styles.payableSummary} aria-labelledby="payable-summary-title">
-              {payableParties.length ? (
-                <button type="button" className={styles.payableToggle} aria-expanded={payableExpanded} aria-controls="payable-parties-list" onClick={() => setPayableExpanded((value) => !value)}>
-                  <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tình hình công nợ" : "미납금 현황"}</h2><strong>{money(payables?.totalOutstanding ?? 0)} <i aria-hidden>{payableExpanded ? "⌃" : "⌄"}</i></strong></div>
+                <button type="button" className={styles.payableToggle} aria-expanded={payableExpanded} aria-controls="payable-summary-body" onClick={() => setPayableExpanded((value) => !value)}>
+                  <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tình hình công nợ" : "미납금 현황"} ({vi?`T${Number(month.slice(5,7))}`:`${Number(month.slice(5,7))}월`})</h2><strong aria-label={vi?"Công nợ cuối tháng":"월말 미납"}>{money(payables?.totalOutstanding ?? 0)} <i aria-hidden>{payableExpanded ? "⌃" : "⌄"}</i></strong></div>
                 </button>
-              ) : (
-                <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tình hình công nợ" : "미납금 현황"}</h2><strong>{money(payables?.totalOutstanding ?? 0)}</strong></div>
-              )}
+              {payableExpanded ? <div className={styles.statusBody} id="payable-summary-body">
+              <PayableMonthTotals summary={payables?.month===month?payables.summary:undefined} vi={vi} />
               {payableParties.length ? (
-                payableExpanded ? <div className={styles.payableParties} id="payable-parties-list">{payableParties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty(party)}><span className={styles.payablePartyMain}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><span className={styles.payablePartyName}>{party.partyName}</span>{party.partialPaidAmount > 0 && <small className={styles.payablePartialPayment} role="group" aria-label={vi ? `Đã thanh toán một phần ${payableNumber(party.partialPaidAmount)}, tổng nợ gốc chưa tất toán ${payableNumber(party.totalOpenAmount)}` : `부분결제 ${payableNumber(party.partialPaidAmount)}, 총 미납원금 ${payableNumber(party.totalOpenAmount)}`}><span className={styles.payablePartialPaid}>{payableNumber(party.partialPaidAmount)}</span><span className={styles.payablePartialSeparator}> / </span><span className={styles.payableOpenPrincipal}>{payableNumber(party.totalOpenAmount)}</span></small>}</span><strong>{money(party.outstandingAmount)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i></button>)}</div> : null
+                <div className={styles.payableParties} id="payable-parties-list">{payableParties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty({...party,viewMonth:month})}>
+                  <span className={styles.payablePartyMain}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><span className={styles.payablePartyName}>{party.partyName}</span>
+                    <small className={styles.payablePartyPeriod}>{vi ? "Phát sinh tháng" : "당월 외상 발생"}: {payableNumber(party.periodPurchases)} · {vi ? "Thanh toán tháng" : "당월 지급"}: {payableNumber(party.periodPayments)}</small>
+                    {party.partialPaidAmount > 0 && <small className={styles.payablePartialPayment} role="group" aria-label={vi ? `Đã thanh toán một phần lũy kế ${payableNumber(party.partialPaidAmount)}, tổng nợ gốc chưa tất toán ${payableNumber(party.totalOpenAmount)}` : `누적 부분결제 ${payableNumber(party.partialPaidAmount)}, 총 미납원금 ${payableNumber(party.totalOpenAmount)}`}>{vi ? "Lũy kế" : "누적 부분결제"} <span className={styles.payablePartialPaid}>{payableNumber(party.partialPaidAmount)}</span><span className={styles.payablePartialSeparator}> / </span><span className={styles.payableOpenPrincipal}>{payableNumber(party.totalOpenAmount)}</span></small>}
+                  </span><strong aria-label={vi ? "Công nợ cuối tháng" : "월말 미납"}>{money(party.closingOutstanding)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i>
+                </button>)}</div>
               ) : <p className={styles.payableEmpty}>{vi ? "Không có công nợ chưa thanh toán." : "미납금이 없습니다."}</p>}
+              </div> : null}
+            </section>
+            <section className={styles.statusCard} aria-labelledby="card-settlement-title">
+              <button type="button" className={styles.payableToggle} aria-expanded={cardSettlementExpanded} aria-controls="card-settlement-body" onClick={()=>setCardSettlementExpanded(value=>!value)}>
+                <div className={styles.payableHeading}><h2 id="card-settlement-title">💳 {vi?"Tình hình quyết toán thẻ":"카드 정산 현황"} ({vi?`T${Number(month.slice(5,7))}`:`${Number(month.slice(5,7))}월`})</h2><strong aria-label={vi?"Thẻ chưa quyết toán tháng":"선택월 미정산 카드"}>{data.month===month?money(data.summary.unsettledCardGross):"-"} <i aria-hidden>{cardSettlementExpanded?"⌃":"⌄"}</i></strong></div>
+              </button>
+              {cardSettlementExpanded ? <div className={styles.statusBody} id="card-settlement-body">
+                <dl className={styles.payableMonthTotals}>
+                  {([
+                    ["monthlyCardGross",vi?"💳 Doanh thu thẻ":"💳 카드매출"],
+                    ["monthlySettledGross",vi?"✅ Đã hoàn tất":"✅ 정산완료"],
+                    ["monthlyUnreconciledGross",vi?"⏳ Chưa quyết toán":"⏳ 미정산"],
+                    ["totalUnreconciledGross",vi?"🌐 Chưa quyết toán toàn kỳ":"🌐 전체 미정산"],
+                  ] as const).map(([key,label])=><div key={key}><dt>{label}</dt><dd>{cardSettlement?.month===month&&cardSettlementError?.month!==month?money(cardSettlement.summary[key]):"-"}</dd></div>)}
+                </dl>
+                {cardSettlementError?.month===month?<p role="alert" className={styles.error}>{cardSettlementError.message}</p>:cardSettlement?.month!==month?<p className={styles.statusHint}>{vi?"Đang tải tình hình thẻ…":"카드 정산 현황을 불러오는 중입니다…"}</p>:null}
+                <div className={styles.statusActions}><p className={styles.statusHint}>{vi?"Đăng ký tiền vào và kết nối doanh thu tại trang chi tiết.":"입금 등록과 매출 연결은 상세 페이지에서 진행합니다."}</p><Link href="/admin/ledger/card-settlements" className={styles.statusDetailLink}>{vi?"Xem chi tiết":"상세 보기"} ›</Link></div>
+              </div>:null}
             </section>
             <section
               className={styles.filters}
@@ -914,7 +960,11 @@ export default function LedgerEntriesPage() {
             }}
           />
         ) : null}
-        {payableParty && data ? <PayablePartySheet lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { setPayableParty(null); await load(); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} /> : null}
+        {payableParty && data && payables?.month === month && payableParty.viewMonth === month ? (
+          month === currentMonth()
+            ? <PayablePartySheet lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { setPayableParty(null); await load(); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} />
+            : <HistoricalPayablePartySheet lang={lang} month={month} party={payableParty} rows={payables.payables.filter(row => Number(row.party_id) === payableParty.partyId)} onClose={() => setPayableParty(null)} />
+        ) : null}
       </main>
     </Container>
   );
@@ -1237,6 +1287,22 @@ function ConfirmedInventoryEditor({lang,draft,setDraft,accounts,categories,savin
     {error?<p className={styles.error} role="alert">{error}</p>:null}
     <button type="button" disabled={saving||paid||!draft.categoryId||!draft.amount||!draft.reason.trim()||(draft.paymentMode==="immediate"&&!draft.fundAccountId)} onClick={()=>void onSave()} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang lưu…":"저장 중…"):(vi?"Lưu chỉnh sửa":"수정 저장")}</button>
   </div>
+}
+
+function PayableMonthTotals({summary,vi}:{summary?:PayablePeriodSummary;vi:boolean}) {
+  const fields = [["openingOutstanding",vi?"↪️ Nợ chuyển tháng trước":"↪️ 전월 이월 미납"],["periodPurchases",vi?"📦 Phát sinh tháng":"📦 당월 외상 발생"],["periodPayments",vi?"💸 Thanh toán tháng":"💸 당월 지급"],["closingOutstanding",vi?"🧾 Công nợ cuối tháng":"🧾 월말 미납"]] as const;
+  return <dl className={styles.payableMonthTotals}>{fields.map(([key,label])=><div key={key}><dt>{label}</dt><dd>{summary?money(summary[key]):"-"}</dd></div>)}</dl>;
+}
+
+function HistoricalPayablePartySheet({lang,month,party,rows,onClose}:{lang:"ko"|"vi";month:string;party:PayableParty;rows:PayableRow[];onClose:()=>void}) {
+  const vi=lang==="vi";
+  return <BarSheet kind="full" compact topAligned comfortableTop title={`${month} · ${vi?"Công nợ cuối tháng":"월말 미납 상세"}`} closeLabel={vi?"Đóng":"닫기"} saving={false} onClose={onClose} footer={<button type="button" onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button>}>
+    <h3>{party.partyName}</h3>
+    <p role="status">{vi?"Chỉ xem số dư tại cuối tháng đã chọn. Không thể thanh toán từ lịch sử.":"선택월 말 기준 잔액을 보여주는 읽기 전용 상세입니다. 과거 조회에서는 결제할 수 없습니다."}</p>
+    <PayableMonthTotals summary={party} vi={vi}/>
+    <div className={styles.payableItems}>{[...rows].sort((a,b)=>(a.expense?.business_date??"").localeCompare(b.expense?.business_date??"")||a.id-b.id).map(row=><span key={row.id}><em>{row.expense?.business_date} · {payableItemLabel(row,vi)}</em><b>{money(row.outstandingAmount)}</b></span>)}</div>
+    {!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}
+  </BarSheet>;
 }
 
 function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {

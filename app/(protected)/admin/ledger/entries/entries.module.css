@@ -18,3 +18,25 @@
 .payablePartialPayment>.payablePartialPaid{color:#16805a}
 .payablePartialPayment>.payablePartialSeparator{color:#d1d5db}
 .payablePartialPayment>.payableOpenPrincipal{color:#6b7280}
+.cardSettlementLink{display:flex;align-items:center;justify-content:center;margin:0 0 14px;padding:12px 16px;border:1px solid #93c5fd;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800;text-decoration:none}
+.payableMonth{margin:0 0 8px;color:#4b5563;font-size:12px;font-weight:700}
+.payableMonthTotals{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:8px 0 12px}
+.payableMonthTotals>div{min-width:0;padding:9px;border-radius:9px;background:#f9fafb}
+.payableMonthTotals dt{color:#6b7280;font-size:11px}
+.payableMonthTotals dd{margin:4px 0 0;color:#111827;font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.payablePartyMain>.payablePartyPeriod{grid-column:1/-1;white-space:normal;font-size:10px;font-weight:500;line-height:1.4}
+@media(max-width:560px){.payableMonthTotals{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.payableSummary,.statusCard{margin-bottom:10px;padding:8px 12px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.payableToggle{min-height:44px;cursor:pointer;color:inherit}
+.payableToggle:focus-visible,.statusDetailLink:focus-visible{outline:2px solid #64748b;outline-offset:4px}
+.payableHeading{gap:8px}.payableHeading h2{min-width:0;font-size:14px}.payableHeading>strong{font-size:13px}
+.statusBody{margin-top:6px;padding-top:8px;border-top:1px solid #eef0f3}
+.statusBody>.payableMonthTotals{margin-top:0}.payableMonthTotals>div{border:1px solid #eef0f3;border-radius:10px;background:#f9fafb}
+.payableMonthTotals dt{line-height:1.5}.payableMonthTotals dd{margin-top:5px}
+.statusCard .payableMonthTotals{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.statusActions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px}
+.statusHint{margin:0;color:#6b7280;font-size:11px;line-height:1.6}
+.statusDetailLink{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;min-height:34px;padding:0 10px;border:1px solid #d1d5db;border-radius:9px;background:#f9fafb;color:#111827;font-size:11px;font-weight:800;text-decoration:none}
+.accountEmoji{font-style:normal}
+.dateChevron{transform:rotate(0deg)}
+@media(max-width:560px){.payableHeading h2{font-size:12px}.payableHeading>strong{font-size:12px}.statusActions{align-items:center}.statusHint{font-size:10px}.openingGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}

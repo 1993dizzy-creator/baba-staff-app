@@ -275,14 +275,16 @@ test("expense card shows accounting expense with paid-expense and unchanged paya
 });
 
 test("payable partial-payment UI keeps numbers-only spans and bilingual accessible labels", () => {
-  const row = page.slice(page.indexOf("payableExpanded ? <div className={styles.payableParties}"), page.indexOf("payableExpanded ? <div className={styles.payableParties}") + 2200);
+  const row = page.slice(page.indexOf("className={styles.payableParties}"), page.indexOf("className={styles.payableParties}") + 2200);
   assert.match(row, /party\.partialPaidAmount > 0 &&/);
   assert.match(row, /role="group" aria-label=/);
   assert.match(row, /부분결제.*총 미납원금/);
   assert.match(row, /Đã thanh toán một phần/);
   assert.match(row, /styles\.payablePartialPaid.*payableNumber\(party\.partialPaidAmount\)/);
   assert.match(row, /styles\.payableOpenPrincipal.*payableNumber\(party\.totalOpenAmount\)/);
-  assert.match(row, /<strong>\{money\(party\.outstandingAmount\)\}/);
+  assert.match(row, /<strong[^>]*>\{money\(party\.closingOutstanding\)\}/);
+  assert.match(row, /누적 부분결제/);
+  assert.match(row, /party\.periodPayments/);
 });
 
 // ---------------------------------------------------------------------------

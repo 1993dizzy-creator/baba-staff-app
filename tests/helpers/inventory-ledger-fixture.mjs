@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 
 const read = name => readFileSync(`supabase/migrations/${name}`, 'utf8');
-export async function database(Database = PGlite) {
+export async function database(Database = PGlite, withPurchaseCorrections = true) {
   const db = new Database();
   await db.exec(`create role anon; create role authenticated; create role service_role;
     create table public.users(id bigint primary key,role text,is_active boolean,app_login_enabled boolean);
@@ -45,5 +45,11 @@ export async function database(Database = PGlite) {
       values(100,1,'Coca','Cola','Drinks','Nuoc','can',10,20000,'Won Mart','2026-09-01','create','purchase','staff',1);
     update inventory_logs set created_at = '2026-09-01T10:00:00+00:00';
   `);
+  await db.exec(`alter table inventory add column quantity numeric default 10, add column purchase_price numeric default 20000,
+    add column item_name text default 'Coca',add column supplier text default 'Won Mart',add column unit text default 'can',
+    add column updated_at timestamptz,add column updated_by_name text,add column updated_by_username text;`);
+  await db.exec('create sequence fixture_inventory_log_id_seq start 1000; alter table inventory_logs alter column id set default nextval(\'fixture_inventory_log_id_seq\')');
+  await db.exec('create table inventory_price_logs(item_id bigint,item_name text,item_code text,old_price numeric,new_price numeric,diff numeric,business_date date,source text,reason text,actor_username text,note text)');
+  if(withPurchaseCorrections)await db.exec(read('20260914161954_link_inventory_purchase_corrections.sql'));
   return db;
 }

@@ -559,6 +559,13 @@ export async function PATCH(req: Request) {
       reason,
     } = body;
 
+    const correctionPurchaseLogId = body.correction_of_inventory_log_id == null
+      ? null : Number(body.correction_of_inventory_log_id);
+    if (correctionPurchaseLogId !== null && (!Number.isSafeInteger(correctionPurchaseLogId) || correctionPurchaseLogId <= 0
+      || mode === "quick-save" || normalizeInventoryReason(reason) !== "purchase" || expectedQuantity === undefined)) {
+      return jsonError("invalid_purchase_correction", "Select an original purchase and supply the expected quantity.", 400);
+    }
+
     if (!id || !payload) {
       return NextResponse.json(
         { ok: false, message: "Missing id or payload" },
@@ -682,7 +689,7 @@ export async function PATCH(req: Request) {
       );
     }
 
-    if (mode === "quick-save" && expectedQuantity !== undefined) {
+    if ((mode === "quick-save" || correctionPurchaseLogId !== null) && expectedQuantity !== undefined) {
       const currentQuantity = roundDecimal(Number(prevItem.quantity ?? 0));
       const baseQuantity = roundDecimal(Number(expectedQuantity));
 
@@ -751,6 +758,22 @@ export async function PATCH(req: Request) {
         },
         { status: 400 }
       );
+    }
+
+    if (correctionPurchaseLogId !== null) {
+      const businessDate = (await resolveInventoryBusinessDate()).businessDate;
+      const { data: correction, error } = await supabaseAdmin.rpc("inventory_apply_purchase_correction_v1", {
+        p_item_id: Number(id), p_purchase_log_id: correctionPurchaseLogId,
+        p_expected_quantity: Number(expectedQuantity), p_payload: serverPayload,
+        p_business_date: businessDate, p_actor_user_id: actor.id,
+      });
+      if (error) throw error;
+      if (correction?.status !== "ok") {
+        return jsonError(correction?.status ?? "purchase_correction_failed", "Purchase correction was not saved.",
+          correction?.status === "quantity_conflict" ? 409 : 400);
+      }
+      const ledgerSync = await projectInventoryPurchaseLog(Number(correction.inventoryLogId),actor.id);
+      return NextResponse.json({ok:true,mode,ledgerSync});
     }
 
     const { data: updatedItem, error: updateError } = await supabaseAdmin

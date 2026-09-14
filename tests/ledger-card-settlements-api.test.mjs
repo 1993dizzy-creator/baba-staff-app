@@ -60,10 +60,11 @@ test('GET keeps sale-month gross separate from deposit-month summary and returns
   const august=await(await get(state)).json();
   assert.equal(august.summary.monthlyCardGross,1000);assert.equal(august.summary.monthlyReconciledGross,1000);assert.equal(august.summary.monthlyUnreconciledGross,0);assert.equal(august.summary.totalUnreconciledGross,2100);assert.equal(august.summary.cardPendingBalance,2000);assert.equal(august.summary.actualCardDeposits,300);assert.equal(august.summary.monthlyUnmatchedDeposits,300);assert.equal(august.summary.actualDifferenceRate,null);
   assert.deepEqual(august.sales.map(row=>row.id),[1,3]);assert.deepEqual(august.reconciliations.map(row=>row.id),[2]);
+  assert.deepEqual(august.monthlySales.map(row=>row.id),[2]);assert.equal(august.monthlySales[0].outstandingGrossAmount,0);assert.deepEqual(august.priorUnreconciledSales.map(row=>row.id),[1]);assert.equal(august.summary.monthlySettledGross,1000);
   const september=await(await get(state,'2026-09')).json();assert.equal(september.summary.monthlyUnreconciledGross,1600);assert.equal(september.summary.monthlyCompletedGross,1000);assert.equal(september.summary.monthlyCompletedDeposit,982);assert.equal(september.summary.monthlyCompletedDifference,18);assert.equal(september.summary.actualDifferenceRate,0.018);
 });
 test('GET with no reconciliation leaves full monthly and total gross outstanding',async()=>{
-  const state=setup({sales:[sale(1,'2026-08-01',1000),sale(2,'2026-09-01',2000)]});const body=await(await get(state)).json();assert.equal(body.summary.monthlyUnreconciledGross,1000);assert.equal(body.summary.totalUnreconciledGross,3000);assert.equal(body.summary.actualCardDeposits,0);
+  const state=setup({sales:[sale(1,'2026-08-01',1000),sale(2,'2026-09-01',2000)]});const body=await(await get(state)).json();assert.equal(body.summary.monthlyUnreconciledGross,1000);assert.equal(body.summary.totalUnreconciledGross,3000);assert.equal(body.summary.actualCardDeposits,0);assert.equal(body.totalReconciliationCount,0);assert.equal(body.monthlySales.length,1);assert.equal(body.monthlySales[0].outstandingGrossAmount,1000);
 });
 test('GET pages sales, reconciliation lines and clearing movements beyond 1000 rows',async()=>{
   const sales=Array.from({length:1001},(_,i)=>sale(i+1,'2026-08-01',1000));

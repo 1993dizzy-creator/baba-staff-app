@@ -1,6 +1,7 @@
 // Isolated PostgreSQL execution (PGlite); never reads production credentials.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 
 import { database } from './helpers/inventory-ledger-fixture.mjs';
 
@@ -9,6 +10,123 @@ async function project(db,id=100,actor=1) {
   return rows[0].result;
 }
 async function one(db,sql) { return (await db.query(sql)).rows[0]; }
+
+async function correctionDatabase() {
+  const db=await database();
+  await db.exec("update inventory_logs set change_quantity=10,new_purchase_price=100,new_supplier='Postpaid',purchase_supplier_partner_id=12 where id=100; update inventory set quantity=10,purchase_price=100,supplier='Postpaid',supplier_partner_id=12");
+  assert.equal((await project(db)).status,'synced');
+  return db;
+}
+async function correction(db,{id=101,root=100,quantity=-4,item=1,supplier=12,price=100}={}) {
+  return db.query(`insert into inventory_logs(id,item_id,unit,change_quantity,new_purchase_price,new_supplier,business_date,source,reason,source_actor_user_id,purchase_supplier_partner_id,correction_of_inventory_log_id)
+    values($1,$2,'can',$3,$4,'Postpaid','2026-09-14','edit_form','purchase',1,$5,$6)`,[id,item,quantity,price,supplier,root]);
+}
+const economicExpense=db=>one(db,'select sum(amount*economic_effect_sign)::numeric as amount from ledger_transactions');
+const unpaid=db=>one(db,"select coalesce(sum(original_amount),0) as amount from ledger_payables where status='unpaid'");
+
+test('A: explicit -4 purchase correction rebooks 1000 to 600 and replaces unpaid payable idempotently',async()=>{
+  const db=await correctionDatabase();try{
+    await correction(db);assert.equal((await project(db,101)).code,'REBOOKED');
+    assert.equal(Number((await economicExpense(db)).amount),600);assert.equal(Number((await unpaid(db)).amount),600);
+    assert.equal(Number((await one(db,"select count(*) as n from ledger_payables where status='cancelled'")).n),1);
+    const original=await one(db,"select amount from ledger_transactions where source_type='inventory_purchase_candidate'");assert.equal(Number(original.amount),1000);
+    await project(db,101);await project(db,100);assert.equal(Number((await one(db,'select count(*) as n from ledger_transactions')).n),3);
+    assert.deepEqual((await one(db,'select source_snapshot from ledger_transactions order by id desc limit 1')).source_snapshot.inventory_correction_log_ids,[101]);
+  }finally{await db.close();}
+});
+
+test('B: full purchase cancellation records reversal only and never deletes or inserts a zero purchase',async()=>{
+  const db=await correctionDatabase();try{
+    await correction(db,{quantity:-10});assert.equal((await project(db,101)).code,'REBOOKED');
+    assert.equal(Number((await economicExpense(db)).amount),0);assert.equal(Number((await unpaid(db)).amount),0);
+    assert.equal(Number((await one(db,'select count(*) as n from ledger_transactions')).n),2);
+    assert.equal((await one(db,'select status from ledger_candidates')).status,'dismissed');
+    await project(db,101);await project(db,100);assert.equal(Number((await one(db,'select count(*) as n from ledger_transactions')).n),2);
+    assert.equal(Number((await one(db,"select count(*) as n from ledger_audit_logs where action='inventory_source_rebooked'")).n),1);
+  }finally{await db.close();}
+});
+
+test('C/D: explicit purchase id isolates same-day repeated purchases and rejects supplier/item mislinks',async()=>{
+  const db=await correctionDatabase();try{
+    await db.exec("insert into inventory_logs(id,item_id,category,unit,change_quantity,new_purchase_price,new_supplier,business_date,source,reason,source_actor_user_id,purchase_supplier_partner_id) values(200,1,'Drinks','can',10,100,'Postpaid','2026-09-01','quick_save','purchase',1,12)");
+    await project(db,200);await correction(db,{root:200});await project(db,101);
+    assert.equal(Number((await one(db,"select sum(amount*economic_effect_sign) as amount from ledger_transactions where source_snapshot->>'inventory_log_id'='100'")).amount),1000);
+    assert.equal(Number((await one(db,"select sum(amount*economic_effect_sign) as amount from ledger_transactions where source_snapshot->>'inventory_log_id'='200'")).amount),600);
+    await assert.rejects(correction(db,{id:102,supplier:11}),/INVALID_PURCHASE_CORRECTION_REFERENCE/);
+    await assert.rejects(correction(db,{id:103,item:2}),/INVALID_PURCHASE_CORRECTION_REFERENCE/);
+    await assert.rejects(correction(db,{id:104,root:101}),/INVALID_PURCHASE_CORRECTION_REFERENCE/);
+  }finally{await db.close();}
+});
+
+test('E/F: closed month, manual override and already paid payable never automatically rebook corrections',async()=>{
+  for(const [setup,code] of [
+    ["insert into ledger_month_closures(month) values('2026-09-01')",'MONTH_CLOSED'],
+    ['update ledger_transactions set amount=900','MANUAL_LEDGER_OVERRIDE'],
+    ["update ledger_payables set status='partially_paid'",'PAYABLE_ALREADY_PAID']
+  ]){const db=await correctionDatabase();try{
+    await db.exec(setup);await correction(db);
+    const result=await project(db,101);assert.equal(result.status,'review_required');assert.equal(result.code,code);
+    assert.equal(Number((await one(db,'select count(*) as n from ledger_transactions')).n),1);
+  }finally{await db.close();}}
+});
+
+test('atomic Inventory correction, cumulative correction quantities and price edits use only explicit source',async()=>{
+  const db=await correctionDatabase();try{
+    const apply=payload=>db.query("select inventory_apply_purchase_correction_v1(1,100,10,$1::jsonb,'2026-09-14',1) as result",[JSON.stringify(payload)]);
+    const result=(await apply({quantity:6,purchase_price:100})).rows[0].result;assert.equal(result.status,'ok');
+    const id=Number(result.inventoryLogId);assert.equal((await project(db,id)).code,'REBOOKED');
+    assert.equal(Number((await economicExpense(db)).amount),600);
+    await correction(db,{id:2000,quantity:-2,price:110});await project(db,2000);
+    assert.equal(Number((await economicExpense(db)).amount),440);assert.equal(Number((await unpaid(db)).amount),440);
+    assert.equal((await apply({quantity:5})).rows[0].result.status,'quantity_conflict');
+    await assert.rejects(db.query("select inventory_apply_purchase_correction_v1(1,100,6,'{\"quantity\":-10}'::jsonb,'2026-09-14',1)"),/PURCHASE_CORRECTION_EXCEEDS_PURCHASE/);
+    assert.equal(Number((await one(db,'select quantity from inventory')).quantity),6,'failed log rolls back Inventory update');
+  }finally{await db.close();}
+});
+
+test('legacy explicit audited attachment projects without applying stock quantity twice and requires owner',async()=>{
+  const db=await correctionDatabase();try{
+    await correction(db,{root:null});assert.equal((await project(db,101)).code,'PURCHASE_CORRECTION_REFERENCE_REQUIRED');
+    await db.exec("update inventory_logs set reason='stock_check',purchase_supplier_partner_id=null where id=101");
+    const link=actor=>db.query("select inventory_link_purchase_correction_v1(101,100,$1,'Verified original receipt') as result",[actor]);
+    assert.equal((await link(1)).rows[0].result.status,'forbidden');
+    assert.equal((await link(2)).rows[0].result.code,'REBOOKED');assert.equal(Number((await economicExpense(db)).amount),600);
+    assert.equal(Number((await one(db,'select quantity from inventory')).quantity),10);
+    await link(2);assert.equal(Number((await one(db,'select count(*) as n from ledger_transactions')).n),3);
+    assert.equal(Number((await one(db,"select count(*) as n from ledger_audit_logs where action='inventory_purchase_correction_linked'")).n),1);
+    await db.exec('set role authenticated');await assert.rejects(link(2),/permission denied/);await db.exec('reset role');
+  }finally{await db.close();}
+});
+
+test('reported large decimal correction reconstructs 16.42 units and 5993300 without touching Production',async()=>{
+  const db=await database();try{
+    await db.exec("update inventory_logs set id=10946,change_quantity=21415,new_purchase_price=365000,new_supplier='Postpaid',purchase_supplier_partner_id=12,unit='kg',business_date='2026-09-14' where id=100");
+    assert.equal((await project(db,10946)).status,'synced');
+    await db.exec("insert into inventory_logs(id,item_id,unit,change_quantity,new_purchase_price,new_supplier,business_date,source,reason,source_actor_user_id,purchase_supplier_partner_id,correction_of_inventory_log_id) values(10947,1,'kg',-21398.58,365000,'Postpaid','2026-09-14','edit_form','purchase',1,12,10946)");
+    assert.equal((await project(db,10947)).code,'REBOOKED');
+    assert.equal(Number((await economicExpense(db)).amount),5993300);assert.equal(Number((await unpaid(db)).amount),5993300);
+    assert.equal(Number((await one(db,'select amount from ledger_transactions order by id limit 1')).amount),7816475000);
+  }finally{await db.close();}
+});
+
+test('explicit price-only purchase correction is atomic and preserves original quantity with price audit',async()=>{
+  const db=await correctionDatabase();try{
+    const result=(await db.query("select inventory_apply_purchase_correction_v1(1,100,10,'{\"quantity\":10,\"purchase_price\":120}'::jsonb,'2026-09-14',1) as result")).rows[0].result;
+    assert.equal(result.status,'ok');assert.equal((await project(db,Number(result.inventoryLogId))).code,'REBOOKED');
+    assert.equal(Number((await economicExpense(db)).amount),1200);assert.equal(Number((await unpaid(db)).amount),1200);
+    assert.equal(Number((await one(db,'select diff from inventory_price_logs')).diff),20);
+  }finally{await db.close();}
+});
+
+test('unexpected deployed projection contract aborts the entire migration without overriding its body',async()=>{
+  const db=await database(undefined,false);try{
+    await db.exec("create or replace function public.ledger_project_inventory_purchase_log_v1(p_inventory_log_id bigint,p_request_actor_user_id bigint) returns jsonb language sql as $$select '{\"status\":\"custom_contract\"}'::jsonb$$");
+    await assert.rejects(db.exec(readFileSync('supabase/migrations/20260914161954_link_inventory_purchase_corrections.sql','utf8')),/PURCHASE_CORRECTION_CONTRACT_MISMATCH/);
+    await db.exec('rollback');
+    assert.equal((await project(db)).status,'custom_contract');
+    assert.equal(Number((await one(db,"select count(*) as n from information_schema.columns where table_name='inventory_logs' and column_name='correction_of_inventory_log_id'")).n),0);
+  }finally{await db.close();}
+});
 
 test('confirmed latest purchase reprojects while an older purchase amount stays unchanged', async () => {
   const db=await database();

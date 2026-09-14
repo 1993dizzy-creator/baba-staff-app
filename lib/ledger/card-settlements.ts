@@ -15,10 +15,12 @@ export const sumCardMoney = (values: readonly (number | string)[]) => values.red
 // Sale business_date controls gross reporting. Deposit dates never filter lines.
 export function calculateCardGross<T extends CardSale>(sales: readonly T[], lines: readonly CardAllocationLine[], start: string, end: string) {
   const allocated = new Map<number, number>();
+  const settled = new Map<number, number>();
   for (const line of lines) {
     if (!line.reconciliation || line.reconciliation.status === "cancelled") continue;
     const id = Number(line.pos_card_transaction_id);
     allocated.set(id, cardMoney((allocated.get(id) ?? 0) + Number(line.allocated_gross_amount)));
+    if (line.reconciliation.status === "matched") settled.set(id, cardMoney((settled.get(id) ?? 0) + Number(line.allocated_gross_amount)));
   }
   const balances = sales.map(sale => {
     const allocatedGrossAmount = allocated.get(Number(sale.id)) ?? 0;
@@ -31,6 +33,7 @@ export function calculateCardGross<T extends CardSale>(sales: readonly T[], line
     sales: balances,
     monthlyCardGross,
     monthlyReconciledGross: cardMoney(monthlyCardGross - monthlyUnreconciledGross),
+    monthlySettledGross: sumCardMoney(monthly.map(sale => Math.min(Number(sale.amount), settled.get(Number(sale.id)) ?? 0))),
     monthlyUnreconciledGross,
     totalUnreconciledGross: sumCardMoney(balances.map(sale => sale.outstandingGrossAmount)),
   };

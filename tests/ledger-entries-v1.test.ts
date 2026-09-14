@@ -10,6 +10,47 @@ const read = (path: string) => readFileSync(path, "utf8");
 const page = read("app/(protected)/admin/ledger/entries/page.tsx");
 const pageCompact = page.replace(/\s+/g, "");
 const css = read("app/(protected)/admin/ledger/entries/entries.module.css");
+const postcss = createRequire(import.meta.url)("postcss") as typeof import("postcss");
+const stylesheet = postcss.parse(css);
+const cssClasses = new Set<string>();
+stylesheet.walkRules(rule => {
+  for (const match of rule.selector.matchAll(/\.([A-Za-z_][\w-]*)/g)) cssClasses.add(match[1]);
+});
+
+test("entries CSS module supplies every referenced class, including dynamic transaction directions", () => {
+  assert.match(page, /import styles from "\.\/entries\.module\.css"/);
+  const referenced = new Set([...page.matchAll(/styles\.([A-Za-z_][\w]*)/g)].map(match => match[1]));
+  assert.match(page, /styles\[entry\.direction\]/);
+  for (const direction of ["income", "expense", "transfer"]) referenced.add(direction);
+  assert.deepEqual([...referenced].filter(name => !cssClasses.has(name)).sort(), [], "JSX classes missing from entries.module.css");
+});
+
+test("entries stylesheet keeps the complete ledger layout and transaction row selectors", () => {
+  for (const name of ["page", "summaryGrid", "summaryCard", "openingSection", "payableSummary", "statusCard", "book", "dateGroup", "dateHeader", "entryRow"]) {
+    assert.ok(cssClasses.has(name), `Missing core ledger selector: ${name}`);
+  }
+  const declarations = (selector: string) => {
+    const result = new Map<string, string>();
+    stylesheet.walkRules(rule => {
+      if (!rule.parent || rule.parent.type !== "root" || !rule.selectors.includes(selector)) return;
+      rule.walkDecls(decl => result.set(decl.prop, decl.value));
+    });
+    return result;
+  };
+  assert.equal(declarations(".page").get("max-width"), "800px");
+  assert.equal(declarations(".summaryGrid").get("display"), "grid");
+  assert.equal(declarations(".summaryGrid").get("grid-template-columns"), "repeat(2,minmax(0,1fr))");
+  assert.equal(declarations(".entryRow").get("display"), "grid");
+  for (const name of [".summaryCard", ".openingSection", ".payableSummary", ".statusCard", ".dateGroup"]) {
+    assert.ok(declarations(name).has("border"), `${name} must remain a bordered card`);
+    assert.ok(declarations(name).has("border-radius"), `${name} must remain rounded`);
+  }
+  assert.equal(declarations(".payableSummary").get("padding"), "8px 12px");
+  assert.equal(declarations(".statusCard").get("padding"), "8px 12px");
+  assert.equal(declarations(".payableToggle").get("min-height"), "44px");
+  assert.equal(declarations(".amountIncome").get("color"), "#16805a");
+  assert.equal(declarations(".amountExpense").get("color"), "#b4493e");
+});
 const keepingUi = read("components/bar/keeping/KeepingUi.tsx");
 const bottomNav = read("components/BottomNav.tsx");
 const route = read("app/api/admin/ledger/route.ts");
@@ -302,14 +343,14 @@ test("payable outstanding card defaults to collapsed, stays expandable, and keep
   assert.match(pageCompact, /\[payableExpanded,setPayableExpanded\]=useState\(false\)/);
   assert.match(pageCompact, /className=\{styles\.payableToggle\}/);
   assert.match(pageCompact, /aria-expanded=\{payableExpanded\}/);
-  assert.match(pageCompact, /aria-controls="payable-parties-list"/);
+  assert.match(pageCompact, /aria-controls="payable-summary-body"/);
   assert.match(pageCompact, /onClick=\{\(\)=>setPayableExpanded\(\(value\)=>!value\)\}/);
-  assert.match(pageCompact, /payableExpanded\?<divclassName=\{styles\.payableParties\}id="payable-parties-list">/);
-  // Party rows keep opening PayablePartySheet regardless of the collapse toggle.
-  assert.match(pageCompact, /onClick=\{\(\)=>setPayableParty\(party\)\}/);
-  // Zero-outstanding-party edge case: heading/total render without a toggle button.
-  assert.match(pageCompact, /payableParties\.length\?\(<buttontype="button"className=\{styles\.payableToggle\}/);
-  assert.match(pageCompact, /\):\(<divclassName=\{styles\.payableHeading\}>/);
+  assert.match(pageCompact, /payableExpanded\?<divclassName=\{styles\.statusBody\}id="payable-summary-body">/);
+  assert.match(pageCompact, /className=\{styles\.payableParties\}id="payable-parties-list"/);
+  // Party drilldown captures the selected month so it cannot leak across month changes.
+  assert.match(pageCompact, /onClick=\{\(\)=>setPayableParty\(\{\.\.\.party,viewMonth:month\}\)\}/);
+  // The monthly summary remains expandable even when there are no outstanding parties.
+  assert.doesNotMatch(pageCompact, /payableParties\.length\?\(<buttontype="button"className=\{styles\.payableToggle\}/);
   assert.match(page, /미납금이 없습니다/);assert.match(page, /Không có công nợ chưa thanh toán/);
 });
 

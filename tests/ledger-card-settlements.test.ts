@@ -51,6 +51,9 @@ test("B and C: later deposit allocates gross, not net deposit, against originati
 });
 test("D: cancelled reconciliation never allocates gross", () => assert.equal(gross([cardSale()],[cardLine(1000,"cancelled")]).monthlyUnreconciledGross,1000));
 test("E: partial allocation reduces outstanding by exactly its gross", () => assert.equal(gross([cardSale()],[cardLine(400,"partial")]).monthlyUnreconciledGross,600));
+test("sale-month completed gross excludes partial saves while connected gross includes them",()=>{
+  const result=gross([cardSale()],[cardLine(400,"partial"),cardLine(300,"matched")]);assert.equal(result.monthlyReconciledGross,700);assert.equal(result.monthlySettledGross,300);assert.equal(result.monthlyUnreconciledGross,300);
+});
 test("F: allocations of other months never enter selected sale month", () => {
   const result=gross([cardSale(),cardSale(2,2000,"2026-09-01")],[cardLine(2000,"matched",2)]);assert.equal(result.monthlyReconciledGross,0);assert.equal(result.monthlyUnreconciledGross,1000);assert.equal(result.totalUnreconciledGross,1000);
 });
@@ -88,5 +91,5 @@ test("dashboard accounting income and historical payable card remain intact", ()
   assert.match(dashboard,/money\(data.summary.income\)/);assert.match(dashboard,/data.summary.unreconciledCardGross/);assert.match(dashboard,/월말 미지급금/);assert.match(dashboard,/payables\?month=\$\{month\}/);assert.match(dashboard,/setOutstanding\(payables.summary.closingOutstanding\)/);
 });
 test("UI retains manual allocations and POS detail without a cancellation control", () => {
-  assert.match(ui,/setAllocations\(current/);assert.match(ui,/pos-drilldown/);assert.match(ui,/차액률 \(차액 \/ Gross\)/);assert.match(ui,/부분 저장/);assert.doesNotMatch(ui,/>취소<|\/cancel/);
+  assert.match(ui,/setAllocations\(current/);assert.match(ui,/pos-drilldown/);assert.match(ui,/정산 차액률/);assert.match(ui,/부분 저장/);assert.doesNotMatch(ui,/>취소<|\/cancel/);
 });
