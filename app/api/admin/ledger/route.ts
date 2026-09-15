@@ -7,6 +7,8 @@ import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { computePaidExpenseTotal } from "@/lib/ledger/payables";
 import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
 import { computeReceivedIncome } from "@/lib/ledger/summary";
+import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
+import { buildFundAccountView, fundAccountViewMode } from "@/lib/ledger/fund-account-view";
 
 export const dynamic = "force-dynamic";
 
@@ -20,11 +22,20 @@ export async function GET(request: Request) {
   const month = new URL(request.url).searchParams.get("month") ?? "";
   if (!MONTH.test(month)) return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400);
   const monthStart = `${month}-01`;
-  const next = new Date(`${monthStart}T00:00:00Z`);
-  next.setUTCMonth(next.getUTCMonth() + 1);
-  const nextMonth = next.toISOString().slice(0, 10);
+  const { businessDateExclusive: nextMonth, cutoffAt: monthEndCutoffAt } = getBusinessMonthEndBoundary(month);
 
   try {
+    const now = new Date();
+    const currentBusinessDate = getBusinessDate(now);
+    const closureResult = month === currentBusinessDate.slice(0, 7)
+      ? { data: null, error: null }
+      : await supabaseServer.from("ledger_month_closures")
+          .select("status,summary_snapshot")
+          .eq("month", monthStart)
+          .eq("status", "closed")
+          .maybeSingle();
+    if (closureResult.error) throw closureResult.error;
+    const fundsViewMode = fundAccountViewMode(month, currentBusinessDate, Boolean(closureResult.data));
     const accountsPromise = supabaseServer.from("ledger_fund_accounts").select("id,code,type,holder_name,display_name,is_active,is_business_fund,sort_order").order("sort_order");
     const categoriesPromise = supabaseServer.from("ledger_categories").select("id,name,kind,parent_id,cost_behavior,is_active,parent:ledger_categories!parent_id(name)").eq("is_active", true).order("kind").order("name");
     const partiesPromise = supabaseServer.from("ledger_parties").select("id,name,type,is_active").eq("is_active", true).order("name");
@@ -32,15 +43,29 @@ export async function GET(request: Request) {
     const bridgePromise = supabaseServer.from("business_partner_ledger_parties").select("business_partner_id,ledger_party_id");
     const profitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales"]);
     const recognitionProfitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).eq("type", "expense_recognition");
-    const movementsPromise = supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status,occurred_at)").eq("transaction.status", "confirmed").lte("transaction.occurred_at", new Date().toISOString());
+    const movementsQuery = supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status,occurred_at,business_date)").eq("transaction.status", "confirmed");
+    const movementsPromise = fundsViewMode === "closed_snapshot"
+      ? Promise.resolve({ data: [], error: null })
+      : fundsViewMode === "live"
+        ? movementsQuery.lte("transaction.occurred_at", now.toISOString())
+        : movementsQuery.lt("transaction.business_date", nextMonth);
     const openingPromise = supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status,type,business_date,source_type)").eq("transaction.status", "confirmed").eq("transaction.type", "opening").eq("transaction.business_date", monthStart);
     // Card gross sales: this month's POS card-bucket sales (business_date scoped), before card-company fees.
     const cardGrossSalesPromise = loadCardSales(monthStart, nextMonth);
     // Actual card deposits: this month's real bank deposits from the card company (deposit_date scoped, not the sale's month).
     const actualCardDepositsPromise = loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("deposit_amount").neq("status", "cancelled").gte("deposit_date", monthStart).lt("deposit_date", nextMonth).order("id").range(from, to));
-    const reservesPromise = supabaseServer.from("ledger_reserve_plans")
-      .select("id,name,is_active,fund_account_id,linked_recurring_plan:ledger_recurring_expense_plans(source_key_prefix),entries:ledger_reserve_entries(entry_type,amount)")
-      .order("id");
+    const reservesPromise = fundsViewMode === "closed_snapshot"
+      ? Promise.resolve({ data: [], error: null })
+      : supabaseServer.from("ledger_reserve_plans")
+          .select("id,name,is_active,fund_account_id,linked_recurring_plan:ledger_recurring_expense_plans(source_key_prefix)")
+          .order("id");
+    const reserveEntriesQuery = supabaseServer.from("ledger_reserve_entries")
+      .select("reserve_plan_id,entry_type,amount,occurred_at");
+    const reserveEntriesPromise = fundsViewMode === "closed_snapshot"
+      ? Promise.resolve({ data: [], error: null })
+      : fundsViewMode === "live"
+        ? reserveEntriesQuery.lte("occurred_at", now.toISOString())
+        : reserveEntriesQuery.lt("occurred_at", monthEndCutoffAt);
     // Root expense/expense_recognition transactions recognized this month, with their
     // linked payable (if any) — the base population for the paidExpense formula below.
     const paidExpenseRootsPromise = supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,source_type,correction_of_id,payable:ledger_payables(status,allocations:ledger_payable_allocations(allocated_amount))").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["expense", "expense_recognition"]);
@@ -53,12 +78,12 @@ export async function GET(request: Request) {
       .eq("candidate_type", "employee_meal").eq("source_type", "attendance_meal_daily")
       .eq("status", "confirmed").gte("business_date", monthStart).lt("business_date", nextMonth)
       .not("resolved_transaction_id", "is", null);
-    const [accountsResult, categoriesResult, partiesResult, partnerResult, bridgeResult, profitResult, recognitionProfitResult, movementsResult, openingResult, cardGrossSalesResult, actualCardDepositsResult, reservesResult, paidExpenseRootsResult, paidExpenseCorrectionsResult, confirmedMealCandidatesResult, transactions, candidates] = await Promise.all([
+    const [accountsResult, categoriesResult, partiesResult, partnerResult, bridgeResult, profitResult, recognitionProfitResult, movementsResult, openingResult, cardGrossSalesResult, actualCardDepositsResult, reservesResult, reserveEntriesResult, paidExpenseRootsResult, paidExpenseCorrectionsResult, confirmedMealCandidatesResult, transactions, candidates] = await Promise.all([
       accountsPromise, categoriesPromise, partiesPromise, partnerPromise, bridgePromise, profitPromise,
-      recognitionProfitPromise, movementsPromise, openingPromise, cardGrossSalesPromise, actualCardDepositsPromise, reservesPromise, paidExpenseRootsPromise, paidExpenseCorrectionsPromise,
+      recognitionProfitPromise, movementsPromise, openingPromise, cardGrossSalesPromise, actualCardDepositsPromise, reservesPromise, reserveEntriesPromise, paidExpenseRootsPromise, paidExpenseCorrectionsPromise,
       confirmedMealCandidatesPromise, loadMonthTransactions(monthStart, nextMonth), loadPendingInventoryCandidates(monthStart, nextMonth),
     ]);
-    for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,reservesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
+    for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,reservesResult,reserveEntriesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
     const profitRows=[...(profitResult.data??[]),...(recognitionProfitResult.data??[])];
     const recognizedIncome = profitRows.filter((row) => row.type === "income" || row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const expense = profitRows.filter((row) => row.type === "expense" || row.type === "expense_recognition").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
@@ -88,16 +113,25 @@ export async function GET(request: Request) {
       corrections: correctionsByRoot.get(Number(row.id)) ?? [],
     }));
     const paidExpense = computePaidExpenseTotal(paidExpenseRoots);
-    const balanceByAccount = new Map<number,number>();
-    for (const row of movementsResult.data ?? []) balanceByAccount.set(Number(row.fund_account_id),(balanceByAccount.get(Number(row.fund_account_id)) ?? 0) + Number(row.amount));
-    const openingByAccount = new Map<number,number>();
-    for (const row of openingResult.data ?? []) openingByAccount.set(Number(row.fund_account_id),(openingByAccount.get(Number(row.fund_account_id)) ?? 0) + Number(row.amount));
-    const accountReserves = reservesByFundAccount(reservesResult.data ?? []);
-    const accounts = (accountsResult.data ?? []).map((account) => {
-      const balance = balanceByAccount.get(Number(account.id)) ?? 0;
-      const reserves = accountReserves.get(Number(account.id)) ?? [];
-      const reserveTotal = reserves.reduce((sum, reserve) => sum + reserve.currentAmount, 0);
-      return { ...account, balance, openingBalance: openingByAccount.get(Number(account.id)) ?? 0, reserves, reserveTotal, availableBalance: balance - reserveTotal };
+    const reserveEntriesByPlan = new Map<number, Array<{ entry_type: string; amount: number | string }>>();
+    for (const entry of reserveEntriesResult.data ?? []) {
+      const planId = Number(entry.reserve_plan_id);
+      const entries = reserveEntriesByPlan.get(planId) ?? [];
+      entries.push({ entry_type: entry.entry_type, amount: entry.amount });
+      reserveEntriesByPlan.set(planId, entries);
+    }
+    const reservePlans = (reservesResult.data ?? []).map((plan) => ({
+      ...plan,
+      entries: reserveEntriesByPlan.get(Number(plan.id)) ?? [],
+    }));
+    const accounts = buildFundAccountView({
+      accounts: accountsResult.data ?? [],
+      openingMovements: openingResult.data ?? [],
+      movements: movementsResult.data ?? [],
+      reservePlans,
+      groupReserves: reservesByFundAccount,
+      mode: fundsViewMode,
+      closeSummary: closureResult.data?.summary_snapshot as Parameters<typeof buildFundAccountView>[0]["closeSummary"],
     });
     const accountById = new Map(accounts.map(account => [Number(account.id), account]));
     const partnerById = new Map((partnerResult.data ?? []).map(partner => [Number(partner.id), partner]));
@@ -121,7 +155,7 @@ export async function GET(request: Request) {
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
     ]);
     const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources);
-    return ledgerJson({ ok: true, month, inventoryProjectionIssues, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, cardGrossSales, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
+    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, cardGrossSales, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);

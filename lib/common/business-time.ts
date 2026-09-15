@@ -89,6 +89,17 @@ export function getBusinessWindow(baseDate = new Date()) {
   return getBusinessWindowByBusinessDate(getBusinessDate(baseDate));
 }
 
+export function getBusinessMonthEndBoundary(month: string) {
+  const nextMonth = new Date(`${month}-01T00:00:00Z`);
+  nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+  const businessDateExclusive = nextMonth.toISOString().slice(0, 10);
+
+  return {
+    businessDateExclusive,
+    cutoffAt: `${businessDateExclusive}T${String(BUSINESS_DAY_END_HOUR).padStart(2, "0")}:00:00${BUSINESS_TIMEZONE_OFFSET}`,
+  };
+}
+
 export function isInCurrentBusinessDay(
   value?: string | null,
   baseDate = new Date()

@@ -7,6 +7,7 @@ import { reserveCurrentAmount, reservesByFundAccount } from "../lib/ledger/reser
 const migration = readFileSync("supabase/migrations/202608270001_link_reserve_plans_to_fund_accounts.sql", "utf8");
 const reserveFoundation = readFileSync("supabase/migrations/202608210007_add_recurring_reserves_bep.sql", "utf8");
 const ledgerApi = readFileSync("app/api/admin/ledger/route.ts", "utf8");
+const fundAccountView = readFileSync("lib/ledger/fund-account-view.ts", "utf8");
 const reserveApi = readFileSync("app/api/admin/ledger/reserves/route.ts", "utf8");
 const page = readFileSync("app/(protected)/admin/ledger/entries/page.tsx", "utf8");
 
@@ -169,8 +170,9 @@ test("same-account concurrent allocations serialize before recomputing totals", 
 });
 
 test("earmarks affect only available balance and never gross movement balance", () => {
-  assert.match(ledgerApi, /const balance = balanceByAccount\.get/);
-  assert.match(ledgerApi, /availableBalance: balance - reserveTotal/);
+  assert.match(fundAccountView, /const balance = mode === "closed_snapshot"/);
+  assert.match(fundAccountView, /availableBalance: balance - reserveTotal/);
+  assert.match(ledgerApi, /buildFundAccountView/);
   assert.doesNotMatch(migration, /insert into public\.ledger_movements/i);
   assert.match(reserveApi, /reserveCurrentAmount/);
   assert.match(migration, /ledger_transaction\.status = 'confirmed'/);

@@ -8,6 +8,7 @@ export type AccountReservePlan = {
   name: string;
   is_active?: boolean;
   fund_account_id?: number | string | null;
+  currentAmount?: number | string;
   linked_recurring_plan?: { source_key_prefix?: string | null } | Array<{ source_key_prefix?: string | null }> | null;
   entries?: ReserveEntryAmount[] | null;
 };
@@ -53,7 +54,9 @@ export function reservesByFundAccount(plans: readonly AccountReservePlan[]) {
   const byAccount = new Map<number, Array<{ id: number; name: string; currentAmount: number; linkedRecurringSourceKeyPrefix: string | null }>>();
   for (const plan of plans) {
     if (plan.fund_account_id == null) continue;
-    const currentAmount = reserveCurrentAmount(plan.entries ?? []);
+    const currentAmount = plan.currentAmount == null
+      ? reserveCurrentAmount(plan.entries ?? [])
+      : Number(plan.currentAmount);
     if (plan.is_active === false && currentAmount === 0) continue;
     const accountId = Number(plan.fund_account_id);
     const list = byAccount.get(accountId) ?? [];

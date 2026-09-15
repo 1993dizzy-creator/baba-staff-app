@@ -34,6 +34,7 @@ import {
   manualExpenseCategorySort,
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
+import { getBusinessDate } from "@/lib/common/business-time";
 
 type Account = {
   id: number;
@@ -81,6 +82,12 @@ type LedgerSummary = {
 type LedgerData = {
   inventoryProjectionIssues?: Array<{ inventoryLogId: number; status: string; code: string }>;
   month: string;
+  fundsView: {
+    month: string;
+    mode: "live" | "provisional" | "closed_snapshot";
+    asOf: string;
+    businessDateExclusive: string | null;
+  };
   summary: LedgerSummary;
   accounts: Account[];
   categories: Category[];
@@ -127,14 +134,7 @@ type InvestmentSummary = { openingCumulative:number; periodOpening:number; perio
 type InvestmentsData = { month:string; configured:boolean; summary:InvestmentSummary; events:InvestmentEvent[] };
 const accountEmoji = (code:string,type:string) => code === "card_clearing" || type === "card_clearing" ? "💳" : code === "store_cash" ? "💵" : type === "personal_custody" || code.endsWith("_personal_custody") ? "👤" : "🏦";
 
-const currentMonth = () =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric",
-    month: "2-digit",
-  })
-    .format(new Date())
-    .slice(0, 7);
+const currentMonth = () => getBusinessDate().slice(0, 7);
 const localTime = () =>
   new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 16);
 const money = (amount: number) =>
@@ -1015,7 +1015,18 @@ export default function LedgerEntriesPage() {
                 aria-controls="ledger-current-balance-detail"
                 onClick={() => setBalanceExpanded((value) => !value)}
               >
-                <span>{vi ? "Tiền hiện có" : "현재 보유금"}</span>
+                <span className={styles.balanceViewLabel}>
+                  {vi
+                    ? `Tiền hiện có (T${Number(month.slice(5, 7))})`
+                    : `현재 보유금 (${Number(month.slice(5, 7))}월)`}
+                  {data.fundsView.mode !== "live" ? (
+                    <small className={styles.balanceViewBadge}>
+                      {data.fundsView.mode === "closed_snapshot"
+                        ? vi ? "Đã chốt" : "마감"
+                        : vi ? "Chưa chốt" : "미마감"}
+                    </small>
+                  ) : null}
+                </span>
                 <strong>{money(currentBalanceTotal)}</strong>
                 <i aria-hidden>{balanceExpanded ? "⌃" : "⌄"}</i>
               </button>

@@ -1,16 +1,11 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
+import { getBusinessMonthEndBoundary } from "@/lib/common/business-time";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 export const validCloseMonth = (value: unknown): value is string => typeof value === "string" && MONTH.test(value);
-
-function nextMonth(month: string) {
-  const date = new Date(`${month}-01T00:00:00Z`);
-  date.setUTCMonth(date.getUTCMonth() + 1);
-  return date.toISOString().slice(0, 10);
-}
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -25,7 +20,7 @@ export function snapshotHash(snapshot: unknown) {
 type Tx = { id:number; type:string; business_date:string; recognition_month:string|null; amount:number|string; economic_effect_sign:number; source_type:string; source_key:string|null; category:{name:string}|null; movements:Array<{fund_account_id:number;amount:number|string}> };
 
 export async function buildMonthCloseSnapshot(month: string) {
-  const monthStart = `${month}-01`, endExclusive = nextMonth(month), endAt = `${endExclusive}T03:00:00+07:00`;
+  const monthStart = `${month}-01`, { businessDateExclusive: endExclusive, cutoffAt: endAt } = getBusinessMonthEndBoundary(month);
   const [transactionsResult, accountsResult, payableResult, allocationResult, cardResult, cardLineResult, reserveResult, reserveEntryResult, payrollResult, recurringResult, candidateResult,ownerCapacityResult,ownerInvestmentResult,ownerAllocationResult] = await Promise.all([
     supabaseServer.from("ledger_transactions").select("id,type,business_date,recognition_month,amount,economic_effect_sign,source_type,source_key,category:ledger_categories(name),movements:ledger_movements(fund_account_id,amount)").eq("status","confirmed").or(`recognition_month.eq.${monthStart},business_date.lt.${endExclusive}`),
     supabaseServer.from("ledger_fund_accounts").select("id,code,type,display_name,is_active").order("sort_order"),
@@ -33,7 +28,7 @@ export async function buildMonthCloseSnapshot(month: string) {
     supabaseServer.from("ledger_payable_allocations").select("payable_id,allocated_amount,payment:ledger_transactions!inner(business_date)").lt("payment.business_date",endExclusive),
     supabaseServer.from("ledger_card_reconciliations").select("id,status,deposit_date,deposit_amount,matched_gross_amount,difference_amount,confirmed_at").lt("deposit_date",endExclusive),
     supabaseServer.from("ledger_card_reconciliation_lines").select("reconciliation_id,pos_card_transaction_id,allocated_gross_amount,reconciliation:ledger_card_reconciliations!inner(confirmed_at,status)").eq("reconciliation.status","matched").lt("reconciliation.confirmed_at",endAt),
-    supabaseServer.from("ledger_reserve_plans").select("id,name,target_amount,target_date,is_active").eq("is_active",true),
+    supabaseServer.from("ledger_reserve_plans").select("id,name,target_amount,target_date,is_active,fund_account_id,linked_recurring_plan:ledger_recurring_expense_plans(source_key_prefix)").eq("is_active",true),
     supabaseServer.from("ledger_reserve_entries").select("reserve_plan_id,entry_type,amount,occurred_at").lt("occurred_at",endAt),
     supabaseServer.from("payroll_payment_batches").select("id,payroll_month,status,actual_company_cost_total").eq("payroll_month",monthStart).maybeSingle(),
     supabaseServer.from("ledger_recurring_expense_plans").select("id,name,amount,effective_from,effective_to").lte("effective_from",monthStart).or(`effective_to.is.null,effective_to.gte.${monthStart}`),
