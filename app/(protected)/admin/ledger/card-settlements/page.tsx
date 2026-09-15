@@ -4,7 +4,7 @@ import Link from "next/link";
 import Container from "@/components/Container";
 import { BarSheet } from "@/components/bar/keeping/KeepingUi";
 import styles from "./card-settlements.module.css";
-import { buildEditableCardSales, cardMoney, recommendCardAllocations, sumCardMoney } from "@/lib/ledger/card-settlements";
+import { buildEditableCardSales, cardMoney, eligibleCardSalesForDeposit, recommendCardAllocations, sumCardMoney } from "@/lib/ledger/card-settlements";
 type Account = { id: number; code: string; display_name: string };
 type Sale = { id: number; business_date: string; amount: number; allocatedGrossAmount: number; outstandingGrossAmount: number };
 type Rec = { id: number; deposit_date: string; deposit_amount: number; matched_gross_amount: number; difference_amount: number; status: string; confirmed_at: string | null; confirmed_by: number | null; cancelled_at: string | null; cancelled_by: number | null; cancel_reason: string | null; memo: string | null; destination: { display_name: string } | null };
@@ -56,9 +56,11 @@ export default function CardSettlementsPage() {
       if (version !== openVersion.current) return;
       if (["matched", "cancelled"].includes(b.reconciliation.status)) throw new Error("이미 확정되었거나 유효하지 않은 정산입니다.");
       const lines: SavedLine[] = b.reconciliation.lines ?? [];
-      const sales = buildEditableCardSales(data?.sales ?? [], lines);
+      const sales = eligibleCardSalesForDeposit(buildEditableCardSales(data?.sales ?? [], lines), rec.deposit_date);
+      const eligibleSaleIds = new Set(sales.map(sale => sale.id));
+      const eligibleLines = lines.filter(line => eligibleSaleIds.has(Number(line.pos_card_transaction_id)));
       setEditableSales(sales); setSelected(rec.id);
-      if (lines.length) { setAllocations(Object.fromEntries(lines.map(line => [line.pos_card_transaction_id, String(line.allocated_gross_amount)]))); setMessage("기존 부분 연결을 불러왔습니다. 저장 시 이 정산의 연결액을 교체합니다."); }
+      if (eligibleLines.length) { setAllocations(Object.fromEntries(eligibleLines.map(line => [line.pos_card_transaction_id, String(line.allocated_gross_amount)]))); setMessage("기존 부분 연결을 불러왔습니다. 저장 시 이 정산의 연결액을 교체합니다."); }
       else { setAllocations({}); recommend(rec, sales); }
     } catch (e) { setMessage(`조회 실패: ${(e as Error).message}`); } finally { if (version === openVersion.current) setWorking(false); }
   }
@@ -77,7 +79,13 @@ export default function CardSettlementsPage() {
     try {
       const rows = Object.entries(allocations).filter(([, value]) => Number(value) > 0).map(([transactionId, allocatedGrossAmount]) => ({ transactionId: Number(transactionId), allocatedGrossAmount: Number(allocatedGrossAmount) }));
       const r = await fetch(`/api/admin/ledger/card-settlements/${selected}/match`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ allocations: rows, confirm }) }), b = await r.json();
-      if (!r.ok) throw new Error(b.code);
+      if (!r.ok) {
+        if (b.code === "FUTURE_CARD_SALE") {
+          const saleDate = b.result?.saleBusinessDate, depositDate = b.result?.depositDate;
+          throw new Error(`입금일 이후의 카드매출은 이 입금에 연결할 수 없습니다.${saleDate && depositDate ? ` (매출일 ${saleDate} · 입금일 ${depositDate})` : ""}`);
+        }
+        throw new Error(b.code);
+      }
       setMessage(confirm ? `정산 완료 · 차액 ${money(Number(b.result.differenceAmount))}` : "부분 매칭을 저장했습니다.");
       setSelected(null); setAllocations({}); setEditableSales([]); await load();
     } catch (e) { setMessage(`매칭 실패: ${(e as Error).message}`); } finally { setWorking(false); }

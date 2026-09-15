@@ -12,6 +12,10 @@ export type CardReconciliation = {
 export const cardMoney = (value: number) => Math.round(value * 1000) / 1000;
 export const sumCardMoney = (values: readonly (number | string)[]) => values.reduce<number>((sum, value) => sum + Math.round(Number(value) * 1000), 0) / 1000;
 
+export function eligibleCardSalesForDeposit<T extends { business_date: string }>(sales: readonly T[], depositDate: string) {
+  return sales.filter(sale => sale.business_date <= depositDate);
+}
+
 // Sale business_date controls gross reporting. Deposit dates never filter lines.
 export function calculateCardGross<T extends CardSale>(sales: readonly T[], lines: readonly CardAllocationLine[], start: string, end: string) {
   const allocated = new Map<number, number>();

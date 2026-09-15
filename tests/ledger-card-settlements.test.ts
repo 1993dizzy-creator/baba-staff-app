@@ -1,7 +1,7 @@
 import test from"node:test";import assert from"node:assert/strict";import{readFileSync}from"node:fs";
 import { createRequire } from "node:module";
-const { calculateCardGross, calculateCardDepositSummary, recommendCardAllocations, buildEditableCardSales } = createRequire(import.meta.url)("../lib/ledger/card-settlements.ts") as typeof import("../lib/ledger/card-settlements");
-const migration=readFileSync("supabase/migrations/202608210006_add_ledger_card_settlements.sql","utf8"),cancellationMigration=readFileSync("supabase/migrations/20260915093246_add_card_reconciliation_cancellation.sql","utf8"),api=readFileSync("app/api/admin/ledger/card-settlements/route.ts","utf8"),detailApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/route.ts","utf8"),matchApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/match/route.ts","utf8"),cancelApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/cancel/route.ts","utf8"),ui=readFileSync("app/(protected)/admin/ledger/card-settlements/page.tsx","utf8"),snapshot=readFileSync("lib/ledger/month-close.ts","utf8"),posMigration=readFileSync("supabase/migrations/202608210002_add_ledger_pos_sales_sync.sql","utf8"),posSource=readFileSync("lib/ledger/pos-sales.ts","utf8"),foundation=readFileSync("tests/ledger-v1-foundation.test.ts","utf8"),inventory=readFileSync("tests/ledger-inventory-candidates.test.ts","utf8"),payable=readFileSync("tests/ledger-payable-payments.test.ts","utf8"),meal=readFileSync("tests/ledger-meal-payroll.test.ts","utf8");
+const { calculateCardGross, calculateCardDepositSummary, recommendCardAllocations, buildEditableCardSales, eligibleCardSalesForDeposit } = createRequire(import.meta.url)("../lib/ledger/card-settlements.ts") as typeof import("../lib/ledger/card-settlements");
+const migration=readFileSync("supabase/migrations/202608210006_add_ledger_card_settlements.sql","utf8"),cancellationMigration=readFileSync("supabase/migrations/20260915095952_add_card_reconciliation_cancellation.sql","utf8"),futureSaleMigration=readFileSync("supabase/migrations/20260915102041_prevent_future_card_sale_matching.sql","utf8"),api=readFileSync("app/api/admin/ledger/card-settlements/route.ts","utf8"),detailApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/route.ts","utf8"),matchApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/match/route.ts","utf8"),cancelApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/cancel/route.ts","utf8"),ui=readFileSync("app/(protected)/admin/ledger/card-settlements/page.tsx","utf8"),snapshot=readFileSync("lib/ledger/month-close.ts","utf8"),posMigration=readFileSync("supabase/migrations/202608210002_add_ledger_pos_sales_sync.sql","utf8"),posSource=readFileSync("lib/ledger/pos-sales.ts","utf8"),foundation=readFileSync("tests/ledger-v1-foundation.test.ts","utf8"),inventory=readFileSync("tests/ledger-inventory-candidates.test.ts","utf8"),payable=readFileSync("tests/ledger-payable-payments.test.ts","utf8"),meal=readFileSync("tests/ledger-meal-payroll.test.ts","utf8");
 test("card deposit registration RPC",()=>assert.match(api,/ledger_create_card_deposit_v1/));
 test("deposit subtracts card pending",()=>assert.match(migration,/v_transaction,v_clearing,-p_amount/));
 test("deposit adds destination bank",()=>assert.match(migration,/v_transaction,p_destination_account_id,p_amount/));
@@ -81,6 +81,19 @@ test("list and detail APIs retain cancelled rows and expose cancellation audit m
   assert.doesNotMatch(api,/\.neq\("status",\s*"cancelled"\)/);assert.match(api,/totalHistoryCount/);assert.match(api,/totalCancelledCount/);
   for(const field of["cancelled_at","cancelled_by","cancel_reason"])assert.match(api+detailApi,new RegExp(field));
 });
+test("future sale guard runs after POS validation and before overallocation or writes",()=>{
+  const valid=futureSaleMigration.indexOf("if v_sale.id is null"),future=futureSaleMigration.indexOf("if v_sale.business_date > v_rec.deposit_date"),overallocation=futureSaleMigration.indexOf("select coalesce(sum(l.allocated_gross_amount)"),write=futureSaleMigration.indexOf("delete from public.ledger_card_reconciliation_lines");
+  assert.ok(valid>=0&&valid<future&&future<overallocation&&overallocation<write);
+  assert.match(futureSaleMigration,/'status', 'future_card_sale'[\s\S]*'transactionId', v_id[\s\S]*'saleBusinessDate', v_sale\.business_date[\s\S]*'depositDate', v_rec\.deposit_date/);
+});
+test("future sale migration preserves locking and privileged function contract",()=>{
+  const monthLock=futureSaleMigration.indexOf("ledger_month_close:"),closed=futureSaleMigration.indexOf("ledger_month_is_closed_v1"),clearing=futureSaleMigration.indexOf("ledger_card_clearing_balance"),rowLock=futureSaleMigration.indexOf("where id = p_reconciliation_id\n  for update");
+  assert.ok(monthLock>=0&&monthLock<closed&&closed<clearing&&clearing<rowLock);
+  assert.match(futureSaleMigration,/security definer[\s\S]*set search_path = pg_catalog, public/);
+  assert.match(futureSaleMigration,/alter function public\.ledger_match_card_reconciliation_v1\(bigint, jsonb, boolean, bigint\) owner to postgres/);
+  assert.match(futureSaleMigration,/revoke all on function public\.ledger_match_card_reconciliation_v1[^;]+from public, anon, authenticated/);
+  assert.match(futureSaleMigration,/grant execute on function public\.ledger_match_card_reconciliation_v1[^;]+to service_role/);
+});
 
 const cardSale = (id=1, amount=1000, business_date="2026-08-15") => ({ id, amount, business_date });
 const cardLine = (amount=1000, status="matched", id=1) => ({ reconciliation_id: 1, pos_card_transaction_id: id, allocated_gross_amount: amount, reconciliation: { status } });
@@ -123,6 +136,11 @@ test("recommendation respects capacities, zero fee, rounding and invalid rates",
   assert.equal(recommendCardAllocations(sales,100,0).targetGross,100);
   assert.ok(recommendCardAllocations(sales,100,0.017).targetGross>=100/(1-0.017));
   for(const rate of [-0.01,1,NaN,Infinity])assert.throws(()=>recommendCardAllocations(sales,982,rate));
+});
+test("deposit eligibility excludes only future sales without mutating or reordering input",()=>{
+  const sales=[cardSale(3,1000,"2026-08-21"),cardSale(1,1000,"2026-08-19"),cardSale(2,1000,"2026-08-20")],before=[...sales];
+  const eligible=eligibleCardSalesForDeposit(sales,"2026-08-20");
+  assert.deepEqual(eligible.map(row=>row.id),[1,2]);assert.deepEqual(sales,before);assert.notEqual(eligible,sales);
 });
 test("editing partial matches restores own allocation capacity including exhausted candidates", () => {
   const candidate={...cardSale(),allocatedGrossAmount:400,outstandingGrossAmount:600};

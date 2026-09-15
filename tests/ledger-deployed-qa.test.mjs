@@ -159,6 +159,31 @@ test('selected deposit keeps fee recommendation, editable allocation, POS detail
   assert.equal(state.requests.length,0);
 });
 
+test('opening a deposit excludes only future-day card sales from editable and recommendation candidates',async()=>{
+  const sales=[
+    {id:1,business_date:'2026-08-19',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000},
+    {id:2,business_date:'2026-08-20',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000},
+    {id:3,business_date:'2026-08-21',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000},
+  ];
+  const rec={id:10,deposit_date:'2026-08-20',deposit_amount:982,matched_gross_amount:0,difference_amount:0,status:'unmatched',memo:null,destination:null};
+  const data={accounts:[],sales,monthlySales:sales,priorUnreconciledSales:[],totalReconciliationCount:1,reconciliations:[rec],summary:{...cardSummary,monthlyUnreconciledGross:3000,actualCardDeposits:982,monthlyUnmatchedDeposits:982}};
+  const state=pageFixture(cardPath,{0:'2026-08',1:data},async url=>Response.json(url.endsWith('/10')?{reconciliation:{...rec,lines:[]}}:data));
+  const link=state.elements.find(element=>element.type==='button'&&String(element.props.children).includes('매출 연결'));
+  link.props.onClick({currentTarget:{}});await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(state.updates.findLast(update=>update.slot===11).value.map(row=>row.id),[1,2]);
+  assert.ok(!Object.hasOwn(state.updates.findLast(update=>update.slot===10).value,3));
+});
+
+test('a DB future-card-sale rejection renders a clear date-aware message',async()=>{
+  const sale={id:3,business_date:'2026-08-21',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000};
+  const rec={id:10,deposit_date:'2026-08-20',deposit_amount:500,matched_gross_amount:0,difference_amount:0,status:'unmatched',memo:null,destination:null};
+  const data={accounts:[],sales:[sale],monthlySales:[sale],priorUnreconciledSales:[],reconciliations:[rec],summary:{...cardSummary}};
+  const state=pageFixture(cardPath,{0:'2026-08',1:data,9:10,10:{3:'500'},11:[sale]},async()=>Response.json({ok:false,code:'FUTURE_CARD_SALE',result:{transactionId:3,saleBusinessDate:'2026-08-21',depositDate:'2026-08-20'}},{status:409}));
+  state.elements.find(element=>element.type==='button'&&element.props.children==='부분 저장').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  const message=state.updates.findLast(update=>update.slot===2).value;
+  assert.match(message,/입금일 이후의 카드매출은 이 입금에 연결할 수 없습니다/);assert.match(message,/2026-08-21/);assert.match(message,/2026-08-20/);
+});
+
 test('deposit registration lives in a sheet with the same required form fields and submit target',()=>{
   const data={accounts:[{id:1,code:'store_cash',display_name:'현금'},{id:2,code:'card_clearing',display_name:'card_clearing'}],sales:[],monthlySales:[],priorUnreconciledSales:[],reconciliations:[],summary:{...cardSummary,actualCardDeposits:0,monthlyCompletedDifference:0}};
   const state=pageFixture(cardPath,{0:'2026-08',1:data,14:true});

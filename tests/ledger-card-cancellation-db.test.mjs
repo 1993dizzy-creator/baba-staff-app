@@ -4,7 +4,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 import { initializePosCloseDatabase } from './helpers/pos-business-day-close-fixture.mjs';
 
-const cancellationMigration=readFileSync('supabase/migrations/20260915093246_add_card_reconciliation_cancellation.sql','utf8');
+const cancellationMigration=readFileSync('supabase/migrations/20260915095952_add_card_reconciliation_cancellation.sql','utf8');
+const futureSaleMigration=readFileSync('supabase/migrations/20260915102041_prevent_future_card_sale_matching.sql','utf8');
 
 async function database(){
   const db=new PGlite();
@@ -16,6 +17,7 @@ async function database(){
         (type in('income','expense','sales','expense_recognition') and recognition_month is not null and recognition_month=date_trunc('month',recognition_month)::date and category_id is not null)
         or(type not in('income','expense','sales','expense_recognition') and recognition_month is null and category_id is null));`);
     await db.exec(cancellationMigration);
+    await db.exec(futureSaleMigration);
     await db.exec(`alter table ledger_candidates add column updated_at timestamptz default now(), add column resolved_transaction_id bigint;
       create table payroll_payment_batches(payroll_month date,status text);
       create table ledger_recurring_expense_plans(id bigint primary key,effective_from date,effective_to date);
@@ -131,5 +133,43 @@ test('preflight blocks incomplete real deposits and excludes cancelled allocatio
     preflight=await call(db,'ledger_close_preflight_v1',['2026-08-01',1]);
     assert.ok(!preflight.blockers.some(item=>item.code==='CARD_UNMATCHED'));
     assert.ok(!preflight.blockers.some(item=>item.code==='CARD_OVERALLOCATED'));
+  }finally{await db.close();}
+});
+
+test('future POS sales fail partial and confirm atomically while same-day and older sales remain eligible',async()=>{
+  const db=await database();
+  try{
+    const existingSale=await seedSale(db,1,500,'2026-08-18');
+    const priorSale=await seedSale(db,2,500,'2026-08-19');
+    const sameDaySale=await seedSale(db,3,500,'2026-08-20');
+    const futureSale=await seedSale(db,4,500,'2026-08-21');
+    const previousMonthSale=await seedSale(db,5,500,'2026-08-31');
+
+    const guarded=await createDeposit(db,400,'2026-08-20');
+    assert.equal((await call(db,'ledger_match_card_reconciliation_v1',[guarded.reconciliationId,JSON.stringify([{transactionId:existingSale,allocatedGrossAmount:500}]),false,1])).status,'partial');
+    const stateBefore={
+      reconciliation:(await db.query('select status,matched_gross_amount,difference_amount,confirmed_at,confirmed_by,updated_at from ledger_card_reconciliations where id=$1',[guarded.reconciliationId])).rows[0],
+      lines:(await db.query('select pos_card_transaction_id,allocated_gross_amount from ledger_card_reconciliation_lines where reconciliation_id=$1 order by id',[guarded.reconciliationId])).rows,
+      differenceCount:Number((await db.query("select count(*) n from ledger_transactions where source_type='card_settlement_difference'")).rows[0].n),
+      auditCount:Number((await db.query('select count(*) n from ledger_audit_logs')).rows[0].n),
+    };
+    for(const confirm of[false,true]){
+      const result=await call(db,'ledger_match_card_reconciliation_v1',[guarded.reconciliationId,JSON.stringify([{transactionId:futureSale,allocatedGrossAmount:500}]),confirm,1]);
+      assert.deepEqual(result,{status:'future_card_sale',transactionId:futureSale,saleBusinessDate:'2026-08-21',depositDate:'2026-08-20'});
+    }
+    const stateAfter={
+      reconciliation:(await db.query('select status,matched_gross_amount,difference_amount,confirmed_at,confirmed_by,updated_at from ledger_card_reconciliations where id=$1',[guarded.reconciliationId])).rows[0],
+      lines:(await db.query('select pos_card_transaction_id,allocated_gross_amount from ledger_card_reconciliation_lines where reconciliation_id=$1 order by id',[guarded.reconciliationId])).rows,
+      differenceCount:Number((await db.query("select count(*) n from ledger_transactions where source_type='card_settlement_difference'")).rows[0].n),
+      auditCount:Number((await db.query('select count(*) n from ledger_audit_logs')).rows[0].n),
+    };
+    assert.deepEqual(stateAfter,stateBefore);
+
+    const sameDay=await createDeposit(db,400,'2026-08-20');
+    assert.equal((await call(db,'ledger_match_card_reconciliation_v1',[sameDay.reconciliationId,JSON.stringify([{transactionId:sameDaySale,allocatedGrossAmount:500}]),false,1])).status,'partial');
+    const prior=await createDeposit(db,400,'2026-08-20');
+    assert.equal((await call(db,'ledger_match_card_reconciliation_v1',[prior.reconciliationId,JSON.stringify([{transactionId:priorSale,allocatedGrossAmount:500}]),false,1])).status,'partial');
+    const nextMonth=await createDeposit(db,400,'2026-09-01');
+    assert.equal((await call(db,'ledger_match_card_reconciliation_v1',[nextMonth.reconciliationId,JSON.stringify([{transactionId:previousMonthSale,allocatedGrossAmount:500}]),true,1])).status,'matched');
   }finally{await db.close();}
 });

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 const migration=fs.readFileSync("supabase/migrations/202608210008_add_ledger_month_close_corrections.sql","utf8");
-const cardCancellationMigration=fs.readFileSync("supabase/migrations/20260915093246_add_card_reconciliation_cancellation.sql","utf8");
+const cardCancellationMigration=fs.readFileSync("supabase/migrations/20260915095952_add_card_reconciliation_cancellation.sql","utf8");
 const closeRoute=fs.readFileSync("app/api/admin/ledger/month-close/route.ts","utf8");
 const correctionRoute=fs.readFileSync("app/api/admin/ledger/corrections/route.ts","utf8");
 const snapshot=fs.readFileSync("lib/ledger/month-close.ts","utf8");

@@ -47,7 +47,8 @@ function setup({ sales=[], reconciliations=[], lines=[], movements=[], denied=fa
     async rpc(name,args) {
       rpcCalls.push({name,args});
       const fallback=name==='ledger_create_card_deposit_v1'?'created':name==='ledger_cancel_card_reconciliation_v1'?'cancelled':args.p_confirm?'matched':'partial';
-      return {data:{status:rpcStatuses[name]??fallback},error:null};
+      const configured=rpcStatuses[name];
+      return {data:configured&&typeof configured==='object'?configured:{status:configured??fallback},error:null};
     },
   };
   const server={requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{actor:{id:7}},ledgerJson:(body,status=200)=>Response.json(body,{status})};
@@ -92,6 +93,13 @@ test('create and partial/confirmed match still forward the existing RPC contract
     const response=await state.match.POST(new Request('http://local/api/admin/ledger/card-settlements/1/match',{method:'POST',body:JSON.stringify({allocations,confirm})}),{params:Promise.resolve({id:'1'})});assert.equal(response.status,200);assert.deepEqual(state.rpcCalls.at(-1),{name:'ledger_match_card_reconciliation_v1',args:{p_reconciliation_id:1,p_allocations:allocations,p_confirm:confirm,p_actor_user_id:7}});
   }
   assert.equal(state.calls.length,0);
+});
+
+test('future card sale is a 409 and preserves the RPC date context',async()=>{
+  const result={status:'future_card_sale',transactionId:21,saleBusinessDate:'2026-08-21',depositDate:'2026-08-20'};
+  const state=setup({rpcStatuses:{ledger_match_card_reconciliation_v1:result}});
+  const response=await state.match.POST(new Request('http://local/api/admin/ledger/card-settlements/1/match',{method:'POST',body:JSON.stringify({allocations:[{transactionId:21,allocatedGrossAmount:1000}],confirm:false})}),{params:Promise.resolve({id:'1'})});
+  assert.equal(response.status,409);assert.deepEqual((await response.json()).result,result);
 });
 
 test('cancel requires a reason, rejects extra keys, and forwards only the canonical RPC arguments',async()=>{
