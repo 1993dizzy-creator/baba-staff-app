@@ -7,14 +7,14 @@ import styles from "./card-settlements.module.css";
 import { buildEditableCardSales, cardMoney, recommendCardAllocations, sumCardMoney } from "@/lib/ledger/card-settlements";
 type Account = { id: number; code: string; display_name: string };
 type Sale = { id: number; business_date: string; amount: number; allocatedGrossAmount: number; outstandingGrossAmount: number };
-type Rec = { id: number; deposit_date: string; deposit_amount: number; matched_gross_amount: number; difference_amount: number; status: string; memo: string | null; destination: { display_name: string } | null };
-type Data = { accounts: Account[]; sales: Sale[]; monthlySales: Sale[]; priorUnreconciledSales: Sale[]; totalReconciliationCount:number; reconciliations: Rec[]; summary: { monthlyCardGross: number; monthlyReconciledGross: number; monthlySettledGross:number; monthlyUnreconciledGross: number; totalUnreconciledGross: number; cardPendingBalance: number; actualCardDeposits: number; monthlyUnmatchedDeposits: number; monthlyCompletedGross: number; monthlyCompletedDeposit: number; monthlyCompletedDifference: number; actualDifferenceRate: number | null } };
+type Rec = { id: number; deposit_date: string; deposit_amount: number; matched_gross_amount: number; difference_amount: number; status: string; confirmed_at: string | null; confirmed_by: number | null; cancelled_at: string | null; cancelled_by: number | null; cancel_reason: string | null; memo: string | null; destination: { display_name: string } | null };
+type Data = { accounts: Account[]; sales: Sale[]; monthlySales: Sale[]; priorUnreconciledSales: Sale[]; totalReconciliationCount:number; totalHistoryCount:number; totalCancelledCount:number; reconciliations: Rec[]; summary: { monthlyCardGross: number; monthlyReconciledGross: number; monthlySettledGross:number; monthlyUnreconciledGross: number; totalUnreconciledGross: number; cardPendingBalance: number; actualCardDeposits: number; monthlyUnmatchedDeposits: number; monthlyCompletedGross: number; monthlyCompletedDeposit: number; monthlyCompletedDifference: number; actualDifferenceRate: number | null } };
 type SavedLine = { pos_card_transaction_id: number; allocated_gross_amount: number; sale: Sale | null };
 const monthNow = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
 const localNow = () => new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 16);
 const money = (n: number) => `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(n)} ₫`;
 const shortDate = (date:string) => `${date.slice(5,7)}/${date.slice(8,10)}`;
-const statusName: Record<string, string> = { unmatched: "미연결", partial: "부분 저장", matched: "정산 완료" };
+const statusName: Record<string, string> = { unmatched: "미연결", partial: "부분 저장", matched: "정산 완료", cancelled: "취소" };
 export default function CardSettlementsPage() {
   const [month, setMonth] = useState(monthNow), [data, setData] = useState<Data | null>(null);
   const [message, setMessage] = useState(""), [working, setWorking] = useState(false);
@@ -24,6 +24,7 @@ export default function CardSettlementsPage() {
   const [editableSales, setEditableSales] = useState<Sale[]>([]), [expectedFee, setExpectedFee] = useState("1.8");
   const [drilldown, setDrilldown] = useState<Record<string, unknown> | null>(null);
   const [createOpen,setCreateOpen]=useState(false), [inspectedDeposit,setInspectedDeposit]=useState<Rec|null>(null);
+  const [cancelOpen,setCancelOpen]=useState(false), [cancelReason,setCancelReason]=useState("");
   const createButtonRef=useRef<HTMLButtonElement>(null), depositButtonRef=useRef<HTMLButtonElement|null>(null);
   const openVersion = useRef(0);
   const load = useCallback(async (signal?: AbortSignal) => {
@@ -88,11 +89,30 @@ export default function CardSettlementsPage() {
       setDrilldown(b.drilldown);
     } catch (e) { setMessage(`POS 조회 실패: ${(e as Error).message}`); }
   }
+  async function cancelReconciliation() {
+    if (!inspectedDeposit || inspectedDeposit.status === "cancelled" || !cancelReason.trim()) return;
+    setWorking(true);
+    try {
+      const r = await fetch(`/api/admin/ledger/card-settlements/${inspectedDeposit.id}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: cancelReason.trim() }),
+      }), b = await r.json();
+      if (!r.ok) throw new Error(b.code);
+      setMessage("카드 입금 정산을 취소하고 역분개했습니다.");
+      setInspectedDeposit(null); setCancelOpen(false); setCancelReason("");
+      await load();
+    } catch (e) {
+      setMessage(`취소 실패: ${(e as Error).message}`);
+    } finally {
+      setWorking(false);
+    }
+  }
   const closeMatch=()=>{if(working)return;++openVersion.current;setSelected(null);setAllocations({});setEditableSales([]);setDrilldown(null);};
   return <Container noPaddingTop noPaddingBottom><main className={styles.page}>
     <header className={styles.header}>
       <div className={styles.headerLine}><Link href="/admin/ledger/entries" className={styles.backLink}>← 장부작성</Link><h1>💳 카드 정산</h1></div>
-      <label className={styles.monthField}><span>선택 월</span><input type="month" disabled={working} value={month} onChange={e=>{++openVersion.current;setMonth(e.target.value);setData(null);setSelected(null);setAllocations({});setEditableSales([]);setInspectedDeposit(null);setCreateOpen(false);setDrilldown(null);setMessage("");}} className={styles.input}/></label>
+      <label className={styles.monthField}><span>선택 월</span><input type="month" disabled={working} value={month} onChange={e=>{++openVersion.current;setMonth(e.target.value);setData(null);setSelected(null);setAllocations({});setEditableSales([]);setInspectedDeposit(null);setCancelOpen(false);setCancelReason("");setCreateOpen(false);setDrilldown(null);setMessage("");}} className={styles.input}/></label>
     </header>
     {message&&!rec&&!createOpen?<p role="status" className={styles.notice}>{message}</p>:null}
     {data?<>
@@ -117,8 +137,8 @@ export default function CardSettlementsPage() {
         <h2>🏦 카드 입금 내역</h2>
         <div className={styles.depositTotals}><span>입금 {money(data.summary.actualCardDeposits)}</span><span>차액 {money(data.summary.monthlyCompletedDifference)}</span></div>
         {data.reconciliations.length===0?<p className={styles.empty}>등록된 카드 입금이 없습니다.</p>:<div className={styles.list}>{data.reconciliations.map(row=><article key={row.id} className={styles.depositRow}>
-          <button type="button" disabled={working} className={styles.depositDetail} onClick={e=>{depositButtonRef.current=e.currentTarget;setInspectedDeposit(row);}}>
-            <time dateTime={row.deposit_date}>{shortDate(row.deposit_date)}</time><strong>{money(Number(row.deposit_amount))}</strong><span className={styles.statusBadge+" "+(row.status==="matched"?styles.completedBadge:"")}>{statusName[row.status]??row.status}</span><i aria-hidden="true">›</i>
+          <button type="button" disabled={working} className={styles.depositDetail} onClick={e=>{depositButtonRef.current=e.currentTarget;setCancelOpen(false);setCancelReason("");setInspectedDeposit(row);}}>
+            <time dateTime={row.deposit_date}>{shortDate(row.deposit_date)}</time><strong>{money(Number(row.deposit_amount))}</strong><span className={styles.statusBadge+" "+(row.status==="matched"?styles.completedBadge:row.status==="cancelled"?styles.cancelledBadge:"")}>{statusName[row.status]??row.status}</span><i aria-hidden="true">›</i>
           </button>
           {["unmatched","partial"].includes(row.status)?<button type="button" disabled={working} className={styles.secondary} onClick={e=>{depositButtonRef.current=e.currentTarget;setMessage("");void open(row);}}>매출 연결{row.status==="partial"?" 수정":""}</button>:null}
         </article>)}</div>}
@@ -133,9 +153,15 @@ export default function CardSettlementsPage() {
           <label>메모<input disabled={working} value={memo} onChange={e=>setMemo(e.target.value)} className={styles.input}/></label>
         </form>
       </BarSheet>:null}
-      {inspectedDeposit?<BarSheet kind="bottom" compact title={inspectedDeposit.deposit_date+" 카드 입금"} closeLabel="닫기" saving={working} onClose={()=>setInspectedDeposit(null)} returnFocusRef={depositButtonRef} footer={["unmatched","partial"].includes(inspectedDeposit.status)?<button type="button" disabled={working} className={styles.primary} onClick={()=>{setMessage("");void open(inspectedDeposit);}}>매출 연결{inspectedDeposit.status==="partial"?" 수정":""}</button>:<button type="button" className={styles.secondary} onClick={()=>setInspectedDeposit(null)}>닫기</button>}>
+      {inspectedDeposit?<BarSheet kind="bottom" compact title={inspectedDeposit.deposit_date+" 카드 입금"} closeLabel="닫기" saving={working} onClose={()=>{setInspectedDeposit(null);setCancelOpen(false);setCancelReason("");}} returnFocusRef={depositButtonRef} footer={inspectedDeposit.status==="cancelled"?<button type="button" className={styles.secondary} onClick={()=>setInspectedDeposit(null)}>닫기</button>:cancelOpen?<div className={styles.actions}><button type="button" disabled={working} className={styles.secondary} onClick={()=>{setCancelOpen(false);setCancelReason("");}}>돌아가기</button><button type="button" disabled={working||!cancelReason.trim()} className={styles.danger} onClick={()=>void cancelReconciliation()}>취소 확정</button></div>:<div className={styles.actions}><button type="button" disabled={working} className={styles.danger} onClick={()=>{setMessage("");setCancelOpen(true);}}>정산 취소</button>{["unmatched","partial"].includes(inspectedDeposit.status)?<button type="button" disabled={working} className={styles.primary} onClick={()=>{setMessage("");void open(inspectedDeposit);}}>매출 연결{inspectedDeposit.status==="partial"?" 수정":""}</button>:<button type="button" className={styles.secondary} onClick={()=>setInspectedDeposit(null)}>닫기</button>}</div>}>
+        {message?<p role="status" className={styles.notice}>{message}</p>:null}
         <div className={styles.grid}><Card title="실제 입금" value={money(Number(inspectedDeposit.deposit_amount))}/><Card title="정산연결" value={money(Number(inspectedDeposit.matched_gross_amount))}/><Card title="정산 차액" value={money(Number(inspectedDeposit.difference_amount))}/><Card title="상태" value={statusName[inspectedDeposit.status]??inspectedDeposit.status}/></div>
         <p className={styles.hint}>{inspectedDeposit.destination?.display_name??"-"}</p>{inspectedDeposit.memo?<p className={styles.hint}>{inspectedDeposit.memo}</p>:null}
+        {inspectedDeposit.status==="cancelled"?<div className={styles.cancelRecord}><strong>취소 기록</strong><p>{inspectedDeposit.cancel_reason??"사유 기록 없음"}</p><small>{inspectedDeposit.cancelled_at?new Date(inspectedDeposit.cancelled_at).toLocaleString("ko-KR",{timeZone:"Asia/Ho_Chi_Minh"}):"-"}</small></div>:null}
+        {cancelOpen?<div className={styles.cancelPanel}>
+          <p>{inspectedDeposit.status==="matched"?"카드 입금 이동과 정산 차액을 역분개하고 연결된 카드매출을 다시 미정산 상태로 돌립니다.":"카드 입금 이동을 역분개합니다. 저장된 매출 연결은 삭제하지 않고 취소 이력으로 보존되며, 카드매출은 다시 연결할 수 있습니다."}</p>
+          <label>취소 사유<textarea required disabled={working} value={cancelReason} onChange={e=>setCancelReason(e.target.value)} className={styles.input} rows={3}/></label>
+        </div>:null}
       </BarSheet>:null}
       {rec?<BarSheet kind="full" compact topAligned fillAvailable title={shortDate(rec.deposit_date)+" 매출 연결"} closeLabel="닫기" saving={working} onClose={closeMatch} returnFocusRef={depositButtonRef} footer={<div className={styles.actions}><button type="button" disabled={working||invalidAllocation||gross<=0} className={styles.secondary} onClick={()=>void match(false)}>부분 저장</button><button type="button" disabled={working||invalidAllocation||gross<=0||gross<Number(rec.deposit_amount)} className={styles.primary} onClick={()=>void match(true)}>정산 확정</button></div>}>
         <div className={styles.sheetBody}>

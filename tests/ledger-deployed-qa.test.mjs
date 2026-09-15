@@ -26,6 +26,7 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
     react,'react/jsx-runtime':trackedRuntime,'next/link':{default:({children,...props})=>h('a',props,children)},
     '@/components/Container':{default:box},'@/lib/language-context':{useLanguage:()=>({lang:'ko'})},'@/lib/styles/ui':{ui:{}},
     '@/components/bar/keeping/KeepingUi':keeping,'@/lib/ledger/manual-entry-amount':{},'@/lib/ledger/manual-entry-policy':{},
+    '@/lib/common/business-time':require('../lib/common/business-time.ts'),
     './entries.module.css':{default:new Proxy({},{get:(_,key)=>String(key)})},
     './card-settlements.module.css':{default:new Proxy({},{get:(_,key)=>String(key)})},'@/lib/ledger/card-settlements':require('../lib/ledger/card-settlements.ts'),
   };
@@ -42,7 +43,7 @@ function payableFixture(month) {
   const party={...result.partySummaries[0],partyName:'Demo supplier',partnerType:null,outstandingAmount:result.summary.closingOutstanding,partialPaidAmount:400,totalOpenAmount:1500,openCount:result.payables.length};
   return {...result,month,parties:[party]};
 }
-const ledgerFixture=month=>({month,summary:{income:9999,receivedIncome:8888,expense:7777,operatingProfit:2222,paidExpense:6666,cardGrossSales:500,actualCardDeposits:0,unsettledCardGross:500},accounts:[],categories:[],partners:[],entries:[]});
+const ledgerFixture=month=>({month,fundsView:{month,mode:'provisional',asOf:`${month}-01`,businessDateExclusive:null},summary:{income:9999,receivedIncome:8888,expense:7777,operatingProfit:2222,paidExpense:6666,cardGrossSales:500,actualCardDeposits:0,unsettledCardGross:500},accounts:[],categories:[],partners:[],entries:[]});
 function entriesFixture(month,{selected=false,payables=payableFixture(month),fetcher,payableExpanded=true,cardExpanded=false,cardSummary=null}={}) {
   return pageFixture(entriesPath,{0:month,1:ledgerFixture(month),2:false,14:payableExpanded,15:payables,16:selected?{...payables.parties[0],viewMonth:month}:null,22:cardExpanded,23:cardSummary},fetcher);
 }
@@ -176,6 +177,31 @@ test('completed deposit row opens read-only details and cannot expose matching c
   const state=pageFixture(cardPath,{0:'2026-09',1:data,15:rec});
   assert.match(state.html,/role="dialog" aria-label="2026-09-03 카드 입금"/);assert.match(state.html,/18 ₫/);assert.match(state.html,/Memo/);
   assert.doesNotMatch(state.html.slice(state.html.indexOf('role="dialog"')),/매출 연결|정산 확정|부분 저장|Gross|card_clearing/);
+});
+
+test('matched cancellation uses reason confirmation and posts the guarded endpoint',async()=>{
+  const rec={id:10,deposit_date:'2026-09-03',deposit_amount:980,matched_gross_amount:1000,difference_amount:20,status:'matched',memo:null,destination:{display_name:'법인'}};
+  const data={accounts:[],sales:[],monthlySales:[],priorUnreconciledSales:[],reconciliations:[rec],summary:{...cardSummary,actualCardDeposits:980,monthlyCompletedDifference:20}};
+  const initial=pageFixture(cardPath,{0:'2026-09',1:data,15:rec});
+  assert.match(initial.html,/정산 취소/);assert.doesNotMatch(initial.html,/취소 사유|취소 확정/);
+  const state=pageFixture(cardPath,{0:'2026-09',1:data,15:rec,16:true,17:'  중복 입금  '},async()=>Response.json({ok:true,result:{status:'cancelled'}}));
+  assert.match(state.html,/카드 입금 이동과 정산 차액을 역분개하고 연결된 카드매출을 다시 미정산 상태로 돌립니다/);
+  assert.match(state.html,/취소 사유/);assert.match(state.html,/취소 확정/);
+  state.elements.find(element=>element.type==='button'&&element.props.children==='취소 확정').props.onClick();
+  await new Promise(resolve=>setImmediate(resolve));
+  const post=state.calls.find(call=>call.options?.method==='POST');
+  assert.equal(post.url,'/api/admin/ledger/card-settlements/10/cancel');
+  assert.deepEqual(JSON.parse(post.options.body),{reason:'중복 입금'});
+});
+
+test('cancelled reconciliation remains visible with audit detail and no link or cancel action',()=>{
+  const rec={id:10,deposit_date:'2026-09-03',deposit_amount:980,matched_gross_amount:1000,difference_amount:20,status:'cancelled',cancel_reason:'중복 입금',cancelled_at:'2026-09-15T03:00:00Z',memo:null,destination:{display_name:'법인'}};
+  const data={accounts:[],sales:[],monthlySales:[],priorUnreconciledSales:[],reconciliations:[rec],summary:{...cardSummary,actualCardDeposits:0,monthlyCompletedDifference:0}};
+  const list=pageFixture(cardPath,{0:'2026-09',1:data}).html;
+  assert.match(list,/취소/);
+  const detail=pageFixture(cardPath,{0:'2026-09',1:data,15:rec}).html;
+  assert.match(detail,/취소 기록/);assert.match(detail,/중복 입금/);
+  assert.doesNotMatch(detail,/정산 취소|매출 연결|취소 확정/);
 });
 
 test('sheet submit preserves card deposit POST fields and closes only after local successful response',async()=>{

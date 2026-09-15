@@ -9,6 +9,7 @@ const read = (path: string) => readFileSync(path, "utf8");
 const sql = read("supabase/migrations/20260826113239_adjust_open_meal_transactions.sql");
 const api = read("app/api/admin/ledger/transactions/[id]/meal-adjust/route.ts");
 const ledgerApi = read("app/api/admin/ledger/route.ts");
+const fundAccountView = read("lib/ledger/fund-account-view.ts");
 const entriesSource = read("lib/ledger/entries.ts");
 const page = read("app/(protected)/admin/ledger/entries/page.tsx");
 const genericCorrection = read("app/api/admin/ledger/corrections/route.ts");
@@ -278,5 +279,5 @@ test("expense summary and cash balance math match repeated meal adjustments", ()
   assert.equal(expense, 240_000);
   assert.equal(cash, -240_000);
   assert.match(ledgerApi, /Number\(row\.amount\) \* Number\(row\.economic_effect_sign \?\? 1\)/);
-  assert.match(ledgerApi, /balanceByAccount[\s\S]*Number\(row\.amount\)/);
+  assert.match(fundAccountView, /movementBalances[\s\S]*Number\(row\.amount\)/);
 });

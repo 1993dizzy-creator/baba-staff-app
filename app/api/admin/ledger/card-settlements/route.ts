@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     const [accounts, saleRows, reconciliations, lines] = await Promise.all([
       loadCardRows((from, to) => supabaseServer.from("ledger_fund_accounts").select("id,code,display_name,type,is_active").order("sort_order").order("id").range(from, to)),
       loadCardSales(),
-      loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("id,deposit_transaction_id,deposit_date,destination_fund_account_id,deposit_amount,matched_gross_amount,difference_amount,status,confirmed_at,memo,destination:ledger_fund_accounts(display_name)").neq("status", "cancelled").order("deposit_date", { ascending: false }).order("id").range(from, to)),
+      loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("id,deposit_transaction_id,deposit_date,destination_fund_account_id,deposit_amount,matched_gross_amount,difference_amount,status,confirmed_at,confirmed_by,cancelled_at,cancelled_by,cancel_reason,memo,destination:ledger_fund_accounts(display_name)").order("deposit_date", { ascending: false }).order("id").range(from, to)),
       loadCardAllocationLines(),
     ]);
     const clearing = accounts.find(account => account.code === "card_clearing");
@@ -26,7 +26,9 @@ export async function GET(request: Request) {
     return ledgerJson({
       ok: true, month, accounts: accounts.filter(account => account.is_active),
       reconciliations: reconciliations.filter(row => row.deposit_date >= start && row.deposit_date < end),
-      totalReconciliationCount: reconciliations.length,
+      totalReconciliationCount: reconciliations.filter(row => row.status !== "cancelled").length,
+      totalHistoryCount: reconciliations.length,
+      totalCancelledCount: reconciliations.filter(row => row.status === "cancelled").length,
       sales: gross.sales.filter(sale => sale.outstandingGrossAmount > 0),
       monthlySales: gross.sales.filter(sale => sale.business_date >= start && sale.business_date < end),
       priorUnreconciledSales: gross.sales.filter(sale => sale.business_date < start && sale.outstandingGrossAmount > 0),
@@ -52,4 +54,4 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request:Request){const auth=await requireLedgerActor();if(auth.response||!auth.actor)return auth.response;const body=await request.json().catch(()=>null)as Record<string,unknown>|null,allowed=new Set(["depositAt","amount","destinationAccountId","reference","memo"]);if(!body||Object.keys(body).some(k=>!allowed.has(k))||!body.depositAt||!Number.isInteger(Number(body.destinationAccountId))||Number(body.amount)<=0)return ledgerJson({ok:false,code:"INVALID_BODY"},400);try{const{data,error}=await supabaseServer.rpc("ledger_create_card_deposit_v1",{p_deposit_at:body.depositAt,p_amount:body.amount,p_destination_account_id:body.destinationAccountId,p_reference:body.reference||null,p_memo:body.memo||null,p_actor_user_id:auth.actor.id});if(error)throw error;const result=data as{status?:string};if(result.status!=="created")return ledgerJson({ok:false,code:String(result.status??"CARD_DEPOSIT_FAILED").toUpperCase(),result},result.status==="forbidden"?403:400);return ledgerJson({ok:true,result},201)}catch(error){console.error("[LEDGER_CARD_DEPOSIT_FAILED]",error);return ledgerJson({ok:false,code:"CARD_DEPOSIT_FAILED"},500)}}
+export async function POST(request:Request){const auth=await requireLedgerActor();if(auth.response||!auth.actor)return auth.response;const body=await request.json().catch(()=>null)as Record<string,unknown>|null,allowed=new Set(["depositAt","amount","destinationAccountId","reference","memo"]);if(!body||Object.keys(body).some(k=>!allowed.has(k))||!body.depositAt||!Number.isInteger(Number(body.destinationAccountId))||Number(body.amount)<=0)return ledgerJson({ok:false,code:"INVALID_BODY"},400);try{const{data,error}=await supabaseServer.rpc("ledger_create_card_deposit_v1",{p_deposit_at:body.depositAt,p_amount:body.amount,p_destination_account_id:body.destinationAccountId,p_reference:body.reference||null,p_memo:body.memo||null,p_actor_user_id:auth.actor.id});if(error)throw error;const result=data as{status?:string};if(result.status!=="created"){const status=result.status;return ledgerJson({ok:false,code:String(status??"CARD_DEPOSIT_FAILED").toUpperCase(),result},status==="forbidden"?403:status==="month_closed"?409:400)}return ledgerJson({ok:true,result},201)}catch(error){console.error("[LEDGER_CARD_DEPOSIT_FAILED]",error);return ledgerJson({ok:false,code:"CARD_DEPOSIT_FAILED"},500)}}

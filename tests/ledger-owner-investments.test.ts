@@ -193,7 +193,8 @@ test("ownerInvestmentMonthBounds rejects a malformed month and mirrors the RPC's
   const migration = read("supabase/migrations/202608210009_add_owner_settlements.sql");
   assert.match(migration, /v_date:=\(\(p_occurred_at at time zone'Asia\/Ho_Chi_Minh'\)-interval'3 hours'\)::date/);
   const monthClose = read("lib/ledger/month-close.ts");
-  assert.match(monthClose, /endAt = `\$\{endExclusive\}T03:00:00\+07:00`/);
+  assert.match(monthClose, /getBusinessMonthEndBoundary\(month\)/);
+  assert.match(read("lib/common/business-time.ts"), /cutoffAt: `\$\{businessDateExclusive\}T\$\{String\(BUSINESS_DAY_END_HOUR\)/);
 });
 
 test("empty/all-zero summary constant matches a from-scratch empty calculation", () => {

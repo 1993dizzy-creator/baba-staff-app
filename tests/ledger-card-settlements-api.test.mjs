@@ -14,7 +14,7 @@ function load(path, dependencies = {}) {
 }
 const sale = (id, date, amount) => ({ id, business_date: date, amount, status: 'confirmed', source_type: 'pos_sales_daily_payment', source_key: `pos:${date}:card` });
 const rec = (id, date, amount, status='matched', gross=amount, difference=0) => ({ id, deposit_date: date, deposit_amount: amount, status, matched_gross_amount: gross, difference_amount: difference });
-function setup({ sales=[], reconciliations=[], lines=[], movements=[], denied=false, failTable=null }={}) {
+function setup({ sales=[], reconciliations=[], lines=[], movements=[], denied=false, failTable=null, rpcStatuses={} }={}) {
   const calls=[], rpcCalls=[];
   const tables = {
     ledger_transactions: sales,
@@ -44,14 +44,18 @@ function setup({ sales=[], reconciliations=[], lines=[], movements=[], denied=fa
       });return query;};
       return query;
     },
-    async rpc(name,args) { rpcCalls.push({name,args});return {data:{status:name==='ledger_create_card_deposit_v1'?'created':args.p_confirm?'matched':'partial'},error:null}; },
+    async rpc(name,args) {
+      rpcCalls.push({name,args});
+      const fallback=name==='ledger_create_card_deposit_v1'?'created':name==='ledger_cancel_card_reconciliation_v1'?'cancelled':args.p_confirm?'matched':'partial';
+      return {data:{status:rpcStatuses[name]??fallback},error:null};
+    },
   };
   const server={requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{actor:{id:7}},ledgerJson:(body,status=200)=>Response.json(body,{status})};
   const deps={'@/lib/supabase/server':{supabaseServer:db},'@/lib/ledger/server':server};
   deps['@/lib/ledger/card-settlements']=load('lib/ledger/card-settlements.ts');
   deps['@/lib/ledger/card-settlement-data']=load('lib/ledger/card-settlement-data.ts',deps);
-  const api=load('app/api/admin/ledger/card-settlements/route.ts',deps),match=load('app/api/admin/ledger/card-settlements/[id]/match/route.ts',deps);
-  return {api,match,calls,rpcCalls};
+  const api=load('app/api/admin/ledger/card-settlements/route.ts',deps),match=load('app/api/admin/ledger/card-settlements/[id]/match/route.ts',deps),cancel=load('app/api/admin/ledger/card-settlements/[id]/cancel/route.ts',deps);
+  return {api,match,cancel,calls,rpcCalls};
 }
 const get=async(state,month='2026-08')=>state.api.GET(new Request(`http://local/api/admin/ledger/card-settlements?month=${month}`));
 
@@ -59,7 +63,8 @@ test('GET keeps sale-month gross separate from deposit-month summary and returns
   const state=setup({sales:[sale(3,'2026-09-01',2000),sale(2,'2026-08-15',1000),sale(1,'2026-07-15',500)],reconciliations:[rec(1,'2026-09-10',982,'matched',1000,18),rec(2,'2026-08-20',300,'partial',400),rec(3,'2026-08-21',200,'cancelled')],lines:[{id:1,reconciliation_id:1,pos_card_transaction_id:2,allocated_gross_amount:1000},{id:2,reconciliation_id:2,pos_card_transaction_id:3,allocated_gross_amount:400},{id:3,reconciliation_id:3,pos_card_transaction_id:1,allocated_gross_amount:500}],movements:[{id:1,fund_account_id:1,amount:2000,transaction:{status:'confirmed'}},{id:2,fund_account_id:1,amount:9999,transaction:{status:'draft'}},{id:3,fund_account_id:2,amount:8888,transaction:{status:'confirmed'}}]});
   const august=await(await get(state)).json();
   assert.equal(august.summary.monthlyCardGross,1000);assert.equal(august.summary.monthlyReconciledGross,1000);assert.equal(august.summary.monthlyUnreconciledGross,0);assert.equal(august.summary.totalUnreconciledGross,2100);assert.equal(august.summary.cardPendingBalance,2000);assert.equal(august.summary.actualCardDeposits,300);assert.equal(august.summary.monthlyUnmatchedDeposits,300);assert.equal(august.summary.actualDifferenceRate,null);
-  assert.deepEqual(august.sales.map(row=>row.id),[1,3]);assert.deepEqual(august.reconciliations.map(row=>row.id),[2]);
+  assert.deepEqual(august.sales.map(row=>row.id),[1,3]);assert.deepEqual(august.reconciliations.map(row=>row.id),[3,2]);
+  assert.equal(august.totalReconciliationCount,2);assert.equal(august.totalHistoryCount,3);assert.equal(august.totalCancelledCount,1);
   assert.deepEqual(august.monthlySales.map(row=>row.id),[2]);assert.equal(august.monthlySales[0].outstandingGrossAmount,0);assert.deepEqual(august.priorUnreconciledSales.map(row=>row.id),[1]);assert.equal(august.summary.monthlySettledGross,1000);
   const september=await(await get(state,'2026-09')).json();assert.equal(september.summary.monthlyUnreconciledGross,1600);assert.equal(september.summary.monthlyCompletedGross,1000);assert.equal(september.summary.monthlyCompletedDeposit,982);assert.equal(september.summary.monthlyCompletedDifference,18);assert.equal(september.summary.actualDifferenceRate,0.018);
 });
@@ -87,4 +92,28 @@ test('create and partial/confirmed match still forward the existing RPC contract
     const response=await state.match.POST(new Request('http://local/api/admin/ledger/card-settlements/1/match',{method:'POST',body:JSON.stringify({allocations,confirm})}),{params:Promise.resolve({id:'1'})});assert.equal(response.status,200);assert.deepEqual(state.rpcCalls.at(-1),{name:'ledger_match_card_reconciliation_v1',args:{p_reconciliation_id:1,p_allocations:allocations,p_confirm:confirm,p_actor_user_id:7}});
   }
   assert.equal(state.calls.length,0);
+});
+
+test('cancel requires a reason, rejects extra keys, and forwards only the canonical RPC arguments',async()=>{
+  const state=setup();
+  for(const [id,body] of [['1',{}],['1',{reason:'   '}],['1',{reason:'duplicate',extra:true}],['0',{reason:'duplicate'}],['NaN',{reason:'duplicate'}]]){
+    const response=await state.cancel.POST(new Request(`http://local/api/admin/ledger/card-settlements/${id}/cancel`,{method:'POST',body:JSON.stringify(body)}),{params:Promise.resolve({id})});
+    assert.equal(response.status,400);
+  }
+  assert.equal(state.rpcCalls.length,0);
+  const response=await state.cancel.POST(new Request('http://local/api/admin/ledger/card-settlements/17/cancel',{method:'POST',body:JSON.stringify({reason:'  duplicate deposit  '})}),{params:Promise.resolve({id:'17'})});
+  assert.equal(response.status,200);
+  assert.deepEqual(state.rpcCalls[0],{name:'ledger_cancel_card_reconciliation_v1',args:{p_reconciliation_id:17,p_reason:'duplicate deposit',p_actor_user_id:7}});
+});
+
+test('cancel enforces owner/master gate and maps RPC states without direct table writes',async()=>{
+  const denied=setup({denied:true});
+  assert.equal((await denied.cancel.POST(new Request('http://local/cancel',{method:'POST',body:JSON.stringify({reason:'duplicate'})}),{params:Promise.resolve({id:'1'})})).status,403);
+  assert.equal(denied.rpcCalls.length,0);
+  for(const [rpcStatus,httpStatus] of [['forbidden',403],['not_found',404],['month_closed',409],['already_cancelled',409],['invalid_state',409],['reason_required',400]]){
+    const state=setup({rpcStatuses:{ledger_cancel_card_reconciliation_v1:rpcStatus}});
+    const response=await state.cancel.POST(new Request('http://local/cancel',{method:'POST',body:JSON.stringify({reason:'duplicate'})}),{params:Promise.resolve({id:'1'})});
+    assert.equal(response.status,httpStatus,rpcStatus);
+    assert.equal(state.calls.length,0);
+  }
 });

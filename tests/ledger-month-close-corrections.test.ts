@@ -3,6 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 const migration=fs.readFileSync("supabase/migrations/202608210008_add_ledger_month_close_corrections.sql","utf8");
+const cardCancellationMigration=fs.readFileSync("supabase/migrations/20260915093246_add_card_reconciliation_cancellation.sql","utf8");
 const closeRoute=fs.readFileSync("app/api/admin/ledger/month-close/route.ts","utf8");
 const correctionRoute=fs.readFileSync("app/api/admin/ledger/corrections/route.ts","utf8");
 const snapshot=fs.readFileSync("lib/ledger/month-close.ts","utf8");
@@ -94,7 +95,11 @@ test("phase8 coverage: current and future month close are rejected",()=>{assert.
 test("phase8 coverage: stale preflight is rejected",()=>{assert.match(migration,/LEDGER_CLOSE_PREFLIGHT_STALE/)});
 test("phase8 coverage: pending inventory and meal are blockers",()=>{assert.match(migration,/candidate_type in\('inventory_purchase','employee_meal'\)/)});
 test("phase8 coverage: payroll and recurring readiness are blockers",()=>{assert.match(migration,/PAYROLL_NOT_COMPLETED/);assert.match(migration,/RECURRING_NOT_SYNCED/)});
-test("phase8 coverage: card payable and reserve are warnings",()=>{for(const code of["CARD_UNMATCHED","PAYABLE_OUTSTANDING","RESERVE_SHORTFALL"])assert.match(migration,new RegExp(code))});
+test("phase8 coverage: payable and reserve remain warnings while incomplete real card deposits are now blockers",()=>{
+ for(const code of["PAYABLE_OUTSTANDING","RESERVE_SHORTFALL"])assert.match(migration,new RegExp(code));
+ const blocker=cardCancellationMigration.slice(cardCancellationMigration.indexOf("r.status in ('unmatched', 'partial')"),cardCancellationMigration.indexOf("select coalesce(sum(p.original_amount)"));
+ assert.match(blocker,/date_trunc\('month', r\.deposit_date\)::date = p_month/);assert.match(blocker,/v_blockers/);assert.match(blocker,/CARD_UNMATCHED/);assert.doesNotMatch(blocker,/v_warnings/);
+});
 test("phase8 coverage: fund payable card reserve snapshots are as-of",()=>{for(const marker of["business_date<endExclusive","payment.business_date\",endExclusive","reconciliation.confirmed_at\",endAt","occurred_at\",endAt"])assert.match(snapshot,new RegExp(marker))});
 test("phase8 coverage: manual and candidate writes are closed-month guarded",()=>{assert.match(migration,/ledger_transactions_month_guard/);assert.match(migration,/ledger_candidates_resolution_month_guard/)});
 test("phase8 coverage: payable and card writes are closed-month guarded",()=>{assert.match(migration,/ledger_payable_allocations_month_guard/);assert.match(migration,/ledger_card_reconciliations_month_guard/);assert.match(migration,/ledger_card_reconciliation_lines_month_guard/)});
@@ -105,5 +110,10 @@ test("phase8 coverage: same drift cannot resolve twice",()=>{assert.match(migrat
 test("phase8 coverage: original closed transaction is never mutated",()=>{assert.doesNotMatch(migration,/update public\.ledger_transactions[\s\S]{0,160}where id=p_original_transaction_id/);assert.match(migration,/correction_of_id/)});
 test("phase8 security: closed sync and drift RPCs revalidate the actor",()=>{for(const name of["ledger_record_source_drift_v1","ledger_sync_pos_sales_v2","ledger_sync_recurring_expenses_v2","ledger_sync_payroll_company_cost_v2"]){const start=migration.indexOf(`function public.${name}`),next=migration.indexOf("create or replace function",start+20),body=migration.slice(start,next<0?undefined:next);assert.match(body,/from public\.users/);assert.match(body,/not in\('owner','master'\)|not in \('owner','master'\)/)}});
 test("phase8 as-of: later card confirmation stays unmatched in an earlier snapshot",()=>{assert.match(snapshot,/row\.confirmed_at!=null&&String\(row\.confirmed_at\)<endAt/);assert.match(snapshot,/!asOfMatchedIds\.has\(Number\(row\.id\)\)/)});
+test("card cancellation extension excludes cancelled deposits and allocations from close",()=>{
+ assert.match(snapshot,/row\.status!=="cancelled"&&!asOfMatchedIds\.has\(Number\(row\.id\)\)/);
+ assert.match(snapshot,/eq\("reconciliation\.status","matched"\)/);
+ assert.match(cardCancellationMigration,/join public\.ledger_card_reconciliations r on r\.id = l\.reconciliation_id and r\.status <> 'cancelled'/);
+});
 test("phase8 idempotency: a resolved fingerprint drift cannot be recreated",()=>{assert.match(migration,/source_type='ledger_source_drift'and source_key=v_key order by id desc limit 1/);assert.doesNotMatch(migration,/source_type='ledger_source_drift'and source_key=v_key and status='pending'/)});
 test("phase8 locking: correction locks drift candidate before original and validates their link",()=>{const fn=migration.slice(migration.indexOf("ledger_create_correction_v1"),migration.indexOf("ledger_sync_pos_sales_v2"));assert.ok(fn.indexOf("id=p_source_drift_candidate_id")<fn.indexOf("id=p_original_transaction_id for update"));assert.match(fn,/source_snapshot->>'originalTransactionId'/)});

@@ -29,6 +29,7 @@ async function summary(sales, lines, { failAllocations = false } = {}) {
       select(value) { query.select = value; return chain; },
       order() { return chain; },
       range(from, to) { Object.assign(query, { from, to }); return chain; },
+      async maybeSingle() { return { data: null, error: null }; },
       then(resolve, reject) {
         if (table === "ledger_card_reconciliation_lines" && failAllocations) {
           return Promise.resolve({ data: null, error: { code: "ALLOCATION_READ_FAILED" } }).then(resolve, reject);
@@ -68,6 +69,14 @@ async function summary(sales, lines, { failAllocations = false } = {}) {
       if (name === "@/lib/ledger/payables") return { computePaidExpenseTotal: () => 0 };
       if (name === "@/lib/ledger/summary") return require("../lib/ledger/summary.ts");
       if (name === "@/lib/ledger/card-settlements") return require("../lib/ledger/card-settlements.ts");
+      if (name === "@/lib/common/business-time") return {
+        getBusinessDate: () => "2026-09-15",
+        getBusinessMonthEndBoundary: month => {
+          const next=new Date(`${month}-01T00:00:00Z`);next.setUTCMonth(next.getUTCMonth()+1);const businessDateExclusive=next.toISOString().slice(0,10);
+          return {businessDateExclusive,cutoffAt:`${businessDateExclusive}T03:00:00+07:00`};
+        },
+      };
+      if (name === "@/lib/ledger/fund-account-view") return require("../lib/ledger/fund-account-view.ts");
       if (name === "@/lib/ledger/card-settlement-data") {
         const dataExports = {};
         const dataCode = ts.transpileModule(readFileSync("lib/ledger/card-settlement-data.ts", "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
