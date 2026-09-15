@@ -37,7 +37,7 @@ test("close is atomic, month-locked, stale-safe and stores snapshots with hash",
 test("as-of snapshot uses target cutoffs for funds, payables, card and reserves",()=>{
  assert.match(snapshot,/business_date<endExclusive/);
  assert.match(snapshot,/payment\.business_date",endExclusive/);
- assert.match(snapshot,/reconciliation\.confirmed_at",endAt/);
+ assert.match(snapshot,/reconciliation\.deposit_date",endExclusive/);
  assert.match(snapshot,/occurred_at",endAt/);
  assert.match(snapshot,/totalOutstanding/);
  assert.match(snapshot,/cardClearing/);
@@ -100,7 +100,7 @@ test("phase8 coverage: payable and reserve remain warnings while incomplete real
  const blocker=cardCancellationMigration.slice(cardCancellationMigration.indexOf("r.status in ('unmatched', 'partial')"),cardCancellationMigration.indexOf("select coalesce(sum(p.original_amount)"));
  assert.match(blocker,/date_trunc\('month', r\.deposit_date\)::date = p_month/);assert.match(blocker,/v_blockers/);assert.match(blocker,/CARD_UNMATCHED/);assert.doesNotMatch(blocker,/v_warnings/);
 });
-test("phase8 coverage: fund payable card reserve snapshots are as-of",()=>{for(const marker of["business_date<endExclusive","payment.business_date\",endExclusive","reconciliation.confirmed_at\",endAt","occurred_at\",endAt"])assert.match(snapshot,new RegExp(marker))});
+test("phase8 coverage: fund payable card reserve snapshots are as-of",()=>{for(const marker of["business_date<endExclusive","payment.business_date\",endExclusive","reconciliation.deposit_date\",endExclusive","occurred_at\",endAt"])assert.match(snapshot,new RegExp(marker))});
 test("phase8 coverage: manual and candidate writes are closed-month guarded",()=>{assert.match(migration,/ledger_transactions_month_guard/);assert.match(migration,/ledger_candidates_resolution_month_guard/)});
 test("phase8 coverage: payable and card writes are closed-month guarded",()=>{assert.match(migration,/ledger_payable_allocations_month_guard/);assert.match(migration,/ledger_card_reconciliations_month_guard/);assert.match(migration,/ledger_card_reconciliation_lines_month_guard/)});
 test("phase8 coverage: closed source sync creates drift without overwrite",()=>{for(const name of["ledger_sync_pos_sales_v2","ledger_sync_recurring_expenses_v2","ledger_sync_payroll_company_cost_v2"])assert.match(migration,new RegExp(name));assert.match(migration,/ledger_record_source_drift_v1/)});
@@ -109,9 +109,13 @@ test("phase8 coverage: fund correction and same-operation economic correction",(
 test("phase8 coverage: same drift cannot resolve twice",()=>{assert.match(migration,/v_candidate.status<>'pending'/);assert.match(migration,/drift_already_resolved/)});
 test("phase8 coverage: original closed transaction is never mutated",()=>{assert.doesNotMatch(migration,/update public\.ledger_transactions[\s\S]{0,160}where id=p_original_transaction_id/);assert.match(migration,/correction_of_id/)});
 test("phase8 security: closed sync and drift RPCs revalidate the actor",()=>{for(const name of["ledger_record_source_drift_v1","ledger_sync_pos_sales_v2","ledger_sync_recurring_expenses_v2","ledger_sync_payroll_company_cost_v2"]){const start=migration.indexOf(`function public.${name}`),next=migration.indexOf("create or replace function",start+20),body=migration.slice(start,next<0?undefined:next);assert.match(body,/from public\.users/);assert.match(body,/not in\('owner','master'\)|not in \('owner','master'\)/)}});
-test("phase8 as-of: later card confirmation stays unmatched in an earlier snapshot",()=>{assert.match(snapshot,/row\.confirmed_at!=null&&String\(row\.confirmed_at\)<endAt/);assert.match(snapshot,/!asOfMatchedIds\.has\(Number\(row\.id\)\)/)});
+test("phase8 as-of: card matching follows deposit date rather than confirmation timestamp",()=>{
+ assert.match(snapshot,/ledger_card_reconciliations!inner\(deposit_date,status\)/);
+ assert.match(snapshot,/reconciliation\.deposit_date",endExclusive/);
+ assert.doesNotMatch(snapshot,/reconciliation\.confirmed_at|row\.confirmed_at/);
+});
 test("card cancellation extension excludes cancelled deposits and allocations from close",()=>{
- assert.match(snapshot,/row\.status!=="cancelled"&&!asOfMatchedIds\.has\(Number\(row\.id\)\)/);
+ assert.match(snapshot,/calculateMonthCloseCardSnapshot/);
  assert.match(snapshot,/eq\("reconciliation\.status","matched"\)/);
  assert.match(cardCancellationMigration,/join public\.ledger_card_reconciliations r on r\.id = l\.reconciliation_id and r\.status <> 'cancelled'/);
 });

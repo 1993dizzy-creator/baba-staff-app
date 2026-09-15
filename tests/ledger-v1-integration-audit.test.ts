@@ -50,9 +50,10 @@ test("investment recovery allocation and payments are recovery-first", () => {
   assert.deepEqual({ recoveryPaid, profitPaid }, { recoveryPaid: 20, profitPaid: 15 });
 });
 
-test("month close card totals use confirmation cutoff rather than current status", () => {
-  assert.match(closeHelper, /confirmed_at!=null&&String\(row\.confirmed_at\)<endAt/);
-  assert.match(closeHelper, /asOfMatchedIds/);
+test("month close card totals use deposit date cutoff and matched status", () => {
+  assert.match(closeHelper, /reconciliation\.deposit_date",endExclusive/);
+  assert.match(closeHelper, /calculateMonthCloseCardSnapshot/);
+  assert.doesNotMatch(closeHelper, /reconciliation\.confirmed_at|row\.confirmed_at/);
 });
 
 test("all migrations deny browser table access and fix security definer search paths", () => {

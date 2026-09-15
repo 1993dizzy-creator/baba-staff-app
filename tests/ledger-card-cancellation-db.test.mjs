@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { initializePosCloseDatabase } from './helpers/pos-business-day-close-fixture.mjs';
 
 const cancellationMigration=readFileSync('supabase/migrations/20260915095952_add_card_reconciliation_cancellation.sql','utf8');
-const futureSaleMigration=readFileSync('supabase/migrations/20260915102041_prevent_future_card_sale_matching.sql','utf8');
+const futureSaleMigration=readFileSync('supabase/migrations/20260915103312_prevent_future_card_sale_matching.sql','utf8');
 
 async function database(){
   const db=new PGlite();
