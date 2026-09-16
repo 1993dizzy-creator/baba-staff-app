@@ -155,7 +155,7 @@ export async function GET(request: Request) {
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
     ]);
     const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources);
-    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, cardGrossSales, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
+    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);

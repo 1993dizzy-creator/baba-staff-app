@@ -12,6 +12,7 @@ import {
 import Container from "@/components/Container";
 import Link from "next/link";
 import type { PayablePeriodSummary } from "@/lib/ledger/payables";
+import { formatCardSettlementRate } from "@/lib/ledger/card-settlements";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
 import {
@@ -76,6 +77,7 @@ type LedgerSummary = {
   operatingProfit: number;
   paidExpense: number;
   cardGrossSales: number;
+  monthlySettledGross: number;
   actualCardDeposits: number;
   unsettledCardGross: number;
 };
@@ -127,7 +129,7 @@ type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; p
 type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[] };
 type PayableRow = { id:number; party_id:number; original_amount:number; outstandingAmount:number; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null}|null };
 type PayableDetail = { party:{id:number;name:string}; payables:PayableRow[]; totalOutstanding:number };
-type CardSettlementSummary = { monthlyCardGross:number; monthlySettledGross:number; monthlyUnreconciledGross:number; totalUnreconciledGross:number; cardPendingBalance:number };
+type CardSettlementSummary = { monthlyCardGross:number; monthlySettledGross:number; monthlyUnreconciledGross:number; monthlySettlementDifference:number; totalUnreconciledGross:number; cardPendingBalance:number };
 type InvestmentEntryType = "opening" | "contribution" | "adjustment";
 type InvestmentEvent = { investmentId:number; participantId:number; participantName:string; entryType:InvestmentEntryType; amount:number; businessDate:string; occurredAt:string; fundAccountId:number|null; fundAccountName:string|null; reason:string|null };
 type InvestmentSummary = { openingCumulative:number; periodOpening:number; periodContribution:number; periodAdjustment:number; periodNetChange:number; closingCumulative:number };
@@ -782,23 +784,13 @@ export default function LedgerEntriesPage() {
                   {vi ? "Thu" : "수입"}
                 </span>
                 <strong>{money(data.summary.income)}</strong>
-                <small>{vi ? "Tổng doanh thu" : "전체 수입"}</small>
-                <div className={styles.summarySubRows}>
-                  <span><small className={styles.summarySubLabel}>{vi ? "Doanh thu thẻ" : "카드결제액"}</small><b>{money(data.summary.cardGrossSales)}</b></span>
-                  <span><small className={styles.summarySubLabel}>{vi ? "Thẻ chưa quyết toán" : "미정산 카드"}</small><b>{money(data.summary.unsettledCardGross)}</b></span>
-                </div>
               </article>
               <article className={`${styles.summaryCard} ${styles.expenseCard}`}>
                 <span className={styles.summaryLabel}>
                   <i aria-hidden="true">💸</i>
                   {vi ? "Chi" : "지출"}
                 </span>
-                <strong>{money(data.summary.expense)}</strong>
-                <small>{vi ? "Tổng chi phí" : "전체 지출"}</small>
-                <div className={styles.summarySubRows}>
-                  <span><small className={styles.summarySubLabel}>{vi ? "Đã thanh toán" : "지급완료"}</small><b>{money(data.summary.paidExpense)}</b></span>
-                  <span><small className={styles.summarySubLabel}>{vi ? "Công nợ" : "미납금"}</small><b>{money(payables?.totalOutstanding ?? 0)}</b></span>
-                </div>
+                <strong>{money(data.summary.paidExpense)}</strong>
               </article>
             </section>
             <section
@@ -836,7 +828,7 @@ export default function LedgerEntriesPage() {
               {payableParties.length ? (
                 <div className={styles.payableParties} id="payable-parties-list">{payableParties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty({...party,viewMonth:month})}>
                   <span className={styles.payablePartyMain}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><span className={styles.payablePartyName}>{party.partyName}</span>
-                    <small className={styles.payablePartyPeriod}>{vi ? "Phát sinh tháng" : "당월 외상 발생"}: {payableNumber(party.periodPurchases)} · {vi ? "Thanh toán tháng" : "당월 지급"}: {payableNumber(party.periodPayments)}</small>
+                    <small className={styles.payablePartyPeriod}>{vi ? `Phát sinh T${Number(month.slice(5,7))}` : `${Number(month.slice(5,7))}월 외상`}: {payableNumber(party.periodPurchases)} · {vi ? `Thanh toán T${Number(month.slice(5,7))}` : `${Number(month.slice(5,7))}월 지급`}: {payableNumber(party.periodPayments)}</small>
                   </span><strong aria-label={vi ? "Công nợ cuối tháng" : "월말 미납"}>{money(party.closingOutstanding)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i>
                 </button>)}</div>
               ) : <p className={styles.payableEmpty}>{vi ? "Không có công nợ chưa thanh toán." : "미납금이 없습니다."}</p>}
@@ -844,7 +836,7 @@ export default function LedgerEntriesPage() {
             </section>
             <section className={styles.statusCard} aria-labelledby="card-settlement-title">
               <button type="button" className={styles.payableToggle} aria-expanded={cardSettlementExpanded} aria-controls="card-settlement-body" onClick={()=>setCardSettlementExpanded(value=>!value)}>
-                <div className={styles.payableHeading}><h2 id="card-settlement-title">💳 {vi?"Tình hình quyết toán thẻ":"카드 정산 현황"} ({vi?`T${Number(month.slice(5,7))}`:`${Number(month.slice(5,7))}월`})</h2><strong aria-label={vi?"Thẻ chưa quyết toán tháng":"선택월 미정산 카드"}>{data.month===month?money(data.summary.unsettledCardGross):"-"} <i aria-hidden>{cardSettlementExpanded?"⌃":"⌄"}</i></strong></div>
+                <div className={styles.payableHeading}><h2 id="card-settlement-title">💳 {vi?"Tình hình quyết toán thẻ":"카드 정산 현황"} ({vi?`T${Number(month.slice(5,7))}`:`${Number(month.slice(5,7))}월`})</h2><strong aria-label={vi?"Tỷ lệ quyết toán tháng":"선택월 정산 완료율"}>{data.month===month?formatCardSettlementRate(data.summary.cardGrossSales,data.summary.monthlySettledGross):"-"} <i aria-hidden>{cardSettlementExpanded?"⌃":"⌄"}</i></strong></div>
               </button>
               {cardSettlementExpanded ? <div className={styles.statusBody} id="card-settlement-body">
                 <dl className={styles.payableMonthTotals}>
@@ -852,7 +844,7 @@ export default function LedgerEntriesPage() {
                     ["monthlyCardGross",vi?"💳 Doanh thu thẻ":"💳 카드매출"],
                     ["monthlySettledGross",vi?"✅ Đã hoàn tất":"✅ 정산완료"],
                     ["monthlyUnreconciledGross",vi?"⏳ Chưa quyết toán":"⏳ 미정산"],
-                    ["totalUnreconciledGross",vi?"🌐 Chưa quyết toán toàn kỳ":"🌐 전체 미정산"],
+                    ["monthlySettlementDifference",vi?"💸 Phí/chênh lệch":"💸 수수료/차액"],
                   ] as const).map(([key,label])=><div key={key}><dt>{label}</dt><dd>{cardSettlement?.month===month&&cardSettlementError?.month!==month?money(cardSettlement.summary[key]):"-"}</dd></div>)}
                 </dl>
                 {cardSettlementError?.month===month?<p role="alert" className={styles.error}>{cardSettlementError.message}</p>:cardSettlement?.month!==month?<p className={styles.statusHint}>{vi?"Đang tải tình hình thẻ…":"카드 정산 현황을 불러오는 중입니다…"}</p>:null}

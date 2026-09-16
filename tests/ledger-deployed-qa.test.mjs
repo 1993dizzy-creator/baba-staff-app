@@ -43,9 +43,11 @@ function payableFixture(month) {
   const party={...result.partySummaries[0],partyName:'Demo supplier',partnerType:null,outstandingAmount:result.summary.closingOutstanding,partialPaidAmount:400,totalOpenAmount:1500,openCount:result.payables.length};
   return {...result,month,parties:[party]};
 }
-const ledgerFixture=month=>({month,fundsView:{month,mode:'provisional',asOf:`${month}-01`,businessDateExclusive:null},summary:{income:9999,receivedIncome:8888,expense:7777,operatingProfit:2222,paidExpense:6666,cardGrossSales:500,actualCardDeposits:0,unsettledCardGross:500},accounts:[],categories:[],partners:[],entries:[]});
-function entriesFixture(month,{selected=false,payables=payableFixture(month),fetcher,payableExpanded=true,cardExpanded=false,cardSummary=null}={}) {
-  return pageFixture(entriesPath,{0:month,1:ledgerFixture(month),2:false,14:payableExpanded,15:payables,16:selected?{...payables.parties[0],viewMonth:month}:null,22:cardExpanded,23:cardSummary},fetcher);
+const ledgerFixture=month=>({month,fundsView:{month,mode:'provisional',asOf:`${month}-01`,businessDateExclusive:null},summary:{income:9999,receivedIncome:8888,expense:7777,operatingProfit:2222,paidExpense:6666,cardGrossSales:500,monthlySettledGross:500,actualCardDeposits:0,unsettledCardGross:500},accounts:[],categories:[],partners:[],entries:[]});
+function entriesFixture(month,{selected=false,payables=payableFixture(month),fetcher,payableExpanded=true,cardExpanded=false,cardSummary=null,ledgerSummary=null}={}) {
+  const ledger=ledgerFixture(month);
+  if(ledgerSummary)ledger.summary={...ledger.summary,...ledgerSummary};
+  return pageFixture(entriesPath,{0:month,1:ledger,2:false,14:payableExpanded,15:payables,16:selected?{...payables.parties[0],viewMonth:month}:null,22:cardExpanded,23:cardSummary},fetcher);
 }
 test('entries month loading actually sends selected month to payables API',async()=>{
   for(const month of ['2026-08','2026-09']){
@@ -58,13 +60,13 @@ test('August and September render different closing with month-only payments and
   const august=entriesFixture('2026-08').html,september=entriesFixture('2026-09').html;
   assert.match(august,/월말 미납<\/dt><dd>600 ₫/);assert.match(september,/월말 미납<\/dt><dd>1\.100 ₫/);
   assert.match(august,/당월 지급<\/dt><dd>400 ₫/);assert.match(september,/당월 지급<\/dt><dd>0 ₫/);
-  assert.match(september,/당월 지급[^<]*: 0/);
+  assert.match(september,/9월 지급[^<]*: 0/);
   for(const html of [august,september]) {
     assert.doesNotMatch(html,/누적 부분결제|class="payablePartialPayment"/);
-    assert.match(html,/당월 외상 발생[^<]*:/);
+    assert.match(html,/(8|9)월 외상[^<]*:/);
     assert.match(html,/aria-label="월말 미납"/);
   }
-  assert.match(september,/9\.999 ₫/);assert.match(september,/7\.777 ₫/);
+  assert.match(september,/9\.999 ₫/);assert.match(september,/6\.666 ₫/);
 });
 test('historical drilldown renders month-end sources with no current payment controls or current detail read',()=>{
   const state=entriesFixture('2026-08',{selected:true});
@@ -112,18 +114,33 @@ test('payable accordion keeps its closing total visible but puts all four monthl
   assert.match(entriesFixture('2026-08',{payables:empty}).html,/id="payable-summary-body"/);
 });
 
-const cardSummary={monthlyCardGross:1000,monthlySettledGross:200,monthlyUnreconciledGross:600,totalUnreconciledGross:1600,cardPendingBalance:1582};
+const cardSummary={monthlyCardGross:1000,monthlySettledGross:200,monthlyUnreconciledGross:600,monthlySettlementDifference:18,totalUnreconciledGross:1600,cardPendingBalance:1582};
 test('card status accordion shows four API metrics and a detail link without internal accounting labels',()=>{
   const collapsed=entriesFixture('2026-09',{payableExpanded:false}).html;
   assert.match(collapsed,/카드 정산 현황/);assert.doesNotMatch(collapsed,/id="card-settlement-body"|href="\/admin\/ledger\/card-settlements"/);
   const expanded=entriesFixture('2026-09',{cardExpanded:true,cardSummary:{month:'2026-09',summary:cardSummary}}).html;
   const body=expanded.slice(expanded.indexOf('id="card-settlement-body"'),expanded.indexOf('id="card-settlement-body"')+2200);
-  for(const value of ['1.000 ₫','200 ₫','600 ₫','1.600 ₫']) assert.ok(body.includes(value));
+  for(const value of ['1.000 ₫','200 ₫','600 ₫','18 ₫']) assert.ok(body.includes(value));
+  assert.match(expanded,/aria-label="선택월 정산 완료율">100%/);
+  assert.match(body,/수수료\/차액/);
+  assert.doesNotMatch(body,/전체 미정산/);
   assert.doesNotMatch(expanded,/Gross|card_clearing|카드미정산 계정 잔액|1\.582 ₫/);
   assert.match(body,/href="\/admin\/ledger\/card-settlements"/);assert.match(body,/상세 보기/);
   assert.doesNotMatch(body,/datetime-local|부분 저장|정산 확정/);
   const stale=entriesFixture('2026-09',{cardExpanded:true,cardSummary:{month:'2026-08',summary:cardSummary}}).html;
   assert.match(stale,/카드 정산 현황을 불러오는 중/);assert.doesNotMatch(stale,/1\.582 ₫/);
+});
+test('August reference summary shows paid expense, full settlement and sale-month difference',()=>{
+  const html=entriesFixture('2026-08',{cardExpanded:true,ledgerSummary:{income:734686553,paidExpense:448445598.5,cardGrossSales:225925720,monthlySettledGross:225925720},cardSummary:{month:'2026-08',summary:{...cardSummary,monthlyCardGross:225925720,monthlySettledGross:225925720,monthlyUnreconciledGross:0,monthlySettlementDifference:4860925.326}}}).html;
+  assert.match(html,/734\.686\.553 ₫/);
+  assert.match(html,/448\.445\.599 ₫/);
+  assert.match(html,/선택월 정산 완료율">100%/);
+  assert.match(html,/4\.860\.925 ₫/);
+  assert.doesNotMatch(html,/전체 미정산/);
+});
+test('zero card sales show a dash in the settlement-rate header',()=>{
+  const html=entriesFixture('2026-08',{ledgerSummary:{cardGrossSales:0,monthlySettledGross:0}}).html;
+  assert.match(html,/선택월 정산 완료율">-/);
 });
 
 test('expanded card status reads the selected month and collapsed status does not request extra data',async()=>{

@@ -309,29 +309,21 @@ test("the summary block itself (GET handler) issues no RPC — the three new fie
 });
 
 test("summary type is modeled on LedgerData so the cards cannot silently fall back to undefined", () => {
-  assert.match(pageCompact, /typeLedgerSummary=\{income:number;receivedIncome:number;expense:number;operatingProfit:number;paidExpense:number;cardGrossSales:number;actualCardDeposits:number;unsettledCardGross:number;\}/);
+  assert.match(pageCompact, /typeLedgerSummary=\{income:number;receivedIncome:number;expense:number;operatingProfit:number;paidExpense:number;cardGrossSales:number;monthlySettledGross:number;actualCardDeposits:number;unsettledCardGross:number;\}/);
   assert.match(pageCompact, /summary:LedgerSummary/);
 });
 
-test("income card shows accounting income with exactly card-gross and unsettled-gross sub-rows", () => {
+test("income card shows only the accounting income total", () => {
   const card = pageCompact.slice(pageCompact.indexOf("styles.incomeCard"), pageCompact.indexOf("styles.expenseCard"));
   assert.match(card, /<strong>\{money\(data\.summary\.income\)\}/);
-  assert.match(card, /전체수입/);
-  assert.match(card, /money\(data\.summary\.unsettledCardGross\)/);
-  assert.match(card, /money\(data\.summary\.cardGrossSales\)/);
-  assert.doesNotMatch(card, /receivedIncome|actualCardDeposits/);
-  assert.equal((card.match(/styles.summarySubLabel/g) ?? []).length, 2);
+  assert.doesNotMatch(card, /전체수입|카드결제액|미정산카드|styles\.summarySubRows/);
 });
 
-test("expense card shows accounting expense with paid-expense and unchanged payable sub-rows", () => {
+test("expense card displays paid expense while accounting expense remains in API", () => {
   const card = pageCompact.slice(pageCompact.indexOf("styles.expenseCard"), pageCompact.indexOf("styles.openingSection"));
-  assert.match(card, /<strong>\{money\(data\.summary\.expense\)\}/);
-  assert.match(card, /전체지출/);
-  assert.match(card, /money\(data\.summary\.paidExpense\)/);
-  assert.match(card, /지급완료/);
-  assert.match(card, /money\(payables\?\.totalOutstanding\?\?0\)/);
-  assert.doesNotMatch(card, /현재|hiện/);
-  assert.equal((card.match(/styles.summarySubLabel/g) ?? []).length, 2);
+  assert.match(card, /<strong>\{money\(data\.summary\.paidExpense\)\}/);
+  assert.doesNotMatch(card, /data\.summary\.expense|전체지출|지급완료|styles\.summarySubRows/);
+  assert.match(route, /expense, operatingProfit: recognizedIncome - expense/);
 });
 
 test("payable rows hide cumulative partial-payment UI and retain monthly purchase/payment/closing fields", () => {
@@ -340,9 +332,9 @@ test("payable rows hide cumulative partial-payment UI and retain monthly purchas
   assert.doesNotMatch(row, /partialPaidAmount|payablePartialPayment|누적 부분결제|Lũy kế/);
   assert.match(page, /partialPaidAmount:number/);
   assert.match(row, /<strong[^>]*>\{money\(party\.closingOutstanding\)\}/);
-  assert.match(row, /당월 외상 발생/);
+  assert.match(row, /\$\{Number\(month\.slice\(5,7\)\)\}월 외상/);
   assert.match(row, /party\.periodPurchases/);
-  assert.match(row, /당월 지급/);
+  assert.match(row, /\$\{Number\(month\.slice\(5,7\)\)\}월 지급/);
   assert.match(row, /party\.periodPayments/);
   assert.match(row, /aria-label=\{vi \? "Công nợ cuối tháng" : "월말 미납"\}/);
 });

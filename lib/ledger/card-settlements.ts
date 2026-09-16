@@ -12,6 +12,31 @@ export type CardReconciliation = {
 export const cardMoney = (value: number) => Math.round(value * 1000) / 1000;
 export const sumCardMoney = (values: readonly (number | string)[]) => values.reduce<number>((sum, value) => sum + Math.round(Number(value) * 1000), 0) / 1000;
 
+export function formatCardSettlementRate(monthlyCardGross: number, monthlySettledGross: number) {
+  if (monthlyCardGross <= 0) return "-";
+  return `${Number((monthlySettledGross / monthlyCardGross * 100).toFixed(1))}%`;
+}
+
+// Attribute a matched reconciliation's difference to the sale month by its
+// allocated gross share. Deposit date does not determine this summary.
+export function calculateMonthlySettlementDifference(
+  sales: readonly CardSale[], lines: readonly CardAllocationLine[], reconciliations: readonly CardReconciliation[],
+  start: string, end: string,
+) {
+  const monthlySaleIds = new Set(sales.filter(sale => sale.business_date >= start && sale.business_date < end).map(sale => Number(sale.id)));
+  const matched = new Map(reconciliations.filter(row => row.status === "matched" && Number(row.matched_gross_amount) > 0).map(row => [Number(row.id), row]));
+  const monthlyGrossByReconciliation = new Map<number, number>();
+  for (const line of lines) {
+    const id = Number(line.reconciliation_id);
+    if (!monthlySaleIds.has(Number(line.pos_card_transaction_id)) || !matched.has(id)) continue;
+    monthlyGrossByReconciliation.set(id, cardMoney((monthlyGrossByReconciliation.get(id) ?? 0) + Number(line.allocated_gross_amount)));
+  }
+  return cardMoney([...monthlyGrossByReconciliation].reduce((sum, [id, gross]) => {
+    const reconciliation = matched.get(id)!;
+    return sum + Number(reconciliation.difference_amount) * gross / Number(reconciliation.matched_gross_amount);
+  }, 0));
+}
+
 export function eligibleCardSalesForDeposit<T extends { business_date: string }>(sales: readonly T[], depositDate: string) {
   return sales.filter(sale => sale.business_date <= depositDate);
 }

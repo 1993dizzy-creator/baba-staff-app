@@ -450,11 +450,10 @@ test("ledger entries header mirrors the monthly summary card hierarchy", () => {
   assert.match(pageCompact, /money\(data\.summary\.income\)/);
   assert.match(pageCompact, /if\(entry\.direction==="income"\)group\.income\+=signedAmount/);
   assert.match(pageCompact, /money\(data\.summary\.paidExpense\)/);
-  assert.match(pageCompact, /money\(data\.summary\.unsettledCardGross\)/);
-  assert.match(pageCompact, /money\(data\.summary\.cardGrossSales\)/);
+  assert.match(pageCompact, /formatCardSettlementRate\(data\.summary\.cardGrossSales,data\.summary\.monthlySettledGross\)/);
   assert.match(pageCompact, /money\(payables\?\.totalOutstanding\?\?0\)/);
   assert.doesNotMatch(pageCompact, /entry\.direction==="income"\)totals\.income\+=entry\.amount/);
-  for (const label of ["월 장부 요약", "전체 수입", "지급완료", "Tổng doanh thu", "Đã thanh toán", "시재 합계", "Tổng số dư đầu tháng"]) {
+  for (const label of ["월 장부 요약", "수입", "지출", "시재 합계", "Tổng số dư đầu tháng"]) {
     assert.match(page, new RegExp(label));
   }
   assert.match(pageCompact, /className=\{styles\.openingTotal\}>\s*<span>/);

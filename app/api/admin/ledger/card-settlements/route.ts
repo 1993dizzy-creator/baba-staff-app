@@ -1,4 +1,4 @@
-import { calculateCardGross, calculateCardDepositSummary, sumCardMoney } from "@/lib/ledger/card-settlements";
+import { calculateCardGross, calculateCardDepositSummary, calculateMonthlySettlementDifference, sumCardMoney } from "@/lib/ledger/card-settlements";
 import { loadCardRows, loadCardSales, loadCardAllocationLines } from "@/lib/ledger/card-settlement-data";
 import {ledgerJson,requireLedgerActor} from "@/lib/ledger/server";
 import {supabaseServer} from "@/lib/supabase/server";
@@ -37,6 +37,7 @@ export async function GET(request: Request) {
         monthlyReconciledGross: gross.monthlyReconciledGross,
         monthlySettledGross: gross.monthlySettledGross,
         monthlyUnreconciledGross: gross.monthlyUnreconciledGross,
+        monthlySettlementDifference: calculateMonthlySettlementDifference(saleRows, lines, reconciliations, start, end),
         totalUnreconciledGross: gross.totalUnreconciledGross,
         cardPendingBalance: sumCardMoney(movements.map(row => row.amount)),
         ...deposits,

@@ -1,6 +1,6 @@
 import test from"node:test";import assert from"node:assert/strict";import{readFileSync}from"node:fs";
 import { createRequire } from "node:module";
-const { calculateCardGross, calculateCardDepositSummary, recommendCardAllocations, buildEditableCardSales, eligibleCardSalesForDeposit } = createRequire(import.meta.url)("../lib/ledger/card-settlements.ts") as typeof import("../lib/ledger/card-settlements");
+const { calculateCardGross, calculateCardDepositSummary, calculateMonthlySettlementDifference, formatCardSettlementRate, recommendCardAllocations, buildEditableCardSales, eligibleCardSalesForDeposit } = createRequire(import.meta.url)("../lib/ledger/card-settlements.ts") as typeof import("../lib/ledger/card-settlements");
 const migration=readFileSync("supabase/migrations/202608210006_add_ledger_card_settlements.sql","utf8"),cancellationMigration=readFileSync("supabase/migrations/20260915095952_add_card_reconciliation_cancellation.sql","utf8"),futureSaleMigration=readFileSync("supabase/migrations/20260915103312_prevent_future_card_sale_matching.sql","utf8"),api=readFileSync("app/api/admin/ledger/card-settlements/route.ts","utf8"),detailApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/route.ts","utf8"),matchApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/match/route.ts","utf8"),cancelApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/cancel/route.ts","utf8"),ui=readFileSync("app/(protected)/admin/ledger/card-settlements/page.tsx","utf8"),snapshot=readFileSync("lib/ledger/month-close.ts","utf8"),posMigration=readFileSync("supabase/migrations/202608210002_add_ledger_pos_sales_sync.sql","utf8"),posSource=readFileSync("lib/ledger/pos-sales.ts","utf8"),foundation=readFileSync("tests/ledger-v1-foundation.test.ts","utf8"),inventory=readFileSync("tests/ledger-inventory-candidates.test.ts","utf8"),payable=readFileSync("tests/ledger-payable-payments.test.ts","utf8"),meal=readFileSync("tests/ledger-meal-payroll.test.ts","utf8");
 const snapshotCard=readFileSync("lib/ledger/month-close-card.ts","utf8");
 test("card deposit registration RPC",()=>assert.match(api,/ledger_create_card_deposit_v1/));
@@ -112,6 +112,39 @@ test("D: cancelled reconciliation never allocates gross", () => assert.equal(gro
 test("E: partial allocation reduces outstanding by exactly its gross", () => assert.equal(gross([cardSale()],[cardLine(400,"partial")]).monthlyUnreconciledGross,600));
 test("sale-month completed gross excludes partial saves while connected gross includes them",()=>{
   const result=gross([cardSale()],[cardLine(400,"partial"),cardLine(300,"matched")]);assert.equal(result.monthlyReconciledGross,700);assert.equal(result.monthlySettledGross,300);assert.equal(result.monthlyUnreconciledGross,300);
+});
+test("settlement rate uses matched sale gross and handles zero card sales",()=>{
+  assert.equal(formatCardSettlementRate(225925720,225925720),"100%");
+  assert.equal(formatCardSettlementRate(1000,874),"87.4%");
+  assert.equal(formatCardSettlementRate(0,0),"-");
+  assert.equal(formatCardSettlementRate(1000,gross([cardSale()],[cardLine(400,"partial")]).monthlySettledGross),"0%");
+});
+test("one matched reconciliation attributes difference to two sale months by gross share",()=>{
+  const sales=[cardSale(1,300,"2026-08-15"),cardSale(2,300,"2026-08-16"),cardSale(3,400,"2026-09-01")];
+  const lines=[cardLine(300,"matched",1),cardLine(300,"matched",2),cardLine(400,"matched",3)];
+  const reconciliations=[{id:1,deposit_date:"2026-09-10",deposit_amount:980,matched_gross_amount:1000,difference_amount:20,status:"matched"}];
+  assert.equal(calculateMonthlySettlementDifference(sales,lines,reconciliations,"2026-08-01","2026-09-01"),12);
+  assert.equal(calculateMonthlySettlementDifference(sales,lines,reconciliations,"2026-09-01","2026-10-01"),8);
+});
+test("partial, cancelled and zero-gross reconciliations never contribute attributed difference",()=>{
+  const sales=[cardSale()];
+  const lines=[1,2,3].map(id=>({...cardLine(100,"matched"),reconciliation_id:id}));
+  const reconciliations=[
+    {id:1,deposit_date:"2026-09-10",deposit_amount:90,matched_gross_amount:100,difference_amount:10,status:"partial"},
+    {id:2,deposit_date:"2026-09-10",deposit_amount:90,matched_gross_amount:100,difference_amount:10,status:"cancelled"},
+    {id:3,deposit_date:"2026-09-10",deposit_amount:90,matched_gross_amount:0,difference_amount:10,status:"matched"},
+  ];
+  assert.equal(calculateMonthlySettlementDifference(sales,lines,reconciliations,"2026-08-01","2026-09-01"),0);
+});
+test("August reference fixture keeps gross and settlement difference at three decimals",()=>{
+  const sales=[cardSale(1,225925720,"2026-08-31")];
+  const lines=[cardLine(225925720)];
+  const reconciliations=[{id:1,deposit_date:"2026-09-03",deposit_amount:221064794.674,matched_gross_amount:225925720,difference_amount:4860925.326,status:"matched"}];
+  const result=gross(sales,lines);
+  assert.equal(result.monthlyCardGross,225925720);
+  assert.equal(result.monthlySettledGross,225925720);
+  assert.equal(result.monthlyUnreconciledGross,0);
+  assert.equal(calculateMonthlySettlementDifference(sales,lines,reconciliations,"2026-08-01","2026-09-01"),4860925.326);
 });
 test("F: allocations of other months never enter selected sale month", () => {
   const result=gross([cardSale(),cardSale(2,2000,"2026-09-01")],[cardLine(2000,"matched",2)]);assert.equal(result.monthlyReconciledGross,0);assert.equal(result.monthlyUnreconciledGross,1000);assert.equal(result.totalUnreconciledGross,1000);
