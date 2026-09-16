@@ -44,11 +44,81 @@ function payableFixture(month) {
   return {...result,month,parties:[party]};
 }
 const ledgerFixture=month=>({month,fundsView:{month,mode:'provisional',asOf:`${month}-01`,businessDateExclusive:null},summary:{income:9999,receivedIncome:8888,expense:7777,operatingProfit:2222,paidExpense:6666,cardGrossSales:500,monthlySettledGross:500,actualCardDeposits:0,unsettledCardGross:500},accounts:[],categories:[],partners:[],entries:[]});
-function entriesFixture(month,{selected=false,payables=payableFixture(month),fetcher,payableExpanded=true,cardExpanded=false,cardSummary=null,ledgerSummary=null}={}) {
+function entriesFixture(month,{selected=false,payables=payableFixture(month),fetcher,payableExpanded=true,cardExpanded=false,cardSummary=null,ledgerSummary=null,closeState=null,reopenOpen=false,reopenReason=''}={}) {
   const ledger=ledgerFixture(month);
   if(ledgerSummary)ledger.summary={...ledger.summary,...ledgerSummary};
-  return pageFixture(entriesPath,{0:month,1:ledger,2:false,14:payableExpanded,15:payables,16:selected?{...payables.parties[0],viewMonth:month}:null,22:cardExpanded,23:cardSummary},fetcher);
+  return pageFixture(entriesPath,{0:month,1:ledger,2:false,5:closeState,14:payableExpanded,15:payables,16:selected?{...payables.parties[0],viewMonth:month}:null,22:cardExpanded,23:cardSummary,28:reopenOpen,29:reopenReason},fetcher);
 }
+
+test('closed month shows a compact reopen entry point and keeps ledger writes disabled',()=>{
+  const state=entriesFixture('2026-08',{closeState:{month:'2026-08',state:'closed',revision:1}});
+  assert.match(state.html,/8월 장부 마감됨/);
+  assert.match(state.html,/1차 마감/);
+  const add=state.elements.find(item=>item.type==='button'&&item.props.children==='장부 내역 추가');
+  assert.equal(add?.props.disabled,true);
+  const reopen=state.elements.find(item=>item.type==='button'&&item.props.children==='마감 다시 열기');
+  assert.ok(reopen);
+  reopen.props.onClick();
+  assert.equal(state.calls.length,0,'first click only opens confirmation');
+  assert.ok(state.updates.some(update=>update.slot===28&&update.value===true));
+
+  const sheet=entriesFixture('2026-08',{closeState:{month:'2026-08',state:'closed',revision:1},reopenOpen:true});
+  assert.match(sheet.html,/8월 마감 다시 열기/);
+  assert.match(sheet.html,/기존 마감본은 이력으로 안전하게 보존됩니다/);
+  const confirm=sheet.elements.find(item=>item.type==='button'&&item.props.children==='재검토 위해 마감 열기');
+  assert.equal(confirm?.props.disabled,true);
+  assert.equal(sheet.calls.length,0);
+});
+
+test('reopen confirmation posts reason, reloads all selected-month data and unlocks writes',async()=>{
+  const calls=[];
+  const fetcher=async(url,options)=>{
+    calls.push({url,options});
+    if(options?.method==='POST')return Response.json({ok:true,result:{status:'reopened'}});
+    if(url.includes('month-close'))return Response.json({month:'2026-08',state:'reopened',closure:{revision:1}});
+    if(url.includes('/payables'))return Response.json(payableFixture('2026-08'));
+    if(url.includes('/investments'))return Response.json({month:'2026-08',configured:false,summary:{openingCumulative:0,periodOpening:0,periodContribution:0,periodAdjustment:0,periodNetChange:0,closingCumulative:0},events:[]});
+    return Response.json(ledgerFixture('2026-08'));
+  };
+  const state=entriesFixture('2026-08',{closeState:{month:'2026-08',state:'closed',revision:1},reopenOpen:true,reopenReason:' 회계 재검토 ',fetcher});
+  const confirm=state.elements.find(item=>item.type==='button'&&item.props.children==='재검토 위해 마감 열기');
+  assert.equal(confirm?.props.disabled,false);
+  confirm.props.onClick();
+  await new Promise(resolve=>setImmediate(resolve));
+  await new Promise(resolve=>setImmediate(resolve));
+  const post=calls.find(call=>call.options?.method==='POST');
+  assert.equal(post?.url,'/api/admin/ledger/month-close');
+  assert.deepEqual(JSON.parse(post.options.body),{action:'reopen',month:'2026-08',reason:'회계 재검토'});
+  for(const path of ['/api/admin/ledger?month=2026-08','/api/admin/ledger/month-close?month=2026-08','/api/admin/ledger/payables?month=2026-08','/api/admin/ledger/investments?month=2026-08']){
+    assert.ok(calls.some(call=>call.url===path&&call.options?.method!=='POST'),path);
+  }
+  assert.ok(state.updates.some(update=>update.slot===28&&update.value===false),'sheet closes');
+  assert.ok(state.updates.some(update=>update.slot===5&&update.value.state==='reopened'),'state refreshes');
+  assert.ok(state.updates.some(update=>update.slot===1&&update.value.month==='2026-08'),'ledger reloads');
+  assert.ok(state.updates.some(update=>update.slot===15),'payables reload');
+  assert.ok(state.updates.some(update=>update.slot===26),'investments reload');
+  assert.ok(state.updates.some(update=>update.slot===4&&update.value.includes('월마감을 다시 열었습니다')),'success notice');
+
+  const reopened=entriesFixture('2026-08',{closeState:{month:'2026-08',state:'reopened',revision:1}});
+  const add=reopened.elements.find(item=>item.type==='button'&&item.props.children==='장부 내역 추가');
+  assert.equal(add?.props.disabled,false);
+  assert.match(reopened.html,/8월 재검토 중/);
+  assert.match(reopened.html,/href="\/admin\/ledger\/month-close\?month=2026-08"/);
+  assert.doesNotMatch(reopened.html,/마감 다시 열기/);
+});
+
+test('open month keeps existing behavior; opening amounts inherit the app font',()=>{
+  const open=entriesFixture('2026-08',{closeState:{month:'2026-08',state:'open',revision:null}});
+  assert.doesNotMatch(open.html,/장부 마감됨|재검토 중|마감 다시 열기/);
+  const add=open.elements.find(item=>item.type==='button'&&item.props.children==='장부 내역 추가');
+  assert.equal(add?.props.disabled,false);
+  const css=readFileSync('app/(protected)/admin/ledger/entries/entries.module.css','utf8');
+  assert.match(css,/\.openingToggle\{[^}]*font:inherit;color:inherit/);
+  assert.match(css,/\.openingGrid strong\{[^}]*font-family:inherit/);
+  const monthPage=readFileSync('app/(protected)/admin/ledger/month-close/page.tsx','utf8');
+  assert.match(monthPage,/searchParams\.get\("month"\)/);
+  assert.match(monthPage,/<MonthClosePanel key=\{month\} month=\{month\}/);
+});
 test('entries month loading actually sends selected month to payables API',async()=>{
   for(const month of ['2026-08','2026-09']){
     const state=entriesFixture(month,{fetcher:async(url)=>Response.json(url.includes('month-close')?{state:'open'}:url.includes('payables')?payableFixture(month):ledgerFixture(month))});

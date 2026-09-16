@@ -134,6 +134,7 @@ type InvestmentEntryType = "opening" | "contribution" | "adjustment";
 type InvestmentEvent = { investmentId:number; participantId:number; participantName:string; entryType:InvestmentEntryType; amount:number; businessDate:string; occurredAt:string; fundAccountId:number|null; fundAccountName:string|null; reason:string|null };
 type InvestmentSummary = { openingCumulative:number; periodOpening:number; periodContribution:number; periodAdjustment:number; periodNetChange:number; closingCumulative:number };
 type InvestmentsData = { month:string; configured:boolean; summary:InvestmentSummary; events:InvestmentEvent[] };
+type MonthCloseState = { month: string; state: "open" | "closed" | "reopened"; revision: number | null };
 const accountEmoji = (code:string,type:string) => code === "card_clearing" || type === "card_clearing" ? "💳" : code === "store_cash" ? "💵" : type === "personal_custody" || code.endsWith("_personal_custody") ? "👤" : "🏦";
 
 const currentMonth = () => getBusinessDate().slice(0, 7);
@@ -212,7 +213,7 @@ export default function LedgerEntriesPage() {
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
-    [closed, setClosed] = useState(false);
+    [monthCloseState, setMonthCloseState] = useState<MonthCloseState | null>(null);
   const [filter, setFilter] = useState<EntryFilter>("all"),
     [search, setSearch] = useState(""),
     [manualOpen, setManualOpen] = useState(false),
@@ -235,6 +236,11 @@ export default function LedgerEntriesPage() {
   const [investmentExpanded,setInvestmentExpanded]=useState(false),
     [investments,setInvestments]=useState<InvestmentsData|null>(null),
     [investmentsError,setInvestmentsError]=useState<{month:string;message:string}|null>(null);
+  const [reopenSheetOpen, setReopenSheetOpen] = useState(false),
+    [reopenReason, setReopenReason] = useState(""),
+    [reopening, setReopening] = useState(false),
+    [reopenError, setReopenError] = useState("");
+  const closed = monthCloseState?.month === month && monthCloseState.state === "closed";
   const addButtonRef = useRef<HTMLButtonElement>(null),
     initializedMonthRef = useRef(""),
     loadRequestSequenceRef = useRef(0);
@@ -289,7 +295,11 @@ export default function LedgerEntriesPage() {
           return null;
         setData(ledgerBody);
         setPayables(payableBody);
-        setClosed(closeBody.state === "closed");
+        setMonthCloseState({
+          month: requestedMonth,
+          state: closeBody.state === "closed" || closeBody.state === "reopened" ? closeBody.state : "open",
+          revision: typeof closeBody.closure?.revision === "number" ? closeBody.closure.revision : null,
+        });
         // Investments: same requestedMonth this call already validated itself against
         // (we're past the sequence/abort guard above, so this call is the current one).
         // A body.month mismatch is treated as a stale/no-op sub-response, not an error.
@@ -465,6 +475,31 @@ export default function LedgerEntriesPage() {
     // could paint next to the previous month's still-attached numbers.
     setLoading(true);
     setMonth(date.toISOString().slice(0, 7));
+  }
+  async function reopenMonth() {
+    const reason = reopenReason.trim();
+    if (!reason || reopening || !closed) return;
+    setReopening(true);
+    setReopenError("");
+    try {
+      const response = await fetch("/api/admin/ledger/month-close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reopen", month, reason }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.code ?? "MONTH_REOPEN_FAILED");
+      setReopenSheetOpen(false);
+      setReopenReason("");
+      const fresh = await load();
+      if (fresh) {
+        setNotice(vi ? "Đã mở lại tháng để kiểm tra." : "월마감을 다시 열었습니다. 장부를 검토할 수 있습니다.");
+      }
+    } catch (cause) {
+      setReopenError((cause as Error).message);
+    } finally {
+      setReopening(false);
+    }
   }
   async function openEntry(entry: LedgerEntry) {
     setSelected(entry);
@@ -772,6 +807,29 @@ export default function LedgerEntriesPage() {
             {notice}
           </p>
         ) : null}
+        {data?.month === month && monthCloseState?.month === month && monthCloseState.state !== "open" ? (
+          <section className={`${styles.monthCloseCard} ${monthCloseState.state === "reopened" ? styles.monthCloseReopened : ""}`}
+            aria-label={vi ? "Trạng thái chốt sổ" : "월마감 상태"}>
+            <div className={styles.monthCloseText}>
+              <strong>{monthCloseState.state === "closed"
+                ? vi ? `Sổ tháng ${Number(month.slice(5, 7))} đã chốt` : `${Number(month.slice(5, 7))}월 장부 마감됨`
+                : vi ? `Đang kiểm tra lại tháng ${Number(month.slice(5, 7))}` : `${Number(month.slice(5, 7))}월 재검토 중`}</strong>
+              <p>{monthCloseState.state === "closed"
+                ? vi ? `Đã chốt lần ${monthCloseState.revision ?? 1} · Mở lại để sửa sổ.`
+                  : `${monthCloseState.revision ?? 1}차 마감 · 수정하려면 마감을 다시 열어야 합니다.`
+                : vi ? `Bản chốt lần ${monthCloseState.revision ?? 1} được lưu giữ. Hiện có thể sửa sổ.`
+                  : `이전 ${monthCloseState.revision ?? 1}차 마감본은 보존됨 · 현재 수정 가능합니다.`}</p>
+            </div>
+            {monthCloseState.state === "closed"
+              ? <button type="button" className={styles.monthCloseAction}
+                  onClick={() => { setReopenError(""); setReopenSheetOpen(true); }}>
+                  {vi ? "Mở lại sổ" : "마감 다시 열기"}
+                </button>
+              : <Link className={styles.monthCloseAction} href={`/admin/ledger/month-close?month=${month}`}>
+                  {vi ? "Quản lý chốt sổ" : "월마감 관리"}
+                </Link>}
+          </section>
+        ) : null}
         {data && data.month === month ? (
           <>
             <section
@@ -1049,6 +1107,41 @@ export default function LedgerEntriesPage() {
               await load();
             }}
           />
+        ) : null}
+        {reopenSheetOpen && closed ? (
+          <BarSheet
+            kind="bottom"
+            topAligned
+            comfortableTop
+            title={vi ? `Mở lại sổ tháng ${Number(month.slice(5, 7))}` : `${Number(month.slice(5, 7))}월 마감 다시 열기`}
+            closeLabel={vi ? "Đóng" : "닫기"}
+            saving={reopening}
+            onClose={() => { setReopenSheetOpen(false); setReopenReason(""); setReopenError(""); }}
+            footer={<div className={styles.reopenFooter}>
+              <button type="button" disabled={reopening || !reopenReason.trim()}
+                onClick={() => void reopenMonth()} style={{ ...primaryButtonStyle, width: "100%" }}>
+                {reopening ? vi ? "Đang mở lại…" : "처리 중…" : vi ? "Mở lại để kiểm tra" : "재검토 위해 마감 열기"}
+              </button>
+              <button type="button" disabled={reopening}
+                onClick={() => { setReopenSheetOpen(false); setReopenReason(""); setReopenError(""); }}
+                style={{ ...secondaryButtonStyle, width: "100%" }}>
+                {vi ? "Hủy" : "취소"}
+              </button>
+            </div>}>
+            <p className={styles.reopenHelp}>
+              {vi ? "Mở lại tháng này sẽ cho phép sửa sổ." : "마감을 다시 열면 이 월의 장부를 수정할 수 있습니다."}
+            </p>
+            <p className={styles.reopenHelp}>
+              {vi ? "Bản chốt trước đó được lưu an toàn trong lịch sử." : "기존 마감본은 이력으로 안전하게 보존됩니다."}
+            </p>
+            <label className={styles.reopenReasonLabel} htmlFor="ledger-reopen-reason">
+              {vi ? "Lý do mở lại" : "재오픈 사유"}
+            </label>
+            <textarea id="ledger-reopen-reason" className={styles.reopenReason}
+              value={reopenReason} onChange={(event) => setReopenReason(event.target.value)}
+              required rows={3} />
+            {reopenError ? <p className={styles.error} role="alert">{reopenError}</p> : null}
+          </BarSheet>
         ) : null}
         {selected ? (
           <EntryDetailSheet

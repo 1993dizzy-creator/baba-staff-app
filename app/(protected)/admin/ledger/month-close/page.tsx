@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import MonthClosePanel from "../MonthClosePanel";
 
@@ -13,8 +14,13 @@ function previousBusinessMonth() {
   return new Date(Date.UTC(year, month - 2, 1)).toISOString().slice(0, 7);
 }
 
-export default function LedgerMonthClosePage() {
-  const [month, setMonth] = useState(previousBusinessMonth);
+function MonthCloseContent() {
+  const searchParams = useSearchParams();
+  const [month, setMonth] = useState(() => {
+    const requestedMonth = searchParams.get("month");
+    return requestedMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(requestedMonth)
+      ? requestedMonth : previousBusinessMonth();
+  });
   return (
     <Container>
       <main style={{ maxWidth: 720, margin: "0 auto" }}>
@@ -28,4 +34,10 @@ export default function LedgerMonthClosePage() {
       </main>
     </Container>
   );
+}
+
+export default function LedgerMonthClosePage() {
+  return <Suspense fallback={<Container><main>월마감 관리 불러오는 중...</main></Container>}>
+    <MonthCloseContent />
+  </Suspense>;
 }
