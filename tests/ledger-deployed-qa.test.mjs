@@ -114,7 +114,7 @@ test('open month keeps existing behavior; opening amounts inherit the app font',
   assert.equal(add?.props.disabled,false);
   const css=readFileSync('app/(protected)/admin/ledger/entries/entries.module.css','utf8');
   assert.match(css,/\.openingToggle\{[^}]*font:inherit;color:inherit/);
-  assert.match(css,/\.openingGrid strong\{[^}]*font-family:inherit/);
+  assert.match(css,/\.openingGrid strong\{[^}]*font-family:inherit;font-size:14px;font-weight:900;line-height:1\.2/);
   const monthPage=readFileSync('app/(protected)/admin/ledger/month-close/page.tsx','utf8');
   assert.match(monthPage,/searchParams\.get\("month"\)/);
   assert.match(monthPage,/<MonthClosePanel key=\{month\} month=\{month\}/);
