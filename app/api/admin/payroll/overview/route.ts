@@ -53,7 +53,7 @@ export async function GET(request: Request) {
     );
     const [overview,{data:run,error:runError}]=await Promise.all([overviewPromise,paymentBatchPromise]);if(runError)throw runError;
     const paymentsPromise=run
-      ? Promise.resolve(supabaseServer.from("payroll_employee_payments").select("user_id,payment_status,calculated_net_amount,actual_paid_amount,difference_amount,difference_reason,payment_date,paid_at,paid_by,paid_actor:users!payroll_employee_payments_paid_by_fkey(name,full_name,username)").eq("payroll_batch_id",run.id))
+      ? Promise.resolve(supabaseServer.from("payroll_employee_payments").select("user_id,payment_status,calculated_net_amount,actual_paid_amount,difference_amount,difference_reason,payment_date,fund_account_id,fund_account:ledger_fund_accounts(display_name),paid_at,paid_by,paid_actor:users!payroll_employee_payments_paid_by_fkey(name,full_name,username)").eq("payroll_batch_id",run.id))
       : Promise.resolve({data:[],error:null});
     const [{data:payments,error:paymentError},mealAllowance]=await Promise.all([paymentsPromise,mealAllowancePromise!]);if(paymentError)throw paymentError;
     const paymentByUser=new Map((payments??[]).map(row=>[Number(row.user_id),row]));

@@ -87,12 +87,12 @@ test("director mapping and employee rate are captured in calculation source and 
   assert.match(snapshot, /sourceSnapshot/);
 });
 
-test("payment snapshot/hash and v2 payment totals carry every tax input and final net", () => {
+test("payment snapshot/hash and v3 payment totals carry every tax input and final net", () => {
   assert.match(snapshot, /taxSnapshot:employee\.tax/);
   assert.match(snapshot, /return \{employee,/);
   assert.match(payments, /payrollPaymentSnapshotHash\(calculationSnapshot\)/);
   assert.match(payments, /p_calculated_net_amount:employee\.amounts\.netPayoutAmount/);
-  assert.match(payments, /payroll_pay_employee_v2/);
+  assert.match(payments, /payroll_pay_employee_v3/);
   assert.match(migration, /employee_pit_total/);
   assert.match(migration, /company_pit_total/);
   assert.match(migration, /calculation_snapshot #>> '\{employee,tax,employeePitDeductionAmount\}'/);

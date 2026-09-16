@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import PayrollModal from "@/components/payroll/PayrollModal";
 import type {
@@ -553,10 +553,26 @@ function AdjustmentModal({
 function PaymentModal({employee,month,lang,close,refresh}:{employee:PayrollOverviewEmployee;month:string;lang:"ko"|"vi";close:()=>void;refresh:()=>Promise<boolean>}){
   const vi=lang==="vi";const payment=employee.payment;const calculated=employee.amounts.netPayoutAmount;
   const [actual,setActual]=useState(String(payment?.actual_paid_amount??calculated));const [date,setDate]=useState(payment?.payment_date??new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Ho_Chi_Minh",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()));const [reason,setReason]=useState(payment?.difference_reason??"");const[cancelMode,setCancelMode]=useState(false);const[cancelReason,setCancelReason]=useState("");const[busy,setBusy]=useState(false);const[error,setError]=useState("");
+  const [fundAccounts,setFundAccounts]=useState<Array<{id:number;code:string;display_name:string}>>([]);
+  const [fundAccountId,setFundAccountId]=useState<number|null>(payment?.fund_account_id??null);
+  const [accountsLoaded,setAccountsLoaded]=useState(false);
+  useEffect(()=>{
+    let active=true;
+    void fetch("/api/admin/payroll/fund-accounts").then(async response=>{
+      const data=await response.json();
+      if(!response.ok)throw new Error("PAYROLL_FUND_ACCOUNTS_READ_FAILED");
+      if(!active)return;
+      const accounts=Array.isArray(data.accounts)?data.accounts as Array<{id:number;code:string;display_name:string}>:[];
+      setFundAccounts(accounts);
+      setFundAccountId(current=>current??(payment?.fund_account_id && accounts.some(account=>account.id===payment.fund_account_id)?payment.fund_account_id:data.defaultFundAccountId??null));
+      setAccountsLoaded(true);
+    }).catch(()=>{if(active){setAccountsLoaded(true);setError(vi?"Không thể tải tài khoản chi trả.":"지급 계좌를 불러오지 못했습니다.")}});
+    return()=>{active=false};
+  },[payment?.fund_account_id,vi]);
   const actualNumber=Number(actual||0);const difference=actualNumber-calculated;const actor=payment?.paid_actor;const actorLabel=actor?.name||actor?.full_name||actor?.username||"—";
-  async function submit(){if(busy||actualNumber<1||(difference!==0&&!reason.trim())||!employee.calculationHash)return;setBusy(true);setError("");try{const response=await fetch("/api/admin/payroll/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({month,userId:employee.userId,calculationHash:employee.calculationHash,actualPaidAmount:actualNumber,differenceReason:reason,paymentDate:date})});const data=await response.json();if(!response.ok){if(data.code==="PAYROLL_CALCULATION_STALE")await refresh();const preflight=data.code==="PAYROLL_BATCH_PREFLIGHT_FAILED"&&Array.isArray(data.employees)?data.employees.map((item:{employeeName:string;reasonCodes:string[]})=>`${item.employeeName}: ${item.reasonCodes.join(", ")}`).join("\n"):null;throw new Error(preflight?`${vi?data.messageVi:data.message}\n${preflight}`:data.code==="PAYROLL_MONTH_NOT_CLOSED"?(vi?data.messageVi:data.message):data.code==="PAYROLL_CALCULATION_STALE"?(vi?data.messageVi:data.message):(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}await refresh();close()}catch(cause){setError(cause instanceof Error?cause.message:(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}finally{setBusy(false)}}
+  async function submit(){if(busy||!accountsLoaded||!fundAccountId||actualNumber<1||(difference!==0&&!reason.trim())||!employee.calculationHash)return;setBusy(true);setError("");try{const response=await fetch("/api/admin/payroll/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({month,userId:employee.userId,calculationHash:employee.calculationHash,actualPaidAmount:actualNumber,differenceReason:reason,paymentDate:date,fundAccountId})});const data=await response.json();if(!response.ok){if(data.code==="PAYROLL_CALCULATION_STALE")await refresh();const preflight=data.code==="PAYROLL_BATCH_PREFLIGHT_FAILED"&&Array.isArray(data.employees)?data.employees.map((item:{employeeName:string;reasonCodes:string[]})=>`${item.employeeName}: ${item.reasonCodes.join(", ")}`).join("\n"):null;throw new Error(preflight?`${vi?data.messageVi:data.message}\n${preflight}`:["PAYROLL_MONTH_NOT_CLOSED","PAYROLL_CALCULATION_STALE","PAYROLL_FUND_ACCOUNT_INVALID","PAYROLL_LEDGER_PROJECTION_FAILED"].includes(data.code)?(vi?data.messageVi:data.message):(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}await refresh();close()}catch(cause){setError(cause instanceof Error?cause.message:(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}finally{setBusy(false)}}
   async function cancelPayment(){if(busy||!cancelReason.trim()||!employee.batchId)return;setBusy(true);setError("");try{const response=await fetch("/api/admin/payroll/payments",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({runId:employee.batchId,userId:employee.userId,reason:cancelReason})});if(!response.ok)throw new Error(vi?"Không thể hủy chi trả.":"지급을 취소하지 못했습니다.");await refresh();close()}catch(cause){setError(cause instanceof Error?cause.message:(vi?"Không thể hủy chi trả.":"지급을 취소하지 못했습니다."))}finally{setBusy(false)}}
-  return <PayrollModal placement="top" title={payment?.payment_status==="paid"?(vi?"Chi tiết chi trả":"지급 내역"):(vi?"Chi trả lương":"급여 지급")} closeLabel={vi?"Đóng":"닫기"} onClose={()=>{if(!busy)close()}} footer={<div style={s.modalFooter}>{payment?.payment_status==="paid"?(employee.batchStatus==="paying"?<button type="button" style={{...s.danger,...s.modalAction}} disabled={busy||cancelMode&&!cancelReason.trim()} onClick={()=>cancelMode?void cancelPayment():setCancelMode(true)}>{cancelMode?(vi?"Xác nhận hủy":"지급 취소 실행"):(vi?"Hủy chi trả":"지급 취소")}</button>:null):<button type="button" style={{...s.primary,...s.modalAction}} disabled={busy||actualNumber<1||(difference!==0&&!reason.trim())} onClick={()=>void submit()}>{vi?"Chi trả":"지급"}</button>}</div>}>
+  return <PayrollModal placement="top" title={payment?.payment_status==="paid"?(vi?"Chi tiết chi trả":"지급 내역"):(vi?"Chi trả lương":"급여 지급")} closeLabel={vi?"Đóng":"닫기"} onClose={()=>{if(!busy)close()}} footer={<div style={s.modalFooter}>{payment?.payment_status==="paid"?(employee.batchStatus==="paying"?<button type="button" style={{...s.danger,...s.modalAction}} disabled={busy||cancelMode&&!cancelReason.trim()} onClick={()=>cancelMode?void cancelPayment():setCancelMode(true)}>{cancelMode?(vi?"Xác nhận hủy":"지급 취소 실행"):(vi?"Hủy chi trả":"지급 취소")}</button>:null):<button type="button" style={{...s.primary,...s.modalAction}} disabled={busy||!accountsLoaded||!fundAccountId||actualNumber<1||(difference!==0&&!reason.trim())} onClick={()=>void submit()}>{vi?"Chi trả":"지급"}</button>}</div>}>
     <div style={s.paymentLayout}>
       <PaymentSalarySummary
         employeeName={employee.name}
@@ -571,6 +587,7 @@ function PaymentModal({employee,month,lang,close,refresh}:{employee:PayrollOverv
           differenceAmount={payment.difference_amount ?? 0}
           differenceReason={payment.difference_reason}
           paymentDate={payment.payment_date}
+          fundAccountName={payment.fund_account_id==null?(vi?"Lịch sử chi trả · chưa chỉ định tài khoản":"기존 지급 기록 · 계좌 미지정"):(payment.fund_account?.display_name??fundAccounts.find(account=>account.id===payment.fund_account_id)?.display_name??(vi?`Tài khoản #${payment.fund_account_id}`:`계좌 #${payment.fund_account_id}`))}
           actorLabel={actorLabel}
           paidAt={payment.paid_at}
           lang={lang}
@@ -580,10 +597,14 @@ function PaymentModal({employee,month,lang,close,refresh}:{employee:PayrollOverv
           actual={actual}
           difference={difference}
           date={date}
+          fundAccounts={fundAccounts}
+          fundAccountId={fundAccountId}
+          accountsLoaded={accountsLoaded}
           reason={reason}
           lang={lang}
           onActualChange={setActual}
           onDateChange={setDate}
+          onFundAccountChange={setFundAccountId}
           onReasonChange={setReason}
         />
       )}
@@ -625,6 +646,7 @@ function PaidPaymentDetails({
   differenceAmount,
   differenceReason,
   paymentDate,
+  fundAccountName,
   actorLabel,
   paidAt,
   lang,
@@ -633,6 +655,7 @@ function PaidPaymentDetails({
   differenceAmount: number;
   differenceReason: string | null;
   paymentDate: string | null;
+  fundAccountName: string;
   actorLabel: string;
   paidAt: string | null;
   lang: "ko" | "vi";
@@ -656,6 +679,7 @@ function PaidPaymentDetails({
       <PaymentSection icon="🕒" title={vi ? "Thông tin xử lý" : "처리 정보"}>
         <PaymentCard>
         <PaymentKeyValue label={vi ? "Ngày trả" : "지급일"} value={paymentDate ?? "—"} />
+        <PaymentKeyValue label={vi ? "Tài khoản chi trả" : "지급계좌"} value={fundAccountName} wrap />
         <PaymentKeyValue label={vi ? "Người xử lý" : "지급 처리자"} value={actorLabel} wrap />
         <PaymentKeyValue label={vi ? "Thời gian xử lý" : "지급 시각"} value={paidAt ? new Date(paidAt).toLocaleString(vi ? "vi-VN" : "ko-KR") : "—"} wrap />
         </PaymentCard>
@@ -664,32 +688,37 @@ function PaidPaymentDetails({
   );
 }
 
-function UnpaidPaymentForm({ actual, difference, date, reason, lang, onActualChange, onDateChange, onReasonChange }: {
+function UnpaidPaymentForm({ actual, difference, date, fundAccounts, fundAccountId, accountsLoaded, reason, lang, onActualChange, onDateChange, onFundAccountChange, onReasonChange }: {
   actual: string;
   difference: number;
   date: string;
+  fundAccounts: Array<{id:number;code:string;display_name:string}>;
+  fundAccountId: number|null;
+  accountsLoaded: boolean;
   reason: string;
   lang: "ko" | "vi";
   onActualChange: (value: string) => void;
   onDateChange: (value: string) => void;
+  onFundAccountChange: (value: number|null) => void;
   onReasonChange: (value: string) => void;
 }) {
   const vi = lang === "vi";
   return (
     <>
-      <PaymentSection icon="💳" title={vi ? "Số tiền chi trả" : "지급 금액"}>
+      <PaymentSection icon="💳" title={vi ? "Thông tin chi trả" : "지급 정보"}>
         <PaymentCard>
+          <PaymentField label={vi ? "Ngày trả" : "지급일"}>
+            <input style={s.paymentInput} type="date" value={date} onChange={event=>onDateChange(event.target.value)} />
+          </PaymentField>
           <PaymentField label={vi ? "Số tiền thực trả" : "실제 지급액"}>
             <input style={s.paymentInput} type="text" inputMode="numeric" value={formatPositiveIntegerInput(actual)} onChange={event=>onActualChange(normalizePositiveIntegerInput(event.target.value))} />
           </PaymentField>
           <PaymentKeyValue label={vi ? "Chênh lệch" : "차액"} value={formatVnd(difference)} />
-        </PaymentCard>
-      </PaymentSection>
-
-      <PaymentSection icon="📅" title={vi ? "Thông tin chi trả" : "지급 정보"}>
-        <PaymentCard>
-          <PaymentField label={vi ? "Ngày trả" : "지급일"}>
-            <input style={s.paymentInput} type="date" value={date} onChange={event=>onDateChange(event.target.value)} />
+          <PaymentField label={vi ? "Tài khoản chi trả" : "지급계좌"}>
+            <select style={s.paymentInput} value={fundAccountId??""} disabled={!accountsLoaded} onChange={event=>onFundAccountChange(event.target.value?Number(event.target.value):null)}>
+              <option value="">{vi ? "Chọn tài khoản chi trả" : "지급계좌 선택"}</option>
+              {fundAccounts.map(account=><option key={account.id} value={account.id}>{account.display_name}</option>)}
+            </select>
           </PaymentField>
         </PaymentCard>
       </PaymentSection>
