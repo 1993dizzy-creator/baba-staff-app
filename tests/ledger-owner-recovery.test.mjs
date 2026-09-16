@@ -5,7 +5,7 @@ import test from 'node:test';
 
 const require=createRequire(import.meta.url);
 const {allocateOwnerRecoveryPool}=require('../lib/ledger/owner-recovery-core.ts');
-const migration=readFileSync('supabase/migrations/20260916213000_separate_owner_capital_recovery.sql','utf8');
+const migration=readFileSync('supabase/migrations/20260916150709_separate_owner_capital_recovery.sql','utf8');
 const route=readFileSync('app/api/admin/ledger/owners/route.ts','utf8');
 const dashboard=readFileSync('lib/ledger/owners.ts','utf8');
 const ownersPage=readFileSync('app/(protected)/admin/ledger/owners/page.tsx','utf8');
