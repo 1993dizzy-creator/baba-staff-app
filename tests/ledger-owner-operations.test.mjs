@@ -28,10 +28,10 @@ function dashboardFixture(){
   const settlements=[{id:1,through_month:'2026-08-01',status:'confirmed',confirmed_pool:30},{id:2,through_month:'2026-09-01',status:'confirmed',confirmed_pool:100}];
   const allocations=[{id:1,settlement_id:1,participant_id:10,assigned_amount:30,recovery_amount:30,recovery_paid_amount:30,pure_profit_amount:0,pure_profit_paid_amount:0,paid_amount:30},{id:2,settlement_id:2,participant_id:20,assigned_amount:100,recovery_amount:100,recovery_paid_amount:100,pure_profit_amount:0,pure_profit_paid_amount:0,paid_amount:100}];
   let participantReads=0;
-  const tables={ledger_owner_investments:investments,ledger_owner_settlements:settlements,ledger_owner_settlement_allocations:allocations,ledger_owner_settlement_policies:[{id:1,effective_month:'2026-08-01',revision:1,lines:[{participant_id:20,settlement_rate:'1'}]}],ledger_fund_accounts:[],users:[{id:7,name:'Cho'}],ledger_month_closures:[{month:'2026-08-01',status:'closed'}],ledger_owner_profit_settings:[{profit_tracking_start_month:'2026-08-01',opening_undistributed_profit:0}]};
+  const tables={ledger_owner_investments:investments,ledger_owner_settlements:settlements,ledger_owner_settlement_allocations:allocations,ledger_owner_settlement_policies:[{id:1,effective_month:'2026-08-01',revision:1,lines:[{participant_id:20,settlement_rate:'1'}]}],ledger_fund_accounts:[],users:[{id:7,name:'Cho',username:'cho',role:'owner',is_active:true},{id:8,name:'HAN',username:'han',role:'master',is_active:true},{id:9,name:'Vuong',username:'vuong',role:'owner',is_active:true},{id:10,name:'POS',username:'pos',role:'master',is_active:true}],ledger_month_closures:[{month:'2026-08-01',status:'closed'}],ledger_owner_profit_settings:[{profit_tracking_start_month:'2026-08-01',opening_undistributed_profit:0}]};
   const db={rpc:async()=>({data:{recommendedMax:100},error:null}),from(table){
     const filters=[];
-    const query={select(){return query},eq(key,value){filters.push(row=>row[key]===value);return query},lte(key,value){filters.push(row=>row[key]<=value);return query},lt(key,value){calls.push({table,key,value});filters.push(row=>key==='occurred_at'?new Date(row[key])<new Date(value):row[key]<value);return query},or(){return query},in(key,values){filters.push(row=>values.includes(row[key]));return query},order(){return query},limit(){return query},maybeSingle(){return Promise.resolve({data:rows()[0]??null,error:null})},then(resolve,reject){return Promise.resolve({data:rows(),error:null}).then(resolve,reject)}};
+    const query={select(){return query},eq(key,value){filters.push(row=>row[key]===value);return query},neq(key,value){filters.push(row=>row[key]!==value);return query},lte(key,value){filters.push(row=>row[key]<=value);return query},lt(key,value){calls.push({table,key,value});filters.push(row=>key==='occurred_at'?new Date(row[key])<new Date(value):row[key]<value);return query},or(){return query},in(key,values){filters.push(row=>values.includes(row[key]));return query},order(){return query},limit(){return query},maybeSingle(){return Promise.resolve({data:rows()[0]??null,error:null})},then(resolve,reject){return Promise.resolve({data:rows(),error:null}).then(resolve,reject)}};
     function rows(){if(table==='ledger_owner_participants')return ++participantReads===1?[participant]:[{id:10,user_id:7},{id:20,user_id:7}];return(tables[table]??[]).filter(row=>filters.every(filter=>filter(row)))}
     return query;
   }};
@@ -68,6 +68,11 @@ test('month-end view includes the remaining September investment and keeps parti
   assert.equal(result.owners[0].cumulativeInvested,690);
   assert.equal(result.owners[0].recoveryPaid,130);
 });
+test('owner candidates exclude POS username but retain HAN master and Vuong owner',async()=>{
+  const result=await dashboardFixture().load('2026-09',{investmentView:'current'});
+  assert.deepEqual(result.users.map(user=>user.name),['Cho','HAN','Vuong']);
+  assert.match(source,/\.neq\("username","pos"\)/);
+});
 test('owners GET chooses explicit view while the settings request keeps month-end default',async()=>{
   const calls=[];
   const api=load('app/api/admin/ledger/owners/route.ts',{'@/lib/ledger/server':{requireLedgerActor:async()=>({actor:{id:1}}),ledgerJson:(body,status=200)=>Response.json(body,{status})},'@/lib/ledger/owners':{OWNER_MONTH:/^\d{4}-(0[1-9]|1[0-2])$/,loadOwnerDashboard:async(month,options)=>{calls.push({month,options});return {owners:[]}}},'@/lib/supabase/server':{supabaseServer:{}}});
@@ -78,7 +83,7 @@ test('owners GET chooses explicit view while the settings request keeps month-en
 });
 test('owners operations remove duplicate settings UI and keep the settings page authoritative',()=>{
   for(const phrase of ['정산 대상 사장 3명','정산 비율 Policy','미분배이익 시작 설정','Requested pool','Allocation 선택','Policy r'])assert.ok(!page.includes(phrase),phrase);
-  for(const phrase of ['정산 참여자 수정','정산 비율 수정','미분배이익 시작 기준'])assert.ok(settings.includes(phrase),phrase);
+  for(const phrase of ['초기 투자자 설정','투자자 구성 변경','정산 비율 수정','미분배이익 시작 기준'])assert.ok(settings.includes(phrase),phrase);
   for(const phrase of ['총 투자금','회수 완료','미회수 투자금','+ 투자금 등록','사장 정산','최근 정산 내역','/admin/ledger/settings'])assert.ok(page.includes(phrase),phrase);
   assert.match(page,/recovered:owners\.reduce\(\(sum,owner\)=>sum\+Number\(owner\.recoveryPaid\)/);
   assert.match(page,/unrecovered:owners\.reduce\(\(sum,owner\)=>sum\+Number\(owner\.cashUnrecovered\)/);
@@ -88,6 +93,31 @@ test('owners operations remove duplicate settings UI and keep the settings page 
   assert.match(source,/\.lt\("occurred_at",cutoffAt\)/);
   assert.match(page,/readDashboard\(currentMonth\(\),"current",signal\)/);
   assert.match(page,/readDashboard\(settlementMonth,"month_end",controller\.signal\)/);
+});
+test('owners header is a compact navigation row and only settlement sheet is top aligned',()=>{
+  const css=readFileSync('app/(protected)/admin/ledger/owners/owners.module.css','utf8');
+  assert.doesNotMatch(page,/← 장부/);
+  assert.match(page,/<Container noPaddingTop>/);
+  assert.match(page,/<header className=\{styles\.header\}><Link href="\/admin\/ledger" className=\{styles\.back\} aria-label="장부로 돌아가기">/);
+  assert.match(css,/\.header\{display:flex;align-items:center/);
+  assert.match(css,/\.page\{display:grid;gap:18px;padding:10px 0 40px/);
+  assert.match(page,/sheet==="settlement"\?<BarSheet kind="bottom" topAligned comfortableTop/);
+  assert.doesNotMatch(page,/sheet==="investment"\?<BarSheet kind="bottom" topAligned/);
+});
+test('investor setup uses stored start month and separate participant and policy months',()=>{
+  const css=readFileSync('app/(protected)/admin/ledger/ledger-settings.module.css','utf8');
+  assert.match(settings,/const \[participantEffectiveMonth, setParticipantEffectiveMonth\] = useState\(""\)/);
+  assert.match(settings,/const \[policyEffectiveMonth, setPolicyEffectiveMonth\] = useState\(month\)/);
+  assert.doesNotMatch(settings,/\[effectiveMonth, setEffectiveMonth\]/);
+  assert.doesNotMatch(settings,/<span>📅 적용 월<\/span>/);
+  assert.match(settings,/owners\.participants\.length === 0\s*\? <section className=\{styles\.initialInvestors\}/);
+  assert.match(settings,/aria-label="초기 투자자 설정"/);
+  assert.match(settings,/<summary>투자자 구성 변경<\/summary><div className=\{styles\.detailBody\}>\{participantForm\}/);
+  assert.match(settings,/row\.effective_from\?\.slice\(0, 7\)/);
+  assert.match(settings,/투자자 구성 시작월/);
+  assert.match(settings,/정산 비율 적용월/);
+  assert.match(settings,/selectedUsers\.length !== 3 \|\| !participantEffectiveMonth/);
+  assert.match(css,/\.ownerSummary\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)\}/);
 });
 test('settlement month data stays separate from current investment cards',()=>{
   let slot=0;const updates=[],elements=[];

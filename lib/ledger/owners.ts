@@ -19,7 +19,7 @@ export async function loadOwnerDashboard(throughMonth:string,{investmentView="mo
   supabaseServer.from("ledger_owner_settlement_allocations").select("id,settlement_id,participant_id,rate_snapshot,assigned_amount,recovery_amount,pure_profit_amount,paid_amount,recovery_paid_amount,pure_profit_paid_amount"),
   supabaseServer.from("ledger_owner_settlement_policies").select("id,effective_month,revision,note,lines:ledger_owner_settlement_policy_lines(participant_id,settlement_rate)").lte("effective_month",monthDate).order("effective_month",{ascending:false}).order("revision",{ascending:false}).limit(1).maybeSingle(),
   supabaseServer.from("ledger_fund_accounts").select("id,display_name,type,is_active,is_business_fund").eq("is_active",true).eq("is_business_fund",true).in("type",["cash","bank","personal_custody"]).order("sort_order"),
-  supabaseServer.from("users").select("id,name,full_name,username,role,is_active").in("role",["owner","master"]).eq("is_active",true).order("id"),
+  supabaseServer.from("users").select("id,name,full_name,username,role,is_active").in("role",["owner","master"]).eq("is_active",true).neq("username","pos").order("id"),
   supabaseServer.from("ledger_month_closures").select("month,status").eq("status","closed").order("month",{ascending:false}),
   supabaseServer.from("ledger_owner_profit_settings").select("profit_tracking_start_month,opening_undistributed_profit").maybeSingle(),
  ]);

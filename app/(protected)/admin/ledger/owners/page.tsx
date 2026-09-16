@@ -91,8 +91,8 @@ export default function OwnerSettlementsPage(){
   const paymentRemaining=selectedAllocation?Math.round((Number(selectedAllocation.assigned_amount)-Number(selectedAllocation.paid_amount))*1000)/1000:0;
   const canPay=!!selectedAllocation&&validAmount(payment.amount)&&Number(payment.amount)>0&&Number(payment.amount)<=paymentRemaining&&!!payment.accountId&&!!payment.paidAt&&!busy;
 
-  return <Container><main className={styles.page}>
-    <header className={styles.header}><Link href="/admin/ledger" className={styles.back}>← 장부</Link><h1>투자금 · 사장정산</h1></header>
+  return <Container noPaddingTop><main className={styles.page}>
+    <header className={styles.header}><Link href="/admin/ledger" className={styles.back} aria-label="장부로 돌아가기"><span aria-hidden="true">←</span></Link><h1>투자금 · 사장정산</h1></header>
     {message?<p className={styles.notice} role="status">{message}</p>:null}
     <section className={styles.summary} aria-label="투자금 요약"><Figure label="총 투자금" value={totals.invested}/><Figure label="회수 완료" value={totals.recovered}/><Figure label="미회수 투자금" value={totals.unrecovered}/></section>
     <section className={styles.section}><h2>사장별 현황</h2>{owners.length?<div className={styles.ownerList}>{owners.map(owner=>{
@@ -115,7 +115,7 @@ export default function OwnerSettlementsPage(){
       <label>메모/사유<input className={styles.input} value={investment.reason} onChange={event=>setInvestment({...investment,reason:event.target.value})} placeholder={investment.entryType==="adjustment"?"조정 사유 필수":"선택 입력"}/></label>{formError?<p role="alert" className={styles.error}>{formError}</p>:null}
     </div></BarSheet>:null}
 
-    {sheet==="settlement"?<BarSheet kind="bottom" title="사장 정산" closeLabel="닫기" saving={busy} onClose={closeSheet} footer={<button className={styles.primary} type="button" disabled={!canConfirm} onClick={()=>void confirmSettlement()}>정산 확정</button>}><div className={styles.form}>
+    {sheet==="settlement"?<BarSheet kind="bottom" topAligned comfortableTop title="사장 정산" closeLabel="닫기" saving={busy} onClose={closeSheet} footer={<button className={styles.primary} type="button" disabled={!canConfirm} onClick={()=>void confirmSettlement()}>정산 확정</button>}><div className={styles.form}>
       <label>정산 기준 마감월<select className={styles.input} value={settlementMonth} onChange={event=>{setSettlementMonth(event.target.value);setSettlementData(null);setPool("");setFormError("")}}>{currentData?.closedMonths.map(month=><option key={month} value={month}>{monthLabel(month)}</option>)}</select></label>
       {historical?<><Figure label="정산 가능 최대" value={recommendedMax}/><label>정산할 금액<input className={styles.input} inputMode="decimal" value={pool} onChange={event=>setPool(event.target.value)} placeholder="금액 입력"/></label>
         {preview.length?<div className={styles.preview}><h3>사장별 예상 배분</h3>{preview.map(line=><div key={line.participantId}><span>{historical.owners.find(owner=>owner.participantId===line.participantId)?.name??"사장"} <small>{percent(line.rate)}</small></span><strong>{money(line.assignedAmount)}</strong></div>)}</div>:null}
