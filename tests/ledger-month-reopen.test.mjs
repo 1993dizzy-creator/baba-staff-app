@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 
-const migration = readFileSync("supabase/migrations/20260916230000_add_ledger_month_reopen.sql", "utf8");
+const migration = readFileSync("supabase/migrations/20260916161512_add_ledger_month_reopen.sql", "utf8");
 const original = readFileSync("supabase/migrations/202608210008_add_ledger_month_close_corrections.sql", "utf8");
 const latestOwnerMigration = readFileSync("supabase/migrations/20260916150709_separate_owner_capital_recovery.sql", "utf8");
 const api = readFileSync("app/api/admin/ledger/month-close/route.ts", "utf8");
