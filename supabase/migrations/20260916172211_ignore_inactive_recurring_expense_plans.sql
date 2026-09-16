@@ -79,8 +79,3 @@ begin
  if not public.ledger_month_is_closed_v1(p_month)then return public.ledger_sync_recurring_expenses_v1(p_month,p_actor_user_id);end if;
  for v_plan in select*from public.ledger_recurring_expense_plans where frequency='monthly'and is_active=true and effective_from<=p_month and(effective_to is null or effective_to>=p_month)order by id loop v_snapshot:=jsonb_build_object('planId',v_plan.id,'planName',v_plan.name,'frequency',v_plan.frequency,'recognitionDay',v_plan.recognition_day,'effectiveFrom',v_plan.effective_from,'effectiveTo',v_plan.effective_to,'amount',v_plan.amount);v_fp:=md5(v_snapshot::text);select*into v_tx from public.ledger_transactions where source_type='recurring_expense'and source_key='recurring:'||v_plan.id||':'||to_char(p_month,'YYYY-MM');if v_tx.id is not null and v_tx.source_fingerprint<>v_fp then v_result:=public.ledger_record_source_drift_v1(v_tx.id,v_fp||v_fp,v_plan.amount,v_snapshot,p_actor_user_id);if v_result->>'status'='created'then v_drift:=v_drift+1;end if;else v_unchanged:=v_unchanged+1;end if;end loop;return jsonb_build_object('status','ok','createdCount',0,'updatedCount',0,'unchangedCount',v_unchanged,'driftCount',v_drift,'closedMonth',true);
 end$$;
-
-alter function public.ledger_sync_recurring_expenses_v1(date,bigint) owner to postgres;
-alter function public.ledger_sync_recurring_expenses_v2(date,bigint) owner to postgres;
-revoke all on function public.ledger_sync_recurring_expenses_v1(date,bigint), public.ledger_sync_recurring_expenses_v2(date,bigint) from public,anon,authenticated;
-grant execute on function public.ledger_sync_recurring_expenses_v1(date,bigint), public.ledger_sync_recurring_expenses_v2(date,bigint) to service_role,postgres;

@@ -95,7 +95,3 @@ begin
   return jsonb_build_object('status', 'created',
     'investmentId', v_id, 'transactionId', v_tx_id);
 end$$;
-
-alter function public.ledger_create_owner_investment_v1(bigint,text,numeric,timestamptz,bigint,text,bigint) owner to postgres;
-revoke all on function public.ledger_create_owner_investment_v1(bigint,text,numeric,timestamptz,bigint,text,bigint) from public,anon,authenticated;
-grant execute on function public.ledger_create_owner_investment_v1(bigint,text,numeric,timestamptz,bigint,text,bigint) to service_role,postgres;
