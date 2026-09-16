@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import Container from "@/components/Container";
+import { ownerCompositionStartMonth } from "@/lib/ledger/owner-settings-view";
 import styles from "../ledger-settings.module.css";
 
 type Account = { id: number; code: string; type: string; display_name: string; is_active: boolean };
@@ -86,7 +87,6 @@ export default function LedgerSettingsPage() {
   const [policyEffectiveMonth, setPolicyEffectiveMonth] = useState(month);
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [rates, setRates] = useState<Record<number, string>>({});
-  const [profit, setProfit] = useState({ trackingMonth: month, openingProfit: "0", reason: "" });
 
   const load = useCallback(async () => {
     const responses = await Promise.all([
@@ -141,9 +141,10 @@ export default function LedgerSettingsPage() {
     return user?.name ?? user?.full_name ?? user?.username ?? `사용자 #${userId}`;
   };
   const ownerRateTotal = owners?.participants.reduce((total, participant) => total + (Number(rates[participant.id]) || 0), 0) ?? 0;
+  const compositionStartMonth = ownerCompositionStartMonth(owners?.participants ?? []);
   const participantForm = <div className={styles.participantForm}>
     <div className={styles.participantSummary}><label><span>{owners?.participants.length ? "변경 적용월" : "투자자 구성 시작월"}</span><input className={styles.input} type="month" value={participantEffectiveMonth} onChange={event => setParticipantEffectiveMonth(event.target.value)} /></label><div><span>선택 인원</span><strong>{selectedUsers.length} / 3명</strong></div></div>
-    {!owners?.participants.length ? <p className={styles.sectionDescription}>현재월이 아니라 실제 투자자 구성이 시작된 월을 선택합니다. 가게 오픈 당시부터 같은 투자자라면 가게 오픈 월을 선택하세요.</p> : null}
+    {!owners?.participants.length ? <p className={styles.sectionDescription}>가게 운영 시작 당시 투자자 구성이 시작된 월을 선택하세요.</p> : null}
     <div className={styles.ownerChoiceGrid}>{owners?.users.map(user => { const selected = selectedUsers.includes(String(user.id)); return <label className={`${styles.ownerChoice} ${selected ? styles.ownerChoiceActive : ""}`} key={user.id}><input type="checkbox" checked={selected} onChange={event => setSelectedUsers(event.target.checked ? [...selectedUsers, String(user.id)] : selectedUsers.filter(id => id !== String(user.id)))} /><span>{user.name ?? user.full_name ?? user.username ?? `사용자 #${user.id}`}</span></label>; })}</div>
     <button className={`${styles.primary} ${styles.ownerAction}`} disabled={working || selectedUsers.length !== 3 || !participantEffectiveMonth} onClick={() => void mutate("/api/admin/ledger/owners", { action: "participants", effectiveMonth: `${participantEffectiveMonth}-01`, rows: selectedUsers.map((userId, index) => ({ userId: Number(userId), isEligible: true, sortOrder: index + 1 })) })}>투자자 구성 저장</button>
   </div>;
@@ -176,17 +177,25 @@ export default function LedgerSettingsPage() {
     </section> : null}
 
     {activeTab === "owners" ? <section className={styles.sectionStack} role="tabpanel"><section className={`${styles.card} ${styles.ownerCard}`}>
-      <div className={styles.cardHeader}><div><h2>사장 정산 기준</h2><p>투자자 구성·정산 비율·미분배이익 기준을 관리합니다.</p></div></div>
+      <div className={styles.cardHeader}><div><h2>사장 정산 기준</h2><p>투자자 구성과 이익 배분 비율을 관리합니다.</p></div></div>
       {owners ? <>
-        <div className={styles.ownerSummary}><div><span>투자자</span><strong>{owners.participants.length}명</strong></div><div><span>정산 비율</span><strong>{owners.policy ? "설정됨" : "미설정"}</strong></div><div><span>미분배이익 기준</span><strong>{owners.settings ? "설정됨" : "미설정"}</strong></div></div>
-        {owners.participants.length === 0 ? <section className={styles.initialInvestors} aria-label="초기 투자자 설정"><h3>초기 투자자 설정</h3><p className={styles.sectionDescription}>가게 운영 시작 당시의 투자자 3명을 최초 1회 설정합니다. 시작월은 이 투자자 구성이 실제로 시작된 월입니다.</p>{participantForm}</section> : <><div className={styles.investorSummary}><strong>투자자 구성</strong><span>{owners.participants.map(row => ownerUserName(row.user_id)).join(" · ")}</span><small>구성 시작 {owners.participants.map(row => row.effective_from?.slice(0, 7)).filter(Boolean).sort()[0] ?? "-"}</small></div><details name="owner-settings" className={styles.detailPanel}><summary>투자자 구성 변경</summary><div className={styles.detailBody}>{participantForm}</div></details></>}
-        <details name="owner-settings" className={styles.detailPanel}><summary>정산 비율 수정</summary><div className={styles.detailBody}>{owners.participants.length === 0 ? <p className={styles.compactEmpty}>먼저 투자자 3명을 설정해주세요.</p> : <>
-          <label>정산 비율 적용월<input className={styles.input} type="month" value={policyEffectiveMonth} onChange={event => setPolicyEffectiveMonth(event.target.value)} /></label>
+        <div className={styles.ownerSummary}>
+          <div><span>🗓️ 구성 시작월</span><strong>{compositionStartMonth ?? "미설정"}</strong></div>
+          <div><span>👥 투자자</span><strong>{owners.participants.length}명</strong></div>
+          <div><span>↩️ 투자금 회수 기준</span><strong>미회수 원금 비례</strong></div>
+          <div><span>⚖️ 이익 배분 비율</span><strong>{owners.policy ? "설정됨" : "미설정"}</strong></div>
+        </div>
+        {owners.participants.length === 0
+          ? <details name="owner-settings" className={styles.detailPanel} open><summary>초기 투자자 설정</summary><div className={styles.detailBody}>{participantForm}</div></details>
+          : <><div className={styles.investorSummary}><strong>투자자 구성</strong><span>{owners.participants.map(row => ownerUserName(row.user_id)).join(" · ")}</span><small>구성 시작 {compositionStartMonth ?? "-"}</small></div><details name="owner-settings" className={styles.detailPanel}><summary>투자자 구성 변경</summary><div className={styles.detailBody}>{participantForm}</div></details></>}
+        <details name="owner-settings" className={styles.detailPanel}><summary>이익 배분 비율 수정</summary><div className={styles.detailBody}>{owners.participants.length === 0 ? <p className={styles.compactEmpty}>먼저 투자자 3명을 설정해주세요.</p> : <>
+          <p className={styles.sectionDescription}>투자금 회수에는 사용되지 않으며, 투자금 회수 완료 후 이익을 배분할 때 적용됩니다.</p>
+          <label>이익 배분 비율 적용월<input className={styles.input} type="month" value={policyEffectiveMonth} onChange={event => setPolicyEffectiveMonth(event.target.value)} /></label>
           <div className={styles.ownerRateList}>{owners.participants.map(row => <label className={styles.ownerRateRow} key={row.id}><span>{ownerUserName(row.user_id)}</span><span className={styles.rateInput}><input className={styles.input} inputMode="decimal" value={rates[row.id] ?? ""} onChange={event => setRates({ ...rates, [row.id]: event.target.value })} /><span>%</span></span></label>)}</div>
-          <div className={styles.rateTotal}><span>정산 비율 합계</span><strong>{new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 4 }).format(ownerRateTotal)}%</strong></div>
-          <button className={`${styles.primary} ${styles.ownerAction}`} disabled={working || !policyEffectiveMonth} onClick={() => void mutate("/api/admin/ledger/owners", { action: "policy", effectiveMonth: `${policyEffectiveMonth}-01`, lines: owners.participants.map(row => ({ participantId: row.id, rate: toRate(rates[row.id] ?? "0") })), note: "Owner settlement policy" })}>정산 비율 저장</button>
+          <div className={styles.rateTotal}><span>이익 배분 비율 합계</span><strong>{new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 4 }).format(ownerRateTotal)}%</strong></div>
+          <button className={`${styles.primary} ${styles.ownerAction}`} disabled={working || !policyEffectiveMonth} onClick={() => void mutate("/api/admin/ledger/owners", { action: "policy", effectiveMonth: `${policyEffectiveMonth}-01`, lines: owners.participants.map(row => ({ participantId: row.id, rate: toRate(rates[row.id] ?? "0") })), note: "Owner settlement policy" })}>이익 배분 비율 저장</button>
         </>}</div></details>
-        <details name="owner-settings" className={styles.detailPanel}><summary>미분배이익 시작 기준</summary><div className={styles.detailBody}>{owners.settings ? <div className={styles.infoPanel}>시작월 {owners.settings.tracking_start_month ?? "설정됨"} · 시작 미분배이익 {money(Number(owners.settings.opening_undistributed_profit ?? 0))}</div> : <><p className={styles.sectionDescription}>장부 추적을 시작하기 전 누적된 미분배이익을 입력합니다.</p><div className={styles.profitGrid}><label>📅 시작월<input className={styles.input} type="month" value={profit.trackingMonth} onChange={event => setProfit({ ...profit, trackingMonth: event.target.value })} /></label><label>💰 시작 미분배이익<input className={styles.input} type="text" inputMode="decimal" value={formatNumericInput(profit.openingProfit)} onChange={event => setProfit({ ...profit, openingProfit: normalizeNumericInput(event.target.value) })} /></label><label className={styles.profitReason}>🗒️ 설정 사유<input className={styles.input} value={profit.reason} onChange={event => setProfit({ ...profit, reason: event.target.value })} /></label></div><button className={`${styles.primary} ${styles.ownerAction}`} disabled={working} onClick={() => void mutate("/api/admin/ledger/owners", { action: "profit_settings", trackingStartMonth: `${profit.trackingMonth}-01`, openingProfit: profit.openingProfit, reason: profit.reason })}>미분배이익 기준 저장</button></>}</div></details></> : null}</section></section> : null}
+      </> : null}</section></section> : null}
   </main></Container>;
 }
 
