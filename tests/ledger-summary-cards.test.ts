@@ -176,6 +176,66 @@ test("H2. reversed IMMEDIATE (non-payable) original nets to zero too, not the un
   assert.equal(computePaidExpenseTotal(roots), 0);
 });
 
+test("append-only reversal A: ordinary immediate payment contributes its full amount", () => {
+  assert.equal(computePaidExpenseTotal([root({ id: 1, sourceType: "payroll_payment_group" })]), 100);
+});
+
+test("append-only reversal B: generic full reversal offsets its original exactly once", () => {
+  assert.equal(computePaidExpenseTotal([
+    root({ id: 1, sourceType: "payroll_payment_group" }),
+    root({ id: 2, sourceType: "payroll_group_reversal", correctionOfId: 1, economicEffectSign: -1 }),
+  ]), 0);
+});
+
+test("append-only reversal C: generic partial reversal reduces the original", () => {
+  assert.equal(computePaidExpenseTotal([
+    root({ id: 1, sourceType: "legacy_settlement" }),
+    root({ id: 2, sourceType: "legacy_settlement_reversal", correctionOfId: 1, economicEffectSign: -1, amount: 40 }),
+  ]), 60);
+});
+
+test("append-only reversal D: positive linked rebook remains a separate root", () => {
+  assert.equal(computePaidExpenseTotal([
+    root({ id: 1, sourceType: "payroll_payment_group" }),
+    root({ id: 2, sourceType: "payroll_group_reversal", correctionOfId: 1, economicEffectSign: -1 }),
+    root({ id: 3, sourceType: "payroll_payment_group", correctionOfId: 1, amount: 80 }),
+  ]), 80);
+});
+
+test("append-only reversal E: payable contribution is capped after partial reversal", () => {
+  assert.equal(computePaidExpenseTotal([
+    root({ id: 1, payableStatus: "paid", allocatedAmount: 100 }),
+    root({ id: 2, sourceType: "generic_reversal", correctionOfId: 1, economicEffectSign: -1, amount: 40 }),
+  ]), 60);
+});
+
+test("append-only reversal F: ledger correction and generic reversal each affect the original once", () => {
+  assert.equal(computePaidExpenseTotal([
+    root({ id: 1, sourceType: "payroll_payment_group", corrections: [{ amount: 10, economicEffectSign: -1 }] }),
+    root({ id: 2, sourceType: "ledger_correction", correctionOfId: 1, economicEffectSign: -1, amount: 10 }),
+    root({ id: 3, sourceType: "payroll_group_reversal", correctionOfId: 1, economicEffectSign: -1, amount: 40 }),
+  ]), 50);
+});
+
+test("append-only reversal G: inventory reversal and positive rebook retain their net result", () => {
+  assert.equal(computePaidExpenseTotal([
+    root({ id: 1, sourceType: "inventory_purchase_candidate" }),
+    root({ id: 2, sourceType: "inventory_purchase_reversal", correctionOfId: 1, economicEffectSign: -1 }),
+    root({ id: 3, sourceType: "inventory_purchase_rebook", correctionOfId: 1, amount: 80 }),
+  ]), 80);
+});
+
+test("August 2026 production-shaped paid total nets payroll and legacy reversal effects", () => {
+  const roots = [
+    root({ id: 101, sourceType: "payroll_payment_group", amount: 200_000_000 }),
+    root({ id: 102, sourceType: "legacy_settlement", amount: 421_648_529.5 }),
+    root({ id: 103, sourceType: "payroll_group_reversal", correctionOfId: 101, economicEffectSign: -1, amount: 100_000_000 }),
+    root({ id: 104, sourceType: "legacy_settlement_reversal", correctionOfId: 102, economicEffectSign: -1, amount: 73_202_931 }),
+  ];
+  assert.equal(computePaidExpenseTotal(roots), 448_445_598.5);
+  assert.equal(Math.round(computePaidExpenseTotal(roots)), 448_445_599);
+});
+
 // I: paidExpense never goes negative for any supported correction scenario, including over-correction.
 test("I. over-correction beyond the original amount floors the effective recognized amount at 0, not negative", () => {
   const roots = [root({ id: 1, payableStatus: "unpaid", allocatedAmount: 0, corrections: [{ amount: 150, economicEffectSign: -1 }] })];

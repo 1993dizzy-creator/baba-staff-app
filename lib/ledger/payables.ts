@@ -74,8 +74,8 @@ export type PaidExpenseRoot={
   amount:number;
   economicEffectSign:number;
   sourceType:string;
-  // Only present for inventory_purchase_reversal rows — used to find and skip
-  // the original transaction they superseded (same treatment as lib/ledger/entries.ts).
+  // Links an append-only reversal or rebook to an earlier transaction.
+  // Negative-sign children offset that transaction; positive rebooks remain roots.
   correctionOfId:number|null;
   // null = no linked payable at all (immediate payment or expense_recognition).
   payableStatus:string|null;
@@ -85,20 +85,21 @@ export type PaidExpenseRoot={
   corrections:readonly PaidExpenseCorrection[];
 };
 export function computePaidExpenseTotal(roots:readonly PaidExpenseRoot[]){
-  // Rebook is append-only: the reversal transaction nets the voided original to
-  // zero and the (separately fetched, independently-rooted) rebook transaction
-  // carries the current, valid amount/payable. Neither the reversal itself nor
-  // the original it voided should count as an independent root here.
-  const reversedRootIds=new Set(roots.filter(row=>row.sourceType==="inventory_purchase_reversal"&&row.correctionOfId!=null).map(row=>row.correctionOfId as number));
+  // Apply each append-only reversal to its referenced transaction exactly once.
+  // A positive-sign rebook is a separate valid root, even when it has a link.
+  const reversalEffectByRoot=new Map<number,number>();
+  for(const row of roots){
+    if(row.sourceType==="ledger_correction"||row.correctionOfId==null||row.economicEffectSign>=0)continue;
+    reversalEffectByRoot.set(row.correctionOfId,(reversalEffectByRoot.get(row.correctionOfId)??0)+row.amount*row.economicEffectSign);
+  }
   let total=0;
   for(const root of roots){
-    if(root.sourceType==="ledger_correction"||root.sourceType==="inventory_purchase_reversal")continue;
-    if(reversedRootIds.has(root.id))continue;
+    if(root.sourceType==="ledger_correction"||(root.correctionOfId!=null&&root.economicEffectSign<0))continue;
     const correctionEffect=root.corrections.reduce((sum,correction)=>sum+correction.amount*correction.economicEffectSign,0);
     // A recognized expense's true economic amount can't go negative even after
     // corrections; this floor is per-root (never masks another root's math),
     // unlike clamping the final aggregate total.
-    const effectiveRecognized=Math.max(0,root.amount*root.economicEffectSign+correctionEffect);
+    const effectiveRecognized=Math.max(0,root.amount*root.economicEffectSign+correctionEffect+(reversalEffectByRoot.get(root.id)??0));
     const contribution=root.payableStatus==null?effectiveRecognized:Math.min(effectiveRecognized,root.allocatedAmount);
     total+=contribution;
   }
