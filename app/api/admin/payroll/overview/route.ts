@@ -4,6 +4,7 @@ import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 import { loadPayrollOverview } from "@/lib/payroll/overview-server";
 import { buildEmployeePaymentSnapshot, payrollPaymentSnapshotHash } from "@/lib/payroll/payment-snapshot";
 import { isClosedPayrollMonth } from "@/lib/payroll/payment-period";
+import { lockPaidExtraWorkReview } from "@/lib/payroll/paid-extra-work";
 import { loadMealAllowanceCostSummary } from "@/lib/payroll/meal-allowance-server";
 // NOTE: Source Export(buildPayrollSourceExport)는 향후 APP↔T8 교차검증에서 다시 쓰므로
 // 코드는 보존하되, 급여관리 메인 화면 진입 경로에서는 계산하지 않는다.
@@ -53,11 +54,21 @@ export async function GET(request: Request) {
     );
     const [overview,{data:run,error:runError}]=await Promise.all([overviewPromise,paymentBatchPromise]);if(runError)throw runError;
     const paymentsPromise=run
-      ? Promise.resolve(supabaseServer.from("payroll_employee_payments").select("user_id,payment_status,calculated_net_amount,actual_paid_amount,difference_amount,difference_reason,payment_date,fund_account_id,fund_account:ledger_fund_accounts(display_name),paid_at,paid_by,paid_actor:users!payroll_employee_payments_paid_by_fkey(name,full_name,username)").eq("payroll_batch_id",run.id))
+      ? Promise.resolve(supabaseServer.from("payroll_employee_payments").select("user_id,payment_status,calculation_snapshot,calculated_net_amount,actual_paid_amount,difference_amount,difference_reason,payment_date,fund_account_id,fund_account:ledger_fund_accounts(display_name),paid_at,paid_by,paid_actor:users!payroll_employee_payments_paid_by_fkey(name,full_name,username)").eq("payroll_batch_id",run.id))
       : Promise.resolve({data:[],error:null});
     const [{data:payments,error:paymentError},mealAllowance]=await Promise.all([paymentsPromise,mealAllowancePromise!]);if(paymentError)throw paymentError;
     const paymentByUser=new Map((payments??[]).map(row=>[Number(row.user_id),row]));
-    const employees=overview.employees.map(employee=>{const raw=overview.rawByUser.get(employee.userId);const calculationHash=raw?payrollPaymentSnapshotHash(buildEmployeePaymentSnapshot(employee,raw,overview.snapshot.sourceSnapshot as Record<string,unknown>)):null;return{...employee,payment:paymentByUser.get(employee.userId)??null,batchStatus:run?.status??null,batchId:run?.id??null,calculationHash}});
+    const employees=overview.employees.map(employee=>{
+      const payment=paymentByUser.get(employee.userId);
+      const raw=overview.rawByUser.get(employee.userId);
+      const calculationHash=raw?payrollPaymentSnapshotHash(buildEmployeePaymentSnapshot(employee,raw,overview.snapshot.sourceSnapshot as Record<string,unknown>)):null;
+      const visibleEmployee=payment?.payment_status==="paid"
+        ? lockPaidExtraWorkReview(employee,payment.calculation_snapshot as Record<string,unknown>|null)
+        : employee;
+      const publicPayment=payment?{...payment}:null;
+      if(publicPayment)delete publicPayment.calculation_snapshot;
+      return{...visibleEmployee,payment:publicPayment,batchStatus:run?.status??null,batchId:run?.id??null,calculationHash};
+    });
     // 식대비용은 지급 snapshot/hash(위 employees[].calculationHash, payrollPaymentSnapshotHash)와
     // 완전히 분리된 표시 전용 집계다 — loadPayrollOverview()가 아니라 이 GET 핸들러에서만
     // 계산해 summary/projectedSummary에 얹으므로, 출근 기록이 바뀌어 식대비용이 달라져도

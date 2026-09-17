@@ -3,6 +3,7 @@ import type { PayrollContract } from "./types";
 
 const STORE_OFFSET = "+07:00";
 export const EXTRA_WORK_MINIMUM_CANDIDATE_MINUTES = 30;
+export const MONTHLY_EXTRA_WORK_CUTOFF_EFFECTIVE_DATE = "2026-09-01";
 
 export type PartTimeExtraWorkDecision = {
   id: number;
@@ -107,7 +108,7 @@ export function calculatePartTimeExtraWork(input: {
   const schedule = windowFor(input.businessDate, input.scheduleStartTime, input.scheduleEndTime);
   // Monthly staff may finish after store close, but never accrue beyond the
   // next business-day cutoff (03:00 Vietnam time). Other contracts retain store close.
-  const workEnd = payType === "monthly"
+  const workEnd = payType === "monthly" && input.businessDate >= MONTHLY_EXTRA_WORK_CUTOFF_EFFECTIVE_DATE
     ? localInstant(input.businessDate, "03:00") + 24 * 60 * 60 * 1000
     : store.end;
   const insideStart = Math.max(actualStart, store.start);

@@ -94,8 +94,18 @@ test("fixed-monthly payroll excludes extra work even with an approval", () => {
   assert.deepEqual(additions(employee), []);
 });
 
-test("Khoi August 12 monthly extra work pays only the approved 34-minute candidate", () => {
+test("Khoi August 12 monthly paid-era calculation creates no new candidate", () => {
   const options = { date: "2026-08-12", userId: 14, attendanceRecordId: 1350,
+    payType: "monthly", baseSalary: 15_600_000, standardMinutesPerDay: 600,
+    scheduleStartTime: "16:00", scheduleEndTime: "01:00" };
+  const employee = batch("16:00", "01:34", null, false, options);
+  assert.deepEqual(employee.partTimeExtraWork, []);
+  assert.deepEqual(additions(employee), []);
+  assert.ok(!employee.reviews.some(row => row.warningCode.startsWith("PART_TIME_EXTRA_WORK")));
+});
+
+test("September monthly extra work pays only the approved 34-minute candidate", () => {
+  const options = { date: "2026-09-01", userId: 14, attendanceRecordId: 1350,
     payType: "monthly", baseSalary: 15_600_000, standardMinutesPerDay: 600,
     scheduleStartTime: "16:00", scheduleEndTime: "01:00" };
   const pending = batch("16:00", "01:34", null, false, options);

@@ -2,6 +2,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { validPayrollMonth } from "@/lib/payroll/monthly-run";
 import { loadPayrollOverview } from "@/lib/payroll/overview-server";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
+import { paidExtraWorkAmount, paidExtraWorkRows } from "@/lib/payroll/paid-extra-work";
 
 export const dynamic = "force-dynamic";
 
@@ -10,15 +11,15 @@ const validId = (value: unknown) => {
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 };
 
-async function paidUserIds(month: string) {
+async function paidPaymentsByUser(month: string) {
   const { data: batch, error: batchError } = await supabaseServer
     .from("payroll_payment_batches").select("id").eq("payroll_month", `${month}-01`).maybeSingle();
   if (batchError) throw batchError;
-  if (!batch) return new Set<number>();
+  if (!batch) return new Map<number, Record<string, unknown>>();
   const { data, error } = await supabaseServer.from("payroll_employee_payments")
-    .select("user_id").eq("payroll_batch_id", batch.id).eq("payment_status", "paid");
+    .select("user_id,calculation_snapshot").eq("payroll_batch_id", batch.id).eq("payment_status", "paid");
   if (error) throw error;
-  return new Set((data ?? []).map(row => Number(row.user_id)));
+  return new Map((data ?? []).map(row => [Number(row.user_id), row]));
 }
 
 export async function GET(request: Request) {
@@ -30,19 +31,23 @@ export async function GET(request: Request) {
   const userId = rawUserId === null ? undefined : validId(rawUserId) ?? undefined;
   if (!month || (rawUserId !== null && userId === undefined)) return payrollJson({ ok: false, code: "INVALID_EXTRA_WORK_QUERY" }, 400);
   try {
-    const [overview, paid] = await Promise.all([loadPayrollOverview(month, { userId }), paidUserIds(month)]);
-    const employees = overview.employees.filter(employee => employee.contract && employee.contract.calculationBasis !== "fixed_monthly").map(employee => ({
+    const [overview, paid] = await Promise.all([loadPayrollOverview(month, { userId }), paidPaymentsByUser(month)]);
+    const employees = overview.employees.filter(employee => employee.contract && employee.contract.calculationBasis !== "fixed_monthly").map(employee => {
+      const paidPayment = paid.get(employee.userId);
+      const snapshot = paidPayment?.calculation_snapshot as Record<string, unknown> | null | undefined;
+      const candidates = paidPayment ? paidExtraWorkRows(snapshot ?? null) : employee.partTimeExtraWork;
+      return {
       userId: employee.userId,
       name: employee.name,
-      paid: paid.has(employee.userId),
+      paid: Boolean(paidPayment),
       summary: {
-        candidateMinutes: employee.partTimeExtraWork.reduce((sum, row) => sum + row.candidateMinutes, 0),
-        approvedMinutes: employee.partTimeExtraWork.filter(row => row.status === "approved").reduce((sum, row) => sum + row.candidateMinutes, 0),
-        approvedAmount: employee.amounts.partTimeExtraWorkAmount,
-        reviewRequiredCount: employee.partTimeExtraWork.filter(row => row.status === "review_required" || row.status === "stale").length,
+        candidateMinutes: candidates.reduce((sum, row) => sum + row.candidateMinutes, 0),
+        approvedMinutes: candidates.filter(row => row.status === "approved").reduce((sum, row) => sum + row.candidateMinutes, 0),
+        approvedAmount: paidPayment ? paidExtraWorkAmount(snapshot ?? null) : employee.amounts.partTimeExtraWorkAmount,
+        reviewRequiredCount: candidates.filter(row => row.status === "review_required" || row.status === "stale").length,
       },
-      candidates: employee.partTimeExtraWork,
-    }));
+      candidates,
+    };});
     return payrollJson({ ok: true, month, employees });
   } catch {
     return payrollJson({ ok: false, code: "PAYROLL_EXTRA_WORK_READ_FAILED" }, 500);

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 // @ts-expect-error Node's test runner requires the explicit TypeScript extension.
-import { calculatePartTimeExtraWork, EXTRA_WORK_MINIMUM_CANDIDATE_MINUTES, isExtraWorkEligible, partTimeExtraWorkDecisionEffect, partTimeExtraWorkSourceHash } from "../lib/payroll/part-time-extra-work.ts";
+import { calculatePartTimeExtraWork, EXTRA_WORK_MINIMUM_CANDIDATE_MINUTES, isExtraWorkEligible, MONTHLY_EXTRA_WORK_CUTOFF_EFFECTIVE_DATE, partTimeExtraWorkDecisionEffect, partTimeExtraWorkSourceHash } from "../lib/payroll/part-time-extra-work.ts";
 // @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { calculatePayrollRates } from "../lib/payroll/work-policy.ts";
 import type { PayrollContract } from "../lib/payroll/types.ts";
@@ -177,19 +177,28 @@ test("store-close clipping is applied before the after-only minimum threshold", 
   assert.deepEqual([clipped.beforeScheduleMinutes, clipped.afterScheduleMinutes, clipped.candidateMinutes, clipped.excludedAfterCloseMinutes], [5, 30, 30, 60]);
 });
 
-test("Khoi August 12 monthly shift creates a 34-minute review candidate beyond store close", () => {
+test("Khoi August 12 monthly shift stays on the old store-close policy", () => {
   const input = { ...base("16:00", "01:34"), payType: "monthly" as const,
     userId: 14, attendanceRecordId: 1350, businessDate: "2026-08-12",
     checkInAt: at("2026-08-12", "16:00"), checkOutAt: at("2026-08-13", "01:34"),
     scheduleStartTime: "16:00", scheduleEndTime: "01:00", minuteRateAmount: 1_000 };
+  assert.equal(MONTHLY_EXTRA_WORK_CUTOFF_EFFECTIVE_DATE, "2026-09-01");
+  assert.equal(calculatePartTimeExtraWork(input), null);
+});
+
+test("September monthly shift creates a 34-minute review candidate beyond store close", () => {
+  const input = { ...base("16:00", "01:34"), payType: "monthly" as const,
+    businessDate: "2026-09-01", checkInAt: at("2026-09-01", "16:00"),
+    checkOutAt: at("2026-09-02", "01:34"), scheduleStartTime: "16:00",
+    scheduleEndTime: "01:00", minuteRateAmount: 1_000 };
   const candidate = calculatePartTimeExtraWork(input)!;
   assert.equal(candidate.status, "review_required");
   assert.equal(candidate.afterScheduleMinutes, 34);
   assert.equal(candidate.candidateMinutes, 34);
   assert.equal(candidate.candidateAmount, 34_000);
   assert.deepEqual(partTimeExtraWorkDecisionEffect(candidate), { amount: 0, warningCode: "PART_TIME_EXTRA_WORK_REVIEW_REQUIRED" });
-  assert.equal(calculatePartTimeExtraWork({ ...input, checkOutAt: at("2026-08-13", "01:20") }), null);
-  const capped = calculatePartTimeExtraWork({ ...input, checkOutAt: at("2026-08-13", "03:30") })!;
+  assert.equal(calculatePartTimeExtraWork({ ...input, checkOutAt: at("2026-09-02", "01:20") }), null);
+  const capped = calculatePartTimeExtraWork({ ...input, checkOutAt: at("2026-09-02", "03:30") })!;
   assert.equal(capped.candidateMinutes, 120);
   assert.equal(capped.candidateAmount, 120_000);
   assert.equal(capped.excludedAfterCloseMinutes, 30);
