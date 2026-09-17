@@ -61,7 +61,7 @@ export type LedgerEntry = {
 
 export type TransactionRow = {
   display_snapshot?: Record<string, unknown> | null;
-  id: number | string; type: string; business_date: string; amount: number | string;
+  id: number | string; type: string; status?: string; business_date: string; amount: number | string;
   occurred_at?: string | null;
   recognition_month?: string | null;
   party_id?: number | string | null;
@@ -233,13 +233,17 @@ export function buildLedgerEntries(
   const entries: LedgerEntry[] = [];
   const inventoryGroups = new Map<string, LedgerEntry>();
   const mealAdjustmentsByOriginal = new Map<number, TransactionRow[]>();
+  const mealOriginalIds = new Set(transactions
+    .filter((row) => row.source_type === "attendance_meal_daily_candidate")
+    .map((row) => value(row.id)));
   const mealSourceByTransaction = new Map(
     mealCandidateSources.map((candidate) => [candidate.resolvedTransactionId, candidate]),
   );
   for (const row of transactions) {
     if (
       row.source_type !== "ledger_correction" || row.correction_of_id == null ||
-      row.source_snapshot?.adjustmentType !== "employee_meal"
+      (row.status != null && row.status !== "confirmed") ||
+      !mealOriginalIds.has(value(row.correction_of_id))
     ) continue;
     const originalId = value(row.correction_of_id);
     const linked = mealAdjustmentsByOriginal.get(originalId) ?? [];
@@ -256,7 +260,8 @@ export function buildLedgerEntries(
     if (row.type === "opening") continue;
     if (
       row.source_type === "ledger_correction" &&
-      row.source_snapshot?.adjustmentType === "employee_meal"
+      row.correction_of_id != null &&
+      mealOriginalIds.has(value(row.correction_of_id))
     ) continue;
     if (row.source_type === "inventory_purchase_reversal") continue;
     if (row.source_type === "inventory_purchase_candidate" || row.source_type === "inventory_purchase_rebook") {

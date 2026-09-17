@@ -29,6 +29,10 @@
       "schedule": "0 11 * * *"
     },
     {
+      "path": "/api/cron/ledger-meal-source-sync",
+      "schedule": "50 19 * * *"
+    },
+    {
       "path": "/api/cron/ledger-reserve-schedule",
       "schedule": "17 20 * * *"
     },

@@ -1,5 +1,7 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
+import { syncMealCandidateMonths } from "@/lib/ledger/employee-costs";
+import { mealCandidateSyncMonths } from "@/lib/ledger/meal-source-sync-period";
 
 export const dynamic = "force-dynamic";
 const FIELDS = "id,daily_amount,effective_from,revision,created_by,created_at,note";
@@ -66,5 +68,22 @@ export async function POST(request: Request) {
       status,
     );
   }
-  return payrollJson({ ok: true, policy: map(data as Record<string, unknown>) }, 201);
+  const currentMonth = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit",
+  }).format(new Date());
+  const syncMonths = mealCandidateSyncMonths(effectiveFrom, currentMonth);
+  let sourceSync = { attemptedMonths: syncMonths, failedMonths: [] as string[] };
+  if (syncMonths.length > 0) {
+    try {
+      const result = await syncMealCandidateMonths(syncMonths, auth.actor.id);
+      sourceSync = { attemptedMonths: syncMonths, failedMonths: result.failedMonths };
+      if (result.failedMonths.length > 0) {
+        console.error("[MEAL_ALLOWANCE_POLICY_SOURCE_SYNC_PARTIAL_FAILED]", { failedMonths: result.failedMonths });
+      }
+    } catch (syncError) {
+      console.error("[MEAL_ALLOWANCE_POLICY_SOURCE_SYNC_FAILED]", syncError);
+      sourceSync = { attemptedMonths: syncMonths, failedMonths: syncMonths };
+    }
+  }
+  return payrollJson({ ok: true, policy: map(data as Record<string, unknown>), sourceSync }, 201);
 }

@@ -72,3 +72,13 @@ test("a past eligibility effective date syncs every affected month through the c
   assert.deepEqual(mealCandidateSyncMonths("2026-06-15", "2026-08"), ["2026-06", "2026-07", "2026-08"]);
   assert.deepEqual(mealCandidateSyncMonths("2026-09-01", "2026-08"), []);
 });
+
+test("backdated policy save syncs every affected month without editing confirmed transactions", () => {
+  const postBody = policyRoute.slice(policyRoute.indexOf("export async function POST"));
+  assert.deepEqual(mealCandidateSyncMonths("2026-07-15", "2026-09"), ["2026-07", "2026-08", "2026-09"]);
+  assert.match(postBody, /mealCandidateSyncMonths\(effectiveFrom, currentMonth\)/);
+  assert.match(postBody, /await syncMealCandidateMonths\(syncMonths, auth\.actor\.id\)/);
+  assert.match(postBody, /ok: true[\s\S]*sourceSync/);
+  assert.ok(postBody.indexOf("payroll_create_meal_allowance_policy_version_v1") < postBody.indexOf("syncMealCandidateMonths"));
+  assert.doesNotMatch(postBody, /ledger_transactions|ledger_resolve_candidate_v2/);
+});

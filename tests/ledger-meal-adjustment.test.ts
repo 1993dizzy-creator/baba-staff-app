@@ -7,6 +7,7 @@ const { buildLedgerEntries } = await import(new URL("../lib/ledger/entries.ts", 
 const { parseMealFinalAmount } = await import(new URL("../lib/ledger/meal-adjust-input.ts", import.meta.url).href) as typeof import("../lib/ledger/meal-adjust-input");
 const read = (path: string) => readFileSync(path, "utf8");
 const sql = read("supabase/migrations/20260826113239_adjust_open_meal_transactions.sql");
+const updatedSql = read("supabase/migrations/20260917092710_count_all_linked_meal_corrections.sql");
 const api = read("app/api/admin/ledger/transactions/[id]/meal-adjust/route.ts");
 const ledgerApi = read("app/api/admin/ledger/route.ts");
 const fundAccountView = read("lib/ledger/fund-account-view.ts");
@@ -171,7 +172,7 @@ test("generic correction and Inventory rebook contracts are untouched", () => {
 test("ledger API fetches only linked meal corrections across business months", () => {
   assert.match(ledgerApi, /mealOriginalIds[\s\S]*source_type === "attendance_meal_daily_candidate"/);
   assert.match(ledgerApi, /\.eq\("source_type", "ledger_correction"\)/);
-  assert.match(ledgerApi, /\.eq\("source_snapshot->>adjustmentType", "employee_meal"\)/);
+  assert.doesNotMatch(ledgerApi, /\.eq\("source_snapshot->>adjustmentType", "employee_meal"\)/);
   assert.match(ledgerApi, /\.in\("correction_of_id", ids\)/);
   assert.match(ledgerApi, /idChunkSize = 200/);
   assert.match(ledgerApi, /pageSize = 1000/);
@@ -180,8 +181,51 @@ test("ledger API fetches only linked meal corrections across business months", (
 test("meal corrections are hidden as rows and summed with economic sign", () => {
   assert.match(entriesSource, /mealAdjustmentsByOriginal/);
   assert.match(entriesSource, /adjustment\.amount\) \* value\(adjustment\.economic_effect_sign/);
-  assert.match(entriesSource, /source_snapshot\?\.adjustmentType === "employee_meal"[\s\S]*continue/);
+  assert.match(entriesSource, /mealOriginalIds\.has\(value\(row\.correction_of_id\)\)/);
   assert.match(entriesSource, /drilldown: "meal"/);
+});
+
+test("legacy linked corrections on both August patterns satisfy current source without duplicate meal rows", () => {
+  for (const [id, original, corrected] of [[697, 270_000, 300_000], [700, 240_000, 270_000]]) {
+    const legacy = { ...adjustment(id + 1000, id, 30_000, 1), source_snapshot: { legacy: true }, status: "confirmed" };
+    const entry = buildLedgerEntries(
+      [mealTransaction(id, original), legacy], [], new Map(),
+      [{ resolvedTransactionId: id, sourceSnapshot: { total_amount: original }, sourceDriftSnapshot: { total_amount: corrected } }],
+    );
+    assert.equal(entry.length, 1);
+    assert.equal(entry[0].effectiveAmount, corrected);
+    assert.equal(entry[0].sourceAmount, corrected);
+    assert.equal(entry[0].requiresCorrection, false);
+    assert.equal(entry[0].adjustmentCount, 1);
+  }
+});
+
+test("monthly unlinked meal adjustment is excluded from root effective amount", () => {
+  const monthly = { ...adjustment(101, 10, 30_000, 1), correction_of_id: null, source_type: "legacy_sheet_meal_actual_adjustment" };
+  const entry = buildLedgerEntries([mealTransaction(), monthly], [], new Map()).find((row) => row.drilldown === "meal")!;
+  assert.equal(entry.effectiveAmount, 270_000);
+  assert.equal(entry.adjustmentCount, 0);
+});
+
+test("follow-up migration counts every confirmed linked correction and keeps RPC security contract", () => {
+  const effectiveQuery = updatedSql.match(/select\s+v_original\.amount[\s\S]*?into v_previous_amount[\s\S]*?;/)?.[0] ?? "";
+  assert.match(effectiveQuery, /linked\.correction_of_id = v_original\.id/);
+  assert.match(effectiveQuery, /linked\.status = 'confirmed'/);
+  assert.match(effectiveQuery, /linked\.source_type = 'ledger_correction'/);
+  assert.doesNotMatch(effectiveQuery, /adjustmentType/);
+  for (const marker of [
+    /create or replace function public\.ledger_adjust_open_meal_transaction_v1\(\s*p_original_transaction_id bigint,\s*p_final_amount numeric,\s*p_reason text,\s*p_actor_user_id bigint\s*\) returns jsonb/,
+    /security definer\s+set search_path = pg_catalog, public/,
+    /owner to postgres/,
+    /revoke all[\s\S]*from public, anon, authenticated/,
+    /grant execute[\s\S]*to service_role/,
+    /pg_advisory_xact_lock/,
+    /ledger_month_is_closed_v1/,
+    /insert into public\.ledger_movements/,
+    /insert into public\.ledger_audit_logs/,
+    /all confirmed linked ledger corrections are included in the effective amount/,
+  ]) assert.match(updatedSql, marker);
+  assert.doesNotMatch(updatedSql, /update public\.ledger_transactions|delete from public\.ledger_transactions/);
 });
 
 test("meal rows retain semantic employee count and fixed 18:00 display time", () => {

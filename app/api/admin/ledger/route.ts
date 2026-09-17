@@ -190,7 +190,6 @@ async function loadMonthTransactions(start: string, end: string) {
         .select(TRANSACTION_SELECT)
         .eq("status", "confirmed")
         .eq("source_type", "ledger_correction")
-        .eq("source_snapshot->>adjustmentType", "employee_meal")
         .in("correction_of_id", ids)
         .order("id", { ascending: true })
         .range(from, from + pageSize - 1);
