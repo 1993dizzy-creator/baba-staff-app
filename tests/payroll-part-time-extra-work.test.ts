@@ -10,6 +10,7 @@ import type { PayrollContract } from "../lib/payroll/types.ts";
 
 const at = (date: string, time: string) => new Date(`${date}T${time}:00+07:00`).toISOString();
 const base = (actualStart: string, actualEnd: string) => ({
+  payType: "hourly" as const,
   attendanceRecordId: 101, userId: 7, businessDate: "2026-08-01",
   checkInAt: at("2026-08-01", actualStart), checkOutAt: at(actualEnd < actualStart ? "2026-08-02" : "2026-08-01", actualEnd),
   contractId: 11, contractRevision: 3, minuteRateAmount: 35_000 / 60, hourlyRateAmount: 35_000,
@@ -69,7 +70,7 @@ test("monthly and daily amounts reuse calculatePayrollRates minuteRate", () => {
   const daily = contract("daily", 360_000);
   for (const row of [monthly, daily]) {
     const rate = calculatePayrollRates(row, row.baseSalary);
-    const candidate = calculatePartTimeExtraWork({ ...base("18:00", "23:31"), minuteRateAmount: rate.minuteRate, hourlyRateAmount: Math.round(rate.minuteRate * 60) });
+    const candidate = calculatePartTimeExtraWork({ ...base("18:00", "23:31"), payType: row.payType, minuteRateAmount: rate.minuteRate, hourlyRateAmount: Math.round(rate.minuteRate * 60) });
     assert.equal(candidate?.candidateAmount, Math.round(31 * rate.minuteRate));
   }
   assert.equal(calculatePayrollRates(monthly, monthly.baseSalary).minuteRate, 1_000);
@@ -174,6 +175,32 @@ test("store-close clipping is applied before the after-only minimum threshold", 
   assert.equal(calculatePartTimeExtraWork({ ...base("16:00", "00:30"), storeCloseTime: "23:20" }), null);
   const clipped = calculatePartTimeExtraWork({ ...base("17:55", "00:30"), storeCloseTime: "23:30" })!;
   assert.deepEqual([clipped.beforeScheduleMinutes, clipped.afterScheduleMinutes, clipped.candidateMinutes, clipped.excludedAfterCloseMinutes], [5, 30, 30, 60]);
+});
+
+test("Khoi August 12 monthly shift creates a 34-minute review candidate beyond store close", () => {
+  const input = { ...base("16:00", "01:34"), payType: "monthly" as const,
+    userId: 14, attendanceRecordId: 1350, businessDate: "2026-08-12",
+    checkInAt: at("2026-08-12", "16:00"), checkOutAt: at("2026-08-13", "01:34"),
+    scheduleStartTime: "16:00", scheduleEndTime: "01:00", minuteRateAmount: 1_000 };
+  const candidate = calculatePartTimeExtraWork(input)!;
+  assert.equal(candidate.status, "review_required");
+  assert.equal(candidate.afterScheduleMinutes, 34);
+  assert.equal(candidate.candidateMinutes, 34);
+  assert.equal(candidate.candidateAmount, 34_000);
+  assert.deepEqual(partTimeExtraWorkDecisionEffect(candidate), { amount: 0, warningCode: "PART_TIME_EXTRA_WORK_REVIEW_REQUIRED" });
+  assert.equal(calculatePartTimeExtraWork({ ...input, checkOutAt: at("2026-08-13", "01:20") }), null);
+  const capped = calculatePartTimeExtraWork({ ...input, checkOutAt: at("2026-08-13", "03:30") })!;
+  assert.equal(capped.candidateMinutes, 120);
+  assert.equal(capped.candidateAmount, 120_000);
+  assert.equal(capped.excludedAfterCloseMinutes, 30);
+});
+
+test("part-time still counts 23:00–23:40 and excludes work after store close", () => {
+  const forty = calculatePartTimeExtraWork(base("18:00", "23:40"))!;
+  assert.equal(forty.candidateMinutes, 40);
+  assert.equal(forty.candidateAmount, Math.round(40 * 35_000 / 60));
+  const afterClose = calculatePartTimeExtraWork({ ...base("18:00", "01:34"), scheduleEndTime: "01:00" });
+  assert.equal(afterClose, null);
 });
 
 test("Đức legacy approvals with after-schedule work under 30 minutes disappear", () => {

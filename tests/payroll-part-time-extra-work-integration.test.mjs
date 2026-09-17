@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
@@ -31,25 +31,29 @@ function load(path) {
 }
 const { calculatePayrollBatch } = load(resolve("lib/payroll/monthly-run.ts"));
 const { partTimeExtraWorkSourceHash } = load(resolve("lib/payroll/part-time-extra-work.ts"));
-function batch(start, end, decision, fixed = false) {
-  const date = "2026-09-04";
+function batch(start, end, decision, fixed = false, options = {}) {
+  const date = options.date ?? "2026-09-04";
+  const nextDate = new Date(`${date}T00:00:00Z`);
+  nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+  const userId = options.userId ?? 7;
+  const attendanceRecordId = options.attendanceRecordId ?? 101;
   const input = {
-    month: "2026-09", dates: [date],
-    users: [{ id: 7, name: "Thiết", username: "local", role: "staff", is_active: true,
+    month: date.slice(0, 7), dates: [date],
+    users: [{ id: userId, name: "Thiết", username: "local", role: "staff", is_active: true,
       is_system_account: false, hire_date: "2026-01-01", termination_date: null,
       payroll_eligible_override: true, level_program_enabled: false, level_base_date_override: null }],
-    attendance: [{ id: 101, user_id: 7, status: "done", work_date: date,
-      check_in_at: `${date}T${start}:00+07:00`, check_out_at: `2026-09-${end < start ? "05" : "04"}T${end}:00+07:00`,
+    attendance: [{ id: attendanceRecordId, user_id: userId, status: "done", work_date: date,
+      check_in_at: `${date}T${start}:00+07:00`, check_out_at: `${end < start ? nextDate.toISOString().slice(0, 10) : date}T${end}:00+07:00`,
       approval_status: "approved", late_minutes: 0, early_leave_minutes: 0, work_minutes: 300, updated_at: null }],
-    contracts: [{ id: 11, userId: 7, payType: fixed ? "monthly" : "hourly", calculationBasis: fixed ? "fixed_monthly" : "minute",
-      baseSalary: fixed ? 9_100_000 : 35_000, fixedRaiseAmount: 0, standardWorkdays: 26, standardMinutesPerDay: 300,
+    contracts: [{ id: 11, userId, payType: options.payType ?? (fixed ? "monthly" : "hourly"), calculationBasis: fixed ? "fixed_monthly" : "minute",
+      baseSalary: options.baseSalary ?? (fixed ? 9_100_000 : 35_000), fixedRaiseAmount: 0, standardWorkdays: 26, standardMinutesPerDay: options.standardMinutesPerDay ?? 300,
       timeBlockMinutes: 1, roundingMode: "none", lateAdjustmentMode: "separate", earlyLeaveAdjustmentMode: "separate",
       overtimeMode: "requires_approval", paidLeaveMode: "unpaid", effectiveFrom: "2026-01-01", effectiveTo: null, revision: 3 }],
-    schedules: [{ id: 21, userId: 7, startTime: "18:00", endTime: "23:00", unpaidBreakMinutes: 0,
+    schedules: [{ id: 21, userId, startTime: options.scheduleStartTime ?? "18:00", endTime: options.scheduleEndTime ?? "23:00", unpaidBreakMinutes: 0,
       effectiveFrom: "2026-01-01", effectiveTo: null, revision: 4 }],
     lateNormalizedRecordIds: new Set(), settingsByDate: new Map(),
     extraWorkSettingsByDate: new Map([[date, { id: 31, revision: 5, openTime: "16:00", closeTime: "01:00" }]]),
-    holidayPremiumByDate: new Map(), decisionsByAttendanceId: new Map(decision ? [[101, decision]] : []),
+    holidayPremiumByDate: new Map(), decisionsByAttendanceId: new Map(decision ? [[attendanceRecordId, decision]] : []),
     insuranceVersionsByUser: new Map(), insuranceGlobal: { employeeRateBp: 0, employerRateBp: 0, directorEnabled: false },
     penaltySettings: { lateMajorThresholdMinutes: 20, lateMinorPenaltyMinutes: 60, lateMajorPenaltyRateBp: 5000, unauthorizedAbsencePenaltyDays: 3 },
   };
@@ -88,6 +92,35 @@ test("fixed-monthly payroll excludes extra work even with an approval", () => {
   const employee = batch("16:00", "00:00", decision("legacy-source"), true);
   assert.deepEqual(employee.partTimeExtraWork, []);
   assert.deepEqual(additions(employee), []);
+});
+
+test("Khoi August 12 monthly extra work pays only the approved 34-minute candidate", () => {
+  const options = { date: "2026-08-12", userId: 14, attendanceRecordId: 1350,
+    payType: "monthly", baseSalary: 15_600_000, standardMinutesPerDay: 600,
+    scheduleStartTime: "16:00", scheduleEndTime: "01:00" };
+  const pending = batch("16:00", "01:34", null, false, options);
+  assert.equal(pending.partTimeExtraWork.length, 1);
+  const candidate = pending.partTimeExtraWork[0];
+  assert.equal(candidate.status, "review_required");
+  assert.equal(candidate.attendanceRecordId, 1350);
+  assert.equal(candidate.candidateMinutes, 34);
+  assert.equal(candidate.minuteRateAmount, 15_600_000 / 26 / 540);
+  assert.equal(candidate.candidateAmount, 37_778);
+  assert.deepEqual(additions(pending), []);
+
+  const approved = batch("16:00", "01:34", { ...decision(candidate.sourceHash), attendanceRecordId: 1350 }, false, options);
+  assert.equal(approved.partTimeExtraWork[0].status, "approved");
+  assert.equal(additions(approved).length, 1);
+  assert.equal(additions(approved)[0].amount, 37_778);
+  assert.equal(additions(approved)[0].sourceSnapshot.candidateMinutes, 34);
+
+  const rejected = batch("16:00", "01:34", { ...decision(candidate.sourceHash), attendanceRecordId: 1350, decision: "rejected" }, false, options);
+  assert.equal(rejected.partTimeExtraWork[0].status, "rejected");
+  assert.deepEqual(additions(rejected), []);
+
+  const stale = batch("16:00", "01:35", { ...decision(candidate.sourceHash), attendanceRecordId: 1350 }, false, options);
+  assert.equal(stale.partTimeExtraWork[0].status, "stale");
+  assert.deepEqual(additions(stale), []);
 });
 
 test("local DB compatibility migration preserves legacy rows and accepts after-only audit snapshots", async () => {

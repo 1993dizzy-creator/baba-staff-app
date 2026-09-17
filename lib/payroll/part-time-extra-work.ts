@@ -79,6 +79,7 @@ export function partTimeExtraWorkSourceHash(snapshot: Record<string, unknown>) {
 }
 
 export function calculatePartTimeExtraWork(input: {
+  payType: PayrollContract["payType"];
   attendanceRecordId: number;
   userId: number;
   businessDate: string;
@@ -98,13 +99,19 @@ export function calculatePartTimeExtraWork(input: {
   storeCloseTime: string;
   decision?: PartTimeExtraWorkDecision | null;
 }): PartTimeExtraWorkCandidate | null {
+  const { payType, ...candidateFields } = input;
   const actualStart = new Date(input.checkInAt).getTime();
   const actualEnd = new Date(input.checkOutAt).getTime();
   if (!Number.isFinite(actualStart) || !Number.isFinite(actualEnd) || actualEnd <= actualStart) return null;
   const store = windowFor(input.businessDate, input.storeOpenTime, input.storeCloseTime);
   const schedule = windowFor(input.businessDate, input.scheduleStartTime, input.scheduleEndTime);
+  // Monthly staff may finish after store close, but never accrue beyond the
+  // next business-day cutoff (03:00 Vietnam time). Other contracts retain store close.
+  const workEnd = payType === "monthly"
+    ? localInstant(input.businessDate, "03:00") + 24 * 60 * 60 * 1000
+    : store.end;
   const insideStart = Math.max(actualStart, store.start);
-  const insideEnd = Math.min(actualEnd, store.end);
+  const insideEnd = Math.min(actualEnd, workEnd);
   const beforeScheduleMinutes = insideEnd > insideStart
     ? overlapMinutes(insideStart, insideEnd, insideStart, Math.min(schedule.start, insideEnd))
     : 0;
@@ -112,9 +119,9 @@ export function calculatePartTimeExtraWork(input: {
     ? overlapMinutes(insideStart, insideEnd, Math.max(schedule.end, insideStart), insideEnd)
     : 0;
   const excludedBeforeOpenMinutes = overlapMinutes(actualStart, actualEnd, actualStart, Math.min(store.start, actualEnd));
-  const excludedAfterCloseMinutes = overlapMinutes(actualStart, actualEnd, Math.max(store.end, actualStart), actualEnd);
+  const excludedAfterCloseMinutes = overlapMinutes(actualStart, actualEnd, Math.max(workEnd, actualStart), actualEnd);
   // Early arrival is audit metadata only. Pay and the minimum threshold use
-  // exclusively work after the scheduled end, already clipped to store close.
+  // exclusively work after the scheduled end, clipped to the contract boundary.
   const candidateMinutes = afterScheduleMinutes;
   if (candidateMinutes < EXTRA_WORK_MINIMUM_CANDIDATE_MINUTES) return null;
   const candidateAmount = Math.round(candidateMinutes * input.minuteRateAmount);
@@ -146,5 +153,5 @@ export function calculatePartTimeExtraWork(input: {
   const sourceHash = partTimeExtraWorkSourceHash(sourceSnapshot);
   const decision = input.decision ?? null;
   const status = !decision ? "review_required" : decision.sourceHash !== sourceHash ? "stale" : decision.decision;
-  return { ...input, beforeScheduleMinutes, afterScheduleMinutes, excludedBeforeOpenMinutes, excludedAfterCloseMinutes, candidateMinutes, candidateAmount, sourceSnapshot, sourceHash, decision, status };
+  return { ...candidateFields, beforeScheduleMinutes, afterScheduleMinutes, excludedBeforeOpenMinutes, excludedAfterCloseMinutes, candidateMinutes, candidateAmount, sourceSnapshot, sourceHash, decision, status };
 }
