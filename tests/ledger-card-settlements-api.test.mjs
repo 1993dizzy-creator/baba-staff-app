@@ -60,13 +60,27 @@ function setup({ sales=[], reconciliations=[], lines=[], movements=[], denied=fa
 }
 const get=async(state,month='2026-08')=>state.api.GET(new Request(`http://local/api/admin/ledger/card-settlements?month=${month}`));
 
+test('GET pins monthly settled and outstanding to deposit date while keeping operational sales current',async()=>{
+  const state=setup({sales:[sale(1,'2026-08-11',1000)],reconciliations:[rec(1,'2026-08-24',590,'matched',600,10),rec(2,'2026-09-02',390,'matched',400,10)],lines:[{id:1,reconciliation_id:1,pos_card_transaction_id:1,allocated_gross_amount:600},{id:2,reconciliation_id:2,pos_card_transaction_id:1,allocated_gross_amount:400}]});
+  const august=await(await get(state)).json();
+  assert.deepEqual([august.summary.monthlyCardGross,august.summary.monthlySettledGross,august.summary.monthlyUnreconciledGross],[1000,600,400]);
+  assert.equal(august.summary.monthlySettlementDifference,20);
+  assert.equal(august.summary.actualCardDeposits,590);
+  assert.equal(august.summary.totalUnreconciledGross,0);
+  assert.equal(august.monthlySales[0].outstandingGrossAmount,0);
+  const september=await(await get(state,'2026-09')).json();
+  assert.equal(september.summary.actualCardDeposits,390);
+  const loader=readFileSync('lib/ledger/card-settlement-data.ts','utf8');
+  assert.match(loader,/reconciliation:ledger_card_reconciliations!inner\(status,deposit_date\)/);
+});
+
 test('GET keeps sale-month gross separate from deposit-month summary and returns oldest outstanding candidates across months',async()=>{
   const state=setup({sales:[sale(3,'2026-09-01',2000),sale(2,'2026-08-15',1000),sale(1,'2026-07-15',500)],reconciliations:[rec(1,'2026-09-10',982,'matched',1000,18),rec(2,'2026-08-20',300,'partial',400),rec(3,'2026-08-21',200,'cancelled')],lines:[{id:1,reconciliation_id:1,pos_card_transaction_id:2,allocated_gross_amount:1000},{id:2,reconciliation_id:2,pos_card_transaction_id:3,allocated_gross_amount:400},{id:3,reconciliation_id:3,pos_card_transaction_id:1,allocated_gross_amount:500}],movements:[{id:1,fund_account_id:1,amount:2000,transaction:{status:'confirmed'}},{id:2,fund_account_id:1,amount:9999,transaction:{status:'draft'}},{id:3,fund_account_id:2,amount:8888,transaction:{status:'confirmed'}}]});
   const august=await(await get(state)).json();
-  assert.equal(august.summary.monthlyCardGross,1000);assert.equal(august.summary.monthlyReconciledGross,1000);assert.equal(august.summary.monthlyUnreconciledGross,0);assert.equal(august.summary.monthlySettlementDifference,18);assert.equal(august.summary.totalUnreconciledGross,2100);assert.equal(august.summary.cardPendingBalance,2000);assert.equal(august.summary.actualCardDeposits,300);assert.equal(august.summary.monthlyUnmatchedDeposits,300);assert.equal(august.summary.actualDifferenceRate,null);
+  assert.equal(august.summary.monthlyCardGross,1000);assert.equal(august.summary.monthlyReconciledGross,0);assert.equal(august.summary.monthlyUnreconciledGross,1000);assert.equal(august.summary.monthlySettlementDifference,18);assert.equal(august.summary.totalUnreconciledGross,2100);assert.equal(august.summary.cardPendingBalance,2000);assert.equal(august.summary.actualCardDeposits,300);assert.equal(august.summary.monthlyUnmatchedDeposits,300);assert.equal(august.summary.actualDifferenceRate,null);
   assert.deepEqual(august.sales.map(row=>row.id),[1,3]);assert.deepEqual(august.reconciliations.map(row=>row.id),[3,2]);
   assert.equal(august.totalReconciliationCount,2);assert.equal(august.totalHistoryCount,3);assert.equal(august.totalCancelledCount,1);
-  assert.deepEqual(august.monthlySales.map(row=>row.id),[2]);assert.equal(august.monthlySales[0].outstandingGrossAmount,0);assert.deepEqual(august.priorUnreconciledSales.map(row=>row.id),[1]);assert.equal(august.summary.monthlySettledGross,1000);
+  assert.deepEqual(august.monthlySales.map(row=>row.id),[2]);assert.equal(august.monthlySales[0].outstandingGrossAmount,0);assert.deepEqual(august.priorUnreconciledSales.map(row=>row.id),[1]);assert.equal(august.summary.monthlySettledGross,0);
   const september=await(await get(state,'2026-09')).json();assert.equal(september.summary.monthlyUnreconciledGross,1600);assert.equal(september.summary.monthlyCompletedGross,1000);assert.equal(september.summary.monthlyCompletedDeposit,982);assert.equal(september.summary.monthlyCompletedDifference,18);assert.equal(september.summary.actualDifferenceRate,0.018);
 });
 test('GET with no reconciliation leaves full monthly and total gross outstanding',async()=>{
@@ -84,7 +98,7 @@ test('GET attributes a mixed-month matched difference by sale gross without chan
 test('GET pages sales, reconciliation lines and clearing movements beyond 1000 rows',async()=>{
   const sales=Array.from({length:1001},(_,i)=>sale(i+1,'2026-08-01',1000));
   const state=setup({sales,reconciliations:[rec(1,'2026-09-01',100100,'partial',100100)],lines:sales.map(row=>({id:row.id,reconciliation_id:1,pos_card_transaction_id:row.id,allocated_gross_amount:100})),movements:sales.map(row=>({id:row.id,fund_account_id:1,amount:1,transaction:{status:'confirmed'}}))});
-  const body=await(await get(state)).json();assert.equal(body.summary.monthlyUnreconciledGross,900900);assert.equal(body.summary.cardPendingBalance,1001);
+  const body=await(await get(state)).json();assert.equal(body.summary.monthlyUnreconciledGross,1001000);assert.equal(body.summary.cardPendingBalance,1001);assert.equal(body.summary.totalUnreconciledGross,900900);
   for(const table of ['ledger_transactions','ledger_card_reconciliation_lines','ledger_movements'])assert.equal(state.calls.filter(call=>call.table===table).length,2);
 });
 test('GET authorization, invalid month and failed reads do not silently return financial totals',async()=>{

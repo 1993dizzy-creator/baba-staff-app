@@ -1,6 +1,6 @@
 import test from"node:test";import assert from"node:assert/strict";import{readFileSync}from"node:fs";
 import { createRequire } from "node:module";
-const { calculateCardGross, calculateCardDepositSummary, calculateMonthlySettlementDifference, formatCardSettlementRate, recommendCardAllocations, buildEditableCardSales, eligibleCardSalesForDeposit } = createRequire(import.meta.url)("../lib/ledger/card-settlements.ts") as typeof import("../lib/ledger/card-settlements");
+const { calculateCardGross, calculateCardGrossAtMonthEnd, calculateCardDepositSummary, calculateMonthlySettlementDifference, formatCardSettlementRate, recommendCardAllocations, buildEditableCardSales, eligibleCardSalesForDeposit } = createRequire(import.meta.url)("../lib/ledger/card-settlements.ts") as typeof import("../lib/ledger/card-settlements");
 const migration=readFileSync("supabase/migrations/202608210006_add_ledger_card_settlements.sql","utf8"),cancellationMigration=readFileSync("supabase/migrations/20260915095952_add_card_reconciliation_cancellation.sql","utf8"),futureSaleMigration=readFileSync("supabase/migrations/20260915103312_prevent_future_card_sale_matching.sql","utf8"),api=readFileSync("app/api/admin/ledger/card-settlements/route.ts","utf8"),detailApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/route.ts","utf8"),matchApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/match/route.ts","utf8"),cancelApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/cancel/route.ts","utf8"),ui=readFileSync("app/(protected)/admin/ledger/card-settlements/page.tsx","utf8"),snapshot=readFileSync("lib/ledger/month-close.ts","utf8"),posMigration=readFileSync("supabase/migrations/202608210002_add_ledger_pos_sales_sync.sql","utf8"),posSource=readFileSync("lib/ledger/pos-sales.ts","utf8"),foundation=readFileSync("tests/ledger-v1-foundation.test.ts","utf8"),inventory=readFileSync("tests/ledger-inventory-candidates.test.ts","utf8"),payable=readFileSync("tests/ledger-payable-payments.test.ts","utf8"),meal=readFileSync("tests/ledger-meal-payroll.test.ts","utf8");
 const snapshotCard=readFileSync("lib/ledger/month-close-card.ts","utf8");
 test("card deposit registration RPC",()=>assert.match(api,/ledger_create_card_deposit_v1/));
@@ -99,6 +99,42 @@ test("future sale migration preserves locking and privileged function contract",
 const cardSale = (id=1, amount=1000, business_date="2026-08-15") => ({ id, amount, business_date });
 const cardLine = (amount=1000, status="matched", id=1) => ({ reconciliation_id: 1, pos_card_transaction_id: id, allocated_gross_amount: amount, reconciliation: { status } });
 const gross = (sales=[cardSale()], lines:ReturnType<typeof cardLine>[] = []) => calculateCardGross(sales, lines, "2026-08-01", "2026-09-01");
+test("month-end card status excludes later deposits while current matching and sale-month difference keep their own rules",()=>{
+  const sales=[cardSale()];
+  const august={reconciliation_id:1,pos_card_transaction_id:1,allocated_gross_amount:600,reconciliation:{status:"matched",deposit_date:"2026-08-24"}};
+  const september={reconciliation_id:2,pos_card_transaction_id:1,allocated_gross_amount:400,reconciliation:{status:"matched",deposit_date:"2026-09-02"}};
+  const snapshot=calculateCardGrossAtMonthEnd(sales,[august,september],"2026-08-01","2026-09-01");
+  assert.equal(snapshot.monthlyCardGross,1000);
+  assert.equal(snapshot.monthlySettledGross,600);
+  assert.equal(snapshot.monthlyUnreconciledGross,400);
+  assert.equal(calculateCardGross(sales,[august,september],"2026-08-01","2026-09-01").monthlyUnreconciledGross,0);
+  const reconciliations=[{id:1,deposit_date:"2026-08-24",deposit_amount:590,matched_gross_amount:600,difference_amount:10,status:"matched"},{id:2,deposit_date:"2026-09-02",deposit_amount:390,matched_gross_amount:400,difference_amount:10,status:"matched"}];
+  assert.equal(calculateMonthlySettlementDifference(sales,[august,september],reconciliations,"2026-08-01","2026-09-01"),20);
+  assert.equal(calculateCardDepositSummary(reconciliations,"2026-08-01","2026-09-01").actualCardDeposits,590);
+});
+test("month-end card status excludes cancelled and future partial allocations but retains in-month partial allocation policy",()=>{
+  const lines=[
+    {reconciliation_id:1,pos_card_transaction_id:1,allocated_gross_amount:300,reconciliation:{status:"partial",deposit_date:"2026-08-20"}},
+    {reconciliation_id:2,pos_card_transaction_id:1,allocated_gross_amount:200,reconciliation:{status:"partial",deposit_date:"2026-09-01"}},
+    {reconciliation_id:3,pos_card_transaction_id:1,allocated_gross_amount:100,reconciliation:{status:"cancelled",deposit_date:"2026-08-22"}},
+  ];
+  const snapshot=calculateCardGrossAtMonthEnd([cardSale()],lines,"2026-08-01","2026-09-01");
+  assert.equal(snapshot.monthlyReconciledGross,300);
+  assert.equal(snapshot.monthlySettledGross,0);
+  assert.equal(snapshot.monthlyUnreconciledGross,700);
+});
+test("August reference gross keeps sale-month outstanding distinct from August deposit totals",()=>{
+  const augustSale=cardSale(1,225_925_720);
+  const lines=[
+    {reconciliation_id:1,pos_card_transaction_id:1,allocated_gross_amount:197_992_160,reconciliation:{status:"matched",deposit_date:"2026-08-31"}},
+    {reconciliation_id:2,pos_card_transaction_id:1,allocated_gross_amount:27_933_560,reconciliation:{status:"matched",deposit_date:"2026-09-02"}},
+  ];
+  const august=calculateCardGrossAtMonthEnd([augustSale],lines,"2026-08-01","2026-09-01");
+  assert.deepEqual([august.monthlyCardGross,august.monthlySettledGross,august.monthlyUnreconciledGross],[225_925_720,197_992_160,27_933_560]);
+  assert.equal(formatCardSettlementRate(august.monthlyCardGross,august.monthlySettledGross),"87.6%");
+  const deposits=calculateCardDepositSummary([{id:3,deposit_date:"2026-08-31",deposit_amount:197_348_230,matched_gross_amount:201_686_360,difference_amount:4_338_130,status:"matched"}],"2026-08-01","2026-09-01");
+  assert.deepEqual([deposits.actualCardDeposits,deposits.monthlyCompletedGross,deposits.monthlyCompletedDifference],[197_348_230,201_686_360,4_338_130]);
+});
 test("A: no allocation leaves all monthly card gross unreconciled", () => {
   const result=gross();assert.equal(result.monthlyCardGross,1000);assert.equal(result.monthlyReconciledGross,0);assert.equal(result.monthlyUnreconciledGross,1000);
 });
@@ -192,4 +228,15 @@ test("UI retains manual allocations and POS detail and adds guarded cancellation
   assert.match(ui,/정산 취소/);assert.match(ui,/취소 사유/);assert.match(ui,/취소 확정/);assert.match(ui,/\/cancel/);assert.match(ui,/status==="cancelled"/);
   assert.match(ui,/카드 입금 이동과 정산 차액을 역분개하고 연결된 카드매출을 다시 미정산 상태로 돌립니다/);
   assert.match(ui,/working\|\|!cancelReason\.trim\(\)/);
+});
+test("card views label month-end settlement separately from current matching and sale-month fees",()=>{
+  const entries=readFileSync("app/(protected)/admin/ledger/entries/page.tsx","utf8");
+  assert.match(entries,/월말 정산완료/);
+  assert.match(entries,/월말 미정산/);
+  assert.match(entries,/매출 귀속 수수료\/차액/);
+  assert.match(entries,/실제 입금은 입금월 기준, 수수료\/차액은 매출월 귀속 기준입니다/);
+  assert.match(ui,/현재 전체 미정산/);
+  assert.match(ui,/아래 매출별 연결 현황은 현재 기준이며 부분 저장을 포함합니다/);
+  assert.match(api,/const gross = calculateCardGross\(/);
+  assert.match(api,/const monthEndGross = calculateCardGrossAtMonthEnd\(/);
 });

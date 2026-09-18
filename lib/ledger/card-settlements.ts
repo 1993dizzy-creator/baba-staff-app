@@ -3,7 +3,7 @@ export type CardAllocationLine = {
   reconciliation_id: number;
   pos_card_transaction_id: number;
   allocated_gross_amount: number | string;
-  reconciliation: { status: string } | null;
+  reconciliation: { status: string; deposit_date?: string } | null;
 };
 export type CardReconciliation = {
   id: number; deposit_date: string; deposit_amount: number | string;
@@ -66,6 +66,13 @@ export function calculateCardGross<T extends CardSale>(sales: readonly T[], line
     monthlyUnreconciledGross,
     totalUnreconciledGross: sumCardMoney(balances.map(sale => sale.outstandingGrossAmount)),
   };
+}
+
+// A selected month's snapshot uses the reconciliation's deposit date. The
+// current-state calculation above remains available for operational matching.
+export function calculateCardGrossAtMonthEnd<T extends CardSale>(sales: readonly T[], lines: readonly CardAllocationLine[], start: string, end: string) {
+  const throughMonth = lines.filter(line => line.reconciliation?.deposit_date && line.reconciliation.deposit_date < end);
+  return calculateCardGross(sales, throughMonth, start, end);
 }
 
 export function calculateCardDepositSummary(reconciliations: readonly CardReconciliation[], start: string, end: string) {

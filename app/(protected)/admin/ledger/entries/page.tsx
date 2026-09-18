@@ -915,11 +915,12 @@ function LedgerEntriesContent() {
                 <dl className={styles.payableMonthTotals}>
                   {([
                     ["monthlyCardGross",vi?"💳 Doanh thu thẻ":"💳 카드매출"],
-                    ["monthlySettledGross",vi?"✅ Đã hoàn tất":"✅ 정산완료"],
-                    ["monthlyUnreconciledGross",vi?"⏳ Chưa quyết toán":"⏳ 미정산"],
-                    ["monthlySettlementDifference",vi?"💸 Phí/chênh lệch":"💸 수수료/차액"],
+                    ["monthlySettledGross",vi?"✅ Đã quyết toán cuối tháng":"✅ 월말 정산완료"],
+                    ["monthlyUnreconciledGross",vi?"⏳ Chưa quyết toán cuối tháng":"⏳ 월말 미정산"],
+                    ["monthlySettlementDifference",vi?"💸 Phí/chênh lệch theo tháng bán":"💸 매출 귀속 수수료/차액"],
                   ] as const).map(([key,label])=><div key={key}><dt>{label}</dt><dd>{cardSettlement?.month===month&&cardSettlementError?.month!==month?money(cardSettlement.summary[key]):"-"}</dd></div>)}
                 </dl>
+                <p className={styles.statusHint}>{vi?"Tiền thực nhận tính theo tháng nhập tiền; phí/chênh lệch tính theo tháng bán.":"실제 입금은 입금월 기준, 수수료/차액은 매출월 귀속 기준입니다."}</p>
                 {cardSettlementError?.month===month?<p role="alert" className={styles.error}>{cardSettlementError.message}</p>:cardSettlement?.month!==month?<p className={styles.statusHint}>{vi?"Đang tải tình hình thẻ…":"카드 정산 현황을 불러오는 중입니다…"}</p>:null}
                 <div className={styles.statusActions}><p className={styles.statusHint}>{vi?"Đăng ký tiền vào và kết nối doanh thu tại trang chi tiết.":"입금 등록과 매출 연결은 상세 페이지에서 진행합니다."}</p><Link href="/admin/ledger/card-settlements" className={styles.statusDetailLink}>{vi?"Xem chi tiết":"상세 보기"} ›</Link></div>
               </div>:null}
@@ -951,10 +952,12 @@ function LedgerEntriesContent() {
                   <>
                     <dl className={styles.payableMonthTotals}>
                       <div><dt>🏁 {vi?"Lũy kế đầu tháng":"월초 누적"}</dt><dd>{money(activeInvestments.summary.openingCumulative)}</dd></div>
+                      {activeInvestments.summary.periodOpening!==0?<div><dt>📌 {vi?"Vốn ghi nhận đầu kỳ trong tháng":"당월 기준투자금"}</dt><dd>{activeInvestments.summary.periodOpening>0?"+":""}{money(activeInvestments.summary.periodOpening)}</dd></div>:null}
                       <div><dt>➕ {vi?"Góp vốn tháng này":"당월 추가투자"}</dt><dd>{activeInvestments.summary.periodContribution>0?"+":""}{money(activeInvestments.summary.periodContribution)}</dd></div>
                       <div><dt>🛠️ {vi?"Điều chỉnh tháng này":"당월 조정"}</dt><dd>{activeInvestments.summary.periodAdjustment>0?"+":""}{money(activeInvestments.summary.periodAdjustment)}</dd></div>
                       <div><dt>💼 {vi?"Lũy kế cuối tháng":"월말 누적"}</dt><dd>{money(activeInvestments.summary.closingCumulative)}</dd></div>
                     </dl>
+                    <p className={styles.statusHint}>{vi?"Vốn góp thêm là dòng vốn vào, được tính vào tiền đang giữ nhưng không tính là doanh thu hay lợi nhuận kinh doanh.":"추가투자는 자본유입으로 보유금에 포함되며, 영업수입·영업이익에는 포함되지 않습니다."}</p>
                     {activeInvestments.events.length ? (
                       <div className={styles.itemList}>
                         {activeInvestments.events.map((event) => (

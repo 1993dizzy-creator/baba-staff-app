@@ -1,4 +1,4 @@
-import { calculateCardGross, sumCardMoney } from "@/lib/ledger/card-settlements";
+import { calculateCardGrossAtMonthEnd, sumCardMoney } from "@/lib/ledger/card-settlements";
 import { loadCardRows, loadCardSales, loadCardAllocationLines } from "@/lib/ledger/card-settlement-data";
 import { supabaseServer } from "@/lib/supabase/server";
 import { withInventoryDisplay, loadInventoryProjectionIssues } from "@/lib/ledger/inventory-display";
@@ -88,7 +88,7 @@ export async function GET(request: Request) {
     const recognizedIncome = profitRows.filter((row) => row.type === "income" || row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const expense = profitRows.filter((row) => row.type === "expense" || row.type === "expense_recognition").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const lines = await loadCardAllocationLines(cardGrossSalesResult.map(row => Number(row.id)));
-    const cardGross = calculateCardGross(cardGrossSalesResult, lines, monthStart, nextMonth);
+    const cardGross = calculateCardGrossAtMonthEnd(cardGrossSalesResult, lines, monthStart, nextMonth);
     const cardGrossSales = cardGross.monthlyCardGross;
     const reconciledCardGross = cardGross.monthlyReconciledGross;
     const unreconciledCardGross = cardGross.monthlyUnreconciledGross;

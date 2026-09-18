@@ -128,13 +128,13 @@ export default function CardSettlementsPage() {
         <h2>카드 현황 ({Number(month.slice(5,7))}월)</h2>
         <div className={styles.grid}>
           <Card title="💳 카드매출" value={money(data.summary.monthlyCardGross)}/>
-          <Card title="✅ 정산완료" value={money(data.summary.monthlySettledGross)}/>
-          <Card title="⏳ 미정산" value={money(data.summary.monthlyUnreconciledGross)}/>
-          <Card title="🌐 전체 미정산" value={money(data.summary.totalUnreconciledGross)}/>
+          <Card title="✅ 월말 정산완료" value={money(data.summary.monthlySettledGross)}/>
+          <Card title="⏳ 월말 미정산" value={money(data.summary.monthlyUnreconciledGross)}/>
+          <Card title="🌐 현재 전체 미정산" value={money(data.summary.totalUnreconciledGross)}/>
         </div>
       </section>
       <details className={styles.card}><summary className={styles.summary}><span>⏳ 미정산 카드매출</span><strong>{money(data.summary.monthlyUnreconciledGross)}</strong><i aria-hidden="true">⌄</i></summary>
-        <p className={styles.hint}>매출월 기준 · 매출별 정산완료 금액은 부분 저장 포함</p>
+        <p className={styles.hint}>상단 금액은 선택월 말 기준입니다. 아래 매출별 연결 현황은 현재 기준이며 부분 저장을 포함합니다.</p>
         <CardSalesList sales={data.monthlySales} onPos={openPos} empty="선택월 카드매출이 없습니다."/>
       </details>
       {data.priorUnreconciledSales.length?<details className={styles.card}><summary className={styles.summary}><span>↪️ 이전월 미정산</span><strong>{money(sumCardMoney(data.priorUnreconciledSales.map(sale=>sale.outstandingGrossAmount)))}</strong><i aria-hidden="true">⌄</i></summary>

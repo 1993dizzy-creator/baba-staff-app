@@ -1,4 +1,4 @@
-import { calculateCardGross, calculateCardDepositSummary, calculateMonthlySettlementDifference, sumCardMoney } from "@/lib/ledger/card-settlements";
+import { calculateCardGross, calculateCardGrossAtMonthEnd, calculateCardDepositSummary, calculateMonthlySettlementDifference, sumCardMoney } from "@/lib/ledger/card-settlements";
 import { loadCardRows, loadCardSales, loadCardAllocationLines } from "@/lib/ledger/card-settlement-data";
 import {ledgerJson,requireLedgerActor} from "@/lib/ledger/server";
 import {supabaseServer} from "@/lib/supabase/server";
@@ -22,6 +22,7 @@ export async function GET(request: Request) {
     const clearing = accounts.find(account => account.code === "card_clearing");
     const movements = clearing ? await loadCardRows((from, to) => supabaseServer.from("ledger_movements").select("id,amount,transaction:ledger_transactions!inner(status)").eq("fund_account_id", clearing.id).eq("transaction.status", "confirmed").order("id").range(from, to)) : [];
     const gross = calculateCardGross(saleRows, lines, start, end);
+    const monthEndGross = calculateCardGrossAtMonthEnd(saleRows, lines, start, end);
     const deposits = calculateCardDepositSummary(reconciliations, start, end);
     return ledgerJson({
       ok: true, month, accounts: accounts.filter(account => account.is_active),
@@ -33,10 +34,10 @@ export async function GET(request: Request) {
       monthlySales: gross.sales.filter(sale => sale.business_date >= start && sale.business_date < end),
       priorUnreconciledSales: gross.sales.filter(sale => sale.business_date < start && sale.outstandingGrossAmount > 0),
       summary: {
-        monthlyCardGross: gross.monthlyCardGross,
-        monthlyReconciledGross: gross.monthlyReconciledGross,
-        monthlySettledGross: gross.monthlySettledGross,
-        monthlyUnreconciledGross: gross.monthlyUnreconciledGross,
+        monthlyCardGross: monthEndGross.monthlyCardGross,
+        monthlyReconciledGross: monthEndGross.monthlyReconciledGross,
+        monthlySettledGross: monthEndGross.monthlySettledGross,
+        monthlyUnreconciledGross: monthEndGross.monthlyUnreconciledGross,
         monthlySettlementDifference: calculateMonthlySettlementDifference(saleRows, lines, reconciliations, start, end),
         totalUnreconciledGross: gross.totalUnreconciledGross,
         cardPendingBalance: sumCardMoney(movements.map(row => row.amount)),

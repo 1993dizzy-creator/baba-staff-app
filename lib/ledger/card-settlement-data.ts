@@ -26,7 +26,7 @@ export async function loadCardAllocationLines(saleIds?: readonly number[]): Prom
   for (const ids of chunks) {
     const lines = await loadCardRows((from, to) => {
       let query = supabaseServer.from("ledger_card_reconciliation_lines")
-        .select("id,reconciliation_id,pos_card_transaction_id,allocated_gross_amount,reconciliation:ledger_card_reconciliations!inner(status)")
+        .select("id,reconciliation_id,pos_card_transaction_id,allocated_gross_amount,reconciliation:ledger_card_reconciliations!inner(status,deposit_date)")
         .neq("reconciliation.status", "cancelled");
       if (ids) query = query.in("pos_card_transaction_id", ids);
       return query.order("id").range(from, to);

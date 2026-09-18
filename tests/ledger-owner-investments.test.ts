@@ -124,6 +124,20 @@ test("opening entries accumulate exactly like contribution/adjustment ones, with
   assert.equal(summary.closingCumulative, 30_000_000);
 });
 
+test("period opening remains visible in the investment card and explains closing without treating contributions as income", () => {
+  const { summary } = summarizeOwnerInvestments([
+    row(1, "opening", 100, "2026-08-01T08:00:00Z"),
+    row(2, "opening", 20, "2026-09-02T08:00:00Z"),
+    row(3, "contribution", 50, "2026-09-10T08:00:00Z"),
+    row(4, "adjustment", -10, "2026-09-20T08:00:00Z"),
+  ], "2026-09");
+  assert.deepEqual([summary.openingCumulative,summary.periodOpening,summary.periodContribution,summary.periodAdjustment,summary.closingCumulative],[100,20,50,-10,160]);
+  assert.equal(summary.closingCumulative,summary.openingCumulative+summary.periodOpening+summary.periodContribution+summary.periodAdjustment);
+  const page=read("app/(protected)/admin/ledger/entries/page.tsx");
+  assert.match(page,/summary\.periodOpening!==0\?<div><dt>📌/);
+  assert.match(page,/추가투자는 자본유입으로 보유금에 포함되며, 영업수입·영업이익에는 포함되지 않습니다/);
+});
+
 // ---------------------------------------------------------------------------
 // 6. contribution is counted in the investment summary but must remain outside
 //    income/expense/operatingProfit — regression against the existing

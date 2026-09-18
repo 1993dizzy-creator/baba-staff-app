@@ -17,15 +17,24 @@ const nowMonth=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ho_Chi_Minh',
 // never automatically run. Tests use only local response doubles.
 function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network request');}) {
   let index=0;const effects=[],requests=[],updates=[],elements=[],calls=[];
-  const react={...React,useState(initial){const slot=index++;return [Object.hasOwn(states,slot)?states[slot]:typeof initial==='function'?initial():initial,value=>updates.push({slot,value})];},useEffect(callback){effects.push(callback);}};
+  const entries=path===entriesPath;
+  // Slot 0 in older fixtures was the month state. The page now reads that month
+  // from the URL, so preserve the remaining fixture slots through this adapter.
+  const react={...React,useState(initial){const slot=index+++(entries?1:0);return [Object.hasOwn(states,slot)?states[slot]:typeof initial==='function'?initial():initial,value=>updates.push({slot,value})];},useEffect(callback){effects.push(callback);}};
   const box=({children})=>h('div',null,children);
   const keeping={BarSheet:({children,footer,title})=>h('section',{role:'dialog','aria-label':title},h('h2',null,title),children,footer),BarField:({children,label})=>h('label',null,label,typeof children==='function'?children({id:'field'}):children),keepingInputStyle:{},primaryButtonStyle:{},secondaryButtonStyle:{}};
   const runtime=require('react/jsx-runtime');
   const trackedRuntime={...runtime,...Object.fromEntries(['jsx','jsxs'].map(name=>[name,(type,props,...rest)=>{elements.push({type,props});return runtime[name](type,props,...rest);}]))};
   const deps={
     react,'react/jsx-runtime':trackedRuntime,'next/link':{default:({children,...props})=>h('a',props,children)},
+    'next/navigation':{useRouter:()=>({push:()=>{}}),usePathname:()=>'/admin/ledger/entries',useSearchParams:()=>new URLSearchParams(entries?`month=${states[0]}`:'')},
     '@/components/Container':{default:box},'@/lib/language-context':{useLanguage:()=>({lang:'ko'})},'@/lib/styles/ui':{ui:{}},
-    '@/components/bar/keeping/KeepingUi':keeping,'@/lib/ledger/manual-entry-amount':{},'@/lib/ledger/manual-entry-policy':{},
+    '@/components/bar/keeping/KeepingUi':keeping,
+    '@/lib/ledger/entries':require('../lib/ledger/entries.ts'),
+    '@/lib/ledger/month-query':require('../lib/ledger/month-query.ts'),
+    '@/lib/ledger/payable-date-groups':require('../lib/ledger/payable-date-groups.ts'),
+    '@/lib/ledger/manual-entry-amount':require('../lib/ledger/manual-entry-amount.ts'),
+    '@/lib/ledger/manual-entry-policy':require('../lib/ledger/manual-entry-policy.ts'),
     '@/lib/common/business-time':require('../lib/common/business-time.ts'),
     './entries.module.css':{default:new Proxy({},{get:(_,key)=>String(key)})},
     './card-settlements.module.css':{default:new Proxy({},{get:(_,key)=>String(key)})},'@/lib/ledger/card-settlements':require('../lib/ledger/card-settlements.ts'),
@@ -41,9 +50,9 @@ function payableFixture(month) {
   const rows=[source(1,'2026-08-10',1000),source(2,'2026-09-10',500)];
   const result=calculatePayableBalances(rows,[{payable_id:1,allocated_amount:400,payment:{business_date:'2026-08-20',status:'confirmed'}}],month);
   const party={...result.partySummaries[0],partyName:'Demo supplier',partnerType:null,outstandingAmount:result.summary.closingOutstanding,partialPaidAmount:400,totalOpenAmount:1500,openCount:result.payables.length};
-  return {...result,month,parties:[party]};
+  return {...result,month,parties:[party],historyPayables:result.payables};
 }
-const ledgerFixture=month=>({month,fundsView:{month,mode:'provisional',asOf:`${month}-01`,businessDateExclusive:null},summary:{income:9999,receivedIncome:8888,expense:7777,operatingProfit:2222,paidExpense:6666,cardGrossSales:500,monthlySettledGross:500,actualCardDeposits:0,unsettledCardGross:500},accounts:[],categories:[],partners:[],entries:[]});
+const ledgerFixture=month=>({month,fundsView:{month,mode:'provisional',asOf:`${month}-01`,businessDateExclusive:null},summary:{income:9999,receivedIncome:8888,expense:7777,operatingProfit:2222,paidExpense:6666,displayedExpense:6666,cardGrossSales:500,monthlySettledGross:500,actualCardDeposits:0,unsettledCardGross:500},accounts:[],categories:[],partners:[],entries:[]});
 function entriesFixture(month,{selected=false,payables=payableFixture(month),fetcher,payableExpanded=true,cardExpanded=false,cardSummary=null,ledgerSummary=null,closeState=null,reopenOpen=false,reopenReason=''}={}) {
   const ledger=ledgerFixture(month);
   if(ledgerSummary)ledger.summary={...ledger.summary,...ledgerSummary};
@@ -140,7 +149,7 @@ test('August and September render different closing with month-only payments and
 });
 test('historical drilldown renders month-end sources with no current payment controls or current detail read',()=>{
   const state=entriesFixture('2026-08',{selected:true});
-  assert.match(state.html,/읽기 전용 상세/);assert.match(state.html,/Demo purchase/);assert.match(state.html,/월말 미납 상세/);
+  assert.match(state.html,/선택월 말 기준 잔액입니다\. 과거 내역은 결제할 수 없습니다/);assert.match(state.html,/8월 10일/);assert.match(state.html,/월말 미납 상세/);
   assert.doesNotMatch(state.html,/출금 계정|선택 일자 .*건 결제|현재 결제|type="checkbox"/);assert.equal(state.requests.length,0);
 });
 test('a drilldown selected in another month cannot expose payment controls after month navigation',()=>{
@@ -200,12 +209,17 @@ test('card status accordion shows four API metrics and a detail link without int
   const stale=entriesFixture('2026-09',{cardExpanded:true,cardSummary:{month:'2026-08',summary:cardSummary}}).html;
   assert.match(stale,/카드 정산 현황을 불러오는 중/);assert.doesNotMatch(stale,/1\.582 ₫/);
 });
-test('August reference summary shows paid expense, full settlement and sale-month difference',()=>{
-  const html=entriesFixture('2026-08',{cardExpanded:true,ledgerSummary:{income:734686553,paidExpense:448445598.5,cardGrossSales:225925720,monthlySettledGross:225925720},cardSummary:{month:'2026-08',summary:{...cardSummary,monthlyCardGross:225925720,monthlySettledGross:225925720,monthlyUnreconciledGross:0,monthlySettlementDifference:4860925.326}}}).html;
+test('August reference summary keeps month-end outstanding distinct from sale-month settlement difference',()=>{
+  // The old .326 fixture was synthetic precision input; the confirmed August
+  // sale-month attribution is .327 and is independent of the month-end cutoff.
+  const html=entriesFixture('2026-08',{cardExpanded:true,ledgerSummary:{income:734686553,paidExpense:448445598.5,displayedExpense:448445598.5,cardGrossSales:225925720,monthlySettledGross:197992160},cardSummary:{month:'2026-08',summary:{...cardSummary,monthlyCardGross:225925720,monthlySettledGross:197992160,monthlyUnreconciledGross:27933560,monthlySettlementDifference:4860925.327}}}).html;
   assert.match(html,/734\.686\.553 ₫/);
   assert.match(html,/448\.445\.599 ₫/);
-  assert.match(html,/선택월 정산 완료율">100%/);
+  assert.match(html,/선택월 정산 완료율">87\.6%/);
+  assert.match(html,/197\.992\.160 ₫/);
+  assert.match(html,/27\.933\.560 ₫/);
   assert.match(html,/4\.860\.925 ₫/);
+  assert.match(html,/실제 입금은 입금월 기준, 수수료\/차액은 매출월 귀속 기준입니다/);
   assert.doesNotMatch(html,/전체 미정산/);
 });
 test('zero card sales show a dash in the settlement-rate header',()=>{
@@ -421,6 +435,19 @@ test('investment events render entry-type label, contribution account or "no fun
   }).html;
   assert.match(state,/HAN/);assert.match(state,/추가 투자/);assert.match(state,/법인/);assert.match(state,/\+10\.000\.000 ₫/);
   assert.match(state,/Vuong/);assert.match(state,/투자금 조정/);assert.match(state,/자금이동 없음/);assert.match(state,/정정/);assert.match(state,/-2\.000\.000 ₫/);
+});
+
+test('investment card shows a nonzero period opening and explains contribution as capital rather than profit',()=>{
+  const state=pageFixture(entriesPath,{
+    0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:true,
+    26:{month:'2026-09',configured:true,summary:{openingCumulative:100,periodOpening:20,periodContribution:50,periodAdjustment:-10,periodNetChange:60,closingCumulative:160},events:[]},
+  }).html;
+  assert.match(state,/당월 기준투자금<\/dt><dd>\+20 ₫/);
+  assert.match(state,/월초 누적<\/dt><dd>100 ₫/);
+  assert.match(state,/당월 추가투자<\/dt><dd>\+50 ₫/);
+  assert.match(state,/당월 조정<\/dt><dd>-10 ₫/);
+  assert.match(state,/월말 누적<\/dt><dd>160 ₫/);
+  assert.match(state,/추가투자는 자본유입으로 보유금에 포함되며, 영업수입·영업이익에는 포함되지 않습니다/);
 });
 
 test('a load() call superseded by a newer one can never write state, even if its response resolves later (stale-response sequence guard)',async()=>{
