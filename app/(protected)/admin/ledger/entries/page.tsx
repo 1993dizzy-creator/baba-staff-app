@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -9,6 +10,7 @@ import {
   type CSSProperties,
   type FormEvent,
 } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import Link from "next/link";
 import type { PayablePeriodSummary } from "@/lib/ledger/payables";
@@ -24,6 +26,7 @@ import {
   secondaryButtonStyle,
 } from "@/components/bar/keeping/KeepingUi";
 import { entryDisplaySubtotal, type LedgerEntry, type LedgerEntryItem } from "@/lib/ledger/entries";
+import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
 import {
   formatLedgerAmountInput,
   parseLedgerAmount,
@@ -206,11 +209,20 @@ const monthInputStyle: CSSProperties = {
   borderRadius: 10,
 };
 
-export default function LedgerEntriesPage() {
+function LedgerEntriesContent() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const requestedMonth = searchParams.get("month");
+  const month = selectedLedgerMonth(requestedMonth, currentMonth());
+  function selectMonth(nextMonth: string) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(nextMonth)) return;
+    setLoading(true);
+    router.push(ledgerMonthHref(pathname, searchParams.toString(), nextMonth), { scroll: false });
+  }
   const { lang } = useLanguage(),
     vi = lang === "vi";
-  const [month, setMonth] = useState(currentMonth),
-    [data, setData] = useState<LedgerData | null>(null),
+  const [data, setData] = useState<LedgerData | null>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -475,7 +487,7 @@ export default function LedgerEntriesPage() {
     // with setMonth), so there is no in-between frame where the new month's title
     // could paint next to the previous month's still-attached numbers.
     setLoading(true);
-    setMonth(date.toISOString().slice(0, 7));
+    selectMonth(date.toISOString().slice(0, 7));
   }
   async function reopenMonth() {
     const reason = reopenReason.trim();
@@ -777,7 +789,7 @@ export default function LedgerEntriesPage() {
               value={month}
               onChange={(event) => {
                 setLoading(true);
-                setMonth(event.target.value);
+                selectMonth(event.target.value);
               }}
               aria-label={vi ? "Chọn tháng" : "월 선택"}
               style={monthInputStyle}
@@ -1184,6 +1196,12 @@ export default function LedgerEntriesPage() {
   );
 }
 
+export default function LedgerEntriesPage() {
+  return <Suspense fallback={<Container><main>장부 불러오는 중...</main></Container>}>
+    <LedgerEntriesContent />
+  </Suspense>;
+}
+
 function EntryDetailSheet({
   lang,
   entry,
@@ -1508,13 +1526,39 @@ function PayableMonthTotals({summary,vi}:{summary?:PayablePeriodSummary;vi:boole
   return <dl className={styles.payableMonthTotals}>{fields.map(([key,label])=><div key={key}><dt>{label}</dt><dd>{summary?money(summary[key]):"-"}</dd></div>)}</dl>;
 }
 
+function groupPayableRows(rows: readonly PayableRow[]) {
+  const byDate = new Map<string, PayableRow[]>();
+  for (const row of rows) {
+    if (row.outstandingAmount <= 0) continue;
+    const date = row.expense?.business_date ?? "";
+    byDate.set(date, [...(byDate.get(date) ?? []), row]);
+  }
+  return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b))
+    .map(([businessDate, items]) => ({businessDate, rows: items, total: items.reduce((sum, row) => sum + row.outstandingAmount, 0)}));
+}
+
+function PayableDateGroups({rows,lang,selectedDates,onSelectDate}:{rows:readonly PayableRow[];lang:"ko"|"vi";selectedDates?:ReadonlySet<string>;onSelectDate?:(date:string)=>void}) {
+  const [expanded,setExpanded]=useState<Set<string>>(()=>new Set());
+  const groups=useMemo(()=>groupPayableRows(rows),[rows]);
+  const vi=lang==="vi";
+  return <div className={styles.payableDates}>{groups.map(group=>{
+    const open=expanded.has(group.businessDate);
+    return <article key={group.businessDate}><div className={styles.payableDateRow}>
+      {onSelectDate?<input type="checkbox" checked={selectedDates?.has(group.businessDate)??false} aria-label={`${formatDate(group.businessDate,lang)} ${vi?"chọn":"선택"}`} onChange={()=>onSelectDate(group.businessDate)}/>:null}
+      <button type="button" aria-expanded={open} onClick={()=>setExpanded(current=>{const next=new Set(current);if(next.has(group.businessDate))next.delete(group.businessDate);else next.add(group.businessDate);return next})}>
+        <span>📅 {formatDate(group.businessDate,lang)}</span><small>{group.rows.length}{vi?" khoản":"건"}</small><strong>{money(group.total)}</strong><i aria-hidden>⌄</i>
+      </button>
+    </div>{open?<div className={styles.payableItems}>{group.rows.map(row=><span key={row.id}><em>↳ {payableItemLabel(row,vi)}</em><b>{money(row.outstandingAmount)}</b></span>)}</div>:null}</article>
+  })}</div>;
+}
+
 function HistoricalPayablePartySheet({lang,month,party,rows,onClose}:{lang:"ko"|"vi";month:string;party:PayableParty;rows:PayableRow[];onClose:()=>void}) {
   const vi=lang==="vi";
   return <BarSheet kind="full" compact topAligned comfortableTop title={`${month} · ${vi?"Công nợ cuối tháng":"월말 미납 상세"}`} closeLabel={vi?"Đóng":"닫기"} saving={false} onClose={onClose} footer={<button type="button" onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button>}>
-    <h3>{party.partyName}</h3>
+    <div className={styles.payableDetailHeader}><strong>🏷 {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(party.closingOutstanding)}</b></span></div>
     <p role="status">{vi?"Chỉ xem số dư tại cuối tháng đã chọn. Không thể thanh toán từ lịch sử.":"선택월 말 기준 잔액을 보여주는 읽기 전용 상세입니다. 과거 조회에서는 결제할 수 없습니다."}</p>
     <PayableMonthTotals summary={party} vi={vi}/>
-    <div className={styles.payableItems}>{[...rows].sort((a,b)=>(a.expense?.business_date??"").localeCompare(b.expense?.business_date??"")||a.id-b.id).map(row=><span key={row.id}><em>{row.expense?.business_date} · {payableItemLabel(row,vi)}</em><b>{money(row.outstandingAmount)}</b></span>)}</div>
+    <PayableDateGroups rows={rows} lang={lang}/>
     {!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}
   </BarSheet>;
 }
@@ -1523,17 +1567,17 @@ function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
   lang:"ko"|"vi"; party:PayableParty; accounts:Account[]; onClose:()=>void; onPaid:()=>Promise<void>;
 }) {
   const vi=lang==="vi", initial=localTime();
-  const [detail,setDetail]=useState<PayableDetail|null>(null),[selectedDates,setSelectedDates]=useState<Set<string>>(()=>new Set()),[expanded,setExpanded]=useState<Set<string>>(()=>new Set()),[accountId,setAccountId]=useState(""),[date,setDate]=useState(initial.slice(0,10)),[time,setTime]=useState(initial.slice(11,16)),[memo,setMemo]=useState(""),[saving,setSaving]=useState(false),[error,setError]=useState("");
+  const [detail,setDetail]=useState<PayableDetail|null>(null),[selectedDates,setSelectedDates]=useState<Set<string>>(()=>new Set()),[accountId,setAccountId]=useState(""),[date,setDate]=useState(initial.slice(0,10)),[time,setTime]=useState(initial.slice(11,16)),[memo,setMemo]=useState(""),[saving,setSaving]=useState(false),[error,setError]=useState("");
   const loadDetail=useCallback(async()=>{setError("");try{const response=await fetch(`/api/admin/ledger/payables/${party.partyId}`,{cache:"no-store"}),body=await response.json();if(!response.ok)throw new Error(body.code);setDetail(body)}catch{setError(vi?"Không thể tải chi tiết công nợ.":"미납 상세를 불러오지 못했습니다.")}},[party.partyId,vi]);
   useEffect(()=>{void loadDetail()},[loadDetail]);
-  const groups=useMemo(()=>{const map=new Map<string,PayableRow[]>();for(const row of detail?.payables??[]){if(row.outstandingAmount<=0)continue;const key=row.expense?.business_date??"";map.set(key,[...(map.get(key)??[]),row])}return [...map.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([businessDate,rows])=>({businessDate,rows,total:rows.reduce((sum,row)=>sum+row.outstandingAmount,0)}))},[detail]);
+  const groups=useMemo(()=>groupPayableRows(detail?.payables??[]),[detail]);
   const selectedGroups=groups.filter(group=>selectedDates.has(group.businessDate)),selectedTotal=selectedGroups.reduce((sum,group)=>sum+group.total,0),selectedPayables=selectedGroups.flatMap(group=>group.rows);
   async function pay(){if(saving||!accountId||!selectedPayables.length)return;setSaving(true);setError("");try{const response=await fetch("/api/admin/ledger/payables/pay",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({partyId:party.partyId,fundAccountId:Number(accountId),occurredAt:`${date}T${time}:00+07:00`,amount:selectedTotal,allocations:selectedPayables.map(row=>({payableId:row.id,allocatedAmount:row.outstandingAmount})),memo:memo||null})}),body=await response.json();if(!response.ok)throw new Error(body.code);setSelectedDates(new Set());await onPaid()}catch(cause){setError(`${vi?"Không thể thanh toán.":"결제하지 못했습니다."} ${(cause as Error).message}`)}finally{setSaving(false)}}
   return <BarSheet kind="full" compact topAligned comfortableTop fillAvailable containedBody title={vi?"Chi tiết công nợ":"미납금 상세"} closeLabel={vi?"Đóng":"닫기"} saving={saving} onClose={onClose} footer={<div className={styles.detailFooter}><button type="button" disabled={saving||!accountId||!selectedPayables.length} onClick={()=>void pay()} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang thanh toán…":"결제 중…"):(vi?`Thanh toán ${selectedDates.size} ngày đã chọn`:`선택 일자 ${selectedDates.size}건 결제`)}</button><button type="button" disabled={saving} onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button></div>}>
     <div className={styles.payableSheetBody}>
     <div className={styles.payableDetailHeader}><strong>🤝 {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(detail?.totalOutstanding??party.outstandingAmount)}</b></span></div>
     {error?<p className={styles.error} role="alert">{error}</p>:null}
-    <div className={styles.payableDates}>{groups.map(group=>{const open=expanded.has(group.businessDate),checked=selectedDates.has(group.businessDate);return <article key={group.businessDate}><div className={styles.payableDateRow}><input type="checkbox" checked={checked} aria-label={`${formatDate(group.businessDate,lang)} ${vi?"chọn":"선택"}`} onChange={()=>setSelectedDates(current=>{const next=new Set(current);if(next.has(group.businessDate))next.delete(group.businessDate);else next.add(group.businessDate);return next})}/><button type="button" aria-expanded={open} onClick={()=>setExpanded(current=>{const next=new Set(current);if(next.has(group.businessDate))next.delete(group.businessDate);else next.add(group.businessDate);return next})}><span>📅 {formatDate(group.businessDate,lang)}</span><small>{group.rows.length}{vi?" khoản":"건"}</small><strong>{money(group.total)}</strong><i aria-hidden>›</i></button></div>{open?<div className={styles.payableItems}>{group.rows.map(row=><span key={row.id}><em>📦 {payableItemLabel(row,vi)}</em><b>{money(row.outstandingAmount)}</b></span>)}</div>:null}</article>})}</div>
+    <PayableDateGroups rows={detail?.payables??[]} lang={lang} selectedDates={selectedDates} onSelectDate={date=>setSelectedDates(current=>{const next=new Set(current);if(next.has(date))next.delete(date);else next.add(date);return next})}/>
     {!groups.length&&!error?<p className={styles.payableEmpty}>{vi?"Không có công nợ chưa thanh toán.":"미납금이 없습니다."}</p>:null}
     <div className={styles.paymentForm}><div className={styles.selectedTotal}><span>{vi?"Công nợ đã chọn":"선택 미납금"}</span><strong>{money(selectedTotal)}</strong></div><div className={styles.manualSingle}><AccountField lang={lang} label={`🏦 ${vi?"Tài khoản chi":"출금 계정"}`} value={accountId} setValue={setAccountId} accounts={accounts}/></div><div className={styles.manualRow}><BarField label={`📅 ${vi?"Ngày thanh toán":"결제일"}`} required compact>{({id})=><input id={id} type="date" value={date} onChange={event=>setDate(event.target.value)} style={keepingInputStyle}/>}</BarField><BarField label={`🕒 ${vi?"Thời gian":"시간"}`} required compact>{({id})=><input id={id} type="time" value={time} onChange={event=>setTime(event.target.value)} style={keepingInputStyle}/>}</BarField></div><BarField label={`📝 ${vi?"Ghi chú":"메모"}`} compact>{({id})=><input id={id} value={memo} onChange={event=>setMemo(event.target.value)} style={keepingInputStyle}/>}</BarField></div>
     </div>
@@ -1899,6 +1943,8 @@ function AccountField({
   );
 }
 function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
+  const settlement = entry.settlementStatus === "partial"
+    ? `${lang === "vi" ? "Còn nợ" : "일부 미지급"} ${money(entry.remainingAmount ?? 0)}` : "";
   if (entry.systemDisplay?.kind === "pos") {
     return lang === "vi"
       ? `${entry.systemDisplay.receiptCount.toLocaleString("vi-VN")} hóa đơn`
@@ -1906,15 +1952,17 @@ function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
   }
   if (entry.systemDisplay?.kind === "meal") return "";
   if (entry.systemDisplay?.kind === "inventory") {
-    return lang === "vi"
+    const items = lang === "vi"
       ? `${entry.systemDisplay.itemCount.toLocaleString("vi-VN")} mặt hàng`
       : `${entry.systemDisplay.itemCount.toLocaleString("ko-KR")}품목`;
+    return [items, settlement].filter(Boolean).join(" · ");
   }
   if (entry.systemDisplay?.kind === "rent") return lang === "vi" ? "Tiền thuê" : "임대료";
   const vi = lang === "vi",
     subtitle = entry.subtitle.replace(/\s*·\s*확인 필요/g, "");
   return [
     subtitle,
+    settlement,
     entry.origin === "manual" ? (vi ? "Thủ công" : "수동") : null,
   ]
     .filter(Boolean)

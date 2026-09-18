@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const TYPES = new Set(["expense", "income", "transfer", "balance_adjustment"]);
-const TRANSACTION_SELECT = "id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,source_synced_at,memo,party_id,category:ledger_categories(id,name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,display_name)),payable:ledger_payables(id,due_date,status,allocations:ledger_payable_allocations(allocated_amount))";
+const TRANSACTION_SELECT = "id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,source_synced_at,memo,party_id,category:ledger_categories(id,name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)),payable:ledger_payables(id,original_amount,due_date,status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(business_date,status,movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)))))";
 
 export async function GET(request: Request) {
   const auth = await requireLedgerActor();
@@ -155,7 +155,7 @@ export async function GET(request: Request) {
     const [displayTransactions, inventoryProjectionIssues] = await Promise.all([
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
     ]);
-    const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources);
+    const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources, month);
     return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);

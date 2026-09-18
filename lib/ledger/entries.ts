@@ -1,3 +1,6 @@
+// @ts-expect-error Node's local strip-types test runner requires the extension.
+import { payableDisplayAsOf } from "./payables.ts";
+
 export type LedgerEntryItem = {
   candidateId?: number;
   transactionId?: number;
@@ -16,6 +19,9 @@ export type LedgerEntryItem = {
   dueDate?: string | null;
   payableStatus?: string | null;
   paidAmount?: number;
+  settlementPaidAmount?: number;
+  remainingAmount?: number;
+  settlementStatus?: "unpaid" | "partial" | "paid";
   memo?: string | null;
   sourceUpdatedAt?: string | null;
   displayTime?: string | null;
@@ -47,6 +53,8 @@ export type LedgerEntry = {
   sourceAmount?: number;
   requiresCorrection?: boolean;
   accountName: string | null;
+  remainingAmount?: number;
+  settlementStatus?: "unpaid" | "partial" | "paid";
   categoryName: string | null;
   transactionId: number | null;
   drilldown: "inventory" | "pos" | "payroll" | "meal" | "generic";
@@ -71,8 +79,8 @@ export type TransactionRow = {
   economic_effect_sign?: number | string | null; source_type: string; source_key?: string | null;
   memo?: string | null; category?: { id?: number | string; name?: string | null } | null; party?: { name?: string | null } | null;
   source_snapshot?: Record<string, unknown> | null;
-  movements?: Array<{ amount?: number | string; fund_account?: { id?: number | string; display_name?: string | null } | null }>;
-  payable?: { id?: number|string; due_date?:string|null; status?:string|null; allocations?:Array<{allocated_amount?:number|string}> }|null;
+  movements?: Array<{ amount?: number | string; fund_account?: { id?: number | string; code?: string | null; display_name?: string | null } | null }>;
+  payable?: { id?: number|string; original_amount?:number|string; due_date?:string|null; status?:string|null; allocations?:Array<{allocated_amount:number|string;payment?:{business_date:string;status:string;movements?:Array<{amount?:number|string;fund_account?:{id?:number|string;code?:string|null;display_name?:string|null}|null}>}|null}> }|null;
 };
 
 export type CandidateRow = {
@@ -98,6 +106,21 @@ export type MealCandidateSource = {
 // ledger_transaction_recognition_policy check constraint — i.e. types that
 // represent a real profit/loss event rather than a pure fund movement.
 const PROFIT_TYPES = new Set(["income", "expense", "sales", "expense_recognition"]);
+
+export function accountFromPaymentNote(note: unknown) {
+  if(typeof note!=="string")return null;
+  const names=new Set<string>();
+  if(/현금|tiền\s*mặt/i.test(note))names.add("매장 현금");
+  if(/tk\s*\(\s*cho\s*\)/i.test(note))names.add("개인(Cho)");
+  if(/tài\s*khoản/i.test(note))names.add("개인(Vương)");
+  if(/법인|pháp\s*nhân/i.test(note))names.add("BABA 법인계좌");
+  return names.size>1?"복수계정":names.values().next().value??null;
+}
+
+function transactionPaymentDisplay(row:TransactionRow,month:string){
+  if(!row.payable)return null;
+  return payableDisplayAsOf(row.payable.original_amount??row.amount,row.payable.allocations??[],month);
+}
 
 export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign">) {
   const signedAmount = entry.amount * entry.economicEffectSign;
@@ -223,7 +246,7 @@ function compareItemsByEarliestTimeFirst(a: LedgerEntryItem, b: LedgerEntryItem)
   return 0;
 }
 
-const inventoryItem = (row: CandidateRow | TransactionRow): LedgerEntryItem => {
+const inventoryItem = (row: CandidateRow | TransactionRow, viewMonth?:string): LedgerEntryItem => {
   const snapshot = row.source_snapshot ?? {};
   const display = (row as TransactionRow).display_snapshot ?? snapshot;
   const time = inventoryTime(row);
@@ -246,6 +269,9 @@ const inventoryItem = (row: CandidateRow | TransactionRow): LedgerEntryItem => {
       dueDate: (row as TransactionRow).payable?.due_date ?? null,
       payableStatus: (row as TransactionRow).payable?.status ?? null,
       paidAmount: ((row as TransactionRow).payable?.allocations??[]).reduce((sum,item)=>sum+value(item.allocated_amount),0),
+      settlementPaidAmount: viewMonth ? transactionPaymentDisplay(row as TransactionRow,viewMonth)?.paidAmount ?? 0 : undefined,
+      remainingAmount: viewMonth ? transactionPaymentDisplay(row as TransactionRow,viewMonth)?.remainingAmount : undefined,
+      settlementStatus: viewMonth ? transactionPaymentDisplay(row as TransactionRow,viewMonth)?.status : undefined,
       memo: (row as TransactionRow).memo ?? null,
     } : {}),
   };
@@ -261,6 +287,7 @@ export function buildLedgerEntries(
   candidates: readonly CandidateRow[],
   partnerDefaultsByParty: ReadonlyMap<number, PartnerLedgerDefault>,
   mealCandidateSources: readonly MealCandidateSource[] = [],
+  viewMonth = transactions[0]?.business_date.slice(0,7) ?? "",
 ): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
   const inventoryGroups = new Map<string, LedgerEntry>();
@@ -308,7 +335,12 @@ export function buildLedgerEntries(
     const direction = row.type === "prepaid_expense_payment" ? "expense" : !participatesInProfit ? "transfer" : expense ? "expense" : "income";
     const economicEffectSign = value(row.economic_effect_sign) || 1;
     const movement = row.movements?.find(item => direction === "income" ? value(item.amount) > 0 : value(item.amount) < 0) ?? row.movements?.[0];
-    const accountName = movement?.fund_account?.display_name ?? null;
+    const paymentDisplay = row.payable && viewMonth ? transactionPaymentDisplay(row,viewMonth) : null;
+    const accountName = movement
+      ? movement.fund_account?.display_name ?? "계정 확인 필요"
+      : paymentDisplay
+        ? paymentDisplay.status==="unpaid" ? "미지급" : paymentDisplay.accountName ?? "지급계정 확인 필요"
+        : accountFromPaymentNote(row.source_snapshot?.paymentNote);
     const automatic = row.source_type !== "manual";
     const time = transactionTime(row);
 
@@ -317,16 +349,18 @@ export function buildLedgerEntries(
       const partyMissing = !row.party?.name?.trim();
       const partyName = inventorySupplierName(row);
       const partyIdentity = inventoryPartyIdentity(partyId, partyName);
-      const key = `confirmed-inventory:${row.business_date}:${partyIdentity}:${accountName ?? "payable"}`;
+      const key = `confirmed-inventory:${row.business_date}:${partyIdentity}:${accountName ?? "payable"}:${paymentDisplay?.status??"immediate"}`;
       const group = inventoryGroups.get(key) ?? {
         id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "confirmed",
         title: partyName, subtitle: "", amount: 0, economicEffectSign: 1, displayTime: null, sortTimestamp: 0,
         inventoryStartAt: null, inventoryEndAt: null, accountName: accountName ?? "미지급",
         categoryName: row.category?.name ?? null, transactionId, drilldown: "inventory",
+        settlementStatus: paymentDisplay?.status, remainingAmount: 0,
         systemDisplay: { kind: "inventory", itemCount: 0, partyMissing, needsConfirmation: false }, items: [],
       } satisfies LedgerEntry;
-      const item = inventoryItem(row);
+      const item = inventoryItem(row,viewMonth);
       group.amount += amount;
+      group.remainingAmount = (group.remainingAmount??0)+(paymentDisplay?.remainingAmount??0);
       group.items.push(item);
       updateInventoryGroupTime(group, item);
       if (group.systemDisplay?.kind === "inventory") group.systemDisplay.itemCount = group.items.length;
@@ -389,7 +423,7 @@ export function buildLedgerEntries(
       origin: automatic ? "auto" : "manual", status: "confirmed",
       title: specialDisplay?.title ?? (pos || rent ? "" : payroll ? "급여 · 인건비" : displayMemo(row.memo) || row.party?.name || row.category?.name || "장부 거래"),
       subtitle: specialDisplay?.subtitle ?? (pos || rent ? "" : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력")),
-      amount, economicEffectSign, ...time, accountName, categoryName: row.category?.name ?? null, transactionId,
+      amount, economicEffectSign, ...time, accountName, settlementStatus: paymentDisplay?.status, remainingAmount: paymentDisplay?.remainingAmount, categoryName: row.category?.name ?? null, transactionId,
       drilldown: pos ? "pos" : payroll ? "payroll" : "generic",
       ...(pos ? { systemDisplay: { kind: "pos" as const, paymentBucket: posPaymentBucket, receiptCount: value(snapshot.receiptCount) } } : {}),
       ...(rent ? { systemDisplay: { kind: "rent" as const } } : {}),
