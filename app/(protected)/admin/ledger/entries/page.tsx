@@ -922,7 +922,7 @@ function LedgerEntriesContent() {
                 </dl>
                 <p className={styles.statusHint}>{vi?"Tiền thực nhận tính theo tháng nhập tiền; phí/chênh lệch tính theo tháng bán.":"실제 입금은 입금월 기준, 수수료/차액은 매출월 귀속 기준입니다."}</p>
                 {cardSettlementError?.month===month?<p role="alert" className={styles.error}>{cardSettlementError.message}</p>:cardSettlement?.month!==month?<p className={styles.statusHint}>{vi?"Đang tải tình hình thẻ…":"카드 정산 현황을 불러오는 중입니다…"}</p>:null}
-                <div className={styles.statusActions}><p className={styles.statusHint}>{vi?"Đăng ký tiền vào và kết nối doanh thu tại trang chi tiết.":"입금 등록과 매출 연결은 상세 페이지에서 진행합니다."}</p><Link href="/admin/ledger/card-settlements" className={styles.statusDetailLink}>{vi?"Xem chi tiết":"상세 보기"} ›</Link></div>
+                <div className={styles.statusActions}><p className={styles.statusHint}>{vi?"Đăng ký tiền vào và kết nối doanh thu tại trang chi tiết.":"입금 등록과 매출 연결은 상세 페이지에서 진행합니다."}</p><Link href={ledgerMonthHref("/admin/ledger/card-settlements", "", month)} className={styles.statusDetailLink}>{vi?"Xem chi tiết":"상세 보기"} ›</Link></div>
               </div>:null}
             </section>
             <section className={styles.statusCard} aria-labelledby="investment-title">

@@ -1,6 +1,5 @@
 .page{max-width:800px;margin:0 auto;padding:8px 12px calc(90px + env(safe-area-inset-bottom));color:#111827;min-width:0}
-.header{margin-bottom:8px}.headerLine{display:flex;align-items:center;justify-content:space-between;gap:8px}.header h1{margin:0;font-size:17px}.backLink{color:#6b7280;font-size:12px;text-decoration:none}
-.monthField{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:#6b7280}.monthField .input{width:156px;min-height:34px;margin:0;font-size:13px;padding:5px 8px}
+.header{margin-bottom:8px;text-align:center}.header h1{margin:0;color:#111827;font-family:inherit;font-size:16px;font-weight:800;line-height:1.35;letter-spacing:normal}
 .card{margin:8px 0;padding:10px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;min-width:0}.card h2{margin:0 0 8px;font-size:13px;line-height:1.4}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;min-width:0}.miniCard{padding:8px;border:1px solid #eef0f3;border-radius:9px;background:#f9fafb;min-width:0}.miniCard span{display:block;color:#6b7280;font-size:11px;line-height:1.4}.miniCard strong{display:block;margin-top:3px;font-size:14px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .summary{display:flex;align-items:center;gap:6px;min-height:34px;font-size:12px;font-weight:700;cursor:pointer;list-style:none}.summary::-webkit-details-marker{display:none}.summary>span{flex:1;min-width:0}.summary strong{font-size:12px;overflow-wrap:anywhere}.summary i{font-style:normal}.card[open]>.summary i{transform:rotate(180deg)}

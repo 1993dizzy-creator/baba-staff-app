@@ -60,6 +60,13 @@ function setup({ sales=[], reconciliations=[], lines=[], movements=[], denied=fa
 }
 const get=async(state,month='2026-08')=>state.api.GET(new Request(`http://local/api/admin/ledger/card-settlements?month=${month}`));
 
+test('GET orders card deposits by date ascending and id ascending within a day, including cancelled history',async()=>{
+  const state=setup({reconciliations:[rec(28,'2026-08-28',100),rec(3,'2026-08-03',100,'cancelled'),rec(2,'2026-08-01',100),rec(4,'2026-08-03',100)]});
+  const body=await(await get(state)).json();
+  assert.deepEqual(body.reconciliations.map(row=>[row.deposit_date,row.id]),[['2026-08-01',2],['2026-08-03',3],['2026-08-03',4],['2026-08-28',28]]);
+  assert.equal(body.totalCancelledCount,1);
+});
+
 test('GET pins monthly settled and outstanding to deposit date while keeping operational sales current',async()=>{
   const state=setup({sales:[sale(1,'2026-08-11',1000)],reconciliations:[rec(1,'2026-08-24',590,'matched',600,10),rec(2,'2026-09-02',390,'matched',400,10)],lines:[{id:1,reconciliation_id:1,pos_card_transaction_id:1,allocated_gross_amount:600},{id:2,reconciliation_id:2,pos_card_transaction_id:1,allocated_gross_amount:400}]});
   const august=await(await get(state)).json();
@@ -78,7 +85,7 @@ test('GET keeps sale-month gross separate from deposit-month summary and returns
   const state=setup({sales:[sale(3,'2026-09-01',2000),sale(2,'2026-08-15',1000),sale(1,'2026-07-15',500)],reconciliations:[rec(1,'2026-09-10',982,'matched',1000,18),rec(2,'2026-08-20',300,'partial',400),rec(3,'2026-08-21',200,'cancelled')],lines:[{id:1,reconciliation_id:1,pos_card_transaction_id:2,allocated_gross_amount:1000},{id:2,reconciliation_id:2,pos_card_transaction_id:3,allocated_gross_amount:400},{id:3,reconciliation_id:3,pos_card_transaction_id:1,allocated_gross_amount:500}],movements:[{id:1,fund_account_id:1,amount:2000,transaction:{status:'confirmed'}},{id:2,fund_account_id:1,amount:9999,transaction:{status:'draft'}},{id:3,fund_account_id:2,amount:8888,transaction:{status:'confirmed'}}]});
   const august=await(await get(state)).json();
   assert.equal(august.summary.monthlyCardGross,1000);assert.equal(august.summary.monthlyReconciledGross,0);assert.equal(august.summary.monthlyUnreconciledGross,1000);assert.equal(august.summary.monthlySettlementDifference,18);assert.equal(august.summary.totalUnreconciledGross,2100);assert.equal(august.summary.cardPendingBalance,2000);assert.equal(august.summary.actualCardDeposits,300);assert.equal(august.summary.monthlyUnmatchedDeposits,300);assert.equal(august.summary.actualDifferenceRate,null);
-  assert.deepEqual(august.sales.map(row=>row.id),[1,3]);assert.deepEqual(august.reconciliations.map(row=>row.id),[3,2]);
+  assert.deepEqual(august.sales.map(row=>row.id),[1,3]);assert.deepEqual(august.reconciliations.map(row=>row.id),[2,3]);
   assert.equal(august.totalReconciliationCount,2);assert.equal(august.totalHistoryCount,3);assert.equal(august.totalCancelledCount,1);
   assert.deepEqual(august.monthlySales.map(row=>row.id),[2]);assert.equal(august.monthlySales[0].outstandingGrossAmount,0);assert.deepEqual(august.priorUnreconciledSales.map(row=>row.id),[1]);assert.equal(august.summary.monthlySettledGross,0);
   const september=await(await get(state,'2026-09')).json();assert.equal(september.summary.monthlyUnreconciledGross,1600);assert.equal(september.summary.monthlyCompletedGross,1000);assert.equal(september.summary.monthlyCompletedDeposit,982);assert.equal(september.summary.monthlyCompletedDifference,18);assert.equal(september.summary.actualDifferenceRate,0.018);
@@ -116,6 +123,14 @@ test('create and partial/confirmed match still forward the existing RPC contract
     const response=await state.match.POST(new Request('http://local/api/admin/ledger/card-settlements/1/match',{method:'POST',body:JSON.stringify({allocations,confirm})}),{params:Promise.resolve({id:'1'})});assert.equal(response.status,200);assert.deepEqual(state.rpcCalls.at(-1),{name:'ledger_match_card_reconciliation_v1',args:{p_reconciliation_id:1,p_allocations:allocations,p_confirm:confirm,p_actor_user_id:7}});
   }
   assert.equal(state.calls.length,0);
+});
+
+test('create accepts a new deposit without reference while retaining legacy reference compatibility',async()=>{
+  const state=setup();
+  const deposit={depositAt:'2026-09-10T10:00:00+07:00',amount:982,destinationAccountId:2,memo:'local-test'};
+  const response=await state.api.POST(new Request('http://local/api/admin/ledger/card-settlements',{method:'POST',body:JSON.stringify(deposit)}));
+  assert.equal(response.status,201);
+  assert.deepEqual(state.rpcCalls[0],{name:'ledger_create_card_deposit_v1',args:{p_deposit_at:deposit.depositAt,p_amount:982,p_destination_account_id:2,p_reference:null,p_memo:'local-test',p_actor_user_id:7}});
 });
 
 test('future card sale is a 409 and preserves the RPC date context',async()=>{

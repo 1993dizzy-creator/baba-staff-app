@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     const [accounts, saleRows, reconciliations, lines] = await Promise.all([
       loadCardRows((from, to) => supabaseServer.from("ledger_fund_accounts").select("id,code,display_name,type,is_active").order("sort_order").order("id").range(from, to)),
       loadCardSales(),
-      loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("id,deposit_transaction_id,deposit_date,destination_fund_account_id,deposit_amount,matched_gross_amount,difference_amount,status,confirmed_at,confirmed_by,cancelled_at,cancelled_by,cancel_reason,memo,destination:ledger_fund_accounts(display_name)").order("deposit_date", { ascending: false }).order("id").range(from, to)),
+      loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("id,deposit_transaction_id,deposit_date,destination_fund_account_id,deposit_amount,matched_gross_amount,difference_amount,status,confirmed_at,confirmed_by,cancelled_at,cancelled_by,cancel_reason,memo,destination:ledger_fund_accounts(display_name)").order("deposit_date", { ascending: true }).order("id", { ascending: true }).range(from, to)),
       loadCardAllocationLines(),
     ]);
     const clearing = accounts.find(account => account.code === "card_clearing");
