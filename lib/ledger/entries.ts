@@ -25,14 +25,16 @@ export type LedgerEntryItem = {
 export type LedgerEntry = {
   id: string;
   businessDate: string;
+  // User-facing ledger bucket; accounting participation is tracked separately.
   direction: "income" | "expense" | "transfer";
+  participatesInProfit?: boolean;
   origin: "auto" | "manual";
   status: "confirmed" | "pending";
   title: string;
   subtitle: string;
   amount: number;
-  // Signed multiplier (+1/-1) for netting corrections/reversals into date-group P&L
-  // subtotals without changing the displayed (always-positive) row amount.
+  // Signed multiplier (+1/-1) for netting corrections/reversals into visible
+  // date-group subtotals without changing the displayed row amount.
   economicEffectSign: number;
   displayTime: string | null;
   sortTimestamp: number;
@@ -96,6 +98,36 @@ export type MealCandidateSource = {
 // ledger_transaction_recognition_policy check constraint — i.e. types that
 // represent a real profit/loss event rather than a pure fund movement.
 const PROFIT_TYPES = new Set(["income", "expense", "sales", "expense_recognition"]);
+
+export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign">) {
+  const signedAmount = entry.amount * entry.economicEffectSign;
+  return {
+    income: entry.direction === "income" ? signedAmount : 0,
+    expense: entry.direction === "expense" ? signedAmount : 0,
+  };
+}
+
+function displayMemo(memo: string | null | undefined) {
+  return (memo ?? "").replace(/^\s*\d{1,2}월\s*시트\s*row\s*\d+\s*[·:—-]?\s*/i, "").trim();
+}
+
+function specialTransactionDisplay(row: TransactionRow) {
+  const memo = displayMemo(row.memo);
+  if (row.type === "investment" && row.source_type === "owner_investment") {
+    const investor = memo.match(/([\p{L}\p{N}]+)\s*투자금/u)?.[1];
+    return { title: investor ? `${investor} 투자금` : "투자금", subtitle: "사업 투자금" };
+  }
+  if (row.type === "prepaid_expense_payment") {
+    const planName = String(row.source_snapshot?.planName ?? "");
+    const rent = /임대료|월세/.test(`${memo} ${planName}`);
+    const annual = /1년|12개월|연간/.test(memo);
+    return {
+      title: rent ? (annual ? "1년치 임대료 선지급" : "임대료 선지급") : memo || "비용 선지급",
+      subtitle: rent ? "임대료 선지급 · 현금 지출" : "비용 선지급 · 현금 지출",
+    };
+  }
+  return null;
+}
 
 const value = (input: unknown) => Number(input ?? 0);
 const vietnamTimeFormatter = new Intl.DateTimeFormat("en-GB", {
@@ -269,15 +301,11 @@ export function buildLedgerEntries(
     }
     const transactionId = value(row.id);
     const amount = value(row.amount);
-    // A transaction only carries a P&L direction when it can be recognized at all
-    // (mirrors the DB's own ledger_transaction_recognition_policy check: only
-    // income/expense/sales/expense_recognition ever get a recognition_month).
-    // Everything else (card_settlement_deposit, payable_payment, payroll_payment,
-    // transfer, investment, owner_settlement, balance_adjustment, ...) is a pure
-    // fund movement, never a new profit/loss event, so it is shown as "transfer".
+    // Recognition eligibility follows the DB's profit types. The visible
+    // direction also includes prepaid cash expense, without recognizing it.
     const participatesInProfit = PROFIT_TYPES.has(row.type);
     const expense = participatesInProfit && (row.type === "expense" || row.type === "expense_recognition");
-    const direction = !participatesInProfit ? "transfer" : expense ? "expense" : "income";
+    const direction = row.type === "prepaid_expense_payment" ? "expense" : !participatesInProfit ? "transfer" : expense ? "expense" : "income";
     const economicEffectSign = value(row.economic_effect_sign) || 1;
     const movement = row.movements?.find(item => direction === "income" ? value(item.amount) > 0 : value(item.amount) < 0) ?? row.movements?.[0];
     const accountName = movement?.fund_account?.display_name ?? null;
@@ -355,11 +383,12 @@ export function buildLedgerEntries(
     const rent = row.source_type === "recurring_expense" &&
       (row.category?.name === "임대료" || snapshot.planName === "매장 임대료");
     const payroll = row.source_type.includes("payroll");
+    const specialDisplay = specialTransactionDisplay(row);
     entries.push({
-      id: `transaction:${transactionId}`, businessDate: row.business_date, direction,
+      id: `transaction:${transactionId}`, businessDate: row.business_date, direction, participatesInProfit,
       origin: automatic ? "auto" : "manual", status: "confirmed",
-      title: pos || rent ? "" : payroll ? "급여 · 인건비" : row.memo || row.party?.name || row.category?.name || "장부 거래",
-      subtitle: pos || rent ? "" : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력"),
+      title: specialDisplay?.title ?? (pos || rent ? "" : payroll ? "급여 · 인건비" : displayMemo(row.memo) || row.party?.name || row.category?.name || "장부 거래"),
+      subtitle: specialDisplay?.subtitle ?? (pos || rent ? "" : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력")),
       amount, economicEffectSign, ...time, accountName, categoryName: row.category?.name ?? null, transactionId,
       drilldown: pos ? "pos" : payroll ? "payroll" : "generic",
       ...(pos ? { systemDisplay: { kind: "pos" as const, paymentBucket: posPaymentBucket, receiptCount: value(snapshot.receiptCount) } } : {}),

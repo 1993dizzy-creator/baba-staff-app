@@ -23,7 +23,7 @@ import {
   primaryButtonStyle,
   secondaryButtonStyle,
 } from "@/components/bar/keeping/KeepingUi";
-import type { LedgerEntry, LedgerEntryItem } from "@/lib/ledger/entries";
+import { entryDisplaySubtotal, type LedgerEntry, type LedgerEntryItem } from "@/lib/ledger/entries";
 import {
   formatLedgerAmountInput,
   parseLedgerAmount,
@@ -76,6 +76,7 @@ type LedgerSummary = {
   expense: number;
   operatingProfit: number;
   paidExpense: number;
+  displayedExpense: number;
   cardGrossSales: number;
   monthlySettledGross: number;
   actualCardDeposits: number;
@@ -386,9 +387,9 @@ export default function LedgerEntriesPage() {
       group.rows.push(entry);
       // Net corrections/reversals into the day subtotal via economicEffectSign
       // without touching the row's own displayed (always-positive) amount.
-      const signedAmount = entry.amount * entry.economicEffectSign;
-      if (entry.direction === "income") group.income += signedAmount;
-      if (entry.direction === "expense") group.expense += signedAmount;
+      const subtotal = entryDisplaySubtotal(entry);
+      group.income += subtotal.income;
+      group.expense += subtotal.expense;
       byDate.set(entry.businessDate, group);
     }
     for (const group of byDate.values()) {
@@ -848,7 +849,7 @@ export default function LedgerEntriesPage() {
                   <i aria-hidden="true">💸</i>
                   {vi ? "Chi" : "지출"}
                 </span>
-                <strong>{money(data.summary.paidExpense)}</strong>
+                <strong>{money(data.summary.displayedExpense)}</strong>
               </article>
             </section>
             <section

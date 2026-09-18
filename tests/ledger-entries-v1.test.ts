@@ -448,8 +448,8 @@ test("ledger entries header mirrors the monthly summary card hierarchy", () => {
   // The income card uses the API's accounting-income field, while daily groups keep
   // their recognized-income direction and economic-effect calculation.
   assert.match(pageCompact, /money\(data\.summary\.income\)/);
-  assert.match(pageCompact, /if\(entry\.direction==="income"\)group\.income\+=signedAmount/);
-  assert.match(pageCompact, /money\(data\.summary\.paidExpense\)/);
+  assert.match(pageCompact, /group\.income\+=subtotal\.income/);
+  assert.match(pageCompact, /money\(data\.summary\.displayedExpense\)/);
   assert.match(pageCompact, /formatCardSettlementRate\(data\.summary\.cardGrossSales,data\.summary\.monthlySettledGross\)/);
   assert.match(pageCompact, /money\(payables\?\.totalOutstanding\?\?0\)/);
   assert.doesNotMatch(pageCompact, /entry\.direction==="income"\)totals\.income\+=entry\.amount/);

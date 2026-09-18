@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 
-const { buildLedgerEntries } = createRequire(import.meta.url)("../lib/ledger/entries.ts") as typeof import("../lib/ledger/entries");
+const { buildLedgerEntries, entryDisplaySubtotal } = createRequire(import.meta.url)("../lib/ledger/entries.ts") as typeof import("../lib/ledger/entries");
 const { computePaidExpenseTotal } = createRequire(import.meta.url)("../lib/ledger/payables.ts") as typeof import("../lib/ledger/payables");
-const { computeReceivedIncome } = createRequire(import.meta.url)("../lib/ledger/summary.ts") as typeof import("../lib/ledger/summary");
+const { computeDisplayedExpense, computeReceivedIncome } = createRequire(import.meta.url)("../lib/ledger/summary.ts") as typeof import("../lib/ledger/summary");
 const read = (path: string) => readFileSync(path, "utf8");
 const route = read("app/api/admin/ledger/route.ts");
 const page = read("app/(protected)/admin/ledger/entries/page.tsx");
@@ -41,6 +41,59 @@ test("payroll_payment, investment, owner_settlement and balance_adjustment are a
   }
 });
 
+test("investment remains outside income and P&L while its outgoing or incoming movement remains available", () => {
+  const movement = { amount: 100_000_000, fund_account: { display_name: "법인계좌" } };
+  const entry = buildLedgerEntries([tx({
+    id: 1303, type: "investment", source_type: "owner_investment", amount: 100_000_000,
+    memo: "8월 시트 row 131 · MJK 투자금", movements: [movement],
+  })], [], new Map())[0];
+  assert.equal(entry.direction, "transfer");
+  assert.equal(entry.participatesInProfit, false);
+  assert.equal(entry.title, "MJK 투자금");
+  assert.equal(entry.subtitle, "사업 투자금");
+  assert.doesNotMatch(entry.title, /row|source|snapshot/i);
+  assert.equal(entry.accountName, "법인계좌");
+  assert.equal(movement.amount, 100_000_000);
+});
+
+test("prepaid rent is a UI expense but remains outside P&L", () => {
+  const entry = buildLedgerEntries([tx({
+    id: 1304, type: "prepaid_expense_payment", source_type: "recurring_expense_payment",
+    amount: 300_000_000, recognition_month: null,
+    memo: "8월 시트 row 132 · 1년치 임대료 실제 지급",
+    movements: [{ amount: -300_000_000, fund_account: { display_name: "법인계좌" } }],
+  })], [], new Map())[0];
+  assert.equal(entry.direction, "expense");
+  assert.equal(entry.participatesInProfit, false);
+  assert.equal(entry.title, "1년치 임대료 선지급");
+  assert.match(entry.subtitle, /현금 지출/);
+  assert.doesNotMatch(entry.title, /row|source|snapshot/i);
+  assert.equal(entry.amount * entry.economicEffectSign, 300_000_000);
+  assert.deepEqual(entryDisplaySubtotal(entry), { income: 0, expense: 300_000_000 });
+});
+
+test("displayed expense adds prepaid once and excludes transfers and investment", () => {
+  const rows = [
+    { type: "prepaid_expense_payment", amount: 300_000_000, movements: [{ amount: -300_000_000 }] },
+    { type: "investment", amount: 100_000_000, movements: [{ amount: 100_000_000 }] },
+    { type: "transfer", amount: 50_000_000, movements: [{ amount: -50_000_000 }] },
+    { type: "owner_settlement_payment", amount: 10_000_000, movements: [{ amount: -10_000_000 }] },
+    { type: "card_settlement_deposit", amount: 5_000_000, movements: [{ amount: 5_000_000 }] },
+  ];
+  assert.equal(computeDisplayedExpense(448_445_598.5, rows), 748_445_598.5);
+  assert.equal(computeDisplayedExpense(448_445_598.5, rows.filter(row => row.type !== "prepaid_expense_payment")), 448_445_598.5);
+});
+
+test("ledger page uses the UI direction for expense filtering and the daily subtotal", () => {
+  assert.match(page, /filter === "expense" && entry\.direction !== "expense"/);
+  assert.match(page, /const subtotal = entryDisplaySubtotal\(entry\);/);
+  assert.match(page, /group\.expense \+= subtotal\.expense/);
+  assert.match(route, /const displayedExpense = computeDisplayedExpense\(paidExpense, transactions\)/);
+  assert.match(route, /operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense/);
+  assert.match(route, /const movementsPromise = fundsViewMode === "closed_snapshot"/);
+  assert.match(route, /buildFundAccountView\(\{[\s\S]*movements: movementsResult\.data/);
+});
+
 test("expense, expense_recognition, income and sales keep their P&L direction", () => {
   assert.equal(buildLedgerEntries([tx({ id: 1, type: "expense" })], [], new Map())[0].direction, "expense");
   assert.equal(buildLedgerEntries([tx({ id: 1, type: "expense_recognition" })], [], new Map())[0].direction, "expense");
@@ -62,9 +115,9 @@ test("economicEffectSign defaults to 1 when the row carries none", () => {
 });
 
 test("day-group subtotal nets economicEffectSign without mutating the displayed row amount", () => {
-  assert.match(pageCompact, /constsignedAmount=entry\.amount\*entry\.economicEffectSign/);
-  assert.match(pageCompact, /group\.income\+=signedAmount/);
-  assert.match(pageCompact, /group\.expense\+=signedAmount/);
+  assert.match(pageCompact, /constsubtotal=entryDisplaySubtotal\(entry\)/);
+  assert.match(pageCompact, /group\.income\+=subtotal\.income/);
+  assert.match(pageCompact, /group\.expense\+=subtotal\.expense/);
 });
 
 // ---------------------------------------------------------------------------
@@ -309,7 +362,7 @@ test("the summary block itself (GET handler) issues no RPC — the three new fie
 });
 
 test("summary type is modeled on LedgerData so the cards cannot silently fall back to undefined", () => {
-  assert.match(pageCompact, /typeLedgerSummary=\{income:number;receivedIncome:number;expense:number;operatingProfit:number;paidExpense:number;cardGrossSales:number;monthlySettledGross:number;actualCardDeposits:number;unsettledCardGross:number;\}/);
+  assert.match(pageCompact, /typeLedgerSummary=\{income:number;receivedIncome:number;expense:number;operatingProfit:number;paidExpense:number;displayedExpense:number;cardGrossSales:number;monthlySettledGross:number;actualCardDeposits:number;unsettledCardGross:number;\}/);
   assert.match(pageCompact, /summary:LedgerSummary/);
 });
 
@@ -321,7 +374,7 @@ test("income card shows only the accounting income total", () => {
 
 test("expense card displays paid expense while accounting expense remains in API", () => {
   const card = pageCompact.slice(pageCompact.indexOf("styles.expenseCard"), pageCompact.indexOf("styles.openingSection"));
-  assert.match(card, /<strong>\{money\(data\.summary\.paidExpense\)\}/);
+  assert.match(card, /<strong>\{money\(data\.summary\.displayedExpense\)\}/);
   assert.doesNotMatch(card, /data\.summary\.expense|전체지출|지급완료|styles\.summarySubRows/);
   assert.match(route, /expense, operatingProfit: recognizedIncome - expense/);
 });

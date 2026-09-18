@@ -6,7 +6,7 @@ import { buildLedgerEntries, type CandidateRow, type MealCandidateSource, type P
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { computePaidExpenseTotal } from "@/lib/ledger/payables";
 import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
-import { computeReceivedIncome } from "@/lib/ledger/summary";
+import { computeDisplayedExpense, computeReceivedIncome } from "@/lib/ledger/summary";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
 import { buildFundAccountView, fundAccountViewMode } from "@/lib/ledger/fund-account-view";
 
@@ -113,6 +113,7 @@ export async function GET(request: Request) {
       corrections: correctionsByRoot.get(Number(row.id)) ?? [],
     }));
     const paidExpense = computePaidExpenseTotal(paidExpenseRoots);
+    const displayedExpense = computeDisplayedExpense(paidExpense, transactions);
     const reserveEntriesByPlan = new Map<number, Array<{ entry_type: string; amount: number | string }>>();
     for (const entry of reserveEntriesResult.data ?? []) {
       const planId = Number(entry.reserve_plan_id);
@@ -155,7 +156,7 @@ export async function GET(request: Request) {
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
     ]);
     const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources);
-    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
+    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);
