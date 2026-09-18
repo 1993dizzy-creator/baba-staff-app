@@ -34,7 +34,7 @@ test("payment UI previews oldest first",()=>{assert.match(page,/buildOldestFirst
 test("inventory candidate regression remains",()=>assert.match(inventoryMigration,/ledger_resolve_inventory_candidate_v1/));
 test("POS parity regression remains",()=>assert.match(pos,/export function buildPaymentSummary/));
 
-const source=(id=1,date="2026-08-10",amount:number|string=1000,status="unpaid",partyId=10)=>({id,party_id:partyId,original_amount:amount,status,expense:{business_date:date,status:"confirmed"}});
+const source=(id=1,date="2026-08-10",amount:number|string=1000,status="unpaid",partyId=10)=>({id,party_id:partyId,original_amount:amount,status,expense:{id,business_date:date,status:"confirmed",source_snapshot:{item_name:`item-${id}`}}});
 const allocation=(date:string,amount:number|string,payableId=1,status="confirmed")=>({payable_id:payableId,allocated_amount:amount,payment:{business_date:date,status}});
 const monthly=(rows=[source()],payments:ReturnType<typeof allocation>[]=[],month="2026-09")=>calculatePayableBalances(rows,payments,month).summary!;
 test("prior purchase carries into next month's opening",()=>assert.deepEqual(monthly(),{openingOutstanding:1000,periodPurchases:0,periodPayments:0,closingOutstanding:1000}));
@@ -83,7 +83,7 @@ function payableApi(rows:ReturnType<typeof source>[],payments:ReturnType<typeof 
     const field=(row:Record<string,unknown>,name:string)=>name.split(".").reduce<unknown>((value,key)=>(value as Record<string,unknown>)?.[key],row);
     const query={select(){return query},order(){return query},eq(name:string,value:unknown){if(name!=="type")filters.push(row=>field(row,name)===value);return query},neq(name:string,value:unknown){filters.push(row=>field(row,name)!==value);return query},lt(name:string,value:string){filters.push(row=>String(field(row,name))<value);return query},range(start:number,end:number){from=start;to=end;return query},then(resolve:(value:unknown)=>unknown){return Promise.resolve({data:tables[table].filter(row=>filters.every(filter=>filter(row as Record<string,unknown>))).slice(from,to+1),error:null}).then(resolve)}};return query;
   }};
-  const dependencies:Record<string,unknown>={"@/lib/ledger/payables":payableFunctions,"@/lib/supabase/server":{supabaseServer:supabase},"@/lib/ledger/server":{requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{},ledgerJson:(body:unknown,status=200)=>Response.json(body,{status})}};
+  const dependencies:Record<string,unknown>={"@/lib/ledger/payables":payableFunctions,"@/lib/ledger/inventory-display":{withInventoryDisplay:async(rows:unknown[])=>rows},"@/lib/supabase/server":{supabaseServer:supabase},"@/lib/ledger/server":{requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{},ledgerJson:(body:unknown,status=200)=>Response.json(body,{status})}};
   const testModule={exports:{} as {GET:(request:Request)=>Promise<Response>}};
   const code=ts.transpileModule(dashboard,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   new Function("require","module","exports",code)((name:string)=>{assert.ok(name in dependencies);return dependencies[name]},testModule,testModule.exports);
@@ -121,4 +121,50 @@ test("monthly parties retain purchase and payment activity with zero closing; cu
   const api=payableApi([source(1,"2026-08-01",1000,"paid",10)],[allocation("2026-08-31",1000)]);
   const monthly=await(await api.get("?month=2026-08")).json();assert.equal(monthly.parties.length,1);assert.equal(monthly.parties[0].periodPayments,1000);assert.equal(monthly.parties[0].closingOutstanding,0);assert.equal(monthly.payables.length,0);
   const current=await(await api.get()).json();assert.equal(current.parties.length,0);assert.equal(current.totalOutstanding,0);
+});
+
+test("historical detail includes paid sources while outstanding and summary keep their existing meaning",async()=>{
+  const api=payableApi([
+    source(1,"2026-08-01",1000,"paid"),
+    source(2,"2026-08-22",500,"partially_paid"),
+    source(3,"2026-08-24",300,"unpaid"),
+  ],[
+    allocation("2026-08-10",1000,1),
+    allocation("2026-08-23",200,2),
+    allocation("2026-09-02",300,2),
+  ]);
+  const august=await(await api.get("?month=2026-08")).json();
+  assert.equal(august.historyPayables.length,3);
+  assert.ok(Object.hasOwn(august.historyPayables[0].expense,"source_snapshot"));
+  assert.ok(Object.hasOwn(august.historyPayables[0].expense,"display_snapshot"));
+  assert.deepEqual(august.historyPayables.map((row:{settlementStatus:string})=>row.settlementStatus),["paid","partial","unpaid"]);
+  assert.deepEqual(august.historyPayables.map((row:{outstandingAmount:number})=>row.outstandingAmount),[0,300,300]);
+  assert.equal(august.payables.length,2);
+  assert.equal(august.totalOutstanding,600);
+  assert.equal(august.summary.closingOutstanding,600);
+});
+
+test("Phương August history restores paid dates, partial 8/22 and unpaid dates without changing totals",async()=>{
+  const paidDays=[1,3,7,8,10,13,15,17,19,21];
+  const unpaidDays=[24,25,26,29,31];
+  const rows=[
+    ...paidDays.map((day,index)=>source(index+1,`2026-08-${String(day).padStart(2,"0")}`,2_772_000,"paid")),
+    source(11,"2026-08-22",11_134_000,"partially_paid"),
+    ...unpaidDays.map((day,index)=>source(index+12,`2026-08-${String(day).padStart(2,"0")}`,index===4?2_362_000:2_000_000,"unpaid")),
+  ];
+  const payments=[...paidDays.map((_,index)=>allocation("2026-08-23",2_772_000,index+1)),allocation("2026-08-23",7_964_000,11)];
+  const august=await(await payableApi(rows,payments).get("?month=2026-08")).json();
+  const history=august.historyPayables as Array<{id:number;paidAmount:number;outstandingAmount:number;settlementStatus:string;expense:{business_date:string}}>;
+  assert.equal(history.length,16);
+  assert.ok(paidDays.every(day=>history.some(row=>row.expense.business_date===`2026-08-${String(day).padStart(2,"0")}`&&row.settlementStatus==="paid"&&row.outstandingAmount===0)));
+  assert.ok(unpaidDays.every(day=>history.some(row=>row.expense.business_date===`2026-08-${String(day).padStart(2,"0")}`&&row.settlementStatus==="unpaid")));
+  const partial=history.find(row=>row.expense.business_date==="2026-08-22");
+  assert.equal(partial?.paidAmount,7_964_000);
+  assert.equal(partial?.outstandingAmount,3_170_000);
+  assert.equal(partial?.settlementStatus,"partial");
+  assert.equal(august.parties[0].periodPurchases,49_216_000);
+  assert.equal(august.parties[0].periodPayments,35_684_000);
+  assert.equal(august.parties[0].closingOutstanding,13_532_000);
+  assert.equal(august.totalOutstanding,13_532_000);
+  assert.equal([13_532_000,8_332_484,7_460_000,15_662_600,29_579_992,2_714_920].reduce((a,b)=>a+b,0),77_281_996);
 });

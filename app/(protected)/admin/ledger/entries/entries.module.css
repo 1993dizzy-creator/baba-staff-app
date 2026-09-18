@@ -31,6 +31,16 @@
 .payableToggle{min-height:44px;cursor:pointer;color:inherit}
 .payableToggle:focus-visible,.statusDetailLink:focus-visible{outline:2px solid #64748b;outline-offset:4px}
 .payableHeading{gap:8px}.payableHeading h2{min-width:0;font-size:14px}.payableHeading>strong{font-size:13px}
+.payableDateRowReadOnly{grid-template-columns:minmax(0,1fr)}
+.payableDateRowReadOnly>button{width:100%;min-width:0}
+.payableDatesReadOnly .payableItems{padding-left:8px}
+.payableDetailPartner{min-width:0;display:flex;align-items:center;gap:6px}
+.payableDetailPartner>.partnerTypeBadge{flex:0 0 auto;padding:2px 5px;border:1px solid #e5e7eb;border-radius:999px;background:#f3f4f6;color:#6b7280;font-size:8px;font-weight:800;line-height:1.3}
+.payableDetailPartner>strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.payableReadOnlyHint{margin:2px 0 4px;overflow:hidden;color:#6b7280;font-family:inherit;font-size:11px;font-weight:500;line-height:1.4;letter-spacing:-.02em;text-overflow:ellipsis;white-space:nowrap}
+.payableDateLabel{min-width:0;display:inline-flex;align-items:center;gap:5px;overflow:hidden}
+.payableDateLabel>span{flex:0 0 auto}
+.payableDateRow .payablePaidBadge{flex:0 0 auto;padding:2px 5px;border-radius:999px;background:#e8f7ef;color:#16805a;font-size:9px;font-style:normal;font-weight:800;line-height:1.2}
 .statusBody{margin-top:6px;padding-top:8px;border-top:1px solid #eef0f3}
 .statusBody>.payableMonthTotals{margin-top:0}.payableMonthTotals>div{border:1px solid #eef0f3;border-radius:10px;background:#f9fafb}
 .payableMonthTotals dt{line-height:1.5}.payableMonthTotals dd{margin-top:5px}
@@ -46,3 +56,4 @@
 .monthCloseText{min-width:0;flex:1 1 180px}.monthCloseText strong{display:block;color:#111827;font-size:12px;font-weight:800}.monthCloseText p{margin:3px 0 0;color:#6b7280;font-size:10px;line-height:1.5}
 .monthCloseAction{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:6px 10px;border:1px solid #d1d5db;border-radius:9px;background:#fff;color:#111827;font:inherit;font-size:11px;font-weight:800;text-decoration:none;cursor:pointer}
 .reopenHelp{margin:0;color:#4b5563;font-size:12px;line-height:1.5}.reopenReasonLabel{font-size:12px;font-weight:800}.reopenReason{width:100%;min-height:90px;box-sizing:border-box;padding:10px;border:1px solid #d1d5db;border-radius:10px;font:inherit;font-size:12px;resize:vertical}.reopenFooter{display:grid;gap:8px}
+.payableDateRow>button>i{grid-column:4}

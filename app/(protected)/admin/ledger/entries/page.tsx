@@ -27,6 +27,7 @@ import {
 } from "@/components/bar/keeping/KeepingUi";
 import { entryDisplaySubtotal, type LedgerEntry, type LedgerEntryItem } from "@/lib/ledger/entries";
 import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
+import { groupPayableRows } from "@/lib/ledger/payable-date-groups";
 import {
   formatLedgerAmountInput,
   parseLedgerAmount,
@@ -130,8 +131,9 @@ type DateGroup = {
   expense: number;
 };
 type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number };
-type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[] };
-type PayableRow = { id:number; party_id:number; original_amount:number; outstandingAmount:number; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null}|null };
+type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[]; historyPayables:PayableHistoryRow[] };
+type PayableRow = { id:number; party_id:number; original_amount:number; paidAmount?:number; outstandingAmount:number; settlementStatus?:"paid"|"partial"|"unpaid"; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null}|null };
+type PayableHistoryRow = PayableRow & { paidAmount:number; settlementStatus:"paid"|"partial"|"unpaid" };
 type PayableDetail = { party:{id:number;name:string}; payables:PayableRow[]; totalOutstanding:number };
 type CardSettlementSummary = { monthlyCardGross:number; monthlySettledGross:number; monthlyUnreconciledGross:number; monthlySettlementDifference:number; totalUnreconciledGross:number; cardPendingBalance:number };
 type InvestmentEntryType = "opening" | "contribution" | "adjustment";
@@ -1189,7 +1191,7 @@ function LedgerEntriesContent() {
         {payableParty && data && payables?.month === month && payableParty.viewMonth === month ? (
           month === currentMonth()
             ? <PayablePartySheet lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { setPayableParty(null); await load(); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} />
-            : <HistoricalPayablePartySheet lang={lang} month={month} party={payableParty} rows={payables.payables.filter(row => Number(row.party_id) === payableParty.partyId)} onClose={() => setPayableParty(null)} />
+            : <HistoricalPayablePartySheet lang={lang} month={month} party={payableParty} rows={payables.historyPayables.filter(row => Number(row.party_id) === payableParty.partyId)} onClose={() => setPayableParty(null)} />
         ) : null}
       </main>
     </Container>
@@ -1526,37 +1528,28 @@ function PayableMonthTotals({summary,vi}:{summary?:PayablePeriodSummary;vi:boole
   return <dl className={styles.payableMonthTotals}>{fields.map(([key,label])=><div key={key}><dt>{label}</dt><dd>{summary?money(summary[key]):"-"}</dd></div>)}</dl>;
 }
 
-function groupPayableRows(rows: readonly PayableRow[]) {
-  const byDate = new Map<string, PayableRow[]>();
-  for (const row of rows) {
-    if (row.outstandingAmount <= 0) continue;
-    const date = row.expense?.business_date ?? "";
-    byDate.set(date, [...(byDate.get(date) ?? []), row]);
-  }
-  return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b))
-    .map(([businessDate, items]) => ({businessDate, rows: items, total: items.reduce((sum, row) => sum + row.outstandingAmount, 0)}));
-}
-
 function PayableDateGroups({rows,lang,selectedDates,onSelectDate}:{rows:readonly PayableRow[];lang:"ko"|"vi";selectedDates?:ReadonlySet<string>;onSelectDate?:(date:string)=>void}) {
   const [expanded,setExpanded]=useState<Set<string>>(()=>new Set());
-  const groups=useMemo(()=>groupPayableRows(rows),[rows]);
+  const selectable=Boolean(onSelectDate);
+  const groups=useMemo(()=>groupPayableRows(rows,!selectable),[rows,selectable]);
   const vi=lang==="vi";
-  return <div className={styles.payableDates}>{groups.map(group=>{
+  return <div className={`${styles.payableDates} ${!selectable ? styles.payableDatesReadOnly : ""}`}>{groups.map(group=>{
     const open=expanded.has(group.businessDate);
-    return <article key={group.businessDate}><div className={styles.payableDateRow}>
-      {onSelectDate?<input type="checkbox" checked={selectedDates?.has(group.businessDate)??false} aria-label={`${formatDate(group.businessDate,lang)} ${vi?"chọn":"선택"}`} onChange={()=>onSelectDate(group.businessDate)}/>:null}
+    const paidReadOnly=!selectable&&group.settlementStatus==="paid";
+    return <article key={group.businessDate}><div className={`${styles.payableDateRow} ${!selectable ? styles.payableDateRowReadOnly : ""}`}>
+      {selectable&&onSelectDate?<input type="checkbox" checked={selectedDates?.has(group.businessDate)??false} aria-label={`${formatDate(group.businessDate,lang)} ${vi?"chọn":"선택"}`} onChange={()=>onSelectDate(group.businessDate)}/>:null}
       <button type="button" aria-expanded={open} onClick={()=>setExpanded(current=>{const next=new Set(current);if(next.has(group.businessDate))next.delete(group.businessDate);else next.add(group.businessDate);return next})}>
-        <span>📅 {formatDate(group.businessDate,lang)}</span><small>{group.rows.length}{vi?" khoản":"건"}</small><strong>{money(group.total)}</strong><i aria-hidden>⌄</i>
+        <span className={styles.payableDateLabel}><span>📅 {formatDate(group.businessDate,lang)}</span>{paidReadOnly?<em className={styles.payablePaidBadge}>{vi?"Đã thanh toán":"결제완료"}</em>:null}</span><small>{group.rows.length}{vi?" khoản":"건"}</small>{paidReadOnly?null:<strong>{money(group.total)}</strong>}<i aria-hidden>⌄</i>
       </button>
-    </div>{open?<div className={styles.payableItems}>{group.rows.map(row=><span key={row.id}><em>↳ {payableItemLabel(row,vi)}</em><b>{money(row.outstandingAmount)}</b></span>)}</div>:null}</article>
+    </div>{open?<div className={styles.payableItems}>{group.rows.map(row=><span key={row.id}><em>↳ {payableItemLabel(row,vi)}</em>{paidReadOnly?null:<b>{money(row.outstandingAmount)}</b>}</span>)}</div>:null}</article>
   })}</div>;
 }
 
-function HistoricalPayablePartySheet({lang,month,party,rows,onClose}:{lang:"ko"|"vi";month:string;party:PayableParty;rows:PayableRow[];onClose:()=>void}) {
+function HistoricalPayablePartySheet({lang,month,party,rows,onClose}:{lang:"ko"|"vi";month:string;party:PayableParty;rows:PayableHistoryRow[];onClose:()=>void}) {
   const vi=lang==="vi";
   return <BarSheet kind="full" compact topAligned comfortableTop title={`${month} · ${vi?"Công nợ cuối tháng":"월말 미납 상세"}`} closeLabel={vi?"Đóng":"닫기"} saving={false} onClose={onClose} footer={<button type="button" onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button>}>
-    <div className={styles.payableDetailHeader}><strong>🏷 {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(party.closingOutstanding)}</b></span></div>
-    <p role="status">{vi?"Chỉ xem số dư tại cuối tháng đã chọn. Không thể thanh toán từ lịch sử.":"선택월 말 기준 잔액을 보여주는 읽기 전용 상세입니다. 과거 조회에서는 결제할 수 없습니다."}</p>
+    <div className={styles.payableDetailHeader}><div className={styles.payableDetailPartner}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><strong>{party.partyName}</strong></div><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(party.closingOutstanding)}</b></span></div>
+    <p className={styles.payableReadOnlyHint} role="status">{vi?"Số dư cuối tháng đã chọn. Không thể thanh toán giao dịch cũ.":"선택월 말 기준 잔액입니다. 과거 내역은 결제할 수 없습니다."}</p>
     <PayableMonthTotals summary={party} vi={vi}/>
     <PayableDateGroups rows={rows} lang={lang}/>
     {!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}
