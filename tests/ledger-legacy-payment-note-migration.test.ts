@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
-const sql=readFileSync("supabase/migrations/20260918120000_backfill_legacy_sheet_payment_notes.sql","utf8");
+const sql=readFileSync("supabase/migrations/20260918091342_backfill_legacy_sheet_payment_notes.sql","utf8");
+
+test("repository migration version matches the applied version without changing SQL",()=>{
+  assert.equal(existsSync("supabase/migrations/20260918120000_backfill_legacy_sheet_payment_notes.sql"),false);
+  assert.equal(createHash("sha256").update(sql).digest("hex").toUpperCase(),"CA4648A426AA59713ADC01C3EB0429E71B3849639356AE1F0F0BDC1FAB1868F4");
+});
 
 test("migration contains exactly the 20 verified sheet rows with correct payment notes",()=>{
   const pairs=[...sql.matchAll(/\((\d+), '(현금|법인|tk\(cho\)|tài khoản)'\)/g)].map(([,row,note])=>[Number(row),note] as const);

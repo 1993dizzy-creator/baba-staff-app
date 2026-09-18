@@ -4,7 +4,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { withInventoryDisplay, loadInventoryProjectionIssues } from "@/lib/ledger/inventory-display";
 import { buildLedgerEntries, type CandidateRow, type MealCandidateSource, type PartnerLedgerDefault, type TransactionRow } from "@/lib/ledger/entries";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
-import { computePaidExpenseTotal } from "@/lib/ledger/payables";
+import { computePaidExpenseTotal, sumConfirmedAllocationsThroughMonth } from "@/lib/ledger/payables";
 import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
 import { computeDisplayedExpense, computeReceivedIncome } from "@/lib/ledger/summary";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
@@ -68,7 +68,7 @@ export async function GET(request: Request) {
         : reserveEntriesQuery.lt("occurred_at", monthEndCutoffAt);
     // Root expense/expense_recognition transactions recognized this month, with their
     // linked payable (if any) — the base population for the paidExpense formula below.
-    const paidExpenseRootsPromise = supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,source_type,correction_of_id,payable:ledger_payables(status,allocations:ledger_payable_allocations(allocated_amount))").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["expense", "expense_recognition"]);
+    const paidExpenseRootsPromise = supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,source_type,correction_of_id,payable:ledger_payables(status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(business_date,status)))").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["expense", "expense_recognition"]);
     // Confirmed corrections targeting ANY transaction (not date-scoped: ledger_create_correction_v1
     // always books a correction into a different, later month than its — closed — original, so a
     // correction of this month's root can itself be recognized in any later open month).
@@ -108,8 +108,8 @@ export async function GET(request: Request) {
       economicEffectSign: Number(row.economic_effect_sign),
       sourceType: String(row.source_type),
       correctionOfId: row.correction_of_id == null ? null : Number(row.correction_of_id),
-      payableStatus: (row.payable as unknown as { status: string; allocations?: { allocated_amount: number }[] } | null)?.status ?? null,
-      allocatedAmount: ((row.payable as unknown as { status: string; allocations?: { allocated_amount: number }[] } | null)?.allocations ?? []).reduce((sum, allocation) => sum + Number(allocation.allocated_amount), 0),
+      payableStatus: (row.payable as unknown as { status: string; allocations?: { allocated_amount: number | string; payment?: { business_date: string; status: string } | null }[] } | null)?.status ?? null,
+      allocatedAmount: sumConfirmedAllocationsThroughMonth((row.payable as unknown as { allocations?: { allocated_amount: number | string; payment?: { business_date: string; status: string } | null }[] } | null)?.allocations ?? [], month),
       corrections: correctionsByRoot.get(Number(row.id)) ?? [],
     }));
     const paidExpense = computePaidExpenseTotal(paidExpenseRoots);

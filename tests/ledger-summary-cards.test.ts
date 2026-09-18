@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 const { buildLedgerEntries, entryDisplaySubtotal } = createRequire(import.meta.url)("../lib/ledger/entries.ts") as typeof import("../lib/ledger/entries");
-const { computePaidExpenseTotal } = createRequire(import.meta.url)("../lib/ledger/payables.ts") as typeof import("../lib/ledger/payables");
+const { computePaidExpenseTotal, sumConfirmedAllocationsThroughMonth, payableDisplayAsOf } = createRequire(import.meta.url)("../lib/ledger/payables.ts") as typeof import("../lib/ledger/payables");
 const { computeDisplayedExpense, computeReceivedIncome } = createRequire(import.meta.url)("../lib/ledger/summary.ts") as typeof import("../lib/ledger/summary");
 const read = (path: string) => readFileSync(path, "utf8");
 const route = read("app/api/admin/ledger/route.ts");
@@ -289,6 +289,32 @@ test("August 2026 production-shaped paid total nets payroll and legacy reversal 
   assert.equal(Math.round(computePaidExpenseTotal(roots)), 448_445_599);
 });
 
+test("September paid expense includes September payment and excludes October payment", () => {
+  const allocations = [
+    {allocated_amount: 300, payment: {business_date: "2026-09-20", status: "confirmed"}},
+    {allocated_amount: 700, payment: {business_date: "2026-10-03", status: "confirmed"}},
+  ];
+  const september = sumConfirmedAllocationsThroughMonth(allocations, "2026-09");
+  assert.equal(september, 300);
+  assert.equal(computePaidExpenseTotal([root({id: 1, amount: 1000, payableStatus: "paid", allocatedAmount: september})]), 300);
+  assert.equal(sumConfirmedAllocationsThroughMonth(allocations, "2026-09"), 300, "October payment must not rewrite September");
+  assert.equal(sumConfirmedAllocationsThroughMonth(allocations, "2026-10"), 1000);
+  assert.equal(sumConfirmedAllocationsThroughMonth([allocations[0]], "2026-09"), 300);
+  assert.equal(sumConfirmedAllocationsThroughMonth([allocations[1]], "2026-09"), 0);
+});
+
+test("paidExpense and payable display share confirmed payment and next-month cutoff", () => {
+  const allocations = [
+    {allocated_amount: 200, payment: {business_date: "2026-09-30", status: "confirmed"}},
+    {allocated_amount: 300, payment: {business_date: "2026-10-01", status: "confirmed"}},
+    {allocated_amount: 400, payment: {business_date: "2026-09-15", status: "draft"}},
+    {allocated_amount: 500, payment: {business_date: "2026-09-16", status: "voided"}},
+  ];
+  assert.equal(sumConfirmedAllocationsThroughMonth(allocations, "2026-09"), 200);
+  assert.equal(payableDisplayAsOf(1000, allocations, "2026-09").paidAmount, 200);
+  assert.equal(computePaidExpenseTotal([root({id: 2, amount: 1000, payableStatus: "unpaid", allocatedAmount: 200})]), 200);
+});
+
 // I: paidExpense never goes negative for any supported correction scenario, including over-correction.
 test("I. over-correction beyond the original amount floors the effective recognized amount at 0, not negative", () => {
   const roots = [root({ id: 1, payableStatus: "unpaid", allocatedAmount: 0, corrections: [{ amount: 150, economicEffectSign: -1 }] })];
@@ -338,8 +364,10 @@ test("a prior-month card sale is received only in the later deposit_date month",
 });
 
 test("paidExpense roots are scoped by the root's own recognition_month, not a payment date", () => {
-  assert.match(route, /paidExpenseRootsPromise[\s\S]{0,260}gte\("recognition_month",\s*monthStart\)\.lt\("recognition_month",\s*nextMonth\)\.in\("type",\s*\["expense",\s*"expense_recognition"\]\)/);
-  assert.match(route, /import \{ computePaidExpenseTotal \} from "@\/lib\/ledger\/payables"/);
+  assert.match(route, /paidExpenseRootsPromise[\s\S]{0,450}gte\("recognition_month",\s*monthStart\)\.lt\("recognition_month",\s*nextMonth\)\.in\("type",\s*\["expense",\s*"expense_recognition"\]\)/);
+  assert.match(route, /import \{ computePaidExpenseTotal, sumConfirmedAllocationsThroughMonth \} from "@\/lib\/ledger\/payables"/);
+  assert.match(route, /paidExpenseRootsPromise[\s\S]*payment:ledger_transactions!payment_transaction_id\(business_date,status\)/);
+  assert.match(route, /allocatedAmount: sumConfirmedAllocationsThroughMonth\([^\n]*, month\)/);
 });
 
 test("paidExpense corrections are fetched independently of any date range (a correction always lands in a different, later open month than its closed original)", () => {

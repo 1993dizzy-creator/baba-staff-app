@@ -19,10 +19,16 @@ export type DatedPayableAllocation={payable_id:number;allocated_amount:number|st
 export function confirmedAllocationThroughMonth(allocation:Pick<DatedPayableAllocation,"payment">,nextMonthStart?:string){
   return allocation.payment?.status==="confirmed"&&(!nextMonthStart||allocation.payment.business_date<nextMonthStart);
 }
+export function confirmedAllocationsThroughMonth<T extends Pick<DatedPayableAllocation,"payment">>(allocations:readonly T[],month?:string){
+  const nextMonthStart=month===undefined?undefined:payableMonthBounds(month).nextMonthStart;
+  return allocations.filter(row=>confirmedAllocationThroughMonth(row,nextMonthStart));
+}
+export function sumConfirmedAllocationsThroughMonth(allocations:readonly Pick<DatedPayableAllocation,"allocated_amount"|"payment">[],month:string){
+  return sumPayableAmounts(confirmedAllocationsThroughMonth(allocations,month).map(row=>row.allocated_amount));
+}
 export function payableDisplayAsOf(originalAmount:number|string,allocations:readonly Pick<DatedPayableAllocation,"allocated_amount"|"payment">[],month:string){
-  const {nextMonthStart}=payableMonthBounds(month);
-  const confirmed=allocations.filter(row=>confirmedAllocationThroughMonth(row,nextMonthStart));
-  const paidAmount=sumPayableAmounts(confirmed.map(row=>row.allocated_amount));
+  const confirmed=confirmedAllocationsThroughMonth(allocations,month);
+  const paidAmount=sumConfirmedAllocationsThroughMonth(allocations,month);
   const remainingAmount=Math.max(0,sumPayableAmounts([originalAmount,-paidAmount]));
   const status=paidAmount<=0?"unpaid" as const:remainingAmount<=0?"paid" as const:"partial" as const;
   const accounts=new Map<string,string>();
@@ -38,8 +44,7 @@ export type PayablePeriodSummary={openingOutstanding:number;periodPurchases:numb
 export function calculatePayableBalances<T extends PayableBalanceSource>(sources:readonly T[],allocations:readonly DatedPayableAllocation[],month?:string){
   const bounds=month===undefined?null:payableMonthBounds(month);
   const byPayable=new Map<number,DatedPayableAllocation[]>();
-  for(const allocation of allocations){
-    if(!confirmedAllocationThroughMonth(allocation))continue;
+  for(const allocation of confirmedAllocationsThroughMonth(allocations,month)){
     const items=byPayable.get(allocation.payable_id)??[];items.push(allocation);byPayable.set(allocation.payable_id,items);
   }
   let opening=BigInt(0),purchases=BigInt(0),payments=BigInt(0),closing=BigInt(0);
@@ -53,7 +58,7 @@ export function calculatePayableBalances<T extends PayableBalanceSource>(sources
     let before=BigInt(0),through=BigInt(0),inPeriod=BigInt(0);
     for(const allocation of byPayable.get(source.id)??[]){
       const paymentDate=allocation.payment!.business_date,amount=amountUnits(allocation.allocated_amount);
-      if(confirmedAllocationThroughMonth(allocation,bounds?.nextMonthStart))through+=amount;
+      through+=amount;
       if(bounds&&paymentDate<bounds.monthStart)before+=amount;
       if(bounds&&paymentDate>=bounds.monthStart&&paymentDate<bounds.nextMonthStart)inPeriod+=amount;
     }
