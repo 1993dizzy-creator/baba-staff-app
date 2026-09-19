@@ -151,5 +151,6 @@ export type OwnerInvestmentMonthData = {
   month: string;
   configured: boolean;
   summary: OwnerInvestmentSummary;
+  participants: (OwnerInvestmentSummary & { participantId: number; participantName: string })[];
   events: OwnerInvestmentEvent[];
 };

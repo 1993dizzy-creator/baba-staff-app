@@ -135,7 +135,7 @@ test("period opening remains visible in the investment card and explains closing
   assert.equal(summary.closingCumulative,summary.openingCumulative+summary.periodOpening+summary.periodContribution+summary.periodAdjustment);
   const page=read("app/(protected)/admin/ledger/entries/page.tsx");
   assert.match(page,/summary\.periodOpening!==0\?<div><dt>📌/);
-  assert.match(page,/추가투자는 자본유입으로 보유금에 포함되며, 영업수입·영업이익에는 포함되지 않습니다/);
+  assert.match(page,/투자금은 월별 누적 기준으로 추적합니다\. 추가투자는 보유금에 포함되며 영업수입·영업이익에는 포함되지 않습니다/);
 });
 
 // ---------------------------------------------------------------------------
@@ -215,6 +215,19 @@ test("empty/all-zero summary constant matches a from-scratch empty calculation",
   assert.deepEqual(summarizeOwnerInvestments([], "2026-09").summary, ZERO_OWNER_INVESTMENT_SUMMARY);
 });
 
+test("2026 August and September investor chart data keeps the production baseline and excludes future activity", () => {
+  const rows = [
+    row(1, "contribution", 100_000_000, "2026-08-11T08:00:00Z"),
+    row(2, "contribution", 30_000_000, "2026-10-03T08:00:00Z"),
+  ];
+  const august = summarizeOwnerInvestments(rows, "2026-08").summary;
+  const september = summarizeOwnerInvestments(rows, "2026-09").summary;
+  assert.deepEqual([august.openingCumulative, august.periodContribution, august.periodAdjustment, august.closingCumulative, august.periodNetChange], [0, 100_000_000, 0, 100_000_000, 100_000_000]);
+  assert.deepEqual([september.openingCumulative, september.periodContribution, september.periodAdjustment, september.closingCumulative, september.periodNetChange], [100_000_000, 0, 0, 100_000_000, 0]);
+  assert.equal(summarizeOwnerInvestments(rows.slice(0, 1), "2026-08").summary.closingCumulative, august.closingCumulative);
+  assert.equal(summarizeOwnerInvestments(rows.slice(0, 1), "2026-09").summary.closingCumulative, september.closingCumulative);
+});
+
 // ---------------------------------------------------------------------------
 // 8/9. The route/loader contract: zero participants must be a normal 200
 // response with configured:false (never a 404/500), and it must be
@@ -234,11 +247,12 @@ test("investments route: authorized/validated like the other ledger read endpoin
 
 test("investments loader: configured is driven by isParticipantEffectiveForMonth (selected-month effective participants), not a bare participant-exists probe", () => {
   const server = read("lib/ledger/investments-server.ts");
-  assert.match(server, /allParticipantsForConfig\.data \?\? \[\]\)\.some\(\(row\) => isParticipantEffectiveForMonth\(row, month\)\)/);
-  assert.match(server, /if \(!configured\) return \{ month, configured: false, summary: ZERO_OWNER_INVESTMENT_SUMMARY, events: \[\] \};/);
+  assert.match(server, /allParticipantsForConfig\.data \?\? \[\]\)\s*\.filter\(\(row\) => isParticipantEffectiveForMonth\(row, month\)\)/);
+  assert.match(server, /if \(!configured\) return \{ month, configured: false, summary: ZERO_OWNER_INVESTMENT_SUMMARY, participants: \[\], events: \[\] \};/);
   // The "configured but nothing happened this period" path is a totally different
   // branch — it still runs the real summarizer and can return real (zero) numbers.
-  assert.match(server, /if \(periodRows\.length === 0\) return \{ month, configured: true, summary, events: \[\] \};/);
+  assert.match(server, /activeParticipants\.map\(\(participant\) => \{/);
+  assert.match(server, /summarizeOwnerInvestments\(rows\.filter\(\(row\) => Number\(row\.participant_id\) === Number\(participant\.id\)\), month\)\.summary/);
   // The historical participant/user lookup used to name past events is a
   // SEPARATE, unfiltered query keyed by the investment rows' own participant_id —
   // it must never be narrowed by the same-month eligibility check above, or past

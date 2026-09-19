@@ -37,10 +37,13 @@ export async function loadOwnerInvestmentMonth(month: string): Promise<OwnerInve
   // and keeps the eligibility rule in one directly-testable place.
   const allParticipantsForConfig = await supabaseServer
     .from("ledger_owner_participants")
-    .select("is_eligible,effective_from,effective_to");
+    .select("id,user_id,sort_order,is_eligible,effective_from,effective_to");
   if (allParticipantsForConfig.error) throw allParticipantsForConfig.error;
-  const configured = (allParticipantsForConfig.data ?? []).some((row) => isParticipantEffectiveForMonth(row, month));
-  if (!configured) return { month, configured: false, summary: ZERO_OWNER_INVESTMENT_SUMMARY, events: [] };
+  const activeParticipants = (allParticipantsForConfig.data ?? [])
+    .filter((row) => isParticipantEffectiveForMonth(row, month))
+    .sort((a, b) => Number(a.sort_order) - Number(b.sort_order) || Number(a.id) - Number(b.id));
+  const configured = activeParticipants.length > 0;
+  if (!configured) return { month, configured: false, summary: ZERO_OWNER_INVESTMENT_SUMMARY, participants: [], events: [] };
 
   const investmentsResult = await supabaseServer
     .from("ledger_owner_investments")
@@ -51,9 +54,10 @@ export async function loadOwnerInvestmentMonth(month: string): Promise<OwnerInve
   if (investmentsResult.error) throw investmentsResult.error;
   const rows = (investmentsResult.data ?? []) as OwnerInvestmentDbRow[];
   const { summary, periodRows } = summarizeOwnerInvestments(rows, month);
-  if (periodRows.length === 0) return { month, configured: true, summary, events: [] };
 
-  const participantIds = [...new Set(periodRows.map((row) => Number(row.participant_id)))];
+  const participantIds = [...new Set(periodRows.map((row) => Number(row.participant_id)))].filter(
+    (id) => !activeParticipants.some((participant) => Number(participant.id) === id),
+  );
   const accountIds = [
     ...new Set(
       periodRows
@@ -63,14 +67,16 @@ export async function loadOwnerInvestmentMonth(month: string): Promise<OwnerInve
     ),
   ];
   const [participantsResult, accountsResult] = await Promise.all([
-    supabaseServer.from("ledger_owner_participants").select("id,user_id").in("id", participantIds),
+    participantIds.length
+      ? supabaseServer.from("ledger_owner_participants").select("id,user_id").in("id", participantIds)
+      : Promise.resolve({ data: [] as Array<{ id: number; user_id: number }>, error: null }),
     accountIds.length
       ? supabaseServer.from("ledger_fund_accounts").select("id,display_name").in("id", accountIds)
       : Promise.resolve({ data: [] as Array<{ id: number; display_name: string }>, error: null }),
   ]);
   if (participantsResult.error) throw participantsResult.error;
   if (accountsResult.error) throw accountsResult.error;
-  const participants = participantsResult.data ?? [];
+  const participants = [...activeParticipants, ...(participantsResult.data ?? [])];
   const userIds = [...new Set(participants.map((row) => Number(row.user_id)))];
   const usersResult = userIds.length
     ? await supabaseServer.from("users").select("id,name,full_name,username").in("id", userIds)
@@ -79,6 +85,14 @@ export async function loadOwnerInvestmentMonth(month: string): Promise<OwnerInve
   const userById = new Map((usersResult.data ?? []).map((row) => [Number(row.id), row]));
   const participantUser = new Map(participants.map((row) => [Number(row.id), Number(row.user_id)]));
   const accountById = new Map((accountsResult.data ?? []).map((row) => [Number(row.id), row.display_name as string]));
+  const participantSummaries = activeParticipants.map((participant) => {
+    const user = userById.get(Number(participant.user_id));
+    return {
+      participantId: Number(participant.id),
+      participantName: user?.name || user?.full_name || user?.username || `#${participant.id}`,
+      ...summarizeOwnerInvestments(rows.filter((row) => Number(row.participant_id) === Number(participant.id)), month).summary,
+    };
+  });
 
   const events: OwnerInvestmentEvent[] = periodRows.map((row) => {
     const userId = participantUser.get(Number(row.participant_id));
@@ -98,5 +112,5 @@ export async function loadOwnerInvestmentMonth(month: string): Promise<OwnerInve
       reason: row.reason ?? null,
     };
   });
-  return { month, configured: true, summary, events };
+  return { month, configured: true, summary, participants: participantSummaries, events };
 }

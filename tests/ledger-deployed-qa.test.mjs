@@ -553,7 +553,60 @@ test('investment card shows a nonzero period opening and explains contribution a
   assert.match(state,/당월 추가투자<\/dt><dd>\+50 ₫/);
   assert.match(state,/당월 조정<\/dt><dd>-10 ₫/);
   assert.match(state,/월말 누적<\/dt><dd>160 ₫/);
-  assert.match(state,/추가투자는 자본유입으로 보유금에 포함되며, 영업수입·영업이익에는 포함되지 않습니다/);
+  assert.match(state,/투자금은 월별 누적 기준으로 추적합니다\. 추가투자는 보유금에 포함되며 영업수입·영업이익에는 포함되지 않습니다/);
+});
+
+test('investor bars show August new capital and September prior cumulative at the same length',()=>{
+  const participant=(openingCumulative,periodContribution,periodNetChange)=>({participantId:1,participantName:'MJK',openingCumulative,periodOpening:0,periodContribution,periodAdjustment:0,periodNetChange,closingCumulative:100_000_000});
+  const render=(month,person)=>pageFixture(entriesPath,{
+    0:month,1:ledgerFixture(month),2:false,25:true,
+    26:{month,configured:true,summary:{...zeroInvestmentSummary,openingCumulative:person.openingCumulative,periodContribution:person.periodContribution,periodNetChange:person.periodNetChange,closingCumulative:person.closingCumulative},participants:[person],events:[]},
+  }).html;
+  const august=render('2026-08',participant(0,100_000_000,100_000_000));
+  const september=render('2026-09',participant(100_000_000,0,0));
+  assert.doesNotMatch(august,/class="investmentPrior"/);
+  assert.match(august,/class="investmentIncrease" style="left:0%;width:100%"/);
+  assert.match(august,/\+100\.000\.000 ₫/);
+  assert.match(september,/class="investmentPrior" style="width:100%"><span>100\.000\.000 ₫<\/span>/);
+  assert.match(september,/class="investmentValues"><\/div>/);
+});
+
+test('investor bars remain finite at zero and show a negative monthly adjustment',()=>{
+  const render=(person)=>pageFixture(entriesPath,{
+    0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:true,
+    26:{month:'2026-09',configured:true,summary:{...zeroInvestmentSummary,...person},participants:[{participantId:1,participantName:'MJK',periodOpening:0,periodContribution:0,...person}],events:[]},
+  }).html;
+  const zero=render({openingCumulative:0,periodAdjustment:0,periodNetChange:0,closingCumulative:0});
+  const decrease=render({openingCumulative:100_000_000,periodAdjustment:-20_000_000,periodNetChange:-20_000_000,closingCumulative:80_000_000});
+  assert.match(zero,/class="investmentZero">0 ₫<\/span>/);
+  assert.match(zero,/class="investmentValues"><\/div>/);
+  assert.doesNotMatch(zero,/NaN|Infinity/);
+  assert.match(decrease,/class="investmentPrior" style="width:100%"><span>100\.000\.000 ₫<\/span>/);
+  assert.match(decrease,/class="investmentDecrease" style="left:80%;width:20%"/);
+  assert.match(decrease,/-20\.000\.000 ₫/);
+});
+
+test('investor segments use the shared opening-or-closing scale for increase, decrease and no change',()=>{
+  const render=(openingCumulative,periodNetChange,closingCumulative)=>pageFixture(entriesPath,{
+    0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:true,
+    26:{month:'2026-09',configured:true,summary:{...zeroInvestmentSummary,openingCumulative,periodNetChange,closingCumulative},participants:[{participantId:1,participantName:'MJK',openingCumulative,periodOpening:0,periodContribution:Math.max(0,periodNetChange),periodAdjustment:Math.min(0,periodNetChange),periodNetChange,closingCumulative}],events:[]},
+  }).html;
+  const gain=render(100_000_000,30_000_000,130_000_000);
+  const loss=render(100_000_000,-20_000_000,80_000_000);
+  const flat=render(100_000_000,0,100_000_000);
+  const gainPrior=gain.match(/class="investmentPrior" style="width:([^%]+)%"/);
+  const gainSegment=gain.match(/class="investmentIncrease" style="left:([^%]+)%;width:([^%]+)%"/);
+  assert.ok(gainPrior && gainSegment);
+  assert.ok(Math.abs(Number(gainPrior[1])-100/130*100)<0.001);
+  assert.ok(Math.abs(Number(gainSegment[1])-100/130*100)<0.001);
+  assert.ok(Math.abs(Number(gainSegment[2])-30/130*100)<0.001);
+  assert.match(gain,/class="investmentValues"><strong[^>]*>\+30\.000\.000 ₫<\/strong><\/div>/);
+  assert.match(loss,/class="investmentPrior" style="width:100%"><span>100\.000\.000 ₫<\/span>/);
+  assert.match(loss,/class="investmentDecrease" style="left:80%;width:20%"/);
+  assert.match(loss,/class="investmentValues"><strong[^>]*>-20\.000\.000 ₫<\/strong><\/div>/);
+  assert.match(flat,/class="investmentPrior" style="width:100%"><span>100\.000\.000 ₫<\/span>/);
+  assert.match(flat,/class="investmentValues"><\/div>/);
+  assert.doesNotMatch(flat,/class="investmentIncrease"|class="investmentDecrease"/);
 });
 
 test('a load() call superseded by a newer one can never write state, even if its response resolves later (stale-response sequence guard)',async()=>{

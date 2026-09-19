@@ -139,7 +139,8 @@ type CardSettlementSummary = { monthlyCardGross:number; monthlySettledGross:numb
 type InvestmentEntryType = "opening" | "contribution" | "adjustment";
 type InvestmentEvent = { investmentId:number; participantId:number; participantName:string; entryType:InvestmentEntryType; amount:number; businessDate:string; occurredAt:string; fundAccountId:number|null; fundAccountName:string|null; reason:string|null };
 type InvestmentSummary = { openingCumulative:number; periodOpening:number; periodContribution:number; periodAdjustment:number; periodNetChange:number; closingCumulative:number };
-type InvestmentsData = { month:string; configured:boolean; summary:InvestmentSummary; events:InvestmentEvent[] };
+type InvestmentParticipant = InvestmentSummary & { participantId:number; participantName:string };
+type InvestmentsData = { month:string; configured:boolean; summary:InvestmentSummary; participants:InvestmentParticipant[]; events:InvestmentEvent[] };
 type MonthCloseState = { month: string; state: "open" | "closed" | "reopened"; revision: number | null };
 const accountEmoji = (code:string,type:string) => code === "card_clearing" || type === "card_clearing" ? "💳" : code === "store_cash" ? "💵" : type === "personal_custody" || code.endsWith("_personal_custody") ? "👤" : "🏦";
 
@@ -459,6 +460,7 @@ function LedgerEntriesContent() {
   );
   const payableParties = payables?.parties ?? [];
   const activeInvestments = investments && investments.month === month ? investments : null;
+  const largestParticipantInvestment = Math.max(0, ...(activeInvestments?.participants ?? []).map(participant=>Math.max(participant.openingCumulative,participant.closingCumulative)));
   const todayKey = todayDate();
   const pastGroups = useMemo(
     () => groups.filter((group) => group.date < todayKey),
@@ -950,6 +952,31 @@ function LedgerEntriesContent() {
                   </>
                 ) : (
                   <>
+                    <div className={styles.investmentChart} aria-label={vi?"Vốn góp lũy kế theo người":"투자자별 누적 투자금"}>
+                      <div className={styles.investmentChartLegend}>
+                        <span><i className={styles.investmentPriorKey}/>{vi?"Lũy kế trước tháng":"기존 누적"}</span>
+                        <span><i className={styles.investmentIncreaseKey}/>{vi?"Tăng trong tháng":"이번 달 증가"}</span>
+                        <span><i className={styles.investmentDecreaseKey}/>{vi?"Giảm trong tháng":"이번 달 감소"}</span>
+                      </div>
+                      {(activeInvestments.participants ?? []).map(participant=>{
+                        const opening = Math.max(0, participant.openingCumulative);
+                        const increase = Math.max(0, participant.periodNetChange);
+                        const decrease = Math.max(0, -participant.periodNetChange);
+                        const percentage = (amount:number) => largestParticipantInvestment > 0 ? amount / largestParticipantInvestment * 100 : 0;
+                        return <div className={styles.investmentChartRow} key={participant.participantId}>
+                          <strong className={styles.investmentName}>{participant.participantName}</strong>
+                          <div className={styles.investmentTrack} role="img" aria-label={`${participant.participantName}: ${vi?"lũy kế cuối tháng":"월말 누적"} ${money(participant.closingCumulative)}${participant.periodNetChange!==0?`, ${vi?"thay đổi trong tháng":"당월 변동"} ${participant.periodNetChange>0?"+":""}${money(participant.periodNetChange)}`:""}`}>
+                            {opening>0?<span className={styles.investmentPrior} style={{width:`${percentage(opening)}%`}}><span>{money(participant.openingCumulative)}</span></span>:null}
+                            {increase>0?<span className={styles.investmentIncrease} style={{left:`${percentage(opening)}%`,width:`${percentage(increase)}%`}}/>:null}
+                            {decrease>0?<span className={styles.investmentDecrease} style={{left:`${percentage(Math.max(0,opening-decrease))}%`,width:`${percentage(decrease)}%`}}/>:null}
+                            {opening===0 && increase===0?<span className={styles.investmentZero}>{money(0)}</span>:null}
+                          </div>
+                          <div className={styles.investmentValues}>
+                            {participant.periodNetChange!==0?<strong className={participant.periodNetChange<0?styles.amountExpense:styles.investmentIncreaseValue}>{participant.periodNetChange>0?"+":""}{money(participant.periodNetChange)}</strong>:null}
+                          </div>
+                        </div>;
+                      })}
+                    </div>
                     <dl className={styles.payableMonthTotals}>
                       <div><dt>🏁 {vi?"Lũy kế đầu tháng":"월초 누적"}</dt><dd>{money(activeInvestments.summary.openingCumulative)}</dd></div>
                       {activeInvestments.summary.periodOpening!==0?<div><dt>📌 {vi?"Vốn ghi nhận đầu kỳ trong tháng":"당월 기준투자금"}</dt><dd>{activeInvestments.summary.periodOpening>0?"+":""}{money(activeInvestments.summary.periodOpening)}</dd></div>:null}
@@ -957,7 +984,7 @@ function LedgerEntriesContent() {
                       <div><dt>🛠️ {vi?"Điều chỉnh tháng này":"당월 조정"}</dt><dd>{activeInvestments.summary.periodAdjustment>0?"+":""}{money(activeInvestments.summary.periodAdjustment)}</dd></div>
                       <div><dt>💼 {vi?"Lũy kế cuối tháng":"월말 누적"}</dt><dd>{money(activeInvestments.summary.closingCumulative)}</dd></div>
                     </dl>
-                    <p className={styles.statusHint}>{vi?"Vốn góp thêm là dòng vốn vào, được tính vào tiền đang giữ nhưng không tính là doanh thu hay lợi nhuận kinh doanh.":"추가투자는 자본유입으로 보유금에 포함되며, 영업수입·영업이익에는 포함되지 않습니다."}</p>
+                    <p className={styles.statusHint}>{vi?"Vốn góp được theo dõi lũy kế theo tháng. Khoản góp thêm được tính vào tiền đang giữ, nhưng không tính vào doanh thu hoặc lợi nhuận kinh doanh.":"투자금은 월별 누적 기준으로 추적합니다. 추가투자는 보유금에 포함되며 영업수입·영업이익에는 포함되지 않습니다."}</p>
                     {activeInvestments.events.length ? (
                       <div className={styles.itemList}>
                         {activeInvestments.events.map((event) => (
