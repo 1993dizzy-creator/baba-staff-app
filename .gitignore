@@ -44,3 +44,6 @@ next-env.d.ts
 .tmp/
 
 /.cache/
+
+# QA browser profiles
+/.qa-income-card-chrome*/
