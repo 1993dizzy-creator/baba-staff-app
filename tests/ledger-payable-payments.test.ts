@@ -4,6 +4,8 @@ import{buildOldestFirstAllocations,calculatePayableBalances,payableMonthBounds,s
 import ts from "typescript";
 // @ts-expect-error Node strips TypeScript extensions in tests.
 import * as payableFunctions from "../lib/ledger/payables.ts";
+// @ts-expect-error Node strips TypeScript extensions in tests.
+import * as paymentVerificationFunctions from "../lib/ledger/payment-verification.ts";
 const read=(p:string)=>readFileSync(join(process.cwd(),p),"utf8"),migration=read("supabase/migrations/202608210004_add_ledger_payable_payments.sql"),pay=read("app/api/admin/ledger/payables/pay/route.ts"),dashboard=read("app/api/admin/ledger/payables/route.ts"),detail=read("app/api/admin/ledger/payables/[partyId]/route.ts"),party=read("app/api/admin/ledger/parties/route.ts"),mapping=read("app/api/admin/ledger/supplier-party-mappings/route.ts"),page=read("app/(protected)/admin/ledger/payables/page.tsx"),ledger=read("app/api/admin/ledger/route.ts"),inventoryMigration=read("supabase/migrations/202608210003_add_inventory_purchase_candidates.sql"),pos=read("lib/sales/payment-summary.ts");
 test("unpaid payable can be fully paid",()=>assert.match(migration,/least\(v_remaining,v_outstanding\)/));
 test("payable supports partial payment",()=>assert.match(migration,/'partially_paid'/));
@@ -83,7 +85,7 @@ function payableApi(rows:ReturnType<typeof source>[],payments:ReturnType<typeof 
     const field=(row:Record<string,unknown>,name:string)=>name.split(".").reduce<unknown>((value,key)=>(value as Record<string,unknown>)?.[key],row);
     const query={select(){return query},order(){return query},eq(name:string,value:unknown){if(name!=="type")filters.push(row=>field(row,name)===value);return query},neq(name:string,value:unknown){filters.push(row=>field(row,name)!==value);return query},lt(name:string,value:string){filters.push(row=>String(field(row,name))<value);return query},range(start:number,end:number){from=start;to=end;return query},then(resolve:(value:unknown)=>unknown){return Promise.resolve({data:tables[table].filter(row=>filters.every(filter=>filter(row as Record<string,unknown>))).slice(from,to+1),error:null}).then(resolve)}};return query;
   }};
-  const dependencies:Record<string,unknown>={"@/lib/ledger/payables":payableFunctions,"@/lib/ledger/inventory-display":{withInventoryDisplay:async(rows:unknown[])=>rows},"@/lib/supabase/server":{supabaseServer:supabase},"@/lib/ledger/server":{requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{},ledgerJson:(body:unknown,status=200)=>Response.json(body,{status})}};
+  const dependencies:Record<string,unknown>={"@/lib/ledger/payables":payableFunctions,"@/lib/ledger/payment-verification":paymentVerificationFunctions,"@/lib/ledger/inventory-display":{withInventoryDisplay:async(rows:unknown[])=>rows},"@/lib/supabase/server":{supabaseServer:supabase},"@/lib/ledger/server":{requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{},ledgerJson:(body:unknown,status=200)=>Response.json(body,{status})}};
   const testModule={exports:{} as {GET:(request:Request)=>Promise<Response>}};
   const code=ts.transpileModule(dashboard,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   new Function("require","module","exports",code)((name:string)=>{assert.ok(name in dependencies);return dependencies[name]},testModule,testModule.exports);
@@ -97,6 +99,21 @@ test("actual GET preserves current response, returns historical month summary an
 test("actual GET validates month and retains authorization gate before DB reads",async()=>{
   const api=payableApi([],[]);assert.equal((await api.get("?month=2026-13")).status,400);assert.equal(api.calls.length,0);
   const denied=payableApi([],[],true);assert.equal((await denied.get("?month=2026-09")).status,403);assert.equal(denied.calls.length,0);
+});
+test("payment verification is separate from ordinary payable totals in the actual GET",async()=>{
+  const special={...source(1,"2026-08-29",1900000),expense:{...source(1).expense,source_snapshot:{item_name:"Kent",supplier:"Chợ",change_quantity:50,purchase_price:38000,paymentVerification:"pending"}}};
+  const ordinary=source(2,"2026-08-29",500000);
+  const current=await (await payableApi([special,ordinary],[]).get()).json();
+  assert.equal(current.totalOutstanding,500000);
+  assert.equal(current.verification.totalPending,1900000);
+  assert.equal(current.verification.pendingCount,1);
+  assert.equal(current.parties[0].outstandingAmount,500000);
+  const paid=await (await payableApi([special,ordinary],[allocation("2026-09-04",1900000)]).get()).json();
+  assert.equal(paid.verification.totalPending,0);
+  assert.equal(paid.verification.items[0].paymentDate,"2026-09-04");
+  const august=await (await payableApi([special,ordinary],[allocation("2026-09-04",1900000)]).get("?month=2026-08")).json();
+  assert.equal(august.verification.totalPending,1900000);
+  assert.equal(august.verification.items[0].paymentDate,null);
 });
 test("actual GET pages beyond 1000 payables and allocations without losing balances",async()=>{
   const rows=Array.from({length:1001},(_,i)=>source(i+1)),payments=rows.map(row=>allocation("2026-09-01",100,row.id));

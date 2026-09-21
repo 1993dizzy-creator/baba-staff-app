@@ -2,6 +2,7 @@ import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { withInventoryDisplay } from "@/lib/ledger/inventory-display";
 import { calculatePayableBalances, payableDisplayAsOf, payableMonthBounds, sumPayableAmounts } from "@/lib/ledger/payables";
+import { buildPaymentVerificationItems, isPaymentVerification } from "@/lib/ledger/payment-verification";
 
 async function loadAll<T>(query:(from:number,to:number)=>PromiseLike<{data:T[]|null;error:unknown}>){
   const rows:T[]=[];
@@ -25,11 +26,13 @@ export async function GET(request: Request) {
   const loadError=payableResult.error??allocationResult.error??paymentResult.error??bridgeResult.error??partnerResult.error;
   if(loadError){console.error("[LEDGER_PAYABLES_GET_FAILED]",loadError);return ledgerJson({ok:false,code:"PAYABLES_LOAD_FAILED"},500)}
   // Supabase's untyped client infers embedded many-to-one relations as arrays.
-  const sources=payableResult.data.map(row=>({...row,expense:row.expense as unknown as {id:number;business_date:string;status:string;memo:string|null;source_snapshot:Record<string,unknown>|null}|null}));
+  const sources=payableResult.data.map(row=>({...row,expense:row.expense as unknown as {id:number;business_date:string;status:string;memo:string|null;source_snapshot:Record<string,unknown>|null}|null,party:row.party as unknown as {name:string}|null}));
   const allocations=allocationResult.data.map(row=>({...row,payment:row.payment as unknown as {business_date:string;status:string}|null}));
-  const balances=calculatePayableBalances(sources,allocations,month??undefined);
+  const verification=buildPaymentVerificationItems(sources,allocations);
+  const ordinarySources=sources.filter(row=>!isPaymentVerification(row));
+  const balances=calculatePayableBalances(ordinarySources,allocations,month??undefined);
   const payables=balances.payables.map(row=>({...row,allocations:allocations.filter(item=>item.payable_id===row.id).map(item=>({allocated_amount:item.allocated_amount}))}));
-  const historySources=month===null?[]:sources.filter(row=>row.status!=="cancelled"&&row.expense?.status==="confirmed"&&row.expense.business_date<bounds!.nextMonthStart);
+  const historySources=month===null?[]:ordinarySources.filter(row=>row.status!=="cancelled"&&row.expense?.status==="confirmed"&&row.expense.business_date<bounds!.nextMonthStart);
   const historyAllocations=new Map<number,typeof allocations>();
   for(const allocation of allocations){const list=historyAllocations.get(Number(allocation.payable_id))??[];list.push(allocation);historyAllocations.set(Number(allocation.payable_id),list)}
   const historyExpenses=await withInventoryDisplay(historySources.flatMap(row=>row.expense?[row.expense]:[]));
@@ -48,11 +51,11 @@ export async function GET(request: Request) {
   for(const party of map.values()){const rows=payables.filter(row=>Number(row.party_id)===party.partyId);party.outstandingAmount=sumPayableAmounts(rows.map(row=>row.outstandingAmount));party.partialPaidAmount=sumPayableAmounts(rows.map(row=>row.allocatedAmount));party.totalOpenAmount=sumPayableAmounts(rows.map(row=>row.original_amount))}
   const currentParties=[...map.values()];
   const parties=month===null?currentParties:(balances.partySummaries??[]).map(summary=>{
-    const source=sources.find(row=>Number(row.party_id)===summary.partyId);
+    const source=ordinarySources.find(row=>Number(row.party_id)===summary.partyId);
     const partyRelation=source?.party as unknown as {name:string}|null;
     const businessPartnerId=businessPartnerByLedgerParty.get(summary.partyId);
     const metadata=map.get(summary.partyId)??{partyId:summary.partyId,partyName:partyRelation?.name??"-",partnerType:businessPartnerId===undefined?null:partnerTypeByBusinessPartner.get(businessPartnerId)??null,partialPaidAmount:0,totalOpenAmount:0,openCount:0,oldestDate:"",nearestDueDate:null,recentPaymentDate:recent.get(summary.partyId)??null};
     return {...metadata,...summary,outstandingAmount:summary.closingOutstanding};
   });
-  return ledgerJson({ok:true,totalOutstanding:balances.totalOutstanding,...(month!==null?{month,summary:balances.summary,historyPayables}:{}),payables,parties:parties.sort((a,b)=>b.outstandingAmount-a.outstandingAmount)});
+  return ledgerJson({ok:true,totalOutstanding:balances.totalOutstanding,verification,...(month!==null?{month,summary:balances.summary,historyPayables}:{}),payables,parties:parties.sort((a,b)=>b.outstandingAmount-a.outstandingAmount)});
 }

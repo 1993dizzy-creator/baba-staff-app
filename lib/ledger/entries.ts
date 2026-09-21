@@ -60,7 +60,7 @@ export type LedgerEntry = {
   categoryName: string | null;
   transactionId: number | null;
   drilldown: "inventory" | "pos" | "payroll" | "meal" | "generic";
-  defaultResolution?: "immediate" | "payable";
+  defaultResolution?: "immediate" | "payable" | "verification_pending";
   defaultFundAccountId?: number | null;
   partyId?: number | null;
   systemDisplay?:
@@ -446,11 +446,11 @@ export function buildLedgerEntries(
   for (const row of candidates) {
     const partyId = row.proposed_party_id == null ? null : value(row.proposed_party_id);
     const defaults = partyId === null ? undefined : partnerDefaultsByParty.get(partyId);
-    const resolution = defaults?.paymentMode === "postpaid" ? "payable" : "immediate";
+    const resolution = defaults?.paymentMode === "postpaid" ? "payable" : "verification_pending";
     const partyMissing = !row.party?.name?.trim();
     const partyName = inventorySupplierName(row);
     const partyIdentity = inventoryPartyIdentity(partyId, partyName);
-    const accountName = resolution === "payable" ? "미지급" : defaults?.defaultFundAccountName ?? "결제계정 확인 필요";
+    const accountName = resolution === "payable" ? "미지급" : "결제 미확인";
     const key = `pending-inventory:${row.business_date}:${partyIdentity}:${resolution}:${defaults?.defaultFundAccountId ?? "none"}`;
     const group = inventoryGroups.get(key) ?? {
       id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "pending", isSystemAdjustment: false,

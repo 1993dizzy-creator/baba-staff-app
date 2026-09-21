@@ -9,6 +9,8 @@ type Preflight = { canClose: boolean; blockers: Issue[]; warnings: Issue[]; pref
 type Check = { month?: string; state: "open" | "closed" | "reopened"; preflight?: Preflight };
 
 const issueNames: Record<string, [string, string]> = {
+  PAYMENT_VERIFICATION_UNRESOLVED: ["결제 미확인 입고", "Hàng nhập chưa xác minh thanh toán"],
+  PAYMENT_VERIFICATION_LATER_PAID: ["월말 결제 미확인 입고", "Hàng nhập chưa xác minh thanh toán cuối tháng"],
   PAYABLE_OUTSTANDING: ["미납금", "Công nợ chưa thanh toán"],
   BALANCE_ADJUSTMENT: ["잔액 조정 기록", "Điều chỉnh số dư"],
   RESERVE_SHORTFALL: ["임대료 준비금 미충족", "Chưa đủ quỹ dự phòng tiền thuê"],
@@ -34,6 +36,8 @@ function issueName(issue: Issue, vi: boolean) {
 }
 
 function issueValue(issue: Issue, vi: boolean) {
+  if (issue.code.startsWith("PAYMENT_VERIFICATION_") && typeof issue.count === "number" && typeof issue.amount === "number")
+    return `${issue.count}${vi ? " mục" : "건"} · ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(issue.amount)} ₫`;
   if (typeof issue.amount === "number") return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(issue.amount)} ₫`;
   if (typeof issue.count === "number") return `${issue.count}${vi ? " mục" : "건"}`;
   return vi ? "Cần kiểm tra" : "확인 필요";

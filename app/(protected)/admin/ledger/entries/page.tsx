@@ -110,7 +110,7 @@ type EntryFilter = "all" | "income" | "expense" | "manual" | "pending";
 type EntryType = "expense" | "income" | "transfer" | "balance_adjustment";
 type CandidateDraft = {
   item: LedgerEntryItem;
-  resolution: "immediate" | "payable";
+  resolution: "immediate" | "payable" | "verification_pending";
   categoryId: string;
   fundAccountId: string;
   memo: string;
@@ -554,7 +554,7 @@ function LedgerEntriesContent() {
     if (selected && item.candidateId) {
       const draft = {
         item,
-        resolution: selected.defaultResolution ?? "immediate",
+        resolution: selected.defaultResolution ?? "verification_pending",
         categoryId: String(item.categoryId ?? ""),
         fundAccountId: String(selected.defaultFundAccountId ?? ""),
         memo: "",
@@ -1421,6 +1421,7 @@ function EntryDetailSheet({
         <div className={styles.candidateEditor}>
           <h3>{candidateDraft.item.name}</h3>
           <BarSegmentedControl
+            scrollable
             label={vi ? "Phương thức xử lý" : "처리 방식"}
             value={candidateDraft.resolution}
             disabled={saving}
@@ -1435,6 +1436,10 @@ function EntryDetailSheet({
               {
                 value: "payable",
                 label: vi ? "Ghi nhận công nợ" : "미지급 등록",
+              },
+              {
+                value: "verification_pending",
+                label: vi ? "Chưa xác minh thanh toán" : "결제 미확인",
               },
             ]}
           />

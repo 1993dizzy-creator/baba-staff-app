@@ -101,6 +101,17 @@ test("blockers prevent close; unknown codes have safe localized fallback", async
   assert.equal(fixture.calls.length, 1);
 });
 
+test("payment verification blocker shows count and amount without a raw code", async () => {
+  const fixture = sheetFixture({ replies: [{ body: check({ canClose: false, blockers: [{ code: "PAYMENT_VERIFICATION_UNRESOLVED", count: 3, amount: 2_450_000 }], warnings: [] }) }] });
+  fixture.render().effects[0]();
+  await flush();
+  const ready = fixture.render();
+  assert.match(ready.html, /결제 미확인 입고/);
+  assert.match(ready.html, /3건 · 2\.450\.000 ₫/);
+  assert.doesNotMatch(ready.html, /PAYMENT_VERIFICATION_UNRESOLVED/);
+  assert.equal(ready.buttons.find(button => button.props.children === "마감 완료")?.props.disabled, true);
+});
+
 test("stale preflight shows guidance and refreshes the sheet before another close", async () => {
   const fixture = sheetFixture({ replies: [
     { body: check() },

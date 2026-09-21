@@ -72,7 +72,8 @@ test("inventory candidates are summarized by date, partner and payment default",
   assert.equal(entries.length, 2);
   assert.deepEqual(entries.map(entry => entry.items.length), [400, 44]);
   assert.equal(entries[0].title, "OK FOOD");
-  assert.equal(entries[0].accountName, "BABA 법인계좌");
+  assert.equal(entries[0].accountName, "결제 미확인");
+  assert.equal(entries[0].defaultResolution, "verification_pending");
   assert.equal(entries[0].amount, 40_000);
 });
 

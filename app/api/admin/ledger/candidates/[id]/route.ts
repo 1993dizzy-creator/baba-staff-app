@@ -6,9 +6,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const { id } = await context.params; const candidateId = Number(id);
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const allowed = new Set(["resolution", "categoryId", "partyId", "fundAccountId", "dueDate", "memo", "reason"]);
-  if (!Number.isInteger(candidateId) || candidateId <= 0 || !body || Object.keys(body).some((key) => !allowed.has(key)) || !["immediate", "payable", "dismiss"].includes(String(body.resolution))) return ledgerJson({ ok: false, code: "INVALID_BODY" }, 400);
+  if (!Number.isInteger(candidateId) || candidateId <= 0 || !body || Object.keys(body).some((key) => !allowed.has(key)) || !["immediate", "payable", "verification_pending", "dismiss"].includes(String(body.resolution))) return ledgerJson({ ok: false, code: "INVALID_BODY" }, 400);
   const {data:candidate,error:candidateError}=await supabaseServer.from("ledger_candidates").select("candidate_type").eq("id",candidateId).maybeSingle();
   if(candidateError)return ledgerJson({ok:false,code:"CANDIDATE_LOAD_FAILED"},500);
+  if(body.resolution==="verification_pending"&&candidate?.candidate_type!=="inventory_purchase")return ledgerJson({ok:false,code:"INVALID_BODY"},400);
   const rpcName=candidate?.candidate_type==="inventory_purchase"?"ledger_resolve_inventory_candidate_v1":"ledger_resolve_candidate_v2";
   const { data, error } = await supabaseServer.rpc(rpcName, {
     p_candidate_id: candidateId, p_resolution: body.resolution, p_category_id: body.categoryId || null,

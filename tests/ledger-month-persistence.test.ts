@@ -20,7 +20,8 @@ test("month navigation preserves other query parameters", () => {
 
 test("URL is the month source for refresh and browser history with a Suspense boundary", () => {
   assert.match(page, /useSearchParams\(\)/);
-  assert.match(page, /selectedLedgerMonth\(requestedMonth, currentMonth\(\)\)/);
+  assert.match(page, /const businessMonth = currentMonth\(\)/);
+  assert.match(page, /selectedLedgerMonth\(requestedMonth, businessMonth\)/);
   assert.match(page, /router\.push\(ledgerMonthHref\(pathname, searchParams\.toString\(\), nextMonth\)/);
   assert.match(page, /<Suspense fallback=/);
   assert.doesNotMatch(page, /useState\(currentMonth\)/);
