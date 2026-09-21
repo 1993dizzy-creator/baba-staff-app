@@ -36,8 +36,10 @@ export type LedgerEntry = {
   participatesInProfit?: boolean;
   origin: "auto" | "manual";
   status: "confirmed" | "pending";
+  isSystemAdjustment: boolean;
   title: string;
   subtitle: string;
+  memo?: string | null;
   amount: number;
   // Signed multiplier (+1/-1) for netting corrections/reversals into visible
   // date-group subtotals without changing the displayed row amount.
@@ -106,6 +108,14 @@ export type MealCandidateSource = {
 // ledger_transaction_recognition_policy check constraint — i.e. types that
 // represent a real profit/loss event rather than a pure fund movement.
 const PROFIT_TYPES = new Set(["income", "expense", "sales", "expense_recognition"]);
+
+function isSystemAdjustmentTransaction(row: TransactionRow) {
+  if (row.source_key === "legacy-sheet-small-diff:2026-08") return false;
+  return row.source_type === "ledger_correction" ||
+    row.type === "balance_adjustment" ||
+    /reversal|technical_adjustment/.test(row.source_type) ||
+    /월말\s*잔액\s*맞춤|상세\s*전환\s*상쇄|기술적\s*보정/.test(row.memo ?? "");
+}
 
 export function accountFromPaymentNote(note: unknown) {
   if(typeof note!=="string")return null;
@@ -351,7 +361,7 @@ export function buildLedgerEntries(
       const partyIdentity = inventoryPartyIdentity(partyId, partyName);
       const key = `confirmed-inventory:${row.business_date}:${partyIdentity}:${accountName ?? "payable"}:${paymentDisplay?.status??"immediate"}`;
       const group = inventoryGroups.get(key) ?? {
-        id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "confirmed",
+        id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "confirmed", isSystemAdjustment: false,
         title: partyName, subtitle: "", amount: 0, economicEffectSign: 1, displayTime: null, sortTimestamp: 0,
         inventoryStartAt: null, inventoryEndAt: null, accountName: accountName ?? "미지급",
         categoryName: row.category?.name ?? null, transactionId, drilldown: "inventory",
@@ -390,6 +400,7 @@ export function buildLedgerEntries(
         direction: "expense",
         origin: "auto",
         status: "confirmed",
+        isSystemAdjustment: false,
         title: "",
         subtitle: "",
         amount: effectiveAmount,
@@ -420,9 +431,10 @@ export function buildLedgerEntries(
     const specialDisplay = specialTransactionDisplay(row);
     entries.push({
       id: `transaction:${transactionId}`, businessDate: row.business_date, direction, participatesInProfit,
-      origin: automatic ? "auto" : "manual", status: "confirmed",
+      origin: automatic ? "auto" : "manual", status: "confirmed", isSystemAdjustment: isSystemAdjustmentTransaction(row),
       title: specialDisplay?.title ?? (pos || rent ? "" : payroll ? "급여 · 인건비" : displayMemo(row.memo) || row.party?.name || row.category?.name || "장부 거래"),
       subtitle: specialDisplay?.subtitle ?? (pos || rent ? "" : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력")),
+      memo: row.memo ?? null,
       amount, economicEffectSign, ...time, accountName, settlementStatus: paymentDisplay?.status, remainingAmount: paymentDisplay?.remainingAmount, categoryName: row.category?.name ?? null, transactionId,
       drilldown: pos ? "pos" : payroll ? "payroll" : "generic",
       ...(pos ? { systemDisplay: { kind: "pos" as const, paymentBucket: posPaymentBucket, receiptCount: value(snapshot.receiptCount) } } : {}),
@@ -441,7 +453,7 @@ export function buildLedgerEntries(
     const accountName = resolution === "payable" ? "미지급" : defaults?.defaultFundAccountName ?? "결제계정 확인 필요";
     const key = `pending-inventory:${row.business_date}:${partyIdentity}:${resolution}:${defaults?.defaultFundAccountId ?? "none"}`;
     const group = inventoryGroups.get(key) ?? {
-      id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "pending",
+      id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "pending", isSystemAdjustment: false,
       title: partyName, subtitle: "", amount: 0, economicEffectSign: 1,
       displayTime: null, sortTimestamp: 0, inventoryStartAt: null, inventoryEndAt: null, accountName,
       categoryName: row.category?.name ?? null, transactionId: null, drilldown: "inventory",

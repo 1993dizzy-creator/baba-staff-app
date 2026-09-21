@@ -68,6 +68,7 @@ async function summary(sales, lines, { failAllocations = false } = {}) {
       if (name === "@/lib/ledger/reserve-balances") return { reservesByFundAccount: () => new Map() };
       if (name === "@/lib/ledger/payables") return { computePaidExpenseTotal: () => 0 };
       if (name === "@/lib/ledger/summary") return require("../lib/ledger/summary.ts");
+      if (name === "@/lib/ledger/cash-outflow") return require("../lib/ledger/cash-outflow.ts");
       if (name === "@/lib/ledger/card-settlements") return require("../lib/ledger/card-settlements.ts");
       if (name === "@/lib/common/business-time") return {
         getBusinessDate: () => "2026-09-15",
@@ -106,11 +107,12 @@ test("cancelled reconciliation allocations are excluded", async () => {
   assert.equal(body.summary.unsettledCardGross, 80);
 });
 
-test("September deposits settling August POS sales reduce August unsettled gross", async () => {
+test("August month-end unsettled gross does not retroactively include a September deposit", async () => {
   const s = sale(1, 100);
   const { body } = await summary([s], [line(1, s, 100, "matched", "2026-09-10")]);
+  // The August as-of snapshot excludes allocations deposited after August 31.
   assert.equal(body.summary.actualCardDeposits, 0);
-  assert.equal(body.summary.unsettledCardGross, 0);
+  assert.equal(body.summary.unsettledCardGross, 100);
 });
 
 test("other months, non-card sources and unconfirmed sales do not reduce August card gross", async () => {

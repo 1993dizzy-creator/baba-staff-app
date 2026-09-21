@@ -77,7 +77,7 @@ test("Ledger rendering hides superseded effects and refreshes every dashboard so
   assert.match(entries,/row\.correction_of_id/);
   assert.match(entries,/reversedInventoryIds\.has\(value\(row\.id\)\)/);
   assert.match(entries,/inventory_purchase_candidate" \|\| row\.source_type === "inventory_purchase_rebook/);
-  assert.match(ledgerApi,/payable:ledger_payables\(id,due_date,status,allocations:ledger_payable_allocations\(allocated_amount\)\)/);
+  assert.match(ledgerApi,/payable:ledger_payables\(id,original_amount,due_date,status,allocations:ledger_payable_allocations\(allocated_amount,payment:ledger_transactions!payment_transaction_id/);
   assert.match(page,/const fresh = await load\(\)/);
   assert.match(page,/entry\.items\.some\(\(item\) => item\.transactionId === transactionId\)/);
   assert.match(page,/setPayables\(payableBody\)/);

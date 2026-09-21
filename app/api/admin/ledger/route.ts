@@ -7,6 +7,7 @@ import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { computePaidExpenseTotal, sumConfirmedAllocationsThroughMonth } from "@/lib/ledger/payables";
 import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
 import { computeDisplayedExpense, computeReceivedIncome } from "@/lib/ledger/summary";
+import { computeActualCashOutflow } from "@/lib/ledger/cash-outflow";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
 import { buildFundAccountView, fundAccountViewMode } from "@/lib/ledger/fund-account-view";
 
@@ -53,7 +54,7 @@ export async function GET(request: Request) {
     // Card gross sales: this month's POS card-bucket sales (business_date scoped), before card-company fees.
     const cardGrossSalesPromise = loadCardSales(monthStart, nextMonth);
     // Actual card deposits: this month's real bank deposits from the card company (deposit_date scoped, not the sale's month).
-    const actualCardDepositsPromise = loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("deposit_amount").neq("status", "cancelled").gte("deposit_date", monthStart).lt("deposit_date", nextMonth).order("id").range(from, to));
+    const actualCardDepositsPromise = loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("deposit_amount,difference_amount,status").neq("status", "cancelled").gte("deposit_date", monthStart).lt("deposit_date", nextMonth).order("id").range(from, to));
     const reservesPromise = fundsViewMode === "closed_snapshot"
       ? Promise.resolve({ data: [], error: null })
       : supabaseServer.from("ledger_reserve_plans")
@@ -85,7 +86,9 @@ export async function GET(request: Request) {
     ]);
     for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,reservesResult,reserveEntriesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
     const profitRows=[...(profitResult.data??[]),...(recognitionProfitResult.data??[])];
-    const recognizedIncome = profitRows.filter((row) => row.type === "income" || row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
+    const salesIncome = profitRows.filter((row) => row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
+    const otherIncome = profitRows.filter((row) => row.type === "income").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
+    const recognizedIncome = salesIncome + otherIncome;
     const expense = profitRows.filter((row) => row.type === "expense" || row.type === "expense_recognition").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const lines = await loadCardAllocationLines(cardGrossSalesResult.map(row => Number(row.id)));
     const cardGross = calculateCardGrossAtMonthEnd(cardGrossSalesResult, lines, monthStart, nextMonth);
@@ -93,8 +96,11 @@ export async function GET(request: Request) {
     const reconciledCardGross = cardGross.monthlyReconciledGross;
     const unreconciledCardGross = cardGross.monthlyUnreconciledGross;
     const actualCardDeposits = sumCardMoney(actualCardDepositsResult.map(row => row.deposit_amount));
+    const cardSettlementDifference = sumCardMoney(actualCardDepositsResult.filter(row => row.status === "matched").map(row => row.difference_amount ?? 0));
     const unsettledCardGross = unreconciledCardGross;
     const receivedIncome = computeReceivedIncome(recognizedIncome, cardGrossSales, actualCardDeposits);
+    const businessFundAccountIds = new Set((accountsResult.data ?? []).filter(account => account.is_business_fund).map(account => Number(account.id)));
+    const actualCashOutflow = computeActualCashOutflow(transactions, businessFundAccountIds, month);
     const correctionsByRoot = new Map<number, { amount: number; economicEffectSign: number }[]>();
     for (const row of paidExpenseCorrectionsResult.data ?? []) {
       const key = Number(row.correction_of_id);
@@ -156,7 +162,7 @@ export async function GET(request: Request) {
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
     ]);
     const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources, month);
-    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
+    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);

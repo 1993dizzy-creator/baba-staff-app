@@ -445,11 +445,12 @@ test("ledger entries header mirrors the monthly summary card hierarchy", () => {
   assert.match(pageCompact, /marginTop:8,display:"grid",gridTemplateColumns:"auto1frauto",gap:8/);
   assert.match(pageCompact, /\.\.\.ui\.button,padding:"9px10px",borderRadius:10,fontSize:12,fontWeight:800/);
   assert.match(pageCompact, /\.\.\.ui\.input,width:"100%",minWidth:0,padding:"9px10px",fontSize:13,borderRadius:10/);
-  // The income card uses the API's accounting-income field, while daily groups keep
+  // The income card uses the API's sales and other-income fields, while daily groups keep
   // their recognized-income direction and economic-effect calculation.
-  assert.match(pageCompact, /money\(data\.summary\.income\)/);
+  assert.match(pageCompact, /money\(data\.summary\.receivedIncome-data\.summary\.otherIncome\)/);
+  assert.match(pageCompact, /money\(data\.summary\.otherIncome\)/);
   assert.match(pageCompact, /group\.income\+=subtotal\.income/);
-  assert.match(pageCompact, /money\(data\.summary\.displayedExpense\)/);
+  assert.match(pageCompact, /money\(data\.summary\.actualCashOutflow\)/);
   assert.match(pageCompact, /formatCardSettlementRate\(data\.summary\.cardGrossSales,data\.summary\.monthlySettledGross\)/);
   assert.match(pageCompact, /money\(payables\?\.totalOutstanding\?\?0\)/);
   assert.doesNotMatch(pageCompact, /entry\.direction==="income"\)totals\.income\+=entry\.amount/);

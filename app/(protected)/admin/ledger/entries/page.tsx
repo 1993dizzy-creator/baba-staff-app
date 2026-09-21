@@ -76,11 +76,15 @@ type Partner = {
 };
 type LedgerSummary = {
   income: number;
+  salesIncome: number;
+  otherIncome: number;
   receivedIncome: number;
   expense: number;
   operatingProfit: number;
   paidExpense: number;
   displayedExpense: number;
+  actualCashOutflow: number;
+  cardSettlementDifference: number;
   cardGrossSales: number;
   monthlySettledGross: number;
   actualCardDeposits: number;
@@ -378,10 +382,11 @@ function LedgerEntriesContent() {
     })();
     return () => controller.abort();
   }, [cardSettlementExpanded,month,vi]);
+  const regularEntries = useMemo(() => (data?.entries ?? []).filter((entry) => !entry.isSystemAdjustment), [data?.entries]);
   const groups = useMemo(() => {
     const keyword = search.trim().toLocaleLowerCase(),
       byDate = new Map<string, DateGroup>();
-    for (const entry of data?.entries ?? []) {
+    for (const entry of regularEntries) {
       if (filter === "income" && entry.direction !== "income") continue;
       if (filter === "expense" && entry.direction !== "expense") continue;
       if (filter === "manual" && entry.origin !== "manual") continue;
@@ -411,7 +416,7 @@ function LedgerEntriesContent() {
       group.rows.sort((a, b) => a.sortTimestamp - b.sortTimestamp);
     }
     return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
-  }, [data?.entries, filter, lang, search]);
+  }, [regularEntries, filter, lang, search]);
   const businessAccounts = useMemo(
     () =>
       (data?.accounts ?? [])
@@ -476,14 +481,14 @@ function LedgerEntriesContent() {
     if (!data || data.month !== month || initializedMonthRef.current === month)
       return;
     const dates = [
-        ...new Set(data.entries.map((entry) => entry.businessDate)),
+        ...new Set(regularEntries.map((entry) => entry.businessDate)),
       ].sort(),
       today = todayDate(),
       defaultDate = dates.includes(today) ? today : dates.at(-1);
     setExpandedDates(defaultDate ? new Set([defaultDate]) : new Set());
     setHistoryExpanded(false);
     initializedMonthRef.current = month;
-  }, [data, month]);
+  }, [data, month, regularEntries]);
   function shiftMonth(delta: number) {
     const date = new Date(`${month}-01T00:00:00Z`);
     date.setUTCMonth(date.getUTCMonth() + delta);
@@ -858,14 +863,20 @@ function LedgerEntriesContent() {
                   <i aria-hidden="true">💰</i>
                   {vi ? "Thu" : "수입"}
                 </span>
-                <strong>{money(data.summary.income)}</strong>
+                <div className={styles.summarySubRows}>
+                  <span><span className={styles.summarySubLabel}>{vi ? "Thực thu bán hàng" : "실제 매출입금"}</span><b>{money(data.summary.receivedIncome - data.summary.otherIncome)}</b></span>
+                  <span><span className={styles.summarySubLabel}>{vi ? "Thu nhập khác" : "기타수입"}</span><b>{money(data.summary.otherIncome)}</b></span>
+                </div>
               </article>
               <article className={`${styles.summaryCard} ${styles.expenseCard}`}>
                 <span className={styles.summaryLabel}>
                   <i aria-hidden="true">💸</i>
                   {vi ? "Chi" : "지출"}
                 </span>
-                <strong>{money(data.summary.displayedExpense)}</strong>
+                <div className={styles.summarySubRows}>
+                  <span><span className={styles.summarySubLabel}>{vi ? "Thực chi" : "실제 지출"}</span><b>{money(data.summary.actualCashOutflow)}</b></span>
+                  <span><span className={styles.summarySubLabel}>{vi ? "Phí thẻ · chênh lệch" : "카드 수수료·정산차액"}</span><b>{money(data.summary.cardSettlementDifference)}</b></span>
+                </div>
               </article>
             </section>
             <section

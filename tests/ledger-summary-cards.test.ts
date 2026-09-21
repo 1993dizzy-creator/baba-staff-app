@@ -9,6 +9,7 @@ const { computeDisplayedExpense, computeReceivedIncome } = createRequire(import.
 const read = (path: string) => readFileSync(path, "utf8");
 const route = read("app/api/admin/ledger/route.ts");
 const page = read("app/(protected)/admin/ledger/entries/page.tsx");
+const entriesCss = read("app/(protected)/admin/ledger/entries/entries.module.css");
 const pageCompact = page.replace(/\s+/g, "");
 const panel = read("app/(protected)/admin/ledger/InventoryCandidatePanel.tsx");
 
@@ -340,8 +341,22 @@ test("received income separates recognized card sales from actual card deposits"
 });
 
 test("recognized income and operating profit keep their accounting meaning", () => {
-  assert.match(route, /const recognizedIncome = profitRows[\s\S]*economic_effect_sign/);
-  assert.match(route, /summary:\s*\{\s*income:\s*recognizedIncome,\s*receivedIncome,\s*expense,\s*operatingProfit:\s*recognizedIncome\s*-\s*expense/);
+  const incomeCalculation = route.match(/const salesIncome = profitRows[^\n]*\n\s*const otherIncome = profitRows[^\n]*\n\s*const recognizedIncome = salesIncome \+ otherIncome;/)?.[0];
+  assert.ok(incomeCalculation);
+  const calculate = new Function("profitRows", `${incomeCalculation}\nreturn { salesIncome, otherIncome, recognizedIncome };`) as
+    (rows: Array<{ type: string; amount: number; economic_effect_sign?: number }>) =>
+      { salesIncome: number; otherIncome: number; recognizedIncome: number };
+  const summary = calculate([
+    { type: "sales", amount: 734_634_810 },
+    { type: "income", amount: 51_743 },
+    { type: "expense", amount: 10_000 },
+  ]);
+  assert.deepEqual(summary, { salesIncome: 734_634_810, otherIncome: 51_743, recognizedIncome: 734_686_553 });
+  assert.deepEqual(calculate([{ type: "sales", amount: 100, economic_effect_sign: -1 }, { type: "income", amount: 20 }]),
+    { salesIncome: -100, otherIncome: 20, recognizedIncome: -80 });
+  assert.equal(computeReceivedIncome(summary.recognizedIncome, 100_000, 90_000), 734_676_553);
+  assert.equal(summary.recognizedIncome - 10_000, 734_676_553);
+  assert.match(route, /summary:\s*\{\s*income:\s*recognizedIncome,\s*salesIncome,\s*otherIncome,\s*receivedIncome,\s*expense,\s*operatingProfit:\s*recognizedIncome\s*-\s*expense/);
 });
 
 test("cardGrossSales sums this month's POS card-bucket sales by business_date", () => {
@@ -353,7 +368,7 @@ test("cardGrossSales sums this month's POS card-bucket sales by business_date", 
 });
 
 test("actualCardDeposits sums this month's real deposits by deposit_date (policy A), excluding cancelled", () => {
-  assert.match(route, /from\("ledger_card_reconciliations"\)\.select\("deposit_amount"\)\.neq\("status",\s*"cancelled"\)\.gte\("deposit_date",\s*monthStart\)\.lt\("deposit_date",\s*nextMonth\)/);
+  assert.match(route, /from\("ledger_card_reconciliations"\)\.select\("deposit_amount,difference_amount,status"\)\.neq\("status",\s*"cancelled"\)\.gte\("deposit_date",\s*monthStart\)\.lt\("deposit_date",\s*nextMonth\)/);
 });
 
 test("a prior-month card sale is received only in the later deposit_date month", () => {
@@ -390,20 +405,44 @@ test("the summary block itself (GET handler) issues no RPC — the three new fie
 });
 
 test("summary type is modeled on LedgerData so the cards cannot silently fall back to undefined", () => {
-  assert.match(pageCompact, /typeLedgerSummary=\{income:number;receivedIncome:number;expense:number;operatingProfit:number;paidExpense:number;displayedExpense:number;cardGrossSales:number;monthlySettledGross:number;actualCardDeposits:number;unsettledCardGross:number;\}/);
+  assert.match(pageCompact, /typeLedgerSummary=\{income:number;salesIncome:number;otherIncome:number;receivedIncome:number;expense:number;operatingProfit:number;paidExpense:number;displayedExpense:number;actualCashOutflow:number;cardSettlementDifference:number;cardGrossSales:number;monthlySettledGross:number;actualCardDeposits:number;unsettledCardGross:number;\}/);
   assert.match(pageCompact, /summary:LedgerSummary/);
 });
 
-test("income card shows only the accounting income total", () => {
+test("income card shows actual sales deposits and other income without double counting", () => {
   const card = pageCompact.slice(pageCompact.indexOf("styles.incomeCard"), pageCompact.indexOf("styles.expenseCard"));
-  assert.match(card, /<strong>\{money\(data\.summary\.income\)\}/);
-  assert.doesNotMatch(card, /전체수입|카드결제액|미정산카드|styles\.summarySubRows/);
+  assert.match(card, /styles\.summarySubRows/);
+  assert.match(card, /vi\?"Thựcthubánhàng":"실제매출입금"/);
+  assert.match(card, /vi\?"Thunhậpkhác":"기타수입"/);
+  assert.match(card, /money\(data\.summary\.receivedIncome-data\.summary\.otherIncome\)/);
+  assert.match(card, /money\(data\.summary\.otherIncome\)/);
+  assert.doesNotMatch(card, /money\(data\.summary\.receivedIncome\)/);
+  assert.doesNotMatch(card, /styles\.summaryCashRow/);
+  assert.doesNotMatch(card, /money\(data\.summary\.income\)/);
 });
 
-test("expense card displays paid expense while accounting expense remains in API", () => {
+test("income and expense cards keep two equal columns and their original amount colors", () => {
+  assert.match(entriesCss, /\.summaryGrid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.doesNotMatch(entriesCss, /\.incomeCard\{grid-column:/);
+  assert.doesNotMatch(entriesCss, /\.summaryGrid\{grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(entriesCss, /\.summarySubRows\{[^}]*border-top:1px solid #eef0f2/);
+  assert.match(entriesCss, /\.summaryCard \.summarySubRows>span\{display:grid;grid-template-columns:minmax\(0,1fr\) auto/);
+  assert.match(entriesCss, /\.incomeCard \.summarySubRows>span>b\{color:#16805a\}/);
+  assert.match(entriesCss, /\.expenseCard \.summarySubRows>span>b\{color:#b4493e\}/);
+  assert.match(entriesCss, /@media\(max-width:560px\)\{\.summaryCard \.summarySubRows\{grid-auto-rows:auto\}/);
+});
+
+test("expense card shows cash outflow and card fee as matching rows without adding them", () => {
   const card = pageCompact.slice(pageCompact.indexOf("styles.expenseCard"), pageCompact.indexOf("styles.openingSection"));
-  assert.match(card, /<strong>\{money\(data\.summary\.displayedExpense\)\}/);
-  assert.doesNotMatch(card, /data\.summary\.expense|전체지출|지급완료|styles\.summarySubRows/);
+  assert.match(card, /styles\.summarySubRows/);
+  assert.match(card, /vi\?"Thựcchi":"실제지출"/);
+  assert.match(card, /<b>\{money\(data\.summary\.actualCashOutflow\)\}<\/b>/);
+  assert.doesNotMatch(card, /styles\.summaryReferenceRow/);
+  assert.match(card, /money\(data\.summary\.cardSettlementDifference\)/);
+  assert.doesNotMatch(card, /money\(data\.summary\.actualCashOutflow\+data\.summary\.cardSettlementDifference\)/);
+  assert.doesNotMatch(entriesCss, /\.summaryReferenceRow/);
+  assert.doesNotMatch(card, /money\(data\.summary\.displayedExpense\)/);
+  assert.doesNotMatch(card, /data\.summary\.expense|전체지출|지급완료|<strong>/);
   assert.match(route, /expense, operatingProfit: recognizedIncome - expense/);
 });
 
