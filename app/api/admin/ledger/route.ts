@@ -85,6 +85,9 @@ export async function GET(request: Request) {
       confirmedMealCandidatesPromise, loadMonthTransactions(monthStart, nextMonth), loadPendingInventoryCandidates(monthStart, nextMonth),
     ]);
     for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,reservesResult,reserveEntriesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
+    const priorConfirmedMovements = (openingResult.data?.length ?? 0) > 0
+      ? []
+      : await loadPriorConfirmedFundMovements(monthStart);
     const profitRows=[...(profitResult.data??[]),...(recognitionProfitResult.data??[])];
     const salesIncome = profitRows.filter((row) => row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const otherIncome = profitRows.filter((row) => row.type === "income").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
@@ -134,6 +137,7 @@ export async function GET(request: Request) {
     const accounts = buildFundAccountView({
       accounts: accountsResult.data ?? [],
       openingMovements: openingResult.data ?? [],
+      priorConfirmedMovements,
       movements: movementsResult.data ?? [],
       reservePlans,
       groupReserves: reservesByFundAccount,
@@ -167,6 +171,23 @@ export async function GET(request: Request) {
     console.error("[LEDGER_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);
   }
+}
+
+async function loadPriorConfirmedFundMovements(monthStart: string) {
+  const rows: Array<{ fund_account_id: number; amount: number | string }> = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseServer.from("ledger_movements")
+      .select("id,fund_account_id,amount,transaction:ledger_transactions!inner(status,business_date)")
+      .eq("transaction.status", "confirmed")
+      .lt("transaction.business_date", monthStart)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if ((data?.length ?? 0) < pageSize) break;
+  }
+  return rows;
 }
 
 async function loadMonthTransactions(start: string, end: string) {

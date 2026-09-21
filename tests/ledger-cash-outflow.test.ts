@@ -45,6 +45,28 @@ test("normal month sums external net outflow of business funds in the payment mo
   assert.equal(computeActualCashOutflow(rows, businessFunds, "2026-08"), 100);
 });
 
+test("inventory purchase reversal offsets the erroneous expense before the rebook", () => {
+  const rows = [
+    payment("expense", 7_816_475_000, "2026-09-14", { source_type: "inventory_purchase" }),
+    payment("expense", 7_816_475_000, "2026-09-14", {
+      source_type: "inventory_purchase_reversal",
+      movements: [{ amount: 7_816_475_000, fund_account: { id: 1 } }],
+    }),
+    payment("expense", 5_993_300, "2026-09-14", { source_type: "inventory_purchase_rebook" }),
+  ];
+  assert.equal(computeActualCashOutflow(rows, businessFunds, "2026-09"), 5_993_300);
+});
+
+test("same-month refunds reduce net cash outflow without adding internal transfers", () => {
+  const rows = [
+    payment("expense", 100),
+    payment("expense", 30, "2026-09-10", { source_type: "supplier_refund", movements: [{ amount: 30, fund_account: { id: 1 } }] }),
+    payment("transfer", 900),
+    payment("balance_adjustment", 800),
+  ];
+  assert.equal(computeActualCashOutflow(rows, businessFunds, "2026-09"), 70);
+});
+
 test("internal transfers, investments, adjustments, corrections and technical reversals are excluded", () => {
   const rows = [
     payment("transfer", 10),

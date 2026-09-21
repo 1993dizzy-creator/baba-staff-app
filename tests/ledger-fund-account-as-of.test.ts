@@ -47,6 +47,70 @@ test("live balances and reserves use the same current dataset", () => {
   assert.equal(result[0].openingBalance, 40);
 });
 
+test("an explicit opening takes precedence for the whole month, even with earlier movements", () => {
+  const result = buildFundAccountView({
+    accounts,
+    openingMovements: [{ fund_account_id: 1, amount: 40 }],
+    priorConfirmedMovements: [{ fund_account_id: 1, amount: 900 }, { fund_account_id: 2, amount: 800 }],
+    movements: [{ fund_account_id: 1, amount: 100 }, { fund_account_id: 2, amount: 80 }],
+    reservePlans: [], groupReserves: reservesByFundAccount, mode: "live",
+  });
+  assert.deepEqual(result.map(account => account.openingBalance), [40, 0]);
+  assert.deepEqual(result.map(account => account.balance), [100, 80]);
+});
+
+test("a later month without explicit opening uses the cumulative prior confirmed movements", () => {
+  const result = buildFundAccountView({
+    accounts,
+    openingMovements: [],
+    priorConfirmedMovements: [
+      { fund_account_id: 1, amount: 120 }, { fund_account_id: 1, amount: -20 },
+      { fund_account_id: 2, amount: 80 },
+    ],
+    movements: [{ fund_account_id: 1, amount: 130 }, { fund_account_id: 2, amount: 70 }],
+    reservePlans: [], groupReserves: reservesByFundAccount, mode: "provisional",
+  });
+  assert.deepEqual(result.map(account => account.openingBalance), [100, 80]);
+  assert.deepEqual(result.map(account => account.balance), [130, 70]);
+});
+
+test("September opening matches the four fund balances without doubling live or closed balances", () => {
+  const septemberAccounts = [
+    { id: 1, code: "store_cash" },
+    { id: 2, code: "vuong_personal_custody" },
+    { id: 3, code: "cho_personal_custody" },
+    { id: 4, code: "baba_corporate_bank" },
+  ];
+  const priorConfirmedMovements = [
+    { fund_account_id: 1, amount: 51_502_786 },
+    { fund_account_id: 2, amount: 6_774_110 },
+    { fund_account_id: 3, amount: 46_343_661 },
+    { fund_account_id: 4, amount: 222_917_683 },
+  ];
+  const options = { accounts: septemberAccounts, openingMovements: [], priorConfirmedMovements,
+    reservePlans: [], groupReserves: reservesByFundAccount };
+  const live = buildFundAccountView({ ...options, mode: "live", movements: [
+    ...priorConfirmedMovements, { fund_account_id: 1, amount: -2_000_000 },
+  ] });
+  assert.deepEqual(live.map(account => account.openingBalance), [51_502_786, 6_774_110, 46_343_661, 222_917_683]);
+  assert.equal(live.reduce((total, account) => total + account.openingBalance, 0), 327_538_240);
+  assert.equal(live[0].balance, 49_502_786);
+  const closed = buildFundAccountView({ ...options, mode: "closed_snapshot", movements: [],
+    closeSummary: { funds: { accounts: septemberAccounts.map((account, index) => ({ ...account, balance: [45, 60, 70, 80][index] })) } },
+  });
+  assert.equal(closed.reduce((total, account) => total + account.openingBalance, 0), 327_538_240);
+  assert.deepEqual(closed.map(account => account.balance), [45, 60, 70, 80]);
+});
+
+test("the ledger route reads every prior confirmed movement only when no explicit opening exists", () => {
+  assert.match(route, /openingResult\.data\?\.length \?\? 0/);
+  assert.match(route, /loadPriorConfirmedFundMovements\(monthStart\)/);
+  assert.match(route, /\.eq\("transaction\.status", "confirmed"\)/);
+  assert.match(route, /\.lt\("transaction\.business_date", monthStart\)/);
+  assert.match(route, /\.range\(from, from \+ pageSize - 1\)/);
+  assert.match(route, /priorConfirmedMovements,/);
+});
+
 test("closed months use stored balances and stored reserve values even after current DB values drift", () => {
   const closeSummary = {
     funds: { accounts: [{ id: 1, code: "store_cash", balance: 100 }, { id: 2, code: "baba_corporate_bank", balance: 200 }] },

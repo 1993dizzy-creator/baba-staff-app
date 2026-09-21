@@ -51,6 +51,7 @@ export function fundAccountViewMode(
 export function buildFundAccountView<T extends FundAccount>({
   accounts,
   openingMovements,
+  priorConfirmedMovements = [],
   movements,
   reservePlans,
   groupReserves,
@@ -59,6 +60,7 @@ export function buildFundAccountView<T extends FundAccount>({
 }: {
   accounts: readonly T[];
   openingMovements: readonly FundMovement[];
+  priorConfirmedMovements?: readonly FundMovement[];
   movements: readonly FundMovement[];
   reservePlans: readonly FundAccountReservePlan[];
   groupReserves: (plans: readonly FundAccountReservePlan[]) => Map<number, GroupedReserve[]>;
@@ -66,7 +68,10 @@ export function buildFundAccountView<T extends FundAccount>({
   closeSummary?: MonthCloseSummary | null;
 }) {
   const openingByAccount = new Map<number, number>();
-  for (const row of openingMovements) {
+  // An explicit opening for this month is authoritative for every account.
+  // Otherwise the preceding confirmed movements are the opening balance;
+  // they are never added to the current balance a second time.
+  for (const row of openingMovements.length > 0 ? openingMovements : priorConfirmedMovements) {
     const accountId = Number(row.fund_account_id);
     openingByAccount.set(accountId, (openingByAccount.get(accountId) ?? 0) + Number(row.amount));
   }

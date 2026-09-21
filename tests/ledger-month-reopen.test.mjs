@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 
@@ -7,8 +7,8 @@ const migration = readFileSync("supabase/migrations/20260916161512_add_ledger_mo
 const original = readFileSync("supabase/migrations/202608210008_add_ledger_month_close_corrections.sql", "utf8");
 const latestOwnerMigration = readFileSync("supabase/migrations/20260916150709_separate_owner_capital_recovery.sql", "utf8");
 const api = readFileSync("app/api/admin/ledger/month-close/route.ts", "utf8");
-const panel = readFileSync("app/(protected)/admin/ledger/MonthClosePanel.tsx", "utf8");
-const monthClosePage = readFileSync("app/(protected)/admin/ledger/month-close/page.tsx", "utf8");
+const panel = readFileSync("app/(protected)/admin/ledger/entries/MonthCloseSheet.tsx", "utf8");
+const entriesPage = readFileSync("app/(protected)/admin/ledger/entries/page.tsx", "utf8");
 const ledgerPage = readFileSync("app/(protected)/admin/ledger/page.tsx", "utf8");
 const ledgerGet = readFileSync("app/api/admin/ledger/route.ts", "utf8");
 const reopenSql = migration.split("create or replace function public.ledger_reopen_month_v1(")[1]
@@ -231,20 +231,17 @@ test("POST close default keeps the existing preflight and close RPC contract", a
   assert.equal(rpc[2].p_snapshot_hash, "new-hash");
 });
 
-test("panel separates reopen confirmation from request and shows review and reclose states", () => {
-  assert.match(panel, /마감 다시 열기/);
-  assert.match(panel, /기존 마감본은 이력으로 보존됩니다/);
-  assert.match(panel, /재오픈 사유/);
-  assert.match(panel, /disabled=\{busy \|\| !reason.trim\(\)\}/);
-  assert.match(panel, /재검토 위해 마감 열기/);
-  assert.match(panel, /action: "reopen"/);
-  assert.match(panel, /data.state === "reopened"/);
-  assert.match(panel, /다시 마감/);
-  assert.match(panel, /disabled=\{busy \|\| !data.preflight\?\.canClose\}/);
+test("ledger keeps reopen confirmation and close sheet protects the hash", () => {
+  assert.match(entriesPage, /재오픈 사유/);
+  assert.match(entriesPage, /action: "reopen"/);
+  assert.match(entriesPage, /MonthCloseSheet/);
+  assert.match(panel, /expectedPreflightHash: preflight.preflightHash/);
+  assert.match(panel, /preflight.blockers\?\.length/);
+  assert.match(panel, /LEDGER_CLOSE_PREFLIGHT_STALE/);
 });
 
-test("month-close panel is reachable from the ledger through a selected-month page", () => {
-  assert.match(ledgerPage, /href="\/admin\/ledger\/month-close"/);
-  assert.match(monthClosePage, /<MonthClosePanel key=\{month\} month=\{month\}/);
-  assert.match(monthClosePage, /type="month"/);
+test("ledger dashboard routes the selected month to entries and old page is removed", () => {
+  assert.match(ledgerPage, /admin\/ledger\/entries\?month=\$\{month\}/);
+  assert.equal(existsSync("app/(protected)/admin/ledger/month-close/page.tsx"), false);
+  assert.equal(existsSync("app/(protected)/admin/ledger/MonthClosePanel.tsx"), false);
 });

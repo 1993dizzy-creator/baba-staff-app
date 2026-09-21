@@ -15,12 +15,12 @@ const nowMonth=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ho_Chi_Minh',
 
 // Render the actual TSX components with state fixtures. Effects are captured,
 // never automatically run. Tests use only local response doubles.
-function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network request');}, lang='ko') {
+function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network request');}, lang='ko', businessDate) {
   let index=0;const effects=[],requests=[],updates=[],elements=[],calls=[],navigations=[];
   const urlMonthPage=path===entriesPath||path===cardPath;
   // Older fixtures reserve slot 0 for the URL month and card slot 7 for the
   // removed reference input. Keep the remaining fixture slots stable.
-  const react={...React,useState(initial){const stateIndex=index++;const slot=stateIndex+(urlMonthPage?1:0)+(path===cardPath&&stateIndex>=6?1:0);const value=Object.hasOwn(states,slot)?states[slot]:typeof initial==='function'?initial():initial;return [path===cardPath&&slot===1&&value?{...value,month:value.month??states[0]}:value,next=>updates.push({slot,value:next})];},useEffect(callback){effects.push(callback);}};
+  const react={...React,useState(initial){const stateIndex=index++;const slot=stateIndex+(urlMonthPage?1:0)+(path===cardPath&&stateIndex>=6?1:0)-(path===entriesPath&&stateIndex>=32?1:0);const value=Object.hasOwn(states,slot)?states[slot]:typeof initial==='function'?initial():initial;return [path===cardPath&&slot===1&&value?{...value,month:value.month??states[0]}:value,next=>updates.push({slot,value:next})];},useEffect(callback){effects.push(callback);}};
   const box=({children})=>h('div',null,children);
   const keeping={BarSheet:({children,footer,title})=>h('section',{role:'dialog','aria-label':title},h('h2',null,title),children,footer),BarField:({children,label})=>h('label',null,label,typeof children==='function'?children({id:'field'}):children),keepingInputStyle:{},primaryButtonStyle:{},secondaryButtonStyle:{}};
   const runtime=require('react/jsx-runtime');
@@ -35,7 +35,8 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
     '@/lib/ledger/payable-date-groups':require('../lib/ledger/payable-date-groups.ts'),
     '@/lib/ledger/manual-entry-amount':require('../lib/ledger/manual-entry-amount.ts'),
     '@/lib/ledger/manual-entry-policy':require('../lib/ledger/manual-entry-policy.ts'),
-    '@/lib/common/business-time':require('../lib/common/business-time.ts'),
+    './MonthCloseSheet':{default:({month})=>h('section',{'data-close-month':month})},
+    '@/lib/common/business-time':businessDate?{getBusinessDate:()=>businessDate}:require('../lib/common/business-time.ts'),
     './entries.module.css':{default:new Proxy({},{get:(_,key)=>String(key)})},
     './card-settlements.module.css':{default:new Proxy({},{get:(_,key)=>String(key)})},'@/lib/ledger/card-settlements':require('../lib/ledger/card-settlements.ts'),
   };
@@ -52,11 +53,11 @@ function payableFixture(month) {
   const party={...result.partySummaries[0],partyName:'Demo supplier',partnerType:null,outstandingAmount:result.summary.closingOutstanding,partialPaidAmount:400,totalOpenAmount:1500,openCount:result.payables.length};
   return {...result,month,parties:[party],historyPayables:result.payables};
 }
-const ledgerFixture=month=>({month,fundsView:{month,mode:'provisional',asOf:`${month}-01`,businessDateExclusive:null},summary:{income:9999,receivedIncome:8888,expense:7777,operatingProfit:2222,paidExpense:6666,displayedExpense:6666,cardGrossSales:500,monthlySettledGross:500,actualCardDeposits:0,unsettledCardGross:500},accounts:[],categories:[],partners:[],entries:[]});
-function entriesFixture(month,{selected=false,payables=payableFixture(month),fetcher,payableExpanded=true,cardExpanded=false,cardSummary=null,ledgerSummary=null,closeState=null,reopenOpen=false,reopenReason=''}={}) {
+const ledgerFixture=month=>({month,fundsView:{month,mode:'provisional',asOf:`${month}-01`,businessDateExclusive:null},summary:{income:9999,receivedIncome:9999,otherIncome:0,expense:7777,operatingProfit:2222,paidExpense:6666,actualCashOutflow:6666,cardSettlementDifference:0,displayedExpense:6666,cardGrossSales:500,monthlySettledGross:500,actualCardDeposits:0,unsettledCardGross:500},accounts:[],categories:[],partners:[],entries:[]});
+function entriesFixture(month,{selected=false,payables=payableFixture(month),fetcher,payableExpanded=true,cardExpanded=false,cardSummary=null,ledgerSummary=null,closeState=null,reopenOpen=false,reopenReason='',closeOpen=false,businessDate}={}) {
   const ledger=ledgerFixture(month);
   if(ledgerSummary)ledger.summary={...ledger.summary,...ledgerSummary};
-  return pageFixture(entriesPath,{0:month,1:ledger,2:false,5:closeState,14:payableExpanded,15:payables,16:selected?{...payables.parties[0],viewMonth:month}:null,22:cardExpanded,23:cardSummary,28:reopenOpen,29:reopenReason},fetcher);
+  return pageFixture(entriesPath,{0:month,1:ledger,2:false,5:closeState,14:payableExpanded,15:payables,16:selected?{...payables.parties[0],viewMonth:month}:null,22:cardExpanded,23:cardSummary,28:reopenOpen,29:reopenReason,...(closeOpen?{32:true}:{})},fetcher,'ko',businessDate);
 }
 
 test('closed month shows a compact reopen entry point and keeps ledger writes disabled',()=>{
@@ -112,21 +113,64 @@ test('reopen confirmation posts reason, reloads all selected-month data and unlo
   const add=reopened.elements.find(item=>item.type==='button'&&item.props.children==='장부 내역 추가');
   assert.equal(add?.props.disabled,false);
   assert.match(reopened.html,/8월 재검토 중/);
-  assert.match(reopened.html,/href="\/admin\/ledger\/month-close\?month=2026-08"/);
+  assert.match(reopened.html,/1차 마감본 보존 · 수정 가능/);
+  assert.match(reopened.html,/8월 다시 마감/);
+  assert.doesNotMatch(reopened.html,/월마감 관리|admin\/ledger\/month-close/);
   assert.doesNotMatch(reopened.html,/마감 다시 열기/);
 });
 
-test('open month keeps existing behavior; opening amounts inherit the app font',()=>{
-  const open=entriesFixture('2026-08',{closeState:{month:'2026-08',state:'open',revision:null}});
+test('open past month keeps its close action; opening amounts inherit the app font',()=>{
+  const open=entriesFixture('2026-08',{businessDate:'2026-09-15',closeState:{month:'2026-08',state:'open',revision:null}});
   assert.doesNotMatch(open.html,/장부 마감됨|재검토 중|마감 다시 열기/);
   const add=open.elements.find(item=>item.type==='button'&&item.props.children==='장부 내역 추가');
   assert.equal(add?.props.disabled,false);
   const css=readFileSync('app/(protected)/admin/ledger/entries/entries.module.css','utf8');
   assert.match(css,/\.openingToggle\{[^}]*font:inherit;color:inherit/);
   assert.match(css,/\.openingGrid strong\{[^}]*font-family:inherit;font-size:14px;font-weight:900;line-height:1\.2/);
-  const monthPage=readFileSync('app/(protected)/admin/ledger/month-close/page.tsx','utf8');
-  assert.match(monthPage,/searchParams\.get\("month"\)/);
-  assert.match(monthPage,/<MonthClosePanel key=\{month\} month=\{month\}/);
+  assert.match(open.html,/8월 마감/);
+});
+test('current business month hides the whole close banner; a past open month can close',()=>{
+  const businessDate='2026-09-15';
+  const current=entriesFixture('2026-09',{businessDate,closeState:{month:'2026-09',state:'open',revision:null}});
+  assert.doesNotMatch(current.html,/aria-label="월마감 상태"|장부 진행 중|월 종료 후 마감할 수 있습니다/);
+  assert.match(current.html, /aria-label="월 선택"[\s\S]*?<\/section><section class="summaryGrid"/);
+  assert.ok(!current.elements.some(item=>item.type==='button'&&item.props.children==='9월 마감'));
+  const past=entriesFixture('2026-08',{businessDate,closeState:{month:'2026-08',state:'open',revision:null}});
+  assert.match(past.html,/8월 장부 마감 전/);
+  assert.match(past.html,/점검 후 장부를 마감할 수 있습니다/);
+  assert.ok(past.elements.some(item=>item.type==='button'&&item.props.children==='8월 마감'));
+  const reopened=entriesFixture('2026-09',{businessDate,closeState:{month:'2026-09',state:'reopened',revision:1}});
+  assert.match(reopened.html,/9월 재검토 중/);
+  assert.ok(reopened.elements.some(item=>item.type==='button'&&item.props.children==='9월 다시 마감'));
+  const closed=entriesFixture('2026-09',{businessDate,closeState:{month:'2026-09',state:'closed',revision:1}});
+  assert.match(closed.html,/9월 장부 마감됨/);
+  assert.ok(closed.elements.some(item=>item.type==='button'&&item.props.children==='마감 다시 열기'));
+});
+
+test('the existing Vietnam business date keeps September current until the 03:00 cutoff',()=>{
+  const {getBusinessDate}=require('../lib/common/business-time.ts');
+  assert.equal(getBusinessDate(new Date('2026-09-30T19:59:00Z')).slice(0,7),'2026-09');
+  assert.equal(getBusinessDate(new Date('2026-09-30T20:00:00Z')).slice(0,7),'2026-10');
+  const before=entriesFixture('2026-09',{businessDate:'2026-09-30',closeState:{month:'2026-09',state:'open',revision:null}});
+  const after=entriesFixture('2026-09',{businessDate:'2026-10-01',closeState:{month:'2026-09',state:'open',revision:null}});
+  assert.doesNotMatch(before.html,/aria-label="월마감 상태"/);
+  assert.match(after.html,/9월 장부 마감 전/);
+  assert.ok(after.elements.some(item=>item.type==='button'&&item.props.children==='9월 마감'));
+});
+test('reclose success closes the sheet, reloads the ledger and shows the new revision',async()=>{
+  const month='2026-08';
+  const fetcher=async(url)=>Response.json(url.includes('month-close')?{month,state:'closed',closure:{revision:2}}:url.includes('payables')?payableFixture(month):url.includes('investments')?{month,configured:false,summary:{openingCumulative:0,periodOpening:0,periodContribution:0,periodAdjustment:0,periodNetChange:0,closingCumulative:0},events:[]}:ledgerFixture(month));
+  const state=entriesFixture(month,{closeState:{month,state:'reopened',revision:1},closeOpen:true,fetcher});
+  const closeSheet=state.elements.find(item=>item.props?.onClosed&&item.props?.month===month);
+  assert.ok(closeSheet);
+  await closeSheet.props.onClosed();
+  assert.ok(state.updates.some(update=>update.slot===32&&update.value===false));
+  assert.ok(state.updates.some(update=>update.slot===5&&update.value.state==='closed'&&update.value.revision===2));
+  assert.ok(state.updates.some(update=>update.slot===1&&update.value.month===month));
+  assert.ok(state.updates.some(update=>update.slot===4&&update.value.includes('장부 마감이 완료되었습니다')));
+  const closed=entriesFixture(month,{closeState:{month,state:'closed',revision:2}});
+  assert.match(closed.html,/2차 마감/);
+  assert.match(closed.html,/마감 다시 열기/);
 });
 test('entries month loading actually sends selected month to payables API',async()=>{
   for(const month of ['2026-08','2026-09']){
@@ -259,7 +303,7 @@ test('card status accordion shows four API metrics and a detail link without int
 test('August reference summary keeps month-end outstanding distinct from sale-month settlement difference',()=>{
   // The old .326 fixture was synthetic precision input; the confirmed August
   // sale-month attribution is .327 and is independent of the month-end cutoff.
-  const html=entriesFixture('2026-08',{cardExpanded:true,ledgerSummary:{income:734686553,paidExpense:448445598.5,displayedExpense:448445598.5,cardGrossSales:225925720,monthlySettledGross:197992160},cardSummary:{month:'2026-08',summary:{...cardSummary,monthlyCardGross:225925720,monthlySettledGross:197992160,monthlyUnreconciledGross:27933560,monthlySettlementDifference:4860925.327}}}).html;
+  const html=entriesFixture('2026-08',{cardExpanded:true,ledgerSummary:{income:734686553,receivedIncome:734686553,paidExpense:448445598.5,actualCashOutflow:448445598.5,displayedExpense:448445598.5,cardGrossSales:225925720,monthlySettledGross:197992160},cardSummary:{month:'2026-08',summary:{...cardSummary,monthlyCardGross:225925720,monthlySettledGross:197992160,monthlyUnreconciledGross:27933560,monthlySettlementDifference:4860925.327}}}).html;
   assert.match(html,/734\.686\.553 ₫/);
   assert.match(html,/448\.445\.599 ₫/);
   assert.match(html,/선택월 정산 완료율">87\.6%/);
@@ -291,6 +335,22 @@ test('opening account cards render readable cash, corporate and personal emojis 
   for(const emoji of ['💵','🏦','👤']) assert.ok(state.html.includes(emoji));
   assert.match(state.html,/class="accountEmoji" aria-hidden="true"/);
   assert.doesNotMatch(state.html,/card_clearing/);
+});
+
+test('September opening card displays the four carried-forward business fund balances',()=>{
+  const data=ledgerFixture('2026-09');
+  data.accounts=[
+    ['store_cash',51_502_786],
+    ['vuong_personal_custody',6_774_110],
+    ['cho_personal_custody',46_343_661],
+    ['baba_corporate_bank',222_917_683],
+  ].map(([code,openingBalance],id)=>({id,code,type:code.includes('personal')?'personal_custody':'cash',is_active:true,is_business_fund:true,display_name:code,openingBalance,balance:openingBalance}));
+  const state=pageFixture(entriesPath,{0:'2026-09',1:data,2:false,11:true});
+  assert.match(state.html,/시재 합계<\/span><strong>327\.538\.240 ₫/);
+  for(const amount of ['51.502.786','6.774.110','46.343.661','222.917.683']) {
+    assert.match(state.html,new RegExp(`${amount.replaceAll('.','\\.')} ₫`));
+  }
+  for(const name of ['현금','개인','법인']) assert.match(state.html,new RegExp(name));
 });
 
 test('selected deposit keeps fee recommendation, editable allocation, POS detail and settlement previews',()=>{

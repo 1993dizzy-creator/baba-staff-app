@@ -39,6 +39,7 @@ import {
   manualExpenseCategorySort,
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
+import MonthCloseSheet from "./MonthCloseSheet";
 import { getBusinessDate } from "@/lib/common/business-time";
 
 type Account = {
@@ -221,7 +222,8 @@ function LedgerEntriesContent() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const requestedMonth = searchParams.get("month");
-  const month = selectedLedgerMonth(requestedMonth, currentMonth());
+  const businessMonth = currentMonth();
+  const month = selectedLedgerMonth(requestedMonth, businessMonth);
   function selectMonth(nextMonth: string) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(nextMonth)) return;
     setLoading(true);
@@ -260,8 +262,10 @@ function LedgerEntriesContent() {
     [reopenReason, setReopenReason] = useState(""),
     [reopening, setReopening] = useState(false),
     [reopenError, setReopenError] = useState("");
+  const [closeSheetOpen, setCloseSheetOpen] = useState(false);
   const closed = monthCloseState?.month === month && monthCloseState.state === "closed";
   const addButtonRef = useRef<HTMLButtonElement>(null),
+    closeButtonRef = useRef<HTMLButtonElement>(null),
     initializedMonthRef = useRef(""),
     loadRequestSequenceRef = useRef(0);
   const load = useCallback(
@@ -829,27 +833,34 @@ function LedgerEntriesContent() {
             {notice}
           </p>
         ) : null}
-        {data?.month === month && monthCloseState?.month === month && monthCloseState.state !== "open" ? (
+        {data?.month === month && monthCloseState?.month === month &&
+          (monthCloseState.state !== "open" || month < businessMonth) ? (
           <section className={`${styles.monthCloseCard} ${monthCloseState.state === "reopened" ? styles.monthCloseReopened : ""}`}
             aria-label={vi ? "Trạng thái chốt sổ" : "월마감 상태"}>
             <div className={styles.monthCloseText}>
               <strong>{monthCloseState.state === "closed"
                 ? vi ? `Sổ tháng ${Number(month.slice(5, 7))} đã chốt` : `${Number(month.slice(5, 7))}월 장부 마감됨`
-                : vi ? `Đang kiểm tra lại tháng ${Number(month.slice(5, 7))}` : `${Number(month.slice(5, 7))}월 재검토 중`}</strong>
+                : monthCloseState.state === "reopened"
+                  ? vi ? `Đang kiểm tra lại tháng ${Number(month.slice(5, 7))}` : `${Number(month.slice(5, 7))}월 재검토 중`
+                  : vi ? `Sổ tháng ${Number(month.slice(5, 7))} chưa chốt` : `${Number(month.slice(5, 7))}월 장부 마감 전`}</strong>
               <p>{monthCloseState.state === "closed"
                 ? vi ? `Đã chốt lần ${monthCloseState.revision ?? 1} · Mở lại để sửa sổ.`
                   : `${monthCloseState.revision ?? 1}차 마감 · 수정하려면 마감을 다시 열어야 합니다.`
-                : vi ? `Bản chốt lần ${monthCloseState.revision ?? 1} được lưu giữ. Hiện có thể sửa sổ.`
-                  : `이전 ${monthCloseState.revision ?? 1}차 마감본은 보존됨 · 현재 수정 가능합니다.`}</p>
+                : monthCloseState.state === "reopened"
+                  ? vi ? `Giữ bản chốt lần ${monthCloseState.revision ?? 1} · Có thể sửa` : `${monthCloseState.revision ?? 1}차 마감본 보존 · 수정 가능`
+                  : vi ? "Có thể kiểm tra và chốt sổ" : "점검 후 장부를 마감할 수 있습니다."}</p>
             </div>
             {monthCloseState.state === "closed"
               ? <button type="button" className={styles.monthCloseAction}
                   onClick={() => { setReopenError(""); setReopenSheetOpen(true); }}>
                   {vi ? "Mở lại sổ" : "마감 다시 열기"}
                 </button>
-              : <Link className={styles.monthCloseAction} href={`/admin/ledger/month-close?month=${month}`}>
-                  {vi ? "Quản lý chốt sổ" : "월마감 관리"}
-                </Link>}
+              : <button type="button" ref={closeButtonRef} className={styles.monthCloseAction}
+                  onClick={() => { setCloseSheetOpen(true); }}>
+                  {monthCloseState.state === "reopened"
+                    ? vi ? `Chốt lại tháng ${Number(month.slice(5, 7))}` : `${Number(month.slice(5, 7))}월 다시 마감`
+                    : vi ? `Chốt tháng ${Number(month.slice(5, 7))}` : `${Number(month.slice(5, 7))}월 마감`}
+                </button>}
           </section>
         ) : null}
         {data && data.month === month ? (
@@ -1198,6 +1209,16 @@ function LedgerEntriesContent() {
               required rows={3} />
             {reopenError ? <p className={styles.error} role="alert">{reopenError}</p> : null}
           </BarSheet>
+        ) : null}
+        {closeSheetOpen && monthCloseState?.month === month &&
+          (monthCloseState.state === "reopened" || (monthCloseState.state === "open" && month < businessMonth)) ? (
+          <MonthCloseSheet key={month} month={month} revision={monthCloseState.revision} vi={vi}
+            onClose={() => setCloseSheetOpen(false)} returnFocusRef={closeButtonRef}
+            onClosed={async () => {
+              setCloseSheetOpen(false);
+              const fresh = await load();
+              if (fresh) setNotice(vi ? `Đã chốt sổ tháng ${Number(month.slice(5, 7))}.` : `${Number(month.slice(5, 7))}월 장부 마감이 완료되었습니다.`);
+            }} />
         ) : null}
         {selected ? (
           <EntryDetailSheet

@@ -44,17 +44,18 @@ export function computeActualCashOutflow(
   endDate.setUTCMonth(endDate.getUTCMonth() + 1);
   const end = endDate.toISOString().slice(0, 10);
 
-  return roundMoney(transactions.reduce((total, row) => {
+  const businessFundNet = transactions.reduce((total, row) => {
     if (row.business_date < start || row.business_date >= end || (row.status != null && row.status !== "confirmed")) return total;
     if (!CASH_PAYMENT_TYPES.has(row.type) || row.source_type === "ledger_correction") return total;
-    if (/reversal|technical_adjustment/.test(row.source_type)) return total;
+    if (/technical_adjustment/.test(row.source_type)) return total;
     if (/월말\s*잔액\s*맞춤|상세\s*전환\s*상쇄|기술적\s*보정/.test(row.memo ?? "")) return total;
 
-    const businessFundNet = roundMoney((row.movements ?? []).reduce((sum, movement) =>
+    const transactionNet = roundMoney((row.movements ?? []).reduce((sum, movement) =>
       businessFundAccountIds.has(Number(movement.fund_account?.id))
         ? sum + Number(movement.amount ?? 0)
         : sum,
     0));
-    return total + Math.max(0, -businessFundNet);
-  }, 0));
+    return total + transactionNet;
+  }, 0);
+  return Math.max(0, roundMoney(-businessFundNet));
 }

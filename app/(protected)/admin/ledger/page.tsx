@@ -53,7 +53,7 @@ export default function LedgerDashboardPage() {
       <Summary label="월말 미지급금" value={outstanding === null ? "-" : money(outstanding)} />
     </div></section>
     <Link href="/admin/ledger/card-settlements">카드 정산</Link>
-    <Link href="/admin/ledger/month-close">월마감 관리</Link>
+    <Link href={`/admin/ledger/entries?month=${month}`}>월마감</Link>
     <section className={styles.sectionCard}><h2>현재 확인 필요 항목</h2><strong className={styles.largeValue}>{pending}건</strong><p>처리와 동기화는 장부작성 탭에서 진행할 수 있습니다.</p></section>
     <section><h2>최근 거래</h2><div className={styles.list}>{data?.transactions.slice(0, 5).map(row => <article className={styles.listRow} key={row.id}><div><strong>{row.category?.name ?? row.type}</strong><span>{row.party?.name ?? row.memo ?? "상세 없음"}</span></div><div><strong>{money(Number(row.amount))}</strong><span>{row.business_date}</span></div></article>)}{data && data.transactions.length === 0 ? <p className={styles.empty}>표시할 거래가 없습니다.</p> : null}</div></section>
   </main></Container>;
