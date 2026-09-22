@@ -77,7 +77,7 @@ test("monthly lines use business date and id ordering with the matching btree in
   assert.match(fetchLines, /offset \+= LINE_PAGE_SIZE/);
   assert.match(fetchLines, /if \(page\.length < LINE_PAGE_SIZE\) break;/);
   assert.match(fetchLines, /raw_json/);
-  assert.match(migration, /create index pos_sales_receipt_lines_business_date_id_idx\s+on public\.pos_sales_receipt_lines using btree \(business_date asc, id asc\);/i);
+  assert.match(migration, /create index idx_pos_sales_receipt_lines_business_date_id\s+on public\.pos_sales_receipt_lines using btree \(business_date asc, id asc\);/i);
 });
 
 test("monthly line pagination returns every row once across equal-date page boundaries", async () => {
