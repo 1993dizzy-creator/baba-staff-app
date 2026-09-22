@@ -883,6 +883,7 @@ async function fetchMonthlyLines(fromDate: string, toDate: string) {
       )
       .gte("business_date", fromDate)
       .lte("business_date", toDate)
+      .order("business_date", { ascending: true })
       .order("id", { ascending: true })
       .range(offset, offset + LINE_PAGE_SIZE - 1);
 
