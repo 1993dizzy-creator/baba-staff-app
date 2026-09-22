@@ -154,6 +154,10 @@ const localTime = () =>
   new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 16);
 const money = (amount: number) =>
   `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(amount))} ₫`;
+const investmentChartChange = (amount: number) => {
+  const sign = amount < 0 ? "-" : amount > 0 ? "+" : "";
+  return `${sign}${Math.round(Math.abs(amount) / 100_000) / 10}tr`;
+};
 const payableNumber = (amount: number) =>
   new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.round(amount));
 const sanitizeLedgerDecimalAmount = (input: string) => {
@@ -988,13 +992,13 @@ function LedgerEntriesContent() {
                         return <div className={styles.investmentChartRow} key={participant.participantId}>
                           <strong className={styles.investmentName}>{participant.participantName}</strong>
                           <div className={styles.investmentTrack} role="img" aria-label={`${participant.participantName}: ${vi?"lũy kế cuối tháng":"월말 누적"} ${money(participant.closingCumulative)}${participant.periodNetChange!==0?`, ${vi?"thay đổi trong tháng":"당월 변동"} ${participant.periodNetChange>0?"+":""}${money(participant.periodNetChange)}`:""}`}>
-                            {opening>0?<span className={styles.investmentPrior} style={{width:`${percentage(opening)}%`}}><span>{money(participant.openingCumulative)}</span></span>:null}
+                            {opening>0?<span className={styles.investmentPrior} style={{width:`${percentage(opening)}%`}}><span>{money(participant.closingCumulative)}</span></span>:null}
                             {increase>0?<span className={styles.investmentIncrease} style={{left:`${percentage(opening)}%`,width:`${percentage(increase)}%`}}/>:null}
                             {decrease>0?<span className={styles.investmentDecrease} style={{left:`${percentage(Math.max(0,opening-decrease))}%`,width:`${percentage(decrease)}%`}}/>:null}
                             {opening===0 && increase===0?<span className={styles.investmentZero}>{money(0)}</span>:null}
                           </div>
                           <div className={styles.investmentValues}>
-                            {participant.periodNetChange!==0?<strong className={participant.periodNetChange<0?styles.amountExpense:styles.investmentIncreaseValue}>{participant.periodNetChange>0?"+":""}{money(participant.periodNetChange)}</strong>:null}
+                            {participant.periodNetChange!==0?<strong className={participant.periodNetChange<0?styles.amountExpense:styles.investmentIncreaseValue}>{investmentChartChange(participant.periodNetChange)}</strong>:null}
                           </div>
                         </div>;
                       })}
@@ -1013,7 +1017,7 @@ function LedgerEntriesContent() {
                           <article key={event.investmentId}>
                             <span className={styles.itemDescription}>
                               <strong>{formatDate(event.businessDate, lang)} · {event.participantName}</strong>
-                              <span> · {investmentEntryTypeLabel(event.entryType, lang)}{investmentEventAccountSuffix(event, lang)}</span>
+                              <span> · {investmentEntryTypeLabel(event.entryType, event.amount, lang)}</span>
                             </span>
                             <span className={styles.itemAmount}>
                               <b className={event.amount < 0 ? styles.amountExpense : styles.amountIncome}>
@@ -2078,17 +2082,11 @@ function accountBadgeLabel(accountName: string | null, lang: "ko" | "vi", entry?
   if (accountName === "개인(Cho)" || accountName === "Cho 개인계좌 (BABA 소유분)") return "Cho";
   return accountName;
 }
-function investmentEntryTypeLabel(entryType: InvestmentEntryType, lang: "ko" | "vi") {
+function investmentEntryTypeLabel(entryType: InvestmentEntryType, amount: number, lang: "ko" | "vi") {
   if (entryType === "opening") return lang === "vi" ? "Vốn góp ban đầu" : "기초 등록";
-  if (entryType === "contribution") return lang === "vi" ? "Góp vốn thêm" : "추가 투자";
+  if (entryType === "contribution") return lang === "vi" ? "Góp vốn thêm" : "추가투자";
+  if (amount < 0) return lang === "vi" ? "Thu hồi vốn góp" : "투자금 회수";
   return lang === "vi" ? "Điều chỉnh vốn góp" : "투자금 조정";
-}
-// contribution moves real funds, so it shows the account; opening/adjustment never
-// create a movement (existing RPC contract) and must never appear to have one.
-function investmentEventAccountSuffix(event: InvestmentEvent, lang: "ko" | "vi") {
-  if (event.entryType === "contribution") return ` · ${accountBadgeLabel(event.fundAccountName, lang)}`;
-  const noMovement = lang === "vi" ? "Không dịch chuyển quỹ" : "자금이동 없음";
-  return event.reason ? ` · ${noMovement} · ${event.reason}` : ` · ${noMovement}`;
 }
 function directionEmoji(direction: LedgerEntry["direction"]) {
   return direction === "income" ? "💰" : direction === "expense" ? "💸" : "🔄";

@@ -591,16 +591,69 @@ test('an investments fetch failure for the current month shows its own error, ne
   assert.doesNotMatch(state,/이번 달 투자금 변동이 없습니다|투자금 기준이 아직 설정되지 않았습니다/);
 });
 
-test('investment events render entry-type label, contribution account or "no fund movement", and +/- colored amounts',()=>{
+test('investment events render short entry labels and amounts without account or reason details',()=>{
   const state=pageFixture(entriesPath,{
     0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:true,
     26:{month:'2026-09',configured:true,summary:{...zeroInvestmentSummary,periodContribution:10_000_000,periodAdjustment:-2_000_000,periodNetChange:8_000_000,closingCumulative:8_000_000},events:[
+      {investmentId:0,participantId:1,participantName:'HAN',entryType:'opening',amount:1_000_000,businessDate:'2026-09-01',occurredAt:'2026-09-01T08:00:00Z',fundAccountId:null,fundAccountName:null,reason:'기초 등록 메모'},
       {investmentId:1,participantId:1,participantName:'HAN',entryType:'contribution',amount:10_000_000,businessDate:'2026-09-05',occurredAt:'2026-09-05T08:00:00Z',fundAccountId:4,fundAccountName:'BABA 법인계좌',reason:null},
       {investmentId:2,participantId:2,participantName:'Vuong',entryType:'adjustment',amount:-2_000_000,businessDate:'2026-09-12',occurredAt:'2026-09-12T08:00:00Z',fundAccountId:null,fundAccountName:null,reason:'정정'},
+      {investmentId:3,participantId:2,participantName:'Vuong',entryType:'adjustment',amount:3_000_000,businessDate:'2026-09-13',occurredAt:'2026-09-13T08:00:00Z',fundAccountId:null,fundAccountName:null,reason:'추가 조정 메모'},
     ]},
-  }).html;
-  assert.match(state,/HAN/);assert.match(state,/추가 투자/);assert.match(state,/법인/);assert.match(state,/\+10\.000\.000 ₫/);
-  assert.match(state,/Vuong/);assert.match(state,/투자금 조정/);assert.match(state,/자금이동 없음/);assert.match(state,/정정/);assert.match(state,/-2\.000\.000 ₫/);
+  }).html.slice(-5000);
+  assert.match(state,/9월 1일 · HAN<\/strong><span> · 기초 등록<\/span>/);
+  assert.match(state,/9월 5일 · HAN<\/strong><span> · 추가투자<\/span>/);
+  assert.match(state,/9월 12일 · Vuong<\/strong><span> · 투자금 회수<\/span>/);
+  assert.match(state,/9월 13일 · Vuong<\/strong><span> · 투자금 조정<\/span>/);
+  assert.match(state,/\+10\.000\.000 ₫/);
+  assert.match(state,/-2\.000\.000 ₫/);
+  assert.doesNotMatch(state,/BABA 법인계좌|자금이동 없음|기초 등록 메모|추가 조정 메모|<\/span> · 정정/);
+});
+
+test('September recoveries show concise investor details in Korean and Vietnamese',()=>{
+  const month='2026-09';
+  const events=[
+    {investmentId:1,participantId:1,participantName:'MJK',entryType:'adjustment',amount:-35_000_000,businessDate:'2026-09-10',occurredAt:'2026-09-10T08:00:00Z',fundAccountId:null,fundAccountName:null,reason:'MJK 2026-09-10 투자금 회수 35,000,000₫ · 지급 transaction #1676 연결'},
+    {investmentId:2,participantId:2,participantName:'HAN',entryType:'adjustment',amount:-35_000_000,businessDate:'2026-09-17',occurredAt:'2026-09-17T08:00:00Z',fundAccountId:null,fundAccountName:null,reason:'HAN 2026-09-17 투자금 회수 35,000,000₫'},
+    {investmentId:3,participantId:3,participantName:'CHO',entryType:'adjustment',amount:-60_000_000,businessDate:'2026-09-19',occurredAt:'2026-09-19T08:00:00Z',fundAccountId:null,fundAccountName:null,reason:'CHO 2026-09-19 투자금 회수 60,000,000₫'},
+  ];
+  for(const [lang,label,dates] of [
+    ['ko','투자금 회수',['9월 10일','9월 17일','9월 19일']],
+    ['vi','Thu hồi vốn góp',['10/9','17/9','19/9']],
+  ]){
+    const html=pageFixture(entriesPath,{
+      0:month,1:ledgerFixture(month),2:false,25:true,
+      26:{month,configured:true,summary:{...zeroInvestmentSummary,closingCumulative:2_739_689_000},participants:[],events},
+    },undefined,lang).html;
+    for(const [index,name,amount] of [[0,'MJK','-35.000.000'],[1,'HAN','-35.000.000'],[2,'CHO','-60.000.000']]){
+      assert.match(html,new RegExp(`<strong>${dates[index]} · ${name}<\\/strong><span> · ${label}<\\/span>[\\s\\S]*?<b[^>]*>${amount.replaceAll('.','\\.')} ₫<\\/b>`));
+    }
+    assert.doesNotMatch(html,/자금이동 없음|Không dịch chuyển quỹ|transaction #1676|2026-09-10 투자금 회수|지급 transaction|투자금 조정|Điều chỉnh vốn góp/);
+  }
+});
+
+test('Vietnamese investment details retain short labels for opening, contribution and positive adjustment',()=>{
+  const month='2026-09';
+  const events=[
+    {investmentId:1,participantId:1,participantName:'HAN',entryType:'opening',amount:1_000_000,businessDate:'2026-09-01',reason:'opening reason'},
+    {investmentId:2,participantId:1,participantName:'HAN',entryType:'contribution',amount:10_000_000,businessDate:'2026-09-05',fundAccountName:'BABA 법인계좌',reason:'contribution reason'},
+    {investmentId:3,participantId:1,participantName:'HAN',entryType:'adjustment',amount:3_000_000,businessDate:'2026-09-13',reason:'adjustment reason'},
+  ];
+  const html=pageFixture(entriesPath,{
+    0:month,1:ledgerFixture(month),2:false,25:true,
+    26:{month,configured:true,summary:zeroInvestmentSummary,participants:[],events},
+  },undefined,'vi').html;
+  assert.match(html,/1\/9 · HAN<\/strong><span> · Vốn góp ban đầu<\/span>/);
+  assert.match(html,/5\/9 · HAN<\/strong><span> · Góp vốn thêm<\/span>/);
+  assert.match(html,/13\/9 · HAN<\/strong><span> · Điều chỉnh vốn góp<\/span>/);
+  assert.doesNotMatch(html,/opening reason|contribution reason|adjustment reason|BABA 법인계좌/);
+});
+
+test('mobile investor chart gives the bars more room without changing desktop columns',()=>{
+  const css=readFileSync('app/(protected)/admin/ledger/entries/entries.module.css','utf8');
+  assert.match(css,/\.investmentChartRow\{display:grid;grid-template-columns:minmax\(60px,90px\) minmax\(0,1fr\) minmax\(90px,auto\)/);
+  assert.match(css,/@media\(max-width:560px\)\{\.investmentChartRow\{grid-template-columns:36px minmax\(0,1fr\) auto;gap:4px\}/);
+  assert.match(css,/@media\(max-width:560px\)[^\n]*\.investmentChart\{padding:8px\}/);
 });
 
 test('investment card shows a nonzero period opening and explains contribution as capital rather than profit',()=>{
@@ -626,7 +679,7 @@ test('investor bars show August new capital and September prior cumulative at th
   const september=render('2026-09',participant(100_000_000,0,0));
   assert.doesNotMatch(august,/class="investmentPrior"/);
   assert.match(august,/class="investmentIncrease" style="left:0%;width:100%"/);
-  assert.match(august,/\+100\.000\.000 ₫/);
+  assert.match(august,/class="investmentValues"><strong[^>]*>\+100tr<\/strong><\/div>/);
   assert.match(september,/class="investmentPrior" style="width:100%"><span>100\.000\.000 ₫<\/span>/);
   assert.match(september,/class="investmentValues"><\/div>/);
 });
@@ -641,9 +694,52 @@ test('investor bars remain finite at zero and show a negative monthly adjustment
   assert.match(zero,/class="investmentZero">0 ₫<\/span>/);
   assert.match(zero,/class="investmentValues"><\/div>/);
   assert.doesNotMatch(zero,/NaN|Infinity/);
-  assert.match(decrease,/class="investmentPrior" style="width:100%"><span>100\.000\.000 ₫<\/span>/);
+  assert.match(decrease,/class="investmentPrior" style="width:100%"><span>80\.000\.000 ₫<\/span>/);
   assert.match(decrease,/class="investmentDecrease" style="left:80%;width:20%"/);
-  assert.match(decrease,/-20\.000\.000 ₫/);
+  assert.match(decrease,/class="investmentValues"><strong[^>]*>-20tr<\/strong><\/div>/);
+});
+
+test('September investor bars show closing capital after recovery in Korean and Vietnamese',()=>{
+  const month='2026-09';
+  const participants=[
+    {participantId:1,participantName:'HAN',openingCumulative:624_300_000,periodNetChange:-35_000_000,closingCumulative:589_300_000},
+    {participantId:2,participantName:'MJK',openingCumulative:567_703_560,periodNetChange:-35_000_000,closingCumulative:532_703_560},
+    {participantId:3,participantName:'CHO',openingCumulative:1_677_685_440,periodNetChange:-60_000_000,closingCumulative:1_617_685_440},
+  ];
+  const expected=[
+    ['HAN','589\\.300\\.000','-35tr','624\\.300\\.000','-35\\.000\\.000'],
+    ['MJK','532\\.703\\.560','-35tr','567\\.703\\.560','-35\\.000\\.000'],
+    ['CHO','1\\.617\\.685\\.440','-60tr','1\\.677\\.685\\.440','-60\\.000\\.000'],
+  ];
+  for(const lang of ['ko','vi']){
+    const html=pageFixture(entriesPath,{
+      0:month,1:ledgerFixture(month),2:false,25:true,
+      26:{month,configured:true,summary:{...zeroInvestmentSummary,closingCumulative:2_739_689_000},participants,events:[]},
+    },undefined,lang).html;
+    assert.match(html,/class="payableHeading"[\s\S]*?<strong aria-label="[^"]+">2\.739\.689\.000 ₫/);
+    for(const [name,closing,change,opening,exactChange] of expected){
+      assert.match(html,new RegExp(`${name}[\\s\\S]*?class="investmentPrior"[^>]*><span>${closing} ₫<\\/span>[\\s\\S]*?class="investmentValues"><strong[^>]*>${change}<\\/strong>`));
+      assert.match(html,new RegExp(`aria-label="${name}: [^"]*${closing} ₫, [^"]*${exactChange} ₫"`));
+      assert.doesNotMatch(html,new RegExp(`class="investmentPrior"[^>]*><span>${opening} ₫<\\/span>`));
+    }
+  }
+});
+
+test('investor change labels use one decimal tr only when needed while exact amounts remain available',()=>{
+  const render=(change)=>pageFixture(entriesPath,{
+    0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:true,
+    26:{month:'2026-09',configured:true,summary:{...zeroInvestmentSummary,periodAdjustment:change,closingCumulative:101_260_000+change},participants:[{participantId:1,participantName:'HAN',openingCumulative:101_260_000,periodNetChange:change,closingCumulative:101_260_000+change}],events:[
+      {investmentId:1,participantId:1,participantName:'HAN',entryType:'adjustment',amount:change,businessDate:'2026-09-10',occurredAt:'2026-09-10T08:00:00Z',fundAccountId:null,fundAccountName:null,reason:null},
+    ]},
+  }).html;
+  const gain=render(1_260_000);
+  const loss=render(-35_260_000);
+  assert.match(gain,/class="investmentValues"><strong[^>]*>\+1\.3tr<\/strong><\/div>/);
+  assert.match(loss,/class="investmentValues"><strong[^>]*>-35\.3tr<\/strong><\/div>/);
+  assert.match(gain,/aria-label="HAN: [^"]*\+1\.260\.000 ₫"/);
+  assert.match(loss,/aria-label="HAN: [^"]*-35\.260\.000 ₫"/);
+  assert.match(gain,/class="itemAmount"><b[^>]*>\+1\.260\.000 ₫<\/b>/);
+  assert.match(loss,/class="itemAmount"><b[^>]*>-35\.260\.000 ₫<\/b>/);
 });
 
 test('investor segments use the shared opening-or-closing scale for increase, decrease and no change',()=>{
@@ -660,10 +756,11 @@ test('investor segments use the shared opening-or-closing scale for increase, de
   assert.ok(Math.abs(Number(gainPrior[1])-100/130*100)<0.001);
   assert.ok(Math.abs(Number(gainSegment[1])-100/130*100)<0.001);
   assert.ok(Math.abs(Number(gainSegment[2])-30/130*100)<0.001);
-  assert.match(gain,/class="investmentValues"><strong[^>]*>\+30\.000\.000 ₫<\/strong><\/div>/);
-  assert.match(loss,/class="investmentPrior" style="width:100%"><span>100\.000\.000 ₫<\/span>/);
+  assert.match(gain,/class="investmentPrior"[^>]*><span>130\.000\.000 ₫<\/span>/);
+  assert.match(gain,/class="investmentValues"><strong[^>]*>\+30tr<\/strong><\/div>/);
+  assert.match(loss,/class="investmentPrior" style="width:100%"><span>80\.000\.000 ₫<\/span>/);
   assert.match(loss,/class="investmentDecrease" style="left:80%;width:20%"/);
-  assert.match(loss,/class="investmentValues"><strong[^>]*>-20\.000\.000 ₫<\/strong><\/div>/);
+  assert.match(loss,/class="investmentValues"><strong[^>]*>-20tr<\/strong><\/div>/);
   assert.match(flat,/class="investmentPrior" style="width:100%"><span>100\.000\.000 ₫<\/span>/);
   assert.match(flat,/class="investmentValues"><\/div>/);
   assert.doesNotMatch(flat,/class="investmentIncrease"|class="investmentDecrease"/);
