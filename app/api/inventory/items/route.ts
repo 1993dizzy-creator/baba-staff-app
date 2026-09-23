@@ -69,6 +69,9 @@ const jsonError = (
 const canDeleteInventoryItem = (role: unknown) =>
   role === "owner" || role === "master";
 
+const canCorrectInventoryPurchase = (role: unknown) =>
+  role === "owner" || role === "master";
+
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -561,6 +564,13 @@ export async function PATCH(req: Request) {
 
     const correctionPurchaseLogId = body.correction_of_inventory_log_id == null
       ? null : Number(body.correction_of_inventory_log_id);
+    if (correctionPurchaseLogId !== null && !canCorrectInventoryPurchase(actor.role)) {
+      return jsonError(
+        "inventory_purchase_correction_forbidden",
+        "Purchase correction requires owner or master permission.",
+        403
+      );
+    }
     if (correctionPurchaseLogId !== null && (!Number.isSafeInteger(correctionPurchaseLogId) || correctionPurchaseLogId <= 0
       || mode === "quick-save" || normalizeInventoryReason(reason) !== "purchase" || expectedQuantity === undefined)) {
       return jsonError("invalid_purchase_correction", "Select an original purchase and supply the expected quantity.", 400);
@@ -687,6 +697,23 @@ export async function PATCH(req: Request) {
         { ok: false, message: "Target not found" },
         { status: 404 }
       );
+    }
+
+    if (
+      mode !== "quick-save" &&
+      correctionPurchaseLogId === null &&
+      normalizeInventoryReason(reason) === "purchase"
+    ) {
+      const previousQuantity = roundDecimal(Number(prevItem.quantity ?? 0));
+      const nextQuantity = roundDecimal(Number(serverPayload.quantity));
+
+      if (!Number.isFinite(nextQuantity) || nextQuantity <= previousQuantity) {
+        return jsonError(
+          "inventory_purchase_quantity_must_increase",
+          "Purchase receipt can only be selected when inventory quantity increases.",
+          400
+        );
+      }
     }
 
     if ((mode === "quick-save" || correctionPurchaseLogId !== null) && expectedQuantity !== undefined) {

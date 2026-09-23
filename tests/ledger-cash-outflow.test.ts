@@ -41,7 +41,7 @@ test("normal month sums external net outflow of business funds in the payment mo
     payment("expense", 100, "2026-09-10", { status: "draft" }),
     payment("expense", 100, "2026-09-10", { movements: [{ amount: -100, fund_account: { id: 3 } }] }),
   ];
-  assert.equal(computeActualCashOutflow(rows, businessFunds, "2026-09"), 150);
+  assert.equal(computeActualCashOutflow(rows, businessFunds, "2026-09"), 100);
   assert.equal(computeActualCashOutflow(rows, businessFunds, "2026-08"), 100);
 });
 
@@ -81,6 +81,97 @@ test("internal transfers, investments, adjustments, corrections and technical re
     payment("card_settlement_deposit", -100),
   ];
   assert.equal(computeActualCashOutflow(rows, businessFunds, "2026-09"), 0);
+});
+
+test("September operating cash outflow excludes 130M of capital recovery and includes actual operating payments", () => {
+  const recoveries = [
+    payment("owner_settlement_payment", 35_000_000, "2026-09-10"),
+    payment("owner_settlement_payment", 30_000_000, "2026-09-17"),
+    payment("owner_settlement_payment", 60_000_000, "2026-09-19"),
+    payment("balance_adjustment", 5_000_000, "2026-09-17", {
+      source_key: "owner-capital-recovery:2026-09-17:han-vuong",
+    }),
+  ];
+  const operatingAdjustments = [
+    payment("balance_adjustment", 182_400, "2026-09-02", {
+      source_key: "historical-payable-bridge:2026-09-02:trung-dong:182400",
+    }),
+    payment("balance_adjustment", 940_516, "2026-09-10", {
+      source_key: "historical-payable-bridge:2026-09-10:ok-mart:940516",
+    }),
+    payment("balance_adjustment", 24_464_000, "2026-09-02", {
+      source_key: "sheet-balance-adjustment:2026-09-02:craft-beer:24464000",
+    }),
+    payment("balance_adjustment", 16_940_000, "2026-09-17", {
+      source_key: "sheet-balance-adjustment:2026-09-17:craft-beer:16940000",
+    }),
+  ];
+  const mealCorrections = [
+    payment("expense", 240_000, "2026-09-19", {
+      source_type: "ledger_correction",
+      source_snapshot: { adjustmentType: "employee_meal", originalTransactionId: 1700 },
+      memo: "직원 식대 추가지급",
+    }),
+  ];
+  const excludedAdjustments = [
+    payment("balance_adjustment", -30_000, "2026-09-17", {
+      source_key: "sheet-balance-adjustment:2026-09-17:cho-pos:30000",
+    }),
+    payment("balance_adjustment", 50_000, "2026-09-19", {
+      source_key: "sheet-balance-adjustment:2026-09-19:technical-reversal:50000",
+      memo: "기술적 보정",
+    }),
+  ];
+
+  assert.equal(computeActualCashOutflow(recoveries, businessFunds, "2026-09"), 0);
+  assert.equal(computeActualCashOutflow(operatingAdjustments, businessFunds, "2026-09"), 42_526_916);
+  assert.equal(computeActualCashOutflow(mealCorrections, businessFunds, "2026-09"), 240_000);
+  assert.equal(computeActualCashOutflow(excludedAdjustments, businessFunds, "2026-09"), 0);
+  assert.equal(computeActualCashOutflow([
+    ...recoveries, ...operatingAdjustments, ...mealCorrections, ...excludedAdjustments,
+  ], businessFunds, "2026-09"), 42_766_916);
+});
+
+test("only evidenced operating adjustments and corrections with business-fund outflow count", () => {
+  const rows = [
+    payment("balance_adjustment", 50, "2026-09-10", {
+      source_key: "sheet-balance-adjustment:operating",
+      movements: [{ amount: -50, fund_account: { id: 3 } }],
+    }),
+    payment("balance_adjustment", 60, "2026-09-10", {
+      source_key: "historical-payable-bridge:internal",
+      movements: [{ amount: -60, fund_account: { id: 1 } }, { amount: 60, fund_account: { id: 2 } }],
+    }),
+    payment("balance_adjustment", 70, "2026-09-10", {
+      source_key: "sheet-balance-adjustment:technical-rebook",
+      memo: "rebook",
+    }),
+    payment("expense", 80, "2026-09-10", {
+      source_type: "ledger_correction",
+      source_snapshot: { adjustmentType: "employee_meal" },
+      movements: [{ amount: 80, fund_account: { id: 1 } }],
+    }),
+    payment("expense", 90, "2026-09-10", {
+      source_type: "ledger_correction",
+      source_snapshot: { economicDelta: 90, movementAdjustments: [{ fundAccountId: 1, signedAmount: -90 }] },
+      memo: "기술적 보정",
+    }),
+    payment("expense", 100, "2026-09-10", { source_type: "ledger_correction" }),
+    payment("expense", 110, "2026-09-10", {
+      source_type: "ledger_correction",
+      source_snapshot: { economicDelta: 110, movementAdjustments: [{ fundAccountId: 1, signedAmount: -110 }] },
+    }),
+    payment("expense", 120, "2026-09-10", {
+      source_type: "ledger_correction",
+      source_snapshot: { economicDelta: 120, movementAdjustments: [{ fundAccountId: 1, signedAmount: -120 }] },
+      memo: "reversal of accounting entry",
+    }),
+    payment("expense", 130, "2026-09-10", {
+      source_type: "ledger_correction",
+      source_snapshot: { adjustmentType: "technical_reversal", economicDelta: 130, movementAdjustments: [{ fundAccountId: 1, signedAmount: -130 }] },
+    }),
+  ];
+  assert.equal(computeActualCashOutflow(rows, businessFunds, "2026-09"), 110);
 });
 
 test("card clearing and settlement difference do not add a second cash outflow", () => {

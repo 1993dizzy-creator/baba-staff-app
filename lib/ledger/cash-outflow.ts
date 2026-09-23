@@ -19,10 +19,42 @@ const CASH_PAYMENT_TYPES = new Set([
   "payable_payment",
   "payroll_payment",
   "prepaid_expense_payment",
-  "owner_settlement_payment",
 ]);
 
+const OPERATING_BALANCE_ADJUSTMENT_PREFIXES = [
+  "historical-payable-bridge:",
+  "sheet-balance-adjustment:",
+];
+
 const roundMoney = (amount: number) => Math.round(amount * 1000) / 1000;
+
+function isTechnicalCashAdjustment(row: CashOutflowTransaction) {
+  if (/technical_adjustment/.test(row.source_type)) return true;
+  if (/월말\s*잔액\s*맞춤|상세\s*전환\s*상쇄|기술적\s*보정/.test(row.memo ?? "")) return true;
+  if (row.type === "balance_adjustment" || row.source_type === "ledger_correction") {
+    if (row.source_type === "ledger_correction" &&
+      /technical|reversal|rebook/i.test(
+        `${row.source_snapshot?.adjustmentType ?? ""} ${row.source_snapshot?.originalSourceType ?? ""}`
+      )) return true;
+    return /technical_adjustment|reversal|rebook/.test(row.source_key ?? "") ||
+      /reversal|rebook|기술적|상쇄/i.test(row.memo ?? "");
+  }
+  return false;
+}
+
+function isOperatingBalanceAdjustment(row: CashOutflowTransaction, businessFundNet: number) {
+  return row.type === "balance_adjustment" && businessFundNet < 0 &&
+    !row.source_key?.startsWith("owner-capital-recovery:") &&
+    OPERATING_BALANCE_ADJUSTMENT_PREFIXES.some((prefix) => row.source_key?.startsWith(prefix));
+}
+
+function isOperatingCorrection(row: CashOutflowTransaction, businessFundNet: number) {
+  if (row.source_type !== "ledger_correction" || row.type !== "expense" || businessFundNet >= 0) return false;
+  if (row.source_snapshot?.adjustmentType === "employee_meal") return true;
+  const economicDelta = Number(row.source_snapshot?.economicDelta);
+  return Number.isFinite(economicDelta) && economicDelta > 0 &&
+    Array.isArray(row.source_snapshot?.movementAdjustments);
+}
 
 export function computeActualCashOutflow(
   transactions: readonly CashOutflowTransaction[],
@@ -46,15 +78,20 @@ export function computeActualCashOutflow(
 
   const businessFundNet = transactions.reduce((total, row) => {
     if (row.business_date < start || row.business_date >= end || (row.status != null && row.status !== "confirmed")) return total;
-    if (!CASH_PAYMENT_TYPES.has(row.type) || row.source_type === "ledger_correction") return total;
-    if (/technical_adjustment/.test(row.source_type)) return total;
-    if (/월말\s*잔액\s*맞춤|상세\s*전환\s*상쇄|기술적\s*보정/.test(row.memo ?? "")) return total;
+    if (isTechnicalCashAdjustment(row)) return total;
 
     const transactionNet = roundMoney((row.movements ?? []).reduce((sum, movement) =>
       businessFundAccountIds.has(Number(movement.fund_account?.id))
         ? sum + Number(movement.amount ?? 0)
         : sum,
     0));
+    if (row.type === "balance_adjustment") {
+      return isOperatingBalanceAdjustment(row, transactionNet) ? total + transactionNet : total;
+    }
+    if (row.source_type === "ledger_correction") {
+      return isOperatingCorrection(row, transactionNet) ? total + transactionNet : total;
+    }
+    if (!CASH_PAYMENT_TYPES.has(row.type)) return total;
     return total + transactionNet;
   }, 0);
   return Math.max(0, roundMoney(-businessFundNet));

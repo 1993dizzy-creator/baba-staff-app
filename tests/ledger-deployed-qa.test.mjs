@@ -537,6 +537,29 @@ test('once the new month\'s data arrives (data.month matches the selected month 
 // ---------------------------------------------------------------------------
 const zeroInvestmentSummary={openingCumulative:0,periodOpening:0,periodContribution:0,periodAdjustment:0,periodNetChange:0,closingCumulative:0};
 
+test('investment header shows signed monthly change in both states and languages while details retain cumulative totals',()=>{
+  const cases=[
+    {change:-130_000_000,opening:2_869_689_000,closing:2_739_689_000,amount:'-130.000.000 ₫',color:'amountExpense'},
+    {change:100_000_000,opening:2_739_689_000,closing:2_839_689_000,amount:'+100.000.000 ₫',color:'amountIncome'},
+    {change:0,opening:2_739_689_000,closing:2_739_689_000,amount:'0 ₫',color:null},
+  ];
+  for(const lang of ['ko','vi'])for(const expanded of [false,true])for(const {change,opening,closing,amount,color} of cases){
+    const html=pageFixture(entriesPath,{
+      0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:expanded,
+      26:{month:'2026-09',configured:true,summary:{...zeroInvestmentSummary,openingCumulative:opening,periodContribution:Math.max(0,change),periodAdjustment:Math.min(0,change),periodNetChange:change,closingCumulative:closing},events:[]},
+    },undefined,lang).html;
+    const header=html.match(/<button[^>]*aria-controls="investment-body"[\s\S]*?<\/button>/)?.[0];
+    assert.ok(header);
+    assert.match(header,new RegExp(`aria-expanded="${expanded}"`));
+    assert.match(header,new RegExp(`<strong${color?` class="${color}"`:''} aria-label="${lang==='vi'?'Biến động vốn góp trong tháng':'당월 투자금 변동'}">${amount.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}`));
+    assert.doesNotMatch(header,/2\.739\.689\.000 ₫|2\.839\.689\.000 ₫/);
+    if(expanded){
+      assert.match(html,new RegExp(`${lang==='vi'?'Lũy kế đầu tháng':'월초 누적'}<\\/dt><dd>${opening.toLocaleString('vi-VN').replace(/\./g,'\\.')} ₫`));
+      assert.match(html,new RegExp(`${lang==='vi'?'Lũy kế cuối tháng':'월말 누적'}<\\/dt><dd>${closing.toLocaleString('vi-VN').replace(/\./g,'\\.')} ₫`));
+    }
+  }
+});
+
 test('investment card sends the selected month to the investments API as part of the main load()',async()=>{
   for(const month of ['2026-08','2026-09']){
     const state=entriesFixture(month,{fetcher:async(url)=>Response.json(
@@ -550,7 +573,7 @@ test('investment card sends the selected month to the investments API as part of
   }
 });
 
-test('investment card distinguishes "not configured" from "configured with zero period activity" — never a misleading 0 ₫ either way',()=>{
+test('investment card distinguishes "not configured" from "configured with zero period activity"',()=>{
   const unconfigured=pageFixture(entriesPath,{
     0:'2026-09',1:ledgerFixture('2026-09'),2:false,25:true,
     26:{month:'2026-09',configured:false,summary:zeroInvestmentSummary,events:[]},
@@ -568,7 +591,9 @@ test('investment card distinguishes "not configured" from "configured with zero 
   }).html;
   assert.match(configuredZero,/이번 달 투자금 변동이 없습니다/);
   assert.doesNotMatch(configuredZero,/투자금 기준이 아직 설정되지 않았습니다/);
-  assert.match(configuredZero,/12\.000\.000 ₫/); // a real cumulative figure, not hidden behind an "unconfigured" message
+  const configuredHeader=configuredZero.slice(configuredZero.indexOf('id="investment-title"'),configuredZero.indexOf('id="investment-title"')+400);
+  assert.match(configuredHeader,/aria-label="당월 투자금 변동">0 ₫/);
+  assert.match(configuredZero,/월말 누적<\/dt><dd>12\.000\.000 ₫/);
 });
 
 test('investment card never paints a stale month\'s numbers — it falls back to the loading hint until investments.month matches the selected month',()=>{
@@ -714,9 +739,9 @@ test('September investor bars show closing capital after recovery in Korean and 
   for(const lang of ['ko','vi']){
     const html=pageFixture(entriesPath,{
       0:month,1:ledgerFixture(month),2:false,25:true,
-      26:{month,configured:true,summary:{...zeroInvestmentSummary,closingCumulative:2_739_689_000},participants,events:[]},
+      26:{month,configured:true,summary:{...zeroInvestmentSummary,openingCumulative:2_869_689_000,periodAdjustment:-130_000_000,periodNetChange:-130_000_000,closingCumulative:2_739_689_000},participants,events:[]},
     },undefined,lang).html;
-    assert.match(html,/class="payableHeading"[\s\S]*?<strong aria-label="[^"]+">2\.739\.689\.000 ₫/);
+    assert.match(html,/class="payableHeading"[\s\S]*?<strong class="amountExpense" aria-label="[^"]+">-130\.000\.000 ₫/);
     for(const [name,closing,change,opening,exactChange] of expected){
       assert.match(html,new RegExp(`${name}[\\s\\S]*?class="investmentPrior"[^>]*><span>${closing} ₫<\\/span>[\\s\\S]*?class="investmentValues"><strong[^>]*>${change}<\\/strong>`));
       assert.match(html,new RegExp(`aria-label="${name}: [^"]*${closing} ₫, [^"]*${exactChange} ₫"`));

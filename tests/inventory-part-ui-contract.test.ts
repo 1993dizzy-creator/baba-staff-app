@@ -101,3 +101,31 @@ test("low-stock counts per part are keyed off the inventory-only part list", () 
   assert.match(inventoryPage, /INVENTORY_PART_VALUES\.reduce\(/);
   assert.match(inventoryPage, /Record<InventoryPartValue, number>/);
 });
+
+test("ordinary item editing no longer exposes or loads historical purchase corrections", () => {
+  assert.doesNotMatch(inventoryPage, /기존 구매입고 수정 \(선택\)/);
+  assert.doesNotMatch(inventoryPage, /purchaseCorrectionSources/);
+  assert.doesNotMatch(inventoryPage, /correctionPurchaseLogId/);
+  assert.doesNotMatch(inventoryPage, /purchaseCorrectionLoadError/);
+  assert.doesNotMatch(inventoryPage, /correctionItemId/);
+  assert.doesNotMatch(inventoryPage, /correction_of_inventory_log_id/);
+});
+
+test("ordinary edit-form reason modal keeps four reasons and gates purchase on a quantity increase", () => {
+  assert.match(
+    inventoryPage,
+    /\["stock_check", "purchase", "service", "other"\] as const/
+  );
+  assert.match(
+    inventoryPage,
+    /reason === "purchase" &&[\s\S]*?Number\(editFormPendingSave\.payload\.quantity\) <=[\s\S]*?editFormPendingSave\.expectedQuantity/
+  );
+  assert.match(
+    inventoryPage,
+    /구매입고는 재고 수량이 증가할 때만 선택할 수 있습니다\./
+  );
+  assert.match(
+    inventoryPage,
+    /Chỉ có thể chọn Nhập mua khi số lượng tồn kho tăng\./
+  );
+});

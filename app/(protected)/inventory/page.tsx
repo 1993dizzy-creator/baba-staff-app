@@ -179,7 +179,6 @@ type InventoryLog = {
     reason?: string | null;
     source?: string | null;
     business_date?: string | null;
-    correction_of_inventory_log_id?: number | null;
     previousKegSummary?: PreviousKegSummary | null;
 };
 
@@ -421,19 +420,6 @@ export default function InventoryPage() {
     const [editFormPendingSave, setEditFormPendingSave] =
         useState<EditFormPendingSave | null>(null);
     const [isEditReasonSaving, setIsEditReasonSaving] = useState(false);
-    const [purchaseCorrectionSources,setPurchaseCorrectionSources]=useState<InventoryLog[]|null>(null);
-    const [correctionPurchaseLogId,setCorrectionPurchaseLogId]=useState("");
-    const [purchaseCorrectionLoadError,setPurchaseCorrectionLoadError]=useState(false);
-    const correctionItemId=editFormPendingSave?.id;
-    useEffect(()=>{
-        if(!correctionItemId)return;
-        const controller=new AbortController();
-        void fetchInventoryApi(`/api/inventory/logs?mode=logs&itemId=${correctionItemId}`,{cache:"no-store",signal:controller.signal})
-            .then(async response=>{const body=await response.json();if(!response.ok||!body.ok)throw Error("PURCHASE_LOG_LOAD_FAILED");
-                if(!controller.signal.aborted)setPurchaseCorrectionSources((body.data as InventoryLog[]).filter(log=>log.item_id===correctionItemId&&log.reason==="purchase"&&Number(log.change_quantity)>0&&!log.correction_of_inventory_log_id));})
-            .catch(()=>{if(!controller.signal.aborted)setPurchaseCorrectionLoadError(true);});
-        return()=>controller.abort();
-    },[correctionItemId]);
     const [logModalItem, setLogModalItem] = useState<InventoryItem | null>(null);
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
@@ -1335,11 +1321,17 @@ export default function InventoryPage() {
     const handleEditReasonConfirm = async (reason: QuickReasonValue) => {
         if (!editFormPendingSave || isEditReasonSaving) return;
 
-        if(correctionPurchaseLogId&&reason!=="purchase") {
-            alert(lang==="ko"?"기존 구매 수정은 구매입고 버튼으로 저장해주세요.":"Chọn Nhập mua để sửa giao dịch đã chọn.");return;
-        }
-        if(reason==="purchase"&&!correctionPurchaseLogId&&Number(editFormPendingSave.payload.quantity)<editFormPendingSave.expectedQuantity) {
-            alert(lang==="ko"?"수정할 원 구매입고를 먼저 선택해주세요.":"Hãy chọn giao dịch nhập mua gốc cần sửa.");return;
+        if (
+            reason === "purchase" &&
+            Number(editFormPendingSave.payload.quantity) <=
+                editFormPendingSave.expectedQuantity
+        ) {
+            alert(
+                lang === "ko"
+                    ? "구매입고는 재고 수량이 증가할 때만 선택할 수 있습니다."
+                    : "Chỉ có thể chọn Nhập mua khi số lượng tồn kho tăng."
+            );
+            return;
         }
 
         setIsEditReasonSaving(true);
@@ -1355,7 +1347,6 @@ export default function InventoryPage() {
                     payload: editFormPendingSave.payload,
                     source: "edit_form",
                     reason,
-                    ...(correctionPurchaseLogId?{correction_of_inventory_log_id:Number(correctionPurchaseLogId),expectedQuantity:editFormPendingSave.expectedQuantity}:{}),
                 }),
             });
 
@@ -1803,7 +1794,6 @@ export default function InventoryPage() {
                             updated_at: new Date().toISOString(),
                         };
 
-                setCorrectionPurchaseLogId("");setPurchaseCorrectionSources(null);setPurchaseCorrectionLoadError(false);
                 setEditFormPendingSave({
                     id: editingId,
                     payload,
@@ -5284,15 +5274,6 @@ export default function InventoryPage() {
                         <div style={{ ...ui.metaText, marginBottom: 4 }}>
                             {t.editReasonModalDescription}
                         </div>
-
-                        <label style={{fontSize:12,color:"#4b5563"}}>
-                            {lang==="ko"?"기존 구매입고 수정 (선택)":"Sửa giao dịch nhập mua (tùy chọn)"}
-                            <select disabled={isEditReasonSaving||purchaseCorrectionSources===null} value={correctionPurchaseLogId} onChange={event=>setCorrectionPurchaseLogId(event.target.value)} style={{width:"100%",minWidth:0,minHeight:40,marginTop:5,fontSize:12,border:"1px solid #d1d5db",borderRadius:8}}>
-                                <option value="">{lang==="ko"?"새 입고 / 일반 재고 수정":"Nhập mới / sửa tồn kho"}</option>
-                                {purchaseCorrectionSources?.map(log=><option key={log.id} value={log.id}>#{log.id} · {log.business_date} · {log.new_supplier??"-"} · {formatDecimalDisplay(log.change_quantity)} {log.unit}</option>)}
-                            </select>
-                        </label>
-                        {purchaseCorrectionLoadError?<p role="alert" style={{margin:0,fontSize:11,color:"#b91c1c"}}>{lang==="ko"?"구매내역을 불러오지 못했습니다. 창을 닫고 다시 시도해주세요.":"Không tải được giao dịch mua. Hãy mở lại cửa sổ."}</p>:null}
 
                         <div
                             style={{

@@ -131,7 +131,7 @@ test('latest purchase correction updates supplier binding and price history befo
   assert.deepEqual(state.calls, ['source-commit', 'master-update', 'price-history', 'ledger-projection']);
 });
 
-function itemSetup({correctionFailure=false}={}) {
+function itemSetup({correctionFailure=false,role='staff'}={}) {
   const calls = [], logs = [];
   const item = { id: 1, item_name: 'Coca', item_name_vi: 'Cola', quantity: 10, purchase_price: 20000, supplier: 'Won Mart', supplier_partner_id: 10, part: 'bar' };
   const supabase = {
@@ -175,7 +175,7 @@ function itemSetup({correctionFailure=false}={}) {
   const route = load('app/api/inventory/items/route.ts', {
     'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } },
     '@supabase/supabase-js': { createClient: () => supabase },
-    '@/lib/auth/server-auth': { getAuthenticatedActor: async () => ({ ok: true, actor: { id: 7, username: 'staff', name: 'Staff', role: 'staff' } }) },
+    '@/lib/auth/server-auth': { getAuthenticatedActor: async () => ({ ok: true, actor: { id: 7, username: role, name: role, role } }) },
     '@/lib/inventory/number': load('lib/inventory/number.ts'),
     '@/lib/inventory/keg-progress': {}, '@/lib/inventory/items-server': {},
     '@/lib/inventory/normalize': load('lib/inventory/normalize.ts'),
@@ -225,16 +225,49 @@ test('additional quick-save purchases get independent source IDs and preserve mo
   assert.equal(retry.status, 409); assert.equal(state.logs.length, before);
 });
 
-test('explicit purchase edit commits Inventory and linked log atomically before projection and reports projection failure separately',async()=>{
-  const state=itemSetup();const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',correction_of_inventory_log_id:99,expectedQuantity:10,payload:{quantity:6}});
-  assert.equal(response.status,200);assert.equal(state.item.quantity,6);assert.equal(state.logs[0].correction_of_inventory_log_id,99);
-  assert.equal((await response.json()).ledgerSync.status,'failed');assert.deepEqual(state.calls,['atomic-correction','ledger-projection']);
+test('ordinary edit-form purchase accepts only a quantity increase',async()=>{
+  const increased=itemSetup();
+  const success=await increased.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',payload:{quantity:11}});
+  assert.equal(success.status,200);assert.equal(increased.item.quantity,11);assert.equal(increased.logs[0].reason,'purchase');
+
+  for(const quantity of [10,9]) {
+    const state=itemSetup();
+    const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',payload:{quantity}});
+    assert.equal(response.status,400);assert.equal((await response.json()).error,'inventory_purchase_quantity_must_increase');
+    assert.equal(state.item.quantity,10);assert.equal(state.logs.length,0);
+  }
+});
+
+test('ordinary edit-form stock check, service, and other reasons keep their existing behavior',async()=>{
+  for(const [reason,quantity] of [['stock_check',10],['service',9],['other',11]]) {
+    const state=itemSetup();
+    const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason,payload:{quantity}});
+    assert.equal(response.status,200);assert.equal(state.item.quantity,quantity);assert.equal(state.logs[0].reason,reason);
+  }
+});
+
+test('owner and master can keep using the emergency purchase-correction flow',async()=>{
+  for(const role of ['owner','master']) {
+    const state=itemSetup({role});
+    const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',correction_of_inventory_log_id:99,expectedQuantity:10,payload:{quantity:6}});
+    assert.equal(response.status,200);assert.equal(state.item.quantity,6);assert.equal(state.logs[0].correction_of_inventory_log_id,99);
+    assert.equal((await response.json()).ledgerSync.status,'failed');assert.deepEqual(state.calls,['atomic-correction','ledger-projection']);
+  }
+});
+
+test('manager, leader, and staff cannot call the emergency purchase-correction flow',async()=>{
+  for(const role of ['manager','leader','staff']) {
+    const state=itemSetup({role});
+    const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',correction_of_inventory_log_id:99,expectedQuantity:10,payload:{quantity:6}});
+    assert.equal(response.status,403);assert.equal((await response.json()).error,'inventory_purchase_correction_forbidden');
+    assert.equal(state.item.quantity,10);assert.equal(state.logs.length,0);assert.equal(state.calls.length,0);
+  }
 });
 
 test('invalid explicit purchase reference or missing expected quantity never falls back to an ordinary Inventory update',async()=>{
-  const failed=itemSetup({correctionFailure:true});
+  const failed=itemSetup({correctionFailure:true,role:'owner'});
   const response=await failed.invoke('PATCH',{id:1,reason:'purchase',correction_of_inventory_log_id:99,expectedQuantity:10,payload:{quantity:6}});
   assert.equal(response.status,400);assert.equal(failed.item.quantity,10);assert.equal(failed.logs.length,0);
-  const state=itemSetup();assert.equal((await state.invoke('PATCH',{id:1,reason:'purchase',correction_of_inventory_log_id:99,payload:{quantity:6}})).status,400);
+  const state=itemSetup({role:'owner'});assert.equal((await state.invoke('PATCH',{id:1,reason:'purchase',correction_of_inventory_log_id:99,payload:{quantity:6}})).status,400);
   assert.equal(state.item.quantity,10);assert.equal(state.calls.length,0);
 });

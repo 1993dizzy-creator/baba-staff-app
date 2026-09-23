@@ -957,8 +957,11 @@ function LedgerEntriesContent() {
               <button type="button" className={styles.payableToggle} aria-expanded={investmentExpanded} aria-controls="investment-body" onClick={()=>setInvestmentExpanded(value=>!value)}>
                 <div className={styles.payableHeading}>
                   <h2 id="investment-title">💼 {vi?"Tình hình vốn góp":"투자금 현황"} ({vi?`T${Number(month.slice(5,7))}`:`${Number(month.slice(5,7))}월`})</h2>
-                  <strong aria-label={vi?"Lũy kế vốn góp cuối tháng":"월말 누적 투자금"}>
-                    {activeInvestments ? (activeInvestments.configured ? money(activeInvestments.summary.closingCumulative) : (vi?"Chưa thiết lập":"미설정")) : "-"}
+                  <strong
+                    className={activeInvestments?.configured ? (activeInvestments.summary.periodNetChange > 0 ? styles.amountIncome : activeInvestments.summary.periodNetChange < 0 ? styles.amountExpense : undefined) : undefined}
+                    aria-label={vi?"Biến động vốn góp trong tháng":"당월 투자금 변동"}
+                  >
+                    {activeInvestments ? (activeInvestments.configured ? `${activeInvestments.summary.periodNetChange > 0 ? "+" : ""}${money(activeInvestments.summary.periodNetChange)}` : (vi?"Chưa thiết lập":"미설정")) : "-"}
                     {" "}<i aria-hidden>{investmentExpanded?"⌃":"⌄"}</i>
                   </strong>
                 </div>
