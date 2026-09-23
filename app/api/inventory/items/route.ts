@@ -254,24 +254,31 @@ type DuplicateInventoryItem = {
   part: string | null;
   category: string | null;
   category_vi: string | null;
+  is_active: boolean | null;
 };
 
 const findDuplicateInventoryItem = async (
+  itemName: unknown,
   itemNameVi: unknown,
   code: unknown,
-  excludeId?: number
+  options: { excludeId?: number; activeOnly: boolean }
 ) => {
-  const normalizedName = normalizeInventoryName(itemNameVi);
+  const normalizedItemName = normalizeInventoryName(itemName);
+  const normalizedItemNameVi = normalizeInventoryName(itemNameVi);
 
-  if (!normalizedName) return null;
+  if (!normalizedItemName && !normalizedItemNameVi) return null;
 
   const normalizedCode = normalizeInventoryCode(code);
   let query = supabaseAdmin
     .from("inventory")
-    .select("id, item_name, item_name_vi, code, part, category, category_vi");
+    .select("id, item_name, item_name_vi, code, part, category, category_vi, is_active");
 
-  if (excludeId !== undefined) {
-    query = query.neq("id", excludeId);
+  if (options.excludeId !== undefined) {
+    query = query.neq("id", options.excludeId);
+  }
+
+  if (options.activeOnly) {
+    query = query.eq("is_active", true);
   }
 
   const { data, error } = await query;
@@ -279,8 +286,14 @@ const findDuplicateInventoryItem = async (
   if (error) throw error;
 
   return ((data || []) as DuplicateInventoryItem[]).find((item) => {
+    const sameName =
+      (normalizedItemName !== "" &&
+        normalizeInventoryName(item.item_name) === normalizedItemName) ||
+      (normalizedItemNameVi !== "" &&
+        normalizeInventoryName(item.item_name_vi) === normalizedItemNameVi);
+
     return (
-      normalizeInventoryName(item.item_name_vi) === normalizedName &&
+      sameName &&
       normalizeInventoryCode(item.code) === normalizedCode
     );
   }) ?? null;
@@ -290,7 +303,7 @@ const duplicateInventoryItemResponse = (duplicateItem: DuplicateInventoryItem) =
   NextResponse.json(
     {
       ok: false,
-      error: "inventory_item_duplicate_name_vi",
+      error: "inventory_item_duplicate_name_code",
       message: "Duplicate inventory item.",
       duplicateItem,
     },
@@ -442,8 +455,10 @@ export async function POST(req: Request) {
     );
 
     const duplicateItem = await findDuplicateInventoryItem(
+      serverPayload.item_name,
       serverPayload.item_name_vi,
-      serverPayload.code
+      serverPayload.code,
+      { activeOnly: false }
     );
 
     if (duplicateItem) {
@@ -742,6 +757,12 @@ export async function PATCH(req: Request) {
     }
 
     if (mode !== "quick-save") {
+      const nextItemName = Object.prototype.hasOwnProperty.call(
+        serverPayload,
+        "item_name"
+      )
+        ? serverPayload.item_name
+        : prevItem.item_name;
       const nextItemNameVi = Object.prototype.hasOwnProperty.call(
         serverPayload,
         "item_name_vi"
@@ -752,9 +773,10 @@ export async function PATCH(req: Request) {
         ? serverPayload.code
         : prevItem.code;
       const duplicateItem = await findDuplicateInventoryItem(
+        nextItemName,
         nextItemNameVi,
         nextCode,
-        Number(prevItem.id)
+        { excludeId: Number(prevItem.id), activeOnly: true }
       );
 
       if (duplicateItem) {

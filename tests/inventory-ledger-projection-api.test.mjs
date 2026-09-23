@@ -131,21 +131,24 @@ test('latest purchase correction updates supplier binding and price history befo
   assert.deepEqual(state.calls, ['source-commit', 'master-update', 'price-history', 'ledger-projection']);
 });
 
-function itemSetup({correctionFailure=false,role='staff'}={}) {
+function itemSetup({correctionFailure=false,role='staff',duplicateItems=[]}={}) {
   const calls = [], logs = [];
   const item = { id: 1, item_name: 'Coca', item_name_vi: 'Cola', quantity: 10, purchase_price: 20000, supplier: 'Won Mart', supplier_partner_id: 10, part: 'bar' };
   const supabase = {
     from(table) {
       let patch, insert, single = false;
+      const filters = [];
       const query = {
-        select() { return query; }, eq() { return query; }, neq() { return query; },
+        select() { return query; },
+        eq(field,value) { filters.push(item => item[field] === value); return query; },
+        neq(field,value) { filters.push(item => item[field] !== value); return query; },
         single() { single = true; return query; }, maybeSingle() { single = true; return query; },
         insert(value) { insert = value; return query; }, update(value) { patch = value; return query; },
         then(resolve) {
           let data;
           if (table === 'inventory') {
             if (patch || insert) { Object.assign(item, patch ?? insert[0]); calls.push('inventory-commit'); }
-            data = single ? { ...item } : [];
+            data = single ? { ...item } : duplicateItems.filter(candidate => filters.every(filter => filter(candidate)));
           } else if (table === 'inventory_logs' && insert) {
             data = { id: 100 + logs.length, ...insert[0] };
             logs.push(data); calls.push('source-commit');
@@ -208,6 +211,68 @@ test('existing_stock POST never projects a purchase expense', async () => {
   assert.equal(state.logs[0].reason, 'stock_check');
   assert.equal((await response.json()).ledgerSync, undefined);
   assert.ok(!state.calls.includes('ledger-projection'));
+});
+
+const createPayload = overrides => ({
+  item_name: '새 품목', item_name_vi: 'Mat hang moi', code: 'PC', quantity: 10,
+  unit: 'can', part: 'bar', purchase_price: 20000, ...overrides,
+});
+
+test('POST duplicate policy matches either Korean or Vietnamese name only when the normalized code also matches',async()=>{
+  const cases = [
+    {
+      existing: {id:2,item_name:'로쿠 진',item_name_vi:'Roku gin cu',code:'PC',is_active:true},
+      payload: createPayload({item_name:'로쿠 진',item_name_vi:'Roku gin moi',code:'pc'}),
+    },
+    {
+      existing: {id:3,item_name:'다른 이름',item_name_vi:'Nước ép nho',code:'Y1',is_active:true},
+      payload: createPayload({item_name:'새 이름',item_name_vi:'nuoc ep nho',code:'Y1'}),
+    },
+    {
+      existing: {id:4,item_name:'빈 코드 품목',item_name_vi:'Ma trong',code:null,is_active:true},
+      payload: createPayload({item_name:'빈 코드 품목',item_name_vi:'Khac',code:''}),
+    },
+  ];
+
+  for(const {existing,payload} of cases) {
+    const state=itemSetup({duplicateItems:[existing]});
+    const response=await state.invoke('POST',{registrationType:'existing_stock',payload});
+    const body=await response.json();
+    assert.equal(response.status,409);assert.equal(body.error,'inventory_item_duplicate_name_code');
+    assert.equal(body.duplicateItem.id,existing.id);assert.equal(body.duplicateItem.is_active,existing.is_active);
+    assert.equal(state.calls.length,0);
+  }
+});
+
+test('POST allows the same Korean or Vietnamese name when the code differs',async()=>{
+  for(const [existing,payload] of [
+    [{id:2,item_name:'로쿠 진',item_name_vi:'Roku gin',code:'PC',is_active:true},createPayload({item_name:'로쿠 진',code:'Y1'})],
+    [{id:3,item_name:'다른 이름',item_name_vi:'Nước ép nho',code:'PC',is_active:true},createPayload({item_name_vi:'nuoc ep nho',code:'Z6'})],
+  ]) {
+    const state=itemSetup({duplicateItems:[existing]});
+    const response=await state.invoke('POST',{registrationType:'existing_stock',payload});
+    assert.equal(response.status,200);assert.ok(state.calls.includes('inventory-commit'));
+  }
+});
+
+test('POST blocks an inactive exact duplicate and returns its inactive status',async()=>{
+  const inactive={id:5,item_name:'병합 품목',item_name_vi:'Mat hang gop',code:'PC',is_active:false};
+  const state=itemSetup({duplicateItems:[inactive]});
+  const response=await state.invoke('POST',{registrationType:'existing_stock',payload:createPayload({item_name:'병합 품목',code:'PC'})});
+  const body=await response.json();
+  assert.equal(response.status,409);assert.equal(body.error,'inventory_item_duplicate_name_code');assert.equal(body.duplicateItem.is_active,false);
+});
+
+test('PATCH ignores inactive legacy duplicates but blocks a different active exact duplicate',async()=>{
+  const payload={item_name:'정리된 품목',code:'PC',quantity:10};
+  const inactiveState=itemSetup({duplicateItems:[{id:2,item_name:'정리된 품목',item_name_vi:'',code:'PC',is_active:false}]});
+  const allowed=await inactiveState.invoke('PATCH',{id:1,source:'edit_form',reason:'other',payload});
+  assert.equal(allowed.status,200);assert.equal(inactiveState.item.item_name,'정리된 품목');
+
+  const activeState=itemSetup({duplicateItems:[{id:3,item_name:'정리된 품목',item_name_vi:'',code:'PC',is_active:true}]});
+  const blocked=await activeState.invoke('PATCH',{id:1,source:'edit_form',reason:'other',payload});
+  assert.equal(blocked.status,409);assert.equal((await blocked.json()).error,'inventory_item_duplicate_name_code');
+  assert.equal(activeState.item.item_name,'Coca');assert.equal(activeState.calls.length,0);
 });
 
 test('additional quick-save purchases get independent source IDs and preserve mode on Ledger failure', async () => {

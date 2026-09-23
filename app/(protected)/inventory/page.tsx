@@ -38,6 +38,7 @@ import {
 import { parseDecimal,formatDecimalDisplay,roundDecimal,} from "@/lib/inventory/number";
 import { formatNumber,parsePrice,formatMoneyDisplay,} from "@/lib/inventory/money";
 import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
+import { findSimilarInventoryItems } from "@/lib/inventory/similarity";
 import {
     InventoryImageCompressionError,
     compressInventoryImage,
@@ -93,7 +94,7 @@ type KegTimeModalState = {
 
 type DuplicateInventoryItem = Pick<
     InventoryItem,
-    "id" | "item_name" | "item_name_vi" | "code" | "part" | "category" | "category_vi"
+    "id" | "item_name" | "item_name_vi" | "code" | "part" | "category" | "category_vi" | "is_active"
 >;
 
 type InventoryItemMutationResult = {
@@ -503,6 +504,14 @@ export default function InventoryPage() {
                 })),
         ],
         [categoryOptions, customCategoryOptions, lang]
+    );
+
+    const similarInventoryCandidates = useMemo(
+        () =>
+            editingId === null
+                ? findSimilarInventoryItems(itemName, inventoryList, 5)
+                : [],
+        [editingId, inventoryList, itemName]
     );
 
     const getDisplayItemName = useCallback(
@@ -1257,6 +1266,12 @@ export default function InventoryPage() {
     };
 
     const getDuplicateItemAlertMessage = (duplicateItem?: DuplicateInventoryItem | null) => {
+        if (duplicateItem?.is_active === false) {
+            return lang === "ko"
+                ? "동일한 품목이 비활성 상태로 등록되어 있습니다. 기존 품목을 확인해주세요."
+                : "Mặt hàng trùng đã được đăng ký ở trạng thái không hoạt động. Vui lòng kiểm tra mặt hàng hiện có.";
+        }
+
         const partLabel = getDuplicatePartLabel(duplicateItem?.part);
         const categoryLabel = getInventoryCategoryLabel(
             duplicateItem?.part,
@@ -1276,7 +1291,8 @@ export default function InventoryPage() {
         result: InventoryItemMutationResult
     ) =>
         res.status === 409 &&
-        result.error === "inventory_item_duplicate_name_vi";
+        (result.error === "inventory_item_duplicate_name_vi" ||
+            result.error === "inventory_item_duplicate_name_code");
 
     const readInventoryItemMutationResult = async (
         res: Response,
@@ -4466,6 +4482,154 @@ export default function InventoryPage() {
                                 ref={itemNameRef}
                                 onKeyDown={(e) => handleKeyDown(e, supplierRef)}
                             />
+                            {similarInventoryCandidates.length > 0 && (
+                                <div
+                                    style={{
+                                        marginTop: 8,
+                                        padding: 8,
+                                        border: "1px solid #fde68a",
+                                        borderRadius: 10,
+                                        background: "#fffbeb",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        gap: 4,
+                                    }}
+                                >
+                                    <div style={{ fontSize: 12, fontWeight: 800, color: "#92400e" }}>
+                                        {lang === "ko"
+                                            ? "유사한 기존 품목"
+                                            : "Các mặt hàng hiện có tương tự"}
+                                    </div>
+                                    {similarInventoryCandidates.map(({ item }) => {
+                                        const partEmoji = PART_META[
+                                            isInventoryPart(item.part) ? item.part : "etc"
+                                        ].emoji;
+                                        const categoryLabel =
+                                            getInventoryCategoryLabel(
+                                                item.part,
+                                                item.category,
+                                                item.category_vi,
+                                                lang
+                                            ) || "-";
+                                        const displayName =
+                                            lang === "ko"
+                                                ? item.item_name || item.item_name_vi || "-"
+                                                : item.item_name_vi || item.item_name || "-";
+
+                                        return (
+                                            <button
+                                                type="button"
+                                                key={item.id}
+                                                onClick={() => handleEdit(item)}
+                                                onPointerEnter={(event) => {
+                                                    event.currentTarget.style.background = "#fef3c7";
+                                                }}
+                                                onPointerLeave={(event) => {
+                                                    event.currentTarget.style.background = "#fff";
+                                                }}
+                                                onPointerDown={(event) => {
+                                                    event.currentTarget.style.background = "#fde68a";
+                                                }}
+                                                onPointerUp={(event) => {
+                                                    event.currentTarget.style.background = "#fef3c7";
+                                                }}
+                                                onPointerCancel={(event) => {
+                                                    event.currentTarget.style.background = "#fff";
+                                                }}
+                                                style={{
+                                                    width: "100%",
+                                                    minWidth: 0,
+                                                    padding: "5px 7px",
+                                                    border: "1px solid #f3e8c8",
+                                                    borderRadius: 7,
+                                                    background: "#fff",
+                                                    fontSize: 11,
+                                                    lineHeight: 1.35,
+                                                    color: "#111827",
+                                                    textAlign: "left",
+                                                    cursor: "pointer",
+                                                    transition: "background 120ms ease",
+                                                    overflow: "hidden",
+                                                }}
+                                            >
+                                                <span
+                                                    style={{
+                                                        display: "flex",
+                                                        alignItems: "center",
+                                                        gap: 4,
+                                                        width: "100%",
+                                                        minWidth: 0,
+                                                        whiteSpace: "nowrap",
+                                                        overflow: "hidden",
+                                                    }}
+                                                >
+                                                    <span
+                                                        aria-hidden="true"
+                                                        style={{
+                                                            flex: "0 0 18px",
+                                                            width: 18,
+                                                            textAlign: "center",
+                                                        }}
+                                                    >
+                                                        {partEmoji}
+                                                    </span>
+                                                    {item.is_active === false && (
+                                                        <span
+                                                            style={{
+                                                                padding: "1px 5px",
+                                                                borderRadius: 999,
+                                                                background: "#e5e7eb",
+                                                                color: "#4b5563",
+                                                                fontSize: 10,
+                                                                flexShrink: 0,
+                                                            }}
+                                                        >
+                                                            {lang === "ko" ? "비활성" : "Không hoạt động"}
+                                                        </span>
+                                                    )}
+                                                    <span style={{ flexShrink: 0 }}>·</span>
+                                                    <span
+                                                        title={categoryLabel}
+                                                        style={{
+                                                            maxWidth: 84,
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                            whiteSpace: "nowrap",
+                                                            flexShrink: 1,
+                                                        }}
+                                                    >
+                                                        {categoryLabel}
+                                                    </span>
+                                                    <span style={{ flexShrink: 0 }}>·</span>
+                                                    <span
+                                                        style={{
+                                                            flex: 1,
+                                                            minWidth: 0,
+                                                            overflow: "hidden",
+                                                            textOverflow: "ellipsis",
+                                                            whiteSpace: "nowrap",
+                                                        }}
+                                                    >
+                                                        {displayName}
+                                                    </span>
+                                                    {item.code?.trim() && (
+                                                        <>
+                                                            <span style={{ flexShrink: 0 }}>·</span>
+                                                            <span style={{ flexShrink: 0 }}>
+                                                                {item.code.trim()}
+                                                            </span>
+                                                        </>
+                                                    )}
+                                                    <span style={{ flexShrink: 0 }}>·</span>
+                                                    <span style={{ flexShrink: 0 }}>
+                                                        {formatDecimalDisplay(item.quantity)} {item.unit || "-"}
+                                                    </span>
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
 
                         <div>

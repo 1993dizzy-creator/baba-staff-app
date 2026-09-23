@@ -129,3 +129,96 @@ test("ordinary edit-form reason modal keeps four reasons and gates purchase on a
     /Chỉ có thể chọn Nhập mua khi số lượng tồn kho tăng\./
   );
 });
+
+test("new-item forms render local top-five similarity candidates directly below the name input", () => {
+  assert.match(inventoryPage, /findSimilarInventoryItems\(itemName, inventoryList, 5\)/);
+  assert.match(inventoryPage, /유사한 기존 품목/);
+  assert.match(inventoryPage, /formatDecimalDisplay\(item\.quantity\)/);
+  assert.match(inventoryPage, /item\.is_active === false/);
+});
+
+test("similar-item rows are compact single-line buttons with optional code text", () => {
+  const candidateSection = inventoryPage.slice(
+    inventoryPage.indexOf("similarInventoryCandidates.map"),
+    inventoryPage.indexOf("similarInventoryCandidates.map") + 12000
+  );
+
+  assert.match(candidateSection, /<button\s+type="button"/);
+  assert.match(candidateSection, /whiteSpace:\s*"nowrap"/);
+  assert.match(candidateSection, /overflow:\s*"hidden"/);
+  assert.match(candidateSection, /textOverflow:\s*"ellipsis"/);
+  assert.match(candidateSection, /item\.code\?\.trim\(\) && \(/);
+  assert.doesNotMatch(candidateSection, /\{c\.code\}:/);
+  assert.doesNotMatch(candidateSection, /현재 재고|Tồn kho hiện tại/);
+});
+
+test("similar-item rows show part emoji, localized category and one localized name before optional code and stock", () => {
+  const candidateSection = inventoryPage.slice(
+    inventoryPage.indexOf("similarInventoryCandidates.map"),
+    inventoryPage.indexOf("similarInventoryCandidates.map") + 12000
+  );
+
+  assert.match(
+    candidateSection,
+    /PART_META\[\s*isInventoryPart\(item\.part\) \? item\.part : "etc"\s*\]\.emoji/
+  );
+  assert.match(
+    candidateSection,
+    /lang === "ko"\s*\? item\.item_name \|\| item\.item_name_vi \|\| "-"\s*:\s*item\.item_name_vi \|\| item\.item_name \|\| "-"/
+  );
+  assert.match(candidateSection, /\{categoryLabel\}/);
+  assert.match(candidateSection, /\{displayName\}/);
+  assert.match(candidateSection, /item\.code\?\.trim\(\) && \(/);
+  assert.match(candidateSection, /\{formatDecimalDisplay\(item\.quantity\)\} \{item\.unit \|\| "-"\}/);
+  assert.doesNotMatch(candidateSection, /partLabel/);
+  assert.doesNotMatch(candidateSection, /item\.item_name \|\| "-"\}\s*\/\s*\{item\.item_name_vi/);
+});
+
+test("similar-item category has its own 84px ellipsis while name, code and stock keep their flex priorities", () => {
+  const candidateSection = inventoryPage.slice(
+    inventoryPage.indexOf("similarInventoryCandidates.map"),
+    inventoryPage.indexOf("similarInventoryCandidates.map") + 12000
+  );
+
+  assert.match(candidateSection, /flex:\s*"0 0 18px"/);
+  assert.match(
+    candidateSection,
+    /title=\{categoryLabel\}[\s\S]*?maxWidth:\s*84[\s\S]*?overflow:\s*"hidden"[\s\S]*?textOverflow:\s*"ellipsis"[\s\S]*?whiteSpace:\s*"nowrap"/
+  );
+  assert.match(
+    candidateSection,
+    /flex:\s*1,[\s\S]*?minWidth:\s*0,[\s\S]*?\{displayName\}/
+  );
+  assert.match(candidateSection, /item\.code\?\.trim\(\) && \([\s\S]*?flexShrink:\s*0/);
+  assert.match(
+    candidateSection,
+    /<span style=\{\{ flexShrink: 0 \}\}>\s*\{formatDecimalDisplay\(item\.quantity\)\}/
+  );
+});
+
+test("clicking a similar-item row reuses handleEdit and enters edit state for that item id", () => {
+  assert.match(inventoryPage, /onClick=\{\(\) => handleEdit\(item\)\}/);
+
+  const handleEditSection = inventoryPage.slice(
+    inventoryPage.indexOf("const handleEdit = (item: InventoryItem)"),
+    inventoryPage.indexOf("const handleSubmit = async")
+  );
+  assert.match(handleEditSection, /setEditingId\(item\.id\)/);
+  assert.match(handleEditSection, /formRef\.current\?\.scrollIntoView/);
+});
+
+test("similarity candidates are hidden while editing an existing item", () => {
+  assert.match(
+    inventoryPage,
+    /editingId === null\s*\? findSimilarInventoryItems\(itemName, inventoryList, 5\)\s*:\s*\[\]/
+  );
+});
+
+test("duplicate UI accepts legacy and current error codes and explains inactive duplicates", () => {
+  assert.match(inventoryPage, /inventory_item_duplicate_name_vi/);
+  assert.match(inventoryPage, /inventory_item_duplicate_name_code/);
+  assert.match(
+    inventoryPage,
+    /동일한 품목이 비활성 상태로 등록되어 있습니다\. 기존 품목을 확인해주세요\./
+  );
+});
