@@ -328,3 +328,51 @@ test("language warning and daily work banners retain distinct visual semantics",
   assert.match(dailyBanner, /↻/);
   assert.match(dailyBanner, /#eff6ff/);
 });
+
+test("date selection immediately clears dated content and shows a scoped loading result", () => {
+  assert.match(page, /const beginDateContentTransition = \(nextViewMode: "current" \| "snapshot"\)/);
+  assert.match(page, /setSnapshotItems\(\[\]\);[\s\S]*setMovementItems\(\[\]\);[\s\S]*setNameSyncItems\(\[\]\)/);
+  assert.match(page, /beginDateContentTransition\("snapshot"\);[\s\S]*setSelectedBatchId\(nextBatchId\)/);
+  assert.match(page, /beginDateContentTransition\("current"\);[\s\S]*setSelectedBatchId\(null\)/);
+  assert.match(page, /data-testid="snapshot-date-content-loading"/);
+  assert.match(page, /\{isDateContentLoading \? \([\s\S]*\{nameSyncBusinessDate && nameSyncItems\.length > 0/);
+});
+
+test("date loading card uses a compact accessible CSS-only spinner", () => {
+  const loadingCard = page.slice(
+    page.indexOf('data-testid="snapshot-date-content-loading"'),
+    page.indexOf("{nameSyncBusinessDate && nameSyncItems.length > 0")
+  );
+  assert.match(loadingCard, /snapshot-date-loading-spinner/);
+  assert.match(loadingCard, /width: 19px/);
+  assert.match(loadingCard, /height: 19px/);
+  assert.match(loadingCard, /display: "inline-flex"/);
+  assert.match(loadingCard, /alignItems: "center"/);
+  assert.match(loadingCard, /\{c\.loading\}/);
+  assert.match(loadingCard, /@keyframes snapshot-date-loading-spin/);
+  assert.match(loadingCard, /transform: rotate\(360deg\)/);
+  assert.match(loadingCard, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(loadingCard, /animation: none/);
+});
+
+test("snapshot and movement requests ignore stale success, failure and finally paths", () => {
+  const snapshotBlock = page.slice(page.indexOf("const fetchSnapshotItems"), page.indexOf("const fetchNameSyncIssues"));
+  const movementBlock = page.slice(page.indexOf("const fetchMovementItems"), page.indexOf("const changeLogReason"));
+  for (const [block, refName] of [
+    [snapshotBlock, "snapshotItemsRequestSequenceRef"],
+    [movementBlock, "movementItemsRequestSequenceRef"],
+  ] as const) {
+    assert.match(block, new RegExp(`const requestSequence = \\+\\+${refName}\\.current`));
+    assert.match(block, new RegExp(`requestSequence !== ${refName}\\.current`));
+    assert.ok((block.match(new RegExp(`requestSequence === ${refName}\\.current`, "g")) || []).length >= 3);
+  }
+});
+
+test("date transitions retain global language warnings while daily sync stays date-gated", () => {
+  const transitionBlock = page.slice(page.indexOf("const beginDateContentTransition"), page.indexOf("useEffect(() =>", page.indexOf("const beginDateContentTransition")));
+  const nameSyncBlock = page.slice(page.indexOf("const fetchNameSyncIssues"), page.indexOf("const syncSnapshotNames"));
+  assert.doesNotMatch(transitionBlock, /setLanguageMissingItems\(\[\]\)/);
+  assert.doesNotMatch(nameSyncBlock, /setLanguageMissingItems\(\[\]\)/);
+  assert.match(page, /setLanguageMissingItems\(json\.languageMissingItems \|\| \[\]\)/);
+  assert.match(page, /const isDateContentLoading = dateContentTransitioning && dateRequestsLoading/);
+});

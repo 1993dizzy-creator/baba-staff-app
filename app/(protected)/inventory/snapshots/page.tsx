@@ -380,11 +380,14 @@ export default function InventorySnapshotsPage() {
     const [purchaseDateMap, setPurchaseDateMap] = useState<Record<string, boolean>>({});
     const resolvedMonthSkipRef = useRef("");
     const batchesRequestSequenceRef = useRef(0);
+    const snapshotItemsRequestSequenceRef = useRef(0);
     const [supplierTab, setSupplierTab] = useState("all");
     const [movementItems, setMovementItems] = useState<SnapshotItem[]>([]);
     const [movementReasonTab, setMovementReasonTab] =
         useState<MovementReasonTab>("stock_check");
     const [loadingMovements, setLoadingMovements] = useState(false);
+    const movementItemsRequestSequenceRef = useRef(0);
+    const [dateContentTransitioning, setDateContentTransitioning] = useState(false);
     const [logModalItem, setLogModalItem] = useState<SnapshotItem | null>(null);
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
@@ -739,6 +742,7 @@ export default function InventorySnapshotsPage() {
             return;
         }
 
+        const requestSequence = ++snapshotItemsRequestSequenceRef.current;
         setLoadingItems(true);
 
         try {
@@ -781,10 +785,13 @@ export default function InventorySnapshotsPage() {
                     bodyPreview,
                     parseError: parseErrorMessage,
                 });
-                setSnapshotItems([]);
+                if (requestSequence === snapshotItemsRequestSequenceRef.current) {
+                    setSnapshotItems([]);
+                }
                 return;
             }
 
+            if (requestSequence !== snapshotItemsRequestSequenceRef.current) return;
             setSnapshotItems(json.items || []);
         } catch (error) {
             console.warn("[inventory/snapshots] fetchSnapshotItems exception", {
@@ -794,9 +801,13 @@ export default function InventorySnapshotsPage() {
                 error,
                 message: error instanceof Error ? error.message : String(error),
             });
-            setSnapshotItems([]);
+            if (requestSequence === snapshotItemsRequestSequenceRef.current) {
+                setSnapshotItems([]);
+            }
         } finally {
-            setLoadingItems(false);
+            if (requestSequence === snapshotItemsRequestSequenceRef.current) {
+                setLoadingItems(false);
+            }
         }
     };
 
@@ -821,7 +832,6 @@ export default function InventorySnapshotsPage() {
 
             if (!res.ok || !json.ok) {
                 setNameSyncItems([]);
-                setLanguageMissingItems([]);
                 setNameSyncCanRun(false);
                 setNameSyncError(snapshotNameSyncText[lang].loadFailed);
                 return;
@@ -834,7 +844,6 @@ export default function InventorySnapshotsPage() {
             console.error("[INVENTORY_SNAPSHOT_NAME_SYNC_LOAD_FAILED]", error);
             if (requestSequence === nameSyncRequestSequenceRef.current) {
                 setNameSyncItems([]);
-                setLanguageMissingItems([]);
                 setNameSyncCanRun(false);
                 setNameSyncError(snapshotNameSyncText[lang].loadFailed);
             }
@@ -1011,6 +1020,7 @@ export default function InventorySnapshotsPage() {
     }, []);
 
     const fetchMovementItems = useCallback(async (businessDate: string) => {
+        const requestSequence = ++movementItemsRequestSequenceRef.current;
         setLoadingMovements(true);
         setSupplierTab("all");
 
@@ -1052,10 +1062,13 @@ export default function InventorySnapshotsPage() {
                     bodyPreview,
                     parseError: parseErrorMessage,
                 });
-                setMovementItems([]);
+                if (requestSequence === movementItemsRequestSequenceRef.current) {
+                    setMovementItems([]);
+                }
                 return;
             }
 
+            if (requestSequence !== movementItemsRequestSequenceRef.current) return;
             setMovementItems((json.data || []).map(mapLogToSnapshotItem));
         } catch (error) {
             console.warn("[inventory/snapshots] fetchMovementItems exception", {
@@ -1063,9 +1076,13 @@ export default function InventorySnapshotsPage() {
                 error,
                 message: error instanceof Error ? error.message : String(error),
             });
-            setMovementItems([]);
+            if (requestSequence === movementItemsRequestSequenceRef.current) {
+                setMovementItems([]);
+            }
         } finally {
-            setLoadingMovements(false);
+            if (requestSequence === movementItemsRequestSequenceRef.current) {
+                setLoadingMovements(false);
+            }
         }
     }, [mapLogToSnapshotItem]);
 
@@ -1348,12 +1365,31 @@ export default function InventorySnapshotsPage() {
         ? selectedSnapshotDate || ""
         : activeBusinessDateKey;
     nameSyncBusinessDateRef.current = nameSyncBusinessDate;
+    const dateRequestsLoading = loadingMovements || nameSyncLoading ||
+        (viewMode === "snapshot" && loadingItems);
+    const isDateContentLoading = dateContentTransitioning && dateRequestsLoading;
+
+    const beginDateContentTransition = (nextViewMode: "current" | "snapshot") => {
+        snapshotItemsRequestSequenceRef.current += 1;
+        movementItemsRequestSequenceRef.current += 1;
+        nameSyncRequestSequenceRef.current += 1;
+        setSnapshotItems([]);
+        setMovementItems([]);
+        setNameSyncItems([]);
+        setNameSyncCanRun(false);
+        setNameSyncError("");
+        setNameSyncResult("");
+        setLogModalItem(null);
+        setLoadingItems(nextViewMode === "snapshot");
+        setLoadingMovements(true);
+        setNameSyncLoading(true);
+        setDateContentTransitioning(true);
+    };
 
     useEffect(() => {
         setNameSyncExpanded(false);
         setLanguageMissingExpanded(false);
         setNameSyncItems([]);
-        setLanguageMissingItems([]);
         setNameSyncCanRun(false);
         setNameSyncError("");
         setNameSyncResult("");
@@ -1371,6 +1407,12 @@ export default function InventorySnapshotsPage() {
             nameSyncRequestSequenceRef.current += 1;
         };
     }, [fetchNameSyncIssues, nameSyncBusinessDate]);
+
+    useEffect(() => {
+        if (dateContentTransitioning && !dateRequestsLoading) {
+            setDateContentTransitioning(false);
+        }
+    }, [dateContentTransitioning, dateRequestsLoading]);
 
     useEffect(() => {
         if (!nameSyncBusinessDate) return;
@@ -2320,12 +2362,17 @@ export default function InventorySnapshotsPage() {
                                         disabled={!hasBatch && !isCurrentBusinessDate}
                                         onClick={() => {
                                             if (cell.batch?.id) {
+                                                const nextBatchId = Number(cell.batch.id);
+                                                if (viewMode === "snapshot" && nextBatchId === selectedBatchId) return;
+                                                beginDateContentTransition("snapshot");
                                                 setViewMode("snapshot");
-                                                setSelectedBatchId(Number(cell.batch.id));
+                                                setSelectedBatchId(nextBatchId);
                                                 return;
                                             }
 
                                             if (isCurrentBusinessDate) {
+                                                if (viewMode === "current") return;
+                                                beginDateContentTransition("current");
                                                 setViewMode("current");
                                                 setSelectedBatchId(null);
                                             }
@@ -2513,6 +2560,63 @@ export default function InventorySnapshotsPage() {
                     )}
                 </div>
             )}
+
+            {isDateContentLoading ? (
+                <div
+                    data-testid="snapshot-date-content-loading"
+                    role="status"
+                    aria-live="polite"
+                    style={{
+                        ...ui.card,
+                        minHeight: 180,
+                        marginBottom: 16,
+                        display: "grid",
+                        placeItems: "center",
+                        color: "#6b7280",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        textAlign: "center",
+                    }}
+                >
+                    <span
+                        style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 8,
+                            maxWidth: "100%",
+                        }}
+                    >
+                        <span
+                            className="snapshot-date-loading-spinner"
+                            aria-hidden="true"
+                        />
+                        <span>{c.loading}</span>
+                    </span>
+                    <style>{`
+                        @keyframes snapshot-date-loading-spin {
+                            to { transform: rotate(360deg); }
+                        }
+                        .snapshot-date-loading-spinner {
+                            width: 19px;
+                            height: 19px;
+                            flex: 0 0 auto;
+                            box-sizing: border-box;
+                            border: 2px solid #d1d5db;
+                            border-top-color: #6b7280;
+                            border-radius: 50%;
+                            animation: snapshot-date-loading-spin 0.8s linear infinite;
+                        }
+                        @media (prefers-reduced-motion: reduce) {
+                            .snapshot-date-loading-spinner {
+                                animation: none;
+                                border-top-color: #9ca3af;
+                            }
+                        }
+                    `}</style>
+                </div>
+            ) : (
+                <>
 
             {nameSyncBusinessDate && nameSyncItems.length > 0 && (
                 <div
@@ -3652,6 +3756,9 @@ export default function InventorySnapshotsPage() {
                     </div>
                 )}
             </div>
+
+                </>
+            )}
 
             {logModalItem && (
                 <div
