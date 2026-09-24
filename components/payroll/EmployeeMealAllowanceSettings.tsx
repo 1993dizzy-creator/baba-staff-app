@@ -10,6 +10,7 @@ import {
   type FormEvent,
 } from "react";
 import { money } from "@/lib/payroll/ui-labels";
+import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
 
 type MealAllowanceVersion = {
   id: number;
@@ -135,19 +136,18 @@ export default function EmployeeMealAllowanceSettings({
 
   if (!state) {
     return (
-      <section style={s.card}>
+      <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={null} vi={vi}>
         {error ? <p role="alert" style={s.error}>{error}</p> : <p style={s.empty}>{vi ? "Đang tải…" : "불러오는 중…"}</p>}
-      </section>
+      </EmployeeSettingCard>
     );
   }
 
   const disabledByAttendanceTracking = !state.attendanceTrackingEnabled;
 
   return (
-    <section style={s.card}>
+    <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={state.current?.isEligible === true} vi={vi}>
       <div style={s.head}>
         <div>
-          <h2 style={s.title}>{vi ? "Trợ cấp ăn" : "🍚 식대"}</h2>
           <p style={s.help}>
             {vi
               ? "Nhân viên thuộc đối tượng nhận trợ cấp ăn sẽ được tính chi phí ăn theo ngày đi làm thực tế."
@@ -265,7 +265,7 @@ export default function EmployeeMealAllowanceSettings({
           </article>
         ))}
       </details>
-    </section>
+    </EmployeeSettingCard>
   );
 }
 

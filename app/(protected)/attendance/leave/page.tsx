@@ -1020,7 +1020,7 @@ export default function AttendanceLeavePage() {
                           {meta.emoji}
                         </span>
                         <EmployeeNameWithLevel name={`${index + 1}. ${user.name}`} levelInfo={user.levelInfo} lang={lang} nameStyle={userNameStyle} showDisabledBadge />
-                        <span style={userMetaStyle}><AttendancePerfectScoreBadge show={perfectSummary.get(Number(user.id))?.perfectAttendanceCurrent===true} vi={lang==="vi"}/></span>
+                        <span style={userMetaStyle}><AttendancePerfectScoreBadge eligible={perfectSummary.get(Number(user.id))?.attendanceBonusEligible===true} show={perfectSummary.get(Number(user.id))?.perfectAttendanceCurrent===true} vi={lang==="vi"}/></span>
                       </div>
 
                       <div style={leaveActionRowStyle}>
@@ -1141,7 +1141,7 @@ export default function AttendanceLeavePage() {
                     <div key={item.user.id} style={summaryRowStyle}>
                       <EmployeeNameWithLevel name={item.user.name} levelInfo={item.user.levelInfo} lang={lang} nameStyle={userNameStyle} showDisabledBadge />
                       <span style={userMetaStyle}>
-                        <AttendancePerfectScoreBadge show={perfectSummary.get(Number(item.user.id))?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
+                        <AttendancePerfectScoreBadge eligible={perfectSummary.get(Number(item.user.id))?.attendanceBonusEligible===true} show={perfectSummary.get(Number(item.user.id))?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
                       </span>
                       <span style={summaryCountStyle}>
                         {item.count}

@@ -51,6 +51,7 @@ export function CompensationCard({
   monthClosed,
   refresh,
   mealAllowanceEligible = false,
+  attendanceBonusEligible = false,
 }: {
   employee: PayrollOverviewEmployee;
   expanded: boolean;
@@ -61,6 +62,7 @@ export function CompensationCard({
   monthClosed: boolean;
   refresh: () => Promise<boolean>;
   mealAllowanceEligible?: boolean;
+  attendanceBonusEligible?: boolean;
 }) {
   const t = payrollOverviewText[lang];
   const detailText = lang === "vi"
@@ -107,7 +109,7 @@ export function CompensationCard({
             lang={lang}
             nameStyle={s.name}
           />
-          <AttendancePerfectScoreBadge show={employee.attendanceStanding?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
+          <AttendancePerfectScoreBadge eligible={attendanceBonusEligible} show={employee.attendanceStanding?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
           {mealAllowanceEligible ? (
             <span style={s.mealBadge} title={mealAllowanceBadgeLabel(lang)} aria-label={mealAllowanceBadgeLabel(lang)}>🍚</span>
           ) : null}

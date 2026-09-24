@@ -14,7 +14,7 @@ import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { getNextLevelSchedule } from "@/lib/employee-level/next-level-schedule";
 import { employeeLevelScheduleText } from "@/lib/text/employee-level-schedule";
-import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
+import AttendanceBonusProgressBadge from "@/components/attendance/AttendanceBonusProgressBadge";
 import { useMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
 import {
     ATTENDANCE_STATUS_COLORS,
@@ -32,9 +32,22 @@ type UserRow = {
     part: string | null;
     position: string | null;
     birth_date: string | null;
+    work_start_time: string | null;
+    work_end_time: string | null;
     is_active: boolean;
     levelInfo: EmployeeLevelInfo;
 };
+
+function formatWorkClock(value: string | null) {
+    const match = value?.match(/^(\d{2}):(\d{2})/);
+    return match ? `${match[1]}:${match[2]}` : null;
+}
+
+function formatWorkHours(user: Pick<UserRow, "work_start_time" | "work_end_time">) {
+    const start = formatWorkClock(user.work_start_time);
+    const end = formatWorkClock(user.work_end_time);
+    return start && end ? `${start}~${end}` : "-";
+}
 
 type AttendanceRecord = {
     id: number;
@@ -639,7 +652,7 @@ export default function AttendanceOverviewPage() {
                                             >
                                                 <div style={staffLeftStyle}>
                                                     <EmployeeNameWithLevel name={`${user.name}${age ? ` (${age})` : ""}`} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} showDisabledBadge />
-                                                    <AttendancePerfectScoreBadge show={perfectSummary.get(user.id)?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
+                                                    <AttendanceBonusProgressBadge eligible={perfectSummary.get(user.id)?.attendanceBonusEligible===true} perfectAttendanceCurrent={perfectSummary.get(user.id)?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
                                                     <span style={staffSeparatorStyle}>·</span>
                                                     <span style={staffMetaStyle}>
                                                         {user.role ? getEmployeeRoleLabel(user.role, lang) : user.username}
@@ -662,7 +675,10 @@ export default function AttendanceOverviewPage() {
 
                                             {isExpanded && (
                                                 <div style={recentAttendanceStyle}>
-                                                    <div style={recentTitleStyle}>{t.recent7Days}</div>
+                                                    <div style={recentTitleRowStyle}>
+                                                        <span style={recentTitleStyle}>{t.recent7Days}</span>
+                                                        <span style={recentTitleStyle}>{formatWorkHours(user)}</span>
+                                                    </div>
                                                     <div style={recentWeekdayGridStyle}>
                                                         {recentDateKeys.map((dateKey) => {
                                                             const weekdayIndex = getDateKeyWeekdayIndex(dateKey);
@@ -1048,6 +1064,15 @@ const recentTitleStyle: CSSProperties = {
     fontSize: 11,
     fontWeight: 800,
     color: "#4b5563",
+};
+
+const recentTitleRowStyle: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    minWidth: 0,
+    whiteSpace: "nowrap",
 };
 
 const recentWeekdayGridStyle: CSSProperties = {

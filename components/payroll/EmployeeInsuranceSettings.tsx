@@ -12,6 +12,7 @@ import {
 import { money } from "@/lib/payroll/ui-labels";
 import type { PayrollInsuranceSettingVersion } from "@/lib/payroll/insurance";
 import { formatInsuranceNote } from "@/lib/payroll/insurance-note";
+import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
 
 function currentMonth() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -49,6 +50,7 @@ export default function EmployeeInsuranceSettings({
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   const resetForm = useCallback(
     (setting: PayrollInsuranceSettingVersion | null) => {
@@ -79,6 +81,7 @@ export default function EmployeeInsuranceSettings({
               : "보험 설정을 불러오지 못했습니다.",
           );
           onLoadStateChange?.(userId, { current: null, error: true, loading: false });
+          setLoaded(true);
           return;
         }
         const nextCurrent = data.current ?? null;
@@ -86,6 +89,7 @@ export default function EmployeeInsuranceSettings({
         setCurrent(nextCurrent);
         resetForm(nextCurrent);
         onLoadStateChange?.(userId, { current: nextCurrent, error: false, loading: false });
+        setLoaded(true);
       } catch (loadError: unknown) {
         if (
           signal?.aborted ||
@@ -98,6 +102,7 @@ export default function EmployeeInsuranceSettings({
             : "보험 설정을 불러오지 못했습니다.",
         );
         onLoadStateChange?.(userId, { current: null, error: true, loading: false });
+        setLoaded(true);
       }
     },
     [onLoadStateChange, resetForm, userId, vi],
@@ -108,6 +113,7 @@ export default function EmployeeInsuranceSettings({
     const controller = new AbortController();
     setHistory([]);
     setCurrent(null);
+    setLoaded(false);
     setFormOpen(false);
     resetForm(null);
     void load(controller.signal).catch((loadError: unknown) => {
@@ -162,10 +168,9 @@ export default function EmployeeInsuranceSettings({
   }
 
   return (
-    <section style={s.card}>
+    <EmployeeSettingCard title={vi ? "Bảo hiểm nhân viên" : "직원 보험"} applied={loaded ? current?.isEnrolled === true : null} vi={vi}>
       <div style={s.head}>
         <div>
-          <h2 style={s.title}>{vi ? "Bảo hiểm nhân viên" : "직원 보험"}</h2>
           <p style={s.help}>
             {vi
               ? "Quản lý trạng thái tham gia và mức lương cơ sở bảo hiểm của nhân viên."
@@ -308,7 +313,7 @@ export default function EmployeeInsuranceSettings({
           </article>
         ))}
       </details>
-    </section>
+    </EmployeeSettingCard>
   );
 }
 

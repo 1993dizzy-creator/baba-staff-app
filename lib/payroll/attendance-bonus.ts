@@ -32,6 +32,21 @@ export function selectAttendanceBonusEligibilityAt(
     .sort((a, b) => b.effectiveMonth.localeCompare(a.effectiveMonth) || b.revision - a.revision)[0] ?? null;
 }
 
+export function shouldShowAttendancePerfectScoreBadge(
+  isEligible: boolean,
+  perfectAttendanceCurrent: boolean,
+) {
+  return isEligible && perfectAttendanceCurrent;
+}
+
+export function attendanceBonusProgressIcon(
+  isEligible: boolean,
+  perfectAttendanceCurrent: boolean,
+) {
+  if (!isEligible) return null;
+  return perfectAttendanceCurrent ? "perfect" : "eligible";
+}
+
 export function qualifiesForAttendanceBonus(input: {
   monthClosed: boolean;
   attendanceTrackingEnabled: boolean;

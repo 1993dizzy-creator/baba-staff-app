@@ -4,6 +4,8 @@ import { join } from "node:path";
 import test from "node:test";
 // @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { getStaffCancellationDecision } from "../lib/attendance/mutation-policy.ts";
+// @ts-expect-error Node strip-types resolves the TypeScript source directly.
+import { formatStaffListWorkTime } from "../lib/attendance/time.ts";
 
 const read = (path: string) =>
   readFileSync(join(process.cwd(), path), "utf8");
@@ -14,6 +16,24 @@ const employeeLeaveRoute = read("app/api/attendance/leave/route.ts");
 const migration = read(
   "supabase/migrations/202607240002_add_attendance_staff_direct_leave_marker.sql"
 );
+
+test("staff list formats existing work schedule times compactly", () => {
+  assert.equal(formatStaffListWorkTime("16:00:00", "01:00:00"), "16~01");
+  assert.equal(formatStaffListWorkTime("17:00", "23:00"), "17~23");
+  assert.equal(formatStaffListWorkTime("16:30:45", "01:00:59"), "16:30~01:00");
+  assert.equal(formatStaffListWorkTime("16:00:59", "00:30:12"), "16:00~00:30");
+  assert.equal(formatStaffListWorkTime(null, "01:00"), null);
+});
+
+test("staff list keeps role text and compact work time ahead of the fixed status area", () => {
+  assert.match(page, /getEmployeeRoleLabel\(user\.role, lang\)/);
+  assert.match(page, /formatStaffListWorkTime\(user\.work_start_time, user\.work_end_time\)/);
+  assert.match(page, /staffRoleStyle/);
+  assert.match(page, /textOverflow: "ellipsis"/);
+  assert.match(page, /staffWorkTimeStyle/);
+  assert.match(page, /flexShrink: 0/);
+  assert.match(page, /staffRightStyle/);
+});
 
 test("check-in cancellation permits only an open non-leave record", () => {
   assert.deepEqual(

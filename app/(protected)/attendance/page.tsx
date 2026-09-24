@@ -645,6 +645,8 @@ function MyAttendance() {
               ? {
                   perfectAttendanceCurrent:
                     result.perfectAttendanceCurrent === true,
+                  attendanceBonusEligible:
+                    result.attendanceBonusEligible === true,
                   summary: result.summary,
                   incentives: Array.isArray(result.incentives) ? result.incentives : [],
                   penalties: Array.isArray(result.penalties) ? result.penalties : [],
@@ -954,6 +956,7 @@ function MyAttendance() {
               nameStyle={profileNameStyle}
             />
             <AttendancePerfectScoreBadge
+              eligible={payrollData?.attendanceBonusEligible === true}
               show={profile !== null && payrollData?.perfectAttendanceCurrent === true}
               vi={lang === "vi"}
             />

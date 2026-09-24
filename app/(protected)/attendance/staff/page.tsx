@@ -13,7 +13,7 @@ import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
 import { getEmployeeRoleLabel, getEmployeeRoleRank } from "@/lib/common/roles";
 import { getBusinessDate } from "@/lib/common/business-time";
-import { isLongShiftRecord } from "@/lib/attendance/time";
+import { formatStaffListWorkTime, isLongShiftRecord } from "@/lib/attendance/time";
 import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
@@ -544,6 +544,7 @@ export default function AttendanceStaffPage() {
                   const record = recordMap.get(user.id);
                   const statusColor = getStatusColor(record);
                   const isExpanded = expandedUserId === user.id;
+                  const workTime = formatStaffListWorkTime(user.work_start_time, user.work_end_time);
 
                   return (
                     <div key={user.id} style={staffCardStyle}>
@@ -553,11 +554,12 @@ export default function AttendanceStaffPage() {
                         style={staffSummaryButtonStyle}
                       >
                         <div style={staffLeftStyle}>
-                          <EmployeeNameWithLevel name={user.name} levelInfo={user.levelInfo} lang={lang} nameStyle={staffNameStyle} showDisabledBadge />
-                          <span style={staffMetaStyle}>
+                          <EmployeeNameWithLevel name={user.name} levelInfo={user.levelInfo} lang={lang} style={staffNameContainerStyle} nameStyle={staffNameStyle} showDisabledBadge />
+                          <span style={staffRoleStyle} title={user.role ? getEmployeeRoleLabel(user.role, lang) : user.username}>
                             {user.role ? getEmployeeRoleLabel(user.role, lang) : user.username}
-                            <AttendancePerfectScoreBadge show={perfectSummary.get(Number(user.id))?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
                           </span>
+                          {workTime ? <span style={staffWorkTimeStyle}>{workTime}</span> : null}
+                          <AttendancePerfectScoreBadge eligible={perfectSummary.get(Number(user.id))?.attendanceBonusEligible===true} show={perfectSummary.get(Number(user.id))?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
                         </div>
 
                         <div style={staffRightStyle}>
@@ -1112,6 +1114,8 @@ const staffLeftStyle: CSSProperties = {
   alignItems: "center",
   gap: 6,
   minWidth: 0,
+  flex: 1,
+  overflow: "hidden",
 };
 
 const staffRightStyle: CSSProperties = {
@@ -1128,10 +1132,25 @@ const staffNameStyle: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-const staffMetaStyle: CSSProperties = {
+const staffNameContainerStyle: CSSProperties = {
+  flexShrink: 1,
+};
+
+const staffRoleStyle: CSSProperties = {
   fontSize: 11,
   color: "#6b7280",
   whiteSpace: "nowrap",
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  flexShrink: 100,
+};
+
+const staffWorkTimeStyle: CSSProperties = {
+  fontSize: 11,
+  color: "#6b7280",
+  whiteSpace: "nowrap",
+  flexShrink: 0,
 };
 
 const miniBadgeStyle: CSSProperties = {

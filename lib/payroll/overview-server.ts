@@ -73,10 +73,12 @@ export async function loadPayrollOverview(month: string,options?:{userId?:number
   const rawByUser=new Map(snapshot.employees.map(employee=>[employee.userId,employee]));
   const attendanceUsersById=new Map(attendanceStanding.users.map(user=>[Number(user.id),user]));
   const bonusPolicy=selectAttendanceBonusPolicyAt(bonusVersions.policies,month);
+  const attendanceBonusEligibleUserIds:number[]=[];
   for(const employee of snapshot.employees){
     const standing=attendanceStanding.standings.get(employee.userId);
     const attendanceUser=attendanceUsersById.get(employee.userId);
     const eligibility=selectAttendanceBonusEligibilityAt(bonusVersions.eligibilityByUser.get(employee.userId)??[],month);
+    if(eligibility?.isEligible===true)attendanceBonusEligibleUserIds.push(employee.userId);
     if(standing&&bonusPolicy&&qualifiesForAttendanceBonus({monthClosed:isClosedPayrollMonth(month),attendanceTrackingEnabled:attendanceUser?.attendance_tracking_enabled===true,policy:bonusPolicy,eligibility,standing})){
       employee.items.push({itemType:"automatic",category:"attendance_bonus",direction:"addition",amount:bonusPolicy.bonusAmount,originalAmount:bonusPolicy.bonusAmount,businessDate:null,description:"개근 보너스",taxTreatment:"taxable_compensation",taxReviewCode:null,sourceSnapshot:{policyVersionId:bonusPolicy.id,policyRevision:bonusPolicy.revision,eligibilityVersionId:eligibility?.id??null,eligibilityRevision:eligibility?.revision??null,payrollMonth:month,policyEffectiveMonth:bonusPolicy.effectiveMonth,eligibilityEffectiveMonth:eligibility?.effectiveMonth??null,minimumActualWorkdays:bonusPolicy.minimumActualWorkdays,allowedLateCount:bonusPolicy.allowedLateCount,allowedEarlyLeaveCount:bonusPolicy.allowedEarlyLeaveCount,bonusAmount:bonusPolicy.bonusAmount,actualWorkDays:standing.actualWorkDays,lateCount:standing.lateCount,earlyLeaveCount:standing.earlyLeaveCount,unauthorizedAbsenceCount:standing.unauthorizedAbsenceCount,blockingCount:standing.blockingCount,engineVersion:PAYROLL_RUN_ENGINE_VERSION}});
     }
@@ -84,5 +86,5 @@ export async function loadPayrollOverview(month: string,options?:{userId?:number
   const employees=snapshot.employees.flatMap(employee=>{const user=userById.get(employee.userId);return user?[buildPayrollOverviewEmployee({employee,user,contracts:contractsByUser.get(employee.userId)??[],adjustments:adjustmentsByUser.get(employee.userId)??[],taxPolicy:taxVersions.currentPolicy,taxSetting:taxVersions.currentByUser.get(employee.userId)??null,period})]:[];});
   for(const employee of employees){employee.attendanceStanding=attendanceStanding.standings.get(employee.userId)??null;}
   const directorInsuranceAmount=Number(((snapshot.sourceSnapshot.insuranceSettings as {director?:{calculatedAmount?:number}}|undefined)?.director?.calculatedAmount)??0);
-  return {period,snapshot,employees,rawByUser,adjustmentLedgerByUser,directorInsuranceAmount,summary:buildPayrollOverviewSummary(employees,directorInsuranceAmount),projectedSummary:buildPayrollOverviewProjectedSummary(employees,directorInsuranceAmount)};
+  return {period,snapshot,employees,rawByUser,adjustmentLedgerByUser,attendanceBonusEligibleUserIds,directorInsuranceAmount,summary:buildPayrollOverviewSummary(employees,directorInsuranceAmount),projectedSummary:buildPayrollOverviewProjectedSummary(employees,directorInsuranceAmount)};
 }

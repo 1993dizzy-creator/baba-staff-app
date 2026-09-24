@@ -49,6 +49,7 @@ export type AttendancePayrollAdvance = {
 
 export type AttendancePayrollData = {
   perfectAttendanceCurrent: boolean;
+  attendanceBonusEligible?: boolean;
   summary: AttendancePayrollSummary;
   incentives: AttendancePayrollIncentive[];
   penalties: AttendancePayrollPenalty[];

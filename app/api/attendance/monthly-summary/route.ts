@@ -1,6 +1,8 @@
 import { attendanceAuthFailure, attendanceJson, requireAttendanceActor } from "@/lib/attendance/server-api";
 import { loadMonthlyAttendanceStandings } from "@/lib/attendance/monthly-standing-server";
 import { validPayrollMonth } from "@/lib/payroll/monthly-run";
+import { loadAttendanceBonusVersions } from "@/lib/payroll/attendance-bonus-server";
+import { selectAttendanceBonusEligibilityAt } from "@/lib/payroll/attendance-bonus";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +27,7 @@ export async function GET(request: Request) {
 
   try {
     const result = await loadMonthlyAttendanceStandings(month, { userId });
+    const bonusVersions = await loadAttendanceBonusVersions(month, [...result.standings.keys()]);
     const summaries = [...result.standings.entries()].map(([summaryUserId, standing]) => ({
       userId: summaryUserId,
       actualWorkDays: standing.actualWorkDays,
@@ -33,6 +36,11 @@ export async function GET(request: Request) {
       unauthorizedAbsenceCount: standing.unauthorizedAbsenceCount,
       blockingCount: standing.blockingCount,
       perfectAttendanceCurrent: standing.perfectAttendanceCurrent,
+      attendanceBonusEligible:
+        selectAttendanceBonusEligibilityAt(
+          bonusVersions.eligibilityByUser.get(summaryUserId) ?? [],
+          month,
+        )?.isEligible === true,
     }));
     return attendanceJson({ ok: true, month, asOfDate: result.asOfDate, summaries });
   } catch {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import type { PayrollTaxBurdenMode, PayrollTaxInsuranceDeductionMode, PayrollTaxMode, PayrollTaxSettingVersion } from "@/lib/payroll/tax";
+import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
 
 function currentMonth() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
@@ -22,6 +23,7 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi }: { user
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   const resetForm = useCallback((setting: PayrollTaxSettingVersion | null) => {
     setTaxMode(setting?.taxMode ?? "not_applicable");
@@ -44,10 +46,12 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi }: { user
       const nextCurrent = data.current ?? null;
       setHistory(data.history ?? []);
       setCurrent(nextCurrent);
+      setLoaded(true);
       resetForm(nextCurrent);
     } catch (loadError) {
       if (signal?.aborted || !mounted.current || (loadError instanceof Error && loadError.name === "AbortError")) return;
       setError(vi ? "Không thể tải cài đặt thuế TNCN." : "TNCN 설정을 불러오지 못했습니다.");
+      setLoaded(true);
     }
   }, [resetForm, userId, vi]);
 
@@ -56,6 +60,7 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi }: { user
     const controller = new AbortController();
     setHistory([]);
     setCurrent(null);
+    setLoaded(false);
     setFormOpen(false);
     resetForm(null);
     void load(controller.signal);
@@ -105,9 +110,9 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi }: { user
     ? vi ? "Lũy tiến từng phần" : "거주자 누진세"
     : vi ? "Không áp dụng TNCN" : "TNCN 미적용";
 
-  return <section style={s.card}>
+  return <EmployeeSettingCard title={vi ? "Thuế TNCN nhân viên" : "직원 TNCN"} applied={loaded ? current !== null && current.taxMode !== "not_applicable" : null} vi={vi}>
     <div style={s.head}>
-      <div><h2 style={s.title}>{vi ? "Thuế TNCN nhân viên" : "직원 TNCN"}</h2><p style={s.help}>{vi ? "Lưu từng phiên bản theo tháng áp dụng; tên kế toán không thay đổi danh tính nhân viên." : "적용 월별 새 revision으로 저장하며 회계 명의는 직원 identity를 변경하지 않습니다."}</p></div>
+      <p style={s.help}>{vi ? "Lưu từng phiên bản theo tháng áp dụng; tên kế toán không thay đổi danh tính nhân viên." : "적용 월별 새 revision으로 저장하며 회계 명의는 직원 identity를 변경하지 않습니다."}</p>
       <button type="button" style={s.secondary} onClick={() => { resetForm(current); setFormOpen(true); }}>{vi ? "Thay đổi cài đặt TNCN" : "TNCN 설정 변경"}</button>
     </div>
     {current ? <div style={s.current}>
@@ -133,7 +138,7 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi }: { user
     </form> : null}
     {error ? <p role="alert" style={s.error}>{error}</p> : null}
     <details style={s.details}><summary>{vi ? `Lịch sử ${history.length} mục` : `설정 이력 ${history.length}건`}</summary>{history.map((item) => <article style={s.history} key={item.id}><b>{item.effectiveMonth.slice(0, 7)} · #{item.revision}</b><span>{item.taxMode} · {item.burdenMode} · {item.accountingName ?? "—"}</span>{item.note ? <small>{item.note}</small> : null}</article>)}</details>
-  </section>;
+  </EmployeeSettingCard>;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label style={s.field}><span>{label}</span>{children}</label>; }

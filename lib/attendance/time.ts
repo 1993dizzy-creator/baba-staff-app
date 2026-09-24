@@ -8,6 +8,21 @@ export function normalizeTime(time?: string | null) {
   return String(time).slice(0, 5);
 }
 
+export function formatStaffListWorkTime(
+  startTime?: string | null,
+  endTime?: string | null
+) {
+  const start = normalizeTime(startTime);
+  const end = normalizeTime(endTime);
+  if (!start || !end) return null;
+
+  if (start.endsWith(":00") && end.endsWith(":00")) {
+    return `${start.slice(0, 2)}~${end.slice(0, 2)}`;
+  }
+
+  return `${start}~${end}`;
+}
+
 export function getMinutesDiff(startIso: string, endIso: string) {
   const diff = Math.floor(
     (new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000

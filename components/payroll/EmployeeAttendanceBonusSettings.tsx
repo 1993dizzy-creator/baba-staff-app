@@ -13,6 +13,7 @@ import {
   attendanceBonusMonthlyStatus,
   type AttendanceBonusMonthlyStanding,
 } from "@/lib/payroll/attendance-bonus-status";
+import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
 
 type EligibilityVersion = {
   id: number;
@@ -159,9 +160,9 @@ export default function EmployeeAttendanceBonusSettings({
 
   if (!state) {
     return (
-      <section style={s.card}>
+      <EmployeeSettingCard title={vi ? "✨ Thưởng chuyên cần" : "✨ 개근 보너스"} applied={null} vi={vi}>
         {error ? <p role="alert" style={s.error}>{error}</p> : <p style={s.empty}>{vi ? "Đang tải…" : "불러오는 중…"}</p>}
-      </section>
+      </EmployeeSettingCard>
     );
   }
 
@@ -187,10 +188,9 @@ export default function EmployeeAttendanceBonusSettings({
   });
 
   return (
-    <section style={s.card}>
+    <EmployeeSettingCard title={vi ? "✨ Thưởng chuyên cần" : "✨ 개근 보너스"} applied={eligible} vi={vi}>
       <div style={s.head}>
         <div>
-          <h2 style={s.title}>{vi ? "✨ Thưởng chuyên cần" : "✨ 개근 보너스"}</h2>
           <p style={s.help}>
             {vi
               ? "Nhân viên thuộc đối tượng sẽ được tự động tính thưởng nếu đáp ứng điều kiện chấm công cuối tháng."
@@ -266,7 +266,7 @@ export default function EmployeeAttendanceBonusSettings({
           </article>
         ))}
       </details>
-    </section>
+    </EmployeeSettingCard>
   );
 }
 

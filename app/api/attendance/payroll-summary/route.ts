@@ -29,6 +29,8 @@ export async function GET(request: Request) {
       ok: true,
       month,
       perfectAttendanceCurrent: data?.perfectAttendanceCurrent ?? false,
+      attendanceBonusEligible:
+        overview.attendanceBonusEligibleUserIds?.includes(auth.actor.id) === true,
       summary: data?.summary ?? null,
       incentives: data?.incentives ?? [],
       penalties: data?.penalties ?? [],

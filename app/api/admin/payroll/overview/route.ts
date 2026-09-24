@@ -83,7 +83,7 @@ export async function GET(request: Request) {
     const summary={...overview.summary,mealAllowanceAmount:mealAllowance.currentAmount,totalCompanyCostAmount:overview.summary.totalCompanyCostAmount+mealAllowance.currentAmount};
     const projectedSummary=overview.projectedSummary?{...overview.projectedSummary,mealAllowanceAmount:mealAllowance.projectedAmount,totalCompanyCostAmount:overview.projectedSummary.totalCompanyCostAmount+mealAllowance.projectedAmount}:null;
     const mealAllowanceEligibleUserIds=mealAllowance.eligibleUserIds;
-    return payrollJson({ok:true,month,asOfDate:overview.period.asOfDate,future:overview.period.future,monthClosed:isClosedPayrollMonth(month),employees,summary,projectedSummary,mealAllowancePolicyMissing:mealAllowance.policyMissing,mealAllowanceEligibleUserIds,paymentBatch:run??null});
+    return payrollJson({ok:true,month,asOfDate:overview.period.asOfDate,future:overview.period.future,monthClosed:isClosedPayrollMonth(month),employees,summary,projectedSummary,mealAllowancePolicyMissing:mealAllowance.policyMissing,mealAllowanceEligibleUserIds,attendanceBonusEligibleUserIds:overview.attendanceBonusEligibleUserIds,paymentBatch:run??null});
   } catch {
     return payrollJson({ ok: false, code: "PAYROLL_OVERVIEW_READ_FAILED" }, 500);
   }
