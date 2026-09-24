@@ -6,7 +6,15 @@ export type LedgerSyncResult = {
   candidateId?: number;
 };
 
-export const INVENTORY_DISPLAY_FIELDS = ["item_name", "item_name_vi", "category", "category_vi", "unit"] as const;
+export const INVENTORY_DISPLAY_FIELDS = [
+  "item_name",
+  "item_name_vi",
+  "part",
+  "category",
+  "category_vi",
+  "code",
+  "unit",
+] as const;
 
 export function inventoryDisplayOverlay(original: Record<string, unknown> | null | undefined, overlay: Record<string, unknown> | null | undefined): Record<string, unknown> {
   const result = { ...original };
@@ -19,7 +27,14 @@ export function inventoryDisplayOverlay(original: Record<string, unknown> | null
 export function inventoryLogDisplayUpdate(item: Record<string, unknown>): Record<string, string | number | null> {
   const fields: Record<string, string | number | null> = {};
   for (const key of INVENTORY_DISPLAY_FIELDS) fields[key] = typeof item[key] === "string" ? item[key] : null;
-  return { ...fields, new_category: fields.category, new_category_vi: fields.category_vi, new_unit: fields.unit };
+  return {
+    ...fields,
+    new_part: fields.part,
+    new_category: fields.category,
+    new_category_vi: fields.category_vi,
+    new_code: fields.code,
+    new_unit: fields.unit,
+  };
 }
 
 export function inventoryPurchaseLogCurrentItemSyncUpdate(

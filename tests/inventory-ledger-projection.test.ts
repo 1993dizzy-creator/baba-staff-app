@@ -5,8 +5,8 @@ import { inventoryDisplayOverlay, inventoryLogDisplayUpdate, inventoryPurchaseLo
 
 test("display-only helper never mutates purchase economics", () => {
   const log = { new_supplier: "Won Mart", new_purchase_price: 20000, change_quantity: 10 };
-  const update = inventoryLogDisplayUpdate({ item_name: "Coca-Cola", item_name_vi: "Cola", category: "Soda", category_vi: "Nuoc", unit: "can", supplier: "OK FOOD", purchase_price: 18000 });
-  assert.deepEqual({ ...log, ...update }, { ...log, item_name: "Coca-Cola", item_name_vi: "Cola", category: "Soda", category_vi: "Nuoc", new_category: "Soda", new_category_vi: "Nuoc", unit: "can", new_unit: "can" });
+  const update = inventoryLogDisplayUpdate({ item_name: "Coca-Cola", item_name_vi: "Cola", part: "bar", category: "Soda", category_vi: "Nuoc", code: "C1", unit: "can", supplier: "OK FOOD", purchase_price: 18000 });
+  assert.deepEqual({ ...log, ...update }, { ...log, item_name: "Coca-Cola", item_name_vi: "Cola", part: "bar", new_part: "bar", category: "Soda", category_vi: "Nuoc", new_category: "Soda", new_category_vi: "Nuoc", code: "C1", new_code: "C1", unit: "can", new_unit: "can" });
 });
 
 test("explicit current-item sync updates purchase log display and economics", () => {
@@ -19,8 +19,10 @@ test("explicit current-item sync updates purchase log display and economics", ()
   const update = inventoryPurchaseLogCurrentItemSyncUpdate({
     item_name: "Set fern",
     item_name_vi: "Set la duong xi kho",
+    part: "hall",
     category: "Decoration",
     category_vi: "Trang tri",
+    code: "D1",
     unit: "Goi",
     purchase_price: 19000,
     supplier: "Shopee",
@@ -33,10 +35,14 @@ test("explicit current-item sync updates purchase log display and economics", ()
       change_quantity: 3,
       item_name: "Set fern",
       item_name_vi: "Set la duong xi kho",
+      part: "hall",
+      new_part: "hall",
       category: "Decoration",
       category_vi: "Trang tri",
       new_category: "Decoration",
       new_category_vi: "Trang tri",
+      code: "D1",
+      new_code: "D1",
       unit: "Goi",
       new_unit: "Goi",
       new_purchase_price: 19000,

@@ -50,6 +50,10 @@ function setup({ ledgerFailure = false, logId = 100, latestLogId = logId, reason
     },
   };
   const contract = load('lib/inventory/ledger-sync-contract.ts');
+  const logSyncServer = load('lib/inventory/log-sync-server.ts', {
+    'server-only': {},
+    '@/lib/inventory/ledger-sync-contract': contract,
+  });
   const projection = load('lib/ledger/inventory-projection.ts', {
     'server-only': {}, '@/lib/supabase/server': { supabaseServer: supabase },
   });
@@ -59,7 +63,7 @@ function setup({ ledgerFailure = false, logId = 100, latestLogId = logId, reason
     '@/lib/inventory/reasons': load('lib/inventory/reasons.ts'),
     '@/lib/inventory/keg-replacement-summary': {},
     '@/lib/supabase/server': { supabaseServer: supabase },
-    '@/lib/inventory/ledger-sync-contract': contract,
+    '@/lib/inventory/log-sync-server': logSyncServer,
     '@/lib/ledger/inventory-projection': projection,
     '@/lib/inventory/supplier-partners-server': { resolveInventorySupplier: async ({ payload }) => ({ supplier: payload.supplier, supplier_partner_id: 11 }) },
     '@/lib/inventory/price-logs': { insertInventoryPriceLog: async () => { calls.push('price-history'); } },

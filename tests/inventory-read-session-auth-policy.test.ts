@@ -15,6 +15,7 @@ const readRoutes = [
   "app/api/inventory/snapshot/latest/route.ts",
   "app/api/inventory/snapshot/list/route.ts",
   "app/api/inventory/snapshot/[id]/route.ts",
+  "app/api/inventory/snapshot/name-sync/route.ts",
 ];
 
 test("all inventory read APIs require the active signed session before data access", () => {

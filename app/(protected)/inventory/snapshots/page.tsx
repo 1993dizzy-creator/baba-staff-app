@@ -28,6 +28,84 @@ type SnapshotBatch = {
     snapshot_date: string;
 };
 
+type SnapshotNameSyncIssueCode =
+    | "missing_ko"
+    | "missing_vi"
+    | "ko_changed"
+    | "vi_changed"
+    | "part_changed"
+    | "category_changed"
+    | "category_vi_changed"
+    | "code_changed"
+    | "unit_changed"
+    | "purchase_price_changed"
+    | "supplier_changed"
+    | "supplier_partner_changed"
+    | "quantity_review_required";
+
+type SnapshotNameSyncField =
+    | "item_name" | "item_name_vi" | "part" | "category" | "category_vi"
+    | "code" | "unit" | "purchase_price" | "supplier" | "supplier_partner_id";
+
+type SnapshotNameSyncChange = {
+    field: SnapshotNameSyncField;
+    from: string | number | null;
+    to: string | number | null;
+};
+
+type SnapshotNameSyncItem = {
+    itemId: number;
+    logIds: number[];
+    currentItemName: string | null;
+    currentItemNameVi: string | null;
+    issues: SnapshotNameSyncIssueCode[];
+    changes: SnapshotNameSyncChange[];
+    quantityReviewRequired: boolean;
+};
+
+const snapshotNameSyncText = {
+    ko: {
+        banner: (count: number) => `당일 입고정보 동기화 필요 ${count}개 품목`,
+        syncAll: "전체 동기화",
+        syncOne: "동기화",
+        processing: "처리 중...",
+        empty: "없음",
+        quantityReview: "수량 변경은 별도 입고보정 필요",
+        confirmAll: (count: number) =>
+            `현재 영업일의 입고정보 ${count}개 품목을 최종 수정값으로 동기화합니다. 수량은 변경되지 않으며 가격·거래처 변경은 장부에 재동기화됩니다.`,
+        loadFailed: "당일 입고정보 동기화 상태를 확인하지 못했습니다.",
+        syncFailed: "당일 입고정보를 동기화하지 못했습니다. 다시 시도해주세요.",
+        result: (synced: number, review: number, failed: number) =>
+            `${synced}개 동기화 완료${review ? ` · ${review}개 관리자 확인 필요` : ""}${failed ? ` · ${failed}개 실패` : ""}`,
+        fields: {
+            item_name: "한글명", item_name_vi: "베트남어명", part: "파트",
+            category: "카테고리", category_vi: "베트남어 카테고리", code: "코드",
+            unit: "단위", purchase_price: "단가", supplier: "거래처",
+            supplier_partner_id: "거래처 연결",
+        },
+    },
+    vi: {
+        banner: (count: number) => `Cần đồng bộ thông tin nhập hàng hôm nay: ${count} mặt hàng`,
+        syncAll: "Đồng bộ tất cả",
+        syncOne: "Đồng bộ",
+        processing: "Đang xử lý...",
+        empty: "Không có",
+        quantityReview: "Thay đổi số lượng cần dùng quy trình điều chỉnh nhập hàng riêng",
+        confirmAll: (count: number) =>
+            `Đồng bộ thông tin nhập hàng cuối cùng của ${count} mặt hàng trong ngày kinh doanh hiện tại. Số lượng không thay đổi; đơn giá và nhà cung cấp sẽ được đồng bộ lại với sổ cái.`,
+        loadFailed: "Không thể kiểm tra trạng thái đồng bộ thông tin nhập hàng hôm nay.",
+        syncFailed: "Không thể đồng bộ thông tin nhập hàng hôm nay. Vui lòng thử lại.",
+        result: (synced: number, review: number, failed: number) =>
+            `Đã đồng bộ ${synced} mặt hàng${review ? ` · ${review} mặt hàng cần quản trị viên kiểm tra` : ""}${failed ? ` · ${failed} mặt hàng thất bại` : ""}`,
+        fields: {
+            item_name: "Tên tiếng Hàn", item_name_vi: "Tên tiếng Việt", part: "Bộ phận",
+            category: "Danh mục", category_vi: "Danh mục tiếng Việt", code: "Mã",
+            unit: "Đơn vị", purchase_price: "Đơn giá", supplier: "Nhà cung cấp",
+            supplier_partner_id: "Liên kết nhà cung cấp",
+        },
+    },
+} as const;
+
 type KegSalesBreakdown = {
     totalUnits: number;
     regularUnits: number;
@@ -292,6 +370,33 @@ export default function InventorySnapshotsPage() {
     const [changingReasonLogId, setChangingReasonLogId] = useState<number | null>(null);
     const [syncingPurchaseLogId, setSyncingPurchaseLogId] = useState<number | null>(null);
     const [purchaseLogGroupFilter, setPurchaseLogGroupFilter] = useState("all");
+    const [nameSyncItems, setNameSyncItems] = useState<SnapshotNameSyncItem[]>([]);
+    const [nameSyncCanRun, setNameSyncCanRun] = useState(false);
+    const [nameSyncExpanded, setNameSyncExpanded] = useState(false);
+    const [nameSyncLoading, setNameSyncLoading] = useState(false);
+    const [nameSyncProcessingKey, setNameSyncProcessingKey] = useState<number | "all" | null>(null);
+    const [nameSyncError, setNameSyncError] = useState("");
+    const [nameSyncResult, setNameSyncResult] = useState("");
+    const nameSyncRequestSequenceRef = useRef(0);
+    const nameSyncBusinessDateRef = useRef("");
+    const nameSyncT = snapshotNameSyncText[lang];
+
+    const getNameSyncItemLabel = (item: SnapshotNameSyncItem) =>
+        (lang === "vi"
+            ? item.currentItemNameVi || item.currentItemName
+            : item.currentItemName || item.currentItemNameVi) || "-";
+
+    const formatNameSyncValue = (change: SnapshotNameSyncChange, value: string | number | null) => {
+        if (value === null || value === undefined || String(value).trim() === "") return nameSyncT.empty;
+        if (change.field === "purchase_price") return `${Number(value).toLocaleString()} ₫`;
+        return String(value);
+    };
+
+    const getNameSyncChanges = (item: SnapshotNameSyncItem) => item.changes.map((change) => ({
+        key: `${change.field}:${String(change.from)}:${String(change.to)}`,
+        label: nameSyncT.fields[change.field],
+        value: `${formatNameSyncValue(change, change.from)} → ${formatNameSyncValue(change, change.to)}`,
+    }));
 
     const getSelectedBusinessDate = () => {
         if (viewMode === "snapshot") {
@@ -661,6 +766,116 @@ export default function InventorySnapshotsPage() {
             setSnapshotItems([]);
         } finally {
             setLoadingItems(false);
+        }
+    };
+
+    const fetchNameSyncIssues = useCallback(async (businessDate: string) => {
+        const requestSequence = ++nameSyncRequestSequenceRef.current;
+        setNameSyncLoading(true);
+        setNameSyncError("");
+
+        try {
+            const res = await fetchInventoryApi(
+                `/api/inventory/snapshot/name-sync?businessDate=${encodeURIComponent(businessDate)}`,
+                { cache: "no-store" }
+            );
+            const json = await res.json() as {
+                ok?: boolean;
+                canSync?: boolean;
+                items?: SnapshotNameSyncItem[];
+            };
+
+            if (requestSequence !== nameSyncRequestSequenceRef.current) return;
+
+            if (!res.ok || !json.ok) {
+                setNameSyncItems([]);
+                setNameSyncCanRun(false);
+                setNameSyncError(snapshotNameSyncText[lang].loadFailed);
+                return;
+            }
+
+            setNameSyncItems(json.items || []);
+            setNameSyncCanRun(json.canSync === true);
+        } catch (error) {
+            console.error("[INVENTORY_SNAPSHOT_NAME_SYNC_LOAD_FAILED]", error);
+            if (requestSequence === nameSyncRequestSequenceRef.current) {
+                setNameSyncItems([]);
+                setNameSyncCanRun(false);
+                setNameSyncError(snapshotNameSyncText[lang].loadFailed);
+            }
+        } finally {
+            if (requestSequence === nameSyncRequestSequenceRef.current) {
+                setNameSyncLoading(false);
+            }
+        }
+    }, [lang]);
+
+    const syncSnapshotNames = async (
+        action: "sync_item" | "sync_all",
+        item?: SnapshotNameSyncItem
+    ) => {
+        const businessDate = getSelectedBusinessDate();
+        if (!businessDate || nameSyncProcessingKey !== null) {
+            return;
+        }
+
+        if (
+            action === "sync_all" &&
+            !window.confirm(nameSyncT.confirmAll(nameSyncItems.length))
+        ) {
+            return;
+        }
+
+        const processingKey = action === "sync_all" ? "all" : Number(item?.itemId);
+        setNameSyncProcessingKey(processingKey);
+        setNameSyncError("");
+        setNameSyncResult("");
+
+        try {
+            const res = await fetchInventoryApi("/api/inventory/snapshot/name-sync", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action,
+                    business_date: businessDate,
+                    ...(action === "sync_item" ? { item_id: item?.itemId } : {}),
+                }),
+            });
+            const json = await res.json() as {
+                ok?: boolean;
+                error?: string;
+                syncedCount?: number;
+                reviewRequiredCount?: number;
+                failedCount?: number;
+            };
+
+            if (!res.ok || !json.ok) {
+                setNameSyncError(nameSyncT.syncFailed);
+                return;
+            }
+
+            if (nameSyncBusinessDateRef.current !== businessDate) return;
+            setNameSyncResult(nameSyncT.result(
+                Number(json.syncedCount ?? 0),
+                Number(json.reviewRequiredCount ?? 0),
+                Number(json.failedCount ?? 0)
+            ));
+
+            const reloads: Promise<void>[] = [
+                fetchMovementItems(businessDate),
+                fetchNameSyncIssues(businessDate),
+            ];
+            if (viewMode === "snapshot" && selectedBatchId) {
+                reloads.push(fetchSnapshotItems(selectedBatchId));
+            }
+            await Promise.all(reloads);
+        } catch (error) {
+            console.error("[INVENTORY_SNAPSHOT_NAME_SYNC_UPDATE_FAILED]", error);
+            if (nameSyncBusinessDateRef.current === businessDate) {
+                setNameSyncError(nameSyncT.syncFailed);
+            }
+        } finally {
+            setNameSyncProcessingKey(null);
         }
     };
 
@@ -1089,6 +1304,43 @@ export default function InventorySnapshotsPage() {
         const batch = batchList.find((item) => Number(item.id) === Number(selectedBatchId));
         return batch?.snapshot_date ?? null;
     }, [viewMode, batchList, selectedBatchId]);
+
+    const nameSyncBusinessDate = viewMode === "snapshot"
+        ? selectedSnapshotDate || ""
+        : activeBusinessDateKey;
+    nameSyncBusinessDateRef.current = nameSyncBusinessDate;
+
+    useEffect(() => {
+        setNameSyncExpanded(false);
+        setNameSyncItems([]);
+        setNameSyncCanRun(false);
+        setNameSyncError("");
+        setNameSyncResult("");
+        setNameSyncProcessingKey(null);
+
+        if (!nameSyncBusinessDate) {
+            nameSyncRequestSequenceRef.current += 1;
+            setNameSyncLoading(false);
+            return;
+        }
+
+        fetchNameSyncIssues(nameSyncBusinessDate);
+
+        return () => {
+            nameSyncRequestSequenceRef.current += 1;
+        };
+    }, [fetchNameSyncIssues, nameSyncBusinessDate]);
+
+    useEffect(() => {
+        if (!nameSyncBusinessDate) return;
+
+        const handleWindowFocus = () => {
+            fetchNameSyncIssues(nameSyncBusinessDate);
+        };
+
+        window.addEventListener("focus", handleWindowFocus);
+        return () => window.removeEventListener("focus", handleWindowFocus);
+    }, [fetchNameSyncIssues, nameSyncBusinessDate]);
 
     useEffect(() => {
         if (viewMode !== "current" || !activeBusinessDateKey) return;
@@ -2120,6 +2372,198 @@ export default function InventorySnapshotsPage() {
                     </>
                 )}
             </div>
+
+            {nameSyncBusinessDate && nameSyncItems.length > 0 && (
+                <div
+                    data-testid="snapshot-name-sync-banner"
+                    style={{
+                        background: "#fffbeb",
+                        border: "1px solid #fde68a",
+                        borderRadius: 14,
+                        padding: "10px 12px",
+                        marginBottom: 12,
+                        display: "grid",
+                        gap: 8,
+                    }}
+                >
+                    <button
+                        type="button"
+                        aria-expanded={nameSyncExpanded}
+                        style={{
+                            width: "100%",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 8,
+                            border: "none",
+                            background: "transparent",
+                            padding: 0,
+                            cursor: "pointer",
+                            textAlign: "left",
+                        }}
+                        onClick={() => setNameSyncExpanded((current) => !current)}
+                    >
+                        <span style={{ fontSize: 13, fontWeight: 900, color: "#92400e" }}>
+                            ⚠ {nameSyncT.banner(nameSyncItems.length)}
+                        </span>
+                        <span
+                            aria-hidden="true"
+                            style={{ fontSize: 14, fontWeight: 900, color: "#92400e", flexShrink: 0 }}
+                        >
+                            {nameSyncExpanded ? "⌃" : "⌄"}
+                        </span>
+                    </button>
+
+                    {nameSyncExpanded && (
+                        <div style={{ display: "grid", gap: 7 }}>
+                            {nameSyncCanRun && (
+                                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                                    <button
+                                        type="button"
+                                        disabled={nameSyncProcessingKey !== null || nameSyncLoading}
+                                        onClick={() => syncSnapshotNames("sync_all")}
+                                        style={{
+                                            padding: "6px 10px",
+                                            minHeight: 28,
+                                            borderRadius: 8,
+                                            border: "1px solid #92400e",
+                                            background: "#92400e",
+                                            color: "#fff",
+                                            fontSize: 11,
+                                            fontWeight: 800,
+                                            cursor: nameSyncProcessingKey !== null ? "not-allowed" : "pointer",
+                                            opacity: nameSyncProcessingKey !== null || nameSyncLoading ? 0.6 : 1,
+                                        }}
+                                    >
+                                        {nameSyncProcessingKey === "all"
+                                            ? nameSyncT.processing
+                                            : nameSyncT.syncAll}
+                                    </button>
+                                </div>
+                            )}
+
+                            {nameSyncItems.map((item) => {
+                                const isProcessing = nameSyncProcessingKey === item.itemId;
+                                const isDisabled = nameSyncProcessingKey !== null || nameSyncLoading;
+
+                                return (
+                                    <div
+                                        key={item.itemId}
+                                        data-testid={`snapshot-name-sync-item-${item.itemId}`}
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            gap: 10,
+                                            border: "1px solid #fde68a",
+                                            background: "#fff",
+                                            borderRadius: 10,
+                                            padding: "7px 9px",
+                                        }}
+                                    >
+                                        <div style={{ minWidth: 0, display: "grid", gap: 2 }}>
+                                            <span
+                                                style={{
+                                                    fontSize: 12,
+                                                    fontWeight: 800,
+                                                    color: "#111827",
+                                                    overflow: "hidden",
+                                                    textOverflow: "ellipsis",
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                            >
+                                                {getNameSyncItemLabel(item)}
+                                            </span>
+                                            {getNameSyncChanges(item).map((change) => (
+                                                <span key={change.key} style={{ fontSize: 11, color: "#6b7280", overflowWrap: "anywhere" }}>
+                                                    <strong style={{ color: "#4b5563" }}>{change.label}</strong>
+                                                    <br />
+                                                    {change.value}
+                                                </span>
+                                            ))}
+                                            {item.quantityReviewRequired && (
+                                                <span style={{ fontSize: 11, fontWeight: 800, color: "#b45309" }}>
+                                                    {nameSyncT.quantityReview}
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {nameSyncCanRun && (
+                                            <button
+                                                type="button"
+                                                disabled={isDisabled}
+                                                onClick={() => syncSnapshotNames("sync_item", item)}
+                                                style={{
+                                                    flexShrink: 0,
+                                                    padding: "6px 10px",
+                                                    minHeight: 28,
+                                                    borderRadius: 8,
+                                                    border: "1px solid #d97706",
+                                                    background: "#fff7ed",
+                                                    color: "#9a3412",
+                                                    fontSize: 11,
+                                                    fontWeight: 800,
+                                                    cursor: isDisabled ? "not-allowed" : "pointer",
+                                                    opacity: isDisabled ? 0.6 : 1,
+                                                }}
+                                            >
+                                                {isProcessing ? nameSyncT.processing : nameSyncT.syncOne}
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
+
+                            {nameSyncError && (
+                                <div role="alert" style={{ fontSize: 12, fontWeight: 700, color: "#b91c1c" }}>
+                                    {nameSyncError}
+                                </div>
+                            )}
+                            {nameSyncResult && (
+                                <div role="status" style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>
+                                    {nameSyncResult}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {nameSyncBusinessDate && nameSyncItems.length === 0 && nameSyncError && (
+                <div
+                    role="alert"
+                    style={{
+                        background: "#fef2f2",
+                        border: "1px solid #fecaca",
+                        borderRadius: 10,
+                        padding: "9px 11px",
+                        marginBottom: 12,
+                        color: "#b91c1c",
+                        fontSize: 12,
+                        fontWeight: 700,
+                    }}
+                >
+                    {nameSyncError}
+                </div>
+            )}
+
+            {nameSyncBusinessDate && nameSyncItems.length === 0 && nameSyncResult && (
+                <div
+                    role="status"
+                    style={{
+                        background: "#fffbeb",
+                        border: "1px solid #fde68a",
+                        borderRadius: 10,
+                        padding: "9px 11px",
+                        marginBottom: 12,
+                        color: "#92400e",
+                        fontSize: 12,
+                        fontWeight: 700,
+                    }}
+                >
+                    {nameSyncResult}
+                </div>
+            )}
 
             {purchasedItems.length > 0 && (
                 <div

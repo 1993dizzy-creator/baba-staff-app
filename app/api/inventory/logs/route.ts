@@ -10,9 +10,10 @@ import {
 } from "@/lib/inventory/keg-replacement-summary";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
-  inventoryLogDisplayUpdate,
-  inventoryPurchaseLogCurrentItemSyncUpdate,
-} from "@/lib/inventory/ledger-sync-contract";
+  syncInventoryLogRowsFromItem,
+  updateInventoryLogRows,
+  type InventoryLogSyncItem,
+} from "@/lib/inventory/log-sync-server";
 import { projectInventoryPurchaseLogs } from "@/lib/ledger/inventory-projection";
 import { resolveInventorySupplier } from "@/lib/inventory/supplier-partners-server";
 import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
@@ -34,17 +35,6 @@ const toNullableNumber = (value: unknown) => {
 
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
-};
-
-type CurrentInventoryItem = {
-  item_name: string | null;
-  item_name_vi: string | null;
-  category: string | null;
-  category_vi: string | null;
-  unit: string | null;
-  purchase_price: number | null;
-  supplier: string | null;
-  supplier_partner_id: number | null;
 };
 
 type InventoryLogsQueryOptions = {
@@ -133,15 +123,6 @@ const asPageResult = async <T,>(promise: Promise<T>) => {
 
 const normalizeText = (value: unknown) =>
   String(value ?? "").replace(/\s+/g, " ").trim();
-
-const buildInventoryLogSyncPayload = (
-  currentItem: CurrentInventoryItem,
-  syncPurchaseEconomics: boolean
-): Record<string, string | number | null> => {
-  return syncPurchaseEconomics
-    ? inventoryPurchaseLogCurrentItemSyncUpdate(currentItem)
-    : inventoryLogDisplayUpdate(currentItem);
-};
 
 const findLatestPurchaseLogId = async (itemId: number) => {
   const { data, error } = await supabaseServer
@@ -360,7 +341,7 @@ export async function PATCH(req: Request) {
     const existing = existingRows[0];
 
     const updatePayload: Record<string, string | number | null> = {};
-    let currentItem: CurrentInventoryItem | null = null;
+    let currentItem: InventoryLogSyncItem | null = null;
     let latestPurchaseLogId: number | null = null;
 
     if (syncCurrentItem) {
@@ -394,7 +375,7 @@ export async function PATCH(req: Request) {
       const { data, error: currentItemError } = await supabaseServer
         .from("inventory")
         .select(
-          "item_name, item_name_vi, category, category_vi, unit, purchase_price, supplier, supplier_partner_id"
+          "item_name, item_name_vi, part, category, category_vi, code, unit, purchase_price, supplier, supplier_partner_id"
         )
         .eq("id", Number(existing.item_id))
         .maybeSingle();
@@ -458,25 +439,6 @@ export async function PATCH(req: Request) {
       updatePayload.new_purchase_price = purchasePrice;
     }
 
-    const updatedRowSelect =
-      "id, item_id, item_name, item_name_vi, category, category_vi, new_category, new_category_vi, unit, new_unit, reason, business_date, change_quantity, new_supplier, new_purchase_price, purchase_supplier_partner_id";
-    const updateLogRows = async (
-      ids: number[],
-      payload: Record<string, string | number | null>
-    ) => {
-      if (ids.length === 0) return [];
-
-      const { data, error } = await supabaseServer
-        .from("inventory_logs")
-        .update(payload)
-        .in("id", ids)
-        .select(updatedRowSelect)
-        .order("id", { ascending: true });
-
-      if (error) throw error;
-      return data || [];
-    };
-
     let updatedRows;
     if (syncCurrentItem && currentItem) {
       const purchaseLogIds = existingRows
@@ -492,21 +454,19 @@ export async function PATCH(req: Request) {
         )
         .map((row) => Number(row.id));
 
-      const [purchaseRows, displayOnlyRows] = await Promise.all([
-        updateLogRows(purchaseLogIds, {
-          ...buildInventoryLogSyncPayload(currentItem, true),
-          ...updatePayload,
-        }),
-        updateLogRows(displayOnlyLogIds, {
-          ...buildInventoryLogSyncPayload(currentItem, false),
-          ...updatePayload,
-        }),
-      ]);
-      updatedRows = [...purchaseRows, ...displayOnlyRows].sort(
-        (left, right) => Number(left.id) - Number(right.id)
-      );
+      updatedRows = await syncInventoryLogRowsFromItem({
+        supabase: supabaseServer,
+        item: currentItem,
+        purchaseLogIds,
+        displayOnlyLogIds,
+        overlay: updatePayload,
+      });
     } else {
-      updatedRows = await updateLogRows(targetLogIds, updatePayload);
+      updatedRows = await updateInventoryLogRows(
+        supabaseServer,
+        targetLogIds,
+        updatePayload
+      );
     }
 
     const updatesPurchaseInfo = hasNewSupplier || hasNewPurchasePrice;
