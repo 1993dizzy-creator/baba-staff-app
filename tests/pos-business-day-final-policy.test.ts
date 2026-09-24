@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 // @ts-expect-error Direct Node TypeScript tests require explicit extensions.
 import { comparePosFinalAmounts,isEligiblePosFinalSync,posSnapshotTotals } from '../lib/sales/pos-business-day-final-policy.ts';
@@ -7,6 +9,12 @@ import { runManualCloseWorkflow,runPosFinalWorkflow } from '../lib/sales/pos-bus
 // @ts-expect-error Direct Node TypeScript tests require explicit extensions.
 import { buildPosBusinessDaySource } from '../lib/ledger/pos-sales-source.ts';
 const date='2026-09-11',now=new Date('2026-09-11T20:05:00Z'),cutoffAt='2026-09-11T20:00:00Z';
+const read=(path:string)=>readFileSync(join(process.cwd(),path),'utf8');
+const closePanel=read('components/sales/PosBusinessDayClosePanel.tsx');
+const salesPage=read('app/(protected)/admin/sales/page.tsx');
+const closeText=read('lib/text/sales-close.ts');
+const closeService=read('lib/sales/pos-business-day-close.ts');
+const finalService=read('lib/sales/pos-business-day-final.ts');
 const source=buildPosBusinessDaySource(date,[],[]);
 const run={id:100,business_date:date,source:'cukcuk',status:'success',source_complete:true,started_at:cutoffAt,finished_at:'2026-09-11T20:01:00Z',error_message:null};
 for(const role of ['owner','master','manager','staff','leader'])test('manual close role '+role,async()=>{
@@ -55,4 +63,46 @@ test('workflow releases lease even when finalize throws an unexpected failure',a
   release:async()=>{released++;},latest:async()=>run,refresh:async()=>100,source:async()=>source,
   finalize:async()=>{throw Error('database unavailable');}}),/database unavailable/);
  assert.equal(released,1);
+});
+test('daily sales notice integrates the compact close control before summary cards',()=>{
+ const notice=salesPage.slice(salesPage.indexOf('<section style={noticeCardStyle}>'),salesPage.indexOf('<section style={summaryGridStyle}>'));
+ assert.match(notice,/dailyText\.syncButton[\s\S]*<PosBusinessDayClosePanel/);
+ assert.equal((salesPage.match(/<PosBusinessDayClosePanel/g)||[]).length,1);
+});
+test('normal closed state is compact and omits duplicate sales totals, payment grid and sync detail',()=>{
+ assert.match(closePanel,/✓ \{t\.closed\}/);
+ assert.match(closePanel,/check\.result==='verified_unchanged'\?''/);
+ assert.doesNotMatch(closePanel,/t\.lastSync/);
+ assert.doesNotMatch(closePanel,/totals\?<div style=\{grid\}/);
+ assert.doesNotMatch(closePanel,/t\.verifiedDetail/);
+});
+test('pre-close eligibility, automatic/manual metadata and reclose confirmation remain available',()=>{
+ assert.match(closePanel,/disabled=\{!status\.canClose\|\|busy\|\|disabled\}/);
+ assert.match(closePanel,/\{eligibility\?<p style=\{muted\}>\{eligibility\}/);
+ assert.match(closePanel,/status\.latestClose\.method==='automatic'\?t\.automatic:t\.manual/);
+ assert.match(closePanel,/status\.canReclose[\s\S]*setConfirm\(true\)/);
+ assert.match(closePanel,/confirm&&status\.latestClose&&status\.currentTotals&&status\.delta/);
+ assert.match(closePanel,/expectedSourceFingerprint:status\?\.currentFingerprint/);
+});
+test('initial manual close requires confirmation while reclose keeps its existing review flow',()=>{
+ assert.match(closePanel,/onClick=\{\(\)=>setConfirmInitialClose\(true\)\}/);
+ assert.match(closePanel,/confirmInitialClose&&!status\.latestClose[\s\S]*role='dialog'[\s\S]*t\.manualCloseConfirmTitle/);
+ assert.match(closePanel,/onClick=\{\(\)=>setConfirmInitialClose\(false\)\}>\{t\.cancel\}/);
+ assert.equal((closePanel.match(/onClick=\{\(\)=>void close\(false\)\}/g)||[]).length,1);
+ assert.match(closePanel,/status\.canReclose[\s\S]*setConfirm\(true\)/);
+ assert.match(closeText,/"beforeClose": "오후 11시 이후 영업 마감이 가능합니다\."/);
+ assert.match(closeText,/"beforeClose": "Có thể chốt ngày kinh doanh sau 23:00\."/);
+ assert.match(closeText,/"manualCloseConfirmTitle": "영업 마감을 진행하시겠습니까\?"/);
+ assert.match(closeText,/"manualCloseConfirmTitle": "Bạn có muốn chốt ngày kinh doanh không\?"/);
+});
+test('manual close paths use the 23:00 policy while automatic and final paths retain configured close time',()=>{
+ assert.match(closeService,/getPosBusinessDayManualCloseTime[\s\S]*evaluatePosManualCloseTime/);
+ assert.match(closeService,/options\.method === "manual"[\s\S]*getPosBusinessDayManualCloseTime[\s\S]*getPosBusinessDayCloseTime/);
+ assert.match(finalService,/eligible:async\(\)=>\(await getPosBusinessDayManualCloseTime\(date\)\)\.allowed/);
+ assert.match(finalService,/finalizePosBusinessDay[\s\S]*getPosBusinessDayCloseTime\(date,now\)/);
+});
+test('exception states stay visible while verified unchanged stays quiet',()=>{
+ for(const contract of ['metadata_changed_only','financial_drift','sync_failed','source_invalid','month_closed','ledgerProjection.status===\'mismatch\'','needsOwnerReview'])assert.match(closePanel,new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+ assert.match(closeText,/"recloseReview": "마감 재확인"/);
+ assert.match(closeText,/"recloseReview": "Kiểm tra chốt lại"/);
 });

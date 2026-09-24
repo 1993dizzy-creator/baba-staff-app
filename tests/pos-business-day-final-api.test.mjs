@@ -11,7 +11,7 @@ for(const role of ['owner','master','manager','staff','leader'])test('trusted ma
  const service=load('lib/sales/pos-business-day-final.ts',{
   'server-only':{},'@/lib/auth/server-auth':{getAuthenticatedActor:async()=>{calls.push('session');return {ok:true,actor:{id:55,role}};}},
   '@/lib/supabase/server':{},'@/lib/ledger/pos-sales':{},'./pos-business-day-close':{
-   getPosBusinessDayCloseTime:async()=>{calls.push('time');return {allowed:true};},
+   getPosBusinessDayManualCloseTime:async()=>{calls.push('time');return {allowed:true};},
    closePosBusinessDay:async(date,options)=>{calls.push('close');assert.equal(options.syncRunId,100);return {status:'closed'};}},
   './pos-business-day-final-workflow':workflow,'./pos-business-day-refresh':{forceRefreshPosBusinessDay:async(origin,date)=>{calls.push('force');assert.equal(date,'2026-09-11');return 100;}},
   './pos-business-day-final-policy':{},'@/lib/ledger/pos-sales-source':{validPosBusinessDate:()=>true},

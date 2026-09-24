@@ -4,7 +4,7 @@ import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { supabaseServer } from "@/lib/supabase/server";
 import { loadPosBusinessDaySource } from "@/lib/ledger/pos-sales";
 import { loadBusinessTimeAdapter, loadBusinessTimeSnapshotsForDates } from "@/lib/store-settings/business-time-adapter";
-import { canWritePosBusinessDayClose, comparePosClosedSource, evaluatePosCloseTime, validatePosSystemActor } from "./pos-business-day-close-policy";
+import { canWritePosBusinessDayClose, comparePosClosedSource, evaluatePosCloseTime, evaluatePosManualCloseTime, validatePosSystemActor } from "./pos-business-day-close-policy";
 import { validPosBusinessDate } from "@/lib/ledger/pos-sales-source";
 
 export async function resolvePosCloseSystemActor() {
@@ -24,6 +24,16 @@ export async function getPosBusinessDayCloseTime(businessDate: string, now = new
   return evaluatePosCloseTime(businessDate, adapter.databaseBusinessDate, now, snapshot);
 }
 
+export async function getPosBusinessDayManualCloseTime(businessDate: string, now = new Date()) {
+  if (!validPosBusinessDate(businessDate)) throw new Error("INVALID_POS_BUSINESS_DATE");
+  const [adapter, snapshots] = await Promise.all([
+    loadBusinessTimeAdapter(now), loadBusinessTimeSnapshotsForDates([businessDate]),
+  ]);
+  const snapshot = snapshots.get(businessDate);
+  if (!snapshot) throw new Error("POS_CLOSE_STORE_SETTING_UNAVAILABLE");
+  return evaluatePosManualCloseTime(businessDate, adapter.databaseBusinessDate, now, snapshot);
+}
+
 async function requireCloseActor(write: boolean, reclose = false) {
   const auth = await getAuthenticatedActor();
   if (!auth.ok) throw new Error(auth.code);
@@ -35,7 +45,7 @@ export async function getPosBusinessDayCloseStatus(businessDate: string) {
   const actor = await requireCloseActor(false);
   if (!validPosBusinessDate(businessDate)) throw new Error("INVALID_POS_BUSINESS_DATE");
   const [source, time, latest] = await Promise.all([
-    loadPosBusinessDaySource(businessDate), getPosBusinessDayCloseTime(businessDate),
+    loadPosBusinessDaySource(businessDate), getPosBusinessDayManualCloseTime(businessDate),
     supabaseServer.from("pos_sales_business_day_closures")
       .select("id,business_date,revision,close_method,closed_at,closed_by,sync_run_id,source_fingerprint,source_snapshot,ledger_result_snapshot,actor:users!closed_by(id,username,name,full_name,role)")
       .eq("business_date", businessDate).order("revision", { ascending: false }).limit(1).maybeSingle(),
@@ -55,7 +65,9 @@ export async function getPosBusinessDayCloseStatus(businessDate: string) {
 async function closeWithActor(businessDate: string, actorId: number, options: {
   method: "manual" | "automatic"; reclose: boolean; expectedSourceFingerprint?: string; syncRunId?: number;
 }) {
-  const time = await getPosBusinessDayCloseTime(businessDate);
+  const time = options.method === "manual"
+    ? await getPosBusinessDayManualCloseTime(businessDate)
+    : await getPosBusinessDayCloseTime(businessDate);
   if (!time.allowed) throw new Error("POS_CLOSE_BEFORE_CONFIGURED_CLOSE_TIME");
   const source = await loadPosBusinessDaySource(businessDate);
   if (options.expectedSourceFingerprint !== undefined && options.expectedSourceFingerprint !== source.sourceFingerprint) throw new Error("POS_CLOSE_SOURCE_CHANGED_SINCE_REVIEW");

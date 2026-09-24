@@ -2,7 +2,7 @@ import 'server-only';
 import { getAuthenticatedActor } from '@/lib/auth/server-auth';
 import { supabaseServer } from '@/lib/supabase/server';
 import { loadPosBusinessDaySource } from '@/lib/ledger/pos-sales';
-import { closePosBusinessDay,getPosBusinessDayCloseTime,resolvePosCloseSystemActor } from './pos-business-day-close';
+import { closePosBusinessDay,getPosBusinessDayCloseTime,getPosBusinessDayManualCloseTime,resolvePosCloseSystemActor } from './pos-business-day-close';
 import { runManualCloseWorkflow,runPosFinalWorkflow } from './pos-business-day-final-workflow';
 import { forceRefreshPosBusinessDay,loadLatestPosSyncRun } from './pos-business-day-refresh';
 import { isEligiblePosFinalSync,posSnapshotTotals } from './pos-business-day-final-policy';
@@ -13,7 +13,7 @@ export async function manualClosePosBusinessDay(origin:string,date:string,reclos
   const auth=await getAuthenticatedActor();if(!auth.ok)throw Error(auth.code);
   if(!validPosBusinessDate(date))throw Error('INVALID_POS_BUSINESS_DATE');
   return runManualCloseWorkflow({role:auth.actor.role,reclose},{
-    eligible:async()=>(await getPosBusinessDayCloseTime(date)).allowed,
+    eligible:async()=>(await getPosBusinessDayManualCloseTime(date)).allowed,
     refresh:()=>forceRefreshPosBusinessDay(origin,date),
     close:runId=>closePosBusinessDay(date,{reclose,syncRunId:runId,expectedSourceFingerprint}),
   });
@@ -49,7 +49,7 @@ export async function getPosBusinessDayCloseView(date:string){
   if(!['owner','master','manager','leader'].includes(auth.actor.role))throw Error('POS_CLOSE_FORBIDDEN');
   if(!validPosBusinessDate(date))throw Error('INVALID_POS_BUSINESS_DATE');
   const [source,time,latest,check,month,run,ledger]=await Promise.all([
-    loadPosBusinessDaySource(date).catch(()=>null),getPosBusinessDayCloseTime(date),
+    loadPosBusinessDaySource(date).catch(()=>null),getPosBusinessDayManualCloseTime(date),
     supabaseServer.from('pos_sales_business_day_closures').select('id,revision,close_method,closed_at,closed_by,source_fingerprint,source_snapshot,actor:users!closed_by(name,full_name,username)')
       .eq('business_date',date).order('revision',{ascending:false}).limit(1).maybeSingle(),
     supabaseServer.from('pos_sales_business_day_close_checks').select('id,closure_id,result,checked_at,closed_total,current_total,total_delta,closed_buckets,current_buckets,bucket_delta')

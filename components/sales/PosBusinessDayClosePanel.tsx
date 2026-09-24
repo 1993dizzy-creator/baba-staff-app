@@ -11,7 +11,7 @@ const signed=(amount:number)=>(amount>0?'+':'')+money(amount);
 export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClosed,onBusyChange,disabled=false}:{businessDate:string;refreshKey:number;onClosed:()=>Promise<void>;onBusyChange:(busy:boolean)=>void;disabled?:boolean}){
  const {lang}=useLanguage(),t=salesCloseText[lang];
  const [status,setStatus]=useState<PosCloseView|null>(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
- const [message,setMessage]=useState(''),[confirm,setConfirm]=useState(false);
+ const [message,setMessage]=useState(''),[confirm,setConfirm]=useState(false),[confirmInitialClose,setConfirmInitialClose]=useState(false);
  const load=useCallback(async(signal?:AbortSignal,clearMessage=false)=>{
   if(clearMessage)setMessage('');
   try{
@@ -34,43 +34,44 @@ export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClos
     body:JSON.stringify({businessDate,reclose,...(reclose?{expectedSourceFingerprint:status?.currentFingerprint}:{})})});
    const result=await response.json();
    setMessage(response.ok&&result.ok?(result.status==='already_closed'?'unchanged':'done'):(result.code??result.status));
-   setConfirm(false);await Promise.all([load(),onClosed()]);
+   setConfirm(false);setConfirmInitialClose(false);await Promise.all([load(),onClosed()]);
   }catch{setMessage('POS_CLOSE_FAILED');}finally{setBusy(false);onBusyChange(false);}
  }
- const totals=status?.latestClose?.totals??status?.currentTotals;
  const check=status?.latestFinalCheck;
  const reason=status?.closeEligibilityReason;
  const eligibility=reason==='source_invalid'?t.sourceInvalid:reason==='month_closed'?t.monthClosed:reason==='future_business_date'?t.future
-  :reason==='configured_close_time_unavailable'?t.settings:reason==='configured_close_time'?t.beforeClose:reason==='forbidden'?t.forbidden:'';
+  :reason==='configured_close_time_unavailable'?t.settings:['configured_close_time','manual_close_time'].includes(reason??'')?t.beforeClose:reason==='forbidden'?t.forbidden:'';
  const stamp=(value:string)=>new Intl.DateTimeFormat(lang==='ko'?'ko-KR':'vi-VN',{timeZone:'Asia/Ho_Chi_Minh',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value));
  function deltaRows(delta:PosCloseTotals){return <div style={grid}>{buckets.map(bucket=><div key={bucket}><span>{t[bucket]}</span><strong style={amount}>{signed(Number(delta[bucket]))}</strong></div>)}</div>;}
- return <section style={card} aria-busy={busy||loading}>
-  <h2 style={{margin:'0 0 12px',fontSize:17}}>{status?.latestClose?t.closed:t.title}</h2>
-  {loading?<p>{t.loading}</p>:!status?<p role='alert'>{t.failed}</p>:<>
-   <strong style={{fontSize:25}}>{totals?money(totals.total):t.notAvailable}</strong>
-   {status.latestClose?<p style={muted}>{status.latestClose.method==='automatic'?t.automatic:t.manual} · {stamp(status.latestClose.closedAt)} · {status.latestClose.method==='automatic'?t.system:status.latestClose.closedBy}</p>:null}
-   {totals?<div style={grid}>{buckets.map(bucket=><div key={bucket}><span>{t[bucket]}</span><strong style={amount}>{money(totals[bucket])}</strong></div>)}</div>:null}
-   <p style={muted}>{t.lastSync}: {status.finalSync.lastSyncedAt?stamp(status.finalSync.lastSyncedAt):t.notAvailable}</p>
-   {status.latestClose&&!status.sourceValid?<p role='alert'>{t.sourceInvalid}</p>:null}
-   {status.latestClose&&status.monthClosed?<p style={muted}>{t.monthClosed}</p>:null}
-   {status.latestClose?<div style={{...notice,background:check?.result==='financial_drift'?'#fff7ed':check?.result==='verified_unchanged'?'#f0fdf4':'#f3f4f6'}}>
-    {!check?<p>{t.pending}</p>:<>
-     <strong>{check.result==='verified_unchanged'?t.verified:check.result==='metadata_changed_only'?t.metadata:check.result==='financial_drift'?t.drift:t.checkFailed}</strong>
-     <p style={muted}>{stamp(check.checkedAt)}</p>
-     {check.result==='verified_unchanged'?<p>{t.verifiedDetail}</p>:check.result==='metadata_changed_only'?<p>{t.metadataDetail}</p>:check.result==='financial_drift'?<>
-      <p>{t.closedTotal}: {money(check.closedTotal??0)}<br/>{t.finalTotal}: {money(check.currentTotal??0)}<br/><strong>{t.difference}: {signed(check.totalDelta??0)}</strong></p>
-      {check.bucketDelta?deltaRows({total:check.totalDelta??0,...check.bucketDelta}):null}
-     </>:<p>{check.result==='sync_failed'?t.syncFailed:check.result==='month_closed'?t.monthClosed:t.sourceInvalid}</p>}
-    </>}
-   </div>:check?<p role='status'>{t.checkFailed} ? {check.result==='sync_failed'?t.syncFailed:check.result==='month_closed'?t.monthClosed:t.sourceInvalid}</p>:null}
-   {status.ledgerProjection.status==='mismatch'?<p role='alert'>{t.ledgerMismatch}</p>:null}
+ const closeMeta=status?.latestClose
+  ? `${status.latestClose.method==='automatic'?t.automatic:t.manual} · ${status.latestClose.method==='automatic'?'':`${status.latestClose.closedBy} · `}${stamp(status.latestClose.closedAt)}`
+  : '';
+ const checkDetail=!status?.latestClose?'':!check?t.pending:check.result==='verified_unchanged'?''
+  :check.result==='metadata_changed_only'?`${t.metadata} · ${t.metadataDetail}`
+  :check.result==='financial_drift'?`${t.drift} · ${t.difference}: ${signed(check.totalDelta??0)}`
+  :`${t.checkFailed} · ${check.result==='sync_failed'?t.syncFailed:check.result==='month_closed'?t.monthClosed:t.sourceInvalid}`;
+ return <div style={compact} aria-busy={busy||loading}>
+  {loading?<p style={muted}>{t.loading}</p>:!status?<p role='alert' style={warning}>{t.failed}</p>:<>
    {!status.latestClose?<>
+    <button style={{...closeButton,opacity:status.canClose&&!busy&&!disabled?1:0.5}} disabled={!status.canClose||busy||disabled} onClick={()=>setConfirmInitialClose(true)}>{busy?t.working:t.close}</button>
     {eligibility?<p style={muted}>{eligibility}</p>:null}
-    <button style={{...ui.button,opacity:status.canClose&&!busy&&!disabled?1:0.5}} disabled={!status.canClose||busy||disabled} onClick={()=>void close(false)}>{busy?t.working:t.close}</button>
-   </>:status.canReclose?<>
-    {status.drift&&status.delta&&Object.values(status.delta).some(amount=>amount!==0)&&check?.result!=='financial_drift'?<p>{t.drift}</p>:null}
-    <button style={ui.button} disabled={busy||disabled} onClick={()=>setConfirm(true)}>{busy?t.working:t.recloseReview}</button>
-   </>:status.needsOwnerReview?<p>{t.ownerReview}</p>:null}
+   </>:status.canReclose?
+    <button style={closeButton} disabled={busy||disabled} onClick={()=>setConfirm(true)}>{busy?t.working:t.recloseReview}</button>
+    :<div role='status' style={closedStatus}>✓ {t.closed}</div>}
+   {closeMeta?<p style={muted}>{closeMeta}</p>:null}
+   {checkDetail?<p role={check?.result==='metadata_changed_only'?'status':'alert'} style={check?.result==='metadata_changed_only'?info:warning}>{checkDetail}</p>:null}
+   {status.latestClose&&!status.sourceValid&&check?.result!=='source_invalid'?<p role='alert' style={warning}>{t.sourceInvalid}</p>:null}
+   {status.latestClose&&status.monthClosed&&check?.result!=='month_closed'?<p role='alert' style={warning}>{t.monthClosed}</p>:null}
+   {status.ledgerProjection.status==='mismatch'?<p role='alert' style={warning}>{t.ledgerMismatch}</p>:null}
+   {status.needsOwnerReview?<p role='alert' style={warning}>{t.ownerReview}</p>:null}
+   {status.drift&&status.delta&&Object.values(status.delta).some(value=>value!==0)&&check?.result!=='financial_drift'?<p role='alert' style={warning}>{t.drift}</p>:null}
+   {confirmInitialClose&&!status.latestClose?<div role='dialog' aria-modal='true' aria-label={t.manualCloseConfirmTitle} style={notice}>
+    <strong>{t.manualCloseConfirmTitle}</strong><p style={{margin:'6px 0 0'}}>{t.manualCloseConfirmDetail}</p>
+    <div style={{display:'flex',gap:8,marginTop:12}}>
+     <button style={ui.subButton} disabled={busy} onClick={()=>setConfirmInitialClose(false)}>{t.cancel}</button>
+     <button style={ui.button} disabled={busy||disabled} onClick={()=>void close(false)}>{busy?t.working:t.proceedClose}</button>
+    </div>
+   </div>:null}
    {confirm&&status.latestClose&&status.currentTotals&&status.delta?<div role='region' aria-label={t.recloseReview} style={notice}>
     <p>{t.confirm}</p><p>{t.closedTotal}: {money(status.latestClose.totals.total)}<br/>{t.current}: {money(status.currentTotals.total)}<br/><strong>{t.difference}: {signed(status.delta.total)}</strong></p>
     {deltaRows(status.delta)}<div style={{display:'flex',gap:8,marginTop:12}}>
@@ -79,11 +80,16 @@ export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClos
     </div>
    </div>:null}
   </>}
-  {message?<p role='status' style={{fontSize:13,lineHeight:1.5}}>{message==='done'?t.done:message==='unchanged'?t.unchanged:errorText(message)}</p>:null}
- </section>;
+  {message?<p role='status' style={messageStyle}>{message==='done'?t.done:message==='unchanged'?t.unchanged:errorText(message)}</p>:null}
+ </div>;
 }
-const card:CSSProperties={background:'#fff',border:'1px solid #e5e7eb',borderRadius:18,padding:16};
+const compact:CSSProperties={display:'grid',gap:6,minWidth:0};
+const closeButton:CSSProperties={...ui.subButton,width:'100%',minHeight:40,padding:'9px 12px',fontSize:13,fontWeight:800,borderRadius:10};
+const closedStatus:CSSProperties={minHeight:40,display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',border:'1px solid #d1d5db',borderRadius:10,background:'#fff',color:'#166534',fontSize:13,fontWeight:800};
 const grid:CSSProperties={display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:12,margin:'14px 0',fontSize:13};
 const amount:CSSProperties={display:'block',marginTop:4,overflowWrap:'anywhere'};
-const muted:CSSProperties={fontSize:12,color:'#6b7280',lineHeight:1.5};
+const muted:CSSProperties={margin:0,fontSize:11,color:'#6b7280',lineHeight:1.45,overflowWrap:'anywhere'};
+const warning:CSSProperties={margin:0,border:'1px solid #fde68a',borderRadius:8,padding:'7px 8px',background:'#fffbeb',color:'#92400e',fontSize:12,fontWeight:700,lineHeight:1.45,overflowWrap:'anywhere'};
+const info:CSSProperties={...warning,border:'1px solid #d1d5db',background:'#f9fafb',color:'#4b5563'};
+const messageStyle:CSSProperties={margin:0,fontSize:12,lineHeight:1.45,overflowWrap:'anywhere'};
 const notice:CSSProperties={borderRadius:12,padding:12,margin:'12px 0',fontSize:13,lineHeight:1.5,background:'#f3f4f6'};

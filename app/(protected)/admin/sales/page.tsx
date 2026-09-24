@@ -501,12 +501,20 @@ export default function SalesPage() {
             >
               {isSyncing ? `${dailyText.syncing}...` : dailyText.syncButton}
             </button>
+            {businessDate ? (
+              <PosBusinessDayClosePanel
+                key={businessDate}
+                businessDate={businessDate}
+                refreshKey={closeRefreshKey}
+                onClosed={fetchSalesToday}
+                onBusyChange={setIsClosing}
+                disabled={isSyncing}
+              />
+            ) : null}
           </div>
           {syncMessage ? <p style={successTextStyle}>{syncMessage}</p> : null}
           {errorMessage ? <p style={errorTextStyle}>{errorMessage}</p> : null}
         </section>
-
-        {businessDate ? <PosBusinessDayClosePanel key={businessDate} businessDate={businessDate} refreshKey={closeRefreshKey} onClosed={fetchSalesToday} onBusyChange={setIsClosing} disabled={isSyncing} /> : null}
 
         <section style={summaryGridStyle}>
           {summaryCards.map((card) => (

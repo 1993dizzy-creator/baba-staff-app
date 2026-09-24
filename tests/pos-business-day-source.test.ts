@@ -4,7 +4,7 @@ import test from "node:test";
 // @ts-expect-error Node's direct TypeScript tests require explicit extensions.
 import { buildPosBusinessDaySource, buildPosLedgerRangeSource, canonicalPosJson, posSourceFingerprint, validPosBusinessDate } from "../lib/ledger/pos-sales-source.ts";
 // @ts-expect-error Node's direct TypeScript tests require explicit extensions.
-import { comparePosClosedSource, evaluatePosCloseTime, validatePosSystemActor } from "../lib/sales/pos-business-day-close-policy.ts";
+import { comparePosClosedSource, evaluatePosCloseTime, evaluatePosManualCloseTime, validatePosSystemActor } from "../lib/sales/pos-business-day-close-policy.ts";
 // @ts-expect-error Node's direct TypeScript tests require explicit extensions.
 import { createFallbackBusinessTimeSnapshot } from "../lib/store-settings/business-time-adapter-core.ts";
 
@@ -103,4 +103,22 @@ test("configured overnight close permits past dates or closeAt and rejects early
   assert.equal(evaluatePosCloseTime(date, "2026-08-21", new Date("2026-08-21T05:00:00+07:00"), snapshot).allowed, true);
   assert.equal(evaluatePosCloseTime("2026-08-21", date, new Date("2026-08-21T01:00:00+07:00"), snapshot).allowed, false);
   assert.equal(evaluatePosCloseTime(date, date, new Date("2026-08-21T02:00:00+07:00"), fallback).allowed, false);
+});
+
+test("manual close starts at 23:00 for the current business date without changing configured close or cutoff", () => {
+  const fallback = createFallbackBusinessTimeSnapshot(date);
+  const snapshot = { ...fallback, source: "configured" as const, isFallback: false,
+    hours: fallback.hours.map(hour => ({ ...hour, isClosed: false, openTime: "16:00", closeTime: "01:00" })) };
+  const configured = evaluatePosCloseTime(date, date, new Date("2026-08-20T23:00:00+07:00"), snapshot);
+  const before = evaluatePosManualCloseTime(date, date, new Date("2026-08-20T22:59:59+07:00"), snapshot);
+  const at = evaluatePosManualCloseTime(date, date, new Date("2026-08-20T23:00:00+07:00"), snapshot);
+  assert.equal(before.allowed, false);
+  assert.equal(at.allowed, true);
+  assert.equal(evaluatePosManualCloseTime(date, date, new Date("2026-08-20T23:30:00+07:00"), snapshot).allowed, true);
+  assert.equal(evaluatePosManualCloseTime(date, date, new Date("2026-08-21T00:30:00+07:00"), snapshot).allowed, true);
+  assert.equal(evaluatePosManualCloseTime(date, "2026-08-21", new Date("2026-08-21T00:30:00+07:00"), snapshot).allowed, true);
+  assert.equal(evaluatePosManualCloseTime("2026-08-21", date, new Date("2026-08-20T23:30:00+07:00"), snapshot).allowed, false);
+  assert.equal(configured.allowed, false);
+  assert.equal(at.closeAt, configured.closeAt);
+  assert.equal(at.cutoffAt, configured.cutoffAt);
 });

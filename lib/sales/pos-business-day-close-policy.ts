@@ -27,6 +27,15 @@ export function evaluatePosCloseTime(businessDate: string, currentBusinessDate: 
   return { allowed: now.getTime() >= new Date(window.closeAt).getTime(), reason: "configured_close_time", closeAt: window.closeAt, cutoffAt: window.cutoffAt };
 }
 
+export function evaluatePosManualCloseTime(businessDate: string, currentBusinessDate: string, now: Date, snapshot: BusinessTimeSnapshot) {
+  if (!validPosBusinessDate(businessDate) || !validPosBusinessDate(currentBusinessDate) || !Number.isFinite(now.getTime())) throw new Error("INVALID_POS_CLOSE_TIME");
+  const window = buildPosCollectionWindow(businessDate, snapshot);
+  if (businessDate < currentBusinessDate) return { allowed: true, reason: "past_business_date", closeAt: window.closeAt, cutoffAt: window.cutoffAt };
+  if (businessDate > currentBusinessDate) return { allowed: false, reason: "future_business_date", closeAt: window.closeAt, cutoffAt: window.cutoffAt };
+  const manualCloseAt = `${businessDate}T23:00:00+07:00`;
+  return { allowed: now.getTime() >= new Date(manualCloseAt).getTime(), reason: "manual_close_time", closeAt: window.closeAt, cutoffAt: window.cutoffAt };
+}
+
 export function comparePosClosedSource(current: PosBusinessDaySource, closedSnapshot: unknown, closedFingerprint: string | null) {
   if (closedFingerprint === null) return { isClosed: false, drift: false, totalDelta: null, bucketDeltas: null };
   if (!closedSnapshot || typeof closedSnapshot !== "object") throw new Error("POS_CLOSED_SOURCE_SNAPSHOT_INCOMPLETE");

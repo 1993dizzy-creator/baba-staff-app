@@ -19,6 +19,7 @@ const date = '2026-08-20';
 const source = sources.buildPosBusinessDaySource(date, [], []);
 function service({ role = 'owner', systemDisabled = false, early = false, monthClosed = false } = {}) {
   const calls = [];
+  const evaluations = { configured: 0, manual: 0 };
   const supabase = {
     from(table) {
       const filters = {};
@@ -46,10 +47,12 @@ function service({ role = 'owner', systemDisabled = false, early = false, monthC
     '@/lib/store-settings/business-time-adapter': {
       loadBusinessTimeAdapter: async () => ({ databaseBusinessDate: early ? date : '2026-08-21' }),
       loadBusinessTimeSnapshotsForDates: async () => new Map([[date, snapshot]]),
-    }, './pos-business-day-close-policy': { ...policy, evaluatePosCloseTime: (...args) => early ? { allowed: false } : policy.evaluatePosCloseTime(...args) },
+    }, './pos-business-day-close-policy': { ...policy,
+      evaluatePosCloseTime: (...args) => { evaluations.configured++; return policy.evaluatePosCloseTime(...args); },
+      evaluatePosManualCloseTime: (...args) => { evaluations.manual++; return early ? { allowed: false } : policy.evaluatePosManualCloseTime(...args); } },
     '@/lib/ledger/pos-sales-source': sources,
   });
-  return { api, calls };
+  return { api, calls, evaluations };
 }
 
 test('manual close/reclose use the session actor; manager initial close allowed and explicit reclose denied before RPC', async () => {
@@ -75,6 +78,8 @@ test('manual close/reclose use the session actor; manager initial close allowed 
 test('automatic close looks up pos rather than hardcoding an actor; disabled actor and missing run fail closed', async () => {
   const enabled = service();
   await enabled.api.closePosBusinessDayAutomatically(date, 12);
+  assert.equal(enabled.evaluations.configured, 1);
+  assert.equal(enabled.evaluations.manual, 0);
   assert.deepEqual(enabled.calls.find(call => call.table === 'users').filters, { username: 'pos' });
   const rpc = enabled.calls.find(call => call.name);
   assert.equal(rpc.args.p_actor_user_id, 789);
@@ -98,8 +103,10 @@ test('status reads permit manager and expose current/closed fingerprint, drift, 
 });
 
 test('early manual close is denied without calling the write RPC', async () => {
-  const { api, calls } = service({ early: true });
+  const { api, calls, evaluations } = service({ early: true });
   await assert.rejects(api.closePosBusinessDay(date), /BEFORE_CONFIGURED_CLOSE_TIME/);
+  assert.equal(evaluations.manual, 1);
+  assert.equal(evaluations.configured, 0);
   assert.ok(!calls.some(call => call.name));
 });
 
