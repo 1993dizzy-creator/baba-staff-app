@@ -16,7 +16,7 @@ export type PayrollMonthSnapshot = Awaited<ReturnType<typeof loadPayrollMonthSna
 
 export async function loadPayrollOverview(month: string,options?:{userId?:number;onSnapshotReady?:(input:{snapshot:PayrollMonthSnapshot;period:PayrollOverviewPeriod})=>void}) {
   const taxVersionsPromise=loadPayrollTaxVersions(month,options?.userId);
-  const adjustmentQuery=supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,kind,category,amount,business_date,reason,note,created_at,cancelled_at,cancelled_by,cancellation_reason").eq("payroll_month",`${month}-01`).order("id");
+  const adjustmentQuery=supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,kind,category,amount,business_date,reason,note,source_type,source_key,created_at,cancelled_at,cancelled_by,cancellation_reason").eq("payroll_month",`${month}-01`).order("id");
   const adjustmentPromise=Promise.resolve(options?.userId===undefined?adjustmentQuery:adjustmentQuery.eq("user_id",options.userId));
   void adjustmentPromise.catch(()=>undefined);
   const period=await resolvePayrollOverviewPeriod(month);
@@ -65,7 +65,7 @@ export async function loadPayrollOverview(month: string,options?:{userId?:number
   ]);
   if(adjustmentResult.error)throw new Error("PAYROLL_ADJUSTMENT_READ_FAILED");
   const adjustmentLedgerByUser=new Map<number,PayrollMonthlyAdjustment[]>();
-  for(const row of adjustmentResult.data??[]){const list=adjustmentLedgerByUser.get(Number(row.user_id))??[];list.push({id:Number(row.id),kind:row.kind as PayrollMonthlyAdjustment["kind"],category:String(row.category),amount:Number(row.amount),businessDate:String(row.business_date),reason:String(row.reason),note:row.note?String(row.note):null,createdAt:String(row.created_at),cancelledAt:row.cancelled_at?String(row.cancelled_at):null,cancelledBy:row.cancelled_by==null?null:Number(row.cancelled_by),cancellationReason:row.cancellation_reason?String(row.cancellation_reason):null});adjustmentLedgerByUser.set(Number(row.user_id),list);}
+  for(const row of adjustmentResult.data??[]){const list=adjustmentLedgerByUser.get(Number(row.user_id))??[];list.push({id:Number(row.id),kind:row.kind as PayrollMonthlyAdjustment["kind"],category:String(row.category),amount:Number(row.amount),businessDate:String(row.business_date),reason:String(row.reason),note:row.note?String(row.note):null,sourceType:row.source_type==="sales_menu_incentive"?"sales_menu_incentive":"manual",sourceKey:row.source_key?String(row.source_key):null,createdAt:String(row.created_at),cancelledAt:row.cancelled_at?String(row.cancelled_at):null,cancelledBy:row.cancelled_by==null?null:Number(row.cancelled_by),cancellationReason:row.cancellation_reason?String(row.cancellation_reason):null});adjustmentLedgerByUser.set(Number(row.user_id),list);}
   const adjustmentsByUser=new Map([...adjustmentLedgerByUser].map(([userId,rows])=>[userId,rows.filter(row=>!row.cancelledAt)]));
   const userById=new Map(snapshot.context.users.map(user=>[user.id,user]));
   const contractsByUser=new Map<number,typeof snapshot.context.contracts>();

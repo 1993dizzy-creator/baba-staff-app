@@ -39,6 +39,10 @@
     {
       "path": "/api/cron/sales-close-final",
       "schedule": "5 20 * * *"
+    },
+    {
+      "path": "/api/cron/payroll-quyen-menu-incentive",
+      "schedule": "15 20 * * *"
     }
   ]
 }

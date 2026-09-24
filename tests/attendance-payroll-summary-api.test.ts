@@ -121,6 +121,7 @@ function employee(
       incentiveAmount: 120_000,
       manualIncentiveAmount: 120_000,
       automaticIncentiveAmount: 0,
+      salesMenuIncentiveAmount: 0,
       incentiveCount: 0,
       automaticPenaltyAmount: 0,
       manualPenaltyAmount: 35_000,
@@ -222,9 +223,9 @@ test("self payroll summary reuses the employee monthly standing result", () => {
 test("self projection exposes only display DTOs and preserves incentive and combined penalty totals", () => {
   const source = employee(11);
   source.adjustments = [
-    { id: 1, kind: "incentive", category: "sales", amount: 120_000, businessDate: "2026-08-03", reason: "Sales", note: "August", createdAt: "private" },
-    { id: 2, kind: "penalty", category: "manual", amount: 20_000, businessDate: "2026-08-07", reason: "Manual", note: null, createdAt: "private" },
-    { id: 3, kind: "advance", category: "advance", amount: 50_000, businessDate: "2026-08-09", reason: "Advance", note: "August advance", createdAt: "private" },
+    { id: 1, kind: "incentive", category: "sales", amount: 120_000, businessDate: "2026-08-03", reason: "Sales", note: "August", sourceType: "manual", sourceKey: null, createdAt: "private" },
+    { id: 2, kind: "penalty", category: "manual", amount: 20_000, businessDate: "2026-08-07", reason: "Manual", note: null, sourceType: "manual", sourceKey: null, createdAt: "private" },
+    { id: 3, kind: "advance", category: "advance", amount: 50_000, businessDate: "2026-08-09", reason: "Advance", note: "August advance", sourceType: "manual", sourceKey: null, createdAt: "private" },
   ];
   source.automaticPenalties = [
     { sourceType: "automatic", category: "late", businessDate: "2026-08-02", minutes: 12, amount: 15_000, attendanceRecordId: 999, description: "Late" },

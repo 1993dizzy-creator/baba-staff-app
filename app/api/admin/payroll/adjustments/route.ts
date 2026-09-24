@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   const auth=await requirePayrollActor();if(auth.response)return auth.response;
   const url=new URL(request.url);const month=validPayrollMonth(url.searchParams.get("month"));const userId=id(url.searchParams.get("userId"));
   if(!month)return payrollJson({ok:false,code:"INVALID_MONTH"},400);
-  let query=supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,payroll_month,kind,category,amount,business_date,reason,note,created_by,created_at,cancelled_at,cancelled_by,cancellation_reason").eq("payroll_month",`${month}-01`).order("business_date").order("id");
+  let query=supabaseServer.from("payroll_monthly_adjustments").select("id,user_id,payroll_month,kind,category,amount,business_date,reason,note,source_type,source_key,created_by,created_at,cancelled_at,cancelled_by,cancellation_reason").eq("payroll_month",`${month}-01`).order("business_date").order("id");
   if(userId)query=query.eq("user_id",userId);const{data,error}=await query;
   return error?payrollJson({ok:false,code:"PAYROLL_ADJUSTMENT_READ_FAILED"},500):payrollJson({ok:true,adjustments:data??[]});
 }
@@ -31,6 +31,6 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const auth=await requirePayrollActor();if(auth.response||!auth.actor)return auth.response;
   const body=await request.json().catch(()=>null) as Record<string,unknown>|null;const adjustmentId=id(body?.id);const reason=String(body?.cancellationReason??"").trim();if(!adjustmentId||!reason)return payrollJson({ok:false,code:"INVALID_CANCELLATION"},400);
-  const{data,error}=await supabaseServer.from("payroll_monthly_adjustments").update({cancelled_at:new Date().toISOString(),cancelled_by:auth.actor.id,cancellation_reason:reason}).eq("id",adjustmentId).is("cancelled_at",null).select().maybeSingle();
+  const{data,error}=await supabaseServer.from("payroll_monthly_adjustments").update({cancelled_at:new Date().toISOString(),cancelled_by:auth.actor.id,cancellation_reason:reason}).eq("id",adjustmentId).eq("source_type","manual").is("cancelled_at",null).select().maybeSingle();
   if(error)return adjustmentError(error.message,"PAYROLL_ADJUSTMENT_CANCEL_FAILED");return data?payrollJson({ok:true,adjustment:data}):payrollJson({ok:false,code:"ADJUSTMENT_NOT_ACTIVE"},409);
 }

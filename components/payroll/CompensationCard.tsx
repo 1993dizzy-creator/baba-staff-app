@@ -449,32 +449,37 @@ function AdjustmentModal({
               <b style={s.itemAmount}>{formatSignedVnd(item.amount, "-")}</b>
             </article>
           ))}
-        {list.map((item) => (
-          <article key={item.id} style={s.item}>
-            <span style={s.itemText}>
-              {item.businessDate.slice(5)} · {item.kind === "advance" ? t.advance : item.kind === "penalty" ? t.manualPenalty : item.category}
-            </span>
-            <b style={s.itemAmount}>
-              {formatSignedVnd(item.amount, kind === "incentive" ? "+" : "-")}
-            </b>
-            <span style={s.itemDetail}>
-              {item.reason}
-              {item.note ? ` · ${item.note}` : ""}
-            </span>
-            <small style={s.itemMeta}>
-              {new Date(item.createdAt).toLocaleString(
-                lang === "vi" ? "vi-VN" : "ko-KR",
-              )}
-            </small>
-            <button
-              style={s.cancel}
-              disabled={busy}
-              onClick={() => setCancelTarget(item)}
-            >
-              {t.cancel}
-            </button>
-          </article>
-        ))}
+        {list.map((item) => {
+          const automaticSales = item.sourceType === "sales_menu_incentive";
+          return (
+            <article key={item.id} style={s.item}>
+              <span style={s.itemText}>
+                {item.businessDate.slice(5)} · {automaticSales
+                  ? (lang === "vi" ? "Thưởng doanh số menu tự động" : "자동 판매 인센티브")
+                  : item.kind === "advance" ? t.advance : item.kind === "penalty" ? t.manualPenalty : item.category}
+              </span>
+              <b style={s.itemAmount}>
+                {formatSignedVnd(item.amount, kind === "incentive" ? "+" : "-")}
+              </b>
+              <span style={{...s.itemDetail,...(automaticSales?s.automaticAdjustmentDetail:{})}}>
+                {item.reason}
+                {item.note ? `${automaticSales ? "\n" : " · "}${item.note}` : ""}
+              </span>
+              <small style={s.itemMeta}>
+                {new Date(item.createdAt).toLocaleString(
+                  lang === "vi" ? "vi-VN" : "ko-KR",
+                )}
+              </small>
+              {!automaticSales && <button
+                style={s.cancel}
+                disabled={busy}
+                onClick={() => setCancelTarget(item)}
+              >
+                {t.cancel}
+              </button>}
+            </article>
+          );
+        })}
       </div>
       {error && (
         <p role="alert" style={s.error}>
@@ -1058,5 +1063,6 @@ const s = {
   itemText: { minWidth: 0, overflowWrap: "anywhere", color: "#475569" },
   itemAmount: { alignSelf: "start", whiteSpace: "nowrap", fontSize: 11, fontWeight: 800, fontVariantNumeric: "tabular-nums" },
   itemDetail: { gridColumn: "1 / -1", minWidth: 0, overflowWrap: "anywhere", color: "#334155" },
+  automaticAdjustmentDetail: { whiteSpace: "pre-line", lineHeight: 1.45 },
   itemMeta: { minWidth: 0, color: "#64748b", fontSize: 10 },
 } satisfies Record<string, CSSProperties>;

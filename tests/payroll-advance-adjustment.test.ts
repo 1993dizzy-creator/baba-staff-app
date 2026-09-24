@@ -90,7 +90,7 @@ test("incentive, penalty, and advance stay separate in a combined calculation", 
 
 test("overview, payment snapshot/hash, and calculated net amount carry advance", () => {
   assert.match(overview, /advanceAmount: number;[\s\S]*advanceCount: number;/);
-  assert.match(overview, /calculatePayrollPayoutAmounts\(\{automaticPreInsuranceAmount,manualIncentiveAmount,manualPenaltyAmount,employeeInsuranceDeductionAmount,advanceAmount\}\)/);
+  assert.match(overview, /manualIncentiveAmount:payrollAdjustmentIncentiveAmount,manualPenaltyAmount,employeeInsuranceDeductionAmount,advanceAmount/);
   assert.match(paymentSnapshot, /return \{employee,[\s\S]*adjustmentsSnapshot:employee\.adjustments/);
   assert.match(payments, /payrollPaymentSnapshotHash\(calculationSnapshot\)/);
   assert.match(payments, /p_calculated_net_amount:employee\.amounts\.netPayoutAmount/);
