@@ -11,6 +11,10 @@ import {
   type CurrentInventoryDailySyncRow,
   type InventoryDailySyncLogRow,
 } from "../lib/inventory/snapshot-name-sync.ts";
+import {
+  findInventoryLanguageMissingItems,
+  type InventoryLanguageRow,
+} from "../lib/inventory/language-missing.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const route = read("app/api/inventory/snapshot/name-sync/route.ts");
@@ -72,6 +76,59 @@ const inventory = (overrides: Partial<CurrentInventoryDailySyncRow> = {}): Curre
 
 const detect = (logs: InventoryDailySyncLogRow[], current = inventory()) =>
   findInventoryLogNameSyncItems("2026-09-23", logs, [current]);
+
+const languageInventory = (overrides: Partial<InventoryLanguageRow> = {}): InventoryLanguageRow => ({
+  id: 604,
+  item_name: "설거지 행주",
+  item_name_vi: "Khăn lau bát",
+  is_active: true,
+  ...overrides,
+});
+
+test("active inventory language gaps are detected independently from daily logs", () => {
+  const items = findInventoryLanguageMissingItems([
+    languageInventory({ id: 1, item_name: null }),
+    languageInventory({ id: 2, item_name_vi: "" }),
+    languageInventory({ id: 3 }),
+    languageInventory({ id: 4, item_name: "   ", item_name_vi: "\t" }),
+    languageInventory({ id: 5, item_name: null, is_active: false }),
+  ]);
+
+  assert.deepEqual(items.map((item) => ({ itemId: item.itemId, missing: item.missingLanguages })), [
+    { itemId: 1, missing: ["ko"] },
+    { itemId: 2, missing: ["vi"] },
+    { itemId: 4, missing: ["ko", "vi"] },
+  ]);
+});
+
+test("language gaps remain detectable without today's purchase and after the snapshot date changes", () => {
+  const oldPurchaseOnlyItem = languageInventory({ item_name: "", item_name_vi: "Khăn lau bát" });
+  const firstSelection = findInventoryLanguageMissingItems([oldPurchaseOnlyItem]);
+  const secondSelection = findInventoryLanguageMissingItems([oldPurchaseOnlyItem]);
+
+  assert.deepEqual(firstSelection, secondSelection);
+  assert.deepEqual(firstSelection[0].missingLanguages, ["ko"]);
+});
+
+test("filling a missing master name removes the language alert and preserves daily empty-to-name sync", () => {
+  const beforeEdit = languageInventory({ item_name: "", item_name_vi: "Khăn lau bát" });
+  const afterEdit = languageInventory({ item_name: "설거지 행주", item_name_vi: "Khăn lau bát" });
+
+  assert.equal(findInventoryLanguageMissingItems([beforeEdit]).length, 1);
+  assert.equal(findInventoryLanguageMissingItems([afterEdit]).length, 0);
+
+  const dailyItems = findInventoryLogNameSyncItems("2026-09-23", [
+    log({ item_id: 604, item_name: "", item_name_vi: "Khăn lau bát" }),
+    correction({ item_id: 604, item_name: "설거지 행주", item_name_vi: "Khăn lau bát" }),
+  ], [inventory({ id: 604, item_name: "설거지 행주", item_name_vi: "Khăn lau bát" })]);
+  assert.equal(dailyItems.length, 1);
+  assert.ok(dailyItems[0].issues.includes("missing_ko"));
+  assert.deepEqual(dailyItems[0].changes.find((change) => change.field === "item_name"), {
+    field: "item_name",
+    from: "",
+    to: "설거지 행주",
+  });
+});
 
 test("the single cutoff constant protects every business date before 2026-09-23", () => {
   assert.equal(INVENTORY_SNAPSHOT_NAME_SYNC_START_DATE, "2026-09-23");
@@ -205,12 +262,69 @@ test("only owner/master can POST while GET keeps authenticated snapshot access",
   assert.match(route, /status: 403/);
 });
 
+test("GET separates all-active language gaps from business-date daily sync items", () => {
+  const get = route.slice(route.indexOf("export async function GET"), route.indexOf("export async function POST"));
+  assert.match(route, /loadActiveInventoryLanguageRows[\s\S]*\.eq\("is_active", true\)/);
+  assert.match(get, /languageMissingItems: findInventoryLanguageMissingItems/);
+  assert.match(get, /dailySyncItems: findInventoryLogNameSyncItems/);
+  assert.doesNotMatch(
+    route.slice(route.indexOf("async function loadActiveInventoryLanguageRows"), route.indexOf("async function loadOptionalSnapshotBatchId")),
+    /businessDate|business_date/
+  );
+});
+
+test("language alert is separate, hidden at zero, labels gaps, falls back by UI language and opens existing edit route", () => {
+  assert.match(page, /\{languageMissingItems\.length > 0 && \(/);
+  assert.match(page, /data-testid="inventory-language-missing-banner"/);
+  assert.match(page, /한글명 미설정/);
+  assert.match(page, /베트남어명 미설정/);
+  assert.match(page, /currentItemNameVi \|\| item\.currentItemName/);
+  assert.match(page, /currentItemName \|\| item\.currentItemNameVi/);
+  assert.match(page, /품목 수정/);
+  assert.match(page, /openInventoryItemEdit\(item\.itemId\)/);
+  assert.match(page, /router\.push\(`\/inventory\?itemId=\$\{itemId\}&mode=edit`\)/);
+});
+
 test("current view banner, focus refresh and post-sync movement reload remain wired", () => {
   assert.match(page, /당일 입고정보 동기화 필요/);
   assert.match(page, /Cần đồng bộ thông tin nhập hàng hôm nay/);
   assert.match(page, /const nameSyncBusinessDate = viewMode === "snapshot"[\s\S]*: activeBusinessDateKey/);
   assert.match(page, /window\.addEventListener\("focus", handleWindowFocus\)/);
+  assert.match(page, /setLanguageMissingItems\(json\.languageMissingItems \|\| \[\]\)/);
   assert.match(page, /fetchMovementItems\(businessDate\),\s*fetchNameSyncIssues\(businessDate\)/);
   assert.match(page, /전체 동기화/);
   assert.match(page, /수량 변경은 별도 입고보정 필요/);
+});
+
+test("daily sync cards keep every field on one compact overflow-safe row", () => {
+  const dailyBanner = page.slice(
+    page.indexOf('data-testid="snapshot-name-sync-banner"'),
+    page.indexOf("{nameSyncBusinessDate && nameSyncItems.length === 0 && nameSyncError")
+  );
+  assert.match(page, /from: formatNameSyncValue\(change, change\.from\)/);
+  assert.match(page, /to: formatNameSyncValue\(change, change\.to\)/);
+  assert.match(dailyBanner, /title=\{`\$\{change\.label\}  \$\{change\.from\} → \$\{change\.to\}`\}/);
+  assert.match(dailyBanner, /whiteSpace: "nowrap"/);
+  assert.match(dailyBanner, /textOverflow: "ellipsis"/);
+  assert.doesNotMatch(dailyBanner, /<br \/>/);
+  assert.match(page, /if \(change\.field === "purchase_price"\) return `\$\{Number\(value\)\.toLocaleString\(\)\} ₫`/);
+});
+
+test("daily sync actions distinguish one-item, multi-item, active, processing and disabled states", () => {
+  assert.match(page, /nameSyncCanRun && nameSyncItems\.length > 1/);
+  assert.match(page, /background: isProcessing[\s\S]*: isDisabled \? "#f3f4f6" : "#2563eb"/);
+  assert.match(page, /color: isDisabled && !isProcessing \? "#6b7280" : "#fff"/);
+  assert.match(page, /isProcessing \? nameSyncT\.processing : nameSyncT\.syncOne/);
+});
+
+test("language warning and daily work banners retain distinct visual semantics", () => {
+  const languageBanner = page.slice(
+    page.indexOf('data-testid="inventory-language-missing-banner"'),
+    page.indexOf('data-testid="snapshot-name-sync-banner"')
+  );
+  const dailyBanner = page.slice(page.indexOf('data-testid="snapshot-name-sync-banner"'));
+  assert.match(languageBanner, /⚠/);
+  assert.match(languageBanner, /#fff7ed/);
+  assert.match(dailyBanner, /↻/);
+  assert.match(dailyBanner, /#eff6ff/);
 });

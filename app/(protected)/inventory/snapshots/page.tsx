@@ -63,6 +63,13 @@ type SnapshotNameSyncItem = {
     quantityReviewRequired: boolean;
 };
 
+type SnapshotLanguageMissingItem = {
+    itemId: number;
+    currentItemName: string | null;
+    currentItemNameVi: string | null;
+    missingLanguages: ("ko" | "vi")[];
+};
+
 const snapshotNameSyncText = {
     ko: {
         banner: (count: number) => `당일 입고정보 동기화 필요 ${count}개 품목`,
@@ -103,6 +110,21 @@ const snapshotNameSyncText = {
             unit: "Đơn vị", purchase_price: "Đơn giá", supplier: "Nhà cung cấp",
             supplier_partner_id: "Liên kết nhà cung cấp",
         },
+    },
+} as const;
+
+const inventoryLanguageMissingText = {
+    ko: {
+        banner: (count: number) => `품목명 언어 미설정 ${count}개 품목`,
+        missingKo: "한글명 미설정",
+        missingVi: "베트남어명 미설정",
+        editItem: "품목 수정",
+    },
+    vi: {
+        banner: (count: number) => `${count} mặt hàng chưa thiết lập đủ ngôn ngữ tên`,
+        missingKo: "Chưa thiết lập tên tiếng Hàn",
+        missingVi: "Chưa thiết lập tên tiếng Việt",
+        editItem: "Sửa mặt hàng",
     },
 } as const;
 
@@ -371,6 +393,8 @@ export default function InventorySnapshotsPage() {
     const [syncingPurchaseLogId, setSyncingPurchaseLogId] = useState<number | null>(null);
     const [purchaseLogGroupFilter, setPurchaseLogGroupFilter] = useState("all");
     const [nameSyncItems, setNameSyncItems] = useState<SnapshotNameSyncItem[]>([]);
+    const [languageMissingItems, setLanguageMissingItems] = useState<SnapshotLanguageMissingItem[]>([]);
+    const [languageMissingExpanded, setLanguageMissingExpanded] = useState(false);
     const [nameSyncCanRun, setNameSyncCanRun] = useState(false);
     const [nameSyncExpanded, setNameSyncExpanded] = useState(false);
     const [nameSyncLoading, setNameSyncLoading] = useState(false);
@@ -380,8 +404,14 @@ export default function InventorySnapshotsPage() {
     const nameSyncRequestSequenceRef = useRef(0);
     const nameSyncBusinessDateRef = useRef("");
     const nameSyncT = snapshotNameSyncText[lang];
+    const languageMissingT = inventoryLanguageMissingText[lang];
 
     const getNameSyncItemLabel = (item: SnapshotNameSyncItem) =>
+        (lang === "vi"
+            ? item.currentItemNameVi || item.currentItemName
+            : item.currentItemName || item.currentItemNameVi) || "-";
+
+    const getLanguageMissingItemLabel = (item: SnapshotLanguageMissingItem) =>
         (lang === "vi"
             ? item.currentItemNameVi || item.currentItemName
             : item.currentItemName || item.currentItemNameVi) || "-";
@@ -395,7 +425,8 @@ export default function InventorySnapshotsPage() {
     const getNameSyncChanges = (item: SnapshotNameSyncItem) => item.changes.map((change) => ({
         key: `${change.field}:${String(change.from)}:${String(change.to)}`,
         label: nameSyncT.fields[change.field],
-        value: `${formatNameSyncValue(change, change.from)} → ${formatNameSyncValue(change, change.to)}`,
+        from: formatNameSyncValue(change, change.from),
+        to: formatNameSyncValue(change, change.to),
     }));
 
     const getSelectedBusinessDate = () => {
@@ -782,24 +813,28 @@ export default function InventorySnapshotsPage() {
             const json = await res.json() as {
                 ok?: boolean;
                 canSync?: boolean;
-                items?: SnapshotNameSyncItem[];
+                languageMissingItems?: SnapshotLanguageMissingItem[];
+                dailySyncItems?: SnapshotNameSyncItem[];
             };
 
             if (requestSequence !== nameSyncRequestSequenceRef.current) return;
 
             if (!res.ok || !json.ok) {
                 setNameSyncItems([]);
+                setLanguageMissingItems([]);
                 setNameSyncCanRun(false);
                 setNameSyncError(snapshotNameSyncText[lang].loadFailed);
                 return;
             }
 
-            setNameSyncItems(json.items || []);
+            setLanguageMissingItems(json.languageMissingItems || []);
+            setNameSyncItems(json.dailySyncItems || []);
             setNameSyncCanRun(json.canSync === true);
         } catch (error) {
             console.error("[INVENTORY_SNAPSHOT_NAME_SYNC_LOAD_FAILED]", error);
             if (requestSequence === nameSyncRequestSequenceRef.current) {
                 setNameSyncItems([]);
+                setLanguageMissingItems([]);
                 setNameSyncCanRun(false);
                 setNameSyncError(snapshotNameSyncText[lang].loadFailed);
             }
@@ -1112,14 +1147,18 @@ export default function InventorySnapshotsPage() {
         await fetchItemLogs(selectedPurchaseItem);
     };
 
-    const openInventoryEdit = (item: SnapshotItem) => {
-        const itemId = Number(item.item_id);
+    const openInventoryItemEdit = (itemIdValue: number | null) => {
+        const itemId = Number(itemIdValue);
         if (!Number.isFinite(itemId) || itemId <= 0) {
             alert(c.noData);
             return;
         }
 
         router.push(`/inventory?itemId=${itemId}&mode=edit`);
+    };
+
+    const openInventoryEdit = (item: SnapshotItem) => {
+        openInventoryItemEdit(item.item_id);
     };
 
     const syncPurchaseInfoFromCurrentItem = async (item: SnapshotItem) => {
@@ -1312,7 +1351,9 @@ export default function InventorySnapshotsPage() {
 
     useEffect(() => {
         setNameSyncExpanded(false);
+        setLanguageMissingExpanded(false);
         setNameSyncItems([]);
+        setLanguageMissingItems([]);
         setNameSyncCanRun(false);
         setNameSyncError("");
         setNameSyncResult("");
@@ -2373,12 +2414,112 @@ export default function InventorySnapshotsPage() {
                 )}
             </div>
 
+            {languageMissingItems.length > 0 && (
+                <div
+                    data-testid="inventory-language-missing-banner"
+                    style={{
+                        background: "#fff7ed",
+                        border: "1px solid #fdba74",
+                        borderRadius: 14,
+                        padding: "10px 12px",
+                        marginBottom: 12,
+                        display: "grid",
+                        gap: 8,
+                    }}
+                >
+                    <button
+                        type="button"
+                        aria-expanded={languageMissingExpanded}
+                        style={{
+                            width: "100%",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 8,
+                            border: "none",
+                            background: "transparent",
+                            padding: 0,
+                            cursor: "pointer",
+                            textAlign: "left",
+                        }}
+                        onClick={() => setLanguageMissingExpanded((current) => !current)}
+                    >
+                        <span style={{ fontSize: 13, fontWeight: 900, color: "#9a3412" }}>
+                            ⚠ {languageMissingT.banner(languageMissingItems.length)}
+                        </span>
+                        <span aria-hidden="true" style={{ fontSize: 14, fontWeight: 900, color: "#9a3412" }}>
+                            {languageMissingExpanded ? "⌃" : "⌄"}
+                        </span>
+                    </button>
+
+                    {languageMissingExpanded && (
+                        <div style={{ display: "grid", gap: 7 }}>
+                            {languageMissingItems.map((item) => (
+                                <div
+                                    key={item.itemId}
+                                    data-testid={`inventory-language-missing-item-${item.itemId}`}
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "space-between",
+                                        gap: 10,
+                                        border: "1px solid #fed7aa",
+                                        background: "#fff",
+                                        borderRadius: 10,
+                                        padding: "7px 9px",
+                                    }}
+                                >
+                                    <div style={{ minWidth: 0, display: "grid", gap: 2 }}>
+                                        <span style={{
+                                            fontSize: 12,
+                                            fontWeight: 800,
+                                            color: "#111827",
+                                            overflow: "hidden",
+                                            textOverflow: "ellipsis",
+                                            whiteSpace: "nowrap",
+                                        }}>
+                                            {getLanguageMissingItemLabel(item)}
+                                        </span>
+                                        {item.missingLanguages.map((missingLanguage) => (
+                                            <span
+                                                key={missingLanguage}
+                                                style={{ fontSize: 11, fontWeight: 800, color: "#c2410c" }}
+                                            >
+                                                {missingLanguage === "ko" ? languageMissingT.missingKo : languageMissingT.missingVi}
+                                            </span>
+                                        ))}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => openInventoryItemEdit(item.itemId)}
+                                        style={{
+                                            flexShrink: 0,
+                                            padding: "6px 10px",
+                                            minHeight: 28,
+                                            borderRadius: 8,
+                                            border: "1px solid #ea580c",
+                                            background: "#fff7ed",
+                                            color: "#9a3412",
+                                            fontSize: 11,
+                                            fontWeight: 800,
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        {languageMissingT.editItem}
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {nameSyncBusinessDate && nameSyncItems.length > 0 && (
                 <div
                     data-testid="snapshot-name-sync-banner"
                     style={{
-                        background: "#fffbeb",
-                        border: "1px solid #fde68a",
+                        background: "#eff6ff",
+                        border: "1px solid #bfdbfe",
                         borderRadius: 14,
                         padding: "10px 12px",
                         marginBottom: 12,
@@ -2403,12 +2544,12 @@ export default function InventorySnapshotsPage() {
                         }}
                         onClick={() => setNameSyncExpanded((current) => !current)}
                     >
-                        <span style={{ fontSize: 13, fontWeight: 900, color: "#92400e" }}>
-                            ⚠ {nameSyncT.banner(nameSyncItems.length)}
+                        <span style={{ fontSize: 13, fontWeight: 900, color: "#1d4ed8" }}>
+                            ↻ {nameSyncT.banner(nameSyncItems.length)}
                         </span>
                         <span
                             aria-hidden="true"
-                            style={{ fontSize: 14, fontWeight: 900, color: "#92400e", flexShrink: 0 }}
+                            style={{ fontSize: 14, fontWeight: 900, color: "#1d4ed8", flexShrink: 0 }}
                         >
                             {nameSyncExpanded ? "⌃" : "⌄"}
                         </span>
@@ -2416,7 +2557,7 @@ export default function InventorySnapshotsPage() {
 
                     {nameSyncExpanded && (
                         <div style={{ display: "grid", gap: 7 }}>
-                            {nameSyncCanRun && (
+                            {nameSyncCanRun && nameSyncItems.length > 1 && (
                                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                                     <button
                                         type="button"
@@ -2426,8 +2567,8 @@ export default function InventorySnapshotsPage() {
                                             padding: "6px 10px",
                                             minHeight: 28,
                                             borderRadius: 8,
-                                            border: "1px solid #92400e",
-                                            background: "#92400e",
+                                            border: "1px solid #1d4ed8",
+                                            background: "#1d4ed8",
                                             color: "#fff",
                                             fontSize: 11,
                                             fontWeight: 800,
@@ -2451,14 +2592,14 @@ export default function InventorySnapshotsPage() {
                                         key={item.itemId}
                                         data-testid={`snapshot-name-sync-item-${item.itemId}`}
                                         style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            gap: 10,
-                                            border: "1px solid #fde68a",
+                                            display: "grid",
+                                            gridTemplateColumns: "minmax(0, 1fr) auto",
+                                            alignItems: "end",
+                                            gap: 8,
+                                            border: "1px solid #bfdbfe",
                                             background: "#fff",
                                             borderRadius: 10,
-                                            padding: "7px 9px",
+                                            padding: "6px 8px",
                                         }}
                                     >
                                         <div style={{ minWidth: 0, display: "grid", gap: 2 }}>
@@ -2475,11 +2616,43 @@ export default function InventorySnapshotsPage() {
                                                 {getNameSyncItemLabel(item)}
                                             </span>
                                             {getNameSyncChanges(item).map((change) => (
-                                                <span key={change.key} style={{ fontSize: 11, color: "#6b7280", overflowWrap: "anywhere" }}>
-                                                    <strong style={{ color: "#4b5563" }}>{change.label}</strong>
-                                                    <br />
-                                                    {change.value}
-                                                </span>
+                                                <div
+                                                    key={change.key}
+                                                    title={`${change.label}  ${change.from} → ${change.to}`}
+                                                    style={{
+                                                        minWidth: 0,
+                                                        display: "flex",
+                                                        alignItems: "baseline",
+                                                        gap: 5,
+                                                        overflow: "hidden",
+                                                        whiteSpace: "nowrap",
+                                                        fontSize: 11,
+                                                    }}
+                                                >
+                                                    <span style={{ flexShrink: 0, color: "#9ca3af", fontSize: 10 }}>
+                                                        {change.label}
+                                                    </span>
+                                                    <span style={{
+                                                        minWidth: 0,
+                                                        maxWidth: "42%",
+                                                        overflow: "hidden",
+                                                        textOverflow: "ellipsis",
+                                                        color: "#6b7280",
+                                                    }}>
+                                                        {change.from}
+                                                    </span>
+                                                    <span aria-hidden="true" style={{ flexShrink: 0, color: "#9ca3af" }}>→</span>
+                                                    <span style={{
+                                                        minWidth: 0,
+                                                        flex: 1,
+                                                        overflow: "hidden",
+                                                        textOverflow: "ellipsis",
+                                                        color: "#1f2937",
+                                                        fontWeight: 800,
+                                                    }}>
+                                                        {change.to}
+                                                    </span>
+                                                </div>
                                             ))}
                                             {item.quantityReviewRequired && (
                                                 <span style={{ fontSize: 11, fontWeight: 800, color: "#b45309" }}>
@@ -2498,13 +2671,15 @@ export default function InventorySnapshotsPage() {
                                                     padding: "6px 10px",
                                                     minHeight: 28,
                                                     borderRadius: 8,
-                                                    border: "1px solid #d97706",
-                                                    background: "#fff7ed",
-                                                    color: "#9a3412",
+                                                    border: `1px solid ${isDisabled && !isProcessing ? "#d1d5db" : "#2563eb"}`,
+                                                    background: isProcessing
+                                                        ? "#1d4ed8"
+                                                        : isDisabled ? "#f3f4f6" : "#2563eb",
+                                                    color: isDisabled && !isProcessing ? "#6b7280" : "#fff",
                                                     fontSize: 11,
                                                     fontWeight: 800,
                                                     cursor: isDisabled ? "not-allowed" : "pointer",
-                                                    opacity: isDisabled ? 0.6 : 1,
+                                                    opacity: 1,
                                                 }}
                                             >
                                                 {isProcessing ? nameSyncT.processing : nameSyncT.syncOne}
@@ -2520,7 +2695,7 @@ export default function InventorySnapshotsPage() {
                                 </div>
                             )}
                             {nameSyncResult && (
-                                <div role="status" style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>
+                                <div role="status" style={{ fontSize: 12, fontWeight: 700, color: "#1d4ed8" }}>
                                     {nameSyncResult}
                                 </div>
                             )}

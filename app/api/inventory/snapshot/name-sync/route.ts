@@ -12,6 +12,10 @@ import {
   type InventoryDailySyncPlan,
 } from "@/lib/inventory/snapshot-name-sync";
 import { projectInventoryPurchaseLogs } from "@/lib/ledger/inventory-projection";
+import {
+  findInventoryLanguageMissingItems,
+  type InventoryLanguageRow,
+} from "@/lib/inventory/language-missing";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +31,7 @@ const INVENTORY_SELECT = [
   "id", "item_name", "item_name_vi", "part", "category", "category_vi", "code", "unit",
   "purchase_price", "supplier", "supplier_partner_id", "quantity", "is_active",
 ].join(", ");
+const LANGUAGE_INVENTORY_SELECT = "id, item_name, item_name_vi, is_active";
 
 const createSupabaseAdmin = () => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -72,6 +77,18 @@ async function loadDailySyncRows(
     ok: true as const,
     logs,
     inventoryItems: (inventoryResult.data ?? []) as unknown as CurrentInventoryDailySyncRow[],
+  };
+}
+
+async function loadActiveInventoryLanguageRows(
+  supabase: ReturnType<typeof createSupabaseAdmin>
+) {
+  const result = await supabase.from("inventory").select(LANGUAGE_INVENTORY_SELECT)
+    .eq("is_active", true).order("id", { ascending: true });
+  if (result.error) return { ok: false as const, error: "inventory_language_missing_query_failed" };
+  return {
+    ok: true as const,
+    inventoryItems: (result.data ?? []) as unknown as InventoryLanguageRow[],
   };
 }
 
@@ -167,16 +184,26 @@ export async function GET(request: Request) {
     const businessDate = new URL(request.url).searchParams.get("businessDate");
     if (!isValidBusinessDate(businessDate)) return NextResponse.json({ ok: false, error: "inventory_daily_sync_invalid_business_date" }, { status: 400, headers: NO_STORE_HEADERS });
 
-    const canSync = canRunInventorySnapshotNameSync(auth.actor.role);
-    if (!isInventorySnapshotNameSyncEligible(businessDate)) return NextResponse.json({ ok: true, businessDate, canSync, items: [] }, { headers: NO_STORE_HEADERS });
     const supabase = createSupabaseAdmin();
+    const languageRows = await loadActiveInventoryLanguageRows(supabase);
+    if (!languageRows.ok) return NextResponse.json({ ok: false, error: languageRows.error }, { status: 500, headers: NO_STORE_HEADERS });
+
+    const canSync = canRunInventorySnapshotNameSync(auth.actor.role);
+    if (!isInventorySnapshotNameSyncEligible(businessDate)) return NextResponse.json({
+      ok: true,
+      businessDate,
+      canSync,
+      languageMissingItems: findInventoryLanguageMissingItems(languageRows.inventoryItems),
+      dailySyncItems: [],
+    }, { headers: NO_STORE_HEADERS });
     const rows = await loadDailySyncRows(supabase, businessDate);
     if (!rows.ok) return NextResponse.json({ ok: false, error: rows.error }, { status: 500, headers: NO_STORE_HEADERS });
     return NextResponse.json({
       ok: true,
       businessDate,
       canSync,
-      items: findInventoryLogNameSyncItems(businessDate, rows.logs, rows.inventoryItems),
+      languageMissingItems: findInventoryLanguageMissingItems(languageRows.inventoryItems),
+      dailySyncItems: findInventoryLogNameSyncItems(businessDate, rows.logs, rows.inventoryItems),
     }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     console.error("[INVENTORY_DAILY_SYNC_GET_FAILED]", error);
