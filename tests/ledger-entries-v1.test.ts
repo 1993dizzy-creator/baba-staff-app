@@ -387,6 +387,12 @@ test("past-history group wraps dates before today, collapses by default, and reu
   assert.match(pageCompact, /Boolean\(search\.trim\(\)\)\|\|expandedDates\.has\(group\.date\)/);
 });
 
+test("ledger entries groups use the BABA business date instead of a midnight date helper", () => {
+  assert.doesNotMatch(pageCompact, /todayDate/);
+  assert.match(pageCompact, /consttodayKey=getBusinessDate\(\)/);
+  assert.match(pageCompact, /today=getBusinessDate\(\),defaultDate=dates\.includes\(today\)\?today:dates\.at\(-1\)/);
+});
+
 test("business partners are the user-facing party source and defaults stay one-way", () => {
   assert.match(autoLink, /business_partner_ensure_ledger_party_v1\(\s*p_business_partner_id bigint\s*\)/);
   assert.match(autoLink, /after insert or update of name,\s*default_payment_term_days,\s*is_active/);

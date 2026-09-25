@@ -185,13 +185,6 @@ const accountOrder: Record<string, number> = {
   vuong_personal_custody: 2,
   cho_personal_custody: 3,
 };
-const todayDate = () =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
 
 const monthNoticeCardStyle: CSSProperties = {
   padding: "10px 12px",
@@ -474,7 +467,7 @@ function LedgerEntriesContent() {
   const payableParties = payables?.parties ?? [];
   const activeInvestments = investments && investments.month === month ? investments : null;
   const largestParticipantInvestment = Math.max(0, ...(activeInvestments?.participants ?? []).map(participant=>Math.max(participant.openingCumulative,participant.closingCumulative)));
-  const todayKey = todayDate();
+  const todayKey = getBusinessDate();
   const pastGroups = useMemo(
     () => groups.filter((group) => group.date < todayKey),
     [groups, todayKey],
@@ -491,7 +484,7 @@ function LedgerEntriesContent() {
     const dates = [
         ...new Set(regularEntries.map((entry) => entry.businessDate)),
       ].sort(),
-      today = todayDate(),
+      today = getBusinessDate(),
       defaultDate = dates.includes(today) ? today : dates.at(-1);
     setExpandedDates(defaultDate ? new Set([defaultDate]) : new Set());
     setHistoryExpanded(false);
