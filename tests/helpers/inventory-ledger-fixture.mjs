@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 
 const read = name => readFileSync(`supabase/migrations/${name}`, 'utf8');
-export async function database(Database = PGlite, withPurchaseCorrections = true) {
+export async function database(Database = PGlite, withPurchaseCorrections = true, withSamePartyMetadata = true) {
   const db = new Database();
   await db.exec(`create role anon; create role authenticated; create role service_role;
     create table public.users(id bigint primary key,role text,is_active boolean,app_login_enabled boolean);
@@ -51,5 +51,6 @@ export async function database(Database = PGlite, withPurchaseCorrections = true
   await db.exec('create sequence fixture_inventory_log_id_seq start 1000; alter table inventory_logs alter column id set default nextval(\'fixture_inventory_log_id_seq\')');
   await db.exec('create table inventory_price_logs(item_id bigint,item_name text,item_code text,old_price numeric,new_price numeric,diff numeric,business_date date,source text,reason text,actor_username text,note text)');
   if(withPurchaseCorrections)await db.exec(read('20260914161954_link_inventory_purchase_corrections.sql'));
+  if(withSamePartyMetadata)await db.exec(read('202609250001_allow_same_party_inventory_supplier_metadata_enrichment.sql'));
   return db;
 }

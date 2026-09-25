@@ -66,6 +66,8 @@ export type InventoryDailySyncChange = {
   field: InventoryDailySyncField;
   from: string | number | null;
   to: string | number | null;
+  displayFrom?: string | null;
+  displayTo?: string | null;
 };
 
 export type InventoryDailySyncTarget = {
@@ -213,7 +215,20 @@ export function findInventoryLogNameSyncItems(
       const changes = SYNC_FIELDS.flatMap((field) => {
         const from = logValue(root, field);
         const to = syncItem[field];
-        return valuesEqual(field, from, to) ? [] : [{ field, from, to }];
+        if (valuesEqual(field, from, to)) return [];
+
+        const change: InventoryDailySyncChange = { field, from, to };
+        if (field === "supplier_partner_id") {
+          // Partner IDs remain the comparison/sync contract. Only their UI values use
+          // the supplier names already captured by the purchase log and sync target.
+          change.displayFrom = normalizeNumber(from) === null
+            ? null
+            : normalizeText(root.new_supplier) || null;
+          change.displayTo = normalizeNumber(to) === null
+            ? null
+            : normalizeText(syncItem.supplier) || null;
+        }
+        return [change];
       });
       const quantityReviewRequired = corrections.some(hasQuantityDiscrepancy);
       if (changes.length === 0 && !quantityReviewRequired) continue;

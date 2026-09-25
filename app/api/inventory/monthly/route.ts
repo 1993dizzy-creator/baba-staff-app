@@ -7,6 +7,12 @@ import {
   normalizeInventoryReason,
 } from "@/lib/inventory/reasons";
 import { calculateInventoryPurchaseAmount } from "@/lib/inventory/purchase-cost";
+import {
+  buildMonthlyEffectivePurchases,
+  isMonthlyPurchaseRoot,
+  type MonthlyEffectivePurchase,
+  type MonthlyPurchaseLog,
+} from "@/lib/inventory/monthly-effective-purchases";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -47,7 +53,7 @@ type CurrentInventoryItem = {
   supplier: string | null;
 };
 
-type InventoryLog = {
+type InventoryLog = MonthlyPurchaseLog & {
   id: number;
   item_id: number | null;
   item_name: string | null;
@@ -65,6 +71,7 @@ type InventoryLog = {
   reason: string | null;
   source: string | null;
   business_date: string | null;
+  correction_of_inventory_log_id: number | null;
 };
 
 type InventoryPriceLog = {
@@ -373,28 +380,24 @@ const getCurrentInventoryItems = async () => {
 };
 
 const createSupplierPurchaseItem = (
-  log: InventoryLog,
+  log: MonthlyEffectivePurchase,
   baseItem: MonthlyItemResult | undefined,
   supplier: string | null,
   supplierLabel: string | null
 ): MonthlyItemResult => ({
-  itemId: log.item_id ?? log.id * -1,
-  code: baseItem?.code ?? log.code ?? null,
+  itemId: log.item_id ?? log.rootLogId * -1,
+  code: log.code,
   name:
-    baseItem?.name?.trim() ||
     log.item_name?.trim() ||
     log.item_name_vi?.trim() ||
     "-",
-  nameVi:
-    baseItem?.nameVi?.trim() ||
-    log.item_name_vi?.trim() ||
-    null,
-  unit: baseItem?.unit ?? log.unit ?? null,
+  nameVi: log.item_name_vi?.trim() || null,
+  unit: log.unit,
   supplier,
   supplierLabel,
-  part: baseItem?.part ?? log.part ?? null,
-  category: baseItem?.category ?? log.category ?? null,
-  categoryVi: baseItem?.categoryVi ?? log.category_vi ?? null,
+  part: log.part,
+  category: log.category,
+  categoryVi: log.category_vi,
   baselineQuantity: baseItem?.baselineQuantity ?? null,
   latestQuantity: baseItem?.latestQuantity ?? null,
   stockNetChange: baseItem?.stockNetChange ?? 0,
@@ -423,16 +426,13 @@ const createSupplierPurchaseItem = (
 });
 
 const buildSupplierSummary = (
-  logs: InventoryLog[],
+  effectivePurchases: MonthlyEffectivePurchase[],
   itemResultMap: Map<number, MonthlyItemResult>
 ) => {
   const map = new Map<string, SupplierSummaryAccumulator>();
 
-  for (const log of logs) {
-    const normalizedReason = normalizeInventoryReason(log.reason);
-    const changeQuantity = roundDecimal(toNumber(log.change_quantity));
-
-    if (normalizedReason !== "purchase" || changeQuantity <= 0) continue;
+  for (const log of effectivePurchases) {
+    const changeQuantity = log.effectiveQuantity;
 
     const supplier = log.new_supplier?.trim() || null;
     const supplierKey = supplier || "__none__";
@@ -455,7 +455,7 @@ const buildSupplierSummary = (
     const itemKey =
       log.item_id !== null && log.item_id !== undefined
         ? String(log.item_id)
-        : `log:${log.id}`;
+        : `log:${log.rootLogId}`;
     const baseItem =
       log.item_id !== null && log.item_id !== undefined
         ? itemResultMap.get(Number(log.item_id))
@@ -557,7 +557,8 @@ const fetchMonthlyInventoryLogs = async (
           prev_supplier,
           reason,
           source,
-          business_date
+          business_date,
+          correction_of_inventory_log_id
         `
       )
       .gte("business_date", monthStart)
@@ -574,6 +575,60 @@ const fetchMonthlyInventoryLogs = async (
     if (page.length < pageSize) break;
 
     from += pageSize;
+  }
+
+  return result;
+};
+
+const fetchLinkedPurchaseCorrections = async (
+  rootIds: number[]
+): Promise<InventoryLog[]> => {
+  if (rootIds.length === 0) return [];
+
+  const chunkSize = 200;
+  const pageSize = 1000;
+  const result: InventoryLog[] = [];
+
+  for (let chunkStart = 0; chunkStart < rootIds.length; chunkStart += chunkSize) {
+    const rootIdChunk = rootIds.slice(chunkStart, chunkStart + chunkSize);
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await supabaseAdmin
+        .from("inventory_logs")
+        .select(
+          `
+            id,
+            item_id,
+            item_name,
+            item_name_vi,
+            part,
+            category,
+            category_vi,
+            change_quantity,
+            unit,
+            code,
+            new_purchase_price,
+            prev_purchase_price,
+            new_supplier,
+            prev_supplier,
+            reason,
+            source,
+            business_date,
+            correction_of_inventory_log_id
+          `
+        )
+        .in("correction_of_inventory_log_id", rootIdChunk)
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (error) throw error;
+
+      const page = (data ?? []) as InventoryLog[];
+      result.push(...page);
+      if (page.length < pageSize) break;
+      from += pageSize;
+    }
   }
 
   return result;
@@ -672,6 +727,17 @@ export async function GET(request: Request) {
 
     if (priceLogsError) throw priceLogsError;
 
+    const purchaseRootIds = allLogs
+      .filter(isMonthlyPurchaseRoot)
+      .map((log) => Number(log.id));
+    const linkedPurchaseCorrections = await fetchLinkedPurchaseCorrections(
+      purchaseRootIds
+    );
+    const effectivePurchaseLogs = buildMonthlyEffectivePurchases(
+      allLogs,
+      linkedPurchaseCorrections
+    );
+
     const baselineMap = getItemMap(baselineItems);
     const latestMap = getItemMap(latestItems);
     const itemIds = new Set<number>([
@@ -763,6 +829,10 @@ export async function GET(request: Request) {
         continue;
       }
 
+      // Raw purchase roots and linked correction deltas are projected together
+      // below. Counting either row here would duplicate or omit corrections.
+      if (normalizedReason === "purchase") continue;
+
       const changeQuantity = roundDecimal(toNumber(log.change_quantity));
       const logPurchasePrice = toNullableNumber(log.new_purchase_price);
 
@@ -778,7 +848,7 @@ export async function GET(request: Request) {
           logPurchasePrice
         );
 
-        if (changeQuantity < 0 && normalizedReason !== "purchase") {
+        if (changeQuantity < 0) {
           const abs = roundDecimal(Math.abs(changeQuantity));
           if (normalizedReason === "sale_deduction") {
             itemAccumulator.saleDeductionDeduction = roundDecimal(itemAccumulator.saleDeductionDeduction + abs);
@@ -800,6 +870,21 @@ export async function GET(request: Request) {
 
         itemMovementMap.set(safeItemId, itemAccumulator);
       }
+    }
+
+    for (const purchase of effectivePurchaseLogs) {
+      if (purchase.item_id === null || purchase.item_id === undefined) continue;
+
+      const itemId = Number(purchase.item_id);
+      const itemAccumulator =
+        itemMovementMap.get(itemId) ?? createItemAccumulator();
+      addMovement(
+        itemAccumulator,
+        "purchase",
+        purchase.effectiveQuantity,
+        toNullableNumber(purchase.new_purchase_price)
+      );
+      itemMovementMap.set(itemId, itemAccumulator);
     }
 
     const items: MonthlyItemResult[] = [...itemIds].map((itemId) => {
@@ -971,7 +1056,7 @@ export async function GET(request: Request) {
     }
 
     const supplierSummary = buildSupplierSummary(
-      allLogs,
+      effectivePurchaseLogs,
       itemResultMap
     );
 

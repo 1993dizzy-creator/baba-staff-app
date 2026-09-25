@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  getMonthlySummaryBarMetrics,
+  getMonthlySummaryDeductionAmount,
+} from "@/lib/inventory/monthly-summary-bars";
 import { usePathname } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
@@ -185,7 +189,8 @@ const monthlyText = {
     supplierView: "거래처별",
     partView: "파트별",
     partSummary: "파트별 요약",
-    spendingShare: "지출 비중",
+    purchaseShare: "전체 비중",
+    deductionRate: "입고대비 차감",
     noPart: "파트 없음",
     noCategory: "카테고리 없음",
     missingUnitPrice: "단가 누락",
@@ -277,7 +282,8 @@ const monthlyText = {
     supplierView: "Theo nơi mua",
     partView: "Theo bộ phận",
     partSummary: "Tổng hợp theo bộ phận",
-    spendingShare: "Tỷ trọng chi phí",
+    purchaseShare: "Tỷ trọng nhập",
+    deductionRate: "Khấu trừ / nhập",
     noPart: "Chưa có bộ phận",
     noCategory: "Chưa có danh mục",
     missingUnitPrice: "Thiếu đơn giá",
@@ -651,10 +657,9 @@ export default function InventoryMonthlyPage() {
           const amount = group.summary?.purchaseAmountKnown ?? 0;
           return {
             total: stats.total + amount,
-            max: Math.max(stats.max, amount),
           };
         },
-        { total: 0, max: 0 }
+        { total: 0 }
       ),
     [supplierGroups]
   );
@@ -815,11 +820,32 @@ export default function InventoryMonthlyPage() {
       partGroups.reduce(
         (stats, part) => ({
           total: stats.total + part.totalAmount,
-          max: Math.max(stats.max, part.totalAmount),
         }),
-        { total: 0, max: 0 }
+        { total: 0 }
       ),
     [partGroups]
+  );
+
+  const supplierScaleMax = useMemo(
+    () => supplierGroups.reduce((max, group) => Math.max(
+      max,
+      group.summary?.purchaseAmountKnown ?? 0,
+      getMonthlySummaryDeductionAmount(
+        supplierDeductionData.get(group.key) ?? { sale: 0, check: 0, service: 0, other: 0 }
+      )
+    ), 0),
+    [supplierDeductionData, supplierGroups]
+  );
+
+  const partScaleMax = useMemo(
+    () => partGroups.reduce((max, part) => Math.max(
+      max,
+      part.totalAmount,
+      getMonthlySummaryDeductionAmount(
+        partDeductionData.get(part.key) ?? { sale: 0, check: 0, service: 0, other: 0 }
+      )
+    ), 0),
+    [partDeductionData, partGroups]
   );
 
   const getDisplayName = (item: MonthlyItem) =>
@@ -1097,37 +1123,22 @@ export default function InventoryMonthlyPage() {
                   const expandedSupplier = Boolean(expandedSupplierKeys[group.key]);
                   const supplier = group.summary;
                   const itemCount = (supplier?.itemCount ?? group.items.length) + group.deductionOnlyItems.length;
-                  const supplierMissingPriceCount = group.items.filter(
-                    hasMissingPurchasePrice
-                  ).length;
-                  const supplierPriceChangedCount = group.items.filter(
-                    hasPurchasePriceChange
-                  ).length;
-                  const supplierServiceCount = group.items.filter(
-                    (item) => item.serviceNetChange !== 0
-                  ).length;
                   const supplierAmount = supplier?.purchaseAmountKnown ?? 0;
-                  const supplierBarWidth =
-                    supplierAmountStats.max > 0
-                      ? (supplierAmount / supplierAmountStats.max) * 100
-                      : 0;
-                  const supplierShare =
-                    supplierAmountStats.total > 0
-                      ? (supplierAmount / supplierAmountStats.total) * 100
-                      : 0;
-                  const supplierSignals = [
-                    supplierMissingPriceCount > 0
-                      ? `${MONTHLY_SIGNAL_EMOJIS.missingPrice} ${formatQuantity(supplierMissingPriceCount)}`
-                      : "",
-                    supplierPriceChangedCount > 0
-                      ? `${MONTHLY_SIGNAL_EMOJIS.priceChange} ${formatQuantity(supplierPriceChangedCount)}`
-                      : "",
-                    supplierServiceCount > 0
-                      ? `${MONTHLY_REASON_EMOJIS.service} ${formatQuantity(
-                          supplierServiceCount
-                        )}`
-                      : "",
-                  ].filter(Boolean);
+                  const deduction = supplierDeductionData.get(group.key) ?? {
+                    sale: 0,
+                    check: 0,
+                    service: 0,
+                    other: 0,
+                    total: 0,
+                  };
+                  const supplierBarMetrics = getMonthlySummaryBarMetrics({
+                    purchaseAmount: supplierAmount,
+                    totalPurchaseAmount: supplierAmountStats.total,
+                    scaleMax: supplierScaleMax,
+                    deductions: deduction,
+                  });
+                  const purchaseShareText = `${supplierBarMetrics.purchaseShare.toFixed(1)}%`;
+                  const deductionRateText = `${supplierBarMetrics.deductionRate.toFixed(1)}%`;
 
                   return (
                     <div
@@ -1223,84 +1234,53 @@ export default function InventoryMonthlyPage() {
                           gap: 4,
                         }}
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 38px", alignItems: "center", gap: 6 }}>
                           <div
+                            role="img"
+                            aria-label={`${labels.purchase} ${supplierBarMetrics.purchaseBarWidth.toFixed(0)}%`}
                             style={{
-                              flex: 1,
-                              minWidth: 0,
-                              display: "grid",
-                              gridTemplateColumns: "minmax(0, 1fr) 38px",
-                              alignItems: "center",
-                              gap: 6,
+                              height: 6,
+                              overflow: "hidden",
+                              borderRadius: 999,
+                              background: "#e5e7eb",
                             }}
                           >
                             <div
                               style={{
-                                height: 6,
-                                overflow: "hidden",
+                                width: `${supplierBarMetrics.purchaseBarWidth}%`,
+                                height: "100%",
                                 borderRadius: 999,
-                                background: "#e5e7eb",
+                                background: "#2563eb",
                               }}
-                            >
-                              <div
-                                style={{
-                                  width: `${supplierBarWidth}%`,
-                                  height: "100%",
-                                  borderRadius: 999,
-                                  background: "#2563eb",
-                                }}
-                              />
-                            </div>
-                            <span
-                              style={{
-                                textAlign: "right",
-                                color: "#6b7280",
-                                fontSize: 10,
-                                fontWeight: 900,
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {supplierShare.toFixed(1)}%
-                            </span>
+                            />
                           </div>
-                          {supplierSignals.length > 0 && (
-                            <div
-                              style={{
-                                flexShrink: 0,
-                                maxWidth: "32%",
-                                display: "flex",
-                                justifyContent: "flex-end",
-                                flexWrap: "wrap",
-                                gap: "2px 5px",
-                                color: "#6b7280",
-                                fontSize: 11,
-                                fontWeight: 800,
-                                textAlign: "right",
-                              }}
-                            >
-                              {supplierSignals.map((signal) => (
-                                <span key={signal} style={{ whiteSpace: "nowrap" }}>
-                                  {signal}
-                                </span>
-                              ))}
-                            </div>
-                          )}
+                          <span
+                            title={`${labels.purchaseShare} ${purchaseShareText}`}
+                            aria-label={`${labels.purchaseShare} ${purchaseShareText}`}
+                            style={{ textAlign: "right", color: "#6b7280", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}
+                          >
+                            {purchaseShareText}
+                          </span>
                         </div>
-                        {(() => {
-                          const d = supplierDeductionData.get(group.key) ?? { sale: 0, check: 0, service: 0, other: 0, total: 0 };
-                          const barWidth = supplierAmountStats.total > 0 ? (d.total / supplierAmountStats.total) * 100 : 0;
-                          const shareStr = supplierAmountStats.total > 0 ? ((d.total / supplierAmountStats.total) * 100).toFixed(1) : "0.0";
-                          return (
-                            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 38px", alignItems: "center", gap: 6 }}>
-                              <div style={{ height: 5, borderRadius: 999, overflow: "hidden", background: "#e5e7eb" }}>
-                                <div style={{ width: `${barWidth}%`, height: "100%", display: "flex" }}>
-                                  {d.total > 0 && <><div style={{ flex: d.sale, background: "#ef4444" }} /><div style={{ flex: d.check, background: "seagreen" }} /><div style={{ flex: d.service, background: "#8b5cf6" }} /><div style={{ flex: d.other, background: "#9ca3af" }} /></>}
-                                </div>
-                              </div>
-                              <span style={{ textAlign: "right", color: "#6b7280", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}>{shareStr}%</span>
-                            </div>
-                          );
-                        })()}
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 38px", alignItems: "center", gap: 6 }}>
+                          <div
+                            role="img"
+                            aria-label={`${labels.deductionRate} ${deductionRateText}`}
+                            style={{ height: 5, borderRadius: 999, overflow: "hidden", background: "#e5e7eb", display: "flex" }}
+                          >
+                            <div style={{ width: `${supplierBarMetrics.deductionSegmentWidths.sale}%`, flexShrink: 0, background: "#ef4444" }} />
+                            <div style={{ width: `${supplierBarMetrics.deductionSegmentWidths.check}%`, flexShrink: 0, background: "seagreen" }} />
+                            <div style={{ width: `${supplierBarMetrics.deductionSegmentWidths.service}%`, flexShrink: 0, background: "#8b5cf6" }} />
+                            <div style={{ width: `${supplierBarMetrics.deductionSegmentWidths.other}%`, flexShrink: 0, background: "#9ca3af" }} />
+                          </div>
+                          <span
+                            title={`${labels.deductionRate} ${deductionRateText}`}
+                            aria-label={`${labels.deductionRate} ${deductionRateText}`}
+                            style={{ textAlign: "right", color: "#6b7280", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}
+                          >
+                            {deductionRateText}
+                          </span>
+                        </div>
                       </div>
 
                       {expandedSupplier && (
@@ -1967,14 +1947,21 @@ export default function InventoryMonthlyPage() {
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {partGroups.map((part) => {
-                    const partBarWidth =
-                      partAmountStats.max > 0
-                        ? (part.totalAmount / partAmountStats.max) * 100
-                        : 0;
-                    const partShare =
-                      partAmountStats.total > 0
-                        ? (part.totalAmount / partAmountStats.total) * 100
-                        : 0;
+                    const deduction = partDeductionData.get(part.key) ?? {
+                      sale: 0,
+                      check: 0,
+                      service: 0,
+                      other: 0,
+                      total: 0,
+                    };
+                    const partBarMetrics = getMonthlySummaryBarMetrics({
+                      purchaseAmount: part.totalAmount,
+                      totalPurchaseAmount: partAmountStats.total,
+                      scaleMax: partScaleMax,
+                      deductions: deduction,
+                    });
+                    const partShareText = `${partBarMetrics.purchaseShare.toFixed(1)}%`;
+                    const partDeductionRateText = `${partBarMetrics.deductionRate.toFixed(1)}%`;
                     const expandedPart = Boolean(expandedParts[part.key]);
                     const maxCategoryAmount = part.categories.reduce(
                       (max, category) => Math.max(max, category.totalAmount),
@@ -2059,7 +2046,7 @@ export default function InventoryMonthlyPage() {
                           style={{
                             marginTop: 4,
                             display: "flex",
-                            justifyContent: "space-between",
+                            justifyContent: "flex-start",
                             alignItems: "center",
                             gap: 8,
                             color: "#6b7280",
@@ -2071,44 +2058,55 @@ export default function InventoryMonthlyPage() {
                             {labels.purchaseQuantity}{" "}
                             <b>{formatQuantity(part.totalQuantity)}</b>
                           </span>
-                          <span style={{ whiteSpace: "nowrap" }}>
-                            {labels.spendingShare} {partShare.toFixed(1)}%
-                          </span>
                         </div>
 
-                        <div
-                          style={{
-                            marginTop: 7,
-                            height: 7,
-                            overflow: "hidden",
-                            borderRadius: 999,
-                            background: "#e5e7eb",
-                          }}
-                        >
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 38px", alignItems: "center", gap: 6, marginTop: 7 }}>
                           <div
+                            role="img"
+                            aria-label={`${labels.purchase} ${partBarMetrics.purchaseBarWidth.toFixed(0)}%`}
                             style={{
-                              width: `${partBarWidth}%`,
-                              height: "100%",
+                              height: 7,
+                              overflow: "hidden",
                               borderRadius: 999,
-                              background: "#2563eb",
+                              background: "#e5e7eb",
                             }}
-                          />
+                          >
+                            <div
+                              style={{
+                                width: `${partBarMetrics.purchaseBarWidth}%`,
+                                height: "100%",
+                                borderRadius: 999,
+                                background: "#2563eb",
+                              }}
+                            />
                           </div>
-                          {(() => {
-                            const d = partDeductionData.get(part.key) ?? { sale: 0, check: 0, service: 0, other: 0, total: 0 };
-                            const barWidth = partAmountStats.total > 0 ? (d.total / partAmountStats.total) * 100 : 0;
-                            const deductPct = partAmountStats.total > 0 ? ((d.total / partAmountStats.total) * 100).toFixed(1) : "0.0";
-                            return (
-                              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 38px", alignItems: "center", gap: 6, marginTop: 4 }}>
-                                <div style={{ height: 5, borderRadius: 999, overflow: "hidden", background: "#e5e7eb" }}>
-                                  <div style={{ width: `${barWidth}%`, height: "100%", display: "flex" }}>
-                                    {d.total > 0 && <><div style={{ flex: d.sale, background: "#ef4444" }} /><div style={{ flex: d.check, background: "seagreen" }} /><div style={{ flex: d.service, background: "#8b5cf6" }} /><div style={{ flex: d.other, background: "#9ca3af" }} /></>}
-                                  </div>
-                                </div>
-                                <span style={{ textAlign: "right", color: "#6b7280", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}>{deductPct}%</span>
-                              </div>
-                            );
-                          })()}
+                          <span
+                            title={`${labels.purchaseShare} ${partShareText}`}
+                            aria-label={`${labels.purchaseShare} ${partShareText}`}
+                            style={{ textAlign: "right", color: "#6b7280", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}
+                          >
+                            {partShareText}
+                          </span>
+                        </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 38px", alignItems: "center", gap: 6, marginTop: 4 }}>
+                            <div
+                              role="img"
+                              aria-label={`${labels.deductionRate} ${partDeductionRateText}`}
+                              style={{ height: 5, borderRadius: 999, overflow: "hidden", background: "#e5e7eb", display: "flex" }}
+                            >
+                              <div style={{ width: `${partBarMetrics.deductionSegmentWidths.sale}%`, flexShrink: 0, background: "#ef4444" }} />
+                              <div style={{ width: `${partBarMetrics.deductionSegmentWidths.check}%`, flexShrink: 0, background: "seagreen" }} />
+                              <div style={{ width: `${partBarMetrics.deductionSegmentWidths.service}%`, flexShrink: 0, background: "#8b5cf6" }} />
+                              <div style={{ width: `${partBarMetrics.deductionSegmentWidths.other}%`, flexShrink: 0, background: "#9ca3af" }} />
+                            </div>
+                            <span
+                              title={`${labels.deductionRate} ${partDeductionRateText}`}
+                              aria-label={`${labels.deductionRate} ${partDeductionRateText}`}
+                              style={{ textAlign: "right", color: "#6b7280", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}
+                            >
+                              {partDeductionRateText}
+                            </span>
+                          </div>
                         </button>
 
                         {expandedPart && (

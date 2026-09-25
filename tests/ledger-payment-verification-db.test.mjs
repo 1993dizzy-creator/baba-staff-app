@@ -5,9 +5,10 @@ import { readFileSync } from 'node:fs';
 import { database } from './helpers/inventory-ledger-fixture.mjs';
 
 const migration = readFileSync('supabase/migrations/20260921170100_add_inventory_payment_verification.sql', 'utf8');
+const samePartyMetadataMigration = readFileSync('supabase/migrations/202609250001_allow_same_party_inventory_supplier_metadata_enrichment.sql', 'utf8');
 
 async function verificationDatabase({ legacyImmediate = false, initialPostpaid = false } = {}) {
-  const db = await database();
+  const db = await database(undefined, true, false);
   try {
     if (initialPostpaid) await db.exec("update inventory_logs set new_supplier='Postpaid',purchase_supplier_partner_id=12 where id=100");
     if (legacyImmediate) {
@@ -28,6 +29,9 @@ async function verificationDatabase({ legacyImmediate = false, initialPostpaid =
       end $$`);
     await db.exec(readFileSync('supabase/migrations/202608210004_add_ledger_payable_payments.sql', 'utf8'));
     await db.exec(migration);
+    // Match production ordering: the same-party metadata projection patch is
+    // applied after the payment-verification migration has amended the RPC.
+    await db.exec(samePartyMetadataMigration);
     return db;
   } catch (error) { await db.close(); throw error; }
 }

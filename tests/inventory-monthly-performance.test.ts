@@ -62,3 +62,12 @@ test("snapshot and monthly log projections remain intact", () => {
   assert.match(route, /const baselineMap = getItemMap\(baselineItems\);/);
   assert.match(route, /const latestMap = getItemMap\(latestItems\);/);
 });
+
+test("monthly purchases batch-load linked corrections and reuse one effective projection", () => {
+  assert.match(route, /correction_of_inventory_log_id/);
+  assert.match(route, /fetchLinkedPurchaseCorrections\(\s*purchaseRootIds\s*\)/);
+  assert.match(route, /\.in\("correction_of_inventory_log_id", rootIdChunk\)/);
+  assert.match(route, /const effectivePurchaseLogs = buildMonthlyEffectivePurchases/);
+  assert.match(route, /for \(const purchase of effectivePurchaseLogs\)/);
+  assert.match(route, /buildSupplierSummary\(\s*effectivePurchaseLogs,/);
+});

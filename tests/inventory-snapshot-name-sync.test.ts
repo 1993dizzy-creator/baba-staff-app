@@ -15,6 +15,7 @@ import {
   findInventoryLanguageMissingItems,
   type InventoryLanguageRow,
 } from "../lib/inventory/language-missing.ts";
+import { inventoryPurchaseLogCurrentItemSyncUpdate } from "../lib/inventory/ledger-sync-contract.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const route = read("app/api/inventory/snapshot/name-sync/route.ts");
@@ -171,6 +172,50 @@ test("75,000₫ / Chợ becomes one corrected 80,000₫ / Hà Giang purchase tar
   assert.ok(items[0].issues.includes("supplier_changed"));
 });
 
+test("supplier partner changes keep numeric sync IDs but expose supplier names for display", () => {
+  const items = detect([
+    log({
+      item_name: "대형 지퍼백",
+      new_purchase_price: 80000,
+      new_supplier: "An Liên",
+      purchase_supplier_partner_id: null,
+    }),
+    correction({
+      new_supplier: "An Liên",
+      purchase_supplier_partner_id: 27,
+    }),
+  ], inventory({ supplier: "An Liên", supplier_partner_id: 27 }));
+
+  const partnerChange = items[0].changes.find((change) => change.field === "supplier_partner_id");
+  assert.deepEqual(partnerChange, {
+    field: "supplier_partner_id",
+    from: null,
+    to: 27,
+    displayFrom: null,
+    displayTo: "An Liên",
+  });
+
+  const syncItem = items[0].targets[0].syncItem;
+  assert.equal(syncItem.supplier_partner_id, 27);
+  assert.equal(
+    inventoryPurchaseLogCurrentItemSyncUpdate(syncItem).purchase_supplier_partner_id,
+    27
+  );
+});
+
+test("supplier name changes remain independent from supplier partner display values", () => {
+  const items = detect([
+    log({ new_supplier: "Chợ", purchase_supplier_partner_id: 27 }),
+    correction({ new_supplier: "An Liên", purchase_supplier_partner_id: 27 }),
+  ], inventory({ supplier: "An Liên", supplier_partner_id: 27 }));
+
+  assert.deepEqual(items[0].changes.find((change) => change.field === "supplier"), {
+    field: "supplier",
+    from: "Chợ",
+    to: "An Liên",
+  });
+});
+
 test("a zero-quantity correction is never treated as a new purchase", () => {
   const items = detect([log(), correction()]);
   assert.deepEqual(items[0].logIds, [101]);
@@ -301,8 +346,8 @@ test("daily sync cards keep every field on one compact overflow-safe row", () =>
     page.indexOf('data-testid="snapshot-name-sync-banner"'),
     page.indexOf("{nameSyncBusinessDate && nameSyncItems.length === 0 && nameSyncError")
   );
-  assert.match(page, /from: formatNameSyncValue\(change, change\.from\)/);
-  assert.match(page, /to: formatNameSyncValue\(change, change\.to\)/);
+  assert.match(page, /change\.displayFrom !== undefined \? change\.displayFrom : change\.from/);
+  assert.match(page, /change\.displayTo !== undefined \? change\.displayTo : change\.to/);
   assert.match(dailyBanner, /title=\{`\$\{change\.label\}  \$\{change\.from\} → \$\{change\.to\}`\}/);
   assert.match(dailyBanner, /whiteSpace: "nowrap"/);
   assert.match(dailyBanner, /textOverflow: "ellipsis"/);

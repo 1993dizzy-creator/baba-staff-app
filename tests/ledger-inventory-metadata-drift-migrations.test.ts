@@ -14,6 +14,10 @@ const predecessor = readFileSync(
   "supabase/migrations/202608250002_auto_post_inventory_purchases.sql",
   "utf8"
 );
+const samePartyMetadata = readFileSync(
+  "supabase/migrations/202609250001_allow_same_party_inventory_supplier_metadata_enrichment.sql",
+  "utf8"
+);
 
 test("the existing inventory sync body is preserved as core before v2 is created", () => {
   const rename = guard.indexOf("rename to ledger_sync_inventory_candidates_core_v1");
@@ -54,4 +58,22 @@ test("all three functions retain the production security contract", () => {
   assert.match(guard, /alter function public\.ledger_sync_inventory_candidates_core_v1\(jsonb, bigint\)\s+owner to postgres/);
   assert.match(guard, /revoke all on function public\.ledger_sync_inventory_candidates_core_v1\(jsonb, bigint\)[\s\S]*from public, anon, authenticated, service_role/);
   assert.match(guard, /grant execute on function public\.ledger_sync_inventory_candidates_core_v1\(jsonb, bigint\)[\s\S]*to postgres, service_role/);
+});
+
+test("same-party supplier linkage is a narrow projection-only metadata exception", () => {
+  assert.match(samePartyMetadata, /pg_get_functiondef\(v_oid\)/);
+  assert.match(samePartyMetadata, /inventory_ledger_private\.economics\(v_candidate\.source_snapshot\) - 'purchase_supplier_partner_id'/);
+  assert.match(samePartyMetadata, /inventory_ledger_private\.economics\(v_snapshot\) - 'purchase_supplier_partner_id'/);
+  assert.match(samePartyMetadata, /source_snapshot->>'purchase_supplier_partner_id' is null/);
+  assert.match(samePartyMetadata, /v_log\.purchase_supplier_partner_id is not null/);
+  assert.match(samePartyMetadata, /source_snapshot->'supplier' is not distinct from v_snapshot->'supplier'/);
+  assert.match(samePartyMetadata, /business_partner_ledger_parties bridge/);
+  assert.match(samePartyMetadata, /bridge\.ledger_party_id = v_tx\.party_id/);
+  assert.doesNotMatch(samePartyMetadata, /create or replace function inventory_ledger_private\.economics/);
+});
+
+test("same-party projection patch preserves the production function security contract", () => {
+  assert.match(samePartyMetadata, /alter function public\.ledger_project_inventory_purchase_log_v1\(bigint,bigint\) owner to postgres/);
+  assert.match(samePartyMetadata, /revoke all on function public\.ledger_project_inventory_purchase_log_v1\(bigint,bigint\)[\s\S]*from public, anon, authenticated, service_role/);
+  assert.match(samePartyMetadata, /grant execute on function public\.ledger_project_inventory_purchase_log_v1\(bigint,bigint\)[\s\S]*to service_role/);
 });

@@ -51,6 +51,8 @@ type SnapshotNameSyncChange = {
     field: SnapshotNameSyncField;
     from: string | number | null;
     to: string | number | null;
+    displayFrom?: string | null;
+    displayTo?: string | null;
 };
 
 type SnapshotNameSyncItem = {
@@ -428,8 +430,14 @@ export default function InventorySnapshotsPage() {
     const getNameSyncChanges = (item: SnapshotNameSyncItem) => item.changes.map((change) => ({
         key: `${change.field}:${String(change.from)}:${String(change.to)}`,
         label: nameSyncT.fields[change.field],
-        from: formatNameSyncValue(change, change.from),
-        to: formatNameSyncValue(change, change.to),
+        from: formatNameSyncValue(
+            change,
+            change.displayFrom !== undefined ? change.displayFrom : change.from
+        ),
+        to: formatNameSyncValue(
+            change,
+            change.displayTo !== undefined ? change.displayTo : change.to
+        ),
     }));
 
     const getSelectedBusinessDate = () => {

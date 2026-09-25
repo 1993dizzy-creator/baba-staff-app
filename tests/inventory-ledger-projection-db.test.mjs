@@ -147,6 +147,93 @@ test('confirmed latest purchase reprojects while an older purchase amount stays 
   } finally {await db.close();}
 });
 
+async function paidAnLienPurchase({initialPartnerId=null}={}) {
+  const db=await database();
+  await db.exec(`insert into ledger_parties(id,name,type) values(27,'An Liên','supplier');
+    insert into business_partners values(27,'An Liên',true,'postpaid',null,7);
+    insert into business_partner_ledger_parties values(27,27);
+    update inventory_logs set id=11646,item_name='배',item_name_vi='Lê',change_quantity=1.27,
+      new_purchase_price=35000,new_supplier='An Liên',business_date='2026-09-23'
+      where id=100;`);
+  await db.query('update inventory_logs set purchase_supplier_partner_id=$1 where id=11646',[initialPartnerId]);
+  const initial=await project(db,11646);
+  assert.equal(initial.status,'synced');
+  const payable=await one(db,'select id,expense_transaction_id,original_amount from ledger_payables');
+  await db.query('insert into ledger_payable_allocations(payable_id,payment_transaction_id,allocated_amount) values($1,$2,$3)',
+    [payable.id,payable.expense_transaction_id,payable.original_amount]);
+  await db.exec("update ledger_payables set status='paid'");
+  return db;
+}
+
+test('#11646 same-party partner enrichment updates drift evidence without touching paid Ledger history',async()=>{
+  const db=await paidAnLienPurchase();try{
+    const candidateBefore=await one(db,'select source_snapshot,source_fingerprint from ledger_candidates');
+    const txBefore=await one(db,'select id,party_id,amount,source_snapshot,source_fingerprint from ledger_transactions');
+    const payableBefore=await one(db,'select id,status,original_amount from ledger_payables');
+    const allocationBefore=await one(db,'select payable_id,payment_transaction_id,allocated_amount from ledger_payable_allocations');
+
+    await db.exec('update inventory_logs set purchase_supplier_partner_id=27 where id=11646');
+    const result=await project(db,11646);
+    assert.equal(result.status,'synced');assert.equal(result.code,'METADATA_SYNCED');
+    assert.equal(Number(txBefore.amount),44450);assert.equal(Number(txBefore.party_id),27);
+    assert.equal(Number((await one(db,'select count(*) as n from ledger_transactions')).n),1,'no reversal or rebook');
+    assert.equal(Number((await one(db,"select count(*) as n from ledger_transactions where source_type in ('inventory_purchase_reversal','inventory_purchase_rebook')")).n),0);
+    assert.deepEqual(await one(db,'select id,party_id,amount,source_snapshot,source_fingerprint from ledger_transactions'),txBefore);
+    assert.deepEqual(await one(db,'select id,status,original_amount from ledger_payables'),payableBefore);
+    assert.deepEqual(await one(db,'select payable_id,payment_transaction_id,allocated_amount from ledger_payable_allocations'),allocationBefore);
+    const candidateAfter=await one(db,'select source_snapshot,source_fingerprint,source_drift_snapshot,source_drift_fingerprint,source_drift_detected_at from ledger_candidates');
+    assert.deepEqual(candidateAfter.source_snapshot,candidateBefore.source_snapshot);
+    assert.equal(candidateAfter.source_fingerprint,candidateBefore.source_fingerprint);
+    assert.equal(Number(candidateAfter.source_drift_snapshot.purchase_supplier_partner_id),27);
+    assert.notEqual(candidateAfter.source_drift_fingerprint,candidateBefore.source_fingerprint);
+    assert.ok(candidateAfter.source_drift_detected_at);
+    const repeated=await project(db,11646);
+    assert.equal(repeated.status,'synced');assert.equal(repeated.code,'UNCHANGED');
+  }finally{await db.close();}
+});
+
+test('existing partner id cannot change through same-party metadata enrichment even when the bridge is relinked to the same Ledger party',async()=>{
+  const db=await paidAnLienPurchase({initialPartnerId:27});try{
+    await db.exec(`delete from business_partner_ledger_parties where business_partner_id=27;
+      insert into business_partners values(28,'An Liên successor',true,'postpaid',null,7);
+      insert into business_partner_ledger_parties values(28,27);
+      update inventory_logs set purchase_supplier_partner_id=28 where id=11646;`);
+    const result=await project(db,11646);
+    assert.equal(result.status,'review_required');assert.equal(result.code,'PAYABLE_ALREADY_PAID');
+    assert.equal(Number((await one(db,'select count(*) as n from ledger_transactions')).n),1);
+    assert.equal((await one(db,'select status from ledger_payables')).status,'paid');
+  }finally{await db.close();}
+});
+
+test('existing partner id cannot be cleared through same-party metadata enrichment',async()=>{
+  const db=await paidAnLienPurchase({initialPartnerId:27});try{
+    await db.exec('update inventory_logs set purchase_supplier_partner_id=null where id=11646');
+    const result=await project(db,11646);
+    assert.equal(result.status,'review_required');assert.equal(result.code,'PAYABLE_ALREADY_PAID');
+    assert.equal(Number((await one(db,'select count(*) as n from ledger_transactions')).n),1);
+    assert.equal((await one(db,'select status from ledger_payables')).status,'paid');
+  }finally{await db.close();}
+});
+
+test('different party, price, quantity, or supplier text still use the paid-payable review path',async()=>{
+  const mutations=[
+    ["insert into ledger_parties(id,name,type) values(28,'Other','supplier'); insert into business_partners values(28,'Other',true,'postpaid',null,7); insert into business_partner_ledger_parties values(28,28); update inventory_logs set purchase_supplier_partner_id=28 where id=11646",'different resolved party'],
+    ["update inventory_logs set purchase_supplier_partner_id=27,new_purchase_price=40000 where id=11646",'price'],
+    ["update inventory_logs set purchase_supplier_partner_id=27,change_quantity=1.50 where id=11646",'quantity'],
+    ["update inventory_logs set purchase_supplier_partner_id=27,new_supplier='Other supplier' where id=11646",'supplier text'],
+  ];
+  for(const [mutation,label] of mutations){
+    const db=await paidAnLienPurchase();try{
+      await db.exec(mutation);
+      const result=await project(db,11646);
+      assert.equal(result.status,'review_required',label);
+      assert.equal(result.code,'PAYABLE_ALREADY_PAID',label);
+      assert.equal(Number((await one(db,'select count(*) as n from ledger_transactions')).n),1,label);
+      assert.equal((await one(db,'select status from ledger_payables')).status,'paid',label);
+    }finally{await db.close();}
+  }
+});
+
 test('source-only projection, metadata, corrections, payment guards, permissions and retries', async () => {
   const db=await database();
   try {
