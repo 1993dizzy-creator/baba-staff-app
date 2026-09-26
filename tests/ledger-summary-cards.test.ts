@@ -448,7 +448,8 @@ test("expense card shows cash outflow and card fee as matching rows without addi
 
 test("payable rows hide cumulative partial-payment UI and retain monthly purchase/payment/closing fields", () => {
   const start = page.indexOf("className={styles.payableParties}");
-  const row = page.slice(start, page.indexOf("</button>)}</div>", start));
+  // The party row map ends at "</button>)}"; the 기타 · 결제 미확인 row follows it.
+  const row = page.slice(start, page.indexOf("</button>)}", start));
   assert.doesNotMatch(row, /partialPaidAmount|payablePartialPayment|누적 부분결제|Lũy kế/);
   assert.match(page, /partialPaidAmount:number/);
   assert.match(row, /<strong[^>]*>\{money\(party\.closingOutstanding\)\}/);

@@ -128,7 +128,6 @@ export default function AdminPage() {
   const text = adminPageText[lang];
   const [permissionChecked, setPermissionChecked] = useState(false);
   const [currentUser, setCurrentUser] = useState<ReturnType<typeof getUser>>(null);
-
   useEffect(() => {
     let cancelled = false;
 

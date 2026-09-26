@@ -219,9 +219,12 @@ test("editing partial matches restores own allocation capacity including exhaust
   const exhausted={...cardSale(2),allocatedGrossAmount:1000,outstandingGrossAmount:0};
   const result=buildEditableCardSales([], [{pos_card_transaction_id:2,allocated_gross_amount:1000,sale:exhausted}]);assert.equal(result[0].outstandingGrossAmount,1000);assert.equal(result[0].allocatedGrossAmount,0);
 });
-test("dashboard accounting income and historical payable card remain intact", () => {
+test("monthly report keeps accounting income; card settlements stay reachable from ledger entries", () => {
   const dashboard=readFileSync("app/(protected)/admin/ledger/page.tsx","utf8");
-  assert.match(dashboard,/money\(data.summary.income\)/);assert.match(dashboard,/data.summary.unreconciledCardGross/);assert.match(dashboard,/월말 미지급금/);assert.match(dashboard,/payables\?month=\$\{month\}/);assert.match(dashboard,/setOutstanding\(payables.summary.closingOutstanding\)/);
+  // The dashboard shortcut section was removed on request; entries links to the card settlement page.
+  assert.match(dashboard,/report\.kpis\.income/);assert.doesNotMatch(dashboard,/href="\/admin\/ledger\/card-settlements"/);
+  assert.match(readFileSync("app/(protected)/admin/ledger/entries/page.tsx","utf8"),/ledgerMonthHref\("\/admin\/ledger\/card-settlements"/);
+  assert.doesNotMatch(dashboard,/data.summary.unreconciledCardGross/);assert.doesNotMatch(dashboard,/setOutstanding\(/);
 });
 test("UI retains manual allocations and POS detail and adds guarded cancellation controls", () => {
   assert.match(ui,/setAllocations\(current/);assert.match(ui,/pos-drilldown/);assert.match(ui,/정산 차액률/);assert.match(ui,/부분 저장/);

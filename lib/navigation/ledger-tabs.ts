@@ -8,7 +8,7 @@ export function getLedgerTabs(pathname: string, lang: "ko" | "vi") {
     {
       href: "/admin/ledger/entries",
       label: lang === "vi" ? "Ghi sổ" : "장부작성",
-      active: pathname.startsWith("/admin/ledger/entries") || pathname.startsWith("/admin/ledger/payables") || pathname.startsWith("/admin/ledger/card-settlements") || pathname.startsWith("/admin/ledger/owners"),
+      active: pathname.startsWith("/admin/ledger/entries") || pathname.startsWith("/admin/ledger/card-settlements") || pathname.startsWith("/admin/ledger/owners"),
     },
     {
       href: "/admin/ledger/settings",

@@ -4,6 +4,7 @@ type CashMovement = {
 };
 
 export type CashOutflowTransaction = {
+  id?: number | string;
   type: string;
   status?: string;
   business_date: string;
@@ -26,9 +27,9 @@ const OPERATING_BALANCE_ADJUSTMENT_PREFIXES = [
   "sheet-balance-adjustment:",
 ];
 
-const roundMoney = (amount: number) => Math.round(amount * 1000) / 1000;
+export const roundLedgerMoney = (amount: number) => Math.round(amount * 1000) / 1000;
 
-function isTechnicalCashAdjustment(row: CashOutflowTransaction) {
+export function isTechnicalCashAdjustment(row: CashOutflowTransaction) {
   if (/technical_adjustment/.test(row.source_type)) return true;
   if (/월말\s*잔액\s*맞춤|상세\s*전환\s*상쇄|기술적\s*보정/.test(row.memo ?? "")) return true;
   if (row.type === "balance_adjustment" || row.source_type === "ledger_correction") {
@@ -61,6 +62,34 @@ export function computeActualCashOutflow(
   businessFundAccountIds: ReadonlySet<number>,
   month: string,
 ) {
+  return Math.max(0, roundLedgerMoney(listActualCashOutflowItems(
+    transactions,
+    businessFundAccountIds,
+    month,
+  ).reduce((sum, item) => sum + item.amount, 0)));
+}
+
+export type ActualCashOutflowItem = {
+  transaction: CashOutflowTransaction;
+  amount: number;
+};
+
+export function businessFundMovementNet(
+  row: CashOutflowTransaction,
+  businessFundAccountIds: ReadonlySet<number>,
+) {
+  return roundLedgerMoney((row.movements ?? []).reduce((sum, movement) =>
+    businessFundAccountIds.has(Number(movement.fund_account?.id))
+      ? sum + Number(movement.amount ?? 0)
+      : sum,
+  0));
+}
+
+export function listActualCashOutflowItems(
+  transactions: readonly CashOutflowTransaction[],
+  businessFundAccountIds: ReadonlySet<number>,
+  month: string,
+): ActualCashOutflowItem[] {
   const legacy = transactions.find((row) =>
     row.source_key === `legacy_sheet_expense_reconciliation:${month}` &&
     row.source_snapshot?.sheetCashOutflow != null,
@@ -69,30 +98,28 @@ export function computeActualCashOutflow(
   if (
     (typeof sheetCashOutflow === "number" || (typeof sheetCashOutflow === "string" && sheetCashOutflow.trim() !== "")) &&
     Number.isFinite(Number(sheetCashOutflow)) && Number(sheetCashOutflow) >= 0
-  ) return Number(sheetCashOutflow);
+  ) return [{ transaction: legacy!, amount: Number(sheetCashOutflow) }];
 
   const start = `${month}-01`;
   const endDate = new Date(`${start}T00:00:00Z`);
   endDate.setUTCMonth(endDate.getUTCMonth() + 1);
   const end = endDate.toISOString().slice(0, 10);
 
-  const businessFundNet = transactions.reduce((total, row) => {
-    if (row.business_date < start || row.business_date >= end || (row.status != null && row.status !== "confirmed")) return total;
-    if (isTechnicalCashAdjustment(row)) return total;
+  return transactions.flatMap((row): ActualCashOutflowItem[] => {
+    if (row.business_date < start || row.business_date >= end || (row.status != null && row.status !== "confirmed")) return [];
+    if (isTechnicalCashAdjustment(row)) return [];
 
-    const transactionNet = roundMoney((row.movements ?? []).reduce((sum, movement) =>
-      businessFundAccountIds.has(Number(movement.fund_account?.id))
-        ? sum + Number(movement.amount ?? 0)
-        : sum,
-    0));
+    const transactionNet = businessFundMovementNet(row, businessFundAccountIds);
+    let included = false;
     if (row.type === "balance_adjustment") {
-      return isOperatingBalanceAdjustment(row, transactionNet) ? total + transactionNet : total;
+      included = isOperatingBalanceAdjustment(row, transactionNet);
+    } else if (row.source_type === "ledger_correction") {
+      included = isOperatingCorrection(row, transactionNet);
+    } else {
+      included = CASH_PAYMENT_TYPES.has(row.type);
     }
-    if (row.source_type === "ledger_correction") {
-      return isOperatingCorrection(row, transactionNet) ? total + transactionNet : total;
-    }
-    if (!CASH_PAYMENT_TYPES.has(row.type)) return total;
-    return total + transactionNet;
-  }, 0);
-  return Math.max(0, roundMoney(-businessFundNet));
+    return included && transactionNet !== 0
+      ? [{ transaction: row, amount: roundLedgerMoney(-transactionNet) }]
+      : [];
+  });
 }

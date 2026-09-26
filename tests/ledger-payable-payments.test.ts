@@ -6,7 +6,7 @@ import ts from "typescript";
 import * as payableFunctions from "../lib/ledger/payables.ts";
 // @ts-expect-error Node strips TypeScript extensions in tests.
 import * as paymentVerificationFunctions from "../lib/ledger/payment-verification.ts";
-const read=(p:string)=>readFileSync(join(process.cwd(),p),"utf8"),migration=read("supabase/migrations/202608210004_add_ledger_payable_payments.sql"),pay=read("app/api/admin/ledger/payables/pay/route.ts"),dashboard=read("app/api/admin/ledger/payables/route.ts"),detail=read("app/api/admin/ledger/payables/[partyId]/route.ts"),party=read("app/api/admin/ledger/parties/route.ts"),mapping=read("app/api/admin/ledger/supplier-party-mappings/route.ts"),page=read("app/(protected)/admin/ledger/payables/page.tsx"),ledger=read("app/api/admin/ledger/route.ts"),inventoryMigration=read("supabase/migrations/202608210003_add_inventory_purchase_candidates.sql"),pos=read("lib/sales/payment-summary.ts");
+const read=(p:string)=>readFileSync(join(process.cwd(),p),"utf8"),migration=read("supabase/migrations/202608210004_add_ledger_payable_payments.sql"),pay=read("app/api/admin/ledger/payables/pay/route.ts"),dashboard=read("app/api/admin/ledger/payables/route.ts"),detail=read("app/api/admin/ledger/payables/[partyId]/route.ts"),party=read("app/api/admin/ledger/parties/route.ts"),mapping=read("app/api/admin/ledger/supplier-party-mappings/route.ts"),page=read("app/(protected)/admin/ledger/payables/page.tsx"),entries=read("app/(protected)/admin/ledger/entries/page.tsx"),partialPlan=read("lib/ledger/partial-payable-payment.ts"),ledger=read("app/api/admin/ledger/route.ts"),inventoryMigration=read("supabase/migrations/202608210003_add_inventory_purchase_candidates.sql"),pos=read("lib/sales/payment-summary.ts");
 test("unpaid payable can be fully paid",()=>assert.match(migration,/least\(v_remaining,v_outstanding\)/));
 test("payable supports partial payment",()=>assert.match(migration,/'partially_paid'/));
 test("partial payment changes status to partially paid",()=>assert.match(migration,/when v_outstanding=0 then 'paid' else 'partially_paid'/));
@@ -26,13 +26,17 @@ test("payment transaction movement allocations and statuses share one RPC",()=>{
 test("payables lock in deterministic order",()=>{assert.match(migration,/order by t\.business_date,p\.id for update/);assert.match(migration,/order by p\.id for update/)});
 test("status derives from allocation sum",()=>assert.match(migration,/original_amount-coalesce\(sum\(a\.allocated_amount\),0\)/));
 test("party dashboard aggregates outstanding and dates",()=>{for(const field of["outstandingAmount","openCount","oldestDate","nearestDueDate","recentPaymentDate"])assert.match(dashboard,new RegExp(field))});
-test("party detail returns payable and allocation payment history",()=>{assert.match(detail,/ledger_payable_allocations\(allocated_amount,payment_transaction_id\)/);assert.match(detail,/type","payable_payment/);assert.match(page,/지급 내역/)});
+test("party detail returns payable and allocation payment history",()=>{assert.match(detail,/ledger_payable_allocations\(allocated_amount,payment_transaction_id\)/);assert.match(detail,/type","payable_payment/);assert.match(entries,/지급 내역/);assert.match(entries.replace(/\s+/g,""),/dailyPayments=useMemo\(\(\)=>groupPaymentsByDate\(detail\?\.payments\?\?\[\]\),\[detail\]\)/)});
 test("lower roles are rejected by the shared server gate",()=>{for(const route of[pay,dashboard,detail,party,mapping])assert.match(route,/requireLedgerActor\(\)/)});
 test("party creation is owner-master RPC only",()=>{assert.match(party,/ledger_create_party_v1/);assert.match(migration,/ledger_create_party_v1[\s\S]*not in\('owner','master'\)/)});
 test("supplier party mapping can be saved",()=>{assert.match(mapping,/ledger_upsert_supplier_party_mapping_v1/);assert.match(migration,/'supplier_party_mapping_saved'/)});
 test("payment precision remains numeric 16 comma 3",()=>{assert.match(inventoryMigration,/allocated_amount numeric\(16,3\)/);assert.match(migration,/round\(p_amount,3\)<>p_amount/)});
 test("payment audit includes actor transaction party fund allocations and before after",()=>{for(const value of["p_actor_user_id","v_payment_id","p_party_id","p_amount","p_fund_account_id","allocations","v_before","v_after"])assert.match(migration,new RegExp(value))});
-test("payment UI previews oldest first",()=>{assert.match(page,/buildOldestFirstAllocations/);assert.match(page,/오래된 외상부터 배분/)});
+test("payment UI previews oldest first",()=>{
+  // Partial payment now lives in 장부작성 > 미납금 상세 and reuses buildOldestFirstAllocations() through a thin validator.
+  assert.match(partialPlan,/buildOldestFirstAllocations\(open, amount\)/);
+  assert.match(entries,/planPartialPayablePayment\(partialRows,/);assert.match(entries,/배분 예정 \(오래된 외상부터\)/);assert.match(entries,/Phân bổ dự kiến \(cũ nhất trước\)/);
+});
 test("inventory candidate regression remains",()=>assert.match(inventoryMigration,/ledger_resolve_inventory_candidate_v1/));
 test("POS parity regression remains",()=>assert.match(pos,/export function buildPaymentSummary/));
 
@@ -119,9 +123,11 @@ test("actual GET pages beyond 1000 payables and allocations without losing balan
   const rows=Array.from({length:1001},(_,i)=>source(i+1)),payments=rows.map(row=>allocation("2026-09-01",100,row.id));
   const result=await (await payableApi(rows,payments).get("?month=2026-09")).json();assert.equal(result.totalOutstanding,900900);assert.equal(result.parties[0].outstandingAmount,900900);assert.equal(result.summary.periodPayments,100100);
 });
-test("dashboard queries selected month while payment page keeps current endpoint",()=>{
-  assert.match(read("app/(protected)/admin/ledger/page.tsx"),/\/api\/admin\/ledger\/payables\?month=\$\{month\}/);
-  assert.match(page,/fetch\("\/api\/admin\/ledger\/payables",/);assert.doesNotMatch(page,/payables\?month=/);
+test("monthly report has no payables shortcut; old /payables URL redirects to entries and entries uses the monthly endpoint",()=>{
+  const report=read("app/(protected)/admin/ledger/page.tsx");
+  assert.doesNotMatch(report,/href="\/admin\/ledger\/payables"/);assert.doesNotMatch(report,/fetch\(`\/api\/admin\/ledger\/payables/);
+  assert.doesNotMatch(page,/fetch\(|"use client"|useState/);assert.match(page,/import \{ redirect \} from "next\/navigation";/);
+  assert.match(entries,/fetch\(`\/api\/admin\/ledger\/payables\?month=\$\{requestedMonth\}`/);
 });
 test("party period payments include fully settled payables and never use cumulative allocations",async()=>{
   const rows=[source(1,"2026-08-01",1000,"paid",10),source(2,"2026-08-05",500,"partially_paid",10),source(3,"2026-09-01",600,"unpaid",20)];

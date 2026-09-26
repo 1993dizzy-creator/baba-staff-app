@@ -10,6 +10,7 @@ import { computeDisplayedExpense, computeReceivedIncome } from "@/lib/ledger/sum
 import { computeActualCashOutflow } from "@/lib/ledger/cash-outflow";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
 import { buildFundAccountView, fundAccountViewMode } from "@/lib/ledger/fund-account-view";
+import { buildDashboardCashReport, type PayableAllocationCategory } from "@/lib/ledger/dashboard-cash-report";
 
 export const dynamic = "force-dynamic";
 
@@ -42,8 +43,8 @@ export async function GET(request: Request) {
     const partiesPromise = supabaseServer.from("ledger_parties").select("id,name,type,is_active").eq("is_active", true).order("name");
     const partnerPromise = supabaseServer.from("business_partners").select("id,name,payment_mode,default_fund_account_id,is_active").order("name");
     const bridgePromise = supabaseServer.from("business_partner_ledger_parties").select("business_partner_id,ledger_party_id");
-    const profitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales"]);
-    const recognitionProfitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).eq("type", "expense_recognition");
+    const profitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales"]);
+    const recognitionProfitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).eq("type", "expense_recognition");
     const movementsQuery = supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status,occurred_at,business_date)").eq("transaction.status", "confirmed");
     const movementsPromise = fundsViewMode === "closed_snapshot"
       ? Promise.resolve({ data: [], error: null })
@@ -103,7 +104,33 @@ export async function GET(request: Request) {
     const unsettledCardGross = unreconciledCardGross;
     const receivedIncome = computeReceivedIncome(recognizedIncome, cardGrossSales, actualCardDeposits);
     const businessFundAccountIds = new Set((accountsResult.data ?? []).filter(account => account.is_business_fund).map(account => Number(account.id)));
+    const balanceAccountIds = new Set((accountsResult.data ?? [])
+      .filter((account) => account.is_business_fund && account.type !== "card_clearing" && account.code !== "card_clearing")
+      .map((account) => Number(account.id)));
     const actualCashOutflow = computeActualCashOutflow(transactions, businessFundAccountIds, month);
+    const [payableAllocationCategories, prepaidCategoryIds] = await Promise.all([
+      loadPayableAllocationCategories(
+        transactions.filter((row) => row.type === "payable_payment").map((row) => Number(row.id)),
+      ),
+      loadPrepaidCategoryIds(transactions),
+    ]);
+    const cashTransactions = transactions.map((row) => {
+      if (row.type !== "prepaid_expense_payment") return row;
+      const planId = Number(row.source_snapshot?.planId);
+      const categoryId = prepaidCategoryIds.get(planId);
+      return categoryId == null ? row : {
+        ...row,
+        source_snapshot: { ...(row.source_snapshot ?? {}), categoryId },
+      };
+    });
+    const cashReport = buildDashboardCashReport(
+      cashTransactions,
+      categoriesResult.data ?? [],
+      payableAllocationCategories,
+      businessFundAccountIds,
+      month,
+      balanceAccountIds,
+    );
     const correctionsByRoot = new Map<number, { amount: number; economicEffectSign: number }[]>();
     for (const row of paidExpenseCorrectionsResult.data ?? []) {
       const key = Number(row.correction_of_id);
@@ -166,11 +193,72 @@ export async function GET(request: Request) {
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
     ]);
     const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources, month);
-    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, accounts, categories: categoriesResult.data ?? [], parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
+    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, cashReport, accounts, categories: categoriesResult.data ?? [], profitTransactions: profitRows, parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);
   }
+}
+
+async function loadPrepaidCategoryIds(transactions: readonly TransactionRow[]) {
+  const planIds = [...new Set(transactions
+    .filter((row) => row.type === "prepaid_expense_payment")
+    .map((row) => Number(row.source_snapshot?.planId))
+    .filter((id) => Number.isFinite(id) && id > 0))];
+  const result = new Map<number, number>();
+  const chunkSize = 200;
+  for (let offset = 0; offset < planIds.length; offset += chunkSize) {
+    const { data, error } = await supabaseServer.from("ledger_recurring_expense_plans")
+      .select("id,category_id")
+      .in("id", planIds.slice(offset, offset + chunkSize));
+    if (error) throw error;
+    for (const row of data ?? []) if (row.category_id != null) result.set(Number(row.id), Number(row.category_id));
+  }
+  return result;
+}
+
+async function loadPayableAllocationCategories(paymentTransactionIds: number[]): Promise<PayableAllocationCategory[]> {
+  if (paymentTransactionIds.length === 0) return [];
+  const allocations: Array<{ payment_transaction_id: number; payable_id: number; allocated_amount: number | string }> = [];
+  const chunkSize = 200;
+  for (let offset = 0; offset < paymentTransactionIds.length; offset += chunkSize) {
+    const paymentIds = paymentTransactionIds.slice(offset, offset + chunkSize);
+    const pageSize = 1000;
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await supabaseServer.from("ledger_payable_allocations")
+        .select("payment_transaction_id,payable_id,allocated_amount")
+        .in("payment_transaction_id", paymentIds)
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      allocations.push(...(data ?? []));
+      if ((data?.length ?? 0) < pageSize) break;
+    }
+  }
+  const payableIds = [...new Set(allocations.map((row) => Number(row.payable_id)))];
+  const payables: Array<{ id: number; expense_transaction_id: number }> = [];
+  for (let offset = 0; offset < payableIds.length; offset += chunkSize) {
+    const { data, error } = await supabaseServer.from("ledger_payables")
+      .select("id,expense_transaction_id")
+      .in("id", payableIds.slice(offset, offset + chunkSize));
+    if (error) throw error;
+    payables.push(...(data ?? []));
+  }
+  const expenseIds = [...new Set(payables.map((row) => Number(row.expense_transaction_id)))];
+  const expenseCategories = new Map<number, number | null>();
+  for (let offset = 0; offset < expenseIds.length; offset += chunkSize) {
+    const { data, error } = await supabaseServer.from("ledger_transactions")
+      .select("id,category_id")
+      .in("id", expenseIds.slice(offset, offset + chunkSize));
+    if (error) throw error;
+    for (const row of data ?? []) expenseCategories.set(Number(row.id), row.category_id == null ? null : Number(row.category_id));
+  }
+  const expenseIdByPayable = new Map(payables.map((row) => [Number(row.id), Number(row.expense_transaction_id)]));
+  return allocations.map((row) => ({
+    paymentTransactionId: Number(row.payment_transaction_id),
+    allocatedAmount: Number(row.allocated_amount),
+    expenseCategoryId: expenseCategories.get(expenseIdByPayable.get(Number(row.payable_id)) ?? -1) ?? null,
+  }));
 }
 
 async function loadPriorConfirmedFundMovements(monthStart: string) {
