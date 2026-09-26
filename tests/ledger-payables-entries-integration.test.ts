@@ -271,4 +271,19 @@ test("기타 sheet groups the unresolved items by real party without changing to
   assert.equal(other.count, verification.pendingCount);
   assert.equal(other.amount, verification.totalPending);
   for (const group of groups) assert.ok(group.items.every((item) => item.partyId === group.partyId));
+  // party → date → items: per-date totals roll up exactly to the party (and 기타) totals.
+  for (const group of groups) {
+    assert.deepEqual(group.dates.map((day) => day.businessDate), [...new Set(group.items.map((item) => item.businessDate))].sort());
+    assert.equal(group.dates.reduce((sum, day) => sum + day.count, 0), group.count);
+    assert.equal(sumPayableAmounts(group.dates.map((day) => day.amount)), group.amount);
+    for (const day of group.dates) assert.ok(day.items.every((item) => item.businessDate === day.businessDate && item.partyId === group.partyId));
+  }
+  // 일괄 결제 plan per date: one party, exactly that date's payables in full, Σ = date total.
+  const { planVerificationDatePayment } = require("../lib/ledger/payable-display-groups.ts") as typeof import("../lib/ledger/payable-display-groups");
+  for (const group of groups) for (const day of group.dates) {
+    const plan = planVerificationDatePayment(day.items)!;
+    assert.equal(plan.partyId, group.partyId);
+    assert.equal(plan.amount, day.amount);
+    assert.deepEqual(plan.allocations, day.items.map((item) => ({ payableId: item.payableId, allocatedAmount: item.remainingAmount })));
+  }
 });
