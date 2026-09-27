@@ -15,12 +15,13 @@ function load(path, dependencies = {}) {
 const sale = (id, date, amount) => ({ id, business_date: date, amount, status: 'confirmed', source_type: 'pos_sales_daily_payment', source_key: `pos:${date}:card` });
 const rec = (id, date, amount, status='matched', gross=amount, difference=0) => ({ id, deposit_date: date, deposit_amount: amount, status, matched_gross_amount: gross, difference_amount: difference });
 const defaultFundAccounts=[{id:1,code:'card_clearing',type:'card_clearing',display_name:'Card',is_active:true},{id:2,code:'bank',type:'bank',display_name:'Bank',is_active:true},{id:5,code:'baba_corporate_bank',type:'bank',display_name:'BABA Corporate',is_active:true}];
-function setup({ sales=[], reconciliations=[], lines=[], movements=[], fundAccounts=defaultFundAccounts, denied=false, failTable=null, rpcStatuses={} }={}) {
+function setup({ sales=[], reconciliations=[], lines=[], movements=[], feeClosures=[], feeLines=[], fundAccounts=defaultFundAccounts, denied=false, failTable=null, rpcStatuses={} }={}) {
   const calls=[], rpcCalls=[];
   const tables = {
     ledger_transactions: sales,
     ledger_card_reconciliations: reconciliations,
     ledger_card_reconciliation_lines: lines.map(line => ({ ...line, reconciliation: reconciliations.find(row => row.id === line.reconciliation_id) ?? null })),
+    ledger_card_fee_allocation_lines: feeLines.map(line => ({ ...line, closure: feeClosures.find(row => row.id === line.closure_id) ?? null })),
     ledger_fund_accounts: fundAccounts,
     ledger_movements: movements,
   };
@@ -205,4 +206,19 @@ test('cancel enforces owner/master gate and maps RPC states without direct table
     assert.equal(response.status,httpStatus,rpcStatus);
     assert.equal(state.calls.length,0);
   }
+});
+
+test('GET subtracts active month-end fee allocations from outstanding and ignores cancelled fee closures',async()=>{
+  const reconciliations=[rec(1,'2026-08-25',700,'auto_allocated',700,0)];
+  const lines=[{id:1,reconciliation_id:1,pos_card_transaction_id:1,allocated_gross_amount:700}];
+  const feeLines=[{id:1,closure_id:9,pos_card_transaction_id:1,allocated_fee_amount:300},{id:2,closure_id:8,pos_card_transaction_id:1,allocated_fee_amount:300}];
+  const active=setup({sales:[sale(1,'2026-08-10',1000)],reconciliations,lines,feeLines,feeClosures:[{id:9,status:'confirmed',fee_month:'2026-08-01'},{id:8,status:'cancelled',fee_month:'2026-08-01'}]});
+  const body=await(await get(active)).json();
+  assert.equal(body.summary.totalUnreconciledGross,0);assert.equal(body.summary.monthlyUnreconciledGross,0);assert.equal(body.summary.monthlySettledGross,1000);
+  assert.deepEqual(body.sales.map(row=>row.id),[],'fee-consumed sales are no longer FIFO candidates');
+  // Fee gross is not a matched difference: the historical attribution stays zero.
+  assert.equal(body.summary.monthlySettlementDifference,0);assert.equal(body.summary.monthlyCompletedDifference,0);
+  const cancelled=setup({sales:[sale(1,'2026-08-10',1000)],reconciliations,lines,feeLines:[feeLines[1]],feeClosures:[{id:8,status:'cancelled',fee_month:'2026-08-01'}]});
+  const reopened=await(await get(cancelled)).json();
+  assert.equal(reopened.summary.totalUnreconciledGross,300);assert.equal(reopened.sales[0].outstandingGrossAmount,300);
 });

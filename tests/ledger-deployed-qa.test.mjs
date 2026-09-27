@@ -26,8 +26,8 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
   // Older fixtures reserve slot 0 for the URL month. Card slots 6/7/12 belonged to the
   // removed account, reference and expected-fee inputs and 9-11 to the removed manual
   // matching sheet; map each card useState call to its legacy slot so the remaining
-  // fixture slots stay stable. 18 holds the inspected deposit's allocation lines.
-  const cardSlots=[1,2,3,4,5,8,13,14,15,16,17,18];
+  // fixture slots stay stable. 18 holds the inspected deposit's allocation lines; 19-23 the card fee state, confirm sheet, memo, cancel sheet and cancel reason.
+  const cardSlots=[1,2,3,4,5,8,13,14,15,16,17,18,19,20,21,22,23];
   const react={...React,useState(initial){const stateIndex=index++;const slot=path===cardPath?cardSlots[stateIndex]:stateIndex+(urlMonthPage?1:0)-(path===entriesPath&&stateIndex>=32?1:0);const value=Object.hasOwn(states,slot)?states[slot]:typeof initial==='function'?initial():initial;return [path===cardPath&&slot===1&&value?{...value,month:value.month??states[0]}:value,next=>updates.push({slot,value:next})];},useEffect(callback){effects.push(callback);}};
   const box=({children})=>h('div',null,children);
   const keeping={BarSheet:({children,footer,title})=>h('section',{role:'dialog','aria-label':title},h('h2',null,title),children,footer),BarField:({children,label})=>h('label',null,label,typeof children==='function'?children({id:'field'}):children),keepingInputStyle:{},primaryButtonStyle:{},secondaryButtonStyle:{}};
@@ -279,7 +279,7 @@ test('card page reads the URL month, navigates by month controls and falls back 
   assert.match(state.html,/aria-label="월 선택"/);
   assert.doesNotMatch(state.html,/선택 월<\/span>/);
   const cleanup=state.effects[0]();await new Promise(resolve=>setImmediate(resolve));cleanup();
-  assert.deepEqual(state.requests,['/api/admin/ledger/card-settlements?month=2026-08']);
+  assert.deepEqual(state.requests,['/api/admin/ledger/card-settlements?month=2026-08','/api/admin/ledger/card-fees?month=2026-08']);
   state.elements.find(item=>item.type==='button'&&item.props['aria-label']==='다음 달').props.onClick();
   assert.equal(state.navigations.at(-1).href,'/admin/ledger/card-settlements?month=2026-09');
   state.elements.find(item=>item.type==='button'&&item.props['aria-label']==='이전 달').props.onClick();
@@ -393,7 +393,7 @@ test('completed deposit rows label their date as the deposit date in both langua
   const rec={id:10,deposit_date:'2026-09-14',deposit_amount:17_767_388,matched_gross_amount:18_000_000,difference_amount:232_612,status:'matched',memo:null,destination:null};
   const data={accounts:[],sales:[],monthlySales:[],priorUnreconciledSales:[],reconciliations:[rec],summary:{...cardSummary}};
   const ko=pageFixture(cardPath,{0:'2026-09',1:data}).html;
-  assert.match(ko,/<time dateTime="2026-09-14">09\/14 입금<\/time><strong>17\.767\.388 ₫<\/strong><\/button><button type="button" class="detailChevron"/);
+  assert.match(ko,/<span class="depositWhen"><time dateTime="2026-09-14">09\/14 입금<\/time><\/span><strong class="depositAmount">17\.767\.388 ₫<\/strong><\/button><button type="button" class="detailChevron"/);
   assert.doesNotMatch(ko,/<details|정산 완료|statusBadge/);
   const vi=pageFixture(cardPath,{0:'2026-09',1:data},undefined,'vi').html;
   assert.match(vi,/<time dateTime="2026-09-14">Tiền về 09\/14<\/time>/);
@@ -941,10 +941,10 @@ test('matched and auto_allocated deposits render as one date-ordered list withou
   const rows=[rec(40,'2026-09-25',10_032_166,'auto_allocated'),rec(3,'2026-09-03',42_879_074,'matched'),rec(31,'2026-09-24',11_296_172,'auto_allocated'),rec(4,'2026-09-04',2_097_326,'matched'),rec(30,'2026-09-24',1_000,'auto_allocated'),
     rec(20,'2026-09-16',3_000_000,'unmatched'),{...rec(21,'2026-09-17',500,'partial'),matched_gross_amount:100},{...rec(5,'2026-09-05',700,'cancelled'),cancelled_at:'2026-09-06T00:00:00Z',cancel_reason:'dup'}];
   const html=pageFixture(cardPath,{0:'2026-09',1:cardData([],rows)}).html;
-  const order=[...html.matchAll(/<time dateTime="(2026-09-\d\d)">\d\d\/\d\d 입금<\/time><strong>([\d.]+) ₫/g)].map(match=>`${match[1]} ${match[2]}`);
+  const order=[...html.matchAll(/<time dateTime="(2026-09-\d\d)">\d\d\/\d\d 입금<\/time>(?:<span class="statusBadge[^"]*">[^<]*<\/span>)?<\/span><strong class="depositAmount">([\d.]+) ₫/g)].map(match=>`${match[1]} ${match[2]}`);
   assert.deepEqual(order,['2026-09-03 42.879.074','2026-09-04 2.097.326','2026-09-16 3.000.000','2026-09-17 500','2026-09-24 1.000','2026-09-24 11.296.172','2026-09-25 10.032.166','2026-09-05 700']);
-  assert.match(html,/<time dateTime="2026-09-24">09\/24 입금<\/time><strong>11\.296\.172 ₫<\/strong><\/button><button type="button" class="detailChevron"/);
-  assert.match(html,/<time dateTime="2026-09-03">09\/03 입금<\/time><strong>42\.879\.074 ₫<\/strong><\/button><button type="button" class="detailChevron"/);
+  assert.match(html,/<time dateTime="2026-09-24">09\/24 입금<\/time><\/span><strong class="depositAmount">11\.296\.172 ₫<\/strong><\/button><button type="button" class="detailChevron"/);
+  assert.match(html,/<time dateTime="2026-09-03">09\/03 입금<\/time><\/span><strong class="depositAmount">42\.879\.074 ₫<\/strong><\/button><button type="button" class="detailChevron"/);
   assert.equal((html.match(/class="statusBadge/g)||[]).length,3,'only unmatched, partial and cancelled carry a badge');
   assert.match(html,/statusBadge warningBadge">미연결<\/span>/);assert.match(html,/statusBadge warningBadge">부분 연결<\/span>/);assert.match(html,/statusBadge cancelledBadge">취소<\/span>/);
   assert.doesNotMatch(html,/<details|자동 정산<\/span>|정산 완료|매출 연결|정산 확정|부분 저장/);
@@ -992,4 +992,120 @@ test('legacy unmatched deposits stay reachable read-only with cancellation, and 
   assert.ok(list.updates.some(update=>update.slot===15&&update.value?.id===20));
   assert.deepEqual(list.updates.findLast(update=>update.slot===18).value,[]);
   assert.ok(!list.calls.some(call=>call.options?.method==='POST'),'opening never auto-settles a legacy deposit');
+});
+
+test('deposit rows are date-left, amount-right, chevron-last inside a scroll container below the fixed title and totals',async()=>{
+  const rec=(id,date,amount,status='auto_allocated')=>({id,deposit_date:date,deposit_amount:amount,matched_gross_amount:amount,difference_amount:0,status,memo:null,destination:{display_name:'BABA 법인'}});
+  const rows=Array.from({length:12},(_,i)=>rec(i+1,`2026-09-${String(i+3).padStart(2,'0')}`,1_000_000*(i+1)));
+  rows.push(rec(99,'2026-09-28',123_456_789_012,'unmatched'));
+  const data=cardData([],rows);
+  const state=pageFixture(cardPath,{0:'2026-09',1:data},async()=>Response.json({reconciliation:{...rows[0],lines:[]}}));
+  const html=state.html;
+  // Title and totals sit before the scroll container; every row is inside it.
+  const section=html.slice(html.indexOf('🏦 카드 입금 내역'));
+  const scrollAt=section.indexOf('<div class="depositScroll"><div class="list">');
+  assert.ok(scrollAt>0);
+  assert.ok(section.indexOf('<dl class="depositTotals">')<scrollAt,'totals stay outside the scroll area');
+  assert.equal((section.slice(0,scrollAt).match(/class="depositRow/g)||[]).length,0);
+  assert.equal((section.slice(scrollAt).match(/class="depositRow compactDeposit"/g)||[]).length,13);
+  // Three regions: [date (+exception badge)] [amount] [chevron]; long amounts keep the same structure.
+  assert.match(section,/<article class="depositRow compactDeposit"><button type="button" class="depositDetail"><span class="depositWhen"><time dateTime="2026-09-03">09\/03 입금<\/time><\/span><strong class="depositAmount">1\.000\.000 ₫<\/strong><\/button><button type="button" class="detailChevron" aria-label="2026-09-03 카드 입금">›<\/button><\/article>/);
+  assert.match(section,/<span class="depositWhen"><time dateTime="2026-09-28">09\/28 입금<\/time><span class="statusBadge warningBadge">미연결<\/span><\/span><strong class="depositAmount">123\.456\.789\.012 ₫<\/strong><\/button><button type="button" class="detailChevron"/);
+  const css=readFileSync('app/(protected)/admin/ledger/card-settlements/card-settlements.module.css','utf8');
+  assert.match(css,/\.compactDeposit\{display:grid;grid-template-columns:minmax\(0,1fr\) auto;/);
+  assert.match(css,/\.compactDeposit \.depositDetail\{display:grid;grid-template-columns:minmax\(0,1fr\) auto;[^}]*white-space:nowrap/);
+  assert.match(css,/\.compactDeposit \.depositDetail \.depositAmount\{[^}]*justify-self:end;text-align:right;[^}]*white-space:nowrap;font-weight:700/);
+  assert.match(css,/\.depositWhen\{[^}]*min-width:0;overflow:hidden\}/);
+  assert.match(css,/\.depositScroll\{max-height:min\(24rem,60dvh\);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin;[^}]*padding:1px 2px 6px 0/);
+  assert.doesNotMatch(css,/\.depositScroll[^{]*\{[^}]*position:sticky/);
+  // Row clicks inside the scroll area still open the detail sheet.
+  state.elements.find(element=>element.type==='button'&&element.props.className==='depositDetail').props.onClick({currentTarget:{}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(state.updates.some(update=>update.slot===15&&update.value?.id===1));
+  assert.deepEqual(state.requests,['/api/admin/ledger/card-settlements/1']);
+  const empty=pageFixture(cardPath,{0:'2026-09',1:cardData([],[])}).html;
+  assert.doesNotMatch(empty,/depositScroll/);assert.match(empty,/등록된 카드 입금이 없습니다/);
+});
+
+// ---------------------------------------------------------------------------
+// Month-end card fee
+// ---------------------------------------------------------------------------
+const feeState=(overrides={})=>({month:'2026-08',hasCardSales:true,historicalConfirmedFee:200,currentOutstanding:3_250_000,projectedTotalFee:3_250_200,monthEndFee:0,finalConfirmedFee:null,monthClosed:false,earlierUnconfirmedMonth:null,blockerReason:null,canConfirm:true,canCancel:false,closure:null,...overrides});
+const feeSection=html=>html.slice(html.indexOf('<h2>💳 카드 수수료</h2>'),html.indexOf('<h2>💳 카드 수수료</h2>')+1500);
+
+test('current-month card fee shows only the next-month guidance',()=>{
+  const html=pageFixture(cardPath,{0:'2026-09',1:cardData([]),19:feeState({month:'2026-09',blockerReason:'current_month',canConfirm:false})}).html;
+  const section=feeSection(html);
+  assert.match(section,/카드 수수료는 익월에 해당 월 카드입금이 모두 들어온 것을 확인한 뒤 확정합니다\./);
+  assert.doesNotMatch(section,/카드 수수료 확정<\/button>|현재 남은 카드매출/);
+  assert.ok(html.indexOf('카드 현황 (9월)')<html.indexOf('💳 카드 수수료'),'fee section sits under the sale-month card status');
+});
+
+test('past open month previews the fee from the remaining card sales and confirms without any amount input',async()=>{
+  const fee=feeState();
+  const html=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:fee}).html;
+  const section=feeSection(html);
+  assert.match(section,/<dt>기존 확정 수수료<\/dt><dd>200 ₫<\/dd>/);
+  assert.match(section,/<dt>현재 남은 카드매출<\/dt><dd>3\.250\.000 ₫<\/dd>/);
+  assert.match(section,/<dt>확정 후 총 수수료<\/dt><dd>3\.250\.200 ₫<\/dd>/);
+  assert.match(section,/해당 월 카드입금이 모두 등록되었는지 확인한 뒤 확정하세요\./);
+  assert.match(section,/<button type="button" class="primary" style="width:100%">카드 수수료 확정<\/button>/);
+  const state=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:fee,20:true,21:'bank checked'},async(url,options)=>Response.json(options?.method==='POST'?{ok:true,result:{status:'confirmed',feeAmount:3_300_000}}:fee));
+  const sheet=state.html.slice(state.html.indexOf('role="dialog" aria-label="2026-08 카드 수수료 확정"'));
+  assert.ok(sheet.length>0);
+  for(const [label,value] of [['대상 매출월','2026-08'],['기존 확정 수수료','200 ₫'],['현재 남은 카드매출','3\\.250\\.000 ₫'],['이번 수수료 확정','3\\.250\\.000 ₫'],['최종 카드수수료','3\\.250\\.200 ₫']]) assert.match(sheet,new RegExp(`<span>${label}</span><strong>${value}</strong>`),label);
+  assert.match(sheet,/확정하면 남은 카드매출은 카드수수료로 비용 처리되며 이후 카드입금 자동배분 대상에서 제외됩니다\./);
+  const inputs=state.elements.filter(element=>element.type==='input'&&element.props.value==='bank checked');
+  assert.equal(inputs.length,1,'memo is the only input');assert.notEqual(inputs[0].props.type,'number');
+  state.elements.find(element=>element.type==='button'&&element.props.children==='수수료 확정').props.onClick();
+  await new Promise(resolve=>setImmediate(resolve));
+  const post=state.calls.find(call=>call.options?.method==='POST');
+  assert.equal(post.url,'/api/admin/ledger/card-fees');
+  assert.deepEqual(JSON.parse(post.options.body),{month:'2026-08',memo:'bank checked'},'no fee amount is ever sent');
+  // The RPC amount is the truth when it differs from the preview.
+  assert.ok(state.updates.some(update=>update.slot===2&&update.value==='카드 수수료를 확정했습니다: 3.300.000 ₫ · 미리보기 3.250.000 ₫와 달라 최신 잔액으로 확정했습니다'));
+  assert.ok(state.updates.some(update=>update.slot===20&&update.value===false));
+  assert.ok(state.requests.filter(url=>url.startsWith('/api/admin/ledger/card-fees?month=2026-08')).length>=1,'fee state reloads after confirmation');
+});
+
+test('confirmation blockers are explained and disable the button',()=>{
+  for(const [overrides,text] of [
+    [{blockerReason:'legacy_unallocated_deposits',canConfirm:false},'카드매출에 반영되지 않은 입금이 있습니다'],
+    [{blockerReason:'earlier_month_unconfirmed',earlierUnconfirmedMonth:'2026-07',canConfirm:false},'2026-07 카드 수수료를 먼저 확정하세요'],
+    [{blockerReason:'month_closed',canConfirm:false,monthClosed:true},'월마감이 완료된 달은 수수료를 확정할 수 없습니다'],
+  ]){
+    const state=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:feeState(overrides)});
+    assert.ok(feeSection(state.html).includes(text),text);
+    assert.equal(state.elements.find(element=>element.type==='button'&&element.props.children==='카드 수수료 확정').props.disabled,true);
+  }
+  const none=feeSection(pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:feeState({hasCardSales:false,blockerReason:'no_card_sales',canConfirm:false})}).html);
+  assert.match(none,/선택월 카드매출이 없어 수수료 확정이 필요 없습니다\./);assert.doesNotMatch(none,/카드 수수료 확정<\/button>/);
+});
+
+test('a confirmed month shows the fee breakdown and cancels through the guarded endpoint while open',async()=>{
+  const confirmed=feeState({canConfirm:false,canCancel:true,monthEndFee:3_250_000,finalConfirmedFee:3_250_200,closure:{id:41,fee_amount:3_250_000,confirmed_at:'2026-09-05T03:00:00Z'}});
+  const section=feeSection(pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:confirmed}).html);
+  assert.match(section,/<div class="feeTotal"><dt>확정 카드수수료<\/dt><dd>3\.250\.200 ₫<\/dd><\/div><div><dt>└ 기존 확정<\/dt><dd>200 ₫<\/dd><\/div><div><dt>└ 월말 확정<\/dt><dd>3\.250\.000 ₫<\/dd><\/div>/);
+  assert.match(section,/✅ 확정 완료 · <time dateTime="2026-09-05T03:00:00Z">/);
+  assert.match(section,/>수수료 확정 취소<\/button>/);assert.doesNotMatch(section,/카드 수수료 확정<\/button>|현재 남은 카드매출/);
+  const state=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:confirmed,22:true,23:'  late deposit  '},async()=>Response.json({ok:true,result:{status:'cancelled'}}));
+  assert.match(state.html,/월말 수수료 비용을 역분개하고 소진한 카드매출을 다시 미정산으로 돌립니다/);
+  state.elements.find(element=>element.type==='button'&&element.props.children==='취소 확정').props.onClick();
+  await new Promise(resolve=>setImmediate(resolve));
+  const post=state.calls.find(call=>call.options?.method==='POST');
+  assert.equal(post.url,'/api/admin/ledger/card-fees/41/cancel');assert.deepEqual(JSON.parse(post.options.body),{reason:'late deposit'});
+  const closed=feeSection(pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:{...confirmed,canCancel:false,monthClosed:true}}).html);
+  assert.match(closed,/월마감 완료 · 읽기 전용/);assert.doesNotMatch(closed,/수수료 확정 취소/);
+});
+
+test('card fee section is translated and deposit rows still carry no fee',()=>{
+  const auto={id:30,deposit_date:'2026-08-27',deposit_amount:5_000_000,matched_gross_amount:5_000_000,difference_amount:0,status:'auto_allocated',memo:null,destination:null};
+  const vi=pageFixture(cardPath,{0:'2026-08',1:cardData([],[auto]),19:feeState()},undefined,'vi').html;
+  for(const label of ['Phí thẻ','Phí đã xác nhận trước','Doanh thu thẻ còn lại','Tổng phí sau xác nhận','Xác nhận phí thẻ']) assert.ok(vi.includes(label),label);
+  assert.doesNotMatch(vi,/카드 수수료|기존 확정/);
+  const ko=pageFixture(cardPath,{0:'2026-08',1:cardData([],[auto]),19:feeState(),15:auto}).html;
+  const detail=ko.slice(ko.indexOf('role="dialog" aria-label="2026-08-27 카드 입금"'));
+  assert.doesNotMatch(detail,/수수료/);
+  const list=ko.slice(ko.indexOf('🏦 카드 입금 내역'),ko.indexOf('role="dialog"'));
+  assert.doesNotMatch(list,/수수료/);
 });

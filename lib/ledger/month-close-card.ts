@@ -24,7 +24,8 @@ export type MonthCloseCardSale = {
 
 // auto_allocated deposits settle sale principal FIFO without confirming a fee, so they
 // reduce unsettled gross like matched ones but stay out of completed gross/difference.
-const settles = (status: string | undefined) => status === "matched" || status === "auto_allocated";
+// Month-end card fee lines ("card_fee", dated on the fee month's last day) settle the rest.
+const settles = (status: string | undefined) => status === "matched" || status === "auto_allocated" || status === "card_fee";
 
 function lineReconciliation(line: MonthCloseCardLine) {
   return Array.isArray(line.reconciliation) ? line.reconciliation[0] : line.reconciliation;

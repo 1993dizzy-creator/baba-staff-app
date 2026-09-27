@@ -1,5 +1,5 @@
 import { supabaseServer } from "@/lib/supabase/server";
-import type { CardAllocationLine } from "@/lib/ledger/card-settlements";
+import { cardFeeRowsAsAllocationLines, type CardAllocationLine, type CardFeeAllocationRow } from "@/lib/ledger/card-settlements";
 
 export async function loadCardRows<T>(query: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>) {
   const rows: T[] = [];
@@ -32,6 +32,15 @@ export async function loadCardAllocationLines(saleIds?: readonly number[]): Prom
       return query.order("id").range(from, to);
     });
     rows.push(...lines as unknown as CardAllocationLine[]);
+    // Active month-end fee allocations consume sale gross exactly like deposit lines.
+    const feeLines = await loadCardRows((from, to) => {
+      let query = supabaseServer.from("ledger_card_fee_allocation_lines")
+        .select("id,closure_id,pos_card_transaction_id,allocated_fee_amount,closure:ledger_card_fee_closures!inner(status,fee_month)")
+        .neq("closure.status", "cancelled");
+      if (ids) query = query.in("pos_card_transaction_id", ids);
+      return query.order("id").range(from, to);
+    });
+    rows.push(...cardFeeRowsAsAllocationLines(feeLines as unknown as CardFeeAllocationRow[]));
   }
   return rows;
 }

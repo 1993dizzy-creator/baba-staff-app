@@ -13,7 +13,27 @@ export type CardReconciliation = {
 // allocated to card sale principal FIFO. It settles gross but never confirms a fee,
 // so it is excluded from confirmed-difference (fee) metrics that use "matched".
 export const CARD_AUTO_ALLOCATED_STATUS = "auto_allocated";
-export const isSettledCardReconciliationStatus = (status: string | null | undefined) => status === "matched" || status === CARD_AUTO_ALLOCATED_STATUS;
+// Month-end card fee allocations (ledger_card_fee_allocation_lines of a confirmed closure)
+// are fed to the gross calculations as lines with this pseudo status, dated on the fee
+// month's last day like their expense, so every outstanding path subtracts them.
+export const CARD_FEE_ALLOCATION_STATUS = "card_fee";
+export const isSettledCardReconciliationStatus = (status: string | null | undefined) => status === "matched" || status === CARD_AUTO_ALLOCATED_STATUS || status === CARD_FEE_ALLOCATION_STATUS;
+export const cardFeeMonthLastDay = (feeMonth: string) => {
+  const next = new Date(`${feeMonth.slice(0, 7)}-01T00:00:00Z`);
+  next.setUTCMonth(next.getUTCMonth() + 1);
+  next.setUTCDate(0);
+  return next.toISOString().slice(0, 10);
+};
+export type CardFeeAllocationRow = { id: number; closure_id: number; pos_card_transaction_id: number; allocated_fee_amount: number | string; closure: { status: string; fee_month: string } | null };
+export function cardFeeRowsAsAllocationLines(rows: readonly CardFeeAllocationRow[]): CardAllocationLine[] {
+  return rows.filter(row => row.closure && row.closure.status !== "cancelled").map(row => ({
+    // Negative ids keep fee lines apart from reconciliation ids in per-reconciliation maps.
+    reconciliation_id: -Number(row.closure_id),
+    pos_card_transaction_id: Number(row.pos_card_transaction_id),
+    allocated_gross_amount: row.allocated_fee_amount,
+    reconciliation: { status: CARD_FEE_ALLOCATION_STATUS, deposit_date: cardFeeMonthLastDay(row.closure!.fee_month) },
+  }));
+}
 export const cardMoney = (value: number) => Math.round(value * 1000) / 1000;
 export const sumCardMoney = (values: readonly (number | string)[]) => values.reduce<number>((sum, value) => sum + Math.round(Number(value) * 1000), 0) / 1000;
 

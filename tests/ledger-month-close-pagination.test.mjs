@@ -58,8 +58,10 @@ function fixture(transactionCount, extraTables = {}) {
     },
     rpc() { return Promise.resolve({ data: null, error: null }); },
   };
+  const cardSettlements = require("../lib/ledger/card-settlements.ts");
   const { loadCardRows } = loadTs("lib/ledger/card-settlement-data.ts", {
     "@/lib/supabase/server": { supabaseServer },
+    "@/lib/ledger/card-settlements": cardSettlements,
   });
   const { buildMonthCloseSnapshot } = loadTs("lib/ledger/month-close.ts", {
     "server-only": {},
@@ -68,6 +70,7 @@ function fixture(transactionCount, extraTables = {}) {
     "@/lib/ledger/month-close-card": require("../lib/ledger/month-close-card.ts"),
     "@/lib/ledger/month-close-operating": require("../lib/ledger/month-close-operating.ts"),
     "@/lib/ledger/card-settlement-data": { loadCardRows },
+    "@/lib/ledger/card-settlements": cardSettlements,
     "@/lib/supabase/server": { supabaseServer },
   });
   return { buildMonthCloseSnapshot, pages, allPages };

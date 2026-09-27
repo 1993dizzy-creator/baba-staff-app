@@ -1,4 +1,4 @@
-.page{max-width:800px;margin:0 auto;padding:8px 12px calc(90px + env(safe-area-inset-bottom));color:#111827;min-width:0}
+.page{max-width:800px;margin:0 auto;padding:8px 12px calc(70px + env(safe-area-inset-bottom));color:#111827;min-width:0}
 .header{margin-bottom:8px;text-align:center}.header h1{margin:0;color:#111827;font-family:inherit;font-size:16px;font-weight:800;line-height:1.35;letter-spacing:normal}
 .card{margin:8px 0;padding:10px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;min-width:0}.card h2{margin:0 0 8px;font-size:13px;line-height:1.4}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;min-width:0}.miniCard{padding:8px;border:1px solid #eef0f3;border-radius:9px;background:#f9fafb;min-width:0}.miniCard span{display:block;color:#6b7280;font-size:11px;line-height:1.4}.miniCard strong{display:block;margin-top:3px;font-size:14px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
@@ -8,9 +8,15 @@
 .primary,.secondary,.danger{min-height:36px;padding:7px 10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer}.primary{border:1px solid #111827;background:#111827;color:#fff}.secondary{border:1px solid #d1d5db;background:#fff;color:#374151}.danger{border:1px solid #b91c1c;background:#b91c1c;color:#fff}.primary:disabled,.secondary:disabled,.danger:disabled{opacity:.45;cursor:default}.primary:focus-visible,.secondary:focus-visible,.danger:focus-visible,.input:focus-visible,.backLink:focus-visible,.depositDetail:focus-visible{outline:2px solid #64748b;outline-offset:2px}
 .actions{display:flex;gap:8px}.actions>button{flex:1;min-width:0}
 .hint,.empty{margin:7px 0;color:#6b7280;font-size:11px;line-height:1.4;overflow-wrap:anywhere}.notice,.validation{margin:5px 0;padding:7px 9px;border-radius:8px;background:#fff0d0;color:#79581c;font-size:11px;line-height:1.4;overflow-wrap:anywhere}
-.compactDeposit{display:flex;align-items:center;gap:5px;min-width:0}
-.compactDeposit .depositDetail{flex:1;min-width:0;width:auto;white-space:nowrap;gap:5px;font-size:11px}
-.compactDeposit .depositDetail strong{overflow-wrap:normal;white-space:nowrap}
+/* Row = [date (+exception badge) | amount] as one clickable button, then the chevron: effectively 1fr auto auto. */
+.compactDeposit{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px;min-width:0}
+.compactDeposit .depositDetail{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0;width:100%;white-space:nowrap;font-size:11px}
+.depositWhen{display:flex;align-items:center;gap:5px;min-width:0;overflow:hidden}
+.depositWhen time{flex-shrink:0}
+.compactDeposit .depositDetail .depositAmount{flex:none;justify-self:end;text-align:right;overflow-wrap:normal;white-space:nowrap;font-weight:700;font-variant-numeric:tabular-nums}
+/* Title and totals stay outside; only the deposit list scrolls (~7-8 rows on a phone). */
+.depositScroll{max-height:min(24rem,60dvh);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:#d1d5db transparent;padding:1px 2px 6px 0;border-radius:9px}
+.depositScroll::-webkit-scrollbar{width:4px}.depositScroll::-webkit-scrollbar-thumb{border-radius:4px;background:#d1d5db}.depositScroll::-webkit-scrollbar-track{background:transparent}
 .compactDeposit .statusBadge{font-size:9px;white-space:nowrap}
 .detailChevron{flex-shrink:0;border:0;background:transparent;color:#6b7280;padding:3px;min-height:34px;cursor:pointer;font-size:18px}
 .preview{padding:9px;border:1px solid #eef0f3;border-radius:9px;background:#f9fafb;font-size:12px}
@@ -21,3 +27,4 @@
 @media(max-width:400px){.compactDeposit{gap:3px;padding:4px}.compactDeposit .depositDetail{font-size:10px;gap:3px}.compactDeposit .statusBadge{font-size:8px;padding:3px}}
 .cancelPanel,.cancelRecord{margin-top:10px;padding:9px;border:1px solid #fecaca;border-radius:9px;background:#fff7f7}.cancelPanel p,.cancelRecord p{margin:0 0 8px;color:#7f1d1d;font-size:11px;line-height:1.5}.cancelPanel label{font-size:12px;font-weight:700}.cancelRecord strong{font-size:12px;color:#991b1b}.cancelRecord small{color:#6b7280;font-size:10px}
 @media(max-width:360px){.page{padding-left:8px;padding-right:8px}.miniCard strong{font-size:13px}}
+.feeRows{display:grid;gap:3px;margin:0 0 6px}.feeRows div{display:flex;justify-content:space-between;gap:10px;font-size:12px}.feeRows dt{color:#6b7280}.feeRows dd{margin:0;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}.feeTotal{padding-top:4px;border-top:1px solid #eef0f3}.feeRows .feeTotal dt{color:#111827;font-weight:700}

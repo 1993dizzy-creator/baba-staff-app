@@ -27,6 +27,7 @@ const issueNames: Record<string, [string, string]> = {
   PAYABLE_OVERALLOCATED: ["미납금 지급액 초과", "Phân bổ thanh toán vượt công nợ"],
   CARD_OVERALLOCATED: ["카드 정산액 초과", "Phân bổ đối soát thẻ vượt mức"],
   CARD_UNMATCHED: ["미확인 카드 정산", "Đối soát thẻ chưa khớp"],
+  CARD_FEE_NOT_CONFIRMED: ["카드 수수료 미확정 · 남은 카드매출", "Phí thẻ chưa xác nhận · Doanh thu thẻ còn lại"],
   DUPLICATE_ACTIVE_SOURCE: ["중복된 장부 원본", "Nguồn ghi sổ bị trùng"],
   CONFIRMED_SOURCE_DRIFT: ["확정 원본 변경 미처리", "Thay đổi nguồn đã xác nhận chưa xử lý"],
 };
