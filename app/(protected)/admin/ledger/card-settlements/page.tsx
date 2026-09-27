@@ -24,33 +24,34 @@ const cardText = {
     title:"카드 정산",previous:"이전",next:"다음",previousMonth:"이전 달",nextMonth:"다음 달",selectMonth:"월 선택",
     cardStatus:"카드 현황",cardSales:"카드매출",monthEndSettled:"월말 정산완료",monthEndUnsettled:"월말 미정산",currentUnsettled:"현재 전체 미정산",
     priorUnsettled:"이전월 미정산",posDetail:"POS 상세",
-    registerDeposit:"카드 입금 등록",depositHistory:"카드 입금 내역",deposit:"입금",difference:"차액",averageFee:"평균 수수료",noDeposits:"등록된 카드 입금이 없습니다.",
-    unmatched:"기존 미연결",partial:"기존 부분연결",matched:"정산 완료",auto_allocated:"자동 정산",cancelled:"취소",depositTitle:"카드 입금",close:"닫기",depositDate:"입금일",depositAmount:"실제 입금액",memo:"메모",submitDeposit:"입금 등록",
-    actualDeposit:"실제 입금",settlementAmount:"정산금액",estimatedFee:"정산 차액 & 추정 수수료",feeNotConfirmed:"수수료",feeNotConfirmedValue:"미확정",status:"상태",cancelSettlement:"정산 취소",confirmCancel:"취소 확정",back:"돌아가기",cancelRecord:"취소 기록",noReason:"사유 기록 없음",cancelReason:"취소 사유",
+    registerDeposit:"카드 입금 등록",depositHistory:"카드 입금 내역",deposit:"입금",unsettledCardSales:"미정산 카드매출",noDeposits:"등록된 카드 입금이 없습니다.",
+    unmatched:"미연결",partial:"부분 연결",cancelled:"취소",depositTitle:"카드 입금",close:"닫기",depositDate:"입금일",depositAmount:"실제 입금액",memo:"메모",submitDeposit:"입금 등록",
+    actualDeposit:"실제 입금",appliedToSales:"카드매출 반영",cancelDeposit:"입금 취소",confirmCancel:"취소 확정",back:"돌아가기",cancelRecord:"취소 기록",noReason:"사유 기록 없음",cancelReason:"취소 사유",
     depositOn:"입금",saleDate:"매출일",autoPreview:"자동 정산 미리보기",autoPreviewHint:"실제 입금액을 입력하면 오래된 미정산 카드매출부터 자동 정산합니다.",availableOutstanding:"정산 가능 미정산",thisSettlement:"이번 정산",totalSettlement:"총 정산",
     insufficientOutstanding:"미정산 카드매출 잔액이 실제 입금액보다 부족합니다.",invalidAmount:"실제 입금액을 확인해주세요.",noEligibleSales:"입금일 이전의 미정산 카드매출이 없습니다.",
-    allocatedSales:"정산된 카드매출",legacyHint:"기존 방식으로 등록된 입금입니다. 매출이 자동 정산되지 않았으며 그대로 보존됩니다. 필요하면 정산 취소 후 새 입금으로 다시 등록하세요.",autoFeeHint:"실제 입금액만큼 카드매출 원금을 차감했습니다. 남은 매출 잔액은 수수료로 처리하지 않습니다.",
+    appliedSales:"반영된 카드매출",legacyHint:"카드매출에 자동 반영되지 않은 입금입니다. 필요하면 입금 취소 후 다시 등록하세요.",autoAppliedHint:"실제 입금액만큼 오래된 카드매출부터 자동 반영되었습니다.",
     posCardDetail:"POS 카드매출 상세",source:"원본",ledger:"장부",loading:"불러오는 중…",loadingPage:"카드 정산을 불러오는 중…",
-    created:"카드 입금을 등록했습니다.",createdWithAllocations:"카드 입금을 등록하고 카드매출 {count}건을 자동 정산했습니다.",createFailed:"등록 실패",readFailed:"조회 실패",posFailed:"POS 조회 실패",cancelledMessage:"카드 입금 정산을 취소하고 역분개했습니다.",cancelFailed:"취소 실패",
-    matchedCancelHint:"카드 입금 이동과 정산 차액을 역분개하고 연결된 카드매출을 다시 미정산 상태로 돌립니다.",autoCancelHint:"카드 입금 이동을 역분개하고 자동 정산된 카드매출을 다시 미정산 상태로 돌립니다. 정산 내역은 취소 이력으로 보존됩니다.",partialCancelHint:"카드 입금 이동을 역분개합니다. 저장된 매출 연결은 삭제하지 않고 취소 이력으로 보존되며, 카드매출은 다시 연결할 수 있습니다.",
+    created:"카드 입금을 등록했습니다.",createdWithAllocations:"카드 입금을 등록하고 카드매출 {count}건을 자동 정산했습니다.",createFailed:"등록 실패",readFailed:"조회 실패",posFailed:"POS 조회 실패",cancelledMessage:"카드 입금을 취소하고 역분개했습니다.",cancelFailed:"취소 실패",
+    cancelHint:"카드 입금 기록을 취소합니다. 입금 이동을 역분개하고 반영된 카드매출을 다시 미정산으로 돌립니다. 기록은 취소 이력으로 보존됩니다.",historicalDifferenceCancelHint:"이 입금에 기록된 과거 정산 차액도 함께 역분개됩니다.",
   },
   vi: {
     title:"Quyết toán thẻ",previous:"Trước",next:"Sau",previousMonth:"Tháng trước",nextMonth:"Tháng sau",selectMonth:"Chọn tháng",
     cardStatus:"Tình hình thẻ",cardSales:"Doanh thu thẻ",monthEndSettled:"Đã quyết toán cuối tháng",monthEndUnsettled:"Chưa quyết toán cuối tháng",currentUnsettled:"Tổng chưa quyết toán hiện tại",
     priorUnsettled:"Chưa quyết toán từ tháng trước",posDetail:"Chi tiết POS",
-    registerDeposit:"Ghi nhận tiền thẻ",depositHistory:"Lịch sử tiền thẻ về",deposit:"Tiền về",difference:"Chênh lệch",averageFee:"Phí trung bình",noDeposits:"Chưa có khoản tiền thẻ nào.",
-    unmatched:"Chưa kết nối (cũ)",partial:"Kết nối một phần (cũ)",matched:"Đã quyết toán",auto_allocated:"Tự động quyết toán",cancelled:"Đã hủy",depositTitle:"Tiền thẻ về",close:"Đóng",depositDate:"Ngày tiền về",depositAmount:"Số tiền thực nhận",memo:"Ghi chú",submitDeposit:"Ghi nhận",
-    actualDeposit:"Tiền thực nhận",settlementAmount:"Số tiền quyết toán",estimatedFee:"Chênh lệch & phí ước tính",feeNotConfirmed:"Phí",feeNotConfirmedValue:"Chưa xác định",status:"Trạng thái",cancelSettlement:"Hủy quyết toán",confirmCancel:"Xác nhận hủy",back:"Quay lại",cancelRecord:"Lịch sử hủy",noReason:"Không có lý do",cancelReason:"Lý do hủy",
+    registerDeposit:"Ghi nhận tiền thẻ",depositHistory:"Lịch sử tiền thẻ về",deposit:"Tiền về",unsettledCardSales:"Doanh thu thẻ chưa quyết toán",noDeposits:"Chưa có khoản tiền thẻ nào.",
+    unmatched:"Chưa kết nối",partial:"Kết nối một phần",cancelled:"Đã hủy",depositTitle:"Tiền thẻ về",close:"Đóng",depositDate:"Ngày tiền về",depositAmount:"Số tiền thực nhận",memo:"Ghi chú",submitDeposit:"Ghi nhận",
+    actualDeposit:"Tiền thực nhận",appliedToSales:"Trừ vào doanh thu thẻ",cancelDeposit:"Hủy tiền về",confirmCancel:"Xác nhận hủy",back:"Quay lại",cancelRecord:"Lịch sử hủy",noReason:"Không có lý do",cancelReason:"Lý do hủy",
     depositOn:"Tiền về",saleDate:"Ngày bán",autoPreview:"Xem trước quyết toán tự động",autoPreviewHint:"Nhập số tiền thực nhận để tự động quyết toán doanh thu thẻ cũ nhất trước.",availableOutstanding:"Có thể quyết toán",thisSettlement:"Lần này",totalSettlement:"Tổng quyết toán",
     insufficientOutstanding:"Số dư doanh thu thẻ chưa quyết toán nhỏ hơn số tiền thực nhận.",invalidAmount:"Hãy kiểm tra số tiền thực nhận.",noEligibleSales:"Không có doanh thu thẻ chưa quyết toán trước ngày tiền về.",
-    allocatedSales:"Doanh thu thẻ đã quyết toán",legacyHint:"Khoản tiền về theo cách cũ. Doanh thu chưa được quyết toán tự động và được giữ nguyên. Nếu cần, hủy quyết toán rồi ghi nhận lại.",autoFeeHint:"Đã trừ gốc doanh thu thẻ đúng bằng số tiền thực nhận. Phần doanh thu còn lại không được coi là phí.",
+    appliedSales:"Doanh thu thẻ đã trừ",legacyHint:"Khoản tiền về chưa được trừ tự động vào doanh thu thẻ. Nếu cần, hủy tiền về rồi ghi nhận lại.",autoAppliedHint:"Đã tự động trừ vào doanh thu thẻ cũ nhất trước, đúng bằng số tiền thực nhận.",
     posCardDetail:"Chi tiết doanh thu thẻ POS",source:"Nguồn",ledger:"Sổ cái",loading:"Đang tải…",loadingPage:"Đang tải quyết toán thẻ…",
-    created:"Đã ghi nhận tiền thẻ.",createdWithAllocations:"Đã ghi nhận tiền thẻ và tự động quyết toán {count} doanh thu thẻ.",createFailed:"Ghi nhận thất bại",readFailed:"Tải thất bại",posFailed:"Tải chi tiết POS thất bại",cancelledMessage:"Đã hủy quyết toán tiền thẻ và ghi bút toán đảo.",cancelFailed:"Hủy thất bại",
-    matchedCancelHint:"Bút toán tiền thẻ về và chênh lệch sẽ được đảo; doanh thu thẻ đã kết nối sẽ trở lại trạng thái chưa quyết toán.",autoCancelHint:"Bút toán tiền thẻ về sẽ được đảo và doanh thu thẻ đã tự động quyết toán sẽ trở lại trạng thái chưa quyết toán. Lịch sử được giữ lại.",partialCancelHint:"Bút toán tiền thẻ về sẽ được đảo. Phần kết nối đã lưu được giữ trong lịch sử hủy và có thể kết nối lại doanh thu thẻ.",
+    created:"Đã ghi nhận tiền thẻ.",createdWithAllocations:"Đã ghi nhận tiền thẻ và tự động quyết toán {count} doanh thu thẻ.",createFailed:"Ghi nhận thất bại",readFailed:"Tải thất bại",posFailed:"Tải chi tiết POS thất bại",cancelledMessage:"Đã hủy tiền thẻ về và ghi bút toán đảo.",cancelFailed:"Hủy thất bại",
+    cancelHint:"Hủy bản ghi tiền thẻ về. Bút toán tiền về sẽ được đảo và doanh thu thẻ đã trừ trở lại trạng thái chưa quyết toán. Lịch sử được giữ lại.",historicalDifferenceCancelHint:"Chênh lệch quyết toán cũ của khoản này cũng sẽ được đảo.",
   },
 } as const;
 type CardText = typeof cardText["ko"] | typeof cardText["vi"];
-const statusName = (status:string,text:CardText) => ({unmatched:text.unmatched,partial:text.partial,matched:text.matched,auto_allocated:text.auto_allocated,cancelled:text.cancelled} as Record<string,string>)[status]??status;
+// Normal deposits (matched / auto_allocated) carry no badge; only exceptional states are labelled.
+const exceptionLabel = (status:string,text:CardText) => status==="unmatched"?text.unmatched:status==="partial"?text.partial:status==="cancelled"?text.cancelled:null;
 const isLegacyPending = (status:string) => status==="unmatched"||status==="partial";
 const monthNoticeCardStyle: CSSProperties = { padding: "10px 12px", borderRadius: 10, background: "#f9fafb", border: "1px solid #e5e7eb" };
 const monthControlStyle: CSSProperties = { marginTop: 8, display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 8 };
@@ -117,8 +118,8 @@ function CardSettlementsContent() {
   }
   const closeInspected = () => { ++inspectVersion.current; setInspectedDeposit(null); setDepositLines(null); setCancelOpen(false); setCancelReason(""); };
   const inspectedGross=Number(inspectedDeposit?.matched_gross_amount);
-  const inspectedDifference=Number(inspectedDeposit?.difference_amount);
-  const inspectedFeeRate=inspectedGross>0&&Number.isFinite(inspectedGross)&&Number.isFinite(inspectedDifference)?(inspectedDifference/inspectedGross*100).toFixed(2):null;
+  // Historical matched rows may carry a booked difference; cancelling reverses it too.
+  const inspectedHasDifference=Number(inspectedDeposit?.difference_amount)>0;
   const inspectedWasAuto=inspectedDeposit?.status===CARD_AUTO_ALLOCATED_STATUS;
   async function openPos(id: number) {
     try {
@@ -150,14 +151,13 @@ function CardSettlementsContent() {
   // Deposit rows show deposit_date; sale rows show business_date. Label both so equal dates are not read as one state.
   const depositDateLabel = (date:string) => lang==="vi" ? `${t.depositOn} ${shortDate(date)}` : `${shortDate(date)} ${t.depositOn}`;
   const saleDateLabel = (date:string) => `${t.saleDate} ${shortDate(date)}`;
-  const cancelHint = (status:string) => status==="matched"?t.matchedCancelHint:status===CARD_AUTO_ALLOCATED_STATUS?t.autoCancelHint:t.partialCancelHint;
   function renderDeposit(row: Rec) {
-    const badge = row.status==="matched"?styles.completedBadge:row.status===CARD_AUTO_ALLOCATED_STATUS?styles.autoBadge:row.status==="cancelled"?styles.cancelledBadge:styles.legacyBadge;
+    const exception = exceptionLabel(row.status,t);
     return <article key={row.id} className={`${styles.depositRow} ${styles.compactDeposit}`}>
       <button type="button" disabled={working} className={styles.depositDetail} onClick={e=>{depositButtonRef.current=e.currentTarget;void inspect(row);}}>
         <time dateTime={row.deposit_date}>{depositDateLabel(row.deposit_date)}</time><strong>{money(Number(row.deposit_amount))}</strong>
       </button>
-      <span className={`${styles.statusBadge} ${badge}`}>{statusName(row.status,t)}</span>
+      {exception?<span className={`${styles.statusBadge} ${row.status==="cancelled"?styles.cancelledBadge:styles.warningBadge}`}>{exception}</span>:null}
       <button type="button" disabled={working} className={styles.detailChevron} aria-label={`${row.deposit_date} ${t.depositTitle}`} onClick={e=>{depositButtonRef.current=e.currentTarget;void inspect(row);}}>›</button>
     </article>;
   }
@@ -183,11 +183,10 @@ function CardSettlementsContent() {
       <button ref={createButtonRef} type="button" disabled={working} className={styles.primary} style={{width:"100%"}} onClick={()=>{setMessage("");setCreateOpen(true);}}>＋ {t.registerDeposit}</button>
       <section className={styles.card} aria-label={lang==="vi"?"Theo tháng tiền thẻ về":"카드입금월 기준"}>
         <h2>🏦 {t.depositHistory}</h2>
-        <div className={styles.depositTotals}><span>{t.deposit} {money(data.summary.actualCardDeposits)}</span><span>{t.difference} {money(data.summary.monthlyCompletedDifference)}</span><span>{t.averageFee} {data.summary.actualDifferenceRate == null ? "-" : `${(data.summary.actualDifferenceRate * 100).toFixed(2)}%`}</span></div>
+        {/* Unsettled card sales is the current outstanding balance, not a confirmed card fee. */}
+        <dl className={styles.depositTotals}><div><dt>{t.deposit}</dt><dd>{money(data.summary.actualCardDeposits)}</dd></div><div><dt>{t.unsettledCardSales}</dt><dd>{money(data.summary.totalUnreconciledGross)}</dd></div></dl>
         {data.reconciliations.length===0?<p className={styles.empty}>{t.noDeposits}</p>:<div className={styles.list}>
-          {depositGroups.pending.map(renderDeposit)}
-          {depositGroups.auto.map(renderDeposit)}
-          {depositGroups.matched.length?<details key={month} className={styles.card}><summary className={styles.summary}><span>✅ {t.matched} · {depositGroups.matched.length}{lang==="ko"?"건":" khoản"} · {money(depositGroups.matchedTotal)}</span><i aria-hidden="true">⌄</i></summary><div className={styles.list}>{depositGroups.matched.map(renderDeposit)}</div></details>:null}
+          {depositGroups.deposits.map(renderDeposit)}
           {depositGroups.cancelled.map(renderDeposit)}
         </div>}
       </section>
@@ -215,18 +214,19 @@ function CardSettlementsContent() {
           <BarField label={`📝 ${t.memo}`}>{({id})=><input id={id} disabled={working} value={memo} onChange={e=>setMemo(e.target.value)} style={keepingInputStyle}/>}</BarField>
         </form>
       </BarSheet>:null}
-      {inspectedDeposit?<BarSheet kind="full" compact title={`${inspectedDeposit.deposit_date} ${t.depositTitle}`} closeLabel={t.close} saving={working} onClose={closeInspected} returnFocusRef={depositButtonRef} footer={inspectedDeposit.status==="cancelled"?<button type="button" className={styles.secondary} onClick={closeInspected}>{t.close}</button>:cancelOpen?<div className={styles.actions}><button type="button" disabled={working} className={styles.secondary} onClick={()=>{setCancelOpen(false);setCancelReason("");}}>{t.back}</button><button type="button" disabled={working||!cancelReason.trim()} className={styles.danger} onClick={()=>void cancelReconciliation()}>{t.confirmCancel}</button></div>:<div className={styles.actions}><button type="button" disabled={working} className={styles.danger} onClick={()=>{setMessage("");setCancelOpen(true);}}>{t.cancelSettlement}</button><button type="button" className={styles.secondary} onClick={closeInspected}>{t.close}</button></div>}>
+      {inspectedDeposit?<BarSheet kind="full" compact title={`${inspectedDeposit.deposit_date} ${t.depositTitle}`} closeLabel={t.close} saving={working} onClose={closeInspected} returnFocusRef={depositButtonRef} footer={inspectedDeposit.status==="cancelled"?<button type="button" className={styles.secondary} onClick={closeInspected}>{t.close}</button>:cancelOpen?<div className={styles.actions}><button type="button" disabled={working} className={styles.secondary} onClick={()=>{setCancelOpen(false);setCancelReason("");}}>{t.back}</button><button type="button" disabled={working||!cancelReason.trim()} className={styles.danger} onClick={()=>void cancelReconciliation()}>{t.confirmCancel}</button></div>:<div className={styles.actions}><button type="button" disabled={working} className={styles.danger} onClick={()=>{setMessage("");setCancelOpen(true);}}>{t.cancelDeposit}</button><button type="button" className={styles.secondary} onClick={closeInspected}>{t.close}</button></div>}>
         {message?<p role="status" className={styles.notice}>{message}</p>:null}
-        <div className={styles.grid}><Card title={t.actualDeposit} value={money(Number(inspectedDeposit.deposit_amount))}/><Card title={t.settlementAmount} value={money(inspectedGross)}/>{inspectedWasAuto?<Card title={t.feeNotConfirmed} value={t.feeNotConfirmedValue}/>:<Card title={t.estimatedFee} value={`${money(inspectedDifference)}${inspectedFeeRate===null?"":` (${inspectedFeeRate}%)`}`}/>}<Card title={t.status} value={statusName(inspectedDeposit.status,t)}/></div>
+        {/* matched and auto_allocated share one layout: the gross applied to sales is shown as stored. */}
+        <div className={styles.grid}><Card title={t.actualDeposit} value={money(Number(inspectedDeposit.deposit_amount))}/><Card title={t.appliedToSales} value={money(inspectedGross)}/></div>
         <p className={styles.hint}>{inspectedDeposit.destination?.display_name??"-"}</p>{inspectedDeposit.memo?<p className={styles.hint}>{inspectedDeposit.memo}</p>:null}
-        {inspectedWasAuto?<p className={styles.hint}>{t.autoFeeHint}</p>:null}
+        {inspectedWasAuto?<p className={styles.hint}>{t.autoAppliedHint}</p>:null}
         {isLegacyPending(inspectedDeposit.status)?<p className={styles.notice}>{t.legacyHint}</p>:null}
-        {depositLines?.length?<section aria-label={t.allocatedSales}><h3 className={styles.sectionTitle}>{t.allocatedSales}</h3><div className={styles.list}>{depositLines.map(line=><article key={line.id} className={styles.saleRow}>
+        {depositLines?.length?<section aria-label={t.appliedSales}><h3 className={styles.sectionTitle}>{t.appliedSales}</h3><div className={styles.list}>{depositLines.map(line=><article key={line.id} className={styles.saleRow}>
           <div className={styles.saleHeading}>{line.sale?<time dateTime={line.sale.business_date}>{saleDateLabel(line.sale.business_date)}</time>:<span>#{line.pos_card_transaction_id}</span>}<strong>{money(Number(line.allocated_gross_amount))}</strong><button type="button" className={styles.secondary} onClick={()=>void openPos(Number(line.pos_card_transaction_id))}>{t.posDetail}</button></div>
         </article>)}</div></section>:null}
         {inspectedDeposit.status==="cancelled"?<div className={styles.cancelRecord}><strong>{t.cancelRecord}</strong><p>{inspectedDeposit.cancel_reason??t.noReason}</p><small>{inspectedDeposit.cancelled_at?new Date(inspectedDeposit.cancelled_at).toLocaleString(lang==="vi"?"vi-VN":"ko-KR",{timeZone:"Asia/Ho_Chi_Minh"}):"-"}</small></div>:null}
         {cancelOpen?<div className={styles.cancelPanel}>
-          <p>{cancelHint(inspectedDeposit.status)}</p>
+          <p>{t.cancelHint}{inspectedHasDifference?` ${t.historicalDifferenceCancelHint}`:""}</p>
           <label>{t.cancelReason}<textarea required disabled={working} value={cancelReason} onChange={e=>setCancelReason(e.target.value)} className={styles.input} rows={3}/></label>
         </div>:null}
       </BarSheet>:null}

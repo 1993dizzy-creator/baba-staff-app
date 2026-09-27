@@ -228,9 +228,9 @@ test("monthly report keeps accounting income; card settlements stay reachable fr
 });
 test("UI keeps POS detail and guarded cancellation controls without manual allocation", () => {
   assert.doesNotMatch(ui,/setAllocations|실제 수수료율|연결 합계|savePartial/);assert.match(ui,/pos-drilldown/);
-  assert.match(ui,/자동 정산된 카드매출을 다시 미정산 상태로 돌립니다/);
-  assert.match(ui,/정산 취소/);assert.match(ui,/취소 사유/);assert.match(ui,/취소 확정/);assert.match(ui,/\/cancel/);assert.match(ui,/status==="cancelled"/);
-  assert.match(ui,/카드 입금 이동과 정산 차액을 역분개하고 연결된 카드매출을 다시 미정산 상태로 돌립니다/);
+  assert.match(ui,/카드 입금 기록을 취소합니다/);assert.match(ui,/반영된 카드매출을 다시 미정산으로 돌립니다/);
+  assert.match(ui,/cancelDeposit:"입금 취소"/);assert.doesNotMatch(ui,/정산 취소/);assert.match(ui,/취소 사유/);assert.match(ui,/취소 확정/);assert.match(ui,/\/cancel/);assert.match(ui,/status==="cancelled"/);
+  assert.match(ui,/과거 정산 차액도 함께 역분개됩니다/);
   assert.match(ui,/working\|\|!cancelReason\.trim\(\)/);
 });
 test("card views label month-end settlement separately from current matching and sale-month fees",()=>{
