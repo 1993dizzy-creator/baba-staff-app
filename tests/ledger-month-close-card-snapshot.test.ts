@@ -72,3 +72,20 @@ test("cancelled reconciliation and its allocation remain excluded", () => {
     settlementDifference: 0,
   });
 });
+
+test("auto_allocated deposits settle principal without counting as unmatched or as a confirmed fee", () => {
+  const result = calculateMonthCloseCardSnapshot(
+    [reconciliation(1, "matched", 980, 1_000, 20), reconciliation(2, "auto_allocated", 5_000_000, 5_000_000, 0), reconciliation(3, "unmatched", 300, 0, 0)],
+    [line(10, 1_000, "2026-09-10"), line(11, 5_000_000, "2026-09-27", "auto_allocated")],
+    [sale(10, 1_000), sale(11, 6_245_400)],
+    "2026-10-01"
+  );
+
+  assert.deepEqual(result, {
+    // 6,245,400 - 5,000,000: the remaining principal stays unsettled; it is not treated as a fee.
+    unsettledGross: 1_245_400,
+    unmatchedDeposits: 300,
+    completedGross: 1_000,
+    settlementDifference: 20,
+  });
+});

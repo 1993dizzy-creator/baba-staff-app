@@ -9,6 +9,11 @@ export type CardReconciliation = {
   id: number; deposit_date: string; deposit_amount: number | string;
   matched_gross_amount: number | string; difference_amount: number | string; status: string;
 };
+// Registered by ledger_create_card_deposit_auto_allocate_v1: the deposit amount is
+// allocated to card sale principal FIFO. It settles gross but never confirms a fee,
+// so it is excluded from confirmed-difference (fee) metrics that use "matched".
+export const CARD_AUTO_ALLOCATED_STATUS = "auto_allocated";
+export const isSettledCardReconciliationStatus = (status: string | null | undefined) => status === "matched" || status === CARD_AUTO_ALLOCATED_STATUS;
 export const cardMoney = (value: number) => Math.round(value * 1000) / 1000;
 export const sumCardMoney = (values: readonly (number | string)[]) => values.reduce<number>((sum, value) => sum + Math.round(Number(value) * 1000), 0) / 1000;
 
@@ -49,7 +54,7 @@ export function calculateCardGross<T extends CardSale>(sales: readonly T[], line
     if (!line.reconciliation || line.reconciliation.status === "cancelled") continue;
     const id = Number(line.pos_card_transaction_id);
     allocated.set(id, cardMoney((allocated.get(id) ?? 0) + Number(line.allocated_gross_amount)));
-    if (line.reconciliation.status === "matched") settled.set(id, cardMoney((settled.get(id) ?? 0) + Number(line.allocated_gross_amount)));
+    if (isSettledCardReconciliationStatus(line.reconciliation.status)) settled.set(id, cardMoney((settled.get(id) ?? 0) + Number(line.allocated_gross_amount)));
   }
   const balances = sales.map(sale => {
     const allocatedGrossAmount = allocated.get(Number(sale.id)) ?? 0;
@@ -82,12 +87,46 @@ export function calculateCardDepositSummary(reconciliations: readonly CardReconc
   const monthlyCompletedDifference = sumCardMoney(completed.map(row => row.difference_amount));
   return {
     actualCardDeposits: sumCardMoney(monthly.map(row => row.deposit_amount)),
-    monthlyUnmatchedDeposits: sumCardMoney(monthly.filter(row => row.status !== "matched").map(row => row.deposit_amount)),
+    monthlyUnmatchedDeposits: sumCardMoney(monthly.filter(row => row.status === "unmatched" || row.status === "partial").map(row => row.deposit_amount)),
     monthlyCompletedGross,
     monthlyCompletedDeposit: sumCardMoney(completed.map(row => row.deposit_amount)),
     monthlyCompletedDifference,
     actualDifferenceRate: monthlyCompletedGross > 0 ? monthlyCompletedDifference / monthlyCompletedGross : null,
   };
+}
+
+export type CardDepositAutoAllocationError = "invalid_amount" | "nothing_outstanding" | "exceeds_outstanding";
+export type CardDepositAutoAllocationRow = { transactionId: number; businessDate: string; outstandingBefore: number; allocatedAmount: number; outstandingAfter: number };
+
+// FIFO contract shared with ledger_create_card_deposit_auto_allocate_v1: sales dated on
+// or before the deposit date, oldest business_date first, then id; each takes
+// min(remaining deposit, outstanding). The allocated total always equals the deposit;
+// no fee rate is applied, so remaining sale balances are never treated as fees.
+export function planCardDepositAutoAllocation(sales: readonly { id: number; business_date: string; outstandingGrossAmount: number | string }[], depositAmount: number, depositDate: string) {
+  const eligible = eligibleCardSalesForDeposit(sales, depositDate).filter(sale => Number(sale.outstandingGrossAmount) > 0)
+    .sort((a, b) => a.business_date.localeCompare(b.business_date) || a.id - b.id);
+  const availableOutstanding = sumCardMoney(eligible.map(sale => sale.outstandingGrossAmount));
+  const plan = (error: CardDepositAutoAllocationError | null, rows: CardDepositAutoAllocationRow[] = []) => ({
+    depositAmount, availableOutstanding, rows,
+    allocations: rows.map(row => ({ transactionId: row.transactionId, allocatedGrossAmount: row.allocatedAmount })),
+    totalAllocated: sumCardMoney(rows.map(row => row.allocatedAmount)),
+    remainingDeposit: error ? depositAmount : 0,
+    error,
+  });
+  // DB amounts are numeric(16,3).
+  if (!Number.isFinite(depositAmount) || depositAmount <= 0 || cardMoney(depositAmount) !== depositAmount) return plan("invalid_amount");
+  if (!eligible.length) return plan("nothing_outstanding");
+  if (depositAmount > availableOutstanding) return plan("exceeds_outstanding");
+  // Work in integer thousandths so the allocated total matches the deposit exactly.
+  let remaining = Math.round(depositAmount * 1000);
+  const rows: CardDepositAutoAllocationRow[] = [];
+  for (const sale of eligible) {
+    if (remaining <= 0) break;
+    const before = Math.round(Number(sale.outstandingGrossAmount) * 1000), allocated = Math.min(remaining, before);
+    rows.push({ transactionId: sale.id, businessDate: sale.business_date, outstandingBefore: before / 1000, allocatedAmount: allocated / 1000, outstandingAfter: (before - allocated) / 1000 });
+    remaining -= allocated;
+  }
+  return plan(null, rows);
 }
 
 export function recommendCardAllocations(sales: readonly { id: number; business_date: string; outstandingGrossAmount: number }[], depositAmount: number, expectedFeeRate: number) {

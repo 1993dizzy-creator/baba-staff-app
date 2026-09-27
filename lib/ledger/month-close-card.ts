@@ -22,6 +22,10 @@ export type MonthCloseCardSale = {
   amount: number | string;
 };
 
+// auto_allocated deposits settle sale principal FIFO without confirming a fee, so they
+// reduce unsettled gross like matched ones but stay out of completed gross/difference.
+const settles = (status: string | undefined) => status === "matched" || status === "auto_allocated";
+
 function lineReconciliation(line: MonthCloseCardLine) {
   return Array.isArray(line.reconciliation) ? line.reconciliation[0] : line.reconciliation;
 }
@@ -35,14 +39,14 @@ export function calculateMonthCloseCardSnapshot(
   const matched = cards.filter(row => row.status === "matched");
   const eligibleLines = cardLines.filter(line => {
     const reconciliation = lineReconciliation(line);
-    return reconciliation?.status === "matched" && reconciliation.deposit_date < endExclusive;
+    return !!reconciliation && settles(reconciliation.status) && reconciliation.deposit_date < endExclusive;
   });
   const allocatedBySale = new Map<number, number>();
   for (const line of eligibleLines) {
     const saleId = Number(line.pos_card_transaction_id);
     allocatedBySale.set(saleId, (allocatedBySale.get(saleId) ?? 0) + Number(line.allocated_gross_amount));
   }
-  const matchedIds = new Set(matched.map(row => Number(row.id)));
+  const settledIds = new Set(cards.filter(row => settles(row.status)).map(row => Number(row.id)));
 
   return {
     unsettledGross: cardSales.reduce(
@@ -50,7 +54,7 @@ export function calculateMonthCloseCardSnapshot(
       0
     ),
     unmatchedDeposits: cards
-      .filter(row => row.status !== "cancelled" && !matchedIds.has(Number(row.id)))
+      .filter(row => row.status !== "cancelled" && !settledIds.has(Number(row.id)))
       .reduce((sum, row) => sum + Number(row.deposit_amount), 0),
     completedGross: matched.reduce((sum, row) => sum + Number(row.matched_gross_amount), 0),
     settlementDifference: matched.reduce((sum, row) => sum + Number(row.difference_amount), 0),

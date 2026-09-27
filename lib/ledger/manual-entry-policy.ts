@@ -32,6 +32,79 @@ export function manualExpenseCategorySort(a: { name: string }, b: { name: string
     - (manualExpenseCategoryOrder.get(b.name) ?? Number.MAX_SAFE_INTEGER);
 }
 
+export const MANUAL_INCOME_CATEGORY_NAMES = [
+  "영업수입",
+  "기타 수입",
+  "예금이자",
+] as const;
+
+const manualIncomeCategoryOrder = new Map<string, number>(
+  MANUAL_INCOME_CATEGORY_NAMES.map((name, index) => [name, index]),
+);
+
+export function isManualIncomeCategory(category: { kind: string; name: string }) {
+  return category.kind === "income" && manualIncomeCategoryOrder.has(category.name);
+}
+
+export function manualIncomeCategorySort(a: { name: string }, b: { name: string }) {
+  return (manualIncomeCategoryOrder.get(a.name) ?? Number.MAX_SAFE_INTEGER)
+    - (manualIncomeCategoryOrder.get(b.name) ?? Number.MAX_SAFE_INTEGER);
+}
+
+export const MANUAL_ENTRY_PARTNER_GROUP_ORDER = [
+  "alcohol",
+  "food",
+  "beverage",
+  "consumable",
+  "equipment",
+  "service",
+  "rent",
+  "other",
+] as const;
+
+export type ManualEntryPartnerGroup = (typeof MANUAL_ENTRY_PARTNER_GROUP_ORDER)[number];
+
+const MANUAL_ENTRY_PARTNER_GROUP_LABELS: Record<ManualEntryPartnerGroup, { ko: string; vi: string }> = {
+  alcohol: { ko: "주류", vi: "Rượu" },
+  food: { ko: "식자재", vi: "Thực phẩm" },
+  beverage: { ko: "음료", vi: "Đồ uống" },
+  consumable: { ko: "소모품", vi: "Vật tư tiêu hao" },
+  equipment: { ko: "장비", vi: "Thiết bị" },
+  service: { ko: "서비스", vi: "Dịch vụ" },
+  rent: { ko: "임대", vi: "Cho thuê" },
+  other: { ko: "기타", vi: "Khác" },
+};
+
+function manualEntryPartnerGroup(partnerType: string | null | undefined): ManualEntryPartnerGroup {
+  const normalized = partnerType?.trim().toLowerCase();
+  return MANUAL_ENTRY_PARTNER_GROUP_ORDER.includes(normalized as ManualEntryPartnerGroup)
+    ? normalized as ManualEntryPartnerGroup
+    : "other";
+}
+
+export function partnerTypeDisplayLabel(
+  partnerType: string | null | undefined,
+  lang: "ko" | "vi",
+) {
+  return MANUAL_ENTRY_PARTNER_GROUP_LABELS[manualEntryPartnerGroup(partnerType)][lang];
+}
+
+export function groupManualEntryPartners<T extends { name: string; partnerType: string | null; isActive: boolean }>(
+  partners: readonly T[],
+  lang: "ko" | "vi",
+) {
+  return MANUAL_ENTRY_PARTNER_GROUP_ORDER.flatMap((group) => {
+    const grouped = partners
+      .filter((partner) => partner.isActive && manualEntryPartnerGroup(partner.partnerType) === group)
+      .sort((a, b) => a.name.localeCompare(b.name, lang === "vi" ? "vi" : "ko", { sensitivity: "base" }));
+    return grouped.length === 0 ? [] : [{
+      group,
+      label: MANUAL_ENTRY_PARTNER_GROUP_LABELS[group][lang],
+      partners: grouped,
+    }];
+  });
+}
+
 export type ManualExpensePartnerType =
   | "food"
   | "alcohol"

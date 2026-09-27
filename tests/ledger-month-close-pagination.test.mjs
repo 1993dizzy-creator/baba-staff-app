@@ -40,7 +40,7 @@ function fixture(transactionCount, extraTables = {}) {
     from(table) {
       const query = {
         table, start: 0, end: Infinity, ordered: false,
-        select() { return this; }, eq() { return this; }, neq() { return this; }, lt() { return this; }, lte() { return this; }, or() { return this; },
+        select() { return this; }, eq() { return this; }, neq() { return this; }, in() { return this; }, lt() { return this; }, lte() { return this; }, or() { return this; },
         order(column) { if (column === "id") this.ordered = true; return this; },
         range(from, to) { this.start = from; this.end = to; return this; },
         maybeSingle() { return Promise.resolve({ data: null, error: null }); },

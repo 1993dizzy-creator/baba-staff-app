@@ -13,14 +13,22 @@ const entriesPath='app/(protected)/admin/ledger/entries/page.tsx';
 const cardPath='app/(protected)/admin/ledger/card-settlements/page.tsx';
 const nowMonth=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit'}).format(new Date()).slice(0,7);
 
+function transpiled(path,deps) {
+  const transpiledModule={exports:{}};
+  new Function('require','module','exports',ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(name=>{assert.ok(name in deps,`Unexpected dependency ${name}`);return deps[name];},transpiledModule,transpiledModule.exports);
+  return transpiledModule.exports;
+}
 // Render the actual TSX components with state fixtures. Effects are captured,
 // never automatically run. Tests use only local response doubles.
 function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network request');}, lang='ko', businessDate) {
   let index=0;const effects=[],requests=[],updates=[],elements=[],calls=[],navigations=[];
   const urlMonthPage=path===entriesPath||path===cardPath;
-  // Older fixtures reserve slot 0 for the URL month and card slot 7 for the
-  // removed reference input. Keep the remaining fixture slots stable.
-  const react={...React,useState(initial){const stateIndex=index++;const slot=stateIndex+(urlMonthPage?1:0)+(path===cardPath&&stateIndex>=6?1:0)-(path===entriesPath&&stateIndex>=32?1:0);const value=Object.hasOwn(states,slot)?states[slot]:typeof initial==='function'?initial():initial;return [path===cardPath&&slot===1&&value?{...value,month:value.month??states[0]}:value,next=>updates.push({slot,value:next})];},useEffect(callback){effects.push(callback);}};
+  // Older fixtures reserve slot 0 for the URL month. Card slots 6/7/12 belonged to the
+  // removed account, reference and expected-fee inputs and 9-11 to the removed manual
+  // matching sheet; map each card useState call to its legacy slot so the remaining
+  // fixture slots stay stable. 18 holds the inspected deposit's allocation lines.
+  const cardSlots=[1,2,3,4,5,8,13,14,15,16,17,18];
+  const react={...React,useState(initial){const stateIndex=index++;const slot=path===cardPath?cardSlots[stateIndex]:stateIndex+(urlMonthPage?1:0)-(path===entriesPath&&stateIndex>=32?1:0);const value=Object.hasOwn(states,slot)?states[slot]:typeof initial==='function'?initial():initial;return [path===cardPath&&slot===1&&value?{...value,month:value.month??states[0]}:value,next=>updates.push({slot,value:next})];},useEffect(callback){effects.push(callback);}};
   const box=({children})=>h('div',null,children);
   const keeping={BarSheet:({children,footer,title})=>h('section',{role:'dialog','aria-label':title},h('h2',null,title),children,footer),BarField:({children,label})=>h('label',null,label,typeof children==='function'?children({id:'field'}):children),keepingInputStyle:{},primaryButtonStyle:{},secondaryButtonStyle:{}};
   const runtime=require('react/jsx-runtime');
@@ -42,6 +50,7 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
     '@/lib/common/business-time':businessDate?{getBusinessDate:()=>businessDate}:require('../lib/common/business-time.ts'),
     './entries.module.css':{default:new Proxy({},{get:(_,key)=>String(key)})},
     './card-settlements.module.css':{default:new Proxy({},{get:(_,key)=>String(key)})},'@/lib/ledger/card-settlements':require('../lib/ledger/card-settlements.ts'),
+    '@/lib/ledger/card-deposit-display':transpiled('lib/ledger/card-deposit-display.ts',{'./card-settlements':require('../lib/ledger/card-settlements.ts')}),
   };
   const testModule={exports:{}};
   const code=ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
@@ -213,11 +222,12 @@ test('zero reconciliations retain compact collapsed sales and entry button witho
   const monthly=[sale(2,'2026-09-03',500)],prior=[sale(1,'2026-08-02',1000)];
   const data={accounts:[],sales:[...prior,...monthly],monthlySales:monthly,priorUnreconciledSales:prior,totalReconciliationCount:0,reconciliations:[],summary:{monthlyCardGross:500,monthlyReconciledGross:0,monthlySettledGross:0,monthlyUnreconciledGross:500,totalUnreconciledGross:1500,cardPendingBalance:1500,actualCardDeposits:0,monthlyUnmatchedDeposits:0,monthlyCompletedGross:0,monthlyCompletedDeposit:0,monthlyCompletedDifference:0,actualDifferenceRate:null}};
   const state=pageFixture(cardPath,{0:'2026-09',1:data});
-  assert.match(state.html,/dateTime="2026-09-03"/);assert.match(state.html,/dateTime="2026-08-02"/);assert.match(state.html,/POS 상세/);
+  // The per-sale accordions were removed from the main view; sales appear only inside the matching sheet.
   assert.match(state.html,/등록된 카드 입금이 없습니다/);assert.match(state.html,/카드 현황 \(9월\)/);
-  assert.equal((state.html.match(/<details class="card">/g)||[]).length,2);
-  assert.doesNotMatch(state.html,/<details[^>]*open|datetime-local|Gross|card_clearing|카드미정산 계정/);
-  assert.ok(state.html.indexOf('미정산 카드매출')<state.html.indexOf('＋ 카드 입금 등록'));
+  assert.match(state.html,/↪️ 이전월 미정산 1\.000 ₫/);
+  assert.equal((state.html.match(/<details/g)||[]).length,0);
+  assert.doesNotMatch(state.html,/datetime-local|Gross|card_clearing|카드미정산 계정/);
+  assert.ok(state.html.indexOf('이전월 미정산')<state.html.indexOf('＋ 카드 입금 등록'));
   assert.ok(state.html.indexOf('＋ 카드 입금 등록')<state.html.indexOf('카드 입금 내역'));
   assert.equal(state.requests.length,0);
 });
@@ -356,53 +366,14 @@ test('September opening card displays the four carried-forward business fund bal
   for(const name of ['현금','개인','법인']) assert.match(state.html,new RegExp(name));
 });
 
-test('selected deposit keeps fee recommendation, editable allocation, POS detail and settlement previews',()=>{
-  const sale={id:1,business_date:'2026-08-02',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000};
-  const rec={id:10,deposit_date:'2026-09-03',deposit_amount:982,matched_gross_amount:0,difference_amount:0,status:'unmatched',memo:null,destination:null};
-  const data={accounts:[],sales:[sale],monthlySales:[],priorUnreconciledSales:[sale],totalReconciliationCount:1,reconciliations:[rec],summary:{...cardSummary,monthlyReconciledGross:400,actualCardDeposits:982,monthlyUnmatchedDeposits:982,monthlyCompletedGross:0,monthlyCompletedDeposit:0,monthlyCompletedDifference:0,actualDifferenceRate:null}};
-  const state=pageFixture(cardPath,{0:'2026-09',1:data,9:10,10:{1:'1000'},11:[sale]});
-  assert.match(state.html,/value="1.8"/);assert.match(state.html,/오래된 매출부터 추천/);
-  assert.match(state.html,/role="dialog" aria-label="09\/03 매출 연결"/);assert.match(state.html,/정산 대상/);
-  assert.match(state.html,/max="1000" step="0.001" class="input" value="1000"/);
-  assert.match(state.html,/1\.800%/);assert.match(state.html,/POS 상세/);
-  assert.match(state.html,/class="secondary">부분 저장<\/button>/);assert.match(state.html,/class="primary">정산 확정<\/button>/);
-  assert.doesNotMatch(state.html,/Gross|card_clearing/);
-  assert.equal(state.requests.length,0);
-});
-
-test('opening a deposit excludes only future-day card sales from editable and recommendation candidates',async()=>{
-  const sales=[
-    {id:1,business_date:'2026-08-19',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000},
-    {id:2,business_date:'2026-08-20',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000},
-    {id:3,business_date:'2026-08-21',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000},
-  ];
-  const rec={id:10,deposit_date:'2026-08-20',deposit_amount:982,matched_gross_amount:0,difference_amount:0,status:'unmatched',memo:null,destination:null};
-  const data={accounts:[],sales,monthlySales:sales,priorUnreconciledSales:[],totalReconciliationCount:1,reconciliations:[rec],summary:{...cardSummary,monthlyUnreconciledGross:3000,actualCardDeposits:982,monthlyUnmatchedDeposits:982}};
-  const state=pageFixture(cardPath,{0:'2026-08',1:data},async url=>Response.json(url.endsWith('/10')?{reconciliation:{...rec,lines:[]}}:data));
-  const link=state.elements.find(element=>element.type==='button'&&String(element.props.children).includes('매출 연결'));
-  link.props.onClick({currentTarget:{}});await new Promise(resolve=>setImmediate(resolve));
-  assert.deepEqual(state.updates.findLast(update=>update.slot===11).value.map(row=>row.id),[1,2]);
-  assert.ok(!Object.hasOwn(state.updates.findLast(update=>update.slot===10).value,3));
-});
-
-test('a DB future-card-sale rejection renders a clear date-aware message',async()=>{
-  const sale={id:3,business_date:'2026-08-21',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000};
-  const rec={id:10,deposit_date:'2026-08-20',deposit_amount:500,matched_gross_amount:0,difference_amount:0,status:'unmatched',memo:null,destination:null};
-  const data={accounts:[],sales:[sale],monthlySales:[sale],priorUnreconciledSales:[],reconciliations:[rec],summary:{...cardSummary}};
-  const state=pageFixture(cardPath,{0:'2026-08',1:data,9:10,10:{3:'500'},11:[sale]},async()=>Response.json({ok:false,code:'FUTURE_CARD_SALE',result:{transactionId:3,saleBusinessDate:'2026-08-21',depositDate:'2026-08-20'}},{status:409}));
-  state.elements.find(element=>element.type==='button'&&element.props.children==='부분 저장').props.onClick();await new Promise(resolve=>setImmediate(resolve));
-  const message=state.updates.findLast(update=>update.slot===2).value;
-  assert.match(message,/입금일 이후의 카드매출은 이 입금에 연결할 수 없습니다/);assert.match(message,/2026-08-21/);assert.match(message,/2026-08-20/);
-});
-
 test('deposit registration uses the centered form modal and keeps its submit and close contracts',()=>{
   const data={accounts:[{id:1,code:'store_cash',display_name:'현금'},{id:2,code:'card_clearing',display_name:'card_clearing'}],sales:[],monthlySales:[],priorUnreconciledSales:[],reconciliations:[],summary:{...cardSummary,actualCardDeposits:0,monthlyCompletedDifference:0}};
   const state=pageFixture(cardPath,{0:'2026-08',1:data,14:true});
   assert.match(state.html,/role="dialog" aria-label="카드 입금 등록"/);
-  for(const label of ['입금일','실제 입금액','입금계정','메모']) assert.ok(state.html.includes(label));
-  assert.doesNotMatch(state.html,/참조번호|Reference/);
+  for(const label of ['📅 입금일','💵 실제 입금액','💡 자동 정산 미리보기','📝 메모']) assert.ok(state.html.includes(label),label);
+  assert.doesNotMatch(state.html,/참조번호|Reference|입금계정|<select|수수료율|추천/);
   assert.match(state.html,/<form id="card-deposit-form"/);assert.match(state.html,/form="card-deposit-form" type="submit"/);
-  assert.match(state.html,/<option value="1">현금/);assert.doesNotMatch(state.html,/card_clearing|Gross/);
+  assert.doesNotMatch(state.html,/card_clearing|Gross/);
   const sheet=state.elements.find(item=>item.props?.title==='카드 입금 등록');
   assert.equal(sheet?.props.kind,'full');assert.equal(sheet?.props.compact,true);
   assert.equal(typeof sheet?.props.onClose,'function');assert.ok(sheet?.props.returnFocusRef);
@@ -416,6 +387,17 @@ test('deposit registration uses the centered form modal and keeps its submit and
   assert.match(modal,/overflowY:containedBody\?"hidden":"auto"/);
   assert.match(modal,/event.key==="Escape"/);assert.match(modal,/focus\?\.focus\(\)/);
   assert.equal(state.requests.length,0);
+});
+
+test('completed deposit rows label their date as the deposit date in both languages',()=>{
+  const rec={id:10,deposit_date:'2026-09-14',deposit_amount:17_767_388,matched_gross_amount:18_000_000,difference_amount:232_612,status:'matched',memo:null,destination:null};
+  const data={accounts:[],sales:[],monthlySales:[],priorUnreconciledSales:[],reconciliations:[rec],summary:{...cardSummary}};
+  const ko=pageFixture(cardPath,{0:'2026-09',1:data}).html;
+  const completed=ko.slice(ko.indexOf('<details'));
+  assert.match(completed,/<time dateTime="2026-09-14">09\/14 입금<\/time><strong>17\.767\.388 ₫<\/strong>/);
+  assert.match(completed,/class="statusBadge completedBadge">정산 완료/);
+  const vi=pageFixture(cardPath,{0:'2026-09',1:data},undefined,'vi').html;
+  assert.match(vi,/<time dateTime="2026-09-14">Tiền về 09\/14<\/time>/);
 });
 
 test('completed deposit row opens read-only details and cannot expose matching controls',()=>{
@@ -470,13 +452,21 @@ test('cancelled reconciliation remains visible with audit detail and no link or 
 
 test('sheet submit preserves card deposit POST fields and closes only after local successful response',async()=>{
   const data={accounts:[],sales:[],monthlySales:[],priorUnreconciledSales:[],reconciliations:[],summary:{...cardSummary,actualCardDeposits:0,monthlyCompletedDifference:0}};
-  const state=pageFixture(cardPath,{0:'2026-09',1:data,4:'2026-09-14T12:30',5:'982',6:'1',8:'Memo',14:true},async(url,options)=>Response.json(options?.method==='POST'?{result:{}}:data));
+  const sale={id:1,business_date:'2026-09-10',amount:5_000_000,allocatedGrossAmount:0,outstandingGrossAmount:5_000_000};
+  const withSales={...data,sales:[sale]};
+  const state=pageFixture(cardPath,{0:'2026-09',1:withSales,4:'2026-09-14T12:30',5:'982000',8:'Memo',14:true},async(url,options)=>Response.json(options?.method==='POST'?{ok:true,result:{status:'created',allocations:[{transactionId:1}]}}:withSales));
   let prevented=false;await state.elements.find(element=>element.type==='form').props.onSubmit({preventDefault(){prevented=true;}});
   assert.ok(prevented);
   const post=state.calls.find(call=>call.options?.method==='POST');
   assert.equal(post.url,'/api/admin/ledger/card-settlements');
-  assert.deepEqual(JSON.parse(post.options.body),{depositAt:'2026-09-14T12:30:00+07:00',amount:982,destinationAccountId:1,memo:'Memo'});
+  // The amount is sent as the parsed number, never the comma-formatted display string.
+  assert.deepEqual(JSON.parse(post.options.body),{depositAt:'2026-09-14T12:30:00+07:00',amount:982000,memo:'Memo'});
   assert.ok(state.updates.some(update=>update.slot===14&&update.value===false));
+  assert.ok(state.updates.some(update=>update.slot===2&&update.value==='카드 입금을 등록하고 카드매출 1건을 자동 정산했습니다.'));
+  // Without enough eligible outstanding the form submits nothing.
+  const blocked=pageFixture(cardPath,{0:'2026-09',1:data,4:'2026-09-14T12:30',5:'982',14:true},()=>{throw new Error('must not post');});
+  await blocked.elements.find(element=>element.type==='form').props.onSubmit({preventDefault(){}});
+  assert.equal(blocked.calls.length,0);
 });
 
 test('card settlement renders Vietnamese throughout its main view and deposit form',()=>{
@@ -484,30 +474,20 @@ test('card settlement renders Vietnamese throughout its main view and deposit fo
   const sale={id:1,business_date:'2026-08-01',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000};
   const data={accounts:[{id:1,code:'store_cash',display_name:'Tiền mặt'}],sales:[sale],monthlySales:[sale],priorUnreconciledSales:[],reconciliations:[rec],summary:{...cardSummary}};
   const main=pageFixture(cardPath,{0:'2026-08',1:data},undefined,'vi').html;
-  for(const label of ['Quyết toán thẻ','Tình hình thẻ (T8)','Đã quyết toán cuối tháng','Doanh thu thẻ chưa quyết toán','Ghi nhận tiền thẻ','Lịch sử tiền thẻ về','Đã quyết toán']) assert.ok(main.includes(label),label);
-  assert.doesNotMatch(main,/카드 정산|카드 현황|월말 정산완료|미정산 카드매출|카드 입금 등록|카드 입금 내역/);
+  for(const label of ['Quyết toán thẻ','Tình hình thẻ (T8)','Đã quyết toán cuối tháng','Ghi nhận tiền thẻ','Lịch sử tiền thẻ về','Đã quyết toán','Tiền về 08/28']) assert.ok(main.includes(label),label);
+  assert.doesNotMatch(main,/카드 정산|카드 현황|월말 정산완료|미정산 카드매출|카드 입금 등록|카드 입금 내역|입금</);
   const form=pageFixture(cardPath,{0:'2026-08',1:data,14:true},undefined,'vi').html;
-  for(const label of ['Ngày tiền về','Số tiền thực nhận','Tài khoản nhận','Ghi chú','Chọn']) assert.ok(form.includes(label),label);
-  assert.doesNotMatch(form,/참조번호|Reference|입금일|실제 입금액/);
+  for(const label of ['Ngày tiền về','Số tiền thực nhận','Xem trước quyết toán tự động','Ghi chú']) assert.ok(form.includes(label),label);
+  assert.doesNotMatch(form,/참조번호|Reference|입금일|실제 입금액|자동 정산 미리보기|Tài khoản nhận/);
+  const preview=pageFixture(cardPath,{0:'2026-08',1:data,4:'2026-08-20T10:00',5:'600',14:true},undefined,'vi').html;
+  assert.match(preview,/<time dateTime="2026-08-01">Ngày bán 08\/01<\/time><span>Lần này <strong>600 ₫<\/strong><\/span>/);
+  assert.match(preview,/Tổng quyết toán <strong>600 ₫<\/strong> = Tiền thực nhận/);
+  assert.match(pageFixture(cardPath,{0:'2026-08',1:data,4:'2026-08-20T10:00',5:'5000',14:true},undefined,'vi').html,/Số dư doanh thu thẻ chưa quyết toán nhỏ hơn số tiền thực nhận/);
   const detail=pageFixture(cardPath,{0:'2026-08',1:data,15:rec},undefined,'vi').html;
   for(const label of ['Tiền thực nhận','Số tiền quyết toán','Chênh lệch &amp; phí ước tính','Hủy quyết toán','41.830 ₫ (1.88%)']) assert.ok(detail.includes(label),label);
   assert.doesNotMatch(detail,/실제 입금|정산금액|정산 취소/);
   const cancel=pageFixture(cardPath,{0:'2026-08',1:data,15:rec,16:true},undefined,'vi').html;
   for(const label of ['Lý do hủy','Xác nhận hủy','Quay lại']) assert.ok(cancel.includes(label),label);
-});
-
-test('Vietnamese card matching labels, date validation and deposit success are translated',async()=>{
-  const sale={id:1,business_date:'2026-08-21',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000};
-  const rec={id:10,deposit_date:'2026-08-20',deposit_amount:500,matched_gross_amount:0,difference_amount:0,status:'unmatched',memo:null,destination:null};
-  const data={accounts:[],sales:[sale],monthlySales:[sale],priorUnreconciledSales:[],reconciliations:[rec],summary:{...cardSummary}};
-  const matching=pageFixture(cardPath,{0:'2026-08',1:data,9:10,10:{1:'500'},11:[sale]},async()=>Response.json({ok:false,code:'FUTURE_CARD_SALE',result:{saleBusinessDate:'2026-08-21',depositDate:'2026-08-20'}},{status:409}),'vi');
-  for(const label of ['Kết nối doanh thu','Doanh thu quyết toán','Gợi ý từ doanh thu cũ nhất','Lưu một phần','Xác nhận quyết toán','Số tiền kết nối']) assert.ok(matching.html.includes(label),label);
-  matching.elements.find(element=>element.type==='button'&&element.props.children==='Lưu một phần').props.onClick();
-  await new Promise(resolve=>setImmediate(resolve));
-  assert.match(matching.updates.findLast(update=>update.slot===2).value,/Không thể kết nối doanh thu thẻ sau ngày tiền về/);
-  const creating=pageFixture(cardPath,{0:'2026-08',1:data,4:'2026-08-20T10:00',5:'500',6:'1',14:true},async(url,options)=>Response.json(options?.method==='POST'?{result:{}}:data),'vi');
-  await creating.elements.find(element=>element.type==='form').props.onSubmit({preventDefault(){}});
-  assert.ok(creating.updates.some(update=>update.slot===2&&update.value==='Đã ghi nhận tiền thẻ.'));
 });
 
 // ---------------------------------------------------------------------------
@@ -914,21 +894,93 @@ test('Case C — when the latest (non-stale) request itself fails, the error ban
   assert.equal(state.updates.filter(u => u.slot === 1).length, 0, 'no stale/partial data is written on failure');
 });
 
-test('sheet recommendation, manual allocation and partial/confirm actions retain their contracts',async()=>{
-  const sale={id:1,business_date:'2026-08-02',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000};
-  const rec={id:10,deposit_date:'2026-09-03',deposit_amount:982,matched_gross_amount:0,difference_amount:0,status:'partial',memo:null,destination:null};
-  const data={accounts:[],sales:[sale],monthlySales:[],priorUnreconciledSales:[],reconciliations:[rec],summary:{...cardSummary,actualCardDeposits:982,monthlyCompletedDifference:0}};
-  for(const [label,confirm] of [['부분 저장',false],['정산 확정',true]]){
-    const state=pageFixture(cardPath,{0:'2026-09',1:data,9:10,10:{1:'1000'},11:[sale]},async(url,options)=>Response.json(options?.method==='POST'?{result:{differenceAmount:18}}:data));
-    const button=text=>state.elements.find(element=>element.type==='button'&&element.props.children===text);
-    button('오래된 매출부터 추천').props.onClick();
-    assert.ok(state.updates.some(update=>update.slot===10&&update.value[1]==='1000'));
-    const input=state.elements.find(element=>element.type==='input'&&element.props['aria-label']==='2026-08-02 연결액');
-    input.props.onChange({target:{value:'400'}});
-    assert.deepEqual(state.updates.findLast(update=>update.slot===10).value({1:'1000'}),{1:'400'});
-    button(label).props.onClick();await new Promise(resolve=>setImmediate(resolve));
-    const post=state.calls.find(call=>call.options?.method==='POST');
-    assert.equal(post.url,'/api/admin/ledger/card-settlements/10/match');
-    assert.deepEqual(JSON.parse(post.options.body),{allocations:[{transactionId:1,allocatedGrossAmount:1000}],confirm});
-  }
+
+// ---------------------------------------------------------------------------
+// Card deposit auto allocation (single-step registration)
+// ---------------------------------------------------------------------------
+const cardSale=(id,date,outstanding,amount=outstanding)=>({id,business_date:date,amount,allocatedGrossAmount:amount-outstanding,outstandingGrossAmount:outstanding});
+const cardData=(sales,reconciliations=[])=>({accounts:[],sales,monthlySales:sales,priorUnreconciledSales:[],reconciliations,summary:{...cardSummary,actualCardDeposits:0,monthlyCompletedDifference:0}});
+
+test('deposit form formats the amount with commas and previews FIFO allocation of exactly the deposit',()=>{
+  const data=cardData([cardSale(16,'2026-09-16',900),cardSale(15,'2026-09-15',14_606_200),cardSale(14,'2026-09-14',6_245_400,7_000_000)]);
+  const state=pageFixture(cardPath,{0:'2026-09',1:data,4:'2026-09-15T10:00',5:'10000000',14:true});
+  const input=state.elements.find(element=>element.type==='input'&&element.props.inputMode==='numeric');
+  assert.equal(input.props.value,'10,000,000');assert.notEqual(input.props.type,'number');
+  input.props.onChange({target:{value:'5,000,0001'}});
+  assert.equal(state.updates.findLast(update=>update.slot===5).value,'50000001','the stored value stays digits only');
+  const preview=state.html.slice(state.html.indexOf('💡 자동 정산 미리보기'),state.html.indexOf('📝 메모'));
+  // 09/14 already had 754,600 allocated, so its outstanding is the partial remainder; 09/16 is after the deposit.
+  assert.match(preview,/<li><div><time dateTime="2026-09-14">매출일 09\/14<\/time><span>이번 정산 <strong>6\.245\.400 ₫<\/strong><\/span><\/div><div class="previewBalance">6\.245\.400 ₫ → 0 ₫<\/div><\/li>/);
+  assert.match(preview,/<li><div><time dateTime="2026-09-15">매출일 09\/15<\/time><span>이번 정산 <strong>3\.754\.600 ₫<\/strong><\/span><\/div><div class="previewBalance">14\.606\.200 ₫ → 10\.851\.600 ₫<\/div><\/li>/);
+  assert.match(preview,/총 정산 <strong>10\.000\.000 ₫<\/strong> = 실제 입금/);
+  assert.doesNotMatch(preview,/09\/16|수수료|추천/);
+  const footer=state.elements.find(item=>item.props?.title==='카드 입금 등록').props.footer;
+  assert.equal(footer.props.disabled,false);
+  const partial=pageFixture(cardPath,{0:'2026-09',1:data,4:'2026-09-15T10:00',5:'5000000',14:true}).html;
+  assert.match(partial,/이번 정산 <strong>5\.000\.000 ₫<\/strong><\/span><\/div><div class="previewBalance">6\.245\.400 ₫ → 1\.245\.400 ₫/);
+  assert.equal((partial.match(/<li>/g)||[]).length,1);
+});
+
+test('deposit form blocks registration when eligible outstanding is short and hints before an amount is entered',()=>{
+  const data=cardData([cardSale(14,'2026-09-14',6_245_400),cardSale(16,'2026-09-16',9_000_000)]);
+  const short=pageFixture(cardPath,{0:'2026-09',1:data,4:'2026-09-15T10:00',5:'6245401',14:true});
+  assert.match(short.html,/role="alert" class="validation">미정산 카드매출 잔액이 실제 입금액보다 부족합니다\. \(정산 가능 미정산 6\.245\.400 ₫\)/);
+  assert.equal(short.elements.find(item=>item.props?.title==='카드 입금 등록').props.footer.props.disabled,true);
+  const empty=pageFixture(cardPath,{0:'2026-09',1:data,4:'2026-09-15T10:00',14:true}).html;
+  assert.match(empty,/실제 입금액을 입력하면 오래된 미정산 카드매출부터 자동 정산합니다\./);
+  assert.match(empty,/정산 가능 미정산 6\.245\.400 ₫/);
+  const none=pageFixture(cardPath,{0:'2026-09',1:data,4:'2026-09-13T10:00',5:'100',14:true}).html;
+  assert.match(none,/입금일 이전의 미정산 카드매출이 없습니다\./);
+});
+
+test('deposit list has no manual matching buttons; auto rows show a single auto-settled line',()=>{
+  const auto={id:30,deposit_date:'2026-09-27',deposit_amount:5_000_000,matched_gross_amount:5_000_000,difference_amount:0,status:'auto_allocated',memo:null,destination:{display_name:'BABA 법인'}};
+  const legacy={id:20,deposit_date:'2026-09-16',deposit_amount:3_000_000,matched_gross_amount:0,difference_amount:0,status:'unmatched',memo:null,destination:{display_name:'BABA 법인'}};
+  const partial={...legacy,id:21,status:'partial',matched_gross_amount:1_000_000};
+  const html=pageFixture(cardPath,{0:'2026-09',1:cardData([],[auto,legacy,partial])}).html;
+  assert.match(html,/<time dateTime="2026-09-27">09\/27 입금<\/time><strong>5\.000\.000 ₫<\/strong><\/button><span class="statusBadge autoBadge">자동 정산<\/span>/);
+  assert.match(html,/<time dateTime="2026-09-16">09\/16 입금<\/time><strong>3\.000\.000 ₫<\/strong><\/button><span class="statusBadge legacyBadge">기존 미연결<\/span>/);
+  assert.match(html,/statusBadge legacyBadge">기존 부분연결/);
+  assert.doesNotMatch(html,/매출 연결|정산 확정|부분 저장/);
+  const vi=pageFixture(cardPath,{0:'2026-09',1:cardData([],[auto,legacy])},undefined,'vi').html;
+  assert.match(vi,/Tự động quyết toán/);assert.match(vi,/Chưa kết nối \(cũ\)/);
+});
+
+test('auto deposit detail lists its FIFO sales with POS detail, states the fee is unconfirmed and cancels through the guarded endpoint',async()=>{
+  const auto={id:30,deposit_date:'2026-09-27',deposit_amount:10_000_000,matched_gross_amount:10_000_000,difference_amount:0,status:'auto_allocated',memo:null,destination:{display_name:'BABA 법인'}};
+  const lines=[{id:1,pos_card_transaction_id:14,allocated_gross_amount:6_245_400,sale:{id:14,business_date:'2026-09-14',amount:6_245_400}},{id:2,pos_card_transaction_id:15,allocated_gross_amount:3_754_600,sale:{id:15,business_date:'2026-09-15',amount:14_606_200}}];
+  const data=cardData([],[auto]);
+  const state=pageFixture(cardPath,{0:'2026-09',1:data,15:auto,18:lines},async url=>Response.json(url.includes('pos-drilldown')?{drilldown:{sourceAmount:1}}:{ok:true,result:{status:'cancelled'}}));
+  const sheet=state.html.slice(state.html.indexOf('role="dialog"'));
+  assert.match(sheet,/<span>수수료<\/span><strong>미확정<\/strong>/);
+  assert.doesNotMatch(sheet,/정산 차액 &amp; 추정 수수료|0\.00%/);
+  assert.match(sheet,/남은 매출 잔액은 수수료로 처리하지 않습니다/);
+  assert.match(sheet,/정산된 카드매출/);
+  assert.match(sheet,/<time dateTime="2026-09-14">매출일 09\/14<\/time><strong>6\.245\.400 ₫<\/strong>/);
+  assert.match(sheet,/<time dateTime="2026-09-15">매출일 09\/15<\/time><strong>3\.754\.600 ₫<\/strong>/);
+  const pos=state.elements.filter(element=>element.type==='button'&&element.props.children==='POS 상세');
+  assert.equal(pos.length,2);
+  await pos[1].props.onClick();
+  assert.ok(state.requests.includes('/api/admin/ledger/transactions/15/pos-drilldown'));
+  const cancelling=pageFixture(cardPath,{0:'2026-09',1:data,15:auto,16:true,17:'잘못된 금액'},async()=>Response.json({ok:true,result:{status:'cancelled'}}));
+  assert.match(cancelling.html,/카드 입금 이동을 역분개하고 자동 정산된 카드매출을 다시 미정산 상태로 돌립니다/);
+  cancelling.elements.find(element=>element.type==='button'&&element.props.children==='취소 확정').props.onClick();
+  await new Promise(resolve=>setImmediate(resolve));
+  const post=cancelling.calls.find(call=>call.options?.method==='POST');
+  assert.equal(post.url,'/api/admin/ledger/card-settlements/30/cancel');assert.deepEqual(JSON.parse(post.options.body),{reason:'잘못된 금액'});
+});
+
+test('legacy unmatched deposits stay reachable read-only with cancellation, and opening a row loads its lines',async()=>{
+  const legacy={id:20,deposit_date:'2026-09-16',deposit_amount:3_000_000,matched_gross_amount:0,difference_amount:0,status:'unmatched',memo:null,destination:{display_name:'BABA 법인'}};
+  const data=cardData([cardSale(14,'2026-09-14',6_245_400)],[legacy]);
+  const detail=pageFixture(cardPath,{0:'2026-09',1:data,15:legacy}).html;
+  assert.match(detail,/기존 방식으로 등록된 입금입니다\. 매출이 자동 정산되지 않았으며 그대로 보존됩니다/);
+  assert.match(detail,/정산 취소/);assert.doesNotMatch(detail,/매출 연결|부분 저장|정산 확정/);
+  const list=pageFixture(cardPath,{0:'2026-09',1:data},async()=>Response.json({reconciliation:{...legacy,lines:[]}}));
+  list.elements.find(element=>element.type==='button'&&element.props['aria-label']==='2026-09-16 카드 입금').props.onClick({currentTarget:{}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(list.requests,['/api/admin/ledger/card-settlements/20']);
+  assert.ok(list.updates.some(update=>update.slot===15&&update.value?.id===20));
+  assert.deepEqual(list.updates.findLast(update=>update.slot===18).value,[]);
+  assert.ok(!list.calls.some(call=>call.options?.method==='POST'),'opening never auto-settles a legacy deposit');
 });

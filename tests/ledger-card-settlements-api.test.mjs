@@ -14,25 +14,28 @@ function load(path, dependencies = {}) {
 }
 const sale = (id, date, amount) => ({ id, business_date: date, amount, status: 'confirmed', source_type: 'pos_sales_daily_payment', source_key: `pos:${date}:card` });
 const rec = (id, date, amount, status='matched', gross=amount, difference=0) => ({ id, deposit_date: date, deposit_amount: amount, status, matched_gross_amount: gross, difference_amount: difference });
-function setup({ sales=[], reconciliations=[], lines=[], movements=[], denied=false, failTable=null, rpcStatuses={} }={}) {
+const defaultFundAccounts=[{id:1,code:'card_clearing',type:'card_clearing',display_name:'Card',is_active:true},{id:2,code:'bank',type:'bank',display_name:'Bank',is_active:true},{id:5,code:'baba_corporate_bank',type:'bank',display_name:'BABA Corporate',is_active:true}];
+function setup({ sales=[], reconciliations=[], lines=[], movements=[], fundAccounts=defaultFundAccounts, denied=false, failTable=null, rpcStatuses={} }={}) {
   const calls=[], rpcCalls=[];
   const tables = {
     ledger_transactions: sales,
     ledger_card_reconciliations: reconciliations,
     ledger_card_reconciliation_lines: lines.map(line => ({ ...line, reconciliation: reconciliations.find(row => row.id === line.reconciliation_id) ?? null })),
-    ledger_fund_accounts: [{id:1,code:'card_clearing',display_name:'Card',is_active:true},{id:2,code:'bank',display_name:'Bank',is_active:true}],
+    ledger_fund_accounts: fundAccounts,
     ledger_movements: movements,
   };
   const db = {
     from(table) {
       const filters=[], orders=[];let from=0,to=999;
       const field=(row,key)=>key.split('.').reduce((current,part)=>current?.[part],row);
-      const query={select(){return query},order(key,options={}){orders.push([key,options.ascending!==false]);return query},range(start,end){from=start;to=end;return query},then(resolve,reject){
-        calls.push({table,from,to});
+      let single=false;
+      const query={select(){return query},order(key,options={}){orders.push([key,options.ascending!==false]);return query},range(start,end){from=start;to=end;return query},maybeSingle(){single=true;return query},then(resolve,reject){
+        calls.push({table,from,to,single});
         if(table===failTable)return Promise.resolve({data:null,error:{code:'LOCAL_READ_FAILURE'}}).then(resolve,reject);
         const rows=tables[table].filter(row=>filters.every(filter=>filter(row))).sort((a,b)=>{
           for(const [key,ascending] of orders){const av=field(a,key),bv=field(b,key);if(av<bv)return ascending?-1:1;if(av>bv)return ascending?1:-1;}return 0;
         });
+        if(single)return Promise.resolve(rows.length>1?{data:null,error:{code:'PGRST116'}}:{data:rows[0]??null,error:null}).then(resolve,reject);
         return Promise.resolve({data:rows.slice(from,to+1),error:null}).then(resolve,reject);
       }};
       for(const op of ['eq','neq','gte','lt','in','like'])query[op]=(key,value)=>{filters.push(row=>{
@@ -46,7 +49,7 @@ function setup({ sales=[], reconciliations=[], lines=[], movements=[], denied=fa
     },
     async rpc(name,args) {
       rpcCalls.push({name,args});
-      const fallback=name==='ledger_create_card_deposit_v1'?'created':name==='ledger_cancel_card_reconciliation_v1'?'cancelled':args.p_confirm?'matched':'partial';
+      const fallback=name==='ledger_create_card_deposit_auto_allocate_v1'?'created':name==='ledger_cancel_card_reconciliation_v1'?'cancelled':args.p_confirm?'matched':'partial';
       const configured=rpcStatuses[name];
       return {data:configured&&typeof configured==='object'?configured:{status:configured??fallback},error:null};
     },
@@ -113,24 +116,64 @@ test('GET authorization, invalid month and failed reads do not silently return f
   const invalid=setup();assert.equal((await get(invalid,'2026-13')).status,400);assert.equal(invalid.calls.length,0);
   const failed=setup({failTable:'ledger_card_reconciliation_lines'});assert.equal((await get(failed)).status,500);
 });
-test('create and partial/confirmed match still forward the existing RPC contracts without direct writes',async()=>{
+test('create calls only the atomic auto-allocation RPC while the legacy match route keeps its RPC contract without direct writes',async()=>{
   const state=setup();
-  const deposit={depositAt:'2026-09-10T10:00:00+07:00',amount:982,destinationAccountId:2,reference:'local-test',memo:'local-test'};
+  const deposit={depositAt:'2026-09-10T10:00:00+07:00',amount:982,memo:'local-test'};
   const response=await state.api.POST(new Request('http://local/api/admin/ledger/card-settlements',{method:'POST',body:JSON.stringify(deposit)}));assert.equal(response.status,201);
-  assert.deepEqual(state.rpcCalls[0],{name:'ledger_create_card_deposit_v1',args:{p_deposit_at:deposit.depositAt,p_amount:982,p_destination_account_id:2,p_reference:'local-test',p_memo:'local-test',p_actor_user_id:7}});
+  assert.deepEqual(state.rpcCalls,[{name:'ledger_create_card_deposit_auto_allocate_v1',args:{p_deposit_at:deposit.depositAt,p_amount:982,p_destination_account_id:5,p_memo:'local-test',p_actor_user_id:7}}]);
   const allocations=[{transactionId:1,allocatedGrossAmount:1000}];
   for(const confirm of [false,true]){
     const response=await state.match.POST(new Request('http://local/api/admin/ledger/card-settlements/1/match',{method:'POST',body:JSON.stringify({allocations,confirm})}),{params:Promise.resolve({id:'1'})});assert.equal(response.status,200);assert.deepEqual(state.rpcCalls.at(-1),{name:'ledger_match_card_reconciliation_v1',args:{p_reconciliation_id:1,p_allocations:allocations,p_confirm:confirm,p_actor_user_id:7}});
   }
-  assert.equal(state.calls.length,0);
+  assert.deepEqual(state.calls.map(call=>[call.table,call.single]),[['ledger_fund_accounts',true]]);
 });
 
-test('create accepts a new deposit without reference while retaining legacy reference compatibility',async()=>{
+test('create accepts only depositAt/amount/memo and maps RPC rejections to explicit statuses',async()=>{
   const state=setup();
-  const deposit={depositAt:'2026-09-10T10:00:00+07:00',amount:982,destinationAccountId:2,memo:'local-test'};
+  const deposit={depositAt:'2026-09-10T10:00:00+07:00',amount:982};
   const response=await state.api.POST(new Request('http://local/api/admin/ledger/card-settlements',{method:'POST',body:JSON.stringify(deposit)}));
   assert.equal(response.status,201);
-  assert.deepEqual(state.rpcCalls[0],{name:'ledger_create_card_deposit_v1',args:{p_deposit_at:deposit.depositAt,p_amount:982,p_destination_account_id:2,p_reference:null,p_memo:'local-test',p_actor_user_id:7}});
+  assert.deepEqual(state.rpcCalls[0].args,{p_deposit_at:deposit.depositAt,p_amount:982,p_destination_account_id:5,p_memo:null,p_actor_user_id:7});
+  for(const extra of [{reference:'legacy'},{allocations:[]},{expectedFeeRate:0.018}]){
+    const rejected=await state.api.POST(new Request('http://local/api/admin/ledger/card-settlements',{method:'POST',body:JSON.stringify({...deposit,...extra})}));
+    assert.equal(rejected.status,400,JSON.stringify(extra));assert.equal((await rejected.json()).code,'INVALID_BODY');
+  }
+  assert.equal(state.rpcCalls.length,1);
+  for(const [rpcStatus,httpStatus,code] of [['insufficient_unsettled_card_sales',409,'INSUFFICIENT_UNSETTLED_CARD_SALES'],['insufficient_card_pending',409,'INSUFFICIENT_CARD_PENDING'],['month_closed',409,'MONTH_CLOSED'],['forbidden',403,'FORBIDDEN'],['invalid_destination',400,'INVALID_DESTINATION']]){
+    const failing=setup({rpcStatuses:{ledger_create_card_deposit_auto_allocate_v1:rpcStatus}});
+    const result=await failing.api.POST(new Request('http://local/api/admin/ledger/card-settlements',{method:'POST',body:JSON.stringify(deposit)}));
+    assert.equal(result.status,httpStatus,rpcStatus);assert.equal((await result.json()).code,code);
+  }
+});
+
+test('GET treats auto_allocated deposits as settled principal but never as unmatched deposits or confirmed fees',async()=>{
+  const state=setup({sales:[sale(1,'2026-09-14',6245400)],reconciliations:[rec(1,'2026-09-10',980,'matched',1000,20),rec(2,'2026-09-27',5000000,'auto_allocated',5000000,0),rec(3,'2026-09-20',300,'unmatched',0)],lines:[{id:1,reconciliation_id:2,pos_card_transaction_id:1,allocated_gross_amount:5000000}]});
+  const body=await(await get(state,'2026-09')).json();
+  assert.equal(body.summary.monthlySettledGross,5000000);
+  assert.equal(body.summary.monthlyUnreconciledGross,1245400);
+  assert.equal(body.summary.actualCardDeposits,5001280);
+  assert.equal(body.summary.monthlyUnmatchedDeposits,300);
+  // Fee metrics stay on fee-confirmed (matched) history only: no 0% dilution from auto rows.
+  assert.equal(body.summary.monthlyCompletedGross,1000);assert.equal(body.summary.monthlyCompletedDifference,20);assert.equal(body.summary.actualDifferenceRate,0.02);
+  assert.equal(body.summary.monthlySettlementDifference,0);
+});
+
+test('create rejects a client-supplied destinationAccountId before any account lookup or RPC',async()=>{
+  const state=setup();
+  const response=await state.api.POST(new Request('http://local/api/admin/ledger/card-settlements',{method:'POST',body:JSON.stringify({depositAt:'2026-09-10T10:00:00+07:00',amount:982,destinationAccountId:2})}));
+  assert.equal(response.status,400);
+  assert.equal((await response.json()).code,'INVALID_BODY');
+  assert.equal(state.calls.length,0);assert.equal(state.rpcCalls.length,0);
+});
+
+test('create returns CORPORATE_BANK_ACCOUNT_MISSING when no active baba_corporate_bank account exists',async()=>{
+  for(const fundAccounts of [defaultFundAccounts.filter(row=>row.code!=='baba_corporate_bank'),defaultFundAccounts.map(row=>row.code==='baba_corporate_bank'?{...row,is_active:false}:row)]){
+    const state=setup({fundAccounts});
+    const response=await state.api.POST(new Request('http://local/api/admin/ledger/card-settlements',{method:'POST',body:JSON.stringify({depositAt:'2026-09-10T10:00:00+07:00',amount:982})}));
+    assert.equal(response.status,400);
+    assert.equal((await response.json()).code,'CORPORATE_BANK_ACCOUNT_MISSING');
+    assert.equal(state.rpcCalls.length,0);
+  }
 });
 
 test('future card sale is a 409 and preserves the RPC date context',async()=>{

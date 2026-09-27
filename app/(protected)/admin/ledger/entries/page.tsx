@@ -39,9 +39,12 @@ import {
   sanitizeLedgerAmountInput,
 } from "@/lib/ledger/manual-entry-amount";
 import {
+  groupManualEntryPartners,
   isManualExpenseCategory,
+  isManualIncomeCategory,
   manualExpenseCategoryLabel,
   manualExpenseCategorySort,
+  manualIncomeCategorySort,
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
 import MonthCloseSheet from "./MonthCloseSheet";
@@ -1745,9 +1748,15 @@ function ManualEntrySheet({
         ? data.categories
             .filter(isManualExpenseCategory)
             .sort(manualExpenseCategorySort)
-        : data.categories.filter((row) => row.kind === "income"),
+        : type === "income"
+          ? data.categories
+              .filter(isManualIncomeCategory)
+              .sort(manualIncomeCategorySort)
+          : [],
     accounts = data.accounts.filter((row) => row.is_active),
     investmentAccounts = accounts.filter((row) => row.is_business_fund && ["cash", "bank", "personal_custody"].includes(row.type)),
+    activePartners = data.partners.filter((row) => row.isActive),
+    partnerGroups = groupManualEntryPartners(activePartners, lang),
     selectedPartner = data.partners.find((row) => String(row.id) === partnerId);
   function changeType(next: EntryType) {
     setType(next);
@@ -1895,19 +1904,16 @@ function ManualEntrySheet({
             {type === "expense" ? (
               <BarField label={`🤝 ${vi ? "Đối tác (không bắt buộc)" : "거래처 (선택)"}`} compact>
                 {({ id }) => (
-                  <div className={styles.manualFieldStack}>
-                    <select id={id} data-manual-field="partner" value={partnerId} onChange={(event) => setPartnerId(event.target.value)} style={keepingInputStyle}>
-                      <option value="">{vi ? "Không có" : "없음"}</option>
-                      {data.partners.filter((row) => row.isActive).map((row) => (
-                        <option key={row.id} value={row.id}>{row.name}</option>
-                      ))}
-                    </select>
-                    <small className={styles.manualHelp}>
-                      {vi
-                        ? "Hãy xử lý nhập kho và thanh toán công nợ hiện có trong chức năng tương ứng."
-                        : "재고 입고·기존 미납금 지급은 해당 기능에서 처리하세요."}
-                    </small>
-                  </div>
+                  <select id={id} data-manual-field="partner" value={partnerId} onChange={(event) => setPartnerId(event.target.value)} style={keepingInputStyle}>
+                    <option value="">{vi ? "Không có" : "없음"}</option>
+                    {partnerGroups.map((group) => (
+                      <optgroup key={group.group} label={group.label}>
+                        {group.partners.map((partner) => (
+                          <option key={partner.id} value={partner.id}>{partner.name}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
                 )}
               </BarField>
             ) : type === "income" ? (

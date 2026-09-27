@@ -56,4 +56,31 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request:Request){const auth=await requireLedgerActor();if(auth.response||!auth.actor)return auth.response;const body=await request.json().catch(()=>null)as Record<string,unknown>|null,allowed=new Set(["depositAt","amount","destinationAccountId","reference","memo"]);if(!body||Object.keys(body).some(k=>!allowed.has(k))||!body.depositAt||!Number.isInteger(Number(body.destinationAccountId))||Number(body.amount)<=0)return ledgerJson({ok:false,code:"INVALID_BODY"},400);try{const{data,error}=await supabaseServer.rpc("ledger_create_card_deposit_v1",{p_deposit_at:body.depositAt,p_amount:body.amount,p_destination_account_id:body.destinationAccountId,p_reference:body.reference||null,p_memo:body.memo||null,p_actor_user_id:auth.actor.id});if(error)throw error;const result=data as{status?:string};if(result.status!=="created"){const status=result.status;return ledgerJson({ok:false,code:String(status??"CARD_DEPOSIT_FAILED").toUpperCase(),result},status==="forbidden"?403:status==="month_closed"?409:400)}return ledgerJson({ok:true,result},201)}catch(error){console.error("[LEDGER_CARD_DEPOSIT_FAILED]",error);return ledgerJson({ok:false,code:"CARD_DEPOSIT_FAILED"},500)}}
+export async function POST(request: Request) {
+  const auth = await requireLedgerActor();
+  if (auth.response || !auth.actor) return auth.response;
+  const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+  const allowed = new Set(["depositAt", "amount", "memo"]);
+  if (!body || Object.keys(body).some(key => !allowed.has(key)) || !body.depositAt || !Number.isFinite(Number(body.amount)) || Number(body.amount) <= 0) return ledgerJson({ ok: false, code: "INVALID_BODY" }, 400);
+  try {
+    const account = await supabaseServer.from("ledger_fund_accounts").select("id")
+      .eq("code", "baba_corporate_bank").eq("is_active", true).neq("type", "card_clearing").maybeSingle();
+    if (account.error) throw account.error;
+    if (!account.data) return ledgerJson({ ok: false, code: "CORPORATE_BANK_ACCOUNT_MISSING" }, 400);
+    // One RPC registers the deposit and allocates exactly its amount FIFO; the RPC re-checks the corporate bank.
+    const { data, error } = await supabaseServer.rpc("ledger_create_card_deposit_auto_allocate_v1", {
+      p_deposit_at: body.depositAt, p_amount: body.amount, p_destination_account_id: account.data.id,
+      p_memo: body.memo || null, p_actor_user_id: auth.actor.id,
+    });
+    if (error) throw error;
+    const result = data as { status?: string };
+    if (result.status !== "created") {
+      const status = result.status;
+      return ledgerJson({ ok: false, code: String(status ?? "CARD_DEPOSIT_FAILED").toUpperCase(), result }, status === "forbidden" ? 403 : ["month_closed", "insufficient_unsettled_card_sales", "insufficient_card_pending"].includes(String(status)) ? 409 : 400);
+    }
+    return ledgerJson({ ok: true, result }, 201);
+  } catch (error) {
+    console.error("[LEDGER_CARD_DEPOSIT_FAILED]", error);
+    return ledgerJson({ ok: false, code: "CARD_DEPOSIT_FAILED" }, 500);
+  }
+}

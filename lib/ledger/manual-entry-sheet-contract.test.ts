@@ -32,7 +32,22 @@ test("partner selection switches category between mapped readonly and the existi
   assert.match(sheet, /\) : \(\s*<select[^>]*data-manual-field="expense-category"/);
   assert.match(sheet, /data\.categories\s*\.filter\(isManualExpenseCategory\)/);
   assert.match(sheet, /setPartnerId\(event\.target\.value\)/);
-  assert.match(sheet, /재고 입고·기존 미납금 지급은 해당 기능에서 처리하세요/);
+  assert.doesNotMatch(sheet, /재고 입고·기존 미납금 지급은 해당 기능에서 처리하세요|Hãy xử lý nhập kho|manualHelp|manualFieldStack/);
+});
+
+test("partner select keeps none first and renders policy groups as optgroups", () => {
+  const partnerSelect = sheet.slice(sheet.indexOf('data-manual-field="partner"'), sheet.indexOf("</select>", sheet.indexOf('data-manual-field="partner"')));
+  inOrder(partnerSelect, ['<option value="">', "partnerGroups.map", "<optgroup", "group.partners.map"]);
+  assert.match(sheet, /activePartners = data\.partners\.filter\(\(row\) => row\.isActive\)/);
+  assert.match(sheet, /partnerGroups = groupManualEntryPartners\(activePartners, lang\)/);
+  assert.match(sheet, /<optgroup key=\{group\.group\} label=\{group\.label\}>/);
+});
+
+test("manual income select uses only the fixed income policy and preserves categoryId POST", () => {
+  assert.match(sheet, /type === "income"[\s\S]*?\.filter\(isManualIncomeCategory\)[\s\S]*?\.sort\(manualIncomeCategorySort\)/);
+  assert.match(sheet, /data-manual-field="income-category"[\s\S]*?value=\{categoryId\}[\s\S]*?setCategoryId\(event\.target\.value\)/);
+  assert.match(sheet, /categoryId:[\s\S]*?Number\(selectedPartner\?\.manualExpenseCategoryId \?\? categoryId\)/);
+  assert.doesNotMatch(sheet, /POS 매출/);
 });
 
 test("general balance adjustments keep positive amount and route direction to one account", () => {

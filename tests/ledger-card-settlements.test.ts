@@ -1,9 +1,9 @@
 import test from"node:test";import assert from"node:assert/strict";import{readFileSync}from"node:fs";
 import { createRequire } from "node:module";
-const { calculateCardGross, calculateCardGrossAtMonthEnd, calculateCardDepositSummary, calculateMonthlySettlementDifference, formatCardSettlementRate, recommendCardAllocations, buildEditableCardSales, eligibleCardSalesForDeposit } = createRequire(import.meta.url)("../lib/ledger/card-settlements.ts") as typeof import("../lib/ledger/card-settlements");
+const { calculateCardGross, calculateCardGrossAtMonthEnd, calculateCardDepositSummary, calculateMonthlySettlementDifference, formatCardSettlementRate, recommendCardAllocations, buildEditableCardSales, eligibleCardSalesForDeposit, planCardDepositAutoAllocation, isSettledCardReconciliationStatus } = createRequire(import.meta.url)("../lib/ledger/card-settlements.ts") as typeof import("../lib/ledger/card-settlements");
 const migration=readFileSync("supabase/migrations/202608210006_add_ledger_card_settlements.sql","utf8"),cancellationMigration=readFileSync("supabase/migrations/20260915095952_add_card_reconciliation_cancellation.sql","utf8"),futureSaleMigration=readFileSync("supabase/migrations/20260915103312_prevent_future_card_sale_matching.sql","utf8"),api=readFileSync("app/api/admin/ledger/card-settlements/route.ts","utf8"),detailApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/route.ts","utf8"),matchApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/match/route.ts","utf8"),cancelApi=readFileSync("app/api/admin/ledger/card-settlements/[id]/cancel/route.ts","utf8"),ui=readFileSync("app/(protected)/admin/ledger/card-settlements/page.tsx","utf8"),snapshot=readFileSync("lib/ledger/month-close.ts","utf8"),posMigration=readFileSync("supabase/migrations/202608210002_add_ledger_pos_sales_sync.sql","utf8"),posSource=readFileSync("lib/ledger/pos-sales.ts","utf8"),foundation=readFileSync("tests/ledger-v1-foundation.test.ts","utf8"),inventory=readFileSync("tests/ledger-inventory-candidates.test.ts","utf8"),payable=readFileSync("tests/ledger-payable-payments.test.ts","utf8"),meal=readFileSync("tests/ledger-meal-payroll.test.ts","utf8");
 const snapshotCard=readFileSync("lib/ledger/month-close-card.ts","utf8");
-test("card deposit registration RPC",()=>assert.match(api,/ledger_create_card_deposit_v1/));
+test("card deposit registration RPC is only the atomic auto-allocation RPC",()=>{assert.match(api,/ledger_create_card_deposit_auto_allocate_v1/);assert.doesNotMatch(api,/ledger_create_card_deposit_v1|ledger_match_card_reconciliation_v1/);});
 test("deposit subtracts card pending",()=>assert.match(migration,/v_transaction,v_clearing,-p_amount/));
 test("deposit adds destination bank",()=>assert.match(migration,/v_transaction,p_destination_account_id,p_amount/));
 test("card deposit is not income",()=>assert.match(migration,/values\(v_operation,'card_settlement_deposit'/));
@@ -19,7 +19,7 @@ test("five million less 4.91 million is 90 thousand",()=>assert.equal(5_000_000-
 test("difference expense is created",()=>assert.match(migration,/'expense_recognition'[\s\S]*v_diff/));
 test("difference additionally subtracts pending",()=>assert.match(migration,/v_diff_tx,v_clearing,-v_diff/));
 test("difference has one unique source key",()=>assert.match(migration,/card-reconciliation:'\|\|v_rec.id\|\|':difference/));
-test("expected fee is only an editable recommendation input, never persisted",()=>{assert.match(ui,/useState\("1\.8"\)/);assert.doesNotMatch(migration+api+matchApi,/expectedFee|expectedFeeRate/)});
+test("expected fee is neither a card UI input nor persisted",()=>{assert.doesNotMatch(ui,/expectedFee|recommendCardAllocations|useState\("1\.8"\)/);assert.doesNotMatch(migration+api+matchApi,/expectedFee|expectedFeeRate/)});
 test("rate uses completed reconciliation only",()=>assert.match(readFileSync("lib/ledger/card-settlements.ts","utf8"),/row.status === "matched"/));
 test("unmatched and partial do not enter rate",()=>assert.match(readFileSync("lib/ledger/card-settlements.ts","utf8"),/monthlyCompletedDifference \/ monthlyCompletedGross/));
 test("card sales lock in id order",()=>assert.match(migration,/id=any\(v_ids\) order by id for update/));
@@ -75,8 +75,8 @@ test("preflight blocks incomplete deposits and ignores cancelled allocation hist
   const fn=cancellationMigration.slice(cancellationMigration.indexOf("create or replace function public.ledger_close_preflight_v1"));
   assert.match(fn,/r\.status in \('unmatched', 'partial'\)[\s\S]*date_trunc\('month', r\.deposit_date\)::date = p_month[\s\S]*v_blockers[\s\S]*'CARD_UNMATCHED'/);
   assert.match(fn,/join public\.ledger_card_reconciliations r on r\.id = l\.reconciliation_id and r\.status <> 'cancelled'/);
-  assert.match(snapshotCard,/row\.status !== "cancelled" && !matchedIds\.has/);
-  assert.match(snapshot,/eq\("reconciliation\.status","matched"\)/);
+  assert.match(snapshotCard,/row\.status !== "cancelled" && !settledIds\.has/);
+  assert.match(snapshot,/in\("reconciliation\.status",\["matched","auto_allocated"\]\)/);
 });
 test("list and detail APIs retain cancelled rows and expose cancellation audit metadata",()=>{
   assert.doesNotMatch(api,/\.neq\("status",\s*"cancelled"\)/);assert.match(api,/totalHistoryCount/);assert.match(api,/totalCancelledCount/);
@@ -226,8 +226,9 @@ test("monthly report keeps accounting income; card settlements stay reachable fr
   assert.match(readFileSync("app/(protected)/admin/ledger/entries/page.tsx","utf8"),/ledgerMonthHref\("\/admin\/ledger\/card-settlements"/);
   assert.doesNotMatch(dashboard,/data.summary.unreconciledCardGross/);assert.doesNotMatch(dashboard,/setOutstanding\(/);
 });
-test("UI retains manual allocations and POS detail and adds guarded cancellation controls", () => {
-  assert.match(ui,/setAllocations\(current/);assert.match(ui,/pos-drilldown/);assert.match(ui,/정산 차액률/);assert.match(ui,/부분 저장/);
+test("UI keeps POS detail and guarded cancellation controls without manual allocation", () => {
+  assert.doesNotMatch(ui,/setAllocations|실제 수수료율|연결 합계|savePartial/);assert.match(ui,/pos-drilldown/);
+  assert.match(ui,/자동 정산된 카드매출을 다시 미정산 상태로 돌립니다/);
   assert.match(ui,/정산 취소/);assert.match(ui,/취소 사유/);assert.match(ui,/취소 확정/);assert.match(ui,/\/cancel/);assert.match(ui,/status==="cancelled"/);
   assert.match(ui,/카드 입금 이동과 정산 차액을 역분개하고 연결된 카드매출을 다시 미정산 상태로 돌립니다/);
   assert.match(ui,/working\|\|!cancelReason\.trim\(\)/);
@@ -239,7 +240,48 @@ test("card views label month-end settlement separately from current matching and
   assert.match(entries,/매출 귀속 수수료\/차액/);
   assert.match(entries,/실제 입금은 입금월 기준, 수수료\/차액은 매출월 귀속 기준입니다/);
   assert.match(ui,/현재 전체 미정산/);
-  assert.match(ui,/아래 매출별 연결 현황은 현재 기준이며 부분 저장을 포함합니다/);
   assert.match(api,/const gross = calculateCardGross\(/);
   assert.match(api,/const monthEndGross = calculateCardGrossAtMonthEnd\(/);
+});
+
+const outstanding=(id:number,business_date:string,outstandingGrossAmount:number)=>({id,business_date,outstandingGrossAmount});
+const planRows=(plan:ReturnType<typeof planCardDepositAutoAllocation>)=>plan.rows.map(row=>[row.transactionId,row.businessDate,row.outstandingBefore,row.allocatedAmount,row.outstandingAfter]);
+test("auto allocation partially settles the oldest sale by exactly the deposit amount",()=>{
+  const plan=planCardDepositAutoAllocation([outstanding(15,"2026-09-15",14_606_200),outstanding(14,"2026-09-14",6_245_400)],5_000_000,"2026-09-15");
+  assert.equal(plan.error,null);assert.equal(plan.totalAllocated,5_000_000);assert.equal(plan.remainingDeposit,0);
+  assert.deepEqual(planRows(plan),[[14,"2026-09-14",6_245_400,5_000_000,1_245_400]]);
+  assert.deepEqual(plan.allocations,[{transactionId:14,allocatedGrossAmount:5_000_000}]);
+});
+test("auto allocation fully settles one sale and continues across dates in order",()=>{
+  const sales=[outstanding(15,"2026-09-15",14_606_200),outstanding(14,"2026-09-14",6_245_400)];
+  assert.deepEqual(planRows(planCardDepositAutoAllocation(sales,6_245_400,"2026-09-15")),[[14,"2026-09-14",6_245_400,6_245_400,0]]);
+  const plan=planCardDepositAutoAllocation(sales,10_000_000,"2026-09-15");
+  assert.deepEqual(planRows(plan),[[14,"2026-09-14",6_245_400,6_245_400,0],[15,"2026-09-15",14_606_200,3_754_600,10_851_600]]);
+  assert.equal(plan.totalAllocated,10_000_000);
+});
+test("auto allocation uses remaining partial outstanding, id order within a date, and skips settled or future sales",()=>{
+  const plan=planCardDepositAutoAllocation([outstanding(9,"2026-09-10",300),outstanding(4,"2026-09-10",0),outstanding(7,"2026-09-10",200),outstanding(3,"2026-09-16",5000),outstanding(2,"2026-09-08","250.5" as unknown as number)],600.5,"2026-09-15");
+  assert.deepEqual(planRows(plan),[[2,"2026-09-08",250.5,250.5,0],[7,"2026-09-10",200,200,0],[9,"2026-09-10",300,150,150]]);
+  assert.equal(plan.totalAllocated,600.5);
+});
+test("auto allocation refuses amounts beyond eligible outstanding or without eligible sales, and invalid amounts",()=>{
+  const sales=[outstanding(1,"2026-09-14",1000),outstanding(2,"2026-09-16",9000)];
+  const short=planCardDepositAutoAllocation(sales,1000.001,"2026-09-15");
+  assert.deepEqual([short.error,short.availableOutstanding,short.rows.length,short.remainingDeposit],["exceeds_outstanding",1000,0,1000.001]);
+  assert.equal(planCardDepositAutoAllocation(sales,100,"2026-09-13").error,"nothing_outstanding");
+  for(const amount of[0,-1,Number.NaN,Infinity,1.0001])assert.equal(planCardDepositAutoAllocation(sales,amount,"2026-09-15").error,"invalid_amount",String(amount));
+});
+test("auto allocation sums exactly in thousandths",()=>{
+  const plan=planCardDepositAutoAllocation([outstanding(1,"2026-09-01",0.1),outstanding(2,"2026-09-02",0.2)],0.3,"2026-09-15");
+  assert.equal(plan.error,null);assert.deepEqual(plan.rows.map(row=>row.allocatedAmount),[0.1,0.2]);assert.equal(plan.totalAllocated,0.3);assert.equal(plan.rows[1].outstandingAfter,0);
+});
+test("settled statuses are matched and auto_allocated only",()=>{
+  assert.deepEqual(["matched","auto_allocated","partial","unmatched","cancelled",undefined].map(isSettledCardReconciliationStatus),[true,true,false,false,false,false]);
+});
+test("auto-allocation migration never books a fee and leaves existing rows untouched",()=>{
+  const auto=readFileSync("supabase/migrations/20260927144325_add_card_deposit_auto_allocation.sql","utf8");
+  const rpc=auto.slice(auto.indexOf("create function public.ledger_create_card_deposit_auto_allocate_v1"),auto.indexOf("-- Legacy manual matching"));
+  assert.doesNotMatch(rpc,/expense_recognition|card_settlement_difference|카드 정산 차액|confirmed_at|fee_rate|expectedFee/);
+  assert.match(rpc,/'auto_allocated'/);assert.match(rpc,/code = 'baba_corporate_bank'/);
+  assert.doesNotMatch(auto.replace(/create or replace function[\s\S]*?\$\$;|create function[\s\S]*?\$\$;/g,""),/\b(update|delete)\b/i,"no data backfill outside function bodies");
 });
