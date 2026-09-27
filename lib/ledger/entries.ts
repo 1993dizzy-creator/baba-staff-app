@@ -67,7 +67,9 @@ export type LedgerEntry = {
     | { kind: "pos"; paymentBucket: "cash" | "transfer" | "card" | "other"; receiptCount: number }
     | { kind: "meal"; employeeCount: number }
     | { kind: "inventory"; itemCount: number; partyMissing: boolean; needsConfirmation: boolean }
-    | { kind: "rent" };
+    | { kind: "rent" }
+    | { kind: "payablePayment"; partyName: string; prepaid: boolean }
+    | { kind: "cardSettlementDeposit" };
   items: LedgerEntryItem[];
 };
 
@@ -144,6 +146,40 @@ function displayMemo(memo: string | null | undefined) {
   return (memo ?? "").replace(/^\s*\d{1,2}월\s*시트\s*row\s*\d+\s*[·:—-]?\s*/i, "").trim();
 }
 
+function hasPrepaymentFlag(snapshot: Record<string, unknown> | null | undefined) {
+  if (!snapshot) return false;
+  if (snapshot.prepayment === true || snapshot.isPrepayment === true || snapshot.prepaid === true) return true;
+  return [snapshot.paymentType, snapshot.paymentKind].some(value =>
+    typeof value === "string" && /^(prepayment|prepaid)$/i.test(value.trim()),
+  );
+}
+
+function conciseTransactionTitle(row: TransactionRow) {
+  const memo = displayMemo(row.memo);
+  if (!memo) return row.party?.name || row.category?.name || "장부 거래";
+
+  const [, month, day] = row.business_date.match(/^\d{4}-(\d{2})-(\d{2})$/) ?? [];
+  const datePrefix = month && day
+    ? new RegExp(`^\\s*0?${Number(month)}\\s*[/.-]\\s*0?${Number(day)}\\s+`)
+    : null;
+  const hasBusinessDatePrefix = datePrefix?.test(memo) ?? false;
+  const titleMemo = hasBusinessDatePrefix && datePrefix ? memo.replace(datePrefix, "").trim() : memo;
+
+  const payrollAdvance = titleMemo.match(/^\s*([^·\n]{1,40}?\s+(?:급여\s*가불|ứng\s*lương))(?=\s*(?:[·,]|$))/i);
+  if (payrollAdvance) return payrollAdvance[1].trim();
+
+  // 임의의 사용자 메모는 보존한다. 영업일과 같은 날짜로 시작하고 뒤 절이
+  // 계정/금액 반복임이 분명한 형식만 목록 제목에서 안전하게 덜어낸다.
+  if (hasBusinessDatePrefix) {
+    const segments = titleMemo.split(/\s+·\s+/);
+    if (
+      segments.length > 1 &&
+      segments.slice(1).some(segment => /(?:₫|VND|동)\s*$/i.test(segment) || /(?:현금|cash|tiền\s*mặt)/i.test(segment))
+    ) return segments[0].trim() || memo;
+  }
+  return memo;
+}
+
 function specialTransactionDisplay(row: TransactionRow) {
   const memo = displayMemo(row.memo);
   if (row.type === "investment" && row.source_type === "owner_investment") {
@@ -177,6 +213,10 @@ function transactionTime(row: TransactionRow) {
       sortTimestamp: Date.parse(`${row.business_date}T18:00:00+07:00`),
     };
   }
+  if (row.source_type === "pos_sales_daily_payment") {
+    const syncedTime = timestampTime(row.source_snapshot?.syncedAt);
+    if (syncedTime.sortTimestamp > 0) return syncedTime;
+  }
   const sortTimestamp = Date.parse(row.occurred_at ?? "");
   if (!Number.isFinite(sortTimestamp)) {
     return { displayTime: null, sortTimestamp: 0 };
@@ -185,6 +225,14 @@ function transactionTime(row: TransactionRow) {
     displayTime: vietnamTimeFormatter.format(new Date(sortTimestamp)),
     sortTimestamp,
   };
+}
+
+export function entryRequiresReview(entry: Pick<LedgerEntry, "status" | "requiresCorrection">) {
+  return entry.status === "pending" || entry.requiresCorrection === true;
+}
+
+export function compareLedgerEntriesByDisplayTime(a: LedgerEntry, b: LedgerEntry) {
+  return a.sortTimestamp - b.sortTimestamp || a.id.localeCompare(b.id);
 }
 
 function timestampTime(input: unknown) {
@@ -429,16 +477,20 @@ export function buildLedgerEntries(
       (row.category?.name === "임대료" || snapshot.planName === "매장 임대료");
     const payroll = row.source_type.includes("payroll");
     const specialDisplay = specialTransactionDisplay(row);
+    const payablePayment = row.type === "payable_payment";
+    const cardSettlementDeposit = row.type === "card_settlement_deposit";
     entries.push({
       id: `transaction:${transactionId}`, businessDate: row.business_date, direction, participatesInProfit,
       origin: automatic ? "auto" : "manual", status: "confirmed", isSystemAdjustment: isSystemAdjustmentTransaction(row),
-      title: specialDisplay?.title ?? (pos || rent ? "" : payroll ? "급여 · 인건비" : displayMemo(row.memo) || row.party?.name || row.category?.name || "장부 거래"),
+      title: specialDisplay?.title ?? (pos || rent || payablePayment || cardSettlementDeposit ? "" : payroll ? "급여 · 인건비" : conciseTransactionTitle(row)),
       subtitle: specialDisplay?.subtitle ?? (pos || rent ? "" : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력")),
       memo: row.memo ?? null,
       amount, economicEffectSign, ...time, accountName, settlementStatus: paymentDisplay?.status, remainingAmount: paymentDisplay?.remainingAmount, categoryName: row.category?.name ?? null, transactionId,
       drilldown: pos ? "pos" : payroll ? "payroll" : "generic",
       ...(pos ? { systemDisplay: { kind: "pos" as const, paymentBucket: posPaymentBucket, receiptCount: value(snapshot.receiptCount) } } : {}),
       ...(rent ? { systemDisplay: { kind: "rent" as const } } : {}),
+      ...(payablePayment ? { systemDisplay: { kind: "payablePayment" as const, partyName: row.party?.name?.trim() || "", prepaid: hasPrepaymentFlag(row.source_snapshot) } } : {}),
+      ...(cardSettlementDeposit ? { systemDisplay: { kind: "cardSettlementDeposit" as const } } : {}),
       items: [],
     });
   }

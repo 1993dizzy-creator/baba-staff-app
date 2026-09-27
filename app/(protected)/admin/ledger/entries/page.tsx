@@ -25,7 +25,12 @@ import {
   primaryButtonStyle,
   secondaryButtonStyle,
 } from "@/components/bar/keeping/KeepingUi";
-import { entryDisplaySubtotal, type LedgerEntry, type LedgerEntryItem } from "@/lib/ledger/entries";
+import {
+  entryDisplaySubtotal,
+  entryRequiresReview,
+  type LedgerEntry,
+  type LedgerEntryItem,
+} from "@/lib/ledger/entries";
 import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
 import { groupPayableRows } from "@/lib/ledger/payable-date-groups";
 import {
@@ -74,6 +79,11 @@ type Partner = {
   id: number;
   name: string;
   ledgerPartyId: number;
+  partnerType: string;
+  partnerSubtypeId: number | null;
+  partnerSubtypeCode: string | null;
+  manualExpenseCategoryId: number | null;
+  manualExpenseCategoryName: string | null;
   paymentMode: "immediate" | "postpaid";
   defaultFundAccountId: number | null;
   isActive: boolean;
@@ -395,10 +405,10 @@ function LedgerEntriesContent() {
       if (filter === "income" && entry.direction !== "income") continue;
       if (filter === "expense" && entry.direction !== "expense") continue;
       if (filter === "manual" && entry.origin !== "manual") continue;
-      if (filter === "pending" && entry.status !== "pending") continue;
+      if (filter === "pending" && !entryRequiresReview(entry)) continue;
       if (
         keyword &&
-        !`${entryDisplayTitle(entry, lang)} ${entryMeta(entry, lang)} ${entry.accountName ?? ""} ${entry.categoryName ?? ""}`
+        !`${entryDisplayTitle(entry, lang)} ${entryMeta(entry, lang)} ${entry.accountName ?? ""} ${entry.categoryName ?? ""} ${entry.memo ?? ""}`
           .toLocaleLowerCase()
           .includes(keyword)
       )
@@ -719,20 +729,14 @@ function LedgerEntriesContent() {
               >
                 <span
                   className={`${styles.direction} ${styles[entry.direction]}`}
+                  data-icon={directionEmoji(entry.direction)}
                 >
-                  {entry.direction === "income"
-                    ? vi
-                      ? "Thu"
-                      : "수입"
-                    : entry.direction === "expense"
-                      ? vi
-                        ? "Chi"
-                        : "지출"
-                      : vi
-                        ? "Chuyển"
-                        : "이체"}
+                  {directionBadgeLabel(entry.direction, lang)}
                 </span>
-                <span className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""}`}>
+                <span
+                  className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""}`}
+                  title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}
+                >
                   {accountBadgeLabel(entry.accountName,lang,entry)}
                 </span>
                 <span className={styles.entryMain}>
@@ -1180,6 +1184,7 @@ function LedgerEntriesContent() {
           <ManualEntrySheet
             lang={lang}
             data={data}
+            investments={activeInvestments}
             month={month}
             saving={saving}
             setSaving={setSaving}
@@ -1359,13 +1364,22 @@ function EntryDetailSheet({
           </span>
         </div>
         <div className={styles.detailMain}>
-          <span>{directionEmoji(entry.direction)} {directionLabel(entry.direction, lang)}</span>
+          <span className={styles.detailBadges}>
+            <span
+              className={`${styles.direction} ${styles[entry.direction]}`}
+              data-icon={directionEmoji(entry.direction)}
+            >
+              {directionBadgeLabel(entry.direction, lang)}
+            </span>
+            <span
+              className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""}`}
+              title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}
+            >
+              {accountBadgeLabel(entry.accountName, lang, entry)}
+            </span>
+          </span>
           <strong className={styles.detailAmount}>{money(entry.amount)}</strong>
         </div>
-        <span className={styles.detailMeta}>
-          📅 {formatDate(entry.businessDate, lang)} · 🏦{" "}
-          {entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}
-        </span>
       </div>
       {message ? (
         <p className={styles.error} role="alert">
@@ -1575,6 +1589,12 @@ function EntryDetailSheet({
             : "원본 snapshot은 보존됩니다. 마감된 월의 변경은 기존 장부 정정 정책으로 처리됩니다."}
         </p>
       ) : null}
+      {entry.memo?.trim() ? (
+        <section className={styles.detailMemo} aria-label={vi ? "Ghi chú" : "메모"}>
+          <strong className={styles.detailMemoLabel}>{vi ? "Ghi chú" : "메모"}</strong>
+          <p className={styles.detailMemoText}>{entry.memo}</p>
+        </section>
+      ) : null}
     </BarSheet>
   );
 }
@@ -1685,6 +1705,7 @@ function payableItemLabel(row:PayableRow,vi:boolean){const snapshot=row.expense?
 function ManualEntrySheet({
   lang,
   data,
+  investments,
   month,
   saving,
   setSaving,
@@ -1694,6 +1715,7 @@ function ManualEntrySheet({
 }: {
   lang: "ko" | "vi";
   data: LedgerData;
+  investments: InvestmentsData | null;
   month: string;
   saving: boolean;
   setSaving: (value: boolean) => void;
@@ -1711,6 +1733,10 @@ function ManualEntrySheet({
     [partnerId, setPartnerId] = useState(""),
     [fromAccountId, setFromAccountId] = useState(""),
     [toAccountId, setToAccountId] = useState(""),
+    [adjustmentType, setAdjustmentType] = useState<"general" | "investment">("general"),
+    [balanceDirection, setBalanceDirection] = useState<"increase" | "decrease">("increase"),
+    [investmentAction, setInvestmentAction] = useState<"contribution" | "recovery">("contribution"),
+    [participantId, setParticipantId] = useState(""),
     [memo, setMemo] = useState(""),
     [reason, setReason] = useState(""),
     [error, setError] = useState("");
@@ -1721,6 +1747,7 @@ function ManualEntrySheet({
             .sort(manualExpenseCategorySort)
         : data.categories.filter((row) => row.kind === "income"),
     accounts = data.accounts.filter((row) => row.is_active),
+    investmentAccounts = accounts.filter((row) => row.is_business_fund && ["cash", "bank", "personal_custody"].includes(row.type)),
     selectedPartner = data.partners.find((row) => String(row.id) === partnerId);
   function changeType(next: EntryType) {
     setType(next);
@@ -1738,10 +1765,22 @@ function ManualEntrySheet({
             ? "Số tiền phải là số nguyên dương hợp lệ."
             : "금액은 안전한 범위의 양의 정수여야 합니다.",
         );
-      const response = await fetch("/api/admin/ledger", {
+      if (type === "balance_adjustment" && adjustmentType === "investment" && !investments?.configured) {
+        throw new Error(vi ? "Tình hình vốn góp của tháng này chưa được thiết lập." : "선택월 투자금 현황이 설정되지 않았습니다.");
+      }
+      const isInvestmentAdjustment = type === "balance_adjustment" && adjustmentType === "investment";
+      const response = await fetch(isInvestmentAdjustment ? "/api/admin/ledger/investments" : "/api/admin/ledger", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+          body: JSON.stringify(isInvestmentAdjustment ? {
+            participantId: Number(participantId),
+            action: investmentAction,
+            amount: amountValue,
+            occurredAt: `${occurredDate}T${occurredTime}:00+07:00`,
+            fundAccountId: Number(investmentAction === "contribution" ? toAccountId : fromAccountId),
+            reason,
+            memo,
+          } : {
             type,
             amount: amountValue,
             occurredAt: `${occurredDate}T${occurredTime}:00+07:00`,
@@ -1749,22 +1788,20 @@ function ManualEntrySheet({
               type === "income" || type === "expense" ? `${month}-01` : null,
             categoryId:
               type === "income" || type === "expense"
-                ? Number(categoryId)
+                ? Number(selectedPartner?.manualExpenseCategoryId ?? categoryId)
                 : null,
-            partyId:
-              type === "expense"
-                ? (selectedPartner?.ledgerPartyId ?? null)
-                : null,
+            partyId: type === "expense" ? (selectedPartner?.ledgerPartyId ?? null) : null,
+            businessPartnerId: type === "expense" ? (selectedPartner?.id ?? null) : null,
             fromAccountId:
               type === "expense" ||
               type === "transfer" ||
-              (type === "balance_adjustment" && Number(amount) < 0)
+              (type === "balance_adjustment" && balanceDirection === "decrease")
                 ? Number(fromAccountId)
                 : null,
             toAccountId:
               type === "income" ||
               type === "transfer" ||
-              (type === "balance_adjustment" && Number(amount) >= 0)
+              (type === "balance_adjustment" && balanceDirection === "increase")
                 ? Number(toAccountId)
                 : null,
             memo,
@@ -1785,11 +1822,11 @@ function ManualEntrySheet({
   const outgoing =
       type === "expense" ||
       type === "transfer" ||
-      (type === "balance_adjustment" && Number(amount) < 0),
+      (type === "balance_adjustment" && balanceDirection === "decrease"),
     incoming =
       type === "income" ||
       type === "transfer" ||
-      (type === "balance_adjustment" && Number(amount) >= 0);
+      (type === "balance_adjustment" && balanceDirection === "increase");
   return (
     <BarSheet
       kind="bottom"
@@ -1838,13 +1875,12 @@ function ManualEntrySheet({
           ]}
         />
         <div className={styles.manualGrid}>
-          <div
-            className={`${styles.manualRow} ${type === "income" || type === "expense" ? "" : styles.manualSingle}`}
-          >
+          <div className={`${styles.manualRow} ${type === "transfer" ? styles.manualSingle : ""}`}>
             <BarField label={`💵 ${vi ? "Số tiền" : "금액"}`} required compact>
               {({ id }) => (
                 <input
                   id={id}
+                  data-manual-field="amount"
                   required
                   inputMode="numeric"
                   autoComplete="off"
@@ -1856,7 +1892,25 @@ function ManualEntrySheet({
                 />
               )}
             </BarField>
-            {type === "income" || type === "expense" ? (
+            {type === "expense" ? (
+              <BarField label={`🤝 ${vi ? "Đối tác (không bắt buộc)" : "거래처 (선택)"}`} compact>
+                {({ id }) => (
+                  <div className={styles.manualFieldStack}>
+                    <select id={id} data-manual-field="partner" value={partnerId} onChange={(event) => setPartnerId(event.target.value)} style={keepingInputStyle}>
+                      <option value="">{vi ? "Không có" : "없음"}</option>
+                      {data.partners.filter((row) => row.isActive).map((row) => (
+                        <option key={row.id} value={row.id}>{row.name}</option>
+                      ))}
+                    </select>
+                    <small className={styles.manualHelp}>
+                      {vi
+                        ? "Hãy xử lý nhập kho và thanh toán công nợ hiện có trong chức năng tương ứng."
+                        : "재고 입고·기존 미납금 지급은 해당 기능에서 처리하세요."}
+                    </small>
+                  </div>
+                )}
+              </BarField>
+            ) : type === "income" ? (
               <BarField
                 label={`🏷️ ${vi ? "Danh mục" : "카테고리"}`}
                 required
@@ -1865,6 +1919,7 @@ function ManualEntrySheet({
                 {({ id }) => (
                   <select
                     id={id}
+                    data-manual-field="income-category"
                     required
                     value={categoryId}
                     onChange={(event) => setCategoryId(event.target.value)}
@@ -1873,95 +1928,160 @@ function ManualEntrySheet({
                     <option value="">{vi ? "Chọn" : "선택"}</option>
                     {categories.map((row) => (
                       <option key={row.id} value={row.id}>
-                        {type === "expense"
-                          ? manualExpenseCategoryLabel(row.name, lang)
-                          : row.name}
+                        {row.name}
                       </option>
                     ))}
                   </select>
                 )}
               </BarField>
-            ) : null}
-          </div>
-          <div className={styles.manualRow}>
-            <BarField
-              label={`📅 ${vi ? "Ngày phát sinh" : "발생일"}`}
-              required
-              compact
-            >
-              {({ id }) => (
-                <input
-                  id={id}
-                  required
-                  type="date"
-                  value={occurredDate}
-                  onChange={(event) => setOccurredDate(event.target.value)}
-                  style={keepingInputStyle}
-                />
-              )}
-            </BarField>
-            <BarField
-              label={`🕒 ${vi ? "Thời gian" : "시간"}`}
-              required
-              compact
-            >
-              {({ id }) => (
-                <input
-                  id={id}
-                  required
-                  type="time"
-                  value={occurredTime}
-                  onChange={(event) => setOccurredTime(event.target.value)}
-                  style={keepingInputStyle}
-                />
-              )}
-            </BarField>
-          </div>
-          <div
-            className={`${styles.manualRow} ${type === "transfer" || type === "expense" ? "" : styles.manualSingle}`}
-          >
-            {outgoing ? (
-              <AccountField
-                lang={lang}
-                label={`🏦 ${type === "balance_adjustment" ? (vi ? "Tài khoản điều chỉnh" : "조정 계정") : vi ? "Tài khoản chi" : "출금 계정"}`}
-                value={fromAccountId}
-                setValue={setFromAccountId}
-                accounts={accounts}
-              />
-            ) : null}
-            {incoming ? (
-              <AccountField
-                lang={lang}
-                label={`🏦 ${type === "balance_adjustment" ? (vi ? "Tài khoản điều chỉnh" : "조정 계정") : vi ? "Tài khoản nhận" : "입금 계정"}`}
-                value={toAccountId}
-                setValue={setToAccountId}
-                accounts={accounts}
-              />
-            ) : null}
-            {type === "expense" ? (
-              <BarField
-                label={`🤝 ${vi ? "Đối tác (không bắt buộc)" : "거래처 (선택)"}`}
-                compact
-              >
+            ) : type === "balance_adjustment" ? (
+              <BarField label={`⚖️ ${vi ? "Loại điều chỉnh" : "조정유형"}`} required compact>
                 {({ id }) => (
                   <select
                     id={id}
-                    value={partnerId}
-                    onChange={(event) => setPartnerId(event.target.value)}
+                    data-manual-field="adjustment-type"
+                    required
+                    value={adjustmentType}
+                    onChange={(event) => {
+                      setAdjustmentType(event.target.value as "general" | "investment");
+                      setFromAccountId("");
+                      setToAccountId("");
+                    }}
                     style={keepingInputStyle}
                   >
-                    <option value="">{vi ? "Không có" : "없음"}</option>
-                    {data.partners
-                      .filter((row) => row.isActive)
-                      .map((row) => (
-                        <option key={row.id} value={row.id}>
-                          {row.name}
-                        </option>
-                      ))}
+                    <option value="general">{vi ? "Điều chỉnh số dư thông thường" : "일반 잔액조정"}</option>
+                    <option value="investment" disabled={!investments?.configured}>{vi ? "Điều chỉnh vốn góp" : "투자금 조정"}</option>
                   </select>
                 )}
               </BarField>
             ) : null}
+          </div>
+          {type === "expense" ? (
+            <div className={styles.manualRow}>
+              <BarField label={`🏷️ ${vi ? "Danh mục" : "카테고리"}`} required compact>
+                {({ id }) => selectedPartner ? (
+                  <input
+                    id={id}
+                    data-manual-field="expense-category"
+                    readOnly
+                    aria-readonly="true"
+                    value={selectedPartner.manualExpenseCategoryName
+                      ? manualExpenseCategoryLabel(selectedPartner.manualExpenseCategoryName, lang)
+                      : (vi ? "Chưa liên kết danh mục" : "카테고리 연결 필요")}
+                    className={styles.manualReadOnly}
+                    style={keepingInputStyle}
+                  />
+                ) : (
+                  <select id={id} data-manual-field="expense-category" required value={categoryId} onChange={(event) => setCategoryId(event.target.value)} style={keepingInputStyle}>
+                    <option value="">{vi ? "Chọn" : "선택"}</option>
+                    {categories.map((row) => <option key={row.id} value={row.id}>{manualExpenseCategoryLabel(row.name, lang)}</option>)}
+                  </select>
+                )}
+              </BarField>
+              <AccountField
+                lang={lang}
+                label={`🏦 ${vi ? "Tài khoản chi" : "출금 계정"}`}
+                fieldName="expense-account"
+                value={fromAccountId}
+                setValue={setFromAccountId}
+                accounts={accounts}
+              />
+            </div>
+          ) : type === "income" ? (
+            <div className={`${styles.manualRow} ${styles.manualSingle}`}>
+              <AccountField
+                lang={lang}
+                label={`🏦 ${vi ? "Tài khoản nhận" : "입금 계정"}`}
+                fieldName="income-account"
+                value={toAccountId}
+                setValue={setToAccountId}
+                accounts={accounts}
+              />
+            </div>
+          ) : type === "transfer" ? (
+            <div className={styles.manualRow}>
+              <AccountField lang={lang} label={`🏦 ${vi ? "Tài khoản chi" : "출금 계정"}`} fieldName="transfer-from-account" value={fromAccountId} setValue={setFromAccountId} accounts={accounts}/>
+              <AccountField lang={lang} label={`🏦 ${vi ? "Tài khoản nhận" : "입금 계정"}`} fieldName="transfer-to-account" value={toAccountId} setValue={setToAccountId} accounts={accounts}/>
+            </div>
+          ) : adjustmentType === "general" ? (
+            <div className={styles.manualRow}>
+              <BarField label={`↕️ ${vi ? "Tăng / giảm" : "증가/감소"}`} required compact>
+                {({ id }) => (
+                  <select
+                    id={id}
+                    data-manual-field="balance-direction"
+                    required
+                    value={balanceDirection}
+                    onChange={(event) => {
+                      setBalanceDirection(event.target.value as "increase" | "decrease");
+                      setFromAccountId("");
+                      setToAccountId("");
+                    }}
+                    style={keepingInputStyle}
+                  >
+                    <option value="increase">{vi ? "Tăng" : "증가"}</option>
+                    <option value="decrease">{vi ? "Giảm" : "감소"}</option>
+                  </select>
+                )}
+              </BarField>
+              {outgoing ? <AccountField lang={lang} label={`🏦 ${vi ? "Tài khoản điều chỉnh" : "조정 계정"}`} fieldName="balance-account" value={fromAccountId} setValue={setFromAccountId} accounts={accounts}/> : null}
+              {incoming ? <AccountField lang={lang} label={`🏦 ${vi ? "Tài khoản điều chỉnh" : "조정 계정"}`} fieldName="balance-account" value={toAccountId} setValue={setToAccountId} accounts={accounts}/> : null}
+            </div>
+          ) : (
+            <>
+              <div className={styles.manualRow}>
+                <BarField label={`👤 ${vi ? "Nhà đầu tư" : "투자자"}`} required compact>
+                  {({ id }) => (
+                    <select id={id} data-manual-field="participant" required value={participantId} onChange={(event) => setParticipantId(event.target.value)} style={keepingInputStyle}>
+                      <option value="">{vi ? "Chọn" : "선택"}</option>
+                      {(investments?.participants ?? []).map((participant) => (
+                        <option key={participant.participantId} value={participant.participantId}>{participant.participantName}</option>
+                      ))}
+                    </select>
+                  )}
+                </BarField>
+                <BarField label={`↕️ ${vi ? "Giao dịch vốn" : "추가투자 / 투자금 회수"}`} required compact>
+                  {({ id }) => (
+                    <select
+                      id={id}
+                      data-manual-field="investment-action"
+                      required
+                      value={investmentAction}
+                      onChange={(event) => {
+                        setInvestmentAction(event.target.value as "contribution" | "recovery");
+                        setFromAccountId("");
+                        setToAccountId("");
+                      }}
+                      style={keepingInputStyle}
+                    >
+                      <option value="contribution">{vi ? "Góp thêm vốn" : "추가투자"}</option>
+                      <option value="recovery">{vi ? "Thu hồi vốn" : "투자금 회수"}</option>
+                    </select>
+                  )}
+                </BarField>
+              </div>
+              <div className={`${styles.manualRow} ${styles.manualSingle}`}>
+                <AccountField
+                  lang={lang}
+                  label={`🏦 ${vi ? "Tài khoản vốn" : "자금 계정"}`}
+                  fieldName="investment-account"
+                  value={investmentAction === "contribution" ? toAccountId : fromAccountId}
+                  setValue={investmentAction === "contribution" ? setToAccountId : setFromAccountId}
+                  accounts={investmentAccounts}
+                />
+              </div>
+            </>
+          )}
+          {type === "balance_adjustment" && adjustmentType === "investment" && !investments?.configured ? (
+            <p className={styles.manualNotice}>{vi ? "Tháng đã chọn chưa được thiết lập nhà đầu tư." : "선택월 투자금 현황이 설정되지 않아 투자금 조정을 저장할 수 없습니다."}</p>
+          ) : null}
+          <div className={styles.manualRow}>
+            <BarField label={`📅 ${vi ? "Ngày phát sinh" : "발생일"}`} required compact>
+              {({ id }) => <input id={id} data-manual-field="date" required type="date" value={occurredDate} onChange={(event) => setOccurredDate(event.target.value)} style={keepingInputStyle}/>} 
+            </BarField>
+            <BarField label={`🕒 ${vi ? "Thời gian" : "시간"}`} required compact>
+              {({ id }) => <input id={id} data-manual-field="time" required type="time" value={occurredTime} onChange={(event) => setOccurredTime(event.target.value)} style={keepingInputStyle}/>} 
+            </BarField>
           </div>
           {type === "balance_adjustment" ? (
             <div className={styles.manualFull}>
@@ -1973,6 +2093,7 @@ function ManualEntrySheet({
                 {({ id }) => (
                   <input
                     id={id}
+                    data-manual-field="reason"
                     required
                     value={reason}
                     onChange={(event) => setReason(event.target.value)}
@@ -1987,6 +2108,7 @@ function ManualEntrySheet({
               {({ id }) => (
                 <input
                   id={id}
+                  data-manual-field="memo"
                   value={memo}
                   onChange={(event) => setMemo(event.target.value)}
                   style={keepingInputStyle}
@@ -2007,12 +2129,14 @@ function ManualEntrySheet({
 function AccountField({
   lang,
   label,
+  fieldName,
   value,
   setValue,
   accounts,
 }: {
   lang: "ko" | "vi";
   label: string;
+  fieldName?: string;
   value: string;
   setValue: (value: string) => void;
   accounts: Account[];
@@ -2022,6 +2146,7 @@ function AccountField({
       {({ id }) => (
         <select
           id={id}
+          data-manual-field={fieldName}
           required
           value={value}
           onChange={(event) => setValue(event.target.value)}
@@ -2082,6 +2207,13 @@ function entryDisplayTitle(entry: LedgerEntry, lang: "ko" | "vi") {
     return lang === "vi" ? "Chưa chỉ định nhà cung cấp" : "거래처 미지정";
   }
   if (display?.kind === "rent") return lang === "vi" ? "Tiền thuê mặt bằng" : "매장 임대료";
+  if (display?.kind === "payablePayment") {
+    const fallback = lang === "vi" ? "Công nợ" : "미지급금";
+    const party = display.partyName || fallback;
+    if (display.prepaid) return lang === "vi" ? `${party} trả trước` : `${party} 선지급`;
+    return lang === "vi" ? `Thanh toán ${party}` : `${party} 지급`;
+  }
+  if (display?.kind === "cardSettlementDeposit") return lang === "vi" ? "Tiền thẻ thực nhận" : "카드 실제 입금";
   return entry.title;
 }
 function reserveLabel(
@@ -2123,13 +2255,10 @@ function investmentEntryTypeLabel(entryType: InvestmentEntryType, amount: number
 function directionEmoji(direction: LedgerEntry["direction"]) {
   return direction === "income" ? "💰" : direction === "expense" ? "💸" : "🔄";
 }
-function directionLabel(
-  direction: LedgerEntry["direction"],
-  lang: "ko" | "vi",
-) {
+function directionBadgeLabel(direction: LedgerEntry["direction"], lang: "ko" | "vi") {
   if (direction === "income") return lang === "vi" ? "Thu" : "수입";
   if (direction === "expense") return lang === "vi" ? "Chi" : "지출";
-  return lang === "vi" ? "Chuyển tiền" : "이체";
+  return lang === "vi" ? "Chuyển" : "이체";
 }
 function formatDate(date: string, lang: "ko" | "vi" = "ko") {
   const [, month, day] = date.split("-").map(Number);

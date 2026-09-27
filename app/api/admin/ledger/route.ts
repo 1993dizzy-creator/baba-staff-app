@@ -11,6 +11,7 @@ import { computeActualCashOutflow } from "@/lib/ledger/cash-outflow";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
 import { buildFundAccountView, fundAccountViewMode } from "@/lib/ledger/fund-account-view";
 import { buildDashboardCashReport, type PayableAllocationCategory } from "@/lib/ledger/dashboard-cash-report";
+import { manualExpenseCategoryNameForPartner } from "@/lib/ledger/manual-entry-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +42,8 @@ export async function GET(request: Request) {
     const accountsPromise = supabaseServer.from("ledger_fund_accounts").select("id,code,type,holder_name,display_name,is_active,is_business_fund,sort_order").order("sort_order");
     const categoriesPromise = supabaseServer.from("ledger_categories").select("id,name,kind,parent_id,cost_behavior,is_active,parent:ledger_categories!parent_id(name)").eq("is_active", true).order("kind").order("name");
     const partiesPromise = supabaseServer.from("ledger_parties").select("id,name,type,is_active").eq("is_active", true).order("name");
-    const partnerPromise = supabaseServer.from("business_partners").select("id,name,payment_mode,default_fund_account_id,is_active").order("name");
+    const partnerPromise = supabaseServer.from("business_partners").select("id,name,partner_type,partner_subtype_id,payment_mode,default_fund_account_id,is_active").order("name");
+    const partnerSubtypePromise = supabaseServer.from("business_partner_subtypes").select("id,code");
     const bridgePromise = supabaseServer.from("business_partner_ledger_parties").select("business_partner_id,ledger_party_id");
     const profitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales"]);
     const recognitionProfitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).eq("type", "expense_recognition");
@@ -80,12 +82,12 @@ export async function GET(request: Request) {
       .eq("candidate_type", "employee_meal").eq("source_type", "attendance_meal_daily")
       .eq("status", "confirmed").gte("business_date", monthStart).lt("business_date", nextMonth)
       .not("resolved_transaction_id", "is", null);
-    const [accountsResult, categoriesResult, partiesResult, partnerResult, bridgeResult, profitResult, recognitionProfitResult, movementsResult, openingResult, cardGrossSalesResult, actualCardDepositsResult, reservesResult, reserveEntriesResult, paidExpenseRootsResult, paidExpenseCorrectionsResult, confirmedMealCandidatesResult, transactions, candidates] = await Promise.all([
-      accountsPromise, categoriesPromise, partiesPromise, partnerPromise, bridgePromise, profitPromise,
+    const [accountsResult, categoriesResult, partiesResult, partnerResult, partnerSubtypeResult, bridgeResult, profitResult, recognitionProfitResult, movementsResult, openingResult, cardGrossSalesResult, actualCardDepositsResult, reservesResult, reserveEntriesResult, paidExpenseRootsResult, paidExpenseCorrectionsResult, confirmedMealCandidatesResult, transactions, candidates] = await Promise.all([
+      accountsPromise, categoriesPromise, partiesPromise, partnerPromise, partnerSubtypePromise, bridgePromise, profitPromise,
       recognitionProfitPromise, movementsPromise, openingPromise, cardGrossSalesPromise, actualCardDepositsPromise, reservesPromise, reserveEntriesPromise, paidExpenseRootsPromise, paidExpenseCorrectionsPromise,
       confirmedMealCandidatesPromise, loadMonthTransactions(monthStart, nextMonth), loadPendingInventoryCandidates(monthStart, nextMonth),
     ]);
-    for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,reservesResult,reserveEntriesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
+    for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,partnerSubtypeResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,reservesResult,reserveEntriesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
     const priorConfirmedMovements = (openingResult.data?.length ?? 0) > 0
       ? []
       : await loadPriorConfirmedFundMovements(monthStart);
@@ -173,16 +175,28 @@ export async function GET(request: Request) {
     });
     const accountById = new Map(accounts.map(account => [Number(account.id), account]));
     const partnerById = new Map((partnerResult.data ?? []).map(partner => [Number(partner.id), partner]));
+    const partnerSubtypeCodeById = new Map((partnerSubtypeResult.data ?? []).map(subtype => [Number(subtype.id), String(subtype.code)]));
+    const activeCategoryByName = new Map((categoriesResult.data ?? []).map(category => [String(category.name), category]));
     const partnerDefaultsByParty = new Map<number, PartnerLedgerDefault>();
     const partners = (bridgeResult.data ?? []).flatMap(bridge => {
       const partner = partnerById.get(Number(bridge.business_partner_id));
       if (!partner) return [];
       const defaultFundAccountId = partner.default_fund_account_id === null ? null : Number(partner.default_fund_account_id);
+      const partnerSubtypeId = partner.partner_subtype_id === null ? null : Number(partner.partner_subtype_id);
+      const partnerSubtypeCode = partnerSubtypeId === null ? null : partnerSubtypeCodeById.get(partnerSubtypeId) ?? null;
+      const manualExpenseCategoryName = manualExpenseCategoryNameForPartner(partner.partner_type, partnerSubtypeCode);
+      const manualExpenseCategory = manualExpenseCategoryName === null ? null : activeCategoryByName.get(manualExpenseCategoryName) ?? null;
       partnerDefaultsByParty.set(Number(bridge.ledger_party_id), {
         paymentMode: partner.payment_mode, defaultFundAccountId,
         defaultFundAccountName: defaultFundAccountId === null ? null : accountById.get(defaultFundAccountId)?.display_name ?? null,
       });
-      return [{ id: Number(partner.id), name: partner.name, ledgerPartyId: Number(bridge.ledger_party_id), paymentMode: partner.payment_mode, defaultFundAccountId, isActive: partner.is_active }];
+      return [{
+        id: Number(partner.id), name: partner.name, ledgerPartyId: Number(bridge.ledger_party_id),
+        partnerType: partner.partner_type, partnerSubtypeId, partnerSubtypeCode,
+        manualExpenseCategoryId: manualExpenseCategory ? Number(manualExpenseCategory.id) : null,
+        manualExpenseCategoryName,
+        paymentMode: partner.payment_mode, defaultFundAccountId, isActive: partner.is_active,
+      }];
     });
     const mealCandidateSources: MealCandidateSource[] = (confirmedMealCandidatesResult.data ?? []).map((candidate) => ({
       resolvedTransactionId: Number(candidate.resolved_transaction_id),
@@ -339,12 +353,43 @@ export async function POST(request: Request) {
   if (auth.response || !auth.actor) return auth.response;
   const body = await request.json().catch(() => null) as Record<string,unknown> | null;
   if (!body) return ledgerJson({ ok: false, code: "INVALID_BODY" }, 400);
-  const allowed = new Set(["type","occurredAt","recognitionMonth","amount","categoryId","partyId","fromAccountId","toAccountId","memo","reason","sourceKey"]);
+  const allowed = new Set(["type","occurredAt","recognitionMonth","amount","categoryId","partyId","businessPartnerId","fromAccountId","toAccountId","memo","reason","sourceKey"]);
   if (Object.keys(body).some((key) => !allowed.has(key)) || !TYPES.has(String(body.type))) return ledgerJson({ ok: false, code: "INVALID_BODY" }, 400);
   try {
+    let categoryId = body.categoryId || null;
+    let partyId = body.partyId || null;
+    if (body.businessPartnerId !== null && body.businessPartnerId !== undefined && body.businessPartnerId !== "") {
+      if (body.type !== "expense") return ledgerJson({ ok: false, code: "INVALID_BUSINESS_PARTNER_CONTEXT" }, 400);
+      const businessPartnerId = Number(body.businessPartnerId);
+      if (!Number.isSafeInteger(businessPartnerId) || businessPartnerId < 1) return ledgerJson({ ok: false, code: "INVALID_BUSINESS_PARTNER_ID" }, 400);
+      const [partnerResult, bridgeResult] = await Promise.all([
+        supabaseServer.from("business_partners")
+          .select("id,partner_type,partner_subtype_id")
+          .eq("id", businessPartnerId).maybeSingle(),
+        supabaseServer.from("business_partner_ledger_parties")
+          .select("ledger_party_id")
+          .eq("business_partner_id", businessPartnerId).maybeSingle(),
+      ]);
+      if (partnerResult.error || bridgeResult.error) throw partnerResult.error ?? bridgeResult.error;
+      if (!partnerResult.data) return ledgerJson({ ok: false, code: "BUSINESS_PARTNER_NOT_FOUND" }, 400);
+      if (!bridgeResult.data) return ledgerJson({ ok: false, code: "PARTNER_LEDGER_PARTY_MISSING" }, 400);
+      const partnerSubtypeId = partnerResult.data.partner_subtype_id === null ? null : Number(partnerResult.data.partner_subtype_id);
+      const subtypeResult = partnerSubtypeId === null
+        ? { data: null, error: null }
+        : await supabaseServer.from("business_partner_subtypes").select("code").eq("id", partnerSubtypeId).maybeSingle();
+      if (subtypeResult.error) throw subtypeResult.error;
+      const categoryName = manualExpenseCategoryNameForPartner(partnerResult.data.partner_type, subtypeResult.data?.code ?? null);
+      if (!categoryName) return ledgerJson({ ok: false, code: "PARTNER_CATEGORY_MAPPING_MISSING" }, 400);
+      const categoryResult = await supabaseServer.from("ledger_categories")
+        .select("id").eq("name", categoryName).eq("kind", "expense").eq("is_active", true).maybeSingle();
+      if (categoryResult.error) throw categoryResult.error;
+      if (!categoryResult.data) return ledgerJson({ ok: false, code: "PARTNER_CATEGORY_MISSING", categoryName }, 400);
+      categoryId = Number(categoryResult.data.id);
+      partyId = Number(bridgeResult.data.ledger_party_id);
+    }
     const { data, error } = await supabaseServer.rpc("ledger_create_manual_transaction_v1", {
       p_type: body.type, p_occurred_at: body.occurredAt, p_recognition_month: body.recognitionMonth || null,
-      p_amount: body.amount, p_category_id: body.categoryId || null, p_party_id: body.partyId || null,
+      p_amount: body.amount, p_category_id: categoryId, p_party_id: partyId,
       p_from_account_id: body.fromAccountId || null, p_to_account_id: body.toAccountId || null,
       p_memo: body.memo || null, p_reason: body.reason || null, p_actor_user_id: auth.actor.id, p_source_key: body.sourceKey || null,
     });

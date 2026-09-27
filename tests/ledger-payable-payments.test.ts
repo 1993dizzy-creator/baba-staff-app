@@ -6,6 +6,8 @@ import ts from "typescript";
 import * as payableFunctions from "../lib/ledger/payables.ts";
 // @ts-expect-error Node strips TypeScript extensions in tests.
 import * as paymentVerificationFunctions from "../lib/ledger/payment-verification.ts";
+// @ts-expect-error Node strips TypeScript extensions in tests.
+import{groupPayablesForDisplay}from"../lib/ledger/payable-display-groups.ts";
 const read=(p:string)=>readFileSync(join(process.cwd(),p),"utf8"),migration=read("supabase/migrations/202608210004_add_ledger_payable_payments.sql"),pay=read("app/api/admin/ledger/payables/pay/route.ts"),dashboard=read("app/api/admin/ledger/payables/route.ts"),detail=read("app/api/admin/ledger/payables/[partyId]/route.ts"),party=read("app/api/admin/ledger/parties/route.ts"),mapping=read("app/api/admin/ledger/supplier-party-mappings/route.ts"),page=read("app/(protected)/admin/ledger/payables/page.tsx"),entries=read("app/(protected)/admin/ledger/entries/page.tsx"),partialPlan=read("lib/ledger/partial-payable-payment.ts"),ledger=read("app/api/admin/ledger/route.ts"),inventoryMigration=read("supabase/migrations/202608210003_add_inventory_purchase_candidates.sql"),pos=read("lib/sales/payment-summary.ts");
 test("unpaid payable can be fully paid",()=>assert.match(migration,/least\(v_remaining,v_outstanding\)/));
 test("payable supports partial payment",()=>assert.match(migration,/'partially_paid'/));
@@ -115,9 +117,69 @@ test("payment verification is separate from ordinary payable totals in the actua
   const paid=await (await payableApi([special,ordinary],[allocation("2026-09-04",1900000)]).get()).json();
   assert.equal(paid.verification.totalPending,0);
   assert.equal(paid.verification.items[0].paymentDate,"2026-09-04");
+  // 결제 미확인 is a current action queue: the 9/4 payment also clears it from the 8월 view.
   const august=await (await payableApi([special,ordinary],[allocation("2026-09-04",1900000)]).get("?month=2026-08")).json();
-  assert.equal(august.verification.totalPending,1900000);
-  assert.equal(august.verification.items[0].paymentDate,null);
+  assert.equal(august.verification.totalPending,0);
+  assert.equal(august.verification.pendingCount,0);
+  assert.equal(august.verification.items[0].paymentDate,"2026-09-04");
+});
+
+// 기타 · 결제 미확인 (current confirmed allocations) vs ordinary 월말 미납 (as of the selected month end).
+const kent=(id=749,amount=1_900_000)=>({...source(id,"2026-08-29",amount,"unpaid",10),expense:{...source(id,"2026-08-29").expense,source_snapshot:{item_name:"켄트 담배",supplier:"Chợ",paymentVerification:"pending"}}});
+test("Case A: 8/29 verification fully paid on 9/4 is not pending in the 8월 view (nor 9월/current)",async()=>{
+  const api=payableApi([kent()],[allocation("2026-09-04",1_900_000,749)]);
+  for(const query of ["?month=2026-08","?month=2026-09",""]){
+    const result=await(await api.get(query)).json();
+    assert.equal(result.verification.items[0].remainingAmount,0,query);
+    assert.equal(result.verification.items[0].paidAmount,1_900_000,query);
+    assert.equal(result.verification.totalPending,0,query);
+    assert.equal(result.verification.pendingCount,0,query);
+    // The synthetic 기타 row is built from remaining>0 items only, so it disappears entirely.
+    assert.equal(groupPayablesForDisplay(result.parties,result.payables,result.verification.items).other,null,query);
+    // Verification payables never enter ordinary 월말 미납.
+    assert.equal(result.totalOutstanding,0,query);
+  }
+});
+test("Case B: 9월 partial 900,000 leaves the current 1,000,000 in the 8월 view (never back to 1,900,000)",async()=>{
+  const august=await(await payableApi([kent()],[allocation("2026-09-10",900_000,749)]).get("?month=2026-08")).json();
+  assert.deepEqual([august.verification.items[0].paidAmount,august.verification.items[0].remainingAmount],[900_000,1_000_000]);
+  assert.equal(august.verification.totalPending,1_000_000);
+  assert.equal(august.verification.pendingCount,1);
+  const other=groupPayablesForDisplay(august.parties,august.payables,august.verification.items).other!;
+  assert.deepEqual([other.count,other.amount],[1,1_000_000]);
+});
+test("Case C: never paid verification keeps its full remaining in past and current views",async()=>{
+  const api=payableApi([kent()],[]);
+  for(const query of ["?month=2026-08",""]){
+    const result=await(await api.get(query)).json();
+    assert.equal(result.verification.totalPending,1_900_000,query);
+    assert.equal(result.verification.pendingCount,1,query);
+    assert.equal(result.verification.items[0].paymentDate,null,query);
+  }
+});
+test("Case D: ordinary 8월 purchase paid in 9월 is still 8월-end outstanding (history, summary, parties unchanged)",async()=>{
+  const ordinary=source(2,"2026-08-20",500_000,"paid",20);
+  const api=payableApi([kent(),ordinary],[allocation("2026-09-04",1_900_000,749),allocation("2026-09-05",500_000,2)]);
+  const august=await(await api.get("?month=2026-08")).json();
+  assert.equal(august.verification.totalPending,0,"verification uses current allocations");
+  assert.equal(august.totalOutstanding,500_000,"ordinary uses 8월-end allocations");
+  assert.deepEqual(august.summary,{openingOutstanding:0,periodPurchases:500_000,periodPayments:0,closingOutstanding:500_000});
+  assert.deepEqual(august.parties.map((row:{partyId:number;closingOutstanding:number;periodPayments:number})=>[row.partyId,row.closingOutstanding,row.periodPayments]),[[20,500_000,0]]);
+  assert.deepEqual(august.payables.map((row:{id:number;allocatedAmount:number;outstandingAmount:number;allocations:unknown[]})=>[row.id,row.allocatedAmount,row.outstandingAmount,row.allocations]),[[2,0,500_000,[]]],"no 9월 allocation leaks into 8월 payables");
+  assert.deepEqual(august.historyPayables.map((row:{id:number;paidAmount:number;outstandingAmount:number;settlementStatus:string})=>[row.id,row.paidAmount,row.outstandingAmount,row.settlementStatus]),[[2,0,500_000,"unpaid"]]);
+  const september=await(await api.get("?month=2026-09")).json();
+  assert.deepEqual(september.summary,{openingOutstanding:500_000,periodPurchases:0,periodPayments:500_000,closingOutstanding:0},"9월 opening = 8월 closing; 9/5 payment is a 9월 payment");
+  assert.equal(september.verification.totalPending,0);
+});
+test("payables route reads allocations once without a month cutoff and splits them in memory",()=>{
+  const compact=dashboard.replace(/\s+/g,"");
+  assert.equal((compact.match(/from\("ledger_payable_allocations"\)/g)??[]).length,1);
+  assert.doesNotMatch(compact,/lt\("payment\.business_date"/);
+  assert.match(compact,/constverification=buildPaymentVerificationItems\(sources,allConfirmedAllocations\);/);
+  assert.match(compact,/constasOfAllocations=month===null\?allConfirmedAllocations:confirmedAllocationsThroughMonth\(allConfirmedAllocations,month\);/);
+  assert.match(compact,/calculatePayableBalances\(ordinarySources,asOfAllocations,month\?\?undefined\)/);
+  assert.match(compact,/for\(constallocationofasOfAllocations\)\{constlist=historyAllocations/);
+  assert.match(compact,/allocations:asOfAllocations\.filter\(/);
 });
 test("actual GET pages beyond 1000 payables and allocations without losing balances",async()=>{
   const rows=Array.from({length:1001},(_,i)=>source(i+1)),payments=rows.map(row=>allocation("2026-09-01",100,row.id));

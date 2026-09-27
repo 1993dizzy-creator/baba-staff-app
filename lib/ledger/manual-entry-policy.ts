@@ -32,7 +32,60 @@ export function manualExpenseCategorySort(a: { name: string }, b: { name: string
     - (manualExpenseCategoryOrder.get(b.name) ?? Number.MAX_SAFE_INTEGER);
 }
 
+export type ManualExpensePartnerType =
+  | "food"
+  | "alcohol"
+  | "beverage"
+  | "consumable"
+  | "equipment"
+  | "rent"
+  | "service"
+  | "other";
+
+const PARTNER_TYPE_CATEGORY: Partial<Record<ManualExpensePartnerType, string>> = {
+  food: "식자재 매입",
+  alcohol: "주류 매입",
+  beverage: "음료·BAR 재료",
+  consumable: "소모품·잡화",
+  equipment: "설비·비품",
+  rent: "임대료",
+};
+
+const SERVICE_SUBTYPE_CATEGORY: Record<string, string> = {
+  maintenance: "수리·유지보수",
+  delivery: "배송·운송비",
+  professional_service: "기타 비용",
+  service_other: "기타 비용",
+};
+
+const OTHER_SUBTYPE_CATEGORY: Record<string, string> = {
+  gas: "가스비",
+  printing: "인쇄·홍보비",
+  market_purchase: "기타 비용",
+  miscellaneous: "기타 비용",
+  other_misc: "기타 비용",
+};
+
+export function manualExpenseCategoryNameForPartner(
+  partnerType: string | null | undefined,
+  partnerSubtypeCode: string | null | undefined,
+) {
+  if (!partnerType) return null;
+  const normalizedType = partnerType.trim().toLowerCase() as ManualExpensePartnerType;
+  const direct = PARTNER_TYPE_CATEGORY[normalizedType];
+  if (direct) return direct;
+  const subtype = partnerSubtypeCode?.trim().toLowerCase() ?? "";
+  if (normalizedType === "service") return SERVICE_SUBTYPE_CATEGORY[subtype] ?? "기타 비용";
+  if (normalizedType === "other") return OTHER_SUBTYPE_CATEGORY[subtype] ?? "기타 비용";
+  return null;
+}
+
 const MANUAL_EXPENSE_CATEGORY_DISPLAY: Record<string, { emoji: string; vi: string }> = {
+  "식자재 매입": { emoji: "🥬", vi: "Mua nguyên liệu thực phẩm" },
+  "주류 매입": { emoji: "🍷", vi: "Mua đồ uống có cồn" },
+  "음료·BAR 재료": { emoji: "🥤", vi: "Đồ uống & nguyên liệu BAR" },
+  "소모품·잡화": { emoji: "🧻", vi: "Vật tư tiêu hao & tạp hóa" },
+  "임대료": { emoji: "🏢", vi: "Tiền thuê" },
   "직원 식대": { emoji: "🍱", vi: "Chi phí ăn uống nhân viên" },
   "전기료": { emoji: "⚡", vi: "Tiền điện" },
   "수도료": { emoji: "💧", vi: "Tiền nước" },

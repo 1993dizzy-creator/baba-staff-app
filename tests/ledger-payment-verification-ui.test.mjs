@@ -302,6 +302,20 @@ test('일괄 결제 uses the blue primary modifier (white text, hover/active dar
   assert.match(readOnly, /<article class="verificationItem"><strong class="verificationName">Jonut 코코넛 워터<\/strong><strong class="verificationItemAmount" aria-label="남은 금액">22\.000 ₫<\/strong><\/article>/);
 });
 
+test('Case E: a still-unresolved item in a past month is shown read-only (current remaining, no buttons)', () => {
+  // e.g. 8월 view, 9월 partial 900,000 → the API returns today's remaining 1,000,000.
+  const pending = [
+    { ...items[0], payableId: 749, partyId: 10, supplierName: 'Chợ', businessDate: '2026-08-29', itemName: '켄트 담배', amount: 1_900_000, paidAmount: 900_000, remainingAmount: 1_000_000 },
+    { ...items[0], payableId: 750, partyId: 10, supplierName: 'Chợ', businessDate: '2026-08-29', itemName: '말보로', amount: 50_000, paidAmount: 0, remainingAmount: 50_000 },
+  ];
+  const html = render({ states: { 0: true }, canPay: false, group: { items: pending, count: 2, amount: 1_050_000 }, expanded: ['10:2026-08-29'] });
+  assert.match(html, /남은 금액 <b>1\.050\.000 ₫<\/b>/);
+  assert.match(html, /<span>08\/29 · 2건 · <b>1\.050\.000 ₫<\/b><\/span><\/button><\/div>/, 'no 일괄 결제 on a 2-item past-month date');
+  assert.match(html, /켄트 담배<\/strong><strong class="verificationItemAmount" aria-label="남은 금액">1\.000\.000 ₫<\/strong><\/article>/);
+  assert.doesNotMatch(html, /개별 결제|일괄 결제|1\.900\.000/);
+  assert.match(html, /조회만 가능합니다\. 과거월은 결제를 기록할 수 없습니다\./);
+});
+
 test('after a reload the paid item disappears, its group shrinks, and an emptied group is removed', () => {
   const afterPaying = mixed.filter((item) => item.payableId !== 32 && item.payableId !== 31);
   const html = render({ states: { 0: true }, group: { items: afterPaying, count: 2, amount: 19_000 }, expanded: allDates });
