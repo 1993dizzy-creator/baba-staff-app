@@ -16,6 +16,7 @@ export function calculateReceiptFinancials(params: {
     (sum, line) => sum + Math.round(line.finalAmount),
     0
   );
+  // The edited lines determine calculated VAT; it may differ from the original receipt VAT.
   const calculatedVatAmount =
     params.taxMode === "exclude_all"
       ? 0
@@ -32,6 +33,7 @@ export function calculateReceiptFinancials(params: {
         ? null
         : Math.round(requestedOverride);
   const finalAmount = finalAmountOverride ?? calculatedFinalAmount;
+  // vat_amount preserves original VAT when tax applies; differing from calculatedVatAmount is intentional.
   const appliedVatAmount =
     params.taxMode === "exclude_all" ? 0 : Math.round(params.originalTaxAmount);
 

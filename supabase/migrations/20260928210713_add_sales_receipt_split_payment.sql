@@ -1,5 +1,5 @@
--- Extends the existing atomic edit RPC with an explicit cash/other split.
--- The 10-argument overload remains available to existing callers.
+-- Replace the 10-argument edit RPC with the split-capable 11-argument signature.
+drop function public.admin_update_paid_sales_receipt(bigint,bigint,uuid,text,text,text,numeric,text,numeric,jsonb);
 create or replace function public.admin_update_paid_sales_receipt(
   p_receipt_id bigint,
   p_expected_revision bigint,
@@ -121,12 +121,14 @@ begin
     into v_total, v_calculated_vat
   from jsonb_array_elements(p_lines) item;
   v_total := round(v_total);
+  -- Recalculate VAT from edited lines for calculated_vat_amount.
   v_calculated_vat := round(v_calculated_vat);
   v_calculated_final := v_total + v_calculated_vat;
   v_override := case
     when p_final_amount_override is null or p_final_amount_override = v_calculated_final then null
     else p_final_amount_override end;
   v_final := coalesce(v_override, v_calculated_final);
+  -- vat_amount preserves original VAT when tax applies; it may intentionally differ from calculated_vat_amount.
   v_applied_vat := case when p_tax_override_mode = 'exclude_all' then 0
     else coalesce((v_original_tax_summary->>'totalTaxAmount')::numeric, v_receipt.vat_amount) end;
   v_receive := case when p_payment_method = 'cash' then p_cash_received_amount else v_final end;

@@ -417,7 +417,7 @@ export function buildLedgerEntries(
         id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "confirmed", isSystemAdjustment: false,
         title: partyName, subtitle: "", amount: 0, economicEffectSign: 1, displayTime: null, sortTimestamp: 0,
         inventoryStartAt: null, inventoryEndAt: null, accountName: accountName ?? "미지급",
-        categoryName: row.category?.name ?? null, transactionId, drilldown: "inventory",
+        categoryName: row.category?.name ?? null, transactionId, partyId, drilldown: "inventory",
         settlementStatus: paymentDisplay?.status, remainingAmount: 0,
         systemDisplay: { kind: "inventory", itemCount: 0, partyMissing, needsConfirmation: false }, items: [],
       } satisfies LedgerEntry;
@@ -491,6 +491,7 @@ export function buildLedgerEntries(
       subtitle: specialDisplay?.subtitle ?? (pos || rent ? "" : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력")),
       memo: row.memo ?? null,
       amount, economicEffectSign, ...time, accountName, settlementStatus: paymentDisplay?.status, remainingAmount: paymentDisplay?.remainingAmount, categoryName: row.category?.name ?? null, transactionId,
+      partyId: row.party_id == null ? null : value(row.party_id),
       drilldown: pos ? "pos" : payroll ? "payroll" : "generic",
       ...(pos ? { systemDisplay: { kind: "pos" as const, paymentBucket: posPaymentBucket, receiptCount: value(snapshot.receiptCount) } } : {}),
       ...(rent ? { systemDisplay: { kind: "rent" as const } } : {}),

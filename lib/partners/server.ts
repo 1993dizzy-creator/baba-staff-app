@@ -35,7 +35,7 @@ export async function loadPartnerData(partnerId?: number) {
     supabaseServer.from("ledger_parties").select("id,name,is_active").order("name"),
     supabaseServer.from("inventory").select("supplier_partner_id,is_active,part,category,category_vi").not("supplier_partner_id", "is", null),
     supabaseServer.from("ledger_fund_accounts").select("id,code,type,display_name,is_active,is_business_fund,sort_order").eq("is_active", true).eq("is_business_fund", true).neq("type", "card_clearing").order("sort_order"),
-    supabaseServer.from("business_partner_subtypes").select("id,code,partner_type,name_ko,name_vi,sort_order,is_active").order("partner_type").order("sort_order"),
+    supabaseServer.from("business_partner_subtypes").select("id,code,partner_type,name_ko,name_vi,emoji,sort_order,is_active").order("partner_type").order("sort_order"),
   ]);
   if (partnerResult.error || mappingResult.error || ledgerResult.error || inventoryResult.error || fundAccountResult.error || subtypeResult.error) {
     throw partnerResult.error ?? mappingResult.error ?? ledgerResult.error ?? inventoryResult.error ?? fundAccountResult.error ?? subtypeResult.error;
@@ -63,6 +63,7 @@ export async function loadPartnerData(partnerId?: number) {
     partnerType: row.partner_type,
     nameKo: row.name_ko,
     nameVi: row.name_vi,
+    emoji: row.emoji,
     sortOrder: Number(row.sort_order),
     isActive: row.is_active,
   }));
@@ -116,7 +117,7 @@ export async function loadPartnerDetailData(partnerId: number) {
       .select("ledger_party_id").eq("business_partner_id", partnerId).maybeSingle(),
     supabaseServer.from("ledger_fund_accounts").select("id,code,type,display_name,is_active,is_business_fund,sort_order")
       .eq("is_active", true).eq("is_business_fund", true).neq("type", "card_clearing").order("sort_order"),
-    supabaseServer.from("business_partner_subtypes").select("id,code,partner_type,name_ko,name_vi,sort_order,is_active")
+    supabaseServer.from("business_partner_subtypes").select("id,code,partner_type,name_ko,name_vi,emoji,sort_order,is_active")
       .order("partner_type").order("sort_order"),
   ]);
   if (partnerResult.error || mappingResult.error || fundAccountResult.error || subtypeResult.error) {
@@ -132,7 +133,7 @@ export async function loadPartnerDetailData(partnerId: number) {
 
   const partnerSubtypes = (subtypeResult.data ?? []).map(row => ({
     id: Number(row.id), code: row.code as string, partnerType: row.partner_type,
-    nameKo: row.name_ko, nameVi: row.name_vi, sortOrder: Number(row.sort_order), isActive: row.is_active,
+    nameKo: row.name_ko, nameVi: row.name_vi, emoji: row.emoji, sortOrder: Number(row.sort_order), isActive: row.is_active,
   }));
   const subtypeById = new Map(partnerSubtypes.map(subtype => [subtype.id, subtype]));
   const fundAccountCodeById = new Map((fundAccountResult.data ?? []).map(row => [Number(row.id), row.code as string]));

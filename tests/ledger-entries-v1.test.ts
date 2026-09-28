@@ -61,6 +61,20 @@ const categories = read("supabase/migrations/20260824152948_ledger_category_v1.s
 const opening = read("supabase/migrations/20260824153108_seed_august_2026_opening_balances.sql");
 const manualCategories = read("supabase/migrations/20260824174814_add_manual_ledger_expense_categories.sql");
 
+test("entry display keeps partner identity separate from its accounting category", () => {
+  const [linked, unlinked] = buildLedgerEntries([
+    { id: 901, party_id: 7, type: "expense", business_date: "2026-09-28", amount: 100,
+      source_type: "manual", memo: "Linked partner", party: { name: "Supplier" }, category: { name: "직원 식대" } },
+    { id: 902, party_id: null, type: "expense", business_date: "2026-09-28", amount: 200,
+      source_type: "manual", memo: "No partner", category: { name: "직원 식대" } },
+  ], [], new Map()).sort((a, b) => Number(a.transactionId) - Number(b.transactionId));
+  assert.equal(linked.partyId, 7);
+  assert.equal(unlinked.partyId, null);
+  assert.equal(linked.categoryName, "직원 식대");
+  assert.equal(unlinked.categoryName, "직원 식대");
+  assert.equal(linked.amount, 100);
+  assert.equal(unlinked.amount, 200);
+});
 test("inventory candidates are summarized by date, partner and payment default", () => {
   const candidates = Array.from({ length: 444 }, (_, index) => ({
     id: index + 1, business_date: index < 400 ? "2026-08-24" : "2026-08-23", proposed_amount: 100,
@@ -437,10 +451,35 @@ test("ledger entries UI keeps the compact chronological accordion contract", () 
   assert.match(pageCompact, /expanded\?\(<divid=\{panelId\}>/);
   assert.match(pageCompact, /group\.rows\.map/);
   assert.match(pageCompact, /className=\{styles\.entryMain\}/);
-  assert.match(pageCompact, /entry\.status==="pending"\?\(<spanclassName=\{styles\.pendingBadge\}>/);
+  assert.match(pageCompact, /entry\.status==="pending"\?<spanclassName=\{styles\.pendingBadge\}>/);
   assert.match(css, /\.entryMain\{[^}]*text-overflow:ellipsis;white-space:nowrap/);
 });
 
+test("daily rows keep category emoji and compact account, amount, and chevron layout", () => {
+  const row = page.slice(page.indexOf("{group.rows.map((entry)"), page.indexOf("</button>", page.indexOf("{group.rows.map((entry)")));
+  const positions = ["styles.entryLeft", "styles.entryCategoryEmoji", "styles.entryMain", "styles.entryRight", "styles.entryTime", "styles.entryBottom", "accountBadgeLabel(entry.accountName, lang, entry)", "styles.chevron"].map(token => row.indexOf(token));
+  assert.ok(positions.every(position => position >= 0));
+  assert.ok(positions.every((position, index) => index === 0 || position > positions[index - 1]));
+  assert.match(row, /onClick=\{\(\) => void openEntry\(entry\)\}/);
+  assert.match(page, /onClick=\{\(\) => toggleDate\(group\.date\)\}/);
+  assert.match(page, /subtitle === entry\.categoryName \? "" : subtitle/);
+  assert.match(page, /manualExpenseCategoryEmoji\(entry\.categoryName\)/);
+
+  const finalRule = (selector: string, property: string, media?: string) => {
+    let value: string | undefined;
+    stylesheet.walkRules(selector, rule => {
+      if (media && rule.parent.type === "atrule" && !rule.parent.params.includes(media)) return;
+      if (!media && rule.parent.type !== "root") return;
+      rule.walkDecls(property, decl => { value = decl.value; });
+    });
+    return value;
+  };
+  assert.equal(finalRule(".entryRow", "grid-template-columns"), "minmax(0,1fr) max-content");
+  assert.equal(finalRule(".entryRow", "grid-template-columns", "max-width:560px"), "minmax(0,1fr) max-content");
+  assert.equal(finalRule(".entryLeft", "grid-template-columns", "max-width:560px"), "auto 16px minmax(0,1fr)");
+  assert.equal(finalRule(".entryMain", "text-overflow"), "ellipsis");
+  assert.equal(finalRule(".entryBottom", "white-space"), "nowrap");
+});
 test("ledger entries header mirrors the monthly summary card hierarchy", () => {
   assert.match(pageCompact, /style=\{monthNoticeCardStyle\}/);
   assert.match(pageCompact, /<divstyle=\{monthControlStyle\}>/);

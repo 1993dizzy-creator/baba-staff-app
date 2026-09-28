@@ -33,6 +33,7 @@ import {
   type LedgerEntryItem,
 } from "@/lib/ledger/entries";
 import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
+import { chooseLedgerEntryEmoji } from "@/lib/ledger/entry-display-emoji";
 import { groupPayableRows } from "@/lib/ledger/payable-date-groups";
 import {
   formatLedgerAmountInput,
@@ -43,6 +44,7 @@ import {
   groupManualEntryPartners,
   isManualExpenseCategory,
   isManualIncomeCategory,
+  manualExpenseCategoryEmoji,
   manualExpenseCategoryLabel,
   manualExpenseCategorySort,
   manualIncomeCategorySort,
@@ -86,6 +88,7 @@ type Partner = {
   partnerType: string;
   partnerSubtypeId: number | null;
   partnerSubtypeCode: string | null;
+  emoji: string;
   manualExpenseCategoryId: number | null;
   manualExpenseCategoryName: string | null;
   paymentMode: "immediate" | "postpaid";
@@ -692,7 +695,10 @@ function LedgerEntriesContent() {
       </article>
     );
   }
-  function renderDateGroup(group: DateGroup) {
+  const partnerByLedgerParty = useMemo(
+    () => new Map((data?.partners ?? []).map((partner) => [partner.ledgerPartyId, partner] as const)),
+    [data?.partners],
+  );  function renderDateGroup(group: DateGroup) {
     const expanded =
         Boolean(search.trim()) || expandedDates.has(group.date),
       panelId = `ledger-date-${group.date}`;
@@ -725,59 +731,37 @@ function LedgerEntriesContent() {
         {expanded ? (
           <div id={panelId}>
             {group.rows.map((entry) => (
-              <button
-                type="button"
-                className={styles.entryRow}
-                key={entry.id}
-                onClick={() => void openEntry(entry)}
-              >
-                <span
-                  className={`${styles.direction} ${styles[entry.direction]}`}
-                  data-icon={directionEmoji(entry.direction)}
-                >
-                  {directionBadgeLabel(entry.direction, lang)}
-                </span>
-                <span
-                  className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""}`}
-                  title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}
-                >
-                  {accountBadgeLabel(entry.accountName,lang,entry)}
-                </span>
-                <span className={styles.entryMain}>
-                  <strong>{compactEntryListTitle(entryDisplayTitle(entry, lang))}</strong>
-                  <span> · {entryMeta(entry, lang)}</span>
-                </span>
-                {entry.status === "pending" ? (
-                  <span className={styles.pendingBadge}>
-                    {vi ? "Cần xác nhận" : "확인 필요"}
+              <button type="button" className={styles.entryRow} key={entry.id} onClick={() => void openEntry(entry)}>
+                <span className={styles.entryLeft}>
+                  <span className={[styles.direction, styles[entry.direction]].join(" ")} data-icon={directionEmoji(entry.direction)}>
+                    {directionBadgeLabel(entry.direction, lang)}
                   </span>
-                ) : null}
-                {entry.requiresCorrection ? (
-                  <span className={styles.correctionBadge}>
-                    {vi ? "Cần điều chỉnh" : "정정 필요"}
+                  <span className={styles.entryCategoryEmoji} role="img" aria-label={entry.partyId == null ? entry.categoryName ?? (vi ? "Danh mục" : "카테고리") : partnerByLedgerParty.get(entry.partyId)?.name ?? (vi ? "Đối tác" : "거래처")}>
+                    {entryDisplayEmoji(entry, partnerByLedgerParty)}
                   </span>
-                ) : null}
-                <span className={styles.amountStack}>
-                  {entry.displayTime ? <small>{entry.displayTime}</small> : null}
-                  <strong
-                    className={
-                      entry.direction === "income"
-                        ? styles.amountIncome
-                        : entry.direction === "expense"
-                          ? styles.amountExpense
-                          : styles.amountTransfer
-                    }
-                  >
-                    {entry.direction === "income"
-                      ? "+"
-                      : entry.direction === "expense"
-                        ? "−"
-                        : ""}
-                    {money(entry.amount)}
-                  </strong>
+                  <span className={styles.entryMain}>
+                    <strong>{compactEntryListTitle(entryDisplayTitle(entry, lang))}</strong>
+                    {entryMeta(entry, lang) ? <span> · {entryMeta(entry, lang)}</span> : null}
+                  </span>
+                  {entry.status === "pending" || entry.requiresCorrection ? (
+                    <span className={styles.entryFlags}>
+                      {entry.status === "pending" ? <span className={styles.pendingBadge}>{vi ? "Cần xác nhận" : "확인 필요"}</span> : null}
+                      {entry.requiresCorrection ? <span className={styles.correctionBadge}>{vi ? "Cần điều chỉnh" : "정정 필요"}</span> : null}
+                    </span>
+                  ) : null}
                 </span>
-                <span aria-hidden className={styles.chevron}>
-                  ›
+                <span className={styles.entryRight}>
+                  <small className={styles.entryTime}>{entry.displayTime ?? ""}</small>
+                  <span className={styles.entryBottom}>
+                    <span className={[styles.accountBadge, isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""].join(" ")}
+                      title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}>
+                      {accountBadgeLabel(entry.accountName, lang, entry)}
+                    </span>
+                    <strong className={entry.direction === "income" ? styles.amountIncome : entry.direction === "expense" ? styles.amountExpense : styles.amountTransfer}>
+                      {entry.direction === "income" ? "+" : entry.direction === "expense" ? "−" : ""}{money(entry.amount)}
+                    </strong>
+                    <span aria-hidden className={styles.chevron}>›</span>
+                  </span>
                 </span>
               </button>
             ))}
@@ -1930,7 +1914,7 @@ function ManualEntrySheet({
                     {partnerGroups.map((group) => (
                       <optgroup key={group.group} label={group.label}>
                         {group.partners.map((partner) => (
-                          <option key={partner.id} value={partner.id}>{partner.name}</option>
+                          <option key={partner.id} value={partner.id}>{partner.emoji} {partner.name}</option>
                         ))}
                       </optgroup>
                     ))}
@@ -2190,6 +2174,23 @@ function AccountField({
     </BarField>
   );
 }
+function entryDisplayEmoji(entry: LedgerEntry, partnersByParty: ReadonlyMap<number, Partner>) {
+  if (entry.partyId != null) {
+    const partner = partnersByParty.get(entry.partyId);
+    if (partner) return chooseLedgerEntryEmoji(partner.emoji, entryCategoryEmoji(entry));
+  }
+  return entryCategoryEmoji(entry);
+}
+function entryCategoryEmoji(entry: LedgerEntry) {
+  if (entry.categoryName) {
+    const manualEmoji = manualExpenseCategoryEmoji(entry.categoryName);
+    if (manualEmoji) return manualEmoji;
+    if (entry.categoryName.includes("매출")) return "🧾";
+    if (entry.categoryName.includes("수수료")) return "🏦";
+  }
+  return entry.direction === "income" ? "💰" : entry.direction === "expense" ? "📂" : "🔄";
+}
+
 function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
   const settlement = entry.settlementStatus === "partial"
     ? `${lang === "vi" ? "Còn nợ" : "일부 미지급"} ${money(entry.remainingAmount ?? 0)}` : "";
@@ -2209,7 +2210,7 @@ function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
   const vi = lang === "vi",
     subtitle = entry.subtitle.replace(/\s*·\s*확인 필요/g, "");
   return [
-    subtitle,
+    subtitle === entry.categoryName ? "" : subtitle,
     settlement,
     entry.origin === "manual" ? (vi ? "Thủ công" : "수동") : null,
   ]

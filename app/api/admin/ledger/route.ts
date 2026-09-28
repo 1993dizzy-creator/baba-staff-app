@@ -1,3 +1,5 @@
+import { effectivePartnerEmoji } from "@/lib/partners/emoji";
+import type { PartnerType } from "@/lib/partners/policy";
 import { calculateCardGrossAtMonthEnd, sumCardMoney } from "@/lib/ledger/card-settlements";
 import { loadCardRows, loadCardSales, loadCardAllocationLines } from "@/lib/ledger/card-settlement-data";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -43,7 +45,7 @@ export async function GET(request: Request) {
     const categoriesPromise = supabaseServer.from("ledger_categories").select("id,name,kind,parent_id,cost_behavior,is_active,parent:ledger_categories!parent_id(name)").eq("is_active", true).order("kind").order("name");
     const partiesPromise = supabaseServer.from("ledger_parties").select("id,name,type,is_active").eq("is_active", true).order("name");
     const partnerPromise = supabaseServer.from("business_partners").select("id,name,partner_type,partner_subtype_id,payment_mode,default_fund_account_id,is_active").order("name");
-    const partnerSubtypePromise = supabaseServer.from("business_partner_subtypes").select("id,code");
+    const partnerSubtypePromise = supabaseServer.from("business_partner_subtypes").select("id,code,emoji");
     const bridgePromise = supabaseServer.from("business_partner_ledger_parties").select("business_partner_id,ledger_party_id");
     const profitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales"]);
     const recognitionProfitPromise = supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).eq("type", "expense_recognition");
@@ -175,7 +177,7 @@ export async function GET(request: Request) {
     });
     const accountById = new Map(accounts.map(account => [Number(account.id), account]));
     const partnerById = new Map((partnerResult.data ?? []).map(partner => [Number(partner.id), partner]));
-    const partnerSubtypeCodeById = new Map((partnerSubtypeResult.data ?? []).map(subtype => [Number(subtype.id), String(subtype.code)]));
+    const partnerSubtypeById = new Map((partnerSubtypeResult.data ?? []).map(subtype => [Number(subtype.id), subtype]));
     const activeCategoryByName = new Map((categoriesResult.data ?? []).map(category => [String(category.name), category]));
     const partnerDefaultsByParty = new Map<number, PartnerLedgerDefault>();
     const partners = (bridgeResult.data ?? []).flatMap(bridge => {
@@ -183,7 +185,8 @@ export async function GET(request: Request) {
       if (!partner) return [];
       const defaultFundAccountId = partner.default_fund_account_id === null ? null : Number(partner.default_fund_account_id);
       const partnerSubtypeId = partner.partner_subtype_id === null ? null : Number(partner.partner_subtype_id);
-      const partnerSubtypeCode = partnerSubtypeId === null ? null : partnerSubtypeCodeById.get(partnerSubtypeId) ?? null;
+      const partnerSubtype = partnerSubtypeId === null ? null : partnerSubtypeById.get(partnerSubtypeId) ?? null;
+      const partnerSubtypeCode = partnerSubtype?.code ?? null;
       const manualExpenseCategoryName = manualExpenseCategoryNameForPartner(partner.partner_type, partnerSubtypeCode);
       const manualExpenseCategory = manualExpenseCategoryName === null ? null : activeCategoryByName.get(manualExpenseCategoryName) ?? null;
       partnerDefaultsByParty.set(Number(bridge.ledger_party_id), {
@@ -193,6 +196,7 @@ export async function GET(request: Request) {
       return [{
         id: Number(partner.id), name: partner.name, ledgerPartyId: Number(bridge.ledger_party_id),
         partnerType: partner.partner_type, partnerSubtypeId, partnerSubtypeCode,
+        emoji: effectivePartnerEmoji(partner.partner_type as PartnerType, partnerSubtype),
         manualExpenseCategoryId: manualExpenseCategory ? Number(manualExpenseCategory.id) : null,
         manualExpenseCategoryName,
         paymentMode: partner.payment_mode, defaultFundAccountId, isActive: partner.is_active,

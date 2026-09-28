@@ -179,6 +179,10 @@ const MANUAL_EXPENSE_CATEGORY_DISPLAY: Record<string, { emoji: string; vi: strin
   "기타 비용": { emoji: "📦", vi: "Chi phí khác" },
 };
 
+export function manualExpenseCategoryEmoji(name: string) {
+  return MANUAL_EXPENSE_CATEGORY_DISPLAY[name]?.emoji ?? null;
+}
+
 export function manualExpenseCategoryLabel(name: string, lang: "ko" | "vi") {
   const display = MANUAL_EXPENSE_CATEGORY_DISPLAY[name];
   if (!display) return name;

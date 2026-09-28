@@ -4,6 +4,7 @@ import { useState } from "react";
 import { BarField, BarSection, BarSegmentedControl, BarSheet, keepingInputStyle, primaryButtonStyle, secondaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
 import type { PartnerSubtype } from "@/components/PartnerForm";
 import { PARTNER_TYPES, type PartnerType } from "@/lib/partners/policy";
+import { effectivePartnerEmoji, partnerTypeEmoji } from "@/lib/partners/emoji";
 import { formatPartnerSubtypeName, partnerTypeLabels } from "@/lib/partners/text";
 
 type Props = {
@@ -16,9 +17,11 @@ type Props = {
 };
 
 const labels = {
-  ko: { title: "중분류 관리", close: "닫기", groupLabel: "대분류", listLabel: "중분류 목록", add: "+ 중분류 추가", edit: "중분류 수정", nameKo: "한국어", nameVi: "Tiếng Việt", sortOrder: "정렬순서", status: "사용 여부", active: "사용 중", inactive: "사용 안 함", cancel: "취소", save: "저장", saving: "저장 중…", empty: "등록된 중분류가 없습니다.", nameRequired: "한국어 또는 베트남어 중 하나는 입력해야 합니다.", dangerTitle: "중분류 삭제", delete: "삭제", deleting: "삭제 중…", deleteConfirm: "정말 이 중분류를 삭제하시겠습니까?", deleteCancel: "삭제 취소", inUse: "이 중분류를 사용 중인 거래처가 있어 삭제할 수 없습니다. 먼저 거래처의 중분류를 변경해주세요.", notFound: "이미 삭제되었거나 존재하지 않는 중분류입니다.", deleteFailed: "중분류를 삭제하지 못했습니다." },
-  vi: { title: "Quản lý danh mục phụ", close: "Đóng", groupLabel: "Ngành / loại", listLabel: "Danh sách danh mục phụ", add: "+ Thêm danh mục phụ", edit: "Sửa danh mục phụ", nameKo: "Tiếng Hàn", nameVi: "Tiếng Việt", sortOrder: "Thứ tự", status: "Trạng thái", active: "Đang dùng", inactive: "Ngừng dùng", cancel: "Hủy", save: "Lưu", saving: "Đang lưu…", empty: "Chưa có danh mục phụ nào.", nameRequired: "Cần nhập ít nhất tiếng Hàn hoặc tiếng Việt.", dangerTitle: "Xóa danh mục phụ", delete: "Xóa", deleting: "Đang xóa…", deleteConfirm: "Bạn có chắc muốn xóa danh mục phụ này không?", deleteCancel: "Hủy xóa", inUse: "Không thể xóa vì có đối tác đang sử dụng danh mục phụ này. Vui lòng đổi danh mục phụ của đối tác trước.", notFound: "Danh mục phụ không tồn tại hoặc đã bị xóa.", deleteFailed: "Không thể xóa danh mục phụ." },
+  ko: { title: "중분류 관리", close: "닫기", groupLabel: "대분류", listLabel: "중분류 목록", add: "+ 중분류 추가", edit: "중분류 수정", nameKo: "한국어", nameVi: "Tiếng Việt", sortOrder: "정렬순서", emoji: "중분류 이모지 (선택)", inheritEmoji: "대분류 이모지 사용", status: "사용 여부", active: "사용 중", inactive: "사용 안 함", cancel: "취소", save: "저장", saving: "저장 중…", empty: "등록된 중분류가 없습니다.", nameRequired: "한국어 또는 베트남어 중 하나는 입력해야 합니다.", dangerTitle: "중분류 삭제", delete: "삭제", deleting: "삭제 중…", deleteConfirm: "정말 이 중분류를 삭제하시겠습니까?", deleteCancel: "삭제 취소", inUse: "이 중분류를 사용 중인 거래처가 있어 삭제할 수 없습니다. 먼저 거래처의 중분류를 변경해주세요.", notFound: "이미 삭제되었거나 존재하지 않는 중분류입니다.", deleteFailed: "중분류를 삭제하지 못했습니다." },
+  vi: { title: "Quản lý danh mục phụ", close: "Đóng", groupLabel: "Ngành / loại", listLabel: "Danh sách danh mục phụ", add: "+ Thêm danh mục phụ", edit: "Sửa danh mục phụ", nameKo: "Tiếng Hàn", nameVi: "Tiếng Việt", sortOrder: "Thứ tự", emoji: "Biểu tượng danh mục phụ (tùy chọn)", inheritEmoji: "Dùng biểu tượng nhóm chính", status: "Trạng thái", active: "Đang dùng", inactive: "Ngừng dùng", cancel: "Hủy", save: "Lưu", saving: "Đang lưu…", empty: "Chưa có danh mục phụ nào.", nameRequired: "Cần nhập ít nhất tiếng Hàn hoặc tiếng Việt.", dangerTitle: "Xóa danh mục phụ", delete: "Xóa", deleting: "Đang xóa…", deleteConfirm: "Bạn có chắc muốn xóa danh mục phụ này không?", deleteCancel: "Hủy xóa", inUse: "Không thể xóa vì có đối tác đang sử dụng danh mục phụ này. Vui lòng đổi danh mục phụ của đối tác trước.", notFound: "Danh mục phụ không tồn tại hoặc đã bị xóa.", deleteFailed: "Không thể xóa danh mục phụ." },
 } as const;
+
+const SUBTYPE_EMOJI_OPTIONS = ["🍾", "🍺", "🛒", "🥩", "🥬", "🦑", "🍷", "🥤", "🧻", "🏦", "📦"] as const;
 
 // Reuses the shared BarSheet chrome (same pattern as the "+ 거래처 추가" dialog on this
 // page) instead of a separate large management screen.
@@ -29,6 +32,7 @@ export default function PartnerSubtypeManager({ lang, open, partnerSubtypes, onC
   const [nameKo, setNameKo] = useState("");
   const [nameVi, setNameVi] = useState("");
   const [sortOrder, setSortOrder] = useState("0");
+  const [emoji, setEmoji] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -37,10 +41,10 @@ export default function PartnerSubtypeManager({ lang, open, partnerSubtypes, onC
   const rows = partnerSubtypes.filter(subtype => subtype.partnerType === groupType).sort((a, b) => a.sortOrder - b.sortOrder);
 
   function startCreate() {
-    setEditing("new"); setNameKo(""); setNameVi(""); setSortOrder("0"); setIsActive(true); setConfirmingDelete(false); setError("");
+    setEditing("new"); setNameKo(""); setNameVi(""); setSortOrder("0"); setEmoji(""); setIsActive(true); setConfirmingDelete(false); setError("");
   }
   function startEdit(subtype: PartnerSubtype) {
-    setEditing(subtype); setNameKo(subtype.nameKo ?? ""); setNameVi(subtype.nameVi ?? ""); setSortOrder(String(subtype.sortOrder)); setIsActive(subtype.isActive); setConfirmingDelete(false); setError("");
+    setEditing(subtype); setNameKo(subtype.nameKo ?? ""); setNameVi(subtype.nameVi ?? ""); setSortOrder(String(subtype.sortOrder)); setEmoji(subtype.emoji ?? ""); setIsActive(subtype.isActive); setConfirmingDelete(false); setError("");
   }
 
   async function remove() {
@@ -67,7 +71,7 @@ export default function PartnerSubtypeManager({ lang, open, partnerSubtypes, onC
     try {
       const isCreate = editing === "new";
       const url = isCreate ? "/api/admin/partners/subtypes" : `/api/admin/partners/subtypes/${(editing as PartnerSubtype).id}`;
-      const body: Record<string, unknown> = { nameKo: nameKo.trim() || null, nameVi: nameVi.trim() || null, sortOrder: Number(sortOrder) || 0 };
+      const body: Record<string, unknown> = { nameKo: nameKo.trim() || null, nameVi: nameVi.trim() || null, sortOrder: Number(sortOrder) || 0, emoji: emoji || null };
       if (isCreate) body.partnerType = groupType; else body.isActive = isActive;
       const response = await fetch(url, { method: isCreate ? "POST" : "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const result = await response.json();
@@ -86,13 +90,17 @@ export default function PartnerSubtypeManager({ lang, open, partnerSubtypes, onC
     : <button type="button" style={{ ...primaryButtonStyle, width: "100%" }} onClick={startCreate}>{t.add}</button>}>
     <BarSection title={t.groupLabel} icon="📂" first>
       <select value={groupType} onChange={event => { setGroupType(event.target.value as PartnerType); setEditing(null); }} style={keepingInputStyle}>
-        {PARTNER_TYPES.map(type => <option key={type} value={type}>{partnerTypeLabels[type][lang]}</option>)}
+        {PARTNER_TYPES.map(type => <option key={type} value={type}>{partnerTypeEmoji[type]} {partnerTypeLabels[type][lang]}</option>)}
       </select>
     </BarSection>
     {editing ? <BarSection title={editing === "new" ? t.add : t.edit} icon="✏️">
       <BarField label={t.nameKo}>{({ id }) => <input id={id} maxLength={80} value={nameKo} onChange={event => setNameKo(event.target.value)} style={keepingInputStyle} />}</BarField>
       <BarField label={t.nameVi}>{({ id }) => <input id={id} maxLength={80} value={nameVi} onChange={event => setNameVi(event.target.value)} style={keepingInputStyle} />}</BarField>
-      <BarField label={t.sortOrder}>{({ id }) => <input id={id} type="number" inputMode="numeric" value={sortOrder} onChange={event => setSortOrder(event.target.value)} style={keepingInputStyle} />}</BarField>
+      <BarField label={t.emoji}>{({ id }) => <select id={id} value={emoji} onChange={event => setEmoji(event.target.value)} style={keepingInputStyle}>
+        <option value="">{partnerTypeEmoji[groupType]} {t.inheritEmoji}</option>
+        {SUBTYPE_EMOJI_OPTIONS.map(value => <option key={value} value={value}>{value}</option>)}
+        {emoji && !SUBTYPE_EMOJI_OPTIONS.some(value => value === emoji) ? <option value={emoji}>{emoji}</option> : null}
+      </select>}</BarField>      <BarField label={t.sortOrder}>{({ id }) => <input id={id} type="number" inputMode="numeric" value={sortOrder} onChange={event => setSortOrder(event.target.value)} style={keepingInputStyle} />}</BarField>
       {editing !== "new" ? <div style={{ display: "grid", gap: 5 }}>
         <span style={{ color: "#4b5563", fontSize: 12, fontWeight: 700 }}>{t.status}</span>
         <BarSegmentedControl label={t.status} value={isActive ? "active" : "inactive"} onChange={next => setIsActive(next === "active")} options={[{ value: "active", label: t.active }, { value: "inactive", label: t.inactive }]} />
@@ -111,7 +119,7 @@ export default function PartnerSubtypeManager({ lang, open, partnerSubtypes, onC
     </BarSection> : <BarSection title={t.listLabel} icon="📋">
       <div style={{ display: "grid", gap: 6 }}>
         {rows.map(subtype => <button key={subtype.id} type="button" onClick={() => startEdit(subtype)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 44, padding: "8px 10px", border: "1px solid #e5e7eb", borderRadius: 10, background: subtype.isActive ? "#fff" : "#f9fafb", color: "#111827", textAlign: "left", cursor: "pointer" }}>
-          <span>{formatPartnerSubtypeName(subtype, lang)}</span>
+          <span>{effectivePartnerEmoji(subtype.partnerType, subtype)} {formatPartnerSubtypeName(subtype, lang)}</span>
           <span style={{ fontSize: 11, fontWeight: 700, color: subtype.isActive ? "#166534" : "#9ca3af" }}>{subtype.isActive ? t.active : t.inactive}</span>
         </button>)}
         {rows.length === 0 ? <p style={{ margin: 0, padding: "12px 4px", color: "#6b7280", fontSize: 12 }}>{t.empty}</p> : null}

@@ -8,23 +8,19 @@ import type { PartnerFormValue, PartnerSubtype } from "@/components/PartnerForm"
 import PartnerSubtypeManager from "@/components/PartnerSubtypeManager";
 import { formatInventoryItemCount } from "@/lib/inventory/category-groups";
 import { useLanguage } from "@/lib/language-context";
-import { groupPartnersByTypeAndSubtype, type PartnerType } from "@/lib/partners/policy";
+import { groupPartnersByTypeAndSubtype } from "@/lib/partners/policy";
+import { effectivePartnerEmoji, partnerTypeEmoji } from "@/lib/partners/emoji";
 import { formatPartnerPaymentSummary, formatPartnerSubtypeName, partnerText, partnerTypeLabels } from "@/lib/partners/text";
 import styles from "../partners.module.css";
 
-type Partner = PartnerFormValue & { id: number; inventoryCount: number; activeInventoryCount: number; defaultFundAccountCode: string | null; displayTag: string | null };
+type Partner = PartnerFormValue & { partnerSubtype: PartnerSubtype | null; id: number; inventoryCount: number; activeInventoryCount: number; defaultFundAccountCode: string | null; displayTag: string | null };
 type Filter = "active" | "inactive";
-
-const partnerTypeIcons: Record<PartnerType, string> = {
-  alcohol: "🍷", beverage: "🥤", food: "🥬", consumable: "🧻",
-  equipment: "🧰", service: "🛎️", rent: "🏠", other: "📦",
-};
 
 function PartnerRow({ partner, lang }: { partner: Partner; lang: "ko" | "vi" }) {
   const payment = formatPartnerPaymentSummary(partner, lang);
   return <Link className={`${styles.compactRow} ${styles.partnerInfoRow}`} href={`/admin/partners/${partner.id}`}>
     <span className={styles.rowNameGroup}>
-      <strong className={styles.rowName}>{partner.name}</strong>
+      <strong className={styles.rowName}>{effectivePartnerEmoji(partner.partnerType, partner.partnerSubtype)} {partner.name}</strong>
       {partner.displayTag ? <span className={styles.tagBadge}>{partner.displayTag}</span> : null}
     </span>
     <span className={styles.rowMeta}>{payment} · {formatInventoryItemCount(partner.inventoryCount, partner.activeInventoryCount, lang)}</span>
@@ -70,16 +66,16 @@ export default function PartnerInfoPage() {
     {error ? <p className={styles.error} role="alert">{error}</p> : null}
     {groups.length === 0 ? <section className={styles.compactList}><p className={styles.compactEmpty}>{labels.empty}</p></section> : <div className={styles.partnerGroups}>{groups.map(group => <section className={styles.partnerGroup} key={group.type}>
       <header className={styles.partnerGroupHeader} data-partner-type={group.type}>
-        <span aria-hidden="true">{partnerTypeIcons[group.type]}</span>
+        <span aria-hidden="true">{partnerTypeEmoji[group.type]}</span>
         <strong>{partnerTypeLabels[group.type][lang]}</strong>
         <span className={styles.partnerGroupCount}>{group.partners.length}</span>
       </header>
       {group.subgroups.map(sub => <div className={styles.subtypeGroup} key={sub.subtype.id}>
-        <h3 className={styles.subtypeDivider}>{formatPartnerSubtypeName(sub.subtype, lang)}</h3>
+        <h3 className={styles.subtypeDivider}>{effectivePartnerEmoji(group.type, sub.subtype)} {formatPartnerSubtypeName(sub.subtype, lang)}</h3>
         <div className={styles.compactList}>{sub.partners.map(partner => <PartnerRow partner={partner} lang={lang} key={partner.id} />)}</div>
       </div>)}
       {group.unclassified.length > 0 ? <div className={styles.subtypeGroup}>
-        <h3 className={styles.subtypeDivider}>{formatPartnerSubtypeName(null, lang)}</h3>
+        <h3 className={styles.subtypeDivider}>{partnerTypeEmoji[group.type]} {formatPartnerSubtypeName(null, lang)}</h3>
         <div className={styles.compactList}>{group.unclassified.map(partner => <PartnerRow partner={partner} lang={lang} key={partner.id} />)}</div>
       </div> : null}
     </section>)}</div>}

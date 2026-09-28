@@ -14,15 +14,36 @@ async function database(){
  insert into pos_sales_receipts(id,source,ref_id,business_date,payment_status,is_canceled,revision,total_amount,discount_amount,vat_amount,final_amount,receive_amount,return_amount,original_tax_summary) values(1,'manual','receipt-1','2026-09-28',3,false,0,165000,0,0,165000,165000,0,'{"totalTaxAmount":0}'::jsonb);
  insert into pos_sales_receipt_lines(id,source,receipt_id,receipt_ref_id,business_date,sort_order,item_name,quantity,unit_price,amount,discount_amount,final_amount,tax_rate,tax_amount,pre_tax_amount,tax_reduction_amount,ref_detail_type,is_option,is_excluded,mapping_status) values(1,'manual',1,'receipt-1','2026-09-28',1,'Item',1,165000,165000,0,165000,0,0,165000,0,1,false,false,'unmapped');
  insert into pos_sales_receipt_payments(source,receipt_id,receipt_ref_id,business_date,payment_name,amount) values('manual',1,'receipt-1','2026-09-28','Ti\u1ec1n m\u1eb7t',165000);`);
+ await db.exec("create function public.admin_update_paid_sales_receipt(bigint,bigint,uuid,text,text,text,numeric,text,numeric,jsonb) returns jsonb language sql as $$select '{}'::jsonb$$;");
  await db.exec(migration);return db;
 }
-function line(amount=165000){return [{id:1,sort_order:1,ref_detail_id:null,parent_ref_detail_id:null,item_id:null,item_code:null,item_name:'Item',unit_name:null,quantity:1,unit_price:amount,amount,discount_amount:0,final_amount:amount,tax_rate:0,tax_amount:0,pre_tax_amount:amount,tax_reduction_amount:0,ref_detail_type:1,inventory_item_type:null,is_option:false,mapping_status:'unmapped',raw_json:{}}]}
-async function save(db,{method='split',split=100000,cash=165000,override=null,revision=0,id=requestId,amount=165000}={}){const r=await db.query(`select admin_update_paid_sales_receipt(1,$1,$2::uuid,'owner',null,'apply',$3,$4,$5,$6::jsonb,$7) as result`,[revision,id,override,method,cash,JSON.stringify(line(amount)),split]);return r.rows[0].result}
+function line(amount=165000,rate=0){return [{id:1,sort_order:1,ref_detail_id:null,parent_ref_detail_id:null,item_id:null,item_code:null,item_name:'Item',unit_name:null,quantity:1,unit_price:amount,amount,discount_amount:0,final_amount:amount,tax_rate:rate,tax_amount:Math.round(amount*rate/100),pre_tax_amount:amount,tax_reduction_amount:0,ref_detail_type:1,inventory_item_type:null,is_option:false,mapping_status:'unmapped',raw_json:{}}]}
+async function save(db,{method='split',split=100000,cash=165000,override=null,revision=0,id=requestId,amount=165000,rate=0}={}){const r=await db.query(`select admin_update_paid_sales_receipt(1,$1,$2::uuid,'owner',null,'apply',$3,$4,$5,$6::jsonb,$7) as result`,[revision,id,override,method,cash,JSON.stringify(line(amount,rate)),split]);return r.rows[0].result}
 const payments=async db=>(await db.query('select payment_name,amount from pos_sales_receipt_payments where receipt_id=1 order by id')).rows;
-const receipt=async db=>(await db.query('select revision,final_amount,calculated_final_amount,final_amount_override,receive_amount,return_amount from pos_sales_receipts where id=1')).rows[0];
+const receipt=async db=>(await db.query('select revision,vat_amount,calculated_vat_amount,final_amount,calculated_final_amount,final_amount_override,receive_amount,return_amount from pos_sales_receipts where id=1')).rows[0];
 test('cash and other remain single-payment edits',async()=>{for(const [method,cash,name,received,change] of [['cash',170000,'Ti\u1ec1n m\u1eb7t',170000,5000],['other',165000,'Kh\u00e1c',165000,0]]){const db=await database();try{await save(db,{method,cash,split:null});assert.deepEqual((await payments(db)).map(r=>[r.payment_name,Number(r.amount)]),[[name,165000]]);const row=await receipt(db);assert.equal(Number(row.receive_amount),received);assert.equal(Number(row.return_amount),change)}finally{await db.close()}}});
 test('split writes two payment rows and preserves receipt total',async()=>{const db=await database();try{await save(db);assert.deepEqual((await payments(db)).map(r=>[r.payment_name,Number(r.amount)]),[['Ti\u1ec1n m\u1eb7t',100000],['Kh\u00e1c',65000]]);const row=await receipt(db);assert.equal(Number(row.final_amount),165000);assert.equal(Number(row.receive_amount),165000);assert.equal(Number(row.return_amount),0);assert.equal(Number(row.revision),1)}finally{await db.close()}});
 test('manual adjustment stays separate from split equality',async()=>{const db=await database();try{await save(db,{amount:5137000,override:5130000,split:5000000,cash:5130000});const row=await receipt(db);assert.equal(Number(row.calculated_final_amount),5137000);assert.equal(Number(row.final_amount_override),5130000);assert.equal(Number(row.final_amount)-Number(row.calculated_final_amount),-7000);assert.deepEqual((await payments(db)).map(r=>Number(r.amount)),[5000000,130000])}finally{await db.close()}});
 test('invalid split cash leaves payments and receipt untouched',async()=>{const db=await database();try{for(const split of [0,165000,165001,50000.5]){await assert.rejects(save(db,{split}),/receipt_invalid_split_cash_amount/);assert.equal(Number((await receipt(db)).revision),0);assert.equal((await payments(db)).length,1)}}finally{await db.close()}});
 test('revision conflict and request replay preserve a single payment pair',async()=>{const db=await database();try{const first=await save(db);await assert.rejects(save(db,{revision:0,id:'22222222-2222-4222-8222-222222222222'}),/receipt_revision_conflict/);assert.deepEqual(await save(db,{revision:0}),first);assert.equal((await payments(db)).length,2);assert.equal(Number((await receipt(db)).revision),1);assert.equal(Number((await db.query('select count(*) as n from pos_sales_receipt_modifications')).rows[0].n),1)}finally{await db.close()}});
 test('failure on second payment insert rolls back the first insert and the whole edit',async()=>{const db=await database();try{await db.exec(`create function reject_other_payment() returns trigger language plpgsql as $$begin if new.payment_name='Kh\u00e1c' then raise exception 'payment_insert_failed'; end if; return new; end $$; create trigger reject_other_payment before insert on pos_sales_receipt_payments for each row execute function reject_other_payment();`);await assert.rejects(save(db),/payment_insert_failed/);assert.deepEqual((await payments(db)).map(r=>Number(r.amount)),[165000]);assert.equal(Number((await receipt(db)).revision),0);assert.equal(Number((await db.query('select count(*) as n from pos_sales_receipt_modifications')).rows[0].n),0)}finally{await db.close()}});
+
+test('migration leaves only the 11-argument RPC',async()=>{
+ const db=await database();
+ try{
+  const rows=(await db.query("select pronargs from pg_proc where proname='admin_update_paid_sales_receipt' and pronamespace='public'::regnamespace")).rows;
+  assert.deepEqual(rows.map(row=>row.pronargs),[11]);
+ }finally{await db.close()}
+});
+test('edited menu VAT can differ from preserved original receipt VAT',async()=>{
+ const db=await database();
+ try{
+  await db.exec("update pos_sales_receipts set vat_amount=900000, original_tax_summary='{\"totalTaxAmount\":900000}'::jsonb where id=1");
+  await save(db,{method:'other',split:null,amount:10470000,rate:10});
+  const row=await receipt(db);
+  assert.equal(Number(row.calculated_vat_amount),1047000);
+  assert.equal(Number(row.vat_amount),900000);
+  assert.equal(Number(row.calculated_final_amount),11517000);
+  assert.equal(Number(row.final_amount),11517000);
+ }finally{await db.close()}
+});

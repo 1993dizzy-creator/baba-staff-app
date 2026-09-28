@@ -141,9 +141,9 @@ test("payable and account mini badges are bilingual and compact",()=>{
   for(const label of ["주류","식자재","음료","기타","Rượu","Thực phẩm","Đồ uống","Khác"])assert.match(page,new RegExp(label));
   for(const label of ["현금","법인","미지급","미지정","Tiền mặt","Công ty","Công nợ","Chưa rõ","Vương","Cho"])assert.match(page,new RegExp(label));
   assert.match(page,/partnerTypeLabel\(party\.partnerType,lang\)/);
-  assert.match(page,/accountBadgeLabel\(entry\.accountName,lang,entry\)/);
-  assert.match(css,/\.entryRow\{grid-template-columns:38px auto minmax\(0,1fr\) auto auto 12px/);
-  assert.match(css,/@media\(max-width:560px\)[\s\S]*\.entryRow\{grid-template-columns:35px auto minmax\(0,1fr\) auto auto 9px/);
+  assert.match(page,/accountBadgeLabel\(entry\.accountName, lang, entry\)/);
+  assert.match(css,/\.entryRow\{grid-template-columns:minmax\(0,1fr\) max-content;gap:8px\}/);
+  assert.match(css,/@media\(max-width:560px\)\{\.entryRow\{grid-template-columns:minmax\(0,1fr\) max-content/);
   assert.match(css,/\.accountBadge\{[^}]*font-size:9px/);
   assert.match(css,/\.accountBadgePayable\{/);
   assert.match(css,/\.payablePartyMain>\.partnerTypeBadge\{[^}]*font-size:8px/);

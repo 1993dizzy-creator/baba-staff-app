@@ -323,9 +323,9 @@ test("active/inactive filter still applies per Partner before grouping", () => {
 test("26: info page renders the group -> subtype-divider -> row structure with the shared row/payment/tag formatting kept", () => {
   assert.match(infoPage, /groupPartnersByTypeAndSubtype\(partners, filter === "active", lang, partnerSubtypes\)/);
   assert.match(infoPage, /group\.subgroups\.map\(sub =>/);
-  assert.match(infoPage, /<h3 className={styles\.subtypeDivider}>{formatPartnerSubtypeName\(sub\.subtype, lang\)}<\/h3>/);
+  assert.match(infoPage, /<h3 className={styles\.subtypeDivider}>{effectivePartnerEmoji\(group\.type, sub\.subtype\)} {formatPartnerSubtypeName\(sub\.subtype, lang\)}<\/h3>/);
   assert.match(infoPage, /group\.unclassified\.length > 0/);
-  assert.match(infoPage, /<h3 className={styles\.subtypeDivider}>{formatPartnerSubtypeName\(null, lang\)}<\/h3>/);
+  assert.match(infoPage, /<h3 className={styles\.subtypeDivider}>{partnerTypeEmoji\[group\.type\]} {formatPartnerSubtypeName\(null, lang\)}<\/h3>/);
   // 30/31: tag badge and payment summary formatting stay exactly as before
   assert.match(infoPage, /partner\.displayTag \? <span className={styles\.tagBadge}>{partner\.displayTag}<\/span> : null/);
   assert.match(infoPage, /formatPartnerPaymentSummary\(partner, lang\)/);
@@ -355,8 +355,8 @@ test("35: both names blank is rejected by parsePartnerSubtypeCreateInput/UpdateI
 });
 
 test("34: either language alone is accepted by the parsers", () => {
-  assert.deepEqual(parsePartnerSubtypeCreateInput({ partnerType: "alcohol", nameKo: "생맥주", nameVi: "", sortOrder: 10 }), { partnerType: "alcohol", nameKo: "생맥주", nameVi: null, sortOrder: 10 });
-  assert.deepEqual(parsePartnerSubtypeCreateInput({ partnerType: "alcohol", nameKo: "", nameVi: "Bia tươi", sortOrder: 10 }), { partnerType: "alcohol", nameKo: null, nameVi: "Bia tươi", sortOrder: 10 });
+  assert.deepEqual(parsePartnerSubtypeCreateInput({ partnerType: "alcohol", nameKo: "생맥주", nameVi: "", sortOrder: 10 }), { partnerType: "alcohol", nameKo: "생맥주", nameVi: null, sortOrder: 10, emoji: null });
+  assert.deepEqual(parsePartnerSubtypeCreateInput({ partnerType: "alcohol", nameKo: "", nameVi: "Bia tươi", sortOrder: 10 }), { partnerType: "alcohol", nameKo: null, nameVi: "Bia tươi", sortOrder: 10, emoji: null });
 });
 
 test("36: deactivate goes through the same update RPC (isActive:false), not a separate delete", () => {
@@ -508,7 +508,7 @@ test("43: V1/V2/V3 create/update/review-alias function bodies remain in their ow
 
 test("API responses expose partnerSubtypeId/partnerSubtypeCode on each Partner and a partnerSubtypes master list, N+1-free", () => {
   assert.match(partnerServer, /partnerSubtypeId,\s*\n\s*partnerSubtypeCode: partnerSubtype\?\.code \?\? null,\s*\n\s*partnerSubtype,/);
-  assert.match(partnerServer, /supabaseServer\.from\("business_partner_subtypes"\)\.select\("id,code,partner_type,name_ko,name_vi,sort_order,is_active"\)/);
+  assert.match(partnerServer, /supabaseServer\.from\("business_partner_subtypes"\)\.select\("id,code,partner_type,name_ko,name_vi,emoji,sort_order,is_active"\)/);
   assert.match(partnerServer, /const \[partnerResult, mappingResult, ledgerResult, inventoryResult, fundAccountResult, subtypeResult\] = await Promise\.all\(\[/);
   assert.match(collectionApi, /partnerJson\(\{ ok: true, \.\.\.partnerData, supplierAliases \}\)/); // partnerSubtypes rides along via ...partnerData
   assert.match(detailApi, /partnerSubtypes: data\.partnerSubtypes/);

@@ -126,3 +126,16 @@
 .projectionWarning{margin:8px 0;padding:9px 11px;border:1px solid #f3d9a9;border-radius:11px;background:#fffaf0;color:#7c4e2e;font-size:11px}.projectionWarning p{margin:4px 0}.projectionWarning summary{cursor:pointer;font-weight:800}.projectionWarningRow{display:flex;flex-wrap:wrap;gap:3px 8px;padding:7px 0;border-top:1px solid #f3e7d1}.projectionWarningRow:first-of-type{margin-top:6px}.projectionWarningRow strong{min-width:0;overflow-wrap:anywhere}.projectionWarningRow small{flex-basis:100%;color:#94600f}
 .manualReadOnly{background:#f3f4f6;color:#374151;font-weight:700}
 .manualNotice{grid-column:1/-1;margin:0;padding:8px 10px;border:1px solid #f5d9a8;border-radius:9px;background:#fffaf0;color:#9a5b10;font-size:10px;line-height:1.45}
+
+.entryRow{grid-template-columns:minmax(0,1fr) max-content;gap:8px}
+.entryLeft{min-width:0;display:grid;grid-template-columns:auto 18px minmax(0,1fr);align-items:center;column-gap:6px}
+.entryCategoryEmoji{font-size:14px;line-height:1;text-align:center}
+.entryLeft>.entryMain{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.entryFlags{grid-column:3;display:flex;align-items:center;gap:4px;min-width:0}
+.entryRight{display:grid;justify-items:end;gap:2px;min-width:0;white-space:nowrap}
+.entryTime{min-height:10px;color:#9ca3af;font-size:9px;font-weight:700;line-height:1}
+.entryBottom{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.entryBottom>.accountBadge{display:inline-block;flex:0 1 auto;max-width:58px}
+.entryBottom>.amountIncome,.entryBottom>.amountExpense,.entryBottom>.amountTransfer{grid-column:auto}
+.entryBottom>.chevron{grid-column:auto;line-height:1}
+@media(max-width:560px){.entryRow{grid-template-columns:minmax(0,1fr) max-content;gap:5px;padding:7px}.entryLeft{grid-template-columns:auto 16px minmax(0,1fr);column-gap:4px}.entryCategoryEmoji{font-size:13px}.entryBottom{gap:4px}.entryBottom>.accountBadge{max-width:44px;padding:3px 4px;font-size:8px}.entryBottom>.amountIncome,.entryBottom>.amountExpense,.entryBottom>.amountTransfer{font-size:10px}}

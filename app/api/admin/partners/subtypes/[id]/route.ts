@@ -7,7 +7,7 @@ function parseId(raw: string) {
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
-// Edits name_ko/name_vi/sort_order/is_active only -- partner_type and code are immutable.
+// Edits name_ko/name_vi/sort_order/is_active/emoji only -- partner_type and code are immutable.
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const auth = await requirePartnerManager();
   if (auth.response || !auth.actor) return auth.response;
@@ -21,6 +21,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       p_name_vi: input.nameVi,
       p_sort_order: input.sortOrder,
       p_is_active: input.isActive,
+      ...(input.emoji !== undefined ? { p_emoji: input.emoji } : {}),
       p_actor_user_id: auth.actor.id,
     });
     if (error) throw error;

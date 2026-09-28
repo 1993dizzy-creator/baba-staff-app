@@ -134,30 +134,42 @@ const optionalName = (value: unknown) => {
   return normalized.length <= 80 ? normalized || null : undefined;
 };
 
-export type PartnerSubtypeCreateInput = { partnerType: PartnerType; nameKo: string | null; nameVi: string | null; sortOrder: number };
+export function parsePartnerSubtypeEmoji(value: unknown): string | null | undefined {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value !== "string") return undefined;
+  const emoji = value.trim();
+  if (!emoji) return null;
+  if (emoji.length > 32 || !/\p{Extended_Pictographic}/u.test(emoji)) return undefined;
+  return Array.from(new Intl.Segmenter().segment(emoji)).length === 1 ? emoji : undefined;
+}
+
+export type PartnerSubtypeCreateInput = { partnerType: PartnerType; nameKo: string | null; nameVi: string | null; sortOrder: number; emoji: string | null };
 export function parsePartnerSubtypeCreateInput(value: unknown): PartnerSubtypeCreateInput | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
   if (!PARTNER_TYPES.includes(input.partnerType as PartnerType)) return null;
   const nameKo = optionalName(input.nameKo);
   const nameVi = optionalName(input.nameVi);
-  if (nameKo === undefined || nameVi === undefined) return null;
+  const emoji = parsePartnerSubtypeEmoji(input.emoji);
+  if (nameKo === undefined || nameVi === undefined || emoji === undefined) return null;
   if (!nameKo && !nameVi) return null;
   const sortOrder = input.sortOrder === null || input.sortOrder === undefined || input.sortOrder === "" ? 0 : Number(input.sortOrder);
   if (!Number.isSafeInteger(sortOrder) || sortOrder < 0 || sortOrder > 100000) return null;
-  return { partnerType: input.partnerType as PartnerType, nameKo, nameVi, sortOrder };
+  return { partnerType: input.partnerType as PartnerType, nameKo, nameVi, sortOrder, emoji };
 }
 
-export type PartnerSubtypeUpdateInput = { nameKo: string | null; nameVi: string | null; sortOrder: number; isActive: boolean };
+export type PartnerSubtypeUpdateInput = { nameKo: string | null; nameVi: string | null; sortOrder: number; isActive: boolean; emoji?: string | null };
 export function parsePartnerSubtypeUpdateInput(value: unknown): PartnerSubtypeUpdateInput | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
   const nameKo = optionalName(input.nameKo);
   const nameVi = optionalName(input.nameVi);
-  if (nameKo === undefined || nameVi === undefined) return null;
+  const hasEmoji = Object.hasOwn(input, "emoji");
+  const emoji = hasEmoji ? parsePartnerSubtypeEmoji(input.emoji) : undefined;
+  if (nameKo === undefined || nameVi === undefined || (hasEmoji && emoji === undefined)) return null;
   if (!nameKo && !nameVi) return null;
   const sortOrder = input.sortOrder === null || input.sortOrder === undefined || input.sortOrder === "" ? 0 : Number(input.sortOrder);
   if (!Number.isSafeInteger(sortOrder) || sortOrder < 0 || sortOrder > 100000) return null;
   if (typeof input.isActive !== "boolean") return null;
-  return { nameKo, nameVi, sortOrder, isActive: input.isActive };
+  return { nameKo, nameVi, sortOrder, isActive: input.isActive, ...(hasEmoji ? { emoji } : {}) };
 }

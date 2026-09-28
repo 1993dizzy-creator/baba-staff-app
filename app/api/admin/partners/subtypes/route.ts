@@ -15,6 +15,7 @@ export async function POST(request: Request) {
       p_name_ko: input.nameKo,
       p_name_vi: input.nameVi,
       p_sort_order: input.sortOrder,
+      p_emoji: input.emoji,
       p_actor_user_id: auth.actor.id,
     });
     if (error) throw error;

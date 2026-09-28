@@ -8,7 +8,7 @@ import { formatPartnerSubtypeName, partnerText, partnerTypeLabels } from "@/lib/
 
 export type PartnerFormValue = { name: string; partnerType: PartnerType; paymentMode: PaymentMode; settlementMode: SettlementMode | null; settlementRule: SettlementRule | null; defaultPaymentTermDays: number | null; defaultFundAccountId: number | null; partnerSubtypeId: number | null; contactName: string | null; phone: string | null; memo: string | null; isActive: boolean; ledgerPartyId: number | null };
 export type FundAccount = { id: number; code: string; displayName: string; type: string };
-export type PartnerSubtype = { id: number; code: string; partnerType: PartnerType; nameKo: string | null; nameVi: string | null; sortOrder: number; isActive: boolean };
+export type PartnerSubtype = { id: number; code: string; partnerType: PartnerType; nameKo: string | null; nameVi: string | null; emoji: string | null; sortOrder: number; isActive: boolean };
 
 const basicGridStyle: React.CSSProperties = { display: "grid", gridTemplateColumns: "minmax(0, 1.65fr) minmax(110px, 1fr)", gap: 10, alignItems: "start" };
 const twoColumnGridStyle: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, alignItems: "start" };
