@@ -119,7 +119,19 @@
 .detailMemo{display:grid;gap:5px;padding:9px 10px;border:1px solid #e5e7eb;border-radius:11px;background:#fff}
 .detailMemoLabel{color:#374151;font-size:11px}
 .detailMemoText{margin:0;color:#4b5563;font-size:11px;line-height:1.55;overflow-wrap:anywhere;white-space:pre-wrap}
-.detailDate{color:#6b7280;font-size:10px;font-weight:700}
+.detailSummary{grid-template-columns:minmax(0,1fr) max-content;align-items:center;column-gap:8px}
+.detailLeft{min-width:0;display:flex;align-items:center;gap:6px}
+.detailLeft>.direction{flex:0 0 auto}
+.detailEmoji{flex:0 0 auto;font-size:14px;line-height:1}
+.detailTitleText{flex:1 1 auto;min-width:0;overflow:hidden;color:#6b7280;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.detailTitleText>strong{color:#111827;font-size:12px}
+.detailLeft>.entryFlags{flex:0 0 auto}
+.detailPayment{display:flex;align-items:center;justify-self:end;gap:5px;min-width:0;white-space:nowrap}
+.detailPayment>.accountBadge{flex:0 1 auto;max-width:58px}
+.detailSummary .detailAmount{font-size:15px}
+.itemDescription>strong+small{margin-left:8px}
+@media(max-width:560px){.detailSummary{column-gap:5px}.detailLeft{gap:4px}.detailEmoji{font-size:13px}.detailPayment{gap:4px}.detailPayment>.accountBadge{max-width:44px;padding:3px 4px;font-size:8px}.detailSummary .detailAmount{font-size:13px}.itemDescription>strong+small{margin-left:6px}}
+@media(max-width:360px){.detailPayment>.accountBadge{max-width:40px}.detailSummary .detailAmount{font-size:12px}}
 .detailMemoLabel{cursor:pointer}
 .detailMemoText{margin-top:7px}
 .entryMain strong{display:inline;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

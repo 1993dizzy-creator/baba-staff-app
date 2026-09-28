@@ -480,6 +480,25 @@ test("daily rows keep category emoji and compact account, amount, and chevron la
   assert.equal(finalRule(".entryMain", "text-overflow"), "ellipsis");
   assert.equal(finalRule(".entryBottom", "white-space"), "nowrap");
 });
+test("entry detail uses a one-row summary matching the daily row and moves the date to the header", () => {
+  const detail = page.slice(page.indexOf("function EntryDetailSheet"), page.indexOf("{entry.drilldown === \"inventory\"", page.indexOf("function EntryDetailSheet")));
+  const summary = detail.slice(detail.indexOf("<div className={styles.detailSummary}>"), detail.indexOf("{message ? ("));
+  assert.match(page, /partnersByParty=\{partnerByLedgerParty\}/);
+  assert.match(summary, /entryDisplayEmoji\(entry, partnersByParty\)/);
+  assert.match(page, /entryDisplayEmoji\(entry, partnerByLedgerParty\)/);
+  assert.doesNotMatch(summary, /🤝|Ngày giao dịch|거래일|반영 완료|Đã ghi sổ|✅|formatDate/);
+  assert.match(detail, /titleAside=\{formatDate\(entry\.businessDate, lang\)\}/);
+  const order = ["styles.detailLeft", "styles.direction", "styles.detailEmoji", "styles.detailTitleText", "entryMeta(entry, lang)", "styles.detailPayment", "styles.accountBadge", "styles.detailAmount"].map(token => summary.indexOf(token));
+  assert.ok(order.every((position, index) => position >= 0 && (index === 0 || position > order[index - 1])));
+  assert.match(summary, /compactEntryListTitle\(entryDisplayTitle\(entry, lang\)\)/);
+  assert.match(summary, /accountBadgeLabel\(entry.accountName, lang, entry\)/);
+  assert.match(summary, /money\(entry.amount\)/);
+  assert.match(css, /\.detailSummary\{grid-template-columns:minmax\(0,1fr\) max-content/);
+  assert.match(css, /\.detailTitleText\{[^}]*text-overflow:ellipsis;white-space:nowrap/);
+  assert.match(css, /\.itemDescription>strong\+small\{margin-left:8px\}/);
+  assert.match(css, /@media\(max-width:360px\)\{\.detailPayment>\.accountBadge/);
+  assert.match(keepingUi, /titleAside\?<span/);
+});
 test("ledger entries header mirrors the monthly summary card hierarchy", () => {
   assert.match(pageCompact, /style=\{monthNoticeCardStyle\}/);
   assert.match(pageCompact, /<divstyle=\{monthControlStyle\}>/);
@@ -542,7 +561,7 @@ test("manual ledger amount input formats display text without changing the numer
 
 test("entry detail and inventory candidate editor expose complete Vietnamese UI labels", () => {
   for (const label of [
-    "Chi tiết", "Đóng", "Cần xác nhận", "Cần điều chỉnh", "Đã ghi sổ", "Không có tài khoản",
+    "Chi tiết", "Đóng", "Cần xác nhận", "Cần điều chỉnh", "Không có tài khoản",
     "Sửa", "Hóa đơn", "Phương thức thanh toán", "Phương thức xử lý",
     "Thanh toán ngay", "Ghi nhận công nợ", "Danh mục chi phí",
     "Tài khoản thanh toán thực tế", "Ghi chú", "Ghi mặt hàng này vào sổ",
@@ -559,7 +578,7 @@ test("entry detail and inventory candidate editor expose complete Vietnamese UI 
   assert.match(pageCompact, /kind="full"compacttopAlignedcomfortableTop/);
   assert.match(page, /Chi tiết giao dịch/);
   assert.match(page, /거래 상세/);
-  assert.match(pageCompact, /entry\.status==="pending"\|\|entry\.requiresCorrection\?"⚠️":"✅"/);
+  assert.doesNotMatch(pageCompact, /반영완료|Đãghisổ/);
   assert.match(pageCompact, /direction==="income"\?"💰":direction==="expense"\?"💸":"🔄"/);
   assert.match(pageCompact, /className=\{styles\.itemDescription\}/);
   assert.match(pageCompact, /className=\{`\$\{styles\.candidateFields\}/);

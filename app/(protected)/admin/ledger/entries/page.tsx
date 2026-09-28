@@ -1252,6 +1252,7 @@ function LedgerEntriesContent() {
           <EntryDetailSheet
             lang={lang}
             entry={selected}
+            partnersByParty={partnerByLedgerParty}
             accounts={data?.accounts ?? []}
             categories={data?.categories ?? []}
             candidateDraft={candidateDraft}
@@ -1297,6 +1298,7 @@ export default function LedgerEntriesPage() {
 function EntryDetailSheet({
   lang,
   entry,
+  partnersByParty,
   accounts,
   categories,
   candidateDraft,
@@ -1312,6 +1314,7 @@ function EntryDetailSheet({
 }: {
   lang: "ko" | "vi";
   entry: LedgerEntry;
+  partnersByParty: ReadonlyMap<number, Partner>;
   accounts: Account[];
   categories: Category[];
   candidateDraft: CandidateDraft | null;
@@ -1340,6 +1343,7 @@ function EntryDetailSheet({
       topAligned
       comfortableTop
       title={vi ? "Chi tiết giao dịch" : "거래 상세"}
+      titleAside={formatDate(entry.businessDate, lang)}
       closeLabel={vi ? "Đóng" : "닫기"}
       saving={saving||editSaving}
       onClose={onClose}
@@ -1359,35 +1363,34 @@ function EntryDetailSheet({
       }
     >
       <div className={styles.detailSummary}>
-        <span className={styles.detailDate}>{vi ? "Ngày giao dịch" : "거래일"} · {formatDate(entry.businessDate, lang)}</span>
-        <div className={styles.detailTop}>
-          <strong>🤝 {entryDisplayTitle(entry, lang)}</strong>
-          <span className={styles.detailStatus}>
-            {entry.status === "pending" || entry.requiresCorrection ? "⚠️" : "✅"}{" "}
-            {entry.status === "pending"
-              ? vi ? "Cần xác nhận" : "확인 필요"
-              : entry.requiresCorrection
-                ? vi ? "Cần điều chỉnh" : "정정 필요"
-                : vi ? "Đã ghi sổ" : "반영 완료"}
+        <span className={styles.detailLeft}>
+          <span
+            className={`${styles.direction} ${styles[entry.direction]}`}
+            data-icon={directionEmoji(entry.direction)}
+          >
+            {directionBadgeLabel(entry.direction, lang)}
           </span>
-        </div>
-        <div className={styles.detailMain}>
-          <span className={styles.detailBadges}>
-            <span
-              className={`${styles.direction} ${styles[entry.direction]}`}
-              data-icon={directionEmoji(entry.direction)}
-            >
-              {directionBadgeLabel(entry.direction, lang)}
+          <span className={styles.detailEmoji} aria-hidden="true">{entryDisplayEmoji(entry, partnersByParty)}</span>
+          <span className={styles.detailTitleText} title={entryDisplayTitle(entry, lang)}>
+            <strong>{compactEntryListTitle(entryDisplayTitle(entry, lang))}</strong>
+            {entryMeta(entry, lang) ? <span> · {entryMeta(entry, lang)}</span> : null}
+          </span>
+          {entry.status === "pending" || entry.requiresCorrection ? (
+            <span className={styles.entryFlags}>
+              {entry.status === "pending" ? <span className={styles.pendingBadge}>{vi ? "Cần xác nhận" : "확인 필요"}</span> : null}
+              {entry.requiresCorrection ? <span className={styles.correctionBadge}>{vi ? "Cần điều chỉnh" : "정정 필요"}</span> : null}
             </span>
-            <span
-              className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""}`}
-              title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}
-            >
-              {accountBadgeLabel(entry.accountName, lang, entry)}
-            </span>
+          ) : null}
+        </span>
+        <span className={styles.detailPayment}>
+          <span
+            className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""}`}
+            title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}
+          >
+            {accountBadgeLabel(entry.accountName, lang, entry)}
           </span>
           <strong className={styles.detailAmount}>{money(entry.amount)}</strong>
-        </div>
+        </span>
       </div>
       {message ? (
         <p className={styles.error} role="alert">
