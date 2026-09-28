@@ -9,6 +9,7 @@ import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
 import { fetchSalesApi } from "@/lib/sales/client-auth";
+import { splitReceiptPayment } from "@/lib/sales/receipt-split-payment";
 import { commonText, salesText } from "@/lib/text";
 
 const salesTabs = [
@@ -237,6 +238,7 @@ type SaveReceiptEditInput = {
   lines: ReceiptEditLine[];
   paymentMethod: PaymentMethod;
   cashReceivedAmount: number | null;
+  splitCashAmount: number | null;
   note: string;
   taxOverrideMode: "apply" | "exclude_all";
   finalAmountOverride: number | null;
@@ -244,7 +246,7 @@ type SaveReceiptEditInput = {
   requestId: string;
 };
 
-type PaymentMethod = "cash" | "other";
+type PaymentMethod = "cash" | "other" | "split";
 
 type ReceiptEditLine =
   | {
@@ -1882,6 +1884,12 @@ function hasCashPayment(payments?: PaymentDetail[]) {
   return (payments || []).some(isCashPayment);
 }
 
+function hasOtherPayment(payments?: PaymentDetail[]) {
+  return (payments || []).some(payment =>
+    normalizePaymentText(`${payment.paymentName ?? ""} ${payment.cardName ?? ""}`).includes("khac")
+  );
+}
+
 export default function SalesReceiptsPage() {
   const pathname = usePathname();
   const router = useRouter();
@@ -2201,6 +2209,7 @@ export default function SalesReceiptsPage() {
     lines,
     paymentMethod,
     cashReceivedAmount,
+    splitCashAmount,
     note,
     taxOverrideMode,
     finalAmountOverride,
@@ -2233,6 +2242,7 @@ export default function SalesReceiptsPage() {
           actorUsername: user.username,
           paymentMethod,
           cashReceivedAmount,
+          splitCashAmount,
           note,
           lines,
           taxOverrideMode,
@@ -4203,6 +4213,7 @@ function ReceiptEditPanel({
   onRequestEdit: () => void;
   onSave: (values: Omit<SaveReceiptEditInput, "receiptId">) => void;
 }) {
+  const { lang } = useLanguage();
   const [isEditing, setIsEditing] = useState(initialEditing === true);
   const receiptLineRefDetailIds = getReceiptLineRefDetailIds(lines);
   const isReceiptCanceled =
@@ -4245,10 +4256,15 @@ function ReceiptEditPanel({
   );
   const [newLines, setNewLines] = useState<NewDraftLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
-    hasCashPayment(payments) ? "cash" : "other"
+    hasCashPayment(payments)
+      ? hasOtherPayment(payments) ? "split" : "cash"
+      : "other"
   );
   const [cashReceivedAmount, setCashReceivedAmount] = useState(
     receipt.receiveAmount ?? receipt.finalAmount
+  );
+  const [splitCashAmount, setSplitCashAmount] = useState(
+    payments.filter(isCashPayment).reduce((sum, payment) => sum + payment.amount, 0)
   );
   const [taxOverrideMode, setTaxOverrideMode] = useState<"apply" | "exclude_all">(
     receipt.taxOverrideMode ?? "apply"
@@ -4384,7 +4400,10 @@ function ReceiptEditPanel({
     paymentMethod === "cash" &&
     (!Number.isFinite(cashReceivedAmount) ||
       cashReceivedAmount < draftPaymentTotal);
-  const saveDisabled = isSaving || draftSalesSubtotal <= 0 || cashPaymentInvalid || finalAmountInvalid;
+  const splitPayment = paymentMethod === "split"
+    ? splitReceiptPayment(draftPaymentTotal, splitCashAmount) : null;
+  const splitPaymentInvalid = paymentMethod === "split" && !splitPayment;
+  const saveDisabled = isSaving || draftSalesSubtotal <= 0 || cashPaymentInvalid || splitPaymentInvalid || finalAmountInvalid;
 
   useEffect(() => {
     if (!finalAmountTouched) setFinalAmountInput(String(draftCalculatedTotal));
@@ -4493,8 +4512,11 @@ function ReceiptEditPanel({
         }))
     );
     setNewLines([]);
-    setPaymentMethod(hasCashPayment(payments) ? "cash" : "other");
+    setPaymentMethod(hasCashPayment(payments)
+      ? hasOtherPayment(payments) ? "split" : "cash"
+      : "other");
     setCashReceivedAmount(receipt.receiveAmount ?? receipt.finalAmount);
+    setSplitCashAmount(payments.filter(isCashPayment).reduce((sum, payment) => sum + payment.amount, 0));
     setTaxOverrideMode(receipt.taxOverrideMode ?? "apply");
     setFinalAmountInput(String(receipt.finalAmountOverride ?? receipt.calculatedFinalAmount ?? receipt.finalAmount));
     setFinalAmountTouched(receipt.finalAmountOverride !== null);
@@ -4531,6 +4553,7 @@ function ReceiptEditPanel({
       lines: [...existingLines, ...createLines],
       paymentMethod,
       cashReceivedAmount: paymentMethod === "cash" ? cashReceivedAmount : null,
+      splitCashAmount: paymentMethod === "split" ? splitCashAmount : null,
       note,
       taxOverrideMode,
       finalAmountOverride:
@@ -4888,6 +4911,13 @@ function ReceiptEditPanel({
                 >
                   {text.other}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod("split")}
+                  style={{ ...secondaryButtonStyle, ...(paymentMethod === "split" ? activeSegmentStyle : null) }}
+                >
+                  {lang === "vi" ? "Chia thanh toán" : "분할결제"}
+                </button>
               </span>
               <span style={reviewCurrentStatusStyle}>{text.vatApply}</span>
               <span style={paymentMethodButtonsStyle}>
@@ -4926,6 +4956,21 @@ function ReceiptEditPanel({
                     <span style={miniLabelStyle}>{text.changeAmount}</span>
                     <strong style={miniValueStyle}>{formatVnd(returnAmount)}</strong>
                   </div>
+                </div>
+              ) : null}
+              {paymentMethod === "split" ? (
+                <div style={cashPaymentEditStyle}>
+                  <label style={cashInputLabelStyle}>
+                    <span style={reviewCurrentStatusStyle}>{lang === "vi" ? "Tiền mặt" : "현금 결제액"}</span>
+                    <input type="number" min={1} max={Math.max(0, draftPaymentTotal - 1)} step={1}
+                      value={splitCashAmount} onChange={event => setSplitCashAmount(Number(event.target.value))}
+                      style={editNameInputStyle} disabled={isSaving} />
+                  </label>
+                  <div style={miniRowStyle}><span style={miniLabelStyle}>{lang === "vi" ? "Khác (tự động)" : "기타 결제액 (자동)"}</span>
+                    <strong style={miniValueStyle}>{formatVnd(splitPayment?.otherAmount ?? Math.max(0, draftPaymentTotal - splitCashAmount))}</strong></div>
+                  <div style={miniRowStyle}><span style={miniLabelStyle}>{lang === "vi" ? "Tổng thanh toán" : "결제 합계"}</span>
+                    <strong style={miniValueStyle}>{formatVnd(splitCashAmount + Math.max(0, draftPaymentTotal - splitCashAmount))} / {formatVnd(draftPaymentTotal)}</strong></div>
+                  {splitPaymentInvalid ? <span style={reviewErrorTextStyle}>{lang === "vi" ? "Tiền mặt phải lớn hơn 0 và nhỏ hơn tổng thanh toán." : "현금 결제액은 0보다 크고 최종 결제금액보다 작아야 합니다."}</span> : null}
                 </div>
               ) : null}
             </div>
@@ -7047,6 +7092,7 @@ const paymentEditBlockStyle: CSSProperties = {
 
 const paymentMethodButtonsStyle: CSSProperties = {
   display: "flex",
+  flexWrap: "wrap",
   gap: 6,
 };
 

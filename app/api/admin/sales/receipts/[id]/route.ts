@@ -5,6 +5,7 @@ import {
   calculateReceiptFinancials,
   MAX_VND_RECEIPT_AMOUNT,
 } from "@/lib/sales/receipt-financials";
+import { splitReceiptPayment } from "@/lib/sales/receipt-split-payment";
 
 type ReceiptRow = {
   id: number;
@@ -95,6 +96,7 @@ type UpdateReceiptBody = {
   actorUsername?: unknown;
   paymentMethod?: unknown;
   cashReceivedAmount?: unknown;
+  splitCashAmount?: unknown;
   note?: unknown;
   lines?: unknown;
   taxOverrideMode?: unknown;
@@ -164,7 +166,7 @@ type CalculatedLine = {
   taxAmount: number;
 };
 
-type PaymentMethod = "cash" | "other";
+type PaymentMethod = "cash" | "other" | "split";
 
 function toNumber(value: unknown) {
   if (typeof value === "number") {
@@ -447,7 +449,7 @@ function normalizeEditableLines(value: unknown): NormalizedLineInput[] | null {
 }
 
 function normalizePaymentMethod(value: unknown): PaymentMethod | null {
-  if (value === "cash" || value === "other") return value;
+  if (value === "cash" || value === "other" || value === "split") return value;
   return null;
 }
 
@@ -1665,6 +1667,9 @@ async function handleAtomicReceiptPatch(
     const cash = paymentMethod === "cash" ? Number(body.cashReceivedAmount) : finalAmount;
     if (paymentMethod === "cash" && (!Number.isSafeInteger(cash) || cash < finalAmount || cash > MAX_VND_RECEIPT_AMOUNT))
       return NextResponse.json({ ok: false, error: "Cash received must cover the final amount." }, { status: 400 });
+    const split = paymentMethod === "split" ? splitReceiptPayment(finalAmount, body.splitCashAmount) : null;
+    if (paymentMethod === "split" && !split)
+      return NextResponse.json({ ok: false, error: "Split cash must be greater than zero and less than the final amount." }, { status: 400 });
 
     const note = typeof body.note === "string" ? body.note.trim() || null : null;
     const { data, error } = await supabaseServer.rpc("admin_update_paid_sales_receipt", {
@@ -1672,6 +1677,7 @@ async function handleAtomicReceiptPatch(
       p_actor_username: actor.username, p_modification_note: note,
       p_tax_override_mode: taxMode, p_final_amount_override: normalizedOverride,
       p_payment_method: paymentMethod, p_cash_received_amount: cash, p_lines: rpcLines,
+      p_split_cash_amount: split?.cashAmount ?? null,
     });
     if (error) {
       if (error.message.includes("receipt_revision_conflict"))
