@@ -28,6 +28,7 @@ import {
 import {
   entryDisplaySubtotal,
   entryRequiresReview,
+  compareLedgerEntriesByDisplayTime,
   type LedgerEntry,
   type LedgerEntryItem,
 } from "@/lib/ledger/entries";
@@ -108,7 +109,7 @@ type LedgerSummary = {
   unsettledCardGross: number;
 };
 type LedgerData = {
-  inventoryProjectionIssues?: Array<{ inventoryLogId: number; status: string; code: string }>;
+  inventoryProjectionIssues?: Array<{ inventoryLogId: number; status: string; code: string; itemName: string; businessDate: string; quantityDelta: number; amountDelta: number; originalQuantity: number | null }>;
   month: string;
   fundsView: {
     month: string;
@@ -431,7 +432,7 @@ function LedgerEntriesContent() {
       byDate.set(entry.businessDate, group);
     }
     for (const group of byDate.values()) {
-      group.rows.sort((a, b) => a.sortTimestamp - b.sortTimestamp);
+      group.rows.sort(compareLedgerEntriesByDisplayTime);
     }
     return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
   }, [regularEntries, filter, lang, search]);
@@ -743,7 +744,7 @@ function LedgerEntriesContent() {
                   {accountBadgeLabel(entry.accountName,lang,entry)}
                 </span>
                 <span className={styles.entryMain}>
-                  <strong>{entryDisplayTitle(entry, lang)}</strong>
+                  <strong>{compactEntryListTitle(entryDisplayTitle(entry, lang))}</strong>
                   <span> · {entryMeta(entry, lang)}</span>
                 </span>
                 {entry.status === "pending" ? (
@@ -835,12 +836,31 @@ function LedgerEntriesContent() {
             {error}
           </p>
         ) : null}
-        {data && data.month === month && data.inventoryProjectionIssues?.length ? <div role="status">
-          <strong>{vi ? "Các giao dịch nhập kho cần kiểm tra" : "입고 장부 반영 확인 필요"}</strong>
-          {data.inventoryProjectionIssues.map(issue => <p key={issue.inventoryLogId}>
-            {vi ? "Nhập kho" : "입고 기록"} #{issue.inventoryLogId}: {issue.code}
-          </p>)}
-        </div> : null}
+        {data && data.month === month && data.inventoryProjectionIssues?.length ? (
+          <section className={styles.projectionWarning} role="status">
+            <strong>⚠️ {vi ? "Cần kiểm tra ghi sổ nhập kho" : "입고 수정 장부 반영 확인 필요"}</strong>
+            <p>{data.inventoryProjectionIssues.every(issue => issue.code === "PURCHASE_CORRECTION_REFERENCE_REQUIRED")
+              ? vi
+                ? `${data.inventoryProjectionIssues.length} thay đổi số lượng nhập kho chưa được ghi vào sổ.`
+                : `${data.inventoryProjectionIssues.length}건의 입고 수정이 장부에 반영되지 않았습니다.`
+              : vi
+                ? `${data.inventoryProjectionIssues.length} thay đổi nhập kho cần kiểm tra trong sổ.`
+                : `${data.inventoryProjectionIssues.length}건의 입고 내역에 장부 확인이 필요합니다.`}</p>
+            <details>
+              <summary>{vi ? "Xem chi tiết" : "상세 보기"}</summary>
+              {data.inventoryProjectionIssues.map(issue => <div className={styles.projectionWarningRow} key={issue.inventoryLogId}>
+                <strong>{issue.itemName}</strong>
+                <span>{issue.businessDate ? formatDate(issue.businessDate, lang) : ""}</span>
+                {issue.originalQuantity !== null ? <span>{vi ? "Nhập gốc" : "원입고"} {issue.originalQuantity}</span> : null}
+                <span>{vi ? "Chênh lệch" : "수량 차이"} {issue.quantityDelta > 0 ? "+" : ""}{issue.quantityDelta}</span>
+                <span>{vi ? "Chênh lệch tiền" : "금액 차이"} {money(issue.amountDelta)}</span>
+                <small>{issue.code === "PURCHASE_CORRECTION_REFERENCE_REQUIRED"
+                  ? vi ? "Chưa liên kết với lần nhập hàng gốc." : "원래 입고내역과 연결되지 않았습니다."
+                  : vi ? "Cần kiểm tra trạng thái ghi sổ." : "장부 반영 상태를 확인해 주세요."}</small>
+              </div>)}
+            </details>
+          </section>
+        ) : null}
         {notice ? (
           <p className={styles.success} role="status">
             {notice}
@@ -1355,6 +1375,7 @@ function EntryDetailSheet({
       }
     >
       <div className={styles.detailSummary}>
+        <span className={styles.detailDate}>{vi ? "Ngày giao dịch" : "거래일"} · {formatDate(entry.businessDate, lang)}</span>
         <div className={styles.detailTop}>
           <strong>🤝 {entryDisplayTitle(entry, lang)}</strong>
           <span className={styles.detailStatus}>
@@ -1593,10 +1614,10 @@ function EntryDetailSheet({
         </p>
       ) : null}
       {entry.memo?.trim() ? (
-        <section className={styles.detailMemo} aria-label={vi ? "Ghi chú" : "메모"}>
-          <strong className={styles.detailMemoLabel}>{vi ? "Ghi chú" : "메모"}</strong>
+        <details className={styles.detailMemo}>
+          <summary className={styles.detailMemoLabel}>{vi ? "Xem toàn bộ ghi chú" : "메모 전체 보기"}</summary>
           <p className={styles.detailMemoText}>{entry.memo}</p>
-        </section>
+        </details>
       ) : null}
     </BarSheet>
   );
@@ -2195,6 +2216,11 @@ function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
     .filter(Boolean)
     .join(" · ");
 }
+function compactEntryListTitle(title: string) {
+  const firstLine = title.split(/\r?\n/, 1)[0].trim();
+  return firstLine.length > 72 ? `${firstLine.slice(0, 72).trimEnd()}…` : firstLine;
+}
+
 function entryDisplayTitle(entry: LedgerEntry, lang: "ko" | "vi") {
   const display = entry.systemDisplay;
   if (display?.kind === "pos") {

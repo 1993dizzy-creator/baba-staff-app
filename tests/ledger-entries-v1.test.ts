@@ -383,7 +383,7 @@ test("past-history group wraps dates before today, collapses by default, and reu
   assert.match(css, /\.historyPanel\{display:grid;gap:8px;padding:8px;border-top:1px solid #e5e7eb;background:#f9fafb\}/);
   // The date-card contract itself (ascending date/time sort, expandedDates, search override) is unchanged.
   assert.match(pageCompact, /sort\(\(a,b\)=>a\.date\.localeCompare\(b\.date\)\)/);
-  assert.match(pageCompact, /group\.rows\.sort\(\(a,b\)=>a\.sortTimestamp-b\.sortTimestamp\)/);
+  assert.match(pageCompact, /group\.rows\.sort\(compareLedgerEntriesByDisplayTime\)/);
   assert.match(pageCompact, /Boolean\(search\.trim\(\)\)\|\|expandedDates\.has\(group\.date\)/);
 });
 

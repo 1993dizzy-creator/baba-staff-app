@@ -21,6 +21,12 @@ import {
   normalizeInventoryName,
 } from "@/lib/inventory/normalize";
 import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
+import {
+  nearestPriorPurchaseRoot,
+  purchaseCorrectionIdentityMatches,
+  purchaseFamilyAllowsDelta,
+  type PurchaseRoot,
+} from "@/lib/inventory/purchase-correction-policy";
 import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
 import { projectInventoryPurchaseLog } from "@/lib/ledger/inventory-projection";
 import { applyResolvedInventorySupplier, resolveInventorySupplier } from "@/lib/inventory/supplier-partners-server";
@@ -714,9 +720,94 @@ export async function PATCH(req: Request) {
       );
     }
 
+    // The edit form has no explicit purchase ID. Resolve its same-day quantity
+    // correction on the server so an ordinary staff edit cannot write an
+    // unlinked purchase log. The RPC remains the only writer of the correction.
+    let autoCorrectionRootId: number | null = null;
+    let autoCorrectionBusinessDate: string | null = null;
+    if (mode !== "quick-save" && body.source === "edit_form" && correctionPurchaseLogId === null &&
+        Object.hasOwn(serverPayload, "quantity")) {
+      const previousQuantity = roundDecimal(Number(prevItem.quantity ?? 0));
+      const nextQuantity = roundDecimal(Number(serverPayload.quantity));
+      const delta = roundDecimal(nextQuantity - previousQuantity);
+      // An explicit positive "purchase" is a new receipt, even when an older
+      // receipt exists today. Other edits correct the nearest prior receipt.
+      if (Number.isFinite(delta) && delta !== 0 &&
+          (normalizeInventoryReason(reason) !== "purchase" || delta < 0)) {
+        const { businessDate } = await resolveInventoryBusinessDate();
+        const before = new Date().toISOString();
+        const { data: possibleRoots, error: rootError } = await supabaseAdmin.from("inventory_logs")
+          .select("id,item_id,business_date,created_at,reason,change_quantity,correction_of_inventory_log_id,unit,new_supplier,purchase_supplier_partner_id,new_purchase_price")
+          .eq("item_id", Number(id)).eq("business_date", businessDate).eq("reason", "purchase")
+          .gt("change_quantity", 0).is("correction_of_inventory_log_id", null)
+          .lte("created_at", before).order("created_at", { ascending: false })
+          .order("id", { ascending: false }).limit(2);
+        if (rootError) throw rootError;
+        const root = nearestPriorPurchaseRoot((possibleRoots ?? []) as PurchaseRoot[], Number(id), businessDate, before);
+        if (root) {
+          if (!purchaseCorrectionIdentityMatches(root, serverPayload as {
+            unit: unknown; supplier: unknown; supplier_partner_id: unknown; purchase_price: unknown;
+          })) return jsonError("purchase_correction_review_required", "Purchase details do not match the receipt.", 409);
+          const { data: corrections, error: correctionError } = await supabaseAdmin.from("inventory_logs")
+            .select("change_quantity").eq("correction_of_inventory_log_id", root.id);
+          if (correctionError) throw correctionError;
+          if (!purchaseFamilyAllowsDelta(Number(root.change_quantity),
+            (corrections ?? []).map(row => Number(row.change_quantity)), delta)) {
+            return jsonError("purchase_correction_exceeds_purchase", "Correction exceeds the original purchase.", 409);
+          }
+          const { data: closure, error: closureError } = await supabaseAdmin.from("ledger_month_closures")
+            .select("month").eq("month", `${businessDate.slice(0, 7)}-01`).eq("status", "closed").maybeSingle();
+          if (closureError) throw closureError;
+          if (closure) return jsonError("purchase_correction_review_required", "The purchase month is closed.", 409);
+          const { data: candidate, error: candidateError } = await supabaseAdmin.from("ledger_candidates")
+            .select("status,proposed_amount,resolved_transaction_id,proposed_recognition_month")
+            .eq("source_type", "inventory_purchase_log").eq("source_key", `inventory-log:${root.id}`)
+            .order("id", { ascending: false }).limit(1).maybeSingle();
+          if (candidateError) throw candidateError;
+          if (candidate?.status === "dismissed") return jsonError("purchase_correction_review_required", "Purchase requires manual review.", 409);
+          if (candidate?.proposed_recognition_month && candidate.proposed_recognition_month !== `${businessDate.slice(0, 7)}-01`) {
+            const { data: recognitionClosure, error: recognitionError } = await supabaseAdmin.from("ledger_month_closures")
+              .select("month").eq("month", candidate.proposed_recognition_month).eq("status", "closed").maybeSingle();
+            if (recognitionError) throw recognitionError;
+            if (recognitionClosure) return jsonError("purchase_correction_review_required", "The recognition month is closed.", 409);
+          }
+          if (candidate?.status === "confirmed") {
+            const { data: transaction, error: transactionError } = await supabaseAdmin.from("ledger_transactions")
+              .select("amount,business_date,recognition_month,status,type,source_type").eq("id", candidate.resolved_transaction_id).maybeSingle();
+            if (transactionError) throw transactionError;
+            if (!transaction || Number(transaction.amount) !== Number(candidate.proposed_amount))
+              return jsonError("purchase_correction_review_required", "Purchase has a manual Ledger override.", 409);
+            if (transaction.status !== "confirmed" || transaction.type !== "expense" ||
+                !["inventory_purchase_candidate", "inventory_purchase_rebook"].includes(transaction.source_type)) {
+              return jsonError("purchase_correction_review_required", "Linked Ledger transaction requires review.", 409);
+            }
+            const { data: payable, error: payableError } = await supabaseAdmin.from("ledger_payables")
+              .select("id,status").eq("expense_transaction_id", candidate.resolved_transaction_id).maybeSingle();
+            if (payableError) throw payableError;
+            if (payable) {
+              const { data: allocations, error: allocationError } = await supabaseAdmin.from("ledger_payable_allocations")
+                .select("allocated_amount").eq("payable_id", payable.id).gt("allocated_amount", 0).limit(1);
+              if (allocationError) throw allocationError;
+              if (payable.status !== "unpaid" || (allocations?.length ?? 0) > 0)
+                return jsonError("purchase_correction_review_required", "Purchase payment requires manual review.", 409);
+            }
+            for (const month of [transaction.business_date?.slice(0, 7), transaction.recognition_month?.slice(0, 7)]) {
+              if (!month || month === businessDate.slice(0, 7)) continue;
+              const { data: otherClosure, error: otherClosureError } = await supabaseAdmin.from("ledger_month_closures")
+                .select("month").eq("month", `${month}-01`).eq("status", "closed").maybeSingle();
+              if (otherClosureError) throw otherClosureError;
+              if (otherClosure) return jsonError("purchase_correction_review_required", "A linked Ledger month is closed.", 409);
+            }
+          }
+          autoCorrectionRootId = root.id;
+          autoCorrectionBusinessDate = businessDate;
+        }
+      }
+    }
+
     if (
       mode !== "quick-save" &&
-      correctionPurchaseLogId === null &&
+      correctionPurchaseLogId === null && autoCorrectionRootId === null &&
       normalizeInventoryReason(reason) === "purchase"
     ) {
       const previousQuantity = roundDecimal(Number(prevItem.quantity ?? 0));
@@ -809,11 +900,11 @@ export async function PATCH(req: Request) {
       );
     }
 
-    if (correctionPurchaseLogId !== null) {
-      const businessDate = (await resolveInventoryBusinessDate()).businessDate;
+    if (correctionPurchaseLogId !== null || autoCorrectionRootId !== null) {
+      const businessDate = autoCorrectionBusinessDate ?? (await resolveInventoryBusinessDate()).businessDate;
       const { data: correction, error } = await supabaseAdmin.rpc("inventory_apply_purchase_correction_v1", {
-        p_item_id: Number(id), p_purchase_log_id: correctionPurchaseLogId,
-        p_expected_quantity: Number(expectedQuantity), p_payload: serverPayload,
+        p_item_id: Number(id), p_purchase_log_id: correctionPurchaseLogId ?? autoCorrectionRootId,
+        p_expected_quantity: autoCorrectionRootId !== null ? Number(prevItem.quantity) : Number(expectedQuantity), p_payload: serverPayload,
         p_business_date: businessDate, p_actor_user_id: actor.id,
       });
       if (error) throw error;

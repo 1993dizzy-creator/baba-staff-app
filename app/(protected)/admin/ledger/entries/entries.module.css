@@ -119,5 +119,10 @@
 .detailMemo{display:grid;gap:5px;padding:9px 10px;border:1px solid #e5e7eb;border-radius:11px;background:#fff}
 .detailMemoLabel{color:#374151;font-size:11px}
 .detailMemoText{margin:0;color:#4b5563;font-size:11px;line-height:1.55;overflow-wrap:anywhere;white-space:pre-wrap}
+.detailDate{color:#6b7280;font-size:10px;font-weight:700}
+.detailMemoLabel{cursor:pointer}
+.detailMemoText{margin-top:7px}
+.entryMain strong{display:inline;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.projectionWarning{margin:8px 0;padding:9px 11px;border:1px solid #f3d9a9;border-radius:11px;background:#fffaf0;color:#7c4e2e;font-size:11px}.projectionWarning p{margin:4px 0}.projectionWarning summary{cursor:pointer;font-weight:800}.projectionWarningRow{display:flex;flex-wrap:wrap;gap:3px 8px;padding:7px 0;border-top:1px solid #f3e7d1}.projectionWarningRow:first-of-type{margin-top:6px}.projectionWarningRow strong{min-width:0;overflow-wrap:anywhere}.projectionWarningRow small{flex-basis:100%;color:#94600f}
 .manualReadOnly{background:#f3f4f6;color:#374151;font-weight:700}
 .manualNotice{grid-column:1/-1;margin:0;padding:8px 10px;border:1px solid #f5d9a8;border-radius:9px;background:#fffaf0;color:#9a5b10;font-size:10px;line-height:1.45}

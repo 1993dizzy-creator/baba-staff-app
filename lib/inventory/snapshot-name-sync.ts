@@ -27,6 +27,7 @@ export type InventoryDailySyncLogRow = {
   created_at: string | null;
   reason: string | null;
   change_quantity: number | null;
+  correction_of_inventory_log_id?: number | null;
   prev_quantity: number | null;
   new_quantity: number | null;
   item_name: string | null;
@@ -125,7 +126,7 @@ export const canRunInventorySnapshotNameSync = (role: string | null | undefined)
 
 const isActualPurchase = (log: InventoryDailySyncLogRow) =>
   String(log.reason ?? "").trim().toLowerCase() === "purchase" &&
-  Number(log.change_quantity ?? 0) > 0;
+  Number(log.change_quantity ?? 0) > 0 && log.correction_of_inventory_log_id == null;
 const isZeroQuantityCorrection = (log: InventoryDailySyncLogRow) =>
   Number(log.change_quantity ?? 0) === 0;
 

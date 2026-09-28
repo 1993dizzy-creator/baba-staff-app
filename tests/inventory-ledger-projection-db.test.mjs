@@ -412,3 +412,28 @@ test('pending supersession, existing stock exclusion, independent purchases and 
     assert.equal((await project(db)).code,'REBOOKED');
   } finally {await db.close();}
 });
+
+test('local DB: +72 bottles corrected by -12 links the root and rebooks 3960000 to 3300000',async()=>{
+  const db=await database();try{
+    await db.exec("update inventory_logs set change_quantity=72,new_purchase_price=55000,new_supplier='Postpaid',purchase_supplier_partner_id=12 where id=100; update inventory set quantity=72,purchase_price=55000,supplier='Postpaid',supplier_partner_id=12");
+    assert.equal((await project(db,100)).status,'synced');
+    assert.equal(Number((await economicExpense(db)).amount),3960000);
+    const result=(await db.query("select inventory_apply_purchase_correction_v1(1,100,72,'{\"quantity\":60,\"purchase_price\":55000}'::jsonb,'2026-09-14',1) as result")).rows[0].result;
+    assert.equal(result.status,'ok');
+    const id=Number(result.inventoryLogId);
+    assert.equal(Number((await one(db,`select correction_of_inventory_log_id from inventory_logs where id=${id}`)).correction_of_inventory_log_id),100);
+    assert.equal((await project(db,id)).code,'REBOOKED');
+    assert.equal(Number((await economicExpense(db)).amount),3300000);
+    assert.equal(Number((await unpaid(db)).amount),3300000);
+  }finally{await db.close();}
+});
+
+test('local DB: positive quantity correction remains in the same root family',async()=>{
+  const db=await correctionDatabase();try{
+    const result=(await db.query("select inventory_apply_purchase_correction_v1(1,100,10,'{\"quantity\":13,\"purchase_price\":100}'::jsonb,'2026-09-14',1) as result")).rows[0].result;
+    assert.equal(result.status,'ok');
+    assert.equal((await project(db,Number(result.inventoryLogId))).code,'REBOOKED');
+    assert.equal(Number((await economicExpense(db)).amount),1300);
+    assert.equal(Number((await unpaid(db)).amount),1300);
+  }finally{await db.close();}
+});

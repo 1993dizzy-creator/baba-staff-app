@@ -135,17 +135,23 @@ test('latest purchase correction updates supplier binding and price history befo
   assert.deepEqual(state.calls, ['source-commit', 'master-update', 'price-history', 'ledger-projection']);
 });
 
-function itemSetup({correctionFailure=false,role='staff',duplicateItems=[]}={}) {
+function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootLogs=[],businessDate='2026-09-01',startingQuantity=10,closedMonths=[],candidate=null,transaction=null,payable=null,payableAllocations=[]}={}) {
   const calls = [], logs = [];
-  const item = { id: 1, item_name: 'Coca', item_name_vi: 'Cola', quantity: 10, purchase_price: 20000, supplier: 'Won Mart', supplier_partner_id: 10, part: 'bar' };
+  const item = { id: 1, item_name: 'Coca', item_name_vi: 'Cola', quantity: startingQuantity, purchase_price: 20000, supplier: 'Won Mart', supplier_partner_id: 10, unit: 'can', part: 'bar' };
   const supabase = {
     from(table) {
-      let patch, insert, single = false;
+      let patch, insert, single = false, max = Infinity;
       const filters = [];
+      const orders = [];
       const query = {
         select() { return query; },
         eq(field,value) { filters.push(item => item[field] === value); return query; },
         neq(field,value) { filters.push(item => item[field] !== value); return query; },
+        gt(field,value) { filters.push(item => item[field] > value); return query; },
+        lte(field,value) { filters.push(item => item[field] <= value); return query; },
+        is(field,value) { filters.push(item => item[field] === value); return query; },
+        order(field,{ascending=true}={}) { orders.push([field,ascending]); return query; },
+        limit(value) { max=value; return query; },
         single() { single = true; return query; }, maybeSingle() { single = true; return query; },
         insert(value) { insert = value; return query; }, update(value) { patch = value; return query; },
         then(resolve) {
@@ -156,6 +162,13 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[]}={}) 
           } else if (table === 'inventory_logs' && insert) {
             data = { id: 100 + logs.length, ...insert[0] };
             logs.push(data); calls.push('source-commit');
+          } else if (table === 'inventory_logs') {
+            data = [...rootLogs,...logs].filter(row => filters.every(filter => filter(row)))
+              .sort((a,b) => { for(const [field,ascending] of orders) { const result=String(a[field]).localeCompare(String(b[field])); if(result)return ascending?result:-result; } return 0; }).slice(0,max);
+          } else if (['ledger_month_closures','ledger_candidates','ledger_transactions','ledger_payables','ledger_payable_allocations'].includes(table)) {
+            const sourceRows = table === 'ledger_month_closures' ? closedMonths.map(month => ({month,status:'closed'})) : table === 'ledger_candidates' ? (candidate ? [candidate] : []) : table === 'ledger_transactions' ? (transaction ? [transaction] : []) : table === 'ledger_payables' ? (payable ? [payable] : []) : payableAllocations;
+            const filtered = sourceRows.filter(row => filters.every(filter => filter(row)));
+            data = single ? filtered[0] ?? null : filtered.slice(0,max);
           } else throw new Error(`Unexpected table ${table}`);
           return Promise.resolve({ data, error: null }).then(resolve);
         },
@@ -164,10 +177,11 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[]}={}) 
     },
     async rpc(name, args) {
       if(name==='inventory_apply_purchase_correction_v1') {
-        assert.equal(args.p_purchase_log_id,99);assert.equal(args.p_expected_quantity,10);
+        assert.equal(args.p_purchase_log_id,rootLogs.length ? rootLogs.at(-1).id : 99);assert.equal(args.p_expected_quantity,startingQuantity);
         assert.equal(args.p_actor_user_id,7);calls.push('atomic-correction');
         if(correctionFailure)return {data:{status:'invalid_purchase_reference'},error:null};
-        Object.assign(item,args.p_payload);logs.push({id:100,correction_of_inventory_log_id:99,change_quantity:-4,reason:'purchase'});
+        const change_quantity=Number(args.p_payload.quantity)-Number(item.quantity);
+        Object.assign(item,args.p_payload);logs.push({id:100+logs.length,correction_of_inventory_log_id:args.p_purchase_log_id,change_quantity,reason:'purchase'});
         return {data:{status:'ok',inventory:{...item},inventoryLogId:100},error:null};
       }
       assert.equal(name, 'ledger_project_inventory_purchase_log_v1');
@@ -186,10 +200,11 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[]}={}) 
     '@/lib/inventory/number': load('lib/inventory/number.ts'),
     '@/lib/inventory/keg-progress': {}, '@/lib/inventory/items-server': {},
     '@/lib/inventory/normalize': load('lib/inventory/normalize.ts'),
-    '@/lib/inventory/inventory-business-time': { resolveInventoryBusinessDate: async () => ({ businessDate: '2026-09-01' }) },
+    '@/lib/inventory/inventory-business-time': { resolveInventoryBusinessDate: async () => ({ businessDate }) },
+    '@/lib/inventory/purchase-correction-policy': load('lib/inventory/purchase-correction-policy.ts'),
     '@/lib/inventory/price-logs': { insertInventoryPriceLog: async () => { calls.push('price-history'); } },
     '@/lib/ledger/inventory-projection': projection,
-    '@/lib/inventory/supplier-partners-server': { resolveInventorySupplier: async () => ({ supplier: 'Won Mart', supplier_partner_id: 10 }), applyResolvedInventorySupplier: (payload, supplier) => ({ ...payload, ...supplier }) },
+    '@/lib/inventory/supplier-partners-server': { resolveInventorySupplier: async ({payload}) => ({ supplier: payload.supplier ?? 'Won Mart', supplier_partner_id: payload.supplierPartnerId ?? 10 }), applyResolvedInventorySupplier: (payload, supplier) => ({ ...payload, ...supplier }) },
     '@/lib/inventory/reasons': load('lib/inventory/reasons.ts'),
     '@/lib/inventory/parts': load('lib/inventory/parts.ts'),
   });
@@ -339,4 +354,129 @@ test('invalid explicit purchase reference or missing expected quantity never fal
   assert.equal(response.status,400);assert.equal(failed.item.quantity,10);assert.equal(failed.logs.length,0);
   const state=itemSetup({role:'owner'});assert.equal((await state.invoke('PATCH',{id:1,reason:'purchase',correction_of_inventory_log_id:99,payload:{quantity:6}})).status,400);
   assert.equal(state.item.quantity,10);assert.equal(state.calls.length,0);
+});
+
+const correctionPolicy = load('lib/inventory/purchase-correction-policy.ts');
+const root = (id, quantity, created_at, business_date='2026-09-01') => ({
+  id, item_id: 1, business_date, created_at, reason: 'purchase', change_quantity: quantity,
+  correction_of_inventory_log_id: null, unit: 'can', new_supplier: 'Won Mart',
+  purchase_supplier_partner_id: 10, new_purchase_price: 20000,
+});
+
+test('same-day +72 then -12 uses the correction RPC and retains a 60-unit family', async () => {
+  const state=itemSetup({role:'staff',rootLogs:[root(99,72,'2026-09-01T08:00:00Z')],startingQuantity:72});
+  const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'stock_check',payload:{quantity:60,unit:'can',purchase_price:20000}});
+  assert.equal(response.status,200);
+  assert.deepEqual(state.calls,['atomic-correction','ledger-projection']);
+  assert.equal(state.logs[0].correction_of_inventory_log_id,99);
+  assert.equal(72+state.logs[0].change_quantity,60);
+});
+
+test('same-day positive quantity correction uses the same purchase family', async () => {
+  const state=itemSetup({rootLogs:[root(99,10,'2026-09-01T08:00:00Z')]});
+  const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'other',payload:{quantity:13,unit:'can',purchase_price:20000}});
+  assert.equal(response.status,200);
+  assert.equal(state.logs[0].correction_of_inventory_log_id,99);
+  assert.equal(state.logs[0].change_quantity,3);
+});
+
+test('two same-day receipts link the edit to the latest prior root', async () => {
+  const state=itemSetup({rootLogs:[root(98,10,'2026-09-01T10:00:00Z'),root(99,20,'2026-09-01T14:00:00Z')],startingQuantity:30});
+  const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'stock_check',payload:{quantity:27,unit:'can',purchase_price:20000}});
+  assert.equal(response.status,200);
+  assert.equal(state.logs[0].correction_of_inventory_log_id,99);
+});
+
+test('later receipt never changes the root chosen for an earlier edit; timestamps tie by descending ID', () => {
+  const early=root(98,10,'2026-09-01T10:00:00Z');
+  const late=root(99,20,'2026-09-01T14:00:00Z');
+  assert.equal(correctionPolicy.nearestPriorPurchaseRoot([late,early],1,'2026-09-01','2026-09-01T11:00:00Z')?.id,98);
+  assert.equal(correctionPolicy.nearestPriorPurchaseRoot([late,early],1,'2026-09-01','2026-09-01T15:00:00Z')?.id,99);
+  assert.equal(correctionPolicy.nearestPriorPurchaseRoot([root(100,20,early.created_at),early],1,'2026-09-01','2026-09-01T11:00:00Z')?.id,100);
+});
+
+test('previous-day purchase does not auto-correct a current-day edit', async () => {
+  const state=itemSetup({rootLogs:[root(99,10,'2026-08-31T10:00:00Z','2026-08-31')]});
+  const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'stock_check',payload:{quantity:8,unit:'can'}});
+  assert.equal(response.status,200);
+  assert.equal(state.logs[0].correction_of_inventory_log_id,undefined);
+  assert.equal(state.calls.includes('atomic-correction'),false);
+});
+
+test('correction below zero is refused before a write', async () => {
+  const state=itemSetup({rootLogs:[root(99,5,'2026-09-01T10:00:00Z')]});
+  const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'stock_check',payload:{quantity:4,unit:'can',purchase_price:20000}});
+  assert.equal(response.status,409);
+  assert.equal(state.logs.length,0);
+  assert.equal(state.item.quantity,10);
+});
+
+test('metadata-only edit still uses the ordinary same-day sync log contract', async () => {
+  const state=itemSetup({rootLogs:[root(99,10,'2026-09-01T10:00:00Z')]});
+  const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'other',payload:{quantity:10,item_name:'Cola new',purchase_price:21000}});
+  assert.equal(response.status,200);
+  assert.equal(state.logs[0].change_quantity,0);
+  assert.equal(state.calls.includes('atomic-correction'),false);
+  assert.equal(state.logs[0].source,'edit_form');
+});
+
+test('Ledger review card hides raw projection codes and log IDs in operator text', () => {
+  const page=readFileSync('app/(protected)/admin/ledger/entries/page.tsx','utf8');
+  assert.match(page,/className=\{styles\.projectionWarning\}/);
+  assert.match(page,/issue\.code === "PURCHASE_CORRECTION_REFERENCE_REQUIRED"/);
+  assert.doesNotMatch(page,/#\{issue\.inventoryLogId\}/);
+  assert.doesNotMatch(page,/\{issue\.code\}/);
+});
+
+test('successful automatic corrections are excluded from the warning query', () => {
+  const loader=readFileSync('lib/ledger/inventory-display.ts','utf8');
+  assert.match(loader,/\.in\("status", \["failed", "review_required"\]\)/);
+  assert.doesNotMatch(loader,/\.in\("status", \["synced"/);
+});
+
+test('unit and supplier mismatch cannot silently become an automatic correction', async () => {
+  for (const payload of [{quantity:8,unit:'kg',purchase_price:20000},{quantity:8,unit:'can',purchase_price:20000,supplier:'Other',supplierPartnerId:11}]) {
+    const state=itemSetup({rootLogs:[root(99,10,'2026-09-01T10:00:00Z')]});
+    const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'stock_check',payload});
+    assert.equal(response.status,409);
+    assert.equal(state.logs.length,0);
+  }
+});
+
+test('closed purchase month blocks automatic correction before the RPC', async () => {
+  const state=itemSetup({rootLogs:[root(99,10,'2026-09-01T10:00:00Z')],closedMonths:['2026-09-01']});
+  const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'stock_check',payload:{quantity:8,unit:'can',purchase_price:20000}});
+  assert.equal(response.status,409);
+  assert.equal(state.calls.includes('atomic-correction'),false);
+});
+
+test('manual Ledger amount override blocks automatic correction', async () => {
+  const state=itemSetup({rootLogs:[root(99,10,'2026-09-01T10:00:00Z')],
+    candidate:{source_type:'inventory_purchase_log',source_key:'inventory-log:99',status:'confirmed',proposed_amount:200000,resolved_transaction_id:3},
+    transaction:{id:3,amount:190000,business_date:'2026-09-01',recognition_month:'2026-09-01'}});
+  const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'stock_check',payload:{quantity:8,unit:'can',purchase_price:20000}});
+  assert.equal(response.status,409);
+  assert.equal(state.calls.includes('atomic-correction'),false);
+});
+
+test('a later explicit purchase stays independent after an earlier same-day correction', async () => {
+  const state=itemSetup({rootLogs:[root(99,10,'2026-09-01T10:00:00Z')]});
+  const correction=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'stock_check',payload:{quantity:8,unit:'can',purchase_price:20000}});
+  assert.equal(correction.status,200);
+  const purchase=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',payload:{quantity:28,unit:'can',purchase_price:20000}});
+  assert.equal(purchase.status,200);
+  assert.equal(state.logs[0].correction_of_inventory_log_id,99);
+  assert.equal(state.logs[1].correction_of_inventory_log_id,undefined);
+  assert.equal(state.logs[1].reason,'purchase');
+  assert.equal(state.logs[1].change_quantity,20);
+});
+
+test('an allocated payable prevents automatic purchase correction', async () => {
+  const state=itemSetup({rootLogs:[root(99,10,'2026-09-01T10:00:00Z')],
+    candidate:{source_type:'inventory_purchase_log',source_key:'inventory-log:99',status:'confirmed',proposed_amount:200000,resolved_transaction_id:3},
+    transaction:{id:3,amount:200000,business_date:'2026-09-01',recognition_month:'2026-09-01',status:'confirmed',type:'expense',source_type:'inventory_purchase_candidate'},
+    payable:{id:5,expense_transaction_id:3,status:'unpaid'},payableAllocations:[{payable_id:5,allocated_amount:20000}]});
+  const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'stock_check',payload:{quantity:8,unit:'can',purchase_price:20000}});
+  assert.equal(response.status,409);
+  assert.equal(state.calls.includes('atomic-correction'),false);
 });

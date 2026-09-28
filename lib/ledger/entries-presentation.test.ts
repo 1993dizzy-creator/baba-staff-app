@@ -27,7 +27,19 @@ test("POS daily close uses its actual sync time and sorts after same-day manual 
   assert.deepEqual(entries.map(entry => entry.transactionId), [1, 2]);
   assert.equal(entries[1].displayTime, "03:05");
   assert.equal(entries[1].sortTimestamp, Date.parse("2026-09-26T03:05:00+07:00"));
-  assert.match(pageCompact, /group\.rows\.sort\(\(a,b\)=>a\.sortTimestamp-b\.sortTimestamp\)/);
+  assert.match(pageCompact, /group\.rows\.sort\(compareLedgerEntriesByDisplayTime\)/);
+});
+
+test("daily display puts POS close last and preserves ordinary timestamp and id order", () => {
+  const entries = buildLedgerEntries([
+    { id: 5, type: "sales", business_date: "2026-09-25", amount: 20_000, occurred_at: "2026-09-25T08:00:00+07:00", source_type: "pos_sales_daily_payment", source_key: "pos:2026-09-25:cash" },
+    { id: 3, type: "expense", business_date: "2026-09-25", amount: 10_000, occurred_at: "2026-09-25T12:00:00+07:00", source_type: "manual" },
+    { id: 2, type: "income", business_date: "2026-09-25", amount: 12_000, occurred_at: "2026-09-25T10:00:00+07:00", source_type: "manual" },
+    { id: 1, type: "expense", business_date: "2026-09-25", amount: 9_000, occurred_at: "2026-09-25T10:00:00+07:00", source_type: "manual" },
+    { id: 4, type: "sales", business_date: "2026-09-25", amount: 21_000, occurred_at: "2026-09-25T08:00:00+07:00", source_type: "pos_sales_daily_payment", source_key: "pos:2026-09-25:card" },
+  ], [], new Map()).sort(compareLedgerEntriesByDisplayTime);
+  assert.deepEqual(entries.map(entry => entry.transactionId), [1, 2, 3, 4, 5]);
+  assert.ok(entries.every(entry => entry.businessDate === "2026-09-25"));
 });
 
 test("review filter includes pending and correction-required entries only", () => {
@@ -67,7 +79,7 @@ test("list titles are concise while the original transaction memo remains intact
 
 test("detail summary is compact and the original memo has its own optional section", () => {
   const detailSummary = page.slice(page.indexOf('<div className={styles.detailSummary}>'), page.indexOf("{message ? ("));
-  assert.doesNotMatch(detailSummary, /entry\.businessDate|formatDate/);
+  assert.match(detailSummary, /formatDate\(entry\.businessDate, lang\)/);
   assert.match(detailSummary, /entryDisplayTitle/);
   assert.match(detailSummary, /styles\.detailStatus/);
   assert.match(detailSummary, /styles\.detailAmount/);
@@ -77,13 +89,15 @@ test("detail summary is compact and the original memo has its own optional secti
   assert.match(detailSummary, /accountBadgeLabel\(entry\.accountName, lang, entry\)/);
   assert.match(detailSummary, /isPayableAccount\(entry\.accountName\)/);
   assert.match(detailSummary, /entry\.requiresCorrection/);
-  assert.match(pageCompact, /entry\.memo\?\.trim\(\)\?\(<sectionclassName=\{styles\.detailMemo\}/);
+  assert.match(pageCompact, /entry\.memo\?\.trim\(\)\?\(<detailsclassName=\{styles\.detailMemo\}/);
   assert.match(page, /className={styles.detailMemoText}>{entry.memo}/);
   assert.match(css, /\.detailSummary\{gap:3px;padding:8px 10px\}/);
   assert.match(css, /\.detailMemoText\{[^}]*white-space:pre-wrap/);
   for (const name of ["detailMemo", "detailMemoLabel", "detailMemoText"]) {
     assert.match(css, new RegExp(`\\.${name}\\{`));
   }
+  assert.match(page, /compactEntryListTitle\(entryDisplayTitle\(entry, lang\)\)/);
+  assert.match(page, /title\.split\(\/\\r\?\\n\/[, ]+1\)/);
 });
 
 test("detail memo preserves stored newline order without parsing or sorting", () => {

@@ -421,3 +421,15 @@ test("date transitions retain global language warnings while daily sync stays da
   assert.match(page, /setLanguageMissingItems\(json\.languageMissingItems \|\| \[\]\)/);
   assert.match(page, /const isDateContentLoading = dateContentTransitioning && dateRequestsLoading/);
 });
+
+test("positive linked correction is not a second purchase root for metadata-only sync", () => {
+  const result = detect([
+    log({ id: 101, change_quantity: 10 }),
+    log({ id: 102, created_at: "2026-09-23T09:10:00Z", change_quantity: 2, correction_of_inventory_log_id: 101 }),
+    correction({ id: 103, created_at: "2026-09-23T09:20:00Z", change_quantity: 0 }),
+  ]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].targets.length, 1);
+  assert.equal(result[0].targets[0].purchaseLogId, 101);
+  assert.equal(result[0].targets[0].correctionLogId, 103);
+});

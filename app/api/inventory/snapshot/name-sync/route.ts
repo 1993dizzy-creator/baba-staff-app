@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" } as const;
 const LOG_PAGE_SIZE = 1000;
 const LOG_SELECT = [
-  "id", "item_id", "business_date", "created_at", "reason", "change_quantity",
+  "id", "item_id", "business_date", "created_at", "reason", "change_quantity", "correction_of_inventory_log_id",
   "prev_quantity", "new_quantity", "item_name", "item_name_vi", "part", "new_part",
   "category", "category_vi", "new_category", "new_category_vi", "code", "new_code",
   "unit", "new_unit", "new_purchase_price", "new_supplier", "purchase_supplier_partner_id",

@@ -108,7 +108,6 @@ type InventoryItemMutationResult = {
 type EditFormPendingSave = {
     id: number;
     payload: Record<string, unknown>;
-    expectedQuantity: number;
 };
 
 type KegSalesBreakdown = {
@@ -1337,19 +1336,6 @@ export default function InventoryPage() {
     const handleEditReasonConfirm = async (reason: QuickReasonValue) => {
         if (!editFormPendingSave || isEditReasonSaving) return;
 
-        if (
-            reason === "purchase" &&
-            Number(editFormPendingSave.payload.quantity) <=
-                editFormPendingSave.expectedQuantity
-        ) {
-            alert(
-                lang === "ko"
-                    ? "구매입고는 재고 수량이 증가할 때만 선택할 수 있습니다."
-                    : "Chỉ có thể chọn Nhập mua khi số lượng tồn kho tăng."
-            );
-            return;
-        }
-
         setIsEditReasonSaving(true);
 
         try {
@@ -1813,7 +1799,6 @@ export default function InventoryPage() {
                 setEditFormPendingSave({
                     id: editingId,
                     payload,
-                    expectedQuantity:Number(targetItem?.quantity??0),
                 });
                 return;
             }

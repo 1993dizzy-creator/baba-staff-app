@@ -111,23 +111,10 @@ test("ordinary item editing no longer exposes or loads historical purchase corre
   assert.doesNotMatch(inventoryPage, /correction_of_inventory_log_id/);
 });
 
-test("ordinary edit-form reason modal keeps four reasons and gates purchase on a quantity increase", () => {
-  assert.match(
-    inventoryPage,
-    /\["stock_check", "purchase", "service", "other"\] as const/
-  );
-  assert.match(
-    inventoryPage,
-    /reason === "purchase" &&[\s\S]*?Number\(editFormPendingSave\.payload\.quantity\) <=[\s\S]*?editFormPendingSave\.expectedQuantity/
-  );
-  assert.match(
-    inventoryPage,
-    /구매입고는 재고 수량이 증가할 때만 선택할 수 있습니다\./
-  );
-  assert.match(
-    inventoryPage,
-    /Chỉ có thể chọn Nhập mua khi số lượng tồn kho tăng\./
-  );
+test("ordinary edit-form reason modal keeps purchase available for same-day corrections", () => {
+  assert.match(inventoryPage, /\["stock_check", "purchase", "service", "other"\] as const/);
+  assert.doesNotMatch(inventoryPage, /Number\(editFormPendingSave\.payload\.quantity\) <=/);
+  assert.match(inventoryPage, /source: "edit_form",[\s\S]*?reason,/);
 });
 
 test("new-item forms render local top-five similarity candidates directly below the name input", () => {

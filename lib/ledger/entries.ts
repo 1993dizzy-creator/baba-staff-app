@@ -231,8 +231,13 @@ export function entryRequiresReview(entry: Pick<LedgerEntry, "status" | "require
   return entry.status === "pending" || entry.requiresCorrection === true;
 }
 
+// POS daily rows describe a completed sync, so keep them after the day's
+// operational transactions without changing either row's business date.
 export function compareLedgerEntriesByDisplayTime(a: LedgerEntry, b: LedgerEntry) {
-  return a.sortTimestamp - b.sortTimestamp || a.id.localeCompare(b.id);
+  const aPosClose = a.systemDisplay?.kind === "pos";
+  const bPosClose = b.systemDisplay?.kind === "pos";
+  return Number(aPosClose) - Number(bPosClose) ||
+    a.sortTimestamp - b.sortTimestamp || a.id.localeCompare(b.id);
 }
 
 function timestampTime(input: unknown) {
