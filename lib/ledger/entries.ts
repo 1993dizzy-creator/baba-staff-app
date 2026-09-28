@@ -1,5 +1,7 @@
 // @ts-expect-error Node's local strip-types test runner requires the extension.
 import { payableDisplayAsOf } from "./payables.ts";
+// @ts-expect-error Node's local strip-types test runner requires the extension.
+import { ledgerPayrollAdvanceRequestId, PAYROLL_ADVANCE_REVERSAL_SOURCE_TYPE } from "./payroll-advance.ts";
 
 export type LedgerEntryItem = {
   candidateId?: number;
@@ -57,6 +59,14 @@ export type LedgerEntry = {
   accountName: string | null;
   remainingAmount?: number;
   settlementStatus?: "unpaid" | "partial" | "paid";
+  // Display identity only: payroll/labor rows (advances may have no category).
+  employeeCost?: boolean;
+  // Display identity only: an actual supplier payable payment (payable_payment);
+  // direction stays "transfer" so the cost is never counted twice.
+  paymentTransaction?: boolean;
+  // Advance created by the ledger 👥 가불 path (cancellable from the ledger);
+  // cancelled once its append-only reversal exists. Historical advances: unset.
+  ledgerPayrollAdvance?: { requestId: string; cancelled: boolean };
   categoryName: string | null;
   transactionId: number | null;
   drilldown: "inventory" | "pos" | "payroll" | "meal" | "generic";
@@ -110,6 +120,14 @@ export type MealCandidateSource = {
 // ledger_transaction_recognition_policy check constraint — i.e. types that
 // represent a real profit/loss event rather than a pure fund movement.
 const PROFIT_TYPES = new Set(["income", "expense", "sales", "expense_recognition"]);
+const EMPLOYEE_COST_CATEGORIES = new Set(["급여/인건비", "인건비", "급여"]);
+
+function isEmployeeCostTransaction(row: TransactionRow) {
+  return row.type === "payroll_payment" ||
+    row.source_type.includes("payroll") ||
+    /^payroll-/.test(row.source_key ?? "") ||
+    EMPLOYEE_COST_CATEGORIES.has(row.category?.name ?? "");
+}
 
 function isSystemAdjustmentTransaction(row: TransactionRow) {
   if (row.source_key === "legacy-sheet-small-diff:2026-08") return false;
@@ -372,6 +390,11 @@ export function buildLedgerEntries(
     linked.push(row);
     mealAdjustmentsByOriginal.set(originalId, linked);
   }
+  const cancelledPayrollAdvanceIds = new Set(
+    transactions
+      .filter(row => row.source_type === PAYROLL_ADVANCE_REVERSAL_SOURCE_TYPE && row.correction_of_id != null)
+      .map(row => value(row.correction_of_id)),
+  );
   const reversedInventoryIds = new Set(
     transactions
       .filter(row => row.source_type === "inventory_purchase_reversal" && row.correction_of_id != null)
@@ -402,7 +425,8 @@ export function buildLedgerEntries(
     const accountName = movement
       ? movement.fund_account?.display_name ?? "계정 확인 필요"
       : paymentDisplay
-        ? paymentDisplay.status==="unpaid" ? "미지급" : paymentDisplay.accountName ?? "지급계정 확인 필요"
+        // Until fully paid the original stays 미지급; partial payers show on the payment rows.
+        ? paymentDisplay.status!=="paid" ? "미지급" : paymentDisplay.accountName ?? "지급계정 확인 필요"
         : accountFromPaymentNote(row.source_snapshot?.paymentNote);
     const automatic = row.source_type !== "manual";
     const time = transactionTime(row);
@@ -492,6 +516,11 @@ export function buildLedgerEntries(
       memo: row.memo ?? null,
       amount, economicEffectSign, ...time, accountName, settlementStatus: paymentDisplay?.status, remainingAmount: paymentDisplay?.remainingAmount, categoryName: row.category?.name ?? null, transactionId,
       partyId: row.party_id == null ? null : value(row.party_id),
+      employeeCost: isEmployeeCostTransaction(row),
+      paymentTransaction: payablePayment,
+      ...(ledgerPayrollAdvanceRequestId(row)
+        ? { ledgerPayrollAdvance: { requestId: ledgerPayrollAdvanceRequestId(row)!, cancelled: cancelledPayrollAdvanceIds.has(transactionId) } }
+        : {}),
       drilldown: pos ? "pos" : payroll ? "payroll" : "generic",
       ...(pos ? { systemDisplay: { kind: "pos" as const, paymentBucket: posPaymentBucket, receiptCount: value(snapshot.receiptCount) } } : {}),
       ...(rent ? { systemDisplay: { kind: "rent" as const } } : {}),

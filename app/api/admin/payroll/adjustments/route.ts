@@ -1,6 +1,7 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 import { validPayrollMonth } from "@/lib/payroll/monthly-run";
+import { isLedgerPayrollAdvanceSourceKey } from "@/lib/ledger/payroll-advance";
 
 export const dynamic = "force-dynamic";
 const KINDS = new Set(["incentive", "penalty", "advance"]);
@@ -21,6 +22,10 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth=await requirePayrollActor();if(auth.response||!auth.actor)return auth.response;
   const body=await request.json().catch(()=>null) as Record<string,unknown>|null;const month=validPayrollMonth(typeof body?.month==="string"?body.month:null);const userId=id(body?.userId);const amount=Number(body?.amount);const kind=String(body?.kind??"");const category=String(body?.category??"");const reason=String(body?.reason??"").trim();
+  // New salary advances are created only by /api/admin/ledger/payroll-advances,
+  // which writes this adjustment together with the payroll_payment cash outflow.
+  // Existing advance rows are still read, calculated and cancellable here.
+  if(kind==="advance"||category==="advance")return payrollJson({ok:false,code:"PAYROLL_ADVANCE_USE_LEDGER"},409);
   const validKindCategory=(kind==="advance")===(category==="advance");
   if(!month||!userId||!KINDS.has(kind)||!CATEGORIES.has(category)||!validKindCategory||!Number.isSafeInteger(amount)||amount<1||!dateInMonth(body?.businessDate,month)||!reason)return payrollJson({ok:false,code:"INVALID_ADJUSTMENT"},400);
   const{data:target}=await supabaseServer.from("users").select("id").eq("id",userId).eq("is_system_account",false).maybeSingle();if(!target)return payrollJson({ok:false,code:"USER_NOT_FOUND"},404);
@@ -31,6 +36,11 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const auth=await requirePayrollActor();if(auth.response||!auth.actor)return auth.response;
   const body=await request.json().catch(()=>null) as Record<string,unknown>|null;const adjustmentId=id(body?.id);const reason=String(body?.cancellationReason??"").trim();if(!adjustmentId||!reason)return payrollJson({ok:false,code:"INVALID_CANCELLATION"},400);
+  // A ledger-created advance is paired with a payroll_payment cash movement; cancelling
+  // only this half would drop the payroll deduction while the cash stays paid out.
+  const{data:existing,error:existingError}=await supabaseServer.from("payroll_monthly_adjustments").select("source_key").eq("id",adjustmentId).maybeSingle();
+  if(existingError)return adjustmentError(existingError.message,"PAYROLL_ADJUSTMENT_CANCEL_FAILED");
+  if(isLedgerPayrollAdvanceSourceKey(existing?.source_key))return payrollJson({ok:false,code:"PAYROLL_ADVANCE_USE_LEDGER"},409);
   const{data,error}=await supabaseServer.from("payroll_monthly_adjustments").update({cancelled_at:new Date().toISOString(),cancelled_by:auth.actor.id,cancellation_reason:reason}).eq("id",adjustmentId).eq("source_type","manual").is("cancelled_at",null).select().maybeSingle();
   if(error)return adjustmentError(error.message,"PAYROLL_ADJUSTMENT_CANCEL_FAILED");return data?payrollJson({ok:true,adjustment:data}):payrollJson({ok:false,code:"ADJUSTMENT_NOT_ACTIVE"},409);
 }

@@ -301,14 +301,15 @@ function AdjustmentModal({
   const [date, setDate] = useState(`${month}-01`);
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
-  const [adjustmentKind, setAdjustmentKind] = useState<"penalty" | "advance">("penalty");
   const [cancelTarget, setCancelTarget] =
     useState<PayrollMonthlyAdjustment | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [mutationCompleted, setMutationCompleted] = useState(false);
-  const selectedKind = kind === "incentive" ? "incentive" : adjustmentKind;
+  // New advances are entered in the ledger (지출 → 👥 가불) so the payroll
+  // deduction and the cash payment are always created together.
+  const selectedKind = kind === "incentive" ? "incentive" : "penalty";
   const list = employee.adjustments.filter((item) => kind === "incentive" ? item.kind === "incentive" : item.kind === "penalty" || item.kind === "advance");
   const saveError =
     lang === "vi"
@@ -347,7 +348,7 @@ function AdjustmentModal({
           userId: employee.userId,
           month,
           kind: selectedKind,
-          category: selectedKind === "advance" ? "advance" : "manual",
+          category: "manual",
           amount: Number(amount),
           businessDate: date,
           reason,
@@ -425,7 +426,7 @@ function AdjustmentModal({
             disabled={busy || mutationCompleted || !reason || Number(amount) < 1}
             onClick={save}
           >
-            {selectedKind === "incentive" ? t.addIncentive : selectedKind === "advance" ? t.addAdvance : t.addPenalty}
+            {selectedKind === "incentive" ? t.addIncentive : t.addPenalty}
           </button>
         )}</div>}
     >
@@ -451,6 +452,8 @@ function AdjustmentModal({
           ))}
         {list.map((item) => {
           const automaticSales = item.sourceType === "sales_menu_incentive";
+          // Ledger-created advances are paired with a cash payment; not cancellable here.
+          const ledgerAdvance = item.sourceKey?.startsWith("ledger-payroll-advance:") ?? false;
           return (
             <article key={item.id} style={s.item}>
               <span style={s.itemText}>
@@ -470,7 +473,7 @@ function AdjustmentModal({
                   lang === "vi" ? "vi-VN" : "ko-KR",
                 )}
               </small>
-              {!automaticSales && <button
+              {!automaticSales && !ledgerAdvance && <button
                 style={s.cancel}
                 disabled={busy}
                 onClick={() => setCancelTarget(item)}
@@ -498,13 +501,9 @@ function AdjustmentModal({
         </label>
       ) : (
         <>
-          {kind === "penalty" && <label style={s.field}>
-            <span style={s.fieldLabel}>⚖️ {lang === "vi" ? "Loại điều chỉnh" : "조정 종류"}</span>
-            <select style={s.input} value={adjustmentKind} onChange={(e) => setAdjustmentKind(e.target.value as "penalty" | "advance")}>
-              <option value="penalty">{lang === "vi" ? "Phạt" : "패널티"}</option>
-              <option value="advance">{t.advance}</option>
-            </select>
-          </label>}
+          {kind === "penalty" && <p style={s.fieldHelp}>{lang === "vi"
+            ? "Ứng lương được nhập tại Sổ sách › Thêm giao dịch › Chi › 👥 Ứng lương."
+            : "가불은 장부 › 장부 내역 추가 › 지출 › 👥 가불에서 등록합니다."}</p>}
           <label style={s.field}>
             <span style={s.fieldLabel}>💰 {lang === "vi" ? "Số tiền" : "금액"}</span>
             <input
@@ -517,9 +516,7 @@ function AdjustmentModal({
             />
             <small style={s.fieldHelp}>{selectedKind === "incentive"
               ? (lang === "vi" ? "Nhập số nguyên dương. Số tiền nhập sẽ được cộng vào lương." : "양수 정수로 입력하세요. 입력 금액은 급여에 추가됩니다.")
-              : selectedKind === "advance"
-                ? (lang === "vi" ? "Số tiền đã ứng sẽ được trừ khỏi khoản thực nhận cuối cùng." : "이미 선지급한 가불액은 최종 실수령액에서 차감됩니다.")
-                : (lang === "vi" ? "Nhập số nguyên dương. Khoản phạt sẽ tự động được trừ." : "양수 정수로 입력하세요. 입력 금액은 급여에서 자동 차감됩니다.")}</small>
+              : (lang === "vi" ? "Nhập số nguyên dương. Khoản phạt sẽ tự động được trừ." : "양수 정수로 입력하세요. 입력 금액은 급여에서 자동 차감됩니다.")}</small>
           </label>
           <label style={s.field}>
             <span style={s.fieldLabel}>📅 {lang === "vi" ? "Ngày áp dụng" : "적용일"}</span>
@@ -538,9 +535,7 @@ function AdjustmentModal({
               onChange={(e) => setReason(e.target.value)}
               placeholder={selectedKind === "incentive"
                 ? (lang === "vi" ? "Thưởng đạt mục tiêu doanh thu" : "매출 목표 달성 보너스")
-                : selectedKind === "advance"
-                  ? (lang === "vi" ? "Ứng trước một phần lương" : "급여 일부 선지급")
-                  : (lang === "vi" ? "Làm hỏng vật dụng" : "비품 파손")}
+                : (lang === "vi" ? "Làm hỏng vật dụng" : "비품 파손")}
             />
           </label>
           <label style={s.field}>

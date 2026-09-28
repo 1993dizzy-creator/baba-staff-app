@@ -13,7 +13,7 @@ import { computeActualCashOutflow } from "@/lib/ledger/cash-outflow";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
 import { buildFundAccountView, fundAccountViewMode } from "@/lib/ledger/fund-account-view";
 import { buildDashboardCashReport, type PayableAllocationCategory } from "@/lib/ledger/dashboard-cash-report";
-import { manualExpenseCategoryNameForPartner } from "@/lib/ledger/manual-entry-policy";
+import { isPayrollAdvanceManualAction, manualExpenseCategoryNameForPartner } from "@/lib/ledger/manual-entry-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -359,6 +359,9 @@ export async function POST(request: Request) {
   if (!body) return ledgerJson({ ok: false, code: "INVALID_BODY" }, 400);
   const allowed = new Set(["type","occurredAt","recognitionMonth","amount","categoryId","partyId","businessPartnerId","fromAccountId","toAccountId","memo","reason","sourceKey"]);
   if (Object.keys(body).some((key) => !allowed.has(key)) || !TYPES.has(String(body.type))) return ledgerJson({ ok: false, code: "INVALID_BODY" }, 400);
+  // 👥 가불 is a UI-only special action, never a ledger_categories id. It must go
+  // through /api/admin/ledger/payroll-advances so it is not booked as a P&L expense.
+  if (isPayrollAdvanceManualAction(body.categoryId)) return ledgerJson({ ok: false, code: "PAYROLL_ADVANCE_REQUIRES_DEDICATED_ENDPOINT" }, 400);
   try {
     let categoryId = body.categoryId || null;
     let partyId = body.partyId || null;

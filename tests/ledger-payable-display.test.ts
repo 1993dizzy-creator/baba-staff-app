@@ -40,7 +40,8 @@ test("Phương and Ok Mart allocated items show paid accounts and accurate Augus
   const items=(party:string)=>entries.filter(entry=>entry.title===party).flatMap(entry=>entry.items);
   assert.equal(items("Phương").reduce((sum,item)=>sum+(item.settlementPaidAmount??0),0),35_684_000);
   assert.equal(items("Phương").reduce((sum,item)=>sum+(item.remainingAmount??0),0),13_532_000);
-  assert.ok(entries.filter(entry=>entry.title==="Phương").every(entry=>entry.accountName==="BABA 법인계좌"));
+  // Fully paid originals show the paying account; partial ones stay 미지급 until settled.
+  assert.deepEqual(entries.filter(entry=>entry.title==="Phương").map(entry=>[entry.settlementStatus,entry.accountName]).sort(),[["paid","BABA 법인계좌"],["partial","미지급"]]);
   assert.equal(items("Ok Mart").reduce((sum,item)=>sum+(item.settlementPaidAmount??0),0),22_126_508);
   assert.equal(items("Ok Mart").reduce((sum,item)=>sum+(item.remainingAmount??0),0),8_332_484);
   assert.equal(items("Trung Đông")[0].settlementStatus,"unpaid");

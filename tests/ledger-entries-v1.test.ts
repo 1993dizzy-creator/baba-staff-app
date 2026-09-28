@@ -20,8 +20,8 @@ stylesheet.walkRules(rule => {
 test("entries CSS module supplies every referenced class, including dynamic transaction directions", () => {
   assert.match(page, /import styles from "\.\/entries\.module\.css"/);
   const referenced = new Set([...page.matchAll(/styles\.([A-Za-z_][\w]*)/g)].map(match => match[1]));
-  assert.match(page, /styles\[entry\.direction\]/);
-  for (const direction of ["income", "expense", "transfer"]) referenced.add(direction);
+  assert.match(page, /styles\[kind\]/);
+  for (const kind of ["income", "expense", "transfer", "unpaid", "payment"]) referenced.add(kind);
   assert.deepEqual([...referenced].filter(name => !cssClasses.has(name)).sort(), [], "JSX classes missing from entries.module.css");
 });
 
@@ -463,7 +463,7 @@ test("daily rows keep category emoji and compact account, amount, and chevron la
   assert.match(row, /onClick=\{\(\) => void openEntry\(entry\)\}/);
   assert.match(page, /onClick=\{\(\) => toggleDate\(group\.date\)\}/);
   assert.match(page, /subtitle === entry\.categoryName \? "" : subtitle/);
-  assert.match(page, /manualExpenseCategoryEmoji\(entry\.categoryName\)/);
+  assert.match(read("lib/ledger/entry-display-emoji.ts"), /manualExpenseCategoryEmoji\(entry\.categoryName\)/);
 
   const finalRule = (selector: string, property: string, media?: string) => {
     let value: string | undefined;
@@ -488,7 +488,7 @@ test("entry detail uses a one-row summary matching the daily row and moves the d
   assert.match(page, /entryDisplayEmoji\(entry, partnerByLedgerParty\)/);
   assert.doesNotMatch(summary, /🤝|Ngày giao dịch|거래일|반영 완료|Đã ghi sổ|✅|formatDate/);
   assert.match(detail, /titleAside=\{formatDate\(entry\.businessDate, lang\)\}/);
-  const order = ["styles.detailLeft", "styles.direction", "styles.detailEmoji", "styles.detailTitleText", "entryMeta(entry, lang)", "styles.detailPayment", "styles.accountBadge", "styles.detailAmount"].map(token => summary.indexOf(token));
+  const order = ["styles.detailLeft", "<EntryDisplayBadge", "styles.detailEmoji", "styles.detailTitleText", "entryMeta(entry, lang)", "styles.detailPayment", "styles.accountBadge", "styles.detailAmount"].map(token => summary.indexOf(token));
   assert.ok(order.every((position, index) => position >= 0 && (index === 0 || position > order[index - 1])));
   assert.match(summary, /compactEntryListTitle\(entryDisplayTitle\(entry, lang\)\)/);
   assert.match(summary, /accountBadgeLabel\(entry.accountName, lang, entry\)/);
@@ -579,7 +579,7 @@ test("entry detail and inventory candidate editor expose complete Vietnamese UI 
   assert.match(page, /Chi tiết giao dịch/);
   assert.match(page, /거래 상세/);
   assert.doesNotMatch(pageCompact, /반영완료|Đãghisổ/);
-  assert.match(pageCompact, /direction==="income"\?"💰":direction==="expense"\?"💸":"🔄"/);
+  assert.match(read("lib/ledger/entry-display-badge.ts"), /income: "Thu", expense: "Chi", transfer: "Chuyển", unpaid: "Công nợ", payment: "Thanh toán"/);
   assert.match(pageCompact, /className=\{styles\.itemDescription\}/);
   assert.match(pageCompact, /className=\{`\$\{styles\.candidateFields\}/);
   assert.match(css, /\.detailSummary\{display:grid;gap:5px;padding:10px 11px/);
@@ -654,4 +654,80 @@ test("month switch clears stale-month content immediately and stale network resp
   // 5) The card-settlement effect (its own independent fetch) applies the same
   //    body.month cross-check, on top of the AbortController it already had.
   assert.match(pageCompact, /controller\.signal\.aborted\|\|\(body\.month&&body\.month!==requestedMonth\)\)return/);
+});
+
+const { entryDisplayBadgeKind, entryDisplayBadgeLabel } = createRequire(import.meta.url)("../lib/ledger/entry-display-badge.ts") as typeof import("../lib/ledger/entry-display-badge");
+const { entryCategoryEmoji, EMPLOYEE_COST_EMOJI } = createRequire(import.meta.url)("../lib/ledger/entry-display-emoji.ts") as typeof import("../lib/ledger/entry-display-emoji");
+
+test("display badge separates unpaid and payment rows without changing accounting direction", () => {
+  const paidOn = (date: string, amount: number) => ({ allocated_amount: amount, payment: { business_date: date, status: "confirmed", movements: [{ amount: -amount, fund_account: { id: 2, display_name: "법인" } }] } });
+  const postpaid = (id: number, allocations: ReturnType<typeof paidOn>[]) => ({
+    id, type: "expense", business_date: "2026-09-01", amount: 425_000, source_type: "manual", category: { name: "식자재 매입" },
+    payable: { id, original_amount: 425_000, allocations },
+  });
+  const rows = [
+    { id: 1, type: "expense", business_date: "2026-09-01", amount: 100_000, source_type: "manual", category: { name: "식자재 매입" }, movements: [{ amount: -100_000, fund_account: { id: 1, display_name: "현금" } }] },
+    postpaid(2, []),
+    postpaid(3, [paidOn("2026-09-05", 200_000)]),
+    postpaid(4, [paidOn("2026-09-05", 425_000)]),
+    { id: 5, type: "payable_payment", business_date: "2026-09-05", amount: 425_000, source_type: "manual", party: { name: "Trung Đông" }, movements: [{ amount: -425_000, fund_account: { id: 2, display_name: "법인" } }] },
+    { id: 6, type: "payable_payment", business_date: "2026-09-06", amount: 300_000, source_type: "manual", source_snapshot: { prepaid: true }, movements: [{ amount: -300_000 }] },
+    { id: 7, type: "income", business_date: "2026-09-07", amount: 50_000, source_type: "manual", movements: [{ amount: 50_000 }] },
+    { id: 8, type: "transfer", business_date: "2026-09-08", amount: 70_000, source_type: "manual", movements: [{ amount: -70_000 }] },
+  ];
+  const entries = buildLedgerEntries(rows, [], new Map(), [], "2026-09");
+  const byId = (id: number) => entries.find(entry => entry.transactionId === id)!;
+  const kinds = Object.fromEntries(rows.map(row => [row.id, entryDisplayBadgeKind(byId(row.id))]));
+  assert.deepEqual(kinds, { 1: "expense", 2: "unpaid", 3: "unpaid", 4: "expense", 5: "payment", 6: "payment", 7: "income", 8: "transfer" });
+  assert.deepEqual(rows.map(row => byId(row.id).direction), ["expense", "expense", "expense", "expense", "transfer", "transfer", "income", "transfer"]);
+  assert.equal(byId(3).settlementStatus, "partial");
+  // Partially paid originals keep 미납 + 미지급; the paying account shows on the 결제 row.
+  assert.equal(byId(3).accountName, "미지급");
+  assert.equal(byId(4).accountName, "법인");
+  assert.equal(byId(2).accountName, "미지급");
+  const prepaidDisplay = byId(6).systemDisplay;
+  assert.equal(prepaidDisplay?.kind === "payablePayment" ? prepaidDisplay.prepaid : null, true);
+  assert.equal(entryDisplayBadgeLabel("unpaid", "ko"), "미납");
+  assert.equal(entryDisplayBadgeLabel("payment", "ko"), "결제");
+  assert.equal(entryDisplayBadgeLabel("transfer", "ko"), "이체");
+  // remaining > 0 alone keeps the row unpaid even without a status.
+  assert.equal(entryDisplayBadgeKind({ direction: "expense", remainingAmount: 1 }), "unpaid");
+});
+
+test("payroll, payroll advances and labor categories share 👥 while meal and insurance keep theirs", () => {
+  const rows = [
+    { id: 11, type: "payroll_payment", business_date: "2026-09-02", amount: 2_000_000, source_type: "manual", source_key: "payroll-advance-payment:abc", category: null, memo: "9/2 Quan 급여 가불 2,000,000₫ · 현금 지급", movements: [{ amount: -2_000_000 }] },
+    { id: 12, type: "payroll_payment", business_date: "2026-09-10", amount: 9_000_000, source_type: "payroll_payment_group", source_key: "payroll-payment-group:1", category: null, movements: [{ amount: -9_000_000 }] },
+    { id: 13, type: "expense", business_date: "2026-09-10", amount: 1_000_000, source_type: "manual", category: { name: "급여/인건비" }, movements: [{ amount: -1_000_000 }] },
+    { id: 14, type: "expense", business_date: "2026-09-10", amount: 300_000, source_type: "manual", category: { name: "직원 식대" }, movements: [{ amount: -300_000 }] },
+    { id: 15, type: "expense", business_date: "2026-09-10", amount: 400_000, source_type: "manual", category: { name: "보험·복리후생" }, movements: [{ amount: -400_000 }] },
+  ];
+  const entries = buildLedgerEntries(rows, [], new Map(), [], "2026-09");
+  const byId = (id: number) => entries.find(entry => entry.transactionId === id)!;
+  assert.equal(EMPLOYEE_COST_EMOJI, "👥");
+  assert.deepEqual([11, 12, 13, 14, 15].map(id => entryCategoryEmoji(byId(id))), ["👥", "👥", "👥", "🍱", "🛡️"]);
+  // Advance: category NULL, identified by type/source_key rather than the title text.
+  assert.equal(byId(11).categoryName, null);
+  assert.match(byId(11).title, /^Quan 급여 가불/);
+  // 결제 is only for supplier payables; payroll pay-outs and advances read as 지출.
+  assert.deepEqual([11, 12, 13, 14, 15].map(id => entryDisplayBadgeKind(byId(id))), ["expense", "expense", "expense", "expense", "expense"]);
+  assert.equal(byId(11).paymentTransaction, false);
+  assert.equal(byId(12).direction, "transfer");
+  assert.equal(byId(11).direction, "transfer");
+  assert.equal(byId(13).direction, "expense");
+  assert.equal(entryDisplayBadgeKind(byId(13)), "expense");
+});
+
+test("daily list and detail summary render the same badge and emoji resolvers", () => {
+  const listRow = page.slice(page.indexOf("className={styles.entryRow}"), page.indexOf("className={styles.entryMain}"));
+  const detail = page.slice(page.indexOf("<div className={styles.detailSummary}>"), page.indexOf("className={styles.detailTitleText}"));
+  for (const block of [listRow, detail]) {
+    assert.match(block, /<EntryDisplayBadge entry=\{entry\} lang=\{lang\} \/>/);
+    assert.match(block, /entryDisplayEmoji\(entry, partner(?:ByLedgerParty|sByParty)\)/);
+  }
+  assert.match(page, /const kind = entryDisplayBadgeKind\(entry\);/);
+  assert.match(page, /if \(entry\.employeeCost\) return EMPLOYEE_COST_EMOJI;/);
+  assert.doesNotMatch(page, /급여 가불"\)|includes\("급여 가불"\)/);
+  assert.match(css, /\.direction\.unpaid\{background:#fff4dc;color:#9a5b10\}/);
+  assert.match(css, /\.direction\.payment\{background:#e8f0fe;color:#1d4ed8\}/);
 });

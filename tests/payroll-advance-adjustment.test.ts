@@ -53,6 +53,18 @@ test("API accepts advance as its own kind/category and keeps create/cancel secur
   assert.doesNotMatch(route, /\.delete\(/);
 });
 
+test("payroll API creates incentive/penalty as before but rejects new advances in favour of the ledger path", () => {
+  const post = route.slice(route.indexOf("export async function POST"), route.indexOf("export async function PATCH"));
+  // Advance is refused before validation or insert; incentive/penalty reach the unchanged insert.
+  assert.match(post, /if\(kind==="advance"\|\|category==="advance"\)return payrollJson\(\{ok:false,code:"PAYROLL_ADVANCE_USE_LEDGER"\},409\);/);
+  assert.ok(post.indexOf("PAYROLL_ADVANCE_USE_LEDGER") < post.indexOf(".insert("));
+  assert.match(post, /\.insert\(\{user_id:userId,payroll_month:`\$\{month\}-01`,kind,category,amount/);
+  // Historical advances stay cancellable; ledger-created ones are paired with cash and are not.
+  const patch = route.slice(route.indexOf("export async function PATCH"));
+  assert.match(patch, /if\(isLedgerPayrollAdvanceSourceKey\(existing\?\.source_key\)\)return payrollJson\(\{ok:false,code:"PAYROLL_ADVANCE_USE_LEDGER"\},409\);/);
+  assert.match(patch, /cancelled_at:new Date\(\)\.toISOString\(\)/);
+});
+
 test("incentive-only and penalty-only calculations preserve existing results", () => {
   const incentive = payout([{ kind: "incentive", amount: 200_000 }]);
   assert.equal(incentive.payout.preInsurancePayoutAmount, 1_200_000);
@@ -101,8 +113,11 @@ test("admin and attendance UI use the requested bilingual combined label and sep
   assert.ok(payrollCopy.includes('penalty:"Phạt & Ứng lương"'));
   assert.ok(attendancePage.includes('penalty: "패널티&가불"'));
   assert.ok(attendancePage.includes('penalty: "Phạt & Ứng lương"'));
-  assert.match(card, /option value="penalty"/);
-  assert.match(card, /option value="advance"/);
+  // The payroll modal no longer creates advances; it points to the ledger entry and still lists existing ones.
+  assert.doesNotMatch(card, /option value="advance"|setAdjustmentKind|selectedKind === "advance"|t\.addAdvance/);
+  assert.match(card, /const selectedKind = kind === "incentive" \? "incentive" : "penalty";/);
+  assert.match(card, /가불은 장부 › 장부 내역 추가 › 지출 › 👥 가불에서 등록합니다\./);
+  assert.match(card, /!automaticSales && !ledgerAdvance && <button/);
   assert.match(card, /item\.kind === "advance" \? t\.advance : item\.kind === "penalty" \? t\.manualPenalty/);
   assert.match(attendancePage, /item\.category === "advance"[\s\S]*text\.advance/);
 });

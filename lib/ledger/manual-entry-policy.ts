@@ -188,3 +188,25 @@ export function manualExpenseCategoryLabel(name: string, lang: "ko" | "vi") {
   if (!display) return name;
   return `${display.emoji} ${lang === "vi" ? display.vi : name}`;
 }
+
+// Special manual actions appear in the expense category selector but are NOT
+// ledger_categories rows and never go through the generic manual expense POST.
+// A payroll advance is a salary prepayment (payroll_payment + payroll advance
+// adjustment), not a new P&L expense.
+export const PAYROLL_ADVANCE_MANUAL_ACTION = "__payroll_advance__";
+
+export const MANUAL_EXPENSE_SPECIAL_ACTIONS = [
+  { value: PAYROLL_ADVANCE_MANUAL_ACTION, emoji: "👥", ko: "가불", vi: "Ứng lương" },
+] as const;
+
+export function isPayrollAdvanceManualAction(value: unknown) {
+  return value === PAYROLL_ADVANCE_MANUAL_ACTION;
+}
+
+export function manualExpenseSpecialActionLabel(action: (typeof MANUAL_EXPENSE_SPECIAL_ACTIONS)[number], lang: "ko" | "vi") {
+  return `${action.emoji} ${lang === "vi" ? action.vi : action.ko}`;
+}
+
+export function payrollAdvanceDefaultMemo(employeeName: string) {
+  return `${employeeName.trim()} 급여 가불`;
+}

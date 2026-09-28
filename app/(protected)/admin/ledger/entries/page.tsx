@@ -21,6 +21,7 @@ import {
   BarField,
   BarSegmentedControl,
   BarSheet,
+  dangerButtonStyle,
   keepingInputStyle,
   primaryButtonStyle,
   secondaryButtonStyle,
@@ -33,7 +34,8 @@ import {
   type LedgerEntryItem,
 } from "@/lib/ledger/entries";
 import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
-import { chooseLedgerEntryEmoji } from "@/lib/ledger/entry-display-emoji";
+import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji } from "@/lib/ledger/entry-display-emoji";
+import { entryDisplayBadgeEmoji, entryDisplayBadgeKind, entryDisplayBadgeLabel } from "@/lib/ledger/entry-display-badge";
 import { groupPayableRows } from "@/lib/ledger/payable-date-groups";
 import {
   formatLedgerAmountInput,
@@ -44,10 +46,13 @@ import {
   groupManualEntryPartners,
   isManualExpenseCategory,
   isManualIncomeCategory,
-  manualExpenseCategoryEmoji,
+  isPayrollAdvanceManualAction,
+  MANUAL_EXPENSE_SPECIAL_ACTIONS,
   manualExpenseCategoryLabel,
   manualExpenseCategorySort,
+  manualExpenseSpecialActionLabel,
   manualIncomeCategorySort,
+  payrollAdvanceDefaultMemo,
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
 import MonthCloseSheet from "./MonthCloseSheet";
@@ -733,9 +738,7 @@ function LedgerEntriesContent() {
             {group.rows.map((entry) => (
               <button type="button" className={styles.entryRow} key={entry.id} onClick={() => void openEntry(entry)}>
                 <span className={styles.entryLeft}>
-                  <span className={[styles.direction, styles[entry.direction]].join(" ")} data-icon={directionEmoji(entry.direction)}>
-                    {directionBadgeLabel(entry.direction, lang)}
-                  </span>
+                  <EntryDisplayBadge entry={entry} lang={lang} />
                   <span className={styles.entryCategoryEmoji} role="img" aria-label={entry.partyId == null ? entry.categoryName ?? (vi ? "Danh mục" : "카테고리") : partnerByLedgerParty.get(entry.partyId)?.name ?? (vi ? "Đối tác" : "거래처")}>
                     {entryDisplayEmoji(entry, partnerByLedgerParty)}
                   </span>
@@ -743,12 +746,7 @@ function LedgerEntriesContent() {
                     <strong>{compactEntryListTitle(entryDisplayTitle(entry, lang))}</strong>
                     {entryMeta(entry, lang) ? <span> · {entryMeta(entry, lang)}</span> : null}
                   </span>
-                  {entry.status === "pending" || entry.requiresCorrection ? (
-                    <span className={styles.entryFlags}>
-                      {entry.status === "pending" ? <span className={styles.pendingBadge}>{vi ? "Cần xác nhận" : "확인 필요"}</span> : null}
-                      {entry.requiresCorrection ? <span className={styles.correctionBadge}>{vi ? "Cần điều chỉnh" : "정정 필요"}</span> : null}
-                    </span>
-                  ) : null}
+                  <EntryFlags entry={entry} lang={lang} />
                 </span>
                 <span className={styles.entryRight}>
                   <small className={styles.entryTime}>{entry.displayTime ?? ""}</small>
@@ -1273,6 +1271,11 @@ function LedgerEntriesContent() {
               else setSelected(null);
               setNotice(vi ? "Đã cập nhật giao dịch." : "거래를 수정했습니다.");
             }}
+            onAdvanceCancelled={async () => {
+              setSelected(null);
+              await load();
+              setNotice(vi ? "Đã hủy ứng lương và hoàn tiền vào tài khoản." : "가불을 취소하고 출금 계정 잔액을 복구했습니다.");
+            }}
             onClose={() => {
               setSelected(null);
               setCandidateDraft(null);
@@ -1310,6 +1313,7 @@ function EntryDetailSheet({
   posDetail,
   closed,
   onConfirmedEdited,
+  onAdvanceCancelled,
   onClose,
 }: {
   lang: "ko" | "vi";
@@ -1326,9 +1330,25 @@ function EntryDetailSheet({
   posDetail: Record<string, unknown> | null;
   closed: boolean;
   onConfirmedEdited: (transactionId: number) => Promise<void>;
+  onAdvanceCancelled: () => Promise<void>;
   onClose: () => void;
 }) {
   const vi = lang === "vi";
+  // Only ledger-created advances can be cancelled, and only here: the payroll
+  // adjustment and an append-only cash reversal are written together.
+  const cancellableAdvance = entry.ledgerPayrollAdvance != null && !entry.ledgerPayrollAdvance.cancelled && entry.transactionId != null;
+  const [advanceCancelReason,setAdvanceCancelReason]=useState<string|null>(null),[advanceCancelError,setAdvanceCancelError]=useState(""),[advanceCancelling,setAdvanceCancelling]=useState(false);
+  async function cancelAdvance(){
+    if(!cancellableAdvance||advanceCancelReason==null||!advanceCancelReason.trim())return;
+    setAdvanceCancelling(true);setAdvanceCancelError("");
+    try{
+      const response=await fetch(`/api/admin/ledger/payroll-advances/${entry.transactionId}/cancel`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reason:advanceCancelReason.trim()})}),body=await response.json();
+      if(!response.ok)throw new Error(body.code??"PAYROLL_ADVANCE_CANCEL_FAILED");
+      setAdvanceCancelReason(null);
+      await onAdvanceCancelled();
+    }catch(cause){setAdvanceCancelError(`${vi?"Không thể hủy ứng lương.":"가불을 취소하지 못했습니다."} ${(cause as Error).message}`)}
+    finally{setAdvanceCancelling(false)}
+  }
   const confirmedInventory = entry.drilldown === "inventory" && entry.status === "confirmed";
   const confirmedMeal = entry.drilldown === "meal" && entry.status === "confirmed";
   const [editMode,setEditMode]=useState(false),[editDraft,setEditDraft]=useState<ConfirmedEditDraft|null>(null),[editError,setEditError]=useState(""),[editSaving,setEditSaving]=useState(false);
@@ -1345,10 +1365,11 @@ function EntryDetailSheet({
       title={vi ? "Chi tiết giao dịch" : "거래 상세"}
       titleAside={formatDate(entry.businessDate, lang)}
       closeLabel={vi ? "Đóng" : "닫기"}
-      saving={saving||editSaving}
+      saving={saving||editSaving||advanceCancelling}
       onClose={onClose}
       footer={
         <div className={styles.detailFooter}>
+          {cancellableAdvance ? <button type="button" disabled={saving||advanceCancelling||closed} onClick={()=>{setAdvanceCancelReason(value=>value==null?"":null);setAdvanceCancelError("")}} style={{...(advanceCancelReason==null?dangerButtonStyle:secondaryButtonStyle),width:"100%"}}>{advanceCancelReason==null?(vi?"Hủy ứng lương":"가불 취소"):(vi?"Đóng hủy ứng lương":"가불 취소 닫기")}</button>:null}
           {confirmedInventory ? <button type="button" disabled={saving||editSaving} onClick={()=>{setEditMode(value=>!value);setEditDraft(null);setEditError("")}} style={{...primaryButtonStyle,width:"100%"}}>{editMode?(vi?"Kết thúc chỉnh sửa":"수정 종료"):(vi?"Sửa":"수정")}</button>:null}
           {confirmedMeal ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setMealDraft(value=>value?null:{finalAmount:String(entry.effectiveAmount??entry.amount),reason:""});setMealError("")}} style={{...primaryButtonStyle,width:"100%"}}>{mealDraft?(vi?"Đóng chỉnh sửa":"수정 닫기"):(vi?"Sửa tiền ăn":"식대 수정")}</button>:null}
           <button
@@ -1364,23 +1385,13 @@ function EntryDetailSheet({
     >
       <div className={styles.detailSummary}>
         <span className={styles.detailLeft}>
-          <span
-            className={`${styles.direction} ${styles[entry.direction]}`}
-            data-icon={directionEmoji(entry.direction)}
-          >
-            {directionBadgeLabel(entry.direction, lang)}
-          </span>
+          <EntryDisplayBadge entry={entry} lang={lang} />
           <span className={styles.detailEmoji} aria-hidden="true">{entryDisplayEmoji(entry, partnersByParty)}</span>
           <span className={styles.detailTitleText} title={entryDisplayTitle(entry, lang)}>
             <strong>{compactEntryListTitle(entryDisplayTitle(entry, lang))}</strong>
             {entryMeta(entry, lang) ? <span> · {entryMeta(entry, lang)}</span> : null}
           </span>
-          {entry.status === "pending" || entry.requiresCorrection ? (
-            <span className={styles.entryFlags}>
-              {entry.status === "pending" ? <span className={styles.pendingBadge}>{vi ? "Cần xác nhận" : "확인 필요"}</span> : null}
-              {entry.requiresCorrection ? <span className={styles.correctionBadge}>{vi ? "Cần điều chỉnh" : "정정 필요"}</span> : null}
-            </span>
-          ) : null}
+          <EntryFlags entry={entry} lang={lang} />
         </span>
         <span className={styles.detailPayment}>
           <span
@@ -1392,6 +1403,21 @@ function EntryDetailSheet({
           <strong className={styles.detailAmount}>{money(entry.amount)}</strong>
         </span>
       </div>
+      {cancellableAdvance && advanceCancelReason != null ? (
+        <div className={styles.candidateEditor}>
+          <h3>{vi ? "Hủy ứng lương" : "가불 취소"}</h3>
+          <p className={styles.editorHelp}>{vi
+            ? `Hủy khoản ứng ${money(entry.amount)}: khoản trừ lương bị hủy và tiền được hoàn lại vào tài khoản chi. Giao dịch gốc vẫn được lưu.`
+            : `${money(entry.amount)} 가불을 취소하면 급여 차감이 취소되고 출금 계정 잔액이 복구됩니다. 원본 거래는 기록으로 남습니다.`}</p>
+          <BarField label={`📝 ${vi ? "Lý do hủy" : "취소 사유"}`} required compact>
+            {({ id }) => <input id={id} data-advance-cancel-field="reason" required value={advanceCancelReason} onChange={(event) => setAdvanceCancelReason(event.target.value)} style={keepingInputStyle} />}
+          </BarField>
+          {advanceCancelError ? <p className={styles.error} role="alert">{advanceCancelError}</p> : null}
+          <button type="button" disabled={advanceCancelling || closed || !advanceCancelReason.trim()} onClick={() => void cancelAdvance()} style={{ ...dangerButtonStyle, width: "100%" }}>
+            {advanceCancelling ? (vi ? "Đang hủy…" : "취소 중…") : (vi ? "Xác nhận hủy ứng lương" : "가불 취소 확정")}
+          </button>
+        </div>
+      ) : null}
       {message ? (
         <p className={styles.error} role="alert">
           {message}
@@ -1750,7 +1776,13 @@ function ManualEntrySheet({
     [participantId, setParticipantId] = useState(""),
     [memo, setMemo] = useState(""),
     [reason, setReason] = useState(""),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [employeeId, setEmployeeId] = useState(""),
+    [employees, setEmployees] = useState<Array<{ userId: number; name: string }> | null>(null),
+    [employeesError, setEmployeesError] = useState(""),
+    // One idempotency key per advance being entered; a retry after a network
+    // error reuses it, and a new key is issued only after a successful save.
+    [advanceRequestId, setAdvanceRequestId] = useState(() => crypto.randomUUID());
   const categories =
       type === "expense"
         ? data.categories
@@ -1766,9 +1798,35 @@ function ManualEntrySheet({
     activePartners = data.partners.filter((row) => row.isActive),
     partnerGroups = groupManualEntryPartners(activePartners, lang),
     selectedPartner = data.partners.find((row) => String(row.id) === partnerId);
+  // 👥 가불 looks like an expense category but is saved as a payroll advance
+  // (payroll_payment + payroll adjustment), never as a P&L expense.
+  const payrollAdvance = type === "expense" && isPayrollAdvanceManualAction(categoryId);
   function changeType(next: EntryType) {
     setType(next);
     setCategoryId("");
+  }
+  async function changeExpenseCategory(next: string) {
+    setCategoryId(next);
+    if (!isPayrollAdvanceManualAction(next)) return;
+    setPartnerId("");
+    if (employees) return;
+    setEmployeesError("");
+    try {
+      const response = await fetch("/api/admin/ledger/payroll-advances", { cache: "no-store" }),
+        body = await response.json();
+      if (!response.ok) throw new Error(body.code);
+      setEmployees(body.employees ?? []);
+    } catch (cause) {
+      setEmployeesError(`${vi ? "Không thể tải danh sách nhân viên." : "직원 목록을 불러오지 못했습니다."} ${(cause as Error).message}`);
+    }
+  }
+  function changeEmployee(next: string) {
+    const previous = employees?.find((row) => String(row.userId) === employeeId),
+      selected = employees?.find((row) => String(row.userId) === next);
+    setEmployeeId(next);
+    // Suggest "<name> 급여 가불" but keep anything the user typed.
+    if (!memo.trim() || (previous && memo === payrollAdvanceDefaultMemo(previous.name)))
+      setMemo(selected ? payrollAdvanceDefaultMemo(selected.name) : "");
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -1786,10 +1844,19 @@ function ManualEntrySheet({
         throw new Error(vi ? "Tình hình vốn góp của tháng này chưa được thiết lập." : "선택월 투자금 현황이 설정되지 않았습니다.");
       }
       const isInvestmentAdjustment = type === "balance_adjustment" && adjustmentType === "investment";
-      const response = await fetch(isInvestmentAdjustment ? "/api/admin/ledger/investments" : "/api/admin/ledger", {
+      if (payrollAdvance && !employeeId) throw new Error(vi ? "Hãy chọn nhân viên." : "직원을 선택하세요.");
+      if (payrollAdvance && !fromAccountId) throw new Error(vi ? "Hãy chọn tài khoản chi." : "출금 계정을 선택하세요.");
+      const response = await fetch(payrollAdvance ? "/api/admin/ledger/payroll-advances" : isInvestmentAdjustment ? "/api/admin/ledger/investments" : "/api/admin/ledger", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(isInvestmentAdjustment ? {
+          body: JSON.stringify(payrollAdvance ? {
+            requestId: advanceRequestId,
+            userId: Number(employeeId),
+            amount: amountValue,
+            occurredAt: `${occurredDate}T${occurredTime}:00+07:00`,
+            fromAccountId: Number(fromAccountId),
+            memo: memo || null,
+          } : isInvestmentAdjustment ? {
             participantId: Number(participantId),
             action: investmentAction,
             amount: amountValue,
@@ -1827,6 +1894,7 @@ function ManualEntrySheet({
         }),
         body = await response.json();
       if (!response.ok) throw new Error(body.code);
+      if (payrollAdvance) setAdvanceRequestId(crypto.randomUUID());
       await onSaved();
     } catch (cause) {
       setError(
@@ -1909,7 +1977,18 @@ function ManualEntrySheet({
                 />
               )}
             </BarField>
-            {type === "expense" ? (
+            {payrollAdvance ? (
+              <BarField label={`👤 ${vi ? "Nhân viên" : "직원"}`} required compact>
+                {({ id }) => (
+                  <select id={id} data-manual-field="employee" required value={employeeId} onChange={(event) => changeEmployee(event.target.value)} style={keepingInputStyle}>
+                    <option value="">{employees ? (vi ? "Chọn" : "선택") : (vi ? "Đang tải…" : "불러오는 중…")}</option>
+                    {(employees ?? []).map((employee) => (
+                      <option key={employee.userId} value={employee.userId}>{employee.name}</option>
+                    ))}
+                  </select>
+                )}
+              </BarField>
+            ) : type === "expense" ? (
               <BarField label={`🤝 ${vi ? "Đối tác (không bắt buộc)" : "거래처 (선택)"}`} compact>
                 {({ id }) => (
                   <select id={id} data-manual-field="partner" value={partnerId} onChange={(event) => setPartnerId(event.target.value)} style={keepingInputStyle}>
@@ -1986,9 +2065,10 @@ function ManualEntrySheet({
                     style={keepingInputStyle}
                   />
                 ) : (
-                  <select id={id} data-manual-field="expense-category" required value={categoryId} onChange={(event) => setCategoryId(event.target.value)} style={keepingInputStyle}>
+                  <select id={id} data-manual-field="expense-category" required value={categoryId} onChange={(event) => void changeExpenseCategory(event.target.value)} style={keepingInputStyle}>
                     <option value="">{vi ? "Chọn" : "선택"}</option>
                     {categories.map((row) => <option key={row.id} value={row.id}>{manualExpenseCategoryLabel(row.name, lang)}</option>)}
+                    {MANUAL_EXPENSE_SPECIAL_ACTIONS.map((action) => <option key={action.value} value={action.value}>{manualExpenseSpecialActionLabel(action, lang)}</option>)}
                   </select>
                 )}
               </BarField>
@@ -2086,6 +2166,12 @@ function ManualEntrySheet({
               </div>
             </>
           )}
+          {payrollAdvance ? (
+            <p className={styles.manualNotice}>{vi
+              ? "Ứng lương được trừ vào lương tháng này và không được tính thêm là chi phí nhân công."
+              : "가불은 이번 달 급여에서 차감되며 인건비로 추가 인식되지 않습니다."}</p>
+          ) : null}
+          {employeesError ? <p className={styles.error} role="alert">{employeesError}</p> : null}
           {type === "balance_adjustment" && adjustmentType === "investment" && !investments?.configured ? (
             <p className={styles.manualNotice}>{vi ? "Tháng đã chọn chưa được thiết lập nhà đầu tư." : "선택월 투자금 현황이 설정되지 않아 투자금 조정을 저장할 수 없습니다."}</p>
           ) : null}
@@ -2178,20 +2264,12 @@ function AccountField({
   );
 }
 function entryDisplayEmoji(entry: LedgerEntry, partnersByParty: ReadonlyMap<number, Partner>) {
+  if (entry.employeeCost) return EMPLOYEE_COST_EMOJI;
   if (entry.partyId != null) {
     const partner = partnersByParty.get(entry.partyId);
     if (partner) return chooseLedgerEntryEmoji(partner.emoji, entryCategoryEmoji(entry));
   }
   return entryCategoryEmoji(entry);
-}
-function entryCategoryEmoji(entry: LedgerEntry) {
-  if (entry.categoryName) {
-    const manualEmoji = manualExpenseCategoryEmoji(entry.categoryName);
-    if (manualEmoji) return manualEmoji;
-    if (entry.categoryName.includes("매출")) return "🧾";
-    if (entry.categoryName.includes("수수료")) return "🏦";
-  }
-  return entry.direction === "income" ? "💰" : entry.direction === "expense" ? "📂" : "🔄";
 }
 
 function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
@@ -2288,13 +2366,29 @@ function investmentEntryTypeLabel(entryType: InvestmentEntryType, amount: number
   if (amount < 0) return lang === "vi" ? "Thu hồi vốn góp" : "투자금 회수";
   return lang === "vi" ? "Điều chỉnh vốn góp" : "투자금 조정";
 }
-function directionEmoji(direction: LedgerEntry["direction"]) {
-  return direction === "income" ? "💰" : direction === "expense" ? "💸" : "🔄";
+// Status flags shared by the daily list and the detail summary.
+function EntryFlags({ entry, lang }: { entry: LedgerEntry; lang: "ko" | "vi" }) {
+  const vi = lang === "vi";
+  const advanceCancelled = entry.ledgerPayrollAdvance?.cancelled ?? false;
+  if (entry.status !== "pending" && !entry.requiresCorrection && !advanceCancelled) return null;
+  return (
+    <span className={styles.entryFlags}>
+      {entry.status === "pending" ? <span className={styles.pendingBadge}>{vi ? "Cần xác nhận" : "확인 필요"}</span> : null}
+      {entry.requiresCorrection ? <span className={styles.correctionBadge}>{vi ? "Cần điều chỉnh" : "정정 필요"}</span> : null}
+      {advanceCancelled ? <span className={styles.cancelledBadge}>{vi ? "Đã hủy ứng lương" : "가불 취소됨"}</span> : null}
+    </span>
+  );
 }
-function directionBadgeLabel(direction: LedgerEntry["direction"], lang: "ko" | "vi") {
-  if (direction === "income") return lang === "vi" ? "Thu" : "수입";
-  if (direction === "expense") return lang === "vi" ? "Chi" : "지출";
-  return lang === "vi" ? "Chuyển" : "이체";
+
+// Shared by the daily list and the detail summary. Display only; the
+// accounting direction is untouched.
+function EntryDisplayBadge({ entry, lang }: { entry: LedgerEntry; lang: "ko" | "vi" }) {
+  const kind = entryDisplayBadgeKind(entry);
+  return (
+    <span className={`${styles.direction} ${styles[kind]}`} data-icon={entryDisplayBadgeEmoji(kind)}>
+      {entryDisplayBadgeLabel(kind, lang)}
+    </span>
+  );
 }
 function formatDate(date: string, lang: "ko" | "vi" = "ko") {
   const [, month, day] = date.split("-").map(Number);
