@@ -2364,7 +2364,7 @@ function entryDisplayTitle(entry: LedgerEntry, lang: "ko" | "vi") {
       ? `Suất ăn nhân viên · ${display.employeeCount.toLocaleString("vi-VN")} người`
       : `직원 식대 · ${display.employeeCount.toLocaleString("ko-KR")}명`;
   }
-  if (display?.kind === "inventory" && display.partyMissing) {
+  if (display?.kind === "inventory" && display.partyMissing && !entry.title.trim()) {
     return lang === "vi" ? "Chưa chỉ định nhà cung cấp" : "거래처 미지정";
   }
   if (display?.kind === "rent") return lang === "vi" ? "Tiền thuê mặt bằng" : "매장 임대료";

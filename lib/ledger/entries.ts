@@ -319,7 +319,10 @@ function updateInventoryGroupTime(group: LedgerEntry, item: LedgerEntryItem) {
 }
 
 function inventorySupplierName(row: CandidateRow | TransactionRow) {
-  return row.party?.name?.trim() || String(row.source_snapshot?.supplier ?? "").trim();
+  const display = (row as TransactionRow).display_snapshot;
+  const supplier = display && Object.hasOwn(display, "supplier")
+    ? display.supplier : row.source_snapshot?.supplier;
+  return row.party?.name?.trim() || String(supplier ?? "").trim();
 }
 
 function inventoryPartyIdentity(partyId: number | null, supplierName: string) {
@@ -411,9 +414,34 @@ export function buildLedgerEntries(
       .filter(row => row.source_type === "inventory_purchase_reversal" && row.correction_of_id != null)
       .map(row => value(row.correction_of_id)),
   );
+  const manualCorrectionsByOriginal = new Map<number, TransactionRow[]>();
+  for (const row of transactions) {
+    if (row.correction_of_id == null || row.status !== "confirmed") continue;
+    const originalId = value(row.correction_of_id);
+    const linked = manualCorrectionsByOriginal.get(originalId) ?? [];
+    linked.push(row);
+    manualCorrectionsByOriginal.set(originalId, linked);
+  }
+  const fullyReversedManualIds = new Set<number>();
+  const hiddenManualCorrectionIds = new Set<number>();
+  for (const original of transactions) {
+    if (original.source_type !== "manual" || original.status !== "confirmed" ||
+        original.correction_of_id != null || Number(original.economic_effect_sign ?? 1) !== 1) continue;
+    const linked = manualCorrectionsByOriginal.get(value(original.id)) ?? [];
+    if (!linked.length || !linked.every(correction =>
+      correction.source_type === "ledger_correction" &&
+      correction.type === original.type &&
+      Number(correction.economic_effect_sign) === -1
+    )) continue;
+    const reversedAmount = linked.reduce((sum, correction) => sum + value(correction.amount), 0);
+    if (reversedAmount !== value(original.amount)) continue;
+    fullyReversedManualIds.add(value(original.id));
+    for (const correction of linked) hiddenManualCorrectionIds.add(value(correction.id));
+  }
 
   for (const row of transactions) {
     if (row.type === "opening") continue;
+    if (fullyReversedManualIds.has(value(row.id)) || hiddenManualCorrectionIds.has(value(row.id))) continue;
     if (
       row.source_type === "ledger_correction" &&
       row.correction_of_id != null &&

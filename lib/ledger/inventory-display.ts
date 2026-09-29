@@ -13,7 +13,23 @@ export async function withInventoryDisplay<T extends { id: number | string; sour
     if (error) throw error;
     for (const row of data ?? []) if (row.source_drift_snapshot) overlays.set(Number(row.resolved_transaction_id), row.source_drift_snapshot);
   }
-  return rows.map(row => ({ ...row, ...(overlays.has(Number(row.id)) ? { display_snapshot: inventoryDisplayOverlay(row.source_snapshot, overlays.get(Number(row.id))) } : {}) }));
+  const logIds = [...new Set(rows.map(row => Number(row.source_snapshot?.inventory_log_id))
+    .filter(id => Number.isSafeInteger(id) && id > 0))];
+  const currentSuppliers = new Map<number, string | null>();
+  for (let from = 0; from < logIds.length; from += 200) {
+    const { data, error } = await supabaseServer.from("inventory_logs")
+      .select("id,new_supplier").in("id", logIds.slice(from, from + 200));
+    if (error) throw error;
+    for (const log of data ?? []) currentSuppliers.set(Number(log.id), log.new_supplier?.trim() || null);
+  }
+  return rows.map(row => {
+    const drift = overlays.get(Number(row.id));
+    const logId = Number(row.source_snapshot?.inventory_log_id);
+    if (!drift && !currentSuppliers.has(logId)) return { ...row };
+    const display = inventoryDisplayOverlay(row.source_snapshot, drift);
+    if (currentSuppliers.has(logId)) display.supplier = currentSuppliers.get(logId);
+    return { ...row, display_snapshot: display };
+  });
 }
 
 export async function loadInventoryProjectionIssues(start: string, end: string) {
