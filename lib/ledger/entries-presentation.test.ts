@@ -78,17 +78,15 @@ test("list titles are concise while the original transaction memo remains intact
 });
 
 test("detail summary is compact and the original memo has its own optional section", () => {
-  const detailSummary = page.slice(page.indexOf('<div className={styles.detailSummary}>'), page.indexOf("{message ? ("));
+  const detailSummary = page.slice(page.indexOf("function EntryDetailSheet"), page.indexOf("{message ? ("));
   assert.match(detailSummary, /formatDate\(entry\.businessDate, lang\)/);
   assert.match(detailSummary, /entryDisplayTitle/);
-  assert.match(detailSummary, /styles\.detailStatus/);
+  assert.match(detailSummary, /<EntryDisplayBadge entry=\{entry\} lang=\{lang\}/);
   assert.match(detailSummary, /styles\.detailAmount/);
-  assert.match(detailSummary, /styles\.direction/);
+  assert.match(detailSummary, /<EntryFlags entry=\{entry\} lang=\{lang\}/);
   assert.match(detailSummary, /styles\.accountBadge/);
-  assert.match(detailSummary, /directionBadgeLabel\(entry\.direction, lang\)/);
   assert.match(detailSummary, /accountBadgeLabel\(entry\.accountName, lang, entry\)/);
   assert.match(detailSummary, /isPayableAccount\(entry\.accountName\)/);
-  assert.match(detailSummary, /entry\.requiresCorrection/);
   assert.match(pageCompact, /entry\.memo\?\.trim\(\)\?\(<detailsclassName=\{styles\.detailMemo\}/);
   assert.match(page, /className={styles.detailMemoText}>{entry.memo}/);
   assert.match(css, /\.detailSummary\{gap:3px;padding:8px 10px\}/);

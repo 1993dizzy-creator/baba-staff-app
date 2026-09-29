@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const TYPES = new Set(["expense", "income", "transfer", "balance_adjustment"]);
-const TRANSACTION_SELECT = "id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,source_synced_at,memo,party_id,category:ledger_categories(id,name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)),payable:ledger_payables(id,original_amount,due_date,status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(business_date,status,movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)))))";
+const TRANSACTION_SELECT = "id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,display_snapshot,source_synced_at,memo,party_id,category:ledger_categories(id,name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)),payable:ledger_payables(id,original_amount,due_date,status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(business_date,status,movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)))))";
 
 export async function GET(request: Request) {
   const auth = await requireLedgerActor();

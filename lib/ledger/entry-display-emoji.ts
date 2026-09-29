@@ -11,7 +11,11 @@ export function chooseLedgerEntryEmoji(
   return partnerEmoji || ledgerCategoryEmoji;
 }
 
-export function entryCategoryEmoji(entry: Pick<LedgerEntry, "categoryName" | "direction" | "employeeCost">) {
+export function entryCategoryEmoji(entry: Pick<LedgerEntry, "categoryName" | "direction" | "employeeCost" | "systemDisplay">) {
+  if (entry.systemDisplay?.kind === "pos") return "🧾";
+  if (entry.systemDisplay?.kind === "cardSettlementDeposit" ||
+      entry.systemDisplay?.kind === "cardSettlementDifference" ||
+      entry.systemDisplay?.kind === "cardFeeMonthClose") return "💳";
   // Payroll rows (including advances with no category) are flagged upstream.
   if (entry.employeeCost) return EMPLOYEE_COST_EMOJI;
   if (entry.categoryName) {

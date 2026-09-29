@@ -64,6 +64,7 @@ export type LedgerEntry = {
   // Display identity only: an actual supplier payable payment (payable_payment);
   // direction stays "transfer" so the cost is never counted twice.
   paymentTransaction?: boolean;
+  editableManualDisplay?: boolean;
   // Advance created by the ledger 👥 가불 path (cancellable from the ledger);
   // cancelled once its append-only reversal exists. Historical advances: unset.
   ledgerPayrollAdvance?: { requestId: string; cancelled: boolean };
@@ -79,7 +80,9 @@ export type LedgerEntry = {
     | { kind: "inventory"; itemCount: number; partyMissing: boolean; needsConfirmation: boolean }
     | { kind: "rent" }
     | { kind: "payablePayment"; partyName: string; prepaid: boolean }
-    | { kind: "cardSettlementDeposit" };
+    | { kind: "cardSettlementDeposit" }
+    | { kind: "cardSettlementDifference"; matchedGrossAmount: number | null; depositAmount: number | null; differenceAmount: number | null }
+    | { kind: "cardFeeMonthClose" };
   items: LedgerEntryItem[];
 };
 
@@ -200,6 +203,14 @@ function conciseTransactionTitle(row: TransactionRow) {
 
 function specialTransactionDisplay(row: TransactionRow) {
   const memo = displayMemo(row.memo);
+  if (row.type === "payroll_payment" &&
+    (row.source_snapshot?.paymentKind === "advance" || /^payroll-advance-payment:/.test(row.source_key ?? "") ||
+      (row.source_type === "manual" && /(?:급여\s*가불|ứng\s*lương)/i.test(memo)))) {
+    const employee = typeof row.source_snapshot?.employee === "string" ? row.source_snapshot.employee.trim() : "";
+    const memoWithoutDate = memo.replace(/^\s*\d{1,2}\s*[/.-]\s*\d{1,2}\s+/, "");
+    const memoEmployee = memoWithoutDate.match(/^(.+?)\s+(?:급여\s*가불|ứng\s*lương)/i)?.[1]?.trim();
+    return { title: `${employee || memoEmployee || "직원"} 급여 가불`, subtitle: "" };
+  }
   if (row.type === "investment" && row.source_type === "owner_investment") {
     const investor = memo.match(/([\p{L}\p{N}]+)\s*투자금/u)?.[1];
     return { title: investor ? `${investor} 투자금` : "투자금", subtitle: "사업 투자금" };
@@ -508,16 +519,28 @@ export function buildLedgerEntries(
     const specialDisplay = specialTransactionDisplay(row);
     const payablePayment = row.type === "payable_payment";
     const cardSettlementDeposit = row.type === "card_settlement_deposit";
+    const cardSettlementDifference = row.source_type === "card_settlement_difference";
+    const cardFeeMonthClose = row.source_type === "card_fee_month_close";
+    const editableManualDisplay = row.source_type === "manual" &&
+      ["income", "expense", "transfer"].includes(row.type) && row.status === "confirmed" &&
+      row.correction_of_id == null;
+    const titleOverride = editableManualDisplay && typeof row.display_snapshot?.titleOverride === "string"
+      ? row.display_snapshot.titleOverride.trim() : "";
+    const snapshotNumber = (key: string) => {
+      const number = Number(snapshot[key]);
+      return snapshot[key] == null || !Number.isFinite(number) ? null : number;
+    };
     entries.push({
       id: `transaction:${transactionId}`, businessDate: row.business_date, direction, participatesInProfit,
       origin: automatic ? "auto" : "manual", status: "confirmed", isSystemAdjustment: isSystemAdjustmentTransaction(row),
-      title: specialDisplay?.title ?? (pos || rent || payablePayment || cardSettlementDeposit ? "" : payroll ? "급여 · 인건비" : conciseTransactionTitle(row)),
+      title: titleOverride || (specialDisplay?.title ?? (pos || rent || payablePayment || cardSettlementDeposit ? "" : payroll ? "급여 · 인건비" : conciseTransactionTitle(row))),
       subtitle: specialDisplay?.subtitle ?? (pos || rent ? "" : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력")),
       memo: row.memo ?? null,
       amount, economicEffectSign, ...time, accountName, settlementStatus: paymentDisplay?.status, remainingAmount: paymentDisplay?.remainingAmount, categoryName: row.category?.name ?? null, transactionId,
       partyId: row.party_id == null ? null : value(row.party_id),
       employeeCost: isEmployeeCostTransaction(row),
       paymentTransaction: payablePayment,
+      editableManualDisplay,
       ...(ledgerPayrollAdvanceRequestId(row)
         ? { ledgerPayrollAdvance: { requestId: ledgerPayrollAdvanceRequestId(row)!, cancelled: cancelledPayrollAdvanceIds.has(transactionId) } }
         : {}),
@@ -526,6 +549,8 @@ export function buildLedgerEntries(
       ...(rent ? { systemDisplay: { kind: "rent" as const } } : {}),
       ...(payablePayment ? { systemDisplay: { kind: "payablePayment" as const, partyName: row.party?.name?.trim() || "", prepaid: hasPrepaymentFlag(row.source_snapshot) } } : {}),
       ...(cardSettlementDeposit ? { systemDisplay: { kind: "cardSettlementDeposit" as const } } : {}),
+      ...(cardSettlementDifference ? { systemDisplay: { kind: "cardSettlementDifference" as const, matchedGrossAmount: snapshotNumber("matchedGrossAmount"), depositAmount: snapshotNumber("depositAmount"), differenceAmount: snapshotNumber("differenceAmount") } } : {}),
+      ...(cardFeeMonthClose ? { systemDisplay: { kind: "cardFeeMonthClose" as const } } : {}),
       items: [],
     });
   }

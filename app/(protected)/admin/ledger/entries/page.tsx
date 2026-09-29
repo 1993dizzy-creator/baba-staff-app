@@ -753,7 +753,7 @@ function LedgerEntriesContent() {
                 <span className={styles.entryRight}>
                   <small className={styles.entryTime}>{entry.displayTime ?? ""}</small>
                   <span className={styles.entryBottom}>
-                    <span className={[styles.accountBadge, isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""].join(" ")}
+                    <span className={[styles.accountBadge, isPayableAccount(entry.accountName) ? styles.accountBadgePayable : "", entry.systemDisplay?.kind === "cardSettlementDeposit" ? styles.accountBadgeCardSettlement : ""].join(" ")}
                       title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}>
                       {accountBadgeLabel(entry.accountName, lang, entry)}
                     </span>
@@ -1340,6 +1340,30 @@ function EntryDetailSheet({
   // adjustment and an append-only cash reversal are written together.
   const cancellableAdvance = entry.ledgerPayrollAdvance != null && !entry.ledgerPayrollAdvance.cancelled && entry.transactionId != null;
   const [advanceCancelReason,setAdvanceCancelReason]=useState<string|null>(null),[advanceCancelError,setAdvanceCancelError]=useState(""),[advanceCancelling,setAdvanceCancelling]=useState(false);
+  const [manualDisplayDraft, setManualDisplayDraft] = useState<{ title: string; memo: string; reason: string } | null>(null);
+  const [manualDisplayError, setManualDisplayError] = useState("");
+  const [manualDisplaySaving, setManualDisplaySaving] = useState(false);
+  async function saveManualDisplay() {
+    if (!entry.editableManualDisplay || closed || !manualDisplayDraft || !entry.transactionId ||
+        !manualDisplayDraft.title.trim() || !manualDisplayDraft.reason.trim()) return;
+    setManualDisplaySaving(true);
+    setManualDisplayError("");
+    try {
+      const response = await fetch(`/api/admin/ledger/transactions/${entry.transactionId}/display`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(manualDisplayDraft),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.code ?? "MANUAL_DISPLAY_EDIT_FAILED");
+      setManualDisplayDraft(null);
+      await onConfirmedEdited(entry.transactionId);
+    } catch (cause) {
+      setManualDisplayError(`${vi ? "Không thể sửa giao dịch." : "거래를 수정하지 못했습니다."} ${(cause as Error).message}`);
+    } finally {
+      setManualDisplaySaving(false);
+    }
+  }
   async function cancelAdvance(){
     if(!cancellableAdvance||advanceCancelReason==null||!advanceCancelReason.trim())return;
     setAdvanceCancelling(true);setAdvanceCancelError("");
@@ -1367,10 +1391,11 @@ function EntryDetailSheet({
       title={vi ? "Chi tiết giao dịch" : "거래 상세"}
       titleAside={formatDate(entry.businessDate, lang)}
       closeLabel={vi ? "Đóng" : "닫기"}
-      saving={saving||editSaving||advanceCancelling}
+      saving={saving||editSaving||advanceCancelling||manualDisplaySaving}
       onClose={onClose}
       footer={
         <div className={styles.detailFooter}>
+          {entry.editableManualDisplay ? <button type="button" disabled={saving || manualDisplaySaving || closed} onClick={() => { setManualDisplayDraft(value => value ? null : { title: entryDisplayTitle(entry, lang), memo: entry.memo ?? "", reason: "" }); setManualDisplayError(""); }} style={{ ...primaryButtonStyle, width: "100%" }}>{manualDisplayDraft ? (vi ? "Đóng chỉnh sửa" : "수정 닫기") : (vi ? "Sửa tiêu đề/ghi chú" : "제목·메모 수정")}</button> : null}
           {cancellableAdvance ? <button type="button" disabled={saving||advanceCancelling||closed} onClick={()=>{setAdvanceCancelReason(value=>value==null?"":null);setAdvanceCancelError("")}} style={{...(advanceCancelReason==null?dangerButtonStyle:secondaryButtonStyle),width:"100%"}}>{advanceCancelReason==null?(vi?"Hủy ứng lương":"가불 취소"):(vi?"Đóng hủy ứng lương":"가불 취소 닫기")}</button>:null}
           {confirmedInventory ? <button type="button" disabled={saving||editSaving} onClick={()=>{setEditMode(value=>!value);setEditDraft(null);setEditError("")}} style={{...primaryButtonStyle,width:"100%"}}>{editMode?(vi?"Kết thúc chỉnh sửa":"수정 종료"):(vi?"Sửa":"수정")}</button>:null}
           {confirmedMeal ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setMealDraft(value=>value?null:{finalAmount:String(entry.effectiveAmount??entry.amount),reason:""});setMealError("")}} style={{...primaryButtonStyle,width:"100%"}}>{mealDraft?(vi?"Đóng chỉnh sửa":"수정 닫기"):(vi?"Sửa tiền ăn":"식대 수정")}</button>:null}
@@ -1397,7 +1422,7 @@ function EntryDetailSheet({
         </span>
         <span className={styles.detailPayment}>
           <span
-            className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""}`}
+            className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""} ${entry.systemDisplay?.kind === "cardSettlementDeposit" ? styles.accountBadgeCardSettlement : ""}`}
             title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}
           >
             {accountBadgeLabel(entry.accountName, lang, entry)}
@@ -1405,6 +1430,35 @@ function EntryDetailSheet({
           <strong className={styles.detailAmount}>{money(entry.amount)}</strong>
         </span>
       </div>
+      {manualDisplayDraft ? (
+        <div className={styles.candidateEditor}>
+          <h3>{vi ? "Sửa giao dịch thủ công" : "수동 거래 제목·메모 수정"}</h3>
+          <BarField label={vi ? "Tiêu đề hiển thị" : "표시 제목"} required compact>
+            {({ id }) => <input id={id} required maxLength={160} value={manualDisplayDraft.title} onChange={event => setManualDisplayDraft({ ...manualDisplayDraft, title: event.target.value })} style={keepingInputStyle} />}
+          </BarField>
+          <BarField label={vi ? "Ghi chú" : "메모"} compact>
+            {({ id }) => <textarea id={id} maxLength={2000} rows={3} value={manualDisplayDraft.memo} onChange={event => setManualDisplayDraft({ ...manualDisplayDraft, memo: event.target.value })} style={keepingInputStyle} />}
+          </BarField>
+          <BarField label={vi ? "Lý do chỉnh sửa" : "수정 사유"} required compact>
+            {({ id }) => <input id={id} required maxLength={500} value={manualDisplayDraft.reason} onChange={event => setManualDisplayDraft({ ...manualDisplayDraft, reason: event.target.value })} style={keepingInputStyle} />}
+          </BarField>
+          {manualDisplayError ? <p className={styles.error} role="alert">{manualDisplayError}</p> : null}
+          <button type="button" disabled={manualDisplaySaving || closed || !manualDisplayDraft.title.trim() || !manualDisplayDraft.reason.trim()} onClick={() => void saveManualDisplay()} style={{ ...primaryButtonStyle, width: "100%" }}>{vi ? "Lưu sửa đổi" : "수정 저장"}</button>
+        </div>
+      ) : null}
+      {entry.systemDisplay?.kind === "cardSettlementDifference" ? (
+        <div className={styles.candidateEditor}>
+          <p>{vi
+            ? "Giao dịch này được xác nhận theo cách đối soát thẻ cũ: chênh lệch giữa doanh số thẻ đã khớp và tiền thực nhận."
+            : "과거 카드정산 방식에서 카드매출 매칭금액과 실제 입금액의 차액으로 확정된 기록입니다."}</p>
+          <dl className={styles.cardLegacyFacts}>
+            {entry.systemDisplay.matchedGrossAmount != null ? <div><dt>{vi ? "Doanh số thẻ đối soát" : "정산 대상 카드매출"}</dt><dd>{money(entry.systemDisplay.matchedGrossAmount)}</dd></div> : null}
+            {entry.systemDisplay.depositAmount != null ? <div><dt>{vi ? "Tiền thực nhận" : "실제 입금"}</dt><dd>{money(entry.systemDisplay.depositAmount)}</dd></div> : null}
+            {entry.systemDisplay.differenceAmount != null ? <div><dt>{vi ? "Chênh lệch" : "정산차액"}</dt><dd>{money(entry.systemDisplay.differenceAmount)}</dd></div> : null}
+            {entry.systemDisplay.matchedGrossAmount != null && entry.systemDisplay.matchedGrossAmount > 0 && entry.systemDisplay.differenceAmount != null ? <div><dt>{vi ? "Tỷ lệ chênh lệch" : "차이율"}</dt><dd>{(entry.systemDisplay.differenceAmount / entry.systemDisplay.matchedGrossAmount * 100).toFixed(2)}%</dd></div> : null}
+          </dl>
+        </div>
+      ) : null}
       {cancellableAdvance && advanceCancelReason != null ? (
         <div className={styles.candidateEditor}>
           <h3>{vi ? "Hủy ứng lương" : "가불 취소"}</h3>
@@ -2272,6 +2326,8 @@ function AccountField({
   );
 }
 function entryDisplayEmoji(entry: LedgerEntry, partnersByParty: ReadonlyMap<number, Partner>) {
+  if (entry.systemDisplay?.kind === "pos") return entryCategoryEmoji(entry);
+  if (entry.systemDisplay?.kind === "cardSettlementDeposit" || entry.systemDisplay?.kind === "cardSettlementDifference" || entry.systemDisplay?.kind === "cardFeeMonthClose") return entryCategoryEmoji(entry);
   if (entry.employeeCost) return EMPLOYEE_COST_EMOJI;
   if (entry.partyId != null) {
     const partner = partnersByParty.get(entry.partyId);
@@ -2336,6 +2392,8 @@ function entryDisplayTitle(entry: LedgerEntry, lang: "ko" | "vi") {
     return lang === "vi" ? `Thanh toán ${party}` : `${party} 지급`;
   }
   if (display?.kind === "cardSettlementDeposit") return lang === "vi" ? "Tiền thẻ thực nhận" : "카드 실제 입금";
+  if (display?.kind === "cardSettlementDifference") return lang === "vi" ? "Chênh lệch đối soát thẻ cũ" : "카드 정산차액";
+  if (display?.kind === "cardFeeMonthClose") return lang === "vi" ? "Phí thẻ" : "카드 수수료";
   return entry.title;
 }
 function reserveLabel(
@@ -2357,6 +2415,7 @@ function isPayableAccount(accountName: string | null) {
   return accountName === "미지급";
 }
 function accountBadgeLabel(accountName: string | null, lang: "ko" | "vi", entry?: LedgerEntry) {
+  if (entry?.systemDisplay?.kind === "cardSettlementDeposit") return lang === "vi" ? "Đối soát thẻ" : "카드정산";
   if (entry?.systemDisplay?.kind === "pos" && entry.systemDisplay.paymentBucket === "card") {
     return lang === "vi" ? "Thẻ" : "카드";
   }

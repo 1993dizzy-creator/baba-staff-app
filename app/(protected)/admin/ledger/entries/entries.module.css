@@ -147,10 +147,13 @@
 .entryRight{display:grid;justify-items:end;gap:2px;min-width:0;white-space:nowrap}
 .entryTime{min-height:10px;color:#9ca3af;font-size:9px;font-weight:700;line-height:1}
 .entryBottom{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.entryBottom>.accountBadgeCardSettlement,.detailPayment>.accountBadgeCardSettlement{max-width:none;flex-shrink:0}
 .entryBottom>.accountBadge{display:inline-block;flex:0 1 auto;max-width:58px}
 .entryBottom>.amountIncome,.entryBottom>.amountExpense,.entryBottom>.amountTransfer{grid-column:auto}
 .entryBottom>.chevron{grid-column:auto;line-height:1}
 @media(max-width:560px){.entryRow{grid-template-columns:minmax(0,1fr) max-content;gap:5px;padding:7px}.entryLeft{grid-template-columns:auto 16px minmax(0,1fr);column-gap:4px}.entryCategoryEmoji{font-size:13px}.entryBottom{gap:4px}.entryBottom>.accountBadge{max-width:44px;padding:3px 4px;font-size:8px}.entryBottom>.amountIncome,.entryBottom>.amountExpense,.entryBottom>.amountTransfer{font-size:10px}}
+.entryBottom>.accountBadgeCardSettlement,.detailPayment>.accountBadgeCardSettlement{max-width:none}
+.cardLegacyFacts{display:grid;gap:5px;margin:10px 0 0}.cardLegacyFacts>div{display:flex;justify-content:space-between;gap:12px}.cardLegacyFacts dt{color:#6b7280}.cardLegacyFacts dd{margin:0;font-weight:700;text-align:right}
 /* Display-only badges: unpaid reuses the pending/payable yellow, payment is blue. */
 .direction.unpaid{background:#fff4dc;color:#9a5b10}
 .direction.payment{background:#e8f0fe;color:#1d4ed8}

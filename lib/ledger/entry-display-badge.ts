@@ -5,10 +5,11 @@ import type { LedgerEntry } from "./entries";
 export type EntryDisplayBadgeKind = "income" | "expense" | "transfer" | "unpaid" | "payment";
 
 export function entryDisplayBadgeKind(
-  entry: Pick<LedgerEntry, "direction" | "settlementStatus" | "remainingAmount" | "paymentTransaction" | "employeeCost">,
+  entry: Pick<LedgerEntry, "direction" | "settlementStatus" | "remainingAmount" | "paymentTransaction" | "employeeCost" | "systemDisplay">,
 ): EntryDisplayBadgeKind {
-  // 결제 is reserved for supplier payable payments.
+  // Supplier payments and card settlement deposits share the display badge.
   if (entry.paymentTransaction) return "payment";
+  if (entry.systemDisplay?.kind === "cardSettlementDeposit") return "payment";
   // Payroll pay-outs and advances (payroll_payment, direction transfer) read as
   // spending; the labor cost itself is recognized once by the payroll batch.
   if (entry.employeeCost && entry.direction === "transfer") return "expense";
