@@ -39,6 +39,7 @@ import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
 import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji } from "@/lib/ledger/entry-display-emoji";
 import { entryDisplayBadgeEmoji, entryDisplayBadgeKind, entryDisplayBadgeLabel } from "@/lib/ledger/entry-display-badge";
 import { entryDisplayAmount, entryDisplayAmountSign, entryDisplayAmountTone } from "@/lib/ledger/entry-display-amount";
+import { accountTransferBadgeLabel, shortLedgerAccountName } from "@/lib/ledger/entry-display-account";
 import { groupPayableRows } from "@/lib/ledger/payable-date-groups";
 import {
   formatLedgerAmountInput,
@@ -759,7 +760,7 @@ function LedgerEntriesContent() {
                 <span className={styles.entryRight}>
                   <small className={styles.entryTime}>{entry.displayTime ?? ""}</small>
                   <span className={styles.entryBottom}>
-                    <span className={[styles.accountBadge, isPayableAccount(entry.accountName) ? styles.accountBadgePayable : "", entry.systemDisplay?.kind === "cardSettlementDeposit" ? styles.accountBadgeCardSettlement : ""].join(" ")}
+                    <span className={[styles.accountBadge, isPayableAccount(entry.accountName) ? styles.accountBadgePayable : "", entry.systemDisplay?.kind === "cardSettlementDeposit" ? styles.accountBadgeCardSettlement : "", entry.systemDisplay?.kind === "accountTransfer" ? styles.accountBadgeAccountTransfer : ""].join(" ")}
                       title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}>
                       {accountBadgeLabel(entry.accountName, lang, entry)}
                     </span>
@@ -1406,7 +1407,7 @@ function EntryDetailSheet({
         </span>
         <span className={styles.detailPayment}>
           <span
-            className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""} ${entry.systemDisplay?.kind === "cardSettlementDeposit" ? styles.accountBadgeCardSettlement : ""}`}
+            className={`${styles.accountBadge} ${isPayableAccount(entry.accountName) ? styles.accountBadgePayable : ""} ${entry.systemDisplay?.kind === "cardSettlementDeposit" ? styles.accountBadgeCardSettlement : ""} ${entry.systemDisplay?.kind === "accountTransfer" ? styles.accountBadgeAccountTransfer : ""}`}
             title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}
           >
             {accountBadgeLabel(entry.accountName, lang, entry)}
@@ -2343,7 +2344,7 @@ function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
   const vi = lang === "vi",
     subtitle = entry.subtitle.replace(/\s*·\s*확인 필요/g, "");
   return [
-    subtitle === entry.categoryName ? "" : subtitle,
+    subtitle === entry.categoryName || subtitle === "수동 입력" && entry.origin === "manual" ? "" : subtitle,
     settlement,
     entry.origin === "manual" ? (vi ? "Thủ công" : "수동") : null,
   ]
@@ -2374,6 +2375,7 @@ function entryDisplayTitle(entry: LedgerEntry, lang: "ko" | "vi") {
   }
   if (display?.kind === "rent") return lang === "vi" ? "Tiền thuê mặt bằng" : "매장 임대료";
   if (display?.kind === "payablePayment") {
+    if (entry.title.trim()) return entry.title;
     const fallback = lang === "vi" ? "Công nợ" : "미지급금";
     const party = display.partyName || fallback;
     if (display.prepaid) return lang === "vi" ? `${party} trả trước` : `${party} 선지급`;
@@ -2404,16 +2406,12 @@ function isPayableAccount(accountName: string | null) {
 }
 function accountBadgeLabel(accountName: string | null, lang: "ko" | "vi", entry?: LedgerEntry) {
   if (entry?.systemDisplay?.kind === "cardSettlementDeposit") return lang === "vi" ? "Đối soát thẻ" : "카드정산";
+  if (entry?.systemDisplay?.kind === "accountTransfer") return accountTransferBadgeLabel(entry.systemDisplay, lang);
   if (entry?.systemDisplay?.kind === "pos" && entry.systemDisplay.paymentBucket === "card") {
     return lang === "vi" ? "Thẻ" : "카드";
   }
   if (!accountName) return lang === "vi" ? "Chưa rõ" : "미지정";
-  if (accountName === "매장 현금") return lang === "vi" ? "Tiền mặt" : "현금";
-  if (accountName === "BABA 법인계좌") return lang === "vi" ? "Công ty" : "법인";
-  if (accountName === "미지급") return lang === "vi" ? "Công nợ" : "미지급";
-  if (accountName === "개인(Vương)" || accountName === "Vương 개인계좌 (BABA 소유분)") return "Vương";
-  if (accountName === "개인(Cho)" || accountName === "Cho 개인계좌 (BABA 소유분)") return "Cho";
-  return accountName;
+  return shortLedgerAccountName(accountName, lang);
 }
 function investmentEntryTypeLabel(entryType: InvestmentEntryType, amount: number, lang: "ko" | "vi") {
   if (entryType === "opening") return lang === "vi" ? "Vốn góp ban đầu" : "기초 등록";

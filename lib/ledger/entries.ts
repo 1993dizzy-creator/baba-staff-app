@@ -2,6 +2,8 @@
 import { payableDisplayAsOf } from "./payables.ts";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
 import { ledgerPayrollAdvanceRequestId, PAYROLL_ADVANCE_REVERSAL_SOURCE_TYPE } from "./payroll-advance.ts";
+// @ts-expect-error Node's local strip-types test runner requires the extension.
+import { shortLedgerAccountName } from "./entry-display-account.ts";
 
 export type LedgerEntryItem = {
   candidateId?: number;
@@ -82,6 +84,7 @@ export type LedgerEntry = {
     | { kind: "inventory"; itemCount: number; partyMissing: boolean; needsConfirmation: boolean }
     | { kind: "rent" }
     | { kind: "payablePayment"; partyName: string; prepaid: boolean; actualPaidAmount?: number; paymentDifferenceAmount?: number }
+    | { kind: "accountTransfer"; fromAccountName: string; toAccountName: string }
     | { kind: "investment"; cashFlow: "inflow" | "outflow" | "none" }
     | { kind: "cardSettlementDeposit" }
     | { kind: "cardSettlementDifference"; matchedGrossAmount: number | null; depositAmount: number | null; differenceAmount: number | null }
@@ -179,6 +182,29 @@ export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amo
 function transactionFundFlow(row: TransactionRow): "inflow" | "outflow" | "none" {
   const net = (row.movements ?? []).reduce((sum, movement) => sum + value(movement.amount), 0);
   return net > 0 ? "inflow" : net < 0 ? "outflow" : "none";
+}
+
+function accountTransferDisplay(row: TransactionRow) {
+  if (row.type !== "transfer" || row.status !== "confirmed" || row.movements?.length !== 2) return null;
+  const from = row.movements.find(movement => value(movement.amount) < 0);
+  const to = row.movements.find(movement => value(movement.amount) > 0);
+  if (!from || !to || -value(from.amount) !== value(to.amount)) return null;
+  const fromAccountName = from.fund_account?.display_name?.trim();
+  const toAccountName = to.fund_account?.display_name?.trim();
+  return fromAccountName && toAccountName
+    ? { kind: "accountTransfer" as const, fromAccountName, toAccountName }
+    : null;
+}
+
+function accountTransferTitle(row: TransactionRow, transfer: NonNullable<ReturnType<typeof accountTransferDisplay>>) {
+  const memo = displayMemo(row.memo);
+  const segments = memo.split(/\s+·\s+/);
+  if (segments.length < 2) return conciseTransactionTitle(row);
+  const route = segments.at(-1)?.match(/^(.+?)\s*→\s*(.+?)\s+([\d,]+)\s*₫$/u);
+  if (!route || route[1].trim() !== shortLedgerAccountName(transfer.fromAccountName, "ko") ||
+      route[2].trim() !== shortLedgerAccountName(transfer.toAccountName, "ko") ||
+      Number(route[3].replace(/,/g, "")) !== value(row.amount)) return conciseTransactionTitle(row);
+  return segments.slice(0, -1).join(" · ").trim() || conciseTransactionTitle(row);
 }
 
 function investmentDisplayFlow(row: TransactionRow): "inflow" | "outflow" | "none" | null {
@@ -603,13 +629,14 @@ export function buildLedgerEntries(
     const payroll = row.source_type.includes("payroll");
     const specialDisplay = specialTransactionDisplay(row);
     const payablePayment = row.type === "payable_payment";
+    const accountTransfer = accountTransferDisplay(row);
     const investmentFlow = investmentDisplayFlow(row);
     const linkedPaymentDifference = linkedPaymentDifferences.get(transactionId);
     const cardSettlementDeposit = row.type === "card_settlement_deposit";
     const cardSettlementDifference = row.source_type === "card_settlement_difference";
     const cardFeeMonthClose = row.source_type === "card_fee_month_close";
     const editableManualDisplay = row.source_type === "manual" &&
-      ["income", "expense", "transfer"].includes(row.type) && row.status === "confirmed" &&
+      ["income", "expense", "transfer", "payable_payment"].includes(row.type) && row.status === "confirmed" &&
       row.correction_of_id == null;
     const titleOverride = editableManualDisplay && typeof row.display_snapshot?.titleOverride === "string"
       ? row.display_snapshot.titleOverride.trim() : "";
@@ -620,7 +647,7 @@ export function buildLedgerEntries(
     entries.push({
       id: `transaction:${transactionId}`, businessDate: row.business_date, direction, participatesInProfit,
       origin: automatic ? "auto" : "manual", status: "confirmed", isSystemAdjustment: isSystemAdjustmentTransaction(row),
-      title: titleOverride || (specialDisplay?.title ?? (pos || rent || payablePayment || cardSettlementDeposit ? "" : payroll ? "급여 · 인건비" : conciseTransactionTitle(row))),
+      title: titleOverride || (specialDisplay?.title ?? (pos || rent || payablePayment || cardSettlementDeposit ? "" : payroll ? "급여 · 인건비" : accountTransfer ? accountTransferTitle(row, accountTransfer) : conciseTransactionTitle(row))),
       subtitle: specialDisplay?.subtitle ?? (pos || rent ? "" : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력")),
       memo: row.memo ?? null,
       amount, economicEffectSign, fundFlow, ...time, accountName, settlementStatus: paymentDisplay?.status, remainingAmount: paymentDisplay?.remainingAmount, categoryName: row.category?.name ?? null, transactionId,
@@ -637,6 +664,7 @@ export function buildLedgerEntries(
       ...(rent ? { systemDisplay: { kind: "rent" as const } } : {}),
       ...(payablePayment ? { systemDisplay: { kind: "payablePayment" as const, partyName: row.party?.name?.trim() || "", prepaid: hasPrepaymentFlag(row.source_snapshot),
         ...(linkedPaymentDifference ? { actualPaidAmount: linkedPaymentDifference.actualPaidAmount, paymentDifferenceAmount: linkedPaymentDifference.differenceAmount } : {}) } } : {}),
+      ...(accountTransfer ? { systemDisplay: accountTransfer } : {}),
       ...(investmentFlow !== null ? { systemDisplay: { kind: "investment" as const, cashFlow: investmentFlow } } : {}),
       ...(cardSettlementDeposit ? { systemDisplay: { kind: "cardSettlementDeposit" as const } } : {}),
       ...(cardSettlementDifference ? { systemDisplay: { kind: "cardSettlementDifference" as const, matchedGrossAmount: snapshotNumber("matchedGrossAmount"), depositAmount: snapshotNumber("depositAmount"), differenceAmount: snapshotNumber("differenceAmount") } } : {}),

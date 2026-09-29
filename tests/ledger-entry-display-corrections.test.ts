@@ -7,6 +7,8 @@ import { buildLedgerEntries, entryDisplaySubtotal } from "../lib/ledger/entries.
 import { entryDisplayBadgeKind, entryDisplayBadgeLabel } from "../lib/ledger/entry-display-badge.ts";
 // @ts-expect-error Node strip-types requires the extension.
 import { entryCategoryEmoji } from "../lib/ledger/entry-display-emoji.ts";
+// @ts-expect-error Node strip-types requires the extension.
+import { accountTransferBadgeLabel } from "../lib/ledger/entry-display-account.ts";
 
 const page = readFileSync("app/(protected)/admin/ledger/entries/page.tsx", "utf8");
 const manualDisplayEditor = readFileSync("app/(protected)/admin/ledger/entries/ManualDisplayEditor.tsx", "utf8");
@@ -69,4 +71,96 @@ test("title override flows through shared list, detail and search display", () =
   assert.match(page, /!`\$\{entryDisplayTitle\(entry, lang\)\}/);
   assert.match(page, /<ManualDisplayEditor/);
   assert.match(manualDisplayEditor, /"\/api\/admin\/ledger\/transactions\/" \+ transactionId \+ "\/display"/);
+});
+
+test("production-shaped #1661 is editable and reaches the detail edit controls", () => {
+  const [entry] = build([{
+    id: 1661, type: "expense", source_type: "manual", status: "confirmed",
+    correction_of_id: null, source_key: "sheet-manual-expense:2026-09:row-120",
+    business_date: "2026-09-12", amount: 4_500_000,
+    memo: "diet con trun thang 678 · 해충방제",
+    movements: [{ amount: -4_500_000, fund_account: { display_name: "BABA 법인계좌" } }],
+  }]);
+  assert.equal(entry.editableManualDisplay, true);
+  assert.equal(entry.drilldown, "generic");
+  assert.equal(entry.title, "diet con trun thang 678 · 해충방제");
+  assert.match(page, /entry\.editableManualDisplay \? <button type="button"[\s\S]*?제목·메모 수정/);
+  assert.match(page, /manualDisplayOpen && entry\.editableManualDisplay && entry\.transactionId != null/);
+  assert.match(page, /<ManualDisplayEditor[\s\S]*?transactionId=\{entry\.transactionId\}/);
+});
+
+test("manual payable payment #1675 can edit its title and memo without changing payment identity", () => {
+  const [entry] = build([{
+    id: 1675, type: "payable_payment", source_type: "manual", status: "confirmed",
+    correction_of_id: null, source_key: "delayed-purchase-payment:inventory-log:10017:2026-09-04",
+    business_date: "2026-09-04", amount: 1_900_000,
+    memo: "8/29 켄트 담배 50개 매입분 실제 지연결제 · 9/4 Cho 계좌 1,900,000₫",
+    source_snapshot: { paymentKind: "delayed_purchase_payment", originalBusinessDate: "2026-08-29", originalTransactionId: 794, originalInventoryLogId: 10017, itemName: "켄트 담배", quantity: 50, purchasePrice: 38000 },
+    movements: [{ amount: -1_900_000, fund_account: { display_name: "개인(Cho)" } }],
+    display_snapshot: { titleOverride: "켄트 담배 지연결제" },
+  }]);
+  assert.equal(entry.editableManualDisplay, true);
+  assert.equal(entry.title, "켄트 담배 지연결제");
+  assert.equal(entry.memo, "8/29 켄트 담배 50개 매입분 실제 지연결제 · 9/4 Cho 계좌 1,900,000₫");
+  assert.equal(entry.amount, 1_900_000);
+  assert.equal(entry.accountName, "개인(Cho)");
+  assert.equal(entry.systemDisplay?.kind, "payablePayment");
+  assert.match(page, /if \(display\?\.kind === "payablePayment"\) \{\s*if \(entry\.title\.trim\(\)\) return entry\.title/);
+});
+
+test("manual edit whitelist includes generic transfer and payable but excludes payroll, auto and corrections", () => {
+  const entries = build([
+    { id: 1, type: "income", source_type: "manual", status: "confirmed", business_date: "2026-09-12", amount: 10 },
+    { id: 2, type: "expense", source_type: "manual", status: "confirmed", business_date: "2026-09-12", amount: 10 },
+    { id: 3, type: "transfer", source_type: "manual", status: "confirmed", business_date: "2026-09-12", amount: 10 },
+    { id: 4, type: "payable_payment", source_type: "manual", status: "confirmed", business_date: "2026-09-12", amount: 10 },
+    { id: 5, type: "payroll_payment", source_type: "manual", status: "confirmed", business_date: "2026-09-12", amount: 10 },
+    { id: 6, type: "payable_payment", source_type: "automatic", status: "confirmed", business_date: "2026-09-12", amount: 10 },
+    { id: 7, type: "expense", source_type: "manual", status: "confirmed", correction_of_id: 1, business_date: "2026-09-12", amount: 10 },
+  ]);
+  const byId = (id: number) => entries.find(entry => entry.transactionId === id)!;
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7].map(id => byId(id).editableManualDisplay),
+    [true, true, true, true, false, false, false]);
+});
+
+test("movement-confirmed #1724 transfer displays Cho to cash and strips only its duplicate route clause", () => {
+  const input = {
+    id: 1724, type: "transfer", source_type: "manual", status: "confirmed",
+    business_date: "2026-09-12", amount: 1_500_000,
+    memo: "9월 시트 row122 · doi tien mat · Cho → 현금 1,500,000₫",
+    movements: [
+      { amount: -1_500_000, fund_account: { display_name: "Cho 개인계좌 (BABA 소유분)" } },
+      { amount: 1_500_000, fund_account: { display_name: "매장 현금" } },
+    ],
+  };
+  const [entry] = build([input]);
+  assert.equal(entry.title, "doi tien mat");
+  assert.deepEqual(entry.systemDisplay, {
+    kind: "accountTransfer", fromAccountName: "Cho 개인계좌 (BABA 소유분)", toAccountName: "매장 현금",
+  });
+  assert.equal(entry.memo, input.memo);
+  if (entry.systemDisplay?.kind !== "accountTransfer") throw new Error("Missing transfer route");
+  assert.equal(accountTransferBadgeLabel(entry.systemDisplay, "ko"), "Cho → 현금");
+  assert.equal(accountTransferBadgeLabel(entry.systemDisplay, "vi"), "Cho → Tiền mặt");
+  assert.equal(entry.accountName, "Cho 개인계좌 (BABA 소유분)");
+  assert.match(page, /accountBadgeLabel\(entry\.accountName, lang, entry\)/);
+});
+
+test("account transfer route follows movement signs, and ambiguous movements retain fallback", () => {
+  const movement = (amount: number, display_name: string) => ({ amount, fund_account: { display_name } });
+  const base = { type: "transfer", source_type: "manual", status: "confirmed", business_date: "2026-09-12", amount: 100 };
+  const entries = build([
+    { ...base, id: 1, movements: [movement(100, "매장 현금"), movement(-100, "개인(Cho)")] },
+    { ...base, id: 2, movements: [movement(-100, "개인(Cho)"), movement(100, "매장 현금"), movement(10, "법인")] },
+    { ...base, id: 3, movements: [movement(-100, "개인(Cho)"), movement(90, "매장 현금")] },
+  ]);
+  const byId = (id: number) => entries.find(entry => entry.transactionId === id)!;
+  assert.deepEqual(byId(1).systemDisplay, { kind: "accountTransfer", fromAccountName: "개인(Cho)", toAccountName: "매장 현금" });
+  assert.equal(byId(2).systemDisplay, undefined);
+  assert.equal(byId(3).systemDisplay, undefined);
+  assert.equal(byId(2).accountName, "개인(Cho)");
+});
+
+test("manual metadata is shown once beside generic and payable rows", () => {
+  assert.match(page, /subtitle === "수동 입력" && entry\.origin === "manual" \? "" : subtitle/);
 });

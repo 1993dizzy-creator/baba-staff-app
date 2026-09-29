@@ -351,7 +351,7 @@ test("current balance panel is collapsed, nav-safe and expandable", () => {
   assert.match(bottomNav,/height: 60/);assert.match(bottomNav,/marginTop: -22/);assert.match(bottomNav,/zIndex: 1000/);
   assert.match(page,/vuong_personal_custody: "개인\(Vương\)"/);
   assert.match(page,/cho_personal_custody: "개인\(Cho\)"/);
-  assert.match(page,/return "Vương"/);assert.match(page,/return "Cho"/);
+  assert.match(read("lib/ledger/entry-display-account.ts"),/return "Vương"/);assert.match(read("lib/ledger/entry-display-account.ts"),/return "Cho"/);
 });
 
 test("payable outstanding card defaults to collapsed, stays expandable, and keeps party drilldown", () => {
@@ -462,7 +462,7 @@ test("daily rows keep category emoji and compact account, amount, and chevron la
   assert.ok(positions.every((position, index) => index === 0 || position > positions[index - 1]));
   assert.match(row, /onClick=\{\(\) => void openEntry\(entry\)\}/);
   assert.match(page, /onClick=\{\(\) => toggleDate\(group\.date\)\}/);
-  assert.match(page, /subtitle === entry\.categoryName \? "" : subtitle/);
+  assert.match(page, /subtitle === entry\.categoryName \|\| subtitle === "수동 입력" && entry\.origin === "manual" \? "" : subtitle/);
   assert.match(read("lib/ledger/entry-display-emoji.ts"), /manualExpenseCategoryEmoji\(entry\.categoryName\)/);
 
   const finalRule = (selector: string, property: string, media?: string) => {
