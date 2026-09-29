@@ -1,5 +1,7 @@
 // @ts-expect-error Node's local strip-types test runner requires the extension.
 import { isPayrollEligible, type PayrollEligibilityUser } from "../payroll/eligibility.ts";
+// @ts-expect-error Node's local strip-types test runner requires the extension.
+import { getPartKey, type PartValue } from "../common/parts.ts";
 
 // Input contract for POST /api/admin/ledger/payroll-advances. The employee is
 // always a real users.id; no category or party is accepted because an advance
@@ -66,13 +68,27 @@ export type PayrollAdvanceEmployeeRow = PayrollEligibilityUser & {
   full_name: string | null;
   username: string;
   is_active: boolean;
+  attendance_tracking_enabled: boolean;
+  part: string | null;
 };
 
 export function payrollAdvanceEmployees(rows: readonly PayrollAdvanceEmployeeRow[]) {
   return rows
-    .filter(row => row.is_active && isPayrollEligible(row))
-    .map(row => ({ userId: Number(row.id), name: (row.name?.trim() || row.full_name?.trim() || row.username) }))
+    .filter(row => row.is_active && row.attendance_tracking_enabled === true && isPayrollEligible(row))
+    .map(row => ({ userId: Number(row.id), name: (row.name?.trim() || row.full_name?.trim() || row.username), part: row.part }))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export type PayrollAdvanceEmployee = ReturnType<typeof payrollAdvanceEmployees>[number];
+
+const ADVANCE_PART_ORDER: readonly PartValue[] = ["kitchen", "hall", "bar", "cleaning", "owner", "etc"];
+
+export function groupPayrollAdvanceEmployees(employees: readonly PayrollAdvanceEmployee[]) {
+  return ADVANCE_PART_ORDER.map(part => ({
+    part,
+    employees: employees.filter(employee => getPartKey(employee.part) === part)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  })).filter(group => group.employees.length > 0);
 }
 
 // A ledger-created advance transaction key ends with its request UUID; the

@@ -14,7 +14,7 @@ export async function GET() {
   const auth = await requireLedgerActor();
   if (auth.response || !auth.actor) return auth.response;
   const { data, error } = await supabaseServer.from("users")
-    .select("id,name,full_name,username,is_active,role,is_system_account,payroll_eligible_override")
+    .select("id,name,full_name,username,is_active,role,is_system_account,payroll_eligible_override,attendance_tracking_enabled,part")
     .eq("is_active", true).eq("is_system_account", false).order("id");
   if (error) {
     console.error("[LEDGER_PAYROLL_ADVANCE_EMPLOYEES_FAILED]", error);

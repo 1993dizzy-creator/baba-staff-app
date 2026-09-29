@@ -60,6 +60,8 @@ import PaymentVerificationSection, { type Verification } from "./PaymentVerifica
 import { planPartialPayablePayment } from "@/lib/ledger/partial-payable-payment";
 import { groupPayablesForDisplay, groupPaymentsByDate } from "@/lib/ledger/payable-display-groups";
 import { getBusinessDate } from "@/lib/common/business-time";
+import { groupPayrollAdvanceEmployees, type PayrollAdvanceEmployee } from "@/lib/ledger/payroll-advance";
+import { adminUsersText } from "@/lib/text/admin-users";
 
 type Account = {
   id: number;
@@ -1778,7 +1780,7 @@ function ManualEntrySheet({
     [reason, setReason] = useState(""),
     [error, setError] = useState(""),
     [employeeId, setEmployeeId] = useState(""),
-    [employees, setEmployees] = useState<Array<{ userId: number; name: string }> | null>(null),
+    [employees, setEmployees] = useState<PayrollAdvanceEmployee[] | null>(null),
     [employeesError, setEmployeesError] = useState(""),
     // One idempotency key per advance being entered; a retry after a network
     // error reuses it, and a new key is issued only after a successful save.
@@ -1797,7 +1799,9 @@ function ManualEntrySheet({
     investmentAccounts = accounts.filter((row) => row.is_business_fund && ["cash", "bank", "personal_custody"].includes(row.type)),
     activePartners = data.partners.filter((row) => row.isActive),
     partnerGroups = groupManualEntryPartners(activePartners, lang),
-    selectedPartner = data.partners.find((row) => String(row.id) === partnerId);
+    selectedPartner = data.partners.find((row) => String(row.id) === partnerId),
+    employeeGroups = groupPayrollAdvanceEmployees(employees ?? []),
+    partText = adminUsersText[lang];
   // 👥 가불 looks like an expense category but is saved as a payroll advance
   // (payroll_payment + payroll adjustment), never as a P&L expense.
   const payrollAdvance = type === "expense" && isPayrollAdvanceManualAction(categoryId);
@@ -1982,8 +1986,12 @@ function ManualEntrySheet({
                 {({ id }) => (
                   <select id={id} data-manual-field="employee" required value={employeeId} onChange={(event) => changeEmployee(event.target.value)} style={keepingInputStyle}>
                     <option value="">{employees ? (vi ? "Chọn" : "선택") : (vi ? "Đang tải…" : "불러오는 중…")}</option>
-                    {(employees ?? []).map((employee) => (
-                      <option key={employee.userId} value={employee.userId}>{employee.name}</option>
+                    {employeeGroups.map((group) => (
+                      <optgroup key={group.part} label={group.part === "owner" ? (vi ? partText.ownerGroup : "Owner") : partText[`${group.part}Group`]}>
+                        {group.employees.map((employee) => (
+                          <option key={employee.userId} value={employee.userId}>{employee.name}</option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 )}

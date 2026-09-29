@@ -24,7 +24,7 @@ import {
   // @ts-expect-error local Node strip-types runner requires explicit extension
 } from "../lib/ledger/manual-entry-policy.ts";
 // @ts-expect-error local Node strip-types runner requires explicit extension
-import { ledgerPayrollAdvanceRequestId, parsePayrollAdvanceCancelInput, parsePayrollAdvanceInput, payrollAdvanceCancelErrorStatus, payrollAdvanceEmployees, payrollAdvanceErrorStatus } from "../lib/ledger/payroll-advance.ts";
+import { groupPayrollAdvanceEmployees, ledgerPayrollAdvanceRequestId, parsePayrollAdvanceCancelInput, parsePayrollAdvanceInput, payrollAdvanceCancelErrorStatus, payrollAdvanceEmployees, payrollAdvanceErrorStatus } from "../lib/ledger/payroll-advance.ts";
 
 const read = (path: string) => readFileSync(path, "utf8");
 const page = read("app/(protected)/admin/ledger/entries/page.tsx");
@@ -100,7 +100,7 @@ test("advance input contract requires employee, account, amount and time and rej
 });
 
 test("employee list is active payroll-eligible users keyed by real user_id", () => {
-  const base = { is_active: true, is_system_account: false, payroll_eligible_override: null, full_name: null };
+  const base = { is_active: true, is_system_account: false, payroll_eligible_override: null, full_name: null, attendance_tracking_enabled: true, part: "kitchen" };
   const employees = payrollAdvanceEmployees([
     { ...base, id: 10, name: "Triem", username: "triem", role: "staff" },
     { ...base, id: 4, name: "Quan", username: "quan", role: "staff" },
@@ -108,12 +108,38 @@ test("employee list is active payroll-eligible users keyed by real user_id", () 
     { ...base, id: 24, name: null, full_name: "Cô Thêm", username: "them", role: "staff" },
     { ...base, id: 30, name: "Left", username: "left", role: "staff", is_active: false },
     { ...base, id: 31, name: "Excluded", username: "x", role: "staff", payroll_eligible_override: false },
+    { ...base, id: 32, name: "No tracking", username: "n", role: "staff", attendance_tracking_enabled: false },
+    { ...base, id: 33, name: "Vuong", username: "vuong", role: "owner", payroll_eligible_override: true, part: "owner" },
   ]);
-  assert.deepEqual(employees, [{ userId: 24, name: "Cô Thêm" }, { userId: 4, name: "Quan" }, { userId: 10, name: "Triem" }]);
+  assert.deepEqual(employees, [
+    { userId: 24, name: "Cô Thêm", part: "kitchen" },
+    { userId: 4, name: "Quan", part: "kitchen" },
+    { userId: 10, name: "Triem", part: "kitchen" },
+    { userId: 33, name: "Vuong", part: "owner" },
+  ]);
+  assert.match(route, /\.select\("id,name,full_name,username,is_active,role,is_system_account,payroll_eligible_override,attendance_tracking_enabled,part"\)/);
   assert.match(route, /requireLedgerActor\(\)/);
   assert.match(route, /rpc\("ledger_create_payroll_advance_payment_v1"/);
   assert.match(route, /p_request_id: input\.requestId,\s*p_user_id: input\.userId/);
   assert.match(route, /if \(result\.status === "duplicate"\) return ledgerJson\(\{ ok: true, replayed: true, result \}, 200\);/);
+});
+
+test("advance employee options group by part in order and sort names within each part", () => {
+  const groups = groupPayrollAdvanceEmployees([
+    { userId: 1, name: "Zed", part: "hall" },
+    { userId: 2, name: "Vuong", part: "owner" },
+    { userId: 3, name: "Bar", part: "bar" },
+    { userId: 4, name: "Alex", part: "hall" },
+    { userId: 5, name: "Kitchen", part: "kitchen" },
+    { userId: 6, name: "Cleaner", part: "cleaning" },
+    { userId: 7, name: "Unknown", part: null },
+  ]);
+  assert.deepEqual(groups.map(group => group.part), ["kitchen", "hall", "bar", "cleaning", "owner", "etc"]);
+  assert.deepEqual(groups.find(group => group.part === "hall")?.employees.map(employee => employee.name), ["Alex", "Zed"]);
+  assert.deepEqual(groups.find(group => group.part === "owner")?.employees.map(employee => employee.name), ["Vuong"]);
+  assert.match(manualSheet, /employeeGroups\.map\(\(group\) => \(\s*<optgroup/);
+  assert.match(manualSheet, /group\.employees\.map\(\(employee\) => \(\s*<option/);
+  assert.match(page, /adminUsersText\[lang\]/);
 });
 
 test("migration reuses the production advance contract and never creates a generic expense", () => {
