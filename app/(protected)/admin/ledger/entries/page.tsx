@@ -56,6 +56,7 @@ import {
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
 import MonthCloseSheet from "./MonthCloseSheet";
+import ManualDisplayEditor from "./ManualDisplayEditor";
 import PaymentVerificationSection, { type Verification } from "./PaymentVerificationSection";
 import { planPartialPayablePayment } from "@/lib/ledger/partial-payable-payment";
 import { groupPayablesForDisplay, groupPaymentsByDate } from "@/lib/ledger/payable-display-groups";
@@ -1340,30 +1341,8 @@ function EntryDetailSheet({
   // adjustment and an append-only cash reversal are written together.
   const cancellableAdvance = entry.ledgerPayrollAdvance != null && !entry.ledgerPayrollAdvance.cancelled && entry.transactionId != null;
   const [advanceCancelReason,setAdvanceCancelReason]=useState<string|null>(null),[advanceCancelError,setAdvanceCancelError]=useState(""),[advanceCancelling,setAdvanceCancelling]=useState(false);
-  const [manualDisplayDraft, setManualDisplayDraft] = useState<{ title: string; memo: string; reason: string } | null>(null);
-  const [manualDisplayError, setManualDisplayError] = useState("");
+  const [manualDisplayOpen, setManualDisplayOpen] = useState(false);
   const [manualDisplaySaving, setManualDisplaySaving] = useState(false);
-  async function saveManualDisplay() {
-    if (!entry.editableManualDisplay || closed || !manualDisplayDraft || !entry.transactionId ||
-        !manualDisplayDraft.title.trim() || !manualDisplayDraft.reason.trim()) return;
-    setManualDisplaySaving(true);
-    setManualDisplayError("");
-    try {
-      const response = await fetch(`/api/admin/ledger/transactions/${entry.transactionId}/display`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(manualDisplayDraft),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.code ?? "MANUAL_DISPLAY_EDIT_FAILED");
-      setManualDisplayDraft(null);
-      await onConfirmedEdited(entry.transactionId);
-    } catch (cause) {
-      setManualDisplayError(`${vi ? "Không thể sửa giao dịch." : "거래를 수정하지 못했습니다."} ${(cause as Error).message}`);
-    } finally {
-      setManualDisplaySaving(false);
-    }
-  }
   async function cancelAdvance(){
     if(!cancellableAdvance||advanceCancelReason==null||!advanceCancelReason.trim())return;
     setAdvanceCancelling(true);setAdvanceCancelError("");
@@ -1395,7 +1374,7 @@ function EntryDetailSheet({
       onClose={onClose}
       footer={
         <div className={styles.detailFooter}>
-          {entry.editableManualDisplay ? <button type="button" disabled={saving || manualDisplaySaving || closed} onClick={() => { setManualDisplayDraft(value => value ? null : { title: entryDisplayTitle(entry, lang), memo: entry.memo ?? "", reason: "" }); setManualDisplayError(""); }} style={{ ...primaryButtonStyle, width: "100%" }}>{manualDisplayDraft ? (vi ? "Đóng chỉnh sửa" : "수정 닫기") : (vi ? "Sửa tiêu đề/ghi chú" : "제목·메모 수정")}</button> : null}
+          {entry.editableManualDisplay ? <button type="button" disabled={saving || manualDisplaySaving || closed} onClick={() => setManualDisplayOpen(value => !value)} style={{ ...primaryButtonStyle, width: "100%" }}>{manualDisplayOpen ? (vi ? "Đóng chỉnh sửa" : "수정 닫기") : (vi ? "Sửa tiêu đề/ghi chú" : "제목·메모 수정")}</button> : null}
           {cancellableAdvance ? <button type="button" disabled={saving||advanceCancelling||closed} onClick={()=>{setAdvanceCancelReason(value=>value==null?"":null);setAdvanceCancelError("")}} style={{...(advanceCancelReason==null?dangerButtonStyle:secondaryButtonStyle),width:"100%"}}>{advanceCancelReason==null?(vi?"Hủy ứng lương":"가불 취소"):(vi?"Đóng hủy ứng lương":"가불 취소 닫기")}</button>:null}
           {confirmedInventory ? <button type="button" disabled={saving||editSaving} onClick={()=>{setEditMode(value=>!value);setEditDraft(null);setEditError("")}} style={{...primaryButtonStyle,width:"100%"}}>{editMode?(vi?"Kết thúc chỉnh sửa":"수정 종료"):(vi?"Sửa":"수정")}</button>:null}
           {confirmedMeal ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setMealDraft(value=>value?null:{finalAmount:String(entry.effectiveAmount??entry.amount),reason:""});setMealError("")}} style={{...primaryButtonStyle,width:"100%"}}>{mealDraft?(vi?"Đóng chỉnh sửa":"수정 닫기"):(vi?"Sửa tiền ăn":"식대 수정")}</button>:null}
@@ -1430,21 +1409,17 @@ function EntryDetailSheet({
           <strong className={styles.detailAmount}>{money(entry.amount)}</strong>
         </span>
       </div>
-      {manualDisplayDraft ? (
-        <div className={styles.candidateEditor}>
-          <h3>{vi ? "Sửa giao dịch thủ công" : "수동 거래 제목·메모 수정"}</h3>
-          <BarField label={vi ? "Tiêu đề hiển thị" : "표시 제목"} required compact>
-            {({ id }) => <input id={id} required maxLength={160} value={manualDisplayDraft.title} onChange={event => setManualDisplayDraft({ ...manualDisplayDraft, title: event.target.value })} style={keepingInputStyle} />}
-          </BarField>
-          <BarField label={vi ? "Ghi chú" : "메모"} compact>
-            {({ id }) => <textarea id={id} maxLength={2000} rows={3} value={manualDisplayDraft.memo} onChange={event => setManualDisplayDraft({ ...manualDisplayDraft, memo: event.target.value })} style={keepingInputStyle} />}
-          </BarField>
-          <BarField label={vi ? "Lý do chỉnh sửa" : "수정 사유"} required compact>
-            {({ id }) => <input id={id} required maxLength={500} value={manualDisplayDraft.reason} onChange={event => setManualDisplayDraft({ ...manualDisplayDraft, reason: event.target.value })} style={keepingInputStyle} />}
-          </BarField>
-          {manualDisplayError ? <p className={styles.error} role="alert">{manualDisplayError}</p> : null}
-          <button type="button" disabled={manualDisplaySaving || closed || !manualDisplayDraft.title.trim() || !manualDisplayDraft.reason.trim()} onClick={() => void saveManualDisplay()} style={{ ...primaryButtonStyle, width: "100%" }}>{vi ? "Lưu sửa đổi" : "수정 저장"}</button>
-        </div>
+      {manualDisplayOpen && entry.editableManualDisplay && entry.transactionId != null ? (
+        <ManualDisplayEditor
+          lang={lang}
+          transactionId={entry.transactionId}
+          originalTitle={entryDisplayTitle(entry, lang)}
+          originalMemo={entry.memo ?? ""}
+          closed={closed}
+          onSavingChange={setManualDisplaySaving}
+          onConfirmedEdited={onConfirmedEdited}
+          onClose={() => setManualDisplayOpen(false)}
+        />
       ) : null}
       {entry.systemDisplay?.kind === "cardSettlementDifference" ? (
         <div className={styles.candidateEditor}>
@@ -2392,7 +2367,7 @@ function entryDisplayTitle(entry: LedgerEntry, lang: "ko" | "vi") {
     return lang === "vi" ? `Thanh toán ${party}` : `${party} 지급`;
   }
   if (display?.kind === "cardSettlementDeposit") return lang === "vi" ? "Tiền thẻ thực nhận" : "카드 실제 입금";
-  if (display?.kind === "cardSettlementDifference") return lang === "vi" ? "Chênh lệch đối soát thẻ cũ" : "카드 정산차액";
+  if (display?.kind === "cardSettlementDifference") return lang === "vi" ? "Chênh lệch đối soát thẻ cũ" : "기존 카드 정산차액";
   if (display?.kind === "cardFeeMonthClose") return lang === "vi" ? "Phí thẻ" : "카드 수수료";
   return entry.title;
 }

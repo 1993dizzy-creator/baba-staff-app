@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 // @ts-expect-error Node strip-types requires the extension.
@@ -9,6 +9,7 @@ import { entryDisplayBadgeKind, entryDisplayBadgeLabel } from "../lib/ledger/ent
 import { entryCategoryEmoji } from "../lib/ledger/entry-display-emoji.ts";
 
 const page = readFileSync("app/(protected)/admin/ledger/entries/page.tsx", "utf8");
+const manualDisplayEditor = readFileSync("app/(protected)/admin/ledger/entries/ManualDisplayEditor.tsx", "utf8");
 const route = readFileSync("app/api/admin/ledger/route.ts", "utf8");
 
 const build = (rows: Parameters<typeof buildLedgerEntries>[0]) => buildLedgerEntries(rows, [], new Map());
@@ -47,7 +48,7 @@ test("card settlement display keeps accounting direction and separates legacy fr
   assert.equal(fee.systemDisplay?.kind, "cardFeeMonthClose");
   assert.equal(entryCategoryEmoji(fee), "💳");
   assert.equal(entryCategoryEmoji(pos), "🧾");
-  for (const text of ["카드 실제 입금", "카드 정산차액", "카드 수수료", "카드정산", "과거 카드정산 방식에서 카드매출 매칭금액과 실제 입금액의 차액으로 확정된 기록입니다.", "정산 대상 카드매출", "실제 입금", "정산차액", "차이율"]) assert.ok(page.includes(text), text);
+  for (const text of ["카드 실제 입금", "기존 카드 정산차액", "카드 수수료", "카드정산", "과거 카드정산 방식에서 카드매출 매칭금액과 실제 입금액의 차액으로 확정된 기록입니다.", "정산 대상 카드매출", "실제 입금", "정산차액", "차이율"]) assert.ok(page.includes(text), text);
 });
 
 test("title override flows through shared list, detail and search display", () => {
@@ -66,5 +67,6 @@ test("title override flows through shared list, detail and search display", () =
   assert.match(route, /source_snapshot,display_snapshot,/);
   assert.match(page, /entryDisplayTitle\(entry, lang\)/);
   assert.match(page, /!`\$\{entryDisplayTitle\(entry, lang\)\}/);
-  assert.match(page, /transactions\/\$\{entry.transactionId\}\/display/);
+  assert.match(page, /<ManualDisplayEditor/);
+  assert.match(manualDisplayEditor, /"\/api\/admin\/ledger\/transactions\/" \+ transactionId \+ "\/display"/);
 });

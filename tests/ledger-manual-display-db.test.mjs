@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
-const migration = readFileSync("supabase/migrations/20260929100000_edit_manual_ledger_display.sql", "utf8");
+const migration = readFileSync("supabase/migrations/20260929063551_edit_manual_ledger_display.sql", "utf8");
 const api = readFileSync("app/api/admin/ledger/transactions/[id]/display/route.ts", "utf8");
 
 async function database() {
