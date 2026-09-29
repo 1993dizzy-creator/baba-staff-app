@@ -28,6 +28,8 @@ import {
 } from "@/components/bar/keeping/KeepingUi";
 import {
   entryDisplaySubtotal,
+  entryMatchesExpenseFilter,
+  isPayrollPaymentOutflow,
   entryRequiresReview,
   compareLedgerEntriesByDisplayTime,
   type LedgerEntry,
@@ -36,7 +38,7 @@ import {
 import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
 import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji } from "@/lib/ledger/entry-display-emoji";
 import { entryDisplayBadgeEmoji, entryDisplayBadgeKind, entryDisplayBadgeLabel } from "@/lib/ledger/entry-display-badge";
-import { entryDisplayAmount, entryDisplayAmountSign } from "@/lib/ledger/entry-display-amount";
+import { entryDisplayAmount, entryDisplayAmountSign, entryDisplayAmountTone } from "@/lib/ledger/entry-display-amount";
 import { groupPayableRows } from "@/lib/ledger/payable-date-groups";
 import {
   formatLedgerAmountInput,
@@ -185,6 +187,7 @@ const localTime = () =>
   new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 16);
 const money = (amount: number) =>
   `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(amount))} ₫`;
+const amountClassByTone = { income: styles.amountIncome, expense: styles.amountExpense, transfer: styles.amountTransfer };
 const investmentChartChange = (amount: number) => {
   const sign = amount < 0 ? "-" : amount > 0 ? "+" : "";
   return `${sign}${Math.round(Math.abs(amount) / 100_000) / 10}tr`;
@@ -420,7 +423,7 @@ function LedgerEntriesContent() {
       byDate = new Map<string, DateGroup>();
     for (const entry of regularEntries) {
       if (filter === "income" && entry.direction !== "income") continue;
-      if (filter === "expense" && entry.direction !== "expense") continue;
+      if (filter === "expense" && !entryMatchesExpenseFilter(entry)) continue;
       if (filter === "manual" && entry.origin !== "manual") continue;
       if (filter === "pending" && !entryRequiresReview(entry)) continue;
       if (
@@ -760,7 +763,7 @@ function LedgerEntriesContent() {
                       title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}>
                       {accountBadgeLabel(entry.accountName, lang, entry)}
                     </span>
-                    <strong className={entry.direction === "income" ? styles.amountIncome : entry.direction === "expense" ? styles.amountExpense : styles.amountTransfer}>
+                    <strong className={amountClassByTone[entryDisplayAmountTone(entry)]}>
                       {entryDisplayAmountSign(entry)}{money(entryDisplayAmount(entry))}
                     </strong>
                     <span aria-hidden className={styles.chevron}>›</span>
@@ -1408,7 +1411,7 @@ function EntryDetailSheet({
           >
             {accountBadgeLabel(entry.accountName, lang, entry)}
           </span>
-          <strong className={styles.detailAmount}>{entryDisplayAmountSign(entry)}{money(entryDisplayAmount(entry))}</strong>
+          <strong className={`${styles.detailAmount} ${isPayrollPaymentOutflow(entry) ? styles.amountExpense : ""}`}>{entryDisplayAmountSign(entry)}{money(entryDisplayAmount(entry))}</strong>
         </span>
       </div>
       {manualDisplayOpen && entry.editableManualDisplay && entry.transactionId != null ? (

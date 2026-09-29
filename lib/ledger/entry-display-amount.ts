@@ -1,4 +1,5 @@
-import type { LedgerEntry } from "./entries";
+// @ts-expect-error Node's local strip-types test runner requires the extension.
+import { isPayrollPaymentOutflow, type LedgerEntry } from "./entries.ts";
 
 // Presentation only. LedgerEntry.amount and direction remain accounting values.
 export function entryDisplayAmount(entry: Pick<LedgerEntry, "amount" | "systemDisplay">) {
@@ -7,7 +8,7 @@ export function entryDisplayAmount(entry: Pick<LedgerEntry, "amount" | "systemDi
     : entry.amount;
 }
 
-export function entryDisplayAmountSign(entry: Pick<LedgerEntry, "direction" | "paymentTransaction" | "employeeCost" | "fundFlow" | "systemDisplay">) {
+export function entryDisplayAmountSign(entry: Pick<LedgerEntry, "direction" | "paymentTransaction" | "payrollPayment" | "fundFlow" | "systemDisplay">) {
   if (entry.paymentTransaction) return "";
   if (entry.systemDisplay?.kind === "investment") {
     return entry.systemDisplay.cashFlow === "outflow" ? "−" :
@@ -15,6 +16,12 @@ export function entryDisplayAmountSign(entry: Pick<LedgerEntry, "direction" | "p
   }
   if (entry.direction === "income") return "+";
   if (entry.direction === "expense") return "−";
-  if (entry.employeeCost && entry.fundFlow === "outflow") return "−";
+  if (isPayrollPaymentOutflow(entry)) return "−";
   return "";
+}
+
+export function entryDisplayAmountTone(entry: Pick<LedgerEntry, "direction" | "payrollPayment" | "fundFlow">): "income" | "expense" | "transfer" {
+  if (entry.direction === "income") return "income";
+  if (entry.direction === "expense" || isPayrollPaymentOutflow(entry)) return "expense";
+  return "transfer";
 }

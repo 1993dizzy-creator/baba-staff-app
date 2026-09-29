@@ -1,19 +1,19 @@
-import type { LedgerEntry } from "./entries";
+// @ts-expect-error Node's local strip-types test runner requires the extension.
+import { isPayrollPaymentOutflow, type LedgerEntry } from "./entries.ts";
 
 // Display-only badge. LedgerEntry.direction stays the accounting bucket used
 // for date subtotals; this never feeds any calculation.
 export type EntryDisplayBadgeKind = "income" | "expense" | "transfer" | "unpaid" | "payment" | "investment";
 
 export function entryDisplayBadgeKind(
-  entry: Pick<LedgerEntry, "direction" | "settlementStatus" | "remainingAmount" | "paymentTransaction" | "employeeCost" | "systemDisplay">,
+  entry: Pick<LedgerEntry, "direction" | "settlementStatus" | "remainingAmount" | "paymentTransaction" | "payrollPayment" | "fundFlow" | "systemDisplay">,
 ): EntryDisplayBadgeKind {
   // Supplier payments and card settlement deposits share the display badge.
   if (entry.paymentTransaction) return "payment";
   if (entry.systemDisplay?.kind === "cardSettlementDeposit") return "payment";
   if (entry.systemDisplay?.kind === "investment") return "investment";
-  // Payroll pay-outs and advances (payroll_payment, direction transfer) read as
-  // spending; the labor cost itself is recognized once by the payroll batch.
-  if (entry.employeeCost && entry.direction === "transfer") return "expense";
+  // Only an actual payroll_payment fund outflow reads as spending.
+  if (isPayrollPaymentOutflow(entry)) return "expense";
   if (entry.direction !== "expense") return entry.direction;
   const outstanding = entry.settlementStatus === "unpaid" || entry.settlementStatus === "partial" || (entry.remainingAmount ?? 0) > 0;
   return outstanding ? "unpaid" : "expense";

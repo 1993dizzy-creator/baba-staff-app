@@ -62,6 +62,7 @@ export type LedgerEntry = {
   settlementStatus?: "unpaid" | "partial" | "paid";
   // Display identity only: payroll/labor rows (advances may have no category).
   employeeCost?: boolean;
+  payrollPayment?: boolean;
   // Display identity only: an actual supplier payable payment (payable_payment);
   // direction stays "transfer" so the cost is never counted twice.
   paymentTransaction?: boolean;
@@ -157,11 +158,20 @@ function transactionPaymentDisplay(row:TransactionRow,month:string){
   return payableDisplayAsOf(row.payable.original_amount??row.amount,row.payable.allocations??[],month);
 }
 
-export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign" | "systemDisplay">) {
+export function isPayrollPaymentOutflow(entry: Pick<LedgerEntry, "payrollPayment" | "fundFlow">) {
+  return entry.payrollPayment === true && entry.fundFlow === "outflow";
+}
+
+export function entryMatchesExpenseFilter(entry: Pick<LedgerEntry, "direction" | "payrollPayment" | "fundFlow">) {
+  return entry.direction === "expense" || isPayrollPaymentOutflow(entry);
+}
+
+export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign" | "systemDisplay" | "payrollPayment" | "fundFlow">) {
   const signedAmount = entry.amount * entry.economicEffectSign;
   return {
     income: entry.direction === "income" ? signedAmount : 0,
     expense: (entry.direction === "expense" ? signedAmount : 0) +
+      (isPayrollPaymentOutflow(entry) ? entry.amount : 0) +
       (entry.systemDisplay?.kind === "payablePayment" ? entry.systemDisplay.paymentDifferenceAmount ?? 0 : 0),
   };
 }
@@ -485,6 +495,7 @@ export function buildLedgerEntries(
 
   for (const row of transactions) {
     if (row.type === "opening") continue;
+    if (row.type === "expense_recognition" && row.source_type === "payroll_completed_batch") continue;
     if (fullyReversedManualIds.has(value(row.id)) || hiddenManualCorrectionIds.has(value(row.id)) ||
         hiddenPaymentDifferenceIds.has(value(row.id))) continue;
     if (
@@ -615,6 +626,7 @@ export function buildLedgerEntries(
       amount, economicEffectSign, fundFlow, ...time, accountName, settlementStatus: paymentDisplay?.status, remainingAmount: paymentDisplay?.remainingAmount, categoryName: row.category?.name ?? null, transactionId,
       partyId: row.party_id == null ? null : value(row.party_id),
       employeeCost: isEmployeeCostTransaction(row),
+      payrollPayment: row.type === "payroll_payment",
       paymentTransaction: payablePayment,
       editableManualDisplay,
       ...(ledgerPayrollAdvanceRequestId(row)

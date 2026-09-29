@@ -46,8 +46,8 @@ const advanceRow = {
   movements: [{ amount: -2_000_000, fund_account: { id: 1, code: "store_cash", display_name: "현금" } }],
 };
 
-test("expense category selector keeps the 18 DB categories and adds 👥 가불 as a special action", () => {
-  assert.equal(MANUAL_EXPENSE_CATEGORY_NAMES.length, 18);
+test("expense category selector keeps the 19 DB categories and adds 👥 가불 as a special action", () => {
+  assert.equal(MANUAL_EXPENSE_CATEGORY_NAMES.length, 19);
   assert.ok(!MANUAL_EXPENSE_CATEGORY_NAMES.some((name: string) => /가불|급여|인건비/.test(name)));
   assert.deepEqual(MANUAL_EXPENSE_SPECIAL_ACTIONS.map((action: { value: string }) => action.value), [PAYROLL_ADVANCE_MANUAL_ACTION]);
   assert.equal(manualExpenseSpecialActionLabel(MANUAL_EXPENSE_SPECIAL_ACTIONS[0], "ko"), "👥 가불");
@@ -174,11 +174,11 @@ test("an advance is a cash outflow, is deducted from net payout, and never adds 
     payableStatus: null, allocatedAmount: 0, corrections: [],
   }));
   assert.equal(computePaidExpenseTotal(roots), 9_000_000, "labor cost is recognized once, not 9,000,000 + 2,000,000");
-  // Daily expense subtotal (accounting direction) also excludes the advance.
+  // Daily display subtotal includes actual cash outflow; the P&L root above still excludes the advance.
   const entries = buildLedgerEntries(rows, [], new Map(), [], "2026-09");
   const advance = entries.find((entry: { transactionId: number | null }) => entry.transactionId === 2101)!;
   assert.equal(advance.direction, "transfer");
-  assert.deepEqual(entryDisplaySubtotal(advance), { income: 0, expense: 0 });
+  assert.deepEqual(entryDisplaySubtotal(advance), { income: 0, expense: 2_000_000 });
   // Real cash left the store.
   assert.equal(computeActualCashOutflow([advanceRow], new Set([1]), "2026-09"), 2_000_000);
   // Payroll: the advance adjustment is deducted from the month's net payout.

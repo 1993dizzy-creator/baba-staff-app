@@ -85,8 +85,8 @@ test("displayed expense adds prepaid once and excludes transfers and investment"
   assert.equal(computeDisplayedExpense(448_445_598.5, rows.filter(row => row.type !== "prepaid_expense_payment")), 448_445_598.5);
 });
 
-test("ledger page uses the UI direction for expense filtering and the daily subtotal", () => {
-  assert.match(page, /filter === "expense" && entry\.direction !== "expense"/);
+test("ledger page uses the display expense predicate and the daily subtotal", () => {
+  assert.match(page, /filter === "expense" && !entryMatchesExpenseFilter\(entry\)/);
   assert.match(page, /const subtotal = entryDisplaySubtotal\(entry\);/);
   assert.match(page, /group\.expense \+= subtotal\.expense/);
   assert.match(route, /const displayedExpense = computeDisplayedExpense\(paidExpense, transactions\)/);
