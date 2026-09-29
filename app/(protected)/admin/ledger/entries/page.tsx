@@ -57,6 +57,7 @@ import {
 import styles from "./entries.module.css";
 import MonthCloseSheet from "./MonthCloseSheet";
 import ManualDisplayEditor from "./ManualDisplayEditor";
+import ManualDisplayHistory from "./ManualDisplayHistory";
 import PaymentVerificationSection, { type Verification } from "./PaymentVerificationSection";
 import { planPartialPayablePayment } from "@/lib/ledger/partial-payable-payment";
 import { groupPayablesForDisplay, groupPaymentsByDate } from "@/lib/ledger/payable-display-groups";
@@ -1662,6 +1663,13 @@ function EntryDetailSheet({
           <summary className={styles.detailMemoLabel}>{vi ? "Xem toàn bộ ghi chú" : "메모 전체 보기"}</summary>
           <p className={styles.detailMemoText}>{entry.memo}</p>
         </details>
+      ) : null}
+      {entry.editableManualDisplay && entry.transactionId != null ? (
+        <ManualDisplayHistory
+          key={`${entry.transactionId}:${entryDisplayTitle(entry, lang)}:${entry.memo ?? ""}`}
+          transactionId={entry.transactionId}
+          lang={lang}
+        />
       ) : null}
     </BarSheet>
   );
