@@ -535,7 +535,7 @@ test("manual entry uses its own canonical expense whitelist", () => {
   assert.deepEqual(MANUAL_EXPENSE_CATEGORY_NAMES, [
     "직원 식대", "전기료", "수도료", "가스비", "인터넷·통신비", "청소·위생비",
     "배송·운송비", "수리·유지보수", "설비·비품", "운영 소모품", "인쇄·홍보비",
-    "직원 주거비", "세금", "보험·복리후생", "회계·세무", "결제·은행 수수료",
+    "직원 주거비", "세금", "보험", "복리후생", "회계·세무", "결제·은행 수수료",
     "인테리어", "기타 비용",
   ]);
   for (const automatic of ["급여/인건비", "식자재", "건어물", "생맥주", "시럽", "소모품·잡화"]) {
@@ -700,7 +700,7 @@ test("payroll, payroll advances and labor categories share 👥 while meal and i
     { id: 12, type: "payroll_payment", business_date: "2026-09-10", amount: 9_000_000, source_type: "payroll_payment_group", source_key: "payroll-payment-group:1", category: null, movements: [{ amount: -9_000_000 }] },
     { id: 13, type: "expense", business_date: "2026-09-10", amount: 1_000_000, source_type: "manual", category: { name: "급여/인건비" }, movements: [{ amount: -1_000_000 }] },
     { id: 14, type: "expense", business_date: "2026-09-10", amount: 300_000, source_type: "manual", category: { name: "직원 식대" }, movements: [{ amount: -300_000 }] },
-    { id: 15, type: "expense", business_date: "2026-09-10", amount: 400_000, source_type: "manual", category: { name: "보험·복리후생" }, movements: [{ amount: -400_000 }] },
+    { id: 15, type: "expense", business_date: "2026-09-10", amount: 400_000, source_type: "manual", category: { name: "보험" }, movements: [{ amount: -400_000 }] },
   ];
   const entries = buildLedgerEntries(rows, [], new Map(), [], "2026-09");
   const byId = (id: number) => entries.find(entry => entry.transactionId === id)!;

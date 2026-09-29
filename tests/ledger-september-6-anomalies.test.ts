@@ -11,13 +11,13 @@ test("outing pork remains a manual cash expense with its display title, memo and
     id: 1767, type: "expense", status: "confirmed", source_type: "manual",
     business_date: "2026-09-06", amount: 515_000, memo: "7~8일 직원 야유회용 시장 구매",
     display_snapshot: { titleOverride: "야유회 돼지고기 구입" },
-    party_id: 7, party: { name: "Chợ" }, category: { name: "보험·복리후생" },
+    party_id: 7, party: { name: "Chợ" }, category: { name: "복리후생" },
     movements: [{ amount: -515_000, fund_account: { display_name: "매장 현금" } }],
   }], [], new Map());
   assert.equal(entry.title, "야유회 돼지고기 구입");
   assert.equal(entry.memo, "7~8일 직원 야유회용 시장 구매");
   assert.equal(entry.partyId, 7);
-  assert.equal(entry.categoryName, "보험·복리후생");
+  assert.equal(entry.categoryName, "복리후생");
   assert.equal(entry.accountName, "매장 현금");
   assert.equal(entry.amount, 515_000);
   assert.equal(entry.businessDate, "2026-09-06");

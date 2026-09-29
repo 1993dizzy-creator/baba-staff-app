@@ -157,6 +157,7 @@
 /* Display-only badges: unpaid reuses the pending/payable yellow, payment is blue. */
 .direction.unpaid{background:#fff4dc;color:#9a5b10}
 .direction.payment{background:#e8f0fe;color:#1d4ed8}
+.direction.investment{background:#f1edfa;color:#68459a}
 .cancelledBadge{padding:3px 5px;border-radius:999px;background:#f3f4f6;color:#6b7280;font-size:9px;font-weight:800;white-space:nowrap}
 .manualDisplayHistory{border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;padding:10px 12px;font-size:12px}
 .manualDisplayHistory>summary{cursor:pointer;font-weight:800;color:#374151}

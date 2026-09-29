@@ -367,7 +367,7 @@ test("every actual-cash expense row equals the sum of its details; payroll_payme
     { id: 21, name: "식자재 매입", kind: "expense" as const, parent_id: 20 },
     { id: 22, name: "주류 매입", kind: "expense" as const, parent_id: 20 },
     { id: 40, name: "인건비", kind: "expense" as const, parent_id: null },
-    { id: 41, name: "보험·복리후생", kind: "expense" as const, parent_id: 40 },
+    { id: 41, name: "보험", kind: "expense" as const, parent_id: 40 },
     { id: 42, name: "직원 식대", kind: "expense" as const, parent_id: 40 },
     { id: 43, name: "직원 주거비", kind: "expense" as const, parent_id: 40 },
     { id: 50, name: "공과금", kind: "expense" as const, parent_id: null },
@@ -412,7 +412,7 @@ test("every actual-cash expense row equals the sum of its details; payroll_payme
   const byName = new Map(rows.map((row) => [row.name, row]));
   const labor = byName.get("인건비")!;
   assert.equal(labor.amount, 187_560_248);
-  assert.deepEqual(labor.details.map((detail) => [detail.name, detail.amount]), [["급여 지급", 153_405_248], ["보험·복리후생", 23_465_000], ["직원 식대", 8_190_000], ["직원 주거비", 2_500_000]]);
+  assert.deepEqual(labor.details.map((detail) => [detail.name, detail.amount]), [["급여 지급", 153_405_248], ["보험", 23_465_000], ["직원 식대", 8_190_000], ["직원 주거비", 2_500_000]]);
   // 매입비 keeps payable-allocation tracing to the original categories.
   assert.deepEqual(byName.get("매입비")!.details.map((detail) => [detail.name, detail.amount]), [["식자재 매입", 600], ["주류 매입", 300]]);
   assert.deepEqual(byName.get("공과금")!.details.map((detail) => [detail.name, detail.amount]), [["전기료", 700], ["세부분류 없음", 50]]);

@@ -43,6 +43,7 @@ export type LedgerEntry = {
   subtitle: string;
   memo?: string | null;
   amount: number;
+  fundFlow?: "inflow" | "outflow" | "none";
   // Signed multiplier (+1/-1) for netting corrections/reversals into visible
   // date-group subtotals without changing the displayed row amount.
   economicEffectSign: number;
@@ -79,7 +80,8 @@ export type LedgerEntry = {
     | { kind: "meal"; employeeCount: number }
     | { kind: "inventory"; itemCount: number; partyMissing: boolean; needsConfirmation: boolean }
     | { kind: "rent" }
-    | { kind: "payablePayment"; partyName: string; prepaid: boolean }
+    | { kind: "payablePayment"; partyName: string; prepaid: boolean; actualPaidAmount?: number; paymentDifferenceAmount?: number }
+    | { kind: "investment"; cashFlow: "inflow" | "outflow" | "none" }
     | { kind: "cardSettlementDeposit" }
     | { kind: "cardSettlementDifference"; matchedGrossAmount: number | null; depositAmount: number | null; differenceAmount: number | null }
     | { kind: "cardFeeMonthClose" };
@@ -155,12 +157,33 @@ function transactionPaymentDisplay(row:TransactionRow,month:string){
   return payableDisplayAsOf(row.payable.original_amount??row.amount,row.payable.allocations??[],month);
 }
 
-export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign">) {
+export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign" | "systemDisplay">) {
   const signedAmount = entry.amount * entry.economicEffectSign;
   return {
     income: entry.direction === "income" ? signedAmount : 0,
-    expense: entry.direction === "expense" ? signedAmount : 0,
+    expense: (entry.direction === "expense" ? signedAmount : 0) +
+      (entry.systemDisplay?.kind === "payablePayment" ? entry.systemDisplay.paymentDifferenceAmount ?? 0 : 0),
   };
+}
+
+function transactionFundFlow(row: TransactionRow): "inflow" | "outflow" | "none" {
+  const net = (row.movements ?? []).reduce((sum, movement) => sum + value(movement.amount), 0);
+  return net > 0 ? "inflow" : net < 0 ? "outflow" : "none";
+}
+
+function investmentDisplayFlow(row: TransactionRow): "inflow" | "outflow" | "none" | null {
+  const snapshot = row.source_snapshot ?? {};
+  const ownerPayment = row.type === "owner_settlement_payment" || row.source_type === "owner_settlement_payment";
+  const capitalRecovery = snapshot.settlementType === "capital_recovery" ||
+    (snapshot.settlementType == null && Number(snapshot.recoveryPaid) > 0 && Number(snapshot.pureProfitPaid ?? 0) === 0);
+  if (row.type !== "investment" && row.source_type !== "owner_investment" &&
+      row.source_type !== "owner_investment_recovery" && !(ownerPayment && capitalRecovery)) return null;
+  const movementFlow = transactionFundFlow(row);
+  if (movementFlow !== "none") return movementFlow;
+  if (ownerPayment || row.source_type === "owner_investment_recovery" ||
+      snapshot.entryType === "recovery" || Number(row.amount) < 0) return "outflow";
+  if (snapshot.entryType === "contribution" || Number(row.amount) > 0) return "inflow";
+  return "none";
 }
 
 function displayMemo(memo: string | null | undefined) {
@@ -211,9 +234,12 @@ function specialTransactionDisplay(row: TransactionRow) {
     const memoEmployee = memoWithoutDate.match(/^(.+?)\s+(?:급여\s*가불|ứng\s*lương)/i)?.[1]?.trim();
     return { title: `${employee || memoEmployee || "직원"} 급여 가불`, subtitle: "" };
   }
-  if (row.type === "investment" && row.source_type === "owner_investment") {
-    const investor = memo.match(/([\p{L}\p{N}]+)\s*투자금/u)?.[1];
-    return { title: investor ? `${investor} 투자금` : "투자금", subtitle: "사업 투자금" };
+  const investmentFlow = investmentDisplayFlow(row);
+  if (investmentFlow !== null) {
+    const investor = memo.match(/([\p{L}\p{N}]+)\s*투자금/u)?.[1] ||
+      String(row.source_snapshot?.participantName ?? row.source_snapshot?.investorName ?? row.party?.name ?? "").trim();
+    const name = investor ? `${investor} 투자금` : "투자금";
+    return { title: investmentFlow === "outflow" ? `${name} 회수` : name, subtitle: "사업 투자금" };
   }
   if (row.type === "prepaid_expense_payment") {
     const planName = String(row.source_snapshot?.planName ?? "");
@@ -414,6 +440,24 @@ export function buildLedgerEntries(
       .filter(row => row.source_type === "inventory_purchase_reversal" && row.correction_of_id != null)
       .map(row => value(row.correction_of_id)),
   );
+  const transactionsById = new Map(transactions.map(row => [value(row.id), row]));
+  const linkedPaymentDifferences = new Map<number, { actualPaidAmount: number; differenceAmount: number }>();
+  const hiddenPaymentDifferenceIds = new Set<number>();
+  for (const payment of transactions) {
+    if (payment.type !== "payable_payment" || payment.status !== "confirmed") continue;
+    const actual = Number(payment.display_snapshot?.actualPaidAmount);
+    const differenceAmount = Number(payment.display_snapshot?.paymentDifferenceAmount);
+    const linkedId = Number(payment.display_snapshot?.linkedDifferenceTransactionId);
+    const difference = transactionsById.get(linkedId);
+    if (!Number.isSafeInteger(linkedId) || !difference || difference.status !== "confirmed" ||
+        difference.source_type !== "manual" || difference.type !== "expense" ||
+        difference.business_date !== payment.business_date || difference.amount == null ||
+        !Number.isFinite(differenceAmount) || differenceAmount <= 0 ||
+        value(difference.amount) !== differenceAmount ||
+        actual !== value(payment.amount) + differenceAmount) continue;
+    linkedPaymentDifferences.set(value(payment.id), { actualPaidAmount: actual, differenceAmount });
+    hiddenPaymentDifferenceIds.add(linkedId);
+  }
   const manualCorrectionsByOriginal = new Map<number, TransactionRow[]>();
   for (const row of transactions) {
     if (row.correction_of_id == null || row.status !== "confirmed") continue;
@@ -441,7 +485,8 @@ export function buildLedgerEntries(
 
   for (const row of transactions) {
     if (row.type === "opening") continue;
-    if (fullyReversedManualIds.has(value(row.id)) || hiddenManualCorrectionIds.has(value(row.id))) continue;
+    if (fullyReversedManualIds.has(value(row.id)) || hiddenManualCorrectionIds.has(value(row.id)) ||
+        hiddenPaymentDifferenceIds.has(value(row.id))) continue;
     if (
       row.source_type === "ledger_correction" &&
       row.correction_of_id != null &&
@@ -459,6 +504,7 @@ export function buildLedgerEntries(
     const expense = participatesInProfit && (row.type === "expense" || row.type === "expense_recognition");
     const direction = row.type === "prepaid_expense_payment" ? "expense" : !participatesInProfit ? "transfer" : expense ? "expense" : "income";
     const economicEffectSign = value(row.economic_effect_sign) || 1;
+    const fundFlow = transactionFundFlow(row);
     const movement = row.movements?.find(item => direction === "income" ? value(item.amount) > 0 : value(item.amount) < 0) ?? row.movements?.[0];
     const paymentDisplay = row.payable && viewMonth ? transactionPaymentDisplay(row,viewMonth) : null;
     const accountName = movement
@@ -546,6 +592,8 @@ export function buildLedgerEntries(
     const payroll = row.source_type.includes("payroll");
     const specialDisplay = specialTransactionDisplay(row);
     const payablePayment = row.type === "payable_payment";
+    const investmentFlow = investmentDisplayFlow(row);
+    const linkedPaymentDifference = linkedPaymentDifferences.get(transactionId);
     const cardSettlementDeposit = row.type === "card_settlement_deposit";
     const cardSettlementDifference = row.source_type === "card_settlement_difference";
     const cardFeeMonthClose = row.source_type === "card_fee_month_close";
@@ -564,7 +612,7 @@ export function buildLedgerEntries(
       title: titleOverride || (specialDisplay?.title ?? (pos || rent || payablePayment || cardSettlementDeposit ? "" : payroll ? "급여 · 인건비" : conciseTransactionTitle(row))),
       subtitle: specialDisplay?.subtitle ?? (pos || rent ? "" : row.category?.name ?? (automatic ? "자동 장부" : "수동 입력")),
       memo: row.memo ?? null,
-      amount, economicEffectSign, ...time, accountName, settlementStatus: paymentDisplay?.status, remainingAmount: paymentDisplay?.remainingAmount, categoryName: row.category?.name ?? null, transactionId,
+      amount, economicEffectSign, fundFlow, ...time, accountName, settlementStatus: paymentDisplay?.status, remainingAmount: paymentDisplay?.remainingAmount, categoryName: row.category?.name ?? null, transactionId,
       partyId: row.party_id == null ? null : value(row.party_id),
       employeeCost: isEmployeeCostTransaction(row),
       paymentTransaction: payablePayment,
@@ -575,7 +623,9 @@ export function buildLedgerEntries(
       drilldown: pos ? "pos" : payroll ? "payroll" : "generic",
       ...(pos ? { systemDisplay: { kind: "pos" as const, paymentBucket: posPaymentBucket, receiptCount: value(snapshot.receiptCount) } } : {}),
       ...(rent ? { systemDisplay: { kind: "rent" as const } } : {}),
-      ...(payablePayment ? { systemDisplay: { kind: "payablePayment" as const, partyName: row.party?.name?.trim() || "", prepaid: hasPrepaymentFlag(row.source_snapshot) } } : {}),
+      ...(payablePayment ? { systemDisplay: { kind: "payablePayment" as const, partyName: row.party?.name?.trim() || "", prepaid: hasPrepaymentFlag(row.source_snapshot),
+        ...(linkedPaymentDifference ? { actualPaidAmount: linkedPaymentDifference.actualPaidAmount, paymentDifferenceAmount: linkedPaymentDifference.differenceAmount } : {}) } } : {}),
+      ...(investmentFlow !== null ? { systemDisplay: { kind: "investment" as const, cashFlow: investmentFlow } } : {}),
       ...(cardSettlementDeposit ? { systemDisplay: { kind: "cardSettlementDeposit" as const } } : {}),
       ...(cardSettlementDifference ? { systemDisplay: { kind: "cardSettlementDifference" as const, matchedGrossAmount: snapshotNumber("matchedGrossAmount"), depositAmount: snapshotNumber("depositAmount"), differenceAmount: snapshotNumber("differenceAmount") } } : {}),
       ...(cardFeeMonthClose ? { systemDisplay: { kind: "cardFeeMonthClose" as const } } : {}),

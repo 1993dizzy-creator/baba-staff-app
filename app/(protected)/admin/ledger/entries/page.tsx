@@ -36,6 +36,7 @@ import {
 import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
 import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji } from "@/lib/ledger/entry-display-emoji";
 import { entryDisplayBadgeEmoji, entryDisplayBadgeKind, entryDisplayBadgeLabel } from "@/lib/ledger/entry-display-badge";
+import { entryDisplayAmount, entryDisplayAmountSign } from "@/lib/ledger/entry-display-amount";
 import { groupPayableRows } from "@/lib/ledger/payable-date-groups";
 import {
   formatLedgerAmountInput,
@@ -760,7 +761,7 @@ function LedgerEntriesContent() {
                       {accountBadgeLabel(entry.accountName, lang, entry)}
                     </span>
                     <strong className={entry.direction === "income" ? styles.amountIncome : entry.direction === "expense" ? styles.amountExpense : styles.amountTransfer}>
-                      {entry.direction === "income" ? "+" : entry.direction === "expense" ? "−" : ""}{money(entry.amount)}
+                      {entryDisplayAmountSign(entry)}{money(entryDisplayAmount(entry))}
                     </strong>
                     <span aria-hidden className={styles.chevron}>›</span>
                   </span>
@@ -1407,7 +1408,7 @@ function EntryDetailSheet({
           >
             {accountBadgeLabel(entry.accountName, lang, entry)}
           </span>
-          <strong className={styles.detailAmount}>{money(entry.amount)}</strong>
+          <strong className={styles.detailAmount}>{entryDisplayAmountSign(entry)}{money(entryDisplayAmount(entry))}</strong>
         </span>
       </div>
       {manualDisplayOpen && entry.editableManualDisplay && entry.transactionId != null ? (
@@ -2309,6 +2310,7 @@ function AccountField({
   );
 }
 function entryDisplayEmoji(entry: LedgerEntry, partnersByParty: ReadonlyMap<number, Partner>) {
+  if (entry.systemDisplay?.kind === "investment") return entryCategoryEmoji(entry);
   if (entry.systemDisplay?.kind === "pos") return entryCategoryEmoji(entry);
   if (entry.systemDisplay?.kind === "cardSettlementDeposit" || entry.systemDisplay?.kind === "cardSettlementDifference" || entry.systemDisplay?.kind === "cardFeeMonthClose") return entryCategoryEmoji(entry);
   if (entry.employeeCost) return EMPLOYEE_COST_EMOJI;
