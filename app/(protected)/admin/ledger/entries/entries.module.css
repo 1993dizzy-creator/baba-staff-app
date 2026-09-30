@@ -123,9 +123,12 @@
 .detailLeft{min-width:0;display:flex;align-items:center;gap:6px}
 .detailLeft>.direction{flex:0 0 auto}
 .detailEmoji{flex:0 0 auto;font-size:14px;line-height:1}
-.detailTitleText{flex:1 1 auto;min-width:0;overflow:hidden;color:#6b7280;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
-.detailTitleText>strong{color:#111827;font-size:12px}
-.detailLeft>.entryFlags{flex:0 0 auto}
+.detailTitleText{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:4px;color:#6b7280;font-size:11px;white-space:nowrap}
+.detailTitleText>span:last-child:not(.detailTitleLine){min-width:0;overflow:hidden;text-overflow:ellipsis}
+.detailTitleLine{min-width:0;display:inline-flex;align-items:center;gap:4px}
+.detailTitleLine>strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#111827;font-size:12px}
+.detailTitleLine>.entryFlags{flex-shrink:0}
+.entryStatusReason{margin:6px 0;color:#9a5b10;font-size:11px;line-height:1.5}
 .detailPayment{display:flex;align-items:center;justify-self:end;gap:5px;min-width:0;white-space:nowrap}
 .detailPayment>.accountBadge{flex:0 1 auto;max-width:58px}
 .detailSummary .detailAmount{font-size:15px}
@@ -134,7 +137,7 @@
 @media(max-width:360px){.detailPayment>.accountBadge{max-width:40px}.detailSummary .detailAmount{font-size:12px}}
 .detailMemoLabel{cursor:pointer}
 .detailMemoText{margin-top:7px}
-.entryMain strong{display:inline;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.entryMain strong{flex:0 1 auto;min-width:0;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .projectionWarning{margin:8px 0;padding:9px 11px;border:1px solid #f3d9a9;border-radius:11px;background:#fffaf0;color:#7c4e2e;font-size:11px}.projectionWarning p{margin:4px 0}.projectionWarning summary{cursor:pointer;font-weight:800}.projectionWarningRow{display:flex;flex-wrap:wrap;gap:3px 8px;padding:7px 0;border-top:1px solid #f3e7d1}.projectionWarningRow:first-of-type{margin-top:6px}.projectionWarningRow strong{min-width:0;overflow-wrap:anywhere}.projectionWarningRow small{flex-basis:100%;color:#94600f}
 .manualReadOnly{background:#f3f4f6;color:#374151;font-weight:700}
 .manualNotice{grid-column:1/-1;margin:0;padding:8px 10px;border:1px solid #f5d9a8;border-radius:9px;background:#fffaf0;color:#9a5b10;font-size:10px;line-height:1.45}
@@ -142,8 +145,11 @@
 .entryRow{grid-template-columns:minmax(0,1fr) max-content;gap:8px}
 .entryLeft{min-width:0;display:grid;grid-template-columns:auto 18px minmax(0,1fr);align-items:center;column-gap:6px}
 .entryCategoryEmoji{font-size:14px;line-height:1;text-align:center}
-.entryLeft>.entryMain{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.entryFlags{grid-column:3;display:flex;align-items:center;gap:4px;min-width:0}
+.entryLeft>.entryMain{min-width:0;display:flex;align-items:center;gap:4px;overflow:visible;white-space:nowrap}
+.entryMain>span:last-child:not(.entryFlags){flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.entryFlags{display:flex;align-items:center;gap:4px;min-width:0}
+.entryMain>.entryFlags{flex:0 0 auto;display:inline-flex;flex-wrap:nowrap;white-space:nowrap}
+.entryAlert{display:inline-block;line-height:1;font-size:12px}
 .entryRight{display:grid;justify-items:end;gap:2px;min-width:0;white-space:nowrap}
 .entryTime{min-height:10px;color:#9ca3af;font-size:9px;font-weight:700;line-height:1}
 .entryBottom{display:flex;align-items:center;gap:5px;white-space:nowrap}

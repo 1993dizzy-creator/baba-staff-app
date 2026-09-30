@@ -494,7 +494,7 @@ test("entry detail uses a one-row summary matching the daily row and moves the d
   assert.match(summary, /accountBadgeLabel\(entry.accountName, lang, entry\)/);
   assert.match(summary, /money\(entry.amount\)/);
   assert.match(css, /\.detailSummary\{grid-template-columns:minmax\(0,1fr\) max-content/);
-  assert.match(css, /\.detailTitleText\{[^}]*text-overflow:ellipsis;white-space:nowrap/);
+  assert.match(css, /\.detailTitleLine>strong\{[^}]*text-overflow:ellipsis;white-space:nowrap/);
   assert.match(css, /\.itemDescription>strong\+small\{margin-left:8px\}/);
   assert.match(css, /@media\(max-width:360px\)\{\.detailPayment>\.accountBadge/);
   assert.match(keepingUi, /titleAside\?<span/);
@@ -730,4 +730,86 @@ test("daily list and detail summary render the same badge and emoji resolvers", 
   assert.doesNotMatch(page, /급여 가불"\)|includes\("급여 가불"\)/);
   assert.match(css, /\.direction\.unpaid\{background:#fff4dc;color:#9a5b10\}/);
   assert.match(css, /\.direction\.payment\{background:#e8f0fe;color:#1d4ed8\}/);
+});
+
+
+test("daily status icon stays immediately after strong inside entryMain", () => {
+  assert.match(css, /\.entryLeft\{[^}]*grid-template-columns:auto 18px minmax\(0,1fr\);/);
+  assert.match(css, /\.entryLeft\{grid-template-columns:auto 16px minmax\(0,1fr\);/);
+  assert.match(css, /\.entryMain strong\{[^}]*min-width:0;[^}]*text-overflow:ellipsis;white-space:nowrap/);
+  assert.match(css, /\.entryMain>\.entryFlags\{flex:0 0 auto;display:inline-flex/);
+  assert.doesNotMatch(css, /entryTitleLine|\.entryLeft>\.entryFlags|\.entryFlags\{grid-column/);
+  const start = page.indexOf("{group.rows.map((entry)");
+  const row = page.slice(start, page.indexOf("className={styles.entryRight}", start));
+  assert.match(row, /entryMain\}>\s*<strong>[\s\S]*?<\/strong>\s*<EntryListFlags entry=\{entry\} lang=\{lang\} \/>\s*\{entryMeta/);
+  assert.doesNotMatch(row, /<EntryFlags /);
+});
+
+const requireUi = createRequire(import.meta.url);
+const ts = requireUi("typescript");
+const React = requireUi("react");
+const { renderToStaticMarkup } = requireUi("react-dom/server");
+const listFlagsSource = page.slice(page.indexOf("function EntryListFlags("), page.indexOf("// Text status flags"));
+const compiledFlags = ts.transpileModule(listFlagsSource, { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2020 } }).outputText;
+const ListFlags = new Function("React", "styles", compiledFlags + "; return EntryListFlags;")(React, { entryFlags: "entryFlags", entryAlert: "entryAlert", cancelledBadge: "cancelledBadge" });
+for (const [status, requiresCorrection, label] of [
+  ["pending", false, "\ud655\uc778 \ud544\uc694"],
+  ["posted", true, "\uc815\uc815 \ud544\uc694"],
+  ["pending", true, "\ud655\uc778 \ud544\uc694 \u00b7 \uc815\uc815 \ud544\uc694"],
+  ["posted", false, ""],
+] as const) {
+  test("daily status icon: " + (label || "ordinary entry"), () => {
+    const html = renderToStaticMarkup(React.createElement(ListFlags, { entry: { status, requiresCorrection }, lang: "ko" }));
+    assert.equal(html.split("\u2757").length - 1, label ? 1 : 0);
+    if (label) {
+      assert.ok(html.includes('title="' + label + '"'));
+      assert.ok(html.includes('aria-label="' + label + '"'));
+    } else assert.equal(html, "");
+    assert.ok(!html.includes("pendingBadge") && !html.includes("correctionBadge"));
+  });
+}
+test("daily cancelled advance keeps the grey text badge", () => {
+  const html = renderToStaticMarkup(React.createElement(ListFlags, { entry: { status: "posted", ledgerPayrollAdvance: { cancelled: true } }, lang: "ko" }));
+  assert.ok(html.includes('class="cancelledBadge"'));
+  assert.ok(html.includes("\uac00\ubd88 \ucde8\uc18c\ub428"));
+  assert.ok(!html.includes("\u2757"));
+  assert.match(css, /\.cancelledBadge\{[^}]*background:#f3f4f6/);
+});
+test("detail summary preserves text status flags", () => {
+  const detail = page.slice(page.indexOf("function EntryDetailSheet"));
+  assert.match(detail, /detailTitleText[\s\S]*?detailTitleLine\}>\s*<strong>[\s\S]*?<\/strong>\s*<EntryFlags entry=\{entry\} lang=\{lang\} \/>\s*<\/span>/);
+  assert.match(css, /\.detailTitleLine>\.entryFlags\{flex-shrink:0\}/);
+  const source = page.slice(page.indexOf("function EntryFlags("), page.indexOf("// Shared by the daily list"));
+  const compiled = ts.transpileModule(source, { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2020 } }).outputText;
+  const Flags = new Function("React", "styles", compiled + "; return EntryFlags;")(React, { entryFlags: "entryFlags", pendingBadge: "pendingBadge", correctionBadge: "correctionBadge" });
+  const html = renderToStaticMarkup(React.createElement(Flags, { entry: { status: "pending", requiresCorrection: true }, lang: "ko" }));
+  assert.ok(html.includes("\ud655\uc778 \ud544\uc694") && html.includes("\uc815\uc815 \ud544\uc694"));
+  assert.ok(html.includes("pendingBadge") && html.includes("correctionBadge"));
+  assert.ok(!html.includes("\u2757"));
+});
+
+const { entryStatusReason } = requireUi("../lib/ledger/entry-status-reason.ts") as typeof import("../lib/ledger/entry-status-reason");
+test("partyMissing pending inventory explains supplier and payment verification", () => {
+  assert.equal(entryStatusReason({ status: "pending", accountName: null, systemDisplay: { kind: "inventory", itemCount: 1, partyMissing: true, needsConfirmation: true } }, "ko"),
+    "거래처 확인 필요 · 입고 거래처가 'khác'로 등록되어 실제 거래처와 결제방식을 확인해야 합니다.");
+});
+test("mapped pending inventory explains actual payment and account verification", () => {
+  for (const accountName of [null, "결제 미확인", "현금"]) {
+    assert.equal(entryStatusReason({ accountName, status: "pending", systemDisplay: { kind: "inventory", itemCount: 1, partyMissing: false, needsConfirmation: true } }, "ko"),
+      "결제 확인 필요 · 실제 지급 여부와 결제계정을 확인해야 합니다.");
+  }
+});
+test("meal correction explains the mismatch and shows source and effective amounts", () => {
+  assert.equal(entryStatusReason({ status: "confirmed", accountName: "현금", systemDisplay: { kind: "meal", employeeCount: 12 }, requiresCorrection: true, sourceAmount: 360000, effectiveAmount: 330000 }, "ko"),
+    "금액 정정 필요 · 최신 원천 금액과 현재 장부 반영 금액이 다릅니다. · 최신 원천 360,000₫ · 현재 반영 330,000₫");
+});
+test("correction without amounts does not invent amounts", () => {
+  assert.equal(entryStatusReason({ status: "confirmed", accountName: null, requiresCorrection: true }, "ko"), "금액 정정 필요 · 최신 원천 금액과 현재 장부 반영 금액이 다릅니다.");
+});
+test("normal entries have no status explanation even when amounts are provided", () => {
+  assert.equal(entryStatusReason({ status: "confirmed", accountName: "현금", sourceAmount: 360000, effectiveAmount: 330000 }, "ko"), null);
+});
+test("detail modal renders the shared explanation only when it exists", () => {
+  const detail = page.slice(page.indexOf("function EntryDetailSheet"));
+  assert.ok(detail.includes('{entryStatusReason(entry, lang) ? <p className={styles.entryStatusReason}>{entryStatusReason(entry, lang)}</p> : null}'));
 });

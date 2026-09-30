@@ -59,6 +59,7 @@ import {
   payrollAdvanceDefaultMemo,
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
+import { entryStatusReason } from "@/lib/ledger/entry-status-reason";
 import MonthCloseSheet from "./MonthCloseSheet";
 import ManualDisplayEditor, { LedgerEditShell } from "./ManualDisplayEditor";
 import ManualDisplayHistory from "./ManualDisplayHistory";
@@ -753,9 +754,9 @@ function LedgerEntriesContent() {
                   </span>
                   <span className={styles.entryMain}>
                     <strong>{compactEntryListTitle(entryDisplayTitle(entry, lang))}</strong>
+                    <EntryListFlags entry={entry} lang={lang} />
                     {entryMeta(entry, lang) ? <span> · {entryMeta(entry, lang)}</span> : null}
                   </span>
-                  <EntryFlags entry={entry} lang={lang} />
                 </span>
                 <span className={styles.entryRight}>
                   <small className={styles.entryTime}>{entry.displayTime ?? ""}</small>
@@ -1399,10 +1400,12 @@ function EntryDetailSheet({
           <EntryDisplayBadge entry={entry} lang={lang} />
           <span className={styles.detailEmoji} aria-hidden="true">{entryDisplayEmoji(entry, partnersByParty)}</span>
           <span className={styles.detailTitleText} title={entryDisplayTitle(entry, lang)}>
-            <strong>{compactEntryListTitle(entryDisplayTitle(entry, lang))}</strong>
+            <span className={styles.detailTitleLine}>
+              <strong>{compactEntryListTitle(entryDisplayTitle(entry, lang))}</strong>
+              <EntryFlags entry={entry} lang={lang} />
+            </span>
             {entryMeta(entry, lang) ? <span> · {entryMeta(entry, lang)}</span> : null}
           </span>
-          <EntryFlags entry={entry} lang={lang} />
         </span>
         <span className={styles.detailPayment}>
           <span
@@ -1414,6 +1417,7 @@ function EntryDetailSheet({
           <strong className={`${styles.detailAmount} ${isPayrollPaymentOutflow(entry) ? styles.amountExpense : ""}`}>{entryDisplayAmountSign(entry)}{money(entryDisplayAmount(entry))}</strong>
         </span>
       </div>
+      {entryStatusReason(entry, lang) ? <p className={styles.entryStatusReason}>{entryStatusReason(entry, lang)}</p> : null}
       {manualDisplayOpen && entry.editableManualDisplay && entry.transactionId != null ? (
         <ManualDisplayEditor
           lang={lang}
@@ -2418,7 +2422,24 @@ function investmentEntryTypeLabel(entryType: InvestmentEntryType, amount: number
   if (amount < 0) return lang === "vi" ? "Thu hồi vốn góp" : "투자금 회수";
   return lang === "vi" ? "Điều chỉnh vốn góp" : "투자금 조정";
 }
-// Status flags shared by the daily list and the detail summary.
+// Compact status indicators for the daily list only.
+function EntryListFlags({ entry, lang }: { entry: LedgerEntry; lang: "ko" | "vi" }) {
+  const vi = lang === "vi";
+  const statusLabel = [
+    entry.status === "pending" ? (vi ? "C\u1ea7n x\u00e1c nh\u1eadn" : "\ud655\uc778 \ud544\uc694") : "",
+    entry.requiresCorrection ? (vi ? "C\u1ea7n \u0111i\u1ec1u ch\u1ec9nh" : "\uc815\uc815 \ud544\uc694") : "",
+  ].filter(Boolean).join(" \u00b7 ");
+  const advanceCancelled = entry.ledgerPayrollAdvance?.cancelled ?? false;
+  if (!statusLabel && !advanceCancelled) return null;
+  return (
+    <span className={styles.entryFlags}>
+      {statusLabel ? <span className={styles.entryAlert} role="img" title={statusLabel} aria-label={statusLabel}>{"\u2757"}</span> : null}
+      {advanceCancelled ? <span className={styles.cancelledBadge}>{vi ? "\u0110\u00e3 h\u1ee7y \u1ee9ng l\u01b0\u01a1ng" : "\uac00\ubd88 \ucde8\uc18c\ub428"}</span> : null}
+    </span>
+  );
+}
+
+// Text status flags for the detail summary.
 function EntryFlags({ entry, lang }: { entry: LedgerEntry; lang: "ko" | "vi" }) {
   const vi = lang === "vi";
   const advanceCancelled = entry.ledgerPayrollAdvance?.cancelled ?? false;
