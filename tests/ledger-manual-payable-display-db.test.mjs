@@ -1,10 +1,10 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
 const base = readFileSync("supabase/migrations/20260929063551_edit_manual_ledger_display.sql", "utf8");
-const migration = readFileSync("supabase/migrations/20260929175331_allow_manual_payable_display_edit.sql", "utf8");
+const migration = readFileSync("supabase/migrations/20260929180508_allow_manual_payable_display_edit.sql", "utf8");
 
 async function database() {
   const db = new PGlite();

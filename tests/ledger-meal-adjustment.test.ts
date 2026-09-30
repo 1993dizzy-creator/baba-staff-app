@@ -269,7 +269,7 @@ test("a meal corrected to the latest source amount no longer requires correction
   assert.equal(entry.requiresCorrection, false);
 });
 
-test("same-day ledger rows build in Vietnam display time descending order, while the date-group UI sorts them ascending", () => {
+test("same-day ledger rows use Vietnam display time and the shared date-group comparator", () => {
   const manual = (id: number, occurredAt: string): TransactionRow => ({
     id,
     type: "expense",
@@ -289,8 +289,8 @@ test("same-day ledger rows build in Vietnam display time descending order, while
   assert.deepEqual(entries.map((entry) => entry.displayTime), ["19:15", "18:00", "17:30"]);
   assert.deepEqual(entries.map((entry) => entry.systemDisplay?.kind ?? entry.title), ["manual-22", "meal", "manual-21"]);
   assert.match(page, /entry\.displayTime/);
-  // The ledger entries page re-groups by date and sorts each date's rows ascending (earliest time first).
-  assert.match(page, /a\.sortTimestamp - b\.sortTimestamp/);
+  // The date-group UI uses the shared display-time comparator.
+  assert.match(page, /group\.rows\.sort\(compareLedgerEntriesByDisplayTime\)/);
 });
 
 test("meal UI asks only for final amount and reason and refreshes original row", () => {

@@ -10,6 +10,7 @@ const read=(path:string)=>readFileSync(path,"utf8");
 const sql=read("supabase/migrations/202608250003_rebook_inventory_transaction.sql");
 const api=read("app/api/admin/ledger/transactions/[id]/edit/route.ts");
 const page=read("app/(protected)/admin/ledger/entries/page.tsx");
+const editorShell=read("app/(protected)/admin/ledger/entries/ManualDisplayEditor.tsx");
 const css=read("app/(protected)/admin/ledger/entries/entries.module.css");
 const keeping=read("components/bar/keeping/KeepingUi.tsx");
 const entries=read("lib/ledger/entries.ts");
@@ -29,7 +30,7 @@ test("confirmed Inventory edit actions are mode-scoped and bilingual",()=>{
   assert.match(page,/confirmedInventory = entry\.drilldown === "inventory" && entry\.status === "confirmed"/);
   assert.match(page,/confirmedInventory \? <button[\s\S]*editMode[\s\S]*수정 종료[\s\S]*수정/);
   assert.match(page,/entry\.status === "pending" \|\| \(confirmedInventory && editMode\)/);
-  for(const label of ["Kết thúc chỉnh sửa","Phân loại thanh toán","Trả trước","Trả sau","Lý do chỉnh sửa","수정 저장"])assert.match(page,new RegExp(label));
+  for(const label of ["Kết thúc chỉnh sửa","Phân loại thanh toán","Trả trước","Trả sau","Lý do chỉnh sửa","수정 저장"])assert.match(page + editorShell,new RegExp(label));
 });
 
 test("rebook never updates the confirmed original and supports all payment transitions",()=>{
@@ -138,8 +139,8 @@ test("payables summary joins partner type without N plus one queries",()=>{
 });
 
 test("payable and account mini badges are bilingual and compact",()=>{
-  for(const label of ["주류","식자재","음료","기타","Rượu","Thực phẩm","Đồ uống","Khác"])assert.match(page,new RegExp(label));
-  for(const label of ["현금","법인","미지급","미지정","Tiền mặt","Công ty","Công nợ","Chưa rõ","Vương","Cho"])assert.match(page,new RegExp(label));
+  for(const label of ["주류","식자재","음료","기타","Rượu","Thực phẩm","Đồ uống","Khác"])assert.match(page + editorShell,new RegExp(label));
+  for(const label of ["현금","법인","미지급","미지정","Tiền mặt","Công ty","Công nợ","Chưa rõ","Vương","Cho"])assert.match(page + editorShell,new RegExp(label));
   assert.match(page,/partnerTypeLabel\(party\.partnerType,lang\)/);
   assert.match(page,/accountBadgeLabel\(entry\.accountName, lang, entry\)/);
   assert.match(css,/\.entryRow\{grid-template-columns:minmax\(0,1fr\) max-content;gap:8px\}/);

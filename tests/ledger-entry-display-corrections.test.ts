@@ -70,7 +70,7 @@ test("title override flows through shared list, detail and search display", () =
   assert.match(page, /entryDisplayTitle\(entry, lang\)/);
   assert.match(page, /!`\$\{entryDisplayTitle\(entry, lang\)\}/);
   assert.match(page, /<ManualDisplayEditor/);
-  assert.match(manualDisplayEditor, /"\/api\/admin\/ledger\/transactions\/" \+ transactionId \+ "\/display"/);
+  assert.match(manualDisplayEditor, /amountEditable \? "\/manual-edit" : "\/display"/);
 });
 
 test("production-shaped #1661 is editable and reaches the detail edit controls", () => {
@@ -84,7 +84,7 @@ test("production-shaped #1661 is editable and reaches the detail edit controls",
   assert.equal(entry.editableManualDisplay, true);
   assert.equal(entry.drilldown, "generic");
   assert.equal(entry.title, "diet con trun thang 678 · 해충방제");
-  assert.match(page, /entry\.editableManualDisplay \? <button type="button"[\s\S]*?제목·메모 수정/);
+  assert.match(page, /entry\.editableManualDisplay \? <button type="button"[\s\S]*?"수정"/);
   assert.match(page, /manualDisplayOpen && entry\.editableManualDisplay && entry\.transactionId != null/);
   assert.match(page, /<ManualDisplayEditor[\s\S]*?transactionId=\{entry\.transactionId\}/);
 });

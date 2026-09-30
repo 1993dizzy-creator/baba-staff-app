@@ -60,7 +60,7 @@ import {
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
 import MonthCloseSheet from "./MonthCloseSheet";
-import ManualDisplayEditor from "./ManualDisplayEditor";
+import ManualDisplayEditor, { LedgerEditShell } from "./ManualDisplayEditor";
 import ManualDisplayHistory from "./ManualDisplayHistory";
 import PaymentVerificationSection, { type Verification } from "./PaymentVerificationSection";
 import { planPartialPayablePayment } from "@/lib/ledger/partial-payable-payment";
@@ -1380,10 +1380,10 @@ function EntryDetailSheet({
       onClose={onClose}
       footer={
         <div className={styles.detailFooter}>
-          {entry.editableManualDisplay ? <button type="button" disabled={saving || manualDisplaySaving || closed} onClick={() => setManualDisplayOpen(value => !value)} style={{ ...primaryButtonStyle, width: "100%" }}>{manualDisplayOpen ? (vi ? "Đóng chỉnh sửa" : "수정 닫기") : (vi ? "Sửa tiêu đề/ghi chú" : "제목·메모 수정")}</button> : null}
+          {entry.editableManualDisplay ? <button type="button" disabled={saving || manualDisplaySaving || closed} onClick={() => setManualDisplayOpen(value => !value)} style={{ ...primaryButtonStyle, width: "100%" }}>{manualDisplayOpen ? (vi ? "Đóng chỉnh sửa" : "수정 닫기") : (vi ? "Sửa" : "수정")}</button> : null}
           {cancellableAdvance ? <button type="button" disabled={saving||advanceCancelling||closed} onClick={()=>{setAdvanceCancelReason(value=>value==null?"":null);setAdvanceCancelError("")}} style={{...(advanceCancelReason==null?dangerButtonStyle:secondaryButtonStyle),width:"100%"}}>{advanceCancelReason==null?(vi?"Hủy ứng lương":"가불 취소"):(vi?"Đóng hủy ứng lương":"가불 취소 닫기")}</button>:null}
-          {confirmedInventory ? <button type="button" disabled={saving||editSaving} onClick={()=>{setEditMode(value=>!value);setEditDraft(null);setEditError("")}} style={{...primaryButtonStyle,width:"100%"}}>{editMode?(vi?"Kết thúc chỉnh sửa":"수정 종료"):(vi?"Sửa":"수정")}</button>:null}
-          {confirmedMeal ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setMealDraft(value=>value?null:{finalAmount:String(entry.effectiveAmount??entry.amount),reason:""});setMealError("")}} style={{...primaryButtonStyle,width:"100%"}}>{mealDraft?(vi?"Đóng chỉnh sửa":"수정 닫기"):(vi?"Sửa tiền ăn":"식대 수정")}</button>:null}
+          {confirmedInventory ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setEditMode(value=>!value);setEditDraft(null);setEditError("")}} style={{...primaryButtonStyle,width:"100%"}}>{editMode?(vi?"Kết thúc chỉnh sửa":"수정 종료"):(vi?"Sửa":"수정")}</button>:null}
+          {confirmedMeal ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setMealDraft(value=>value?null:{finalAmount:String(entry.effectiveAmount??entry.amount),reason:""});setMealError("")}} style={{...primaryButtonStyle,width:"100%"}}>{mealDraft?(vi?"Đóng chỉnh sửa":"수정 닫기"):(vi?"Sửa":"수정")}</button>:null}
           <button
             type="button"
             disabled={saving||editSaving}
@@ -1421,6 +1421,8 @@ function EntryDetailSheet({
           transactionId={entry.transactionId}
           originalTitle={entryDisplayTitle(entry, lang)}
           originalMemo={entry.memo ?? ""}
+          originalAmount={entry.amount}
+          amountEditable={!entry.paymentTransaction}
           closed={closed}
           onSavingChange={setManualDisplaySaving}
           onConfirmedEdited={onConfirmedEdited}
@@ -1671,7 +1673,7 @@ function EntryDetailSheet({
       ) : null}
       {entry.editableManualDisplay && entry.transactionId != null ? (
         <ManualDisplayHistory
-          key={`${entry.transactionId}:${entryDisplayTitle(entry, lang)}:${entry.memo ?? ""}`}
+          key={`${entry.transactionId}:${entryDisplayTitle(entry, lang)}:${entry.memo ?? ""}:${entry.amount}`}
           transactionId={entry.transactionId}
           lang={lang}
         />
@@ -1682,29 +1684,27 @@ function EntryDetailSheet({
 
 function MealAdjustmentEditor({lang,draft,setDraft,saving,error,onSave}:{lang:"ko"|"vi";draft:MealAdjustDraft;setDraft:(draft:MealAdjustDraft|null)=>void;saving:boolean;error:string;onSave:()=>Promise<void>}){
   const vi=lang==="vi";
-  return <div className={styles.candidateEditor}>
-    <div className={styles.editorTitle}><h3>✏️ {vi?"Sửa tiền ăn nhân viên":"직원 식대 수정"}</h3><button type="button" disabled={saving} onClick={()=>setDraft(null)}>{vi?"Hủy":"취소"}</button></div>
+  return <LedgerEditShell lang={lang} title={vi?"Sửa tiền ăn nhân viên":"직원 식대 수정"}
+    saving={saving} disabled={!draft.finalAmount||!draft.reason.trim()} error={error}
+    onSave={()=>void onSave()} onCancel={()=>setDraft(null)}>
     <BarField label={vi?"Số tiền ăn cuối cùng":"최종 식대 금액"} required compact>{({id})=><input id={id} inputMode="decimal" value={formatLedgerDecimalAmount(draft.finalAmount)} onChange={event=>setDraft({...draft,finalAmount:sanitizeLedgerDecimalAmount(event.target.value)})} style={keepingInputStyle}/>}</BarField>
     <BarField label={vi?"Lý do chỉnh sửa":"수정 사유"} required compact>{({id})=><input id={id} value={draft.reason} onChange={event=>setDraft({...draft,reason:event.target.value})} style={keepingInputStyle} placeholder={vi?"Ví dụ: thêm 1 nhân viên đến muộn":"예: 18시 이후 추가 출근 1명"}/>}</BarField>
     <p className={styles.editorHelp}>{vi?"Hệ thống tự tính phần chênh lệch và điều chỉnh tiền mặt cửa hàng.":"차액과 매장 현금 조정은 자동으로 계산됩니다."}</p>
-    {error?<p className={styles.error} role="alert">{error}</p>:null}
-    <button type="button" disabled={saving||!draft.finalAmount||!draft.reason.trim()} onClick={()=>void onSave()} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang lưu…":"저장 중…"):(vi?"Lưu":"저장")}</button>
-  </div>
+  </LedgerEditShell>
 }
 
 function ConfirmedInventoryEditor({lang,draft,setDraft,accounts,categories,saving,error,onSave}:{lang:"ko"|"vi";draft:ConfirmedEditDraft;setDraft:(draft:ConfirmedEditDraft|null)=>void;accounts:Account[];categories:Category[];saving:boolean;error:string;onSave:()=>Promise<void>}){
   const vi=lang==="vi",paid=(draft.item.paidAmount??0)>0;
-  return <div className={styles.candidateEditor}>
-    <div className={styles.editorTitle}><h3>✏️ {draft.item.name}</h3><button type="button" disabled={saving} onClick={()=>setDraft(null)}>{vi?"Hủy":"취소"}</button></div>
+  return <LedgerEditShell lang={lang} title={draft.item.name} saving={saving}
+    disabled={paid||!draft.categoryId||!draft.amount||!draft.reason.trim()||(draft.paymentMode==="immediate"&&!draft.fundAccountId)}
+    error={error} onSave={()=>void onSave()} onCancel={()=>setDraft(null)}>
     <BarSegmentedControl label={vi?"Phân loại thanh toán":"결제 구분"} value={draft.paymentMode} disabled={saving||paid} onChange={paymentMode=>setDraft({...draft,paymentMode})} options={[{value:"immediate",label:vi?"Trả trước":"선결제"},{value:"payable",label:vi?"Trả sau":"후불"}]}/>
     {paid?<p className={styles.error}>{vi?"Khoản công nợ đã được thanh toán một phần hoặc toàn bộ nên không thể sửa.":"일부 또는 전액 결제된 미납 거래는 수정할 수 없습니다."}</p>:null}
     <div className={styles.candidateFields}><BarField label={vi?"Danh mục":"카테고리"} required compact>{({id})=><select id={id} value={draft.categoryId} onChange={event=>setDraft({...draft,categoryId:event.target.value})} style={keepingInputStyle}>{categories.filter(row=>row.kind==="expense").map(row=><option key={row.id} value={row.id}>{manualExpenseCategoryLabel(row.name,lang)}</option>)}</select>}</BarField><BarField label={vi?"Số tiền":"금액"} required compact>{({id})=><input id={id} inputMode="decimal" value={formatLedgerDecimalAmount(draft.amount)} onChange={event=>setDraft({...draft,amount:sanitizeLedgerDecimalAmount(event.target.value)})} style={keepingInputStyle}/>}</BarField></div>
     {draft.paymentMode==="immediate"?<div className={styles.candidateSingle}><AccountField lang={lang} label={`🏦 ${vi?"Tài khoản chi":"출금 계정"}`} value={draft.fundAccountId} setValue={fundAccountId=>setDraft({...draft,fundAccountId})} accounts={accounts.filter(row=>row.is_active&&row.is_business_fund&&row.type!=="card_clearing")}/></div>:<div className={styles.candidateSingle}><BarField label={vi?"Ngày đến hạn":"지급 기한"} compact>{({id})=><input id={id} type="date" value={draft.dueDate} onChange={event=>setDraft({...draft,dueDate:event.target.value})} style={keepingInputStyle}/>}</BarField></div>}
     <BarField label={vi?"Ghi chú":"메모"} compact>{({id})=><input id={id} value={draft.memo} onChange={event=>setDraft({...draft,memo:event.target.value})} style={keepingInputStyle}/>}</BarField>
     <BarField label={vi?"Lý do chỉnh sửa":"수정 사유"} required compact>{({id})=><input id={id} required value={draft.reason} onChange={event=>setDraft({...draft,reason:event.target.value})} style={keepingInputStyle}/>}</BarField>
-    {error?<p className={styles.error} role="alert">{error}</p>:null}
-    <button type="button" disabled={saving||paid||!draft.categoryId||!draft.amount||!draft.reason.trim()||(draft.paymentMode==="immediate"&&!draft.fundAccountId)} onClick={()=>void onSave()} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang lưu…":"저장 중…"):(vi?"Lưu chỉnh sửa":"수정 저장")}</button>
-  </div>
+  </LedgerEditShell>
 }
 
 function PayableMonthTotals({summary,vi}:{summary?:PayablePeriodSummary;vi:boolean}) {

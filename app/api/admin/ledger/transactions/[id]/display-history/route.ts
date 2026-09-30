@@ -24,7 +24,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     if (transactionError) throw transactionError;
     if (!transaction || transaction.source_type !== "manual" ||
         transaction.status !== "confirmed" ||
-        !["income", "expense", "transfer"].includes(transaction.type) ||
+        !["income", "expense", "transfer", "payable_payment"].includes(transaction.type) ||
         transaction.correction_of_id != null) {
       return ledgerJson({ ok: false, code: "NOT_FOUND" }, 404);
     }
@@ -36,7 +36,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         .select("id,created_at,reason,before_snapshot,after_snapshot,actor:users!ledger_audit_logs_actor_user_id_fkey(name,full_name,username)")
         .eq("entity_type", "transaction")
         .eq("entity_id", transactionId)
-        .eq("action", "manual_transaction_display_edited")
+        .in("action", ["manual_transaction_display_edited", "manual_transaction_edited"])
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .range(from, from + PAGE_SIZE - 1);

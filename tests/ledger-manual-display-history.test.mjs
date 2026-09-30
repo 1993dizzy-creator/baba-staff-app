@@ -32,13 +32,14 @@ function routeFixture({ rows = [], transaction = { id: 81, type: "expense", stat
       const query = {
         select(columns) { call.columns = columns; return query; },
         eq(column, value) { filters.push([column, value]); return query; },
+        in(column, values) { filters.push([column, values]); return query; },
         order(column, options) { orders.push([column, options]); return query; },
         range(from, to) { call.page = [from, to]; return query; },
         async maybeSingle() {
           return { data: table === "ledger_transactions" ? transaction : null, error: null };
         },
         then(resolve, reject) {
-          const data = rows.filter(row => filters.every(([column, value]) => row[column] === value))
+          const data = rows.filter(row => filters.every(([column, value]) => Array.isArray(value) ? value.includes(row[column]) : row[column] === value))
             .toSorted((a, b) => {
               const byTime = b.created_at.localeCompare(a.created_at);
               return byTime || b.id - a.id;
@@ -97,7 +98,7 @@ test("zero history returns an empty list; invalid and non-manual targets are rej
   const empty = routeFixture();
   assert.deepEqual((await empty.get(81)).body.history, []);
   assert.equal((await empty.get(0)).status, 400);
-  assert.deepEqual(empty.calls[1].filters, [["entity_type", "transaction"], ["entity_id", 81], ["action", "manual_transaction_display_edited"]]);
+  assert.deepEqual(empty.calls[1].filters, [["entity_type", "transaction"], ["entity_id", 81], ["action", ["manual_transaction_display_edited", "manual_transaction_edited"]]]);
   const automatic = routeFixture({ transaction: { ...{ id: 81, type: "expense", status: "confirmed" }, source_type: "automatic", correction_of_id: null } });
   assert.equal((await automatic.get(81)).status, 404);
   assert.equal(automatic.calls.length, 1);
@@ -246,3 +247,22 @@ test("history API returns every audit beyond one PostgREST page", async () => {
   assert.deepEqual(ui.calls[2].page, [500, 999]);
 });
 
+
+test("amount edit history shows transaction and movement audit amount while payable history remains available", async () => {
+  const amountEdit = audit({
+    id: 11, action: "manual_transaction_edited", createdAt: "2026-09-29T15:00:00+07:00",
+    reason: "금액 정정",
+    before: { transaction: { display_snapshot: { titleOverride: "Same" }, memo: "Same", amount: 100 }, movements: [{ amount: -100 }] },
+    after: { transaction: { display_snapshot: { titleOverride: "Same" }, memo: "Same", amount: 150 }, movements: [{ amount: -150 }] },
+  });
+  const ui = routeFixture({ rows: [amountEdit] });
+  const result = await ui.get(81);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.history[0].beforeAmount, 100);
+  assert.equal(result.body.history[0].afterAmount, 150);
+  assert.match(listMarkup(result.body.history), /금액 수정/);
+  assert.match(listMarkup(result.body.history), /150 ₫/);
+  assert.match(page, /entry\.memo \?\? ""\}:\$\{entry\.amount\}/);
+  const payable = routeFixture({ transaction: { id: 81, type: "payable_payment", status: "confirmed", source_type: "manual", correction_of_id: null }, rows: [both] });
+  assert.equal((await payable.get(81)).status, 200);
+});

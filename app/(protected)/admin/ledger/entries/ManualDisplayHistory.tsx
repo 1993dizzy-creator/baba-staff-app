@@ -32,8 +32,13 @@ export function ManualDisplayHistoryList({
         {history.map((item, index) => {
           const titleChanged = item.beforeTitle !== item.afterTitle;
           const memoChanged = (item.beforeMemo ?? "") !== (item.afterMemo ?? "");
+          const amountChanged = item.beforeAmount !== undefined && item.afterAmount !== undefined && item.beforeAmount !== item.afterAmount;
           const bothChanged = titleChanged && memoChanged;
-          const changeTitle = bothChanged
+          const changeTitle = amountChanged && (titleChanged || memoChanged)
+            ? (vi ? "Đã sửa giao dịch" : "거래 수정")
+            : amountChanged
+              ? (vi ? "Đã sửa số tiền" : "금액 수정")
+              : bothChanged
             ? (vi ? "Đã sửa tiêu đề và ghi chú" : "제목·메모 수정")
             : titleChanged
               ? (vi ? "Đã sửa tiêu đề" : "제목 수정")
@@ -63,6 +68,13 @@ export function ManualDisplayHistoryList({
                   <span className={styles.manualDisplayHistoryBefore}>{item.beforeMemo || (vi ? "Không có" : "없음")}</span>
                   <span className={styles.manualDisplayHistoryArrow} aria-hidden="true">↓</span>
                   <span className={styles.manualDisplayHistoryAfter}>{item.afterMemo || (vi ? "Không có" : "없음")}</span>
+                </div>
+              ) : null}
+              {amountChanged ? (
+                <div className={styles.manualDisplayHistoryChange}>
+                  <span className={styles.manualDisplayHistoryBefore}>{item.beforeAmount?.toLocaleString("vi-VN")} ₫</span>
+                  <span className={styles.manualDisplayHistoryArrow} aria-hidden="true">↓</span>
+                  <span className={styles.manualDisplayHistoryAfter}>{item.afterAmount?.toLocaleString("vi-VN")} ₫</span>
                 </div>
               ) : null}
             </article>

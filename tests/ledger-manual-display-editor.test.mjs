@@ -13,7 +13,7 @@ const code = ts.transpileModule(source, {
 }).outputText;
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-function fixture({ lang = "ko", closed = false, response = { ok: true, body: { status: "updated" } } } = {}) {
+function fixture({ lang = "ko", closed = false, amountEditable = false, response = { ok: true, body: { status: "updated" } } } = {}) {
   const values = [];
   const calls = [];
   const events = { refreshed: [], closed: 0, saving: [] };
@@ -47,7 +47,7 @@ function fixture({ lang = "ko", closed = false, response = { ok: true, body: { s
     },
   );
   const props = {
-    lang, transactionId: 81, originalTitle: "기존 제목", originalMemo: "기존 메모", closed,
+    lang, transactionId: 81, originalAmount: 100, amountEditable, originalTitle: "기존 제목", originalMemo: "기존 메모", closed,
     onSavingChange(value) { events.saving.push(value); },
     async onConfirmedEdited(id) { events.refreshed.push(id); },
     onClose() { events.closed++; },
@@ -151,3 +151,32 @@ test("closed month disables save and Vietnamese validation is localized", () => 
   assert.equal(vi.calls.length, 0);
 });
 
+
+test("generic manual editor shows amount and posts title, amount, memo and reason", async () => {
+  const ui = fixture({ amountEditable: true });
+  let view = ui.render();
+  assert.match(view.html, /금액/);
+  assert.equal(view.inputs.length, 3);
+  view.inputs[1].props.onChange({ target: { value: "150" } });
+  view = ui.render();
+  view.inputs[2].props.onChange({ target: { value: "Correction" } });
+  ui.click(ui.render(), "수정 저장");
+  await flush();
+  assert.equal(ui.calls[0].url, "/api/admin/ledger/transactions/81/manual-edit");
+  assert.deepEqual(Object.keys(JSON.parse(ui.calls[0].options.body)), ["title", "amount", "memo", "reason"]);
+  assert.equal(JSON.parse(ui.calls[0].options.body).amount, 150);
+});
+
+test("manual payable editor hides amount and keeps display-only API", async () => {
+  const ui = fixture({ amountEditable: false });
+  let view = ui.render();
+  assert.doesNotMatch(view.html, /<label>금액/);
+  assert.equal(view.inputs.length, 2);
+  view.inputs[0].props.onChange({ target: { value: "Changed title" } });
+  view = ui.render();
+  view.inputs[1].props.onChange({ target: { value: "Correction" } });
+  ui.click(ui.render(), "수정 저장");
+  await flush();
+  assert.equal(ui.calls[0].url, "/api/admin/ledger/transactions/81/display");
+  assert.deepEqual(Object.keys(JSON.parse(ui.calls[0].options.body)), ["title", "memo", "reason"]);
+});

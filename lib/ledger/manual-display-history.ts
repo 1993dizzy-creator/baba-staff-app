@@ -6,6 +6,8 @@
   afterTitle: string | null;
   beforeMemo: string | null;
   afterMemo: string | null;
+  beforeAmount?: number;
+  afterAmount?: number;
 };
 
 type AuditRecord = {
@@ -26,12 +28,23 @@ function text(value: unknown): string | null {
 }
 
 function title(snapshot: unknown): string | null {
-  const display = record(record(snapshot)?.display_snapshot);
+  const display = record(transaction(snapshot)?.display_snapshot);
   return text(display?.titleOverride);
 }
 
 function memo(snapshot: unknown): string | null {
-  return text(record(snapshot)?.memo);
+  return text(transaction(snapshot)?.memo);
+}
+
+function transaction(snapshot: unknown): Record<string, unknown> | null {
+  const outer = record(snapshot);
+  return record(outer?.transaction) ?? outer;
+}
+
+function amount(snapshot: unknown): number | null {
+  const value = transaction(snapshot)?.amount;
+  const number = typeof value === "number" || typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(number) ? number : null;
 }
 
 function actorName(value: unknown): string | null {
@@ -41,6 +54,9 @@ function actorName(value: unknown): string | null {
 }
 
 export function projectManualDisplayHistory(row: AuditRecord): ManualDisplayHistoryEntry {
+  const fullEdit = record(row.after_snapshot)?.transaction != null;
+  const beforeAmount = amount(row.before_snapshot);
+  const afterAmount = amount(row.after_snapshot);
   return {
     createdAt: row.created_at,
     actorName: actorName(row.actor),
@@ -49,6 +65,7 @@ export function projectManualDisplayHistory(row: AuditRecord): ManualDisplayHist
     afterTitle: title(row.after_snapshot),
     beforeMemo: memo(row.before_snapshot),
     afterMemo: memo(row.after_snapshot),
+    ...(fullEdit && beforeAmount !== null && afterAmount !== null ? { beforeAmount, afterAmount } : {}),
   };
 }
 
