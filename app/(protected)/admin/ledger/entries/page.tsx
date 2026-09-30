@@ -301,10 +301,10 @@ function LedgerEntriesContent() {
     initializedMonthRef = useRef(""),
     loadRequestSequenceRef = useRef(0);
   const load = useCallback(
-    async (signal?: AbortSignal) => {
+    async (signal?: AbortSignal, { silent = false }: { silent?: boolean } = {}) => {
       const requestedMonth = month;
       const requestSequence = ++loadRequestSequenceRef.current;
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError("");
       try {
         // Investments never fails the whole load(): its fetch/parse is wrapped so a
@@ -385,7 +385,7 @@ function LedgerEntriesContent() {
           );
         return null;
       } finally {
-        if (!signal?.aborted && requestSequence === loadRequestSequenceRef.current) setLoading(false);
+        if (!silent && !signal?.aborted && requestSequence === loadRequestSequenceRef.current) setLoading(false);
       }
     },
     [month, vi],
@@ -1271,13 +1271,12 @@ function LedgerEntriesContent() {
             posDetail={posDetail}
             closed={closed}
             onConfirmedEdited={async (transactionId) => {
-              const fresh = await load();
+              const fresh = await load(undefined, { silent: true });
               const refreshed = fresh?.entries.find((entry) =>
                 entry.transactionId === transactionId ||
                 entry.items.some((item) => item.transactionId === transactionId),
               );
               if (refreshed) setSelected(refreshed);
-              else setSelected(null);
               setNotice(vi ? "Đã cập nhật giao dịch." : "거래를 수정했습니다.");
             }}
             onAdvanceCancelled={async () => {

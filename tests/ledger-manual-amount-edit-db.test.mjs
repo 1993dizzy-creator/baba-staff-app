@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
+import ts from "typescript";
 
 const base = readFileSync("supabase/migrations/20260929063551_edit_manual_ledger_display.sql", "utf8");
 const migration = readFileSync("supabase/migrations/20260930063332_edit_manual_transaction_amount.sql", "utf8");
@@ -134,4 +135,51 @@ test("API uses dedicated RPC and rejects unsafe amount", () => {
   assert.match(api, /Number\.isSafeInteger\(amount\)/);
   assert.match(api, /rpc\("ledger_edit_manual_transaction_v1"/);
   assert.doesNotMatch(api, /ledger_edit_manual_transaction_display_v1/);
+});
+
+test("numeric(16,3) integer boundary is accepted and the next integer is rejected by RPC", async () => {
+  const db = await database();
+  try {
+    const maximum = 9999999999999;
+    assert.equal((await edit(db, 2, { amount: maximum })).status, "updated");
+    assert.equal(Number((await db.query("select amount from ledger_transactions where id=2")).rows[0].amount), maximum);
+    assert.equal(Number((await db.query("select amount from ledger_movements where transaction_id=2")).rows[0].amount), maximum);
+    assert.equal((await edit(db, 2, { amount: maximum + 1 })).status, "invalid_input");
+    assert.equal(Number((await db.query("select amount from ledger_transactions where id=2")).rows[0].amount), maximum);
+    assert.equal((await db.query("select count(*)::int as n from ledger_audit_logs")).rows[0].n, 1);
+  } finally { await db.close(); }
+});
+
+test("manual-edit API accepts the numeric boundary and rejects the next integer before RPC", async () => {
+  const code = ts.transpileModule(api, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const calls = [];
+  const deps = {
+    "@/lib/ledger/server": {
+      async requireLedgerActor() { return { actor: { id: 1 }, response: null }; },
+      ledgerJson(body, status = 200) { return { body, status }; },
+    },
+    "@/lib/supabase/server": {
+      supabaseServer: {
+        async rpc(name, args) {
+          calls.push({ name, args });
+          return { data: { status: "updated" }, error: null };
+        },
+      },
+    },
+  };
+  const module = { exports: {} };
+  new Function("require", "module", "exports", code)(name => deps[name], module, module.exports);
+  const post = amount => module.exports.POST(
+    new Request("http://localhost/api/admin/ledger/transactions/2/manual-edit", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Title", amount, memo: "Memo", reason: "Correction" }),
+    }),
+    { params: Promise.resolve({ id: "2" }) },
+  );
+  assert.equal((await post(9999999999999)).status, 200);
+  assert.equal(calls[0].args.p_amount, 9999999999999);
+  assert.equal((await post(10000000000000)).status, 400);
+  assert.equal(calls.length, 1);
 });

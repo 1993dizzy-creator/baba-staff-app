@@ -16,7 +16,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       Object.keys(body).some(key => !ALLOWED_FIELDS.has(key)) ||
       typeof body.title !== "string" || !body.title.trim() || body.title.trim().length > 160 ||
       (typeof body.amount === "string" && !/^[0-9]+$/.test(body.amount)) ||
-      !Number.isSafeInteger(amount) || amount <= 0 ||
+      !Number.isSafeInteger(amount) || amount <= 0 || amount > 9999999999999 ||
       (body.memo !== null && typeof body.memo !== "string") ||
       (typeof body.memo === "string" && body.memo.length > 2000) ||
       typeof body.reason !== "string" || !body.reason.trim() || body.reason.trim().length > 500) {

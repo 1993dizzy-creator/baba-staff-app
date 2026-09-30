@@ -11,9 +11,14 @@ const source = readFileSync("app/(protected)/admin/ledger/entries/ManualDisplayE
 const code = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
+const amountModule = { exports: {} };
+new Function("require", "module", "exports", ts.transpileModule(
+  readFileSync("lib/ledger/manual-entry-amount.ts", "utf8"),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } },
+).outputText)(require, amountModule, amountModule.exports);
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-function fixture({ lang = "ko", closed = false, amountEditable = false, response = { ok: true, body: { status: "updated" } } } = {}) {
+function fixture({ lang = "ko", closed = false, amountEditable = false, originalAmount = 100, response = { ok: true, body: { status: "updated" } } } = {}) {
   const values = [];
   const calls = [];
   const events = { refreshed: [], closed: 0, saving: [] };
@@ -37,6 +42,7 @@ function fixture({ lang = "ko", closed = false, amountEditable = false, response
       primaryButtonStyle: {},
     },
     "./entries.module.css": { default: new Proxy({}, { get: (_, key) => String(key) }) },
+    "@/lib/ledger/manual-entry-amount": amountModule.exports,
   };
   const testModule = { exports: {} };
   new Function("require", "module", "exports", "fetch", code)(
@@ -47,7 +53,7 @@ function fixture({ lang = "ko", closed = false, amountEditable = false, response
     },
   );
   const props = {
-    lang, transactionId: 81, originalAmount: 100, amountEditable, originalTitle: "기존 제목", originalMemo: "기존 메모", closed,
+    lang, transactionId: 81, originalAmount, amountEditable, originalTitle: "기존 제목", originalMemo: "기존 메모", closed,
     onSavingChange(value) { events.saving.push(value); },
     async onConfirmedEdited(id) { events.refreshed.push(id); },
     onClose() { events.closed++; },
@@ -179,4 +185,20 @@ test("manual payable editor hides amount and keeps display-only API", async () =
   await flush();
   assert.equal(ui.calls[0].url, "/api/admin/ledger/transactions/81/display");
   assert.deepEqual(Object.keys(JSON.parse(ui.calls[0].options.body)), ["title", "memo", "reason"]);
+});
+
+test("manual amount displays grouping while typing and saves an unformatted number", async () => {
+  const initial = fixture({ amountEditable: true, originalAmount: 3000000 });
+  assert.equal(initial.render().inputs[1].props.value, "3,000,000");
+
+  const ui = fixture({ amountEditable: true });
+  let view = ui.render();
+  view.inputs[1].props.onChange({ target: { value: "3x000,000원" } });
+  view = ui.render();
+  assert.equal(view.inputs[1].props.value, "3,000,000");
+  view.inputs[2].props.onChange({ target: { value: "Correction" } });
+  ui.click(ui.render(), "수정 저장");
+  await flush();
+  assert.equal(ui.calls[0].url, "/api/admin/ledger/transactions/81/manual-edit");
+  assert.equal(JSON.parse(ui.calls[0].options.body).amount, 3000000);
 });

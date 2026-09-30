@@ -27,7 +27,7 @@ begin
      or length(coalesce(p_memo, '')) > 2000
      or v_reason is null or length(v_reason) > 500
      or p_amount is null or p_amount <= 0 or p_amount <> trunc(p_amount)
-     or p_amount > 9999999999999999 then
+     or p_amount > 9999999999999 then
     return jsonb_build_object('status', 'invalid_input');
   end if;
 

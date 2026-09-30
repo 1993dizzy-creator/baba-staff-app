@@ -6,6 +6,7 @@ import {
   keepingInputStyle,
   primaryButtonStyle,
 } from "@/components/bar/keeping/KeepingUi";
+import { formatLedgerAmountInput, sanitizeLedgerAmountInput } from "@/lib/ledger/manual-entry-amount";
 import styles from "./entries.module.css";
 
 type ManualDisplayDraft = { title: string; amount: string; memo: string; reason: string };
@@ -119,7 +120,7 @@ export default function ManualDisplayEditor({
         {({ id }) => <input id={id} required maxLength={160} value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} style={keepingInputStyle} />}
       </BarField>
       {amountEditable ? <BarField label={vi ? "Số tiền" : "금액"} required compact>
-        {({ id }) => <input id={id} required inputMode="numeric" value={draft.amount} onChange={event => setDraft({ ...draft, amount: event.target.value })} style={keepingInputStyle} />}
+        {({ id }) => <input id={id} required inputMode="numeric" value={formatLedgerAmountInput(draft.amount)} onChange={event => setDraft({ ...draft, amount: sanitizeLedgerAmountInput(event.target.value) })} style={keepingInputStyle} />}
       </BarField> : null}
       <BarField label={vi ? "Ghi chú" : "메모"} compact>
         {({ id }) => <textarea id={id} maxLength={2000} rows={3} value={draft.memo} onChange={event => setDraft({ ...draft, memo: event.target.value })} style={keepingInputStyle} />}
