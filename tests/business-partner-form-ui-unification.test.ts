@@ -38,7 +38,7 @@ test("nothing in PartnerForm ever reassigns ledgerPartyId, so the initial value 
   // no onChange handler ever calls setValue({ ...value, ledgerPartyId: ... })
   assert.doesNotMatch(partnerForm, /setValue\(\{[^}]*ledgerPartyId:/);
   assert.match(partnerForm, /useState<PartnerFormValue>\(initial \?\? emptyValue\)/);
-  assert.match(partnerForm, /const ok = await onSubmit\(value\)/);
+  assert.match(partnerForm, /await onSubmit\(value.paymentMode === "unspecified" \? \{ \.\.\.value, settlementMode: null, settlementRule: null, defaultPaymentTermDays: null \} : value\)/);
   // the edit page seeds `initial` straight from the API's existing bridge id
   assert.match(partnerDetail, /setPartner\(\{ \.\.\.body\.partner, ledgerPartyId: body\.partner\.ledgerParty\?\.id \?\? null \}\)/);
 });
@@ -76,7 +76,7 @@ test("candidate create_partner form keeps its field order and fixed isActive=tru
   const contactIdx = candidateForm.indexOf("t.contact");
   const memoIdx = candidateForm.indexOf("labels.memo");
   assert.ok(nameIdx < typeIdx && typeIdx < paymentIdx && paymentIdx < contactIdx && contactIdx < memoIdx);
-  assert.match(candidatePage, /paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null/);
+  assert.match(candidatePage, /paymentMode: "unspecified", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null/);
   assert.match(candidatePage, /isActive: true, ledgerPartyId: null/);
   // No user-facing active/inactive status control on the Candidate form (isActive is fixed
   // true and never rendered as a toggle) -- subtype.isActive is a plain filter predicate

@@ -1,3 +1,4 @@
+import type { PaymentMode } from "@/lib/partners/policy";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
 import { payableDisplayAsOf } from "./payables.ts";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
@@ -114,7 +115,7 @@ export type CandidateRow = {
 };
 
 export type PartnerLedgerDefault = {
-  paymentMode: "immediate" | "postpaid";
+  paymentMode: PaymentMode;
   defaultFundAccountId: number | null;
   defaultFundAccountName: string | null;
 };
@@ -682,11 +683,11 @@ export function buildLedgerEntries(
   for (const row of candidates) {
     const partyId = row.proposed_party_id == null ? null : value(row.proposed_party_id);
     const defaults = partyId === null ? undefined : partnerDefaultsByParty.get(partyId);
-    const resolution = defaults?.paymentMode === "postpaid" ? "payable" : "verification_pending";
+    const resolution = defaults?.paymentMode === "postpaid" ? "payable" : defaults?.paymentMode === "unspecified" ? undefined : "verification_pending";
     const partyMissing = !row.party?.name?.trim();
     const partyName = inventorySupplierName(row);
     const partyIdentity = inventoryPartyIdentity(partyId, partyName);
-    const accountName = resolution === "payable" ? "미지급" : "결제 미확인";
+    const accountName = resolution === "payable" ? "미지급" : resolution === "verification_pending" ? "결제 미확인" : null;
     const key = `pending-inventory:${row.business_date}:${partyIdentity}:${resolution}:${defaults?.defaultFundAccountId ?? "none"}`;
     const group = inventoryGroups.get(key) ?? {
       id: key, businessDate: row.business_date, direction: "expense", origin: "auto", status: "pending", isSystemAdjustment: false,

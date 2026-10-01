@@ -1,7 +1,7 @@
 export const PARTNER_MANAGER_ROLES = ["owner", "master"] as const;
 export const PARTNER_TYPES = ["food", "alcohol", "beverage", "consumable", "equipment", "service", "rent", "other"] as const;
 export const PARTNER_TYPE_GROUP_ORDER = ["alcohol", "beverage", "food", "consumable", "equipment", "service", "rent", "other"] as const;
-export const PAYMENT_MODES = ["immediate", "postpaid"] as const;
+export const PAYMENT_MODES = ["unspecified", "immediate", "postpaid"] as const;
 export const SETTLEMENT_MODES = ["ad_hoc", "scheduled"] as const;
 export const SETTLEMENT_RULES = ["net_days", "monthly_once", "monthly_twice"] as const;
 
@@ -106,6 +106,7 @@ export function parsePartnerInput(value: unknown): PartnerInput | null {
   if (ledgerPartyId !== null && (!Number.isSafeInteger(ledgerPartyId) || ledgerPartyId < 1)) return null;
   if (defaultFundAccountId !== null && (!Number.isSafeInteger(defaultFundAccountId) || defaultFundAccountId < 1)) return null;
   if (partnerSubtypeId !== null && (!Number.isSafeInteger(partnerSubtypeId) || partnerSubtypeId < 1)) return null;
+  if (paymentMode === "unspecified" && [input.settlementMode, input.settlementRule, input.defaultPaymentTermDays].some(value => value != null)) return null;
   const settlementMode: SettlementMode | null = paymentMode === "postpaid" ? "ad_hoc" : null;
 
   return {

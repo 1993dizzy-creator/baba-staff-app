@@ -129,7 +129,7 @@ test("both forms expose only the shared immediate or postpaid control", () => {
   assert.doesNotMatch(read("lib/partners/text.ts"), /수시정산|정기정산|N일 후 지급|월 1회|월 2회|지급기한|정책 미설정|기존 후불 설정/);
 });
 
-test("candidate defaults to immediate and list formatter is wired", () => {
-  assert.match(read("app/(protected)/admin/partners/candidates/[id]/page.tsx"), /paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null/);
+test("candidate defaults to unspecified and list formatter is wired", () => {
+  assert.match(read("app/(protected)/admin/partners/candidates/[id]/page.tsx"), /paymentMode: "unspecified", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null/);
   assert.match(infoPage, /formatPartnerPaymentSummary\(partner, lang\)/);
 });

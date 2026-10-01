@@ -57,8 +57,8 @@ test("entries party sheet: 선택 일자 결제 kept, 부분 지급 added with p
   for (const label of ["선택 일자 결제", "부분 지급", "지급액", "총 미납금을 초과할 수 없습니다.", "Theo ngày", "Thanh toán một phần", "Vượt quá tổng công nợ."]) assert.ok(entries.includes(label), label);
 });
 
-test("past and current ordinary payables use live payment sheets; future month and verification queue keep their existing gate", () => {
-  assert.match(entriesCompact, /month<=currentMonth\(\)\?<PayablePartySheet/);
+test("only current-month ordinary payables use live payment sheets; historical months stay read-only", () => {
+  assert.match(entriesCompact, /month===currentMonth\(\)\?<PayablePartySheet/);
   assert.match(entriesCompact, /:<HistoricalPayablePartySheet/);
   const historical = entriesCompact.slice(entriesCompact.indexOf("functionHistoricalPayablePartySheet("), entriesCompact.indexOf("functionPayablePartySheet("));
   assert.doesNotMatch(historical, /payables\/pay|partial|planPartialPayablePayment/);

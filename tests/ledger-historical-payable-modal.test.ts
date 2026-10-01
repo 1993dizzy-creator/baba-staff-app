@@ -13,12 +13,12 @@ const current=page.slice(page.indexOf("function PayablePartySheet"),page.indexOf
 
 test("past and current payable sheets share dated expandable items",()=>{
   assert.match(historical,/<PayableDateGroups rows=\{rows\} lang=\{lang\}\/>/);
-  assert.match(current,/<PayableDateGroups rows=\{currentRows\} lang=\{lang\}/);
+  assert.match(current,/<PayableDateGroups rows=\{detail\?\.payables\?\?\[\]\} lang=\{lang\}/);
   assert.match(page,/function PayableDateGroups[\s\S]*group\.rows\.length[\s\S]*payableItemLabel/);
   assert.match(historical,/<PayableMonthTotals summary=\{party\}/);
 });
 
-test("snapshot-only sheet keeps its month response while live payment sheets receive historical period context",()=>{
+test("historical sheet keeps its month snapshot and exposes no payment controls",()=>{
   assert.match(page,/rows=\{payables\.historyPayables\.filter\(row => Number\(row\.party_id\) === payableParty\.partyId\)\}/);
   assert.doesNotMatch(historical,/\/api\/admin\/ledger\/payables\/\$\{|type="checkbox"|AccountField|onPaid|paymentForm|ledger\/payables\/pay/);
   assert.match(historical,/onClose=\{onClose\}/);

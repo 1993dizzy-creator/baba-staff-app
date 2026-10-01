@@ -37,6 +37,6 @@ export default function PartnerSettlementFields({ lang, value, fundAccounts, dis
         {fundAccounts.map(account => <option key={account.id} value={account.id}>{formatPartnerFundAccount(account.code, lang, "full")}</option>)}
       </select>
     </div>
-    <PolicySegmentedField compact={compact} label={t.paymentMode} value={value.paymentMode} disabled={disabled} onChange={setPaymentMode} options={[{ value: "immediate", label: t.immediate }, { value: "postpaid", label: t.postpaid }]} />
+    <PolicySegmentedField compact={compact} label={t.paymentMode} value={value.paymentMode} disabled={disabled} onChange={setPaymentMode} options={[{ value: "unspecified", label: t.unspecified }, { value: "immediate", label: t.immediate }, { value: "postpaid", label: t.postpaid }]} />
   </div>;
 }

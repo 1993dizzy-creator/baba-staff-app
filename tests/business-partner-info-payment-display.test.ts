@@ -59,8 +59,8 @@ test("fund account select renders before the payment mode segmented control", ()
 });
 
 // B10/B11/B12/B13: backend value unchanged, KO/VI full+compact labels
-test("payment_mode backend values are untouched; only the user-facing label text changed", () => {
-  assert.match(read("lib/partners/policy.ts"), /PAYMENT_MODES = \["immediate", "postpaid"\] as const/);
+test("immediate and postpaid labels remain unchanged alongside unspecified", () => {
+  assert.match(read("lib/partners/policy.ts"), /PAYMENT_MODES = \["unspecified", "immediate", "postpaid"\] as const/);
   assert.equal(formatPartnerPaymentMode("immediate", "ko"), "선불결제");
   assert.equal(formatPartnerPaymentMode("immediate", "ko", "compact"), "선불");
   assert.equal(formatPartnerPaymentMode("postpaid", "ko"), "후불결제");

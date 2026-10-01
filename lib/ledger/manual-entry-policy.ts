@@ -33,6 +33,32 @@ export function manualExpenseCategorySort(a: { name: string }, b: { name: string
     - (manualExpenseCategoryOrder.get(b.name) ?? Number.MAX_SAFE_INTEGER);
 }
 
+// Inventory edits use purchase categories and relevant operating costs, never
+// automatic inventory subcategories or payroll/financial expense categories.
+export const INVENTORY_MANUAL_CATEGORY_NAMES = [
+  "식자재 매입", "주류 매입", "음료·BAR 재료", "소모품·잡화", "기타 재고매입",
+  ...MANUAL_EXPENSE_CATEGORY_NAMES.filter((name) => [
+    "가스비", "청소·위생비", "배송·운송비", "수리·유지보수", "설비·비품",
+    "운영 소모품", "인쇄·홍보비", "인테리어", "기타 비용",
+  ].includes(name)),
+] as const;
+
+export function isInventoryManualCategory(category: { kind: string; name: string }) {
+  return category.kind === "expense" && INVENTORY_MANUAL_CATEGORY_NAMES.some((name) => name === category.name);
+}
+
+export function inventoryManualCategoryOptions<T extends { id: number; kind: string; name: string }>(
+  categories: readonly T[],
+  currentCategoryId: string | number | null,
+) {
+  const options = categories.filter(isInventoryManualCategory);
+  const current = categories.find((category) => String(category.id) === String(currentCategoryId));
+  // Preserve only this transaction's existing value, even when it is internal.
+  return current && !options.some((category) => category.id === current.id)
+    ? [current, ...options]
+    : options;
+}
+
 export const MANUAL_INCOME_CATEGORY_NAMES = [
   "영업수입",
   "기타 수입",

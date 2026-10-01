@@ -142,3 +142,21 @@ test('F: final immediate mode strips even an incoming pending marker before crea
     await replacement(db, { marker: null, outgoing: 1, payable: 0, partyId: 10 });
   } finally { await db.close(); }
 });
+
+for (const resolution of ['immediate', 'payable', 'verification_pending']) test(`unspecified regular partner stays pending until explicit ${resolution} resolution`, async () => {
+  const db = await verificationDatabase();
+  try {
+    await db.exec("update business_partners set payment_mode='unspecified' where id=10");
+    await project(db);
+    assert.equal(Number((await db.query('select count(*) as n from ledger_transactions')).rows[0].n), 0, 'no automatic confirmation');
+    const candidate = (await db.query("select id,proposed_category_id,proposed_party_id from ledger_candidates where status='pending'")).rows[0];
+    assert.ok(candidate);assert.equal(Number(candidate.proposed_party_id),10);
+    const result = (await db.query('select ledger_resolve_inventory_candidate_v1($1,$2,$3,$4,$5,null,null,null,2) as result', [candidate.id,resolution,candidate.proposed_category_id,10,resolution==='immediate'?1:null])).rows[0].result;
+    assert.equal(result.status,'confirmed');
+    const expense=(await db.query("select party_id,amount,source_snapshot from ledger_transactions where type='expense' and status='confirmed'")).rows[0];
+    assert.equal(Number(expense.party_id),10);assert.equal(Number(expense.amount),200000);
+    assert.equal(expense.source_snapshot.paymentVerification,resolution==='verification_pending'?'pending':undefined);
+    assert.equal(Number((await db.query('select count(*) as n from ledger_payables')).rows[0].n),resolution==='immediate'?0:1);
+    assert.equal(Number((await db.query('select count(*) as n from ledger_movements')).rows[0].n),resolution==='immediate'?1:0);
+  } finally { await db.close(); }
+});

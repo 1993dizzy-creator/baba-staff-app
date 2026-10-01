@@ -36,14 +36,14 @@ export default function PartnerForm({ lang, initial, fundAccounts, partnerSubtyp
   const sectionLabels = lang === "vi"
     ? { basic: "Thông tin cơ bản", payment: "Thông tin thanh toán", contact: "Liên hệ", memo: "Ghi chú", other: "Khác" }
     : { basic: "기본 정보", payment: "결제 정보", contact: "연락처", memo: "메모", other: "기타" };
-  const emptyValue: PartnerFormValue = { name: "", partnerType: "other", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, partnerSubtypeId: null, contactName: null, phone: null, memo: null, isActive: true, ledgerPartyId: null };
+  const emptyValue: PartnerFormValue = { name: "", partnerType: "other", paymentMode: "unspecified", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, partnerSubtypeId: null, contactName: null, phone: null, memo: null, isActive: true, ledgerPartyId: null };
   const [value, setValue] = useState<PartnerFormValue>(initial ?? emptyValue);
   const [saving, setSaving] = useState(false);
   const inputStyle = slim ? { ...keepingInputStyle, minHeight: 40, padding: "0 10px" } : keepingInputStyle;
   async function submit(event: FormEvent) {
     event.preventDefault();
     setSaving(true); onSavingChange?.(true);
-    try { const ok = await onSubmit(value); if (ok && !initial) setValue(emptyValue); }
+    try { const ok = await onSubmit(value.paymentMode === "unspecified" ? { ...value, settlementMode: null, settlementRule: null, defaultPaymentTermDays: null } : value); if (ok && !initial) setValue(emptyValue); }
     finally { setSaving(false); onSavingChange?.(false); }
   }
 

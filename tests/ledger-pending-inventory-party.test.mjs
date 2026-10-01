@@ -5,7 +5,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as jsxRuntime from 'react/jsx-runtime';
 import ts from 'typescript';
-import { groupManualEntryPartners } from '../lib/ledger/manual-entry-policy.ts';
+import { inventoryManualCategoryOptions, groupManualEntryPartners } from '../lib/ledger/manual-entry-policy.ts';
 const read = path => readFileSync(path,'utf8');
 const source = read('app/(protected)/admin/ledger/entries/page.tsx');
 const ast = ts.createSourceFile('page.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
@@ -37,12 +37,12 @@ function fixture({resolution='payable',partyId=null,lang='ko',response={ok:true,
   },'resolveCandidate');
   let saving;
   function render(message='') {
-    const bindings={PartnerSelect,partners:partnerRows,vi:lang==='vi',lang,entry:selected,candidateDraft,message,saving:false,
+    const bindings={inventoryManualCategoryOptions,PartnerSelect,partners:partnerRows,vi:lang==='vi',lang,entry:selected,candidateDraft,message,saving:false,
       partnersByParty:new Map(partnerRows.map(partner=>[partner.ledgerPartyId,partner])),
       accounts:[{id:1,display_name:'Cash',is_active:true,type:'cash'}],categories:[{id:4,name:'Expenses',kind:'expense',parent_id:1}],
       styles:new Proxy({},{get:(_,key)=>String(key)}),keepingInputStyle:{},primaryButtonStyle:{},manualExpenseCategoryLabel:value=>value,
       BarField:({label,required,children})=>React.createElement('label',{'data-required':!!required},label,children({id:label})),
-      BarSegmentedControl:()=>null,setCandidateDraft:value=>Object.assign(candidateDraft,value),resolveCandidate:()=>{saving=save();return saving;},
+      BarSegmentedControl:props=>React.createElement('div',{},props.options.map(option=>React.createElement('button',{type:'button',key:option.value,'aria-pressed':props.value===option.value,onClick:()=>props.onChange(option.value)},option.label))),setCandidateDraft:value=>Object.assign(candidateDraft,value),resolveCandidate:()=>{saving=save();return saving;},
     };
     const renderEditor=compile(`function renderEditor(){return (${editorNode.whenTrue.getText(ast)});}`,bindings,'renderEditor');
     const found={selects:[],buttons:[]};
@@ -149,4 +149,22 @@ test('application has no system-party imports, marker checks or dedicated compon
  const forbidden=/AdHocPayableSheet|ad-hoc-payable|adHocPayableParty|isAdHocPayable|system:ad_hoc_payable|OtherPayablesSection/;
  function scan(dir){for(const item of readdirSync(dir,{withFileTypes:true})){const path=dir+'/'+item.name;if(item.isDirectory())scan(path);else if(/\.(ts|tsx)$/.test(item.name)&&!item.name.includes('.test.'))assert.doesNotMatch(read(path),forbidden,path)}}scan('app');scan('lib');
  assert.equal(existsSync('app/(protected)/admin/ledger/entries/AdHocPayableSheet.tsx'),false);assert.equal(existsSync('lib/ledger/ad-hoc-payable.ts'),false);
+});
+
+test('unspecified partner opens editor without a selected resolution',()=>{
+ let captured;const edit=compile(editNode.getText(ast),{selected:{partyId:33,defaultResolution:undefined},setCandidateDraft:value=>{captured=value;}},'editCandidate');
+ edit({candidateId:1450,categoryId:4});assert.equal(captured.resolution,'');
+});
+test('empty resolution blocks save before partner checks or API and displays inline message',async()=>{
+ for(const lang of ['ko','vi'])for(const partyId of [null,33]){
+ const ui=fixture({resolution:'',lang,partyId});assert.ok(!ui.render().selects.some(node=>node.props.required));
+ await ui.clickSave();assert.equal(ui.calls.length,0);assert.deepEqual(ui.states,[]);
+ const expected=lang==='vi'?'Vui l\u00f2ng ch\u1ecdn ph\u01b0\u01a1ng th\u1ee9c x\u1eed l\u00fd.':'\ucc98\ub9ac \ubc29\uc2dd\uc744 \uc120\ud0dd\ud574\uc8fc\uc138\uc694.';
+ assert.equal(ui.messages.at(-1),expected);assert.ok(ui.render(expected).html.includes('role="alert"'));
+ }
+});
+test('unspecified linked partner accepts any explicit resolution through the normal candidate contract',async()=>{
+ for(const resolution of ['immediate','payable','verification_pending']){
+ const ui=fixture({resolution:'',partyId:33});const view=ui.render();assert.equal(view.buttons.filter(button=>button.props['aria-pressed']===true).length,0);view.buttons[['immediate','payable','verification_pending'].indexOf(resolution)].props.onClick();await ui.clickSave();assert.equal(ui.calls[0].body.resolution,resolution);assert.equal(ui.calls[0].body.partyId,33);
+ }
 });
