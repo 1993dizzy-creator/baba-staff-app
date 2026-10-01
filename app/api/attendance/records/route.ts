@@ -7,6 +7,7 @@ import {
 import { supabaseServer } from "@/lib/supabase/server";
 import { resolveAttendanceRecordPolicy } from "@/lib/attendance/policy-resolution-adapter";
 import { isAdminMissingCheckoutReviewAvailable } from "@/lib/attendance/policy-engine";
+import { loadEarlyLeaveReviewContexts } from "@/lib/attendance/early-leave-review-server";
 
 export async function GET(req: Request) {
   try {
@@ -70,6 +71,8 @@ export async function GET(req: Request) {
     let records = (data ?? []) as unknown as Array<Record<string, unknown>>;
     if (policy.scope === "admin_user_month") {
       const targetUser = adminTarget!;
+      const earlyLeaveContexts = await loadEarlyLeaveReviewContexts(policy.startDate!, policy.endDate!, targetUser.id);
+      records = records.map(record => ({...record, early_leave_review: earlyLeaveContexts.get(Number(record.id)) ?? null}));
       const now = new Date();
       records = await Promise.all(records.map(async (record) => {
         if (!record.check_in_at || record.check_out_at) return record;

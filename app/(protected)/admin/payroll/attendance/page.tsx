@@ -24,6 +24,10 @@ import {
 } from "@/lib/attendance/display-status";
 
 
+import type { EarlyLeaveReviewContext } from "@/lib/attendance/early-leave-review-server";
+
+type EarlyLeaveReviewRecord = EarlyLeaveReviewContext & {user: UnresolvedOpenRecordUser | null};
+
 type UserRow = {
     id: number;
     name: string;
@@ -199,6 +203,8 @@ export default function AttendanceOverviewPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [unresolvedOpenRecords, setUnresolvedOpenRecords] = useState<UnresolvedOpenRecord[]>([]);
     const [isUnresolvedOpen, setIsUnresolvedOpen] = useState(false);
+    const [earlyLeaveReviewRecords, setEarlyLeaveReviewRecords] = useState<EarlyLeaveReviewRecord[]>([]);
+    const [isEarlyLeaveReviewOpen, setIsEarlyLeaveReviewOpen] = useState(false);
     const [processingRecordId, setProcessingRecordId] = useState<number | null>(null);
     const [processingAction, setProcessingAction] = useState<"auto" | "delete" | null>(null);
     const monthlyOverviewRequestRef = useRef(0);
@@ -215,6 +221,7 @@ export default function AttendanceOverviewPage() {
             }
 
             setUnresolvedOpenRecords((result.unresolvedOpenRecords || []) as UnresolvedOpenRecord[]);
+            setEarlyLeaveReviewRecords((result.earlyLeaveReviewRecords || []) as EarlyLeaveReviewRecord[]);
         } catch (err) {
             console.log("fetch unresolved open records exception:", err);
         }
@@ -264,6 +271,9 @@ export default function AttendanceOverviewPage() {
             return;
         }
         void fetchUnresolvedOpenRecords();
+        const refreshReviewBanners = () => { void fetchUnresolvedOpenRecords(); };
+        window.addEventListener("focus", refreshReviewBanners);
+        return () => window.removeEventListener("focus", refreshReviewBanners);
     }, [fetchUnresolvedOpenRecords]);
 
     useEffect(() => {
@@ -473,6 +483,31 @@ export default function AttendanceOverviewPage() {
                     ›
                 </button>
             </div>
+
+            {earlyLeaveReviewRecords.length > 0 && (
+                <div style={unresolvedBannerStyle}>
+                    <button type="button" style={unresolvedBannerHeaderStyle} aria-expanded={isEarlyLeaveReviewOpen}
+                        onClick={() => setIsEarlyLeaveReviewOpen(previous => !previous)}>
+                        <span style={unresolvedBannerTitleStyle}>⚠ {t.earlyLeaveReviewBanner.replace("{count}", String(earlyLeaveReviewRecords.length))}</span>
+                        <span style={unresolvedBannerChevronStyle}>{isEarlyLeaveReviewOpen ? "⌃" : "⌄"}</span>
+                    </button>
+                    {isEarlyLeaveReviewOpen && <div style={unresolvedListStyle}>
+                        {earlyLeaveReviewRecords.map(record => <div key={record.id} style={unresolvedItemStyle}>
+                            <div style={unresolvedItemTopRowStyle}>
+                                <span style={unresolvedItemNameStyle}>{record.user?.name || record.user?.username || `#${record.user_id}`}</span>
+                                <span style={unresolvedItemDateStyle}>{record.work_date}</span>
+                            </div>
+                            <div style={unresolvedItemBottomRowStyle}>
+                                <span style={unresolvedItemMetaStyle}>
+                                    {t.earlyLeaveRawMinutes} {record.rawEarlyLeaveMinutes}{c.minute} · {t.earlyLeaveGraceMinutes} {record.earlyLeaveGraceMinutes}{c.minute} · {t.earlyLeaveEffectiveMinutes} {record.effectiveEarlyLeaveMinutes}{c.minute}
+                                </span>
+                                <button type="button" style={unresolvedDetailButtonStyle}
+                                    onClick={() => goDetailForDate(record.user_id, record.work_date)}>{t.unresolvedOpenRecordDetailButton}</button>
+                            </div>
+                        </div>)}
+                    </div>}
+                </div>
+            )}
 
             {unresolvedOpenRecords.length > 0 && (
                 <div style={unresolvedBannerStyle}>

@@ -1,3 +1,5 @@
+// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
+import { resolveEarlyLeaveReview, type EarlyLeaveSelection } from "./early-leave-review.ts";
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const VIETNAM_TIMEZONE = "Asia/Ho_Chi_Minh";
@@ -22,6 +24,7 @@ export type AttendancePolicyInput = {
   storeCloseTime: string | null;
   lateGraceMinutes: number;
   earlyLeaveGraceMinutes: number;
+  earlyLeaveSelection?: EarlyLeaveSelection | null;
   missingCheckoutGraceMinutes: number;
   overrideCloseTime: string | null;
   checkInAt: string | null;
@@ -34,6 +37,10 @@ export type AttendancePolicyResult = {
   rawLateMinutes: number;
   lateMinutes: number;
   rawEarlyLeaveMinutes: number;
+  earlyLeaveGraceMinutes: number;
+  effectiveEarlyLeaveMinutes: number;
+  earlyLeaveReviewRequired: boolean;
+  earlyLeaveSelection: EarlyLeaveSelection | null;
   earlyLeaveMinutes: number;
   status: AttendancePolicyStatus;
   scheduledStartAt: string | null;
@@ -249,12 +256,13 @@ export function evaluateAttendancePolicy(
     input.checkOutAt && normalCheckoutThresholdAt
       ? minutesBetween(input.checkOutAt, normalCheckoutThresholdAt)
       : 0;
-  // 조퇴 유예는 판정 threshold가 아니라 공제되는 허용 시간이다: 유예분을 raw 조기
-  // 퇴근분에서 제외한 나머지만 조퇴로 인정한다(예: raw 90분, 유예 60분 → 조퇴 30분).
-  const earlyLeaveMinutes = Math.max(
-    0,
-    rawEarlyLeaveMinutes - input.earlyLeaveGraceMinutes
-  );
+  const earlyLeave = resolveEarlyLeaveReview({
+    businessDate: input.businessDate,
+    rawEarlyLeaveMinutes,
+    earlyLeaveGraceMinutes: input.earlyLeaveGraceMinutes,
+    selection: input.earlyLeaveSelection,
+  });
+  const earlyLeaveMinutes = earlyLeave.earlyLeaveMinutes;
 
   let status: AttendancePolicyStatus;
   if (!input.checkOutAt) status = "working";
@@ -276,6 +284,10 @@ export function evaluateAttendancePolicy(
     rawLateMinutes,
     lateMinutes,
     rawEarlyLeaveMinutes,
+    earlyLeaveGraceMinutes: input.earlyLeaveGraceMinutes,
+    effectiveEarlyLeaveMinutes: earlyLeave.effectiveEarlyLeaveMinutes,
+    earlyLeaveReviewRequired: earlyLeave.earlyLeaveReviewRequired,
+    earlyLeaveSelection: earlyLeave.earlyLeaveSelection,
     earlyLeaveMinutes,
     status,
     scheduledStartAt,

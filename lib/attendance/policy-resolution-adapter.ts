@@ -13,6 +13,7 @@ import {
   type EmployeeScheduleVersionRow,
 } from "@/lib/attendance/policy-resolution-core";
 import { evaluateAttendancePolicy, type AttendancePolicyResult } from "@/lib/attendance/policy-engine";
+import type { EarlyLeaveSelection } from "./early-leave-review";
 
 type ScheduleVersionRow = {
   start_time: string;
@@ -31,6 +32,7 @@ export type AttendanceRecordPolicyRequest = {
   checkInAt: string | null;
   checkOutAt: string | null;
   now?: string;
+  earlyLeaveSelection?: EarlyLeaveSelection | null;
 };
 
 // work_date 기준으로 유효한 store_setting_versions, store_attendance_policies,
@@ -104,5 +106,5 @@ export async function resolveAttendanceRecordPolicy(
     now: request.now,
   });
 
-  return evaluateAttendancePolicy(policyInput);
+  return evaluateAttendancePolicy({...policyInput, earlyLeaveSelection: request.earlyLeaveSelection});
 }

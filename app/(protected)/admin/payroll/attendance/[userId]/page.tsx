@@ -23,6 +23,9 @@ import {
 } from "@/lib/attendance/display-status";
 
 
+import type { EarlyLeaveSelection } from "@/lib/attendance/early-leave-review";
+import type { EarlyLeaveReviewContext } from "@/lib/attendance/early-leave-review-server";
+
 type UserRow = {
     id: number;
     name: string;
@@ -50,6 +53,7 @@ type AttendanceRecord = {
     approval_status: "pending" | "approved" | null;
     updated_at?: string | null;
     admin_unresolved?: boolean;
+    early_leave_review?: EarlyLeaveReviewContext | null;
     auto_close_at?: string | null;
     unauthorized_absence_audit?: {
         actorUserId: number;
@@ -380,12 +384,30 @@ export default function AttendanceUserDetailPage() {
                 setSelectedDate(result.record.work_date);
             }
 
+            await fetchDetail();
             setMessage(t.correctionDone);
         } catch (error) {
             setMessage(error instanceof Error ? error.message : t.correctionFailed);
         } finally {
             setIsSaving(false);
         }
+    };
+
+    const handleResolveEarlyLeave = async (recordId: number, selection: EarlyLeaveSelection) => {
+        setIsSaving(true);
+        setMessage("");
+        try {
+            const response = await attendanceFetch("/api/attendance/admin", {
+                method: "POST", headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({action: "resolve_early_leave", attendance_id: recordId, selection, lang}),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) throw new Error(result.message || t.correctionFailed);
+            await fetchDetail();
+            setMessage(t.correctionDone);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : t.correctionFailed);
+        } finally { setIsSaving(false); }
     };
 
     const handleNormalizeLate = async (recordId: number) => {
@@ -416,6 +438,7 @@ export default function AttendanceUserDetailPage() {
                     record.id === result.record.id ? result.record : record
                 )
             );
+            await fetchDetail();
             setMessage(t.correctionDone);
         } catch (error) {
             setMessage(error instanceof Error ? error.message : t.correctionFailed);
@@ -621,6 +644,7 @@ export default function AttendanceUserDetailPage() {
                         message={message}
                         onSave={handleSaveRecord}
                         onNormalizeLate={handleNormalizeLate}
+                        onResolveEarlyLeave={handleResolveEarlyLeave}
                         onSaveLeave={handleSaveLeave}
                         onCancelLeave={handleCancelLeave}
                         onUnauthorizedAbsence={handleUnauthorizedAbsence}
@@ -828,6 +852,7 @@ function RecordDetailPanel({
     message,
     onSave,
     onNormalizeLate,
+    onResolveEarlyLeave,
     onSaveLeave,
     onCancelLeave,
     onUnauthorizedAbsence,
@@ -841,6 +866,7 @@ function RecordDetailPanel({
     message: string;
     onSave: (input: SaveRecordInput) => void;
     onNormalizeLate: (recordId: number) => void;
+    onResolveEarlyLeave: (recordId: number, selection: EarlyLeaveSelection) => void;
     onSaveLeave: (input: { note: string; isNew?: boolean }) => void;
     onCancelLeave: () => void;
     onUnauthorizedAbsence: (action: "set_unauthorized_absence" | "cancel_unauthorized_absence", reason: string) => void;
@@ -993,6 +1019,27 @@ function RecordDetailPanel({
                             value={`${Number(record.early_leave_minutes || 0)}${c.minute}`}
                         />
                     </div>
+
+                    {record.early_leave_review && (record.early_leave_review.earlyLeaveReviewRequired || record.early_leave_review.earlyLeaveSelection) && (
+                        <div style={longShiftWarningStyle}>
+                            <strong>{record.early_leave_review.earlyLeaveReviewRequired ? t.earlyLeaveReviewRequired : t.earlyLeaveSelectionConfirmed}</strong>
+                            <div>{t.earlyLeaveRawMinutes}: {record.early_leave_review.rawEarlyLeaveMinutes}{c.minute}</div>
+                            <div>{t.earlyLeaveGraceMinutes}: {record.early_leave_review.earlyLeaveGraceMinutes}{c.minute}</div>
+                            <div>{t.earlyLeaveEffectiveMinutes}: {record.early_leave_review.effectiveEarlyLeaveMinutes}{c.minute}</div>
+                            {record.early_leave_review.earlyLeaveReviewRequired ? <div style={actionRowStyle}>
+                                <button type="button" style={secondaryActionButtonStyle} disabled={isSaving}
+                                    onClick={() => onResolveEarlyLeave(record.id, "use_raw")}>
+                                    {t.earlyLeaveUseRaw.replace("{minutes}", String(record.early_leave_review.rawEarlyLeaveMinutes))}
+                                </button>
+                                <button type="button" style={secondaryActionButtonStyle} disabled={isSaving}
+                                    onClick={() => onResolveEarlyLeave(record.id, "use_effective")}>
+                                    {t.earlyLeaveUseEffective.replace("{minutes}", String(record.early_leave_review.effectiveEarlyLeaveMinutes))}
+                                </button>
+                            </div> : <div>{record.early_leave_review.earlyLeaveSelection === "use_raw"
+                                ? t.earlyLeaveUseRaw.replace("{minutes}", String(record.early_leave_review.rawEarlyLeaveMinutes))
+                                : t.earlyLeaveUseEffective.replace("{minutes}", String(record.early_leave_review.effectiveEarlyLeaveMinutes))}</div>}
+                        </div>
+                    )}
 
                     {isLongShift ? (
                         <div style={longShiftWarningStyle}>

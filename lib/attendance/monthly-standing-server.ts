@@ -1,4 +1,5 @@
 import "server-only";
+import { loadEarlyLeaveReviewContexts } from "./early-leave-review-server";
 
 import { classifyMonthlyAttendanceDay, evaluateMonthlyAttendanceStanding, resolveAttendanceStoreClosed, type MonthlyAttendanceStanding } from "./monthly-standing";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -44,7 +45,8 @@ export async function loadMonthlyAttendanceStandings(
   const attendanceQuery = options?.attendancePromise ?? (options?.userId === undefined ? baseAttendanceQuery : baseAttendanceQuery.eq("user_id", options.userId));
   const baseScheduleQuery = supabaseServer.from("employee_work_schedule_versions").select("id,user_id,start_time,end_time,unpaid_break_minutes,effective_from,effective_to,revision,change_reason").lte("effective_from", end).or(`effective_to.is.null,effective_to.gte.${start}`);
   const scheduleQuery = options?.userId === undefined ? baseScheduleQuery : baseScheduleQuery.eq("user_id", options.userId);
-  const [userResult, attendanceResult, scheduleResult, settingResult, holidayResult] = await Promise.all([
+  const [earlyLeaveContexts, userResult, attendanceResult, scheduleResult, settingResult, holidayResult] = await Promise.all([
+    loadEarlyLeaveReviewContexts(start, lastDate ?? "2026-01-01", options?.userId),
     userQuery,
     attendanceQuery,
     scheduleQuery,
@@ -105,6 +107,8 @@ export async function loadMonthlyAttendanceStandings(
         schedule, hireDate: user.hire_date, storeSettingsRevision: policy.revision,
         lateGraceMinutes: policy.lateGraceMinutes, earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
         manualLateNormalized: record ? overrides.has(Number(record.id)) : false,
+        earlyLeaveSelection: record ? earlyLeaveContexts.get(Number(record.id))?.earlyLeaveSelection : null,
+        normalCheckoutThresholdAt: record ? earlyLeaveContexts.get(Number(record.id))?.normalCheckoutThresholdAt : null,
       });
       return { date, facts, ...classification, approvedLeave: record?.status === "leave" && record.approval_status === "approved", completedBusinessDay: true };
     });

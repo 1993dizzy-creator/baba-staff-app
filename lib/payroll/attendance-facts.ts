@@ -2,6 +2,8 @@
 import { PAYROLL_AUTOMATION_START_DATE, PAYROLL_FACTS_ENGINE_VERSION, type AttendanceDayFacts, type PayrollWarningCode, type WorkScheduleVersion } from "./types.ts";
 
 const OFFSET = "+07:00";
+// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
+import { EARLY_LEAVE_REVIEW_START_DATE, resolveEarlyLeaveReview, type EarlyLeaveSelection } from "../attendance/early-leave-review.ts";
 
 type RecordInput = {
   id: number;
@@ -39,6 +41,8 @@ export function normalizeAttendanceDayFacts(input: {
   lateGraceMinutes?: number;
   earlyLeaveGraceMinutes?: number;
   manualLateNormalized?: boolean;
+  earlyLeaveSelection?: EarlyLeaveSelection | null;
+  normalCheckoutThresholdAt?: string | null;
 }): AttendanceDayFacts {
   const warnings: PayrollWarningCode[] = [];
   const record = input.attendanceRecord;
@@ -73,13 +77,18 @@ export function normalizeAttendanceDayFacts(input: {
       if (scheduledStart !== null && scheduledEnd !== null) {
         overlap = Math.max(0, minutes(Math.max(actualStart, scheduledStart), Math.min(actualEnd, scheduledEnd)) - (input.schedule?.unpaidBreakMinutes ?? 0));
         rawLateMinutes = minutes(scheduledStart, Math.min(actualStart, scheduledEnd));
-        rawEarly = minutes(Math.max(actualEnd, scheduledStart), scheduledEnd);
+        const checkoutThreshold = input.normalCheckoutThresholdAt
+          ? new Date(input.normalCheckoutThresholdAt).getTime() : scheduledEnd;
+        rawEarly = minutes(input.businessDate >= EARLY_LEAVE_REVIEW_START_DATE
+          ? actualEnd : Math.max(actualEnd, scheduledStart), checkoutThreshold);
         // 정책 grace 적용 후 실제 지각분 — 급여 지각 패널티 산정 기준(정상화 여부와 무관).
         effectiveLate = rawLateMinutes > lateThresholdMinutes ? rawLateMinutes : 0;
         // 표시/개근 판정용 late — 수동 지각 정상화 시 0으로 덮어쓴다(기존 의미 유지).
         late = input.manualLateNormalized ? 0 : effectiveLate;
-        // 조퇴 유예는 threshold가 아니라 공제되는 허용 시간이다(정책 엔진과 동일한 의미).
-        early = Math.max(0, rawEarly - (input.earlyLeaveGraceMinutes ?? 0));
+        const earlyLeave = resolveEarlyLeaveReview({businessDate: input.businessDate, rawEarlyLeaveMinutes: rawEarly,
+          earlyLeaveGraceMinutes: input.earlyLeaveGraceMinutes ?? 0, selection: input.earlyLeaveSelection});
+        early = earlyLeave.earlyLeaveMinutes;
+        if (earlyLeave.earlyLeaveReviewRequired) warnings.push("EARLY_LEAVE_REVIEW_REQUIRED");
         overtime = minutes(actualStart, Math.min(actualEnd, scheduledStart)) + minutes(Math.max(actualStart, scheduledEnd), actualEnd);
       }
     }

@@ -22,6 +22,8 @@ import {
   isAdminMissingCheckoutReviewAvailable,
 } from "@/lib/attendance/policy-engine";
 import { recordAttendanceAuditLog } from "@/lib/attendance/audit-log";
+import { EARLY_LEAVE_REVIEW_START_DATE, isEarlyLeaveSelection } from "@/lib/attendance/early-leave-review";
+import { loadEarlyLeaveReviewContexts } from "@/lib/attendance/early-leave-review-server";
 import {
   ATTENDANCE_TRACKING_DISABLED_CODE,
   getAttendanceTrackingDisabledMessage,
@@ -34,6 +36,7 @@ type Action =
   | "set_leave"
   | "update_record"
   | "normalize_late"
+  | "resolve_early_leave"
   | "auto_close_missing_checkout"
   | "delete_orphan_record"
   | "cancel_check_in"
@@ -94,7 +97,12 @@ export async function GET(req: Request) {
     // 활성 직원만 반환하는 /api/attendance/users에 의존하지 않고, 미퇴근 기록에 등장하는
     // user_id만 모아 한 번에 조회한다(N+1 방지). 비활성 사용자와, users row 자체가 없는
     // orphan 기록(연결된 직원 정보 없음)을 명확히 구분해 카드 표시 정보로 함께 내려준다.
-    const userIds = Array.from(new Set((candidates ?? []).map((record) => record.user_id)));
+    const earlyLeaveContexts = await loadEarlyLeaveReviewContexts(EARLY_LEAVE_REVIEW_START_DATE, businessDate);
+    const earlyLeaveReviews = [...earlyLeaveContexts.values()].filter(context => context.earlyLeaveReviewRequired);
+    const userIds = Array.from(new Set([
+      ...(candidates ?? []).map((record) => record.user_id),
+      ...earlyLeaveReviews.map(record => record.user_id),
+    ]));
 
     const usersById = new Map<
       number,
@@ -154,6 +162,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       unresolvedOpenRecords: enrichedRecords,
+      earlyLeaveReviewRecords: earlyLeaveReviews.map(record => ({...record, user: usersById.get(record.user_id) ?? null})),
     });
   } catch {
     return NextResponse.json(
@@ -186,6 +195,7 @@ export async function POST(req: Request) {
       clear_check_out,
       attendance_id,
       is_new,
+      selection,
     }: {
       action?: Action;
       user_id?: string | number;
@@ -199,13 +209,14 @@ export async function POST(req: Request) {
       clear_check_out?: boolean;
       attendance_id?: string | number;
       is_new?: boolean;
+      selection?: unknown;
     } = body;
 
     const isNormalizeLateAction =
       action === "normalize_late" ||
       (action === "update_record" && mark_normal === true);
 
-    if (!action || (!isNormalizeLateAction && (!user_id || !work_date))) {
+    if (!action || (!isNormalizeLateAction && action !== "resolve_early_leave" && (!user_id || !work_date))) {
       return NextResponse.json(
         {
           ok: false,
@@ -229,6 +240,52 @@ export async function POST(req: Request) {
         },
         { status: 403 }
       );
+    }
+
+    if (action === "resolve_early_leave" &&
+        (!Number.isSafeInteger(Number(attendance_id)) || Number(attendance_id) < 1 || !isEarlyLeaveSelection(selection))) {
+      return NextResponse.json({ok: false, code: "INVALID_SELECTION", message: lang === "vi" ? "Lựa chọn không hợp lệ." : "적용 기준을 선택해주세요."}, {status: 400});
+    }
+
+    // Use the persisted record's owner/date for the paid lock, including ID-only actions.
+    const {data: mutationTarget, error: mutationTargetError} = attendance_id
+      ? await supabaseServer.from("attendance_records").select("user_id,work_date").eq("id", attendance_id).maybeSingle()
+      : {data: null, error: null};
+    if (mutationTargetError) throw mutationTargetError;
+    const paidTargets = [mutationTarget, user_id && work_date ? {user_id: Number(user_id), work_date} : null];
+    for (const target of paidTargets) {
+      if (!target || target.work_date < EARLY_LEAVE_REVIEW_START_DATE) continue;
+      const {data: paid, error: paidError} = await supabaseServer.from("payroll_employee_payments")
+        .select("id,payroll_payment_batches!inner(payroll_month)")
+        .eq("user_id", target.user_id).eq("payment_status", "paid")
+        .eq("payroll_payment_batches.payroll_month", `${target.work_date.slice(0, 7)}-01`).limit(1);
+      if (paidError) throw paidError;
+      if (paid?.length) return NextResponse.json({ok: false, code: "PAYROLL_PAID_LOCKED",
+        message: lang === "vi" ? "Không thể sửa chấm công đã thanh toán lương." : "급여 지급이 완료된 근태는 변경할 수 없습니다."}, {status: 409});
+    }
+
+    if (action === "resolve_early_leave") {
+      const {data: target, error: targetError} = await supabaseServer.from("attendance_records").select("*").eq("id", Number(attendance_id)).maybeSingle();
+      if (targetError) throw targetError;
+      if (!target) return NextResponse.json({ok: false, code: "RECORD_NOT_FOUND"}, {status: 404});
+      const {data: targetUser, error: userError} = await supabaseServer.from("users").select("work_start_time,work_end_time").eq("id", target.user_id).single();
+      if (userError) throw userError;
+      // Never consume client-supplied minutes. Resolve the date's schedule/store policy again.
+      const resolved = await resolveAttendanceRecordPolicy({userId: target.user_id, workDate: target.work_date,
+        fallbackScheduledStartTime: targetUser.work_start_time, fallbackScheduledEndTime: targetUser.work_end_time,
+        checkInAt: target.check_in_at, checkOutAt: target.check_out_at});
+      const {data: result, error: resolveError} = await supabaseServer.rpc("attendance_admin_resolve_early_leave_v1", {
+        p_attendance_record_id: target.id, p_actor_user_id: auth.actor.id, p_selection: selection,
+        p_expected_updated_at: target.updated_at, p_expected_check_in_at: target.check_in_at,
+        p_expected_check_out_at: target.check_out_at, p_expected_threshold_at: resolved.normalCheckoutThresholdAt,
+        p_expected_grace_minutes: resolved.earlyLeaveGraceMinutes,
+      });
+      if (resolveError) throw resolveError;
+      if (result?.status !== "ok") return NextResponse.json({ok: false, code: String(result?.status).toUpperCase(),
+        message: result?.status === "payroll_paid_locked"
+          ? (lang === "vi" ? "Không thể sửa chấm công đã thanh toán lương." : "급여 지급이 완료된 근태는 변경할 수 없습니다.")
+          : (lang === "vi" ? "Dữ liệu đã thay đổi. Vui lòng tải lại." : "기록이나 정책이 변경되었습니다. 새로고침해주세요.")}, {status: result?.status === "forbidden" ? 403 : 409});
+      return NextResponse.json({ok: true, record: result.record});
     }
 
     if (action === "set_unauthorized_absence" || action === "cancel_unauthorized_absence") {
