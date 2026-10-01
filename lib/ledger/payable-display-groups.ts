@@ -1,8 +1,8 @@
 // Display-only grouping for 장부작성 > 미납금 현황. Nothing here changes a payable's
 // real party, amounts or the API/DB totals.
 //
-// "기타 · 결제 미확인" is a synthetic group of unresolved payment-verification payables
-// (marker present AND remaining > 0). Each item keeps its real partyId/supplier.
+// The synthetic row contains unresolved payment-verification items only.
+// Ordinary business partners always remain ordinary party rows.
 //
 // The monthly payables API already excludes verification payables from party rows and
 // totalOutstanding, so normally nothing is moved. If a verification payable ever does
@@ -42,7 +42,7 @@ export function groupPayablesForDisplay<P extends DisplayPartyRow, V extends Dis
     } : party;
   });
   const other = unresolved.length
-    ? { items: unresolved, count: unresolved.length, amount: sumPayableAmounts(unresolved.map((item) => item.remainingAmount)) }
+    ? { items: unresolved, count: unresolved.length, amount: sumPayableAmounts(unresolved.map(item => item.remainingAmount)) }
     : null;
   return { parties: displayParties, other };
 }

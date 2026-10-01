@@ -1,4 +1,3 @@
-import { isAdHocPayableParty } from "@/lib/ledger/ad-hoc-payable";
 import { effectivePartnerEmoji } from "@/lib/partners/emoji";
 import type { PartnerType } from "@/lib/partners/policy";
 import { calculateCardGrossAtMonthEnd, sumCardMoney } from "@/lib/ledger/card-settlements";
@@ -44,7 +43,7 @@ export async function GET(request: Request) {
     const fundsViewMode = fundAccountViewMode(month, currentBusinessDate, Boolean(closureResult.data));
     const accountsPromise = supabaseServer.from("ledger_fund_accounts").select("id,code,type,holder_name,display_name,is_active,is_business_fund,sort_order").order("sort_order");
     const categoriesPromise = supabaseServer.from("ledger_categories").select("id,name,kind,parent_id,cost_behavior,is_active,parent:ledger_categories!parent_id(name)").eq("is_active", true).order("kind").order("name");
-    const partiesPromise = supabaseServer.from("ledger_parties").select("id,name,type,is_active,memo").eq("is_active", true).order("name");
+    const partiesPromise = supabaseServer.from("ledger_parties").select("id,name,type,is_active").eq("is_active", true).order("name");
     const partnerPromise = supabaseServer.from("business_partners").select("id,name,partner_type,partner_subtype_id,payment_mode,default_fund_account_id,is_active").order("name");
     const partnerSubtypePromise = supabaseServer.from("business_partner_subtypes").select("id,code,emoji");
     const bridgePromise = supabaseServer.from("business_partner_ledger_parties").select("business_partner_id,ledger_party_id");
@@ -213,9 +212,7 @@ export async function GET(request: Request) {
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
     ]);
     const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources, month);
-    const adHocParty = (partiesResult.data ?? []).find(isAdHocPayableParty);
-    const adHocPayableParty = adHocParty ? { ledgerPartyId: Number(adHocParty.id), name: adHocParty.name } : null;
-    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, cashReport, accounts, categories: categoriesResult.data ?? [], profitTransactions: profitRows, parties: (partiesResult.data ?? []).map(party => ({ id: party.id, name: party.name, type: party.type, is_active: party.is_active })), partners, adHocPayableParty, transactions: displayTransactions, entries });
+    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, cashReport, accounts, categories: categoriesResult.data ?? [], profitTransactions: profitRows, parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);

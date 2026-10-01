@@ -13,7 +13,7 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import Link from "next/link";
-import type { PayablePeriodSummary } from "@/lib/ledger/payables";
+import { sumPayableAmounts, type PayablePeriodSummary } from "@/lib/ledger/payables";
 import { formatCardSettlementRate } from "@/lib/ledger/card-settlements";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
@@ -47,7 +47,6 @@ import {
   sanitizeLedgerAmountInput,
 } from "@/lib/ledger/manual-entry-amount";
 import {
-  groupManualEntryPartners,
   isManualExpenseCategory,
   isManualIncomeCategory,
   isPayrollAdvanceManualAction,
@@ -61,8 +60,9 @@ import {
 import styles from "./entries.module.css";
 import { entryStatusReason } from "@/lib/ledger/entry-status-reason";
 import MonthCloseSheet from "./MonthCloseSheet";
-import AdHocPayableSheet from "./AdHocPayableSheet";
-import type { AdHocPayableParty } from "@/lib/ledger/ad-hoc-payable";
+import PartnerSelect from "./PartnerSelect";
+import PayablePeriodSnapshot from "./PayablePeriodSnapshot";
+import { currentPeriodPayables, type PayablePeriodContext } from "@/lib/ledger/payable-period-payment";
 import ManualDisplayEditor, { LedgerEditShell } from "./ManualDisplayEditor";
 import ManualDisplayHistory from "./ManualDisplayHistory";
 import PaymentVerificationSection, { type Verification } from "./PaymentVerificationSection";
@@ -140,7 +140,6 @@ type LedgerData = {
   accounts: Account[];
   categories: Category[];
   partners: Partner[];
-  adHocPayableParty: AdHocPayableParty | null;
   entries: LedgerEntry[];
 };
 type EntryFilter = "all" | "income" | "expense" | "manual" | "pending";
@@ -173,7 +172,7 @@ type DateGroup = {
   income: number;
   expense: number;
 };
-type PayableParty = PayablePeriodSummary & { isAdHocPayable?:boolean; partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null };
+type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null };
 type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[]; historyPayables:PayableHistoryRow[]; verification?:Verification };
 type PayableRow = { id:number; party_id:number; original_amount:number; paidAmount?:number; outstandingAmount:number; settlementStatus?:"paid"|"partial"|"unpaid"; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null;memo?:string|null}|null };
 type PayableHistoryRow = PayableRow & { paidAmount:number; settlementStatus:"paid"|"partial"|"unpaid" };
@@ -608,8 +607,7 @@ function LedgerEntriesContent() {
   async function resolveCandidate() {
     if (!selected || !candidateDraft?.item.candidateId) return;
     const partyId = selected.partyId ?? (candidateDraft.resolution === "immediate" ? null :
-      (String(data?.adHocPayableParty?.ledgerPartyId) === candidateDraft.partyId ? data?.adHocPayableParty?.ledgerPartyId :
-      data?.partners.find((partner) => partner.isActive && String(partner.ledgerPartyId) === candidateDraft.partyId)?.ledgerPartyId) ?? null);
+      data?.partners.find((partner) => partner.isActive && String(partner.id) === candidateDraft.partyId)?.ledgerPartyId ?? null);
     if (candidateDraft.resolution !== "immediate" && partyId == null) {
       setDetailMessage(vi ? "Vui lòng chọn đối tác để ghi nhận công nợ." : "미지급 등록을 위해 거래처를 선택해주세요.");
       return;
@@ -1275,7 +1273,7 @@ function LedgerEntriesContent() {
             lang={lang}
             entry={selected}
             partnersByParty={partnerByLedgerParty}
-            adHocPayableParty={data?.adHocPayableParty ?? null}
+            partners={data?.partners ?? []}
             accounts={data?.accounts ?? []}
             categories={data?.categories ?? []}
             candidateDraft={candidateDraft}
@@ -1307,10 +1305,8 @@ function LedgerEntriesContent() {
           />
         ) : null}
         {payableParty && data && payables?.month === month && payableParty.viewMonth === month ? (
-          month === currentMonth()
-            ? payableParty.isAdHocPayable
-              ? <AdHocPayableSheet lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { setPayableParty(null); await load(); setNotice(vi ? "\u0110\u00e3 thanh to\u00e1n c\u00e1c kho\u1ea3n \u0111\u00e3 ch\u1ecdn." : "\uc120\ud0dd\ud55c \uac1c\ubcc4 \ubbf8\ub0a9\uac74\uc744 \uacb0\uc81c\ud588\uc2b5\ub2c8\ub2e4."); }} />
-              : <PayablePartySheet lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { setPayableParty(null); await load(); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} />
+          month <= currentMonth()
+            ? <PayablePartySheet key={`${month}:${payableParty.partyId}`} lang={lang} party={payableParty} accounts={businessAccounts} period={month < currentMonth() ? { month, closingOutstanding: payableParty.closingOutstanding, rows: payables.historyPayables.filter(row => Number(row.party_id) === payableParty.partyId) } : undefined} onClose={() => setPayableParty(null)} onPaid={async () => { setPayableParty(null); await load(); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} />
             : <HistoricalPayablePartySheet lang={lang} month={month} party={payableParty} rows={payables.historyPayables.filter(row => Number(row.party_id) === payableParty.partyId)} onClose={() => setPayableParty(null)} />
         ) : null}
       </main>
@@ -1328,7 +1324,7 @@ function EntryDetailSheet({
   lang,
   entry,
   partnersByParty,
-  adHocPayableParty,
+  partners,
   accounts,
   categories,
   candidateDraft,
@@ -1346,7 +1342,7 @@ function EntryDetailSheet({
   lang: "ko" | "vi";
   entry: LedgerEntry;
   partnersByParty: ReadonlyMap<number, Partner>;
-  adHocPayableParty: AdHocPayableParty | null;
+  partners: Partner[];
   accounts: Account[];
   categories: Category[];
   candidateDraft: CandidateDraft | null;
@@ -1573,14 +1569,8 @@ function EntryDetailSheet({
           />
           {entry.partyId == null && candidateDraft.resolution !== "immediate" ? (
             <BarField label={vi ? "Đối tác" : "거래처"} required compact>
-              {({ id }) => <select id={id} required disabled={saving} value={candidateDraft.partyId}
-                onChange={(event) => setCandidateDraft({ ...candidateDraft, partyId: event.target.value })}
-                style={keepingInputStyle}>
-                <option value="">{vi ? "Chọn đối tác" : "거래처 선택"}</option>
-                {adHocPayableParty ? <option value={adHocPayableParty.ledgerPartyId}>{adHocPayableParty.name}</option> : null}
-                {Array.from(partnersByParty.values()).filter((partner) => partner.isActive).map((partner) =>
-                  <option key={partner.ledgerPartyId} value={partner.ledgerPartyId}>{partner.name}</option>)}
-              </select>}
+              {({ id }) => <PartnerSelect id={id} partners={partners} lang={lang} required disabled={saving} value={candidateDraft.partyId}
+                onChange={(partyId) => setCandidateDraft({ ...candidateDraft, partyId })} />}
             </BarField>
           ) : null}
           <div
@@ -1784,13 +1774,13 @@ function HistoricalPayablePartySheet({lang,month,party,rows,onClose}:{lang:"ko"|
     <div className={styles.payableDetailHeader}><div className={styles.payableDetailPartner}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><strong>{party.partyName}</strong></div><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(party.closingOutstanding)}</b></span></div>
     <p className={styles.payableReadOnlyHint} role="status">{vi?"Số dư cuối tháng đã chọn. Không thể thanh toán giao dịch cũ.":"선택월 말 기준 잔액입니다. 과거 내역은 결제할 수 없습니다."}</p>
     <PayableMonthTotals summary={party} vi={vi}/>
-    {party.isAdHocPayable ? rows.map(row => <div key={row.id} className={styles.paymentHistoryRow}><span>{row.expense?.business_date} · {payableItemLabel(row,vi)}<br />{row.expense?.memo ?? "-"}</span><strong>{money(row.outstandingAmount)}</strong></div>) : <PayableDateGroups rows={rows} lang={lang}/>}
+    <PayableDateGroups rows={rows} lang={lang}/>
     {!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}
   </BarSheet>;
 }
 
-function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
-  lang:"ko"|"vi"; party:PayableParty; accounts:Account[]; onClose:()=>void; onPaid:()=>Promise<void>;
+function PayablePartySheet({ lang, party, accounts, period, onClose, onPaid }: {
+  lang:"ko"|"vi"; party:PayableParty; accounts:Account[]; period?:PayablePeriodContext; onClose:()=>void; onPaid:()=>Promise<void>;
 }) {
   const vi=lang==="vi", initial=localTime();
   const [detail,setDetail]=useState<PayableDetail|null>(null),[selectedDates,setSelectedDates]=useState<Set<string>>(()=>new Set()),[accountId,setAccountId]=useState(""),[date,setDate]=useState(initial.slice(0,10)),[time,setTime]=useState(initial.slice(11,16)),[memo,setMemo]=useState(""),[saving,setSaving]=useState(false),[error,setError]=useState("");
@@ -1798,10 +1788,11 @@ function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
   const [mode,setMode]=useState<"dates"|"partial"|"history">("dates"),[partialAmount,setPartialAmount]=useState("");
   const loadDetail=useCallback(async()=>{setError("");try{const response=await fetch(`/api/admin/ledger/payables/${party.partyId}`,{cache:"no-store"}),body=await response.json();if(!response.ok)throw new Error(body.code);setDetail(body)}catch{setError(vi?"Không thể tải chi tiết công nợ.":"미납 상세를 불러오지 못했습니다.")}},[party.partyId,vi]);
   useEffect(()=>{void loadDetail()},[loadDetail]);
-  const groups=useMemo(()=>groupPayableRows(detail?.payables??[]),[detail]);
+  const currentRows=useMemo(()=>currentPeriodPayables(detail?.payables??[],period),[detail,period]);
+  const groups=useMemo(()=>groupPayableRows(currentRows),[currentRows]);
   const selectedGroups=groups.filter(group=>selectedDates.has(group.businessDate)),selectedTotal=selectedGroups.reduce((sum,group)=>sum+group.total,0),selectedPayables=selectedGroups.flatMap(group=>group.rows);
   // 부분 지급: amount is allocated oldest-first by buildOldestFirstAllocations(); the preview is exactly what is sent.
-  const partialRows=useMemo(()=>(detail?.payables??[]).map(row=>({id:Number(row.id),businessDate:row.expense?.business_date??"",outstandingAmount:Number(row.outstandingAmount)})),[detail]);
+  const partialRows=useMemo(()=>currentRows.map(row=>({id:Number(row.id),businessDate:row.expense?.business_date??"",outstandingAmount:Number(row.outstandingAmount)})),[currentRows]);
   const partialPlan=useMemo(()=>planPartialPayablePayment(partialRows,parseLedgerAmount(partialAmount)??0),[partialRows,partialAmount]);
   const rowById=useMemo(()=>new Map((detail?.payables??[]).map(row=>[Number(row.id),row])),[detail]);
   // 지급 내역: date + daily total only (allocation/item/memo/account stay in the data, not shown).
@@ -1811,14 +1802,15 @@ function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
   async function pay(){if(saving||!accountId||!selectedPayables.length)return;setSaving(true);setError("");try{const response=await fetch("/api/admin/ledger/payables/pay",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({partyId:party.partyId,fundAccountId:Number(accountId),occurredAt:`${date}T${time}:00+07:00`,amount:selectedTotal,allocations:selectedPayables.map(row=>({payableId:row.id,allocatedAmount:row.outstandingAmount})),memo:memo||null})}),body=await response.json();if(!response.ok)throw new Error(body.code);setSelectedDates(new Set());await onPaid()}catch(cause){setError(`${vi?"Không thể thanh toán.":"결제하지 못했습니다."} ${(cause as Error).message}`)}finally{setSaving(false)}}
   return <BarSheet kind="full" compact topAligned comfortableTop fillAvailable containedBody title={vi?"Chi tiết công nợ":"미납금 상세"} closeLabel={vi?"Đóng":"닫기"} saving={saving} onClose={onClose} footer={<div className={styles.detailFooter}>{mode==="history"?null:<button type="button" disabled={saving||!accountId||!canPay} onClick={()=>void (mode==="dates"?pay():payPartial())} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang thanh toán…":"결제 중…"):mode==="dates"?(vi?`Thanh toán ${selectedDates.size} ngày đã chọn`:`선택 일자 ${selectedDates.size}건 결제`):(vi?`Thanh toán một phần ${money(partialPlan.error===null?partialPlan.amount:0)}`:`부분 지급 ${money(partialPlan.error===null?partialPlan.amount:0)}`)}</button>}<button type="button" disabled={saving} onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button></div>}>
     <div className={styles.payableSheetBody}>
-    <div className={styles.payableDetailHeader}><strong>🤝 {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(detail?.totalOutstanding??party.outstandingAmount)}</b></span></div>
+    {period ? <PayablePeriodSnapshot lang={lang} period={period} currentRows={detail?.payables ?? null} /> : null}
+    <div className={styles.payableDetailHeader}><strong>🤝 {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(period ? sumPayableAmounts(currentRows.map(row=>row.outstandingAmount)) : detail?.totalOutstanding??party.outstandingAmount)}</b></span></div>
     <p className={styles.payablePartyMeta}>{vi?"Đầu tiên":"최초"} {party.oldestDate||"-"} · {vi?"Hạn":"예정"} {party.nearestDueDate??(vi?"Chưa định":"미정")} · {vi?"Thanh toán gần nhất":"최근 지급"} {party.recentPaymentDate??(vi?"Không có":"없음")}</p>
     {error?<p className={styles.error} role="alert">{error}</p>:null}
     {detail?<div className={styles.payModeTabs} role="group" aria-label={vi?"Cách thanh toán":"지급 방식"}><button type="button" aria-pressed={mode==="dates"} disabled={saving} onClick={()=>setMode("dates")}>{vi?"Theo ngày":"선택 일자 결제"}</button><button type="button" aria-pressed={mode==="partial"} disabled={saving||!groups.length} onClick={()=>setMode("partial")}>{vi?"Thanh toán một phần":"부분 지급"}</button><button type="button" aria-pressed={mode==="history"} disabled={saving} onClick={()=>setMode("history")}>{vi?"Lịch sử":"지급 내역"} {detail.payments?.length??0}</button></div>:null}
     {mode==="history"
       ?<div className={styles.paymentHistory}>{dailyPayments.length?dailyPayments.map(day=><div key={day.businessDate} className={styles.paymentHistoryRow}><span>{formatDate(day.businessDate,lang)}</span><strong>{money(day.amount)}</strong></div>):<p className={styles.paymentHistoryEmpty}>{vi?"Chưa có lịch sử thanh toán.":"지급 내역이 없습니다."}</p>}</div>
     :mode==="dates"
-      ?<PayableDateGroups rows={detail?.payables??[]} lang={lang} selectedDates={selectedDates} onSelectDate={date=>setSelectedDates(current=>{const next=new Set(current);if(next.has(date))next.delete(date);else next.add(date);return next})}/>
+      ?<PayableDateGroups rows={currentRows} lang={lang} selectedDates={selectedDates} onSelectDate={date=>setSelectedDates(current=>{const next=new Set(current);if(next.has(date))next.delete(date);else next.add(date);return next})}/>
       :<div className={styles.partialPayment}>
         <BarField label={`💰 ${vi?"Số tiền thanh toán":"지급액"}`} required compact help={`${vi?"Tối đa":"최대"} ${money(partialPlan.totalOutstanding)}`}>{({id})=><input id={id} inputMode="numeric" value={formatLedgerAmountInput(partialAmount)} onChange={event=>setPartialAmount(sanitizeLedgerAmountInput(event.target.value))} style={keepingInputStyle}/>}</BarField>
         {partialPlan.error==="exceeds_outstanding"?<p className={styles.error} role="alert">{vi?"Vượt quá tổng công nợ.":"총 미납금을 초과할 수 없습니다."}</p>:null}
@@ -1888,8 +1880,6 @@ function ManualEntrySheet({
           : [],
     accounts = data.accounts.filter((row) => row.is_active),
     investmentAccounts = accounts.filter((row) => row.is_business_fund && ["cash", "bank", "personal_custody"].includes(row.type)),
-    activePartners = data.partners.filter((row) => row.isActive),
-    partnerGroups = groupManualEntryPartners(activePartners, lang),
     selectedPartner = data.partners.find((row) => String(row.id) === partnerId),
     employeeGroups = groupPayrollAdvanceEmployees(employees ?? []),
     partText = adminUsersText[lang];
@@ -2090,16 +2080,7 @@ function ManualEntrySheet({
             ) : type === "expense" ? (
               <BarField label={`🤝 ${vi ? "Đối tác (không bắt buộc)" : "거래처 (선택)"}`} compact>
                 {({ id }) => (
-                  <select id={id} data-manual-field="partner" value={partnerId} onChange={(event) => setPartnerId(event.target.value)} style={keepingInputStyle}>
-                    <option value="">{vi ? "Không có" : "없음"}</option>
-                    {partnerGroups.map((group) => (
-                      <optgroup key={group.group} label={group.label}>
-                        {group.partners.map((partner) => (
-                          <option key={partner.id} value={partner.id}>{partner.emoji} {partner.name}</option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
+                  <PartnerSelect id={id} manual partners={data.partners} lang={lang} value={partnerId} onChange={setPartnerId} />
                 )}
               </BarField>
             ) : type === "income" ? (

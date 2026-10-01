@@ -57,8 +57,8 @@ test("entries party sheet: 선택 일자 결제 kept, 부분 지급 added with p
   for (const label of ["선택 일자 결제", "부분 지급", "지급액", "총 미납금을 초과할 수 없습니다.", "Theo ngày", "Thanh toán một phần", "Vượt quá tổng công nợ."]) assert.ok(entries.includes(label), label);
 });
 
-test("current month pays; past months stay read-only (no pay, partial pay or verification payment)", () => {
-  assert.match(entriesCompact, /month===currentMonth\(\)\?payableParty\.isAdHocPayable\?<AdHocPayableSheet/);
+test("past and current ordinary payables use live payment sheets; future month and verification queue keep their existing gate", () => {
+  assert.match(entriesCompact, /month<=currentMonth\(\)\?<PayablePartySheet/);
   assert.match(entriesCompact, /:<HistoricalPayablePartySheet/);
   const historical = entriesCompact.slice(entriesCompact.indexOf("functionHistoricalPayablePartySheet("), entriesCompact.indexOf("functionPayablePartySheet("));
   assert.doesNotMatch(historical, /payables\/pay|partial|planPartialPayablePayment/);
@@ -209,7 +209,7 @@ test("zero unresolved hides 기타 entirely", () => {
 test("기타 grouping is display-only: no API/DB/economic changes", () => {
   const helper = readFileSync("lib/ledger/payable-display-groups.ts", "utf8");
   assert.doesNotMatch(helper, /fetch\(|supabase|party_id\s*=(?!=)/);
-  assert.match(readFileSync("app/api/admin/ledger/payables/route.ts", "utf8"), /const ordinarySources=sources\.filter\(row=>isAdHocPayableParty\(row\.party\)\|\|!isPaymentVerification\(row\)\);/);
+  assert.match(readFileSync("app/api/admin/ledger/payables/route.ts", "utf8"), /const ordinarySources=sources\.filter\(row=>!isPaymentVerification\(row\)\);/);
 });
 
 const { groupPaymentsByDate } = require("../lib/ledger/payable-display-groups.ts") as typeof import("../lib/ledger/payable-display-groups");

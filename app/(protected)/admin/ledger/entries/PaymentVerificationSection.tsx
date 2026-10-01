@@ -79,24 +79,11 @@ export default function PaymentVerificationSection({ group, accounts, vi, canPay
   }
 
   const title = vi ? "Khác · Chưa xác minh thanh toán" : "기타 · 결제 미확인";
-  return <>
-    {/* Same markup/classes as a party row in .payableParties */}
-    <button type="button" onClick={() => setOpen(true)}>
-      <span className={styles.payablePartyMain}>
-        <span className={styles.partnerTypeBadge}>{vi ? "Khác" : "기타"}</span>
-        <span className={styles.payablePartyName}>{vi ? "Khác" : "기타"} <em className={styles.verificationBadge}>{vi ? "Chưa xác minh" : "결제 미확인"}</em></span>
-        <small className={styles.payablePartyPeriod}>{vi ? "Không tính vào công nợ cuối tháng · Cần xác nhận thanh toán" : "월말 미납 제외 · 실제 지급 확인 필요"}</small>
-      </span>
-      {/* Warning tone: this is not confirmed outstanding and is excluded from 월말 미납. */}
-      <strong className={styles.verificationAmount} aria-label={vi ? "Cần kiểm tra" : "확인 필요"}><span className={styles.verificationAmountLabel}>{vi ? "Cần kiểm tra" : "확인 필요"}</span> {money(group.amount)}</strong><small>{group.count}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i>
-    </button>
-    {/* Portaled so the .payableParties row styles never reach the sheet buttons. */}
-    {open ? createPortal(<BarSheet kind="full" compact topAligned comfortableTop fillAvailable containedBody title={title} closeLabel={vi ? "Đóng" : "닫기"} saving={busy} onClose={() => { setSelected(null); setOpen(false); }}
-      footer={<div className={styles.detailFooter}>{selected ? <>
+  const footer = <div className={styles.detailFooter}>{selected ? <>
         <button type="button" disabled={busy || !canSubmit || !accountId} onClick={() => void submit()} style={{ ...primaryButtonStyle, width: "100%" }}>{busy ? (vi ? "Đang ghi…" : "기록 중…") : (vi ? "Xác nhận thanh toán" : "결제 확정")}</button>
         <button type="button" disabled={busy} onClick={() => setSelected(null)} style={{ ...secondaryButtonStyle, width: "100%" }}>{vi ? "Quay lại" : "목록으로"}</button>
-      </> : <button type="button" onClick={() => setOpen(false)} style={{ ...secondaryButtonStyle, width: "100%" }}>{vi ? "Đóng" : "닫기"}</button>}</div>}>
-      <div className={styles.payableSheetBody}>
+      </> : <button type="button" onClick={() => setOpen(false)} style={{ ...secondaryButtonStyle, width: "100%" }}>{vi ? "Đóng" : "닫기"}</button>}</div>;
+  const content = (<div className={styles.payableSheetBody}>
         <p className={styles.verificationNotice} role="note">{vi ? "Số tiền này không được tính vào công nợ cuối tháng. Hãy ghi nhận sau khi đã xác nhận thanh toán thực tế." : "이 금액은 월말 미납에 포함되지 않습니다. 실제 지급 여부를 확인한 뒤 기록하세요."}</p>
         <div className={styles.payableDetailHeader}><strong>🧾 {title}</strong><span>{vi ? "Còn lại" : "남은 금액"} <b>{money(group.amount)}</b></span></div>
         <p className={styles.payableReadOnlyHint} role="note">{canPay
@@ -150,7 +137,21 @@ export default function PaymentVerificationSection({ group, accounts, vi, canPay
             })}
           </section>)}
         </div>}
-      </div>
-    </BarSheet>, document.body) : null}
+      </div>);
+  const sheet = <BarSheet kind="full" compact topAligned comfortableTop fillAvailable containedBody title={title} closeLabel={vi ? "Đóng" : "닫기"} saving={busy} onClose={() => { setSelected(null); setOpen(false); }}
+      footer={footer}>{content}</BarSheet>;
+  return <>
+    {/* Same markup/classes as a party row in .payableParties */}
+    <button type="button" onClick={() => setOpen(true)}>
+      <span className={styles.payablePartyMain}>
+        <span className={styles.partnerTypeBadge}>{vi ? "Khác" : "기타"}</span>
+        <span className={styles.payablePartyName}>{vi ? "Khác" : "기타"} <em className={styles.verificationBadge}>{vi ? "Chưa xác minh" : "결제 미확인"}</em></span>
+        <small className={styles.payablePartyPeriod}>{vi ? "Không tính vào công nợ cuối tháng · Cần xác nhận thanh toán" : "월말 미납 제외 · 실제 지급 확인 필요"}</small>
+      </span>
+      {/* Warning tone: this is not confirmed outstanding and is excluded from 월말 미납. */}
+      <strong className={styles.verificationAmount} aria-label={vi ? "Cần kiểm tra" : "확인 필요"}><span className={styles.verificationAmountLabel}>{vi ? "Cần kiểm tra" : "확인 필요"}</span> {money(group.amount)}</strong><small>{group.count}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i>
+    </button>
+    {/* Portaled so the .payableParties row styles never reach the sheet buttons. */}
+    {open ? createPortal(sheet, document.body) : null}
   </>;
 }

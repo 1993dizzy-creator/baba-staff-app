@@ -64,7 +64,6 @@ async function summary(sales, lines, { failAllocations = false, parties = [] } =
       if (name === "@/lib/ledger/dashboard-cash-report") return require("../lib/ledger/dashboard-cash-report.ts");
       if (name === "@/lib/ledger/manual-entry-policy") return require("../lib/ledger/manual-entry-policy.ts");
       if (name === "@/lib/partners/emoji") return require("../lib/partners/emoji.ts");
-      if (name === "@/lib/ledger/ad-hoc-payable") return require("../lib/ledger/ad-hoc-payable.ts");
       if (name === "@/lib/supabase/server") return { supabaseServer: db };
       if (name === "@/lib/ledger/server") return { requireLedgerActor: async () => ({}), ledgerJson: body => body };
       if (name === "@/lib/ledger/inventory-display") return { withInventoryDisplay: async rows => rows, loadInventoryProjectionIssues: async () => [] };
@@ -159,10 +158,4 @@ test("allocation read failure fails the summary instead of silently overstating 
   const { body } = await summary([sale(1, 100)], [], { failAllocations: true });
   assert.equal(body.ok, false);
   assert.equal(body.code, "LEDGER_LOAD_FAILED");
-});
-test("ledger GET exposes system party separately without inventing a business partner",async()=>{
- const {body}=await summary([],[],{parties:[{id:987,name:'기타 (khác)',memo:'system:ad_hoc_payable',type:'other',is_active:true}]});
- assert.equal(body.adHocPayableParty.ledgerPartyId,987);
- assert.equal(body.adHocPayableParty.name,'기타 (khác)');
- assert.equal(body.partners.length,0);
 });

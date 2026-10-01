@@ -161,8 +161,8 @@ test('past months are read-only: items visible when opened, no 개별/일괄 결
 });
 
 test('sheet uses the shared full compact BarSheet style and is portaled out of the row list', () => {
-  assert.match(compact, /createPortal\(<BarSheetkind="full"compacttopAlignedcomfortableTopfillAvailablecontainedBody/);
-  assert.match(compact, /<\/BarSheet>,document\.body\)/);
+  assert.match(compact, /constsheet=<BarSheetkind="full"compacttopAlignedcomfortableTopfillAvailablecontainedBody/);
+  assert.match(compact, /createPortal\(sheet,document\.body\)/);
 });
 
 test('기타 amount is shown as a warning (not confirmed outstanding) and the sheet says it is excluded from 월말 미납', () => {

@@ -413,7 +413,8 @@ test("business partners are the user-facing party source and defaults stay one-w
   assert.match(autoLink, /revoke all on function public\.business_partner_ensure_ledger_party_v1\(bigint\)\s+from public, anon, authenticated, service_role/);
   assert.match(route, /from\("business_partners"\)/);
   assert.match(route, /from\("business_partner_ledger_parties"\)/);
-  assert.match(pageCompact, /data\.partners\.filter/);
+  assert.match(pageCompact, /<PartnerSelectid=\{id\}manualpartners=\{data\.partners\}/);
+  assert.match(readFileSync("app/(protected)/admin/ledger/entries/PartnerSelect.tsx", "utf8"), /partners\.filter\(partner => partner\.isActive\)/);
   assert.match(page, /거래처 기본 결제설정은 변경하지 않습니다/);
 });
 
