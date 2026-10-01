@@ -6,7 +6,7 @@ import { PGlite } from '@electric-sql/pglite';
 import ts from 'typescript';
 const require = createRequire(import.meta.url);
 const { buildLedgerEntries } = require('../lib/ledger/entries.ts');
-const migration = readFileSync('supabase/migrations/20261001105348_review_meal_source_drift_without_financial_changes.sql', 'utf8');
+const migration = readFileSync('supabase/migrations/20261001131334_review_meal_source_drift_without_financial_changes.sql', 'utf8');
 const fp = digit => digit.repeat(64);
 async function database(original = 330000, effective = original, latest = 360000) {
   const db = new PGlite();

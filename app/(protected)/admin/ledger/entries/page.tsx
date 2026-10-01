@@ -147,6 +147,7 @@ type CandidateDraft = {
   resolution: "immediate" | "payable" | "verification_pending";
   categoryId: string;
   fundAccountId: string;
+  partyId: string;
   memo: string;
 };
 type ConfirmedEditDraft = {
@@ -595,6 +596,7 @@ function LedgerEntriesContent() {
         resolution: selected.defaultResolution ?? "verification_pending",
         categoryId: String(item.categoryId ?? ""),
         fundAccountId: String(selected.defaultFundAccountId ?? ""),
+        partyId: "",
         memo: "",
       };
       setCandidateDraft(draft);
@@ -602,6 +604,12 @@ function LedgerEntriesContent() {
   }
   async function resolveCandidate() {
     if (!selected || !candidateDraft?.item.candidateId) return;
+    const partyId = selected.partyId ?? (candidateDraft.resolution === "immediate" ? null :
+      data?.partners.find((partner) => partner.isActive && String(partner.ledgerPartyId) === candidateDraft.partyId)?.ledgerPartyId ?? null);
+    if (candidateDraft.resolution !== "immediate" && partyId == null) {
+      setDetailMessage(vi ? "Vui lòng chọn đối tác để ghi nhận công nợ." : "미지급 등록을 위해 거래처를 선택해주세요.");
+      return;
+    }
     setSaving(true);
     setDetailMessage("");
     try {
@@ -613,7 +621,7 @@ function LedgerEntriesContent() {
             body: JSON.stringify({
               resolution: candidateDraft.resolution,
               categoryId: Number(candidateDraft.categoryId),
-              partyId: selected.partyId,
+              partyId,
               fundAccountId:
                 candidateDraft.resolution === "immediate"
                   ? Number(candidateDraft.fundAccountId)
@@ -631,7 +639,9 @@ function LedgerEntriesContent() {
       await load();
     } catch (cause) {
       setDetailMessage(
-        `${vi ? "Không thể ghi sổ." : "반영하지 못했습니다."} ${(cause as Error).message}`,
+        (cause as Error).message === "PARTY_REQUIRED"
+          ? (vi ? "Vui lòng chọn đối tác để ghi nhận công nợ." : "미지급 등록을 위해 거래처를 선택해주세요.")
+          : `${vi ? "Không thể ghi sổ." : "반영하지 못했습니다."} ${(cause as Error).message}`,
       );
     } finally {
       setSaving(false);
@@ -1460,7 +1470,7 @@ function EntryDetailSheet({
           </button>
         </div>
       ) : null}
-      {message ? (
+      {message && !candidateDraft ? (
         <p className={styles.error} role="alert">
           {message}
         </p>
@@ -1552,6 +1562,17 @@ function EntryDetailSheet({
               },
             ]}
           />
+          {entry.partyId == null && candidateDraft.resolution !== "immediate" ? (
+            <BarField label={vi ? "Đối tác" : "거래처"} required compact>
+              {({ id }) => <select id={id} required disabled={saving} value={candidateDraft.partyId}
+                onChange={(event) => setCandidateDraft({ ...candidateDraft, partyId: event.target.value })}
+                style={keepingInputStyle}>
+                <option value="">{vi ? "Chọn đối tác" : "거래처 선택"}</option>
+                {Array.from(partnersByParty.values()).filter((partner) => partner.isActive).map((partner) =>
+                  <option key={partner.ledgerPartyId} value={partner.ledgerPartyId}>{partner.name}</option>)}
+              </select>}
+            </BarField>
+          ) : null}
           <div
             className={`${styles.candidateFields} ${candidateDraft.resolution === "immediate" ? "" : styles.candidateSingle}`}
           >
@@ -1629,6 +1650,7 @@ function EntryDetailSheet({
               ? "Thay đổi này chỉ áp dụng cho giao dịch sổ hiện tại và không thay đổi thiết lập thanh toán mặc định của đối tác."
               : "이 변경은 해당 장부 내역에만 적용되며 거래처 기본 결제설정은 변경하지 않습니다."}
           </p>
+          {message ? <p role="alert" className={styles.error}>{message}</p> : null}
           <button
             type="button"
             disabled={
