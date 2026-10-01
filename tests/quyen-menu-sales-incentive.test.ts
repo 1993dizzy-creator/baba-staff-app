@@ -183,7 +183,7 @@ test("monthly API, payroll overview, readonly KO/VI UI, cron, and schema source 
   const overview = read("lib/payroll/overview.ts");
   const card = read("components/payroll/CompensationCard.tsx");
   const adjustmentRoute = read("app/api/admin/payroll/adjustments/route.ts");
-  const migration = read("supabase/migrations/202609240001_allow_payroll_sales_menu_incentive_source.sql");
+  const migration = read("supabase/migrations/20260928122112_allow_payroll_sales_menu_incentive_source.sql");
   const crons = JSON.parse(read("vercel.json")).crons as Array<{ path: string; schedule: string }>;
   assert.match(monthly, /import \{ buildMenuSales \} from "@\/lib\/sales\/menu-sales"/);
   assert.doesNotMatch(monthly, /function buildMenuSales/);
@@ -192,7 +192,8 @@ test("monthly API, payroll overview, readonly KO/VI UI, cron, and schema source 
   assert.match(overview, /calculateAccountingTaxableCompensationAmount\(\{preInsurancePayoutAmount/);
   assert.match(card, /자동 판매 인센티브/);
   assert.match(card, /Thưởng doanh số menu tự động/);
-  assert.match(card, /!automaticSales && <button/);
+  // Automatic sales incentives and ledger advances cannot be cancelled here; ordinary manual adjustments retain cancellation.
+  assert.match(card, /!automaticSales && !ledgerAdvance && <button/);
   assert.match(adjustmentRoute, /\.eq\("source_type","manual"\)/);
   assert.match(migration, /source_type in \('manual', 'sales_menu_incentive'\)/);
   assert.deepEqual(crons.find((cron) => cron.path === "/api/cron/payroll-quyen-menu-incentive"), { path: "/api/cron/payroll-quyen-menu-incentive", schedule: "15 20 * * *" });

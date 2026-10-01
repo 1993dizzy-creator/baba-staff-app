@@ -30,3 +30,29 @@ test("monthly attendance summary reuses the existing attendance-bonus eligibilit
 test("payroll emits one deterministic automatic attendance bonus and separates incentive totals",()=>{const overviewServer=read("lib/payroll/overview-server.ts");const overview=read("lib/payroll/overview.ts");assert.match(overviewServer,/category:"attendance_bonus"/);assert.match(overviewServer,/itemType:"automatic"/);assert.match(overview,/manualIncentiveAmount/);assert.match(overview,/automaticIncentiveAmount/);assert.match(overview,/manualIncentiveAmount\+automaticIncentiveAmount/)});
 test("attendance bonus source snapshot distinguishes payroll and effective months",()=>{const overviewServer=read("lib/payroll/overview-server.ts");assert.match(overviewServer,/payrollMonth:month/);assert.match(overviewServer,/policyEffectiveMonth:bonusPolicy\.effectiveMonth/);assert.match(overviewServer,/eligibilityEffectiveMonth:eligibility\?\.effectiveMonth/);assert.doesNotMatch(overviewServer,/effectiveMonth:month/)});
 test("employee incentive detail exposes automatic source without salary fields",()=>{const summary=read("lib/payroll/attendance-self-summary.ts");const route=read("app/api/attendance/payroll-summary/route.ts");assert.match(summary,/sourceType: "automatic"/);assert.match(summary,/automaticIncentives/);assert.doesNotMatch(route,/contractSalary|currentAmount|netPayoutAmount/)});
+
+test("admin payroll incentive modal renders automatic attendance bonuses as readonly signed additions", () => {
+ const card = read("components/payroll/CompensationCard.tsx");
+ const modal = card.slice(card.indexOf("function AdjustmentModal("), card.indexOf("function PaymentModal("));
+ const automaticRows = modal.slice(modal.indexOf('{kind === "incentive" &&'), modal.indexOf('{kind === "penalty" &&'));
+ assert.match(automaticRows, /\(employee\.automaticIncentives \?\? \[\]\)\.map/);
+ assert.match(automaticRows, /lang === "vi" \? "Thưởng chuyên cần" : "개근 보너스"/);
+ assert.match(automaticRows, /formatSignedVnd\(item\.amount, "\+"\)/);
+ assert.match(automaticRows, /"Tự động" : "자동 적용"/);
+ assert.doesNotMatch(automaticRows, /<button|setCancelTarget|businessDate|createdAt|new Date/);
+ assert.doesNotMatch(automaticRows, /incentiveAmount|incentiveCount|reduce/);
+});
+
+test("admin payroll preserves manual incentive form and cancel policy while sales incentives remain readonly", () => {
+ const card = read("components/payroll/CompensationCard.tsx");
+ const modal = card.slice(card.indexOf("function AdjustmentModal("), card.indexOf("function PaymentModal("));
+ assert.match(modal, /employee\.adjustments\.filter/);
+ assert.match(modal, /\{list\.map\(\(item\) =>/);
+ assert.match(modal, /item\.sourceType === "sales_menu_incentive"/);
+ assert.match(modal, /"Thưởng doanh số menu tự động" : "자동 판매 인센티브"/);
+ assert.match(modal, /!automaticSales && !ledgerAdvance && <button[\s\S]*?onClick=\{\(\) => setCancelTarget\(item\)\}/);
+ assert.match(modal, /selectedKind === "incentive" \? t\.addIncentive : t\.addPenalty/);
+ assert.match(modal, /value=\{formatPositiveIntegerInput\(amount\)\}/);
+ for (const field of ["date", "reason", "note"]) assert.match(modal, new RegExp(`value=\\{${field}\\}`));
+ assert.match(modal, /formatSignedVnd\(item\.amount, kind === "incentive" \? "\+" : "-"\)/);
+});

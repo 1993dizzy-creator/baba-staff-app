@@ -431,6 +431,18 @@ function AdjustmentModal({
         )}</div>}
     >
       <div style={s.list}>
+        {kind === "incentive" &&
+          (employee.automaticIncentives ?? []).map((item, index) => (
+            <article key={`${item.category}:${index}`} style={s.item}>
+              <span style={s.itemText}>
+                {lang === "vi" ? "Thưởng chuyên cần" : "개근 보너스"}
+              </span>
+              <b style={s.itemAmount}>{formatSignedVnd(item.amount, "+")}</b>
+              <small style={s.itemMeta}>
+                {lang === "vi" ? "Tự động" : "자동 적용"}
+              </small>
+            </article>
+          ))}
         {kind === "penalty" &&
           employee.automaticPenalties.map((item) => (
             <article
