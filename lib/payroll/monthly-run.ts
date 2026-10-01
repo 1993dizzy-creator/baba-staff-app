@@ -12,8 +12,8 @@ import { isPayrollUserCandidate } from "./eligibility";
 import type { PayrollContract, WorkScheduleVersion } from "./types";
 import { buildEmployeeInsuranceSnapshot, calculateDirectorEmployeeInsurance, calculateDirectorInsurance, selectInsuranceSetting, type PayrollInsuranceGlobalSettings, type PayrollInsuranceSettingVersion } from "./insurance";
 import { calculateLatePenalty, calculateTimePenalty, calculateUnauthorizedAbsencePenalty, TIME_PENALTY_BLOCK_MINUTES, type PayrollPenaltySettings } from "./penalties";
-import { getLastCompletedBusinessDate, getPayrollOverviewPeriod } from "./overview-period";
-import { addStoreDays } from "@/lib/store-settings/business-time-core";
+import { getPayrollOverviewPeriod } from "./overview-period";
+import { addStoreDays, calculateStoreBusinessDate } from "@/lib/store-settings/business-time-core";
 import { isMissingAttendanceCandidateDate } from "./missing-attendance";
 import { calculateFixedMonthlyPayroll } from "./fixed-monthly";
 import { resolvePayrollAttendancePolicyByDate, type PayrollStoreSettingTimelineRow } from "./store-setting-timeline";
@@ -59,7 +59,12 @@ type BatchInput={month:string;dates:string[];users:PayrollSnapshotUserRow[];atte
 export function validPayrollMonth(value:string|null){return value&&/^\d{4}-(0[1-9]|1[0-2])$/.test(value)?value:null;}
 export function isOfficialPayrollMonth(month:string){return month>=PAYROLL_RUN_START_MONTH;}
 export function payrollMonthDates(month:string){const[y,m]=month.split("-").map(Number);const count=new Date(Date.UTC(y,m,0)).getUTCDate();return Array.from({length:count},(_,index)=>`${month}-${String(index+1).padStart(2,"0")}`);}
-export async function resolvePayrollOverviewPeriod(month:string){const{data,error}=await supabaseServer.rpc("store_business_date_for_timestamp_v1",{p_timestamp:new Date().toISOString()});const completed=!error&&typeof data==="string"?addStoreDays(data,-1):getLastCompletedBusinessDate();return getPayrollOverviewPeriod(month,completed);}
+export async function resolvePayrollOverviewPeriod(month: string) {
+  const now = new Date();
+  const { data, error } = await supabaseServer.rpc("store_business_date_for_timestamp_v1", { p_timestamp: now.toISOString() });
+  const currentBusinessDate = !error && typeof data === "string" ? data : calculateStoreBusinessDate(now);
+  return getPayrollOverviewPeriod(month, addStoreDays(currentBusinessDate, -1), currentBusinessDate);
+}
 function activeOn<T extends{effectiveFrom:string;effectiveTo:string|null}>(rows:T[],date:string){return rows.filter(row=>row.effectiveFrom<=date&&(!row.effectiveTo||row.effectiveTo>date));}
 function intersectsMonth(row:{effectiveFrom:string;effectiveTo:string|null},start:string,endExclusive:string){return row.effectiveFrom<endExclusive&&(!row.effectiveTo||row.effectiveTo>start);}
 function employeeName(user:PayrollSnapshotUserRow){return user.name||user.full_name||user.username;}

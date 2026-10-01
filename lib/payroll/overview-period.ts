@@ -21,12 +21,14 @@ export function getLastCompletedBusinessDate(now = new Date()) {
   return addStoreDays(calculateStoreBusinessDate(now), -1);
 }
 
-export function getPayrollOverviewPeriod(month: string, today = getLastCompletedBusinessDate()): PayrollOverviewPeriod {
+export function getPayrollOverviewPeriod(month: string, today = getLastCompletedBusinessDate(), currentBusinessDate = today): PayrollOverviewPeriod {
   const [year, monthNumber] = month.split("-").map(Number);
   const monthEnd = `${month}-${String(new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()).padStart(2, "0")}`;
   const todayMonth = today.slice(0, 7);
-  if (month > todayMonth) return { month, asOfDate: `${month}-01`, calculationEndDate: null, future: true, levelAsOfDate: today };
-  if (month === todayMonth) return { month, asOfDate: today, calculationEndDate: today, future: false, levelAsOfDate: today };
+  // Only display levels use the current business day; accruals retain the completed-day cutoff.
+  const levelAsOfDate = month === currentBusinessDate.slice(0, 7) ? currentBusinessDate : today;
+  if (month > todayMonth) return { month, asOfDate: `${month}-01`, calculationEndDate: null, future: true, levelAsOfDate };
+  if (month === todayMonth) return { month, asOfDate: today, calculationEndDate: today, future: false, levelAsOfDate };
   return { month, asOfDate: monthEnd, calculationEndDate: monthEnd, future: false, levelAsOfDate: monthEnd };
 }
 // @ts-expect-error Node's test runner requires the explicit TypeScript extension.

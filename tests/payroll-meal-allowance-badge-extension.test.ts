@@ -93,7 +93,7 @@ test("overview route: eligibility is bulk-loaded once from snapshot.employees (p
 test("overview route: mealAllowanceEligibleUserIds is appended as a sibling response field, and the pre-existing employees/summary/projectedSummary substring is untouched (no regression to the payment-separation invariant)", () => {
   const responseCallIndex = overviewRoute.lastIndexOf("payrollJson({ok:true");
   const responseCall = overviewRoute.slice(responseCallIndex);
-  assert.match(responseCall, /employees,summary,projectedSummary,mealAllowancePolicyMissing:mealAllowance\.policyMissing,mealAllowanceEligibleUserIds,paymentBatch:run\?\?null/);
+  assert.match(responseCall, /employees,summary,projectedSummary,mealAllowancePolicyMissing:mealAllowance\.policyMissing,mealAllowanceEligibleUserIds,attendanceBonusEligibleUserIds:overview\.attendanceBonusEligibleUserIds,paymentBatch:run\?\?null/);
 });
 
 test("overview route: PayrollOverviewEmployee (lib/payroll/overview.ts) still has no meal allowance field after this extension", () => {

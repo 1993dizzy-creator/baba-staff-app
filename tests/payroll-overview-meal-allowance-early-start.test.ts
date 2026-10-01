@@ -115,14 +115,14 @@ test("failure contract unchanged: any thrown error (including a meal allowance r
 test("response shape and other route logic (payments, employees, summary, projectedSummary, paymentBatch) are untouched", () => {
   assert.match(
     route,
-    /return payrollJson\(\{ok:true,month,asOfDate:overview\.period\.asOfDate,future:overview\.period\.future,monthClosed:isClosedPayrollMonth\(month\),employees,summary,projectedSummary,mealAllowancePolicyMissing:mealAllowance\.policyMissing,mealAllowanceEligibleUserIds,paymentBatch:run\?\?null\}\);/,
+    /return payrollJson\(\{ok:true,month,asOfDate:overview\.period\.asOfDate,future:overview\.period\.future,monthClosed:isClosedPayrollMonth\(month\),employees,summary,projectedSummary,mealAllowancePolicyMissing:mealAllowance\.policyMissing,mealAllowanceEligibleUserIds,attendanceBonusEligibleUserIds:overview\.attendanceBonusEligibleUserIds,paymentBatch:run\?\?null\}\);/,
   );
   assert.match(route, /const summary=\{\.\.\.overview\.summary,mealAllowanceAmount:mealAllowance\.currentAmount/);
 });
 
-test("loadPayrollOverview return shape is unchanged (period, snapshot, employees, rawByUser, directorInsuranceAmount, summary, projectedSummary)", () => {
+test("loadPayrollOverview return shape is unchanged (period, snapshot, employees, rawByUser, adjustmentLedgerByUser, attendanceBonusEligibleUserIds, directorInsuranceAmount, summary, projectedSummary)", () => {
   assert.match(
     overview,
-    /return \{period,snapshot,employees,rawByUser,adjustmentLedgerByUser,directorInsuranceAmount,summary:buildPayrollOverviewSummary\(employees,directorInsuranceAmount\),projectedSummary:buildPayrollOverviewProjectedSummary\(employees,directorInsuranceAmount\)\};/,
+    /return \{period,snapshot,employees,rawByUser,adjustmentLedgerByUser,attendanceBonusEligibleUserIds,directorInsuranceAmount,summary:buildPayrollOverviewSummary\(employees,directorInsuranceAmount\),projectedSummary:buildPayrollOverviewProjectedSummary\(employees,directorInsuranceAmount\)\};/,
   );
 });
