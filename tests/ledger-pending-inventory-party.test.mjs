@@ -23,17 +23,17 @@ function compile(text,bindings,returnName) {
 }
 const partners=[{id:1012,ledgerPartyId:12,name:'Postpaid',isActive:true},{id:1011,ledgerPartyId:11,name:'Inactive',isActive:false}];
 const draft=resolution=>({item:{candidateId:1450,name:'냅킨',nameVi:'Giấy ăn'},resolution,categoryId:'4',fundAccountId:'1',partyId:'',memo:''});
-function fixture({resolution='payable',partyId=null,lang='ko',response={ok:true,body:{result:{status:'confirmed'}}},fetchImpl}={}) {
+function fixture({resolution='payable',partyId=null,lang='ko',response={ok:true,body:{result:{status:'confirmed'}}},fetchImpl,adHocPayableParty=null}={}) {
   const candidateDraft=draft(resolution);const messages=[];const calls=[];const states=[];const closures=[];
   const selected={partyId};
-  const save=compile(resolveNode.getText(ast),{selected,candidateDraft,data:{partners},vi:lang==='vi',
+  const save=compile(resolveNode.getText(ast),{selected,candidateDraft,data:{partners,adHocPayableParty},vi:lang==='vi',
     setSaving:value=>states.push(value),setDetailMessage:value=>messages.push(value),
     setSelected:value=>closures.push(value),setCandidateDraft:value=>closures.push(value),load:async()=>{},
     fetch:async(url,options)=>{calls.push({url,body:JSON.parse(options.body)});return fetchImpl?fetchImpl(url,options):{ok:response.ok,json:async()=>response.body};},
   },'resolveCandidate');
   let saving;
   function render(message='') {
-    const bindings={vi:lang==='vi',lang,entry:selected,candidateDraft,message,saving:false,
+    const bindings={adHocPayableParty,vi:lang==='vi',lang,entry:selected,candidateDraft,message,saving:false,
       partnersByParty:new Map(partners.map(partner=>[partner.ledgerPartyId,partner])),
       accounts:[{id:1,display_name:'Cash',is_active:true,type:'cash'}],categories:[{id:4,name:'Expenses',kind:'expense',parent_id:1}],
       styles:new Proxy({},{get:(_,key)=>String(key)}),keepingInputStyle:{},primaryButtonStyle:{},manualExpenseCategoryLabel:value=>value,
@@ -155,4 +155,30 @@ for(const resolution of ['payable','verification_pending','immediate']){
       assert.deepEqual((await db.query('select * from ledger_supplier_party_mappings')).rows,mappingsBefore);
     }finally{await db.close();}
   });
+}
+
+for(const resolution of ['payable','verification_pending']) {
+ test('system party is first selectable partner and candidate 1450 creates '+resolution+' without changing masters',async()=>{
+  const db=await candidateDatabase();
+  try {
+   await db.exec(read('supabase/migrations/202608210004_add_ledger_payable_payments.sql'));
+   const migration=read('supabase/migrations/20261001140419_add_ad_hoc_ledger_payable_party.sql');
+   const before=(await db.query('select * from business_partners order by id')).rows;
+   const aliases=(await db.query('select * from business_partner_supplier_aliases')).rows;
+   await db.exec(migration);await db.exec(migration);
+   const parties=(await db.query("select * from ledger_parties where memo='system:ad_hoc_payable'")).rows;
+   assert.equal(parties.length,1);assert.equal(parties[0].type,'other');assert.equal(parties[0].is_active,true);
+   const adHocPayableParty={ledgerPartyId:Number(parties[0].id),name:parties[0].name};
+   const ui=fixture({resolution,adHocPayableParty,fetchImpl:apiFetch(db)});
+   const select=ui.render().selects.find(node=>node.props.required&&node.props.onChange);
+   const html=ui.render().html;assert.ok(html.indexOf(adHocPayableParty.name)<html.indexOf('Postpaid'));
+   select.props.onChange({target:{value:String(adHocPayableParty.ledgerPartyId)}});
+   await ui.clickSave();assert.deepEqual(ui.closures,[null,null]);
+   const rows=(await db.query('select * from ledger_payables')).rows;
+   assert.equal(rows.length,1);assert.equal(Number(rows[0].party_id),adHocPayableParty.ledgerPartyId);assert.equal(Number(rows[0].original_amount),2400000);
+   assert.deepEqual((await db.query('select * from business_partners order by id')).rows,before);
+   assert.deepEqual((await db.query('select * from business_partner_supplier_aliases')).rows,aliases);
+   assert.equal((await db.query('select * from ledger_supplier_party_mappings')).rows.length,0);
+  }finally{await db.close();}
+ });
 }

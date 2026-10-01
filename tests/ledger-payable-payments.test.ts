@@ -8,6 +8,8 @@ import * as payableFunctions from "../lib/ledger/payables.ts";
 import * as paymentVerificationFunctions from "../lib/ledger/payment-verification.ts";
 // @ts-expect-error Node strips TypeScript extensions in tests.
 import{groupPayablesForDisplay}from"../lib/ledger/payable-display-groups.ts";
+// @ts-expect-error Node strips TypeScript extensions in tests.
+import * as adHocFunctions from "../lib/ledger/ad-hoc-payable.ts";
 const read=(p:string)=>readFileSync(join(process.cwd(),p),"utf8"),migration=read("supabase/migrations/202608210004_add_ledger_payable_payments.sql"),pay=read("app/api/admin/ledger/payables/pay/route.ts"),dashboard=read("app/api/admin/ledger/payables/route.ts"),detail=read("app/api/admin/ledger/payables/[partyId]/route.ts"),party=read("app/api/admin/ledger/parties/route.ts"),mapping=read("app/api/admin/ledger/supplier-party-mappings/route.ts"),page=read("app/(protected)/admin/ledger/payables/page.tsx"),entries=read("app/(protected)/admin/ledger/entries/page.tsx"),partialPlan=read("lib/ledger/partial-payable-payment.ts"),ledger=read("app/api/admin/ledger/route.ts"),inventoryMigration=read("supabase/migrations/202608210003_add_inventory_purchase_candidates.sql"),pos=read("lib/sales/payment-summary.ts");
 test("unpaid payable can be fully paid",()=>assert.match(migration,/least\(v_remaining,v_outstanding\)/));
 test("payable supports partial payment",()=>assert.match(migration,/'partially_paid'/));
@@ -91,7 +93,7 @@ function payableApi(rows:ReturnType<typeof source>[],payments:ReturnType<typeof 
     const field=(row:Record<string,unknown>,name:string)=>name.split(".").reduce<unknown>((value,key)=>(value as Record<string,unknown>)?.[key],row);
     const query={select(){return query},order(){return query},eq(name:string,value:unknown){if(name!=="type")filters.push(row=>field(row,name)===value);return query},neq(name:string,value:unknown){filters.push(row=>field(row,name)!==value);return query},lt(name:string,value:string){filters.push(row=>String(field(row,name))<value);return query},range(start:number,end:number){from=start;to=end;return query},then(resolve:(value:unknown)=>unknown){return Promise.resolve({data:tables[table].filter(row=>filters.every(filter=>filter(row as Record<string,unknown>))).slice(from,to+1),error:null}).then(resolve)}};return query;
   }};
-  const dependencies:Record<string,unknown>={"@/lib/ledger/payables":payableFunctions,"@/lib/ledger/payment-verification":paymentVerificationFunctions,"@/lib/ledger/inventory-display":{withInventoryDisplay:async(rows:unknown[])=>rows},"@/lib/supabase/server":{supabaseServer:supabase},"@/lib/ledger/server":{requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{},ledgerJson:(body:unknown,status=200)=>Response.json(body,{status})}};
+  const dependencies:Record<string,unknown>={"@/lib/ledger/ad-hoc-payable":adHocFunctions,"@/lib/ledger/payables":payableFunctions,"@/lib/ledger/payment-verification":paymentVerificationFunctions,"@/lib/ledger/inventory-display":{withInventoryDisplay:async(rows:unknown[])=>rows},"@/lib/supabase/server":{supabaseServer:supabase},"@/lib/ledger/server":{requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{},ledgerJson:(body:unknown,status=200)=>Response.json(body,{status})}};
   const testModule={exports:{} as {GET:(request:Request)=>Promise<Response>}};
   const code=ts.transpileModule(dashboard,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   new Function("require","module","exports",code)((name:string)=>{assert.ok(name in dependencies);return dependencies[name]},testModule,testModule.exports);
@@ -175,7 +177,7 @@ test("payables route reads allocations once without a month cutoff and splits th
   const compact=dashboard.replace(/\s+/g,"");
   assert.equal((compact.match(/from\("ledger_payable_allocations"\)/g)??[]).length,1);
   assert.doesNotMatch(compact,/lt\("payment\.business_date"/);
-  assert.match(compact,/constverification=buildPaymentVerificationItems\(sources,allConfirmedAllocations\);/);
+  assert.match(compact,/constverification=buildPaymentVerificationItems\(sources\.filter\(row=>!isAdHocPayableParty\(row\.party\)\),allConfirmedAllocations\);/);
   assert.match(compact,/constasOfAllocations=month===null\?allConfirmedAllocations:confirmedAllocationsThroughMonth\(allConfirmedAllocations,month\);/);
   assert.match(compact,/calculatePayableBalances\(ordinarySources,asOfAllocations,month\?\?undefined\)/);
   assert.match(compact,/for\(constallocationofasOfAllocations\)\{constlist=historyAllocations/);

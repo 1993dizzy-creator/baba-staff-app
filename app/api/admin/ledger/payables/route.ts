@@ -1,3 +1,4 @@
+import { isAdHocPayableParty } from "@/lib/ledger/ad-hoc-payable";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { withInventoryDisplay } from "@/lib/ledger/inventory-display";
@@ -17,7 +18,7 @@ export async function GET(request: Request) {
   if(month!==null){try{bounds=payableMonthBounds(month)}catch{return ledgerJson({ok:false,code:"INVALID_MONTH"},400)}}
   const [payableResult,allocationResult,paymentResult,bridgeResult,partnerResult]=await Promise.all([
     loadAll((from,to)=>{let query=supabaseServer.from("ledger_payables")
-      .select("id,party_id,original_amount,due_date,status,created_at,party:ledger_parties(name),expense:ledger_transactions!inner(id,business_date,status,memo,source_snapshot)")
+      .select("id,party_id,original_amount,due_date,status,created_at,party:ledger_parties(name,memo),expense:ledger_transactions!inner(id,business_date,status,memo,source_snapshot)")
       .neq("status","cancelled").eq("expense.status","confirmed");if(bounds)query=query.lt("expense.business_date",bounds.nextMonthStart);return query.order("created_at",{ascending:false}).order("id").range(from,to)}),
     // All confirmed allocations (no month cutoff): 결제 미확인 needs today's remaining; the month cutoff is applied in memory below.
     loadAll((from,to)=>supabaseServer.from("ledger_payable_allocations").select("id,payable_id,allocated_amount,payment:ledger_transactions!inner(business_date,status)").eq("payment.status","confirmed").order("id").range(from,to)),
@@ -27,14 +28,14 @@ export async function GET(request: Request) {
   const loadError=payableResult.error??allocationResult.error??paymentResult.error??bridgeResult.error??partnerResult.error;
   if(loadError){console.error("[LEDGER_PAYABLES_GET_FAILED]",loadError);return ledgerJson({ok:false,code:"PAYABLES_LOAD_FAILED"},500)}
   // Supabase's untyped client infers embedded many-to-one relations as arrays.
-  const sources=payableResult.data.map(row=>({...row,expense:row.expense as unknown as {id:number;business_date:string;status:string;memo:string|null;source_snapshot:Record<string,unknown>|null}|null,party:row.party as unknown as {name:string}|null}));
+  const sources=payableResult.data.map(row=>({...row,expense:row.expense as unknown as {id:number;business_date:string;status:string;memo:string|null;source_snapshot:Record<string,unknown>|null}|null,party:row.party as unknown as {name:string;memo:string|null}|null}));
   const allConfirmedAllocations=allocationResult.data.map(row=>({...row,payment:row.payment as unknown as {business_date:string;status:string}|null}));
   // Two contracts: 기타 · 결제 미확인 is a current action queue, so it uses every confirmed
   // allocation to date (an 8월 purchase paid on 9/4 is gone from the 8월 view too).
   // Ordinary payables/history/summary stay as-of the selected month end.
-  const verification=buildPaymentVerificationItems(sources,allConfirmedAllocations);
+  const verification=buildPaymentVerificationItems(sources.filter(row=>!isAdHocPayableParty(row.party)),allConfirmedAllocations);
   const asOfAllocations=month===null?allConfirmedAllocations:confirmedAllocationsThroughMonth(allConfirmedAllocations,month);
-  const ordinarySources=sources.filter(row=>!isPaymentVerification(row));
+  const ordinarySources=sources.filter(row=>isAdHocPayableParty(row.party)||!isPaymentVerification(row));
   const balances=calculatePayableBalances(ordinarySources,asOfAllocations,month??undefined);
   const payables=balances.payables.map(row=>({...row,allocations:asOfAllocations.filter(item=>item.payable_id===row.id).map(item=>({allocated_amount:item.allocated_amount}))}));
   const historySources=month===null?[]:ordinarySources.filter(row=>row.status!=="cancelled"&&row.expense?.status==="confirmed"&&row.expense.business_date<bounds!.nextMonthStart);
@@ -62,5 +63,5 @@ export async function GET(request: Request) {
     const metadata=map.get(summary.partyId)??{partyId:summary.partyId,partyName:partyRelation?.name??"-",partnerType:businessPartnerId===undefined?null:partnerTypeByBusinessPartner.get(businessPartnerId)??null,partialPaidAmount:0,totalOpenAmount:0,openCount:0,oldestDate:"",nearestDueDate:null,recentPaymentDate:recent.get(summary.partyId)??null};
     return {...metadata,...summary,outstandingAmount:summary.closingOutstanding};
   });
-  return ledgerJson({ok:true,totalOutstanding:balances.totalOutstanding,verification,...(month!==null?{month,summary:balances.summary,historyPayables}:{}),payables,parties:parties.sort((a,b)=>b.outstandingAmount-a.outstandingAmount)});
+  return ledgerJson({ok:true,totalOutstanding:balances.totalOutstanding,verification,...(month!==null?{month,summary:balances.summary,historyPayables}:{}),payables,parties:parties.map(party=>({...party,isAdHocPayable:ordinarySources.some(row=>Number(row.party_id)===party.partyId&&isAdHocPayableParty(row.party))})).sort((a,b)=>b.outstandingAmount-a.outstandingAmount)});
 }

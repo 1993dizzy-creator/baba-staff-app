@@ -61,6 +61,8 @@ import {
 import styles from "./entries.module.css";
 import { entryStatusReason } from "@/lib/ledger/entry-status-reason";
 import MonthCloseSheet from "./MonthCloseSheet";
+import AdHocPayableSheet from "./AdHocPayableSheet";
+import type { AdHocPayableParty } from "@/lib/ledger/ad-hoc-payable";
 import ManualDisplayEditor, { LedgerEditShell } from "./ManualDisplayEditor";
 import ManualDisplayHistory from "./ManualDisplayHistory";
 import PaymentVerificationSection, { type Verification } from "./PaymentVerificationSection";
@@ -138,6 +140,7 @@ type LedgerData = {
   accounts: Account[];
   categories: Category[];
   partners: Partner[];
+  adHocPayableParty: AdHocPayableParty | null;
   entries: LedgerEntry[];
 };
 type EntryFilter = "all" | "income" | "expense" | "manual" | "pending";
@@ -170,9 +173,9 @@ type DateGroup = {
   income: number;
   expense: number;
 };
-type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null };
+type PayableParty = PayablePeriodSummary & { isAdHocPayable?:boolean; partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null };
 type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[]; historyPayables:PayableHistoryRow[]; verification?:Verification };
-type PayableRow = { id:number; party_id:number; original_amount:number; paidAmount?:number; outstandingAmount:number; settlementStatus?:"paid"|"partial"|"unpaid"; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null}|null };
+type PayableRow = { id:number; party_id:number; original_amount:number; paidAmount?:number; outstandingAmount:number; settlementStatus?:"paid"|"partial"|"unpaid"; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null;memo?:string|null}|null };
 type PayableHistoryRow = PayableRow & { paidAmount:number; settlementStatus:"paid"|"partial"|"unpaid" };
 type PayablePaymentHistory = { id:number; business_date:string; amount:number|string; memo:string|null; movements?:Array<{fund_account:{display_name:string}|null}>; allocations?:Array<{payable_id:number;allocated_amount:number|string}> };
 type PayableDetail = { party:{id:number;name:string}; payables:PayableRow[]; payments?:PayablePaymentHistory[]; totalOutstanding:number };
@@ -605,7 +608,8 @@ function LedgerEntriesContent() {
   async function resolveCandidate() {
     if (!selected || !candidateDraft?.item.candidateId) return;
     const partyId = selected.partyId ?? (candidateDraft.resolution === "immediate" ? null :
-      data?.partners.find((partner) => partner.isActive && String(partner.ledgerPartyId) === candidateDraft.partyId)?.ledgerPartyId ?? null);
+      (String(data?.adHocPayableParty?.ledgerPartyId) === candidateDraft.partyId ? data?.adHocPayableParty?.ledgerPartyId :
+      data?.partners.find((partner) => partner.isActive && String(partner.ledgerPartyId) === candidateDraft.partyId)?.ledgerPartyId) ?? null);
     if (candidateDraft.resolution !== "immediate" && partyId == null) {
       setDetailMessage(vi ? "Vui lòng chọn đối tác để ghi nhận công nợ." : "미지급 등록을 위해 거래처를 선택해주세요.");
       return;
@@ -1271,6 +1275,7 @@ function LedgerEntriesContent() {
             lang={lang}
             entry={selected}
             partnersByParty={partnerByLedgerParty}
+            adHocPayableParty={data?.adHocPayableParty ?? null}
             accounts={data?.accounts ?? []}
             categories={data?.categories ?? []}
             candidateDraft={candidateDraft}
@@ -1303,7 +1308,9 @@ function LedgerEntriesContent() {
         ) : null}
         {payableParty && data && payables?.month === month && payableParty.viewMonth === month ? (
           month === currentMonth()
-            ? <PayablePartySheet lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { setPayableParty(null); await load(); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} />
+            ? payableParty.isAdHocPayable
+              ? <AdHocPayableSheet lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { setPayableParty(null); await load(); setNotice(vi ? "\u0110\u00e3 thanh to\u00e1n c\u00e1c kho\u1ea3n \u0111\u00e3 ch\u1ecdn." : "\uc120\ud0dd\ud55c \uac1c\ubcc4 \ubbf8\ub0a9\uac74\uc744 \uacb0\uc81c\ud588\uc2b5\ub2c8\ub2e4."); }} />
+              : <PayablePartySheet lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { setPayableParty(null); await load(); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} />
             : <HistoricalPayablePartySheet lang={lang} month={month} party={payableParty} rows={payables.historyPayables.filter(row => Number(row.party_id) === payableParty.partyId)} onClose={() => setPayableParty(null)} />
         ) : null}
       </main>
@@ -1321,6 +1328,7 @@ function EntryDetailSheet({
   lang,
   entry,
   partnersByParty,
+  adHocPayableParty,
   accounts,
   categories,
   candidateDraft,
@@ -1338,6 +1346,7 @@ function EntryDetailSheet({
   lang: "ko" | "vi";
   entry: LedgerEntry;
   partnersByParty: ReadonlyMap<number, Partner>;
+  adHocPayableParty: AdHocPayableParty | null;
   accounts: Account[];
   categories: Category[];
   candidateDraft: CandidateDraft | null;
@@ -1568,6 +1577,7 @@ function EntryDetailSheet({
                 onChange={(event) => setCandidateDraft({ ...candidateDraft, partyId: event.target.value })}
                 style={keepingInputStyle}>
                 <option value="">{vi ? "Chọn đối tác" : "거래처 선택"}</option>
+                {adHocPayableParty ? <option value={adHocPayableParty.ledgerPartyId}>{adHocPayableParty.name}</option> : null}
                 {Array.from(partnersByParty.values()).filter((partner) => partner.isActive).map((partner) =>
                   <option key={partner.ledgerPartyId} value={partner.ledgerPartyId}>{partner.name}</option>)}
               </select>}
@@ -1774,7 +1784,7 @@ function HistoricalPayablePartySheet({lang,month,party,rows,onClose}:{lang:"ko"|
     <div className={styles.payableDetailHeader}><div className={styles.payableDetailPartner}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><strong>{party.partyName}</strong></div><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(party.closingOutstanding)}</b></span></div>
     <p className={styles.payableReadOnlyHint} role="status">{vi?"Số dư cuối tháng đã chọn. Không thể thanh toán giao dịch cũ.":"선택월 말 기준 잔액입니다. 과거 내역은 결제할 수 없습니다."}</p>
     <PayableMonthTotals summary={party} vi={vi}/>
-    <PayableDateGroups rows={rows} lang={lang}/>
+    {party.isAdHocPayable ? rows.map(row => <div key={row.id} className={styles.paymentHistoryRow}><span>{row.expense?.business_date} · {payableItemLabel(row,vi)}<br />{row.expense?.memo ?? "-"}</span><strong>{money(row.outstandingAmount)}</strong></div>) : <PayableDateGroups rows={rows} lang={lang}/>}
     {!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}
   </BarSheet>;
 }

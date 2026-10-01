@@ -20,7 +20,7 @@ const line = (id, saleRow, gross, status = "matched", depositDate = "2026-08-20"
 });
 
 // Execute the actual GET handler with a read-only query double that applies its filters.
-async function summary(sales, lines, { failAllocations = false } = {}) {
+async function summary(sales, lines, { failAllocations = false, parties = [] } = {}) {
   const queries = [];
   const db = { from(table) {
     const query = { table, select: "", filters: [], from: 0, to: 999 };
@@ -34,7 +34,7 @@ async function summary(sales, lines, { failAllocations = false } = {}) {
         if (table === "ledger_card_reconciliation_lines" && failAllocations) {
           return Promise.resolve({ data: null, error: { code: "ALLOCATION_READ_FAILED" } }).then(resolve, reject);
         }
-        let rows = table === "ledger_card_reconciliation_lines" ? lines
+        let rows = table === "ledger_parties" ? parties : table === "ledger_card_reconciliation_lines" ? lines
           : table === "ledger_card_reconciliations" ? lines.map(l => l.reconciliation)
           : table === "ledger_transactions" && query.select === "id,business_date,amount,source_key,memo" ? sales : [];
         for (const [operator, key, expected] of query.filters) {
@@ -61,12 +61,16 @@ async function summary(sales, lines, { failAllocations = false } = {}) {
   vm.runInNewContext(compiled, {
     exports, URL, console: { error() {} },
     require(name) {
+      if (name === "@/lib/ledger/dashboard-cash-report") return require("../lib/ledger/dashboard-cash-report.ts");
+      if (name === "@/lib/ledger/manual-entry-policy") return require("../lib/ledger/manual-entry-policy.ts");
+      if (name === "@/lib/partners/emoji") return require("../lib/partners/emoji.ts");
+      if (name === "@/lib/ledger/ad-hoc-payable") return require("../lib/ledger/ad-hoc-payable.ts");
       if (name === "@/lib/supabase/server") return { supabaseServer: db };
       if (name === "@/lib/ledger/server") return { requireLedgerActor: async () => ({}), ledgerJson: body => body };
       if (name === "@/lib/ledger/inventory-display") return { withInventoryDisplay: async rows => rows, loadInventoryProjectionIssues: async () => [] };
       if (name === "@/lib/ledger/entries") return { buildLedgerEntries: () => [] };
       if (name === "@/lib/ledger/reserve-balances") return { reservesByFundAccount: () => new Map() };
-      if (name === "@/lib/ledger/payables") return { computePaidExpenseTotal: () => 0 };
+      if (name === "@/lib/ledger/payables") return require("../lib/ledger/payables.ts");
       if (name === "@/lib/ledger/summary") return require("../lib/ledger/summary.ts");
       if (name === "@/lib/ledger/cash-outflow") return require("../lib/ledger/cash-outflow.ts");
       if (name === "@/lib/ledger/card-settlements") return require("../lib/ledger/card-settlements.ts");
@@ -82,6 +86,7 @@ async function summary(sales, lines, { failAllocations = false } = {}) {
         const dataExports = {};
         const dataCode = ts.transpileModule(readFileSync("lib/ledger/card-settlement-data.ts", "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
         vm.runInNewContext(dataCode, { exports: dataExports, require: dependency => {
+          if (dependency === "@/lib/ledger/card-settlements") return require("../lib/ledger/card-settlements.ts");
           if (dependency === "@/lib/supabase/server") return { supabaseServer: db };
           throw new Error(`Unexpected data import: ${dependency}`);
         } });
@@ -154,4 +159,10 @@ test("allocation read failure fails the summary instead of silently overstating 
   const { body } = await summary([sale(1, 100)], [], { failAllocations: true });
   assert.equal(body.ok, false);
   assert.equal(body.code, "LEDGER_LOAD_FAILED");
+});
+test("ledger GET exposes system party separately without inventing a business partner",async()=>{
+ const {body}=await summary([],[],{parties:[{id:987,name:'기타 (khác)',memo:'system:ad_hoc_payable',type:'other',is_active:true}]});
+ assert.equal(body.adHocPayableParty.ledgerPartyId,987);
+ assert.equal(body.adHocPayableParty.name,'기타 (khác)');
+ assert.equal(body.partners.length,0);
 });
