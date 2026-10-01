@@ -123,6 +123,7 @@ export type MealCandidateSource = {
   resolvedTransactionId: number;
   sourceSnapshot: Record<string, unknown> | null;
   sourceDriftSnapshot: Record<string, unknown> | null;
+  sourceDriftFingerprint?: string | null;
 };
 
 // Types that can ever carry a recognition_month per the DB's own
@@ -591,8 +592,13 @@ export function buildLedgerEntries(
         candidateSource?.sourceSnapshot ?? row.source_snapshot ?? {};
       const employeeCount = value(latestSourceSnapshot.employee_count);
       const sourceAmount = value(latestSourceSnapshot.total_amount);
+      const originalSourceAmount = value(row.source_snapshot?.total_amount ??
+        candidateSource?.sourceSnapshot?.total_amount ?? originalAmount);
+      const driftFingerprint = candidateSource?.sourceDriftFingerprint;
+      const driftReviewed = !!driftFingerprint &&
+        row.display_snapshot?.mealSourceDriftReviewedFingerprint === driftFingerprint;
       const requiresCorrection = candidateSource?.sourceDriftSnapshot != null &&
-        sourceAmount !== effectiveAmount;
+        sourceAmount !== originalSourceAmount && sourceAmount !== effectiveAmount && !driftReviewed;
       entries.push({
         id: `transaction:${transactionId}`,
         businessDate: row.business_date,

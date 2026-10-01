@@ -47,3 +47,5 @@ next-env.d.ts
 
 # QA browser profiles
 /.qa-income-card-chrome*/
+.tmp-npm-cache/
+1a175ff8302a38a10cc4efec3eda76f110b73086

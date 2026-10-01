@@ -791,7 +791,7 @@ test("detail summary preserves text status flags", () => {
 const { entryStatusReason } = requireUi("../lib/ledger/entry-status-reason.ts") as typeof import("../lib/ledger/entry-status-reason");
 test("partyMissing pending inventory explains supplier and payment verification", () => {
   assert.equal(entryStatusReason({ status: "pending", accountName: null, systemDisplay: { kind: "inventory", itemCount: 1, partyMissing: true, needsConfirmation: true } }, "ko"),
-    "거래처 확인 필요 · 입고 거래처가 'khác'로 등록되어 실제 거래처와 결제방식을 확인해야 합니다.");
+    "거래처 확인 필요 · 입고 거래처가 거래처와 연결되지 않았습니다. 실제 거래처와 결제방식을 확인해주세요.");
 });
 test("mapped pending inventory explains actual payment and account verification", () => {
   for (const accountName of [null, "결제 미확인", "현금"]) {

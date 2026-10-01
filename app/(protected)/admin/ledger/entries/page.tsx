@@ -1271,14 +1271,14 @@ function LedgerEntriesContent() {
             message={detailMessage}
             posDetail={posDetail}
             closed={closed}
-            onConfirmedEdited={async (transactionId) => {
+            onConfirmedEdited={async (transactionId, successMessage) => {
+              setNotice(successMessage ?? (vi ? "Đã cập nhật giao dịch." : "거래를 수정했습니다."));
               const fresh = await load(undefined, { silent: true });
               const refreshed = fresh?.entries.find((entry) =>
                 entry.transactionId === transactionId ||
                 entry.items.some((item) => item.transactionId === transactionId),
               );
               if (refreshed) setSelected(refreshed);
-              setNotice(vi ? "Đã cập nhật giao dịch." : "거래를 수정했습니다.");
             }}
             onAdvanceCancelled={async () => {
               setSelected(null);
@@ -1338,7 +1338,7 @@ function EntryDetailSheet({
   message: string;
   posDetail: Record<string, unknown> | null;
   closed: boolean;
-  onConfirmedEdited: (transactionId: number) => Promise<void>;
+  onConfirmedEdited: (transactionId: number, successMessage?: string) => Promise<void>;
   onAdvanceCancelled: () => Promise<void>;
   onClose: () => void;
 }) {
@@ -1363,7 +1363,7 @@ function EntryDetailSheet({
   const confirmedInventory = entry.drilldown === "inventory" && entry.status === "confirmed";
   const confirmedMeal = entry.drilldown === "meal" && entry.status === "confirmed";
   const [editMode,setEditMode]=useState(false),[editDraft,setEditDraft]=useState<ConfirmedEditDraft|null>(null),[editError,setEditError]=useState(""),[editSaving,setEditSaving]=useState(false);
-  const [mealDraft,setMealDraft]=useState<MealAdjustDraft|null>(null),[mealError,setMealError]=useState("");
+  const [mealDraft,setMealDraft]=useState<MealAdjustDraft|null>(null),[mealError,setMealError]=useState(""),[mealNotice,setMealNotice]=useState("");
   const payments = (posDetail?.payments ?? []) as Array<
     Record<string, unknown>
   >;
@@ -1383,7 +1383,7 @@ function EntryDetailSheet({
           {entry.editableManualDisplay ? <button type="button" disabled={saving || manualDisplaySaving || closed} onClick={() => setManualDisplayOpen(value => !value)} style={{ ...primaryButtonStyle, width: "100%" }}>{manualDisplayOpen ? (vi ? "Đóng chỉnh sửa" : "수정 닫기") : (vi ? "Sửa" : "수정")}</button> : null}
           {cancellableAdvance ? <button type="button" disabled={saving||advanceCancelling||closed} onClick={()=>{setAdvanceCancelReason(value=>value==null?"":null);setAdvanceCancelError("")}} style={{...(advanceCancelReason==null?dangerButtonStyle:secondaryButtonStyle),width:"100%"}}>{advanceCancelReason==null?(vi?"Hủy ứng lương":"가불 취소"):(vi?"Đóng hủy ứng lương":"가불 취소 닫기")}</button>:null}
           {confirmedInventory ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setEditMode(value=>!value);setEditDraft(null);setEditError("")}} style={{...primaryButtonStyle,width:"100%"}}>{editMode?(vi?"Kết thúc chỉnh sửa":"수정 종료"):(vi?"Sửa":"수정")}</button>:null}
-          {confirmedMeal ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setMealDraft(value=>value?null:{finalAmount:String(entry.effectiveAmount??entry.amount),reason:""});setMealError("")}} style={{...primaryButtonStyle,width:"100%"}}>{mealDraft?(vi?"Đóng chỉnh sửa":"수정 닫기"):(vi?"Sửa":"수정")}</button>:null}
+          {confirmedMeal ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setMealDraft(value=>value?null:{finalAmount:String(entry.effectiveAmount??entry.amount),reason:""});setMealError("");setMealNotice("")}} style={{...primaryButtonStyle,width:"100%"}}>{mealDraft?(vi?"Đóng chỉnh sửa":"수정 닫기"):(vi?"Sửa":"수정")}</button>:null}
           <button
             type="button"
             disabled={saving||editSaving}
@@ -1656,10 +1656,24 @@ function EntryDetailSheet({
         try{const response=await fetch(`/api/admin/ledger/transactions/${editDraft.item.transactionId}/edit`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paymentMode:editDraft.paymentMode,categoryId:Number(editDraft.categoryId),fundAccountId:editDraft.paymentMode==="immediate"?Number(editDraft.fundAccountId):null,dueDate:editDraft.paymentMode==="payable"?(editDraft.dueDate||null):null,amount:editDraft.amount,memo:editDraft.memo||null,reason:editDraft.reason})}),body=await response.json();if(!response.ok)throw new Error(body.code??"INVENTORY_EDIT_FAILED");setEditDraft(null);await onConfirmedEdited(Number(body.result.transactionId))}catch(cause){setEditError(`${vi?"Không thể sửa giao dịch.":"거래를 수정하지 못했습니다."} ${(cause as Error).message}`)}finally{setEditSaving(false)}
       }}/>:null}
       {mealDraft ? <MealAdjustmentEditor lang={lang} draft={mealDraft} setDraft={setMealDraft} saving={editSaving} error={mealError} onSave={async()=>{
+        if(!mealDraft.reason.trim()){
+          setMealError(vi?"Vui lòng nhập lý do chỉnh sửa.":"수정 사유를 입력해주세요.");
+          return;
+        }
         if(!entry.transactionId)return;
         setEditSaving(true);setMealError("");
-        try{const response=await fetch(`/api/admin/ledger/transactions/${entry.transactionId}/meal-adjust`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({finalAmount:mealDraft.finalAmount,reason:mealDraft.reason})}),body=await response.json();if(!response.ok)throw new Error(body.code??"MEAL_ADJUST_FAILED");setMealDraft(null);await onConfirmedEdited(entry.transactionId)}catch(cause){const code=(cause as Error).message;setMealError(code==="ORIGINAL_MONTH_CLOSED"?(vi?"Không thể sửa giao dịch của tháng đã khóa.":"마감된 월의 거래는 일반 수정할 수 없습니다."):`${vi?"Không thể sửa tiền ăn.":"식대를 수정하지 못했습니다."} ${code}`)}finally{setEditSaving(false)}
+        let successMessage: string | undefined;
+        try{const response=await fetch(`/api/admin/ledger/transactions/${entry.transactionId}/meal-adjust`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({finalAmount:mealDraft.finalAmount,reason:mealDraft.reason})}),body=await response.json();if(!response.ok)throw new Error(body.code??"MEAL_ADJUST_FAILED");
+          successMessage=body.result?.status==="unchanged"
+            ?(vi?"Số tiền giống với số tiền hiện đang ghi nhận. Không tạo thêm giao dịch điều chỉnh.":"현재 반영 금액과 동일합니다. 추가 정정은 생성하지 않았습니다.")
+            :body.result?.status==="reviewed"
+              ?(vi?"Đã kiểm tra thay đổi dữ liệu nguồn và giữ nguyên số tiền hiện đang ghi nhận. Không tạo thêm giao dịch điều chỉnh.":"원천 변경을 검토하고 현재 반영 금액을 유지했습니다. 추가 정정은 생성하지 않았습니다.")
+              :(vi?"Đã điều chỉnh tiền ăn.":"식대를 정정했습니다.");
+          setMealDraft(null);setMealNotice(successMessage);
+        }catch(cause){const code=(cause as Error).message;setMealError(code==="ORIGINAL_MONTH_CLOSED"?(vi?"Không thể sửa giao dịch của tháng đã khóa.":"마감된 월의 거래는 일반 수정할 수 없습니다."):`${vi?"Không thể sửa tiền ăn.":"식대를 수정하지 못했습니다."} ${code}`)}finally{setEditSaving(false)}
+        if(successMessage)await onConfirmedEdited(entry.transactionId,successMessage);
       }}/>:null}
+      {confirmedMeal&&mealNotice?<p role="status" className={styles.policyNote}>{mealNotice}</p>:null}
       {confirmedMeal&&closed?<p className={styles.policyNote}>{vi?"Không thể sửa giao dịch của tháng đã khóa.":"마감된 월의 거래는 일반 수정할 수 없습니다."}</p>:null}
       {entry.status === "confirmed" && entry.origin === "auto" ? (
         <p className={styles.policyNote}>
@@ -1688,7 +1702,7 @@ function EntryDetailSheet({
 function MealAdjustmentEditor({lang,draft,setDraft,saving,error,onSave}:{lang:"ko"|"vi";draft:MealAdjustDraft;setDraft:(draft:MealAdjustDraft|null)=>void;saving:boolean;error:string;onSave:()=>Promise<void>}){
   const vi=lang==="vi";
   return <LedgerEditShell lang={lang} title={vi?"Sửa tiền ăn nhân viên":"직원 식대 수정"}
-    saving={saving} disabled={!draft.finalAmount||!draft.reason.trim()} error={error}
+    saving={saving} disabled={!draft.finalAmount} error={error}
     onSave={()=>void onSave()} onCancel={()=>setDraft(null)}>
     <BarField label={vi?"Số tiền ăn cuối cùng":"최종 식대 금액"} required compact>{({id})=><input id={id} inputMode="decimal" value={formatLedgerDecimalAmount(draft.finalAmount)} onChange={event=>setDraft({...draft,finalAmount:sanitizeLedgerDecimalAmount(event.target.value)})} style={keepingInputStyle}/>}</BarField>
     <BarField label={vi?"Lý do chỉnh sửa":"수정 사유"} required compact>{({id})=><input id={id} value={draft.reason} onChange={event=>setDraft({...draft,reason:event.target.value})} style={keepingInputStyle} placeholder={vi?"Ví dụ: thêm 1 nhân viên đến muộn":"예: 18시 이후 추가 출근 1명"}/>}</BarField>

@@ -35,7 +35,7 @@ export async function POST(
     );
     if (error) throw error;
     const result = data as { status?: string };
-    if (result.status !== "created" && result.status !== "unchanged") {
+    if (result.status !== "created" && result.status !== "unchanged" && result.status !== "reviewed") {
       const code = String(result.status ?? "MEAL_ADJUST_FAILED").toUpperCase();
       const status = result.status === "forbidden" ? 403
         : result.status === "not_found" ? 404

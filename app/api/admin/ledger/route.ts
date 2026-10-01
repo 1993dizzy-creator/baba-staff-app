@@ -80,7 +80,7 @@ export async function GET(request: Request) {
     // correction of this month's root can itself be recognized in any later open month).
     const paidExpenseCorrectionsPromise = supabaseServer.from("ledger_transactions").select("correction_of_id,amount,economic_effect_sign").eq("status", "confirmed").eq("source_type", "ledger_correction").not("correction_of_id", "is", null);
     const confirmedMealCandidatesPromise = supabaseServer.from("ledger_candidates")
-      .select("resolved_transaction_id,source_snapshot,source_drift_snapshot")
+      .select("resolved_transaction_id,source_snapshot,source_drift_snapshot,source_drift_fingerprint")
       .eq("candidate_type", "employee_meal").eq("source_type", "attendance_meal_daily")
       .eq("status", "confirmed").gte("business_date", monthStart).lt("business_date", nextMonth)
       .not("resolved_transaction_id", "is", null);
@@ -206,6 +206,7 @@ export async function GET(request: Request) {
       resolvedTransactionId: Number(candidate.resolved_transaction_id),
       sourceSnapshot: candidate.source_snapshot as Record<string, unknown> | null,
       sourceDriftSnapshot: candidate.source_drift_snapshot as Record<string, unknown> | null,
+      sourceDriftFingerprint: candidate.source_drift_fingerprint,
     }));
     const [displayTransactions, inventoryProjectionIssues] = await Promise.all([
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
