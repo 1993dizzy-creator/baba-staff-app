@@ -1,8 +1,9 @@
+import { CARD_FEE_AUTO_CLOSE_MIN_RATE, type AutoCardFeeMonth } from "./card-fee-policy";
 import { calculateCardGross, calculateMonthlySettlementDifference, cardMoney, type CardAllocationLine, type CardReconciliation, type CardSale } from "./card-settlements";
 
 export type CardFeeClosure = {
   id: number; fee_month: string; fee_amount: number | string; status: string; expense_transaction_id: number | null;
-  confirmed_at: string; confirmed_by: number; cancelled_at: string | null; cancel_reason: string | null; memo: string | null;
+  finalization_business_date?: string | null; confirmed_at: string; confirmed_by: number; cancelled_at: string | null; cancel_reason: string | null; memo: string | null;
 };
 export type CardFeeBlocker = "current_month" | "future_month" | "month_closed" | "no_card_sales" | "legacy_unallocated_deposits" | "earlier_month_unconfirmed";
 
@@ -46,7 +47,17 @@ export function buildCardFeeMonthState(input: {
             : monthCardGross <= 0 ? "no_card_sales"
               : null;
   const closureFee = closure ? cardMoney(Number(closure.fee_amount)) : 0;
+  const autoFeeMonths: AutoCardFeeMonth[] = [...closedMonths].filter(m => m < currentMonth && !confirmedMonths.has(m)).sort().map(m => ({
+    month: m, reviewRequired: reconciliations.some(r => (r.status === "unmatched" || r.status === "partial") && r.deposit_date >= `${m}-01`), gross: sales.filter(s => monthOf(s.business_date) === m).reduce((n,s) => n+Number(s.amount),0),
+    outstanding: gross.sales.filter(s => monthOf(s.business_date) === m).reduce((n,s) => n+s.outstandingGrossAmount,0),
+  })).filter(row => row.gross > 0 && row.outstanding > 0);
+  const remainingRate = monthCardGross > 0 ? currentOutstanding / monthCardGross : null;
+  const autoStatus = closure ? "confirmed" : month >= currentMonth ? "current_month"
+    : legacy.length || (remainingRate !== null && remainingRate < CARD_FEE_AUTO_CLOSE_MIN_RATE) ? "review_required"
+      : !monthClosed ? "awaiting_month_close" : "pending";
   return {
+    autoFeeMonths, remainingRate, autoStatus,
+    confirmedRate: closure && monthCardGross > 0 ? cardMoney(Number(closure.fee_amount)) / monthCardGross : null,
     month,
     hasCardSales: monthCardGross > 0,
     monthCardGross,
@@ -61,6 +72,6 @@ export function buildCardFeeMonthState(input: {
     earlierUnconfirmedMonth: earlierMonth,
     blockerReason: closure ? null : blocker,
     canConfirm: !closure && blocker === null,
-    canCancel: Boolean(closure) && !monthClosed,
+    canCancel: Boolean(closure) && (!monthClosed || Boolean(closure?.finalization_business_date)),
   };
 }

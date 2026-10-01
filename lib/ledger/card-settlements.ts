@@ -10,12 +10,12 @@ export type CardReconciliation = {
   matched_gross_amount: number | string; difference_amount: number | string; status: string;
 };
 // Registered by ledger_create_card_deposit_auto_allocate_v1: the deposit amount is
-// allocated to card sale principal FIFO. It settles gross but never confirms a fee,
+// allocated to card sale principal FIFO. Fee finalization is a separate closure,
 // so it is excluded from confirmed-difference (fee) metrics that use "matched".
 export const CARD_AUTO_ALLOCATED_STATUS = "auto_allocated";
 // Month-end card fee allocations (ledger_card_fee_allocation_lines of a confirmed closure)
-// are fed to the gross calculations as lines with this pseudo status, dated on the fee
-// month's last day like their expense, so every outstanding path subtracts them.
+// use this pseudo status. Legacy fees retain their month-end date; automatic fees
+// use their actual finalization day so historical asset snapshots stay intact.
 export const CARD_FEE_ALLOCATION_STATUS = "card_fee";
 export const isSettledCardReconciliationStatus = (status: string | null | undefined) => status === "matched" || status === CARD_AUTO_ALLOCATED_STATUS || status === CARD_FEE_ALLOCATION_STATUS;
 export const cardFeeMonthLastDay = (feeMonth: string) => {
@@ -24,14 +24,14 @@ export const cardFeeMonthLastDay = (feeMonth: string) => {
   next.setUTCDate(0);
   return next.toISOString().slice(0, 10);
 };
-export type CardFeeAllocationRow = { id: number; closure_id: number; pos_card_transaction_id: number; allocated_fee_amount: number | string; closure: { status: string; fee_month: string } | null };
+export type CardFeeAllocationRow = { id: number; closure_id: number; pos_card_transaction_id: number; allocated_fee_amount: number | string; closure: { status: string; fee_month: string; finalization_business_date?: string | null } | null };
 export function cardFeeRowsAsAllocationLines(rows: readonly CardFeeAllocationRow[]): CardAllocationLine[] {
   return rows.filter(row => row.closure && row.closure.status !== "cancelled").map(row => ({
     // Negative ids keep fee lines apart from reconciliation ids in per-reconciliation maps.
     reconciliation_id: -Number(row.closure_id),
     pos_card_transaction_id: Number(row.pos_card_transaction_id),
     allocated_gross_amount: row.allocated_fee_amount,
-    reconciliation: { status: CARD_FEE_ALLOCATION_STATUS, deposit_date: cardFeeMonthLastDay(row.closure!.fee_month) },
+    reconciliation: { status: CARD_FEE_ALLOCATION_STATUS, deposit_date: row.closure!.finalization_business_date ?? cardFeeMonthLastDay(row.closure!.fee_month) },
   }));
 }
 export const cardMoney = (value: number) => Math.round(value * 1000) / 1000;

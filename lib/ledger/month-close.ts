@@ -49,11 +49,11 @@ export async function buildMonthCloseSnapshot(month: string) {
   ]);
   const errors=[transactionsResult,accountsResult,payableResult,allocationResult,cardResult,cardLineResult,cardFeeLineResult,reserveResult,reserveEntryResult,payrollResult,recurringResult,candidateResult,ownerCapacityResult,ownerInvestmentResult,ownerAllocationResult].map(result=>result.error).filter(Boolean);
   if(errors.length) throw errors[0];
-  // Month-end card fee: its allocations (dated on the fee month's last day, like its expense)
-  // reduce month-end unsettled gross, and the confirmed closure is part of the snapshot.
+  // Legacy fees retain their month-end date; automatic fees consume clearing on
+  // the actual finalization day, preserving the previous close's asset balances.
   const [monthEndFeeLineResult, feeClosureResult] = await Promise.all([
-    loadSnapshotRows((from,to)=>supabaseServer.from("ledger_card_fee_allocation_lines").select("id,closure_id,pos_card_transaction_id,allocated_fee_amount,closure:ledger_card_fee_closures!inner(status,fee_month)").neq("closure.status","cancelled").lt("closure.fee_month",endExclusive).order("id").range(from,to)),
-    supabaseServer.from("ledger_card_fee_closures").select("id,fee_month,fee_amount,status,confirmed_at,confirmed_by,expense_transaction_id").eq("fee_month",monthStart).eq("status","confirmed").maybeSingle(),
+    loadSnapshotRows((from,to)=>supabaseServer.from("ledger_card_fee_allocation_lines").select("id,closure_id,pos_card_transaction_id,allocated_fee_amount,closure:ledger_card_fee_closures!inner(status,fee_month,finalization_business_date)").neq("closure.status","cancelled").lt("closure.fee_month",endExclusive).order("id").range(from,to)),
+    supabaseServer.from("ledger_card_fee_closures").select("id,fee_month,fee_amount,status,confirmed_at,confirmed_by,expense_transaction_id,finalization_business_date").eq("fee_month",monthStart).eq("status","confirmed").maybeSingle(),
   ]);
   if(monthEndFeeLineResult.error) throw monthEndFeeLineResult.error;
   if(feeClosureResult.error) throw feeClosureResult.error;
@@ -79,13 +79,13 @@ export async function buildMonthCloseSnapshot(month: string) {
   const reserves=(reserveResult.data??[]).map(plan=>({...plan,currentAmount:reserveAmounts.get(Number(plan.id))??0}));
   const protectedReserve=reserves.reduce((sum,row)=>sum+row.currentAmount,0),liquidFunds=accounts.filter(account=>["cash","bank","personal_custody"].includes(account.type)&&account.code!=="card_clearing").reduce((sum,row)=>sum+row.balance,0);
   const cards=cardResult.data??[],cardLines:MonthCloseCardLine[]=[...(cardLineResult.data??[]) as unknown as MonthCloseCardLine[],...cardFeeRowsAsAllocationLines((monthEndFeeLineResult.data??[]) as unknown as CardFeeAllocationRow[]) as MonthCloseCardLine[]];
-  const feeClosure=feeClosureResult.data as {id:number;fee_amount:number|string;confirmed_at:string;confirmed_by:number;expense_transaction_id:number|null}|null;
+  const feeClosure=feeClosureResult.data as {id:number;fee_amount:number|string;confirmed_at:string;confirmed_by:number;expense_transaction_id:number|null;finalization_business_date?:string|null}|null;
   const cardSales=txs.filter(tx=>tx.source_type==="pos_sales_daily_payment"&&tx.source_key?.endsWith(":card")&&tx.business_date<endExclusive);
   const candidateCounts=(candidateResult.data??[]).reduce<Record<string,number>>((counts,row)=>{const key=`${row.candidate_type}:${row.status}`;counts[key]=(counts[key]??0)+1;return counts},{});
   // finalConfirmedFee = historical matched differences attributed to this sale month + this month's closure.
   const monthEndFee=feeClosure?cardMoney(Number(feeClosure.fee_amount)):0;
-  const card={...calculateMonthCloseCardSnapshot(cards,cardLines,cardSales,endExclusive),
-    feeClosure:feeClosure?{id:Number(feeClosure.id),feeAmount:monthEndFee,confirmedAt:feeClosure.confirmed_at,confirmedBy:Number(feeClosure.confirmed_by),expenseTransactionId:feeClosure.expense_transaction_id===null?null:Number(feeClosure.expense_transaction_id)}:null,
+  const card={feeStatus:feeClosure?"confirmed":"pending",...calculateMonthCloseCardSnapshot(cards,cardLines,cardSales,endExclusive),
+    feeClosure:feeClosure?{id:Number(feeClosure.id),feeAmount:monthEndFee,...(feeClosure.finalization_business_date?{autoConfirmed:true}:{}),confirmedAt:feeClosure.confirmed_at,confirmedBy:Number(feeClosure.confirmed_by),expenseTransactionId:feeClosure.expense_transaction_id===null?null:Number(feeClosure.expense_transaction_id)}:null,
     historicalConfirmedFee:expense.attributedCardDifference,
     finalConfirmedFee:cardMoney(expense.attributedCardDifference+monthEndFee)};
   return {month,revenue,expense,operatingResult,funds:{accounts,liquidFunds,cardClearing:accounts.find(account=>account.code==="card_clearing")?.balance??0},payables:{byParty:payableParties,totalOutstanding:payableParties.reduce((sum,row)=>sum+row.outstanding,0)},...(verificationPayables.length ? {paymentVerification:{count:verificationOutstanding.filter(amount=>amount>0).length,totalOutstanding:verificationOutstanding.reduce((sum,amount)=>sum+amount,0)}} : {}),card,reserve:{plans:reserves,totalProtectedReserve:protectedReserve,freeCash:liquidFunds-protectedReserve},payroll:payrollResult.data,recurring:(recurringResult.data??[]).map(plan=>({...plan,recognizedAmount:recognized.filter(tx=>tx.source_key===`recurring:${plan.id}:${month}`).reduce((sum,tx)=>sum+signed(tx),0)})),candidate:{counts:candidateCounts},owners:{capacity:ownerCapacityResult.data,investmentBasis:(ownerInvestmentResult.data??[]).reduce((sum,row)=>sum+Number(row.signed_amount),0),recoveryAllocated:(ownerAllocationResult.data??[]).reduce((sum,row)=>sum+Number(row.recovery_amount),0),recoveryPaid:(ownerAllocationResult.data??[]).reduce((sum,row)=>sum+Number(row.assigned_amount)-Number(row.paid_amount),0)}};

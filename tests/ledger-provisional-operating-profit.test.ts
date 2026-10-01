@@ -204,7 +204,7 @@ test("detail sheet renders the same provisional result as the KPI, with fail-saf
     ["copy.provisionalExpense", "operatingResult.provisionalExpense"],
     ["copy.provisionalOperatingProfit", "operatingResult.operatingProfit"],
   ]);
-  assert.match(provisional, /<pclassName=\{styles\.sectionNote\}>\{copy\.provisionalNote\}<\/p>/);
+  assert.match(provisional, /operatingResult\.warnings\.includes\("CARD_FEE_PENDING"\)\?copy\.cardFeePendingNote:copy\.provisionalNote/);
   assert.match(provisional, /amount=\{operatingResult\.provisionalExpense\}fallback=\{copy\.needsCheck\}totalexpense\/>/);
   assert.match(provisional, /amount=\{operatingResult\.operatingProfit\}fallback=\{copy\.needsCheck\}emphasis\/>/);
   // null amounts render the fallback text, never a silent 0.

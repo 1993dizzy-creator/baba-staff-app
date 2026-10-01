@@ -14,7 +14,7 @@
 // reconciliation is matched. Gross that is not yet matched (unallocated or
 // partial) has no fee yet, so only that gross gets an estimate.
 
-export type ProvisionalLedgerSummary = { income: number; expense: number; operatingProfit: number };
+export type ProvisionalLedgerSummary = { cardFeePending?: boolean; income: number; expense: number; operatingProfit: number };
 
 export type PayrollOverviewSource = {
   summary?: { totalCompanyCostAmount?: unknown; mealAllowanceAmount?: unknown } | null;
@@ -42,7 +42,8 @@ export type ProvisionalWarning =
   | "PAYROLL_UNAVAILABLE"
   | "CARD_SETTLEMENTS_UNAVAILABLE"
   | "PREVIOUS_CARD_SETTLEMENTS_UNAVAILABLE"
-  | "CARD_FEE_RATE_UNAVAILABLE";
+  | "CARD_FEE_RATE_UNAVAILABLE"
+  | "CARD_FEE_PENDING";
 
 // Guard against clearly broken observed rates; not a fee assumption.
 export const MAX_PLAUSIBLE_CARD_FEE_RATE = 0.1;
@@ -89,7 +90,7 @@ export function buildProvisionalOperatingProfit(input: ProvisionalOperatingProfi
     unsettledCardGross: 0,
   };
   if (!input.isCurrentMonth) {
-    return { ...base, mode: "final" as const, needsCheck: false, provisionalExpense: summary.expense, operatingProfit: summary.operatingProfit as number | null, warnings: [] as ProvisionalWarning[] };
+    return { ...base, mode: summary.cardFeePending ? "provisional" as const : "final" as const, needsCheck: false, provisionalExpense: summary.expense, operatingProfit: summary.operatingProfit as number | null, warnings: (summary.cardFeePending ? ["CARD_FEE_PENDING"] : []) as ProvisionalWarning[] };
   }
 
   const warnings: ProvisionalWarning[] = [];

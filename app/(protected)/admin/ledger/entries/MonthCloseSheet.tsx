@@ -27,7 +27,11 @@ const issueNames: Record<string, [string, string]> = {
   PAYABLE_OVERALLOCATED: ["미납금 지급액 초과", "Phân bổ thanh toán vượt công nợ"],
   CARD_OVERALLOCATED: ["카드 정산액 초과", "Phân bổ đối soát thẻ vượt mức"],
   CARD_UNMATCHED: ["미확인 카드 정산", "Đối soát thẻ chưa khớp"],
-  CARD_FEE_NOT_CONFIRMED: ["카드 수수료 미확정 · 남은 카드매출", "Phí thẻ chưa xác nhận · Doanh thu thẻ còn lại"],
+  CARD_FEE_PENDING: ["카드수수료 미확정 · 카드 정산대기", "Phí thẻ chưa xác nhận · Doanh thu thẻ còn lại"],
+  CARD_CLEARING_NEGATIVE: ["카드 정산대기 음수 잔액", "Số dư thẻ chờ quyết toán âm"],
+  CARD_ALLOCATION_MISMATCH: ["카드입금 배분액 불일치", "Phân bổ tiền thẻ không khớp"],
+  CARD_FEE_ALLOCATION_MISMATCH: ["카드수수료 배분액 불일치", "Phân bổ phí thẻ không khớp"],
+  CARD_LEGACY_UNALLOCATED: ["카드입금 미배분", "Tiền thẻ chưa phân bổ"],
   DUPLICATE_ACTIVE_SOURCE: ["중복된 장부 원본", "Nguồn ghi sổ bị trùng"],
   CONFIRMED_SOURCE_DRIFT: ["확정 원본 변경 미처리", "Thay đổi nguồn đã xác nhận chưa xử lý"],
 };
@@ -137,6 +141,7 @@ export default function MonthCloseSheet({ month, revision, vi, onClose, onClosed
           </div>)}
         </div>
       </section>
+      {warnings.some(issue => issue.code === "CARD_FEE_PENDING") ? <p>{vi ? "Phí thẻ sẽ được xác nhận tự động khi ghi nhận tiền thẻ tháng sau." : "익월 카드입금 처리 중 자동 확정됩니다."}</p> : null}
       <div className={styles.closeNoticeCard}>
         {reclose ? <p>{vi ? `Bản chốt lần ${revision} được lưu trong lịch sử.` : `${revision}차 마감본은 이력으로 보존됩니다.`}</p> : null}
         <p>{vi ? "Sau khi chốt, việc sửa sổ sẽ bị hạn chế." : "마감 후에는 장부 수정이 제한됩니다."}</p>

@@ -8,13 +8,14 @@ import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
 import styles from "./card-settlements.module.css";
 import { groupCardDeposits } from "@/lib/ledger/card-deposit-display";
-import { CARD_AUTO_ALLOCATED_STATUS, planCardDepositAutoAllocation, sumCardMoney } from "@/lib/ledger/card-settlements";
+import { CARD_AUTO_ALLOCATED_STATUS, sumCardMoney } from "@/lib/ledger/card-settlements";
 import { formatLedgerAmountInput, parseLedgerAmount, sanitizeLedgerAmountInput } from "@/lib/ledger/manual-entry-amount";
+import { planCardDepositWithFees, type AutoCardFeeMonth } from "@/lib/ledger/card-fee-policy";
 type Account = { id: number; code: string; display_name: string };
 type Sale = { id: number; business_date: string; amount: number; allocatedGrossAmount: number; outstandingGrossAmount: number };
 type Rec = { id: number; deposit_date: string; deposit_amount: number; matched_gross_amount: number; difference_amount: number; status: string; confirmed_at: string | null; confirmed_by: number | null; cancelled_at: string | null; cancelled_by: number | null; cancel_reason: string | null; memo: string | null; destination: { display_name: string } | null };
 type Data = { month:string; accounts: Account[]; sales: Sale[]; monthlySales: Sale[]; priorUnreconciledSales: Sale[]; totalReconciliationCount:number; totalHistoryCount:number; totalCancelledCount:number; reconciliations: Rec[]; summary: { monthlyCardGross: number; monthlyReconciledGross: number; monthlySettledGross:number; monthlyUnreconciledGross: number; totalUnreconciledGross: number; cardPendingBalance: number; actualCardDeposits: number; monthlyUnmatchedDeposits: number; monthlyCompletedGross: number; monthlyCompletedDeposit: number; monthlyCompletedDifference: number; actualDifferenceRate: number | null } };
-type FeeState = { month:string; hasCardSales:boolean; historicalConfirmedFee:number; currentOutstanding:number; projectedTotalFee:number; monthEndFee:number; finalConfirmedFee:number|null; monthClosed:boolean; earlierUnconfirmedMonth:string|null; blockerReason:string|null; canConfirm:boolean; canCancel:boolean; closure:{ id:number; fee_amount:number|string; confirmed_at:string }|null };
+type FeeState = { autoFeeMonths:AutoCardFeeMonth[]; autoStatus:string; remainingRate:number|null; confirmedRate:number|null;  month:string; hasCardSales:boolean; historicalConfirmedFee:number; currentOutstanding:number; projectedTotalFee:number; monthEndFee:number; finalConfirmedFee:number|null; monthClosed:boolean; earlierUnconfirmedMonth:string|null; blockerReason:string|null; canConfirm:boolean; canCancel:boolean; closure:{ id:number; fee_amount:number|string; confirmed_at:string; memo?:string|null; finalization_business_date?:string|null }|null };
 type DepositLine ={ id: number; pos_card_transaction_id: number; allocated_gross_amount: number | string; sale: { id: number; business_date: string; amount: number | string } | null };
 const monthNow = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
 const localNow = () => new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 16);
@@ -34,12 +35,12 @@ const cardText = {
     posCardDetail:"POS 카드매출 상세",source:"원본",ledger:"장부",loading:"불러오는 중…",loadingPage:"카드 정산을 불러오는 중…",
     created:"카드 입금을 등록했습니다.",createdWithAllocations:"카드 입금을 등록하고 카드매출 {count}건을 자동 정산했습니다.",createFailed:"등록 실패",readFailed:"조회 실패",posFailed:"POS 조회 실패",cancelledMessage:"카드 입금을 취소하고 역분개했습니다.",cancelFailed:"취소 실패",
     cancelHint:"카드 입금 기록을 취소합니다. 입금 이동을 역분개하고 반영된 카드매출을 다시 미정산으로 돌립니다. 기록은 취소 이력으로 보존됩니다.",historicalDifferenceCancelHint:"이 입금에 기록된 과거 정산 차액도 함께 역분개됩니다.",
-    cardFee:"카드 수수료",feeCurrentMonthHint:"카드 수수료는 익월에 해당 월 카드입금이 모두 들어온 것을 확인한 뒤 확정합니다.",feeNoSales:"선택월 카드매출이 없어 수수료 확정이 필요 없습니다.",
-    historicalFee:"기존 확정 수수료",remainingCardSales:"현재 남은 카드매출",projectedFee:"확정 후 총 수수료",feeConfirmHint:"해당 월 카드입금이 모두 등록되었는지 확인한 뒤 확정하세요.",confirmFee:"카드 수수료 확정",
-    feeMonth:"대상 매출월",thisFee:"이번 수수료 확정",finalFee:"최종 카드수수료",feeConfirmNotice:"은행 카드입금이 모두 등록되었는지 확인하세요. 확정하면 남은 카드매출은 카드수수료로 비용 처리되며 이후 카드입금 자동배분 대상에서 제외됩니다.",submitFee:"수수료 확정",
+    cardFee:"카드 수수료",feeCurrentMonthHint:"카드 수수료는 월마감 후 익월 카드입금 처리 중 자동 확정됩니다.",feeNoSales:"선택월 카드매출이 없어 수수료 확정이 필요 없습니다.",
+    historicalFee:"기존 확정 수수료",remainingCardSales:"현재 남은 카드매출",
+    feeMonth:"대상 매출월",thisFee:"이번 수수료 확정",finalFee:"최종 카드수수료",
     confirmedFee:"확정 카드수수료",historicalPart:"└ 기존 확정",monthEndPart:"└ 월말 확정",feeConfirmedState:"확정 완료",feeReadOnly:"월마감 완료 · 읽기 전용",cancelFee:"수수료 확정 취소",feeCancelHint:"월말 수수료 비용을 역분개하고 소진한 카드매출을 다시 미정산으로 돌립니다. 확정 기록은 취소 이력으로 보존됩니다.",
-    feeConfirmed:"카드 수수료를 확정했습니다:",feePreviewChanged:"미리보기 {preview}와 달라 최신 잔액으로 확정했습니다",feeConfirmFailed:"수수료 확정 실패",feeCancelled:"카드 수수료 확정을 취소하고 역분개했습니다.",
-    feeBlockMonthClosed:"월마감이 완료된 달은 수수료를 확정할 수 없습니다.",feeBlockLegacy:"카드매출에 반영되지 않은 입금이 있습니다. 입금 취소 후 다시 등록한 뒤 확정하세요.",feeBlockEarlier:"{month} 카드 수수료를 먼저 확정하세요.",feeBlockPending:"카드 미정산 잔액이 수수료보다 적습니다. 카드 입금 기록을 확인하세요.",
+    feeCancelled:"카드 수수료 확정을 취소하고 역분개했습니다.",
+    feeBlockLegacy:"카드매출에 반영되지 않은 입금이 있습니다. 입금 취소 후 다시 등록한 뒤 확정하세요.",feeBlockEarlier:"{month} 카드 정산을 먼저 처리합니다.",feeBlockPending:"카드 미정산 잔액이 수수료보다 적습니다. 카드 입금 기록을 확인하세요.",
   },
   vi: {
     title:"Quyết toán thẻ",previous:"Trước",next:"Sau",previousMonth:"Tháng trước",nextMonth:"Tháng sau",selectMonth:"Chọn tháng",
@@ -54,12 +55,12 @@ const cardText = {
     posCardDetail:"Chi tiết doanh thu thẻ POS",source:"Nguồn",ledger:"Sổ cái",loading:"Đang tải…",loadingPage:"Đang tải quyết toán thẻ…",
     created:"Đã ghi nhận tiền thẻ.",createdWithAllocations:"Đã ghi nhận tiền thẻ và tự động quyết toán {count} doanh thu thẻ.",createFailed:"Ghi nhận thất bại",readFailed:"Tải thất bại",posFailed:"Tải chi tiết POS thất bại",cancelledMessage:"Đã hủy tiền thẻ về và ghi bút toán đảo.",cancelFailed:"Hủy thất bại",
     cancelHint:"Hủy bản ghi tiền thẻ về. Bút toán tiền về sẽ được đảo và doanh thu thẻ đã trừ trở lại trạng thái chưa quyết toán. Lịch sử được giữ lại.",historicalDifferenceCancelHint:"Chênh lệch quyết toán cũ của khoản này cũng sẽ được đảo.",
-    cardFee:"Phí thẻ",feeCurrentMonthHint:"Phí thẻ được xác nhận vào tháng sau, khi đã kiểm tra toàn bộ tiền thẻ về của tháng đó.",feeNoSales:"Tháng đã chọn không có doanh thu thẻ nên không cần xác nhận phí.",
-    historicalFee:"Phí đã xác nhận trước",remainingCardSales:"Doanh thu thẻ còn lại",projectedFee:"Tổng phí sau xác nhận",feeConfirmHint:"Hãy kiểm tra đã ghi nhận đủ tiền thẻ về của tháng rồi mới xác nhận.",confirmFee:"Xác nhận phí thẻ",
-    feeMonth:"Tháng bán",thisFee:"Phí xác nhận lần này",finalFee:"Tổng phí thẻ cuối cùng",feeConfirmNotice:"Hãy kiểm tra đã ghi nhận đủ tiền thẻ về từ ngân hàng. Khi xác nhận, doanh thu thẻ còn lại được ghi chi phí phí thẻ và không còn được tự động trừ khi có tiền thẻ về.",submitFee:"Xác nhận phí",
+    cardFee:"Phí thẻ",feeCurrentMonthHint:"Phí thẻ được xác nhận tự động khi xử lý tiền về tháng sau, sau khi chốt sổ.",feeNoSales:"Tháng đã chọn không có doanh thu thẻ nên không cần xác nhận phí.",
+    historicalFee:"Phí đã xác nhận trước",remainingCardSales:"Doanh thu thẻ còn lại",
+    feeMonth:"Tháng bán",thisFee:"Phí xác nhận lần này",finalFee:"Tổng phí thẻ cuối cùng",
     confirmedFee:"Phí thẻ đã xác nhận",historicalPart:"└ Đã xác nhận trước",monthEndPart:"└ Xác nhận cuối tháng",feeConfirmedState:"Đã xác nhận",feeReadOnly:"Đã chốt sổ · Chỉ xem",cancelFee:"Hủy xác nhận phí",feeCancelHint:"Chi phí phí thẻ cuối tháng sẽ được đảo và doanh thu thẻ đã dùng trở lại chưa quyết toán. Lịch sử xác nhận được giữ lại.",
-    feeConfirmed:"Đã xác nhận phí thẻ:",feePreviewChanged:"khác bản xem trước {preview}, đã xác nhận theo số dư mới nhất",feeConfirmFailed:"Xác nhận phí thất bại",feeCancelled:"Đã hủy xác nhận phí thẻ và ghi bút toán đảo.",
-    feeBlockMonthClosed:"Tháng đã chốt sổ nên không thể xác nhận phí.",feeBlockLegacy:"Có khoản tiền về chưa trừ vào doanh thu thẻ. Hãy hủy và ghi nhận lại trước khi xác nhận.",feeBlockEarlier:"Hãy xác nhận phí thẻ tháng {month} trước.",feeBlockPending:"Số dư thẻ chờ quyết toán nhỏ hơn phí. Hãy kiểm tra tiền thẻ về.",
+    feeCancelled:"Đã hủy xác nhận phí thẻ và ghi bút toán đảo.",
+    feeBlockLegacy:"Có khoản tiền về chưa trừ vào doanh thu thẻ. Hãy hủy và ghi nhận lại trước khi xác nhận.",feeBlockEarlier:"Hãy xác nhận phí thẻ tháng {month} trước.",feeBlockPending:"Số dư thẻ chờ quyết toán nhỏ hơn phí. Hãy kiểm tra tiền thẻ về.",
   },
 } as const;
 type CardText = typeof cardText["ko"] | typeof cardText["vi"];
@@ -67,13 +68,12 @@ type CardText = typeof cardText["ko"] | typeof cardText["vi"];
 const exceptionLabel = (status:string,text:CardText) => status==="unmatched"?text.unmatched:status==="partial"?text.partial:status==="cancelled"?text.cancelled:null;
 const isLegacyPending = (status:string) => status==="unmatched"||status==="partial";
 function feeBlockerText(reason:string|null|undefined,earlierMonth:string|null|undefined,text:CardText) {
-  if (reason==="month_closed") return text.feeBlockMonthClosed;
+  if (reason==="month_closed") return null;
   if (reason==="legacy_unallocated_deposits") return text.feeBlockLegacy;
   if (reason==="earlier_month_unconfirmed") return text.feeBlockEarlier.replace("{month}",(earlierMonth??"").slice(0,7));
   if (reason==="insufficient_card_pending") return text.feeBlockPending;
   return null;
 }
-const feeErrorText = (code:string,result:{month?:string}|undefined,text:CardText) => feeBlockerText(code.toLowerCase(),result?.month,text) ?? code;
 const monthNoticeCardStyle: CSSProperties = { padding: "10px 12px", borderRadius: 10, background: "#f9fafb", border: "1px solid #e5e7eb" };
 const monthControlStyle: CSSProperties = { marginTop: 8, display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 8 };
 const monthButtonStyle: CSSProperties = { ...ui.button, padding: "9px 10px", borderRadius: 10, fontSize: 12, fontWeight: 800 };
@@ -90,7 +90,7 @@ function CardSettlementsContent() {
   const [createOpen,setCreateOpen]=useState(false), [inspectedDeposit,setInspectedDeposit]=useState<Rec|null>(null);
   const [cancelOpen,setCancelOpen]=useState(false), [cancelReason,setCancelReason]=useState("");
   const [depositLines,setDepositLines]=useState<DepositLine[]|null>(null);
-  const [loadedFee,setFee]=useState<FeeState|null>(null), [feeConfirmOpen,setFeeConfirmOpen]=useState(false), [feeMemo,setFeeMemo]=useState("");
+  const [loadedFee,setFee]=useState<FeeState|null>(null);
   const [feeCancelOpen,setFeeCancelOpen]=useState(false), [feeCancelReason,setFeeCancelReason]=useState("");
   const data=loadedData?.month===month?loadedData:null;
   const fee=loadedFee?.month===month?loadedFee:null;
@@ -108,26 +108,13 @@ function CardSettlementsContent() {
     if (!signal?.aborted) setFee(b);
   }, [month]);
   useEffect(() => {
-    ++inspectVersion.current;setData(null);setFee(null);setInspectedDeposit(null);setDepositLines(null);setCancelOpen(false);setCancelReason("");setCreateOpen(false);setFeeConfirmOpen(false);setFeeCancelOpen(false);setFeeCancelReason("");setDrilldown(null);setMessage("");
+    ++inspectVersion.current;setData(null);setFee(null);setInspectedDeposit(null);setDepositLines(null);setCancelOpen(false);setCancelReason("");setCreateOpen(false);setFeeCancelOpen(false);setFeeCancelReason("");setDrilldown(null);setMessage("");
     const controller = new AbortController();
     void load(controller.signal).catch(e => { if (!controller.signal.aborted) setMessage(`${t.readFailed}: ${e.message}`); });
     void loadFee(controller.signal).catch(e => { if (!controller.signal.aborted) setMessage(`${t.readFailed}: ${e.message}`); });
     return () => controller.abort();
   }, [load,loadFee,t]);
   const reloadAll = async () => { await load(); await loadFee(); };
-  async function confirmFee() {
-    if (!fee?.canConfirm) return;
-    setWorking(true);
-    try {
-      const r = await fetch("/api/admin/ledger/card-fees", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month, memo: feeMemo }) }), b = await r.json();
-      if (!r.ok) throw new Error(feeErrorText(String(b.code ?? ""), b.result, t));
-      // The RPC recomputes the fee under lock; its amount is the truth even if the preview moved.
-      const confirmed = Number(b.result?.feeAmount ?? 0);
-      setFeeConfirmOpen(false); setFeeMemo("");
-      setMessage(`${t.feeConfirmed} ${money(confirmed)}${confirmed !== fee.currentOutstanding ? ` · ${t.feePreviewChanged.replace("{preview}", money(fee.currentOutstanding))}` : ""}`);
-      await reloadAll();
-    } catch (e) { setMessage(`${t.feeConfirmFailed}: ${(e as Error).message}`); } finally { setWorking(false); }
-  }
   async function cancelFee() {
     if (!fee?.closure || !feeCancelReason.trim()) return;
     setWorking(true);
@@ -140,7 +127,7 @@ function CardSettlementsContent() {
   }
   function selectMonth(nextMonth:string) {
     if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(nextMonth))return;
-    ++inspectVersion.current;setData(null);setFee(null);setInspectedDeposit(null);setDepositLines(null);setCancelOpen(false);setCancelReason("");setCreateOpen(false);setFeeConfirmOpen(false);setFeeCancelOpen(false);setFeeCancelReason("");setDrilldown(null);setMessage("");
+    ++inspectVersion.current;setData(null);setFee(null);setInspectedDeposit(null);setDepositLines(null);setCancelOpen(false);setCancelReason("");setCreateOpen(false);setFeeCancelOpen(false);setFeeCancelReason("");setDrilldown(null);setMessage("");
     router.push(ledgerMonthHref(pathname,searchParams.toString(),nextMonth),{scroll:false});
   }
   function shiftMonth(delta:number) {
@@ -149,15 +136,15 @@ function CardSettlementsContent() {
     selectMonth(date.toISOString().slice(0,7));
   }
   // Same FIFO contract as ledger_create_card_deposit_auto_allocate_v1; the RPC re-plans under lock on save.
-  const plan = planCardDepositAutoAllocation(data?.sales ?? [], parseLedgerAmount(amount) ?? 0, depositAt.slice(0,10));
+  const plan = planCardDepositWithFees(data?.sales ?? [], parseLedgerAmount(amount) ?? 0, depositAt.slice(0,10), fee?.autoFeeMonths ?? []);
   async function create(e: FormEvent) {
     e.preventDefault();
     const depositAmount = parseLedgerAmount(amount);
-    if (depositAmount === null || plan.error) return;
+    if (!fee || depositAmount === null || plan.error) return;
     setWorking(true);
     try {
       const r = await fetch("/api/admin/ledger/card-settlements", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ depositAt: `${depositAt}:00+07:00`, amount: depositAmount, memo }) }), b = await r.json();
-      if (!r.ok) throw new Error(b.code === "INSUFFICIENT_UNSETTLED_CARD_SALES" ? t.insufficientOutstanding : b.code);
+      if (!r.ok) throw new Error(["INSUFFICIENT_UNSETTLED_CARD_SALES","INSUFFICIENT_CARD_PENDING"].includes(b.code) ? t.insufficientOutstanding : ["CARD_FEE_REVIEW_REQUIRED","CARD_DATA_INVALID"].includes(b.code) ? (lang==="vi"?"Dữ liệu quyết toán thẻ cần được kiểm tra. Khoản tiền về chưa được lưu.":"카드 정산 데이터를 확인해주세요. 입금은 저장되지 않았습니다.") : b.code);
       const allocated = Array.isArray(b.result?.allocations) ? b.result.allocations.length : 0;
       setAmount(""); setMemo(""); setCreateOpen(false); setMessage(allocated ? t.createdWithAllocations.replace("{count}", String(allocated)) : t.created); await reloadAll();
     } catch (e) { setMessage(`${t.createFailed}: ${(e as Error).message}`); } finally { setWorking(false); }
@@ -223,7 +210,7 @@ function CardSettlementsContent() {
       <input type="month" disabled={working} value={month} onChange={e=>selectMonth(e.target.value)} aria-label={t.selectMonth} style={monthInputStyle}/>
       <button type="button" disabled={working} onClick={()=>shiftMonth(1)} aria-label={t.nextMonth} style={monthButtonStyle}>{t.next}</button>
     </div></section>
-    {message&&!createOpen&&!inspectedDeposit&&!feeConfirmOpen&&!feeCancelOpen?<p role="status" className={styles.notice}>{message}</p>:null}
+    {message&&!createOpen&&!inspectedDeposit&&!feeCancelOpen?<p role="status" className={styles.notice}>{message}</p>:null}
     {data?<>
       <section className={styles.card} aria-label={lang==="vi"?"Theo tháng bán thẻ":"카드매출 발생월 기준"}>
         <h2>{t.cardStatus} ({lang==="vi"?`T${Number(month.slice(5,7))}`:`${Number(month.slice(5,7))}월`})</h2>
@@ -245,7 +232,7 @@ function CardSettlementsContent() {
             <div><dt>{t.historicalPart}</dt><dd>{money(fee.historicalConfirmedFee)}</dd></div>
             <div><dt>{t.monthEndPart}</dt><dd>{money(fee.monthEndFee)}</dd></div>
           </dl>
-          <p className={styles.hint}>✅ {t.feeConfirmedState} · <time dateTime={fee.closure.confirmed_at}>{new Date(fee.closure.confirmed_at).toLocaleDateString(lang==="vi"?"vi-VN":"ko-KR",{timeZone:"Asia/Ho_Chi_Minh"})}</time></p>
+          <p className={styles.hint}>✅ {fee.closure?.finalization_business_date?(lang==="vi"?"Đã xác nhận tự động":"자동 확정 완료"):t.feeConfirmedState} · {fee.confirmedRate!=null?`${(fee.confirmedRate*100).toFixed(2)}% · `:""}<time dateTime={fee.closure.confirmed_at}>{new Date(fee.closure.confirmed_at).toLocaleDateString(lang==="vi"?"vi-VN":"ko-KR",{timeZone:"Asia/Ho_Chi_Minh"})}</time></p>
           {fee.canCancel?<button ref={feeButtonRef} type="button" disabled={working} className={styles.secondary} style={{width:"100%"}} onClick={()=>{setMessage("");setFeeCancelReason("");setFeeCancelOpen(true);}}>{t.cancelFee}</button>:<p className={styles.hint}>{t.feeReadOnly}</p>}
         </>
         :!fee.hasCardSales?<p className={styles.hint}>{t.feeNoSales}</p>
@@ -253,11 +240,11 @@ function CardSettlementsContent() {
           <dl className={styles.feeRows}>
             <div><dt>{t.historicalFee}</dt><dd>{money(fee.historicalConfirmedFee)}</dd></div>
             <div><dt>{t.remainingCardSales}</dt><dd>{money(fee.currentOutstanding)}</dd></div>
-            <div className={styles.feeTotal}><dt>{t.projectedFee}</dt><dd>{money(fee.projectedTotalFee)}</dd></div>
+
           </dl>
-          <p className={styles.hint}>{t.feeConfirmHint}</p>
+          <p className={styles.hint}>{lang==="vi"?"Chờ xác nhận tự động khi tiền thẻ về tháng sau.":"자동 확정 대기 · 익월 카드입금 처리 중 자동 확정됩니다."} {fee.remainingRate!=null?`${(fee.remainingRate*100).toFixed(2)}%`:""}</p>
+          {fee.autoStatus==="review_required"?<p role="status" className={styles.validation}>{lang==="vi"?"Cần kiểm tra dữ liệu quyết toán thẻ.":"카드 정산 데이터를 확인해주세요."}</p>:null}
           {feeBlockerText(fee.blockerReason,fee.earlierUnconfirmedMonth,t)?<p role="status" className={styles.validation}>{feeBlockerText(fee.blockerReason,fee.earlierUnconfirmedMonth,t)}</p>:null}
-          <button ref={feeButtonRef} type="button" disabled={working||!fee.canConfirm} className={styles.primary} style={{width:"100%"}} onClick={()=>{setMessage("");setFeeMemo("");setFeeConfirmOpen(true);}}>{t.confirmFee}</button>
         </>}
       </section>
       {data.priorUnreconciledSales.length?<p className={styles.hint}>↪️ {t.priorUnsettled} {money(sumCardMoney(data.priorUnreconciledSales.map(sale=>sale.outstandingGrossAmount)))}</p>:null}
@@ -271,7 +258,7 @@ function CardSettlementsContent() {
           {depositGroups.cancelled.map(renderDeposit)}
         </div></div>}
       </section>
-      {createOpen?<BarSheet kind="full" compact title={t.registerDeposit} closeLabel={t.close} saving={working} onClose={()=>setCreateOpen(false)} returnFocusRef={createButtonRef} footer={<button form="card-deposit-form" type="submit" disabled={working||plan.error!==null} className={styles.primary} style={{...primaryButtonStyle,width:"100%"}}>{t.submitDeposit}</button>}>
+      {createOpen?<BarSheet kind="full" compact title={t.registerDeposit} closeLabel={t.close} saving={working} onClose={()=>setCreateOpen(false)} returnFocusRef={createButtonRef} footer={<button form="card-deposit-form" type="submit" disabled={working||!fee||plan.error!==null} className={styles.primary} style={{...primaryButtonStyle,width:"100%"}}>{t.submitDeposit}</button>}>
         {message?<p role="status" className={styles.notice}>{message}</p>:null}
         <form id="card-deposit-form" onSubmit={create} className={styles.formGrid}>
           <BarField label={`📅 ${t.depositDate}`} required>{({id})=><input id={id} required type="datetime-local" disabled={working} value={depositAt} onChange={e=>setDepositAt(e.target.value)} style={keepingInputStyle}/>}</BarField>
@@ -283,6 +270,7 @@ function CardSettlementsContent() {
               <p>{t.availableOutstanding} {money(plan.availableOutstanding)}</p>
             </>:plan.error==="exceeds_outstanding"?<p role="alert" className={styles.validation}>{t.insufficientOutstanding} ({t.availableOutstanding} {money(plan.availableOutstanding)})</p>
             :plan.error==="nothing_outstanding"?<p role="alert" className={styles.validation}>{t.noEligibleSales}</p>
+            :plan.error==="review_required"?<p role="alert" className={styles.validation}>{lang==="vi"?"Cần kiểm tra dữ liệu quyết toán thẻ.":"카드 정산 데이터를 확인해주세요."}</p>
             :plan.error?<p role="alert" className={styles.validation}>{t.invalidAmount}</p>
             :<>
               <ol className={styles.previewRows}>{plan.rows.map(row=><li key={row.transactionId}>
@@ -310,16 +298,6 @@ function CardSettlementsContent() {
           <p>{t.cancelHint}{inspectedHasDifference?` ${t.historicalDifferenceCancelHint}`:""}</p>
           <label>{t.cancelReason}<textarea required disabled={working} value={cancelReason} onChange={e=>setCancelReason(e.target.value)} className={styles.input} rows={3}/></label>
         </div>:null}
-      </BarSheet>:null}
-      {feeConfirmOpen&&fee?<BarSheet kind="full" compact title={`${month} ${t.confirmFee}`} closeLabel={t.close} saving={working} onClose={()=>setFeeConfirmOpen(false)} returnFocusRef={feeButtonRef} footer={<button type="button" disabled={working||!fee.canConfirm} className={styles.primary} style={{...primaryButtonStyle,width:"100%"}} onClick={()=>void confirmFee()}>{t.submitFee}</button>}>
-        {message?<p role="status" className={styles.notice}>{message}</p>:null}
-        <div className={styles.grid}>
-          <Card title={t.feeMonth} value={month}/><Card title={t.historicalFee} value={money(fee.historicalConfirmedFee)}/>
-          <Card title={t.remainingCardSales} value={money(fee.currentOutstanding)}/><Card title={t.thisFee} value={money(fee.currentOutstanding)}/>
-          <Card title={t.finalFee} value={money(fee.projectedTotalFee)}/>
-        </div>
-        <p className={styles.notice}>{t.feeConfirmNotice}</p>
-        <BarField label={`📝 ${t.memo}`}>{({id})=><input id={id} disabled={working} value={feeMemo} onChange={e=>setFeeMemo(e.target.value)} style={keepingInputStyle}/>}</BarField>
       </BarSheet>:null}
       {feeCancelOpen&&fee?.closure?<BarSheet kind="full" compact title={`${month} ${t.cancelFee}`} closeLabel={t.close} saving={working} onClose={()=>setFeeCancelOpen(false)} returnFocusRef={feeButtonRef} footer={<div className={styles.actions}><button type="button" disabled={working} className={styles.secondary} onClick={()=>{setFeeCancelOpen(false);setFeeCancelReason("");}}>{t.back}</button><button type="button" disabled={working||!feeCancelReason.trim()} className={styles.danger} onClick={()=>void cancelFee()}>{t.confirmCancel}</button></div>}>
         {message?<p role="status" className={styles.notice}>{message}</p>:null}

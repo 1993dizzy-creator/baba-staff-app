@@ -31,6 +31,7 @@ export type DashboardAccount = {
 };
 
 export type DashboardSummary = {
+  cardFeePending?: boolean;
   income: number;
   expense: number;
   operatingProfit: number;

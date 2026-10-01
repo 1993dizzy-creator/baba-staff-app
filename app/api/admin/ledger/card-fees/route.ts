@@ -5,7 +5,7 @@ import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { supabaseServer } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
-const currentMonth = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
+const currentMonth = () => new Date(Date.now() + 4 * 3600000).toISOString().slice(0,7);
 
 export async function GET(request: Request) {
   const auth = await requireLedgerActor(); if (auth.response) return auth.response;
@@ -17,7 +17,7 @@ export async function GET(request: Request) {
       loadCardSales(),
       loadCardAllocationLines(),
       loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("id,deposit_date,deposit_amount,matched_gross_amount,difference_amount,status").order("id").range(from, to)),
-      loadCardRows((from, to) => supabaseServer.from("ledger_card_fee_closures").select("id,fee_month,fee_amount,status,expense_transaction_id,confirmed_at,confirmed_by,cancelled_at,cancel_reason,memo").order("id").range(from, to)),
+      loadCardRows((from, to) => supabaseServer.from("ledger_card_fee_closures").select("id,fee_month,fee_amount,status,expense_transaction_id,confirmed_at,confirmed_by,finalization_business_date,cancelled_at,cancel_reason,memo").order("id").range(from, to)),
       loadCardRows((from, to) => supabaseServer.from("ledger_month_closures").select("month,status").eq("status", "closed").order("month").range(from, to)),
     ]);
     const state = buildCardFeeMonthState({

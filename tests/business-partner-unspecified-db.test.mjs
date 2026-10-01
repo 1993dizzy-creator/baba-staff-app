@@ -2,7 +2,7 @@
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import {PGlite} from '@electric-sql/pglite';
-const sql=readFileSync('supabase/migrations/20261002090000_support_unspecified_partner_payment_mode.sql','utf8');
+const sql=readFileSync('supabase/migrations/20261001172556_support_unspecified_partner_payment_mode.sql','utf8');
 const old=readFileSync('supabase/migrations/202608230001_add_business_partner_settlement_policy.sql','utf8');
 const oldConstraint=old.slice(old.indexOf('add constraint business_partners_settlement_policy'),old.indexOf('comment on column public.business_partners.settlement_mode'));
 async function fixture(){

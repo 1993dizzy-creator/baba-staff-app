@@ -12,7 +12,7 @@ function load(path, dependencies = {}) {
   return testModule.exports;
 }
 const cardSettlements = load('lib/ledger/card-settlements.ts');
-const { buildCardFeeMonthState } = load('lib/ledger/card-fee-closures.ts', { './card-settlements': cardSettlements });
+const { buildCardFeeMonthState } = load('lib/ledger/card-fee-closures.ts', { './card-settlements': cardSettlements, './card-fee-policy': require('../lib/ledger/card-fee-policy.ts') });
 const { calculateMonthCloseOperatingSummary } = require('../lib/ledger/month-close-operating.ts');
 const { calculateMonthCloseCardSnapshot } = require('../lib/ledger/month-close-card.ts');
 
@@ -139,4 +139,9 @@ test('card fee cancel requires a reason and forwards only the canonical RPC argu
   for (const [status, http] of [['forbidden', 403], ['not_found', 404], ['month_closed', 409], ['already_cancelled', 409], ['reason_required', 400]]) {
     assert.equal((await feeApi({ rpcResult: { status } }).cancelPost('41', { reason: 'x' })).status, http, status);
   }
+});
+
+test('closed post-close automatic closure exposes cancellation while closed legacy closure remains read-only',()=>{
+ const input={closedMonths:new Set(['2026-08']),sales:[sale(1,'2026-08-20',100000000)]};const legacy=closure(1,'2026-08',2150000);
+ assert.equal(state({...input,closures:[legacy]}).canCancel,false);assert.equal(state({...input,closures:[{...legacy,finalization_business_date:'2026-09-05'}]}).canCancel,true);
 });

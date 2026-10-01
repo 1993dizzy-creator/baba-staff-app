@@ -151,3 +151,8 @@ test("Vietnamese reserve warning names the rent reserve", async () => {
   assert.match(ready.html, /Chưa đủ quỹ dự phòng tiền thuê<\/span><strong>1 mục/);
   assert.match(ready.html, /Hoàn tất chốt sổ/);
 });
+
+test('pending card fees display a warning and permit close without a fee-confirmation action',async()=>{
+ const fixture=sheetFixture({replies:[{body:check({warnings:[{code:'CARD_FEE_PENDING',amount:6926797}]})}]});fixture.render().effects[0]();await flush();const ready=fixture.render();
+ assert.match(ready.html,/6\.926\.797/);assert.match(ready.html,/\uCE74\uB4DC\uC218\uC218\uB8CC \uBBF8\uD655\uC815/);assert.equal(ready.buttons.find(b=>b.props.children==='\uB9C8\uAC10 \uC644\uB8CC').props.disabled,false);
+});

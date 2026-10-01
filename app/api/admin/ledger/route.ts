@@ -101,6 +101,9 @@ export async function GET(request: Request) {
     const lines = await loadCardAllocationLines(cardGrossSalesResult.map(row => Number(row.id)));
     const cardGross = calculateCardGrossAtMonthEnd(cardGrossSalesResult, lines, monthStart, nextMonth);
     const cardGrossSales = cardGross.monthlyCardGross;
+    const feeClosureResult = await supabaseServer.from("ledger_card_fee_closures").select("id").eq("fee_month",monthStart).eq("status","confirmed").maybeSingle();
+    if (feeClosureResult.error) throw feeClosureResult.error;
+    const cardFeePending = cardGrossSales > 0 && !feeClosureResult.data;
     const reconciledCardGross = cardGross.monthlyReconciledGross;
     const unreconciledCardGross = cardGross.monthlyUnreconciledGross;
     const actualCardDeposits = sumCardMoney(actualCardDepositsResult.map(row => row.deposit_amount));
@@ -212,7 +215,7 @@ export async function GET(request: Request) {
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
     ]);
     const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources, month);
-    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross }, cashReport, accounts, categories: categoriesResult.data ?? [], profitTransactions: profitRows, parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
+    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross, cardFeePending }, cashReport, accounts, categories: categoriesResult.data ?? [], profitTransactions: profitRows, parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);

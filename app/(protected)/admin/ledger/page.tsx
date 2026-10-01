@@ -43,6 +43,7 @@ const text = {
     operatingProfit: "영업이익",
     provisionalOperatingProfit: "잠정 영업이익",
     provisionalNote: "현재까지 발생 기준 · 미확정 급여와 카드수수료 예상분 포함",
+    cardFeePendingNote: "카드수수료 미확정 · 익월 카드입금 처리 중 자동 확정됩니다.",
     ledgerExpense: "현재 장부비용",
     unrecognizedPayroll: "미반영 급여비용",
     cardFeeEstimate: "미정산 카드수수료 예상",
@@ -85,6 +86,7 @@ const text = {
     operatingProfit: "Lợi nhuận hoạt động",
     provisionalOperatingProfit: "Lợi nhuận tạm tính",
     provisionalNote: "Tính đến hiện tại · gồm lương chưa chốt và phí thẻ ước tính",
+    cardFeePendingNote: "Phí thẻ chưa chốt · Tự động xác nhận khi xử lý tiền về tháng sau.",
     ledgerExpense: "Chi phí đã ghi sổ",
     unrecognizedPayroll: "Chi phí lương chưa ghi sổ",
     cardFeeEstimate: "Phí thẻ chưa quyết toán (ước tính)",
@@ -364,12 +366,12 @@ function OperatingProfitSheet({ copy, report, operatingResult, returnFocusRef, o
   return <BarSheet kind="full" compact title={`📊 ${provisional ? copy.provisionalDetailTitle : copy.operatingProfitDetailTitle}`} closeLabel={copy.close} onClose={onClose} returnFocusRef={returnFocusRef}
     footer={<button type="button" className={styles.sheetCloseButton} onClick={onClose}>{copy.close}</button>}>
     {provisional ? <div>
-      <p className={styles.sectionNote}>{copy.provisionalNote}</p>
+      <p className={styles.sectionNote}>{operatingResult.warnings.includes("CARD_FEE_PENDING") ? copy.cardFeePendingNote : copy.provisionalNote}</p>
       <div className={styles.comparisonList}>
         <ReportValue label={copy.operatingIncome} amount={operatingResult.recognizedRevenue} />
         <ReportValue label={copy.ledgerExpense} amount={operatingResult.recognizedExpense} expense />
-        <ReportValue expense label={`+ ${copy.unrecognizedPayroll}`} amount={operatingResult.warnings.includes("PAYROLL_UNAVAILABLE") ? null : operatingResult.payrollAdjustment} fallback={copy.needsCheck} />
-        <ReportValue expense label={`+ ${copy.cardFeeEstimate}`} amount={operatingResult.cardFeeRateSource === "unavailable" || operatingResult.warnings.includes("CARD_SETTLEMENTS_UNAVAILABLE") || operatingResult.warnings.includes("PREVIOUS_CARD_SETTLEMENTS_UNAVAILABLE") ? null : operatingResult.estimatedCardFee} fallback={operatingResult.cardFeeRateSource === "unavailable" ? copy.estimateUnavailable : copy.needsCheck} />
+        {!operatingResult.warnings.includes("CARD_FEE_PENDING") && <><ReportValue expense label={`+ ${copy.unrecognizedPayroll}`} amount={operatingResult.warnings.includes("PAYROLL_UNAVAILABLE") ? null : operatingResult.payrollAdjustment} fallback={copy.needsCheck} />
+        <ReportValue expense label={`+ ${copy.cardFeeEstimate}`} amount={operatingResult.cardFeeRateSource === "unavailable" || operatingResult.warnings.includes("CARD_SETTLEMENTS_UNAVAILABLE") || operatingResult.warnings.includes("PREVIOUS_CARD_SETTLEMENTS_UNAVAILABLE") ? null : operatingResult.estimatedCardFee} fallback={operatingResult.cardFeeRateSource === "unavailable" ? copy.estimateUnavailable : copy.needsCheck} /></>}
         <ReportValue label={copy.provisionalExpense} amount={operatingResult.provisionalExpense} fallback={copy.needsCheck} total expense />
         <ReportValue label={copy.provisionalOperatingProfit} amount={operatingResult.operatingProfit} fallback={copy.needsCheck} emphasis />
       </div>

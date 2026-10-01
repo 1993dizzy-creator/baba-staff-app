@@ -1,3 +1,4 @@
+import { normalizePostCloseCardFeeSnapshot } from "@/lib/ledger/post-close-card-fee";
 import { buildMonthCloseSnapshot, snapshotHash, validCloseMonth } from "@/lib/ledger/month-close";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -31,7 +32,8 @@ export async function GET(request: Request) {
     if (closure?.status === "closed") {
       return ledgerJson({ ok: true, month, state: "closed", closure,
         currentRecalculation: currentSummary, currentHash: currentSnapshotHash,
-        snapshotDrift: currentSnapshotHash !== closure.snapshot_hash });
+        finalizedOperatingResult: currentSummary.operatingResult, cardFeeStatus: currentSummary.card.feeStatus,
+        snapshotDrift: snapshotHash(normalizePostCloseCardFeeSnapshot(currentSummary,closure.summary_snapshot)) !== closure.snapshot_hash });
     }
     if (closure?.status === "reopened") {
       return ledgerJson({ ok: true, month, state: "reopened",

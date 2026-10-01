@@ -1,3 +1,4 @@
+import { normalizePostCloseCardFeeSnapshot } from "../lib/ledger/post-close-card-fee.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
@@ -41,9 +42,10 @@ function routeFixture({ closure = null, earlierReopened = [], preflight = { stat
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
   } }).outputText;
   new Function("require", "module", "exports", code)(name => {
+    if (name === "@/lib/ledger/post-close-card-fee") return {normalizePostCloseCardFeeSnapshot};
     if (name === "@/lib/ledger/month-close") return {
       validCloseMonth: value => typeof value === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(value),
-      buildMonthCloseSnapshot: async () => ({ funds: 123 }),
+      buildMonthCloseSnapshot: async () => ({ funds: 123, ...(closure?.status === "closed" ? {card:{feeStatus:"pending"}} : {}) }),
       snapshotHash: () => "new-hash",
     };
     if (name === "@/lib/ledger/server") return {
@@ -182,7 +184,7 @@ test("GET exposes old snapshot only as previousClosure while reopened preflight 
 });
 
 test("GET closed and open retain their existing response shape with revision", async () => {
-  const closed = routeFixture({ closure: { status: "closed", revision: 2, snapshot_hash: "old" } });
+  const closed = routeFixture({ closure: { status: "closed", revision: 2, snapshot_hash: "old", summary_snapshot: {} } });
   assert.equal((await (await closed.route.GET(new Request("http://localhost/?month=2026-08"))).json()).state, "closed");
   const open = routeFixture();
   const body = await (await open.route.GET(new Request("http://localhost/?month=2026-08"))).json();

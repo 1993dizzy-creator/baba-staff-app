@@ -35,7 +35,7 @@ export async function loadCardAllocationLines(saleIds?: readonly number[]): Prom
     // Active month-end fee allocations consume sale gross exactly like deposit lines.
     const feeLines = await loadCardRows((from, to) => {
       let query = supabaseServer.from("ledger_card_fee_allocation_lines")
-        .select("id,closure_id,pos_card_transaction_id,allocated_fee_amount,closure:ledger_card_fee_closures!inner(status,fee_month)")
+        .select("id,closure_id,pos_card_transaction_id,allocated_fee_amount,closure:ledger_card_fee_closures!inner(status,fee_month,finalization_business_date)")
         .neq("closure.status", "cancelled");
       if (ids) query = query.in("pos_card_transaction_id", ids);
       return query.order("id").range(from, to);

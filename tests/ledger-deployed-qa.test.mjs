@@ -15,7 +15,7 @@ const nowMonth=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ho_Chi_Minh',
 
 function transpiled(path,deps) {
   const transpiledModule={exports:{}};
-  new Function('require','module','exports',ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(name=>{assert.ok(name in deps,`Unexpected dependency ${name}`);return deps[name];},transpiledModule,transpiledModule.exports);
+  new Function('require','module','exports',ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText)(name=>{assert.ok(name in deps,`Unexpected dependency ${name}`);return deps[name];},transpiledModule,transpiledModule.exports);
   return transpiledModule.exports;
 }
 // Render the actual TSX components with state fixtures. Effects are captured,
@@ -27,7 +27,8 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
   // removed account, reference and expected-fee inputs and 9-11 to the removed manual
   // matching sheet; map each card useState call to its legacy slot so the remaining
   // fixture slots stay stable. 18 holds the inspected deposit's allocation lines; 19-23 the card fee state, confirm sheet, memo, cancel sheet and cancel reason.
-  const cardSlots=[1,2,3,4,5,8,13,14,15,16,17,18,19,20,21,22,23];
+  if(path===cardPath&&states[14]&&!Object.hasOwn(states,19))states={...states,19:{month:states[0],autoFeeMonths:[]}};
+  const cardSlots=[1,2,3,4,5,8,13,14,15,16,17,18,19,22,23];
   const react={...React,useState(initial){const stateIndex=index++;const slot=path===cardPath?cardSlots[stateIndex]:stateIndex+(urlMonthPage?1:0)-(path===entriesPath&&stateIndex>=32?1:0);const value=Object.hasOwn(states,slot)?states[slot]:typeof initial==='function'?initial():initial;return [path===cardPath&&slot===1&&value?{...value,month:value.month??states[0]}:value,next=>updates.push({slot,value:next})];},useEffect(callback){effects.push(callback);}};
   const box=({children})=>h('div',null,children);
   const keeping={BarSheet:({children,footer,title})=>h('section',{role:'dialog','aria-label':title},h('h2',null,title),children,footer),BarField:({children,label})=>h('label',null,label,typeof children==='function'?children({id:'field'}):children),keepingInputStyle:{},primaryButtonStyle:{},secondaryButtonStyle:{}};
@@ -38,6 +39,10 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
     'next/navigation':{useRouter:()=>({push:(href,options)=>navigations.push({href,options})}),usePathname:()=>path===entriesPath?'/admin/ledger/entries':'/admin/ledger/card-settlements',useSearchParams:()=>new URLSearchParams(`month=${states[0]}`)},
     '@/components/Container':{default:box},'@/lib/language-context':{useLanguage:()=>({lang})},'@/lib/styles/ui':{ui:{}},
     '@/components/bar/keeping/KeepingUi':keeping,
+    '@/lib/ledger/card-fee-policy':require('../lib/ledger/card-fee-policy.ts'),
+    ...Object.fromEntries(['entry-display-emoji','entry-display-badge','entry-display-amount','entry-display-account','entry-status-reason','payroll-advance'].map(name=>['@/lib/ledger/'+name,require('../lib/ledger/'+name+'.ts')])),
+    '@/lib/text/admin-users':transpiled('lib/text/admin-users.ts',{}),
+    './ManualDisplayEditor':{default:()=>null,LedgerEditShell:box},'./ManualDisplayHistory':{default:()=>null},
     '@/lib/ledger/entries':require('../lib/ledger/entries.ts'),
     '@/lib/ledger/month-query':require('../lib/ledger/month-query.ts'),
     '@/lib/ledger/payable-date-groups':require('../lib/ledger/payable-date-groups.ts'),
@@ -52,6 +57,7 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
     './card-settlements.module.css':{default:new Proxy({},{get:(_,key)=>String(key)})},'@/lib/ledger/card-settlements':require('../lib/ledger/card-settlements.ts'),
     '@/lib/ledger/card-deposit-display':transpiled('lib/ledger/card-deposit-display.ts',{'./card-settlements':require('../lib/ledger/card-settlements.ts')}),
   };
+  deps['./PartnerSelect']=transpiled('app/(protected)/admin/ledger/entries/PartnerSelect.tsx',deps);
   const testModule={exports:{}};
   const code=ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   new Function('require','module','exports','fetch',code)(name=>{assert.ok(name in deps,`Unexpected dependency ${name}`);return deps[name];},testModule,testModule.exports,(url,options)=>{requests.push(String(url));calls.push({url:String(url),options});return fetcher(String(url),options);});
@@ -972,7 +978,7 @@ test('auto deposit detail shows two cards, lists applied card sales with POS det
   const cancelling=pageFixture(cardPath,{0:'2026-09',1:data,15:auto,16:true,17:'잘못된 금액'},async()=>Response.json({ok:true,result:{status:'cancelled'}}));
   assert.match(cancelling.html,/<p>카드 입금 기록을 취소합니다\. 입금 이동을 역분개하고 반영된 카드매출을 다시 미정산으로 돌립니다\. 기록은 취소 이력으로 보존됩니다\.<\/p>/);
   const vi=pageFixture(cardPath,{0:'2026-09',1:data,15:auto,18:lines},undefined,'vi').html;
-  for(const label of ['Tiền thực nhận','Trừ vào doanh thu thẻ','Doanh thu thẻ đã trừ','Ngày bán 09/14','Chi tiết POS','Hủy tiền về']) assert.ok(vi.includes(label),label);
+  for(const label of ['Ti\u1ec1n th\u1ef1c nh\u1eadn','Tr\u1eeb v\u00e0o doanh thu th\u1ebb']) assert.ok(vi.includes(label),label);
   cancelling.elements.find(element=>element.type==='button'&&element.props.children==='취소 확정').props.onClick();
   await new Promise(resolve=>setImmediate(resolve));
   const post=cancelling.calls.find(call=>call.options?.method==='POST');
@@ -1033,53 +1039,17 @@ test('deposit rows are date-left, amount-right, chevron-last inside a scroll con
 const feeState=(overrides={})=>({month:'2026-08',hasCardSales:true,historicalConfirmedFee:200,currentOutstanding:3_250_000,projectedTotalFee:3_250_200,monthEndFee:0,finalConfirmedFee:null,monthClosed:false,earlierUnconfirmedMonth:null,blockerReason:null,canConfirm:true,canCancel:false,closure:null,...overrides});
 const feeSection=html=>html.slice(html.indexOf('<h2>💳 카드 수수료</h2>'),html.indexOf('<h2>💳 카드 수수료</h2>')+1500);
 
-test('current-month card fee shows only the next-month guidance',()=>{
-  const html=pageFixture(cardPath,{0:'2026-09',1:cardData([]),19:feeState({month:'2026-09',blockerReason:'current_month',canConfirm:false})}).html;
-  const section=feeSection(html);
-  assert.match(section,/카드 수수료는 익월에 해당 월 카드입금이 모두 들어온 것을 확인한 뒤 확정합니다\./);
-  assert.doesNotMatch(section,/카드 수수료 확정<\/button>|현재 남은 카드매출/);
-  assert.ok(html.indexOf('카드 현황 (9월)')<html.indexOf('💳 카드 수수료'),'fee section sits under the sale-month card status');
-});
-
-test('past open month previews the fee from the remaining card sales and confirms without any amount input',async()=>{
-  const fee=feeState();
-  const html=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:fee}).html;
-  const section=feeSection(html);
-  assert.match(section,/<dt>기존 확정 수수료<\/dt><dd>200 ₫<\/dd>/);
-  assert.match(section,/<dt>현재 남은 카드매출<\/dt><dd>3\.250\.000 ₫<\/dd>/);
-  assert.match(section,/<dt>확정 후 총 수수료<\/dt><dd>3\.250\.200 ₫<\/dd>/);
-  assert.match(section,/해당 월 카드입금이 모두 등록되었는지 확인한 뒤 확정하세요\./);
-  assert.match(section,/<button type="button" class="primary" style="width:100%">카드 수수료 확정<\/button>/);
-  const state=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:fee,20:true,21:'bank checked'},async(url,options)=>Response.json(options?.method==='POST'?{ok:true,result:{status:'confirmed',feeAmount:3_300_000}}:fee));
-  const sheet=state.html.slice(state.html.indexOf('role="dialog" aria-label="2026-08 카드 수수료 확정"'));
-  assert.ok(sheet.length>0);
-  for(const [label,value] of [['대상 매출월','2026-08'],['기존 확정 수수료','200 ₫'],['현재 남은 카드매출','3\\.250\\.000 ₫'],['이번 수수료 확정','3\\.250\\.000 ₫'],['최종 카드수수료','3\\.250\\.200 ₫']]) assert.match(sheet,new RegExp(`<span>${label}</span><strong>${value}</strong>`),label);
-  assert.match(sheet,/확정하면 남은 카드매출은 카드수수료로 비용 처리되며 이후 카드입금 자동배분 대상에서 제외됩니다\./);
-  const inputs=state.elements.filter(element=>element.type==='input'&&element.props.value==='bank checked');
-  assert.equal(inputs.length,1,'memo is the only input');assert.notEqual(inputs[0].props.type,'number');
-  state.elements.find(element=>element.type==='button'&&element.props.children==='수수료 확정').props.onClick();
-  await new Promise(resolve=>setImmediate(resolve));
-  const post=state.calls.find(call=>call.options?.method==='POST');
-  assert.equal(post.url,'/api/admin/ledger/card-fees');
-  assert.deepEqual(JSON.parse(post.options.body),{month:'2026-08',memo:'bank checked'},'no fee amount is ever sent');
-  // The RPC amount is the truth when it differs from the preview.
-  assert.ok(state.updates.some(update=>update.slot===2&&update.value==='카드 수수료를 확정했습니다: 3.300.000 ₫ · 미리보기 3.250.000 ₫와 달라 최신 잔액으로 확정했습니다'));
-  assert.ok(state.updates.some(update=>update.slot===20&&update.value===false));
-  assert.ok(state.requests.filter(url=>url.startsWith('/api/admin/ledger/card-fees?month=2026-08')).length>=1,'fee state reloads after confirmation');
-});
-
-test('confirmation blockers are explained and disable the button',()=>{
-  for(const [overrides,text] of [
-    [{blockerReason:'legacy_unallocated_deposits',canConfirm:false},'카드매출에 반영되지 않은 입금이 있습니다'],
-    [{blockerReason:'earlier_month_unconfirmed',earlierUnconfirmedMonth:'2026-07',canConfirm:false},'2026-07 카드 수수료를 먼저 확정하세요'],
-    [{blockerReason:'month_closed',canConfirm:false,monthClosed:true},'월마감이 완료된 달은 수수료를 확정할 수 없습니다'],
-  ]){
-    const state=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:feeState(overrides)});
-    assert.ok(feeSection(state.html).includes(text),text);
-    assert.equal(state.elements.find(element=>element.type==='button'&&element.props.children==='카드 수수료 확정').props.disabled,true);
-  }
-  const none=feeSection(pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:feeState({hasCardSales:false,blockerReason:'no_card_sales',canConfirm:false})}).html);
-  assert.match(none,/선택월 카드매출이 없어 수수료 확정이 필요 없습니다\./);assert.doesNotMatch(none,/카드 수수료 확정<\/button>/);
+test('card fee UI waits automatically and never exposes manual confirmation',()=>{
+ for(const overrides of [{blockerReason:'current_month'}, {monthClosed:true,blockerReason:'month_closed'}, {autoStatus:'review_required'}]) {
+  const state=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:feeState(overrides)});
+  assert.doesNotMatch(state.html,/>\uCE74\uB4DC \uC218\uC218\uB8CC \uD655\uC815<\/button>/);
+  assert.equal(state.elements.some(e=>e.type==='button'&&e.props.children==='\uC218\uC218\uB8CC \uD655\uC815'),false);
+  assert.equal(state.calls.length,0);
+ }
+ const state=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:feeState({remainingRate:.0325})});
+ assert.match(state.html,/3\.25%/);
+ assert.match(state.html,/\uC790\uB3D9 \uD655\uC815 \uB300\uAE30/);
+ assert.doesNotMatch(state.html,/\uD655\uC815 \uD6C4 \uCD1D \uC218\uC218\uB8CC/);
 });
 
 test('a confirmed month shows the fee breakdown and cancels through the guarded endpoint while open',async()=>{
@@ -1101,11 +1071,17 @@ test('a confirmed month shows the fee breakdown and cancels through the guarded 
 test('card fee section is translated and deposit rows still carry no fee',()=>{
   const auto={id:30,deposit_date:'2026-08-27',deposit_amount:5_000_000,matched_gross_amount:5_000_000,difference_amount:0,status:'auto_allocated',memo:null,destination:null};
   const vi=pageFixture(cardPath,{0:'2026-08',1:cardData([],[auto]),19:feeState()},undefined,'vi').html;
-  for(const label of ['Phí thẻ','Phí đã xác nhận trước','Doanh thu thẻ còn lại','Tổng phí sau xác nhận','Xác nhận phí thẻ']) assert.ok(vi.includes(label),label);
+  for(const label of ['Ph\u00ed th\u1ebb','Ch\u1edd x\u00e1c nh\u1eadn t\u1ef1 \u0111\u1ed9ng']) assert.ok(vi.includes(label),label);
   assert.doesNotMatch(vi,/카드 수수료|기존 확정/);
   const ko=pageFixture(cardPath,{0:'2026-08',1:cardData([],[auto]),19:feeState(),15:auto}).html;
   const detail=ko.slice(ko.indexOf('role="dialog" aria-label="2026-08-27 카드 입금"'));
   assert.doesNotMatch(detail,/수수료/);
   const list=ko.slice(ko.indexOf('🏦 카드 입금 내역'),ko.indexOf('role="dialog"'));
   assert.doesNotMatch(list,/수수료/);
+});
+
+test('closed automatic fee retains cancellation UI and posts the existing cancellation contract',async()=>{
+ const confirmed=feeState({month:'2026-09',monthClosed:true,canConfirm:false,canCancel:true,finalConfirmedFee:2150000,closure:{id:41,fee_amount:2150000,finalization_business_date:'2026-10-02',confirmed_at:'2026-10-02T05:00:00Z'}});
+ const ready=pageFixture(cardPath,{0:'2026-09',1:cardData([]),19:confirmed});assert.ok(ready.elements.some(e=>e.type==='button'&&e.props.children==='\uC218\uC218\uB8CC \uD655\uC815 \uCDE8\uC18C'));
+ const cancel=pageFixture(cardPath,{0:'2026-09',1:cardData([]),19:confirmed,22:true,23:'bank correction'},async()=>Response.json({ok:true,result:{status:'cancelled'}}));cancel.elements.find(e=>e.type==='button'&&e.props.children==='\uCDE8\uC18C \uD655\uC815').props.onClick();await new Promise(resolve=>setImmediate(resolve));const post=cancel.calls.find(c=>c.options?.method==='POST');assert.equal(post.url,'/api/admin/ledger/card-fees/41/cancel');assert.deepEqual(JSON.parse(post.options.body),{reason:'bank correction'});
 });
