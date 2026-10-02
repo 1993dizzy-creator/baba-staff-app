@@ -38,6 +38,6 @@ export const ledgerSettingsTabText = {
 } as const;
 
 export const partnerSettingsText = {
-  ko: { title: "거래처 설정", add: "+ 거래처 추가", addTitle: "거래처 추가", close: "닫기", manageSubtypes: "중분류 관리", pending: "등록대기", active: "사용중", inactive: "사용안함", empty: "조건에 맞는 거래처가 없습니다.", showResolved: "처리완료 보기", hideResolved: "등록대기만 보기" },
-  vi: { title: "Cài đặt đối tác", add: "+ Thêm đối tác", addTitle: "Thêm đối tác", close: "Đóng", manageSubtypes: "Quản lý danh mục phụ", pending: "Chờ duyệt", active: "Đang dùng", inactive: "Ngừng dùng", empty: "Không có đối tác phù hợp.", showResolved: "Xem đã xử lý", hideResolved: "Chỉ xem chờ duyệt" },
+  ko: { title: "거래처 설정", add: "+ 거래처 추가", addTitle: "거래처 추가", close: "닫기", manageSubtypes: "중분류 관리", pending: "등록대기", active: "사용중", inactive: "사용안함", empty: "조건에 맞는 거래처가 없습니다." },
+  vi: { title: "Cài đặt đối tác", add: "+ Thêm đối tác", addTitle: "Thêm đối tác", close: "Đóng", manageSubtypes: "Quản lý danh mục phụ", pending: "Chờ duyệt", active: "Đang dùng", inactive: "Ngừng dùng", empty: "Không có đối tác phù hợp." },
 } as const;

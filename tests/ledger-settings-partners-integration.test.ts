@@ -32,17 +32,17 @@ test("A: 장부설정 has exactly 기본설정 / 거래처 / 준비금 and no ca
   assert.equal(parseLedgerSettingsTab(null), "basic");
 });
 
-test("B: 기본설정 shows 자금계정 and 사장 정산 as independent accordions, closed by default", () => {
-  assert.match(settings, /const \[fundAccountsOpen, setFundAccountsOpen\] = useState\(false\);/);
-  assert.match(settings, /const \[ownerSettlementOpen, setOwnerSettlementOpen\] = useState\(false\);/);
-  assert.match(settings, /aria-expanded=\{fundAccountsOpen\}[^>]*onClick=\{\(\) => setFundAccountsOpen\(value => !value\)\}><h2>\{tabText\.fundAccounts\}<\/h2>/);
-  assert.match(settings, /aria-expanded=\{ownerSettlementOpen\}[^>]*onClick=\{\(\) => setOwnerSettlementOpen\(value => !value\)\}><h2>\{tabText\.ownerSettlement\}<\/h2>/);
+test("B: 기본설정 shows 🏦 자금계정 and 🤝 사장 정산 as independent accordions, open by default", () => {
+  assert.match(settings, /const \[fundAccountsOpen, setFundAccountsOpen\] = useState\(true\);/);
+  assert.match(settings, /const \[ownerSettlementOpen, setOwnerSettlementOpen\] = useState\(true\);/);
+  assert.match(settings, /aria-expanded=\{fundAccountsOpen\}[^>]*onClick=\{\(\) => setFundAccountsOpen\(value => !value\)\}><h2>🏦 \{tabText\.fundAccounts\}<\/h2>/);
+  assert.match(settings, /aria-expanded=\{ownerSettlementOpen\}[^>]*onClick=\{\(\) => setOwnerSettlementOpen\(value => !value\)\}><h2>🤝 \{tabText\.ownerSettlement\}<\/h2>/);
   assert.match(settings, /\{fundAccountsOpen \? <div id="settings-fund-accounts"/);
   assert.match(settings, /\{ownerSettlementOpen && owners \? <div id="settings-owner-settlement"/);
   assert.equal(ledgerSettingsTabText.ko.accountCount(5), "5개");
   assert.equal(ledgerSettingsTabText.ko.participantCount(3), "참여자 3명");
   // Existing owner settings and save flows are reused unchanged.
-  for (const phrase of ["초기 투자자 설정", "투자자 구성 변경", "이익 배분 비율 수정", "투자자 구성 저장", "이익 배분 비율 저장"]) assert.ok(settings.includes(phrase), phrase);
+  for (const phrase of ["투자자 구성", "투자자 선택", "투자자 구성 저장", "이익 배분 비율", "이익 배분 비율 저장"]) assert.ok(settings.includes(phrase), phrase);
   assert.match(settings, /mutate\("\/api\/admin\/ledger\/owners", \{ action: "participants"/);
   assert.match(css, /\.accordionHeader\{[^}]*grid-template-columns:minmax\(0,1fr\) auto 14px/);
   assert.match(css, /\.accordionHeader>h2\{[^}]*white-space:nowrap/);

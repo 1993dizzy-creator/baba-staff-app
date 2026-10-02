@@ -241,8 +241,9 @@ test('owners recovery UX has no month selector, distinguishes zero principal and
 test('settings shows principal rule and profit-only policy, without profit setup UI',()=>{
   assert.match(settingsPage,/↩️ \{copy\.recoveryBasis\}<\/span><strong>\{copy\.recoveryBasisValue\}<\/strong>/);
   assert.match(settingsPage,/recoveryBasis: "투자금 회수 기준",\s*recoveryBasisValue: "미회수 원금 비례"/);
-  assert.match(settingsPage,/이익 배분 비율 수정/);
-  assert.match(settingsPage,/투자금 회수에는 사용되지 않으며/);
+  // Profit share is edited from its own compact row; the help text says it applies only after recovery.
+  assert.match(settingsPage,/profitShareRate: "이익 배분 비율"/);
+  assert.match(settingsPage,/profitShareHelp: "※ 이 비율은 투자금 회수 완료 후 이익 배분에 적용됩니다\."/);
   assert.doesNotMatch(settingsPage,/미분배이익 시작 기준|action: "profit_settings"/);
   assert.match(settingsPage,/selectedUsers\.length !== 3/);
   assert.match(settingsPage,/participantEffectiveMonth/);

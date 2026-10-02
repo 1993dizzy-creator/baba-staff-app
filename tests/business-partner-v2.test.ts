@@ -122,12 +122,14 @@ test("partner settings separate candidates (등록대기) from regular partners 
   assert.doesNotMatch(adminPage, /shownPartners/);
   assert.match(adminPage, /PartnerForm/);
   // Candidates only render on 등록대기; partners come from business partners by isActive.
-  assert.match(adminPage, /\{view === "pending" \? <>[\s\S]*candidateRows\.map/);
+  assert.match(adminPage, /\{view === "pending" \? <section className=\{styles\.compactList\}>\{pendingAliases\.map\(/);
   assert.match(adminPage, /active: partners\.filter\(row => row\.isActive\)\.length,\s*inactive: partners\.filter\(row => !row\.isActive\)\.length/);
   assert.equal(infoPage, adminPage);
   assert.match(candidatePage, /새 정규 거래처로 등록/);
   assert.match(candidatePage, /기존 정규 거래처에 연결/);
-  assert.match(candidatePage, /등록하지 않음/);
+  // 등록 제외 is no longer a user-facing action (the backend ignore/reopen branch stays for history).
+  assert.doesNotMatch(candidatePage, /등록하지 않음|등록 안 함|Không đăng ký|Bỏ qua|action: "ignore"|action: "reopen"/);
+  assert.match(candidatePage, /type Action = "create_partner" \| "link_existing";/);
 });
 
 test("partner detail routes sit under 가게 장부 > 장부설정 with the ledger SubNav", () => {

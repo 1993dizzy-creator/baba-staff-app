@@ -50,7 +50,6 @@ export default function PartnerSettingsPanel({ lang, view, onViewChange }: { lan
   const [showAdd, setShowAdd] = useState(false);
   const [addSaving, setAddSaving] = useState(false);
   const [showSubtypeManager, setShowSubtypeManager] = useState(false);
-  const [showResolved, setShowResolved] = useState(false);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const subtypeManagerButtonRef = useRef<HTMLButtonElement>(null);
   const load = useCallback(async () => {
@@ -64,10 +63,9 @@ export default function PartnerSettingsPanel({ lang, view, onViewChange }: { lan
   }, []);
   useEffect(() => { void load().catch(() => setError(t.loadFailed)); }, [load, t.loadFailed]);
 
-  // 등록대기 = pending Supplier Candidates; 사용중/사용안함 = regular partners by is_active.
-  // Ignored/archived candidates are processing history, never "사용안함" partners.
+  // 등록대기 = pending Supplier Candidates only; 사용중/사용안함 = regular partners by
+  // is_active. Linked/ignored/archived candidates are never listed or counted here.
   const pendingAliases = aliases.filter(row => row.status === "pending");
-  const ignoredAliases = aliases.filter(row => row.status === "ignored");
   const counts: Record<PartnerSettingsView, number> = {
     pending: pendingAliases.length,
     active: partners.filter(row => row.isActive).length,
@@ -84,7 +82,6 @@ export default function PartnerSettingsPanel({ lang, view, onViewChange }: { lan
     setShowAdd(false); await load(); alert(t.saved); return true;
   }
 
-  const candidateRows = showResolved ? ignoredAliases : pendingAliases;
   return <section className={styles.compactPage} aria-label={labels.title}>
     <div className={styles.partnerSettingsHeader}>
       <h2>{labels.title}</h2>
@@ -103,10 +100,7 @@ export default function PartnerSettingsPanel({ lang, view, onViewChange }: { lan
     <PartnerSubtypeManager lang={lang} open={showSubtypeManager} partnerSubtypes={partnerSubtypes} onClose={() => setShowSubtypeManager(false)} onReload={load} returnFocusRef={subtypeManagerButtonRef} />
     <div className={styles.compactFilters} role="tablist" aria-label={t.status}>{PARTNER_SETTINGS_VIEWS.map(key => <button role="tab" aria-selected={view === key} className={view === key ? styles.filterActive : ""} key={key} type="button" onClick={() => onViewChange(key)}>{labels[key]} {counts[key]}</button>)}</div>
     {error ? <p className={styles.error} role="alert">{error}</p> : null}
-    {view === "pending" ? <>
-      <section className={styles.compactList}>{candidateRows.map(alias => <CandidateRow alias={alias} lang={lang} key={alias.id} />)}{candidateRows.length === 0 ? <p className={styles.compactEmpty}>{labels.empty}</p> : null}</section>
-      <button type="button" className={styles.resolvedToggle} aria-pressed={showResolved} onClick={() => setShowResolved(value => !value)}>{showResolved ? labels.hideResolved : `${labels.showResolved} ${ignoredAliases.length}`}</button>
-    </> : groups.length === 0 ? <section className={styles.compactList}><p className={styles.compactEmpty}>{labels.empty}</p></section> : <div className={styles.partnerGroups}>{groups.map(group => <section className={styles.partnerGroup} key={group.type}>
+    {view === "pending" ? <section className={styles.compactList}>{pendingAliases.map(alias => <CandidateRow alias={alias} lang={lang} key={alias.id} />)}{pendingAliases.length === 0 ? <p className={styles.compactEmpty}>{labels.empty}</p> : null}</section> : groups.length === 0 ? <section className={styles.compactList}><p className={styles.compactEmpty}>{labels.empty}</p></section> : <div className={styles.partnerGroups}>{groups.map(group => <section className={styles.partnerGroup} key={group.type}>
       <header className={styles.partnerGroupHeader} data-partner-type={group.type}>
         <span aria-hidden="true">{partnerTypeEmoji[group.type]}</span>
         <strong>{partnerTypeLabels[group.type][lang]}</strong>

@@ -87,13 +87,11 @@ test("candidate detail page shows a delete action only when inventory usage is z
   assert.match(candidatePage, /dangerButtonStyle/);
 });
 
-test("archived candidates never resurface in the pending or ignored registration lists", () => {
+test("only pending candidates are listed; ignored/archived history never resurfaces", () => {
+  // The DB statuses are kept for history; the UI simply never lists the non-pending ones.
   assert.match(candidatePage, /status: "pending" \| "linked" \| "ignored" \| "archived"/);
   assert.match(registrationPage, /status: "pending" \| "linked" \| "ignored" \| "archived"/);
-  // 등록대기 renders pending rows, and the secondary 처리완료 view only ignored rows;
-  // archived candidates are never listed and never count as 사용안함 partners.
   assert.match(registrationPage, /const pendingAliases = aliases\.filter\(row => row\.status === "pending"\);/);
-  assert.match(registrationPage, /const ignoredAliases = aliases\.filter\(row => row\.status === "ignored"\);/);
-  assert.match(registrationPage, /const candidateRows = showResolved \? ignoredAliases : pendingAliases;/);
-  assert.doesNotMatch(registrationPage, /"archived"\)/);
+  assert.match(registrationPage, /\{view === "pending" \? <section className=\{styles\.compactList\}>\{pendingAliases\.map\(/);
+  assert.doesNotMatch(registrationPage, /"archived"\)|"ignored"\)|ignoredAliases|showResolved|처리완료/);
 });

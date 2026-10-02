@@ -95,7 +95,7 @@ test('confirm_recovery API dispatches the new RPC without a through-month argume
 });
 test('owners operations remove duplicate settings UI and keep the settings page authoritative',()=>{
   for(const phrase of ['정산 대상 사장 3명','정산 비율 Policy','미분배이익 시작 설정','Requested pool','Allocation 선택','Policy r'])assert.ok(!page.includes(phrase),phrase);
-  for(const phrase of ['초기 투자자 설정','투자자 구성 변경','이익 배분 비율 수정'])assert.ok(settings.includes(phrase),phrase);
+  for(const phrase of ['투자자 구성','투자자 선택','투자자 구성 저장','이익 배분 비율','이익 배분 비율 저장'])assert.ok(settings.includes(phrase),phrase);
   for(const phrase of ['총 투자금','회수 완료','미회수 투자금','+ 투자금 등록','투자금 회수','최근 정산 내역','/admin/ledger/settings'])assert.ok(page.includes(phrase),phrase);
   assert.match(page,/recovered:owners\.reduce\(\(sum,owner\)=>sum\+Number\(owner\.recoveryPaid\)/);
   assert.match(page,/unrecovered:owners\.reduce\(\(sum,owner\)=>sum\+Number\(owner\.cashUnrecovered\)/);
@@ -122,21 +122,20 @@ test('investor setup uses stored start month and separate participant and policy
   assert.match(settings,/const \[policyEffectiveMonth, setPolicyEffectiveMonth\] = useState\(month\)/);
   assert.doesNotMatch(settings,/\[effectiveMonth, setEffectiveMonth\]/);
   assert.doesNotMatch(settings,/<span>📅 적용 월<\/span>/);
-  assert.match(settings,/owners\.participants\.length === 0\s*\? <details name="owner-settings" className=\{styles\.detailPanel\} open><summary>\{copy\.initialInvestorSetup\}<\/summary>/);
-  assert.match(settings,/initialInvestorSetup: "초기 투자자 설정"/);
-  assert.match(settings,/<summary>\{copy\.changeInvestors\}<\/summary><div className=\{styles\.detailBody\}>\{participantForm\}/);
-  assert.match(settings,/changeInvestors: "투자자 구성 변경"/);
+  // Initial setup opens the participant editor automatically; afterwards a compact row + [변경].
+  assert.match(settings,/const participantEditorVisible = participantEditorOpen \|\| owners\?\.participants\.length === 0;/);
+  assert.match(settings,/\{participantEditorVisible \? <div id="owner-participant-editor">\{participantForm\}<\/div> : null\}/);
   assert.match(settings,/ownerCompositionStartMonth\(owners\?\.participants \?\? \[\]\)/);
   assert.match(settings,/compositionStartMonth \?\? copy\.notSet/);
   assert.match(settings,/notSet: "미설정"/);
   assert.match(settings,/투자자 구성 시작월/);
-  assert.match(settings,/이익 배분 비율 적용월/);
+  assert.match(settings,/applyMonth: "적용월"/);
   assert.match(settings,/selectedUsers\.length !== 3 \|\| !participantEffectiveMonth/);
   assert.match(css,/\.ownerSummary\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/);
   assert.doesNotMatch(css,/@media\(max-width:330px\)\{\.ownerSummary\{grid-template-columns:1fr\}\}/);
 });
 test('owner settings restores four summary tiles and compact initial setup panel',()=>{
-  const summary=settings.match(/<div className=\{styles\.ownerSummary\}>([\s\S]*?)<\/div>\s*\{owners\.participants\.length === 0/);
+  const summary=settings.match(/<div className=\{styles\.ownerSummary\}>([\s\S]*?)<\/div>\s*<div className=\{styles\.settingRows\}>/);
   assert.ok(summary);
   assert.equal((summary[1].match(/<div><span>/g)??[]).length,4);
   for(const label of ['copy.compositionStart','copy.investors','copy.recoveryBasis','copy.profitShareRate'])assert.ok(summary[1].includes(label),label);

@@ -12,7 +12,7 @@ import { RESERVE_ENTRY_TYPE_KEYS, reserveEntryTypeLabel, reserveEntryTypeText, t
 import { ledgerSettingsText, type LedgerSettingsCopy } from "@/lib/ledger/settings-text";
 import styles from "../ledger-settings.module.css";
 
-type Account = { id: number; code: string; type: string; display_name: string; is_active: boolean };
+type Account = { id: number; code: string; type: string; display_name: string; is_active: boolean; is_business_fund?: boolean };
 type ReserveEntry = { id: number; entry_type: string; amount: number | string; occurred_at: string; memo: string | null };
 type ReserveFundAccount = { id: number; code: string; displayName: string };
 type ReserveRecurring = { monthlyAmount: number; recurringDay: number; startMonth: string; endMonth: string | null; autoGenerate: boolean };
@@ -42,13 +42,16 @@ const normalizeNumericInput = (value: string) => {
 // Display labels only (ledger_fund_accounts rows are unchanged). Korean keeps the
 // stored display_name unless an override exists; short names reuse the ledger's
 // shortLedgerAccountName, keyed by the canonical ledger account name.
-const ACCOUNT_UI: Record<string, { order: number; emoji: string; ledgerName: string; name: { ko?: string; vi: string }; short?: { ko: string; vi: string } }> = {
+const ACCOUNT_UI: Record<string, { order: number; emoji: string; ledgerName: string; name: { ko?: string; vi: string } }> = {
   store_cash: { order: 0, emoji: "💵", ledgerName: "매장 현금", name: { vi: "Tiền mặt cửa hàng" } },
   baba_corporate_bank: { order: 1, emoji: "🏦", ledgerName: "BABA 법인계좌", name: { vi: "Tài khoản công ty BABA" } },
   vuong_personal_custody: { order: 2, emoji: "👤", ledgerName: "개인(Vương)", name: { ko: "개인(Vương)", vi: "Cá nhân (Vương)" } },
   cho_personal_custody: { order: 3, emoji: "👤", ledgerName: "개인(Cho)", name: { ko: "개인(Cho)", vi: "Cá nhân (Cho)" } },
-  card_clearing: { order: 4, emoji: "💳", ledgerName: "카드결제", name: { ko: "카드결제", vi: "Thanh toán thẻ" }, short: { ko: "카드", vi: "Thẻ" } },
 };
+// card_clearing stays a backend clearing account (is_business_fund=false); the
+// settings list shows only the user-facing business fund accounts.
+const isUserFundAccount = (account: Account) => account.is_business_fund === true && account.type !== "card_clearing";
+const rateMicros = (percent: string) => Number(toRate(percent).replace(".", ""));
 const toRate = (percent: string) => {
   const [whole = "0", fraction = ""] = percent.trim().split(".");
   const million = BigInt(1_000_000);
@@ -77,8 +80,10 @@ function LedgerSettingsContent() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [working, setWorking] = useState(false);
-  const [fundAccountsOpen, setFundAccountsOpen] = useState(false);
-  const [ownerSettlementOpen, setOwnerSettlementOpen] = useState(false);
+  const [fundAccountsOpen, setFundAccountsOpen] = useState(true);
+  const [ownerSettlementOpen, setOwnerSettlementOpen] = useState(true);
+  const [participantEditorOpen, setParticipantEditorOpen] = useState(false);
+  const [policyEditorOpen, setPolicyEditorOpen] = useState(false);
   const [reserveFormOpen, setReserveFormOpen] = useState(false);
   const [reserve, setReserve] = useState({ name: "", targetAmount: "", targetDate: "", fundAccountId: "", memo: "" });
   const [participantEffectiveMonth, setParticipantEffectiveMonth] = useState("");
@@ -132,19 +137,28 @@ function LedgerSettingsContent() {
   async function generateReserveSchedule() { await mutate("/api/admin/ledger/reserves/schedule", { month }); }
   async function resolveReserveSchedule(scheduleId: number, body: Record<string, unknown>) { await mutate(`/api/admin/ledger/reserves/schedule/${scheduleId}`, body); }
 
-  const activeAccountCount = ledger?.accounts.filter(row => row.is_active).length ?? 0;
-  const inactiveAccountCount = (ledger?.accounts.length ?? 0) - activeAccountCount;
-  const displayedAccounts = [...(ledger?.accounts ?? [])].sort((left, right) => (ACCOUNT_UI[left.code]?.order ?? 999) - (ACCOUNT_UI[right.code]?.order ?? 999));
+  const userFundAccounts = (ledger?.accounts ?? []).filter(isUserFundAccount);
+  const activeAccountCount = userFundAccounts.filter(row => row.is_active).length;
+  const inactiveAccountCount = userFundAccounts.length - activeAccountCount;
+  const displayedAccounts = [...userFundAccounts].sort((left, right) => (ACCOUNT_UI[left.code]?.order ?? 999) - (ACCOUNT_UI[right.code]?.order ?? 999));
   const ownerUserName = (userId: number) => {
     const user = owners?.users.find(item => item.id === userId);
     return user?.name ?? user?.full_name ?? user?.username ?? copy.userFallback(userId);
   };
   const ownerRateTotal = owners?.participants.reduce((total, participant) => total + (Number(rates[participant.id]) || 0), 0) ?? 0;
+  // Same conversion the save sends; the server requires the rates to sum to exactly 1.000000.
+  const ownerRateTotalValid = (owners?.participants.length ?? 0) > 0 && owners!.participants.reduce((total, participant) => total + rateMicros(rates[participant.id] ?? "0"), 0) === 1_000_000;
+  const percentFormat = new Intl.NumberFormat(copy.dateLocale, { maximumFractionDigits: 4 });
+  const policySummary = owners?.policy?.lines.length
+    ? owners.policy.lines.map(line => { const participant = owners.participants.find(row => row.id === line.participant_id); return `${participant ? ownerUserName(participant.user_id) : copy.userFallback(line.participant_id)} ${percentFormat.format(Number(line.settlement_rate) * 100)}%`; }).join(" · ")
+    : null;
+  const participantEditorVisible = participantEditorOpen || owners?.participants.length === 0;
   const compositionStartMonth = ownerCompositionStartMonth(owners?.participants ?? []);
-  const participantForm = <div className={styles.participantForm}>
-    <div className={styles.participantSummary}><label><span>{owners?.participants.length ? copy.participantChangeMonth : copy.participantStartMonth}</span><input className={styles.input} type="month" value={participantEffectiveMonth} onChange={event => setParticipantEffectiveMonth(event.target.value)} /></label><div><span>{copy.selectedPeople}</span><strong>{copy.selectedOfThree(selectedUsers.length)}</strong></div></div>
-    {!owners?.participants.length ? <p className={styles.sectionDescription}>{copy.participantStartHelp}</p> : null}
-    <div className={styles.ownerChoiceGrid}>{owners?.users.map(user => { const selected = selectedUsers.includes(String(user.id)); return <label className={`${styles.ownerChoice} ${selected ? styles.ownerChoiceActive : ""}`} key={user.id}><input type="checkbox" checked={selected} onChange={event => setSelectedUsers(event.target.checked ? [...selectedUsers, String(user.id)] : selectedUsers.filter(id => id !== String(user.id)))} /><span>{user.name ?? user.full_name ?? user.username ?? copy.userFallback(user.id)}</span></label>; })}</div>
+  const participantForm = <div className={styles.settingEditor}>
+    <label className={styles.editorField}><span>{owners?.participants.length ? copy.participantChangeMonth : copy.participantStartMonth}</span><input className={styles.input} type="month" value={participantEffectiveMonth} onChange={event => setParticipantEffectiveMonth(event.target.value)} /></label>
+    {!owners?.participants.length ? <p className={styles.mutedHelp}>{copy.participantStartHelp}</p> : null}
+    <div className={styles.editorLabelRow}><span>{copy.selectInvestors}</span><small>{copy.selectedOfThree(selectedUsers.length)}</small></div>
+    <div className={styles.ownerChoiceGrid}>{owners?.users.map(user => { const selected = selectedUsers.includes(String(user.id)); return <label className={`${styles.ownerChip} ${selected ? styles.ownerChipActive : ""}`} key={user.id}><input className={styles.visuallyHidden} type="checkbox" checked={selected} onChange={event => setSelectedUsers(event.target.checked ? [...selectedUsers, String(user.id)] : selectedUsers.filter(id => id !== String(user.id)))} /><span aria-hidden>{selected ? "✓" : ""}</span><span>{user.name ?? user.full_name ?? user.username ?? copy.userFallback(user.id)}</span></label>; })}</div>
     <button className={`${styles.primary} ${styles.ownerAction}`} disabled={working || selectedUsers.length !== 3 || !participantEffectiveMonth} onClick={() => void mutate("/api/admin/ledger/owners", { action: "participants", effectiveMonth: `${participantEffectiveMonth}-01`, rows: selectedUsers.map((userId, index) => ({ userId: Number(userId), isEligible: true, sortOrder: index + 1 })) })}>{copy.saveParticipants}</button>
   </div>;
   return <Container noPaddingTop><main className={styles.page}>
@@ -155,11 +169,11 @@ function LedgerSettingsContent() {
 
     {activeTab === "basic" ? <section className={styles.sectionStack} role="tabpanel">
       <section className={`${styles.card} ${styles.accordionCard}`}>
-        <button type="button" className={styles.accordionHeader} aria-expanded={fundAccountsOpen} aria-controls="settings-fund-accounts" onClick={() => setFundAccountsOpen(value => !value)}><h2>{tabText.fundAccounts}</h2><span className={styles.countBadge}>{ledger ? tabText.accountCount(activeAccountCount) : "…"}</span><span className={styles.accordionChevron} aria-hidden>{fundAccountsOpen ? "⌃" : "›"}</span></button>
-        {fundAccountsOpen ? <div id="settings-fund-accounts" className={styles.accordionBody}>{inactiveAccountCount > 0 ? <p className={styles.sectionDescription}>{copy.activeInactive(activeAccountCount, inactiveAccountCount)}</p> : null}<div className={styles.accountGrid}>{displayedAccounts.map(row => { const accountUi = ACCOUNT_UI[row.code]; return <div className={styles.accountCard} key={row.id}><div><strong><span aria-hidden>{accountUi?.emoji ?? "💰"}</span>{accountUi?.name[lang] ?? row.display_name}</strong><span>{accountUi?.short?.[lang] ?? shortLedgerAccountName(accountUi?.ledgerName ?? row.display_name, lang)}</span></div>{!row.is_active ? <span className={styles.statusInactive}>{copy.accountInactive}</span> : null}</div>; })}</div></div> : null}
+        <button type="button" className={styles.accordionHeader} aria-expanded={fundAccountsOpen} aria-controls="settings-fund-accounts" onClick={() => setFundAccountsOpen(value => !value)}><h2>🏦 {tabText.fundAccounts}</h2><span className={styles.countBadge}>{ledger ? tabText.accountCount(activeAccountCount) : "…"}</span><span className={styles.accordionChevron} aria-hidden>{fundAccountsOpen ? "⌃" : "›"}</span></button>
+        {fundAccountsOpen ? <div id="settings-fund-accounts" className={styles.accordionBody}>{inactiveAccountCount > 0 ? <p className={styles.sectionDescription}>{copy.activeInactive(activeAccountCount, inactiveAccountCount)}</p> : null}<div className={`${styles.accountGrid} ${styles.accountGridTwo}`}>{displayedAccounts.map(row => { const accountUi = ACCOUNT_UI[row.code]; return <div className={styles.accountCard} key={row.id}><div><strong><span aria-hidden>{accountUi?.emoji ?? "💰"}</span>{accountUi?.name[lang] ?? row.display_name}</strong><span>{shortLedgerAccountName(accountUi?.ledgerName ?? row.display_name, lang)}</span></div>{!row.is_active ? <span className={styles.statusInactive}>{copy.accountInactive}</span> : null}</div>; })}</div></div> : null}
       </section>
       <section className={`${styles.card} ${styles.accordionCard} ${styles.ownerCard}`}>
-        <button type="button" className={styles.accordionHeader} aria-expanded={ownerSettlementOpen} aria-controls="settings-owner-settlement" onClick={() => setOwnerSettlementOpen(value => !value)}><h2>{tabText.ownerSettlement}</h2><span className={styles.countBadge}>{owners ? tabText.participantCount(owners.participants.length) : "…"}</span><span className={styles.accordionChevron} aria-hidden>{ownerSettlementOpen ? "⌃" : "›"}</span></button>
+        <button type="button" className={styles.accordionHeader} aria-expanded={ownerSettlementOpen} aria-controls="settings-owner-settlement" onClick={() => setOwnerSettlementOpen(value => !value)}><h2>🤝 {tabText.ownerSettlement}</h2><span className={styles.countBadge}>{owners ? tabText.participantCount(owners.participants.length) : "…"}</span><span className={styles.accordionChevron} aria-hidden>{ownerSettlementOpen ? "⌃" : "›"}</span></button>
         {ownerSettlementOpen && owners ? <div id="settings-owner-settlement" className={styles.accordionBody}>
           <div className={styles.ownerSummary}>
             <div><span>🗓️ {copy.compositionStart}</span><strong>{compositionStartMonth ?? copy.notSet}</strong></div>
@@ -167,16 +181,25 @@ function LedgerSettingsContent() {
             <div><span>↩️ {copy.recoveryBasis}</span><strong>{copy.recoveryBasisValue}</strong></div>
             <div><span>⚖️ {copy.profitShareRate}</span><strong>{owners.policy ? copy.configured : copy.notSet}</strong></div>
           </div>
-          {owners.participants.length === 0
-            ? <details name="owner-settings" className={styles.detailPanel} open><summary>{copy.initialInvestorSetup}</summary><div className={styles.detailBody}>{participantForm}</div></details>
-            : <><div className={styles.investorSummary}><strong>{copy.investorComposition}</strong><span>{owners.participants.map(row => ownerUserName(row.user_id)).join(" · ")}</span><small>{copy.compositionStartShort(compositionStartMonth ?? "-")}</small></div><details name="owner-settings" className={styles.detailPanel}><summary>{copy.changeInvestors}</summary><div className={styles.detailBody}>{participantForm}</div></details></>}
-          <details name="owner-settings" className={styles.detailPanel}><summary>{copy.editProfitShare}</summary><div className={styles.detailBody}>{owners.participants.length === 0 ? <p className={styles.compactEmpty}>{copy.investorsFirst}</p> : <>
-            <p className={styles.sectionDescription}>{copy.profitShareHelp}</p>
-            <label>{copy.profitShareMonth}<input className={styles.input} type="month" value={policyEffectiveMonth} onChange={event => setPolicyEffectiveMonth(event.target.value)} /></label>
+          <div className={styles.settingRows}>
+            <div className={styles.settingRow}>
+              <div className={styles.settingRowMain}><span className={styles.settingRowTitle}>{copy.investorComposition}</span><strong>{owners.participants.length ? owners.participants.map(row => ownerUserName(row.user_id)).join(" · ") : copy.notSet}</strong>{compositionStartMonth ? <small>{copy.appliedFrom(compositionStartMonth)}</small> : null}</div>
+              {owners.participants.length ? <button type="button" className={styles.settingRowAction} aria-expanded={participantEditorOpen} aria-controls="owner-participant-editor" onClick={() => setParticipantEditorOpen(value => !value)}>{participantEditorOpen ? copy.close : copy.change}</button> : null}
+            </div>
+            {participantEditorVisible ? <div id="owner-participant-editor">{participantForm}</div> : null}
+            <div className={styles.settingRow}>
+              <div className={styles.settingRowMain}><span className={styles.settingRowTitle}>{copy.profitShareRate}</span><strong>{policySummary ?? copy.notSet}</strong></div>
+              {owners.participants.length ? <button type="button" className={styles.settingRowAction} aria-expanded={policyEditorOpen} aria-controls="owner-policy-editor" onClick={() => setPolicyEditorOpen(value => !value)}>{policyEditorOpen ? copy.close : owners.policy ? copy.change : copy.setup}</button> : <small className={styles.mutedHelp}>{copy.investorsFirst}</small>}
+            </div>
+            {policyEditorOpen && owners.participants.length ? <div id="owner-policy-editor" className={styles.settingEditor}>
+            <label className={styles.editorField}><span>{copy.applyMonth}</span><input className={styles.input} type="month" value={policyEffectiveMonth} onChange={event => setPolicyEffectiveMonth(event.target.value)} /></label>
             <div className={styles.ownerRateList}>{owners.participants.map(row => <label className={styles.ownerRateRow} key={row.id}><span>{ownerUserName(row.user_id)}</span><span className={styles.rateInput}><input className={styles.input} inputMode="decimal" value={rates[row.id] ?? ""} onChange={event => setRates({ ...rates, [row.id]: event.target.value })} /><span>%</span></span></label>)}</div>
-            <div className={styles.rateTotal}><span>{copy.profitShareTotal}</span><strong>{new Intl.NumberFormat(copy.dateLocale, { maximumFractionDigits: 4 }).format(ownerRateTotal)}%</strong></div>
-            <button className={`${styles.primary} ${styles.ownerAction}`} disabled={working || !policyEffectiveMonth} onClick={() => void mutate("/api/admin/ledger/owners", { action: "policy", effectiveMonth: `${policyEffectiveMonth}-01`, lines: owners.participants.map(row => ({ participantId: row.id, rate: toRate(rates[row.id] ?? "0") })), note: "Owner settlement policy" })}>{copy.saveProfitShare}</button>
-          </>}</div></details>
+            <div className={styles.rateTotal}><span>{copy.profitShareTotal}</span><strong className={ownerRateTotalValid ? undefined : styles.rateTotalInvalid}>{copy.rateTotalOf(percentFormat.format(ownerRateTotal))}</strong></div>
+            {!ownerRateTotalValid ? <p className={styles.rateTotalHint} role="status">{copy.rateMustBe100}</p> : null}
+            <p className={styles.mutedHelp}>{copy.profitShareHelp}</p>
+            <button className={`${styles.primary} ${styles.ownerAction}`} disabled={working || !policyEffectiveMonth || !ownerRateTotalValid} onClick={() => void mutate("/api/admin/ledger/owners", { action: "policy", effectiveMonth: `${policyEffectiveMonth}-01`, lines: owners.participants.map(row => ({ participantId: row.id, rate: toRate(rates[row.id] ?? "0") })), note: "Owner settlement policy" })}>{copy.saveProfitShare}</button>
+            </div> : null}
+          </div>
         </div> : null}
       </section>
     </section> : null}

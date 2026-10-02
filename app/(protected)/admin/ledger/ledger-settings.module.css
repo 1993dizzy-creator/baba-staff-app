@@ -22,3 +22,29 @@
 .accordionHeader>.countBadge{white-space:nowrap}
 .accordionChevron{color:#6b7280;font-size:16px;text-align:center}
 .accordionBody{display:grid;gap:9px;padding:0 14px 14px;border-top:1px solid #f0f1f3;padding-top:12px}
+.accountGridTwo{grid-template-columns:repeat(2,minmax(0,1fr))}
+.settingRows{display:grid;border-top:1px solid #f0f1f3}
+.settingRow{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;padding:11px 0;border-bottom:1px solid #f0f1f3}
+.settingRowMain{display:grid;gap:2px;min-width:0}
+.settingRowTitle{color:#6b7280;font-size:11px;font-weight:800}
+.settingRowMain>strong{min-width:0;font-size:14px;font-weight:850;overflow-wrap:anywhere}
+.settingRowMain>small{color:#6b7280;font-size:11px}
+.settingRowAction{flex:0 0 auto;min-height:32px;padding:5px 11px;border:1px solid #d1d5db;border-radius:999px;background:#fff;color:#111827;font-size:12px;font-weight:850;white-space:nowrap;cursor:pointer}
+.settingRowAction[aria-expanded=true]{border-color:#111827;background:#111827;color:#fff}
+.settingEditor{display:grid;gap:10px;padding:12px 0;border-bottom:1px solid #f0f1f3}
+.editorField{display:grid;gap:5px;font-size:12px;font-weight:800;color:#374151}
+.editorField>.input{max-width:220px}
+.editorLabelRow{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:12px;font-weight:800;color:#374151}
+.editorLabelRow>small{color:#6b7280;font-size:11px;font-weight:750}
+.mutedHelp{margin:0;color:#6b7280;font-size:11px;line-height:1.45}
+.ownerChip{display:flex;align-items:center;gap:6px;box-sizing:border-box;min-width:0;min-height:36px;padding:6px 10px;border:1px solid #e5e7eb;border-radius:999px;background:#fff;color:#374151;font-size:12px;font-weight:800;cursor:pointer}
+.ownerChip>span:first-of-type{flex:0 0 12px;text-align:center}
+.ownerChip>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ownerChipActive{border-color:#111827;background:#111827;color:#fff}
+.ownerChip:has(input:focus-visible){outline:2px solid #2563eb;outline-offset:2px}
+.visuallyHidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.settingEditor .ownerRateRow{grid-template-columns:minmax(0,1fr) auto;padding:4px 0}
+.settingEditor .rateInput .input{width:84px;min-height:36px;padding:6px 8px}
+.settingEditor .rateTotal{display:flex;align-items:center;justify-content:space-between;padding:8px 0 0;border:0;border-top:1px solid #f0f1f3;border-radius:0;background:transparent;font-size:12px}
+.rateTotalInvalid{color:#b45309}
+.rateTotalHint{margin:0;color:#b45309;font-size:11px;font-weight:750}
