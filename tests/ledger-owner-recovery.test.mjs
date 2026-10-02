@@ -9,7 +9,8 @@ const migration=readFileSync('supabase/migrations/20260916150709_separate_owner_
 const route=readFileSync('app/api/admin/ledger/owners/route.ts','utf8');
 const dashboard=readFileSync('lib/ledger/owners.ts','utf8');
 const ownersPage=readFileSync('app/(protected)/admin/ledger/owners/page.tsx','utf8');
-const settingsPage=readFileSync('app/(protected)/admin/ledger/settings/page.tsx','utf8');
+// Page source plus its KO/VI copy module (visible text moved out of the page).
+const settingsPage=readFileSync('app/(protected)/admin/ledger/settings/page.tsx','utf8')+readFileSync('lib/ledger/settings-text.ts','utf8');
 function body(name,next){
   const start=migration.indexOf(`create or replace function public.${name}`);
   assert.ok(start>=0,name);
@@ -238,7 +239,8 @@ test('owners recovery UX has no month selector, distinguishes zero principal and
 });
 
 test('settings shows principal rule and profit-only policy, without profit setup UI',()=>{
-  assert.match(settingsPage,/투자금 회수 기준<\/span><strong>미회수 원금 비례/);
+  assert.match(settingsPage,/↩️ \{copy\.recoveryBasis\}<\/span><strong>\{copy\.recoveryBasisValue\}<\/strong>/);
+  assert.match(settingsPage,/recoveryBasis: "투자금 회수 기준",\s*recoveryBasisValue: "미회수 원금 비례"/);
   assert.match(settingsPage,/이익 배분 비율 수정/);
   assert.match(settingsPage,/투자금 회수에는 사용되지 않으며/);
   assert.doesNotMatch(settingsPage,/미분배이익 시작 기준|action: "profit_settings"/);

@@ -7,7 +7,8 @@ import { isReserveEligibleFundAccount, reserveShortfall, reserveCurrentAmount } 
 const reservesApi = readFileSync("app/api/admin/ledger/reserves/route.ts", "utf8");
 const reserveIdApi = readFileSync("app/api/admin/ledger/reserves/[id]/route.ts", "utf8");
 const reserveEntryApi = readFileSync("app/api/admin/ledger/reserves/[id]/entries/route.ts", "utf8");
-const settings = readFileSync("app/(protected)/admin/ledger/settings/page.tsx", "utf8");
+// Page source plus its KO/VI copy modules (visible text moved out of the page).
+const settings = readFileSync("app/(protected)/admin/ledger/settings/page.tsx", "utf8") + readFileSync("lib/ledger/settings-text.ts", "utf8") + readFileSync("lib/ledger/reserve-text.ts", "utf8");
 
 test("eligible fund account mirrors the DB guard rule", () => {
   assert.equal(isReserveEligibleFundAccount({ type: "bank", code: "baba_corporate_bank", is_active: true, is_business_fund: true }), true);
@@ -82,7 +83,9 @@ test("settings reserve card exposes target, current and shortfall", () => {
 });
 
 test("settings reserve history shows time / type / amount / memo", () => {
-  for (const col of ["일시", "유형", "금액", "메모"]) assert.match(settings, new RegExp(col));
+  for (const col of ["일시", "금액", "메모"]) assert.match(settings, new RegExp(col));
+  // Type column: each history row renders its entry-type label.
+  assert.match(settings, /reserveEntryTypeText\(entry\.entry_type, lang\)/);
 });
 
 test("settings consume control states it is not a ledger expense", () => {

@@ -12,7 +12,7 @@ import { chooseLedgerEntryEmoji } from "../lib/ledger/entry-display-emoji.ts";
 
 const read = (path: string) => readFileSync(path, "utf8");
 const migration = read("supabase/migrations/20260928225900_add_partner_subtype_emoji.sql");
-const info = read("app/(protected)/admin/partners/info/page.tsx");
+const info = read("components/partners/PartnerSettingsPanel.tsx");
 const manager = read("components/PartnerSubtypeManager.tsx");
 const ledger = read("app/(protected)/admin/ledger/entries/page.tsx");
 const ledgerApi = read("app/api/admin/ledger/route.ts");

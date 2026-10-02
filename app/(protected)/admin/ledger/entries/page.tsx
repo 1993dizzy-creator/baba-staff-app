@@ -35,10 +35,10 @@ import {
   withPaymentDifferenceAdjustments,
   type LedgerEntry,
   type LedgerEntryItem,
-  type ReserveEntryType,
 } from "@/lib/ledger/entries";
 import { entryFilterHeaderAmount, entryMatchesListFilter, LEDGER_ENTRY_FILTERS, ledgerEntryFilterLabel, type LedgerEntryFilter } from "@/lib/ledger/entry-list-filter";
 import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
+import { reserveEntryTypeLabel } from "@/lib/ledger/reserve-text";
 import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji, ledgerPartyEmoji } from "@/lib/ledger/entry-display-emoji";
 import { entryDisplayBadgeEmoji, entryDisplayBadgeKind, entryDisplayBadgeLabel } from "@/lib/ledger/entry-display-badge";
 import { entryDisplayAmount, entryDisplayAmountSign, entryDisplayAmountTone } from "@/lib/ledger/entry-display-amount";
@@ -2460,12 +2460,6 @@ function entryDisplayTitle(entry: LedgerEntry, lang: "ko" | "vi") {
     return lang === "vi" ? `Chênh lệch thanh toán ${party}` : `${party} 지급차액`;
   }
   return entry.title;
-}
-function reserveEntryTypeLabel(entryType: ReserveEntryType, lang: "ko" | "vi") {
-  const labels = lang === "vi"
-    ? { allocate: "Trích lập", release: "Giải phóng", consume: "Sử dụng", adjustment: "Điều chỉnh" }
-    : { allocate: "적립", release: "해제", consume: "사용", adjustment: "조정" };
-  return labels[entryType];
 }
 function reserveLabel(
   reserve: Account["reserves"][number],

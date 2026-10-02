@@ -17,7 +17,7 @@ const aliasApi = read("app/api/admin/partners/aliases/[id]/route.ts");
 const partnerForm = read("components/PartnerForm.tsx");
 const settlementFields = read("components/PartnerSettlementFields.tsx");
 const candidateForm = read("components/CandidatePartnerReviewForm.tsx");
-const registrationPage = read("app/(protected)/admin/partners/page.tsx");
+const registrationPage = read("components/partners/PartnerSettingsPanel.tsx");
 const detailPage = read("app/(protected)/admin/partners/[id]/page.tsx");
 const candidatePage = read("app/(protected)/admin/partners/candidates/[id]/page.tsx");
 

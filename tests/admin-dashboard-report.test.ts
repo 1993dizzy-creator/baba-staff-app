@@ -229,7 +229,9 @@ test("ledger API exposes the same recognition-month profit rows used by summary 
 });
 
 test("admin remains the original role-filtered management menu without monthly-report UI", () => {
-  for (const href of ["/admin/sales", "/admin/users", "/admin/payroll/attendance", "/admin/ledger", "/admin/partners", "/admin/pos/mappings", "/admin/settings/store"]) assert.match(adminPage, new RegExp(`href: "${href}"`));
+  for (const href of ["/admin/sales", "/admin/users", "/admin/payroll/attendance", "/admin/ledger", "/admin/pos/mappings", "/admin/settings/store"]) assert.match(adminPage, new RegExp(`href: "${href}"`));
+  // 거래처 관리 moved into 가게 장부 > 장부설정 > 거래처; no standalone menu entry.
+  assert.doesNotMatch(adminPage, /href: "\/admin\/partners"/);
   assert.match(adminPage, /const visibleMenus/);
   assert.match(adminPage, /case "manage": return isManage\(currentUser\)/);
   assert.match(adminPage, /case "admin": return isAdmin\(currentUser\)/);

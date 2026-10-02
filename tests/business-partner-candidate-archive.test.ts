@@ -9,7 +9,7 @@ const oldCandidateMigration = read("supabase/migrations/202608220002_add_invento
 const oldFixMigration = read("supabase/migrations/202608220003_fix_supplier_alias_ignore_behavior.sql");
 const aliasApi = read("app/api/admin/partners/aliases/[id]/route.ts");
 const candidatePage = read("app/(protected)/admin/partners/candidates/[id]/page.tsx");
-const registrationPage = read("app/(protected)/admin/partners/page.tsx");
+const registrationPage = read("components/partners/PartnerSettingsPanel.tsx");
 
 test("archive/reactivate statuses and audit actions are additive on top of the existing enums", () => {
   assert.match(migration, /drop constraint business_partner_supplier_aliases_status_check/);
@@ -82,14 +82,18 @@ test("candidate detail page shows a delete action only when inventory usage is z
   assert.match(candidatePage, /removeConfirm: "연결된 품목이 없는 등록대기 거래처를 삭제하시겠습니까\?"/);
   assert.match(candidatePage, /removeConfirm: "Bạn có muốn xóa đối tác chờ duyệt không còn mặt hàng liên kết này không\?"/);
   assert.match(candidatePage, /action: "archive"/);
-  assert.match(candidatePage, /router\.push\("\/admin\/partners"\)/);
+  // After archiving, return to 장부설정 > 거래처 > 등록대기 (the old /admin/partners list).
+  assert.match(candidatePage, /router\.push\(ledgerSettingsHref\("partners", "pending"\)\)/);
   assert.match(candidatePage, /dangerButtonStyle/);
 });
 
 test("archived candidates never resurface in the pending or ignored registration lists", () => {
   assert.match(candidatePage, /status: "pending" \| "linked" \| "ignored" \| "archived"/);
   assert.match(registrationPage, /status: "pending" \| "linked" \| "ignored" \| "archived"/);
-  // the registration list only ever renders rows matching the pending/ignored tab filter
-  assert.match(registrationPage, /const rows = aliases\.filter\(row => row\.status === filter\)/);
+  // 등록대기 renders pending rows, and the secondary 처리완료 view only ignored rows;
+  // archived candidates are never listed and never count as 사용안함 partners.
+  assert.match(registrationPage, /const pendingAliases = aliases\.filter\(row => row\.status === "pending"\);/);
+  assert.match(registrationPage, /const ignoredAliases = aliases\.filter\(row => row\.status === "ignored"\);/);
+  assert.match(registrationPage, /const candidateRows = showResolved \? ignoredAliases : pendingAliases;/);
   assert.doesNotMatch(registrationPage, /"archived"\)/);
 });

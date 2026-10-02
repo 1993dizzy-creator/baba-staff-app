@@ -11,7 +11,8 @@ const scheduleApi = readFileSync("app/api/admin/ledger/reserves/schedule/route.t
 const scheduleResolveApi = readFileSync("app/api/admin/ledger/reserves/schedule/[scheduleId]/route.ts", "utf8");
 const cron = readFileSync("app/api/cron/ledger-reserve-schedule/route.ts", "utf8");
 const vercelJson = readFileSync("vercel.json", "utf8");
-const settings = readFileSync("app/(protected)/admin/ledger/settings/page.tsx", "utf8");
+// Page source plus its KO/VI copy modules (visible text moved out of the page).
+const settings = readFileSync("app/(protected)/admin/ledger/settings/page.tsx", "utf8") + readFileSync("lib/ledger/settings-text.ts", "utf8") + readFileSync("lib/ledger/reserve-text.ts", "utf8");
 
 // ── pure helpers ────────────────────────────────────────────────────────────────
 test("recurring window: active only from start month through optional end month", () => {

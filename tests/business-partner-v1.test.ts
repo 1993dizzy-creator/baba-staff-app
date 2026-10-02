@@ -62,7 +62,8 @@ test("Ledger IDs and inventory supplier strings remain untouched", () => {
   assert.doesNotMatch(migration, /update public\.inventory/);
 });
 
-test("admin menu places partners immediately after ledger", () => {
-  assert.ok(admin.indexOf('href: "/admin/ledger"') < admin.indexOf('href: "/admin/partners"'));
-  assert.ok(admin.indexOf('href: "/admin/partners"') < admin.indexOf('href: "/admin/pos/mappings"'));
+test("admin menu has no standalone partner entry; partners live under 가게 장부 > 장부설정", () => {
+  assert.ok(admin.includes('href: "/admin/ledger"'));
+  assert.doesNotMatch(admin, /href: "\/admin\/partners"/);
+  assert.doesNotMatch(admin, /거래처 관리/);
 });

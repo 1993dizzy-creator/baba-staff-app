@@ -9,7 +9,8 @@ import ts from 'typescript';
 const require=createRequire(import.meta.url);
 const source=readFileSync('lib/ledger/owners.ts','utf8');
 const page=readFileSync('app/(protected)/admin/ledger/owners/page.tsx','utf8');
-const settings=readFileSync('app/(protected)/admin/ledger/settings/page.tsx','utf8');
+// Page source plus its KO/VI copy module (visible text moved out of the page).
+const settings=readFileSync('app/(protected)/admin/ledger/settings/page.tsx','utf8')+readFileSync('lib/ledger/settings-text.ts','utf8');
 function load(path,deps,jsx=false){
   const mod={exports:{}};
   const code=ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:jsx?ts.JsxEmit.ReactJSX:undefined}}).outputText;
@@ -121,10 +122,13 @@ test('investor setup uses stored start month and separate participant and policy
   assert.match(settings,/const \[policyEffectiveMonth, setPolicyEffectiveMonth\] = useState\(month\)/);
   assert.doesNotMatch(settings,/\[effectiveMonth, setEffectiveMonth\]/);
   assert.doesNotMatch(settings,/<span>📅 적용 월<\/span>/);
-  assert.match(settings,/owners\.participants\.length === 0\s*\? <details name="owner-settings" className=\{styles\.detailPanel\} open><summary>초기 투자자 설정<\/summary>/);
-  assert.match(settings,/<summary>투자자 구성 변경<\/summary><div className=\{styles\.detailBody\}>\{participantForm\}/);
+  assert.match(settings,/owners\.participants\.length === 0\s*\? <details name="owner-settings" className=\{styles\.detailPanel\} open><summary>\{copy\.initialInvestorSetup\}<\/summary>/);
+  assert.match(settings,/initialInvestorSetup: "초기 투자자 설정"/);
+  assert.match(settings,/<summary>\{copy\.changeInvestors\}<\/summary><div className=\{styles\.detailBody\}>\{participantForm\}/);
+  assert.match(settings,/changeInvestors: "투자자 구성 변경"/);
   assert.match(settings,/ownerCompositionStartMonth\(owners\?\.participants \?\? \[\]\)/);
-  assert.match(settings,/compositionStartMonth \?\? "미설정"/);
+  assert.match(settings,/compositionStartMonth \?\? copy\.notSet/);
+  assert.match(settings,/notSet: "미설정"/);
   assert.match(settings,/투자자 구성 시작월/);
   assert.match(settings,/이익 배분 비율 적용월/);
   assert.match(settings,/selectedUsers\.length !== 3 \|\| !participantEffectiveMonth/);
@@ -135,7 +139,8 @@ test('owner settings restores four summary tiles and compact initial setup panel
   const summary=settings.match(/<div className=\{styles\.ownerSummary\}>([\s\S]*?)<\/div>\s*\{owners\.participants\.length === 0/);
   assert.ok(summary);
   assert.equal((summary[1].match(/<div><span>/g)??[]).length,4);
-  for(const label of ['구성 시작월','투자자','투자금 회수 기준','이익 배분 비율'])assert.ok(summary[1].includes(label),label);
+  for(const label of ['copy.compositionStart','copy.investors','copy.recoveryBasis','copy.profitShareRate'])assert.ok(summary[1].includes(label),label);
+  for(const label of ['compositionStart: "구성 시작월"','investors: "투자자"','recoveryBasis: "투자금 회수 기준"','profitShareRate: "이익 배분 비율"'])assert.ok(settings.includes(label),label);
   assert.doesNotMatch(summary[1],/participantEffectiveMonth/);
   assert.match(settings,/가게 운영 시작 당시 투자자 구성이 시작된 월을 선택하세요\./);
   assert.doesNotMatch(settings,/2025-05/);

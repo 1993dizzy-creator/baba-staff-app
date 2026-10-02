@@ -13,7 +13,8 @@ export function getLedgerTabs(pathname: string, lang: "ko" | "vi") {
     {
       href: "/admin/ledger/settings",
       label: lang === "vi" ? "Cài đặt" : "장부설정",
-      active: pathname.startsWith("/admin/ledger/settings"),
+      // Partner detail pages are part of 장부설정 > 거래처.
+      active: pathname.startsWith("/admin/ledger/settings") || pathname.startsWith("/admin/partners"),
     },
   ];
 }

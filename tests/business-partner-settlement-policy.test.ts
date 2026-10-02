@@ -25,7 +25,7 @@ const partnerForm = read("components/PartnerForm.tsx");
 const candidateForm = read("components/CandidatePartnerReviewForm.tsx");
 const settlementFields = read("components/PartnerSettlementFields.tsx");
 const partnerServer = read("lib/partners/server.ts");
-const infoPage = read("app/(protected)/admin/partners/info/page.tsx");
+const infoPage = read("components/partners/PartnerSettingsPanel.tsx");
 
 const base = { name: "Fresh Foods", partnerType: "food", paymentMode: "immediate", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null, defaultFundAccountId: null, partnerSubtypeId: null, phone: null, contactName: null, memo: null, isActive: true, ledgerPartyId: null };
 const parse = (changes: Record<string, unknown>) => parsePartnerInput({ ...base, ...changes });

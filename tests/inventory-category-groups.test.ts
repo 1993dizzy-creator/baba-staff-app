@@ -54,15 +54,13 @@ test("partner and candidate groups use active inventory from existing non-N+1 re
   assert.doesNotMatch(server, /for \([^)]*\)[\s\S]{0,200}await supabaseServer/);
 });
 
-test("partner list search is removed and add form lives on registration", () => {
-  const registration = read("app/(protected)/admin/partners/page.tsx");
-  const info = read("app/(protected)/admin/partners/info/page.tsx");
-  assert.doesNotMatch(registration, /placeholder=.*검색|setQuery|supplierName\.toLowerCase/);
-  assert.doesNotMatch(info, /setQuery|placeholder=.*검색/);
-  assert.match(registration, /<PartnerForm/);
-  assert.doesNotMatch(info, /<PartnerForm/);
-  assert.match(registration, /dominantInventoryGroup/);
-  assert.doesNotMatch(info, /dominantInventoryGroup/);
-  assert.match(registration, /alias\.dominantInventoryGroup \? <span className={styles\.groupBadge}/);
-  assert.doesNotMatch(info, /partner\.dominantInventoryGroup \? <span className={styles\.groupBadge}/);
+test("partner list search is removed and the add form sits once at the top of 거래처 설정", () => {
+  const panel = read("components/partners/PartnerSettingsPanel.tsx");
+  const candidateRow = panel.slice(panel.indexOf("function CandidateRow"), panel.indexOf("export default function PartnerSettingsPanel"));
+  const partnerRow = panel.slice(panel.indexOf("function PartnerRow"), panel.indexOf("function CandidateRow"));
+  assert.doesNotMatch(panel, /placeholder=.*검색|setQuery|supplierName\.toLowerCase/);
+  assert.equal((panel.match(/<PartnerForm /g) ?? []).length, 1);
+  assert.ok(panel.indexOf("labels.add}") < panel.indexOf("<PartnerSubtypeManager "));
+  assert.match(candidateRow, /alias\.dominantInventoryGroup \? <span className={styles\.groupBadge}/);
+  assert.doesNotMatch(partnerRow, /dominantInventoryGroup/);
 });

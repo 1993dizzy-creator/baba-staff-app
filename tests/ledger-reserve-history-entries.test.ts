@@ -63,7 +63,8 @@ test("9/30 12:00 rent reserve allocate shows as an informational 60M row on 9/30
   assert.equal(entryCategoryEmoji(row), "🏦");
   assert.equal(entryDisplayAmountSign(row), "");
   assert.equal(entryDisplayAmountTone(row), "transfer");
-  assert.match(page, /allocate: "적립", release: "해제", consume: "사용", adjustment: "조정"/);
+  assert.match(readFileSync("lib/ledger/reserve-text.ts", "utf8"), /ko: \{ allocate: "적립", release: "해제", consume: "사용", adjustment: "조정" \}/);
+  assert.match(page, /import \{ reserveEntryTypeLabel \} from "@\/lib\/ledger\/reserve-text";/);
   assert.match(page, /if \(display\?\.kind === "reserve"\) return display\.reserveName;/);
 });
 

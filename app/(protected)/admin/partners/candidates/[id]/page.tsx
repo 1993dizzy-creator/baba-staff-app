@@ -8,6 +8,7 @@ import { BarField, BarSection, BarSegmentedControl, dangerButtonStyle, keepingFo
 import type { FundAccount, PartnerFormValue, PartnerSubtype } from "@/components/PartnerForm";
 import type { InventoryCategoryGroup } from "@/lib/inventory/category-groups";
 import { useLanguage } from "@/lib/language-context";
+import { ledgerSettingsHref } from "@/lib/partners/settings-view";
 import styles from "../../partners.module.css";
 
 type Alias = { id: number; supplierName: string; status: "pending" | "linked" | "ignored" | "archived"; businessPartnerId: number | null; inventoryCount: number; activeInventoryCount: number; dominantInventoryGroup: InventoryCategoryGroup | null };
@@ -73,7 +74,7 @@ export default function SupplierCandidatePage() {
       const response = await fetch(`/api/admin/partners/aliases/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const body = await response.json();
       if (!response.ok) { setError(body.code); return false; }
-      router.push(body.result?.partnerId ? `/admin/partners/${body.result.partnerId}` : "/admin/partners");
+      router.push(body.result?.partnerId ? `/admin/partners/${body.result.partnerId}` : ledgerSettingsHref("partners", "pending"));
       return true;
     } finally { setBusy(false); }
   }
@@ -85,7 +86,7 @@ export default function SupplierCandidatePage() {
       const response = await fetch(`/api/admin/partners/aliases/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "archive" }) });
       const body = await response.json();
       if (!response.ok) { setError(body.code === "CANDIDATE_IN_USE" ? labels.removeInUse : body.code); return; }
-      router.push("/admin/partners");
+      router.push(ledgerSettingsHref("partners", "pending"));
     } finally { setBusy(false); }
   }
   if (!alias) return <Container>{error ? <p className={styles.error}>{error}</p> : null}</Container>;

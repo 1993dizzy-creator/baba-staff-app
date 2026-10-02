@@ -13,10 +13,10 @@ const resolver = read("lib/inventory/supplier-partners-server.ts");
 const inventoryUi = read("app/(protected)/inventory/page.tsx");
 const adminApi = read("app/api/admin/partners/aliases/[id]/route.ts");
 const partnerServer = read("lib/partners/server.ts");
-const adminPage = read("app/(protected)/admin/partners/page.tsx");
-const infoPage = read("app/(protected)/admin/partners/info/page.tsx");
-const partnerTabs = read("lib/navigation/partner-tabs.ts");
-const partnerSubNav = read("components/PartnerSubNav.tsx");
+const adminPage = read("components/partners/PartnerSettingsPanel.tsx");
+const infoPage = read("components/partners/PartnerSettingsPanel.tsx");
+const settingsView = read("lib/partners/settings-view.ts");
+const ledgerTabs = read("lib/navigation/ledger-tabs.ts");
 const partnerLayout = read("app/(protected)/admin/partners/layout.tsx");
 const partnerStyles = read("app/(protected)/admin/partners/partners.module.css");
 const candidatePage = read("app/(protected)/admin/partners/candidates/[id]/page.tsx");
@@ -116,23 +116,24 @@ test("candidate review is owner/master only and browser table mutation is denied
   assert.match(migration, /grant execute[\s\S]*to service_role/);
 });
 
-test("partner registration and info routes separate candidates from masters", () => {
-  assert.match(adminPage, /등록 대기/);
-  assert.match(adminPage, /제외/);
+test("partner settings separate candidates (등록대기) from regular partners (사용중/사용안함)", () => {
+  assert.match(settingsView, /pending: "등록대기", active: "사용중", inactive: "사용안함"/);
+  assert.match(settingsView, /pending: "Chờ duyệt", active: "Đang dùng", inactive: "Ngừng dùng"/);
   assert.doesNotMatch(adminPage, /shownPartners/);
   assert.match(adminPage, /PartnerForm/);
-  assert.doesNotMatch(infoPage, /<PartnerForm/);
-  assert.doesNotMatch(infoPage, /supplierAliases|Candidate/);
+  // Candidates only render on 등록대기; partners come from business partners by isActive.
+  assert.match(adminPage, /\{view === "pending" \? <>[\s\S]*candidateRows\.map/);
+  assert.match(adminPage, /active: partners\.filter\(row => row\.isActive\)\.length,\s*inactive: partners\.filter\(row => !row\.isActive\)\.length/);
+  assert.equal(infoPage, adminPage);
   assert.match(candidatePage, /새 정규 거래처로 등록/);
   assert.match(candidatePage, /기존 정규 거래처에 연결/);
   assert.match(candidatePage, /등록하지 않음/);
 });
 
-test("partner routes share the common two-tab SubNav", () => {
-  assert.match(partnerTabs, /href: "\/admin\/partners"/);
-  assert.match(partnerTabs, /href: "\/admin\/partners\/info"/);
-  assert.match(partnerSubNav, /<SubNav tabs={getPartnerTabs\(pathname, lang\)} \/>/);
-  assert.match(partnerLayout, /<PartnerSubNav \/>/);
+test("partner detail routes sit under 가게 장부 > 장부설정 with the ledger SubNav", () => {
+  assert.match(partnerLayout, /<LedgerSubNav \/>/);
+  assert.doesNotMatch(partnerLayout, /PartnerSubNav/);
+  assert.match(ledgerTabs, /active: pathname\.startsWith\("\/admin\/ledger\/settings"\) \|\| pathname\.startsWith\("\/admin\/partners"\)/);
 });
 
 test("candidate and partner lists use one-line compact rows", () => {

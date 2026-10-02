@@ -9,3 +9,7 @@
 .compactRow{grid-template-columns:minmax(0,1fr) auto auto auto}.partnerInfoRow{grid-template-columns:minmax(0,1fr) auto auto}
 .subtypeGroup{display:grid;gap:4px}.subtypeGroup+.subtypeGroup{margin-top:8px}.subtypeDivider{margin:0;padding:0 2px;color:#6b7280;font-size:12px;font-weight:700;line-height:1.3;text-align:left}
 @media(max-width:640px){.subtypeDivider{font-size:11px}}
+.partnerSettingsHeader{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+.partnerSettingsHeader>h2{margin:0;min-width:0;font-size:15px;font-weight:900;white-space:nowrap}
+.partnerAddButton{flex:0 0 auto;min-height:38px;padding:7px 12px;border:1px solid #111827;border-radius:10px;background:#111827;color:#fff;font-size:13px;font-weight:850;white-space:nowrap;cursor:pointer}
+.resolvedToggle{justify-self:start;padding:4px 2px;border:0;background:transparent;color:#6b7280;font-size:12px;font-weight:750;text-decoration:underline;cursor:pointer}

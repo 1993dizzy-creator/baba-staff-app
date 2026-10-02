@@ -22,8 +22,8 @@ const detailApi = read("app/api/admin/partners/[id]/route.ts");
 const aliasApi = read("app/api/admin/partners/aliases/[id]/route.ts");
 const subtypeCreateApi = read("app/api/admin/partners/subtypes/route.ts");
 const subtypeUpdateApi = read("app/api/admin/partners/subtypes/[id]/route.ts");
-const adminPage = read("app/(protected)/admin/partners/page.tsx");
-const infoPage = read("app/(protected)/admin/partners/info/page.tsx");
+const adminPage = read("components/partners/PartnerSettingsPanel.tsx");
+const infoPage = read("components/partners/PartnerSettingsPanel.tsx");
 const candidatePage = read("app/(protected)/admin/partners/candidates/[id]/page.tsx");
 const partnerStyles = read("app/(protected)/admin/partners/partners.module.css");
 
@@ -321,7 +321,7 @@ test("active/inactive filter still applies per Partner before grouping", () => {
 });
 
 test("26: info page renders the group -> subtype-divider -> row structure with the shared row/payment/tag formatting kept", () => {
-  assert.match(infoPage, /groupPartnersByTypeAndSubtype\(partners, filter === "active", lang, partnerSubtypes\)/);
+  assert.match(infoPage, /groupPartnersByTypeAndSubtype\(partners, view === "active", lang, partnerSubtypes\)/);
   assert.match(infoPage, /group\.subgroups\.map\(sub =>/);
   assert.match(infoPage, /<h3 className={styles\.subtypeDivider}>{effectivePartnerEmoji\(group\.type, sub\.subtype\)} {formatPartnerSubtypeName\(sub\.subtype, lang\)}<\/h3>/);
   assert.match(infoPage, /group\.unclassified\.length > 0/);
@@ -421,10 +421,12 @@ test("subtype management RPCs are owner/master gated with the same security patt
 
 test("subtype management UI reuses the shared BarSheet chrome, same as the existing add-partner dialog", () => {
   assert.match(subtypeManager, /import \{ BarField, BarSection, BarSegmentedControl, BarSheet, keepingInputStyle, primaryButtonStyle, secondaryButtonStyle \} from "@\/components\/bar\/keeping\/KeepingUi"/);
-  assert.doesNotMatch(adminPage, /PartnerSubtypeManager|manageSubtypes|중분류 관리/);
+  // 장부설정 > 거래처 shows [중분류 관리] once, above the status tabs.
+  assert.equal((adminPage.match(/<PartnerSubtypeManager /g) ?? []).length, 1);
   assert.match(infoPage, /import PartnerSubtypeManager from "@\/components\/PartnerSubtypeManager"/);
   assert.match(infoPage, /<PartnerSubtypeManager lang={lang} open={showSubtypeManager} partnerSubtypes={partnerSubtypes} onClose={\(\) => setShowSubtypeManager\(false\)} onReload={load}/);
-  assert.match(infoPage, /중분류 관리/);
+  assert.match(infoPage, /<span>\{labels\.manageSubtypes\}<\/span>/);
+  assert.match(read("lib/partners/settings-view.ts"), /manageSubtypes: "중분류 관리"/);
 });
 
 test("info-page subtype manager entry is a full-width mobile-safe action with an icon", () => {

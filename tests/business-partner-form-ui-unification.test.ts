@@ -9,7 +9,7 @@ const partnerSettlementFields = read("components/PartnerSettlementFields.tsx");
 const candidateForm = read("components/CandidatePartnerReviewForm.tsx");
 const keepingUi = read("components/bar/keeping/KeepingUi.tsx");
 const partnerStyles = read("app/(protected)/admin/partners/partners.module.css");
-const adminPage = read("app/(protected)/admin/partners/page.tsx");
+const adminPage = read("components/partners/PartnerSettingsPanel.tsx");
 const partnerDetail = read("app/(protected)/admin/partners/[id]/page.tsx");
 const candidatePage = read("app/(protected)/admin/partners/candidates/[id]/page.tsx");
 const collectionApi = read("app/api/admin/partners/route.ts");
@@ -89,8 +89,9 @@ test("candidate create_partner form keeps its field order and fixed isActive=tru
 test("the reworked status control and add-dialog labels are both localized", () => {
   assert.match(text, /status: "상태"/);
   assert.match(text, /status: "Trạng thái"/);
-  assert.match(adminPage, /addTitle: "Thêm đối tác", close: "Đóng"/);
-  assert.match(adminPage, /addTitle: "거래처 추가", close: "닫기"/);
+  const settingsText = read("lib/partners/settings-view.ts");
+  assert.match(settingsText, /addTitle: "Thêm đối tác", close: "Đóng"/);
+  assert.match(settingsText, /addTitle: "거래처 추가", close: "닫기"/);
   assert.match(partnerForm, /basic: "Thông tin cơ bản"/);
   assert.match(partnerForm, /basic: "기본 정보"/);
 });

@@ -6,7 +6,7 @@ import test from "node:test";
 import { formatPartnerFundAccount, formatPartnerPaymentMode, formatPartnerPaymentSummary } from "../lib/partners/text.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
-const infoPage = read("app/(protected)/admin/partners/info/page.tsx");
+const infoPage = read("components/partners/PartnerSettingsPanel.tsx");
 const partnerServer = read("lib/partners/server.ts");
 const settlementFields = read("components/PartnerSettlementFields.tsx");
 const partnerForm = read("components/PartnerForm.tsx");
@@ -15,7 +15,8 @@ const text = read("lib/partners/text.ts");
 
 // A1/A8: top spacing + Container usage
 test("info page uses noPaddingTop like the registration/candidate pages, no page-local negative margins", () => {
-  assert.match(infoPage, /<Container noPaddingTop>/);
+  // The partner list is now a panel inside 장부설정, which owns the noPaddingTop Container.
+  assert.match(read("app/(protected)/admin/ledger/settings/page.tsx"), /<Container noPaddingTop>/);
   assert.doesNotMatch(infoPage, /margin-?[Tt]op:\s*-|marginTop:\s*-/);
 });
 
