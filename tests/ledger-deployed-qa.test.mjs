@@ -40,7 +40,7 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
     '@/components/Container':{default:box},'@/lib/language-context':{useLanguage:()=>({lang})},'@/lib/styles/ui':{ui:{}},
     '@/components/bar/keeping/KeepingUi':keeping,
     '@/lib/ledger/card-fee-policy':require('../lib/ledger/card-fee-policy.ts'),
-    ...Object.fromEntries(['entry-display-emoji','entry-display-badge','entry-display-amount','entry-display-account','entry-status-reason','payroll-advance'].map(name=>['@/lib/ledger/'+name,require('../lib/ledger/'+name+'.ts')])),
+    ...Object.fromEntries(['entry-display-emoji','entry-display-badge','entry-list-filter','entry-display-amount','entry-display-account','entry-status-reason','payroll-advance'].map(name=>['@/lib/ledger/'+name,require('../lib/ledger/'+name+'.ts')])),
     '@/lib/text/admin-users':transpiled('lib/text/admin-users.ts',{}),
     './ManualDisplayEditor':{default:()=>null,LedgerEditShell:box},'./ManualDisplayHistory':{default:()=>null},
     '@/lib/ledger/entries':require('../lib/ledger/entries.ts'),

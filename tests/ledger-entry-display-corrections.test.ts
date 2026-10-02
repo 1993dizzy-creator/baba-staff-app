@@ -38,10 +38,13 @@ test("card settlement display keeps accounting direction and separates legacy fr
   const [deposit, legacy, fee, pos] = [1, 2, 3, 4].map(byId);
   assert.equal(deposit.direction, "transfer");
   assert.deepEqual(entryDisplaySubtotal(deposit), { income: 0, expense: 0 });
-  assert.equal(entryDisplayBadgeLabel(entryDisplayBadgeKind(deposit), "ko"), "결제");
+  // Card settlement rows use the dedicated [카드] badge; accounting direction is unchanged.
+  assert.equal(entryDisplayBadgeLabel(entryDisplayBadgeKind(deposit), "ko"), "카드");
   assert.equal(entryCategoryEmoji(deposit), "💳");
   assert.equal(legacy.direction, "expense");
-  assert.equal(entryDisplayBadgeKind(legacy), "expense");
+  assert.equal(entryDisplayBadgeKind(legacy), "card");
+  assert.equal(entryDisplayBadgeKind(fee), "card");
+  assert.equal(entryDisplayBadgeKind(pos), "income");
   assert.equal(entryCategoryEmoji(legacy), "💳");
   assert.equal(legacy.systemDisplay?.kind, "cardSettlementDifference");
   if (legacy.systemDisplay?.kind !== "cardSettlementDifference") throw new Error("Missing legacy identity");

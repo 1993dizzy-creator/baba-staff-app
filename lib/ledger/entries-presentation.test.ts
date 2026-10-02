@@ -9,7 +9,7 @@ import {
 
 const page = readFileSync("app/(protected)/admin/ledger/entries/page.tsx", "utf8");
 const pageCompact = page.replace(/\s+/g, "");
-const entriesSource = readFileSync("lib/ledger/entries.ts", "utf8");
+const entriesSource = readFileSync("lib/ledger/entry-list-filter.ts", "utf8");
 const css = readFileSync("app/(protected)/admin/ledger/entries/entries.module.css", "utf8");
 
 test("POS daily close uses its actual sync time and sorts after same-day manual activity", () => {
@@ -47,7 +47,7 @@ test("review filter includes pending and correction-required entries only", () =
   assert.equal(entryRequiresReview({ status: "pending", requiresCorrection: false }), true);
   assert.equal(entryRequiresReview({ status: "confirmed", requiresCorrection: true }), true);
   assert.equal(entryRequiresReview({ status: "confirmed", requiresCorrection: false }), false);
-  assert.match(entriesSource, /return entryRequiresReview\(entry\);/);
+  assert.match(entriesSource, /case "pending": return entryRequiresReview\(entry\);/);
   assert.match(pageCompact, /if\(!entryMatchesListFilter\(entry,filter\)\)continue;/);
 });
 

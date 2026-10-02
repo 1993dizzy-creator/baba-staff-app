@@ -52,7 +52,7 @@ test("actual payroll payment outflow is a red display expense with unchanged tra
   assert.deepEqual(entryDisplaySubtotal(entry), { income: 0, expense: 137_195_248 });
   assert.match(page, /amountClassByTone\[entryDisplayAmountTone\(entry\)\]/);
   assert.match(page, /if \(!entryMatchesListFilter\(entry, filter\)\) continue;/);
-  assert.match(readFileSync("lib/ledger/entries.ts", "utf8"), /if \(filter === "expense"\) return entryMatchesExpenseFilter\(entry\);/);
+  assert.match(readFileSync("lib/ledger/entry-list-filter.ts", "utf8"), /case "expense": return entryMatchesExpenseFilter\(entry\);/);
   assert.match(page, /group\.expense \+= subtotal\.expense/);
 });
 

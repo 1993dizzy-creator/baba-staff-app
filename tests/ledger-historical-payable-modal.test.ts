@@ -12,7 +12,8 @@ const historical=page.slice(page.indexOf("function HistoricalPayablePartySheet")
 const current=page.slice(page.indexOf("function PayablePartySheet"),page.indexOf("function payableItemLabel"));
 
 test("past and current payable sheets share dated expandable items",()=>{
-  assert.match(historical,/<PayableDateGroups rows=\{rows\} lang=\{lang\}\/>/);
+  assert.match(historical,/<PayableMonthGroups rows=\{rows\} lang=\{lang\}\/>/);
+  assert.match(page,/function PayableMonthGroups[\s\S]*?<PayableDateGroups rows=\{group\.rows\} lang=\{lang\}\/>/);
   assert.match(current,/<PayableDateGroups rows=\{detail\?\.payables\?\?\[\]\} lang=\{lang\}/);
   assert.match(page,/function PayableDateGroups[\s\S]*group\.rows\.length[\s\S]*payableItemLabel/);
   assert.match(historical,/<PayableMonthTotals summary=\{party\}/);

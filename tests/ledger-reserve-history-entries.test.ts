@@ -6,11 +6,10 @@ import {
   buildReserveLedgerEntries,
   compareLedgerEntriesByDisplayTime,
   entryDisplaySubtotal,
-  entryMatchesListFilter,
   type LedgerEntry,
-  type LedgerEntryFilter,
   type TransactionRow,
 } from "../lib/ledger/entries.ts";
+import { entryMatchesListFilter, LEDGER_ENTRY_FILTERS } from "../lib/ledger/entry-list-filter.ts";
 import { getBusinessDate } from "../lib/common/business-time.ts";
 import { entryDisplayAmountSign, entryDisplayAmountTone } from "../lib/ledger/entry-display-amount.ts";
 import { entryDisplayBadgeKind, entryDisplayBadgeLabel } from "../lib/ledger/entry-display-badge.ts";
@@ -132,10 +131,9 @@ test("reserve balance keeps the full cumulative scope while history uses the sam
   assert.match(route, /const reservePlans = fundsViewMode === "closed_snapshot" \? \[\] :/);
 });
 
-test("reserve rows are excluded from every filter except 전체", () => {
+test("reserve rows are excluded from every filter except 전체 and 준비금", () => {
   const [row] = reserveRows();
-  const filters: LedgerEntryFilter[] = ["all", "income", "expense", "manual", "pending"];
-  assert.deepEqual(filters.filter(filter => entryMatchesListFilter(row, filter)), ["all"]);
+  assert.deepEqual(LEDGER_ENTRY_FILTERS.filter(filter => entryMatchesListFilter(row, filter)), ["all", "reserve"]);
   const [expense, income] = buildLedgerEntries(septemberTransactions.slice(0, 2), [], new Map(), [], "2026-09")
     .sort((a, b) => Number(a.transactionId) - Number(b.transactionId));
   assert.equal(entryMatchesListFilter(expense, "expense"), true);

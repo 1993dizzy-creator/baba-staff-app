@@ -30,20 +30,20 @@ import {
 } from "@/components/bar/keeping/KeepingUi";
 import {
   entryDisplaySubtotal,
-  entryMatchesListFilter,
   isPayrollPaymentOutflow,
   compareLedgerEntriesByDisplayTime,
+  withPaymentDifferenceAdjustments,
   type LedgerEntry,
-  type LedgerEntryFilter,
   type LedgerEntryItem,
   type ReserveEntryType,
 } from "@/lib/ledger/entries";
+import { entryFilterHeaderAmount, entryMatchesListFilter, LEDGER_ENTRY_FILTERS, ledgerEntryFilterLabel, type LedgerEntryFilter } from "@/lib/ledger/entry-list-filter";
 import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
-import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji } from "@/lib/ledger/entry-display-emoji";
+import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji, ledgerPartyEmoji } from "@/lib/ledger/entry-display-emoji";
 import { entryDisplayBadgeEmoji, entryDisplayBadgeKind, entryDisplayBadgeLabel } from "@/lib/ledger/entry-display-badge";
 import { entryDisplayAmount, entryDisplayAmountSign, entryDisplayAmountTone } from "@/lib/ledger/entry-display-amount";
 import { accountTransferBadgeLabel, shortLedgerAccountName } from "@/lib/ledger/entry-display-account";
-import { groupPayableRows } from "@/lib/ledger/payable-date-groups";
+import { groupPayableRows, groupPayableRowsByMonth, latestPayableMonth } from "@/lib/ledger/payable-date-groups";
 import {
   formatLedgerAmountInput,
   parseLedgerAmount,
@@ -173,6 +173,8 @@ type DateGroup = {
   rows: LedgerEntry[];
   income: number;
   expense: number;
+  // Single-amount filters (결제/카드/이체/조정/투자금/준비금): sum of visible display amounts.
+  filterAmount: number | null;
 };
 type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null };
 type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[]; historyPayables:PayableHistoryRow[]; verification?:Verification };
@@ -425,11 +427,14 @@ function LedgerEntriesContent() {
     return () => controller.abort();
   }, [cardSettlementExpanded,month,vi]);
   const regularEntries = useMemo(() => (data?.entries ?? []).filter((entry) => !entry.isSystemAdjustment), [data?.entries]);
+  // Adds display-only [조정] rows for payable-payment differences (조정 filter only).
+  const listEntries = useMemo(() => withPaymentDifferenceAdjustments(data?.entries ?? []), [data?.entries]);
   const groups = useMemo(() => {
     const keyword = search.trim().toLocaleLowerCase(),
       byDate = new Map<string, DateGroup>();
-    for (const entry of regularEntries) {
-      // Reserve history rows only appear under 전체.
+    // The filter keeps system adjustments hidden (only user-facing
+    // adjustments, under 조정) and reserve rows to 전체/준비금.
+    for (const entry of listEntries) {
       if (!entryMatchesListFilter(entry, filter)) continue;
       if (
         keyword &&
@@ -443,8 +448,15 @@ function LedgerEntriesContent() {
         rows: [],
         income: 0,
         expense: 0,
+        filterAmount: null,
       };
       group.rows.push(entry);
+      const headerAmount = entryFilterHeaderAmount(entry, filter);
+      if (headerAmount !== null) {
+        group.filterAmount = (group.filterAmount ?? 0) + headerAmount;
+        byDate.set(entry.businessDate, group);
+        continue;
+      }
       // Net corrections/reversals into the day subtotal via economicEffectSign
       // without touching the row's own displayed (always-positive) amount.
       const subtotal = entryDisplaySubtotal(entry);
@@ -456,7 +468,7 @@ function LedgerEntriesContent() {
       group.rows.sort(compareLedgerEntriesByDisplayTime);
     }
     return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
-  }, [regularEntries, filter, lang, search]);
+  }, [listEntries, filter, lang, search]);
   const businessAccounts = useMemo(
     () =>
       (data?.accounts ?? [])
@@ -745,8 +757,9 @@ function LedgerEntriesContent() {
           <strong>{formatDate(group.date, lang)}</strong>
           <span className={styles.dateSummary}>
             <span>{group.rows.length} {vi ? "giao dịch" : "건"}</span>
-            {group.income > 0 ? <><i aria-hidden>·</i><b className={styles.dateIncome}>{vi ? "Thu" : "수입"} {money(group.income)}</b></> : null}
-            {group.expense > 0 ? <><i aria-hidden>·</i><b className={styles.dateExpense}>{vi ? "Chi" : "지출"} {money(group.expense)}</b></> : null}
+            {group.filterAmount !== null ? <><i aria-hidden>·</i><b className={styles.dateFilterAmount}>{ledgerEntryFilterLabel(filter, lang)} {group.filterAmount < 0 ? "−" : filter === "investment" && group.filterAmount > 0 ? "+" : ""}{money(Math.abs(group.filterAmount))}</b></> : null}
+            {group.filterAmount === null && group.income > 0 ? <><i aria-hidden>·</i><b className={styles.dateIncome}>{vi ? "Thu" : "수입"} {money(group.income)}</b></> : null}
+            {group.filterAmount === null && group.expense > 0 ? <><i aria-hidden>·</i><b className={styles.dateExpense}>{vi ? "Chi" : "지출"} {money(group.expense)}</b></> : null}
           </span>
           <i
             aria-hidden
@@ -965,7 +978,7 @@ function LedgerEntriesContent() {
               <PayableMonthTotals summary={payables?.month===month?payables.summary:undefined} vi={vi} />
               {payableDisplay.parties.length || payableDisplay.other ? (
                 <div className={styles.payableParties} id="payable-parties-list">{payableDisplay.parties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty({...party,viewMonth:month})}>
-                  <span className={styles.payablePartyMain}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><span className={styles.payablePartyName}>{party.partyName}</span>
+                  <span className={styles.payablePartyMain}><span className={styles.payablePartyEmoji} role="img" aria-label={partnerTypeLabel(party.partnerType,lang)}>{ledgerPartyEmoji(partnerByLedgerParty.get(party.partyId)?.emoji,party.partnerType)}</span><span className={styles.payablePartyName}>{party.partyName}</span>
                     <small className={styles.payablePartyPeriod}>{vi ? `Phát sinh T${Number(month.slice(5,7))}` : `${Number(month.slice(5,7))}월 외상`}: {payableNumber(party.periodPurchases)} · {vi ? `Thanh toán T${Number(month.slice(5,7))}` : `${Number(month.slice(5,7))}월 지급`}: {payableNumber(party.periodPayments)}</small>
                   </span><strong aria-label={vi ? "Công nợ cuối tháng" : "월말 미납"}>{money(party.closingOutstanding)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i>
                 </button>)}
@@ -1084,20 +1097,16 @@ function LedgerEntriesContent() {
               aria-label={vi ? "Bộ lọc sổ" : "장부 필터"}
             >
               <div className={styles.filterTabs}>
-                {(
-                  [
-                    ["all", vi ? "Tất cả" : "전체"],
-                    ["income", vi ? "Thu" : "수입"],
-                    ["expense", vi ? "Chi" : "지출"],
-                    ["manual", vi ? "Thủ công" : "수동"],
-                    ["pending", vi ? "Cần xác nhận" : "확인 필요"],
-                  ] as const
-                ).map(([value, label]) => (
+                {LEDGER_ENTRY_FILTERS.map((value) => [value, ledgerEntryFilterLabel(value, lang)] as const).map(([value, label]) => (
                   <button
                     key={value}
                     type="button"
                     aria-pressed={filter === value}
-                    onClick={() => setFilter(value)}
+                    onClick={(event) => {
+                      setFilter(value);
+                      // Keep the chosen pill in view without moving the page vertically.
+                      event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+                    }}
                   >
                     {label}
                   </button>
@@ -1777,13 +1786,33 @@ function PayableDateGroups({rows,lang,selectedDates,onSelectDate}:{rows:readonly
   })}</div>;
 }
 
+// Month accordion around the existing read-only date accordion. Months run
+// oldest → newest like the dates inside them; only the newest returned month
+// starts open. Rows, counts and amounts are passed through as-is.
+function PayableMonthGroups({rows,lang}:{rows:readonly PayableRow[];lang:"ko"|"vi"}) {
+  const groups=useMemo(()=>groupPayableRowsByMonth(rows),[rows]);
+  const [toggled,setToggled]=useState<Set<string>>(()=>new Set());
+  const vi=lang==="vi",latest=latestPayableMonth(groups);
+  return <div className={styles.payableMonthGroups}>{groups.map(group=>{
+    const open=(group.month===latest)!==toggled.has(group.month);
+    const [year,monthNumber]=group.month.split("-").map(Number);
+    const label=!group.month?(vi?"Không rõ ngày":"날짜 미상"):vi?`Tháng ${monthNumber}/${year}`:`${year}년 ${monthNumber}월`;
+    return <section key={group.month} className={styles.payableMonthGroup}>
+      <button type="button" className={styles.payableMonthHeader} aria-expanded={open} onClick={()=>setToggled(current=>{const next=new Set(current);if(next.has(group.month))next.delete(group.month);else next.add(group.month);return next})}>
+        <span className={styles.payableMonthLabel}><span>{label} · {group.rows.length}{vi?" khoản":"건"}</span>{group.unpaidCount>0?<span className={styles.pendingBadge}>{vi?"Chưa thanh toán":"미결제"} {group.unpaidCount}</span>:null}</span><i aria-hidden>{open?"⌄":"›"}</i>
+      </button>
+      {open?<PayableDateGroups rows={group.rows} lang={lang}/>:null}
+    </section>;
+  })}</div>;
+}
+
 function HistoricalPayablePartySheet({lang,month,party,rows,onClose}:{lang:"ko"|"vi";month:string;party:PayableParty;rows:PayableHistoryRow[];onClose:()=>void}) {
   const vi=lang==="vi";
   return <BarSheet kind="full" compact topAligned comfortableTop title={`${month} · ${vi?"Công nợ cuối tháng":"월말 미납 상세"}`} closeLabel={vi?"Đóng":"닫기"} saving={false} onClose={onClose} footer={<button type="button" onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button>}>
     <div className={styles.payableDetailHeader}><div className={styles.payableDetailPartner}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><strong>{party.partyName}</strong></div><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(party.closingOutstanding)}</b></span></div>
     <p className={styles.payableReadOnlyHint} role="status">{vi?"Số dư cuối tháng đã chọn. Không thể thanh toán giao dịch cũ.":"선택월 말 기준 잔액입니다. 과거 내역은 결제할 수 없습니다."}</p>
     <PayableMonthTotals summary={party} vi={vi}/>
-    <PayableDateGroups rows={rows} lang={lang}/>
+    <PayableMonthGroups rows={rows} lang={lang}/>
     {!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}
   </BarSheet>;
 }
@@ -2351,6 +2380,7 @@ function AccountField({
   );
 }
 function entryDisplayEmoji(entry: LedgerEntry, partnersByParty: ReadonlyMap<number, Partner>) {
+  if (entry.userAdjustment) return entryCategoryEmoji(entry);
   if (entry.systemDisplay?.kind === "reserve") return entryCategoryEmoji(entry);
   if (entry.systemDisplay?.kind === "investment") return entryCategoryEmoji(entry);
   if (entry.systemDisplay?.kind === "pos") return entryCategoryEmoji(entry);
@@ -2425,6 +2455,10 @@ function entryDisplayTitle(entry: LedgerEntry, lang: "ko" | "vi") {
   if (display?.kind === "cardFeeMonthClose") return lang === "vi" ? "Phí thẻ" : "카드 수수료";
   // The reserve's own name; never inferred from a linked recurring plan.
   if (display?.kind === "reserve") return display.reserveName;
+  if (entry.paymentDifference) {
+    const party = entry.paymentDifference.partyName || (lang === "vi" ? "Công nợ" : "미지급금");
+    return lang === "vi" ? `Chênh lệch thanh toán ${party}` : `${party} 지급차액`;
+  }
   return entry.title;
 }
 function reserveEntryTypeLabel(entryType: ReserveEntryType, lang: "ko" | "vi") {

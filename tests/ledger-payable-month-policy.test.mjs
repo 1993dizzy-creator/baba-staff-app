@@ -25,7 +25,7 @@ for(const month of ['2026-10','2026-09','2026-11'])test(`payable modal policy fo
  if(month!=='2026-10'){assert.deepEqual(element.props.rows,[{party_id:12,outstandingAmount:100}]);assert.equal('onPaid' in element.props,false);}
 });
 test('historical sheet renders only its snapshot and close action without payment inputs',()=>{
- const Sheet=compile(historical.getText(ast),{BarSheet:({children,footer})=>React.createElement('section',null,children,footer),styles:{},secondaryButtonStyle:{},partnerTypeLabel:()=> 'Other',money:String,PayableMonthTotals:()=>null,PayableDateGroups:({rows})=>React.createElement('div',null,rows.map(row=>row.outstandingAmount).join(','))},'HistoricalPayablePartySheet');
+ const Sheet=compile(historical.getText(ast),{BarSheet:({children,footer})=>React.createElement('section',null,children,footer),styles:{},secondaryButtonStyle:{},partnerTypeLabel:()=> 'Other',money:String,PayableMonthTotals:()=>null,PayableMonthGroups:({rows})=>React.createElement('div',null,rows.map(row=>row.outstandingAmount).join(','))},'HistoricalPayablePartySheet');
  const html=renderToStaticMarkup(React.createElement(Sheet,{lang:'ko',month:'2026-09',party:{partyName:'Partner',closingOutstanding:2400000},rows:[{outstandingAmount:2400000}],onClose:()=>{}}));
  assert.match(html,/2400000/);assert.doesNotMatch(html,/<input|<select|checkbox/);assert.equal((html.match(/<button/g)||[]).length,1);
  assert.doesNotMatch(historical.getText(ast),/fetch|payables\/pay|AccountField|onPaid/);

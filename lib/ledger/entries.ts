@@ -73,6 +73,15 @@ export type LedgerEntry = {
   // Advance created by the ledger 👥 가불 path (cancellable from the ledger);
   // cancelled once its append-only reversal exists. Historical advances: unset.
   ledgerPayrollAdvance?: { requestId: string; cancelled: boolean };
+  // Display identity only: a user-facing adjustment shown as [조정] — a manual
+  // balance_adjustment, or an explicit payment/settlement difference. Accounting
+  // direction and amounts are unchanged.
+  userAdjustment?: "balance" | "paymentDifference";
+  // Display identity only: an actual account-to-account transfer transaction.
+  transferTransaction?: boolean;
+  // Display-only row derived from a payable payment's linked difference (see
+  // withPaymentDifferenceAdjustments); never part of 전체 or its subtotal.
+  paymentDifference?: { paymentEntryId: string; partyName: string };
   categoryName: string | null;
   transactionId: number | null;
   drilldown: "inventory" | "pos" | "payroll" | "meal" | "generic";
@@ -143,6 +152,15 @@ function isEmployeeCostTransaction(row: TransactionRow) {
     EMPLOYEE_COST_CATEGORIES.has(row.category?.name ?? "");
 }
 
+// User-facing adjustments only: never corrections, reversals or technical rows.
+// Explicit sheet differences are created with a sheet-adjustment:* source key.
+function userAdjustmentKind(row: TransactionRow): LedgerEntry["userAdjustment"] {
+  if (row.source_type !== "manual" || row.correction_of_id != null) return undefined;
+  if (row.type === "balance_adjustment") return "balance";
+  if ((row.type === "expense" || row.type === "income") && /^sheet-adjustment:/.test(row.source_key ?? "")) return "paymentDifference";
+  return undefined;
+}
+
 function isSystemAdjustmentTransaction(row: TransactionRow) {
   if (row.source_key === "legacy-sheet-small-diff:2026-08") return false;
   return row.source_type === "ledger_correction" ||
@@ -170,31 +188,26 @@ export function isPayrollPaymentOutflow(entry: Pick<LedgerEntry, "payrollPayment
   return entry.payrollPayment === true && entry.fundFlow === "outflow";
 }
 
-export type LedgerEntryFilter = "all" | "income" | "expense" | "manual" | "pending";
+const CARD_SETTLEMENT_KINDS = new Set(["cardSettlementDeposit", "cardSettlementDifference", "cardFeeMonthClose"]);
+
+// Card settlement rows (actual deposit, valid legacy difference, month-close
+// fee) share the [카드] display identity. POS card sales are sales, not this.
+export function isCardSettlementEntry(entry: Pick<LedgerEntry, "systemDisplay">) {
+  return CARD_SETTLEMENT_KINDS.has(entry.systemDisplay?.kind ?? "");
+}
 
 export function isReserveLedgerEntry(entry: Pick<LedgerEntry, "systemDisplay">) {
   return entry.systemDisplay?.kind === "reserve";
-}
-
-// Reserve history rows are informational: visible under 전체 only.
-export function entryMatchesListFilter(
-  entry: Pick<LedgerEntry, "direction" | "origin" | "status" | "requiresCorrection" | "payrollPayment" | "fundFlow" | "systemDisplay">,
-  filter: LedgerEntryFilter,
-) {
-  if (filter === "all") return true;
-  if (isReserveLedgerEntry(entry)) return false;
-  if (filter === "income") return entry.direction === "income";
-  if (filter === "expense") return entryMatchesExpenseFilter(entry);
-  if (filter === "manual") return entry.origin === "manual";
-  return entryRequiresReview(entry);
 }
 
 export function entryMatchesExpenseFilter(entry: Pick<LedgerEntry, "direction" | "payrollPayment" | "fundFlow">) {
   return entry.direction === "expense" || isPayrollPaymentOutflow(entry);
 }
 
-export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign" | "systemDisplay" | "payrollPayment" | "fundFlow">) {
-  if (isReserveLedgerEntry(entry)) return { income: 0, expense: 0 };
+export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign" | "systemDisplay" | "payrollPayment" | "fundFlow" | "paymentDifference">) {
+  // Informational rows: reserve history and derived payment-difference rows
+  // (their expense is already in the payment row's subtotal).
+  if (isReserveLedgerEntry(entry) || entry.paymentDifference) return { income: 0, expense: 0 };
   const signedAmount = entry.amount * entry.economicEffectSign;
   return {
     income: entry.direction === "income" ? signedAmount : 0,
@@ -686,6 +699,8 @@ export function buildLedgerEntries(
       payrollPayment: row.type === "payroll_payment",
       paymentTransaction: payablePayment,
       editableManualDisplay,
+      ...(userAdjustmentKind(row) ? { userAdjustment: userAdjustmentKind(row) } : {}),
+      ...(row.type === "transfer" ? { transferTransaction: true } : {}),
       ...(ledgerPayrollAdvanceRequestId(row)
         ? { ledgerPayrollAdvance: { requestId: ledgerPayrollAdvanceRequestId(row)!, cancelled: cancelledPayrollAdvanceIds.has(transactionId) } }
         : {}),
@@ -811,4 +826,43 @@ export function buildReserveLedgerEntries(
     });
   }
   return rows;
+}
+
+// A payable payment whose actual cash-out exceeded the payable carries its
+// linked difference (e.g. Mega Market 9/11: 11,862,000₫ + 600₫) inside the
+// payment row. This adds a display-only [조정] row for that difference so the
+// 조정 filter can show it. 전체 never lists it, and its expense stays counted
+// once — through the payment row's subtotal.
+export function withPaymentDifferenceAdjustments(entries: readonly LedgerEntry[]): LedgerEntry[] {
+  const derived: LedgerEntry[] = [];
+  for (const entry of entries) {
+    const display = entry.systemDisplay;
+    if (display?.kind !== "payablePayment" || !(Number(display.paymentDifferenceAmount) > 0)) continue;
+    derived.push({
+      id: `${entry.id}:payment-difference`,
+      businessDate: entry.businessDate,
+      direction: "expense",
+      participatesInProfit: false,
+      origin: entry.origin,
+      status: "confirmed",
+      isSystemAdjustment: false,
+      title: `${display.partyName || "미지급금"} 지급차액`,
+      subtitle: "",
+      memo: entry.memo ?? null,
+      amount: Number(display.paymentDifferenceAmount),
+      fundFlow: "none",
+      economicEffectSign: 1,
+      displayTime: entry.displayTime,
+      sortTimestamp: entry.sortTimestamp,
+      accountName: entry.accountName,
+      categoryName: null,
+      transactionId: null,
+      partyId: entry.partyId ?? null,
+      drilldown: "generic",
+      userAdjustment: "paymentDifference",
+      paymentDifference: { paymentEntryId: entry.id, partyName: display.partyName },
+      items: [],
+    });
+  }
+  return derived.length ? [...entries, ...derived] : [...entries];
 }

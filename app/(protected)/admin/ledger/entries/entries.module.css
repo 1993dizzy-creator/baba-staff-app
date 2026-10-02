@@ -183,3 +183,18 @@
 .manualDisplayHistoryAfter{color:#1f2937;font-size:12px;font-weight:600;white-space:pre-wrap}
 .entryBottom>.accountBadgeAccountTransfer,.detailPayment>.accountBadgeAccountTransfer{max-width:none;flex-shrink:0}
 .direction.reserve{background:#f3f4f6;color:#374151}
+.payablePartyMain>.payablePartyEmoji{flex:0 0 auto;font-size:13px;line-height:1}
+.payableMonthGroups{display:grid;gap:6px}
+.payableMonthGroup{border:1px solid #e5e7eb;border-radius:10px;background:#fff;overflow:hidden}
+.payableMonthHeader{width:100%;min-height:36px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;border:0;background:#f9fafb;color:#111827;font-size:11px;font-weight:800;text-align:left}
+.payableMonthHeader>i{flex:0 0 auto;color:#9ca3af;font-style:normal}
+.payableMonthLabel{min-width:0;display:inline-flex;align-items:center;gap:6px;overflow:hidden;white-space:nowrap}
+.payableMonthLabel>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.payableMonthLabel>.pendingBadge{flex:0 0 auto;padding:2px 5px;line-height:1.2}
+.payableMonthGroup>.payableDates{padding:0 10px}
+.filterTabs{flex-wrap:nowrap;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;touch-action:pan-x pan-y;scroll-padding-inline:2px;-ms-overflow-style:none}
+.filterTabs::-webkit-scrollbar{display:none}
+.filterTabs button{white-space:nowrap}
+.dateFilterAmount{color:#374151;font-weight:800}
+.direction.card{background:#e6f4f7;color:#0e7490}
+.direction.adjustment{background:#eef2f7;color:#334155}
