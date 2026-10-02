@@ -51,7 +51,8 @@ test("actual payroll payment outflow is a red display expense with unchanged tra
   assert.equal(entryMatchesExpenseFilter(entry), true);
   assert.deepEqual(entryDisplaySubtotal(entry), { income: 0, expense: 137_195_248 });
   assert.match(page, /amountClassByTone\[entryDisplayAmountTone\(entry\)\]/);
-  assert.match(page, /filter === "expense" && !entryMatchesExpenseFilter\(entry\)/);
+  assert.match(page, /if \(!entryMatchesListFilter\(entry, filter\)\) continue;/);
+  assert.match(readFileSync("lib/ledger/entries.ts", "utf8"), /if \(filter === "expense"\) return entryMatchesExpenseFilter\(entry\);/);
   assert.match(page, /group\.expense \+= subtotal\.expense/);
 });
 
@@ -120,7 +121,7 @@ test("ordinary transfer, payable, unpaid expense and investment retain their dis
 test("the API keeps raw transactions and computes summary expense before building display entries", () => {
   assert.match(route, /const paidExpense = computePaidExpenseTotal\(paidExpenseRoots\)/);
   assert.match(route, /const displayedExpense = computeDisplayedExpense\(paidExpense, transactions\)/);
-  assert.match(route, /const entries = buildLedgerEntries\(displayTransactions,/);
+  assert.match(route, /const entries = \[\s*\.\.\.buildLedgerEntries\(displayTransactions,/);
   assert.match(route, /operatingProfit: recognizedIncome - expense/);
   assert.match(route, /profitTransactions: profitRows, parties: partiesResult\.data \?\? \[\], partners, transactions: displayTransactions, entries/);
 });

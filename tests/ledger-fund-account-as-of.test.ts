@@ -28,7 +28,7 @@ test("past provisional queries exclude next-month movements and reserve entries 
     cutoffAt: "2026-09-01T03:00:00+07:00",
   });
   assert.match(route, /movementsQuery\.lt\("transaction\.business_date", nextMonth\)/);
-  assert.match(route, /reserveEntriesQuery\.lt\("occurred_at", monthEndCutoffAt\)/);
+  assert.match(route, /from\("ledger_reserve_entries"\)\s*\.select\("[^"]*"\)\s*\.lt\("occurred_at", monthEndCutoffAt\)/);
   assert.match(route, /getBusinessMonthEndBoundary\(month\)/);
 });
 

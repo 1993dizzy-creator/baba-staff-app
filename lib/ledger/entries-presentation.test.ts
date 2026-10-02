@@ -9,6 +9,7 @@ import {
 
 const page = readFileSync("app/(protected)/admin/ledger/entries/page.tsx", "utf8");
 const pageCompact = page.replace(/\s+/g, "");
+const entriesSource = readFileSync("lib/ledger/entries.ts", "utf8");
 const css = readFileSync("app/(protected)/admin/ledger/entries/entries.module.css", "utf8");
 
 test("POS daily close uses its actual sync time and sorts after same-day manual activity", () => {
@@ -46,7 +47,8 @@ test("review filter includes pending and correction-required entries only", () =
   assert.equal(entryRequiresReview({ status: "pending", requiresCorrection: false }), true);
   assert.equal(entryRequiresReview({ status: "confirmed", requiresCorrection: true }), true);
   assert.equal(entryRequiresReview({ status: "confirmed", requiresCorrection: false }), false);
-  assert.match(pageCompact, /filter==="pending"&&!entryRequiresReview\(entry\)/);
+  assert.match(entriesSource, /return entryRequiresReview\(entry\);/);
+  assert.match(pageCompact, /if\(!entryMatchesListFilter\(entry,filter\)\)continue;/);
 });
 
 test("list titles are concise while the original transaction memo remains intact", () => {

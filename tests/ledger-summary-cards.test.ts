@@ -86,7 +86,8 @@ test("displayed expense adds prepaid once and excludes transfers and investment"
 });
 
 test("ledger page uses the display expense predicate and the daily subtotal", () => {
-  assert.match(page, /filter === "expense" && !entryMatchesExpenseFilter\(entry\)/);
+  assert.match(page, /if \(!entryMatchesListFilter\(entry, filter\)\) continue;/);
+  assert.match(read("lib/ledger/entries.ts"), /if \(filter === "expense"\) return entryMatchesExpenseFilter\(entry\);/);
   assert.match(page, /const subtotal = entryDisplaySubtotal\(entry\);/);
   assert.match(page, /group\.expense \+= subtotal\.expense/);
   assert.match(route, /const displayedExpense = computeDisplayedExpense\(paidExpense, transactions\)/);

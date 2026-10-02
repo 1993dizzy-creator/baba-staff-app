@@ -182,3 +182,4 @@
 .manualDisplayHistoryArrow{color:#9ca3af;font-size:12px;line-height:1}
 .manualDisplayHistoryAfter{color:#1f2937;font-size:12px;font-weight:600;white-space:pre-wrap}
 .entryBottom>.accountBadgeAccountTransfer,.detailPayment>.accountBadgeAccountTransfer{max-width:none;flex-shrink:0}
+.direction.reserve{background:#f3f4f6;color:#374151}

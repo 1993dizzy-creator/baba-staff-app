@@ -4,7 +4,7 @@ import { calculateCardGrossAtMonthEnd, sumCardMoney } from "@/lib/ledger/card-se
 import { loadCardRows, loadCardSales, loadCardAllocationLines } from "@/lib/ledger/card-settlement-data";
 import { supabaseServer } from "@/lib/supabase/server";
 import { withInventoryDisplay, loadInventoryProjectionIssues } from "@/lib/ledger/inventory-display";
-import { buildLedgerEntries, type CandidateRow, type MealCandidateSource, type PartnerLedgerDefault, type TransactionRow } from "@/lib/ledger/entries";
+import { buildLedgerEntries, buildReserveLedgerEntries, type CandidateRow, type MealCandidateSource, type PartnerLedgerDefault, type TransactionRow } from "@/lib/ledger/entries";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { computePaidExpenseTotal, sumConfirmedAllocationsThroughMonth } from "@/lib/ledger/payables";
 import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
@@ -28,6 +28,8 @@ export async function GET(request: Request) {
   if (!MONTH.test(month)) return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400);
   const monthStart = `${month}-01`;
   const { businessDateExclusive: nextMonth, cutoffAt: monthEndCutoffAt } = getBusinessMonthEndBoundary(month);
+  // Business day starts at 03:00 Asia/Ho_Chi_Minh, so the month window does too.
+  const monthStartCutoffAt = `${monthStart}T03:00:00+07:00`;
 
   try {
     const now = new Date();
@@ -60,18 +62,20 @@ export async function GET(request: Request) {
     const cardGrossSalesPromise = loadCardSales(monthStart, nextMonth);
     // Actual card deposits: this month's real bank deposits from the card company (deposit_date scoped, not the sale's month).
     const actualCardDepositsPromise = loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("deposit_amount,difference_amount,status").neq("status", "cancelled").gte("deposit_date", monthStart).lt("deposit_date", nextMonth).order("id").range(from, to));
-    const reservesPromise = fundsViewMode === "closed_snapshot"
-      ? Promise.resolve({ data: [], error: null })
-      : supabaseServer.from("ledger_reserve_plans")
-          .select("id,name,is_active,fund_account_id,linked_recurring_plan:ledger_recurring_expense_plans(source_key_prefix)")
-          .order("id");
+    // Plans are also needed in closed months to label the reserve history rows.
+    const reservesPromise = supabaseServer.from("ledger_reserve_plans")
+      .select("id,name,is_active,fund_account_id,linked_recurring_plan:ledger_recurring_expense_plans(source_key_prefix)")
+      .order("id");
+    // One query serves both the cumulative reserve balance and the month's
+    // informational reserve history rows. Open months load every entry up to the
+    // month-end cutoff (balance filtering happens in memory below); a closed
+    // month uses its snapshot balance, so only the month window is loaded.
     const reserveEntriesQuery = supabaseServer.from("ledger_reserve_entries")
-      .select("reserve_plan_id,entry_type,amount,occurred_at");
+      .select("id,reserve_plan_id,entry_type,amount,occurred_at,memo")
+      .lt("occurred_at", monthEndCutoffAt);
     const reserveEntriesPromise = fundsViewMode === "closed_snapshot"
-      ? Promise.resolve({ data: [], error: null })
-      : fundsViewMode === "live"
-        ? reserveEntriesQuery.lte("occurred_at", now.toISOString())
-        : reserveEntriesQuery.lt("occurred_at", monthEndCutoffAt);
+      ? reserveEntriesQuery.gte("occurred_at", monthStartCutoffAt)
+      : reserveEntriesQuery;
     // Root expense/expense_recognition transactions recognized this month, with their
     // linked payable (if any) — the base population for the paidExpense formula below.
     const paidExpenseRootsPromise = supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,source_type,correction_of_id,payable:ledger_payables(status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(business_date,status)))").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["expense", "expense_recognition"]);
@@ -157,14 +161,22 @@ export async function GET(request: Request) {
     }));
     const paidExpense = computePaidExpenseTotal(paidExpenseRoots);
     const displayedExpense = computeDisplayedExpense(paidExpense, transactions);
+    const reserveEntryRows = reserveEntriesResult.data ?? [];
     const reserveEntriesByPlan = new Map<number, Array<{ entry_type: string; amount: number | string }>>();
-    for (const entry of reserveEntriesResult.data ?? []) {
+    // Balance scope is unchanged: everything up to now (live) or up to the
+    // month-end cutoff (provisional); closed months keep their snapshot.
+    const reserveBalanceEntries = fundsViewMode === "closed_snapshot"
+      ? []
+      : fundsViewMode === "live"
+        ? reserveEntryRows.filter((entry) => Date.parse(entry.occurred_at) <= now.getTime())
+        : reserveEntryRows;
+    for (const entry of reserveBalanceEntries) {
       const planId = Number(entry.reserve_plan_id);
       const entries = reserveEntriesByPlan.get(planId) ?? [];
       entries.push({ entry_type: entry.entry_type, amount: entry.amount });
       reserveEntriesByPlan.set(planId, entries);
     }
-    const reservePlans = (reservesResult.data ?? []).map((plan) => ({
+    const reservePlans = fundsViewMode === "closed_snapshot" ? [] : (reservesResult.data ?? []).map((plan) => ({
       ...plan,
       entries: reserveEntriesByPlan.get(Number(plan.id)) ?? [],
     }));
@@ -214,7 +226,17 @@ export async function GET(request: Request) {
     const [displayTransactions, inventoryProjectionIssues] = await Promise.all([
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
     ]);
-    const entries = buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources, month);
+    const entries = [
+      ...buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources, month),
+      // Informational only: never added to summary, cashReport or balances above.
+      ...buildReserveLedgerEntries(
+        reserveEntryRows,
+        reservesResult.data ?? [],
+        new Map((accountsResult.data ?? []).map((account) => [Number(account.id), String(account.display_name)])),
+        month,
+        getBusinessDate,
+      ),
+    ];
     return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross, cardFeePending }, cashReport, accounts, categories: categoriesResult.data ?? [], profitTransactions: profitRows, parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);

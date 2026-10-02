@@ -67,7 +67,7 @@ async function summary(sales, lines, { failAllocations = false, parties = [] } =
       if (name === "@/lib/supabase/server") return { supabaseServer: db };
       if (name === "@/lib/ledger/server") return { requireLedgerActor: async () => ({}), ledgerJson: body => body };
       if (name === "@/lib/ledger/inventory-display") return { withInventoryDisplay: async rows => rows, loadInventoryProjectionIssues: async () => [] };
-      if (name === "@/lib/ledger/entries") return { buildLedgerEntries: () => [] };
+      if (name === "@/lib/ledger/entries") return { buildLedgerEntries: () => [], buildReserveLedgerEntries: () => [] };
       if (name === "@/lib/ledger/reserve-balances") return { reservesByFundAccount: () => new Map() };
       if (name === "@/lib/ledger/payables") return require("../lib/ledger/payables.ts");
       if (name === "@/lib/ledger/summary") return require("../lib/ledger/summary.ts");

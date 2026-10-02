@@ -89,7 +89,10 @@ export type LedgerEntry = {
     | { kind: "investment"; cashFlow: "inflow" | "outflow" | "none" }
     | { kind: "cardSettlementDeposit" }
     | { kind: "cardSettlementDifference"; matchedGrossAmount: number | null; depositAmount: number | null; differenceAmount: number | null }
-    | { kind: "cardFeeMonthClose" };
+    | { kind: "cardFeeMonthClose" }
+    // Informational reserve history row (ledger_reserve_entries). Never a
+    // ledger_transaction: no movement, no P&L, no daily income/expense subtotal.
+    | { kind: "reserve"; reserveEntryId: number; reservePlanId: number; reserveName: string; entryType: ReserveEntryType; signedAmount: number };
   items: LedgerEntryItem[];
 };
 
@@ -167,11 +170,31 @@ export function isPayrollPaymentOutflow(entry: Pick<LedgerEntry, "payrollPayment
   return entry.payrollPayment === true && entry.fundFlow === "outflow";
 }
 
+export type LedgerEntryFilter = "all" | "income" | "expense" | "manual" | "pending";
+
+export function isReserveLedgerEntry(entry: Pick<LedgerEntry, "systemDisplay">) {
+  return entry.systemDisplay?.kind === "reserve";
+}
+
+// Reserve history rows are informational: visible under 전체 only.
+export function entryMatchesListFilter(
+  entry: Pick<LedgerEntry, "direction" | "origin" | "status" | "requiresCorrection" | "payrollPayment" | "fundFlow" | "systemDisplay">,
+  filter: LedgerEntryFilter,
+) {
+  if (filter === "all") return true;
+  if (isReserveLedgerEntry(entry)) return false;
+  if (filter === "income") return entry.direction === "income";
+  if (filter === "expense") return entryMatchesExpenseFilter(entry);
+  if (filter === "manual") return entry.origin === "manual";
+  return entryRequiresReview(entry);
+}
+
 export function entryMatchesExpenseFilter(entry: Pick<LedgerEntry, "direction" | "payrollPayment" | "fundFlow">) {
   return entry.direction === "expense" || isPayrollPaymentOutflow(entry);
 }
 
 export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign" | "systemDisplay" | "payrollPayment" | "fundFlow">) {
+  if (isReserveLedgerEntry(entry)) return { income: 0, expense: 0 };
   const signedAmount = entry.amount * entry.economicEffectSign;
   return {
     income: entry.direction === "income" ? signedAmount : 0,
@@ -715,4 +738,77 @@ export function buildLedgerEntries(
     Number(b.status === "pending") - Number(a.status === "pending") ||
     a.id.localeCompare(b.id)
   );
+}
+
+export type ReserveEntryType = "allocate" | "release" | "consume" | "adjustment";
+
+export type ReserveEntryRow = {
+  id: number | string;
+  reserve_plan_id: number | string;
+  entry_type: string;
+  amount: number | string;
+  occurred_at: string;
+  memo?: string | null;
+};
+
+export type ReservePlanRow = {
+  id: number | string;
+  name: string;
+  fund_account_id?: number | string | null;
+};
+
+const RESERVE_ENTRY_TYPES = new Set<string>(["allocate", "release", "consume", "adjustment"]);
+
+// Builds read-only reserve history rows for the month's date groups. Business
+// date follows occurred_at in Asia/Ho_Chi_Minh with the 03:00 cutoff, exactly
+// like ledger transactions. Rows outside `month` are dropped here, so callers
+// may pass the cumulative entry set used for reserve balances unchanged.
+export function buildReserveLedgerEntries(
+  reserveEntries: readonly ReserveEntryRow[],
+  plans: readonly ReservePlanRow[],
+  accountNameById: ReadonlyMap<number, string>,
+  month: string,
+  businessDateOf: (date: Date) => string,
+): LedgerEntry[] {
+  const planById = new Map(plans.map(plan => [value(plan.id), plan]));
+  const rows: LedgerEntry[] = [];
+  for (const row of reserveEntries) {
+    if (!RESERVE_ENTRY_TYPES.has(row.entry_type)) continue;
+    const sortTimestamp = Date.parse(row.occurred_at);
+    if (!Number.isFinite(sortTimestamp)) continue;
+    const businessDate = businessDateOf(new Date(sortTimestamp));
+    if (businessDate.slice(0, 7) !== month) continue;
+    const reservePlanId = value(row.reserve_plan_id);
+    const plan = planById.get(reservePlanId);
+    const reserveName = plan?.name?.trim() || "준비금";
+    const fundAccountId = plan?.fund_account_id == null ? null : value(plan.fund_account_id);
+    const entryType = row.entry_type as ReserveEntryType;
+    const amount = value(row.amount);
+    const signedAmount = entryType === "release" || entryType === "consume" ? -amount : amount;
+    rows.push({
+      id: `reserve-entry:${value(row.id)}`,
+      businessDate,
+      direction: "transfer",
+      participatesInProfit: false,
+      origin: "auto",
+      status: "confirmed",
+      isSystemAdjustment: false,
+      title: reserveName,
+      subtitle: "",
+      memo: row.memo ?? null,
+      // Neutral, unsigned display amount; signedAmount keeps the balance effect.
+      amount: Math.abs(amount),
+      fundFlow: "none",
+      economicEffectSign: 0,
+      displayTime: vietnamTimeFormatter.format(new Date(sortTimestamp)),
+      sortTimestamp,
+      accountName: fundAccountId == null ? null : accountNameById.get(fundAccountId) ?? null,
+      categoryName: null,
+      transactionId: null,
+      drilldown: "generic",
+      systemDisplay: { kind: "reserve", reserveEntryId: value(row.id), reservePlanId, reserveName, entryType, signedAmount },
+      items: [],
+    });
+  }
+  return rows;
 }

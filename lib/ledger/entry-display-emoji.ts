@@ -12,6 +12,7 @@ export function chooseLedgerEntryEmoji(
 }
 
 export function entryCategoryEmoji(entry: Pick<LedgerEntry, "categoryName" | "direction" | "employeeCost" | "systemDisplay">) {
+  if (entry.systemDisplay?.kind === "reserve") return "🏦";
   if (entry.systemDisplay?.kind === "investment") return "⚖️";
   if (entry.systemDisplay?.kind === "pos") return "🧾";
   if (entry.systemDisplay?.kind === "cardSettlementDeposit" ||

@@ -30,12 +30,13 @@ import {
 } from "@/components/bar/keeping/KeepingUi";
 import {
   entryDisplaySubtotal,
-  entryMatchesExpenseFilter,
+  entryMatchesListFilter,
   isPayrollPaymentOutflow,
-  entryRequiresReview,
   compareLedgerEntriesByDisplayTime,
   type LedgerEntry,
+  type LedgerEntryFilter,
   type LedgerEntryItem,
+  type ReserveEntryType,
 } from "@/lib/ledger/entries";
 import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
 import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji } from "@/lib/ledger/entry-display-emoji";
@@ -143,7 +144,7 @@ type LedgerData = {
   partners: Partner[];
   entries: LedgerEntry[];
 };
-type EntryFilter = "all" | "income" | "expense" | "manual" | "pending";
+type EntryFilter = LedgerEntryFilter;
 type EntryType = "expense" | "income" | "transfer" | "balance_adjustment";
 type CandidateDraft = {
   item: LedgerEntryItem;
@@ -428,10 +429,8 @@ function LedgerEntriesContent() {
     const keyword = search.trim().toLocaleLowerCase(),
       byDate = new Map<string, DateGroup>();
     for (const entry of regularEntries) {
-      if (filter === "income" && entry.direction !== "income") continue;
-      if (filter === "expense" && !entryMatchesExpenseFilter(entry)) continue;
-      if (filter === "manual" && entry.origin !== "manual") continue;
-      if (filter === "pending" && !entryRequiresReview(entry)) continue;
+      // Reserve history rows only appear under 전체.
+      if (!entryMatchesListFilter(entry, filter)) continue;
       if (
         keyword &&
         !`${entryDisplayTitle(entry, lang)} ${entryMeta(entry, lang)} ${entry.accountName ?? ""} ${entry.categoryName ?? ""} ${entry.memo ?? ""}`
@@ -1273,7 +1272,13 @@ function LedgerEntriesContent() {
               if (fresh) setNotice(vi ? `Đã chốt sổ tháng ${Number(month.slice(5, 7))}.` : `${Number(month.slice(5, 7))}월 장부 마감이 완료되었습니다.`);
             }} />
         ) : null}
-        {selected ? (
+        {selected?.systemDisplay?.kind === "reserve" ? (
+          <ReserveEntryDetailSheet
+            lang={lang}
+            entry={selected}
+            onClose={() => setSelected(null)}
+          />
+        ) : selected ? (
           <EntryDetailSheet
             lang={lang}
             entry={selected}
@@ -2346,6 +2351,7 @@ function AccountField({
   );
 }
 function entryDisplayEmoji(entry: LedgerEntry, partnersByParty: ReadonlyMap<number, Partner>) {
+  if (entry.systemDisplay?.kind === "reserve") return entryCategoryEmoji(entry);
   if (entry.systemDisplay?.kind === "investment") return entryCategoryEmoji(entry);
   if (entry.systemDisplay?.kind === "pos") return entryCategoryEmoji(entry);
   if (entry.systemDisplay?.kind === "cardSettlementDeposit" || entry.systemDisplay?.kind === "cardSettlementDifference" || entry.systemDisplay?.kind === "cardFeeMonthClose") return entryCategoryEmoji(entry);
@@ -2366,6 +2372,7 @@ function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
       : `영수증 ${entry.systemDisplay.receiptCount.toLocaleString("ko-KR")}건`;
   }
   if (entry.systemDisplay?.kind === "meal") return "";
+  if (entry.systemDisplay?.kind === "reserve") return reserveEntryTypeLabel(entry.systemDisplay.entryType, lang);
   if (entry.systemDisplay?.kind === "inventory") {
     const items = lang === "vi"
       ? `${entry.systemDisplay.itemCount.toLocaleString("vi-VN")} mặt hàng`
@@ -2416,7 +2423,15 @@ function entryDisplayTitle(entry: LedgerEntry, lang: "ko" | "vi") {
   if (display?.kind === "cardSettlementDeposit") return lang === "vi" ? "Tiền thẻ thực nhận" : "카드 실제 입금";
   if (display?.kind === "cardSettlementDifference") return lang === "vi" ? "Chênh lệch đối soát thẻ cũ" : "기존 카드 정산차액";
   if (display?.kind === "cardFeeMonthClose") return lang === "vi" ? "Phí thẻ" : "카드 수수료";
+  // The reserve's own name; never inferred from a linked recurring plan.
+  if (display?.kind === "reserve") return display.reserveName;
   return entry.title;
+}
+function reserveEntryTypeLabel(entryType: ReserveEntryType, lang: "ko" | "vi") {
+  const labels = lang === "vi"
+    ? { allocate: "Trích lập", release: "Giải phóng", consume: "Sử dụng", adjustment: "Điều chỉnh" }
+    : { allocate: "적립", release: "해제", consume: "사용", adjustment: "조정" };
+  return labels[entryType];
 }
 function reserveLabel(
   reserve: Account["reserves"][number],
@@ -2519,5 +2534,67 @@ function localizedAccountName(account: Account, lang: "ko" | "vi") {
         cho_personal_custody: "Cá nhân Cho",
       } as Record<string, string>
     )[account.code] ?? account.display_name
+  );
+}
+
+// Read-only: reserve history is informational and has no ledger transaction
+// to edit, cancel or correct.
+function ReserveEntryDetailSheet({ lang, entry, onClose }: { lang: "ko" | "vi"; entry: LedgerEntry; onClose: () => void }) {
+  const vi = lang === "vi";
+  if (entry.systemDisplay?.kind !== "reserve") return null;
+  const reserve = entry.systemDisplay;
+  return (
+    <BarSheet
+      kind="full"
+      compact
+      topAligned
+      comfortableTop
+      title={vi ? "Chi tiết quỹ dự phòng" : "준비금 상세"}
+      titleAside={formatDate(entry.businessDate, lang)}
+      closeLabel={vi ? "Đóng" : "닫기"}
+      onClose={onClose}
+      footer={
+        <div className={styles.detailFooter}>
+          <button type="button" onClick={onClose} style={{ ...secondaryButtonStyle, width: "100%" }}>
+            {vi ? "Đóng" : "닫기"}
+          </button>
+        </div>
+      }
+    >
+      <div className={styles.detailSummary}>
+        <span className={styles.detailLeft}>
+          <EntryDisplayBadge entry={entry} lang={lang} />
+          <span className={styles.detailEmoji} aria-hidden="true">{entryCategoryEmoji(entry)}</span>
+          <span className={styles.detailTitleText} title={reserve.reserveName}>
+            <span className={styles.detailTitleLine}>
+              <strong>{compactEntryListTitle(reserve.reserveName)}</strong>
+            </span>
+            <span> · {reserveEntryTypeLabel(reserve.entryType, lang)}</span>
+          </span>
+        </span>
+        <span className={styles.detailPayment}>
+          <span className={styles.accountBadge} title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}>
+            {accountBadgeLabel(entry.accountName, lang, entry)}
+          </span>
+          <strong className={styles.detailAmount}>{money(entry.amount)}</strong>
+        </span>
+      </div>
+      <p className={styles.policyNote}>
+        {vi
+          ? "Chỉ là thông tin quỹ dự phòng. Không phải thu/chi/chuyển khoản và không ảnh hưởng tổng thu chi theo ngày, lãi lỗ hay số dư tài khoản thực tế."
+          : "준비금 기록은 정보성 장부 행입니다. 수입·지출·이체가 아니며 일별 합계, 손익, 실제 계좌잔액에 영향을 주지 않습니다."}
+      </p>
+      <dl className={styles.cardLegacyFacts}>
+        <div><dt>{vi ? "Thời điểm" : "발생 시각"}</dt><dd>{formatDate(entry.businessDate, lang)} {entry.displayTime ?? ""}</dd></div>
+        <div><dt>{vi ? "Loại" : "구분"}</dt><dd>{reserveEntryTypeLabel(reserve.entryType, lang)}</dd></div>
+        <div><dt>{vi ? "Tài khoản" : "계좌"}</dt><dd>{entry.accountName ?? (vi ? "Chưa rõ" : "미지정")}</dd></div>
+      </dl>
+      {entry.memo?.trim() ? (
+        <details className={styles.detailMemo}>
+          <summary className={styles.detailMemoLabel}>{vi ? "Ghi chú" : "메모"}</summary>
+          <p className={styles.detailMemoText}>{entry.memo}</p>
+        </details>
+      ) : null}
+    </BarSheet>
   );
 }
