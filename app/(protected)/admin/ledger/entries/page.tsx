@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type CSSProperties,
@@ -177,7 +178,7 @@ type DateGroup = {
   filterAmount: number | null;
 };
 type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null };
-type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[]; historyPayables:PayableHistoryRow[]; verification?:Verification };
+type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[]; verification?:Verification };
 type PayableRow = { id:number; party_id:number; original_amount:number; paidAmount?:number; outstandingAmount:number; settlementStatus?:"paid"|"partial"|"unpaid"; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null;memo?:string|null}|null };
 type PayableHistoryRow = PayableRow & { paidAmount:number; settlementStatus:"paid"|"partial"|"unpaid" };
 type PayablePaymentHistory = { id:number; business_date:string; amount:number|string; memo:string|null; movements?:Array<{fund_account:{display_name:string}|null}>; allocations?:Array<{payable_id:number;allocated_amount:number|string}> };
@@ -187,6 +188,7 @@ type InvestmentEntryType = "opening" | "contribution" | "adjustment";
 type InvestmentEvent = { investmentId:number; participantId:number; participantName:string; entryType:InvestmentEntryType; amount:number; businessDate:string; occurredAt:string; fundAccountId:number|null; fundAccountName:string|null; reason:string|null };
 type InvestmentSummary = { openingCumulative:number; periodOpening:number; periodContribution:number; periodAdjustment:number; periodNetChange:number; closingCumulative:number };
 type InvestmentParticipant = InvestmentSummary & { participantId:number; participantName:string };
+type InvestmentHeaderSummary = { month: string; configured: boolean; periodNetChange: number };
 type InvestmentsData = { month:string; configured:boolean; summary:InvestmentSummary; participants:InvestmentParticipant[]; events:InvestmentEvent[] };
 type MonthCloseState = { month: string; state: "open" | "closed" | "reopened"; revision: number | null };
 const accountEmoji = (code:string,type:string) => code === "card_clearing" || type === "card_clearing" ? "💳" : code === "store_cash" ? "💵" : type === "personal_custody" || code.endsWith("_personal_custody") ? "👤" : "🏦";
@@ -298,6 +300,12 @@ function LedgerEntriesContent() {
   const [investmentExpanded,setInvestmentExpanded]=useState(false),
     [investments,setInvestments]=useState<InvestmentsData|null>(null),
     [investmentsError,setInvestmentsError]=useState<{month:string;message:string}|null>(null);
+  // Bumped by every applied load() so a later investments read can't reuse pre-mutation data.
+  const [investmentsVersion,bumpInvestmentsVersion]=useReducer((version:number)=>version+1,0);
+  // Collapsed-header summary (mode=summary), loaded with the page. A reducer keeps the
+  // existing useState order intact.
+  const [investmentSummary,setInvestmentSummary]=useReducer((_:InvestmentHeaderSummary|null,next:InvestmentHeaderSummary|null)=>next,null);
+  const investmentsLoadedKeyRef = useRef("");
   const [reopenSheetOpen, setReopenSheetOpen] = useState(false),
     [reopenReason, setReopenReason] = useState(""),
     [reopening, setReopening] = useState(false),
@@ -315,29 +323,31 @@ function LedgerEntriesContent() {
       if (!silent) setLoading(true);
       setError("");
       try {
-        // Investments never fails the whole load(): its fetch/parse is wrapped so a
-        // rejection (network error, abort) resolves to a sentinel instead of
-        // propagating into the Promise.all below and taking data/payables/closed
-        // down with it — its success/failure is applied independently, further down.
-        const investmentPromise = (async () => {
+        // Initial load: ledger, month-close status (closure row only — the preflight runs
+        // when MonthCloseSheet opens), payables and the investment header summary.
+        // Full investments load on demand, below. The summary never fails the load.
+        const investmentSummaryPromise = (async () => {
           try {
-            const response = await fetch(`/api/admin/ledger/investments?month=${requestedMonth}`, { cache: "no-store", signal });
-            return { ok: response.ok, body: await response.json(), aborted: false };
-          } catch (cause) {
-            return { ok: false, body: null, aborted: (cause as Error).name === "AbortError" };
+            const response = await fetch(`/api/admin/ledger/investments?month=${requestedMonth}&mode=summary`, { cache: "no-store", signal });
+            const body = await response.json();
+            return response.ok && body?.month === requestedMonth && typeof body.configured === "boolean"
+              ? { month: requestedMonth, configured: body.configured as boolean, periodNetChange: Number(body.periodNetChange) || 0 }
+              : null;
+          } catch {
+            return null;
           }
         })();
-        const [ledgerResponse, closeResponse, payableResponse, investmentResult] = await Promise.all([
+        const [ledgerResponse, closeResponse, payableResponse, summaryResult] = await Promise.all([
           fetch(`/api/admin/ledger?month=${requestedMonth}`, {
             cache: "no-store",
             signal,
           }),
-          fetch(`/api/admin/ledger/month-close?month=${requestedMonth}`, {
+          fetch(`/api/admin/ledger/month-close?month=${requestedMonth}&mode=status`, {
             cache: "no-store",
             signal,
           }),
           fetch(`/api/admin/ledger/payables?month=${requestedMonth}`, { cache: "no-store", signal }),
-          investmentPromise,
+          investmentSummaryPromise,
         ]);
         const [ledgerBody, closeBody, payableBody] = await Promise.all([
           ledgerResponse.json(),
@@ -364,25 +374,9 @@ function LedgerEntriesContent() {
           state: closeBody.state === "closed" || closeBody.state === "reopened" ? closeBody.state : "open",
           revision: typeof closeBody.closure?.revision === "number" ? closeBody.closure.revision : null,
         });
-        // Investments: same requestedMonth this call already validated itself against
-        // (we're past the sequence/abort guard above, so this call is the current one).
-        // A body.month mismatch is treated as a stale/no-op sub-response, not an error.
-        const investmentBody = investmentResult.body as InvestmentsData & { code?: string };
-        const investmentMonthMismatch = investmentResult.ok && investmentBody?.month && investmentBody.month !== requestedMonth;
-        if (!investmentMonthMismatch) {
-          if (investmentResult.ok && investmentBody && typeof investmentBody.configured === "boolean") {
-            setInvestments(investmentBody);
-            setInvestmentsError(null);
-          } else if (!investmentResult.aborted) {
-            setInvestments(null);
-            setInvestmentsError({
-              month: requestedMonth,
-              message: vi
-                ? "Không thể tải tình hình vốn góp. Vui lòng thử lại sau."
-                : "투자금 현황을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
-            });
-          }
-        }
+        setInvestmentSummary(summaryResult);
+        // Any applied reload (incl. after a save) makes cached investments stale.
+        bumpInvestmentsVersion();
         return ledgerBody as LedgerData;
       } catch (cause) {
         if ((cause as Error).name !== "AbortError" && requestSequence === loadRequestSequenceRef.current)
@@ -426,6 +420,37 @@ function LedgerEntriesContent() {
     })();
     return () => controller.abort();
   }, [cardSettlementExpanded,month,vi]);
+  // Investments load like card settlement: only when the section is opened (or the
+  // manual-entry sheet needs participants), once per month and ledger reload.
+  const investmentsNeeded = investmentExpanded || manualOpen;
+  useEffect(() => {
+    if (!investmentsNeeded) return;
+    const requestedMonth = month;
+    const key = `${requestedMonth}:${investmentsVersion}`;
+    if (investmentsLoadedKeyRef.current === key) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(`/api/admin/ledger/investments?month=${requestedMonth}`, { cache: "no-store", signal: controller.signal });
+        const body = await response.json() as InvestmentsData & { code?: string };
+        if (controller.signal.aborted || (body?.month && body.month !== requestedMonth)) return;
+        if (!response.ok || typeof body?.configured !== "boolean") throw new Error(body?.code ?? "INVESTMENTS_LOAD_FAILED");
+        investmentsLoadedKeyRef.current = key;
+        setInvestments(body);
+        setInvestmentsError(null);
+      } catch {
+        if (controller.signal.aborted) return;
+        setInvestments(null);
+        setInvestmentsError({
+          month: requestedMonth,
+          message: vi
+            ? "Không thể tải tình hình vốn góp. Vui lòng thử lại sau."
+            : "투자금 현황을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
+        });
+      }
+    })();
+    return () => controller.abort();
+  }, [investmentsNeeded, month, investmentsVersion, vi]);
   const regularEntries = useMemo(() => (data?.entries ?? []).filter((entry) => !entry.isSystemAdjustment), [data?.entries]);
   // Adds display-only [조정] rows for payable-payment differences (조정 filter only).
   const listEntries = useMemo(() => withPaymentDifferenceAdjustments(data?.entries ?? []), [data?.entries]);
@@ -522,6 +547,10 @@ function LedgerEntriesContent() {
     payables?.month === month ? payables.verification?.items ?? [] : [],
   ), [payables, month]);
   const activeInvestments = investments && investments.month === month ? investments : null;
+  // Header: full data when this month's section was opened, otherwise the light summary.
+  const investmentHeader: InvestmentHeaderSummary | null = activeInvestments
+    ? { month, configured: activeInvestments.configured, periodNetChange: activeInvestments.summary.periodNetChange }
+    : investmentSummary?.month === month ? investmentSummary : null;
   const largestParticipantInvestment = Math.max(0, ...(activeInvestments?.participants ?? []).map(participant=>Math.max(participant.openingCumulative,participant.closingCumulative)));
   const todayKey = getBusinessDate();
   const pastGroups = useMemo(
@@ -1015,10 +1044,10 @@ function LedgerEntriesContent() {
                 <div className={styles.payableHeading}>
                   <h2 id="investment-title">💼 {vi?"Tình hình vốn góp":"투자금 현황"} ({vi?`T${Number(month.slice(5,7))}`:`${Number(month.slice(5,7))}월`})</h2>
                   <strong
-                    className={activeInvestments?.configured ? (activeInvestments.summary.periodNetChange > 0 ? styles.amountIncome : activeInvestments.summary.periodNetChange < 0 ? styles.amountExpense : undefined) : undefined}
+                    className={investmentHeader?.configured ? (investmentHeader.periodNetChange > 0 ? styles.amountIncome : investmentHeader.periodNetChange < 0 ? styles.amountExpense : undefined) : undefined}
                     aria-label={vi?"Biến động vốn góp trong tháng":"당월 투자금 변동"}
                   >
-                    {activeInvestments ? (activeInvestments.configured ? `${activeInvestments.summary.periodNetChange > 0 ? "+" : ""}${money(activeInvestments.summary.periodNetChange)}` : (vi?"Chưa thiết lập":"미설정")) : "-"}
+                    {investmentHeader ? (investmentHeader.configured ? `${investmentHeader.periodNetChange > 0 ? "+" : ""}${money(investmentHeader.periodNetChange)}` : (vi?"Chưa thiết lập":"미설정")) : "-"}
                     {" "}<i aria-hidden>{investmentExpanded?"⌃":"⌄"}</i>
                   </strong>
                 </div>
@@ -1326,7 +1355,7 @@ function LedgerEntriesContent() {
         {payableParty && data && payables?.month === month && payableParty.viewMonth === month ? (
           month === currentMonth()
             ? <PayablePartySheet key={`${month}:${payableParty.partyId}`} lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { setPayableParty(null); await load(); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} />
-            : <HistoricalPayablePartySheet lang={lang} month={month} party={payableParty} rows={payables.historyPayables.filter(row => Number(row.party_id) === payableParty.partyId)} onClose={() => setPayableParty(null)} />
+            : <HistoricalPayablePartySheet key={`${month}:${payableParty.partyId}`} lang={lang} month={month} party={payableParty} onClose={() => setPayableParty(null)} />
         ) : null}
       </main>
     </Container>
@@ -1806,14 +1835,31 @@ function PayableMonthGroups({rows,lang}:{rows:readonly PayableRow[];lang:"ko"|"v
   })}</div>;
 }
 
-function HistoricalPayablePartySheet({lang,month,party,rows,onClose}:{lang:"ko"|"vi";month:string;party:PayableParty;rows:PayableHistoryRow[];onClose:()=>void}) {
+// Past-month detail is read on open, for this party and month only, with the same
+// month-end as-of contract the month view used (paid/partial/unpaid as of month end).
+function HistoricalPayablePartySheet({lang,month,party,onClose}:{lang:"ko"|"vi";month:string;party:PayableParty;onClose:()=>void}) {
   const vi=lang==="vi";
+  const [rows,setRows]=useState<PayableHistoryRow[]|null>(null),[loadError,setLoadError]=useState(false);
+  useEffect(()=>{
+    const controller=new AbortController();
+    void (async()=>{
+      try{
+        const response=await fetch(`/api/admin/ledger/payables?month=${month}&historyPartyId=${party.partyId}`,{cache:"no-store",signal:controller.signal});
+        const body=await response.json();
+        if(controller.signal.aborted)return;
+        if(!response.ok||body.month!==month||Number(body.partyId)!==party.partyId)throw new Error(body.code??"PAYABLE_HISTORY_LOAD_FAILED");
+        setRows(body.historyPayables as PayableHistoryRow[]);
+      }catch{if(!controller.signal.aborted)setLoadError(true)}
+    })();
+    return()=>controller.abort();
+  },[month,party.partyId]);
   return <BarSheet kind="full" compact topAligned comfortableTop title={`${month} · ${vi?"Công nợ cuối tháng":"월말 미납 상세"}`} closeLabel={vi?"Đóng":"닫기"} saving={false} onClose={onClose} footer={<button type="button" onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button>}>
     <div className={styles.payableDetailHeader}><div className={styles.payableDetailPartner}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><strong>{party.partyName}</strong></div><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(party.closingOutstanding)}</b></span></div>
     <p className={styles.payableReadOnlyHint} role="status">{vi?"Số dư cuối tháng đã chọn. Không thể thanh toán giao dịch cũ.":"선택월 말 기준 잔액입니다. 과거 내역은 결제할 수 없습니다."}</p>
     <PayableMonthTotals summary={party} vi={vi}/>
-    <PayableMonthGroups rows={rows} lang={lang}/>
-    {!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}
+    {loadError?<p className={styles.error} role="alert">{vi?"Không thể tải chi tiết công nợ.":"미납 상세를 불러오지 못했습니다."}</p>
+      :rows===null?<p className={styles.payableEmpty}>{vi?"Đang tải…":"불러오는 중…"}</p>
+      :<><PayableMonthGroups rows={rows} lang={lang}/>{!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}</>}
   </BarSheet>;
 }
 

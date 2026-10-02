@@ -8,8 +8,24 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const auth = await requireLedgerActor();
   if (auth.response || !auth.actor) return auth.response;
-  const month = new URL(request.url).searchParams.get("month");
+  const url = new URL(request.url);
+  const month = url.searchParams.get("month");
   if (!validCloseMonth(month)) return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400);
+
+  // Lightweight status for the entries page (write lock + close banner): one closure
+  // row read, no preflight and no snapshot. MonthCloseSheet keeps the full GET below.
+  if (url.searchParams.get("mode") === "status") {
+    try {
+      const { data: closure, error } = await supabaseServer.from("ledger_month_closures")
+        .select("id,status,revision").eq("month", `${month}-01`).maybeSingle();
+      if (error) throw error;
+      const state = closure?.status === "closed" || closure?.status === "reopened" ? closure.status : "open";
+      return ledgerJson({ ok: true, month, state, closure: closure ? { id: closure.id, revision: closure.revision } : null });
+    } catch (error) {
+      console.error("[LEDGER_MONTH_CLOSE_STATUS_FAILED]", error);
+      return ledgerJson({ ok: false, code: "MONTH_CLOSE_LOAD_FAILED" }, 500);
+    }
+  }
 
   try {
     const [{ data: closure, error: closureError }, { data: preflight, error: preflightError },

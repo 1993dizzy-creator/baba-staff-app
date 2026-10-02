@@ -1,6 +1,6 @@
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { OWNER_INVESTMENT_MONTH } from "@/lib/ledger/investments";
-import { loadOwnerInvestmentMonth } from "@/lib/ledger/investments-server";
+import { loadOwnerInvestmentMonth, loadOwnerInvestmentMonthSummary } from "@/lib/ledger/investments-server";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   ownerInvestmentCashEventErrorStatus,
@@ -12,9 +12,12 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const auth = await requireLedgerActor();
   if (auth.response) return auth.response;
-  const month = new URL(request.url).searchParams.get("month") ?? "";
+  const params = new URL(request.url).searchParams;
+  const month = params.get("month") ?? "";
   if (!OWNER_INVESTMENT_MONTH.test(month)) return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400);
   try {
+    // mode=summary: collapsed header only (configured + this month's net change).
+    if (params.get("mode") === "summary") return ledgerJson({ ok: true, mode: "summary", ...await loadOwnerInvestmentMonthSummary(month) });
     const data = await loadOwnerInvestmentMonth(month);
     return ledgerJson({ ok: true, ...data });
   } catch (error) {

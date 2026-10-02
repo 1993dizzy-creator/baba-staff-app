@@ -8,7 +8,6 @@ const closeRoute=fs.readFileSync("app/api/admin/ledger/month-close/route.ts","ut
 const correctionRoute=fs.readFileSync("app/api/admin/ledger/corrections/route.ts","utf8");
 const snapshot=fs.readFileSync("lib/ledger/month-close.ts","utf8");
 const ledgerRoute=fs.readFileSync("app/api/admin/ledger/route.ts","utf8");
-const bep=fs.readFileSync("lib/ledger/bep.ts","utf8");
 
 test("phase 8 adds immutable month closure with RLS and service-role-only access",()=>{
  assert.match(migration,/create table public\.ledger_month_closures/);
@@ -77,10 +76,6 @@ test("correction uses positive amount plus economic sign and never edits origina
 test("P&L and BEP apply correction sign without changing normal +1 rows",()=>{
  assert.match(ledgerRoute,/economic_effect_sign/);
  assert.match(ledgerRoute,/Number\(row\.amount\) \* Number\(row\.economic_effect_sign \?\? 1\)/);
- assert.match(bep,/economic_effect_sign/);
- assert.match(bep,/referenceMonthSource/);
- assert.match(bep,/closed_months/);
- assert.match(bep,/calendar_fallback/);
 });
 
 test("month-close and correction APIs reuse owner/master server authorization",()=>{

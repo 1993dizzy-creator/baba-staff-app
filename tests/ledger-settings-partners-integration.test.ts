@@ -103,7 +103,11 @@ test("E: each tab loads only its own data and price history stays lazy", () => {
 test("F: 준비금 keeps the reserve features; recurring-expense UI is gone but its backend and history stay", () => {
   for (const marker of ["ReservePlanCard", "/api/admin/ledger/reserves/${id}/entries", "/api/admin/ledger/reserves/${id}/recurring", "/api/admin/ledger/reserves/schedule", "정기 적립 저장", "적립 확정", "+ 준비금 추가"]) assert.ok(settings.includes(marker), marker);
   assert.equal(existsSync("app/(protected)/admin/ledger/RecurringReserveBepPanel.tsx"), false);
-  for (const path of ["app/api/admin/ledger/recurring-expenses/route.ts", "app/api/admin/ledger/recurring-expenses/sync/route.ts", "app/api/admin/ledger/recurring-expenses/payments/route.ts", "supabase/migrations/202608210007_add_recurring_reserves_bep.sql", "supabase/migrations/20261002062405_fix_preflight_inactive_recurring_plans.sql"]) {
+  // Unused recurring HTTP routes are gone; the migrations (tables, functions, preflight) stay.
+  for (const path of ["app/api/admin/ledger/recurring-expenses/route.ts", "app/api/admin/ledger/recurring-expenses/sync/route.ts", "app/api/admin/ledger/recurring-expenses/payments/route.ts"]) {
+    assert.equal(existsSync(path), false, path);
+  }
+  for (const path of ["supabase/migrations/202608210007_add_recurring_reserves_bep.sql", "supabase/migrations/20261002062405_fix_preflight_inactive_recurring_plans.sql"]) {
     assert.equal(existsSync(path), true, path);
   }
   assert.match(read("supabase/migrations/20261002062405_fix_preflight_inactive_recurring_plans.sql"), /ledger_recurring_expense_plans p where p\.is_active=true/);

@@ -158,7 +158,8 @@ test('I/J: KPI and party totals keep their existing sources', () => {
   assert.match(summary, /money\(payables\?\.totalOutstanding \?\? 0\)/);
   assert.match(historical, /<PayableMonthTotals summary=\{party\} vi=\{vi\}\/>/);
   assert.match(historical, /money\(party\.closingOutstanding\)/);
-  assert.match(source, /rows=\{payables\.historyPayables\.filter\(row => Number\(row\.party_id\) === payableParty\.partyId\)\}/);
+  // Historical rows are read per party/month when the sheet opens (same as-of contract).
+  assert.match(historical, /fetch\(`\/api\/admin\/ledger\/payables\?month=\$\{month\}&historyPartyId=\$\{party\.partyId\}`/);
   // The historical sheet still has no payment path.
-  assert.doesNotMatch(historical, /fetch|payables\/pay|onPaid|checkbox/);
+  assert.doesNotMatch(historical, /payables\/pay|payables\/\$\{|onPaid|checkbox|method:/);
 });

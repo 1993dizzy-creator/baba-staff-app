@@ -95,8 +95,9 @@ function LedgerSettingsContent() {
   // 준비금 = reserves, 거래처 = PartnerSettingsPanel's single /api/admin/partners read.
   const loadBasic = useCallback(async () => {
     const responses = await Promise.all([
-      fetch(`/api/admin/ledger?month=${month}`, { cache: "no-store" }),
-      fetch(`/api/admin/ledger/owners?throughMonth=${month}`, { cache: "no-store" }),
+      // Lightweight reads: fund-account balances only, and owner settings only.
+      fetch(`/api/admin/ledger?month=${month}&scope=accounts`, { cache: "no-store" }),
+      fetch(`/api/admin/ledger/owners?throughMonth=${month}&mode=settings`, { cache: "no-store" }),
     ]);
     const bodies = await Promise.all(responses.map(response => response.json()));
     const failed = responses.findIndex(response => !response.ok);

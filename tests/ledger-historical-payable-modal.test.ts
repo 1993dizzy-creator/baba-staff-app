@@ -20,7 +20,10 @@ test("past and current payable sheets share dated expandable items",()=>{
 });
 
 test("historical sheet keeps its month snapshot and exposes no payment controls",()=>{
-  assert.match(page,/rows=\{payables\.historyPayables\.filter\(row => Number\(row\.party_id\) === payableParty\.partyId\)\}/);
+  // The month view no longer ships every party's history; the sheet reads its own party/month on open.
+  assert.match(page,/<HistoricalPayablePartySheet key=\{`\$\{month\}:\$\{payableParty\.partyId\}`\} lang=\{lang\} month=\{month\} party=\{payableParty\} onClose=/);
+  assert.match(historical,/fetch\(`\/api\/admin\/ledger\/payables\?month=\$\{month\}&historyPartyId=\$\{party\.partyId\}`/);
+  assert.doesNotMatch(page,/historyPayables\.filter/);
   assert.doesNotMatch(historical,/\/api\/admin\/ledger\/payables\/\$\{|type="checkbox"|AccountField|onPaid|paymentForm|ledger\/payables\/pay/);
   assert.match(historical,/onClose=\{onClose\}/);
   assert.match(current,/\/api\/admin\/ledger\/payables\/\$\{party\.partyId\}/);

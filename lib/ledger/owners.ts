@@ -6,6 +6,20 @@ import { getBusinessMonthEndBoundary } from "@/lib/common/business-time";
 export const OWNER_MONTH=/^\d{4}-(0[1-9]|1[0-2])$/;
 export type OwnerInvestmentView="current"|"month_end";
 
+// 장부설정 > 사장 정산 needs only these four reads. Same queries/filters as
+// loadOwnerDashboard below; no capacity/recovery RPCs or settlement history.
+export async function loadOwnerSettings(throughMonth:string){
+ const monthDate=`${throughMonth}-01`;
+ const[participantResult,policyResult,userResult,settingsResult]=await Promise.all([
+  supabaseServer.from("ledger_owner_participants").select("id,user_id,is_eligible,effective_from,effective_to,sort_order").lte("effective_from",monthDate).or(`effective_to.is.null,effective_to.gte.${monthDate}`).eq("is_eligible",true).order("sort_order"),
+  supabaseServer.from("ledger_owner_settlement_policies").select("id,effective_month,revision,note,lines:ledger_owner_settlement_policy_lines(participant_id,settlement_rate)").lte("effective_month",monthDate).order("effective_month",{ascending:false}).order("revision",{ascending:false}).limit(1).maybeSingle(),
+  supabaseServer.from("users").select("id,name,full_name,username,role,is_active").in("role",["owner","master"]).eq("is_active",true).neq("username","pos").order("id"),
+  supabaseServer.from("ledger_owner_profit_settings").select("profit_tracking_start_month,opening_undistributed_profit").maybeSingle(),
+ ]);
+ for(const result of[participantResult,policyResult,userResult,settingsResult])if(result.error)throw result.error;
+ return{participants:participantResult.data??[],users:userResult.data??[],policy:policyResult.data,settings:settingsResult.data};
+}
+
 export async function loadOwnerDashboard(throughMonth:string,{investmentView="month_end"}:{investmentView?:OwnerInvestmentView}={}){
  const monthDate=`${throughMonth}-01`;
  // A live dashboard uses server time; a settlement preview uses the selected

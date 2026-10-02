@@ -166,7 +166,10 @@ test("month-close snapshots preserve reserve fund-account linkage and the ledger
   assert.match(route, /summary_snapshot/);
   assert.match(route, /mode: fundsViewMode/);
   assert.match(route, /closeSummary: closureResult\.data\?\.summary_snapshot/);
-  assert.doesNotMatch(route.slice(route.indexOf("const accounts = buildFundAccountView"), route.indexOf("const accountById")), /currentRecalculation/);
+  const accountsBuild = route.slice(route.indexOf("const accounts = buildLedgerFundAccounts"), route.indexOf("const accountById"));
+  assert.ok(accountsBuild.length > 0);
+  assert.doesNotMatch(accountsBuild, /currentRecalculation/);
+  assert.doesNotMatch(route.slice(route.indexOf("function buildLedgerFundAccounts"), route.indexOf("export async function GET")), /currentRecalculation/);
 });
 
 test("UI labels the selected month and only badges non-live views without weakening stale-response protection", () => {

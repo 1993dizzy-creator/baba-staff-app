@@ -31,14 +31,15 @@ function dashboardFixture(){
   const allocations=[{id:1,settlement_id:1,participant_id:10,assigned_amount:30,recovery_amount:30,recovery_paid_amount:30,pure_profit_amount:0,pure_profit_paid_amount:0,paid_amount:30},{id:2,settlement_id:2,participant_id:20,assigned_amount:100,recovery_amount:100,recovery_paid_amount:100,pure_profit_amount:0,pure_profit_paid_amount:0,paid_amount:100}];
   let participantReads=0;
   const tables={ledger_owner_investments:investments,ledger_owner_settlements:settlements,ledger_owner_settlement_allocations:allocations,ledger_owner_settlement_policies:[{id:1,effective_month:'2026-08-01',revision:1,lines:[{participant_id:20,settlement_rate:'1'}]}],ledger_fund_accounts:[],users:[{id:7,name:'Cho',username:'cho',role:'owner',is_active:true},{id:8,name:'HAN',username:'han',role:'master',is_active:true},{id:9,name:'Vuong',username:'vuong',role:'owner',is_active:true},{id:10,name:'POS',username:'pos',role:'master',is_active:true},{id:11,name:'MJK',username:'mjk',role:'owner',is_active:false}],ledger_month_closures:[{month:'2026-08-01',status:'closed'}],ledger_owner_profit_settings:[]};
-  const db={rpc:async name=>({data:name==='ledger_owner_financial_capacity_v1'?{status:'profit_tracking_not_configured'}:{status:'ok',recommendedMaxRecovery:100,totalInvested:165},error:null}),from(table){
+  const rpcCalls=[];
+  const db={rpc:async name=>(rpcCalls.push(name),{data:name==='ledger_owner_financial_capacity_v1'?{status:'profit_tracking_not_configured'}:{status:'ok',recommendedMaxRecovery:100,totalInvested:165},error:null}),from(table){
     const filters=[];
     const query={select(){return query},eq(key,value){filters.push(row=>row[key]===value);return query},neq(key,value){filters.push(row=>row[key]!==value);return query},lte(key,value){filters.push(row=>row[key]<=value);return query},lt(key,value){calls.push({table,key,value});filters.push(row=>key==='occurred_at'?new Date(row[key])<new Date(value):row[key]<value);return query},or(){return query},in(key,values){filters.push(row=>values.includes(row[key]));return query},order(){return query},limit(){return query},maybeSingle(){return Promise.resolve({data:rows()[0]??null,error:null})},then(resolve,reject){return Promise.resolve({data:rows(),error:null}).then(resolve,reject)}};
     function rows(){if(table==='ledger_owner_participants')return ++participantReads===1?[participant]:[{id:10,user_id:7,effective_from:'2025-08-01',sort_order:1},{id:20,user_id:7,effective_from:'2026-08-01',sort_order:1},{id:30,user_id:11,effective_from:'2025-08-01',sort_order:2}];return(tables[table]??[]).filter(row=>filters.every(filter=>filter(row)))}
     return query;
   }};
   const ownerModule=load('lib/ledger/owners.ts',{'server-only':{},'@/lib/supabase/server':{supabaseServer:db},'@/lib/ledger/owner-allocation-core':require('../lib/ledger/owner-allocation-core.ts'),'@/lib/common/business-time':require('../lib/common/business-time.ts')});
-  return {load:ownerModule.loadOwnerDashboard,calls};
+  return {load:ownerModule.loadOwnerDashboard,loadSettings:ownerModule.loadOwnerSettings,calls,rpcCalls};
 }
 
 test('historical investments use the shared 03:00 business-month cutoff',async()=>{
@@ -84,7 +85,29 @@ test('owners GET chooses explicit view while the settings request keeps month-en
   for(const query of ['throughMonth=2026-09&investmentView=current','throughMonth=2026-08&investmentView=month_end','throughMonth=2026-09'])assert.equal((await api.GET(new Request(`http://local/api/admin/ledger/owners?${query}`))).status,200);
   assert.deepEqual(calls,[{month:'2026-09',options:{investmentView:'current'}},{month:'2026-08',options:{investmentView:'month_end'}},{month:'2026-09',options:{investmentView:'month_end'}}]);
   assert.equal((await api.GET(new Request('http://local/api/admin/ledger/owners?throughMonth=2026-09&investmentView=other'))).status,400);
-  assert.match(settings,/fetch\(`\/api\/admin\/ledger\/owners\?throughMonth=\$\{month\}`/);
+  // 장부설정 uses the lightweight settings mode; /admin/ledger/owners keeps the full dashboard GET.
+  assert.match(settings,/fetch\(`\/api\/admin\/ledger\/owners\?throughMonth=\$\{month\}&mode=settings`/);
+  assert.match(readFileSync('app/(protected)/admin/ledger/owners/page.tsx','utf8'),/owners\?throughMonth=\$\{month\}&investmentView=\$\{investmentView\}/);
+});
+test('owners GET mode=settings dispatches only the settings loader',async()=>{
+  const calls=[];
+  const api=load('app/api/admin/ledger/owners/route.ts',{'@/lib/ledger/server':{requireLedgerActor:async()=>({actor:{id:1}}),ledgerJson:(body,status=200)=>Response.json(body,{status})},'@/lib/ledger/owners':{OWNER_MONTH:/^\d{4}-(0[1-9]|1[0-2])$/,loadOwnerDashboard:async()=>{calls.push('dashboard');return {}},loadOwnerSettings:async month=>{calls.push(`settings:${month}`);return {users:[],participants:[],policy:null,settings:null}}},'@/lib/supabase/server':{supabaseServer:{}}});
+  const body=await(await api.GET(new Request('http://local/api/admin/ledger/owners?throughMonth=2026-10&mode=settings'))).json();
+  assert.deepEqual(calls,['settings:2026-10']);
+  assert.deepEqual(Object.keys(body).sort(),['mode','ok','participants','policy','settings','users']);
+  assert.equal((await api.GET(new Request('http://local/api/admin/ledger/owners?throughMonth=2026-13&mode=settings'))).status,400);
+});
+test('settings loader returns the same users/participants/policy/settings without capacity or recovery RPCs',async()=>{
+  const full=await dashboardFixture().load('2026-09',{investmentView:'month_end'});
+  const fixture=dashboardFixture();
+  const light=await fixture.loadSettings('2026-09');
+  assert.deepEqual(fixture.rpcCalls,[]);
+  assert.deepEqual(light.users,full.users);
+  assert.deepEqual(light.participants,full.participants);
+  assert.deepEqual(light.policy,full.policy);
+  assert.deepEqual(light.settings,full.settings);
+  assert.deepEqual(Object.keys(light).sort(),['participants','policy','settings','users']);
+  assert.doesNotMatch(source.slice(source.indexOf('export async function loadOwnerSettings'),source.indexOf('export async function loadOwnerDashboard')),/rpc\(|ledger_owner_settlements|ledger_owner_investments/);
 });
 test('confirm_recovery API dispatches the new RPC without a through-month argument',async()=>{
   const calls=[];

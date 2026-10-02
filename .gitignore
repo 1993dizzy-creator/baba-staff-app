@@ -43,9 +43,13 @@ next-env.d.ts
 /supabase/.temp/
 .tmp/
 
+# local tool caches (npm, Supabase CLI, embedded PostgreSQL)
 /.cache/
 
-# QA browser profiles
-/.qa-income-card-chrome*/
-.tmp-npm-cache/
-1a175ff8302a38a10cc4efec3eda76f110b73086
+# QA browser profiles, crash dumps and throwaway QA apps
+/.qa-*/
+Crashpad/
+*.dmp
+
+# temporary logs, reviews and scratch files from local runs
+/.tmp-*

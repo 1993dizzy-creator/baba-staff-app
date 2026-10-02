@@ -22,6 +22,29 @@ type OwnerInvestmentDbRow = OwnerInvestmentRow & {
 // amount) — the only thing read from source_snapshot is the fund account id the
 // RPC recorded, purely for display. Historical opening/adjustment rows remain
 // account-less; only contributions and explicitly tagged atomic recoveries move cash.
+// Header-only summary for 장부작성's collapsed 투자금 현황. Same Source of Truth
+// (ledger_owner_investments), same 03:00 month bounds and same "configured" rule
+// as loadOwnerInvestmentMonth, but it reads only the selected month's rows: no
+// prior history, users, account names, events or per-participant cumulatives.
+export async function loadOwnerInvestmentMonthSummary(month: string): Promise<{ month: string; configured: boolean; periodNetChange: number }> {
+  if (!OWNER_INVESTMENT_MONTH.test(month)) throw new Error("INVALID_MONTH");
+  const { monthStartAt, nextMonthStartAt } = ownerInvestmentMonthBounds(month);
+  const participants = await supabaseServer
+    .from("ledger_owner_participants")
+    .select("id,is_eligible,effective_from,effective_to");
+  if (participants.error) throw participants.error;
+  const configured = (participants.data ?? []).some((row) => isParticipantEffectiveForMonth(row, month));
+  if (!configured) return { month, configured: false, periodNetChange: 0 };
+  const periodResult = await supabaseServer
+    .from("ledger_owner_investments")
+    .select("id,participant_id,entry_type,signed_amount,occurred_at")
+    .gte("occurred_at", monthStartAt)
+    .lt("occurred_at", nextMonthStartAt);
+  if (periodResult.error) throw periodResult.error;
+  const { summary } = summarizeOwnerInvestments((periodResult.data ?? []) as OwnerInvestmentRow[], month);
+  return { month, configured: true, periodNetChange: summary.periodNetChange };
+}
+
 export async function loadOwnerInvestmentMonth(month: string): Promise<OwnerInvestmentMonthData> {
   if (!OWNER_INVESTMENT_MONTH.test(month)) throw new Error("INVALID_MONTH");
   const { nextMonthStartAt } = ownerInvestmentMonthBounds(month);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 
@@ -11,7 +11,6 @@ const route = read("app/api/admin/ledger/route.ts");
 const page = read("app/(protected)/admin/ledger/entries/page.tsx");
 const entriesCss = read("app/(protected)/admin/ledger/entries/entries.module.css");
 const pageCompact = page.replace(/\s+/g, "");
-const panel = read("app/(protected)/admin/ledger/InventoryCandidatePanel.tsx");
 
 // ---------------------------------------------------------------------------
 // A. Direction classification (lib/ledger/entries.ts)
@@ -93,7 +92,9 @@ test("ledger page uses the display expense predicate and the daily subtotal", ()
   assert.match(route, /const displayedExpense = computeDisplayedExpense\(paidExpense, transactions\)/);
   assert.match(route, /operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense/);
   assert.match(route, /const movementsPromise = fundsViewMode === "closed_snapshot"/);
-  assert.match(route, /buildFundAccountView\(\{[\s\S]*movements: movementsResult\.data/);
+  // Full GET and scope=accounts share buildLedgerFundAccounts → buildFundAccountView.
+  assert.match(route, /const accounts = buildLedgerFundAccounts\(\{[\s\S]*movementRows: movementsResult\.data/);
+  assert.match(route, /return buildFundAccountView\(\{[\s\S]*movements: movementRows,/);
 });
 
 test("expense, expense_recognition, income and sales keep their P&L direction", () => {
@@ -462,24 +463,12 @@ test("payable rows hide cumulative partial-payment UI and retain monthly purchas
 });
 
 // ---------------------------------------------------------------------------
-// E. POS manual sync button (InventoryCandidatePanel)
+// E. The never-mounted InventoryCandidatePanel (old POS/inventory sync buttons) is removed
 // ---------------------------------------------------------------------------
 
-test("POS sync button reuses the existing pos-sync API contract, not a new endpoint", () => {
-  assert.match(panel, /sync\("\/api\/admin\/ledger\/pos-sync","POS"\)/);
-  assert.doesNotMatch(panel, /\/api\/admin\/ledger\/pos-sync\/(trigger|manual|run)/);
-});
-
-test("POS sync button shares the same disabled-while-working guard as the other sync buttons (no double click)", () => {
-  const panelCompact = panel.replace(/\s+/g, "");
-  assert.match(panelCompact, /disabled=\{working\}style=\{s\.secondary\}onClick=\{\(\)=>sync\("\/api\/admin\/ledger\/pos-sync","POS"\)\}>POS동기화/);
-});
-
-test("POS sync goes through the shared sync() helper, so API errors surface via the same message state as other sync buttons", () => {
-  assert.match(panel, /async function sync\(path:string,label:string\)\{setWorking\(true\);try\{/);
-  assert.match(panel, /catch\(e\)\{setMessage\(`\$\{label\} 실패: \$\{\(e as Error\)\.message\}`\)\}/);
-});
-
-test("POS source tables are never written to from the admin panel (read/trigger only, sync itself is server-side)", () => {
-  assert.doesNotMatch(panel, /\.from\("pos_sales_[^"]+"\)\.(insert|update|delete|upsert)/);
+test("dead InventoryCandidatePanel is removed and nothing imports it", () => {
+  assert.equal(existsSync("app/(protected)/admin/ledger/InventoryCandidatePanel.tsx"), false);
+  assert.doesNotMatch(read("app/(protected)/admin/ledger/entries/page.tsx"), /InventoryCandidatePanel/);
+  // The POS sync API itself stays (server-side sync contract).
+  assert.equal(existsSync("app/api/admin/ledger/pos-sync/route.ts"), true);
 });

@@ -1,6 +1,6 @@
 import test from"node:test";import assert from"node:assert/strict";import{existsSync,readFileSync}from"node:fs";// @ts-expect-error Node direct TS tests use explicit extension.
 import{calculateBep}from"../lib/ledger/bep-core.ts";
-const migration=readFileSync("supabase/migrations/202608210007_add_recurring_reserves_bep.sql","utf8"),bepSource=readFileSync("lib/ledger/bep.ts","utf8"),reserveApi=readFileSync("app/api/admin/ledger/reserves/route.ts","utf8"),reserveCore=readFileSync("lib/ledger/reserve-balances.ts","utf8"),foundation=readFileSync("tests/ledger-v1-foundation.test.ts","utf8"),pos=readFileSync("tests/ledger-pos-sales.test.ts","utf8"),inventory=readFileSync("tests/ledger-inventory-candidates.test.ts","utf8"),payable=readFileSync("tests/ledger-payable-payments.test.ts","utf8"),meal=readFileSync("tests/ledger-meal-payroll.test.ts","utf8"),card=readFileSync("tests/ledger-card-settlements.test.ts","utf8");
+const migration=readFileSync("supabase/migrations/202608210007_add_recurring_reserves_bep.sql","utf8"),reserveApi=readFileSync("app/api/admin/ledger/reserves/route.ts","utf8"),reserveCore=readFileSync("lib/ledger/reserve-balances.ts","utf8"),foundation=readFileSync("tests/ledger-v1-foundation.test.ts","utf8"),pos=readFileSync("tests/ledger-pos-sales.test.ts","utf8"),inventory=readFileSync("tests/ledger-inventory-candidates.test.ts","utf8"),payable=readFileSync("tests/ledger-payable-payments.test.ts","utf8"),meal=readFileSync("tests/ledger-meal-payroll.test.ts","utf8"),card=readFileSync("tests/ledger-card-settlements.test.ts","utf8");
 test("monthly rent plan is seeded",()=>assert.match(migration,/'매장 임대료'.*60000000.*'monthly'/));
 test("rent category is fixed",()=>assert.match(migration,/values\('임대료','expense','fixed'\)/));
 test("60M monthly recognition uses plan amount",()=>assert.match(migration,/v_plan\.amount.*v_plan\.category_id/));
@@ -23,11 +23,7 @@ test("target remaining is derived",()=>assert.match(reserveApi,/Math\.max\(0, ta
 test("target date is nullable",()=>assert.match(migration,/target_date date null/));
 test("free cash subtracts active reserves",()=>assert.match(reserveApi,/freeCash: liquidFunds - activeReserve/));
 test("card clearing is excluded from liquid funds",()=>assert.match(reserveApi,/account\.code !== "card_clearing"/));
-test("reserve is not double counted in P and L",()=>assert.doesNotMatch(bepSource,/ledger_reserve_entries/));
-test("fixed cost uses fixed categories",()=>assert.match(bepSource,/cost_behavior==="fixed"/));
-test("variable cost uses variable categories",()=>assert.match(bepSource,/cost_behavior==="variable"/));
 test("rent monthly recognition is fixed input",()=>assert.match(migration,/'임대료','expense','fixed'/));
-test("prepaid cash payment is excluded from BEP query",()=>assert.doesNotMatch(bepSource,/prepaid_expense_payment/));
 test("contribution margin ratio",()=>{const r=calculateBep({referenceMonths:[{month:"2026-07",revenue:100,variableCost:40}],fixedCost:60,currentSales:0,remainingBusinessDays:1});assert.equal(r.contributionMarginRatio,.6)});
 test("BEP formula",()=>{const r=calculateBep({referenceMonths:[{month:"2026-07",revenue:100,variableCost:40}],fixedCost:120,currentSales:0,remainingBusinessDays:1});assert.equal(r.bepRevenue,200)});
 test("three month rolling average",()=>{const r=calculateBep({referenceMonths:[{month:"a",revenue:100,variableCost:40},{month:"b",revenue:100,variableCost:38},{month:"c",revenue:100,variableCost:40}],fixedCost:1,currentSales:0,remainingBusinessDays:1});assert.ok(Math.abs((r.variableCostRatio??0)-.393333)<.00001)});
@@ -35,14 +31,10 @@ test("two month fallback",()=>assert.equal(calculateBep({referenceMonths:[{month
 test("one month fallback",()=>assert.equal(calculateBep({referenceMonths:[{month:"a",revenue:100,variableCost:40}],fixedCost:1,currentSales:0,remainingBusinessDays:1}).referenceMonths.length,1));
 test("no data is unavailable",()=>assert.equal(calculateBep({referenceMonths:[],fixedCost:1,currentSales:0,remainingBusinessDays:1}).unavailableReason,"INSUFFICIENT_REVENUE"));
 test("non-positive revenue is unavailable",()=>assert.equal(calculateBep({referenceMonths:[{month:"a",revenue:0,variableCost:1}],fixedCost:1,currentSales:0,remainingBusinessDays:1}).unavailableReason,"INSUFFICIENT_REVENUE"));
-test("semi variable is classification needed",()=>assert.match(bepSource,/cost_behavior==="semi_variable"/));
-test("POS sales alone is revenue",()=>assert.match(bepSource,/type==="sales"&&r\.source_type==="pos_sales_daily_payment"/));
-test("other income is not BEP revenue",()=>assert.doesNotMatch(bepSource,/type==="income"/));
 test("BEP gap",()=>assert.equal(calculateBep({referenceMonths:[{month:"a",revenue:100,variableCost:0}],fixedCost:100,currentSales:40,remainingBusinessDays:2}).gap,60));
 test("BEP exceeded",()=>assert.equal(calculateBep({referenceMonths:[{month:"a",revenue:100,variableCost:0}],fixedCost:100,currentSales:140,remainingBusinessDays:2}).exceeded,40));
 test("required daily sales",()=>assert.equal(calculateBep({referenceMonths:[{month:"a",revenue:100,variableCost:0}],fixedCost:100,currentSales:40,remainingBusinessDays:3}).requiredDailySales,20));
-test("remaining days reuse Store Settings helper",()=>assert.match(bepSource,/resolveStoreClosedByDate/));
-test("all management APIs use owner master gate",()=>{for(const file of["app/api/admin/ledger/bep/route.ts","app/api/admin/ledger/recurring-expenses/route.ts","app/api/admin/ledger/recurring-expenses/sync/route.ts","app/api/admin/ledger/recurring-expenses/payments/route.ts","app/api/admin/ledger/reserves/route.ts","app/api/admin/ledger/reserves/[id]/route.ts","app/api/admin/ledger/reserves/[id]/entries/route.ts"])assert.match(readFileSync(file,"utf8"),/requireLedgerActor/)});
+test("all management APIs use owner master gate",()=>{for(const file of["app/api/admin/ledger/reserves/route.ts","app/api/admin/ledger/reserves/[id]/route.ts","app/api/admin/ledger/reserves/[id]/entries/route.ts"])assert.match(readFileSync(file,"utf8"),/requireLedgerActor/)});
 test("Card Settlement regression remains",()=>assert.match(card,/card deposit registration RPC/));
 test("Payroll regression remains",()=>assert.match(meal,/company cost parity/));
 test("Payable regression remains",()=>assert.match(payable,/one payment allocates to multiple payables/));
@@ -53,4 +45,6 @@ test("new tables enable RLS",()=>{for(const table of["ledger_recurring_expense_p
 test("browser CRUD and RPC execution are denied",()=>{assert.match(migration,/revoke all on table[\s\S]+from public,anon,authenticated,service_role/);assert.match(migration,/revoke all on function[\s\S]+from public,anon,authenticated/)});
 // The never-mounted RecurringReserveBepPanel (a dead recurring-plan entry point) is removed;
 // the recurring backend, table and history stay for closed months and preflight.
-test("dead recurring UI entry point is removed while the recurring backend stays",()=>{assert.equal(existsSync("app/(protected)/admin/ledger/RecurringReserveBepPanel.tsx"),false);assert.equal(existsSync("app/api/admin/ledger/recurring-expenses/route.ts"),true);assert.match(migration,/create table public.ledger_recurring_expense_plans/)});
+// The unused BEP and recurring-expense HTTP routes are removed too; DB tables, functions,
+// month-close preflight and history stay.
+test("dead recurring/BEP UI and HTTP entry points are removed while the recurring DB backend stays",()=>{assert.equal(existsSync("app/(protected)/admin/ledger/RecurringReserveBepPanel.tsx"),false);for(const path of["app/api/admin/ledger/recurring-expenses/route.ts","app/api/admin/ledger/recurring-expenses/sync/route.ts","app/api/admin/ledger/recurring-expenses/payments/route.ts","app/api/admin/ledger/bep/route.ts","lib/ledger/bep.ts"])assert.equal(existsSync(path),false,path);assert.equal(existsSync("lib/ledger/bep-core.ts"),true);assert.match(readFileSync("lib/ledger/month-close.ts","utf8"),/from\("ledger_recurring_expense_plans"\)/);assert.match(readFileSync("supabase/migrations/20261002062405_fix_preflight_inactive_recurring_plans.sql","utf8"),/RECURRING_NOT_SYNCED/);assert.match(migration,/create table public.ledger_recurring_expense_plans/)});

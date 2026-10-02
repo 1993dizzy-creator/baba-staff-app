@@ -39,7 +39,7 @@ function fixture({ entries = [], selected = { transactionId: 81, items: [] }, fa
     setLoading: value => events.loading.push(value),
     setError: value => events.errors.push(value),
     setData: value => events.data.push(value),
-    setPayables() {}, setMonthCloseState() {}, setInvestments() {}, setInvestmentsError() {},
+    setPayables() {}, setMonthCloseState() {}, setInvestments() {}, setInvestmentsError() {}, bumpInvestmentsVersion() {}, setInvestmentSummary() {},
     async fetch(url) {
       const ledger = url.startsWith("/api/admin/ledger?month=");
       const body = ledger ? { month, entries, code: fail ? "LOAD_FAILED" : undefined }

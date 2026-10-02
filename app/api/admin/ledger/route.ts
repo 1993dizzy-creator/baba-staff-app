@@ -11,7 +11,7 @@ import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
 import { computeDisplayedExpense, computeReceivedIncome } from "@/lib/ledger/summary";
 import { computeActualCashOutflow } from "@/lib/ledger/cash-outflow";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
-import { buildFundAccountView, fundAccountViewMode } from "@/lib/ledger/fund-account-view";
+import { buildFundAccountView, fundAccountViewMode, type FundAccountReservePlan, type FundAccountViewMode } from "@/lib/ledger/fund-account-view";
 import { buildDashboardCashReport, type PayableAllocationCategory } from "@/lib/ledger/dashboard-cash-report";
 import { isPayrollAdvanceManualAction, manualExpenseCategoryNameForPartner } from "@/lib/ledger/manual-entry-policy";
 
@@ -21,10 +21,57 @@ const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const TYPES = new Set(["expense", "income", "transfer", "balance_adjustment"]);
 const TRANSACTION_SELECT = "id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,display_snapshot,source_synced_at,memo,party_id,category:ledger_categories(id,name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)),payable:ledger_payables(id,original_amount,due_date,status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(business_date,status,movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)))))";
 
+type BuildFundAccountsInput = Parameters<typeof buildFundAccountView>[0];
+// One balance Source of Truth for the full ledger GET and the settings
+// accounts scope: same queries, same reserve scope, same buildFundAccountView.
+function buildLedgerFundAccounts<T extends BuildFundAccountsInput["accounts"][number]>({ fundsViewMode, now, accountRows, openingRows, priorConfirmedMovements, movementRows, reservePlanRows, reserveEntryRows, closeSummary }: {
+  fundsViewMode: FundAccountViewMode;
+  now: Date;
+  accountRows: T[];
+  openingRows: BuildFundAccountsInput["openingMovements"];
+  priorConfirmedMovements: BuildFundAccountsInput["priorConfirmedMovements"];
+  movementRows: BuildFundAccountsInput["movements"];
+  reservePlanRows: Array<Omit<FundAccountReservePlan, "entries">>;
+  reserveEntryRows: Array<{ reserve_plan_id: number | string; entry_type: string; amount: number | string; occurred_at: string }>;
+  closeSummary: unknown;
+}) {
+  const reserveEntriesByPlan = new Map<number, Array<{ entry_type: string; amount: number | string }>>();
+  // Balance scope is unchanged: everything up to now (live) or up to the
+  // month-end cutoff (provisional); closed months keep their snapshot.
+  const reserveBalanceEntries = fundsViewMode === "closed_snapshot"
+    ? []
+    : fundsViewMode === "live"
+      ? reserveEntryRows.filter((entry) => Date.parse(entry.occurred_at) <= now.getTime())
+      : reserveEntryRows;
+  for (const entry of reserveBalanceEntries) {
+    const planId = Number(entry.reserve_plan_id);
+    const entries = reserveEntriesByPlan.get(planId) ?? [];
+    entries.push({ entry_type: entry.entry_type, amount: entry.amount });
+    reserveEntriesByPlan.set(planId, entries);
+  }
+  const reservePlans = fundsViewMode === "closed_snapshot" ? [] : reservePlanRows.map((plan) => ({
+    ...plan,
+    entries: reserveEntriesByPlan.get(Number(plan.id)) ?? [],
+  }));
+  return buildFundAccountView({
+    accounts: accountRows,
+    openingMovements: openingRows,
+    priorConfirmedMovements,
+    movements: movementRows,
+    reservePlans,
+    groupReserves: reservesByFundAccount,
+    mode: fundsViewMode,
+    closeSummary: closeSummary as BuildFundAccountsInput["closeSummary"],
+  });
+}
+
 export async function GET(request: Request) {
   const auth = await requireLedgerActor();
   if (auth.response) return auth.response;
-  const month = new URL(request.url).searchParams.get("month") ?? "";
+  const url = new URL(request.url);
+  const month = url.searchParams.get("month") ?? "";
+  // scope=accounts: 장부설정 자금계정 only needs balances, not the month ledger.
+  const accountsOnly = url.searchParams.get("scope") === "accounts";
   if (!MONTH.test(month)) return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400);
   const monthStart = `${month}-01`;
   const { businessDateExclusive: nextMonth, cutoffAt: monthEndCutoffAt } = getBusinessMonthEndBoundary(month);
@@ -58,10 +105,6 @@ export async function GET(request: Request) {
         ? movementsQuery.lte("transaction.occurred_at", now.toISOString())
         : movementsQuery.lt("transaction.business_date", nextMonth);
     const openingPromise = supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status,type,business_date,source_type)").eq("transaction.status", "confirmed").eq("transaction.type", "opening").eq("transaction.business_date", monthStart);
-    // Card gross sales: this month's POS card-bucket sales (business_date scoped), before card-company fees.
-    const cardGrossSalesPromise = loadCardSales(monthStart, nextMonth);
-    // Actual card deposits: this month's real bank deposits from the card company (deposit_date scoped, not the sale's month).
-    const actualCardDepositsPromise = loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("deposit_amount,difference_amount,status").neq("status", "cancelled").gte("deposit_date", monthStart).lt("deposit_date", nextMonth).order("id").range(from, to));
     // Plans are also needed in closed months to label the reserve history rows.
     const reservesPromise = supabaseServer.from("ledger_reserve_plans")
       .select("id,name,is_active,fund_account_id,linked_recurring_plan:ledger_recurring_expense_plans(source_key_prefix)")
@@ -76,6 +119,23 @@ export async function GET(request: Request) {
     const reserveEntriesPromise = fundsViewMode === "closed_snapshot"
       ? reserveEntriesQuery.gte("occurred_at", monthStartCutoffAt)
       : reserveEntriesQuery;
+    if (accountsOnly) {
+      const [accountsResult, movementsResult, openingResult, reservesResult, reserveEntriesResult] = await Promise.all([
+        accountsPromise, movementsPromise, openingPromise, reservesPromise, reserveEntriesPromise,
+      ]);
+      for (const result of [accountsResult, movementsResult, openingResult, reservesResult, reserveEntriesResult]) if (result.error) throw result.error;
+      const priorConfirmedMovements = (openingResult.data?.length ?? 0) > 0 ? [] : await loadPriorConfirmedFundMovements(monthStart);
+      const accounts = buildLedgerFundAccounts({
+        fundsViewMode, now, accountRows: accountsResult.data ?? [], openingRows: openingResult.data ?? [], priorConfirmedMovements,
+        movementRows: movementsResult.data ?? [], reservePlanRows: reservesResult.data ?? [], reserveEntryRows: reserveEntriesResult.data ?? [],
+        closeSummary: closureResult.data?.summary_snapshot,
+      });
+      return ledgerJson({ ok: true, month, scope: "accounts", fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, accounts });
+    }
+    // Card gross sales: this month's POS card-bucket sales (business_date scoped), before card-company fees.
+    const cardGrossSalesPromise = loadCardSales(monthStart, nextMonth);
+    // Actual card deposits: this month's real bank deposits from the card company (deposit_date scoped, not the sale's month).
+    const actualCardDepositsPromise = loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("deposit_amount,difference_amount,status").neq("status", "cancelled").gte("deposit_date", monthStart).lt("deposit_date", nextMonth).order("id").range(from, to));
     // Root expense/expense_recognition transactions recognized this month, with their
     // linked payable (if any) — the base population for the paidExpense formula below.
     const paidExpenseRootsPromise = supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,source_type,correction_of_id,payable:ledger_payables(status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(business_date,status)))").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["expense", "expense_recognition"]);
@@ -162,33 +222,10 @@ export async function GET(request: Request) {
     const paidExpense = computePaidExpenseTotal(paidExpenseRoots);
     const displayedExpense = computeDisplayedExpense(paidExpense, transactions);
     const reserveEntryRows = reserveEntriesResult.data ?? [];
-    const reserveEntriesByPlan = new Map<number, Array<{ entry_type: string; amount: number | string }>>();
-    // Balance scope is unchanged: everything up to now (live) or up to the
-    // month-end cutoff (provisional); closed months keep their snapshot.
-    const reserveBalanceEntries = fundsViewMode === "closed_snapshot"
-      ? []
-      : fundsViewMode === "live"
-        ? reserveEntryRows.filter((entry) => Date.parse(entry.occurred_at) <= now.getTime())
-        : reserveEntryRows;
-    for (const entry of reserveBalanceEntries) {
-      const planId = Number(entry.reserve_plan_id);
-      const entries = reserveEntriesByPlan.get(planId) ?? [];
-      entries.push({ entry_type: entry.entry_type, amount: entry.amount });
-      reserveEntriesByPlan.set(planId, entries);
-    }
-    const reservePlans = fundsViewMode === "closed_snapshot" ? [] : (reservesResult.data ?? []).map((plan) => ({
-      ...plan,
-      entries: reserveEntriesByPlan.get(Number(plan.id)) ?? [],
-    }));
-    const accounts = buildFundAccountView({
-      accounts: accountsResult.data ?? [],
-      openingMovements: openingResult.data ?? [],
-      priorConfirmedMovements,
-      movements: movementsResult.data ?? [],
-      reservePlans,
-      groupReserves: reservesByFundAccount,
-      mode: fundsViewMode,
-      closeSummary: closureResult.data?.summary_snapshot as Parameters<typeof buildFundAccountView>[0]["closeSummary"],
+    const accounts = buildLedgerFundAccounts({
+      fundsViewMode, now, accountRows: accountsResult.data ?? [], openingRows: openingResult.data ?? [], priorConfirmedMovements,
+      movementRows: movementsResult.data ?? [], reservePlanRows: reservesResult.data ?? [], reserveEntryRows,
+      closeSummary: closureResult.data?.summary_snapshot,
     });
     const accountById = new Map(accounts.map(account => [Number(account.id), account]));
     const partnerById = new Map((partnerResult.data ?? []).map(partner => [Number(partner.id), partner]));

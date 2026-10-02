@@ -20,8 +20,9 @@ function transpiled(path,deps) {
 }
 // Render the actual TSX components with state fixtures. Effects are captured,
 // never automatically run. Tests use only local response doubles.
-function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network request');}, lang='ko', businessDate) {
-  let index=0;const effects=[],requests=[],updates=[],elements=[],calls=[],navigations=[];
+// reducers: optional seed values for useReducer calls in render order (entries: 0 = investmentsVersion, 1 = investmentSummary).
+function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network request');}, lang='ko', businessDate, reducers={}) {
+  let index=0,reducerCount=0;const effects=[],requests=[],updates=[],elements=[],calls=[],navigations=[];
   const urlMonthPage=path===entriesPath||path===cardPath;
   // Older fixtures reserve slot 0 for the URL month. Card slots 6/7/12 belonged to the
   // removed account, reference and expected-fee inputs and 9-11 to the removed manual
@@ -29,7 +30,7 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
   // fixture slots stay stable. 18 holds the inspected deposit's allocation lines; 19-23 the card fee state, confirm sheet, memo, cancel sheet and cancel reason.
   if(path===cardPath&&states[14]&&!Object.hasOwn(states,19))states={...states,19:{month:states[0],autoFeeMonths:[]}};
   const cardSlots=[1,2,3,4,5,8,13,14,15,16,17,18,19,22,23];
-  const react={...React,useState(initial){const stateIndex=index++;const slot=path===cardPath?cardSlots[stateIndex]:stateIndex+(urlMonthPage?1:0)-(path===entriesPath&&stateIndex>=32?1:0);const value=Object.hasOwn(states,slot)?states[slot]:typeof initial==='function'?initial():initial;return [path===cardPath&&slot===1&&value?{...value,month:value.month??states[0]}:value,next=>updates.push({slot,value:next})];},useEffect(callback){effects.push(callback);}};
+  const react={...React,useState(initial){const stateIndex=index++;const slot=path===cardPath?cardSlots[stateIndex]:stateIndex+(urlMonthPage?1:0)-(path===entriesPath&&stateIndex>=32?1:0);const value=Object.hasOwn(states,slot)?states[slot]:typeof initial==='function'?initial():initial;return [path===cardPath&&slot===1&&value?{...value,month:value.month??states[0]}:value,next=>updates.push({slot,value:next})];},useEffect(callback){effects.push(callback);},useReducer(reducer,initial){const reducerIndex=reducerCount++;return [Object.hasOwn(reducers,reducerIndex)?reducers[reducerIndex]:initial,()=>{}];}};
   const box=({children})=>h('div',null,children);
   const keeping={BarSheet:({children,footer,title})=>h('section',{role:'dialog','aria-label':title},h('h2',null,title),children,footer),BarField:({children,label})=>h('label',null,label,typeof children==='function'?children({id:'field'}):children),keepingInputStyle:{},primaryButtonStyle:{},secondaryButtonStyle:{}};
   const runtime=require('react/jsx-runtime');
@@ -72,10 +73,10 @@ function payableFixture(month) {
   return {...result,month,parties:[party],historyPayables:result.payables};
 }
 const ledgerFixture=month=>({month,fundsView:{month,mode:'provisional',asOf:`${month}-01`,businessDateExclusive:null},summary:{income:9999,receivedIncome:9999,otherIncome:0,expense:7777,operatingProfit:2222,paidExpense:6666,actualCashOutflow:6666,cardSettlementDifference:0,displayedExpense:6666,cardGrossSales:500,monthlySettledGross:500,actualCardDeposits:0,unsettledCardGross:500},accounts:[],categories:[],partners:[],entries:[]});
-function entriesFixture(month,{selected=false,payables=payableFixture(month),fetcher,payableExpanded=true,cardExpanded=false,cardSummary=null,ledgerSummary=null,closeState=null,reopenOpen=false,reopenReason='',closeOpen=false,businessDate}={}) {
+function entriesFixture(month,{selected=false,payables=payableFixture(month),fetcher,payableExpanded=true,cardExpanded=false,cardSummary=null,ledgerSummary=null,closeState=null,reopenOpen=false,reopenReason='',closeOpen=false,investmentExpanded=false,investments=null,investmentSummary=null,businessDate}={}) {
   const ledger=ledgerFixture(month);
   if(ledgerSummary)ledger.summary={...ledger.summary,...ledgerSummary};
-  return pageFixture(entriesPath,{0:month,1:ledger,2:false,5:closeState,14:payableExpanded,15:payables,16:selected?{...payables.parties[0],viewMonth:month}:null,22:cardExpanded,23:cardSummary,28:reopenOpen,29:reopenReason,...(closeOpen?{32:true}:{})},fetcher,'ko',businessDate);
+  return pageFixture(entriesPath,{0:month,1:ledger,2:false,5:closeState,14:payableExpanded,15:payables,16:selected?{...payables.parties[0],viewMonth:month}:null,22:cardExpanded,23:cardSummary,25:investmentExpanded,26:investments,28:reopenOpen,29:reopenReason,...(closeOpen?{32:true}:{})},fetcher,'ko',businessDate,investmentSummary?{1:investmentSummary}:{});
 }
 
 test('closed month shows a compact reopen entry point and keeps ledger writes disabled',()=>{
@@ -117,14 +118,16 @@ test('reopen confirmation posts reason, reloads all selected-month data and unlo
   const post=calls.find(call=>call.options?.method==='POST');
   assert.equal(post?.url,'/api/admin/ledger/month-close');
   assert.deepEqual(JSON.parse(post.options.body),{action:'reopen',month:'2026-08',reason:'회계 재검토'});
-  for(const path of ['/api/admin/ledger?month=2026-08','/api/admin/ledger/month-close?month=2026-08','/api/admin/ledger/payables?month=2026-08','/api/admin/ledger/investments?month=2026-08']){
+  // Reload uses the lightweight month-close status (no preflight) and the investment header summary.
+  for(const path of ['/api/admin/ledger?month=2026-08','/api/admin/ledger/month-close?month=2026-08&mode=status','/api/admin/ledger/payables?month=2026-08','/api/admin/ledger/investments?month=2026-08&mode=summary']){
     assert.ok(calls.some(call=>call.url===path&&call.options?.method!=='POST'),path);
   }
+  assert.ok(!calls.some(call=>call.url==='/api/admin/ledger/month-close?month=2026-08'),'no full preflight GET on reload');
+  assert.ok(!calls.some(call=>call.url==='/api/admin/ledger/investments?month=2026-08'),'full investments are not part of the main reload');
   assert.ok(state.updates.some(update=>update.slot===28&&update.value===false),'sheet closes');
   assert.ok(state.updates.some(update=>update.slot===5&&update.value.state==='reopened'),'state refreshes');
   assert.ok(state.updates.some(update=>update.slot===1&&update.value.month==='2026-08'),'ledger reloads');
   assert.ok(state.updates.some(update=>update.slot===15),'payables reload');
-  assert.ok(state.updates.some(update=>update.slot===26),'investments reload');
   assert.ok(state.updates.some(update=>update.slot===4&&update.value.includes('월마감을 다시 열었습니다')),'success notice');
 
   const reopened=entriesFixture('2026-08',{closeState:{month:'2026-08',state:'reopened',revision:1}});
@@ -209,10 +212,17 @@ test('August and September render different closing with month-only payments and
   }
   assert.match(september,/9\.999 ₫/);assert.match(september,/6\.666 ₫/);
 });
-test('historical drilldown renders month-end sources with no current payment controls or current detail read',()=>{
-  const state=entriesFixture('2026-08',{selected:true});
-  assert.match(state.html,/선택월 말 기준 잔액입니다\. 과거 내역은 결제할 수 없습니다/);assert.match(state.html,/8월 10일/);assert.match(state.html,/월말 미납 상세/);
+test('historical drilldown reads only its own party/month-end rows on open, with no payment controls or current detail read',async()=>{
+  const history=payableFixture('2026-08');
+  const fetcher=async url=>Response.json(url.includes('historyPartyId=')?{month:'2026-08',partyId:10,historyPayables:history.payables}:url.includes('month-close')?{month:'2026-08',state:'open'}:url.includes('payables')?payableFixture('2026-08'):ledgerFixture('2026-08'));
+  const state=entriesFixture('2026-08',{selected:true,fetcher});
+  assert.match(state.html,/선택월 말 기준 잔액입니다\. 과거 내역은 결제할 수 없습니다/);assert.match(state.html,/월말 미납 상세/);assert.match(state.html,/불러오는 중…/);
   assert.doesNotMatch(state.html,/출금 계정|선택 일자 .*건 결제|현재 결제|type="checkbox"/);assert.equal(state.requests.length,0);
+  for(const effect of state.effects)effect();
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(state.requests.includes('/api/admin/ledger/payables?month=2026-08&historyPartyId=10'));
+  assert.ok(!state.requests.some(url=>/\/payables\/\d+/.test(url)),'never reads the current party detail');
+  assert.ok(state.updates.some(update=>Array.isArray(update.value)&&update.value.some(row=>row.expense?.business_date==='2026-08-10')),'month-end rows applied');
 });
 test('a drilldown selected in another month cannot expose payment controls after month navigation',()=>{
   const month=nowMonth(),payables=payableFixture('2026-09');payables.month=month;
@@ -552,16 +562,24 @@ test('investment header shows signed monthly change in both states and languages
   }
 });
 
-test('investment card sends the selected month to the investments API as part of the main load()',async()=>{
+test('investments load lazily: never in the main load(), only when the section is opened, for the selected month',async()=>{
   for(const month of ['2026-08','2026-09']){
-    const state=entriesFixture(month,{fetcher:async(url)=>Response.json(
-      url.includes('month-close')?{state:'open'}:
+    const fetcher=async(url)=>Response.json(
+      url.includes('month-close')?{month,state:'open'}:
       url.includes('/investments')?{month,configured:false,summary:zeroInvestmentSummary,events:[]}:
       url.includes('/payables')?payableFixture(month):ledgerFixture(month),
-    )});
-    const cleanup=state.effects[0]();await new Promise(resolve=>setImmediate(resolve));cleanup();
-    assert.ok(state.requests.includes(`/api/admin/ledger/investments?month=${month}`));
-    assert.ok(state.updates.some(update=>update.slot===26&&update.value.month===month));
+    );
+    // Collapsed: the initial load sends ledger, month-close status and payables only.
+    const collapsed=entriesFixture(month,{fetcher});
+    for(const effect of collapsed.effects)effect();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(collapsed.requests.sort(),[`/api/admin/ledger/investments?month=${month}&mode=summary`,`/api/admin/ledger/month-close?month=${month}&mode=status`,`/api/admin/ledger/payables?month=${month}`,`/api/admin/ledger?month=${month}`].sort());
+    // Opened: one investments read for that month, applied to the investments slot.
+    const opened=entriesFixture(month,{fetcher,investmentExpanded:true});
+    for(const effect of opened.effects)effect();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(opened.requests.filter(url=>url===`/api/admin/ledger/investments?month=${month}`).length,1);
+    assert.ok(opened.updates.some(update=>update.slot===26&&update.value.month===month));
   }
 });
 
@@ -789,7 +807,7 @@ test('a load() call superseded by a newer one can never write state, even if its
   const fetcher=async(url)=>{
     const record={url};
     record.promise=new Promise(resolve=>{record.resolve=resolve;});
-    record.batch=fetchIndex<4?'first':'second'; // 4 parallel fetches per load(): ledger, month-close, payables, investments
+    record.batch=fetchIndex<4?'first':'second'; // 4 parallel fetches per load(): investment summary, ledger, month-close status, payables (full investments are lazy)
     fetchIndex++;
     deferreds.push(record);
     return record.promise;
@@ -818,7 +836,7 @@ test('a load() call superseded by a newer one can never write state, even if its
   assert.equal(state.updates.filter(update=>update.slot===1).length,1);
   assert.equal(state.updates.filter(update=>update.slot===15).length,1);
   assert.equal(state.updates.filter(update=>update.slot===5).length,1);
-  assert.equal(state.updates.filter(update=>update.slot===26).length,1);
+  assert.equal(state.updates.filter(update=>update.slot===26).length,0,'investments are not part of load()');
 });
 
 test('a card-settlement response for a month the user has already navigated away from is dropped even without abort (body.month guard)',async()=>{
@@ -840,7 +858,7 @@ test('a card-settlement response for a month the user has already navigated away
 function raceLoadFetcher(makeError) {
   const deferreds = []; let fetchIndex = 0;
   const fetcher = async (url) => {
-    const record = { url, batch: fetchIndex < 4 ? 'A' : 'B' }; // 4 parallel fetches per load(): ledger, month-close, payables, investments
+    const record = { url, batch: fetchIndex < 4 ? 'A' : 'B' }; // 4 parallel fetches per load(): investment summary, ledger, month-close status, payables (full investments are lazy)
     fetchIndex++;
     record.promise = new Promise((resolve, reject) => { record.resolve = resolve; record.reject = reject; });
     deferreds.push(record);
@@ -1084,4 +1102,26 @@ test('closed automatic fee retains cancellation UI and posts the existing cancel
  const confirmed=feeState({month:'2026-09',monthClosed:true,canConfirm:false,canCancel:true,finalConfirmedFee:2150000,closure:{id:41,fee_amount:2150000,finalization_business_date:'2026-10-02',confirmed_at:'2026-10-02T05:00:00Z'}});
  const ready=pageFixture(cardPath,{0:'2026-09',1:cardData([]),19:confirmed});assert.ok(ready.elements.some(e=>e.type==='button'&&e.props.children==='\uC218\uC218\uB8CC \uD655\uC815 \uCDE8\uC18C'));
  const cancel=pageFixture(cardPath,{0:'2026-09',1:cardData([]),19:confirmed,22:true,23:'bank correction'},async()=>Response.json({ok:true,result:{status:'cancelled'}}));cancel.elements.find(e=>e.type==='button'&&e.props.children==='\uCDE8\uC18C \uD655\uC815').props.onClick();await new Promise(resolve=>setImmediate(resolve));const post=cancel.calls.find(c=>c.options?.method==='POST');assert.equal(post.url,'/api/admin/ledger/card-fees/41/cancel');assert.deepEqual(JSON.parse(post.options.body),{reason:'bank correction'});
+});
+
+// ---------------------------------------------------------------------------
+// Collapsed 투자금 현황 header from the light summary (mode=summary)
+// ---------------------------------------------------------------------------
+const investmentHeader=html=>html.match(/aria-label="당월 투자금 변동">([^<]*)</)?.[1].trim();
+test('collapsed investment header shows the month net change from the summary, not "-"',()=>{
+  for(const [change,text,color] of [[-130_000_000,'-130.000.000 ₫','amountExpense'],[100_000_000,'+100.000.000 ₫','amountIncome'],[0,'0 ₫',null]]){
+    const state=entriesFixture('2026-09',{investmentSummary:{month:'2026-09',configured:true,periodNetChange:change}});
+    assert.equal(investmentHeader(state.html),text);
+    if(color)assert.match(state.html,new RegExp(`<strong class="${color}" aria-label="당월 투자금 변동">`));
+    assert.match(state.html,/aria-controls="investment-body"/);
+    assert.doesNotMatch(state.html,/id="investment-body"/,'details stay collapsed');
+  }
+  assert.equal(investmentHeader(entriesFixture('2026-09',{investmentSummary:{month:'2026-09',configured:false,periodNetChange:0}}).html),'미설정');
+  // A previous month's summary is never reused for the selected month.
+  assert.equal(investmentHeader(entriesFixture('2026-09',{investmentSummary:{month:'2026-08',configured:true,periodNetChange:5_000}}).html),'-');
+});
+test('once full investments for the month are loaded, the header uses the same net change',()=>{
+  const full={month:'2026-09',configured:true,summary:{...zeroInvestmentSummary,periodNetChange:-130_000_000},participants:[],events:[]};
+  const state=entriesFixture('2026-09',{investments:full,investmentSummary:{month:'2026-09',configured:true,periodNetChange:-130_000_000}});
+  assert.equal(investmentHeader(state.html),'-130.000.000 ₫');
 });

@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";import{readFileSync}from"node:fs";import{join}from"node:path";import test from"node:test";
+import assert from "node:assert/strict";import{existsSync,readFileSync}from"node:fs";import{join}from"node:path";import test from"node:test";
 // @ts-expect-error Node strips TypeScript extensions in tests.
 import{buildOldestFirstAllocations,calculatePayableBalances,payableMonthBounds,sumPayableAmounts}from"../lib/ledger/payables.ts";
 import ts from "typescript";
@@ -8,7 +8,7 @@ import * as payableFunctions from "../lib/ledger/payables.ts";
 import * as paymentVerificationFunctions from "../lib/ledger/payment-verification.ts";
 // @ts-expect-error Node strips TypeScript extensions in tests.
 import{groupPayablesForDisplay}from"../lib/ledger/payable-display-groups.ts";
-const read=(p:string)=>readFileSync(join(process.cwd(),p),"utf8"),migration=read("supabase/migrations/202608210004_add_ledger_payable_payments.sql"),pay=read("app/api/admin/ledger/payables/pay/route.ts"),dashboard=read("app/api/admin/ledger/payables/route.ts"),detail=read("app/api/admin/ledger/payables/[partyId]/route.ts"),party=read("app/api/admin/ledger/parties/route.ts"),mapping=read("app/api/admin/ledger/supplier-party-mappings/route.ts"),page=read("app/(protected)/admin/ledger/payables/page.tsx"),entries=read("app/(protected)/admin/ledger/entries/page.tsx"),partialPlan=read("lib/ledger/partial-payable-payment.ts"),ledger=read("app/api/admin/ledger/route.ts"),inventoryMigration=read("supabase/migrations/202608210003_add_inventory_purchase_candidates.sql"),pos=read("lib/sales/payment-summary.ts");
+const read=(p:string)=>readFileSync(join(process.cwd(),p),"utf8"),migration=read("supabase/migrations/202608210004_add_ledger_payable_payments.sql"),pay=read("app/api/admin/ledger/payables/pay/route.ts"),dashboard=read("app/api/admin/ledger/payables/route.ts"),detail=read("app/api/admin/ledger/payables/[partyId]/route.ts"),party=read("app/api/admin/ledger/parties/route.ts"),page=read("app/(protected)/admin/ledger/payables/page.tsx"),entries=read("app/(protected)/admin/ledger/entries/page.tsx"),partialPlan=read("lib/ledger/partial-payable-payment.ts"),ledger=read("app/api/admin/ledger/route.ts"),inventoryMigration=read("supabase/migrations/202608210003_add_inventory_purchase_candidates.sql"),pos=read("lib/sales/payment-summary.ts");
 test("unpaid payable can be fully paid",()=>assert.match(migration,/least\(v_remaining,v_outstanding\)/));
 test("payable supports partial payment",()=>assert.match(migration,/'partially_paid'/));
 test("partial payment changes status to partially paid",()=>assert.match(migration,/when v_outstanding=0 then 'paid' else 'partially_paid'/));
@@ -29,9 +29,10 @@ test("payables lock in deterministic order",()=>{assert.match(migration,/order b
 test("status derives from allocation sum",()=>assert.match(migration,/original_amount-coalesce\(sum\(a\.allocated_amount\),0\)/));
 test("party dashboard aggregates outstanding and dates",()=>{for(const field of["outstandingAmount","openCount","oldestDate","nearestDueDate","recentPaymentDate"])assert.match(dashboard,new RegExp(field))});
 test("party detail returns payable and allocation payment history",()=>{assert.match(detail,/ledger_payable_allocations\(allocated_amount,payment_transaction_id\)/);assert.match(detail,/type","payable_payment/);assert.match(entries,/지급 내역/);assert.match(entries.replace(/\s+/g,""),/dailyPayments=useMemo\(\(\)=>groupPaymentsByDate\(detail\?\.payments\?\?\[\]\),\[detail\]\)/)});
-test("lower roles are rejected by the shared server gate",()=>{for(const route of[pay,dashboard,detail,party,mapping])assert.match(route,/requireLedgerActor\(\)/)});
+test("lower roles are rejected by the shared server gate",()=>{for(const route of[pay,dashboard,detail,party])assert.match(route,/requireLedgerActor\(\)/)});
 test("party creation is owner-master RPC only",()=>{assert.match(party,/ledger_create_party_v1/);assert.match(migration,/ledger_create_party_v1[\s\S]*not in\('owner','master'\)/)});
-test("supplier party mapping can be saved",()=>{assert.match(mapping,/ledger_upsert_supplier_party_mapping_v1/);assert.match(migration,/'supplier_party_mapping_saved'/)});
+// The unused HTTP entry point is removed; the DB mapping function and audit action stay.
+test("supplier party mapping keeps its DB contract without the unused HTTP route",()=>{assert.equal(existsSync(join(process.cwd(),"app/api/admin/ledger/supplier-party-mappings/route.ts")),false);assert.match(migration,/ledger_upsert_supplier_party_mapping_v1/);assert.match(migration,/'supplier_party_mapping_saved'/)});
 test("payment precision remains numeric 16 comma 3",()=>{assert.match(inventoryMigration,/allocated_amount numeric\(16,3\)/);assert.match(migration,/round\(p_amount,3\)<>p_amount/)});
 test("payment audit includes actor transaction party fund allocations and before after",()=>{for(const value of["p_actor_user_id","v_payment_id","p_party_id","p_amount","p_fund_account_id","allocations","v_before","v_after"])assert.match(migration,new RegExp(value))});
 test("payment UI previews oldest first",()=>{
@@ -166,7 +167,11 @@ test("Case D: ordinary 8월 purchase paid in 9월 is still 8월-end outstanding 
   assert.deepEqual(august.summary,{openingOutstanding:0,periodPurchases:500_000,periodPayments:0,closingOutstanding:500_000});
   assert.deepEqual(august.parties.map((row:{partyId:number;closingOutstanding:number;periodPayments:number})=>[row.partyId,row.closingOutstanding,row.periodPayments]),[[20,500_000,0]]);
   assert.deepEqual(august.payables.map((row:{id:number;allocatedAmount:number;outstandingAmount:number;allocations:unknown[]})=>[row.id,row.allocatedAmount,row.outstandingAmount,row.allocations]),[[2,0,500_000,[]]],"no 9월 allocation leaks into 8월 payables");
-  assert.deepEqual(august.historyPayables.map((row:{id:number;paidAmount:number;outstandingAmount:number;settlementStatus:string})=>[row.id,row.paidAmount,row.outstandingAmount,row.settlementStatus]),[[2,0,500_000,"unpaid"]]);
+  // History is no longer part of the month view; it is read per party on open.
+  assert.equal(Object.hasOwn(august,"historyPayables"),false);
+  const augustHistory=await(await api.get("?month=2026-08&historyPartyId=20")).json();
+  assert.equal(augustHistory.partyId,20);
+  assert.deepEqual(augustHistory.historyPayables.map((row:{id:number;paidAmount:number;outstandingAmount:number;settlementStatus:string})=>[row.id,row.paidAmount,row.outstandingAmount,row.settlementStatus]),[[2,0,500_000,"unpaid"]]);
   const september=await(await api.get("?month=2026-09")).json();
   assert.deepEqual(september.summary,{openingOutstanding:500_000,periodPurchases:0,periodPayments:500_000,closingOutstanding:0},"9월 opening = 8월 closing; 9/5 payment is a 9월 payment");
   assert.equal(september.verification.totalPending,0);
@@ -219,11 +224,12 @@ test("historical detail includes paid sources while outstanding and summary keep
     allocation("2026-09-02",300,2),
   ]);
   const august=await(await api.get("?month=2026-08")).json();
-  assert.equal(august.historyPayables.length,3);
-  assert.ok(Object.hasOwn(august.historyPayables[0].expense,"source_snapshot"));
-  assert.ok(Object.hasOwn(august.historyPayables[0].expense,"display_snapshot"));
-  assert.deepEqual(august.historyPayables.map((row:{settlementStatus:string})=>row.settlementStatus),["paid","partial","unpaid"]);
-  assert.deepEqual(august.historyPayables.map((row:{outstandingAmount:number})=>row.outstandingAmount),[0,300,300]);
+  const {historyPayables}=await(await api.get("?month=2026-08&historyPartyId=10")).json();
+  assert.equal(historyPayables.length,3);
+  assert.ok(Object.hasOwn(historyPayables[0].expense,"source_snapshot"));
+  assert.ok(Object.hasOwn(historyPayables[0].expense,"display_snapshot"));
+  assert.deepEqual(historyPayables.map((row:{settlementStatus:string})=>row.settlementStatus),["paid","partial","unpaid"]);
+  assert.deepEqual(historyPayables.map((row:{outstandingAmount:number})=>row.outstandingAmount),[0,300,300]);
   assert.equal(august.payables.length,2);
   assert.equal(august.totalOutstanding,600);
   assert.equal(august.summary.closingOutstanding,600);
@@ -238,8 +244,9 @@ test("Phương August history restores paid dates, partial 8/22 and unpaid dates
     ...unpaidDays.map((day,index)=>source(index+12,`2026-08-${String(day).padStart(2,"0")}`,index===4?2_362_000:2_000_000,"unpaid")),
   ];
   const payments=[...paidDays.map((_,index)=>allocation("2026-08-23",2_772_000,index+1)),allocation("2026-08-23",7_964_000,11)];
-  const august=await(await payableApi(rows,payments).get("?month=2026-08")).json();
-  const history=august.historyPayables as Array<{id:number;paidAmount:number;outstandingAmount:number;settlementStatus:string;expense:{business_date:string}}>;
+  const api=payableApi(rows,payments);
+  const august=await(await api.get("?month=2026-08")).json();
+  const history=(await(await api.get("?month=2026-08&historyPartyId=10")).json()).historyPayables as Array<{id:number;paidAmount:number;outstandingAmount:number;settlementStatus:string;expense:{business_date:string}}>;
   assert.equal(history.length,16);
   assert.ok(paidDays.every(day=>history.some(row=>row.expense.business_date===`2026-08-${String(day).padStart(2,"0")}`&&row.settlementStatus==="paid"&&row.outstandingAmount===0)));
   assert.ok(unpaidDays.every(day=>history.some(row=>row.expense.business_date===`2026-08-${String(day).padStart(2,"0")}`&&row.settlementStatus==="unpaid")));
@@ -252,4 +259,20 @@ test("Phương August history restores paid dates, partial 8/22 and unpaid dates
   assert.equal(august.parties[0].closingOutstanding,13_532_000);
   assert.equal(august.totalOutstanding,13_532_000);
   assert.equal([13_532_000,8_332_484,7_460_000,15_662_600,29_579_992,2_714_920].reduce((a,b)=>a+b,0),77_281_996);
+});
+
+test("month view no longer builds every party's history; the per-party read keeps the as-of contract",async()=>{
+  const rows=[source(1,"2026-08-01",1000,"paid",10),source(2,"2026-08-05",400,"unpaid",20)];
+  const payments=[allocation("2026-08-10",1000,1),allocation("2026-09-03",400,2)];
+  const api=payableApi(rows,payments);
+  const month=await(await api.get("?month=2026-08")).json();
+  assert.equal(Object.hasOwn(month,"historyPayables"),false);
+  assert.equal(month.totalOutstanding,400);
+  const party20=await(await api.get("?month=2026-08&historyPartyId=20")).json();
+  // Paid today (9/3) but unpaid at the 8월 month end: it must still show as unpaid.
+  assert.deepEqual(party20.historyPayables.map((row:{id:number;outstandingAmount:number;settlementStatus:string})=>[row.id,row.outstandingAmount,row.settlementStatus]),[[2,400,"unpaid"]]);
+  const party10=await(await api.get("?month=2026-08&historyPartyId=10")).json();
+  assert.deepEqual(party10.historyPayables.map((row:{id:number;settlementStatus:string})=>[row.id,row.settlementStatus]),[[1,"paid"]]);
+  assert.equal((await api.get("?historyPartyId=10")).status,400);
+  assert.equal((await api.get("?month=2026-08&historyPartyId=abc")).status,400);
 });
