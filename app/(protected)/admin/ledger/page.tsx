@@ -16,9 +16,9 @@ import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
 import {
   buildProvisionalOperatingProfit,
   type CardSettlementSource,
-  type PayrollOverviewSource,
   type ProvisionalOperatingProfit,
 } from "@/lib/ledger/provisional-operating-profit";
+import type { LedgerPayrollCost } from "@/lib/ledger/payroll-cost";
 import { useLanguage } from "@/lib/language-context";
 import styles from "./ledger-dashboard.module.css";
 
@@ -46,6 +46,10 @@ const text = {
     cardFeePendingNote: "카드수수료 미확정 · 익월 카드입금 처리 중 자동 확정됩니다.",
     ledgerExpense: "현재 장부비용",
     unrecognizedPayroll: "미반영 급여비용",
+    payrollCost: "급여/인건비",
+    payrollPredicted: "예상",
+    payrollFinalized: "확정",
+    checking: "확인 중",
     cardFeeEstimate: "미정산 카드수수료 예상",
     provisionalExpense: "잠정 영업비용",
     provisional: "잠정",
@@ -89,6 +93,10 @@ const text = {
     cardFeePendingNote: "Phí thẻ chưa chốt · Tự động xác nhận khi xử lý tiền về tháng sau.",
     ledgerExpense: "Chi phí đã ghi sổ",
     unrecognizedPayroll: "Chi phí lương chưa ghi sổ",
+    payrollCost: "Chi phí lương",
+    payrollPredicted: "Dự kiến",
+    payrollFinalized: "Đã chốt",
+    checking: "Đang kiểm tra",
     cardFeeEstimate: "Phí thẻ chưa quyết toán (ước tính)",
     provisionalExpense: "Chi phí tạm tính",
     provisional: "Tạm tính",
@@ -139,15 +147,17 @@ const vietnameseCategoryNames: Record<string, string> = {
 };
 
 type ProvisionalSources = {
-  payroll: PayrollOverviewSource | null;
-  currentCard: CardSettlementSource | null;
-  previousCard: CardSettlementSource | null;
+  // Month payroll cost (any month); null while the request is in flight.
+  payroll: LedgerPayrollCost | null;
+  payrollLoading: boolean;
+  // Card sources: current month only (null otherwise).
+  cards: { currentCard: CardSettlementSource | null; previousCard: CardSettlementSource | null } | null;
 };
 type DashboardState = {
   month: string;
   current: DashboardLedgerData;
   previous: DashboardLedgerData;
-  provisional: ProvisionalSources | null;
+  provisional: ProvisionalSources;
 };
 
 // A failed source becomes null so the base dashboard still renders and the
@@ -162,12 +172,18 @@ async function loadOptionalMonthBody<T>(url: string, month: string, signal: Abor
   }
 }
 
-function loadProvisionalSources(month: string, previousMonth: string, signal: AbortSignal): Promise<ProvisionalSources> {
+function loadCardSources(month: string, previousMonth: string, signal: AbortSignal) {
   return Promise.all([
-    loadOptionalMonthBody(`/api/admin/payroll/overview?month=${month}`, month, signal, (body) => body as PayrollOverviewSource),
     loadOptionalMonthBody(`/api/admin/ledger/card-settlements?month=${month}`, month, signal, (body) => (body.summary ?? null) as CardSettlementSource | null),
     loadOptionalMonthBody(`/api/admin/ledger/card-settlements?month=${previousMonth}`, previousMonth, signal, (body) => (body.summary ?? null) as CardSettlementSource | null),
-  ]).then(([payroll, currentCard, previousCard]) => ({ payroll, currentCard, previousCard }));
+  ]).then(([currentCard, previousCard]) => ({ currentCard, previousCard }));
+}
+
+// Month payroll cost (finalized / predicted). A failed request is "unavailable",
+// never a silent 0.
+async function loadPayrollCost(month: string, signal: AbortSignal): Promise<LedgerPayrollCost> {
+  const payroll = await loadOptionalMonthBody(`/api/admin/ledger/payroll-cost?month=${month}`, month, signal, (body) => body as unknown as LedgerPayrollCost);
+  return payroll ?? { month, status: "unavailable", amount: null, recognizedAmount: 0, adjustment: null, batchStatus: null, reason: "PAYROLL_ESTIMATE_FAILED" };
 }
 type DashboardReportData = ReturnType<typeof buildDashboardReport>;
 type DashboardText = (typeof text)["ko"] | (typeof text)["vi"];
@@ -206,8 +222,10 @@ function LedgerDashboardContent() {
     setError(false);
     void (async () => {
       try {
-        // Past months never load Payroll/card estimates.
-        const provisionalPromise = isCurrentMonth ? loadProvisionalSources(month, previousMonth, controller.signal) : Promise.resolve(null);
+        // Payroll cost loads for every month (predicted until the batch completes) and
+        // never blocks the report; card estimates are current-month only.
+        const payrollPromise = loadPayrollCost(month, controller.signal);
+        const cardPromise = isCurrentMonth ? loadCardSources(month, previousMonth, controller.signal) : Promise.resolve(null);
         const [currentResponse, previousResponse] = await Promise.all([
           fetch(`/api/admin/ledger?month=${month}`, { cache: "no-store", signal: controller.signal }),
           fetch(`/api/admin/ledger?month=${previousMonth}`, { cache: "no-store", signal: controller.signal }),
@@ -219,7 +237,7 @@ function LedgerDashboardContent() {
         if (!currentResponse.ok || !previousResponse.ok) {
           throw new Error("DASHBOARD_LOAD_FAILED");
         }
-        const provisional = await provisionalPromise;
+        const cards = await cardPromise;
         if (
           controller.signal.aborted ||
           requestSequence !== requestSequenceRef.current ||
@@ -230,8 +248,13 @@ function LedgerDashboardContent() {
           month,
           current: currentBody as DashboardLedgerData,
           previous: previousBody as DashboardLedgerData,
-          provisional,
+          provisional: { payroll: null, payrollLoading: true, cards },
         });
+        const payroll = await payrollPromise;
+        if (controller.signal.aborted || requestSequence !== requestSequenceRef.current || payroll.month !== month) return;
+        setDashboardState((state) => state && state.month === month
+          ? { ...state, provisional: { ...state.provisional, payroll, payrollLoading: false } }
+          : state);
       } catch (cause) {
         if ((cause as Error).name !== "AbortError" && requestSequence === requestSequenceRef.current) setError(true);
       } finally {
@@ -253,11 +276,12 @@ function LedgerDashboardContent() {
   const operatingResult = useMemo(
     () => dashboardState?.month === month
       ? buildProvisionalOperatingProfit({
-        isCurrentMonth: isCurrentMonth && dashboardState.provisional !== null && dashboardState.current.fundsView.mode === "live",
+        isCurrentMonth: isCurrentMonth && dashboardState.provisional.cards !== null && dashboardState.current.fundsView.mode === "live",
         summary: dashboardState.current.summary,
-        payroll: dashboardState.provisional?.payroll ?? null,
-        currentCard: dashboardState.provisional?.currentCard ?? null,
-        previousCard: dashboardState.provisional?.previousCard ?? null,
+        payroll: dashboardState.provisional.payroll,
+        payrollLoading: dashboardState.provisional.payrollLoading,
+        currentCard: dashboardState.provisional.cards?.currentCard ?? null,
+        previousCard: dashboardState.provisional.cards?.previousCard ?? null,
       })
       : null,
     [dashboardState, month, isCurrentMonth],
@@ -316,7 +340,7 @@ function DashboardReport({ copy, lang, fundsMode, report, operatingResult, expan
       <KpiCard icon="📈" label={copy.cashDifference} amount={report.kpis.cashDifference} {...signedTrend(report.kpis.cashDifferenceChange, copy)} />
       {operatingResult.mode === "provisional"
         // Provisional vs. final profit are different bases, so no month-over-month %.
-        ? <KpiCard icon="📊" label={copy.provisionalOperatingProfit} amount={operatingResult.operatingProfit} note={operatingResult.needsCheck ? copy.needsCheck : copy.provisional} trendDirection={operatingResult.needsCheck ? "down" : undefined} action={detailButton} />
+        ? <KpiCard icon="📊" label={copy.provisionalOperatingProfit} amount={operatingResult.operatingProfit} note={operatingResult.warnings.includes("PAYROLL_LOADING") ? copy.checking : operatingResult.needsCheck ? copy.needsCheck : copy.provisional} trendDirection={operatingResult.needsCheck ? "down" : undefined} action={detailButton} />
         : <KpiCard icon="📊" label={copy.operatingProfit} amount={report.kpis.operatingProfit} {...signedTrend(report.kpis.operatingProfitChange, copy)} action={detailButton} />}
     </section>
 
@@ -370,7 +394,7 @@ function OperatingProfitSheet({ copy, report, operatingResult, returnFocusRef, o
       <div className={styles.comparisonList}>
         <ReportValue label={copy.operatingIncome} amount={operatingResult.recognizedRevenue} />
         <ReportValue label={copy.ledgerExpense} amount={operatingResult.recognizedExpense} expense />
-        {!operatingResult.warnings.includes("CARD_FEE_PENDING") && <><ReportValue expense label={`+ ${copy.unrecognizedPayroll}`} amount={operatingResult.warnings.includes("PAYROLL_UNAVAILABLE") ? null : operatingResult.payrollAdjustment} fallback={copy.needsCheck} />
+        {!operatingResult.warnings.includes("CARD_FEE_PENDING") && <><ReportValue expense label={`+ ${payrollLabel(operatingResult, copy)}`} amount={operatingResult.warnings.includes("PAYROLL_UNAVAILABLE") || operatingResult.warnings.includes("PAYROLL_LOADING") ? null : operatingResult.payrollAdjustment} fallback={operatingResult.warnings.includes("PAYROLL_LOADING") ? copy.checking : copy.estimateUnavailable} />
         <ReportValue expense label={`+ ${copy.cardFeeEstimate}`} amount={operatingResult.cardFeeRateSource === "unavailable" || operatingResult.warnings.includes("CARD_SETTLEMENTS_UNAVAILABLE") || operatingResult.warnings.includes("PREVIOUS_CARD_SETTLEMENTS_UNAVAILABLE") ? null : operatingResult.estimatedCardFee} fallback={operatingResult.cardFeeRateSource === "unavailable" ? copy.estimateUnavailable : copy.needsCheck} /></>}
         <ReportValue label={copy.provisionalExpense} amount={operatingResult.provisionalExpense} fallback={copy.needsCheck} total expense />
         <ReportValue label={copy.provisionalOperatingProfit} amount={operatingResult.operatingProfit} fallback={copy.needsCheck} emphasis />
@@ -382,8 +406,19 @@ function OperatingProfitSheet({ copy, report, operatingResult, returnFocusRef, o
         <ReportValue label={copy.operatingExpense} amount={report.profitAndLoss.expense} expense />
         <ReportValue label={copy.operatingProfit} amount={report.profitAndLoss.operatingProfit} total emphasis />
       </div>
+      {operatingResult.payroll?.status === "finalized" && operatingResult.payroll.amount !== null
+        ? <p className={styles.sectionNote}>{copy.payrollCost} {money(operatingResult.payroll.amount)} · <span className={styles.payrollBadge}>{copy.payrollFinalized}</span></p>
+        : null}
     </div>}
   </BarSheet>;
+}
+
+// "급여/인건비 · 예상|확정" — the payroll row label in the provisional detail.
+function payrollLabel(operatingResult: ProvisionalOperatingProfit, copy: DashboardText) {
+  const status = operatingResult.payroll?.status;
+  if (status === "predicted") return `${copy.payrollCost} · ${copy.payrollPredicted}`;
+  if (status === "finalized") return `${copy.payrollCost} · ${copy.payrollFinalized}`;
+  return status === "loading" || status === "unavailable" ? `${copy.payrollCost} · ${copy.payrollPredicted}` : copy.unrecognizedPayroll;
 }
 
 function KpiCard({ icon, label, amount, change, note, trendLabel, trendDirection, action, amountClass = "" }: { icon: string; label: string; amount: number | null; change?: number | null; note?: string; trendLabel?: string; trendDirection?: "up" | "down"; action?: ReactNode; amountClass?: string }) {

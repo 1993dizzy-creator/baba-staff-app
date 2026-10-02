@@ -1,25 +1,24 @@
-// Current-month provisional operating profit.
+// Provisional operating profit.
 //
-// Adds only costs that already happened this month but are not yet ledger
-// expenses. No future sales, no fixed-cost guesses, no COGS.
+// Adds only costs that already happened but are not yet ledger expenses. No future
+// sales, no fixed-cost guesses, no COGS.
 //
-// Payroll: the ledger books Payroll company cost once, as the
-// `payroll_completed_batch` expense_recognition, only when the payment batch
-// is completed (amount = batch.actual_company_cost_total, meal excluded).
-// Meal allowance is booked daily through attendance meal candidates, so it is
-// removed from the Payroll total before comparing. `payroll_payment` rows have
-// no recognition month and never reach operating profit.
+// Payroll (any month): the ledger books Payroll company cost once, as the
+// `payroll_completed_batch` expense_recognition, when the payment batch completes
+// (around the 10th of the next month, often after the month is closed). Until then
+// the month carries the predicted cost from the Payroll engine (see
+// lib/ledger/payroll-cost.ts — meal allowance excluded, advances never reduce it).
+// Only `payroll.adjustment` (cost − already recognized) is added, so predicted and
+// finalized are never both counted. `payroll_payment` rows have no recognition
+// month and never reach operating profit.
 //
 // Card fees: a fee is booked (`card_settlement_difference`) only when a
 // reconciliation is matched. Gross that is not yet matched (unallocated or
 // partial) has no fee yet, so only that gross gets an estimate.
 
-export type ProvisionalLedgerSummary = { cardFeePending?: boolean; income: number; expense: number; operatingProfit: number };
+import type { LedgerPayrollCost } from "./payroll-cost";
 
-export type PayrollOverviewSource = {
-  summary?: { totalCompanyCostAmount?: unknown; mealAllowanceAmount?: unknown } | null;
-  paymentBatch?: { status?: unknown; actual_company_cost_total?: unknown } | null;
-};
+export type ProvisionalLedgerSummary = { cardFeePending?: boolean; income: number; expense: number; operatingProfit: number };
 
 export type CardSettlementSource = {
   monthlyCardGross?: unknown;
@@ -31,8 +30,11 @@ export type CardSettlementSource = {
 export type ProvisionalOperatingProfitInput = {
   isCurrentMonth: boolean;
   summary: ProvisionalLedgerSummary;
-  // null means the source failed to load.
-  payroll: PayrollOverviewSource | null;
+  // Month payroll cost (finalized / predicted / not_tracked / unavailable).
+  // null: not supplied — needs-check for the current month, ignored for past months.
+  payroll: LedgerPayrollCost | null;
+  // The payroll cost request is still in flight.
+  payrollLoading?: boolean;
   currentCard: CardSettlementSource | null;
   previousCard: CardSettlementSource | null;
 };
@@ -40,6 +42,7 @@ export type ProvisionalOperatingProfitInput = {
 export type CardFeeRateSource = "current" | "previous" | "unavailable";
 export type ProvisionalWarning =
   | "PAYROLL_UNAVAILABLE"
+  | "PAYROLL_LOADING"
   | "CARD_SETTLEMENTS_UNAVAILABLE"
   | "PREVIOUS_CARD_SETTLEMENTS_UNAVAILABLE"
   | "CARD_FEE_RATE_UNAVAILABLE"
@@ -67,20 +70,23 @@ export function previousCardFeeRate(card: CardSettlementSource) {
   return plausibleRate(finite(card.actualDifferenceRate));
 }
 
-export function unrecognizedPayrollCost(payroll: PayrollOverviewSource) {
-  const accruedTotal = finite(payroll.summary?.totalCompanyCostAmount);
-  const mealAllowance = finite(payroll.summary?.mealAllowanceAmount);
-  if (accruedTotal === null || mealAllowance === null) return null;
-  const accruedExcludingMeal = accruedTotal - mealAllowance;
-  const recognized = payroll.paymentBatch?.status === "completed"
-    ? finite(payroll.paymentBatch.actual_company_cost_total) ?? 0
-    : 0;
-  return { accruedExcludingMeal, mealAllowance, recognized, adjustment: Math.max(0, accruedExcludingMeal - recognized) };
+export type PayrollDisplay = { status: LedgerPayrollCost["status"] | "loading"; amount: number | null };
+
+// The payroll part of P&L: how much to add and how to label it.
+function payrollPart(input: ProvisionalOperatingProfitInput) {
+  if (input.payrollLoading) return { display: { status: "loading" as const, amount: null }, adjustment: null as number | null, pending: true };
+  const payroll = input.payroll;
+  if (!payroll) return { display: null, adjustment: input.isCurrentMonth ? null : 0, pending: input.isCurrentMonth };
+  const adjustment = payroll.status === "unavailable" ? null : finite(payroll.adjustment) ?? 0;
+  // A finalized month normally has adjustment 0 (its recognition is already ledger expense).
+  const pending = payroll.status === "predicted" || payroll.status === "unavailable" || (adjustment ?? 0) > 0;
+  return { display: { status: payroll.status, amount: payroll.amount }, adjustment, pending };
 }
 
 export function buildProvisionalOperatingProfit(input: ProvisionalOperatingProfitInput) {
   const { summary } = input;
   const base = {
+    payroll: null as PayrollDisplay | null,
     recognizedRevenue: summary.income,
     recognizedExpense: summary.expense,
     payrollAdjustment: 0,
@@ -89,13 +95,26 @@ export function buildProvisionalOperatingProfit(input: ProvisionalOperatingProfi
     cardFeeRateSource: null as CardFeeRateSource | null,
     unsettledCardGross: 0,
   };
+  const payroll = payrollPart(input);
+  const payrollWarnings: ProvisionalWarning[] = payroll.adjustment === null ? [input.payrollLoading ? "PAYROLL_LOADING" : "PAYROLL_UNAVAILABLE"] : [];
   if (!input.isCurrentMonth) {
-    return { ...base, mode: summary.cardFeePending ? "provisional" as const : "final" as const, needsCheck: false, provisionalExpense: summary.expense, operatingProfit: summary.operatingProfit as number | null, warnings: (summary.cardFeePending ? ["CARD_FEE_PENDING"] : []) as ProvisionalWarning[] };
+    const warnings = [...payrollWarnings, ...(summary.cardFeePending ? ["CARD_FEE_PENDING" as const] : [])];
+    if (!payroll.pending) {
+      return { ...base, payroll: payroll.display, mode: summary.cardFeePending ? "provisional" as const : "final" as const, needsCheck: false, provisionalExpense: summary.expense, operatingProfit: summary.operatingProfit as number | null, warnings };
+    }
+    // A past month whose payroll is not finalized yet: ledger + predicted payroll.
+    const needsCheck = payroll.adjustment === null;
+    const payrollAdjustment = payroll.adjustment ?? 0;
+    const provisionalExpense = summary.expense + payrollAdjustment;
+    return {
+      ...base, payroll: payroll.display, mode: "provisional" as const, needsCheck, payrollAdjustment,
+      provisionalExpense: needsCheck ? null : provisionalExpense,
+      operatingProfit: needsCheck ? null : summary.income - provisionalExpense,
+      warnings,
+    };
   }
 
-  const warnings: ProvisionalWarning[] = [];
-  const payroll = input.payroll ? unrecognizedPayrollCost(input.payroll) : null;
-  if (!payroll) warnings.push("PAYROLL_UNAVAILABLE");
+  const warnings: ProvisionalWarning[] = [...payrollWarnings];
 
   const cardGross = input.currentCard ? finite(input.currentCard.monthlyCardGross) : null;
   const settledGross = input.currentCard ? finite(input.currentCard.monthlySettledGross) : null;
@@ -122,11 +141,12 @@ export function buildProvisionalOperatingProfit(input: ProvisionalOperatingProfi
   }
   const estimatedCardFee = cardFeeRate === null ? 0 : Math.round(unsettledCardGross * cardFeeRate);
 
-  const needsCheck = !payroll || !cardFeeResolved;
-  const payrollAdjustment = payroll?.adjustment ?? 0;
+  const needsCheck = payroll.adjustment === null || !cardFeeResolved;
+  const payrollAdjustment = payroll.adjustment ?? 0;
   const provisionalExpense = summary.expense + payrollAdjustment + estimatedCardFee;
   return {
     ...base,
+    payroll: payroll.display,
     mode: "provisional" as const,
     needsCheck,
     payrollAdjustment,

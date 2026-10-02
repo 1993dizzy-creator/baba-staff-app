@@ -19,7 +19,6 @@ const issueNames: Record<string, [string, string]> = {
   FUTURE_MONTH: ["미래 월은 마감할 수 없음", "Chưa thể chốt tháng tương lai"],
   ALREADY_CLOSED: ["이미 마감된 장부", "Sổ đã được chốt"],
   PENDING_CANDIDATES: ["처리 대기 중인 장부 항목", "Khoản mục đang chờ xử lý"],
-  PAYROLL_NOT_COMPLETED: ["급여 지급 미완료", "Chưa hoàn tất trả lương"],
   RECURRING_NOT_SYNCED: ["반복 지출 미반영", "Chi phí định kỳ chưa được ghi nhận"],
   CANDIDATE_LINK_BROKEN: ["확정 항목의 장부 연결 오류", "Khoản đã xác nhận chưa liên kết với sổ"],
   TRANSFER_UNBALANCED: ["계좌 이체 금액 불일치", "Chuyển khoản chưa cân đối"],

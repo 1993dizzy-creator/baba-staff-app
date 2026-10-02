@@ -473,3 +473,4 @@
     grid-template-columns: minmax(0, 1fr) auto 36px;
   }
 }
+.payrollBadge{display:inline-block;padding:1px 6px;border-radius:999px;background:#e8f6ef;color:#16805a;font-size:10px;font-weight:800}

@@ -7,27 +7,23 @@ const {
   buildProvisionalOperatingProfit,
   currentCardFeeRate,
   previousCardFeeRate,
-  unrecognizedPayrollCost,
   MAX_PLAUSIBLE_CARD_FEE_RATE,
 } = createRequire(import.meta.url)("../lib/ledger/provisional-operating-profit.ts") as typeof import("../lib/ledger/provisional-operating-profit");
 
 const dashboardPage = readFileSync("app/(protected)/admin/ledger/page.tsx", "utf8");
 const dashboardCompact = dashboardPage.replace(/\s+/g, "");
 const helperSource = readFileSync("lib/ledger/provisional-operating-profit.ts", "utf8");
-const payrollRoute = readFileSync("app/api/admin/payroll/overview/route.ts", "utf8");
+const payrollCostServer = readFileSync("lib/ledger/payroll-cost-server.ts", "utf8");
 
 // Ledger summary already includes welfare costs (회식, 숙박, 주거비 ...) inside expense.
 const summary = { income: 1_000_000, expense: 400_000, operatingProfit: 600_000 };
-const payroll = {
-  summary: { totalCompanyCostAmount: 250_000, mealAllowanceAmount: 30_000 },
-  projectedSummary: { totalCompanyCostAmount: 900_000, mealAllowanceAmount: 90_000 },
-  paymentBatch: null,
-};
+// Month payroll cost from /api/admin/ledger/payroll-cost (predicted: no completed batch yet).
+const payroll = { month: "2026-10", status: "predicted" as const, amount: 220_000, recognizedAmount: 0, adjustment: 220_000, batchStatus: null };
 const currentCard = { monthlyCardGross: 300_000, monthlySettledGross: 200_000, monthlySettlementDifference: 4_000, actualDifferenceRate: 0.5 };
 const previousCard = { monthlyCardGross: 500_000, monthlySettledGross: 500_000, monthlySettlementDifference: 12_500, actualDifferenceRate: 0.025 };
 const input = { isCurrentMonth: true, summary, payroll, currentCard, previousCard };
 
-test("current month uses the current Payroll summary minus meal allowance and the current settled card rate", () => {
+test("current month adds the predicted payroll cost and the current settled card rate", () => {
   const result = buildProvisionalOperatingProfit(input);
   assert.equal(result.mode, "provisional");
   assert.equal(result.needsCheck, false);
@@ -43,27 +39,19 @@ test("current month uses the current Payroll summary minus meal allowance and th
   assert.deepEqual(result.warnings, []);
 });
 
-test("projectedSummary is never used for the provisional KPI", () => {
-  const result = buildProvisionalOperatingProfit({ ...input, payroll: { ...payroll, projectedSummary: { totalCompanyCostAmount: 1e12, mealAllowanceAmount: 0 } } as typeof payroll });
-  assert.equal(result.payrollAdjustment, 220_000);
-  assert.doesNotMatch(helperSource.replace(/\/\/.*$/gm, ""), /projectedSummary/);
-});
-
-test("meal allowance is removed so daily ledger meal expenses are not counted twice", () => {
-  const cost = unrecognizedPayrollCost(payroll)!;
-  assert.equal(cost.accruedExcludingMeal, payroll.summary.totalCompanyCostAmount - payroll.summary.mealAllowanceAmount);
-  assert.equal(cost.mealAllowance, 30_000);
-  // Payroll overview's summary really includes meal allowance in totalCompanyCostAmount.
-  assert.match(payrollRoute, /totalCompanyCostAmount:overview\.summary\.totalCompanyCostAmount\+mealAllowance\.currentAmount/);
+test("payroll uses the resolved month cost, never the Payroll overview's projected or meal-inclusive totals", () => {
+  // The ledger payroll-cost server reads loadPayrollOverview() directly: its raw summary has no meal allowance.
+  assert.match(payrollCostServer, /const overview = await loadPayrollOverview\(month\);\s*const companyCost = Number\(overview\.summary\.totalCompanyCostAmount\);/);
+  assert.doesNotMatch(payrollCostServer.replace(/\/\/.*$/gm, ""), /projectedSummary|mealAllowance/);
+  assert.doesNotMatch(helperSource.replace(/\/\/.*$/gm, ""), /projectedSummary|mealAllowanceAmount/);
 });
 
 test("Payroll cost already booked by a completed batch is not added again", () => {
-  const completed = { ...payroll, paymentBatch: { status: "completed", actual_company_cost_total: 220_000 } };
-  assert.equal(buildProvisionalOperatingProfit({ ...input, payroll: completed }).payrollAdjustment, 0);
-  const partly = { ...payroll, paymentBatch: { status: "completed", actual_company_cost_total: 200_000 } };
-  assert.equal(buildProvisionalOperatingProfit({ ...input, payroll: partly }).payrollAdjustment, 20_000);
-  const open = { ...payroll, paymentBatch: { status: "in_progress", actual_company_cost_total: 220_000 } };
-  assert.equal(buildProvisionalOperatingProfit({ ...input, payroll: open }).payrollAdjustment, 220_000);
+  const finalizedBooked = { ...payroll, status: "finalized" as const, amount: 220_000, recognizedAmount: 220_000, adjustment: 0, batchStatus: "completed" };
+  assert.equal(buildProvisionalOperatingProfit({ ...input, payroll: finalizedBooked }).payrollAdjustment, 0);
+  const finalizedMissing = { ...finalizedBooked, recognizedAmount: 200_000, adjustment: 20_000 };
+  assert.equal(buildProvisionalOperatingProfit({ ...input, payroll: finalizedMissing }).payrollAdjustment, 20_000);
+  assert.equal(buildProvisionalOperatingProfit({ ...input, payroll: { ...payroll, batchStatus: "paying" } }).payrollAdjustment, 220_000);
 });
 
 test("existing ledger expenses (welfare, housing, trips) are kept, never replaced", () => {
@@ -115,17 +103,46 @@ test("fee estimate applies only to gross not yet matched, so booked fees are not
   assert.equal(partial.unsettledCardGross, 100_000);
 });
 
-test("past or closed months keep the ledger operating profit without estimates", () => {
-  const result = buildProvisionalOperatingProfit({ ...input, isCurrentMonth: false });
-  assert.equal(result.mode, "final");
-  assert.equal(result.operatingProfit, summary.operatingProfit);
-  assert.equal(result.provisionalExpense, summary.expense);
-  assert.equal(result.payrollAdjustment, 0);
-  assert.equal(result.estimatedCardFee, 0);
+test("past months: finalized payroll keeps the final ledger operating profit; predicted payroll makes it provisional", () => {
+  const finalized = { ...payroll, month: "2026-08", status: "finalized" as const, amount: 220_000, recognizedAmount: 220_000, adjustment: 0, batchStatus: "completed" };
+  const final = buildProvisionalOperatingProfit({ ...input, isCurrentMonth: false, payroll: finalized });
+  assert.equal(final.mode, "final");
+  assert.equal(final.operatingProfit, summary.operatingProfit);
+  assert.equal(final.provisionalExpense, summary.expense);
+  assert.equal(final.payrollAdjustment, 0);
+  assert.equal(final.estimatedCardFee, 0);
+  assert.deepEqual(final.payroll, { status: "finalized", amount: 220_000 });
+  // September closed before its 10/10 payroll: P&L carries the predicted cost, no card estimate.
+  const predicted = buildProvisionalOperatingProfit({ ...input, isCurrentMonth: false, payroll: { ...payroll, month: "2026-09" } });
+  assert.equal(predicted.mode, "provisional");
+  assert.equal(predicted.needsCheck, false);
+  assert.equal(predicted.payrollAdjustment, 220_000);
+  assert.equal(predicted.estimatedCardFee, 0);
+  assert.equal(predicted.provisionalExpense, summary.expense + 220_000);
+  assert.equal(predicted.operatingProfit, summary.income - summary.expense - 220_000);
+  assert.deepEqual(predicted.payroll, { status: "predicted", amount: 220_000 });
+  // Months before payroll tracking, or without a payroll source, stay final.
+  assert.equal(buildProvisionalOperatingProfit({ ...input, isCurrentMonth: false, payroll: { ...payroll, status: "not_tracked" as const, amount: 0, adjustment: 0 } }).mode, "final");
+  assert.equal(buildProvisionalOperatingProfit({ ...input, isCurrentMonth: false, payroll: null }).mode, "final");
+});
+
+test("an unavailable or still-loading payroll estimate is never treated as 0", () => {
+  const unavailable = { ...payroll, status: "unavailable" as const, amount: null, adjustment: null };
+  for (const isCurrentMonth of [true, false]) {
+    const result = buildProvisionalOperatingProfit({ ...input, isCurrentMonth, payroll: unavailable });
+    assert.equal(result.mode, "provisional");
+    assert.equal(result.needsCheck, true);
+    assert.equal(result.operatingProfit, null);
+    assert.ok(result.warnings.includes("PAYROLL_UNAVAILABLE"));
+    const loading = buildProvisionalOperatingProfit({ ...input, isCurrentMonth, payroll: null, payrollLoading: true });
+    assert.equal(loading.operatingProfit, null);
+    assert.ok(loading.warnings.includes("PAYROLL_LOADING"));
+    assert.deepEqual(loading.payroll, { status: "loading", amount: null });
+  }
 });
 
 test("a failed Payroll or card source marks the provisional profit as needs-check instead of assuming 0", () => {
-  for (const failed of [{ payroll: null }, { currentCard: null }, { payroll: { summary: { totalCompanyCostAmount: Number.NaN, mealAllowanceAmount: 0 } } }]) {
+  for (const failed of [{ payroll: null }, { currentCard: null }, { payroll: { ...payroll, status: "unavailable" as const, amount: null, adjustment: null } }]) {
     const result = buildProvisionalOperatingProfit({ ...input, ...failed });
     assert.equal(result.needsCheck, true);
     assert.equal(result.operatingProfit, null);
@@ -138,23 +155,29 @@ test("a failed Payroll or card source marks the provisional profit as needs-chec
   assert.equal(buildProvisionalOperatingProfit({ ...input, previousCard: null }).needsCheck, false);
 });
 
-test("dashboard loads Payroll/card sources only for the current month, in parallel, without failing the base report", () => {
+test("dashboard loads payroll cost for every month without blocking the report; card sources stay current-month only", () => {
   assert.match(dashboardCompact, /constisCurrentMonth=month===getBusinessDate\(\)\.slice\(0,7\);/);
-  assert.match(dashboardCompact, /constprovisionalPromise=isCurrentMonth\?loadProvisionalSources\(month,previousMonth,controller\.signal\):Promise\.resolve\(null\);const\[currentResponse,previousResponse\]=awaitPromise\.all/);
-  for (const url of ["/api/admin/payroll/overview?month=${month}", "/api/admin/ledger/card-settlements?month=${month}", "/api/admin/ledger/card-settlements?month=${previousMonth}"]) assert.ok(dashboardPage.includes(url), url);
+  assert.match(dashboardCompact, /constpayrollPromise=loadPayrollCost\(month,controller\.signal\);constcardPromise=isCurrentMonth\?loadCardSources\(month,previousMonth,controller\.signal\):Promise\.resolve\(null\);/);
+  for (const url of ["/api/admin/ledger/payroll-cost?month=${month}", "/api/admin/ledger/card-settlements?month=${month}", "/api/admin/ledger/card-settlements?month=${previousMonth}"]) assert.ok(dashboardPage.includes(url), url);
+  assert.doesNotMatch(dashboardPage, /\/api\/admin\/payroll\/overview/);
+  // The report renders first (payroll loading), then payroll fills in for the same month only.
+  assert.match(dashboardCompact, /provisional:\{payroll:null,payrollLoading:true,cards\},?\}\);constpayroll=awaitpayrollPromise;if\(controller\.signal\.aborted\|\|requestSequence!==requestSequenceRef\.current\|\|payroll\.month!==month\)return;/);
   assert.match(dashboardCompact, /asyncfunctionloadOptionalMonthBody[^]*?catch\{returnnull;\}/);
   assert.match(dashboardCompact, /body\?\.month===month\?pick\(body\):null/);
+  // A failed payroll request is "unavailable", not 0.
+  assert.match(dashboardCompact, /returnpayroll\?\?\{month,status:"unavailable",amount:null,recognizedAmount:0,adjustment:null,batchStatus:null,reason:"PAYROLL_ESTIMATE_FAILED"\};/);
   // Existing stale guards stay intact.
   assert.match(dashboardCompact, /requestSequence!==requestSequenceRef\.current/);
   assert.match(dashboardCompact, /currentBody\.month!==month\|\|previousBody\.month!==previousMonth/);
   assert.match(dashboardCompact, /controller\.abort\(\);requestSequenceRef\.current\+=1/);
-  assert.match(dashboardCompact, /isCurrentMonth:isCurrentMonth&&dashboardState\.provisional!==null&&dashboardState\.current\.fundsView\.mode==="live"/);
+  assert.match(dashboardCompact, /isCurrentMonth:isCurrentMonth&&dashboardState\.provisional\.cards!==null&&dashboardState\.current\.fundsView\.mode==="live"/);
 });
 
 test("KPI and P&L card switch between provisional (current) and final (past) labels", () => {
-  assert.match(dashboardCompact, /operatingResult\.mode==="provisional"(\/\/[^?]*)?\?<KpiCardicon="📊"label=\{copy\.provisionalOperatingProfit\}amount=\{operatingResult\.operatingProfit\}note=\{operatingResult\.needsCheck\?copy\.needsCheck:copy\.provisional\}trendDirection=\{operatingResult\.needsCheck\?"down":undefined\}action=\{detailButton\}\/>/);
+  assert.match(dashboardCompact, /operatingResult\.mode==="provisional"(\/\/[^?]*)?\?<KpiCardicon="📊"label=\{copy\.provisionalOperatingProfit\}amount=\{operatingResult\.operatingProfit\}note=\{operatingResult\.warnings\.includes\("PAYROLL_LOADING"\)\?copy\.checking:operatingResult\.needsCheck\?copy\.needsCheck:copy\.provisional\}trendDirection=\{operatingResult\.needsCheck\?"down":undefined\}action=\{detailButton\}\/>/);
   assert.match(dashboardCompact, /:<KpiCardicon="📊"label=\{copy\.operatingProfit\}amount=\{report\.kpis\.operatingProfit\}\{\.\.\.signedTrend\(report\.kpis\.operatingProfitChange,copy\)\}action=\{detailButton\}\/>\}/);
-  for (const key of ["operatingIncome", "ledgerExpense", "unrecognizedPayroll", "cardFeeEstimate", "provisionalExpense", "provisionalOperatingProfit", "provisionalNote", "estimateUnavailable", "needsCheck"]) assert.match(dashboardPage, new RegExp(`copy\\.${key}`));
+  for (const key of ["operatingIncome", "ledgerExpense", "unrecognizedPayroll", "cardFeeEstimate", "provisionalExpense", "provisionalOperatingProfit", "provisionalNote", "estimateUnavailable", "needsCheck", "payrollCost", "payrollPredicted", "payrollFinalized", "checking"]) assert.match(dashboardPage, new RegExp(`copy\\.${key}`));
+  for (const label of ["급여/인건비", "예상", "확정", "확인 중", "Chi phí lương", "Dự kiến", "Đã chốt", "Đang kiểm tra"]) assert.ok(dashboardPage.includes(`"${label}"`), label);
   for (const label of ["잠정 영업이익", "현재 장부비용", "미반영 급여비용", "미정산 카드수수료 예상", "잠정 영업비용", "현재까지 발생 기준 · 미확정 급여와 카드수수료 예상분 포함", "계산 확인 필요", "예상 불가",
     "Lợi nhuận tạm tính", "Chi phí đã ghi sổ", "Chi phí lương chưa ghi sổ", "Phí thẻ chưa quyết toán (ước tính)", "Chi phí tạm tính", "gồm lương chưa chốt và phí thẻ ước tính", "Cần kiểm tra", "Chưa ước tính được"]) assert.ok(dashboardPage.includes(label), label);
 });
@@ -193,13 +216,13 @@ test("main P&L card is removed and its rows live in the operating-profit detail 
 });
 
 test("detail sheet renders the same provisional result as the KPI, with fail-safe fallbacks", () => {
-  const sheet = dashboardCompact.slice(dashboardCompact.indexOf("functionOperatingProfitSheet("), dashboardCompact.indexOf("functionKpiCard("));
+  const sheet = dashboardCompact.slice(dashboardCompact.indexOf("functionOperatingProfitSheet("), dashboardCompact.indexOf("functionpayrollLabel("));
   const provisional = sheet.slice(sheet.indexOf("{provisional?"), sheet.indexOf(":<div>"));
   const rows = [...provisional.matchAll(/<ReportValue(?:expense)?label=\{(.*?)\}amount=\{(.*?)\}(?=fallback|total|emphasis|expense|\/>)/g)].map((match) => [match[1], match[2]]);
   assert.deepEqual(rows, [
     ["copy.operatingIncome", "operatingResult.recognizedRevenue"],
     ["copy.ledgerExpense", "operatingResult.recognizedExpense"],
-    ["`+${copy.unrecognizedPayroll}`", "operatingResult.warnings.includes(\"PAYROLL_UNAVAILABLE\")?null:operatingResult.payrollAdjustment"],
+    ["`+${payrollLabel(operatingResult,copy)}`", "operatingResult.warnings.includes(\"PAYROLL_UNAVAILABLE\")||operatingResult.warnings.includes(\"PAYROLL_LOADING\")?null:operatingResult.payrollAdjustment"],
     ["`+${copy.cardFeeEstimate}`", "operatingResult.cardFeeRateSource===\"unavailable\"||operatingResult.warnings.includes(\"CARD_SETTLEMENTS_UNAVAILABLE\")||operatingResult.warnings.includes(\"PREVIOUS_CARD_SETTLEMENTS_UNAVAILABLE\")?null:operatingResult.estimatedCardFee"],
     ["copy.provisionalExpense", "operatingResult.provisionalExpense"],
     ["copy.provisionalOperatingProfit", "operatingResult.operatingProfit"],
