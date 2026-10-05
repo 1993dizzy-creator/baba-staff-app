@@ -25,8 +25,11 @@ import {
 
 
 import type { EarlyLeaveReviewContext } from "@/lib/attendance/early-leave-review-server";
+import type { EarlyLeaveDisplayContext } from "@/lib/attendance/early-leave-display-context";
+import { formatVietnamTime } from "@/lib/common/business-time";
+import type { EarlyLeaveSelection } from "@/lib/attendance/early-leave-review";
 
-type EarlyLeaveReviewRecord = EarlyLeaveReviewContext & {user: UnresolvedOpenRecordUser | null};
+type EarlyLeaveReviewRecord = EarlyLeaveReviewContext & EarlyLeaveDisplayContext & {user: UnresolvedOpenRecordUser | null};
 
 type UserRow = {
     id: number;
@@ -208,6 +211,7 @@ export default function AttendanceOverviewPage() {
     const [processingRecordId, setProcessingRecordId] = useState<number | null>(null);
     const [processingAction, setProcessingAction] = useState<"auto" | "delete" | null>(null);
     const monthlyOverviewRequestRef = useRef(0);
+    const earlyLeaveResolutionRef = useRef(false);
 
     const fetchUnresolvedOpenRecords = useCallback(async () => {
         try {
@@ -283,6 +287,28 @@ export default function AttendanceOverviewPage() {
             monthlyOverviewRequestRef.current += 1;
         };
     }, [fetchMonthlyOverview]);
+
+    const handleResolveEarlyLeave = async (recordId: number, selection: EarlyLeaveSelection) => {
+        if (earlyLeaveResolutionRef.current || processingRecordId !== null) return;
+        earlyLeaveResolutionRef.current = true;
+        setProcessingRecordId(recordId);
+        try {
+            const response = await attendanceFetch("/api/attendance/admin", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "resolve_early_leave", attendance_id: recordId, selection, lang }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) throw new Error(result.message || t.correctionFailed);
+            setEarlyLeaveReviewRecords((current) => current.filter((record) => record.id !== recordId));
+            await Promise.all([fetchUnresolvedOpenRecords(), fetchMonthlyOverview()]);
+        } catch (error) {
+            alert(error instanceof Error ? error.message : t.correctionFailed);
+        } finally {
+            earlyLeaveResolutionRef.current = false;
+            setProcessingRecordId(null);
+        }
+    };
 
     const handleAutoCorrect = async (record: UnresolvedOpenRecord) => {
         if (processingRecordId) return;
@@ -494,15 +520,35 @@ export default function AttendanceOverviewPage() {
                     {isEarlyLeaveReviewOpen && <div style={unresolvedListStyle}>
                         {earlyLeaveReviewRecords.map(record => <div key={record.id} style={unresolvedItemStyle}>
                             <div style={unresolvedItemTopRowStyle}>
-                                <span style={unresolvedItemNameStyle}>{record.user?.name || record.user?.username || `#${record.user_id}`}</span>
+                                <div style={earlyLeaveNameScheduleStyle}>
+                                    <span style={unresolvedItemNameStyle}>{record.user?.name || record.user?.username || `#${record.user_id}`}</span>
+                                    <span style={{ ...unresolvedItemMetaStyle, whiteSpace: "nowrap" }}>
+                                        · {record.effectiveScheduleStart && record.effectiveScheduleEnd ? `${record.effectiveScheduleStart}~${record.effectiveScheduleEnd}` : "-"}
+                                    </span>
+                                </div>
                                 <span style={unresolvedItemDateStyle}>{record.work_date}</span>
                             </div>
-                            <div style={unresolvedItemBottomRowStyle}>
-                                <span style={unresolvedItemMetaStyle}>
-                                    {t.earlyLeaveRawMinutes} {record.rawEarlyLeaveMinutes}{c.minute} · {t.earlyLeaveGraceMinutes} {record.earlyLeaveGraceMinutes}{c.minute} · {t.earlyLeaveEffectiveMinutes} {record.effectiveEarlyLeaveMinutes}{c.minute}
-                                </span>
+                            <div style={earlyLeaveCheckoutComparisonStyle}>
+                                <span>{lang === "vi" ? "Tan ca" : "퇴근"} {formatVietnamTime(record.actualCheckOutAt)}</span>
+                                <span>· {lang === "vi" ? "Tan ca trung bình" : "평균 퇴근"} {formatVietnamTime(record.peerAverageCheckOutAt)}</span>
+                            </div>
+                            <div style={earlyLeaveDecisionRowStyle} aria-busy={processingRecordId === record.id}>
+                                <div style={earlyLeaveDecisionButtonsStyle}>
+                                <button type="button" style={{ ...unresolvedDetailButtonStyle, opacity: processingRecordId !== null ? 0.6 : 1 }}
+                                    disabled={processingRecordId !== null}
+                                    aria-label={t.earlyLeaveUseRaw.replace("{minutes}", String(record.rawEarlyLeaveMinutes))}
+                                    onClick={() => handleResolveEarlyLeave(record.id, "use_raw")}>
+                                    {record.rawEarlyLeaveMinutes}{c.minute} {t.workEarlyLeave}
+                                </button>
+                                <button type="button" style={{ ...unresolvedDetailButtonStyle, opacity: processingRecordId !== null ? 0.6 : 1 }}
+                                    disabled={processingRecordId !== null}
+                                    aria-label={t.earlyLeaveUseEffective.replace("{minutes}", String(record.effectiveEarlyLeaveMinutes))}
+                                    onClick={() => handleResolveEarlyLeave(record.id, "use_effective")}>
+                                    {record.effectiveEarlyLeaveMinutes}{c.minute} {t.workEarlyLeave}
+                                </button>
                                 <button type="button" style={unresolvedDetailButtonStyle}
-                                    onClick={() => goDetailForDate(record.user_id, record.work_date)}>{t.unresolvedOpenRecordDetailButton}</button>
+                                    onClick={() => goDetailForDate(record.user_id, record.work_date)}>{lang === "vi" ? "Xem chi tiết" : "상세보기"}</button>
+                                </div>
                             </div>
                         </div>)}
                     </div>}
@@ -894,6 +940,39 @@ const unresolvedItemTopRowStyle: CSSProperties = {
     justifyContent: "space-between",
     alignItems: "baseline",
     gap: 6,
+    minWidth: 0,
+};
+
+const earlyLeaveNameScheduleStyle: CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "baseline",
+    gap: 4,
+    minWidth: 0,
+};
+
+const earlyLeaveCheckoutComparisonStyle: CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "2px 4px",
+    fontSize: 11,
+    color: "#6b7280",
+    minWidth: 0,
+};
+
+const earlyLeaveDecisionRowStyle: CSSProperties = {
+    display: "flex",
+    alignItems: "baseline",
+    gap: 6,
+    minWidth: 0,
+};
+
+const earlyLeaveDecisionButtonsStyle: CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    gap: 6,
+    marginLeft: "auto",
     minWidth: 0,
 };
 

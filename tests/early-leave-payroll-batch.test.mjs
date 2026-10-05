@@ -71,6 +71,7 @@ test('actual admin action rejects client minutes, applies paid lock, and removes
   ['@/lib/attendance/policy-resolution-adapter',{resolveAttendanceRecordPolicy:async()=>({normalCheckoutThresholdAt:context.normalCheckoutThresholdAt,earlyLeaveGraceMinutes:60})}],
   ['@/lib/attendance/early-leave-review-server',{loadEarlyLeaveReviewContexts:async()=>new Map([[1,context]])}],
   ['@/lib/attendance/audit-log',{recordAttendanceAuditLog:async()=>{}}],
+  ['@/lib/attendance/early-leave-display-context-server',{loadEarlyLeaveDisplayContexts:async()=>new Map()}],
  ]);
  const route=load('app/api/attendance/admin/route.ts',stubs,new Map());
  const request=body=>new Request('http://localhost/api/attendance/admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

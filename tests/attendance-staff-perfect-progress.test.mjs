@@ -252,6 +252,7 @@ function recordsApiHarness() {
     "@/lib/attendance/policy-resolution-adapter": {},
     "@/lib/attendance/policy-engine": {},
     "@/lib/attendance/early-leave-review-server": {},
+    "@/lib/attendance/early-leave-display-context-server": {},
   }, { URL });
   return { tables, queries, get: (scope = "staff_today") => route.GET({ url: "http://localhost/api/attendance/records?scope=" + scope + "&work_date=2026-10-02" }) };
 }

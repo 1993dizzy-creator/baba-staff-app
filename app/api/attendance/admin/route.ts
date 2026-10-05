@@ -24,6 +24,7 @@ import {
 import { recordAttendanceAuditLog } from "@/lib/attendance/audit-log";
 import { EARLY_LEAVE_REVIEW_START_DATE, isEarlyLeaveSelection } from "@/lib/attendance/early-leave-review";
 import { loadEarlyLeaveReviewContexts } from "@/lib/attendance/early-leave-review-server";
+import { loadEarlyLeaveDisplayContexts } from "@/lib/attendance/early-leave-display-context-server";
 import {
   ATTENDANCE_TRACKING_DISABLED_CODE,
   getAttendanceTrackingDisabledMessage,
@@ -159,10 +160,11 @@ export async function GET(req: Request) {
         admin_review_at: getAdminMissingCheckoutReviewAt(policy.effectiveStoreCloseAt),
       }));
 
+    const earlyLeaveDisplayContexts = await loadEarlyLeaveDisplayContexts(earlyLeaveReviews);
     return NextResponse.json({
       ok: true,
       unresolvedOpenRecords: enrichedRecords,
-      earlyLeaveReviewRecords: earlyLeaveReviews.map(record => ({...record, user: usersById.get(record.user_id) ?? null})),
+      earlyLeaveReviewRecords: earlyLeaveReviews.map(record => ({...record, ...earlyLeaveDisplayContexts.get(record.id), user: usersById.get(record.user_id) ?? null})),
     });
   } catch {
     return NextResponse.json(

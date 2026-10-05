@@ -25,6 +25,8 @@ import {
 
 import type { EarlyLeaveSelection } from "@/lib/attendance/early-leave-review";
 import type { EarlyLeaveReviewContext } from "@/lib/attendance/early-leave-review-server";
+import type { EarlyLeaveDisplayContext } from "@/lib/attendance/early-leave-display-context";
+import { formatVietnamTime } from "@/lib/common/business-time";
 
 type UserRow = {
     id: number;
@@ -54,6 +56,7 @@ type AttendanceRecord = {
     updated_at?: string | null;
     admin_unresolved?: boolean;
     early_leave_review?: EarlyLeaveReviewContext | null;
+    early_leave_display_context?: EarlyLeaveDisplayContext | null;
     auto_close_at?: string | null;
     unauthorized_absence_audit?: {
         actorUserId: number;
@@ -1021,11 +1024,15 @@ function RecordDetailPanel({
                     </div>
 
                     {record.early_leave_review && (record.early_leave_review.earlyLeaveReviewRequired || record.early_leave_review.earlyLeaveSelection) && (
-                        <div style={longShiftWarningStyle}>
-                            <strong>{record.early_leave_review.earlyLeaveReviewRequired ? t.earlyLeaveReviewRequired : t.earlyLeaveSelectionConfirmed}</strong>
-                            <div>{t.earlyLeaveRawMinutes}: {record.early_leave_review.rawEarlyLeaveMinutes}{c.minute}</div>
-                            <div>{t.earlyLeaveGraceMinutes}: {record.early_leave_review.earlyLeaveGraceMinutes}{c.minute}</div>
-                            <div>{t.earlyLeaveEffectiveMinutes}: {record.early_leave_review.effectiveEarlyLeaveMinutes}{c.minute}</div>
+                        <div style={earlyLeaveSummaryStyle}>
+                            <div>{lang === "vi" ? "TB tan ca hôm đó" : "당일 평균 퇴근시간"}: {formatVietnamTime(record.early_leave_display_context?.peerAverageCheckOutAt)}</div>
+                            <div style={{ marginTop: 3 }}>{lang === "vi" ? "Về sớm theo giờ kết ca" : "마감시간 기준 조퇴"}: {record.early_leave_review.rawEarlyLeaveMinutes}{lang === "vi" ? " " : ""}{c.minute}</div>
+                            <div>{lang === "vi" ? "Về sớm sau miễn trừ" : "허용시간 적용 조퇴"}: {record.early_leave_review.effectiveEarlyLeaveMinutes}{lang === "vi" ? " " : ""}{c.minute}</div>
+                            <div style={earlyLeaveAppliedSummaryStyle}>{lang === "vi" ? "Thời gian về sớm áp dụng" : "적용된 조퇴 판정 시간"}: {record.early_leave_review.earlyLeaveSelection === "use_raw"
+                                ? `${record.early_leave_review.rawEarlyLeaveMinutes}${lang === "vi" ? " " : ""}${c.minute}`
+                                : record.early_leave_review.earlyLeaveSelection === "use_effective"
+                                    ? `${record.early_leave_review.effectiveEarlyLeaveMinutes}${lang === "vi" ? " " : ""}${c.minute}`
+                                    : lang === "vi" ? "Chưa xác nhận" : "미확정"}</div>
                             {record.early_leave_review.earlyLeaveReviewRequired ? <div style={actionRowStyle}>
                                 <button type="button" style={secondaryActionButtonStyle} disabled={isSaving}
                                     onClick={() => onResolveEarlyLeave(record.id, "use_raw")}>
@@ -1035,9 +1042,7 @@ function RecordDetailPanel({
                                     onClick={() => onResolveEarlyLeave(record.id, "use_effective")}>
                                     {t.earlyLeaveUseEffective.replace("{minutes}", String(record.early_leave_review.effectiveEarlyLeaveMinutes))}
                                 </button>
-                            </div> : <div>{record.early_leave_review.earlyLeaveSelection === "use_raw"
-                                ? t.earlyLeaveUseRaw.replace("{minutes}", String(record.early_leave_review.rawEarlyLeaveMinutes))
-                                : t.earlyLeaveUseEffective.replace("{minutes}", String(record.early_leave_review.effectiveEarlyLeaveMinutes))}</div>}
+                            </div> : null}
                         </div>
                     )}
 
@@ -1818,6 +1823,25 @@ const longShiftWarningStyle: CSSProperties = {
     borderRadius: 10,
     padding: "7px 10px",
     fontSize: 12,
+    fontWeight: 800,
+};
+
+const earlyLeaveSummaryStyle: CSSProperties = {
+    border: "1px solid #f59e0b",
+    background: "#fffbeb",
+    color: "#92400e",
+    borderRadius: 10,
+    padding: "7px 8px",
+    fontSize: 11,
+    fontWeight: 600,
+    lineHeight: 1.5,
+    minWidth: 0,
+};
+
+const earlyLeaveAppliedSummaryStyle: CSSProperties = {
+    marginTop: 3,
+    paddingTop: 3,
+    borderTop: "1px solid #fde68a",
     fontWeight: 800,
 };
 

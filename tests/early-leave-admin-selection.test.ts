@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import test from "node:test";
 // @ts-expect-error Node's direct TypeScript tests require the explicit extension.
@@ -52,7 +52,7 @@ test("admin APIs and both language UIs wire review, resolution and date-specific
  assert.match(admin,/p_expected_grace_minutes: resolved\.earlyLeaveGraceMinutes/);assert.match(admin,/PAYROLL_PAID_LOCKED/);
  assert.match(records,/early_leave_review: earlyLeaveContexts\.get/);
  assert.match(overview,/earlyLeaveReviewBanner/);assert.match(overview,/goDetailForDate\(record\.user_id, record\.work_date\)/);
- assert.doesNotMatch(overview,/resolve_early_leave/);assert.match(overview,/unresolvedOpenRecordsBanner/);
+ assert.match(overview,/action: "resolve_early_leave"/);assert.match(overview,/unresolvedOpenRecordsBanner/);
  assert.match(detail,/action: "resolve_early_leave"/);assert.match(detail,/onResolveEarlyLeave\(record\.id, "use_raw"\)/);assert.match(detail,/onResolveEarlyLeave\(record\.id, "use_effective"\)/);
  const text=read("lib/text/attendance.ts");assert.match(text,/조퇴 적용 기준 확인 필요/);assert.match(text,/Cần xác nhận cách tính phút về sớm/);
  const payroll=read("lib/payroll/monthly-run.ts");assert.match(payroll,/BLOCKING_WARNING_CODES=new Set<string>\(\["EARLY_LEAVE_REVIEW_REQUIRED"/);
