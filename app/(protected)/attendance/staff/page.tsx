@@ -18,7 +18,7 @@ import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
-import { currentVietnamMonth, useMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
+import { useMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
 
 
 type UserRow = {
@@ -54,6 +54,8 @@ type LoginUser = {
   username?: string;
   role?: string | null;
 };
+
+type StaffAttendanceResponse = { records: AttendanceRecord[]; summaryRevision: string };
 
 function formatTime(value: string | null) {
   if (!value) return "-";
@@ -108,10 +110,17 @@ export default function AttendanceStaffPage() {
   const tabs = getAttendanceTabs(pathname, lang);
   const t = attendanceText[lang];
   const c = commonText[lang];
-  const perfectSummary = useMonthlyAttendanceSummary(currentVietnamMonth());
 
   const [users, setUsers] = useState<UserRow[]>([]);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const [summaryRevision, setSummaryRevision] = useState("");
+  const businessDate = getBusinessDate();
+  // Stable across identical polls; local mutations still invalidate immediately.
+  const summaryRefreshKey = useMemo(() => JSON.stringify([
+    summaryRevision,
+    [...records].sort((a, b) => a.id - b.id),
+  ]), [summaryRevision, records]);
+  const perfectSummary = useMonthlyAttendanceSummary(businessDate.slice(0, 7), `${businessDate}:${summaryRefreshKey}`, true);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loginUser, setLoginUser] = useState<LoginUser | null>(null);
@@ -119,7 +128,7 @@ export default function AttendanceStaffPage() {
   const isMountedRef = useRef(true);
   const usersRequestRef = useRef<Promise<UserRow[]> | null>(null);
   const recordsRequestsRef = useRef(
-    new Map<string, Promise<AttendanceRecord[]>>()
+    new Map<string, Promise<StaffAttendanceResponse>>()
   );
   const recordsRequestSequenceRef = useRef(0);
   const mutationInFlightRef = useRef(false);
@@ -207,7 +216,7 @@ export default function AttendanceStaffPage() {
             result?.message || "ATTENDANCE_RECORDS_REQUEST_FAILED"
           );
         }
-        return (result.records || []) as AttendanceRecord[];
+        return { records: result.records || [], summaryRevision: result.summaryRevision } as StaffAttendanceResponse;
       });
       recordsRequestsRef.current.set(workDate, request);
     }
@@ -218,7 +227,8 @@ export default function AttendanceStaffPage() {
         isMountedRef.current &&
         requestSequence === recordsRequestSequenceRef.current
       ) {
-        setRecords(recordData);
+        setRecords(recordData.records);
+        setSummaryRevision(recordData.summaryRevision);
       }
     } catch (error) {
       console.log("fetch attendance records error:", error);

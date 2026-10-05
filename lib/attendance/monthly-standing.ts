@@ -47,6 +47,7 @@ export function resolveAttendanceStoreClosed(input: {
 export function evaluateMonthlyAttendanceStanding(input: {
   attendanceTrackingEnabled: boolean;
   days: readonly MonthlyAttendanceStandingDay[];
+  allowZeroWorkDays?: boolean;
 }): MonthlyAttendanceStanding {
   const seenWorkedDates = new Set<string>();
   let lateCount = 0;
@@ -96,7 +97,7 @@ export function evaluateMonthlyAttendanceStanding(input: {
     earlyLeaveCount,
     unauthorizedAbsenceCount,
     blockingCount,
-    perfectAttendanceCurrent: input.attendanceTrackingEnabled && actualWorkDays >= 1 &&
+    perfectAttendanceCurrent: input.attendanceTrackingEnabled && (input.allowZeroWorkDays === true || actualWorkDays >= 1) &&
       lateCount === 0 && earlyLeaveCount === 0 && unauthorizedAbsenceCount === 0 && blockingCount === 0,
     blockingReasons,
   };

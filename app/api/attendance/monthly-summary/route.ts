@@ -26,7 +26,8 @@ export async function GET(request: Request) {
   const userId = userIdParam === null ? undefined : Number(userIdParam);
 
   try {
-    const result = await loadMonthlyAttendanceStandings(month, { userId });
+    const staffCurrent = searchParams.get("scope") === "staff_current";
+    const result = await loadMonthlyAttendanceStandings(month, { userId, staffCurrent });
     const bonusVersions = await loadAttendanceBonusVersions(month, [...result.standings.keys()]);
     const summaries = [...result.standings.entries()].map(([summaryUserId, standing]) => ({
       userId: summaryUserId,

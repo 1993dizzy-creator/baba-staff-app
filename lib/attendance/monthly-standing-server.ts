@@ -22,7 +22,7 @@ export type MonthlyStandingUser = {
 
 export async function loadMonthlyAttendanceStandings(
   month: string,
-  options?: { period?: PayrollOverviewPeriod; userId?: number; attendancePromise?: Promise<{ data: AttendanceRow[] | null; error: unknown }> },
+  options?: { period?: PayrollOverviewPeriod; userId?: number; attendancePromise?: Promise<{ data: AttendanceRow[] | null; error: unknown }>; staffCurrent?: boolean },
 ): Promise<{
   asOfDate: string;
   users: MonthlyStandingUser[];
@@ -30,7 +30,9 @@ export async function loadMonthlyAttendanceStandings(
 }> {
   const period = options?.period ?? await resolvePayrollOverviewPeriod(month);
   const allDates = payrollMonthDates(month);
-  const calculationEndDate = period.calculationEndDate;
+  const currentBusinessDate = period.levelAsOfDate;
+  const calculationEndDate = options?.staffCurrent && currentBusinessDate.startsWith(`${month}-`)
+    ? currentBusinessDate : period.calculationEndDate;
   const dates = calculationEndDate ? allDates.filter((date) => date <= calculationEndDate) : [];
   const start = `${month}-01`;
   const end = allDates.at(-1) ?? start;
@@ -107,12 +109,13 @@ export async function loadMonthlyAttendanceStandings(
         schedule, hireDate: user.hire_date, storeSettingsRevision: policy.revision,
         lateGraceMinutes: policy.lateGraceMinutes, earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
         manualLateNormalized: record ? overrides.has(Number(record.id)) : false,
+        includeOpenRecordLate: options?.staffCurrent === true,
         earlyLeaveSelection: record ? earlyLeaveContexts.get(Number(record.id))?.earlyLeaveSelection : null,
         normalCheckoutThresholdAt: record ? earlyLeaveContexts.get(Number(record.id))?.normalCheckoutThresholdAt : null,
       });
-      return { date, facts, ...classification, approvedLeave: record?.status === "leave" && record.approval_status === "approved", completedBusinessDay: true };
+      return { date, facts, ...classification, approvedLeave: record?.status === "leave" && record.approval_status === "approved", completedBusinessDay: !options?.staffCurrent || date < currentBusinessDate };
     });
-    standings.set(Number(user.id), evaluateMonthlyAttendanceStanding({ attendanceTrackingEnabled: user.attendance_tracking_enabled === true, days: standingDays }));
+    standings.set(Number(user.id), evaluateMonthlyAttendanceStanding({ attendanceTrackingEnabled: user.attendance_tracking_enabled === true, days: standingDays, allowZeroWorkDays: options?.staffCurrent === true }));
   }
-  return { asOfDate: period.asOfDate, users, standings };
+  return { asOfDate: options?.staffCurrent ? lastDate ?? period.asOfDate : period.asOfDate, users, standings };
 }

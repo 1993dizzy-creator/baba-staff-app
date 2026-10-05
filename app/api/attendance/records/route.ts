@@ -8,6 +8,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { resolveAttendanceRecordPolicy } from "@/lib/attendance/policy-resolution-adapter";
 import { isAdminMissingCheckoutReviewAvailable } from "@/lib/attendance/policy-engine";
 import { loadEarlyLeaveReviewContexts } from "@/lib/attendance/early-leave-review-server";
+import { createHash } from "node:crypto";
 
 export async function GET(req: Request) {
   try {
@@ -130,6 +131,26 @@ export async function GET(req: Request) {
       }
     }
 
+    if (policy.scope === "staff_today") {
+      // Read revision inputs only; avoid recomputing monthly facts on unchanged polls.
+      const { data: monthlyRecords, error: revisionError } = await supabaseServer
+        .from("attendance_records")
+        .select("id,updated_at")
+        .gte("work_date", `${policy.workDate!.slice(0, 7)}-01`)
+        .lte("work_date", policy.workDate!)
+        .order("id");
+      if (revisionError) throw new Error("MONTHLY_ATTENDANCE_REVISION_READ_FAILED");
+      const monthlyIds = (monthlyRecords ?? []).map((record) => Number(record.id));
+      const overrides = monthlyIds.length
+        ? await supabaseServer.from("attendance_record_manual_overrides")
+          .select("id,attendance_record_id,revoked_at")
+          .in("attendance_record_id", monthlyIds).order("id")
+        : { data: [], error: null };
+      if (overrides.error) throw new Error("MONTHLY_ATTENDANCE_REVISION_READ_FAILED");
+      const summaryRevision = createHash("sha256")
+        .update(JSON.stringify([monthlyRecords ?? [], overrides.data ?? []])).digest("hex");
+      return attendanceJson({ ok: true, records, summaryRevision });
+    }
     return attendanceJson({ ok: true, records });
   } catch (err) {
     console.error("attendance records exception:", err);

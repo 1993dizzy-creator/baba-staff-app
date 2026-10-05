@@ -41,6 +41,8 @@ export function normalizeAttendanceDayFacts(input: {
   lateGraceMinutes?: number;
   earlyLeaveGraceMinutes?: number;
   manualLateNormalized?: boolean;
+  // Staff's live standing also evaluates lateness before checkout. Payroll callers retain the default.
+  includeOpenRecordLate?: boolean;
   earlyLeaveSelection?: EarlyLeaveSelection | null;
   normalCheckoutThresholdAt?: string | null;
 }): AttendanceDayFacts {
@@ -97,6 +99,11 @@ export function normalizeAttendanceDayFacts(input: {
     overlap = 0;
   } else if (record?.checkInAt) {
     warnings.push("MISSING_CHECK_OUT");
+    if (input.includeOpenRecordLate && scheduledStart !== null && scheduledEnd !== null) {
+      rawLateMinutes = minutes(scheduledStart, Math.min(new Date(record.checkInAt).getTime(), scheduledEnd));
+      effectiveLate = rawLateMinutes > lateThresholdMinutes ? rawLateMinutes : 0;
+      late = input.manualLateNormalized ? 0 : effectiveLate;
+    }
   } else if ((record && record.status !== "leave") || (!record && input.schedule)) {
     warnings.push("MISSING_CHECK_IN");
   }

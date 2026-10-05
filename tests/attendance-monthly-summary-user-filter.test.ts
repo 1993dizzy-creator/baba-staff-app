@@ -15,11 +15,11 @@ test("monthly summary keeps the full path and adds an optional positive safe use
   assert.match(route, /!Number\.isSafeInteger\(Number\(userIdParam\)\)/);
   assert.match(route, /Number\(userIdParam\) < 1/);
   assert.match(route, /code: "INVALID_USER_ID"/);
-  assert.match(route, /loadMonthlyAttendanceStandings\(month, \{ userId \}\)/);
+  assert.match(route, /loadMonthlyAttendanceStandings\(month, \{ userId, staffCurrent \}\)/);
 });
 
 test("targeted standing filters only employee-scoped database inputs", () => {
-  assert.match(server, /options\?: \{ period\?: PayrollOverviewPeriod; userId\?: number; attendancePromise\?: Promise<\{ data: AttendanceRow\[\] \| null; error: unknown \}> \}/);
+  assert.match(server, /options\?: \{ period\?: PayrollOverviewPeriod; userId\?: number; attendancePromise\?: Promise<\{ data: AttendanceRow\[\] \| null; error: unknown \}>; staffCurrent\?: boolean \}/);
   assert.match(server, /baseUserQuery\.eq\("id", options\.userId\)/);
   assert.match(server, /baseAttendanceQuery\.eq\("user_id", options\.userId\)/);
   assert.match(server, /baseScheduleQuery\.eq\("user_id", options\.userId\)/);
