@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { posCloseDatabase,initializePosCloseDatabase,daySource } from './pos-business-day-close-fixture.mjs';
-export const finalMigration=readFileSync('supabase/migrations/20260912112349_add_pos_business_day_close_checks.sql','utf8');
+export const finalMigration=readFileSync('supabase/migrations/20260912160056_add_pos_business_day_close_checks.sql','utf8');
 export async function seedPosFinalDatabase(db){
  await db.exec(finalMigration);
  const clock=(await db.query(`select ((clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')-interval '3 hours')::date::text cutoff_date`)).rows[0].cutoff_date;

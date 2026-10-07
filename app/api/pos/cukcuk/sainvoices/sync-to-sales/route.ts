@@ -689,15 +689,29 @@ export async function POST(req: Request) {
     const lineSaveResult = await saveLines(lineRows);
     markPhase("saveLinesMs");
     const buildPaymentRowsStartedAt = Date.now();
+    // Only real paid sales require a payment snapshot for close completeness.
+    // Keep the save set separate: any available snapshot (including an empty
+    // canceled/unpaid snapshot) remains authoritative for payment reconciliation.
+    const paymentRequiredDetails = validDetails.filter((item) => {
+      const receipt = receiptRows.find((row) => row.ref_id === item.refId);
+      return receipt?.payment_status === 3 && receipt.is_canceled !== true;
+    });
+    const paymentRequiredRefIds = new Set(paymentRequiredDetails.map((item) => item.refId));
     const authoritativePaymentDetails = validDetails.filter((item) => {
       const snapshot = getPaymentSnapshotFromInvoicePayload(item.detailPayload);
       if (snapshot.available) return true;
-      console.warn("[SALES_SYNC_PAYMENT_SNAPSHOT_UNAVAILABLE]", {
-        refId: item.refId,
-        field: snapshot.field,
-      });
+      if (paymentRequiredRefIds.has(item.refId)) {
+        console.warn("[SALES_SYNC_PAYMENT_SNAPSHOT_UNAVAILABLE]", {
+          refId: item.refId,
+          field: snapshot.field,
+        });
+      }
       return false;
     });
+    const authoritativePaymentRefIds = new Set(authoritativePaymentDetails.map((item) => item.refId));
+    const paymentSnapshotUnavailableCount = paymentRequiredDetails.filter(
+      (item) => !authoritativePaymentRefIds.has(item.refId)
+    ).length;
     const detailPaymentRows = authoritativePaymentDetails.flatMap((item) => {
       const receiptId = receiptSaveResult.receiptIdMap.get(item.refId) ?? null;
       const receiptRow = receiptRows.find((row) => row.ref_id === item.refId);
@@ -752,7 +766,7 @@ export async function POST(req: Request) {
     let receiptPaymentSourceComplete =
       validDetails.length === invoicesInRange.length && receiptRows.length === validDetails.length
       && validDetails.every((item) => receiptSaveResult.receiptIdMap.has(item.refId))
-      && authoritativePaymentDetails.length === validDetails.length;
+      && paymentSnapshotUnavailableCount === 0;
     if (receiptPaymentSourceComplete && !limitReached) {
       try {
         // Reuse the counted/paginated close source and its receipt/payment/bucket checks.
@@ -771,9 +785,9 @@ export async function POST(req: Request) {
         status: "success",
         limitReached,
         skippedDetailCount: failedDetails.length,
-        paymentSnapshotUnavailableCount: validDetails.length - authoritativePaymentDetails.length,
+        paymentSnapshotUnavailableCount,
         receiptPaymentSourceComplete,
-        partial: failedDetails.length > 0 || authoritativePaymentDetails.length !== validDetails.length,
+        partial: failedDetails.length > 0 || paymentSnapshotUnavailableCount > 0,
         errorMessage: failedDetails.length > 0 ? "INVOICE_DETAIL_SKIPPED" : null,
       }),
       receiptCount: receiptRows.length,
@@ -852,8 +866,7 @@ export async function POST(req: Request) {
         paymentRowsFromDetailPayloadCount: detailPaymentRows.length,
         paymentRowsFromStoredReceiptCount: 0,
         paymentRowsBuiltCount: paymentRows.length,
-        paymentSnapshotUnavailableCount:
-          validDetails.length - authoritativePaymentDetails.length,
+        paymentSnapshotUnavailableCount,
         paymentCreatedCount: paymentSaveResult.createdCount,
         paymentUpdatedCount: paymentSaveResult.updatedCount,
         paymentStaleDeletedCount: paymentSaveResult.staleDeletedCount,
