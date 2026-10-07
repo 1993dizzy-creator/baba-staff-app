@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 import * as apiPolicy from '../lib/sales/pos-business-day-api.ts';
 import * as workflow from '../lib/sales/pos-business-day-final-workflow.ts';
+import * as closeViewPolicy from '../lib/sales/pos-business-day-close-view.ts';
 function load(path,deps){const testModule={exports:{}};const code=ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
  new Function('require','module','exports',code)(name=>{if(!(name in deps))throw Error('Unexpected import '+name);return deps[name];},testModule,testModule.exports);return testModule.exports;}
 for(const role of ['owner','master','manager','staff','leader'])test('trusted manual service actor '+role+' refreshes before closing',async()=>{
@@ -13,6 +14,7 @@ for(const role of ['owner','master','manager','staff','leader'])test('trusted ma
   '@/lib/supabase/server':{},'@/lib/ledger/pos-sales':{},'./pos-business-day-close':{
    getPosBusinessDayManualCloseTime:async()=>{calls.push('time');return {allowed:true};},
    closePosBusinessDay:async(date,options)=>{calls.push('close');assert.equal(options.syncRunId,100);return {status:'closed'};}},
+  './pos-business-day-close-view':closeViewPolicy,
   './pos-business-day-final-workflow':workflow,'./pos-business-day-refresh':{forceRefreshPosBusinessDay:async(origin,date)=>{calls.push('force');assert.equal(date,'2026-09-11');return 100;}},
   './pos-business-day-final-policy':{},'@/lib/ledger/pos-sales-source':{validPosBusinessDate:()=>true},
   '@/lib/store-settings/business-time-adapter':{},'@/lib/store-settings/business-time-core':{},

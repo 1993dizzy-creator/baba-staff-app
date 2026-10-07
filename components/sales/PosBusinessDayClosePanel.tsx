@@ -46,7 +46,7 @@ export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClos
  const closeMeta=status?.latestClose
   ? `${status.latestClose.method==='automatic'?t.automatic:t.manual} · ${status.latestClose.method==='automatic'?'':`${status.latestClose.closedBy} · `}${stamp(status.latestClose.closedAt)}`
   : '';
- const checkDetail=!status?.latestClose?'':!check?t.pending:check.result==='verified_unchanged'?''
+ const checkDetail=!status?.latestClose?'':!check?(status.finalCheckPending?t.pending:''):check.result==='verified_unchanged'?''
   :check.result==='metadata_changed_only'?`${t.metadata} · ${t.metadataDetail}`
   :check.result==='financial_drift'?`${t.drift} · ${t.difference}: ${signed(check.totalDelta??0)}`
   :`${t.checkFailed} · ${check.result==='sync_failed'?t.syncFailed:check.result==='month_closed'?t.monthClosed:t.sourceInvalid}`;

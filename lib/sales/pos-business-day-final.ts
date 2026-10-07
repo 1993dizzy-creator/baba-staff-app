@@ -9,6 +9,7 @@ import { isEligiblePosFinalSync,posSnapshotTotals } from './pos-business-day-fin
 import { validPosBusinessDate,POS_BUCKETS } from '@/lib/ledger/pos-sales-source';
 import { loadBusinessTimeAdapter } from '@/lib/store-settings/business-time-adapter';
 import { addStoreDays } from '@/lib/store-settings/business-time-core';
+import { isPosFinalCheckPending } from './pos-business-day-close-view';
 export async function manualClosePosBusinessDay(origin:string,date:string,reclose=false,expectedSourceFingerprint?:string){
   const auth=await getAuthenticatedActor();if(!auth.ok)throw Error(auth.code);
   if(!validPosBusinessDate(date))throw Error('INVALID_POS_BUSINESS_DATE');
@@ -44,12 +45,12 @@ export async function finalizePosBusinessDay(origin:string,date:string,now=new D
     }),
   });
 }
-export async function getPosBusinessDayCloseView(date:string){
+export async function getPosBusinessDayCloseView(date:string,now=new Date()){
   const auth=await getAuthenticatedActor();if(!auth.ok)throw Error(auth.code);
   if(!['owner','master','manager','leader'].includes(auth.actor.role))throw Error('POS_CLOSE_FORBIDDEN');
   if(!validPosBusinessDate(date))throw Error('INVALID_POS_BUSINESS_DATE');
   const [source,time,latest,check,month,run,ledger]=await Promise.all([
-    loadPosBusinessDaySource(date).catch(()=>null),getPosBusinessDayManualCloseTime(date),
+    loadPosBusinessDaySource(date).catch(()=>null),getPosBusinessDayManualCloseTime(date,now),
     supabaseServer.from('pos_sales_business_day_closures').select('id,revision,close_method,closed_at,closed_by,source_fingerprint,source_snapshot,actor:users!closed_by(name,full_name,username)')
       .eq('business_date',date).order('revision',{ascending:false}).limit(1).maybeSingle(),
     supabaseServer.from('pos_sales_business_day_close_checks').select('id,closure_id,result,checked_at,closed_total,current_total,total_delta,closed_buckets,current_buckets,bucket_delta')
@@ -89,8 +90,10 @@ export async function getPosBusinessDayCloseView(date:string){
     canReclose:reclosable&&time.allowed&&!month.data&&Boolean(closure)&&drift&&Boolean(source),
     needsOwnerReview:drift&&!reclosable&&Boolean(delta&&Object.values(delta).some(amount=>amount!==0)),monthClosed:Boolean(month.data),
     closeEligibilityReason:!source?'source_invalid':month.data?'month_closed':!time.allowed?time.reason:!writable?'forbidden':closure?'already_closed':'eligible',
+    finalCheckPending:isPosFinalCheckPending({businessDate:date,
+      latestClose:closure?{method:closure.close_method,closedAt:closure.closed_at}:null,hasFinalCheck:Boolean(latestCheck),now}),
     closeAt:time.closeAt,finalSync:{runId:run?.id??null,lastSyncedAt:run?.finished_at??null,
-      cutoffAt:time.cutoffAt,eligible:isEligiblePosFinalSync(run,date,time.cutoffAt,new Date())},
+      cutoffAt:time.cutoffAt,eligible:isEligiblePosFinalSync(run,date,time.cutoffAt,now)},
     ledgerProjection:{status:closure?(matches?'matches_close':'mismatch'):'not_closed',
       total:(ledger.data??[]).filter(t=>t.status==='confirmed').reduce((sum,t)=>sum+Number(t.amount),0)},
     buckets:POS_BUCKETS,
