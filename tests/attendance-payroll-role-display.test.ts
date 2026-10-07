@@ -20,7 +20,12 @@ const pagesWithRoleLabelAndRank = [
 for (const [name, source] of pagesWithRoleLabelAndRank) {
   test(`${name}: sorts by the shared role rank, not a local/position-based rank`, () => {
     assert.match(source, /from "@\/lib\/common\/roles"/);
-    assert.match(source, /getEmployeeRoleRank\(/);
+    if (name === "attendance/staff") {
+      assert.ok(source.includes("groupUsers.sort(compareAttendanceStaff)"));
+      assert.ok(read("lib/attendance/staff-sort.ts").includes("getEmployeeRoleRank(a.role)"));
+    } else {
+      assert.match(source, /getEmployeeRoleRank\(/);
+    }
     assert.doesNotMatch(source, /getPositionRank/);
     assert.doesNotMatch(source, /common\/positions/);
   });

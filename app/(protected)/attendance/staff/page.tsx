@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
@@ -11,7 +12,9 @@ import { commonText, attendanceText } from "@/lib/text";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { ATTENDANCE_STATUS } from "@/lib/attendance/status";
 import { getPartMeta, getPartKey } from "@/lib/common/parts";
-import { getEmployeeRoleLabel, getEmployeeRoleRank } from "@/lib/common/roles";
+import { getEmployeeRoleLabel } from "@/lib/common/roles";
+import { compareAttendanceStaff } from "@/lib/attendance/staff-sort";
+import { getStaffDetailUrl } from "@/lib/attendance/staff-navigation";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { formatStaffListWorkTime, isLongShiftRecord } from "@/lib/attendance/time";
 import { attendanceFetch } from "@/lib/auth/client-session";
@@ -509,11 +512,7 @@ export default function AttendanceStaffPage() {
       .map(([part, groupUsers]) => ({
         part,
         meta: getPartMeta(part),
-        users: groupUsers.sort((a, b) => {
-          const rankDiff = getEmployeeRoleRank(a.role) - getEmployeeRoleRank(b.role);
-          if (rankDiff !== 0) return rankDiff;
-          return a.name.localeCompare(b.name);
-        }),
+        users: groupUsers.sort(compareAttendanceStaff),
       }))
       .sort((a, b) => {
         const rankDiff = a.meta.rank - b.meta.rank;
@@ -638,7 +637,7 @@ export default function AttendanceStaffPage() {
                                 border: "1px solid #d1d5db",
                                 background: "#ffffff",
                                 display: "grid",
-                                gridTemplateColumns: "repeat(3, 1fr)",
+                                gridTemplateColumns: "repeat(4, 1fr)",
                                 gap: 6,
                               }}
                             >
@@ -720,6 +719,13 @@ export default function AttendanceStaffPage() {
                               >
                                 {t.workLeave}
                               </button>
+                              <Link
+                                href={getStaffDetailUrl(user.id, businessDate.slice(0, 7), businessDate)}
+                                prefetch={false}
+                                style={{ padding: "7px 6px", borderRadius: 9, border: "1px solid #d1d5db", color: "#374151", fontSize: 12, fontWeight: 700, textAlign: "center", textDecoration: "none" }}
+                              >
+                                {t.viewDetail}
+                              </Link>
                             </div>
                           )}
                         </>

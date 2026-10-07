@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { compareAttendanceStaff } from "@/lib/attendance/staff-sort";
+import { getAdjacentStaffId, getStaffDetailUrl, getStaffSwipeDirection, SWIPE_INTERACTIVE_SELECTOR, type StaffDirection } from "@/lib/attendance/staff-navigation";
 import Container from "@/components/Container";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
@@ -207,6 +209,7 @@ export default function AttendanceUserDetailPage() {
     const { lang } = useLanguage();
     const c = commonText[lang];
     const t = attendanceText[lang];
+    const router = useRouter();
     const params = useParams();
     const searchParams = useSearchParams();
 
@@ -223,6 +226,56 @@ export default function AttendanceUserDetailPage() {
     const [message, setMessage] = useState("");
     const [isSaving, setIsSaving] = useState(false);
     const [unauthorizedAbsencePenaltyDays, setUnauthorizedAbsencePenaltyDays] = useState<number | null>(null);
+    const navigationMonth = getMonthRange(currentMonth).startText.slice(0, 7);
+    const [staffNavigation, setStaffNavigation] = useState<{ month: string; ids: number[] }>({ month: "", ids: [] });
+    // Do not navigate using a previous month's list while the new list is loading.
+    const staffIds = staffNavigation.month === navigationMonth ? staffNavigation.ids : [];
+    const pageRef = useRef<HTMLDivElement>(null);
+    const navigatingRef = useRef(false);
+    const slideDirectionRef = useRef(1);
+    const swipeRef = useRef<{ x: number; y: number } | null>(null);
+
+    useEffect(() => {
+        if (!isAdmin(getUser())) return;
+        let cancelled = false;
+        void attendanceFetch(`/api/attendance/users?mode=month&month=${navigationMonth}`).then(async (response) => {
+            const result = await response.json();
+            if (!cancelled && response.ok && result.ok) {
+                setStaffNavigation({
+                    month: navigationMonth,
+                    ids: (result.users as UserRow[]).filter((employee) => !isAdmin(employee)).sort(compareAttendanceStaff).map((employee) => Number(employee.id)),
+                });
+            }
+        }).catch(() => { /* Keep the detail usable if the navigation list fails. */ });
+        return () => { cancelled = true; };
+    }, [navigationMonth]);
+
+    const previousId = getAdjacentStaffId(staffIds, userId, "previous");
+    const nextId = getAdjacentStaffId(staffIds, userId, "next");
+    const navigateStaff = async (direction: StaffDirection) => {
+        const targetId = getAdjacentStaffId(staffIds, userId, direction);
+        if (targetId === null || isLoading || isSaving || navigatingRef.current) return;
+        navigatingRef.current = true;
+        slideDirectionRef.current = direction === "next" ? 1 : -1;
+        const offset = -48 * slideDirectionRef.current;
+        if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+            await pageRef.current?.animate([{ transform: "translateX(0)", opacity: 1 }, { transform: "translateX(" + offset + "px)", opacity: 0 }], { duration: 140, easing: "ease-out" }).finished.catch(() => {});
+        }
+        setMessage("");
+        router.push(getStaffDetailUrl(targetId, getMonthRange(currentMonth).startText.slice(0, 7), selectedDate), { scroll: false });
+    };
+
+    useEffect(() => {
+        navigatingRef.current = false;
+        swipeRef.current = null;
+    }, [userId]);
+
+    useEffect(() => {
+        if (!isLoading && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+            pageRef.current?.animate([{ transform: "translateX(" + (32 * slideDirectionRef.current) + "px)", opacity: 0 }, { transform: "translateX(0)", opacity: 1 }], { duration: 160, easing: "ease-out" });
+        }
+    }, [isLoading]);
+
     const detailRequestSequenceRef = useRef(0);
     const payrollSettingsResultRef = useRef<Record<string, unknown> | null>(null);
     const payrollSettingsRequestRef = useRef<Promise<Record<string, unknown> | null> | null>(null);
@@ -593,8 +646,30 @@ export default function AttendanceUserDetailPage() {
 
     return (
         <Container noPaddingTop>
+            <div ref={pageRef}
+                onTouchStart={(event) => {
+                    swipeRef.current = null;
+                    if (event.touches.length !== 1 || (event.target as Element).closest(SWIPE_INTERACTIVE_SELECTOR)) return;
+                    swipeRef.current = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+                }}
+                onTouchMove={(event) => {
+                    const start = swipeRef.current;
+                    if (!start) return;
+                    if (event.touches.length !== 1 || Math.abs(event.touches[0].clientY - start.y) > Math.max(24, Math.abs(event.touches[0].clientX - start.x))) swipeRef.current = null;
+                }}
+                onTouchCancel={() => { swipeRef.current = null; }}
+                onTouchEnd={(event) => {
+                    const start = swipeRef.current;
+                    swipeRef.current = null;
+                    if (!start || event.changedTouches.length !== 1) return;
+                    const touch = event.changedTouches[0];
+                    const direction = getStaffSwipeDirection(touch.clientX - start.x, touch.clientY - start.y, false);
+                    if (direction) void navigateStaff(direction);
+                }}
+            >
             <div style={headerCardStyle}>
                 <div style={headerTopRowStyle}>
+                    <button type="button" aria-label={lang === "ko" ? "이전 직원" : "Nhân viên trước"} disabled={previousId === null || isLoading || isSaving} onClick={() => void navigateStaff("previous")} style={{ ...calendarMonthButtonStyle, flexShrink: 0, opacity: previousId === null ? 0.35 : 1 }}>‹</button>
                     <div style={headerIdentityStyle}>
                         <EmployeeNameWithLevel name={user?.name || "-"} levelInfo={user?.levelInfo} lang={lang} nameStyle={userNameStyle} showDisabledBadge />
                         <div style={userMetaStyle}>
@@ -604,6 +679,7 @@ export default function AttendanceUserDetailPage() {
                         </div>
                     </div>
 
+                    <button type="button" aria-label={lang === "ko" ? "다음 직원" : "Nhân viên tiếp theo"} disabled={nextId === null || isLoading || isSaving} onClick={() => void navigateStaff("next")} style={{ ...calendarMonthButtonStyle, flexShrink: 0, opacity: nextId === null ? 0.35 : 1 }}>›</button>
                     {!isLoading && (
                         <div style={totalWorkSummaryStyle}>
                             <span style={totalWorkSummaryLabelStyle}>⏳ {t.summaryTotalWorkTime}</span>
@@ -638,7 +714,7 @@ export default function AttendanceUserDetailPage() {
                     />
 
                     <RecordDetailPanel
-                        key={`${selectedDate}-${selectedRecord?.id || "none"}-${selectedRecord?.updated_at || ""}`}
+                        key={`${userId}-${selectedDate}-${selectedRecord?.id || "none"}-${selectedRecord?.updated_at || ""}`}
                         selectedDate={selectedDate}
                         record={selectedRecord}
                         workStartTime={user?.work_start_time || null}
@@ -656,6 +732,7 @@ export default function AttendanceUserDetailPage() {
 
                 </>
             )}
+            </div>
         </Container>
     );
 }
