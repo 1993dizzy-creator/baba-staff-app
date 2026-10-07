@@ -33,6 +33,7 @@ test("confirmed inventory display reads current supplier without changing source
   const testModule = { exports: {} };
   new Function("require", "module", "exports", code)(name => {
     if (name === "server-only") return {};
+    if (name === "./inventory-repair") return { loadInventoryRepairPreview: async () => { throw new Error("Unexpected repair lookup in display-only test"); } };
     if (name === "@/lib/supabase/server") return { supabaseServer: db };
     if (name === "@/lib/inventory/ledger-sync-contract") {
       return { inventoryDisplayOverlay: (source, drift) => ({ ...source, ...drift }) };

@@ -15,6 +15,7 @@ import {
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
+import InventoryProjectionResolution, { type InventoryProjectionIssue } from "@/components/ledger/InventoryProjectionResolution";
 import Link from "next/link";
 import type { PayablePeriodSummary } from "@/lib/ledger/payables";
 import { formatCardSettlementRate } from "@/lib/ledger/card-settlements";
@@ -131,7 +132,7 @@ type LedgerSummary = {
   unsettledCardGross: number;
 };
 type LedgerData = {
-  inventoryProjectionIssues?: Array<{ inventoryLogId: number; status: string; code: string; itemName: string; businessDate: string; quantityDelta: number; amountDelta: number; originalQuantity: number | null }>;
+  inventoryProjectionIssues?: InventoryProjectionIssue[];
   month: string;
   fundsView: {
     month: string;
@@ -899,14 +900,18 @@ function LedgerEntriesContent() {
             <details>
               <summary>{vi ? "Xem chi tiết" : "상세 보기"}</summary>
               {data.inventoryProjectionIssues.map(issue => <div className={styles.projectionWarningRow} key={issue.inventoryLogId}>
-                <strong>{issue.itemName}</strong>
+                <strong>{vi ? issue.itemNameVi || issue.itemName : issue.itemName}</strong>
                 <span>{issue.businessDate ? formatDate(issue.businessDate, lang) : ""}</span>
                 {issue.originalQuantity !== null ? <span>{vi ? "Nhập gốc" : "원입고"} {issue.originalQuantity}</span> : null}
                 <span>{vi ? "Chênh lệch" : "수량 차이"} {issue.quantityDelta > 0 ? "+" : ""}{issue.quantityDelta}</span>
                 <span>{vi ? "Chênh lệch tiền" : "금액 차이"} {money(issue.amountDelta)}</span>
                 <small>{issue.code === "PURCHASE_CORRECTION_REFERENCE_REQUIRED"
-                  ? vi ? "Chưa liên kết với lần nhập hàng gốc." : "원래 입고내역과 연결되지 않았습니다."
+                  ? vi ? "Chọn lô nhập gốc để ghi thay đổi vào sổ." : "원입고를 선택해 수정 내역을 장부에 반영해 주세요."
                   : vi ? "Cần kiểm tra trạng thái ghi sổ." : "장부 반영 상태를 확인해 주세요."}</small>
+                <InventoryProjectionResolution issue={issue} vi={vi} onResolved={async () => {
+                  const refreshed = await load();
+                  if (!refreshed) throw new Error("LEDGER_REFRESH_FAILED");
+                }} />
               </div>)}
             </details>
           </section>

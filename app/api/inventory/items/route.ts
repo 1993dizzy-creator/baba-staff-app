@@ -585,6 +585,13 @@ export async function PATCH(req: Request) {
 
     const correctionPurchaseLogId = body.correction_of_inventory_log_id == null
       ? null : Number(body.correction_of_inventory_log_id);
+    // Ordinary edit UI confirmation is separate from the privileged emergency path.
+    const selectedPurchaseRootId = body.selectedPurchaseRootId == null ? null : Number(body.selectedPurchaseRootId);
+    if (selectedPurchaseRootId !== null && (!Number.isSafeInteger(selectedPurchaseRootId) || selectedPurchaseRootId <= 0
+      || mode === "quick-save" || body.source !== "edit_form" || normalizeInventoryReason(reason) !== "purchase"
+      || correctionPurchaseLogId !== null || expectedQuantity === undefined)) {
+      return jsonError("invalid_purchase_correction", "Invalid purchase selection.", 400);
+    }
     if (correctionPurchaseLogId !== null && !canCorrectInventoryPurchase(actor.role)) {
       return jsonError(
         "inventory_purchase_correction_forbidden",
@@ -720,9 +727,8 @@ export async function PATCH(req: Request) {
       );
     }
 
-    // The edit form has no explicit purchase ID. Resolve its same-day quantity
-    // correction on the server so an ordinary staff edit cannot write an
-    // unlinked purchase log. The RPC remains the only writer of the correction.
+    // Purchase reductions require explicit confirmation of a compatible prior root,
+    // including previous days. Other reasons retain the existing same-day policy.
     let autoCorrectionRootId: number | null = null;
     let autoCorrectionBusinessDate: string | null = null;
     if (mode !== "quick-save" && body.source === "edit_form" && correctionPurchaseLogId === null &&
@@ -736,18 +742,36 @@ export async function PATCH(req: Request) {
           (normalizeInventoryReason(reason) !== "purchase" || delta < 0)) {
         const { businessDate } = await resolveInventoryBusinessDate();
         const before = new Date().toISOString();
-        const { data: possibleRoots, error: rootError } = await supabaseAdmin.from("inventory_logs")
+        const purchaseReduction = normalizeInventoryReason(reason) === "purchase" && delta < 0;
+        let rootQuery = supabaseAdmin.from("inventory_logs")
           .select("id,item_id,business_date,created_at,reason,change_quantity,correction_of_inventory_log_id,unit,new_supplier,purchase_supplier_partner_id,new_purchase_price")
-          .eq("item_id", Number(id)).eq("business_date", businessDate).eq("reason", "purchase")
+          .eq("item_id", Number(id)).eq("reason", "purchase")
           .gt("change_quantity", 0).is("correction_of_inventory_log_id", null)
           .lte("created_at", before).order("created_at", { ascending: false })
-          .order("id", { ascending: false }).limit(2);
+          .order("id", { ascending: false });
+        rootQuery = purchaseReduction ? rootQuery.lte("business_date", businessDate).limit(1001)
+          : rootQuery.eq("business_date", businessDate).limit(2);
+        if (selectedPurchaseRootId !== null) rootQuery = rootQuery.eq("id", selectedPurchaseRootId);
+        const { data: possibleRoots, error: rootError } = await rootQuery;
         if (rootError) throw rootError;
-        const root = nearestPriorPurchaseRoot((possibleRoots ?? []) as PurchaseRoot[], Number(id), businessDate, before);
+        const correctionIdentity = {
+          unit: serverPayload.unit ?? prevItem.unit, supplier: serverPayload.supplier ?? prevItem.supplier,
+          supplier_partner_id: Object.hasOwn(serverPayload, "supplier_partner_id") ? serverPayload.supplier_partner_id : prevItem.supplier_partner_id,
+          purchase_price: serverPayload.purchase_price ?? prevItem.purchase_price,
+        };
+        const compatibleRoots = ((possibleRoots ?? []) as PurchaseRoot[]).filter(row => purchaseCorrectionIdentityMatches(row, correctionIdentity));
+        if (purchaseReduction && selectedPurchaseRootId === null) {
+          return NextResponse.json({ ok: false, error: compatibleRoots.length ? "purchase_correction_selection_required" : "purchase_correction_root_not_found",
+            candidates: compatibleRoots.slice(0, 1000),
+            recommended: compatibleRoots.length === 1 && (possibleRoots?.length ?? 0) < 1001,
+          }, { status: 409 });
+        }
+        const root = purchaseReduction ? compatibleRoots.find(row => row.id === selectedPurchaseRootId) ?? null
+          : nearestPriorPurchaseRoot((possibleRoots ?? []) as PurchaseRoot[], Number(id), businessDate, before);
+        if (purchaseReduction && !root) return jsonError("invalid_purchase_correction", "Select a compatible original purchase.", 409);
         if (root) {
-          if (!purchaseCorrectionIdentityMatches(root, serverPayload as {
-            unit: unknown; supplier: unknown; supplier_partner_id: unknown; purchase_price: unknown;
-          })) return jsonError("purchase_correction_review_required", "Purchase details do not match the receipt.", 409);
+          if (!purchaseCorrectionIdentityMatches(root, correctionIdentity))
+            return jsonError("purchase_correction_review_required", "Purchase details do not match the receipt.", 409);
           const { data: corrections, error: correctionError } = await supabaseAdmin.from("inventory_logs")
             .select("change_quantity").eq("correction_of_inventory_log_id", root.id);
           if (correctionError) throw correctionError;
@@ -756,16 +780,22 @@ export async function PATCH(req: Request) {
             return jsonError("purchase_correction_exceeds_purchase", "Correction exceeds the original purchase.", 409);
           }
           const { data: closure, error: closureError } = await supabaseAdmin.from("ledger_month_closures")
-            .select("month").eq("month", `${businessDate.slice(0, 7)}-01`).eq("status", "closed").maybeSingle();
+            .select("month").eq("month", `${root.business_date.slice(0, 7)}-01`).eq("status", "closed").maybeSingle();
           if (closureError) throw closureError;
           if (closure) return jsonError("purchase_correction_review_required", "The purchase month is closed.", 409);
+          if (root.business_date.slice(0, 7) !== businessDate.slice(0, 7)) {
+            const { data: issueClosure, error: issueClosureError } = await supabaseAdmin.from("ledger_month_closures")
+              .select("month").eq("month", `${businessDate.slice(0, 7)}-01`).eq("status", "closed").maybeSingle();
+            if (issueClosureError) throw issueClosureError;
+            if (issueClosure) return jsonError("purchase_correction_review_required", "The correction month is closed.", 409);
+          }
           const { data: candidate, error: candidateError } = await supabaseAdmin.from("ledger_candidates")
             .select("status,proposed_amount,resolved_transaction_id,proposed_recognition_month")
             .eq("source_type", "inventory_purchase_log").eq("source_key", `inventory-log:${root.id}`)
             .order("id", { ascending: false }).limit(1).maybeSingle();
           if (candidateError) throw candidateError;
           if (candidate?.status === "dismissed") return jsonError("purchase_correction_review_required", "Purchase requires manual review.", 409);
-          if (candidate?.proposed_recognition_month && candidate.proposed_recognition_month !== `${businessDate.slice(0, 7)}-01`) {
+          if (candidate?.proposed_recognition_month && candidate.proposed_recognition_month !== `${root.business_date.slice(0, 7)}-01`) {
             const { data: recognitionClosure, error: recognitionError } = await supabaseAdmin.from("ledger_month_closures")
               .select("month").eq("month", candidate.proposed_recognition_month).eq("status", "closed").maybeSingle();
             if (recognitionError) throw recognitionError;
@@ -803,6 +833,11 @@ export async function PATCH(req: Request) {
           autoCorrectionBusinessDate = businessDate;
         }
       }
+    }
+
+    if (selectedPurchaseRootId !== null && (autoCorrectionRootId === null ||
+      roundDecimal(Number(expectedQuantity)) !== roundDecimal(Number(prevItem.quantity)))) {
+      return jsonError("QUANTITY_CONFLICT", "Quantity changed. Reload before correcting the purchase.", 409);
     }
 
     if (
@@ -883,6 +918,11 @@ export async function PATCH(req: Request) {
       mode === "quick-save" && Object.prototype.hasOwnProperty.call(serverPayload, "quantity")
         ? roundDecimal(Number(serverPayload.quantity ?? 0))
         : null;
+
+    if (mode === "quick-save" && quickSaveLogReason === "purchase" && quickSaveNextQuantity !== null &&
+      quickSaveNextQuantity < roundDecimal(Number(prevItem.quantity ?? 0))) {
+      return jsonError("inventory_purchase_quantity_must_increase", "Select an original purchase in the edit form to reduce a receipt.", 400);
+    }
 
     if (
       mode === "quick-save" &&

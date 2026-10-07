@@ -309,7 +309,7 @@ test('additional quick-save purchases get independent source IDs and preserve mo
   assert.equal(retry.status, 409); assert.equal(state.logs.length, before);
 });
 
-test('ordinary edit-form purchase accepts only a quantity increase',async()=>{
+test('ordinary edit-form purchase increases or asks for an explicit correction root',async()=>{
   const increased=itemSetup();
   const success=await increased.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',payload:{quantity:11}});
   assert.equal(success.status,200);assert.equal(increased.item.quantity,11);assert.equal(increased.logs[0].reason,'purchase');
@@ -317,7 +317,7 @@ test('ordinary edit-form purchase accepts only a quantity increase',async()=>{
   for(const quantity of [10,9]) {
     const state=itemSetup();
     const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',payload:{quantity}});
-    assert.equal(response.status,400);assert.equal((await response.json()).error,'inventory_purchase_quantity_must_increase');
+    assert.equal(response.status,quantity===10?400:409);assert.equal((await response.json()).error,quantity===10?'inventory_purchase_quantity_must_increase':'purchase_correction_root_not_found');
     assert.equal(state.item.quantity,10);assert.equal(state.logs.length,0);
   }
 });
@@ -479,4 +479,47 @@ test('an allocated payable prevents automatic purchase correction', async () => 
   const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'stock_check',payload:{quantity:8,unit:'can',purchase_price:20000}});
   assert.equal(response.status,409);
   assert.equal(state.calls.includes('atomic-correction'),false);
+});
+
+test('cross-day purchase reduction requires confirmation, then uses the explicit atomic RPC',async()=>{
+ const state=itemSetup({rootLogs:[root(99,1.42,'2026-08-31T10:00:00Z','2026-08-31')],startingQuantity:1.42});
+ const body={id:1,source:'edit_form',reason:'purchase',payload:{quantity:1.32,unit:'can',purchase_price:20000}};
+ const first=await state.invoke('PATCH',body);assert.equal(first.status,409);
+ const preview=await first.json();assert.equal(preview.error,'purchase_correction_selection_required');assert.equal(preview.recommended,true);
+ assert.equal(state.logs.length,0);assert.equal(state.item.quantity,1.42);
+ const selected=await state.invoke('PATCH',{...body,selectedPurchaseRootId:99,expectedQuantity:1.42});
+ assert.equal(selected.status,200);assert.equal(state.logs.length,1);assert.equal(state.logs[0].correction_of_inventory_log_id,99);
+ assert.deepEqual(state.calls,['atomic-correction','ledger-projection']);
+});
+test('multiple cross-day roots require explicit selection and never mutate on preview',async()=>{
+ const state=itemSetup({rootLogs:[root(98,10,'2026-08-30T10:00:00Z','2026-08-30'),root(99,10,'2026-08-31T10:00:00Z','2026-08-31')]});
+ const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',payload:{quantity:8,unit:'can'}});
+ const body=await response.json();assert.equal(response.status,409);assert.equal(body.candidates.length,2);assert.equal(body.recommended,false);
+ assert.equal(state.logs.length,0);assert.equal(state.item.quantity,10);
+});
+test('missing or incompatible prior roots cannot create unlinked negative purchase logs',async()=>{
+ for(const roots of [[],[root(99,10,'2026-08-31T10:00:00Z','2026-08-31')]]){
+ const state=itemSetup({rootLogs:roots});const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',payload:{quantity:8,unit:'kg'}});
+ assert.equal(response.status,409);assert.equal((await response.json()).error,'purchase_correction_root_not_found');assert.equal(state.logs.length,0);
+ }
+});
+test('selected root is revalidated for identity, closed months, quantity bounds and stale stock',async()=>{
+ const baseRoot=root(99,10,'2026-08-31T10:00:00Z','2026-08-31');
+ for(const options of [{rootLogs:[baseRoot],closedMonths:['2026-08-01']},{rootLogs:[{...baseRoot,unit:'kg'}]},{rootLogs:[{...baseRoot,change_quantity:1}]},{rootLogs:[baseRoot]}]){
+ const state=itemSetup(options);const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',selectedPurchaseRootId:99,expectedQuantity:9,payload:{quantity:8,unit:'can'}});
+ assert.equal(response.status,409);assert.equal(state.logs.length,0);assert.equal(state.item.quantity,10);
+ }
+});
+
+test('quick-save purchase reduction cannot write an unlinked negative purchase',async()=>{
+ const state=itemSetup();const response=await state.invoke('PATCH',{id:1,mode:'quick-save',reason:'purchase',expectedQuantity:10,payload:{quantity:8}});
+ assert.equal(response.status,400);assert.equal(state.logs.length,0);assert.equal(state.item.quantity,10);
+});
+test('cross-day stock_check and other do not infer purchase intent',async()=>{
+ for(const reason of ['stock_check','other']){
+ const state=itemSetup({rootLogs:[root(99,10,'2026-08-31T10:00:00Z','2026-08-31')]});
+ const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason,payload:{quantity:8,unit:'can',purchase_price:20000}});
+ assert.equal(response.status,200);assert.equal(state.logs[0].reason,reason);
+ assert.equal(state.logs[0].correction_of_inventory_log_id,undefined);assert.equal(state.calls.includes('atomic-correction'),false);
+ }
 });

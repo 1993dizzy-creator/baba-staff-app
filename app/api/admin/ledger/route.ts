@@ -261,7 +261,7 @@ export async function GET(request: Request) {
       sourceDriftFingerprint: candidate.source_drift_fingerprint,
     }));
     const [displayTransactions, inventoryProjectionIssues] = await Promise.all([
-      withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth),
+      withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth, auth.actor.id),
     ]);
     const entries = [
       ...buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources, month),

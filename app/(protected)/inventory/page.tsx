@@ -8,6 +8,7 @@ import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { fetchInventoryApi } from "@/lib/inventory/client-auth";
+import type { PurchaseRoot } from "@/lib/inventory/purchase-correction-policy";
 import { readInventoryBootstrapStream } from "@/lib/inventory/bootstrap-stream";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -103,11 +104,14 @@ type InventoryItemMutationResult = {
     message?: string;
     data?: InventoryItem;
     duplicateItem?: DuplicateInventoryItem;
+    candidates?: PurchaseRoot[];
+    recommended?: boolean;
 };
 
 type EditFormPendingSave = {
     id: number;
     payload: Record<string, unknown>;
+    expectedQuantity: number;
 };
 
 type KegSalesBreakdown = {
@@ -420,6 +424,8 @@ export default function InventoryPage() {
     const [editFormPendingSave, setEditFormPendingSave] =
         useState<EditFormPendingSave | null>(null);
     const [isEditReasonSaving, setIsEditReasonSaving] = useState(false);
+    const [purchaseCorrectionRoots, setPurchaseCorrectionRoots] = useState<PurchaseRoot[] | null>(null);
+    const [selectedPurchaseRootId, setSelectedPurchaseRootId] = useState<number | null>(null);
     const [logModalItem, setLogModalItem] = useState<InventoryItem | null>(null);
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
@@ -1331,6 +1337,8 @@ export default function InventoryPage() {
     const closeEditReasonModal = () => {
         if (isEditReasonSaving) return;
         setEditFormPendingSave(null);
+        setPurchaseCorrectionRoots(null);
+        setSelectedPurchaseRootId(null);
     };
 
     const handleEditReasonConfirm = async (reason: QuickReasonValue) => {
@@ -1349,6 +1357,10 @@ export default function InventoryPage() {
                     payload: editFormPendingSave.payload,
                     source: "edit_form",
                     reason,
+                    ...(reason === "purchase" && selectedPurchaseRootId !== null ? {
+                        selectedPurchaseRootId,
+                        expectedQuantity: editFormPendingSave.expectedQuantity,
+                    } : {}),
                 }),
             });
 
@@ -1356,12 +1368,23 @@ export default function InventoryPage() {
             if (!result) return;
 
             if (!res.ok || !result.ok) {
+                if (reason === "purchase" && result.error === "purchase_correction_selection_required") {
+                    setPurchaseCorrectionRoots(result.candidates ?? []);
+                    setSelectedPurchaseRootId(result.recommended ? result.candidates?.[0]?.id ?? null : null);
+                    return;
+                }
+                if (reason === "purchase" && result.error === "purchase_correction_root_not_found") {
+                    alert(lang === "vi" ? "Không tìm thấy lô nhập gốc có thể liên kết. Vui lòng kiểm tra lịch sử kho." : "연결 가능한 원입고를 찾지 못했습니다. 재고 이력을 확인해주세요.");
+                    return;
+                }
                 handleInventoryItemMutationFailure(res, result, "edit");
                 return;
             }
 
             alert(c.editSuccess);
             setEditFormPendingSave(null);
+            setPurchaseCorrectionRoots(null);
+            setSelectedPurchaseRootId(null);
             await Promise.all([fetchInventory(), fetchRecentLogs()]);
             resetForm();
             setIsFormOpen(false);
@@ -1799,6 +1822,7 @@ export default function InventoryPage() {
                 setEditFormPendingSave({
                     id: editingId,
                     payload,
+                    expectedQuantity: Number(inventoryList.find(item => item.id === editingId)?.quantity),
                 });
                 return;
             }
@@ -5424,6 +5448,23 @@ export default function InventoryPage() {
                             {t.editReasonModalDescription}
                         </div>
 
+                        {purchaseCorrectionRoots ? <>
+                            <p>{lang === "vi" ? "Đây là sửa lô nhập gốc. Chọn lô nhập để liên kết; số tiền trong sổ sẽ được tính lại theo chính sách hiện có." : "원입고 수정입니다. 연결할 원입고를 선택하면 기존 정책에 따라 장부금액이 다시 계산됩니다."}</p>
+                            <label>{lang === "vi" ? "Chọn lô nhập gốc" : "원입고 선택"}
+                                <select value={selectedPurchaseRootId ?? ""} disabled={isEditReasonSaving}
+                                    onChange={event => setSelectedPurchaseRootId(Number(event.target.value) || null)} style={ui.input}>
+                                    <option value="">{lang === "vi" ? "Chọn lô nhập" : "원입고를 선택해 주세요"}</option>
+                                    {purchaseCorrectionRoots.map(root => <option key={root.id} value={root.id}>
+                                        {root.business_date} · +{root.change_quantity}{root.unit ?? ""} · {root.new_supplier} · {root.new_purchase_price}₫
+                                    </option>)}
+                                </select>
+                            </label>
+                            <button type="button" disabled={isEditReasonSaving || selectedPurchaseRootId === null}
+                                onClick={() => handleEditReasonConfirm("purchase")} style={ui.button}>
+                                {lang === "vi" ? "Liên kết lô nhập gốc và lưu thay đổi" : "원입고에 연결하고 수정 저장"}
+                            </button>
+                        </> : null}
+
                         <div
                             style={{
                                 display: "grid",
@@ -5437,7 +5478,7 @@ export default function InventoryPage() {
                                         key={reason}
                                         type="button"
                                         onClick={() => handleEditReasonConfirm(reason)}
-                                        disabled={isEditReasonSaving}
+                                        disabled={isEditReasonSaving || purchaseCorrectionRoots !== null}
                                         style={{
                                             ...ui.subButton,
                                             opacity: isEditReasonSaving ? 0.6 : 1,
