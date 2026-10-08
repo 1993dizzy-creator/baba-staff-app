@@ -48,3 +48,31 @@ test("confirmed inventory display reads current supplier without changing source
   assert.equal(row.display_snapshot.purchase_amount, 153000);
   assert.deepEqual(calls.find(call => call.table === "inventory_logs").ids, [10423]);
 });
+test("projection warnings use the source supplier and keep missing suppliers unconfirmed", async () => {
+  let selectedColumns;
+  const source = { item_id: 1, business_date: "2026-10-06", created_at: "2026-10-06T10:00:00Z", item_name: "배", change_quantity: -0.1, new_purchase_price: 35000 };
+  const db = { from(table) {
+    assert.equal(table, "ledger_inventory_projection_status");
+    const query = {
+      select(columns) { selectedColumns = columns; return query; },
+      in() { return query; }, gte() { return query; }, lt() { return query; }, order() { return query; },
+      async range() { return { data: [
+        { inventory_log_id: 1, status: "review_required", code: "PURCHASE_CORRECTION_REFERENCE_REQUIRED", source: { ...source, new_supplier: " Source supplier " } },
+        { inventory_log_id: 2, status: "review_required", code: "PURCHASE_CORRECTION_REFERENCE_REQUIRED", source: { ...source, new_supplier: null } },
+      ], error: null }; },
+    }; return query;
+  } };
+  const testModule = { exports: {} };
+  new Function("require", "module", "exports", code)(name => {
+    if (name === "server-only") return {};
+    if (name === "./inventory-repair") return { loadInventoryRepairPreview: async () => ({ recommended: true, candidates: [{ supplier: "Suggested supplier", quantity: 1.42 }] }) };
+    if (name === "@/lib/supabase/server") return { supabaseServer: db };
+    if (name === "@/lib/inventory/ledger-sync-contract") return {};
+    return require(name);
+  }, testModule, testModule.exports);
+  const rows = await testModule.exports.loadInventoryProjectionIssues("2026-10-01", "2026-11-01", 7);
+  assert.match(selectedColumns, /new_supplier/);
+  assert.equal(rows[0].supplier, "Source supplier");
+  assert.equal(rows[1].supplier, null);
+  assert.equal(rows.length, 2);
+});

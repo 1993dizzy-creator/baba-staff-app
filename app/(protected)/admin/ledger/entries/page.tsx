@@ -900,14 +900,12 @@ function LedgerEntriesContent() {
             <details>
               <summary>{vi ? "Xem chi tiết" : "상세 보기"}</summary>
               {data.inventoryProjectionIssues.map(issue => <div className={styles.projectionWarningRow} key={issue.inventoryLogId}>
-                <strong>{vi ? issue.itemNameVi || issue.itemName : issue.itemName}</strong>
-                <span>{issue.businessDate ? formatDate(issue.businessDate, lang) : ""}</span>
-                {issue.originalQuantity !== null ? <span>{vi ? "Nhập gốc" : "원입고"} {issue.originalQuantity}</span> : null}
-                <span>{vi ? "Chênh lệch" : "수량 차이"} {issue.quantityDelta > 0 ? "+" : ""}{issue.quantityDelta}</span>
-                <span>{vi ? "Chênh lệch tiền" : "금액 차이"} {money(issue.amountDelta)}</span>
-                <small>{issue.code === "PURCHASE_CORRECTION_REFERENCE_REQUIRED"
-                  ? vi ? "Chọn lô nhập gốc để ghi thay đổi vào sổ." : "원입고를 선택해 수정 내역을 장부에 반영해 주세요."
-                  : vi ? "Cần kiểm tra trạng thái ghi sổ." : "장부 반영 상태를 확인해 주세요."}</small>
+                <span className={styles.projectionWarningSummary}>
+                  <span className={styles.projectionWarningSupplier} title={issue.supplier || undefined}>{issue.supplier || (vi ? "Chưa xác định" : "거래처 미확정")}</span>
+                  <span aria-hidden="true"> · </span>
+                  <strong className={styles.projectionWarningItem} title={vi ? issue.itemNameVi || issue.itemName : issue.itemName}>{vi ? issue.itemNameVi || issue.itemName : issue.itemName}</strong>
+                  <span className={styles.projectionWarningDate}> · {issue.businessDate ? Number(issue.businessDate.slice(5, 7)) + "/" + Number(issue.businessDate.slice(8, 10)) : "—"}</span>
+                </span>
                 <InventoryProjectionResolution issue={issue} vi={vi} onResolved={async () => {
                   const refreshed = await load();
                   if (!refreshed) throw new Error("LEDGER_REFRESH_FAILED");

@@ -1,0 +1,14 @@
+@media (max-width: 560px) {
+  .mobileCentered {
+    inset: auto 0 !important;
+    top: var(--sheet-viewport-top, 0px) !important;
+    height: var(--sheet-viewport-height, 100dvh);
+    box-sizing: border-box;
+    padding: max(16px, env(safe-area-inset-top)) 12px max(16px, env(safe-area-inset-bottom)) !important;
+    align-items: center !important;
+  }
+  .mobileCentered > div {
+    max-height: 100% !important;
+    border-radius: 16px !important;
+  }
+}

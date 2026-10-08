@@ -35,10 +35,10 @@ export async function withInventoryDisplay<T extends { id: number | string; sour
 }
 
 export async function loadInventoryProjectionIssues(start: string, end: string, actorUserId: number) {
-  const rows: Array<{ inventoryLogId: number; status: string; code: string; itemName: string; itemNameVi: string | null; businessDate: string; quantityDelta: number; amountDelta: number; itemId: number; createdAt: string; originalQuantity: number | null; resolution?: PurchaseRepairPreview }> = [];
+  const rows: Array<{ inventoryLogId: number; status: string; code: string; itemName: string; itemNameVi: string | null; supplier: string | null; businessDate: string; quantityDelta: number; amountDelta: number; itemId: number; createdAt: string; originalQuantity: number | null; resolution?: PurchaseRepairPreview }> = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabaseServer.from("ledger_inventory_projection_status")
-      .select("inventory_log_id,status,code,source:inventory_logs!inner(item_id,business_date,created_at,item_name,item_name_vi,change_quantity,new_purchase_price)")
+      .select("inventory_log_id,status,code,source:inventory_logs!inner(item_id,business_date,created_at,item_name,item_name_vi,change_quantity,new_purchase_price,new_supplier)")
       .in("status", ["failed", "review_required"])
       .gte("source.business_date", start).lt("source.business_date", end)
       .order("inventory_log_id").range(from, from + 999);
@@ -50,6 +50,7 @@ export async function loadInventoryProjectionIssues(start: string, end: string, 
         inventoryLogId: Number(row.inventory_log_id), status: row.status, code: row.code,
         itemName: source?.item_name || source?.item_name_vi || "-",
         itemNameVi: source?.item_name_vi || null,
+        supplier: source?.new_supplier?.trim() || null,
         businessDate: source?.business_date ?? "", quantityDelta,
         amountDelta: quantityDelta * Number(source?.new_purchase_price ?? 0),
         itemId: Number(source?.item_id ?? 0), createdAt: source?.created_at ?? "", originalQuantity: null,

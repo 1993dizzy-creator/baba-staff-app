@@ -5,9 +5,11 @@ import ts from 'typescript';
 
 // Minimal hook runtime: refs persist across renders and effects re-run only when a dependency
 // changes (Object.is), matching React's commit semantics closely enough to observe focus moves.
-function harness() {
+function harness(visualViewport) {
   const document = { activeElement: null, body: { style: { overflow: '' } } };
   const listeners = new Set();
+  const viewportProperties = new Map();
+  const viewportElement = { style: { setProperty: (key, value) => viewportProperties.set(key, value) } };
   const element = name => ({ name, focus() { document.activeElement = this; } });
   const closeButton = element('close'), amountInput = element('amount'), trigger = element('trigger');
   let hooks = [], cursor = 0, pending = [];
@@ -20,12 +22,12 @@ function harness() {
       else previous.fresh = true;
     },
   };
-  const runtime = { jsx: (type, props) => { if (props?.ref) props.ref.current = closeButton; return { type, props }; } };
+  const runtime = { jsx: (type, props) => { if (props?.ref) props.ref.current = type === 'button' ? closeButton : viewportElement; return { type, props }; } };
   runtime.jsxs = runtime.jsx;
   const sheetModule = { exports: {} };
   const code = ts.transpileModule(readFileSync('components/bar/keeping/KeepingUi.tsx', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  const deps = { react, 'react/jsx-runtime': runtime };
-  const window = { addEventListener: (_, fn) => listeners.add(fn), removeEventListener: (_, fn) => listeners.delete(fn) };
+  const deps = { react, 'react/jsx-runtime': runtime, './KeepingUi.module.css': { default: {} } };
+  const window = { visualViewport, innerHeight: 740, addEventListener: (_, fn) => listeners.add(fn), removeEventListener: (_, fn) => listeners.delete(fn) };
   new Function('require', 'module', 'exports', 'document', 'window', code)(name => { assert.ok(name in deps, name); return deps[name]; }, sheetModule, sheetModule.exports, document, window);
   function render(props) {
     cursor = 0; pending = [];
@@ -34,7 +36,7 @@ function harness() {
   }
   const stableReturnFocus = { current: trigger };
   return {
-    document, listeners, closeButton, amountInput, trigger,
+    document, listeners, viewportProperties, closeButton, amountInput, trigger,
     render: props => render({ returnFocusRef: stableReturnFocus, ...props }),
     unmount() { for (const hook of hooks) hook?.cleanup?.(); hooks = []; },
     escape() { for (const fn of [...listeners]) fn({ key: 'Escape' }); },
@@ -90,4 +92,26 @@ test('closing the sheet restores body scroll, removes the listener and returns f
   unmounted.render({ onClose() {} });
   unmounted.unmount();
   assert.equal(unmounted.document.activeElement, unmounted.trigger, 'conditionally rendered sheets return focus on unmount');
+});
+
+test('centered mobile sheet follows visual viewport resize and scroll and removes its listeners', () => {
+  const handlers = new Map();
+  const viewport = {
+    height: 500, offsetTop: 50,
+    addEventListener(type, fn) { handlers.set(type, fn); },
+    removeEventListener(type, fn) { if (handlers.get(type) === fn) handlers.delete(type); },
+  };
+  const sheet = harness(viewport);
+  sheet.render({ mobileCentered: true, onClose() {} });
+  assert.equal(sheet.viewportProperties.get('--sheet-viewport-height'), '500px');
+  assert.equal(sheet.viewportProperties.get('--sheet-viewport-top'), '50px');
+  viewport.height = 240;
+  viewport.offsetTop = 80;
+  handlers.get('resize')();
+  handlers.get('scroll')();
+  assert.equal(sheet.viewportProperties.get('--sheet-viewport-height'), '240px');
+  assert.equal(sheet.viewportProperties.get('--sheet-viewport-top'), '80px');
+  sheet.render({ mobileCentered: true, open: false, onClose() {} });
+  assert.equal(handlers.size, 0);
+  assert.equal(sheet.listeners.size, 0);
 });
