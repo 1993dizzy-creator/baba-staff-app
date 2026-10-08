@@ -3,6 +3,9 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
+import DashboardDetailRow from "@/components/ledger/DashboardDetailRow";
+import { buildDashboardDetailEmoji } from "@/lib/ledger/dashboard-detail-emoji";
+import SalesReceiptDetails from "@/components/ledger/SalesReceiptDetails";
 import { BarSheet } from "@/components/bar/keeping/KeepingUi";
 import { getBusinessDate } from "@/lib/common/business-time";
 import {
@@ -66,6 +69,7 @@ const text = {
     deficitToSurplus: "적자 → 흑자",
     surplusToDeficit: "흑자 → 적자",
     reconciliationWarning: "확인 필요 차이",
+    cashFlowMatched: "잔액 대조 차이",
     cashExpense: "실제 현금지출",
     empty: "표시할 내역이 없습니다.",
     newItem: "신규",
@@ -113,6 +117,7 @@ const text = {
     deficitToSurplus: "Lỗ → lãi",
     surplusToDeficit: "Lãi → lỗ",
     reconciliationWarning: "Chênh lệch cần kiểm tra",
+    cashFlowMatched: "Chênh lệch đối chiếu số dư",
     cashExpense: "Tiền thực chi",
     empty: "Không có dữ liệu để hiển thị.",
     newItem: "Mới",
@@ -190,13 +195,6 @@ type DashboardText = (typeof text)["ko"] | (typeof text)["vi"];
 
 const money = (amount: number) =>
   `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(amount))} ₫`;
-
-const compactMoney = (amount: number) => {
-  const absolute = Math.abs(amount);
-  if (absolute < 1_000_000) return money(amount);
-  const sign = amount < 0 ? "-" : "";
-  return `${sign}${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(absolute / 1_000_000)}m ₫`;
-};
 
 const categoryLabel = (name: string, lang: "ko" | "vi") => lang === "vi" ? vietnameseCategoryNames[name] ?? name : name;
 const share = (amount: number, total: number) => total === 0 ? 0 : (amount / Math.abs(total)) * 100;
@@ -306,10 +304,14 @@ function LedgerDashboardContent() {
     {error ? <section role="alert" className={`${styles.statusCard} ${styles.error}`}>{copy.error}</section> : null}
     {loading && !report ? <div className={styles.skeleton} aria-label={copy.loading} /> : null}
     {report && operatingResult && dashboardState?.month === month ? <DashboardReport
+      key={month}
       copy={copy}
       lang={lang}
       fundsMode={dashboardState.current.fundsView.mode}
       report={report}
+      month={month}
+      detailEmoji={buildDashboardDetailEmoji(dashboardState.current)}
+      salesReceiptExplanation={dashboardState.current.salesReceiptExplanation}
       operatingResult={operatingResult}
       expandedExpenses={expandedExpenses}
       onToggleExpense={(id) => setExpandedExpenses((current) => {
@@ -321,11 +323,14 @@ function LedgerDashboardContent() {
   </main></Container>;
 }
 
-function DashboardReport({ copy, lang, fundsMode, report, operatingResult, expandedExpenses, onToggleExpense }: {
+function DashboardReport({ detailEmoji, copy, lang, fundsMode, report, month, salesReceiptExplanation, operatingResult, expandedExpenses, onToggleExpense }: {
+  detailEmoji: ReturnType<typeof buildDashboardDetailEmoji>;
   copy: DashboardText;
   lang: "ko" | "vi";
   fundsMode: DashboardLedgerData["fundsView"]["mode"];
   report: DashboardReportData;
+  month: string;
+  salesReceiptExplanation: DashboardLedgerData["salesReceiptExplanation"];
   operatingResult: ProvisionalOperatingProfit;
   expandedExpenses: Set<number>;
   onToggleExpense: (id: number) => void;
@@ -335,8 +340,6 @@ function DashboardReport({ copy, lang, fundsMode, report, operatingResult, expan
   const detailButton = <button ref={detailButtonRef} type="button" className={styles.kpiDetailButton} aria-haspopup="dialog" onClick={() => setOperatingDetailOpen(true)}>{copy.detail} ›</button>;
   return <>
     <section className={styles.kpiGrid} aria-label="KPI">
-      <KpiCard icon="💰" label={copy.income} amount={report.kpis.income} change={report.kpis.incomeChange} amountClass={styles.trendUp} />
-      <KpiCard icon="💸" label={copy.expense} amount={report.kpis.expense} change={report.kpis.expenseChange} amountClass={styles.trendDown} />
       <KpiCard icon="📈" label={copy.cashDifference} amount={report.kpis.cashDifference} {...signedTrend(report.kpis.cashDifferenceChange, copy)} />
       {operatingResult.mode === "provisional"
         // Provisional vs. final profit are different bases, so no month-over-month %.
@@ -346,25 +349,25 @@ function DashboardReport({ copy, lang, fundsMode, report, operatingResult, expan
 
     {operatingDetailOpen ? <OperatingProfitSheet copy={copy} report={report} operatingResult={operatingResult} returnFocusRef={detailButtonRef} onClose={() => setOperatingDetailOpen(false)} /> : null}
 
-    <BreakdownCard icon="📊" title={copy.incomeComposition} total={report.kpis.income} rows={report.income} lang={lang} empty={copy.empty} newLabel={copy.newItem} />
+    <BreakdownCard icon="📊" title={copy.incomeComposition} total={report.kpis.income} rows={report.income} detailEmoji={detailEmoji} lang={lang} empty={copy.empty} newLabel={copy.newItem} change={report.kpis.incomeChange} month={month} salesReceiptExplanation={salesReceiptExplanation} />
 
     <section className={styles.reportCard}>
-      <div className={styles.sectionHeader}><h2 className={styles.sectionTitle}><span className={styles.titleEmoji} aria-hidden="true">📉</span>{copy.expenseComposition}</h2><strong className={styles.sectionTotal}>{money(report.kpis.expense)}</strong></div>
-      {report.expenses.length ? <div className={styles.breakdownList}>{report.expenses.map((row) => <ExpenseRow key={row.id} row={row} total={report.kpis.expense} lang={lang} newLabel={copy.newItem} expanded={expandedExpenses.has(row.id)} onToggle={() => onToggleExpense(row.id)} />)}</div> : <p className={styles.empty}>{copy.empty}</p>}
+      <div className={styles.sectionHeader}><h2 className={styles.sectionTitle}><span className={styles.titleEmoji} aria-hidden="true">📉</span>{copy.expenseComposition}<CompositionChange change={report.kpis.expenseChange} /></h2><strong className={styles.sectionTotal}>{money(report.kpis.expense)}</strong></div>
+      {report.expenses.length ? <div className={styles.breakdownList}>{report.expenses.map((row) => <ExpenseRow detailEmoji={detailEmoji} key={row.id} row={row} total={report.kpis.expense} lang={lang} newLabel={copy.newItem} expanded={expandedExpenses.has(row.id)} onToggle={() => onToggleExpense(row.id)} />)}</div> : <p className={styles.empty}>{copy.empty}</p>}
     </section>
 
     <section className={styles.reportCard}>
       <div className={styles.sectionHeader}><h2 className={styles.sectionTitle}><span className={styles.titleEmoji} aria-hidden="true">💵</span>{copy.cashFlow}</h2></div>
       <div className={styles.cashFlow}>
-        <div className={styles.cashBalance}><span>{copy.openingBalance}</span><strong>{compactMoney(report.cashFlow.openingBalance)}</strong></div>
+        <div className={styles.cashBalance}><span>{copy.openingBalance}</span><strong>{money(report.cashFlow.openingBalance)}</strong></div>
         <div className={styles.cashArrow}>↓</div>
         <CashLine sign="+" label={copy.receivedIncome} amount={report.cashFlow.receivedIncome} positive />
         <CashLine sign="−" label={copy.cashExpense} amount={report.cashFlow.actualCashOutflow} />
         <CashLine sign={report.cashFlow.investmentCashFlow < 0 ? "−" : "+"} label={copy.investment} amount={Math.abs(report.cashFlow.investmentCashFlow)} positive={report.cashFlow.investmentCashFlow >= 0} />
         <CashLine sign={report.cashFlow.otherFundAdjustment < 0 ? "−" : "+"} label={copy.otherAdjustment} amount={Math.abs(report.cashFlow.otherFundAdjustment)} positive={report.cashFlow.otherFundAdjustment >= 0} />
-        {Math.abs(report.cashFlow.reconciliationDifference) >= 0.5 ? <CashLine sign={report.cashFlow.reconciliationDifference < 0 ? "−" : "+"} label={copy.reconciliationWarning} amount={Math.abs(report.cashFlow.reconciliationDifference)} positive={false} /> : null}
+        {Math.abs(report.cashFlow.reconciliationDifference) >= 0.5 ? <CashLine sign={report.cashFlow.reconciliationDifference < 0 ? "−" : "+"} label={copy.reconciliationWarning} amount={Math.abs(report.cashFlow.reconciliationDifference)} positive={false} /> : <CashLine sign="" label={copy.cashFlowMatched} amount={0} positive />}
         <div className={styles.cashArrow}>↓</div>
-        <div className={styles.cashBalance}><span>{fundsMode === "live" ? copy.balance : copy.monthEndBalance}</span><strong>{compactMoney(report.cashFlow.closingBalance)}</strong></div>
+        <div className={styles.cashBalance}><span>{fundsMode === "live" ? copy.balance : copy.monthEndBalance}</span><strong>{money(report.cashFlow.closingBalance)}</strong></div>
       </div>
     </section>
   </>;
@@ -433,11 +436,16 @@ function ReportValue({ label, amount, expense = false, fallback = "-", total = f
   return <div className={`${styles.comparisonRow} ${styles.reportValueRow} ${total ? styles.reportTotalRow : ""} ${emphasis ? styles.reportEmphasisRow : ""}`}><span className={styles.comparisonName}>{label}</span><strong className={`${styles.comparisonAmount} ${amount === null ? styles.reportPending : expense ? styles.expenseAmount : ""}`}>{amount === null ? fallback : money(amount)}</strong></div>;
 }
 
-function BreakdownCard({ icon, title, total, rows, lang, empty, newLabel }: { icon: string; title: string; total: number; rows: DashboardReportData["income"]; lang: "ko" | "vi"; empty: string; newLabel: string }) {
+function CompositionChange({ change }: { change: number | null }) {
+  if (change == null) return null;
+  return <span className={`${styles.compositionChange} ${change > 0 ? styles.trendUp : change < 0 ? styles.trendDown : ""}`}>{change === 0 ? "0.0%" : `${change > 0 ? "↑" : "↓"} ${Math.abs(change).toFixed(1)}%`}</span>;
+}
+
+function BreakdownCard({ detailEmoji, icon, title, total, rows, lang, empty, newLabel, change, month, salesReceiptExplanation }: { icon: string; title: string; total: number; detailEmoji: ReturnType<typeof buildDashboardDetailEmoji>; rows: DashboardReportData["income"]; lang: "ko" | "vi"; empty: string; newLabel: string; change: number | null; month: string; salesReceiptExplanation: DashboardLedgerData["salesReceiptExplanation"] }) {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(() => new Set());
   return <section className={styles.reportCard}>
-    <div className={styles.sectionHeader}><h2 className={styles.sectionTitle}><span className={styles.titleEmoji} aria-hidden="true">{icon}</span>{title}</h2><strong className={styles.sectionTotal}>{money(total)}</strong></div>
-    {rows.length ? <div className={styles.breakdownList}>{rows.map((row) => <IncomeRow key={row.id} row={row} total={total} lang={lang} newLabel={newLabel} expanded={expandedRows.has(row.id)} onToggle={() => setExpandedRows((current) => {
+    <div className={styles.sectionHeader}><h2 className={styles.sectionTitle}><span className={styles.titleEmoji} aria-hidden="true">{icon}</span>{title}<CompositionChange change={change} /></h2><strong className={styles.sectionTotal}>{money(total)}</strong></div>
+    {rows.length ? <div className={styles.breakdownList}>{rows.map((row) => <IncomeRow detailEmoji={detailEmoji} key={row.id} month={month} salesReceiptExplanation={salesReceiptExplanation} row={row} total={total} lang={lang} newLabel={newLabel} expanded={expandedRows.has(row.id)} onToggle={() => setExpandedRows((current) => {
       const next = new Set(current);
       if (next.has(row.id)) next.delete(row.id); else next.add(row.id);
       return next;
@@ -445,12 +453,12 @@ function BreakdownCard({ icon, title, total, rows, lang, empty, newLabel }: { ic
   </section>;
 }
 
-function IncomeRow({ row, total, lang, newLabel, expanded, onToggle }: { row: DashboardReportData["income"][number]; total: number; lang: "ko" | "vi"; newLabel: string; expanded: boolean; onToggle: () => void }) {
-  return <CategoryRow name={categoryLabel(row.name, lang)} change={<MonthChange change={row.change} increaseIsGood newLabel={newLabel} />} amount={row.amount} total={total} barClass={styles.barFillIncome} details={row.details} detailName={(name) => name} expandable={row.details.length > 0} expanded={expanded} onToggle={onToggle} />;
+function IncomeRow({ detailEmoji, row, total, lang, newLabel, expanded, onToggle, month, salesReceiptExplanation }: { detailEmoji: ReturnType<typeof buildDashboardDetailEmoji>; row: DashboardReportData["income"][number]; total: number; lang: "ko" | "vi"; newLabel: string; expanded: boolean; onToggle: () => void; month: string; salesReceiptExplanation: DashboardLedgerData["salesReceiptExplanation"] }) {
+  return <CategoryRow name={categoryLabel(row.name, lang)} change={<MonthChange change={row.change} increaseIsGood newLabel={newLabel} />} amount={row.amount} total={total} barClass={styles.barFillIncome} details={row.details} detailEmoji={(detail) => detailEmoji(detail, "income", row.id)} detailName={(name) => name} expandedContent={row.id === -1 ? <SalesReceiptDetails month={month} data={salesReceiptExplanation} lang={lang} /> : undefined} expandable={row.id === -1 || row.details.length > 0} expanded={expanded} onToggle={onToggle} />;
 }
 
-function ExpenseRow({ row, total, lang, newLabel, expanded, onToggle }: { row: DashboardReportData["expenses"][number]; total: number; lang: "ko" | "vi"; newLabel: string; expanded: boolean; onToggle: () => void }) {
-  return <CategoryRow name={categoryLabel(row.name, lang)} change={<MonthChange change={row.change} increaseIsGood={false} newLabel={newLabel} />} amount={row.amount} total={total} barClass={styles.barFillExpense} details={row.details} detailName={(name) => categoryLabel(name, lang)} expandable expanded={expanded} onToggle={onToggle} />;
+function ExpenseRow({ detailEmoji, row, total, lang, newLabel, expanded, onToggle }: { detailEmoji: ReturnType<typeof buildDashboardDetailEmoji>; row: DashboardReportData["expenses"][number]; total: number; lang: "ko" | "vi"; newLabel: string; expanded: boolean; onToggle: () => void }) {
+  return <CategoryRow name={categoryLabel(row.name, lang)} change={<MonthChange change={row.change} increaseIsGood={false} newLabel={newLabel} />} amount={row.amount} total={total} barClass={styles.barFillExpense} details={row.details} detailEmoji={(detail) => detailEmoji(detail, "expense", row.id)} detailName={(name) => categoryLabel(name, lang)} expandable expanded={expanded} onToggle={onToggle} />;
 }
 
 // Shared income/expense category row: same chevron, column, spacing and click area.
@@ -464,19 +472,19 @@ function MonthChange({ change, increaseIsGood, newLabel }: { change: BreakdownCh
   return <span className={`${styles.rowChange} ${tone}`}>{text}</span>;
 }
 
-function CategoryRow({ name, change, amount, total, barClass, details, detailName, expandable, expanded, onToggle }: { name: string; change: ReactNode; amount: number; total: number; barClass: string; details: DashboardReportData["income"][number]["details"]; detailName: (name: string) => string; expandable: boolean; expanded: boolean; onToggle: () => void }) {
+function CategoryRow({ name, change, amount, total, barClass, details, detailEmoji, detailName, expandable, expanded, onToggle, expandedContent }: { name: string; change: ReactNode; amount: number; total: number; barClass: string; details: DashboardReportData["income"][number]["details"]; detailEmoji: (detail: DashboardReportData["income"][number]["details"][number]) => string; detailName: (name: string) => string; expandable: boolean; expanded: boolean; onToggle: () => void; expandedContent?: ReactNode }) {
   const content = <>
     <span className={styles.breakdownHeader}><span className={styles.chevron} aria-hidden="true">{expandable ? expanded ? "▼" : "▶" : ""}</span><span className={styles.breakdownLabel}><span className={styles.breakdownName}>{name}</span>{change}</span><strong className={styles.breakdownAmount}>{money(amount)}</strong><span className={styles.breakdownPercent}>{share(amount, total).toFixed(1)}%</span></span>
     <span className={styles.barTrack}><span className={barClass} style={{ width: `${Math.min(100, Math.max(0, Math.abs(share(amount, total))))}%` }} /></span>
   </>;
   return <div className={styles.breakdownItem}>
     {expandable ? <button type="button" className={styles.expenseToggle} aria-expanded={expanded} onClick={onToggle}>{content}</button> : <div className={styles.staticToggle}>{content}</div>}
-    {expanded && details.length ? <div className={styles.detailList}>{details.map((detail) => <div className={styles.detailRow} key={detail.id}><span>{detailName(detail.name)}</span><strong>{money(detail.amount)}</strong></div>)}</div> : null}
+    {expanded && expandedContent ? <div className={styles.detailList}>{expandedContent}</div> : expanded && details.length ? <div className={styles.detailList}>{details.map((detail) => <DashboardDetailRow key={detail.id} emoji={detailEmoji(detail)} name={detailName(detail.name)} amount={money(detail.amount)} />)}</div> : null}
   </div>;
 }
 
 function CashLine({ sign, label, amount, positive = false }: { sign: string; label: string; amount: number; positive?: boolean }) {
-  return <div className={`${styles.cashLine} ${positive ? styles.cashPositive : styles.cashNegative}`}><span>{sign} {label}</span><strong>{compactMoney(amount)}</strong></div>;
+  return <div className={`${styles.cashLine} ${positive ? styles.cashPositive : styles.cashNegative}`}><span>{sign} {label}</span><strong>{money(amount)}</strong></div>;
 }
 
 export default function LedgerDashboardPage() {

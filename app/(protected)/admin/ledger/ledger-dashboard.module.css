@@ -300,9 +300,13 @@
   font-size: 10px;
 }
 
-.detailList {
+.detailList,
+.detailRows {
   display: grid;
   gap: 5px;
+}
+
+.detailList {
   margin: 6px 0 0 17px;
   padding: 7px 8px;
   border-left: 2px solid #e5e7eb;
@@ -312,19 +316,18 @@
 
 .detailRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: baseline;
+  line-height: 1.4;
   gap: 7px;
   color: #4b5563;
   font-size: 10px;
   font-weight: 750;
 }
 
-.detailRow span:first-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.detailEmoji { width: 18px; text-align: center; }
+.detailName { min-width: 0; overflow-wrap: anywhere; }
+.detailAmount { font-weight: inherit; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 
 .comparisonList {
@@ -474,3 +477,12 @@
   }
 }
 .payrollBadge{display:inline-block;padding:1px 6px;border-radius:999px;background:#e8f6ef;color:#16805a;font-size:10px;font-weight:800}
+
+
+.receiptNote { margin: 10px 0 0; font-size: 9px; }
+
+.compositionChange { display: inline-block; margin-left: 6px; font-size: 9px; font-weight: 800; white-space: nowrap; vertical-align: baseline; }
+.sectionTotal { white-space: nowrap; }
+
+.cashBalance strong, .cashLine strong { white-space: nowrap; text-align: right; }
+.cashBalance > span, .cashLine > span { min-width: 0; overflow-wrap: anywhere; }

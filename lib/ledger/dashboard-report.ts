@@ -1,3 +1,5 @@
+import type { SalesReceiptExplanation } from "./card-settlements";
+
 export type DashboardCategory = {
   id: number | string;
   name: string;
@@ -19,6 +21,7 @@ export type DashboardIncomeDetailTransaction = {
   economic_effect_sign?: number | string | null;
   recognition_month?: string | null;
   memo?: string | null;
+  party_id?: number | string | null;
   category?: { id?: number | string | null } | null;
 };
 
@@ -41,6 +44,8 @@ export type DashboardSummary = {
 };
 
 export type DashboardLedgerData = {
+  partners?: Array<{ ledgerPartyId: number; emoji?: string | null }>;
+  salesReceiptExplanation?: SalesReceiptExplanation;
   month: string;
   fundsView: { mode: "live" | "provisional" | "closed_snapshot" };
   summary: DashboardSummary;
@@ -53,6 +58,7 @@ export type DashboardLedgerData = {
     investmentCashFlow: number;
     otherFundAdjustment: number;
     operatingIncomeMovement: number;
+    actualCashOutflowMovement?: number;
   };
 };
 
@@ -291,6 +297,7 @@ export function buildDashboardReport(
   const income = withMonthChange(buildReceivedIncomeRows(current), buildReceivedIncomeRows(previous));
   const expenses = withMonthChange(current.cashReport.expenseBreakdown, previous.cashReport.expenseBreakdown);
   const cashDifference = current.summary.receivedIncome - current.summary.actualCashOutflow;
+  const cashFlowOutflow = current.cashReport.actualCashOutflowMovement ?? current.summary.actualCashOutflow;
   const previousCashDifference = previous.summary.receivedIncome - previous.summary.actualCashOutflow;
   return {
     kpis: {
@@ -315,11 +322,11 @@ export function buildDashboardReport(
       receivedIncome: current.summary.receivedIncome,
       investmentCashFlow: numberValue(current.cashReport.investmentCashFlow),
       otherFundAdjustment: numberValue(current.cashReport.otherFundAdjustment),
-      actualCashOutflow: current.summary.actualCashOutflow,
+      actualCashOutflow: cashFlowOutflow,
       closingBalance: sumBusinessFundBalances(current.accounts, "balance"),
       reconciliationDifference: numberValue(sumBusinessFundBalances(current.accounts, "balance")) -
         (numberValue(sumBusinessFundBalances(current.accounts, "openingBalance")) +
-          current.summary.receivedIncome - current.summary.actualCashOutflow +
+          current.summary.receivedIncome - cashFlowOutflow +
           numberValue(current.cashReport.investmentCashFlow) + numberValue(current.cashReport.otherFundAdjustment)),
     },
   };

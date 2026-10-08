@@ -65,7 +65,7 @@ async function summary(sales, lines, { failAllocations = false, parties = [] } =
       if (name === "@/lib/ledger/manual-entry-policy") return require("../lib/ledger/manual-entry-policy.ts");
       if (name === "@/lib/partners/emoji") return require("../lib/partners/emoji.ts");
       if (name === "@/lib/supabase/server") return { supabaseServer: db };
-      if (name === "@/lib/ledger/server") return { requireLedgerActor: async () => ({}), ledgerJson: body => body };
+      if (name === "@/lib/ledger/server") return { requireLedgerActor: async () => ({ actor: { id: 7, role: "owner" } }), ledgerJson: body => body };
       if (name === "@/lib/ledger/inventory-display") return { withInventoryDisplay: async rows => rows, loadInventoryProjectionIssues: async () => [] };
       if (name === "@/lib/ledger/entries") return { buildLedgerEntries: () => [], buildReserveLedgerEntries: () => [] };
       if (name === "@/lib/ledger/reserve-balances") return { reservesByFundAccount: () => new Map() };
@@ -151,7 +151,7 @@ test("allocation totals include pages beyond the default 1000-row limit", async 
   const s = sale(1, 2000);
   const { body, queries } = await summary([s], Array.from({ length: 1001 }, (_, i) => line(i + 1, s, 1)));
   assert.equal(body.summary.unsettledCardGross, 999);
-  assert.equal(queries.filter(q => q.table === "ledger_card_reconciliation_lines").length, 2);
+  assert.equal(queries.filter(q => q.table === "ledger_card_reconciliation_lines" && !q.select.includes("sale:")).length, 2);
 });
 
 test("allocation read failure fails the summary instead of silently overstating unsettled gross", async () => {

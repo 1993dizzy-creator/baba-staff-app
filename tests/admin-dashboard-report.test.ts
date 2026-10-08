@@ -174,7 +174,7 @@ test("actual cash expense categories trace split payable allocations and payroll
   assert.equal(report.expenseBreakdown.reduce((sum, row) => sum + row.amount, 0), 175);
   assert.deepEqual(report.expenseBreakdown.map((row) => [row.name, row.amount]), [["매입비", 125], ["인건비", 50]]);
   assert.equal(report.investmentCashFlow, 170);
-  assert.equal(report.otherFundAdjustment, 0);
+  assert.equal(report.otherFundAdjustment, -999);
 });
 
 test("2026-09 fixture keeps actual cash KPIs separate from accounting profit", () => {
@@ -210,7 +210,7 @@ test("dashboard KPI shows operating profit instead of the fund balance, which st
   assert.match(kpiSection, /<KpiCardicon="📊"label=\{copy\.operatingProfit\}amount=\{report\.kpis\.operatingProfit\}\{\.\.\.signedTrend\(report\.kpis\.operatingProfitChange,copy\)\}action=\{detailButton\}\/>\}<\/section>/);
   assert.match(kpiSection, /\{\.\.\.signedTrend\(report\.kpis\.cashDifferenceChange,copy\)\}/);
   assert.doesNotMatch(kpiSection, /🏦|copy\.balance|businessFundBalance/);
-  assert.match(dashboardCompact, /<span>\{fundsMode==="live"\?copy\.balance:copy\.monthEndBalance\}<\/span><strong>\{compactMoney\(report\.cashFlow\.closingBalance\)\}/);
+  assert.match(dashboardCompact, /<span>\{fundsMode==="live"\?copy\.balance:copy\.monthEndBalance\}<\/span><strong>\{money\(report\.cashFlow\.closingBalance\)\}/);
   assert.match(dashboardCompact, /label=\{copy\.operatingIncome\}amount=\{report\.profitAndLoss\.income\}/);
   assert.match(dashboardCompact, /label=\{copy\.operatingExpense\}amount=\{report\.profitAndLoss\.expense\}/);
   assert.match(dashboardCompact, /label=\{copy\.operatingProfit\}amount=\{report\.profitAndLoss\.operatingProfit\}/);
@@ -240,7 +240,6 @@ test("admin remains the original role-filtered management menu without monthly-r
 });
 
 test("ledger root contains the monthly report and replaces the legacy summary dashboard", () => {
-  assert.match(dashboardCompact, /<KpiCardicon="💰"label=\{copy\.income\}/);
   assert.match(dashboardCompact, /<BreakdownCardicon="📊"title=\{copy\.incomeComposition\}/);
   assert.match(dashboardCompact, /copy\.expenseComposition/);
   assert.match(dashboardCompact, /copy\.cashFlow/);
@@ -275,7 +274,7 @@ test("ledger dashboard uses the compact entries-style month control and directio
   assert.match(dashboardStylesCompact, /\.trendUp\{color:#16805a;/);
   assert.match(dashboardStylesCompact, /\.trendDown\{color:#b4493e;/);
   assert.match(entriesStyles, /\.page\{max-width:800px;margin:0 auto;padding:8px 16px calc\(150px \+ env\(safe-area-inset-bottom\)\)/);
-  for (const icon of ["💰", "💸", "📈", "📊", "📉", "💵"]) assert.ok(dashboardPage.includes(icon));
+  for (const icon of ["📈","📊","📉","💵"]) assert.ok(dashboardPage.includes(icon));
 });
 
 test("ledger layout authorization, subnav and child-route contract remain unchanged", () => {
@@ -317,14 +316,12 @@ test("income composition folds 예금이자 into 영업수입 and still totals r
 });
 
 test("dashboard UI: KPI amount colors, adjacent detail button, shared category chevrons, no expense ledger link, red cost amounts in the modal", () => {
-  assert.match(dashboardCompact, /<KpiCardicon="💰"label=\{copy\.income\}amount=\{report\.kpis\.income\}change=\{report\.kpis\.incomeChange\}amountClass=\{styles\.trendUp\}\/>/);
-  assert.match(dashboardCompact, /<KpiCardicon="💸"label=\{copy\.expense\}amount=\{report\.kpis\.expense\}change=\{report\.kpis\.expenseChange\}amountClass=\{styles\.trendDown\}\/>/);
   assert.match(dashboardCompact, /<strongclassName=\{`\$\{styles\.kpiAmount\}\$\{amountClass\}`\}>/);
   assert.doesNotMatch(dashboardCompact, /<KpiCardicon="📈"[^>]*amountClass/);
   assert.ok(dashboardStylesCompact.indexOf(".trendUp{") > dashboardStylesCompact.indexOf(".kpiAmount{"), "trend color overrides the KPI amount color");
 
   // Income and expense rows share one CategoryRow with the same ▶/▼ chevron column and toggle button.
-  assert.match(dashboardCompact, /functionIncomeRow\([^]*?return<CategoryRow[^]*?expandable=\{row\.details\.length>0\}/);
+  assert.match(dashboardCompact, /functionIncomeRow\([^]*?return<CategoryRow[^]*?expandable=\{row\.id===-1\|\|row\.details\.length>0\}/);
   assert.match(dashboardCompact, /functionExpenseRow\([^]*?return<CategoryRow[^]*?expandable/);
   assert.match(dashboardCompact, /<spanclassName=\{styles\.chevron\}aria-hidden="true">\{expandable\?expanded\?"▼":"▶":""\}<\/span>/);
   assert.match(dashboardCompact, /\{expandable\?<buttontype="button"className=\{styles\.expenseToggle\}aria-expanded=\{expanded\}onClick=\{onToggle\}>\{content\}<\/button>:<divclassName=\{styles\.staticToggle\}>\{content\}<\/div>\}/);
@@ -344,7 +341,7 @@ test("dashboard UI: KPI amount colors, adjacent detail button, shared category c
   assert.deepEqual(rows, [
     ["copy.operatingIncome", false],
     ["copy.ledgerExpense", true],
-    ["`+${copy.unrecognizedPayroll}`", true],
+    ["`+${payrollLabel(operatingResult,copy)}`", true],
     ["`+${copy.cardFeeEstimate}`", true],
     ["copy.provisionalExpense", true],
     ["copy.provisionalOperatingProfit", false],
@@ -359,7 +356,7 @@ test("dashboard UI: KPI amount colors, adjacent detail button, shared category c
   assert.match(dashboardCompact, /change=\{<MonthChangechange=\{row\.change\}increaseIsGood=\{false\}newLabel=\{newLabel\}\/>\}/);
   assert.match(dashboardCompact, /consttone=change\.kind==="none"\?"":increased===increaseIsGood\?styles\.trendUp:styles\.trendDown;/);
   assert.match(dashboardCompact, /change\.kind==="new"\?newLabel:change\.kind==="percent"\?`\$\{change\.percent>0\?"▲":"▼"\}\$\{Math\.abs\(change\.percent\)\.toFixed\(1\)\}%`:"-"/);
-  assert.match(dashboardCompact, /<divclassName=\{styles\.detailRow\}key=\{detail\.id\}><span>\{detailName\(detail\.name\)\}<\/span><strong>\{money\(detail\.amount\)\}<\/strong><\/div>/);
+  assert.match(dashboardCompact, /<DashboardDetailRowkey=\{detail\.id\}emoji=\{detailEmoji\(detail\)\}name=\{detailName\(detail\.name\)\}amount=\{money\(detail\.amount\)\}\/>/);
   assert.match(dashboardStylesCompact, /\.rowChange\{flex-shrink:0;color:#9ca3af;font-size:9px;/);
 });
 

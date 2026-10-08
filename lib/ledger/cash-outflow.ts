@@ -1,6 +1,6 @@
 type CashMovement = {
   amount?: number | string;
-  fund_account?: { id?: number | string } | null;
+  fund_account?: { id?: number | string; type?: string | null; code?: string | null } | null;
 };
 
 export type CashOutflowTransaction = {
@@ -79,7 +79,8 @@ export function businessFundMovementNet(
   businessFundAccountIds: ReadonlySet<number>,
 ) {
   return roundLedgerMoney((row.movements ?? []).reduce((sum, movement) =>
-    businessFundAccountIds.has(Number(movement.fund_account?.id))
+    businessFundAccountIds.has(Number(movement.fund_account?.id)) &&
+      movement.fund_account?.type !== "card_clearing" && movement.fund_account?.code !== "card_clearing"
       ? sum + Number(movement.amount ?? 0)
       : sum,
   0));
@@ -89,6 +90,7 @@ export function listActualCashOutflowItems(
   transactions: readonly CashOutflowTransaction[],
   businessFundAccountIds: ReadonlySet<number>,
   month: string,
+  useLegacySnapshot = true,
 ): ActualCashOutflowItem[] {
   const legacy = transactions.find((row) =>
     row.source_key === `legacy_sheet_expense_reconciliation:${month}` &&
@@ -96,6 +98,7 @@ export function listActualCashOutflowItems(
   );
   const sheetCashOutflow = legacy?.source_snapshot?.sheetCashOutflow;
   if (
+    useLegacySnapshot &&
     (typeof sheetCashOutflow === "number" || (typeof sheetCashOutflow === "string" && sheetCashOutflow.trim() !== "")) &&
     Number.isFinite(Number(sheetCashOutflow)) && Number(sheetCashOutflow) >= 0
   ) return [{ transaction: legacy!, amount: Number(sheetCashOutflow) }];

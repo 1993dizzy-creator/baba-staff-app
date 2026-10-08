@@ -127,7 +127,7 @@ test("reserve balance keeps the full cumulative scope while history uses the sam
   assert.equal((route.match(/from\("ledger_reserve_plans"\)/g) ?? []).length, 1);
   // No lower bound for open months: balances still sum every entry since the beginning.
   assert.match(route, /\.select\("id,reserve_plan_id,entry_type,amount,occurred_at,memo"\)\s*\.lt\("occurred_at", monthEndCutoffAt\);/);
-  assert.match(route, /fundsViewMode === "closed_snapshot"\s*\? reserveEntriesQuery\.gte\("occurred_at", monthStartCutoffAt\)\s*: reserveEntriesQuery;/);
+  assert.match(route, /fundsViewMode === "closed_snapshot"\s*\? query\.gte\("occurred_at", monthStartCutoffAt\)\s*: query;/);
   assert.match(route, /reserveEntryRows\.filter\(\(entry\) => Date\.parse\(entry\.occurred_at\) <= now\.getTime\(\)\)/);
   assert.match(route, /const reservePlans = fundsViewMode === "closed_snapshot" \? \[\] :/);
 });

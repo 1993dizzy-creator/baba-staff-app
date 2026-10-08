@@ -177,3 +177,44 @@ export function buildEditableCardSales<T extends CardSale & { allocatedGrossAmou
   }
   return [...rows.values()].sort((a, b) => a.business_date.localeCompare(b.business_date) || a.id - b.id);
 }
+
+export type PriorMonthCardDepositAllocation = {
+  reconciliation_id: number;
+  allocated_gross_amount: number | string;
+  sale: { business_date: string } | null;
+  reconciliation: { status: string; deposit_date: string; deposit_amount: number | string; matched_gross_amount: number | string } | null;
+};
+export type SalesReceiptExplanation = {
+  posSales: number;
+  priorMonthCardDeposits: number;
+  monthEndUnsettledCardSales: number;
+  actualSalesReceipts: number;
+  allocationDifference: number;
+};
+
+// Display-only bridge. Cash totals and the settlement/FIFO/fee policies stay unchanged.
+// Attribute real deposits to earlier sales by their recorded allocation share.
+export function calculateSalesReceiptExplanation({ posSales, actualSalesReceipts, monthEndUnsettledCardSales, allocations, start, end }: {
+  posSales: number; actualSalesReceipts: number; monthEndUnsettledCardSales: number;
+  allocations: readonly PriorMonthCardDepositAllocation[]; start: string; end: string;
+}): SalesReceiptExplanation {
+  const priorByReconciliation = new Map<number, { gross: number; reconciliation: NonNullable<PriorMonthCardDepositAllocation["reconciliation"]> }>();
+  for (const line of allocations) {
+    const reconciliation = line.reconciliation;
+    if (!line.sale || line.sale.business_date >= start || !reconciliation
+      || !["matched", "auto_allocated", "partial"].includes(reconciliation.status)
+      || reconciliation.deposit_date < start || reconciliation.deposit_date >= end) continue;
+    const id = Number(line.reconciliation_id);
+    const previous = priorByReconciliation.get(id);
+    priorByReconciliation.set(id, { gross: cardMoney((previous?.gross ?? 0) + Number(line.allocated_gross_amount)), reconciliation });
+  }
+  const priorMonthCardDeposits = sumCardMoney([...priorByReconciliation.values()].map(({ gross, reconciliation }) => {
+    const matchedGross = Number(reconciliation.matched_gross_amount);
+    // Matched legacy deposits can be net of fees. Partial deposits only explain
+    // the allocated principal; their still-unallocated cash stays in the difference.
+    const cashShare = matchedGross > 0 ? Math.min(1, Number(reconciliation.deposit_amount) / matchedGross) : 0;
+    return cardMoney(gross * cashShare);
+  }));
+  return { posSales, priorMonthCardDeposits, monthEndUnsettledCardSales, actualSalesReceipts,
+    allocationDifference: cardMoney(actualSalesReceipts - (posSales + priorMonthCardDeposits - monthEndUnsettledCardSales)) };
+}

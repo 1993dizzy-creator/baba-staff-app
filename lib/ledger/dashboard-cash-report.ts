@@ -1,6 +1,5 @@
 import {
   businessFundMovementNet,
-  isTechnicalCashAdjustment,
   listActualCashOutflowItems,
   roundLedgerMoney,
   type CashOutflowTransaction,
@@ -37,6 +36,7 @@ export type DashboardCashReport = {
   investmentCashFlow: number;
   otherFundAdjustment: number;
   operatingIncomeMovement: number;
+  actualCashOutflowMovement?: number;
 };
 
 const FALLBACK = {
@@ -162,6 +162,17 @@ export function buildActualCashExpenseBreakdown(
     .sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name));
 }
 
+// Explicit source identifiers are authoritative; owner settlement type alone
+// is insufficient. Mixed legacy recovery/profit payments remain general settlements.
+export function isInvestmentCashMovement(transaction: CashReportTransaction) {
+  if (transaction.type === "investment" || ["owner_investment", "owner_investment_recovery"].includes(transaction.source_type)) return true;
+  if (transaction.source_key?.startsWith("owner-capital-recovery:") || transaction.source_key?.startsWith("owner-capital-recovery-pending:")) return true;
+  if (transaction.type !== "owner_settlement_payment" && transaction.source_type !== "owner_settlement_payment") return false;
+  const snapshot = transaction.source_snapshot;
+  return snapshot?.settlementType === "capital_recovery" ||
+    (snapshot?.settlementType == null && Number(snapshot?.recoveryPaid) > 0 && snapshot?.pureProfitPaid != null && Number(snapshot.pureProfitPaid) === 0);
+}
+
 export function computeDashboardFundFlows(
   transactions: readonly CashReportTransaction[],
   businessFundAccountIds: ReadonlySet<number>,
@@ -169,26 +180,28 @@ export function computeDashboardFundFlows(
 ) {
   const start = `${month}-01`;
   const end = monthEnd(month);
-  const outflowIds = new Set(listActualCashOutflowItems(transactions, businessFundAccountIds, month)
-    .map((item) => Number(item.transaction.id)));
+  // The flow uses actual movements, even when a legacy expense KPI is backed
+  // by a non-cash sheet snapshot. Its represented payments must not count twice.
+  const outflows = listActualCashOutflowItems(transactions, businessFundAccountIds, month, false);
+  const outflowTransactions = new Set(outflows.map(item => item.transaction));
   let investmentCashFlow = 0;
   let otherFundAdjustment = 0;
   let operatingIncomeMovement = 0;
   for (const transaction of transactions) {
     if (transaction.business_date < start || transaction.business_date >= end ||
-      (transaction.status != null && transaction.status !== "confirmed") || isTechnicalCashAdjustment(transaction)) continue;
+      (transaction.status != null && transaction.status !== "confirmed")) continue;
     const net = businessFundMovementNet(transaction, businessFundAccountIds);
-    if (net === 0 || outflowIds.has(Number(transaction.id))) continue;
-    if (transaction.source_type === "owner_investment" || transaction.type === "investment" ||
-      transaction.source_key?.startsWith("owner-capital-recovery:")) {
+    if (net === 0 || outflowTransactions.has(transaction)) continue;
+    if (isInvestmentCashMovement(transaction)) {
       investmentCashFlow += net;
     } else if (["sales", "income", "card_settlement_deposit"].includes(transaction.type)) {
       operatingIncomeMovement += net;
-    } else if (transaction.type !== "transfer" && transaction.type !== "opening") {
+    } else if (transaction.type !== "opening") {
       otherFundAdjustment += net;
     }
   }
   return {
+    actualCashOutflowMovement: roundLedgerMoney(outflows.reduce((sum, item) => sum + item.amount, 0)),
     investmentCashFlow: roundLedgerMoney(investmentCashFlow),
     otherFundAdjustment: roundLedgerMoney(otherFundAdjustment),
     operatingIncomeMovement: roundLedgerMoney(operatingIncomeMovement),
