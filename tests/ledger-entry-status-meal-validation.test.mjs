@@ -38,8 +38,7 @@ function find(predicate) {
   return found;
 }
 const editor = find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'MealAdjustmentEditor');
-const element = find(node => ts.isJsxSelfClosingElement(node) && node.tagName.getText(ast) === 'MealAdjustmentEditor');
-const handler = element.attributes.properties.find(node => node.name?.getText(ast) === 'onSave').initializer.expression;
+const handler = find(node => ts.isFunctionDeclaration(node) && node.name?.text === "saveMealAdjustment");
 const deps = {
   react: React,
   'react/jsx-runtime': require('react/jsx-runtime'),
@@ -60,7 +59,7 @@ for (const lang of ['ko', 'vi']) {
       const requests = [];
       const closed = [];
       const refreshed = [];
-      const save = compileHandler({ mealDraft: draft, entry: { transactionId: 91, businessDate: date }, vi: lang === 'vi',
+      const save = compileHandler({ editInFlightRef: { current: false }, detailMountedRef: { current: true }, editSaving: false, saving: false, closed: false, lang, mealDraft: draft, entry: { transactionId: 91, businessDate: date }, vi: lang === 'vi',
         setMealError: value => { error = value; }, setMealNotice() {}, setEditSaving() {}, setMealDraft: value => closed.push(value),
         onConfirmedEdited: async id => refreshed.push(id),
         fetch: async (url, options) => { requests.push({ url, body: JSON.parse(options.body) }); return { ok: true, json: async () => ({}) }; },

@@ -1,5 +1,5 @@
 // @ts-expect-error Node's local strip-types test runner requires the extension.
-import { entryMatchesExpenseFilter, entryRequiresReview, isCardSettlementEntry, isReserveLedgerEntry, type LedgerEntry } from "./entries.ts";
+import { entryDisplaySubtotal, entryMatchesExpenseFilter, entryRequiresReview, isCardSettlementEntry, isReserveLedgerEntry, type LedgerEntry } from "./entries.ts";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
 import { entryDisplayBadgeKind } from "./entry-display-badge.ts";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
@@ -8,7 +8,7 @@ import { entryDisplayAmount, entryDisplayAmountSign } from "./entry-display-amou
 // Display filters for the daily ledger list. They only choose visible rows;
 // amounts, directions and the 전체 subtotal rules are unchanged.
 export const LEDGER_ENTRY_FILTERS = [
-  "all", "income", "expense", "unpaid", "payment", "card", "transfer",
+  "all", "income", "expense", "utilities", "unpaid", "payment", "card", "transfer",
   "payroll", "adjustment", "investment", "manual", "reserve", "pending",
 ] as const;
 export type LedgerEntryFilter = (typeof LEDGER_ENTRY_FILTERS)[number];
@@ -17,8 +17,12 @@ export function ledgerEntryFilterLabel(filter: LedgerEntryFilter, lang: "ko" | "
   const labels = lang === "vi"
     ? { all: "Tất cả", income: "Thu", expense: "Chi", unpaid: "Công nợ", payment: "Thanh toán", card: "Thẻ", transfer: "Chuyển", payroll: "Lương", manual: "Thủ công", pending: "Cần xác nhận", adjustment: "Điều chỉnh", investment: "Vốn góp", reserve: "Dự phòng" }
     : { all: "전체", income: "수입", expense: "지출", unpaid: "미납", payment: "결제", card: "카드", transfer: "이체", payroll: "급여", manual: "수동", pending: "확인 필요", adjustment: "조정", investment: "투자금", reserve: "준비금" };
+  if (filter === "utilities") return lang === "vi" ? "Điện nước" : "공과금";
   return labels[filter];
 }
+
+// Canonical names from ledger_categories, not a title, memo or partner badge.
+const UTILITY_CATEGORIES = new Set(["전기료", "수도료", "가스비"]);
 
 export function entryMatchesListFilter(entry: LedgerEntry, filter: LedgerEntryFilter) {
   // System adjustments stay out of the list; only a user-facing manual balance
@@ -35,6 +39,10 @@ export function entryMatchesListFilter(entry: LedgerEntry, filter: LedgerEntryFi
   switch (filter) {
     case "income": return entry.direction === "income";
     case "expense": return entryMatchesExpenseFilter(entry);
+    case "utilities": return entry.direction === "expense" &&
+      !entry.paymentTransaction && !entry.transferTransaction &&
+      !entry.employeeCost && !entry.payrollPayment &&
+      UTILITY_CATEGORIES.has(entry.categoryName ?? "");
     // 미납 / 결제 / 투자금 follow the row's own display badge.
     case "unpaid": case "payment": case "investment": return entryDisplayBadgeKind(entry) === filter;
     case "transfer": return entry.transferTransaction === true;
@@ -52,6 +60,8 @@ const SUBTOTAL_HEADER_FILTERS = new Set<LedgerEntryFilter>(["all", "income", "ex
 // row's own display amount and display sign (never movement nets). Returns
 // null where the header keeps the 수입/지출 subtotal pair.
 export function entryFilterHeaderAmount(entry: LedgerEntry, filter: LedgerEntryFilter) {
+  if (filter === "utilities") return entryMatchesListFilter(entry, filter)
+    ? entryDisplaySubtotal(entry).expense : 0;
   if (SUBTOTAL_HEADER_FILTERS.has(filter)) return null;
   const amount = Math.abs(entryDisplayAmount(entry));
   return entryDisplayAmountSign(entry) === "−" ? -amount : amount;

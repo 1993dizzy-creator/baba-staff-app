@@ -130,9 +130,50 @@ const pending = "pending-inventory:2026-09-20:supplier:ok food:verification_pend
 const visible = (filter: LedgerEntryFilter) =>
   entries.filter(entry => entryMatchesListFilter(entry, filter)).map(entry => entry.transactionId ?? entry.id).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
 
+test("utilities uses only actual joined electricity/water/gas categories and expense identity", () => {
+  const categories = ["전기료", "수도료", "가스비", "인터넷·통신비", "공과금", "기타 비용", "Điện nước", "가스", "전기료 할인"];
+  const transactions: TransactionRow[] = categories.map((name, index) => ({
+    id: 200 + index, type: "expense", status: "confirmed", business_date: day,
+    amount: (index + 1) * 100, source_type: "manual", category: { id: index + 1, name },
+    memo: "전기료 수도료 가스비", party: { name: "💡 전기료" }, movements: cash(-(index + 1) * 100),
+  }));
+  transactions.push({ id: 300, type: "income", business_date: day, amount: 700, source_type: "manual", category: { name: "전기료" }, movements: cash(700) });
+  transactions.push({ id: 301, type: "transfer", business_date: day, amount: 800, source_type: "manual", category: { name: "수도료" }, movements: [...cash(-800), ...bank(800)] });
+  transactions.push({ id: 302, type: "payable_payment", business_date: day, amount: 900, source_type: "manual", category: { name: "가스비" }, movements: cash(-900) });
+  transactions.push({ id: 303, type: "card_settlement_deposit", business_date: day, amount: 1000, source_type: "card_settlement_deposit", category: { name: "전기료" }, movements: clearingToBank(1000) });
+  transactions.push({ id: 304, type: "balance_adjustment", business_date: day, amount: 1100, source_type: "manual", category: { name: "전기료" }, movements: cash(-1100) });
+  transactions.push({ id: 305, type: "expense", business_date: day, amount: 1200, source_type: "payroll", category: { name: "가스비" }, movements: cash(-1200) });
+  transactions.push({ id: 306, type: "expense", business_date: day, amount: 1300, source_type: "manual", category: null,
+    source_snapshot: { category: "전기료" }, movements: cash(-1300) });
+  const mapped = buildLedgerEntries(transactions, [], new Map(), [], "2026-09");
+  assert.deepEqual(mapped.filter(entry => entryMatchesListFilter(entry, "utilities")).map(entry => entry.transactionId), [200, 201, 202]);
+  const header = dayHeader(mapped, "utilities", day);
+  assert.equal(header.filterAmount, 600);
+  assert.equal(header.count, 3);
+  assert.equal(ledgerEntryFilterLabel("utilities", "ko"), "공과금");
+  assert.equal(ledgerEntryFilterLabel("utilities", "vi"), "Điện nước");
+});
+
+test("utilities header stays date-scoped and reuses signed expense subtotals", () => {
+  const mapped = buildLedgerEntries([
+    { id: 400, type: "expense", business_date: day, amount: 200, source_type: "manual", category: { name: "전기료" } },
+    { id: 401, type: "expense", business_date: "2026-09-21", amount: 300, source_type: "manual", category: { name: "수도료" } },
+  ], [], new Map(), [], "2026-09");
+  assert.equal(dayHeader(mapped, "utilities", day).filterAmount, 200);
+  assert.equal(dayHeader(mapped, "utilities", "2026-09-21").filterAmount, 300);
+  const firstDay = mapped.find(entry => entry.transactionId === 400)!;
+  assert.equal(entryFilterHeaderAmount({ ...firstDay, economicEffectSign: -1 }, "utilities"), -200);
+  for (const filter of ["all", "income", "expense"] as const) {
+    assert.equal(entryFilterHeaderAmount(mapped[0], filter), null);
+  }
+  const system = { ...mapped[0], isSystemAdjustment: true };
+  assert.equal(entryMatchesListFilter(system, "utilities"), false);
+  assert.equal(entryFilterHeaderAmount(system, "utilities"), 0);
+});
+
 test("pill order and labels come from the shared filter list", () => {
-  assert.deepEqual([...LEDGER_ENTRY_FILTERS], ["all", "income", "expense", "unpaid", "payment", "card", "transfer", "payroll", "adjustment", "investment", "manual", "reserve", "pending"]);
-  assert.deepEqual(LEDGER_ENTRY_FILTERS.map(filter => ledgerEntryFilterLabel(filter, "ko")), ["전체", "수입", "지출", "미납", "결제", "카드", "이체", "급여", "조정", "투자금", "수동", "준비금", "확인 필요"]);
+  assert.deepEqual([...LEDGER_ENTRY_FILTERS], ["all", "income", "expense", "utilities", "unpaid", "payment", "card", "transfer", "payroll", "adjustment", "investment", "manual", "reserve", "pending"]);
+  assert.deepEqual(LEDGER_ENTRY_FILTERS.map(filter => ledgerEntryFilterLabel(filter, "ko")), ["전체", "수입", "지출", "공과금", "미납", "결제", "카드", "이체", "급여", "조정", "투자금", "수동", "준비금", "확인 필요"]);
   assert.match(page, /\{LEDGER_ENTRY_FILTERS\.map\(\(value\) => \[value, ledgerEntryFilterLabel\(value, lang\)\] as const\)\.map\(\(\[value, label\]\) => \(/);
 });
 
@@ -180,6 +221,7 @@ test("every filter's date header uses its visible rows only; 전체 subtotal is 
     all: { filterAmount: null, income: 5_100, expense: 200 + 300 + 60 + 800 + 70 + 20 + 120 },
     income: { filterAmount: null, income: 5_100, expense: 0 },
     expense: { filterAmount: null, income: 0, expense: 200 + 300 + 800 + 120 },
+    utilities: { filterAmount: null, income: 0, expense: 0 },
     unpaid: { filterAmount: null, income: 0, expense: 300 },
     payment: { filterAmount: 400 },
     card: { filterAmount: 500 - 60 - 20 },

@@ -6,6 +6,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -39,6 +40,7 @@ import {
   type LedgerEntryItem,
 } from "@/lib/ledger/entries";
 import { entryFilterHeaderAmount, entryMatchesListFilter, LEDGER_ENTRY_FILTERS, ledgerEntryFilterLabel, type LedgerEntryFilter } from "@/lib/ledger/entry-list-filter";
+import { readEditedLedger } from "@/lib/ledger/entry-save-refresh";
 import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
 import { reserveEntryTypeLabel } from "@/lib/ledger/reserve-text";
 import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji, ledgerPartyEmoji } from "@/lib/ledger/entry-display-emoji";
@@ -317,9 +319,17 @@ function LedgerEntriesContent() {
     closeButtonRef = useRef<HTMLButtonElement>(null),
     initializedMonthRef = useRef(""),
     loadRequestSequenceRef = useRef(0);
+  const editRefreshControllerRef = useRef<AbortController | null>(null);
+  const editViewRef = useRef({ month, selectionId: selected?.id ?? null, version: 0 });
+  useLayoutEffect(() => {
+    editViewRef.current = { month, selectionId: selected?.id ?? null, version: editViewRef.current.version + 1 };
+    editRefreshControllerRef.current?.abort();
+  }, [month, selected?.id]);
+  useEffect(() => () => { editRefreshControllerRef.current?.abort(); }, []);
   const load = useCallback(
     async (signal?: AbortSignal, { silent = false }: { silent?: boolean } = {}) => {
       const requestedMonth = month;
+      editRefreshControllerRef.current?.abort();
       const requestSequence = ++loadRequestSequenceRef.current;
       if (!silent) setLoading(true);
       setError("");
@@ -1255,6 +1265,7 @@ function LedgerEntriesContent() {
         ) : null}
         {manualOpen && data ? (
           <ManualEntrySheet
+            key={month}
             lang={lang}
             data={data}
             investments={activeInvestments}
@@ -1323,6 +1334,7 @@ function LedgerEntriesContent() {
         ) : selected ? (
           <EntryDetailSheet
             lang={lang}
+            key={`${month}:${selected.id}`}
             entry={selected}
             partnersByParty={partnerByLedgerParty}
             partners={data?.partners ?? []}
@@ -1334,16 +1346,39 @@ function LedgerEntriesContent() {
             resolveCandidate={resolveCandidate}
             saving={saving}
             message={detailMessage}
+            messageIsSuccess={detailMessage !== "" && detailMessage === notice}
             posDetail={posDetail}
             closed={closed}
-            onConfirmedEdited={async (transactionId, successMessage) => {
-              setNotice(successMessage ?? (vi ? "Đã cập nhật giao dịch." : "거래를 수정했습니다."));
-              const fresh = await load(undefined, { silent: true });
-              const refreshed = fresh?.entries.find((entry) =>
+            onConfirmedEdited={async (transactionId, successMessage, financial = true) => {
+              const view = editViewRef.current;
+              if (view.month !== month || view.selectionId !== selected.id) return;
+              const controller = new AbortController();
+              editRefreshControllerRef.current?.abort();
+              editRefreshControllerRef.current = controller;
+              const sequence = ++loadRequestSequenceRef.current;
+              const current = () => !controller.signal.aborted && sequence === loadRequestSequenceRef.current &&
+                editViewRef.current.version === view.version && editViewRef.current.month === month;
+              let fresh: LedgerData;
+              try {
+                const result = await readEditedLedger<LedgerData, PayablesSummary>(month, financial, controller.signal);
+                if (!current()) return;
+                fresh = result.ledger;
+                setData(fresh);
+                if (result.payables) setPayables(result.payables);
+                if (financial) bumpInvestmentsVersion();
+                setLoading(false);
+              } catch {
+                if (!current()) return;
+                throw new Error("LEDGER_REFRESH_FAILED");
+              }
+              const refreshed = fresh.entries.find((entry) =>
                 entry.transactionId === transactionId ||
                 entry.items.some((item) => item.transactionId === transactionId),
               );
-              if (refreshed) setSelected(refreshed);
+              if (refreshed) setSelected(previous => previous?.id === selected.id ? refreshed : previous);
+              const notice = successMessage ?? (vi ? "Đã cập nhật giao dịch." : "거래를 수정했습니다.");
+              setNotice(notice);
+              setDetailMessage(notice);
             }}
             onAdvanceCancelled={async () => {
               setSelected(null);
@@ -1385,6 +1420,7 @@ function EntryDetailSheet({
   resolveCandidate,
   saving,
   message,
+  messageIsSuccess = false,
   posDetail,
   closed,
   onConfirmedEdited,
@@ -1403,9 +1439,10 @@ function EntryDetailSheet({
   resolveCandidate: () => Promise<void>;
   saving: boolean;
   message: string;
+  messageIsSuccess?: boolean;
   posDetail: Record<string, unknown> | null;
   closed: boolean;
-  onConfirmedEdited: (transactionId: number, successMessage?: string) => Promise<void>;
+  onConfirmedEdited: (transactionId: number, successMessage?: string, financial?: boolean) => Promise<void>;
   onAdvanceCancelled: () => Promise<void>;
   onClose: () => void;
 }) {
@@ -1431,6 +1468,83 @@ function EntryDetailSheet({
   const confirmedMeal = entry.drilldown === "meal" && entry.status === "confirmed";
   const [editMode,setEditMode]=useState(false),[editDraft,setEditDraft]=useState<ConfirmedEditDraft|null>(null),[editError,setEditError]=useState(""),[editSaving,setEditSaving]=useState(false);
   const [mealDraft,setMealDraft]=useState<MealAdjustDraft|null>(null),[mealError,setMealError]=useState(""),[mealNotice,setMealNotice]=useState("");
+  const editInFlightRef = useRef(false);
+  const detailMountedRef = useRef(true);
+  useEffect(() => {
+    detailMountedRef.current = true;
+    return () => { detailMountedRef.current = false; };
+  }, []);
+  async function saveConfirmedInventory() {
+    if (editInFlightRef.current || editSaving || saving || closed || !detailMountedRef.current || !editDraft)
+        return;
+    if (!editDraft.item.transactionId)
+        return;
+    editInFlightRef.current = true;
+    setEditSaving(true);
+    setEditError("");
+    try {
+        const response = await fetch(`/api/admin/ledger/transactions/${editDraft.item.transactionId}/edit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paymentMode: editDraft.paymentMode, categoryId: Number(editDraft.categoryId), fundAccountId: editDraft.paymentMode === "immediate" ? Number(editDraft.fundAccountId) : null, dueDate: editDraft.paymentMode === "payable" ? (editDraft.dueDate || null) : null, amount: editDraft.amount, memo: editDraft.memo || null, reason: editDraft.reason }) }), body = await response.json();
+        if (!response.ok)
+            throw new Error(body.code ?? "INVENTORY_EDIT_FAILED");
+        if (!detailMountedRef.current)
+            return;
+        await onConfirmedEdited(Number(body.result.transactionId));
+        if (detailMountedRef.current)
+            setEditDraft(null);
+    }
+    catch (cause) {
+        if (!detailMountedRef.current)
+            return;
+        setEditError((cause as Error).message === "LEDGER_REFRESH_FAILED" ? editRefreshFailureMessage(lang) : `${vi ? "Không thể sửa giao dịch." : "거래를 수정하지 못했습니다."} ${(cause as Error).message}`);
+    }
+    finally {
+        editInFlightRef.current = false;
+        if (detailMountedRef.current)
+            setEditSaving(false);
+    }
+}
+  async function saveMealAdjustment() {
+    if (editInFlightRef.current || editSaving || saving || closed || !detailMountedRef.current || !mealDraft)
+        return;
+    if (!mealDraft.reason.trim()) {
+        setMealError(vi ? "Vui lòng nhập lý do chỉnh sửa." : "수정 사유를 입력해주세요.");
+        return;
+    }
+    if (!entry.transactionId)
+        return;
+    editInFlightRef.current = true;
+    setEditSaving(true);
+    setMealError("");
+    let successMessage: string | undefined;
+    try {
+        const response = await fetch(`/api/admin/ledger/transactions/${entry.transactionId}/meal-adjust`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ finalAmount: mealDraft.finalAmount, reason: mealDraft.reason }) }), body = await response.json();
+        if (!response.ok)
+            throw new Error(body.code ?? "MEAL_ADJUST_FAILED");
+        successMessage = body.result?.status === "unchanged"
+            ? (vi ? "Số tiền giống với số tiền hiện đang ghi nhận. Không tạo thêm giao dịch điều chỉnh." : "현재 반영 금액과 동일합니다. 추가 정정은 생성하지 않았습니다.")
+            : body.result?.status === "reviewed"
+                ? (vi ? "Đã kiểm tra thay đổi dữ liệu nguồn và giữ nguyên số tiền hiện đang ghi nhận. Không tạo thêm giao dịch điều chỉnh." : "원천 변경을 검토하고 현재 반영 금액을 유지했습니다. 추가 정정은 생성하지 않았습니다.")
+                : (vi ? "Đã điều chỉnh tiền ăn." : "식대를 정정했습니다.");
+        if (!detailMountedRef.current)
+            return;
+        await onConfirmedEdited(entry.transactionId, successMessage);
+        if (!detailMountedRef.current)
+            return;
+        setMealDraft(null);
+        setMealNotice(successMessage);
+    }
+    catch (cause) {
+        if (!detailMountedRef.current)
+            return;
+        const code = (cause as Error).message;
+        setMealError(code === "LEDGER_REFRESH_FAILED" ? editRefreshFailureMessage(lang) : code === "ORIGINAL_MONTH_CLOSED" ? (vi ? "Không thể sửa giao dịch của tháng đã khóa." : "마감된 월의 거래는 일반 수정할 수 없습니다.") : `${vi ? "Không thể sửa tiền ăn." : "식대를 수정하지 못했습니다."} ${code}`);
+    }
+    finally {
+        editInFlightRef.current = false;
+        if (detailMountedRef.current)
+            setEditSaving(false);
+    }
+}
   const payments = (posDetail?.payments ?? []) as Array<
     Record<string, unknown>
   >;
@@ -1453,7 +1567,7 @@ function EntryDetailSheet({
           {confirmedMeal ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setMealDraft(value=>value?null:{finalAmount:String(entry.effectiveAmount??entry.amount),reason:""});setMealError("");setMealNotice("")}} style={{...primaryButtonStyle,width:"100%"}}>{mealDraft?(vi?"Đóng chỉnh sửa":"수정 닫기"):(vi?"Sửa":"수정")}</button>:null}
           <button
             type="button"
-            disabled={saving||editSaving}
+            disabled={saving||editSaving||advanceCancelling||manualDisplaySaving}
             onClick={onClose}
             style={{ ...secondaryButtonStyle, width: "100%" }}
           >
@@ -1528,7 +1642,7 @@ function EntryDetailSheet({
         </div>
       ) : null}
       {message && !candidateDraft ? (
-        <p className={styles.error} role="alert">
+        <p className={messageIsSuccess ? styles.success : styles.error} role={messageIsSuccess ? "status" : "alert"}>
           {message}
         </p>
       ) : null}
@@ -1723,29 +1837,8 @@ function EntryDetailSheet({
           </button>
         </div>
       ) : null}
-      {editDraft ? <ConfirmedInventoryEditor lang={lang} draft={editDraft} setDraft={setEditDraft} accounts={accounts} categories={categories} saving={editSaving} error={editError} onSave={async()=>{
-        if(!editDraft.item.transactionId)return;
-        setEditSaving(true);setEditError("");
-        try{const response=await fetch(`/api/admin/ledger/transactions/${editDraft.item.transactionId}/edit`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paymentMode:editDraft.paymentMode,categoryId:Number(editDraft.categoryId),fundAccountId:editDraft.paymentMode==="immediate"?Number(editDraft.fundAccountId):null,dueDate:editDraft.paymentMode==="payable"?(editDraft.dueDate||null):null,amount:editDraft.amount,memo:editDraft.memo||null,reason:editDraft.reason})}),body=await response.json();if(!response.ok)throw new Error(body.code??"INVENTORY_EDIT_FAILED");setEditDraft(null);await onConfirmedEdited(Number(body.result.transactionId))}catch(cause){setEditError(`${vi?"Không thể sửa giao dịch.":"거래를 수정하지 못했습니다."} ${(cause as Error).message}`)}finally{setEditSaving(false)}
-      }}/>:null}
-      {mealDraft ? <MealAdjustmentEditor lang={lang} draft={mealDraft} setDraft={setMealDraft} saving={editSaving} error={mealError} onSave={async()=>{
-        if(!mealDraft.reason.trim()){
-          setMealError(vi?"Vui lòng nhập lý do chỉnh sửa.":"수정 사유를 입력해주세요.");
-          return;
-        }
-        if(!entry.transactionId)return;
-        setEditSaving(true);setMealError("");
-        let successMessage: string | undefined;
-        try{const response=await fetch(`/api/admin/ledger/transactions/${entry.transactionId}/meal-adjust`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({finalAmount:mealDraft.finalAmount,reason:mealDraft.reason})}),body=await response.json();if(!response.ok)throw new Error(body.code??"MEAL_ADJUST_FAILED");
-          successMessage=body.result?.status==="unchanged"
-            ?(vi?"Số tiền giống với số tiền hiện đang ghi nhận. Không tạo thêm giao dịch điều chỉnh.":"현재 반영 금액과 동일합니다. 추가 정정은 생성하지 않았습니다.")
-            :body.result?.status==="reviewed"
-              ?(vi?"Đã kiểm tra thay đổi dữ liệu nguồn và giữ nguyên số tiền hiện đang ghi nhận. Không tạo thêm giao dịch điều chỉnh.":"원천 변경을 검토하고 현재 반영 금액을 유지했습니다. 추가 정정은 생성하지 않았습니다.")
-              :(vi?"Đã điều chỉnh tiền ăn.":"식대를 정정했습니다.");
-          setMealDraft(null);setMealNotice(successMessage);
-        }catch(cause){const code=(cause as Error).message;setMealError(code==="ORIGINAL_MONTH_CLOSED"?(vi?"Không thể sửa giao dịch của tháng đã khóa.":"마감된 월의 거래는 일반 수정할 수 없습니다."):`${vi?"Không thể sửa tiền ăn.":"식대를 수정하지 못했습니다."} ${code}`)}finally{setEditSaving(false)}
-        if(successMessage)await onConfirmedEdited(entry.transactionId,successMessage);
-      }}/>:null}
+      {editDraft ? <ConfirmedInventoryEditor lang={lang} draft={editDraft} setDraft={setEditDraft} accounts={accounts} categories={categories} saving={editSaving} error={editError} onSave={saveConfirmedInventory}/>:null}
+      {mealDraft ? <MealAdjustmentEditor lang={lang} draft={mealDraft} setDraft={setMealDraft} saving={editSaving} error={mealError} onSave={saveMealAdjustment}/>:null}
       {confirmedMeal&&mealNotice?<p role="status" className={styles.policyNote}>{mealNotice}</p>:null}
       {confirmedMeal&&closed?<p className={styles.policyNote}>{vi?"Không thể sửa giao dịch của tháng đã khóa.":"마감된 월의 거래는 일반 수정할 수 없습니다."}</p>:null}
       {entry.status === "confirmed" && entry.origin === "auto" ? (
@@ -1770,6 +1863,10 @@ function EntryDetailSheet({
       ) : null}
     </BarSheet>
   );
+}
+
+function editRefreshFailureMessage(lang: "ko" | "vi") {
+  return lang === "vi" ? "Đã lưu nhưng không thể tải lại màn hình. Vui lòng tải lại trang." : "저장했지만 화면을 갱신하지 못했습니다. 새로고침해 주세요.";
 }
 
 function MealAdjustmentEditor({lang,draft,setDraft,saving,error,onSave}:{lang:"ko"|"vi";draft:MealAdjustDraft;setDraft:(draft:MealAdjustDraft|null)=>void;saving:boolean;error:string;onSave:()=>Promise<void>}){
@@ -1999,8 +2096,16 @@ function ManualEntrySheet({
     if (!memo.trim() || (previous && memo === payrollAdvanceDefaultMemo(previous.name)))
       setMemo(selected ? payrollAdvanceDefaultMemo(selected.name) : "");
   }
+  const submitInFlightRef = useRef(false);
+  const manualSheetMountedRef = useRef(true);
+  useEffect(() => {
+    manualSheetMountedRef.current = true;
+    return () => { manualSheetMountedRef.current = false; setSaving(false); };
+  }, [setSaving]);
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (submitInFlightRef.current || saving || !manualSheetMountedRef.current) return;
+    submitInFlightRef.current = true;
     setSaving(true);
     setError("");
     try {
@@ -2066,13 +2171,16 @@ function ManualEntrySheet({
         body = await response.json();
       if (!response.ok) throw new Error(body.code);
       if (payrollAdvance) setAdvanceRequestId(crypto.randomUUID());
+      if (!manualSheetMountedRef.current) return;
       await onSaved();
     } catch (cause) {
+      if (!manualSheetMountedRef.current) return;
       setError(
         `${vi ? "Không thể lưu." : "저장하지 못했습니다."} ${(cause as Error).message}`,
       );
     } finally {
-      setSaving(false);
+      submitInFlightRef.current = false;
+      if (manualSheetMountedRef.current) setSaving(false);
     }
   }
   const outgoing =

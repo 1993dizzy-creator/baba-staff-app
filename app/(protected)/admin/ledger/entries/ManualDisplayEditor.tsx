@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   BarField,
   keepingInputStyle,
@@ -22,12 +22,14 @@ export function LedgerEditShell({ lang, title, saving, disabled, error, onSave, 
   children: ReactNode;
 }) {
   const vi = lang === "vi";
-  return <div className={styles.candidateEditor}>
+  return <div className={styles.candidateEditor} aria-busy={saving}>
     <div className={styles.editorTitle}>
       <h3>✏️ {title}</h3>
       <button type="button" disabled={saving} onClick={onCancel}>{vi ? "Hủy" : "취소"}</button>
     </div>
-    {children}
+    <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: "contents" }}>
+      {children}
+    </fieldset>
     {error ? <p className={styles.error} role="alert">{error}</p> : null}
     <button type="button" disabled={saving || disabled} onClick={onSave} style={{ ...primaryButtonStyle, width: "100%" }}>
       {saving ? (vi ? "Đang lưu…" : "저장 중…") : (vi ? "Lưu sửa đổi" : "수정 저장")}
@@ -55,7 +57,7 @@ export default function ManualDisplayEditor({
   amountEditable?: boolean;
   closed: boolean;
   onSavingChange: (saving: boolean) => void;
-  onConfirmedEdited: (transactionId: number) => Promise<void>;
+  onConfirmedEdited: (transactionId: number, successMessage?: string, financial?: boolean) => Promise<void>;
   onClose: () => void;
 }) {
   const vi = lang === "vi";
@@ -67,9 +69,15 @@ export default function ManualDisplayEditor({
   });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const inFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   async function saveManualDisplay() {
-    if (saving || closed) return;
+    if (inFlightRef.current || saving || closed) return;
     const title = draft.title.trim();
     const memo = draft.memo.trim();
     const reason = draft.reason.trim();
@@ -92,6 +100,7 @@ export default function ManualDisplayEditor({
       return;
     }
     setError("");
+    inFlightRef.current = true;
     setSaving(true);
     onSavingChange(true);
     try {
@@ -103,13 +112,22 @@ export default function ManualDisplayEditor({
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.code ?? "MANUAL_DISPLAY_EDIT_FAILED");
-      onClose();
-      await onConfirmedEdited(transactionId);
+      if (!mountedRef.current) return;
+      await onConfirmedEdited(transactionId, undefined, amountEditable && amount !== originalAmount);
+      if (mountedRef.current) onClose();
     } catch (cause) {
+      if (!mountedRef.current) return;
+      if ((cause as Error).message === "LEDGER_REFRESH_FAILED") {
+        setError(vi ? "Đã lưu nhưng không thể tải lại màn hình. Vui lòng tải lại trang." : "저장했지만 화면을 갱신하지 못했습니다. 새로고침해 주세요.");
+        return;
+      }
       setError((vi ? "Không thể sửa giao dịch." : "거래를 수정하지 못했습니다.") + " " + (cause as Error).message);
     } finally {
-      setSaving(false);
-      onSavingChange(false);
+      inFlightRef.current = false;
+      if (mountedRef.current) {
+        setSaving(false);
+        onSavingChange(false);
+      }
     }
   }
 
@@ -117,16 +135,16 @@ export default function ManualDisplayEditor({
     <LedgerEditShell lang={lang} title={vi ? "Sửa giao dịch thủ công" : "수동 거래 수정"}
       saving={saving} disabled={closed} error={error} onSave={() => void saveManualDisplay()} onCancel={onClose}>
       <BarField label={vi ? "Tiêu đề hiển thị" : "표시 제목"} required compact>
-        {({ id }) => <input id={id} required maxLength={160} value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} style={keepingInputStyle} />}
+        {({ id }) => <input id={id} disabled={saving} required maxLength={160} value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} style={keepingInputStyle} />}
       </BarField>
       {amountEditable ? <BarField label={vi ? "Số tiền" : "금액"} required compact>
-        {({ id }) => <input id={id} required inputMode="numeric" value={formatLedgerAmountInput(draft.amount)} onChange={event => setDraft({ ...draft, amount: sanitizeLedgerAmountInput(event.target.value) })} style={keepingInputStyle} />}
+        {({ id }) => <input id={id} disabled={saving} required inputMode="numeric" value={formatLedgerAmountInput(draft.amount)} onChange={event => setDraft({ ...draft, amount: sanitizeLedgerAmountInput(event.target.value) })} style={keepingInputStyle} />}
       </BarField> : null}
       <BarField label={vi ? "Ghi chú" : "메모"} compact>
-        {({ id }) => <textarea id={id} maxLength={2000} rows={3} value={draft.memo} onChange={event => setDraft({ ...draft, memo: event.target.value })} style={keepingInputStyle} />}
+        {({ id }) => <textarea id={id} disabled={saving} maxLength={2000} rows={3} value={draft.memo} onChange={event => setDraft({ ...draft, memo: event.target.value })} style={keepingInputStyle} />}
       </BarField>
       <BarField label={vi ? "Lý do chỉnh sửa" : "수정 사유"} required compact>
-        {({ id }) => <input id={id} required maxLength={500} value={draft.reason} onChange={event => setDraft({ ...draft, reason: event.target.value })} style={keepingInputStyle} />}
+        {({ id }) => <input id={id} disabled={saving} required maxLength={500} value={draft.reason} onChange={event => setDraft({ ...draft, reason: event.target.value })} style={keepingInputStyle} />}
       </BarField>
     </LedgerEditShell>
   );
