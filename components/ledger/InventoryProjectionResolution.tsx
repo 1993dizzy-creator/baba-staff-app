@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { BarSheet, primaryButtonStyle, secondaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
-import { purchaseRepairError, type PurchaseRepairPreview } from "@/lib/inventory/purchase-repair-contract";
+import { canReviewPurchaseCorrection, purchaseRepairState, purchaseRepairError, type PurchaseRepairPreview } from "@/lib/inventory/purchase-repair-contract";
 
 import styles from "./InventoryProjectionResolution.module.css";
 
@@ -25,12 +25,17 @@ export default function InventoryProjectionResolution({ issue, vi, onResolved }:
   const candidate = preview?.candidates.find(row => row.inventoryLogId === selected);
   const itemName = vi ? issue.itemNameVi || issue.itemName : issue.itemName;
   const money = (amount: number | null) => amount == null ? "—" : `${Number(amount).toLocaleString("en-US")}₫`;
-  const supplier = candidate?.supplier?.trim() || issue.supplier || (vi ? "Chưa xác định" : "거래처 미확정");
+  const originalSupplier = candidate?.supplier?.trim();
+  const newSupplier = candidate?.newSupplier?.trim();
+  const supplier = originalSupplier && newSupplier && originalSupplier !== newSupplier
+    ? `${originalSupplier} → ${newSupplier}`
+    : newSupplier || originalSupplier || issue.supplier || (vi ? "Chưa xác định" : "거래처 미확정");
   const quantity = (value: number | null | undefined) => value == null ? "—" : Number(value).toLocaleString("en-US", { maximumFractionDigits: 6 }) + (candidate?.unit ?? "");
-  const result = !busy && candidate && [candidate.effectiveQuantity, candidate.oldAmount, candidate.newAmount, candidate.delta, issue.quantityDelta]
+  const correctionDelta = candidate?.quantityDelta ?? issue.quantityDelta;
+  const result = !busy && candidate && [candidate.effectiveQuantity, candidate.oldAmount, candidate.newAmount, candidate.delta, correctionDelta]
     .every(value => typeof value === "number" && Number.isFinite(value)) ? candidate : null;
   const beforeQuantity = result?.effectiveQuantity;
-  const afterQuantity = beforeQuantity == null ? null : Number((Number(beforeQuantity) + Number(issue.quantityDelta)).toFixed(6));
+  const afterQuantity = beforeQuantity == null ? null : Number((Number(beforeQuantity) + Number(correctionDelta)).toFixed(6));
   const history = <Link href="/inventory/logs">{vi ? "Xem lịch sử kho" : "재고 이력 보기"}</Link>;
   async function show() {
     setOpen(true); setBusy(true); setError(""); setSelected(null); setPreview(undefined);
@@ -57,7 +62,8 @@ export default function InventoryProjectionResolution({ issue, vi, onResolved }:
     finally { setBusy(false); }
   }
   return <>
-    {issue.code === "PURCHASE_CORRECTION_REFERENCE_REQUIRED"
+    <span className={styles.state}>{purchaseRepairState(issue.code, vi, issue.resolution?.candidates.length === 1 && issue.resolution.candidates[0].newAmount === 0)}</span>
+    {canReviewPurchaseCorrection(issue.code)
       ? <button ref={triggerRef} type="button" className={styles.action} style={secondaryButtonStyle} onClick={show}>{vi ? "Giải quyết" : "해결하기"}</button> : <span className={styles.action}>{history}</span>}
     {open ? <BarSheet kind="bottom" mobileCentered returnFocusRef={triggerRef} title={vi ? "Liên kết lô nhập gốc" : "원입고 연결 및 장부 수정"}
       closeLabel={vi ? "Đóng" : "닫기"} saving={busy} onClose={() => setOpen(false)}
@@ -80,8 +86,9 @@ export default function InventoryProjectionResolution({ issue, vi, onResolved }:
       {!preview?.candidates.length && !busy && !error ? <p>{vi ? "Không tìm thấy lô nhập gốc có thể liên kết. Vui lòng kiểm tra lịch sử kho." : "연결 가능한 원입고를 찾지 못했습니다. 재고 이력을 확인해주세요."}</p> : null}
       {result ? <section className={styles.result} aria-label={vi ? "Kết quả điều chỉnh" : "수정 결과"} aria-live="polite">
         <h3>{vi ? "Kết quả điều chỉnh" : "수정 결과"}</h3>
+        <p>{purchaseRepairState("PURCHASE_AMOUNT_CONFIRMATION_REQUIRED", vi, result.newAmount === 0)}</p>
         <dl className={styles.resultGrid}>
-          <div><dt>{vi ? "Số lượng điều chỉnh" : "수정 수량"}</dt><dd>{quantity(issue.quantityDelta)}</dd></div>
+          <div><dt>{vi ? "Số lượng điều chỉnh" : "수정 수량"}</dt><dd>{quantity(correctionDelta)}</dd></div>
           <div><dt>{vi ? "Số lượng trước → sau" : "기존 수량 → 수정 후"}</dt><dd>{quantity(beforeQuantity)} → <span className={styles.decrease}>{quantity(afterQuantity)}</span></dd></div>
           <div><dt>{vi ? "Số tiền sổ trước" : "기존 장부금액"}</dt><dd>{money(result.oldAmount)}</dd></div>
           <div><dt>{vi ? "Số tiền sổ sau" : "수정 후 장부금액"}</dt><dd className={styles.decrease}>{money(result.newAmount)}</dd></div>

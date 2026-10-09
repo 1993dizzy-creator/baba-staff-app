@@ -82,7 +82,7 @@ test("engine creates independent base, holiday, extra-work, late, and early-leav
   assert.match(monthlyRun,/item\("early_leave_deduction","deduction"/);
   assert.match(monthlyRun,/if\(blocking\|\|facts\.actualMinutes===null\).*continue/);
   assert.match(premiumSource,/calculationBasis === "fixed_monthly" \|\| input\.effectiveMultiplier === null/);
-  assert.match(monthlyRun,/monthly-payroll-v11/);
+  assert.match(monthlyRun,/monthly-payroll-v12/);
 });
 
 test("premium item snapshot captures the reproducible holiday and calculation inputs",()=>{

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:inventory-ledger": "node --experimental-strip-types --test tests/admin-dashboard-report.test.ts tests/inventory-ledger-projection.test.ts tests/inventory-ledger-projection-api.test.mjs tests/inventory-ledger-projection-db.test.mjs tests/inventory-purchase-repair*.test.mjs tests/ledger-inventory*.test.ts tests/ledger-inventory*.test.mjs tests/inventory-mutation-session-auth-policy.test.ts tests/ledger-entries-v1.test.ts tests/ledger-payroll-advance.test.ts tests/ledger-payroll-advance-db.test.mjs tests/payroll-advance-adjustment.test.ts tests/payroll-advance-adjustment-db.test.mjs tests/ledger-payable-payments.test.ts tests/ledger-month-close-corrections.test.ts",
-    "test:inventory-ledger:concurrency": "node tests/inventory-ledger-concurrency.mjs"
+    "test:inventory-ledger:concurrency": "node tests/inventory-ledger-concurrency.mjs",
+    "test:purchase-economic": "node --experimental-strip-types --test --test-concurrency=1 tests/purchase-economic-db.test.mjs tests/inventory-purchase-repair-api.test.mjs tests/ledger-inventory-supplier-display.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.1",

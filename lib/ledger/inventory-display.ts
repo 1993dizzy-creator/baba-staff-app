@@ -3,6 +3,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { inventoryDisplayOverlay } from "@/lib/inventory/ledger-sync-contract";
 import { loadInventoryRepairPreview } from "./inventory-repair";
 import type { PurchaseRepairPreview } from "@/lib/inventory/purchase-repair-contract";
+import { canReviewPurchaseCorrection } from "@/lib/inventory/purchase-repair-contract";
 
 // Preserve evidence snapshots in API responses; display_snapshot is explicitly display-only.
 export async function withInventoryDisplay<T extends { id: number | string; source_snapshot?: Record<string, unknown> | null }>(rows: T[]): Promise<Array<T & { display_snapshot?: Record<string, unknown> }>> {
@@ -38,16 +39,20 @@ export async function loadInventoryProjectionIssues(start: string, end: string, 
   const rows: Array<{ inventoryLogId: number; status: string; code: string; itemName: string; itemNameVi: string | null; supplier: string | null; businessDate: string; quantityDelta: number; amountDelta: number; itemId: number; createdAt: string; originalQuantity: number | null; resolution?: PurchaseRepairPreview }> = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabaseServer.from("ledger_inventory_projection_status")
-      .select("inventory_log_id,status,code,source:inventory_logs!inner(item_id,business_date,created_at,item_name,item_name_vi,change_quantity,new_purchase_price,new_supplier)")
-      .in("status", ["failed", "review_required"])
+      .select("inventory_log_id,status,code,source:inventory_logs!inner(item_id,business_date,created_at,item_name,item_name_vi,change_quantity,new_purchase_price,new_supplier,reason,source)")
+      .or("status.in.(failed,review_required),and(status.eq.synced,code.eq.NOT_A_PURCHASE)")
       .gte("source.business_date", start).lt("source.business_date", end)
       .order("inventory_log_id").range(from, from + 999);
     if (error) throw error;
-    rows.push(...(data ?? []).map(row => {
+    rows.push(...(data ?? []).filter(row => {
+      const source = Array.isArray(row.source) ? row.source[0] : row.source;
+      return row.status !== "synced" || (source?.reason === "purchase" && source?.source === "quick_save" && Number(source?.change_quantity) < 0);
+    }).map(row => {
       const source = Array.isArray(row.source) ? row.source[0] : row.source;
       const quantityDelta = Number(source?.change_quantity ?? 0);
       return {
-        inventoryLogId: Number(row.inventory_log_id), status: row.status, code: row.code,
+        inventoryLogId: Number(row.inventory_log_id), status: row.status === "synced" ? "review_required" : row.status,
+        code: row.status === "synced" ? "PURCHASE_CORRECTION_REFERENCE_REQUIRED" : row.code,
         itemName: source?.item_name || source?.item_name_vi || "-",
         itemNameVi: source?.item_name_vi || null,
         supplier: source?.new_supplier?.trim() || null,
@@ -59,7 +64,7 @@ export async function loadInventoryProjectionIssues(start: string, end: string, 
     if ((data?.length ?? 0) < 1000) break;
   }
   for (const issue of rows) {
-    if (issue.code !== "PURCHASE_CORRECTION_REFERENCE_REQUIRED" || !issue.itemId || !issue.createdAt) continue;
+    if (!canReviewPurchaseCorrection(issue.code) || !issue.itemId || !issue.createdAt) continue;
     // Preview is advisory only. POST revalidates everything under canonical locks.
     // A missing migration/preview must never hide the underlying warning.
     try {

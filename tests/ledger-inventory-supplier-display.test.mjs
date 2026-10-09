@@ -33,6 +33,7 @@ test("confirmed inventory display reads current supplier without changing source
   const testModule = { exports: {} };
   new Function("require", "module", "exports", code)(name => {
     if (name === "server-only") return {};
+    if (name === "@/lib/inventory/purchase-repair-contract") return { canReviewPurchaseCorrection: code => ["PURCHASE_CORRECTION_REFERENCE_REQUIRED","PURCHASE_AMOUNT_CONFIRMATION_REQUIRED","PURCHASE_ORIGINAL_CANCELLED","MONTH_CLOSED","PAYABLE_ALREADY_PAID"].includes(code) };
     if (name === "./inventory-repair") return { loadInventoryRepairPreview: async () => { throw new Error("Unexpected repair lookup in display-only test"); } };
     if (name === "@/lib/supabase/server") return { supabaseServer: db };
     if (name === "@/lib/inventory/ledger-sync-contract") {
@@ -55,7 +56,7 @@ test("projection warnings use the source supplier and keep missing suppliers unc
     assert.equal(table, "ledger_inventory_projection_status");
     const query = {
       select(columns) { selectedColumns = columns; return query; },
-      in() { return query; }, gte() { return query; }, lt() { return query; }, order() { return query; },
+      or() { return query; }, in() { return query; }, gte() { return query; }, lt() { return query; }, order() { return query; },
       async range() { return { data: [
         { inventory_log_id: 1, status: "review_required", code: "PURCHASE_CORRECTION_REFERENCE_REQUIRED", source: { ...source, new_supplier: " Source supplier " } },
         { inventory_log_id: 2, status: "review_required", code: "PURCHASE_CORRECTION_REFERENCE_REQUIRED", source: { ...source, new_supplier: null } },
@@ -65,6 +66,7 @@ test("projection warnings use the source supplier and keep missing suppliers unc
   const testModule = { exports: {} };
   new Function("require", "module", "exports", code)(name => {
     if (name === "server-only") return {};
+    if (name === "@/lib/inventory/purchase-repair-contract") return { canReviewPurchaseCorrection: code => ["PURCHASE_CORRECTION_REFERENCE_REQUIRED","PURCHASE_AMOUNT_CONFIRMATION_REQUIRED","PURCHASE_ORIGINAL_CANCELLED","MONTH_CLOSED","PAYABLE_ALREADY_PAID"].includes(code) };
     if (name === "./inventory-repair") return { loadInventoryRepairPreview: async () => ({ recommended: true, candidates: [{ supplier: "Suggested supplier", quantity: 1.42 }] }) };
     if (name === "@/lib/supabase/server") return { supabaseServer: db };
     if (name === "@/lib/inventory/ledger-sync-contract") return {};

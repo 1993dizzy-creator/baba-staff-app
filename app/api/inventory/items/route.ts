@@ -22,7 +22,6 @@ import {
 } from "@/lib/inventory/normalize";
 import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 import {
-  nearestPriorPurchaseRoot,
   purchaseCorrectionIdentityMatches,
   purchaseFamilyAllowsDelta,
   type PurchaseRoot,
@@ -728,10 +727,10 @@ export async function PATCH(req: Request) {
     }
 
     // Purchase reductions require explicit confirmation of a compatible prior root,
-    // including previous days. Other reasons retain the existing same-day policy.
+    // including previous days. Stock checks and sales never imply purchase intent.
     let autoCorrectionRootId: number | null = null;
     let autoCorrectionBusinessDate: string | null = null;
-    if (mode !== "quick-save" && body.source === "edit_form" && correctionPurchaseLogId === null &&
+    if (mode !== "quick-save" && body.source === "edit_form" && normalizeInventoryReason(reason) === "purchase" && correctionPurchaseLogId === null &&
         Object.hasOwn(serverPayload, "quantity")) {
       const previousQuantity = roundDecimal(Number(prevItem.quantity ?? 0));
       const nextQuantity = roundDecimal(Number(serverPayload.quantity));
@@ -739,7 +738,7 @@ export async function PATCH(req: Request) {
       // An explicit positive "purchase" is a new receipt, even when an older
       // receipt exists today. Other edits correct the nearest prior receipt.
       if (Number.isFinite(delta) && delta !== 0 &&
-          (normalizeInventoryReason(reason) !== "purchase" || delta < 0)) {
+          delta < 0) {
         const { businessDate } = await resolveInventoryBusinessDate();
         const before = new Date().toISOString();
         const purchaseReduction = normalizeInventoryReason(reason) === "purchase" && delta < 0;
@@ -766,8 +765,7 @@ export async function PATCH(req: Request) {
             recommended: compatibleRoots.length === 1 && (possibleRoots?.length ?? 0) < 1001,
           }, { status: 409 });
         }
-        const root = purchaseReduction ? compatibleRoots.find(row => row.id === selectedPurchaseRootId) ?? null
-          : nearestPriorPurchaseRoot((possibleRoots ?? []) as PurchaseRoot[], Number(id), businessDate, before);
+        const root = compatibleRoots.find(row => row.id === selectedPurchaseRootId) ?? null;
         if (purchaseReduction && !root) return jsonError("invalid_purchase_correction", "Select a compatible original purchase.", 409);
         if (root) {
           if (!purchaseCorrectionIdentityMatches(root, correctionIdentity))

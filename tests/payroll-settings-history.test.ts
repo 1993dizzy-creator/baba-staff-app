@@ -56,7 +56,7 @@ test("contract history API and UI expose named registration and all corrections 
 test("v7 batch path injects each day's schedule minutes while preserving contract snapshots", () => {
   const engine = fs.readFileSync("lib/payroll/monthly-run.ts", "utf8");
   assert.match(engine, /dailyContract=\{\.\.\.contract,standardMinutesPerDay:scheduleMinutes\}/);
-  assert.match(engine, /calculatePayrollRates\(dailyContract/);
+  assert.match(engine, /calculateCompensatedPayrollRates\(dailyContract/);
   assert.match(engine, /contract:dailyContract/);
   assert.match(engine, /contractSnapshot:contracts/);
 });

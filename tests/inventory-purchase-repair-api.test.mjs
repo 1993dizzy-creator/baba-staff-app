@@ -47,7 +47,7 @@ test('missing root ID never executes a repair',async()=>{
  }assert.equal(state.calls.length,0);
 });
 const candidate={safe:true,code:'READY',inventoryLogId:12581,businessDate:'2026-10-05',quantity:1.42,effectiveQuantity:1.42,unit:'kg',price:35000,supplier:'Ch?',oldAmount:49700,newAmount:46200,delta:-3500};
-function client({candidates=[candidate],recommended=true,vi=false,postCode=null,supplier=null,previewResponse=null,postResponse=null}={}){
+function client({candidates=[candidate],recommended=true,vi=false,postCode=null,supplier=null,previewResponse=null,postResponse=null,code="PURCHASE_CORRECTION_REFERENCE_REQUIRED"}={}){
  const states=[],elements=[],requests=[];let cursor=0,reloaded=0;
  const hooks={...React,useState(initial){const n=cursor++;if(!(n in states))states[n]=initial;return [states[n],value=>{states[n]=value;}];}};
  const captured={...jsxRuntime,jsx(...args){const element=jsxRuntime.jsx(...args);elements.push(element);return element;},jsxs(...args){const element=jsxRuntime.jsxs(...args);elements.push(element);return element;}};
@@ -57,7 +57,7 @@ function client({candidates=[candidate],recommended=true,vi=false,postCode=null,
   './InventoryProjectionResolution.module.css':{default:{decrease:'decrease'}},
   '@/lib/inventory/purchase-repair-contract':load('lib/inventory/purchase-repair-contract.ts',{}),
  }).default;
- const issue={inventoryLogId:12655,code:'PURCHASE_CORRECTION_REFERENCE_REQUIRED',itemName:'배',itemNameVi:'Lê',supplier,businessDate:'2026-10-06',quantityDelta:-0.1,amountDelta:-3500,originalQuantity:null,resolution:{candidates,recommended}};
+ const issue={inventoryLogId:12655,code,itemName:'배',itemNameVi:'Lê',supplier,businessDate:'2026-10-06',quantityDelta:-0.1,amountDelta:-3500,originalQuantity:null,resolution:{candidates,recommended}};
  const oldFetch=globalThis.fetch;
  globalThis.fetch=async(url,options={})=>{requests.push({url,options});if(options.method==='POST'&&postResponse)return postResponse();if(options.method!=='POST'&&previewResponse)return previewResponse();return Response.json(options.method==='POST'?{ok:!postCode,code:postCode}:{ok:true,candidates,recommended},{status:options.method==='POST'&&postCode?409:200});};
  return {
@@ -189,4 +189,15 @@ test('pending submission hides the previous preview; existing failure feedback i
    assert.match(failed,vi?/Tháng liên quan đã chốt sổ/:/관련 월의 장부가 마감되었습니다/);assert.equal(state.reloaded(),0);
   }finally{state.close();}
  }
+});
+
+for(const vi of [false,true])test('four correction states render in '+(vi?'VI':'KO')+' with mobile sheet and cancellation preview',async()=>{
+ const contract=load('lib/inventory/purchase-repair-contract.ts',{});
+ const expected=vi?['Phiếu nhập gốc đã bị hủy','Cần xác nhận thay đổi số tiền','Cần xác nhận phiếu nhập gốc','Đã điều chỉnh sổ kế toán']:['원본 입고 취소됨','금액 변경 확인 필요','원본 입고 연결 확인 필요','장부 정정 완료'];
+ for(const [i,code] of ['PURCHASE_ORIGINAL_CANCELLED','PURCHASE_AMOUNT_CONFIRMATION_REQUIRED','PURCHASE_CORRECTION_REFERENCE_REQUIRED','REBOOKED'].entries())assert.equal(contract.purchaseRepairState(code,vi),expected[i]);
+ const state=client({vi,code:'PURCHASE_ORIGINAL_CANCELLED',candidates:[{...candidate,newAmount:0,delta:-49700}]});try{let html=state.render();assert.ok(html.includes(expected[0]));await state.button(labels(vi).open).props.onClick();html=state.render();assert.ok(html.includes(expected[0]));assert.equal(state.sheet().props.kind,'bottom');assert.equal(state.sheet().props.mobileCentered,true);assert.match(html,/0₫/);}finally{state.close();}
+});
+
+test('price-only preview retains quantity and supplier-change preview shows both parties',async()=>{
+ const state=client({code:'PURCHASE_AMOUNT_CONFIRMATION_REQUIRED',candidates:[{...candidate,quantityDelta:0,newSupplier:'New supplier'}]});try{state.render();await state.button('해결하기').props.onClick();const html=state.render();assert.match(html,/1.42kg → <span class="decrease">1.42kg/);assert.ok(html.includes('Ch? → New supplier'));}finally{state.close();}
 });

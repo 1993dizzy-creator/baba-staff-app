@@ -1,5 +1,7 @@
 import type { EmployeeLevelInfo } from "../employee-level/types";
 import type { PayrollContract } from "./types";
+// @ts-expect-error Node's strip-types tests require the explicit extension.
+import { calculatePayrollRates } from "./work-policy.ts";
 
 export type CombinedSalaryResult = {
   contractSalary: number;
@@ -22,4 +24,14 @@ export function calculateCombinedSalary(contract: PayrollContract, levelInfo: Em
   const additionalRaiseCount = levelInfo.earnedRaiseCount;
   const levelRaiseAmount = levelInfo.earnedRaiseCount * levelInfo.raiseAmountPerStep;
   return { contractSalary: contract.baseSalary, fixedRaiseAmount: contract.fixedRaiseAmount, levelRaiseAmount, combinedSalary: contract.baseSalary + contract.fixedRaiseAmount + levelRaiseAmount, additionalRaiseCount };
+}
+
+// Resolve compensation once for the effective day's contract and level. Both
+// ordinary work and holiday premium must use the resulting base-work item.
+export function calculateCompensatedPayrollRates(contract: PayrollContract, levelInfo: EmployeeLevelInfo) {
+  const compensation = calculateCombinedSalary(contract, levelInfo);
+  return {
+    ...compensation,
+    rates: compensation.combinedSalary === null ? null : calculatePayrollRates(contract, compensation.combinedSalary),
+  };
 }

@@ -27,10 +27,12 @@ test("backfill preserves automatic roles and does not reinterpret legacy false",
   assert.match(migration, /when u\.is_system_account then false/);
 });
 
-test("payroll month loading uses and snapshots the version effective for that month", () => {
+test("payroll loads overlapping level versions and selects date-effective compensation", () => {
   const source = read("lib/payroll/monthly-run.ts");
   assert.match(source, /from\("employee_level_program_versions"\)/);
-  assert.match(source, /\.lte\("effective_from",start\)/);
+  assert.match(source, /\.lt\("effective_from",endExclusive\)/);
+  assert.match(source, /selectEmployeeLevelProgramVersionsForDates\(levelProgramResult.data/);
+  assert.match(source, /payrollUserOnDate\(user,date,input\)/);
   assert.match(source, /levelProgramEnabled/);
   assert.match(source, /levelProgramVersionId/);
   assert.match(source, /levelProgramRevision/);

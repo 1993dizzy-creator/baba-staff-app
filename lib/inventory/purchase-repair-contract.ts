@@ -2,8 +2,21 @@ export type PurchaseRepairCandidate = {
   safe: boolean; code: string; inventoryLogId: number; businessDate: string;
   quantity: number; effectiveQuantity: number; unit: string | null; price: number; supplier: string | null;
   oldAmount: number | null; newAmount: number | null; delta: number | null;
+  quantityDelta?: number;
+  newSupplier?: string | null;
 };
 export type PurchaseRepairPreview = { candidates: PurchaseRepairCandidate[]; recommended: boolean };
+
+export function purchaseRepairState(code: string, vi: boolean, cancelled = false) {
+  if (code === "REBOOKED" || code === "PURCHASE_CANCELLED") return vi ? "Đã điều chỉnh sổ kế toán" : "장부 정정 완료";
+  if (cancelled || code === "PURCHASE_ORIGINAL_CANCELLED") return vi ? "Phiếu nhập gốc đã bị hủy" : "원본 입고 취소됨";
+  if (code === "PURCHASE_AMOUNT_CONFIRMATION_REQUIRED") return vi ? "Cần xác nhận thay đổi số tiền" : "금액 변경 확인 필요";
+  return vi ? "Cần xác nhận phiếu nhập gốc" : "원본 입고 연결 확인 필요";
+}
+
+export function canReviewPurchaseCorrection(code: string) {
+  return ["PURCHASE_CORRECTION_REFERENCE_REQUIRED", "PURCHASE_AMOUNT_CONFIRMATION_REQUIRED", "PURCHASE_ORIGINAL_CANCELLED", "MONTH_CLOSED", "PAYABLE_ALREADY_PAID"].includes(code);
+}
 
 export function purchaseRepairError(code: string, vi: boolean) {
   if (code === "MONTH_CLOSED") return vi ? "Tháng liên quan đã chốt sổ." : "관련 월의 장부가 마감되었습니다.";

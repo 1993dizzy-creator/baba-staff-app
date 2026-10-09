@@ -909,6 +909,7 @@ function LedgerEntriesContent() {
                 <InventoryProjectionResolution issue={issue} vi={vi} onResolved={async () => {
                   const refreshed = await load();
                   if (!refreshed) throw new Error("LEDGER_REFRESH_FAILED");
+                  setNotice(vi ? "Đã điều chỉnh sổ kế toán" : "장부 정정 완료");
                 }} />
               </div>)}
             </details>
