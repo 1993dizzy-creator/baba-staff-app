@@ -61,6 +61,10 @@ const buildInventoryNoteMap = (notes: InventoryNote[]) => {
 const getLogTime = (value?: string | null) =>
     value ? new Date(value).getTime() : 0;
 
+// Date truncates Postgres fractional seconds to milliseconds.
+const getLogSubMillisecondTime = (value?: string | null) =>
+    Number((value?.match(/\.(\d+)/)?.[1] || "").slice(3).padEnd(6, "0"));
+
 const getInventoryLogGroupKey = (log: InventoryLog) => {
     if (log.item_id !== null && log.item_id !== undefined) {
         return `item-${log.item_id}`;
@@ -83,7 +87,7 @@ export default function InventoryLogsPage() {
     const [inventoryNoteMap, setInventoryNoteMap] = useState<Record<string, string>>({});
 
     const fetchLogs = async () => {
-        const res = await fetch("/api/inventory/logs?mode=logs", {
+        const res = await fetch("/api/inventory/logs?mode=logs&view=cards", {
             cache: "no-store",
         });
 
@@ -236,7 +240,10 @@ export default function InventoryLogsPage() {
                 const matchPart = partFilter === "all" || log.part === partFilter;
                 return matchType && matchSearch && matchPart;
             })
-            .sort((a, b) => getLogTime(b.created_at) - getLogTime(a.created_at));
+            .sort((a, b) =>
+                getLogTime(b.created_at) - getLogTime(a.created_at) ||
+                getLogSubMillisecondTime(b.created_at) - getLogSubMillisecondTime(a.created_at) ||
+                b.id - a.id);
 
         const groupedLogsMap: Record<string, InventoryLog[]> = {};
         nextFilteredLogs.forEach((log) => {

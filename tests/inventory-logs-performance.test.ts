@@ -83,12 +83,12 @@ test("globally sorted group subsequences preserve latest and tie ordering", () =
     { id: 5, group: "b", createdAt: null },
   ];
   const time = (value: string | null) => value ? new Date(value).getTime() : 0;
-  const globallySorted = [...rows].sort((a, b) => time(b.createdAt) - time(a.createdAt));
+  const globallySorted = [...rows].sort((a, b) => time(b.createdAt) - time(a.createdAt) || b.id - a.id);
   const groups = new Map<string, typeof rows>();
   globallySorted.forEach((row) => groups.set(row.group, [...(groups.get(row.group) || []), row]));
 
   for (const items of groups.values()) {
-    const oldGroupSort = [...items].sort((a, b) => time(b.createdAt) - time(a.createdAt));
+    const oldGroupSort = [...items].sort((a, b) => time(b.createdAt) - time(a.createdAt) || b.id - a.id);
     assert.deepEqual(items.map((row) => row.id), oldGroupSort.map((row) => row.id));
     assert.equal(items[0]?.id, oldGroupSort[0]?.id);
   }

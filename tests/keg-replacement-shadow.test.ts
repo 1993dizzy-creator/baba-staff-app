@@ -235,12 +235,15 @@ test("dry-run and log routes enforce session auth without writes", () => {
   assert.match(replaceRoute, /supabaseServer\.rpc\("replace_inventory_keg"/);
   assert.doesNotMatch(replaceRoute, /body\?\.actorUsername/);
 
-  for (const route of [logsRoute, itemLogsRoute, recentLogsRoute]) {
+  for (const route of [logsRoute, itemLogsRoute]) {
     assert.match(route, /getAuthenticatedActor\(\)/);
     assert.match(route, /status: auth\.status/);
   }
+  assert.match(recentLogsRoute, /import \{ GET as getInventoryLogs \} from "\.\.\/route"/);
+  assert.match(recentLogsRoute, /getInventoryLogs\(new Request\(url, req\)\)/);
+  assert.match(recentLogsRoute, /url\.searchParams\.set\("mode", "recent"\)/);
   assert.match(logsRoute, /requireRole\(\["master"\]\)/);
-  assert.doesNotMatch(logsRoute, /actorUsername|getActor/);
+  assert.doesNotMatch(logsRoute.slice(0, logsRoute.indexOf("export async function PATCH")), /actorUsername|getActor/);
 });
 
 test("migration centralizes DB calculation and preserves server-only grants", () => {

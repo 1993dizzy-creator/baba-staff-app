@@ -44,34 +44,67 @@ type InventoryLogsQueryOptions = {
   includeKegSalesBreakdown?: boolean;
 };
 
+// Fields used by the log cards, localized search and change history.
+const LOG_CARD_COLUMNS = [
+  "id", "item_id", "item_name", "item_name_vi", "category", "category_vi",
+  "part", "code", "unit", "action", "reason", "source", "created_at", "actor_name",
+  "change_quantity",
+  ...["quantity", "purchase_price", "note", "supplier", "code", "unit", "category",
+    "category_vi", "part", "low_stock_threshold"].flatMap((field) => [`prev_${field}`, `new_${field}`]),
+].join(", ");
+const LOG_PAGE_SIZE = 500;
+type InventoryLogQueryRow = {
+  id: number;
+  created_at: string | null;
+  source?: string;
+  [key: string]: unknown;
+};
+
 const loadInventoryLogs = async (options: InventoryLogsQueryOptions = {}) => {
-  let query = supabaseServer
-    .from("inventory_logs")
-    .select("*")
-    .order("created_at", { ascending: false });
+  const logs: InventoryLogQueryRow[] = [];
+  let cursor: { id: number; created_at: string | null } | undefined;
+  for (;;) {
+    let query = supabaseServer
+      .from("inventory_logs")
+      // Snapshot consumers retain their existing projection.
+      .select(options.includeKegSalesBreakdown === false ? LOG_CARD_COLUMNS : "*")
+      .order("created_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .limit(LOG_PAGE_SIZE);
 
-  if (options.businessDate) {
-    query = query.eq("business_date", options.businessDate);
+    if (cursor) {
+      query = cursor.created_at === null
+        ? query.is("created_at", null).lt("id", cursor.id)
+        : query.or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id}),created_at.is.null`);
+    }
+
+    if (options.businessDate) {
+      query = query.eq("business_date", options.businessDate);
+    }
+
+    if (options.reason) {
+      query = query.eq("reason", normalizeInventoryReason(options.reason));
+    }
+
+    if (options.itemId) {
+      query = query.eq("item_id", options.itemId);
+    }
+
+    const { data, error } = await query.returns<InventoryLogQueryRow[]>();
+    if (error) {
+      return {
+        ok: false as const,
+        error: "inventory_logs_query_failed",
+        message: error.message,
+      };
+    }
+
+    const page = data || [];
+    logs.push(...page);
+    if (page.length < LOG_PAGE_SIZE) break;
+    const last = page[page.length - 1];
+    cursor = { id: Number(last.id), created_at: last.created_at ?? null };
   }
-
-  if (options.reason) {
-    query = query.eq("reason", normalizeInventoryReason(options.reason));
-  }
-
-  if (options.itemId) {
-    query = query.eq("item_id", options.itemId);
-  }
-
-  const { data, error } = await query;
-  if (error) {
-    return {
-      ok: false as const,
-      error: "inventory_logs_query_failed",
-      message: error.message,
-    };
-  }
-
-  const logs = data || [];
   const kegReplaceLogIds = logs
     .filter((log) => log.source === "keg_replace")
     .map((log) => log.id);
@@ -94,19 +127,31 @@ const loadInventoryLogs = async (options: InventoryLogsQueryOptions = {}) => {
 };
 
 const loadInventoryNotes = async () => {
-  const { data, error } = await supabaseServer
-    .from("inventory")
-    .select("id, part, code, item_name, item_name_vi, note");
+  const notes = [];
+  let afterId: number | undefined;
+  for (;;) {
+    let query = supabaseServer
+      .from("inventory")
+      .select("id, part, code, item_name, item_name_vi, note")
+      .order("id", { ascending: true })
+      .limit(LOG_PAGE_SIZE);
+    if (afterId !== undefined) query = query.gt("id", afterId);
+    const { data, error } = await query;
 
-  if (error) {
-    return {
-      ok: false as const,
-      error: "inventory_notes_query_failed",
-      message: error.message,
-    };
+    if (error) {
+      return {
+        ok: false as const,
+        error: "inventory_notes_query_failed",
+        message: error.message,
+      };
+    }
+
+    const page = data || [];
+    notes.push(...page);
+    if (page.length < LOG_PAGE_SIZE) break;
+    afterId = Number(page[page.length - 1].id);
   }
-
-  return { ok: true as const, data: data || [] };
+  return { ok: true as const, data: notes };
 };
 
 const asPageResult = async <T,>(promise: Promise<T>) => {
@@ -188,6 +233,7 @@ export async function GET(req: Request) {
         businessDate,
         reason,
         itemId: parsedItemId,
+        includeKegSalesBreakdown: searchParams.get("view") === "cards" ? false : undefined,
       });
       if (!result.ok) {
         return NextResponse.json(
@@ -206,8 +252,9 @@ export async function GET(req: Request) {
     if (mode === "recent") {
       const { data, error } = await supabaseServer
         .from("inventory_logs")
-        .select("*")
-        .order("created_at", { ascending: false })
+        .select(LOG_CARD_COLUMNS)
+        .order("created_at", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: false })
         .limit(3);
 
       if (error) {

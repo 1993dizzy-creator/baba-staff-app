@@ -89,6 +89,42 @@ export type ExistingLineLookup = {
   byFallbackKey: Map<string, ExistingLineRow[]>;
 };
 
+type StaleLineRow = Pick<ExistingLineRow,
+  "id" | "receipt_ref_id" | "ref_detail_id" | "parent_ref_detail_id" | "sort_order" |
+  "item_id" | "item_code" | "item_name" | "quantity" | "unit_price" | "final_amount" |
+  "is_option" | "is_excluded" | "ref_detail_type"
+>;
+
+const STALE_LINE_COLUMNS = "id, receipt_ref_id, ref_detail_id, parent_ref_detail_id, sort_order, item_id, item_code, item_name, quantity, unit_price, final_amount, is_option, is_excluded, ref_detail_type";
+const SYNC_READ_PAGE_SIZE = 500;
+
+// A receipt can move business dates: its previous lines must still be found.
+async function readSyncRows<T extends { id: number }>(
+  table: string, columns: string, filterColumn: string, filterValues: (string | number)[],
+  source?: string
+): Promise<T[]> {
+  const rows: T[] = [];
+  const values = [...new Set(filterValues)];
+  // Bound IN URLs independently of the number of lines per receipt.
+  for (let offset = 0; offset < values.length; offset += 100) {
+    const batch = values.slice(offset, offset + 100);
+    let afterId: number | undefined;
+    for (;;) {
+      let query = supabaseServer.from(table).select(columns).in(filterColumn, batch)
+        .order("id", { ascending: true }).limit(SYNC_READ_PAGE_SIZE);
+      if (source) query = query.eq("source", source);
+      if (afterId !== undefined) query = query.gt("id", afterId);
+      const { data, error } = await query.returns<T[]>();
+      if (error) throw new Error(`Failed to fetch ${table}: ${error.message}`);
+      const page = (data || []) as T[];
+      rows.push(...page);
+      if (page.length < SYNC_READ_PAGE_SIZE) break;
+      afterId = Number(page[page.length - 1].id);
+    }
+  }
+  return rows;
+}
+
 export type PaymentRow = {
   id?: number;
   source: string;
@@ -690,17 +726,11 @@ export async function getExistingLines(receiptRefIds: string[]): Promise<Existin
     };
   }
 
-  const { data, error } = await supabaseServer
-    .from("pos_sales_receipt_lines")
-    .select(
-      "id, source, receipt_id, receipt_ref_id, ref_detail_id, parent_ref_detail_id, business_date, ref_date, sort_order, item_id, item_code, item_name, unit_id, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, pre_tax_amount, tax_reduction_amount, ref_detail_type, inventory_item_type, is_option, is_excluded, payment_status, is_canceled, raw_json, synced_at, updated_at"
-    )
-    .eq("source", SOURCE)
-    .in("receipt_ref_id", receiptRefIds);
-
-  if (error) {
-    throw new Error(`Failed to fetch existing sales lines: ${error.message}`);
-  }
+  const data = await readSyncRows<ExistingLineRow>(
+    "pos_sales_receipt_lines",
+    "id, source, receipt_id, receipt_ref_id, ref_detail_id, parent_ref_detail_id, business_date, ref_date, sort_order, item_id, item_code, item_name, unit_id, unit_name, quantity, unit_price, amount, discount_amount, final_amount, tax_rate, tax_amount, pre_tax_amount, tax_reduction_amount, ref_detail_type, inventory_item_type, is_option, is_excluded, payment_status, is_canceled, raw_json, synced_at, updated_at",
+    "receipt_ref_id", receiptRefIds, SOURCE
+  );
 
   const byRefDetailKey = new Map<string, ExistingLineRow>();
   const byFallbackKey = new Map<string, ExistingLineRow[]>();
@@ -737,33 +767,18 @@ export async function getReceiptsWithAppliedDeductions(receiptIds: number[]) {
   if (safeReceiptIds.length === 0) return new Set<number>();
 
   const [deductions, deductionReceipts] = await Promise.all([
-    supabaseServer
-      .from("pos_inventory_deductions")
-      .select("receipt_id")
-      .in("receipt_id", safeReceiptIds),
-    supabaseServer
-      .from("pos_inventory_deduction_receipts")
-      .select("receipt_id")
-      .in("receipt_id", safeReceiptIds),
+    readSyncRows<{ id: number; receipt_id: number | null }>(
+      "pos_inventory_deductions", "id, receipt_id", "receipt_id", safeReceiptIds),
+    readSyncRows<{ id: number; receipt_id: number | null }>(
+      "pos_inventory_deduction_receipts", "id, receipt_id", "receipt_id", safeReceiptIds),
   ]);
-
-  if (deductions.error) {
-    throw new Error(
-      `Failed to fetch sales inventory deductions: ${deductions.error.message}`
-    );
-  }
-  if (deductionReceipts.error) {
-    throw new Error(
-      `Failed to fetch sales inventory deduction receipts: ${deductionReceipts.error.message}`
-    );
-  }
 
   return new Set(
     [
-      ...((deductions.data || []) as { receipt_id: number | null }[]).map(
+      ...deductions.map(
         (row) => Number(row.receipt_id)
       ),
-      ...((deductionReceipts.data || []) as { receipt_id: number | null }[]).map(
+      ...deductionReceipts.map(
         (row) => Number(row.receipt_id)
       ),
     ].filter((id) => Number.isInteger(id) && id > 0)
@@ -809,10 +824,10 @@ function groupLinesByReceiptRefId<T extends Pick<LineRow, "receipt_ref_id">>(
 
 function getMatchedActiveLineIds(params: {
   payloadRows: LineRow[];
-  activeLines: ExistingLineRow[];
+  activeLines: StaleLineRow[];
 }) {
-  const byRefDetailKey = new Map<string, ExistingLineRow>();
-  const byFallbackKey = new Map<string, ExistingLineRow[]>();
+  const byRefDetailKey = new Map<string, StaleLineRow>();
+  const byFallbackKey = new Map<string, StaleLineRow[]>();
 
   params.activeLines.forEach((line) => {
     const fallbackKey = getLineFallbackKey(line);
@@ -893,13 +908,14 @@ export async function excludeStaleLines(params: {
   const initialQueriesStartedAt = Date.now();
   const receiptIds = Array.from(params.receiptRows.values()).map((row) => row.id);
   const [latestLines, receiptsWithDeductions] = await Promise.all([
-    getExistingLines(receiptRefIds),
+    readSyncRows<StaleLineRow>("pos_sales_receipt_lines", STALE_LINE_COLUMNS,
+      "receipt_ref_id", receiptRefIds, SOURCE),
     getReceiptsWithAppliedDeductions(receiptIds),
   ]);
   const initialQueriesMs = Date.now() - initialQueriesStartedAt;
   const rowsByReceiptRefId = groupLinesByReceiptRefId(params.rows);
   const activeLinesByReceiptRefId = groupLinesByReceiptRefId(
-    latestLines.rows.filter((line) => line.is_excluded !== true)
+    latestLines.filter((line) => line.is_excluded !== true)
   );
   let candidateCount = 0;
   let excludedCount = 0;
