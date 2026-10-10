@@ -235,3 +235,47 @@ test('name-only evidence with duplicate partner names is blocked until identitie
  await db.exec('update inventory_logs set purchase_supplier_partner_id=10 where id in (12007,12008);update inventory_logs set prev_purchase_supplier_partner_id=10 where id=12008');assert.equal((await resolve(db)).status,'synced');
  }finally{await db.close();}
 });
+import ts from 'typescript';
+function repairRouteForDb(db,actor=2){
+ const m={exports:{}};const code=ts.transpileModule(readFileSync('app/api/admin/ledger/inventory-projection/[inventoryLogId]/resolve/route.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+ const calls=[];const deps={
+  '@/lib/ledger/server':{requireLedgerActor:async()=>({actor:{id:actor,role:'owner'},response:null}),ledgerJson:(body,status=200)=>Response.json(body,{status})},
+  '@/lib/supabase/server':{supabaseServer:{rpc:async(name,args)=>{calls.push({name,args});return {data:await rpc(db,name,args.p_inventory_log_id,args.p_purchase_log_id,args.p_actor_user_id,...(name.endsWith('_v2')?[args.p_supplier_confirmation]:[])),error:null};}}},
+  '@/lib/ledger/inventory-repair':{loadInventoryRepairPreview:(id,actorId)=>rpc(db,'ledger_inventory_purchase_repair_preview_v1',id,actorId)},
+ };
+ new Function('require','module','exports',code)(name=>deps[name],m,m.exports);const context={params:Promise.resolve({inventoryLogId:'12008'})};
+ return {calls,get:()=>m.exports.GET(new Request('http://test'),context),post:body=>m.exports.POST(new Request('http://test',{method:'POST',body:JSON.stringify(body)}),context)};
+}
+test('actual API V2 approves zero-difference supplier change with atomic payable and audit, and retries add no effects',async()=>{
+ const db=await milan({delta:0});try{
+  await changeSupplier(db);const api=repairRouteForDb(db);const checked=await(await api.get()).json();const check=checked.candidates[0];assert.equal(check.code,'SUPPLIER_CHANGE_CONFIRMATION_REQUIRED');assert.equal(check.delta,0);
+  const oldCounts=await counts(db);const unconfirmed=await(await api.post({purchaseLogId:12007})).json();assert.equal(unconfirmed.code,'SUPPLIER_CHANGE_CONFIRMATION_REQUIRED');assert.deepEqual(await counts(db),oldCounts);
+  const body={purchaseLogId:12007,supplierConfirmation:{confirmed:true,fingerprint:check.supplierChange.confirmationFingerprint}};
+  const response=await api.post(body);assert.equal(response.status,200);const result=await response.json();assert.equal(result.status,'synced');
+  assert.equal((await one(db,'select status from ledger_payables where id=866')).status,'cancelled');assert.equal(Number((await one(db,"select party_id from ledger_payables where status='unpaid'")).party_id),12);
+  assert.equal(Number((await one(db,'select sum(amount*economic_effect_sign) as amount from ledger_transactions')).amount),80000);
+  assert.equal(Number((await one(db,'select count(*) as n from ledger_movements')).n),0);
+  const audit=await one(db,"select after_snapshot from ledger_audit_logs where action='inventory_purchase_correction_linked'");assert.deepEqual(audit.after_snapshot.supplierConfirmation,body.supplierConfirmation);
+  const finalCounts=await counts(db);assert.equal((await api.post(body)).status,200);assert.deepEqual(await counts(db),finalCounts);assert.equal(api.calls.at(-1).name,'ledger_resolve_inventory_purchase_correction_v2');
+ }finally{await db.close();}
+});
+test('pear #314 10/09 Chợ root and correction keep their Ledger payee after 10/10 An Liên purchase and master rename',async()=>{
+ const db=await database();try{
+  await db.exec('alter table inventory_logs add column prev_supplier text,add column prev_purchase_supplier_partner_id bigint');await applyCurrentPaymentContract(db);
+  for(const name of ['20261007182027_resolve_inventory_purchase_projection.sql','20261009080243_detect_inventory_purchase_economic_corrections.sql'])await db.exec(readFileSync('supabase/migrations/'+name,'utf8'));
+  await db.query("update business_partners set name=$1,payment_mode='postpaid',default_fund_account_id=null where id=10",['Chợ']);await db.query('update business_partners set name=$1 where id=12',['An Liên']);
+  await db.query("update inventory set id=314,supplier_partner_id=12,purchase_price=40000,item_name=$1,supplier=$2,unit='kg' where id=1",['신선한 배','An Liên']);
+  await db.query("update inventory_logs set id=12848,item_id=314,item_name=$1,item_name_vi=$2,unit='kg',change_quantity=1,new_purchase_price=35000,new_supplier=$3,purchase_supplier_partner_id=10,business_date='2026-10-09',created_at='2026-10-09T04:00:00Z' where id=100",['배','Lê','Chợ']);
+  assert.equal((await rpc(db,'ledger_project_inventory_purchase_log_v1',12848,2)).status,'synced');
+  await db.query("insert into inventory_logs(id,item_id,item_name,item_name_vi,category,category_vi,unit,change_quantity,new_purchase_price,new_supplier,purchase_supplier_partner_id,prev_supplier,business_date,created_at,source,reason,source_actor_user_id,correction_of_inventory_log_id) values(12849,314,$1,$2,'Drinks','Nuoc','kg',0,35000,$3,10,$3,'2026-10-09','2026-10-09T04:01:00Z','edit_form','purchase',1,12848)",['배','Lê','Chợ']);
+  assert.equal((await rpc(db,'ledger_project_inventory_purchase_log_v1',12849,2)).code,'METADATA_SYNCED');
+  await db.query("insert into inventory_logs(id,item_id,item_name,item_name_vi,category,category_vi,unit,change_quantity,new_purchase_price,new_supplier,purchase_supplier_partner_id,business_date,created_at,source,reason,source_actor_user_id) values(12900,314,$1,$2,'Drinks','Nuoc','kg',2,40000,$3,12,'2026-10-10','2026-10-10T04:00:00Z','quick_save','purchase',1)",['배','Lê','An Liên']);assert.equal((await rpc(db,'ledger_project_inventory_purchase_log_v1',12900,2)).status,'synced');
+  const module={exports:{}};const source=ts.transpileModule(readFileSync('lib/inventory/snapshot-name-sync.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('module','exports',source)(module,module.exports);
+  const logs=(await db.query('select * from inventory_logs where item_id=314')).rows.map(row=>({...row,id:Number(row.id),item_id:Number(row.item_id),change_quantity:Number(row.change_quantity),new_purchase_price:Number(row.new_purchase_price),purchase_supplier_partner_id:row.purchase_supplier_partner_id==null?null:Number(row.purchase_supplier_partner_id),business_date:new Date(row.business_date).toISOString().slice(0,10),created_at:new Date(row.created_at).toISOString()}));
+  const master={id:314,item_name:'신선한 배',item_name_vi:'Lê',part:null,category:'Drinks',category_vi:'Nuoc',code:null,unit:'kg',purchase_price:40000,supplier:'An Liên',supplier_partner_id:12,quantity:3,is_active:true};
+  const plans=module.exports.planInventoryLogNameUpdates('2026-10-09',logs,[master]);assert.equal(plans.length,1);assert.equal(plans[0].targets[0].syncItem.supplier,'Chợ');assert.equal(plans[0].targets[0].syncItem.purchase_price,35000);assert.ok(plans[0].changes.every(change=>!['supplier','supplier_partner_id','purchase_price'].includes(change.field)));
+  const before=await counts(db);assert.deepEqual(plans[0].targets[0].linkedCorrectionLogIds,[12849]);await db.query('update inventory_logs set item_name=$1 where id in (12848,12849)',[plans[0].targets[0].syncItem.item_name]);assert.equal((await rpc(db,'ledger_project_inventory_purchase_log_v1',12848,2)).code,'METADATA_SYNCED');
+  const oldBook=await one(db,"select t.party_id,t.amount from ledger_candidates c join ledger_transactions t on t.id=c.resolved_transaction_id where c.source_key='inventory-log:12848'");const newBook=await one(db,"select t.party_id,t.amount from ledger_candidates c join ledger_transactions t on t.id=c.resolved_transaction_id where c.source_key='inventory-log:12900'");
+  assert.equal(Number(oldBook.party_id),10);assert.equal(Number(oldBook.amount),35000);assert.equal(Number(newBook.party_id),12);assert.equal(Number(newBook.amount),80000);assert.equal((await counts(db)).transactions,before.transactions);assert.equal((await one(db,'select new_supplier from inventory_logs where id=12849')).new_supplier,'Chợ');
+ }finally{await db.close();}
+});

@@ -30,7 +30,7 @@ test("custom category language fallback remains unchanged", () => {
 });
 
 test("inventory edit uses standard pairs without cross-language fallback", () => {
-  const page = read("components/inventory/InventoryPageContent.tsx");
+  const page = read("components/inventory/InventoryItemEditor.tsx");
   assert.match(page, /setCategoryKo\(selected\.ko\)/);
   assert.match(page, /setCategoryVi\(selected\.vi\)/);
   assert.match(page, /setCategoryKo\(matchedCategory\?\.ko \|\| item\.category \|\| ""\)/);

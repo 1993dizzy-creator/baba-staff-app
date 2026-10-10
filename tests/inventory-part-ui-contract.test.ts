@@ -6,6 +6,7 @@ import test from "node:test";
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 
 const inventoryPage = read("components/inventory/InventoryPageContent.tsx");
+const inventoryEditor = read("components/inventory/InventoryItemEditor.tsx");
 
 test("/inventory imports the inventory-only part policy, not the common employee PART_VALUES", () => {
   assert.match(
@@ -85,7 +86,7 @@ test("deep-link target item part and edit-entry part fall back through isInvento
     /setPartFilter\(\s*isInventoryPart\(targetItem\.part\) \? targetItem\.part : defaultPart\s*\)/
   );
   assert.match(
-    inventoryPage,
+    inventoryEditor,
     /const nextPart: InventoryPartValue = isInventoryPart\(item\.part\)\s*\?\s*item\.part\s*:\s*defaultPart;/
   );
 });
@@ -112,9 +113,9 @@ test("ordinary item editing no longer exposes or loads historical purchase corre
 });
 
 test("ordinary edit-form reason modal keeps purchase available for same-day corrections", () => {
-  assert.match(inventoryPage, /\["stock_check", "purchase", "service", "other"\] as const/);
-  assert.doesNotMatch(inventoryPage, /Number\(editFormPendingSave\.payload\.quantity\) <=/);
-  assert.match(inventoryPage, /source: "edit_form",[\s\S]*?reason,/);
+  assert.match(inventoryEditor, /\["stock_check", "purchase", "service", "other"\] as const/);
+  assert.doesNotMatch(inventoryEditor, /Number\(editFormPendingSave\.payload\.quantity\) <=/);
+  assert.match(inventoryEditor, /source: "edit_form",[\s\S]*?reason,/);
 });
 
 test("new-item forms render local top-five similarity candidates directly below the name input", () => {

@@ -1,0 +1,29 @@
+﻿.card {
+    display: grid;
+    place-items: center;
+    color: #6b7280;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+}
+.content {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    max-width: 100%;
+}
+.spinner {
+    width: 19px;
+    height: 19px;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    border: 2px solid #d1d5db;
+    border-top-color: #6b7280;
+    border-radius: 50%;
+    animation: inventory-loading-spin .8s linear infinite;
+}
+@keyframes inventory-loading-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-top-color: #9ca3af; }
+}

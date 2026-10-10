@@ -2,6 +2,8 @@
 import test from 'node:test';
 import {projectDailyEffectivePurchases} from '../lib/inventory/daily-effective-purchases.ts';
 import {createRequire} from 'node:module';
+import {mkdir} from 'node:fs/promises';
+import {commonText} from '../lib/text/common.ts';
 const require=createRequire(import.meta.url);
 // API requests are all intercepted; this suite never writes to a database.
 test('snapshot UI and quick-save across KO/VI and desktop/mobile', {skip:!process.env.PLAYWRIGHT_MODULE_PATH}, async () => {
@@ -11,51 +13,121 @@ try {
  for (const lang of ['ko','vi']) for (const mobile of [false,true]) {
   const context=await browser.newContext({viewport:mobile?{width:390,height:844}:{width:1280,height:900},isMobile:mobile,hasTouch:mobile});
   const page=await context.newPage();page.setDefaultTimeout(6000);const writes=[];const reads=[];let missing=true,fail=true;
+  const gates=new Map();
+  const hold=path=>{let release;const promise=new Promise(resolve=>{release=resolve;});gates.set(path,promise);return ()=>{gates.delete(path);release();};};
+  const releaseCalendar=hold('/api/inventory/snapshot/list');
+  const releaseMovements=hold('/api/inventory/logs');
+  let loadFailure=false,logsFailure=true;
   const user={id:1,name:'QA',role:'owner',part:'kitchen',language:lang};
-  const item={id:1,item_name:'Oil',item_name_vi:'Dau',part:'kitchen',category:'Food',category_vi:'Food',quantity:2,unit:'bottle',purchase_price:lang==='vi'&&mobile?30000.5:30000,supplier:'QA',supplier_partner_id:null,code:'QA',is_active:true,updated_at:'2026-10-10T03:00:00.000Z',low_stock_threshold:1,low_stock_enabled:false,package_content_quantity:null,package_content_unit:null};
+  const item={id:1,item_name:lang==='ko'?'Oil':'',item_name_vi:lang==='ko'?'':'Dau',part:'kitchen',category:'Food',category_vi:'Food',quantity:2,unit:'bottle',purchase_price:lang==='vi'&&mobile?30000.5:30000,supplier:'QA',supplier_partner_id:10,image_path:'qa.png',code:'QA',is_active:true,updated_at:'2026-10-10T03:00:00.000Z',low_stock_threshold:1,low_stock_enabled:false,package_content_quantity:null,package_content_unit:null};
   const log={id:100,item_id:1,item_name:'Oil',item_name_vi:'Dau',part:'kitchen',category:'Food',category_vi:'Food',change_quantity:2,prev_quantity:0,new_quantity:2,unit:'bottle',code:'QA',reason:'purchase',new_purchase_price:item.purchase_price,new_supplier:'QA',created_at:'2026-10-10T03:00:00Z'};
   await page.addInitScript(user=>localStorage.setItem('baba_user',JSON.stringify(user)),user);
+  await page.route('**/storage/v1/object/public/**',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9S8AAAAASUVORK5CYII=','base64')}));
   await page.route('**/api/**',async route=>{
    const req=route.request(),url=new URL(req.url());reads.push(url.pathname+url.search);
+   if(gates.has(url.pathname))await gates.get(url.pathname);
    let json={ok:true,data:[],items:[]};let status=200;
-   if(req.method()==='PATCH'){
+   if(url.pathname.endsWith('/photo')) {item.image_path='qa-uploaded.png';item.updated_at=new Date().toISOString();json={ok:true,data:{image_path:item.image_path,updated_at:item.updated_at}};}
+   else if(req.method()==='PATCH'){
     const body=req.postDataJSON();writes.push(body);
     await new Promise(resolve=>setTimeout(resolve,100));
     if(fail){status=409;json={ok:false,error:'INVENTORY_CONFLICT',message:'Item changed. Reload before saving.'};}
-    else {missing=false;item.updated_at=new Date().toISOString();json={ok:true,mode:body.mode,...(body.reason==='purchase'?{ledgerSync:{status:'synced',code:'REBOOKED',inventoryLogId:101}}:{})};}
+    else {Object.assign(item,body.payload);missing=!item.item_name?.trim()||!item.item_name_vi?.trim();item.updated_at=new Date().toISOString();json={ok:true,mode:body.mode,...(body.reason==='purchase'?{ledgerSync:{status:'synced',code:'REBOOKED',inventoryLogId:101}}:{})};}
    }
    else if(url.pathname==='/api/session')json={authenticated:true,user};
    else if(url.pathname==='/api/inventory/snapshot/list')json={ok:true,batches:[{id:10,snapshot_date:'2026-10-03'}],currentBusinessDate:'2026-10-10',purchaseDateMap:{'2026-10-10':true}};
    else if(url.pathname==='/api/inventory/snapshot/name-sync')json={ok:true,canSync:true,dailySyncItems:[],languageMissingItems:missing?[{itemId:1,currentItemName:lang==='ko'?'Oil':null,currentItemNameVi:lang==='ko'?null:'Dau',missingLanguages:[lang==='ko'?'vi':'ko'],registeredAt:'2026-10-03T03:00:00Z',lastUpdatedAt:item.updated_at}]:[]};
    else if(url.pathname==='/api/inventory/logs')json={ok:true,data:projectDailyEffectivePurchases([log,{...log,id:12407,item_id:613,item_name:'Canceled oil',item_name_vi:'Canceled oil',is_active:false}],[{...log,id:12883,change_quantity:-2,correction_of_inventory_log_id:12407}])};
-   else if(url.pathname==='/api/inventory/items')json={ok:true,data:[item],supplierPartners:[],supplierAliases:[]};
+   else if(url.pathname==='/api/inventory/items')json={ok:true,data:[item],supplierPartners:[{id:10,name:"QA"}],supplierAliases:[]};
    else if(url.pathname==='/api/inventory/items/1/logs')json={ok:true,data:[log]};
-   else if(url.pathname==='/api/inventory/bootstrap-stream') { await route.fulfill({contentType:'application/x-ndjson',body:[{type:'items',items:[item],supplierPartners:[],supplierAliases:[]},{type:'enrichment',statusMap:{},kegProgressMap:{},activeKegTrackingItemIds:[]},{type:'complete',timing:{}}].map(row=>JSON.stringify(row)).join('\n')+'\n'});return; }
+   else if(url.pathname==='/api/inventory/bootstrap-stream') { await route.fulfill({contentType:'application/x-ndjson',body:[{type:'items',items:[item],supplierPartners:[{id:10,name:"QA"}],supplierAliases:[]},{type:'enrichment',statusMap:{},kegProgressMap:{},activeKegTrackingItemIds:[]},{type:'complete',timing:{}}].map(row=>JSON.stringify(row)).join('\n')+'\n'});return; }
    else if(url.pathname==='/api/inventory/snapshot/10')json={ok:true,items:[{...item,id:200,item_id:1,batch_id:10,change_quantity:2,total_purchase_price:2*item.purchase_price}]};
+   if(logsFailure && url.pathname==='/api/inventory/items/1/logs'){status=500;json={ok:false,error:'qa_failure'};}
+   if(loadFailure && url.pathname==='/api/inventory/items'){status=500;json={ok:false,message:'QA load failed'};}
    await route.fulfill({status,json});
   });
   page.on('dialog',d=>d.dismiss());
   await page.goto('http://localhost:3000/inventory/snapshots');
+  const calendarLoading=page.getByTestId('snapshot-calendar-loading');await calendarLoading.waitFor();
+  assert.equal(await calendarLoading.getAttribute('role'),'status');
+  assert.equal(await calendarLoading.innerText(),commonText[lang].loading);
+  await page.emulateMedia({reducedMotion:'reduce'});
+  assert.equal(await calendarLoading.locator('[aria-hidden=true]').evaluate(el=>getComputedStyle(el).animationName),'none');
+  await page.emulateMedia({reducedMotion:'no-preference'});
+  assert.notEqual(await calendarLoading.locator('[aria-hidden=true]').evaluate(el=>getComputedStyle(el).animationName),'none');
+  releaseCalendar();await calendarLoading.waitFor({state:'hidden'});
+  const movementsLoading=page.getByTestId('snapshot-movements-loading');await movementsLoading.waitFor();releaseMovements();await movementsLoading.waitFor({state:'hidden'});
   const banner=page.getByTestId('inventory-language-missing-banner');await banner.waitFor();
   assert.equal(await page.getByText('Canceled oil',{exact:false}).count(),0);
   await banner.locator('button').first().click();const row=page.getByTestId('inventory-language-missing-item-1');
   assert.match(await row.innerText(),lang==='ko'?/등록일/:/Ngày đăng ký/);
   assert.equal(reads.some(u=>u.startsWith('/api/inventory/items?')),false);
-  await row.locator('button').first().click();assert.equal(await row.locator('input').count(),1);
-  await row.locator('input').fill('Dau moi');const inlineCount=writes.length;await row.locator('button').last().evaluate(button=>{button.click();button.click();});await row.getByRole('alert').waitFor();assert.equal(writes.length,inlineCount+1);
-  assert.equal(await row.locator('input').inputValue(),'Dau moi');assert.equal(new URL(page.url()).pathname,'/inventory/snapshots');
-  assert.deepEqual(writes[0].payload,lang==='ko'?{item_name_vi:'Dau moi'}:{item_name:'Dau moi'});
-  fail=false;await row.locator('button').last().click();await banner.waitFor({state:'hidden'});
+  const releaseEditor=hold('/api/inventory/items');
+  const started=Date.now();
+  await row.locator('button').first().evaluate(button=>{button.click();button.click();});
+  const bannerDialog=page.getByRole('dialog');
+  const missingInput=bannerDialog.locator('[data-name-language="'+(lang==='ko'?'vi':'ko')+'"]');
+  const editorLoading=page.getByTestId('inventory-editor-loading');await editorLoading.waitFor();
+  assert.equal(await editorLoading.count(),1);
+  assert.ok(await bannerDialog.locator('header h2').isVisible());
+  const loadingPanelHeight=(await bannerDialog.getByTestId('inventory-editor-panel').boundingBox()).height;
+  releaseEditor();
+  await missingInput.waitFor();
+  assert.equal((await bannerDialog.getByTestId('inventory-editor-panel').boundingBox()).height,loadingPanelHeight);
+  await editorLoading.waitFor({state:'hidden'});
+  assert.equal(await row.locator('input').count(),0);
+  assert.equal(await missingInput.inputValue(),'');
+  assert.equal(await missingInput.evaluate(input=>document.activeElement===input),true);
+  assert.equal(reads.filter(u=>u==='/api/inventory/items?itemId=1').length,1);
+  console.log('selected editor first open ms',lang,mobile,Date.now()-started);
+  assert.equal(await bannerDialog.locator('select').filter({has:page.locator('option[value="partner:10"]')}).inputValue(),'partner:10');
+  assert.ok((await bannerDialog.locator('img').first().getAttribute('src')).includes('qa.png'));
+  const panel=bannerDialog.getByTestId('inventory-editor-panel');
+  const scroll=bannerDialog.getByTestId('inventory-editor-scroll');
+  const panelBox=await panel.boundingBox();
+  assert.ok(panelBox.width<=800 && panelBox.x>=0 && panelBox.y>=0);
+  assert.ok(panelBox.y+panelBox.height<=(mobile?844:900));
+  assert.equal(await bannerDialog.locator('header button').innerText(),'\u2715');
+  assert.equal(await bannerDialog.locator('header h2').innerText(),lang==='ko'?'\uD488\uBAA9 \uC218\uC815':'S\u1EEDa m\u1EB7t h\u00E0ng');
+  assert.equal(await bannerDialog.evaluate(el=>getComputedStyle(el).overflowY),'hidden');
+  assert.equal(await scroll.evaluate(el=>getComputedStyle(el).overflowY),'auto');
+  assert.equal(await page.evaluate(()=>document.body.style.overflow),'hidden');
+  const headerY=(await bannerDialog.locator('header').boundingBox()).y;
+  await scroll.evaluate(el=>el.scrollTop=el.scrollHeight);
+  assert.ok(await scroll.evaluate(el=>el.scrollTop>0));
+  assert.equal((await bannerDialog.locator('header').boundingBox()).y,headerY);
+  assert.ok(await scroll.evaluate(el=>el.scrollWidth<=el.clientWidth));
+  await scroll.evaluate(el=>el.scrollTop=0);
+  await mkdir('.qa-review/editor-layout',{recursive:true});
+  await page.screenshot({path:'.qa-review/editor-layout/'+lang+'-'+(mobile?'mobile':'desktop')+'.png'});
+  await missingInput.fill('Dau moi');
+  await bannerDialog.locator('#inventory-form-photo-library').setInputFiles({name:'photo.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9S8AAAAASUVORK5CYII=','base64')});
+  await page.waitForFunction(()=>document.querySelector('[data-testid=inventory-edit-form] img')?.src.includes('qa-uploaded.png'));
+  assert.equal(await missingInput.inputValue(),'Dau moi');
+  const bannerForm=bannerDialog.getByTestId('inventory-edit-form');
+  await bannerForm.getByRole('button',{name:lang==='ko'?'\uc800\uc7a5':'L\u01b0u',exact:true}).click();
+  const bannerConfirm=bannerDialog.getByRole('button').filter({hasText:lang==='ko'?'\uc7ac\uace0\ud655\uc778':'Kiem tra kho'}).last();
+  const bannerCount=writes.length;await bannerConfirm.evaluate(button=>{button.click();button.click();});
+  await page.waitForTimeout(250);assert.equal(writes.length,bannerCount+1);
+  assert.equal(await missingInput.inputValue(),'Dau moi');
+  assert.equal(new URL(page.url()).pathname,'/inventory/snapshots');
+  fail=false;await bannerConfirm.click();await bannerDialog.waitFor({state:'hidden'});await banner.waitFor({state:'hidden'});
   // Open a purchase history card, then its item editor.
   await page.locator('input').first().fill('QA');
+  const releaseLogs=hold('/api/inventory/items/1/logs');
   await page.getByRole('button').filter({hasText:lang==='ko'?'Oil':'Dau'}).first().click();
+  const logsLoading=page.getByTestId('snapshot-item-logs-loading');await logsLoading.waitFor();assert.equal(await logsLoading.count(),1);
+  releaseLogs();await logsLoading.waitFor({state:'hidden'});
+  await page.getByText(commonText[lang].loadFailed,{exact:true}).waitFor();
+  logsFailure=false;
   await page.getByRole('button',{name:lang==='ko'?'\uc218\uc815':'S\u1eeda',exact:true}).click();
   const initialScroll=await page.evaluate(()=>window.scrollY);
   const dialog=page.getByRole('dialog');await dialog.locator('input').first().waitFor();
-  assert.equal(reads.filter(u=>u==='/api/inventory/items?itemId=1').length,1);
+  assert.equal(reads.filter(u=>u==='/api/inventory/items?itemId=1').length,2);
   assert.equal(reads.some(u=>u.includes('bootstrap')),false);
+  assert.equal((await dialog.getByTestId('inventory-editor-panel').boundingBox()).width,panelBox.width);
   const form=dialog.getByTestId('inventory-edit-form');
-  const itemName=dialog.locator('input').nth(2);
+  const itemName=dialog.locator('[data-name-language="'+lang+'"]');
   await itemName.fill('Updated name');
   const saveName=lang==='ko'?'\uc800\uc7a5':'L\u01b0u';
   await form.getByRole('button',{name:saveName,exact:true}).click();
@@ -73,13 +145,37 @@ try {
   const editWrite=writes.at(-1);assert.equal(editWrite.source,'edit_form');assert.equal(editWrite.expectedQuantity,2);assert.equal(typeof editWrite.expectedUpdatedAt,'string');
   assert.equal(editWrite.payload.quantity,2);assert.equal(editWrite.payload.purchase_price,item.purchase_price);assert.equal(editWrite.payload.supplier,'QA');
   assert.equal(new URL(page.url()).pathname,'/inventory/snapshots');
+  await page.getByRole('button',{name:lang==='ko'?'\uc218\uc815':'S\u1eeda',exact:true}).click();
+  await page.getByRole('dialog').getByTestId('inventory-edit-form').waitFor();
+  const cancelWrites=writes.length;await page.getByRole('dialog').getByRole('button',{name:lang==='ko'?'\ub2eb\uae30':'\u0110\u00f3ng',exact:true}).first().click();
+  assert.equal(writes.length,cancelWrites);assert.equal(await page.locator('input').first().inputValue(),'QA');
   // Historical date: select day 3 and retain it while the editor opens/closes.
   await page.getByRole('button',{name:lang==='ko'?'\ub2eb\uae30':'\u0110\u00f3ng',exact:true}).last().click();
   await page.evaluate(()=>window.scrollTo(0,0));
+  const releaseDate=hold('/api/inventory/snapshot/10');
   await page.getByRole('button',{name:'3',exact:true}).click();
+  const dateLoading=page.getByTestId('snapshot-date-content-loading');await dateLoading.waitFor();
+  assert.equal(await page.getByTestId('snapshot-items-loading').count(),0);
+  assert.equal(await page.getByTestId('snapshot-movements-loading').count(),0);
+  releaseDate();await dateLoading.waitFor({state:'hidden'});
   await page.waitForTimeout(100);
   assert.ok(reads.some(u=>u==='/api/inventory/snapshot/10'));
-  console.log('PASS inline failure/success, lazy modal failure/success, immutable accounting, date',lang,mobile?'mobile':'desktop');
+  await page.goto('http://localhost:3000/inventory/snapshots');
+  const failureBanner=page.getByTestId('inventory-language-missing-banner');
+  missing=true;await page.reload();await failureBanner.waitFor();await failureBanner.locator('button').first().click();
+  loadFailure=true;const releaseFailure=hold('/api/inventory/items');
+  await page.getByTestId('inventory-language-missing-item-1').locator('button').first().click();
+  await page.getByTestId('inventory-editor-loading').waitFor();releaseFailure();
+  await page.getByRole('dialog').getByRole('alert').waitFor();
+  assert.equal(await page.getByTestId('inventory-editor-loading').count(),0);
+  assert.equal(await page.getByRole('dialog').getByRole('alert').innerText(),'QA load failed');
+  await page.getByRole('dialog').locator('header button').click();loadFailure=false;missing=false;
+  console.log('PASS shared banner failure/success, lazy modal failure/success, immutable accounting, date',lang,mobile?'mobile':'desktop');
+  const selectedReads=reads.filter(u=>u==='/api/inventory/items?itemId=1').length;
+  await page.goto('http://localhost:3000/inventory?itemId=1&mode=edit');
+  await page.getByTestId('inventory-edit-form').waitFor();
+  assert.equal(await page.locator('[data-name-language="'+lang+'"]').inputValue(),'Updated name');
+  assert.equal(reads.filter(u=>u==='/api/inventory/items?itemId=1').length,selectedReads);
   await page.goto('http://localhost:3000/inventory?itemId=1');
   await page.locator('input[type=number]').first().fill('3');
   await page.getByRole('button',{name:lang==='ko'?'\ube60\ub978\uc800\uc7a5':'L\u01b0u nhanh',exact:true}).click();

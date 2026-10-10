@@ -74,6 +74,7 @@ export type InventoryDailySyncChange = {
 export type InventoryDailySyncTarget = {
   purchaseLogId: number;
   correctionLogId: number;
+  linkedCorrectionLogIds: number[];
   changes: InventoryDailySyncChange[];
   quantityReviewRequired: boolean;
   syncItem: Omit<CurrentInventoryDailySyncRow, "id" | "quantity" | "is_active">;
@@ -159,12 +160,18 @@ const sortLogs = (left: InventoryDailySyncLogRow, right: InventoryDailySyncLogRo
 const toSyncItem = (
   correction: InventoryDailySyncLogRow,
   current: CurrentInventoryDailySyncRow,
+  root: InventoryDailySyncLogRow,
   isLatestSegment: boolean
 ): InventoryDailySyncTarget["syncItem"] => {
   const result = {} as InventoryDailySyncTarget["syncItem"];
   for (const field of SYNC_FIELDS) {
-    const correctionValue = logValue(correction, field);
-    const value = isLatestSegment ? current[field] : correctionValue;
+    const recordedValue = logValue(correction, field);
+    const correctionValue = ECONOMIC_FIELDS.includes(field) && recordedValue == null &&
+      (field !== "supplier_partner_id" || correction.new_supplier == null)
+      ? logValue(root, field) : recordedValue;
+    // Master economics can belong to a later purchase on a different day.
+    // Only display fields may use the live item; money and payee are historical.
+    const value = DISPLAY_FIELDS.includes(field) && isLatestSegment ? current[field] : correctionValue;
     Object.assign(result, { [field]: value ?? null });
   }
   return result;
@@ -207,12 +214,16 @@ export function findInventoryLogNameSyncItems(
       const root = roots[rootIndex];
       const nextRoot = roots[rootIndex + 1];
       const corrections = itemLogs.filter((log) =>
-        isZeroQuantityCorrection(log) && sortLogs(log, root) > 0 && (!nextRoot || sortLogs(log, nextRoot) < 0)
+        isZeroQuantityCorrection(log) && sortLogs(log, root) > 0 && (
+          log.correction_of_inventory_log_id != null
+            ? Number(log.correction_of_inventory_log_id) === Number(root.id)
+            : !nextRoot || sortLogs(log, nextRoot) < 0
+        )
       );
       const correction = corrections.at(-1);
       if (!correction) continue;
 
-      const syncItem = toSyncItem(correction, current, !nextRoot);
+      const syncItem = toSyncItem(correction, current, root, !nextRoot);
       const changes = SYNC_FIELDS.flatMap((field) => {
         const from = logValue(root, field);
         const to = syncItem[field];
@@ -236,6 +247,7 @@ export function findInventoryLogNameSyncItems(
       targets.push({
         purchaseLogId: Number(root.id),
         correctionLogId: Number(correction.id),
+        linkedCorrectionLogIds: itemLogs.filter(log => Number(log.correction_of_inventory_log_id) === Number(root.id)).map(log => Number(log.id)),
         changes,
         quantityReviewRequired,
         syncItem,

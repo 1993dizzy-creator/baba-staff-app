@@ -5,8 +5,13 @@ import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import dynamic from "next/dynamic";
-const InventoryEditor = dynamic(() => import("@/components/inventory/InventoryPageContent"), { ssr: false });
+const InventoryEditor = dynamic(() => import("@/components/inventory/InventoryItemEditor"), { ssr: false, loading: InventoryEditorLoading });
+function InventoryEditorLoading() { const { lang } = useLanguage(); return <InventoryLoadingCard lang={lang} minHeight="min(512px, 52dvh)" testId="inventory-editor-loading" />; }
 import Container from "@/components/Container";
+import InventoryDailySyncResults from "@/components/inventory/InventoryDailySyncResults";
+import type { InventoryDailySyncResult } from "@/lib/inventory/daily-sync-result";
+import InventoryLoadingCard from "@/components/inventory/InventoryLoadingCard";
+import editorStyles from "@/components/inventory/InventoryEditorModal.module.css";
 import { ui } from "@/lib/styles/ui";
 import { commonText, inventoryText } from "@/lib/text";
 import SubNav from "@/components/SubNav";
@@ -86,7 +91,7 @@ const snapshotNameSyncText = {
         empty: "없음",
         quantityReview: "수량 변경은 별도 입고보정 필요",
         confirmAll: (count: number) =>
-            `현재 영업일의 입고정보 ${count}개 품목을 최종 수정값으로 동기화합니다. 수량은 변경되지 않으며 가격·거래처 변경은 장부에 재동기화됩니다.`,
+            `선택한 날짜의 입고정보 ${count}개 품목을 동기화합니다. 표시정보는 반영하고, 해당 입고 수정 이력의 금액·거래처 변경은 장부 확인 절차를 유지합니다.`,
         loadFailed: "당일 입고정보 동기화 상태를 확인하지 못했습니다.",
         syncFailed: "당일 입고정보를 동기화하지 못했습니다. 다시 시도해주세요.",
         result: (synced: number, review: number, failed: number) =>
@@ -106,7 +111,7 @@ const snapshotNameSyncText = {
         empty: "Không có",
         quantityReview: "Thay đổi số lượng cần dùng quy trình điều chỉnh nhập hàng riêng",
         confirmAll: (count: number) =>
-            `Đồng bộ thông tin nhập hàng cuối cùng của ${count} mặt hàng trong ngày kinh doanh hiện tại. Số lượng không thay đổi; đơn giá và nhà cung cấp sẽ được đồng bộ lại với sổ cái.`,
+            `Đồng bộ ${count} mặt hàng của ngày đã chọn. Cập nhật thông tin hiển thị; thay đổi tiền và nhà cung cấp theo lịch sử phiếu nhập vẫn cần xác nhận trong sổ.`,
         loadFailed: "Không thể kiểm tra trạng thái đồng bộ thông tin nhập hàng hôm nay.",
         syncFailed: "Không thể đồng bộ thông tin nhập hàng hôm nay. Vui lòng thử lại.",
         result: (synced: number, review: number, failed: number) =>
@@ -367,13 +372,18 @@ export default function InventorySnapshotsPage() {
     const c = commonText[lang];
     const currentBusinessDateLabel =
         lang === "vi" ? "Ngày kinh doanh hiện tại" : "현재 영업일";
-    const [languageDrafts, setLanguageDrafts] = useState<Record<number, Partial<Record<"ko" | "vi", string>>>>({});
-    const [languageSavingId, setLanguageSavingId] = useState<number | null>(null);
-    const [languageEditError, setLanguageEditError] = useState<Record<number, string>>({});
+    
+    
+    
     const editorDialogRef = useRef<HTMLDivElement>(null);
     const [editorBusy, setEditorBusy] = useState(false);
-    const languageSaveLockRef = useRef(false);
+    
     const [editingItemId, setEditingItemId] = useState<number | null>(null);
+    const editingItemIdRef = useRef<number | null>(null);
+    const editorBusyRef = useRef(false);
+    const [editorFocusLanguage, setEditorFocusLanguage] = useState<"ko" | "vi">();
+    const handleEditorBusyChange = useCallback((busy: boolean) => { editorBusyRef.current = busy; setEditorBusy(busy); }, []);
+    const closeInventoryEditor = (force = false) => { if (editorBusyRef.current && !force) return; editingItemIdRef.current = null; editorBusyRef.current = false; setEditorBusy(false); setEditingItemId(null); setEditorFocusLanguage(undefined); };
 
     useEffect(() => {
         if (editingItemId === null) return;
@@ -434,6 +444,7 @@ export default function InventorySnapshotsPage() {
     const [nameSyncProcessingKey, setNameSyncProcessingKey] = useState<number | "all" | null>(null);
     const [nameSyncError, setNameSyncError] = useState("");
     const [nameSyncResult, setNameSyncResult] = useState("");
+    const [nameSyncDetails, setNameSyncDetails] = useState<InventoryDailySyncResult[]>([]);
     const nameSyncRequestSequenceRef = useRef(0);
     const nameSyncBusinessDateRef = useRef("");
     const nameSyncT = snapshotNameSyncText[lang];
@@ -910,6 +921,7 @@ export default function InventorySnapshotsPage() {
         setNameSyncProcessingKey(processingKey);
         setNameSyncError("");
         setNameSyncResult("");
+        setNameSyncDetails([]);
 
         try {
             const res = await fetchInventoryApi("/api/inventory/snapshot/name-sync", {
@@ -924,6 +936,7 @@ export default function InventorySnapshotsPage() {
             const json = await res.json() as {
                 ok?: boolean;
                 error?: string;
+                results?: InventoryDailySyncResult[];
                 syncedCount?: number;
                 reviewRequiredCount?: number;
                 failedCount?: number;
@@ -935,6 +948,7 @@ export default function InventorySnapshotsPage() {
             }
 
             if (nameSyncBusinessDateRef.current !== businessDate) return;
+            setNameSyncDetails(json.results || []);
             setNameSyncResult(nameSyncT.result(
                 Number(json.syncedCount ?? 0),
                 Number(json.reviewRequiredCount ?? 0),
@@ -1200,34 +1214,18 @@ export default function InventorySnapshotsPage() {
         await fetchItemLogs(selectedPurchaseItem);
     };
 
-    const saveMissingLanguages = async (item: SnapshotLanguageMissingItem) => {
-        if (languageSaveLockRef.current) return;
-        const draft = languageDrafts[item.itemId];
-        if (!draft || item.missingLanguages.some(language => !normalizeInventoryEditText(draft[language] ?? ""))) {
-            setLanguageEditError(prev => ({ ...prev, [item.itemId]: lang === "vi" ? "Vui l\u00f2ng nh\u1eadp t\u00ean." : "\ud488\ubaa9\uba85\uc744 \uc785\ub825\ud574\uc8fc\uc138\uc694." })); return;
-        }
-        languageSaveLockRef.current = true;
-        setLanguageSavingId(item.itemId);
-        setLanguageEditError(prev => ({ ...prev, [item.itemId]: "" }));
-        try {
-            const payload = Object.fromEntries(item.missingLanguages.map(language => [language === "ko" ? "item_name" : "item_name_vi", draft[language]?.trim()]));
-            const res = await fetchInventoryApi("/api/inventory/items", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: item.itemId, payload, source: "edit_form", reason: "other", expectedUpdatedAt: item.lastUpdatedAt ?? null }) });
-            const result = await res.json();
-            if (!res.ok || !result.ok) throw new Error(result.message || c.editFail);
-            setLanguageMissingItems(prev => prev.filter(row => row.itemId !== item.itemId));
-            setLanguageDrafts(prev => { const next = { ...prev }; delete next[item.itemId]; return next; });
-            void fetchNameSyncIssues(nameSyncBusinessDateRef.current);
-        } catch (error) { setLanguageEditError(prev => ({ ...prev, [item.itemId]: error instanceof Error ? error.message : c.editFail })); }
-        finally { languageSaveLockRef.current = false; setLanguageSavingId(null); }
-    };
+    
 
-    const openInventoryItemEdit = (itemIdValue: number | null) => {
+    const openInventoryItemEdit = (itemIdValue: number | null, focusLanguage?: "ko" | "vi") => {
+        if (editingItemIdRef.current !== null) return;
         const itemId = Number(itemIdValue);
         if (!Number.isFinite(itemId) || itemId <= 0) {
             alert(c.noData);
             return;
         }
 
+        editingItemIdRef.current = itemId;
+        setEditorFocusLanguage(focusLanguage);
         setEditingItemId(itemId);
     };
 
@@ -1436,6 +1434,7 @@ export default function InventorySnapshotsPage() {
         setNameSyncCanRun(false);
         setNameSyncError("");
         setNameSyncResult("");
+        setNameSyncDetails([]);
         setLogModalItem(null);
         setLoadingItems(nextViewMode === "snapshot");
         setLoadingMovements(true);
@@ -1450,6 +1449,7 @@ export default function InventorySnapshotsPage() {
         setNameSyncCanRun(false);
         setNameSyncError("");
         setNameSyncResult("");
+        setNameSyncDetails([]);
         setNameSyncProcessingKey(null);
 
         if (!nameSyncBusinessDate) {
@@ -2337,18 +2337,7 @@ export default function InventorySnapshotsPage() {
                 </div>
 
                 {loadingBatches ? (
-                    <div
-                        style={{
-                            height: 120,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            color: "#9ca3af",
-                            fontSize: 13,
-                        }}
-                    >
-                        {c.loading}
-                    </div>
+                    <InventoryLoadingCard lang={lang} minHeight={120} testId="snapshot-calendar-loading" />
                 ) : batchList.length === 0 ? (
                     <div
                         style={{
@@ -2596,7 +2585,7 @@ export default function InventorySnapshotsPage() {
                                     </div>
                                     <button
                                         type="button"
-                                        onClick={() => setLanguageDrafts(prev => ({ ...prev, [item.itemId]: prev[item.itemId] ?? Object.fromEntries(item.missingLanguages.map(language => [language, ""])) }))}
+                                        onClick={() => openInventoryItemEdit(item.itemId, item.missingLanguages[0])}
                                         style={{
                                             flexShrink: 0,
                                             padding: "6px 10px",
@@ -2612,11 +2601,7 @@ export default function InventorySnapshotsPage() {
                                     >
                                         {languageMissingT.editItem}
                                     </button>
-                                    {languageDrafts[item.itemId] && <div style={{ flexBasis: "100%", display: "grid", gap: 6 }}>
-                                        {item.missingLanguages.map(language => <label key={language}>{language === "ko" ? languageMissingT.missingKo : languageMissingT.missingVi}<input style={ui.input} value={languageDrafts[item.itemId][language] ?? ""} onChange={event => setLanguageDrafts(prev => ({ ...prev, [item.itemId]: { ...prev[item.itemId], [language]: event.target.value } }))} /></label>)}
-                                        {languageEditError[item.itemId] && <span role="alert">{languageEditError[item.itemId]}</span>}
-                                        <button type="button" style={ui.button} disabled={languageSavingId !== null} onClick={() => void saveMissingLanguages(item)}>{languageSavingId === item.itemId ? c.saving : c.save}</button>
-                                    </div>}
+                                    
                                 </div>
                             ))}
                         </div>
@@ -2625,59 +2610,7 @@ export default function InventorySnapshotsPage() {
             )}
 
             {isDateContentLoading ? (
-                <div
-                    data-testid="snapshot-date-content-loading"
-                    role="status"
-                    aria-live="polite"
-                    style={{
-                        ...ui.card,
-                        minHeight: 180,
-                        marginBottom: 16,
-                        display: "grid",
-                        placeItems: "center",
-                        color: "#6b7280",
-                        fontSize: 13,
-                        fontWeight: 700,
-                        textAlign: "center",
-                    }}
-                >
-                    <span
-                        style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            gap: 8,
-                            maxWidth: "100%",
-                        }}
-                    >
-                        <span
-                            className="snapshot-date-loading-spinner"
-                            aria-hidden="true"
-                        />
-                        <span>{c.loading}</span>
-                    </span>
-                    <style>{`
-                        @keyframes snapshot-date-loading-spin {
-                            to { transform: rotate(360deg); }
-                        }
-                        .snapshot-date-loading-spinner {
-                            width: 19px;
-                            height: 19px;
-                            flex: 0 0 auto;
-                            box-sizing: border-box;
-                            border: 2px solid #d1d5db;
-                            border-top-color: #6b7280;
-                            border-radius: 50%;
-                            animation: snapshot-date-loading-spin 0.8s linear infinite;
-                        }
-                        @media (prefers-reduced-motion: reduce) {
-                            .snapshot-date-loading-spinner {
-                                animation: none;
-                                border-top-color: #9ca3af;
-                            }
-                        }
-                    `}</style>
-                </div>
+                <InventoryLoadingCard lang={lang} testId="snapshot-date-content-loading" marginBottom={16} />
             ) : (
                 <>
 
@@ -2888,6 +2821,8 @@ export default function InventorySnapshotsPage() {
                     {nameSyncError}
                 </div>
             )}
+
+            <InventoryDailySyncResults results={nameSyncDetails} businessDate={nameSyncBusinessDate || ""} lang={lang} />
 
             {nameSyncBusinessDate && nameSyncItems.length === 0 && nameSyncResult && (
                 <div
@@ -3267,7 +3202,7 @@ export default function InventorySnapshotsPage() {
                     </div>
 
                     {loadingMovements ? (
-                        <div>{c.loading}</div>
+                        <InventoryLoadingCard lang={lang} testId="snapshot-movements-loading" />
                     ) : otherMovementGroups.length === 0 ? (
                         <div style={ui.metaText}>{c.noData}</div>
                     ) : (
@@ -3620,21 +3555,7 @@ export default function InventorySnapshotsPage() {
                 </div>
 
                 {loadingItems ? (
-                    <div
-                        style={{
-                            height: 160,
-                            display: "flex",
-                            flexDirection: "column",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            color: "#9ca3af",
-                            fontSize: 13,
-                            gap: 6,
-                        }}
-                    >
-                        <div style={{ fontSize: 22 }}>⏳</div>
-                        <div>{c.loading}</div>
-                    </div>
+                    <InventoryLoadingCard lang={lang} minHeight={160} testId="snapshot-items-loading" />
                 ) : viewMode === "snapshot" && !selectedBatchId ? (
                     <div
                         style={{
@@ -3962,7 +3883,7 @@ export default function InventorySnapshotsPage() {
                                     : lang === "vi" ? "Nhật ký đã chọn" : "선택한 로그"}
                             </div>
                             {isItemLogsLoading ? (
-                                <div>{c.loading}</div>
+                                <InventoryLoadingCard lang={lang} testId="snapshot-item-logs-loading" />
                             ) : itemLogsError ? (
                                 <div>{itemLogsError}</div>
                             ) : selectedPurchaseAggregate ? (
@@ -4434,16 +4355,28 @@ export default function InventorySnapshotsPage() {
                     </div>
                 </div>
             )}
-            {editingItemId !== null && <div ref={editorDialogRef} role="dialog" aria-modal="true" aria-label={t.editItem} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,.45)", overflowY: "auto", overscrollBehavior: "contain" }}>
-                <div style={{ background: "white", maxWidth: 800, margin: "16px auto", padding: 12, borderRadius: 12 }}>
-                    <button type="button" style={ui.subButton} disabled={editorBusy} onClick={() => setEditingItemId(null)}>{c.close}</button>
-                    <InventoryEditor key={editingItemId} embeddedItemId={editingItemId} onBusyChange={setEditorBusy} onClose={() => setEditingItemId(null)} onSaved={() => {
-                        setEditingItemId(null);
+            {editingItemId !== null && <div ref={editorDialogRef} role="dialog" aria-modal="true" aria-labelledby="inventory-editor-title" className={editorStyles.overlay}>
+                <div className={editorStyles.panel} data-testid="inventory-editor-panel">
+                    <header className={editorStyles.header}>
+                        <h2 id="inventory-editor-title" className={editorStyles.title}>{lang === "ko" ? "\uD488\uBAA9 \uC218\uC815" : "S\u1EEDa m\u1EB7t h\u00E0ng"}</h2>
+                        <button type="button" className={editorStyles.close} aria-label={c.close} disabled={editorBusy} onClick={() => closeInventoryEditor()}>{"\u2715"}</button>
+                    </header>
+                    <div className={editorStyles.content} data-testid="inventory-editor-scroll">
+                    <InventoryEditor key={editingItemId} itemId={editingItemId} embedded focusLanguage={editorFocusLanguage} onBusyChange={handleEditorBusyChange} onClose={() => closeInventoryEditor()} onSaved={(savedItem) => {
+                        setLanguageMissingItems(previous => previous.flatMap(row => {
+                            if (row.itemId !== savedItem.id) return [row];
+                            const missingLanguages: ("ko" | "vi")[] = [];
+                            if (!normalizeInventoryEditText(savedItem.item_name || "")) missingLanguages.push("ko");
+                            if (!normalizeInventoryEditText(savedItem.item_name_vi || "")) missingLanguages.push("vi");
+                            return missingLanguages.length ? [{ ...row, currentItemName: savedItem.item_name || null, currentItemNameVi: savedItem.item_name_vi || null, missingLanguages }] : [];
+                        }));
+                        closeInventoryEditor(true);
                         void fetchNameSyncIssues(activeBusinessDateKey);
                         if (viewMode === "snapshot" && selectedBatchId) void fetchSnapshotItems(selectedBatchId);
                         else void fetchMovementItems(activeBusinessDateKey);
                         if (logModalItem) void fetchItemLogs(logModalItem);
                     }} />
+                    </div>
                 </div>
             </div>}
         </Container>

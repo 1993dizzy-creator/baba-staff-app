@@ -48,8 +48,8 @@ test('missing root ID never executes a repair',async()=>{
 });
 const candidate={safe:true,code:'READY',inventoryLogId:12581,businessDate:'2026-10-05',quantity:1.42,effectiveQuantity:1.42,unit:'kg',price:35000,supplier:'Ch?',oldAmount:49700,newAmount:46200,delta:-3500};
 function client({candidates=[candidate],recommended=true,vi=false,postCode=null,supplier=null,previewResponse=null,postResponse=null,code="PURCHASE_CORRECTION_REFERENCE_REQUIRED"}={}){
- const states=[],elements=[],requests=[];let cursor=0,reloaded=0;
- const hooks={...React,useState(initial){const n=cursor++;if(!(n in states))states[n]=initial;return [states[n],value=>{states[n]=value;}];}};
+ const states=[],refs=[],elements=[],requests=[];let cursor=0,refCursor=0,reloaded=0;
+ const hooks={...React,useRef(initial){const n=refCursor++;if(!(n in refs))refs[n]={current:initial};return refs[n];},useState(initial){const n=cursor++;if(!(n in states))states[n]=initial;return [states[n],value=>{states[n]=value;}];}};
  const captured={...jsxRuntime,jsx(...args){const element=jsxRuntime.jsx(...args);elements.push(element);return element;},jsxs(...args){const element=jsxRuntime.jsxs(...args);elements.push(element);return element;}};
  const Component=load('components/ledger/InventoryProjectionResolution.tsx',{
   react:hooks,'react/jsx-runtime':captured,'next/link':{default:props=>React.createElement('a',{href:props.href},props.children)},
@@ -61,9 +61,10 @@ function client({candidates=[candidate],recommended=true,vi=false,postCode=null,
  const oldFetch=globalThis.fetch;
  globalThis.fetch=async(url,options={})=>{requests.push({url,options});if(options.method==='POST'&&postResponse)return postResponse();if(options.method!=='POST'&&previewResponse)return previewResponse();return Response.json(options.method==='POST'?{ok:!postCode,code:postCode}:{ok:true,candidates,recommended},{status:options.method==='POST'&&postCode?409:200});};
  return {
- render(){cursor=0;elements.length=0;return renderToStaticMarkup(React.createElement(Component,{issue,vi,onResolved:async()=>{reloaded++;}}));},
+ render(){cursor=0;refCursor=0;elements.length=0;return renderToStaticMarkup(React.createElement(Component,{issue,vi,onResolved:async()=>{reloaded++;}}));},
  button(label){return elements.find(e=>e.type==='button'&&e.props.children===label);},
  select(){return elements.find(e=>e.type==='select');},
+ checkbox(){return elements.find(e=>e.type==='input'&&e.props.type==='checkbox');},
  sheet(){return elements.find(e=>e.props.mobileCentered);},
  requests,reloaded:()=>reloaded,close(){globalThis.fetch=oldFetch;},
  };
@@ -195,9 +196,74 @@ for(const vi of [false,true])test('four correction states render in '+(vi?'VI':'
  const contract=load('lib/inventory/purchase-repair-contract.ts',{});
  const expected=vi?['Phiếu nhập gốc đã bị hủy','Cần xác nhận thay đổi số tiền','Cần xác nhận phiếu nhập gốc','Đã điều chỉnh sổ kế toán']:['원본 입고 취소됨','금액 변경 확인 필요','원본 입고 연결 확인 필요','장부 정정 완료'];
  for(const [i,code] of ['PURCHASE_ORIGINAL_CANCELLED','PURCHASE_AMOUNT_CONFIRMATION_REQUIRED','PURCHASE_CORRECTION_REFERENCE_REQUIRED','REBOOKED'].entries())assert.equal(contract.purchaseRepairState(code,vi),expected[i]);
- const state=client({vi,code:'PURCHASE_ORIGINAL_CANCELLED',candidates:[{...candidate,newAmount:0,delta:-49700}]});try{let html=state.render();assert.ok(html.includes(expected[0]));await state.button(labels(vi).open).props.onClick();html=state.render();assert.ok(html.includes(expected[0]));assert.equal(state.sheet().props.kind,'bottom');assert.equal(state.sheet().props.mobileCentered,true);assert.match(html,/0₫/);}finally{state.close();}
+ const state=client({vi,code:'PURCHASE_ORIGINAL_CANCELLED',candidates:[{...candidate,newAmount:0,delta:-49700}]});try{let html=state.render();assert.ok(html.includes(expected[0]));await state.button(labels(vi).open).props.onClick();html=state.render();assert.ok(html.includes(expected[0]));assert.equal(state.sheet().props.kind,'full');assert.equal(state.sheet().props.compact,true);assert.equal(state.sheet().props.mobileCentered,true);assert.match(html,/0₫/);}finally{state.close();}
 });
 
 test('price-only preview retains quantity and supplier-change preview shows both parties',async()=>{
  const state=client({code:'PURCHASE_AMOUNT_CONFIRMATION_REQUIRED',candidates:[{...candidate,quantityDelta:0,newSupplier:'New supplier'}]});try{state.render();await state.button('해결하기').props.onClick();const html=state.render();assert.match(html,/1.42kg → <span class="decrease">1.42kg/);assert.ok(html.includes('Ch? → New supplier'));}finally{state.close();}
+});
+const supplierCandidate={...candidate,safe:false,code:'SUPPLIER_CHANGE_CONFIRMATION_REQUIRED',quantityDelta:0,newAmount:49700,delta:0,supplier:'Chợ',newSupplier:'An Liên',supplierChange:{valid:true,requiresConfirmation:true,beforeSupplier:'Chợ',afterSupplier:'An Liên',beforePartnerId:'7',afterPartnerId:'27',confirmationFingerprint:'a'.repeat(64)}};
+
+test('explicit supplier confirmation uses V2 and exactly the signed server actor',async()=>{
+ for(const role of ['owner','master']){
+  const state=api(role);const response=await state.post({purchaseLogId:12581,supplierConfirmation:{confirmed:true,fingerprint:'a'.repeat(64)},actorUserId:123});
+  assert.equal(response.status,200);
+  assert.deepEqual(state.calls,[{name:'ledger_resolve_inventory_purchase_correction_v2',args:{p_inventory_log_id:12655,p_purchase_log_id:12581,p_actor_user_id:7,p_supplier_confirmation:{confirmed:true,fingerprint:'a'.repeat(64)}}}]);
+ }
+});
+test('invalid supplier approvals cannot execute any RPC',async()=>{
+ const state=api();
+ for(const supplierConfirmation of [null,[],{},true,{confirmed:'true',fingerprint:'a'.repeat(64)},{confirmed:false,fingerprint:'a'.repeat(64)},{confirmed:true,fingerprint:'stale'},{confirmed:true,fingerprint:'a'.repeat(64),actorUserId:1}]){
+  const response=await state.post({purchaseLogId:12581,supplierConfirmation});assert.equal(response.status,400);assert.equal((await response.json()).code,'INVALID_SUPPLIER_CONFIRMATION');
+ }
+ assert.equal(state.calls.length,0);
+ for(const purchaseLogId of [true,false,'',{},[]])assert.equal((await state.post({purchaseLogId})).status,400);
+});
+test('V2 block reasons remain concrete and no fallback RPC bypasses a rejection',async()=>{
+ for(const code of ['SUPPLIER_CHANGE_CONFIRMATION_STALE','PAYABLE_ALREADY_PAID','MONTH_CLOSED','MANUAL_LEDGER_OVERRIDE','SUPPLIER_MISMATCH','SUPPLIER_CORRECTION_ORDER_REQUIRED']){
+  const state=api('owner',{status:'blocked',code});const response=await state.post({purchaseLogId:12581,supplierConfirmation:{confirmed:true,fingerprint:'a'.repeat(64)}});
+  assert.equal(response.status,409);assert.equal((await response.json()).code,code);assert.equal(state.calls.length,1);assert.equal(state.calls[0].name,'ledger_resolve_inventory_purchase_correction_v2');
+ }
+});
+for(const vi of [false,true])test('zero amount difference supplier repair requires explicit approval in '+(vi?'VI':'KO'),async()=>{
+ const state=client({vi,candidates:[supplierCandidate],recommended:false,code:'SUPPLIER_CHANGE_CONFIRMATION_REQUIRED'});try{
+  state.render();await state.button(labels(vi).open).props.onClick();state.render();state.select().props.onChange({target:{value:'12581'}});
+  const html=state.render();assert.ok(html.includes('Chợ'));assert.ok(html.includes('An Liên'));assert.match(html,/49,700₫/);assert.match(html,/0₫/);
+  assert.doesNotMatch(html,/금액 변경 확인 필요|Cần xác nhận thay đổi số tiền|0kg|수정 수량|Số lượng điều chỉnh/);
+  assert.equal(state.button(labels(vi).save).props.disabled,true);
+  await state.button(labels(vi).save).props.onClick();assert.equal(state.requests.length,1);
+  state.checkbox().props.onChange({target:{checked:true}});state.render();assert.equal(state.button(labels(vi).save).props.disabled,false);
+  await state.button(labels(vi).save).props.onClick();assert.equal(state.reloaded(),1);
+  assert.deepEqual(JSON.parse(state.requests[1].options.body),{purchaseLogId:12581,supplierConfirmation:{confirmed:true,fingerprint:'a'.repeat(64)}});
+ }finally{state.close();}
+});
+test('root changes and stale fingerprints reset explicit approval and block reuse',async()=>{
+ const other={...supplierCandidate,inventoryLogId:12580,supplierChange:{...supplierCandidate.supplierChange,confirmationFingerprint:'b'.repeat(64)}};
+ const state=client({candidates:[supplierCandidate,other],recommended:false,postCode:'SUPPLIER_CHANGE_CONFIRMATION_STALE'});try{
+  state.render();await state.button(labels(false).open).props.onClick();state.render();state.select().props.onChange({target:{value:'12581'}});state.render();
+  state.checkbox().props.onChange({target:{checked:true}});state.render();state.select().props.onChange({target:{value:'12580'}});state.render();
+  assert.equal(state.checkbox().props.checked,false);assert.equal(state.button(labels(false).save).props.disabled,true);
+  state.checkbox().props.onChange({target:{checked:true}});state.render();await state.button(labels(false).save).props.onClick();
+  const html=state.render();assert.match(html,/확인 정보가 만료/);assert.equal(state.button(labels(false).save).props.disabled,true);assert.equal(state.checkbox(),undefined);assert.equal(state.reloaded(),0);
+ }finally{state.close();}
+});
+test('unsafe supplier changes never expose an approval checkbox',async()=>{
+ for(const code of ['PAYABLE_ALREADY_PAID','MONTH_CLOSED','MANUAL_LEDGER_OVERRIDE','SUPPLIER_MISMATCH','SUPPLIER_REFERENCE_REQUIRED']){
+  const state=client({candidates:[{...supplierCandidate,code}],recommended:true});try{state.render();await state.button(labels(false).open).props.onClick();state.render();assert.equal(state.checkbox(),undefined);assert.equal(state.button(labels(false).save).props.disabled,true);}finally{state.close();}
+ }
+});
+test('duplicate explicit approval sends only one request while response is pending',async()=>{
+ let finish;const pending=new Promise(resolve=>{finish=resolve;});const state=client({candidates:[supplierCandidate],postResponse:()=>pending});try{
+  state.render();await state.button(labels(false).open).props.onClick();state.render();state.checkbox().props.onChange({target:{checked:true}});state.render();
+  const save=state.button(labels(false).save);const first=save.props.onClick();await save.props.onClick();assert.equal(state.requests.filter(row=>row.options.method==='POST').length,1);
+  finish(Response.json({ok:true,status:'synced'}));await first;assert.equal(state.reloaded(),1);
+ }finally{state.close();}
+});
+
+
+test('failed supplier approval releases the request lock for a fresh preview',async()=>{
+ const state=client({candidates:[supplierCandidate],postCode:'SUPPLIER_CHANGE_CONFIRMATION_STALE'});try{
+  state.render();await state.button(labels(false).open).props.onClick();state.render();state.checkbox().props.onChange({target:{checked:true}});state.render();await state.button(labels(false).save).props.onClick();state.render();
+  await state.button('최신 정보 다시 조회').props.onClick();state.render();assert.equal(state.requests.filter(row=>!row.options.method).length,2);assert.equal(state.checkbox().props.checked,false);assert.equal(state.button(labels(false).save).props.disabled,true);
+ }finally{state.close();}
 });

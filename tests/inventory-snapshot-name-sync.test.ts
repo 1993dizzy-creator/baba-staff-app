@@ -281,12 +281,12 @@ test("the API reuses shared log sync and existing Ledger projection with partial
   assert.doesNotMatch(route, /\.from\("ledger/);
 });
 
-test("snapshot sync updates metadata/economics and recomputes total without changing quantities", () => {
+test("snapshot sync preserves historical economics and quantities while updating display metadata", () => {
   const block = route.slice(route.indexOf("async function syncSnapshotItem"), route.indexOf("async function runItemSync"));
-  for (const field of ["item_name", "item_name_vi", "part", "category", "category_vi", "code", "unit", "purchase_price", "supplier", "total_purchase_price"]) {
+  for (const field of ["item_name", "item_name_vi", "part", "category", "category_vi", "code", "unit"]) {
     assert.match(block, new RegExp(`${field}:`));
   }
-  assert.match(block, /quantity \* price/);
+  assert.doesNotMatch(block, /purchase_price:|supplier:|total_purchase_price:/);
   assert.doesNotMatch(block, /\bquantity:\s/);
   assert.doesNotMatch(block, /prev_quantity:\s/);
   assert.doesNotMatch(block, /change_quantity:\s/);
@@ -318,7 +318,7 @@ test("GET separates all-active language gaps from business-date daily sync items
   );
 });
 
-test("language alert is separate, hidden at zero, labels gaps, falls back by UI language and opens inline language editor", () => {
+test("language alert is separate, hidden at zero, labels gaps, falls back by UI language and opens shared item editor", () => {
   assert.match(page, /\{languageMissingItems\.length > 0 && \(/);
   assert.match(page, /data-testid="inventory-language-missing-banner"/);
   assert.match(page, /한글명 미설정/);
@@ -326,7 +326,8 @@ test("language alert is separate, hidden at zero, labels gaps, falls back by UI 
   assert.match(page, /currentItemNameVi \|\| item\.currentItemName/);
   assert.match(page, /currentItemName \|\| item\.currentItemNameVi/);
   assert.match(page, /품목 수정/);
-  assert.match(page, /setLanguageDrafts/);
+  assert.match(page, /openInventoryItemEdit\(item.itemId, item.missingLanguages\[0\]\)/);
+  assert.doesNotMatch(page, /setLanguageDrafts|saveMissingLanguages/);
   assert.match(page, /setEditingItemId\(itemId\)/);
 });
 
@@ -379,25 +380,21 @@ test("date selection immediately clears dated content and shows a scoped loading
   assert.match(page, /setSnapshotItems\(\[\]\);[\s\S]*setMovementItems\(\[\]\);[\s\S]*setNameSyncItems\(\[\]\)/);
   assert.match(page, /beginDateContentTransition\("snapshot"\);[\s\S]*setSelectedBatchId\(nextBatchId\)/);
   assert.match(page, /beginDateContentTransition\("current"\);[\s\S]*setSelectedBatchId\(null\)/);
-  assert.match(page, /data-testid="snapshot-date-content-loading"/);
+  assert.match(page, /testId="snapshot-date-content-loading"/);
   assert.match(page, /\{isDateContentLoading \? \([\s\S]*\{nameSyncBusinessDate && nameSyncItems\.length > 0/);
 });
 
 test("date loading card uses a compact accessible CSS-only spinner", () => {
-  const loadingCard = page.slice(
-    page.indexOf('data-testid="snapshot-date-content-loading"'),
-    page.indexOf("{nameSyncBusinessDate && nameSyncItems.length > 0")
-  );
-  assert.match(loadingCard, /snapshot-date-loading-spinner/);
-  assert.match(loadingCard, /width: 19px/);
-  assert.match(loadingCard, /height: 19px/);
-  assert.match(loadingCard, /display: "inline-flex"/);
-  assert.match(loadingCard, /alignItems: "center"/);
-  assert.match(loadingCard, /\{c\.loading\}/);
-  assert.match(loadingCard, /@keyframes snapshot-date-loading-spin/);
-  assert.match(loadingCard, /transform: rotate\(360deg\)/);
-  assert.match(loadingCard, /@media \(prefers-reduced-motion: reduce\)/);
-  assert.match(loadingCard, /animation: none/);
+  const component = read("components/inventory/InventoryLoadingCard.tsx");
+  const css = read("components/inventory/InventoryLoadingCard.module.css");
+  assert.match(component, /role="status"/);
+  assert.match(component, /aria-live="polite"/);
+  assert.match(component, /aria-hidden="true"/);
+  assert.match(css, /width: 19px/);
+  assert.match(css, /height: 19px/);
+  assert.match(css, /@keyframes inventory-loading-spin/);
+  assert.match(css, /prefers-reduced-motion: reduce/);
+  assert.match(css, /animation: none/);
 });
 
 test("snapshot and movement requests ignore stale success, failure and finally paths", () => {
@@ -432,4 +429,36 @@ test("positive linked correction is not a second purchase root for metadata-only
   assert.equal(result[0].targets.length, 1);
   assert.equal(result[0].targets[0].purchaseLogId, 101);
   assert.equal(result[0].targets[0].correctionLogId, 103);
+});
+
+
+test("pear #314 preserves 10/09 Chợ economics despite 10/10 An Liên master and purchase", () => {
+  const oldRoot = log({ id: 12848, item_id: 314, business_date: "2026-10-09", created_at: "2026-10-09T04:00:00Z", item_name: "배", new_supplier: "Chợ", new_purchase_price: 35000, purchase_supplier_partner_id: 7 });
+  const oldEdit = correction({ id: 12849, item_id: 314, business_date: "2026-10-09", created_at: "2026-10-09T04:01:00Z", item_name: "배", new_supplier: "Chợ", new_purchase_price: 35000, purchase_supplier_partner_id: 7 });
+  const newRoot = log({ id: 12900, item_id: 314, business_date: "2026-10-10", created_at: "2026-10-10T04:00:00Z", item_name: "배", new_supplier: "An Liên", new_purchase_price: 40000, purchase_supplier_partner_id: 27 });
+  const current = inventory({ id: 314, item_name: "배", supplier: "An Liên", purchase_price: 40000, supplier_partner_id: 27 });
+  const all = [oldRoot, oldEdit, newRoot];
+  assert.deepEqual(findInventoryLogNameSyncItems("2026-10-09", all, [current]), []);
+  const renamed = findInventoryLogNameSyncItems("2026-10-09", all, [{ ...current, item_name: "신선한 배" }]);
+  assert.equal(renamed.length, 1);
+  assert.deepEqual(renamed[0].changes.map(change => change.field), ["item_name"]);
+  assert.equal(renamed[0].targets[0].syncItem.supplier, "Chợ");
+  assert.equal(renamed[0].targets[0].syncItem.purchase_price, 35000);
+  assert.equal(renamed[0].targets[0].syncItem.supplier_partner_id, 7);
+  assert.equal(newRoot.new_supplier, "An Liên");
+  assert.deepEqual(findInventoryLogNameSyncItems("2026-10-10", all, [current]), []);
+});
+
+test("explicit correction identity never applies to an unrelated later purchase", () => {
+  const rows = [log(), log({ id: 103, created_at: "2026-09-23T09:10:00Z" }), correction({ id: 104, created_at: "2026-09-23T09:20:00Z", correction_of_inventory_log_id: 101 })];
+  const items = detect(rows);
+  assert.deepEqual(items[0].logIds, [101]);
+  assert.equal(items[0].targets[0].correctionLogId, 104);
+});
+
+test("null economics on a display correction preserve the original economic values", () => {
+  const items = detect([log(), correction({ new_purchase_price: null, new_supplier: null, purchase_supplier_partner_id: null })]);
+  assert.equal(items[0].targets[0].syncItem.purchase_price, 75000);
+  assert.equal(items[0].targets[0].syncItem.supplier, "Chợ");
+  assert.equal(items[0].targets[0].syncItem.supplier_partner_id, 7);
 });

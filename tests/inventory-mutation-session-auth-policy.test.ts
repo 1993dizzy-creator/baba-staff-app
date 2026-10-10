@@ -66,10 +66,9 @@ test("inventory mutation clients send no actor identity and share 401 handling",
   assert.doesNotMatch(inventoryPage, /updated_by_username/);
   assert.doesNotMatch(inventoryPage, /params\.set\("actorUsername"/);
 
-  const mutationSection = inventoryPage.slice(
-    inventoryPage.indexOf("const handleEditReasonConfirm"),
-    inventoryPage.indexOf("const canReplaceKeg")
-  );
+  const mutationSection = read("components/inventory/InventoryItemEditor.tsx");
+  assert.match(mutationSection, /fetchInventoryApi/);
+  assert.match(mutationSection, /expectedUpdatedAt/);
   assert.doesNotMatch(mutationSection, /\bactorUsername\b|\bactorName\b/);
 
   assert.match(inventoryClient, /const response = await fetch\(input, init\)/);

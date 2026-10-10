@@ -11,6 +11,7 @@ import {
   type InventoryDailySyncLogRow,
   type InventoryDailySyncPlan,
 } from "@/lib/inventory/snapshot-name-sync";
+import type { InventoryDailySyncResult, InventoryDailySyncTargetResult } from "@/lib/inventory/daily-sync-result";
 import { projectInventoryPurchaseLogs } from "@/lib/ledger/inventory-projection";
 import {
   findInventoryLanguageMissingItems,
@@ -113,9 +114,8 @@ async function syncSnapshotItem(
   if (rows.error) throw rows.error;
 
   for (const row of rows.data ?? []) {
-    const quantity = Number(row.change_quantity ?? 0);
-    const price = item.purchase_price === null ? null : Number(item.purchase_price);
-    const totalPurchasePrice = price === null || !Number.isFinite(quantity) ? null : quantity * price;
+    // Snapshots are closing balances without an original-purchase identity.
+    // Keep their historical money/payee unchanged; only synchronize display fields.
     const result = await supabase.from("inventory_snapshot_items").update({
       item_name: item.item_name,
       item_name_vi: item.item_name_vi,
@@ -124,9 +124,6 @@ async function syncSnapshotItem(
       category_vi: item.category_vi,
       code: item.code,
       unit: item.unit,
-      purchase_price: item.purchase_price,
-      supplier: item.supplier,
-      total_purchase_price: totalPurchasePrice,
     }).eq("id", Number(row.id)).eq("batch_id", batchId).eq("item_id", item.id);
     if (result.error) throw result.error;
   }
@@ -145,35 +142,46 @@ async function runItemSync({
   inventoryItem: CurrentInventoryDailySyncRow;
   actorUserId: number;
   snapshotBatchId: number | null;
-}) {
-  if (plan.quantityReviewRequired) {
-    return { itemId: plan.itemId, status: "review_required" as const, code: "QUANTITY_CORRECTION_REQUIRED" };
-  }
-
+}): Promise<InventoryDailySyncResult & { snapshotRowsUpdated: number; purchaseLogIds?: number[] }> {
+  const resultBase = {
+    itemId: plan.itemId, currentItemName: plan.currentItemName, currentItemNameVi: plan.currentItemNameVi,
+  };
+  const targets: InventoryDailySyncTargetResult[] = [];
+  let snapshotRowsUpdated = 0;
   try {
-    const ledgerResults = [];
     for (const target of plan.targets) {
       await syncInventoryLogRowsFromItem({
         supabase,
         item: target.syncItem,
-        purchaseLogIds: [target.purchaseLogId],
+        purchaseLogIds: target.quantityReviewRequired ? [] : [target.purchaseLogId],
+        displayOnlyLogIds: [...target.linkedCorrectionLogIds, ...(target.quantityReviewRequired ? [target.purchaseLogId] : [])],
       });
-      ledgerResults.push(await projectInventoryPurchaseLogs([target.purchaseLogId], actorUserId));
+      if (target.quantityReviewRequired) {
+        await projectInventoryPurchaseLogs([target.purchaseLogId], actorUserId);
+        targets.push({ purchaseLogId: target.purchaseLogId, correctionLogId: target.correctionLogId,
+          status: "review_required", code: "QUANTITY_CORRECTION_REQUIRED" });
+        continue;
+      }
+      const ledger = await projectInventoryPurchaseLogs([target.purchaseLogId], actorUserId);
+      const status = ledger.status === "pending" ? "review_required" : ledger.status;
+      const supplierChanged = target.changes.some(change => change.field === "supplier" || change.field === "supplier_partner_id");
+      const code = status === "review_required" && ledger.code === "PURCHASE_AMOUNT_CONFIRMATION_REQUIRED" && supplierChanged
+        ? "SUPPLIER_CHANGE_CONFIRMATION_REQUIRED" : ledger.code || (status === "synced" ? "SYNCED" : "INVENTORY_DAILY_SYNC_FAILED");
+      targets.push({ purchaseLogId: target.purchaseLogId, correctionLogId: target.correctionLogId, status, code });
     }
-    const snapshotRowsUpdated = await syncSnapshotItem(supabase, snapshotBatchId, inventoryItem);
-    const review = ledgerResults.find((result) => result.status === "review_required" || result.status === "pending");
-    const failed = ledgerResults.find((result) => result.status === "failed");
-    if (failed) return { itemId: plan.itemId, status: "failed" as const, code: failed.code, snapshotRowsUpdated };
-    if (review) return { itemId: plan.itemId, status: "review_required" as const, code: review.code, snapshotRowsUpdated };
-    return {
-      itemId: plan.itemId,
-      status: "synced" as const,
-      purchaseLogIds: plan.logIds,
-      snapshotRowsUpdated,
-    };
+    snapshotRowsUpdated = await syncSnapshotItem(supabase, snapshotBatchId, inventoryItem);
+    const blocking = targets.find(target => target.status === "failed") || targets.find(target => target.status === "review_required");
+    return { ...resultBase, status: blocking?.status || "synced", code: blocking?.code,
+      purchaseLogIds: plan.logIds, targets, snapshotRowsUpdated };
   } catch (error) {
     console.error("[INVENTORY_DAILY_SYNC_ITEM_FAILED]", { itemId: plan.itemId, error });
-    return { itemId: plan.itemId, status: "failed" as const, code: "INVENTORY_DAILY_SYNC_FAILED" };
+    for (const target of plan.targets) {
+      if (!targets.some(row => row.purchaseLogId === target.purchaseLogId)) targets.push({
+        purchaseLogId: target.purchaseLogId, correctionLogId: target.correctionLogId,
+        status: "failed", code: "INVENTORY_DAILY_SYNC_FAILED",
+      });
+    }
+    return { ...resultBase, status: "failed" as const, code: "INVENTORY_DAILY_SYNC_FAILED", targets, snapshotRowsUpdated };
   }
 }
 
@@ -240,7 +248,7 @@ export async function POST(request: Request) {
     for (const plan of plans) {
       const inventoryItem = inventoryById.get(plan.itemId);
       if (!inventoryItem) {
-        results.push({ itemId: plan.itemId, status: "failed" as const, code: "INVENTORY_ITEM_NOT_FOUND" });
+        results.push({ itemId: plan.itemId, currentItemName: plan.currentItemName, currentItemNameVi: plan.currentItemNameVi, status: "failed" as const, code: "INVENTORY_ITEM_NOT_FOUND", targets: plan.targets.map(target => ({ purchaseLogId: target.purchaseLogId, correctionLogId: target.correctionLogId, status: "failed" as const, code: "INVENTORY_ITEM_NOT_FOUND" })) });
         continue;
       }
       results.push(await runItemSync({

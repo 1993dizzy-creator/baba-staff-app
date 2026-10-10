@@ -5,6 +5,8 @@ import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
 import { type ChangeEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
 import { commonText, inventoryText } from "@/lib/text";
+import dynamic from "next/dynamic";
+const InventoryItemEditor = dynamic(() => import("@/components/inventory/InventoryItemEditor"), { ssr: false });
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
@@ -23,7 +25,6 @@ import {
     resolveInventoryDefaultPart,
 } from "@/lib/inventory/parts";
 import {
-    INVENTORY_REASON_EMOJIS,
     INVENTORY_REASON_LABELS,
     getInventoryReasonBadgeMeta,
     getKegReplaceLabel,
@@ -109,12 +110,6 @@ type InventoryItemMutationResult = {
     recommended?: boolean;
 };
 
-type EditFormPendingSave = {
-    id: number;
-    payload: Record<string, unknown>;
-    expectedQuantity: number;
-    expectedUpdatedAt?: string | null;
-};
 
 type KegSalesBreakdown = {
     totalUnits: number;
@@ -341,7 +336,7 @@ const getPhotoUploadErrorMessage = (error?: string, message?: string) => {
     return message || "사진 업로드에 실패했습니다.";
 };
 
-export default function InventoryPageContent({ embeddedItemId, onSaved, onClose, onBusyChange }: { embeddedItemId?: number; onSaved?: () => void; onClose?: () => void; onBusyChange?: (busy: boolean) => void } = {}) {
+export default function InventoryPageContent({ embeddedItemId, onClose, onBusyChange }: { embeddedItemId?: number; onSaved?: () => void; onClose?: () => void; onBusyChange?: (busy: boolean) => void } = {}) {
 
     const currentUser = getUser();
     const canDeleteInventoryItem = isAdmin(currentUser);
@@ -423,11 +418,10 @@ export default function InventoryPageContent({ embeddedItemId, onSaved, onClose,
     const [kegTimeModal, setKegTimeModal] = useState<KegTimeModalState | null>(null);
     const [kegTimeValue, setKegTimeValue] = useState("");
     const [isKegTimeSaving, setIsKegTimeSaving] = useState(false);
-    const [editFormPendingSave, setEditFormPendingSave] =
-        useState<EditFormPendingSave | null>(null);
-    const [isEditReasonSaving, setIsEditReasonSaving] = useState(false);
-    const [purchaseCorrectionRoots, setPurchaseCorrectionRoots] = useState<PurchaseRoot[] | null>(null);
-    const [selectedPurchaseRootId, setSelectedPurchaseRootId] = useState<number | null>(null);
+    
+    
+    
+    
     const [logModalItem, setLogModalItem] = useState<InventoryItem | null>(null);
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
@@ -1358,76 +1352,11 @@ export default function InventoryPageContent({ embeddedItemId, onSaved, onClose,
         alert(result.message || (action === "edit" ? c.editFail : c.saveFail));
     };
 
-    const closeEditReasonModal = () => {
-        if (isEditReasonSaving) return;
-        setEditFormPendingSave(null);
-        setPurchaseCorrectionRoots(null);
-        setSelectedPurchaseRootId(null);
-    };
+    
 
-    useEffect(() => { onBusyChange?.(isEditReasonSaving || isSubmitting); }, [isEditReasonSaving, isSubmitting, onBusyChange]);
-    const editSaveLockRef = useRef(false);
-    const handleEditReasonConfirm = async (reason: QuickReasonValue) => {
-        if (!editFormPendingSave || isEditReasonSaving || editSaveLockRef.current) return;
-        editSaveLockRef.current = true;
-        onBusyChange?.(true);
-
-        setIsEditReasonSaving(true);
-
-        try {
-            const res = await fetchInventoryApi("/api/inventory/items", {
-                method: "PATCH",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    id: editFormPendingSave.id,
-                    payload: editFormPendingSave.payload,
-                    source: "edit_form",
-                    reason,
-                    expectedQuantity: editFormPendingSave.expectedQuantity,
-                    expectedUpdatedAt: editFormPendingSave.expectedUpdatedAt,
-                    ...(reason === "purchase" && selectedPurchaseRootId !== null ? {
-                        selectedPurchaseRootId,
-                        expectedQuantity: editFormPendingSave.expectedQuantity,
-                    } : {}),
-                }),
-            });
-
-            const result = await readInventoryItemMutationResult(res, "edit");
-            if (!result) return;
-
-            if (!res.ok || !result.ok) {
-                if (reason === "purchase" && result.error === "purchase_correction_selection_required") {
-                    setPurchaseCorrectionRoots(result.candidates ?? []);
-                    setSelectedPurchaseRootId(result.recommended ? result.candidates?.[0]?.id ?? null : null);
-                    return;
-                }
-                if (reason === "purchase" && result.error === "purchase_correction_root_not_found") {
-                    alert(lang === "vi" ? "Không tìm thấy lô nhập gốc có thể liên kết. Vui lòng kiểm tra lịch sử kho." : "연결 가능한 원입고를 찾지 못했습니다. 재고 이력을 확인해주세요.");
-                    return;
-                }
-                handleInventoryItemMutationFailure(res, result, "edit");
-                return;
-            }
-
-            if (embeddedItemId) { onSaved?.(); return; }
-            alert(c.editSuccess);
-            setEditFormPendingSave(null);
-            setPurchaseCorrectionRoots(null);
-            setSelectedPurchaseRootId(null);
-            await Promise.all([fetchInventory(), fetchRecentLogs()]);
-            resetForm();
-            setIsFormOpen(false);
-            itemNameRef.current?.focus();
-        } catch {
-            alert(c.editFail);
-        } finally {
-            editSaveLockRef.current = false;
-            onBusyChange?.(false);
-            setIsEditReasonSaving(false);
-        }
-    };
+    useEffect(() => { onBusyChange?.(isSubmitting); }, [isSubmitting, onBusyChange]);
+    
+    
 
     const handleDelete = async (id: number) => {
         if (isDeletingId === id) return;
@@ -1645,71 +1574,7 @@ export default function InventoryPageContent({ embeddedItemId, onSaved, onClose,
     const preserveUnchangedPurchasePrice = (draft: string, original: InventoryItem["purchase_price"]) =>
         draft === formatExistingPurchasePrice(original) ? (original == null ? null : Number(original)) : parsePrice(draft);
 
-    const handleEdit = (item: InventoryItem) => {
-        const nextPart: InventoryPartValue = isInventoryPart(item.part)
-            ? item.part
-            : defaultPart;
-        const matchedCategory = resolveInventoryCategoryOption(
-            nextPart,
-            item.category,
-            item.category_vi
-        );
-        const nextCategory = matchedCategory
-            ? matchedCategory[lang]
-            : getInventoryCategoryLabel(nextPart, item.category, item.category_vi, lang);
-        const nextCategoryOptions =
-            CATEGORY_OPTIONS_BY_PART[nextPart as keyof typeof CATEGORY_OPTIONS_BY_PART] ?? [];
-        const nextItemName =
-            lang === "vi"
-                ? item.item_name_vi || item.item_name || ""
-                : item.item_name || item.item_name_vi || "";
-
-        setIsFormOpen(true);
-        setIsRegistrationTypeModalOpen(false);
-        setRegistrationType(null);
-        clearFormPhotoDraft();
-        setEditingId(item.id);
-        setOpenItemId(item.id);
-        setPart(nextPart);
-        setItemName(nextItemName);
-        setCategory(nextCategory);
-        setCategoryKo(matchedCategory?.ko || item.category || "");
-        setCategoryVi(matchedCategory?.vi || item.category_vi || "");
-
-        const matched = matchedCategory || nextCategoryOptions.find(
-            (option) => (lang === "vi" ? option.vi : option.ko) === nextCategory
-        );
-        setIsCustomCategory(!matched && !!nextCategory);
-
-        setQuantity(String(item.quantity ?? ""));
-        setUnit(item.unit || "");
-        setNote(item.note || "");
-        setPurchasePrice(formatExistingPurchasePrice(item.purchase_price));
-        setSupplier(item.supplier_partner_name || item.supplier || "");
-        setSupplierPartnerId(item.supplier_partner_id ?? null);
-
-        setIsCustomSupplier(
-            !!item.supplier &&
-            !item.supplier_partner_id &&
-            !supplierAliases.some((alias) => alias.status === "pending" && alias.supplierName.trim().toLowerCase() === String(item.supplier).trim().toLowerCase())
-        );
-        setCode(item.code || "");
-        setLowStockThreshold(String(item.low_stock_threshold ?? 1));
-        setLowStockEnabled(item.low_stock_enabled === true);
-        setPackageContentQuantity(
-            item.package_content_quantity === null || item.package_content_quantity === undefined
-                ? ""
-                : String(item.package_content_quantity)
-        );
-        setPackageContentUnit(item.package_content_unit || "");
-
-        setTimeout(() => {
-            if (!embeddedItemId) formRef.current?.scrollIntoView({
-                behavior: "smooth",
-                block: "start",
-            });
-        }, 0);
-    };
+    const handleEdit = (item: InventoryItem) => { setIsRegistrationTypeModalOpen(false); clearFormPhotoDraft(); setEditingId(item.id); setOpenItemId(item.id); setIsFormOpen(true); setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
 
     const handleSubmit = async () => {
         if (isSubmitting) return;
@@ -1775,102 +1640,7 @@ export default function InventoryPageContent({ embeddedItemId, onSaved, onClose,
                 purchasePrice.trim() === "" ? null : preserveUnchangedPurchasePrice(purchasePrice, inventoryList.find(item => item.id === editingId)?.purchase_price);
 
             // ===================== 수정 =====================
-            if (editingId) {
-                if (nextQuantity < 0) {
-                    alert(t.quantityCannotBeNegative);
-                    return;
-                }
-
-                const targetItem = inventoryList.find((item) => item.id === editingId);
-
-                if (!targetItem) {
-                    alert(c.editFail);
-                    return;
-                }
-
-                const currentItemName =
-                    lang === "vi"
-                        ? targetItem.item_name_vi || targetItem.item_name || ""
-                        : targetItem.item_name || targetItem.item_name_vi || "";
-
-                const hasChanges =
-                    normalizeText(currentItemName) !== normalizedItemName ||
-                    normalizeText(targetItem.category || "") !== normalizedCategoryKo ||
-                    normalizeText(targetItem.category_vi || "") !== normalizedCategoryVi ||
-                    normalizeText(targetItem.unit || "") !== normalizedUnit ||
-                    normalizeText(targetItem.note || "") !== normalizedNote ||
-                    (targetItem.part || "") !== part ||
-                    parseDecimal(targetItem.quantity ?? 0) !== nextQuantity ||
-                    (targetItem.purchase_price ?? null) !== nextPurchasePrice ||
-                    normalizeText(targetItem.supplier || "") !== normalizedSupplier ||
-                    (targetItem.supplier_partner_id ?? null) !== supplierPartnerId ||
-                    normalizeText(targetItem.code || "") !== normalizedCode ||
-                    (targetItem.package_content_quantity === null ||
-                    targetItem.package_content_quantity === undefined
-                        ? null
-                        : parseDecimal(targetItem.package_content_quantity)) !==
-                        nextPackageContentQuantity ||
-                    (targetItem.package_content_unit || "").toLowerCase() !==
-                        (nextPackageContentUnit || "") ||
-                    parseDecimal(targetItem.low_stock_threshold ?? 1) !== nextLowStock ||
-                    (targetItem.low_stock_enabled === true) !== nextLowStockEnabled;
-
-                if (!hasChanges) {
-                    alert(t.noAdditionalChanges);
-                    return;
-                }
-
-                const payload =
-                    lang === "ko"
-                        ? {
-                            item_name: normalizedItemName,
-                            category: normalizedCategoryKo,
-                            category_vi: normalizedCategoryVi,
-                            purchase_price: nextPurchasePrice,
-                            low_stock_threshold: nextLowStock,
-                            low_stock_enabled: nextLowStockEnabled,
-                            package_content_quantity: nextPackageContentQuantity,
-                            package_content_unit: nextPackageContentUnit,
-                            quantity: nextQuantity,
-                            unit: normalizedUnit,
-                            note: normalizedNote,
-                            part,
-                            supplier: normalizedSupplier,
-                            supplierPartnerId,
-                            code: normalizedCode,
-                            updated_at: new Date().toISOString(),
-                        }
-                        : {
-                            item_name_vi: normalizedItemName,
-                            category: normalizedCategoryKo,
-                            category_vi: normalizedCategoryVi,
-                            purchase_price: nextPurchasePrice,
-                            low_stock_threshold: nextLowStock,
-                            low_stock_enabled: nextLowStockEnabled,
-                            package_content_quantity: nextPackageContentQuantity,
-                            package_content_unit: nextPackageContentUnit,
-                            quantity: nextQuantity,
-                            unit: normalizedUnit,
-                            note: normalizedNote,
-                            part,
-                            supplier: normalizedSupplier,
-                            supplierPartnerId,
-                            code: normalizedCode,
-                            updated_at: new Date().toISOString(),
-                        };
-
-                setEditFormPendingSave({
-                    id: editingId,
-                    payload,
-                    expectedQuantity: Number(inventoryList.find(item => item.id === editingId)?.quantity),
-                    expectedUpdatedAt: targetItem.updated_at ?? null,
-                });
-                return;
-            }
-
-            // ===================== 생성 =====================
-            else {
-                const payload =
+            const payload =
                     lang === "ko"
                         ? {
                             item_name: normalizedItemName,
@@ -1910,8 +1680,7 @@ export default function InventoryPageContent({ embeddedItemId, onSaved, onClose,
                             package_content_unit: nextPackageContentUnit,
                             updated_at: new Date().toISOString(),
                         };
-
-                const res = await fetchInventoryApi("/api/inventory/items", {
+const res = await fetchInventoryApi("/api/inventory/items", {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -1921,25 +1690,20 @@ export default function InventoryPageContent({ embeddedItemId, onSaved, onClose,
                         registrationType,
                     }),
                 });
-
-                const result = await readInventoryItemMutationResult(res, "save");
-                if (!result) return;
-
-                if (!res.ok || !result.ok) {
+const result = await readInventoryItemMutationResult(res, "save");
+if (!result) return;
+if (!res.ok || !result.ok) {
                     handleInventoryItemMutationFailure(res, result, "save");
                     return;
                 }
-
-                if (formPhotoFile && result.data?.id) {
+if (formPhotoFile && result.data?.id) {
                     const uploaded = await uploadInventoryPhoto(result.data.id, formPhotoFile);
 
                     if (!uploaded) {
                         alert("Item was saved, but image upload failed.");
                     }
                 }
-
-                alert(c.saveSuccess);
-            }
+alert(c.saveSuccess);
 
             await Promise.all([fetchInventory(), fetchRecentLogs()]);
 
@@ -4386,8 +4150,7 @@ export default function InventoryPageContent({ embeddedItemId, onSaved, onClose,
             )}
 
             </>}
-            {isFormOpen && (
-                <div
+            {isFormOpen && (editingId ? <div ref={formRef}><InventoryItemEditor key={editingId} itemId={editingId} initialItem={inventoryList.find(item => item.id === editingId)} initialSuppliers={supplierPartners} initialAliases={supplierAliases} onClose={() => { resetForm(); setIsFormOpen(false); }} onSaved={() => { resetForm(); setIsFormOpen(false); void Promise.all([fetchInventory(), fetchRecentLogs()]); }} /></div> : (<div
                     ref={formRef}
                     data-testid="inventory-edit-form"
                     style={{
@@ -5140,8 +4903,7 @@ export default function InventoryPageContent({ embeddedItemId, onSaved, onClose,
                             </button>
                         )}
                     </div>
-                </div>
-            )}
+                </div>))}
 
             {/* 최근 변경 로그 */}
             {!embeddedItemId && <>
@@ -5462,115 +5224,7 @@ export default function InventoryPageContent({ embeddedItemId, onSaved, onClose,
                 </div>
             )}
 
-            {editFormPendingSave && (
-                <div
-                    style={{
-                        position: "fixed",
-                        inset: 0,
-                        background: "rgba(0,0,0,0.45)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        zIndex: 1000,
-                        padding: 20,
-                    }}
-                    onClick={closeEditReasonModal}
-                >
-                    <div
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                            width: "100%",
-                            maxWidth: 420,
-                            background: "#fff",
-                            borderRadius: 14,
-                            padding: 18,
-                            boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 10,
-                        }}
-                    >
-                        <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
-                            {t.editReasonModalTitle}
-                        </div>
-
-                        <div style={{ ...ui.metaText, marginBottom: 4 }}>
-                            {t.editReasonModalDescription}
-                        </div>
-
-                        {purchaseCorrectionRoots ? <>
-                            <p>{lang === "vi" ? "Đây là sửa lô nhập gốc. Chọn lô nhập để liên kết; số tiền trong sổ sẽ được tính lại theo chính sách hiện có." : "원입고 수정입니다. 연결할 원입고를 선택하면 기존 정책에 따라 장부금액이 다시 계산됩니다."}</p>
-                            <label>{lang === "vi" ? "Chọn lô nhập gốc" : "원입고 선택"}
-                                <select value={selectedPurchaseRootId ?? ""} disabled={isEditReasonSaving}
-                                    onChange={event => setSelectedPurchaseRootId(Number(event.target.value) || null)} style={ui.input}>
-                                    <option value="">{lang === "vi" ? "Chọn lô nhập" : "원입고를 선택해 주세요"}</option>
-                                    {purchaseCorrectionRoots.map(root => <option key={root.id} value={root.id}>
-                                        {root.business_date} · +{root.change_quantity}{root.unit ?? ""} · {root.new_supplier} · {root.new_purchase_price}₫
-                                    </option>)}
-                                </select>
-                            </label>
-                            <button type="button" disabled={isEditReasonSaving || selectedPurchaseRootId === null}
-                                onClick={() => handleEditReasonConfirm("purchase")} style={ui.button}>
-                                {lang === "vi" ? "Liên kết lô nhập gốc và lưu thay đổi" : "원입고에 연결하고 수정 저장"}
-                            </button>
-                        </> : null}
-
-                        <div
-                            style={{
-                                display: "grid",
-                                gridTemplateColumns: "1fr 1fr",
-                                gap: 8,
-                            }}
-                        >
-                            {(["stock_check", "purchase", "service", "other"] as const).map(
-                                (reason) => (
-                                    <button
-                                        key={reason}
-                                        type="button"
-                                        onClick={() => handleEditReasonConfirm(reason)}
-                                        disabled={isEditReasonSaving || purchaseCorrectionRoots !== null}
-                                        style={{
-                                            ...ui.subButton,
-                                            opacity: isEditReasonSaving ? 0.6 : 1,
-                                            cursor: isEditReasonSaving
-                                                ? "not-allowed"
-                                                : "pointer",
-                                        }}
-                                    >
-                                        <span
-                                            style={{
-                                                display: "inline-flex",
-                                                alignItems: "center",
-                                                justifyContent: "center",
-                                                gap: 6,
-                                                whiteSpace: "nowrap",
-                                            }}
-                                        >
-                                            <span aria-hidden="true">
-                                                {INVENTORY_REASON_EMOJIS[reason]}
-                                            </span>
-                                            <span>{INVENTORY_REASON_LABELS[lang][reason]}</span>
-                                        </span>
-                                    </button>
-                                )
-                            )}
-                        </div>
-
-                        <button
-                            type="button"
-                            onClick={closeEditReasonModal}
-                            disabled={isEditReasonSaving}
-                            style={{
-                                ...ui.subButton,
-                                marginTop: 4,
-                                opacity: isEditReasonSaving ? 0.6 : 1,
-                            }}
-                        >
-                            {c.close}
-                        </button>
-                    </div>
-                </div>
-            )}
+            
 
             {kegTimeModal && (
                 <div

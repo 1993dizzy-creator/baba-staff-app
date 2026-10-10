@@ -3,7 +3,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { loadInventoryRepairPreview } from "@/lib/ledger/inventory-repair";
 
 type Context = { params: Promise<{ inventoryLogId: string }> };
-const validId = (value: unknown) => Number.isSafeInteger(Number(value)) && Number(value) > 0;
+const validId = (value: unknown) => (typeof value === "number" || (typeof value === "string" && /^\d+$/.test(value))) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
 
 export async function GET(_request: Request, context: Context) {
   const auth = await requireLedgerActor();
@@ -25,10 +25,20 @@ export async function POST(request: Request, context: Context) {
   let body;
   try { body = await request.json(); } catch { return ledgerJson({ ok: false, code: "INVALID_PAYLOAD" }, 400); }
   if (!validId(inventoryLogId) || !validId(body?.purchaseLogId)) return ledgerJson({ ok: false, code: "INVALID_ID" }, 400);
+  const confirmation = body?.supplierConfirmation;
+  if (confirmation !== undefined && (
+    !confirmation || typeof confirmation !== "object" || Array.isArray(confirmation) ||
+    Object.keys(confirmation).some(key => key !== "confirmed" && key !== "fingerprint") ||
+    confirmation.confirmed !== true || typeof confirmation.fingerprint !== "string" ||
+    !/^[a-f0-9]{64}$/.test(confirmation.fingerprint)
+  )) return ledgerJson({ ok: false, code: "INVALID_SUPPLIER_CONFIRMATION" }, 400);
   try {
-    const { data, error } = await supabaseServer.rpc("ledger_resolve_inventory_purchase_correction_v1", {
+    const { data, error } = await supabaseServer.rpc(confirmation === undefined
+      ? "ledger_resolve_inventory_purchase_correction_v1"
+      : "ledger_resolve_inventory_purchase_correction_v2", {
       p_inventory_log_id: Number(inventoryLogId), p_purchase_log_id: Number(body.purchaseLogId),
       p_actor_user_id: auth.actor.id,
+      ...(confirmation === undefined ? {} : { p_supplier_confirmation: { confirmed: true, fingerprint: confirmation.fingerprint } }),
     });
     if (error) throw error;
     return ledgerJson({ ...data, ok: data?.status === "synced" }, data?.status === "synced" ? 200 : 409);
