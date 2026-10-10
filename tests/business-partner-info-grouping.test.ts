@@ -38,6 +38,7 @@ test("partner groups follow the canonical partner type order", () => {
     "equipment",
     "service",
     "rent",
+    "utilities",
     "other",
   ]);
 });

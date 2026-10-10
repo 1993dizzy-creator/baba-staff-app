@@ -86,6 +86,7 @@ export const MANUAL_ENTRY_PARTNER_GROUP_ORDER = [
   "equipment",
   "service",
   "rent",
+  "utilities",
   "other",
 ] as const;
 
@@ -99,6 +100,7 @@ const MANUAL_ENTRY_PARTNER_GROUP_LABELS: Record<ManualEntryPartnerGroup, { ko: s
   equipment: { ko: "장비", vi: "Thiết bị" },
   service: { ko: "서비스", vi: "Dịch vụ" },
   rent: { ko: "임대", vi: "Cho thuê" },
+  utilities: { ko: "공과금", vi: "Điện nước & gas" },
   other: { ko: "기타", vi: "Khác" },
 };
 
@@ -140,6 +142,7 @@ export type ManualExpensePartnerType =
   | "equipment"
   | "rent"
   | "service"
+  | "utilities"
   | "other";
 
 const PARTNER_TYPE_CATEGORY: Partial<Record<ManualExpensePartnerType, string>> = {
@@ -159,7 +162,6 @@ const SERVICE_SUBTYPE_CATEGORY: Record<string, string> = {
 };
 
 const OTHER_SUBTYPE_CATEGORY: Record<string, string> = {
-  gas: "가스비",
   printing: "인쇄·홍보비",
   market_purchase: "기타 비용",
   miscellaneous: "기타 비용",
@@ -176,6 +178,7 @@ export function manualExpenseCategoryNameForPartner(
   if (direct) return direct;
   const subtype = partnerSubtypeCode?.trim().toLowerCase() ?? "";
   if (normalizedType === "service") return SERVICE_SUBTYPE_CATEGORY[subtype] ?? "기타 비용";
+  if (normalizedType === "utilities") return subtype === "utility_gas" ? "가스비" : null;
   if (normalizedType === "other") return OTHER_SUBTYPE_CATEGORY[subtype] ?? "기타 비용";
   return null;
 }

@@ -20,7 +20,7 @@ test("partner type and subtype resolve to the authoritative manual expense categ
     ["equipment", null, "설비·비품"],
     ["service", "maintenance", "수리·유지보수"],
     ["service", "delivery", "배송·운송비"],
-    ["other", "gas", "가스비"],
+    ["utilities", "utility_gas", "가스비"],
     ["other", "printing", "인쇄·홍보비"],
     ["other", null, "기타 비용"],
   ];

@@ -11,7 +11,7 @@ type InventoryLog = {
   id: number; item_id: number | null; item_name: string | null; item_name_vi: string | null;
   category: string | null; category_vi: string | null; change_quantity: number | string | null;
   new_purchase_price: number | string | null; new_supplier: string | null; business_date: string | null;
-  created_at: string | null; source: string | null; reason: string | null;
+  created_at: string | null; purchase_supplier_partner_id: number | null; source: string | null; reason: string | null;
 };
 
 function monthEnd(month: string) {
@@ -24,7 +24,7 @@ export async function loadInventoryCandidateSource(month: string) {
   const pageSize = 1000;
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer.from("inventory_logs")
-      .select("id,item_id,item_name,item_name_vi,category,category_vi,change_quantity,new_purchase_price,new_supplier,business_date,created_at,source,reason")
+      .select("id,item_id,item_name,item_name_vi,category,category_vi,change_quantity,new_purchase_price,new_supplier,business_date,created_at,purchase_supplier_partner_id,source,reason")
       .gte("business_date", `${month}-01`).lte("business_date", monthEnd(month))
       .order("business_date").order("id").range(from, from + pageSize - 1);
     if (error) throw error;
@@ -45,6 +45,7 @@ export async function loadInventoryCandidateSource(month: string) {
     const snapshot = {
       inventory_log_id: log.id,
       item_id: log.item_id,
+      ...(log.purchase_supplier_partner_id != null ? { purchase_supplier_partner_id: log.purchase_supplier_partner_id } : {}),
       item_name: log.item_name || log.item_name_vi || "-",
       category: log.category,
       category_vi: log.category_vi,

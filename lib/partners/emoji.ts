@@ -8,6 +8,7 @@ export const partnerTypeEmoji: Record<PartnerType, string> = {
   equipment: "🧰",
   service: "🛎️",
   rent: "🏠",
+  utilities: "⚡",
   other: "📦",
 };
 

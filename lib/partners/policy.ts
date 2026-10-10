@@ -1,6 +1,6 @@
 export const PARTNER_MANAGER_ROLES = ["owner", "master"] as const;
-export const PARTNER_TYPES = ["food", "alcohol", "beverage", "consumable", "equipment", "service", "rent", "other"] as const;
-export const PARTNER_TYPE_GROUP_ORDER = ["alcohol", "beverage", "food", "consumable", "equipment", "service", "rent", "other"] as const;
+export const PARTNER_TYPES = ["food", "alcohol", "beverage", "consumable", "equipment", "service", "rent", "utilities", "other"] as const;
+export const PARTNER_TYPE_GROUP_ORDER = ["alcohol", "beverage", "food", "consumable", "equipment", "service", "rent", "utilities", "other"] as const;
 export const PAYMENT_MODES = ["unspecified", "immediate", "postpaid"] as const;
 export const SETTLEMENT_MODES = ["ad_hoc", "scheduled"] as const;
 export const SETTLEMENT_RULES = ["net_days", "monthly_once", "monthly_twice"] as const;

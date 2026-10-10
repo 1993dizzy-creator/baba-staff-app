@@ -8,7 +8,7 @@ export const partnerText = {
 } as const;
 
 export const partnerTypeLabels = {
-  food: { ko: "식자재", vi: "Thực phẩm" }, alcohol: { ko: "주류", vi: "Đồ uống có cồn" }, beverage: { ko: "음료", vi: "Đồ uống" }, consumable: { ko: "소모품", vi: "Vật tư tiêu hao" }, equipment: { ko: "장비", vi: "Thiết bị" }, service: { ko: "서비스", vi: "Dịch vụ" }, rent: { ko: "임대", vi: "Cho thuê" }, other: { ko: "기타", vi: "Khác" },
+  food: { ko: "식자재", vi: "Thực phẩm" }, alcohol: { ko: "주류", vi: "Đồ uống có cồn" }, beverage: { ko: "음료", vi: "Đồ uống" }, consumable: { ko: "소모품", vi: "Vật tư tiêu hao" }, equipment: { ko: "장비", vi: "Thiết bị" }, service: { ko: "서비스", vi: "Dịch vụ" }, rent: { ko: "임대", vi: "Cho thuê" }, utilities: { ko: "공과금", vi: "Điện nước & gas" }, other: { ko: "기타", vi: "Khác" },
 } as const;
 
 // Partner-facing fund account labels are a separate, simplified Source of Truth keyed by
