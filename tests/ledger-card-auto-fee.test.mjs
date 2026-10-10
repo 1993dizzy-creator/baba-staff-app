@@ -18,7 +18,7 @@ test('preview current month, review, rounding and capacity use exact deposit inv
  for(const amount of [0,-1,NaN,Infinity,0.0001])assert.equal(planCardDepositWithFees(sales(5000000),amount,'2026-09-05',[]).error,'invalid_amount');
 });
 test('SQL and shared preview policy rates are identical',()=>{
- const text=readFileSync('supabase/migrations/20261002120000_auto_finalize_closed_month_card_fees.sql','utf8');const policy=JSON.parse(text.match(/select '(\{"targetRate"[^']+)'::jsonb/)[1]);assert.deepEqual(policy,{targetRate:CARD_FEE_TARGET_RATE,minRate:CARD_FEE_AUTO_CLOSE_MIN_RATE,maxRate:CARD_FEE_AUTO_CLOSE_MAX_RATE});
+ const text=readFileSync('supabase/migrations/20261001193526_auto_finalize_closed_month_card_fees.sql','utf8');const policy=JSON.parse(text.match(/select '(\{"targetRate"[^']+)'::jsonb/)[1]);assert.deepEqual(policy,{targetRate:CARD_FEE_TARGET_RATE,minRate:CARD_FEE_AUTO_CLOSE_MIN_RATE,maxRate:CARD_FEE_AUTO_CLOSE_MAX_RATE});
 });
 test('actual auto fee date consumes operational gross without rewriting previous month-end gross',()=>{
  const feeLines=cardFeeRowsAsAllocationLines([{id:1,closure_id:1,pos_card_transaction_id:1,allocated_fee_amount:2150000,closure:{status:'confirmed',fee_month:'2026-08-01',finalization_business_date:'2026-09-05'}}]);

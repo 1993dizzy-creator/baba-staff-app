@@ -1,3 +1,4 @@
+import { projectDailyEffectivePurchases } from "@/lib/inventory/daily-effective-purchases";
 import { NextResponse } from "next/server";
 import { getAuthenticatedActor, requireRole } from "@/lib/auth/server-auth";
 import {
@@ -42,13 +43,14 @@ type InventoryLogsQueryOptions = {
   reason?: string | null;
   itemId?: number | null;
   includeKegSalesBreakdown?: boolean;
+  effectivePurchases?: boolean;
 };
 
 // Fields used by the log cards, localized search and change history.
 const LOG_CARD_COLUMNS = [
   "id", "item_id", "item_name", "item_name_vi", "category", "category_vi",
   "part", "code", "unit", "action", "reason", "source", "created_at", "actor_name",
-  "change_quantity",
+  "change_quantity", "business_date", "correction_of_inventory_log_id",
   ...["quantity", "purchase_price", "note", "supplier", "code", "unit", "category",
     "category_vi", "part", "low_stock_threshold"].flatMap((field) => [`prev_${field}`, `new_${field}`]),
 ].join(", ");
@@ -104,6 +106,22 @@ const loadInventoryLogs = async (options: InventoryLogsQueryOptions = {}) => {
     if (page.length < LOG_PAGE_SIZE) break;
     const last = page[page.length - 1];
     cursor = { id: Number(last.id), created_at: last.created_at ?? null };
+  }
+  if (options.businessDate && options.effectivePurchases) {
+    const roots = logs.filter(row => row.reason === "purchase" && Number(row.change_quantity) > 0 && row.correction_of_inventory_log_id == null);
+    const corrections: InventoryLogQueryRow[] = [];
+    for (let start = 0; start < roots.length; start += 100) {
+      const ids = roots.slice(start, start + 100).map(row => row.id);
+      for (let offset = 0; ; offset += LOG_PAGE_SIZE) {
+        const result = await supabaseServer.from("inventory_logs").select("*")
+          .in("correction_of_inventory_log_id", ids).order("id", { ascending: true }).range(offset, offset + LOG_PAGE_SIZE - 1);
+        if (result.error) return { ok: false as const, error: "inventory_logs_query_failed", message: result.error.message };
+        corrections.push(...(result.data ?? []));
+        if ((result.data ?? []).length < LOG_PAGE_SIZE) break;
+      }
+    }
+    const projected = projectDailyEffectivePurchases(logs, corrections);
+    logs.splice(0, logs.length, ...projected);
   }
   const kegReplaceLogIds = logs
     .filter((log) => log.source === "keg_replace")
@@ -233,6 +251,7 @@ export async function GET(req: Request) {
         businessDate,
         reason,
         itemId: parsedItemId,
+        effectivePurchases: searchParams.get("effectivePurchases") === "true",
         includeKegSalesBreakdown: searchParams.get("view") === "cards" ? false : undefined,
       });
       if (!result.ok) {

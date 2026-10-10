@@ -58,6 +58,7 @@ function setup({ ledgerFailure = false, logId = 100, latestLogId = logId, reason
     'server-only': {}, '@/lib/supabase/server': { supabaseServer: supabase },
   });
   const route = load('app/api/inventory/logs/route.ts', {
+    '@/lib/inventory/daily-effective-purchases':load('lib/inventory/daily-effective-purchases.ts',{}),
     'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } },
     '@/lib/auth/server-auth': { getAuthenticatedActor: async () => ({ ok: true, actor: { id: 7, username: 'staff', role: 'staff' } }) },
     '@/lib/inventory/reasons': load('lib/inventory/reasons.ts'),
@@ -137,7 +138,7 @@ test('latest purchase correction updates supplier binding and price history befo
 
 function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootLogs=[],businessDate='2026-09-01',startingQuantity=10,closedMonths=[],candidate=null,transaction=null,payable=null,payableAllocations=[]}={}) {
   const calls = [], logs = [];
-  const item = { id: 1, item_name: 'Coca', item_name_vi: 'Cola', quantity: startingQuantity, purchase_price: 20000, supplier: 'Won Mart', supplier_partner_id: 10, unit: 'can', part: 'bar' };
+  const item = { id: 1, item_name: 'Coca', item_name_vi: 'Cola', quantity: startingQuantity, purchase_price: 20000, supplier: 'Won Mart', supplier_partner_id: 10, unit: 'can', part: 'bar', updated_at:null,is_active:true };
   const supabase = {
     from(table) {
       let patch, insert, single = false, max = Infinity;
@@ -157,8 +158,9 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootL
         then(resolve) {
           let data;
           if (table === 'inventory') {
-            if (patch || insert) { Object.assign(item, patch ?? insert[0]); calls.push('inventory-commit'); }
-            data = single ? { ...item } : duplicateItems.filter(candidate => filters.every(filter => filter(candidate)));
+            const matches=filters.every(filter=>filter(item));
+            if (insert || (patch && matches)) { Object.assign(item, patch ?? insert[0]); calls.push('inventory-commit'); }
+            data = patch && !matches ? null : single ? { ...item } : duplicateItems.filter(candidate => filters.every(filter => filter(candidate)));
           } else if (table === 'inventory_logs' && insert) {
             data = { id: 100 + logs.length, ...insert[0] };
             logs.push(data); calls.push('source-commit');
@@ -176,7 +178,16 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootL
       return query;
     },
     async rpc(name, args) {
-      if(name==='inventory_apply_purchase_correction_v1') {
+      if(name==='inventory_update_with_audit_v1') {
+        assert.deepEqual(args.p_expected_item,item);assert.equal(args.p_actor_user_id,7);
+        const before=item.quantity;Object.assign(item,args.p_payload,{updated_at:'2026-10-10T05:00:00Z'});
+        const log={id:100+logs.length,item_id:item.id,reason:args.p_reason,source:args.p_source,business_date:args.p_business_date,
+          source_actor_user_id:args.p_actor_user_id,purchase_supplier_partner_id:item.supplier_partner_id,
+          change_quantity:Number(item.quantity)-Number(before)};
+        logs.push(log);calls.push('inventory-commit','source-commit');
+        return {data:{status:'ok',inventoryLogId:log.id},error:null};
+      }
+      if(name==='inventory_apply_purchase_correction_v2') {
         assert.equal(args.p_purchase_log_id,rootLogs.length ? rootLogs.at(-1).id : 99);assert.equal(args.p_expected_quantity,startingQuantity);
         assert.equal(args.p_actor_user_id,7);calls.push('atomic-correction');
         if(correctionFailure)return {data:{status:'invalid_purchase_reference'},error:null};

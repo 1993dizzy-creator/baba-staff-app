@@ -7,7 +7,7 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 
 const itemsRoute = read("app/api/inventory/items/route.ts");
 const photoRoute = read("app/api/inventory/items/[id]/photo/route.ts");
-const inventoryPage = read("app/(protected)/inventory/page.tsx");
+const inventoryPage = read("components/inventory/InventoryPageContent.tsx");
 const inventoryClient = read("lib/inventory/client-auth.ts");
 const snapshotRoute = read("app/api/inventory/snapshot/route.ts");
 

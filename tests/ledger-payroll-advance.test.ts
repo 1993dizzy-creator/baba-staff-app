@@ -262,8 +262,12 @@ test("detail modal shows 가불 취소 only for an active ledger advance and cal
   assert.match(detail, /fetch\(`\/api\/admin\/ledger\/payroll-advances\/\$\{entry\.transactionId\}\/cancel`,\{method:"POST"/);
   assert.match(detail, /body:JSON\.stringify\(\{reason:advanceCancelReason\.trim\(\)\}\)/);
   assert.match(page, /onAdvanceCancelled=\{async \(\) => \{\s*setSelected\(null\);\s*await load\(\);/);
-  // Shared flag component marks the cancelled original in both list and detail.
-  assert.equal(page.match(/<EntryFlags entry=\{entry\} lang=\{lang\} \/>/g)?.length, 2);
+  // Compact list flags and text detail flags both mark the cancelled original.
+  assert.match(detail, /<EntryFlags entry=\{entry\} lang=\{lang\} \/>/);
+  assert.equal(page.match(/<Entry(?:List)?Flags entry=\{entry\} lang=\{lang\} \/>/g)?.length, 2);
+  const listFlags = page.slice(page.indexOf("function EntryListFlags"), page.indexOf("function EntryFlags"));
+  assert.match(listFlags, /const advanceCancelled = entry\.ledgerPayrollAdvance\?\.cancelled \?\? false/);
+  assert.match(listFlags, /advanceCancelled \? <span className=\{styles\.cancelledBadge\}>/);
   assert.match(page, /advanceCancelled \? <span className=\{styles\.cancelledBadge\}>\{vi \? "Đã hủy ứng lương" : "가불 취소됨"\}<\/span>/);
 });
 

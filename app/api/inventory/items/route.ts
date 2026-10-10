@@ -362,6 +362,22 @@ export async function GET(req: Request) {
     if (response) return response;
 
     const { searchParams } = new URL(req.url);
+    const selectedId = searchParams.get("itemId");
+    if (selectedId !== null) {
+      const itemId = Number(selectedId);
+      if (!Number.isSafeInteger(itemId) || itemId <= 0) return jsonError("invalid_item_id", "Invalid item id", 400);
+      const [itemResult, partners, aliases] = await Promise.all([
+        supabaseAdmin.from("inventory").select("*").eq("id", itemId).maybeSingle(),
+        supabaseAdmin.from("business_partners").select("id,name").eq("is_active", true),
+        supabaseAdmin.from("business_partner_supplier_aliases").select("id,supplier_name,status,business_partner_id").in("status", ["pending", "linked", "ignored"]),
+      ]);
+      if (itemResult.error) throw itemResult.error;
+      if (partners.error) throw partners.error;
+      if (aliases.error) throw aliases.error;
+      if (!itemResult.data) return jsonError("inventory_item_not_found", "Item not found", 404);
+      if (itemResult.data.is_active !== true && !canToggleInventoryItemActiveStatus(actor.role)) return jsonError("inventory_item_inactive_list_forbidden", "Inactive inventory items require leader permission.", 403);
+      return NextResponse.json({ ok: true, data: [itemResult.data], supplierPartners: partners.data ?? [], supplierAliases: (aliases.data ?? []).map(row => ({ id: row.id, supplierName: row.supplier_name, status: row.status, businessPartnerId: row.business_partner_id })) }, { headers: { "Cache-Control": "no-store" } });
+    }
     const includeInactive = searchParams.get("includeInactive") === "true";
     const includeKegProgress =
       searchParams.get("includeKegProgress") !== "false";
@@ -603,13 +619,20 @@ export async function PATCH(req: Request) {
       return jsonError("invalid_purchase_correction", "Select an original purchase and supply the expected quantity.", 400);
     }
 
-    if (!id || !payload) {
+    if (!Number.isSafeInteger(Number(id)) || Number(id) <= 0 || !payload || typeof payload !== "object" || Array.isArray(payload)) {
       return NextResponse.json(
         { ok: false, message: "Missing id or payload" },
         { status: 400 }
       );
     }
 
+    if (Object.hasOwn(body, "expectedUpdatedAt") && body.expectedUpdatedAt !== null &&
+      (typeof body.expectedUpdatedAt !== "string" || !Number.isFinite(Date.parse(body.expectedUpdatedAt)))) {
+      return jsonError("invalid_inventory_version", "Invalid expected item version.", 400);
+    }
+    if (Object.hasOwn(payload, "is_active") && mode !== "active-status") {
+      return jsonError("invalid_active_status_mode", "Use the active status action.", 400);
+    }
     if (!normalizePackageContentPayload(payload)) {
       return NextResponse.json(
         {
@@ -628,15 +651,7 @@ export async function PATCH(req: Request) {
     });
     if (partValidationError) return partValidationError;
 
-    const supplierResolution = await resolveInventorySupplier({
-      supabase: supabaseAdmin,
-      payload,
-      actorUserId: actor.id,
-    });
-    const serverPayload = applyResolvedInventorySupplier(
-      withServerActorMetadata(payload, actor),
-      supplierResolution
-    );
+    let serverPayload = withServerActorMetadata(payload, actor);
 
     if (mode === "active-status") {
       if (!canToggleInventoryItemActiveStatus(actor.role)) {
@@ -712,7 +727,9 @@ export async function PATCH(req: Request) {
     low_stock_enabled,
     package_content_quantity,
     package_content_unit,
-    image_path
+    image_path,
+    updated_at,
+    is_active
   `)
       .eq("id", Number(id))
       .maybeSingle();
@@ -725,6 +742,19 @@ export async function PATCH(req: Request) {
         { status: 404 }
       );
     }
+
+    if (prevItem.is_active === false && !canToggleInventoryItemActiveStatus(actor.role)) {
+      return jsonError("inventory_item_inactive_edit_forbidden", "Inactive inventory items require leader permission.", 403);
+    }
+    if (Object.hasOwn(body, "expectedUpdatedAt") && body.expectedUpdatedAt !== (prevItem.updated_at ?? null)) {
+      return jsonError("INVENTORY_CONFLICT", "Item changed. Reload before saving.", 409);
+    }
+    if (expectedQuantity !== undefined && (!Number.isFinite(Number(expectedQuantity)) ||
+      roundDecimal(Number(expectedQuantity)) !== roundDecimal(Number(prevItem.quantity ?? 0)))) {
+      return jsonError("QUANTITY_CONFLICT", "Quantity changed. Reload before saving.", 409);
+    }
+    const supplierResolution = await resolveInventorySupplier({ supabase: supabaseAdmin, payload, actorUserId: actor.id });
+    serverPayload = applyResolvedInventorySupplier(serverPayload, supplierResolution);
 
     // Purchase reductions require explicit confirmation of a compatible prior root,
     // including previous days. Stock checks and sales never imply purchase intent.
@@ -940,154 +970,45 @@ export async function PATCH(req: Request) {
 
     if (correctionPurchaseLogId !== null || autoCorrectionRootId !== null) {
       const businessDate = autoCorrectionBusinessDate ?? (await resolveInventoryBusinessDate()).businessDate;
-      const { data: correction, error } = await supabaseAdmin.rpc("inventory_apply_purchase_correction_v1", {
+      const { data: correction, error } = await supabaseAdmin.rpc("inventory_apply_purchase_correction_v2", {
         p_item_id: Number(id), p_purchase_log_id: correctionPurchaseLogId ?? autoCorrectionRootId,
-        p_expected_quantity: autoCorrectionRootId !== null ? Number(prevItem.quantity) : Number(expectedQuantity), p_payload: serverPayload,
+        p_expected_quantity: autoCorrectionRootId !== null ? Number(prevItem.quantity) : Number(expectedQuantity),
+        p_expected_item: prevItem, p_payload: serverPayload,
         p_business_date: businessDate, p_actor_user_id: actor.id,
       });
       if (error) throw error;
       if (correction?.status !== "ok") {
         return jsonError(correction?.status ?? "purchase_correction_failed", "Purchase correction was not saved.",
-          correction?.status === "quantity_conflict" ? 409 : 400);
+          ["quantity_conflict", "inventory_conflict"].includes(correction?.status) ? 409 : correction?.status === "forbidden" ? 403 : correction?.status === "not_found" ? 404 : 400);
       }
       const ledgerSync = await projectInventoryPurchaseLog(Number(correction.inventoryLogId),actor.id);
       return NextResponse.json({ok:true,mode,ledgerSync});
     }
 
-    const { data: updatedItem, error: updateError } = await supabaseAdmin
-      .from("inventory")
-      .update(serverPayload)
-      .eq("id", Number(id))
-      .select(`
-    id,
-    item_name,
-    item_name_vi,
-    part,
-    category,
-    category_vi,
-    quantity,
-    purchase_price,
-    note,
-    unit,
-    code,
-    supplier,
-    supplier_partner_id,
-    low_stock_threshold,
-    low_stock_enabled,
-    package_content_quantity,
-    package_content_unit,
-    image_path
-  `)
-      .single();
-
-    if (updateError || !updatedItem) throw updateError;
-
     const prevQuantity = roundDecimal(Number(prevItem.quantity ?? 0));
-    const newQuantity = roundDecimal(Number(updatedItem.quantity ?? 0));
+    const newQuantity = roundDecimal(Number(Object.hasOwn(serverPayload, "quantity") ? serverPayload.quantity : prevItem.quantity ?? 0));
     const changeQuantity = roundDecimal(newQuantity - prevQuantity);
     const fallbackLogReason = changeQuantity !== 0 ? "stock_check" : "other";
-    const logReason =
-      mode === "quick-save"
-        ? quickSaveLogReason ?? "stock_check"
-        : Object.prototype.hasOwnProperty.call(body, "reason")
-          ? normalizeInventoryReason(reason, fallbackLogReason)
-          : fallbackLogReason;
+    const logReason = mode === "quick-save"
+      ? quickSaveLogReason ?? "stock_check"
+      : Object.hasOwn(body, "reason") ? normalizeInventoryReason(reason, fallbackLogReason) : fallbackLogReason;
     const logSource = mode === "quick-save" ? "quick_save" : "edit_form";
-
     const businessDate = (await resolveInventoryBusinessDate()).businessDate;
-
-    const purchaseLog = await insertInventoryLog(
-      {
-        item_id: updatedItem.id,
-        source_actor_user_id: actor.id,
-        purchase_supplier_partner_id: updatedItem.supplier_partner_id ?? null,
-        item_name: updatedItem.item_name ?? null,
-        item_name_vi: updatedItem.item_name_vi ?? null,
-        action: "update",
-
-        part: updatedItem.part ?? null,
-        category: updatedItem.category ?? null,
-        category_vi: updatedItem.category_vi ?? null,
-
-        prev_quantity: prevQuantity,
-        new_quantity: newQuantity,
-        change_quantity: changeQuantity,
-
-        prev_purchase_price: prevItem.purchase_price ?? null,
-        new_purchase_price: updatedItem.purchase_price ?? null,
-
-        prev_note: prevItem.note ?? null,
-        new_note: updatedItem.note ?? null,
-
-        prev_supplier: prevItem.supplier ?? null,
-        new_supplier: updatedItem.supplier ?? null,
-
-        prev_code: prevItem.code ?? null,
-        new_code: updatedItem.code ?? null,
-
-        prev_unit: prevItem.unit ?? null,
-        new_unit: updatedItem.unit ?? null,
-
-        prev_category: prevItem.category ?? null,
-        new_category: updatedItem.category ?? null,
-
-        prev_category_vi: prevItem.category_vi ?? null,
-        new_category_vi: updatedItem.category_vi ?? null,
-
-        prev_part: prevItem.part ?? null,
-        new_part: updatedItem.part ?? null,
-
-        unit: updatedItem.unit ?? null,
-        code: updatedItem.code ?? null,
-
-        actor_name: actor.name || "",
-        actor_username: actor.username || "",
-
-        prev_low_stock_threshold: prevItem.low_stock_threshold ?? 1,
-        new_low_stock_threshold: updatedItem.low_stock_threshold ?? 1,
-      },
-      {
-        reason: logReason,
-        source: logSource,
-        businessDate,
-      }
-    );
-
-    if (mode === "quick-save" && logReason === "purchase") {
-      await insertInventoryPriceLog({
-        supabase: supabaseAdmin,
-        itemId: updatedItem.id,
-        itemName: updatedItem.item_name,
-        itemCode: updatedItem.code,
-        oldPrice: prevItem.purchase_price,
-        newPrice: updatedItem.purchase_price,
-        businessDate,
-        source: "quick_save",
-        reason: "purchase",
-        actorUsername: actor.username,
-      });
+    // A single DB transaction commits the item, required source audit and price history.
+    // Never fall back to separate writes if the migration/RPC is unavailable.
+    const { data: saved, error: saveError } = await supabaseAdmin.rpc("inventory_update_with_audit_v1", {
+      p_item_id: Number(id), p_expected_item: prevItem, p_payload: serverPayload,
+      p_business_date: businessDate, p_actor_user_id: actor.id, p_reason: logReason, p_source: logSource,
+      p_price_business_date: mode !== "quick-save" && typeof body.business_date === "string" ? body.business_date : businessDate,
+    });
+    if (saveError) throw saveError;
+    if (saved?.status !== "ok") {
+      const status = ["inventory_conflict", "purchase_correction_required"].includes(saved?.status) ? 409 : saved?.status === "forbidden" ? 403 : saved?.status === "not_found" ? 404 : 400;
+      return jsonError(saved?.status === "inventory_conflict" ? "INVENTORY_CONFLICT" : saved?.status ?? "inventory_save_failed",
+        "Item was not saved. Reload before retrying if it changed.", status);
     }
-
-    if (
-      mode !== "quick-save" &&
-      Object.prototype.hasOwnProperty.call(serverPayload, "purchase_price")
-    ) {
-      await insertInventoryPriceLog({
-        supabase: supabaseAdmin,
-        itemId: updatedItem.id,
-        itemName: updatedItem.item_name,
-        itemCode: updatedItem.code,
-        oldPrice: prevItem.purchase_price,
-        newPrice: updatedItem.purchase_price,
-        businessDate: typeof body.business_date === "string" ? body.business_date : businessDate,
-        source: "edit_form",
-        reason: "manual_price_update",
-        actorUsername: actor.username,
-      });
-    }
-
     const ledgerSync = logReason === "purchase"
-      ? await projectInventoryPurchaseLog(Number(purchaseLog.id), actor.id)
+      ? await projectInventoryPurchaseLog(Number(saved.inventoryLogId), actor.id)
       : undefined;
     return NextResponse.json({ ok: true, mode, ledgerSync });
   } catch (error) {

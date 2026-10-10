@@ -58,7 +58,8 @@ test("partner info and Ledger authoring use one effective partner emoji source",
   assert.match(info, /effectivePartnerEmoji\(partner\.partnerType, partner\.partnerSubtype\)/);
   assert.match(manager, /effectivePartnerEmoji\(subtype\.partnerType, subtype\)/);
   assert.match(ledgerApi, /emoji: effectivePartnerEmoji\(partner\.partner_type as PartnerType, partnerSubtype\)/);
-  assert.match(ledger, /\{partner\.emoji\} \{partner\.name\}/);
+  assert.match(ledger, /<PartnerSelect /);
+  assert.match(read("app/(protected)/admin/ledger/entries/PartnerSelect.tsx"), /\{partner\.emoji\} \{partner\.name\}/);
   assert.match(ledger, /partnerByLedgerParty\.get\(entry\.partyId\)/);
   assert.match(ledger, /chooseLedgerEntryEmoji\(partner\.emoji, entryCategoryEmoji\(entry\)\)/);
 });

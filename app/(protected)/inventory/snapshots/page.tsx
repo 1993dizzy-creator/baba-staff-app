@@ -1,13 +1,16 @@
 "use client";
 
+import { normalizeInventoryEditText } from "@/lib/inventory/edit-validation";
 import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
+import dynamic from "next/dynamic";
+const InventoryEditor = dynamic(() => import("@/components/inventory/InventoryPageContent"), { ssr: false });
 import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { commonText, inventoryText } from "@/lib/text";
 import SubNav from "@/components/SubNav";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
 import {PART_VALUES,PART_META,type PartValue,} from "@/lib/common/parts";
 import { formatDecimalDisplay } from "@/lib/inventory/number";
@@ -67,6 +70,8 @@ type SnapshotNameSyncItem = {
 
 type SnapshotLanguageMissingItem = {
     itemId: number;
+    registeredAt?: string | null;
+    lastUpdatedAt?: string | null;
     currentItemName: string | null;
     currentItemNameVi: string | null;
     missingLanguages: ("ko" | "vi")[];
@@ -362,7 +367,30 @@ export default function InventorySnapshotsPage() {
     const c = commonText[lang];
     const currentBusinessDateLabel =
         lang === "vi" ? "Ngày kinh doanh hiện tại" : "현재 영업일";
-    const router = useRouter();
+    const [languageDrafts, setLanguageDrafts] = useState<Record<number, Partial<Record<"ko" | "vi", string>>>>({});
+    const [languageSavingId, setLanguageSavingId] = useState<number | null>(null);
+    const [languageEditError, setLanguageEditError] = useState<Record<number, string>>({});
+    const editorDialogRef = useRef<HTMLDivElement>(null);
+    const [editorBusy, setEditorBusy] = useState(false);
+    const languageSaveLockRef = useRef(false);
+    const [editingItemId, setEditingItemId] = useState<number | null>(null);
+
+    useEffect(() => {
+        if (editingItemId === null) return;
+        const previousOverflow = document.body.style.overflow;
+        const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        document.body.style.overflow = "hidden";
+        editorDialogRef.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+        const trapFocus = (event: KeyboardEvent) => {
+            if (event.key !== "Tab") return;
+            const controls = Array.from(editorDialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]') ?? []).filter(node => node.getClientRects().length > 0);
+            const first = controls[0], last = controls.at(-1);
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        };
+        document.addEventListener("keydown", trapFocus);
+        return () => { document.body.style.overflow = previousOverflow; document.removeEventListener("keydown", trapFocus); focused?.focus({ preventScroll: true }); };
+    }, [editingItemId]);
 
     const [batchList, setBatchList] = useState<SnapshotBatch[]>([]);
     const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
@@ -1033,7 +1061,7 @@ export default function InventorySnapshotsPage() {
         setSupplierTab("all");
 
         try {
-            const url = `/api/inventory/logs?mode=logs&businessDate=${encodeURIComponent(businessDate)}`;
+            const url = `/api/inventory/logs?mode=logs&effectivePurchases=true&businessDate=${encodeURIComponent(businessDate)}`;
             const res = await fetch(url, {
                 cache: "no-store",
             });
@@ -1080,7 +1108,7 @@ export default function InventorySnapshotsPage() {
             setMovementItems((json.data || []).map(mapLogToSnapshotItem));
         } catch (error) {
             console.warn("[inventory/snapshots] fetchMovementItems exception", {
-                url: `/api/inventory/logs?mode=logs&businessDate=${encodeURIComponent(businessDate)}`,
+                url: `/api/inventory/logs?mode=logs&effectivePurchases=true&businessDate=${encodeURIComponent(businessDate)}`,
                 error,
                 message: error instanceof Error ? error.message : String(error),
             });
@@ -1172,6 +1200,27 @@ export default function InventorySnapshotsPage() {
         await fetchItemLogs(selectedPurchaseItem);
     };
 
+    const saveMissingLanguages = async (item: SnapshotLanguageMissingItem) => {
+        if (languageSaveLockRef.current) return;
+        const draft = languageDrafts[item.itemId];
+        if (!draft || item.missingLanguages.some(language => !normalizeInventoryEditText(draft[language] ?? ""))) {
+            setLanguageEditError(prev => ({ ...prev, [item.itemId]: lang === "vi" ? "Vui l\u00f2ng nh\u1eadp t\u00ean." : "\ud488\ubaa9\uba85\uc744 \uc785\ub825\ud574\uc8fc\uc138\uc694." })); return;
+        }
+        languageSaveLockRef.current = true;
+        setLanguageSavingId(item.itemId);
+        setLanguageEditError(prev => ({ ...prev, [item.itemId]: "" }));
+        try {
+            const payload = Object.fromEntries(item.missingLanguages.map(language => [language === "ko" ? "item_name" : "item_name_vi", draft[language]?.trim()]));
+            const res = await fetchInventoryApi("/api/inventory/items", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: item.itemId, payload, source: "edit_form", reason: "other", expectedUpdatedAt: item.lastUpdatedAt ?? null }) });
+            const result = await res.json();
+            if (!res.ok || !result.ok) throw new Error(result.message || c.editFail);
+            setLanguageMissingItems(prev => prev.filter(row => row.itemId !== item.itemId));
+            setLanguageDrafts(prev => { const next = { ...prev }; delete next[item.itemId]; return next; });
+            void fetchNameSyncIssues(nameSyncBusinessDateRef.current);
+        } catch (error) { setLanguageEditError(prev => ({ ...prev, [item.itemId]: error instanceof Error ? error.message : c.editFail })); }
+        finally { languageSaveLockRef.current = false; setLanguageSavingId(null); }
+    };
+
     const openInventoryItemEdit = (itemIdValue: number | null) => {
         const itemId = Number(itemIdValue);
         if (!Number.isFinite(itemId) || itemId <= 0) {
@@ -1179,7 +1228,7 @@ export default function InventorySnapshotsPage() {
             return;
         }
 
-        router.push(`/inventory?itemId=${itemId}&mode=edit`);
+        setEditingItemId(itemId);
     };
 
     const openInventoryEdit = (item: SnapshotItem) => {
@@ -2517,6 +2566,7 @@ export default function InventorySnapshotsPage() {
                                         display: "flex",
                                         alignItems: "center",
                                         justifyContent: "space-between",
+                                        flexWrap: "wrap",
                                         gap: 10,
                                         border: "1px solid #fed7aa",
                                         background: "#fff",
@@ -2533,7 +2583,7 @@ export default function InventorySnapshotsPage() {
                                             textOverflow: "ellipsis",
                                             whiteSpace: "nowrap",
                                         }}>
-                                            {getLanguageMissingItemLabel(item)}
+                                            <span style={{ fontWeight: 400 }}>{lang === "vi" ? "Ng\u00e0y \u0111\u0103ng k\u00fd" : "\ub4f1\ub85d\uc77c"} {item.registeredAt ? new Date(item.registeredAt).toLocaleDateString(lang === "vi" ? "vi-VN" : "ko-KR", { timeZone: "Asia/Ho_Chi_Minh" }) : "-"} {"\u00b7"} </span>{getLanguageMissingItemLabel(item)}
                                         </span>
                                         {item.missingLanguages.map((missingLanguage) => (
                                             <span
@@ -2546,7 +2596,7 @@ export default function InventorySnapshotsPage() {
                                     </div>
                                     <button
                                         type="button"
-                                        onClick={() => openInventoryItemEdit(item.itemId)}
+                                        onClick={() => setLanguageDrafts(prev => ({ ...prev, [item.itemId]: prev[item.itemId] ?? Object.fromEntries(item.missingLanguages.map(language => [language, ""])) }))}
                                         style={{
                                             flexShrink: 0,
                                             padding: "6px 10px",
@@ -2562,6 +2612,11 @@ export default function InventorySnapshotsPage() {
                                     >
                                         {languageMissingT.editItem}
                                     </button>
+                                    {languageDrafts[item.itemId] && <div style={{ flexBasis: "100%", display: "grid", gap: 6 }}>
+                                        {item.missingLanguages.map(language => <label key={language}>{language === "ko" ? languageMissingT.missingKo : languageMissingT.missingVi}<input style={ui.input} value={languageDrafts[item.itemId][language] ?? ""} onChange={event => setLanguageDrafts(prev => ({ ...prev, [item.itemId]: { ...prev[item.itemId], [language]: event.target.value } }))} /></label>)}
+                                        {languageEditError[item.itemId] && <span role="alert">{languageEditError[item.itemId]}</span>}
+                                        <button type="button" style={ui.button} disabled={languageSavingId !== null} onClick={() => void saveMissingLanguages(item)}>{languageSavingId === item.itemId ? c.saving : c.save}</button>
+                                    </div>}
                                 </div>
                             ))}
                         </div>
@@ -4379,6 +4434,18 @@ export default function InventorySnapshotsPage() {
                     </div>
                 </div>
             )}
+            {editingItemId !== null && <div ref={editorDialogRef} role="dialog" aria-modal="true" aria-label={t.editItem} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,.45)", overflowY: "auto", overscrollBehavior: "contain" }}>
+                <div style={{ background: "white", maxWidth: 800, margin: "16px auto", padding: 12, borderRadius: 12 }}>
+                    <button type="button" style={ui.subButton} disabled={editorBusy} onClick={() => setEditingItemId(null)}>{c.close}</button>
+                    <InventoryEditor key={editingItemId} embeddedItemId={editingItemId} onBusyChange={setEditorBusy} onClose={() => setEditingItemId(null)} onSaved={() => {
+                        setEditingItemId(null);
+                        void fetchNameSyncIssues(activeBusinessDateKey);
+                        if (viewMode === "snapshot" && selectedBatchId) void fetchSnapshotItems(selectedBatchId);
+                        else void fetchMovementItems(activeBusinessDateKey);
+                        if (logModalItem) void fetchItemLogs(logModalItem);
+                    }} />
+                </div>
+            </div>}
         </Container>
     );
 }

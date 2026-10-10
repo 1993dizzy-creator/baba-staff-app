@@ -107,7 +107,7 @@ test("inventory read errors do not expose database error messages", () => {
 });
 
 test("all browser callers use the shared inventory 401 wrapper", () => {
-  const inventoryPage = read("app/(protected)/inventory/page.tsx");
+  const inventoryPage = read("components/inventory/InventoryPageContent.tsx");
   const monthlyPage = read("app/(protected)/inventory/monthly/page.tsx");
   const snapshotsPage = read("app/(protected)/inventory/snapshots/page.tsx");
   const mappingsPage = read("app/(protected)/admin/pos/mappings/page.tsx");

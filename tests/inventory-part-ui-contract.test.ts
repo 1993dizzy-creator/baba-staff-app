@@ -5,7 +5,7 @@ import test from "node:test";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 
-const inventoryPage = read("app/(protected)/inventory/page.tsx");
+const inventoryPage = read("components/inventory/InventoryPageContent.tsx");
 
 test("/inventory imports the inventory-only part policy, not the common employee PART_VALUES", () => {
   assert.match(

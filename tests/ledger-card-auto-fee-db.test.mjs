@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {calculateMonthCloseOperatingSummary} from '../lib/ledger/month-close-operating.ts';
 import {database,seedSale,autoDeposit,call,balance,outstanding} from './helpers/card-fee-fixture.mjs';
-const migration=readFileSync('supabase/migrations/20261002120000_auto_finalize_closed_month_card_fees.sql','utf8');
+const migration=readFileSync('supabase/migrations/20261001193526_auto_finalize_closed_month_card_fees.sql','utf8');
 async function fixture(){const db=await database();try{await db.exec(migration);
  await db.exec(`alter table ledger_month_closures add constraint ledger_month_closures_status_check check(status='closed');
  alter table ledger_month_closures add column closed_at timestamptz default now(),add column closed_by bigint default 1,

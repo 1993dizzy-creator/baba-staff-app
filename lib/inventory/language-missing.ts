@@ -3,12 +3,16 @@ export type InventoryLanguageRow = {
   item_name: string | null;
   item_name_vi: string | null;
   is_active: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export type InventoryMissingLanguage = "ko" | "vi";
 
 export type InventoryLanguageMissingItem = {
   itemId: number;
+  registeredAt?: string | null;
+  lastUpdatedAt?: string | null;
   currentItemName: string | null;
   currentItemNameVi: string | null;
   missingLanguages: InventoryMissingLanguage[];
@@ -30,6 +34,8 @@ export function findInventoryLanguageMissingItems(
 
     return [{
       itemId: Number(item.id),
+      registeredAt: item.created_at ?? null,
+      lastUpdatedAt: item.updated_at ?? null,
       currentItemName: item.item_name,
       currentItemNameVi: item.item_name_vi,
       missingLanguages,

@@ -6,7 +6,7 @@ import test from "node:test";
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const jsonRoute = read("app/api/inventory/bootstrap/route.ts");
 const streamRoute = read("app/api/inventory/bootstrap-stream/route.ts");
-const page = read("app/(protected)/inventory/page.tsx");
+const page = read("components/inventory/InventoryPageContent.tsx");
 const helper = read("lib/inventory/bootstrap-server.ts");
 const parser = read("lib/inventory/bootstrap-stream.ts");
 const itemsRoute = read("app/api/inventory/items/route.ts");

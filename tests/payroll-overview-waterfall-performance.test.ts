@@ -12,10 +12,10 @@ test("monthly standing accepts a resolved period while preserving the existing f
   // options widened (Phase 2) to also accept the shared attendancePromise —
   // period/userId acceptance and the resolvePayrollOverviewPeriod fallback
   // are unchanged.
-  assert.match(standing, /options\?: \{ period\?: PayrollOverviewPeriod; userId\?: number; attendancePromise\?: Promise<\{ data: AttendanceRow\[\] \| null; error: unknown \}> \}/);
+  assert.match(standing, /options\?: \{ period\?: PayrollOverviewPeriod; userId\?: number; attendancePromise\?: Promise<\{ data: AttendanceRow\[\] \| null; error: unknown \}>; staffCurrent\?: boolean \}/);
   assert.match(standing, /const period = options\?\.period \?\? await resolvePayrollOverviewPeriod\(month\)/);
-  assert.match(standing, /const calculationEndDate = period\.calculationEndDate/);
-  assert.match(standing, /return \{ asOfDate: period\.asOfDate, users, standings \}/);
+  assert.match(standing, /const calculationEndDate = options\?\.staffCurrent && currentBusinessDate\.startsWith\(`\$\{month\}-`\)\s*\? currentBusinessDate : period\.calculationEndDate/);
+  assert.match(standing, /return \{ asOfDate: options\?\.staffCurrent \? lastDate \?\? period\.asOfDate : period\.asOfDate, users, standings \}/);
 });
 
 test("payroll overview overlaps adjustments with period resolution and shares that period", () => {

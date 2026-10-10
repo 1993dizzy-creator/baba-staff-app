@@ -318,7 +318,7 @@ test("GET separates all-active language gaps from business-date daily sync items
   );
 });
 
-test("language alert is separate, hidden at zero, labels gaps, falls back by UI language and opens existing edit route", () => {
+test("language alert is separate, hidden at zero, labels gaps, falls back by UI language and opens inline language editor", () => {
   assert.match(page, /\{languageMissingItems\.length > 0 && \(/);
   assert.match(page, /data-testid="inventory-language-missing-banner"/);
   assert.match(page, /한글명 미설정/);
@@ -326,8 +326,8 @@ test("language alert is separate, hidden at zero, labels gaps, falls back by UI 
   assert.match(page, /currentItemNameVi \|\| item\.currentItemName/);
   assert.match(page, /currentItemName \|\| item\.currentItemNameVi/);
   assert.match(page, /품목 수정/);
-  assert.match(page, /openInventoryItemEdit\(item\.itemId\)/);
-  assert.match(page, /router\.push\(`\/inventory\?itemId=\$\{itemId\}&mode=edit`\)/);
+  assert.match(page, /setLanguageDrafts/);
+  assert.match(page, /setEditingItemId\(itemId\)/);
 });
 
 test("current view banner, focus refresh and post-sync movement reload remain wired", () => {

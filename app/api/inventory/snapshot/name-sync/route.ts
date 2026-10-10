@@ -31,7 +31,7 @@ const INVENTORY_SELECT = [
   "id", "item_name", "item_name_vi", "part", "category", "category_vi", "code", "unit",
   "purchase_price", "supplier", "supplier_partner_id", "quantity", "is_active",
 ].join(", ");
-const LANGUAGE_INVENTORY_SELECT = "id, item_name, item_name_vi, is_active";
+const LANGUAGE_INVENTORY_SELECT = "id, item_name, item_name_vi, is_active, created_at, updated_at";
 
 const createSupabaseAdmin = () => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

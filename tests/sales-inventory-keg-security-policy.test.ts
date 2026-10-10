@@ -13,7 +13,7 @@ const directApply = read(
 const unifiedExecute = read(
   "app/api/admin/sales/inventory-deductions/unified-execute/route.ts"
 );
-const inventoryPage = read("app/(protected)/inventory/page.tsx");
+const inventoryPage = read("components/inventory/InventoryPageContent.tsx");
 const receiptsPage = read("app/(protected)/admin/sales/receipts/page.tsx");
 const migration = read(
   "supabase/migrations/202607230002_lock_down_sales_inventory_keg_public_access.sql"

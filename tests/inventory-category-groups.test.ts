@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import ts from "typescript";
 // @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { CATEGORY_OPTIONS_BY_PART } from "../lib/inventory/categories.ts";
 // @ts-expect-error Node test execution needs explicit TypeScript extensions.
@@ -51,7 +52,23 @@ test("partner and candidate groups use active inventory from existing non-N+1 re
   assert.match(server, /from\("inventory"\)\.select\("supplier,is_active,part,category,category_vi"\)/);
   assert.match(server, /if \(row\.is_active !== false\) \{[\s\S]*activeItems\.push/);
   assert.match(server, /dominantInventoryGroup: getDominantInventoryCategoryGroup/);
-  assert.doesNotMatch(server, /for \([^)]*\)[\s\S]{0,200}await supabaseServer/);
+  // Only these bulk category loaders promise no per-item queries. Price-history
+  // pagination elsewhere in the file is a separate, bounded read.
+  const ast = ts.createSourceFile("server.ts", server, ts.ScriptTarget.Latest, true);
+  for (const name of ["loadPartnerData", "loadSupplierAliases"]) {
+    const fn = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
+    assert.ok(fn && ts.isFunctionDeclaration(fn) && fn.body, name);
+    let loops = 0;
+    function visit(node: ts.Node) {
+      if (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node) || ts.isWhileStatement(node)) {
+        loops++;
+        assert.doesNotMatch(node.getText(ast), /await|supabaseServer/);
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(fn);
+    assert.ok(loops > 0, `${name} must actually group the bulk result`);
+  }
 });
 
 test("partner list search is removed and the add form sits once at the top of 거래처 설정", () => {

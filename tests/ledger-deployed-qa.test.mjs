@@ -46,6 +46,9 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
     './ManualDisplayEditor':{default:()=>null,LedgerEditShell:box},'./ManualDisplayHistory':{default:()=>null},
     '@/lib/ledger/entries':require('../lib/ledger/entries.ts'),
     '@/lib/ledger/month-query':require('../lib/ledger/month-query.ts'),
+    '@/lib/ledger/entry-save-refresh':require('../lib/ledger/entry-save-refresh.ts'),
+    '@/lib/inventory/purchase-repair-contract':require('../lib/inventory/purchase-repair-contract.ts'),
+    './InventoryProjectionResolution.module.css':{default:new Proxy({},{get:(_,key)=>String(key)})},
     '@/lib/ledger/payable-date-groups':require('../lib/ledger/payable-date-groups.ts'),
     '@/lib/ledger/manual-entry-amount':require('../lib/ledger/manual-entry-amount.ts'),
     '@/lib/ledger/manual-entry-policy':require('../lib/ledger/manual-entry-policy.ts'),
@@ -59,11 +62,19 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
     '@/lib/ledger/card-deposit-display':transpiled('lib/ledger/card-deposit-display.ts',{'./card-settlements':require('../lib/ledger/card-settlements.ts')}),
   };
   deps['./PartnerSelect']=transpiled('app/(protected)/admin/ledger/entries/PartnerSelect.tsx',deps);
+  deps['@/components/ledger/InventoryProjectionResolution']=transpiled('components/ledger/InventoryProjectionResolution.tsx',deps);
   const testModule={exports:{}};
   const code=ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   new Function('require','module','exports','fetch',code)(name=>{assert.ok(name in deps,`Unexpected dependency ${name}`);return deps[name];},testModule,testModule.exports,(url,options)=>{requests.push(String(url));calls.push({url:String(url),options});return fetcher(String(url),options);});
   const html=renderToStaticMarkup(h(testModule.exports.default));
-  return {html,effects,requests,updates,elements,calls,navigations};
+  const runEffect=name=>{
+    const marker=name==='load'?'load(controller.signal)':name==='card'?'if (!cardSettlementExpanded)':null;
+    assert.ok(marker,`Unknown effect ${name}`);
+    const matches=effects.filter(effect=>String(effect).includes(marker));
+    assert.equal(matches.length,1,`Exactly one ${name} effect must exist`);
+    return matches[0]();
+  };
+  return {html,effects,runEffect,requests,updates,elements,calls,navigations};
 }
 function payableFixture(month) {
   const source=(id,date,amount)=>({id,party_id:10,original_amount:amount,status:'partially_paid',expense:{business_date:date,status:'confirmed',source_snapshot:{item_name:'Demo purchase'}}});
@@ -196,7 +207,7 @@ test('reclose success closes the sheet, reloads the ledger and shows the new rev
 test('entries month loading actually sends selected month to payables API',async()=>{
   for(const month of ['2026-08','2026-09']){
     const state=entriesFixture(month,{fetcher:async(url)=>Response.json(url.includes('month-close')?{state:'open'}:url.includes('payables')?payableFixture(month):ledgerFixture(month))});
-    const cleanup=state.effects[0]();await new Promise(resolve=>setImmediate(resolve));cleanup();
+    const cleanup=state.runEffect('load');await new Promise(resolve=>setImmediate(resolve));cleanup();
     assert.ok(state.requests.includes(`/api/admin/ledger/payables?month=${month}`));assert.ok(!state.requests.includes('/api/admin/ledger/payables'));
   }
 });
@@ -294,7 +305,7 @@ test('card page reads the URL month, navigates by month controls and falls back 
   assert.match(state.html,/type="month"[^>]*value="2026-08"/);
   assert.match(state.html,/aria-label="월 선택"/);
   assert.doesNotMatch(state.html,/선택 월<\/span>/);
-  const cleanup=state.effects[0]();await new Promise(resolve=>setImmediate(resolve));cleanup();
+  const cleanup=state.runEffect('load');await new Promise(resolve=>setImmediate(resolve));cleanup();
   assert.deepEqual(state.requests,['/api/admin/ledger/card-settlements?month=2026-08','/api/admin/ledger/card-fees?month=2026-08']);
   state.elements.find(item=>item.type==='button'&&item.props['aria-label']==='다음 달').props.onClick();
   assert.equal(state.navigations.at(-1).href,'/admin/ledger/card-settlements?month=2026-09');
@@ -350,11 +361,11 @@ test('zero card sales show a dash in the settlement-rate header',()=>{
 test('expanded card status reads the selected month and collapsed status does not request extra data',async()=>{
   for(const month of ['2026-08','2026-09']) {
     const state=entriesFixture(month,{cardExpanded:true,fetcher:async()=>Response.json({summary:cardSummary})});
-    const cleanup=state.effects[1]();await new Promise(resolve=>setImmediate(resolve));cleanup();
+    const cleanup=state.runEffect('card');await new Promise(resolve=>setImmediate(resolve));cleanup();
     assert.deepEqual(state.requests,[`/api/admin/ledger/card-settlements?month=${month}`]);
     assert.ok(state.updates.some(update=>update.slot===23&&update.value.month===month));
   }
-  const state=entriesFixture('2026-09');state.effects[1]();assert.equal(state.requests.length,0);
+  const state=entriesFixture('2026-09');state.runEffect('card');assert.equal(state.requests.length,0);
 });
 
 test('opening account cards render readable cash, corporate and personal emojis while preserving clearing exclusion',()=>{
@@ -821,8 +832,8 @@ test('a load() call superseded by a newer one can never write state, even if its
   const state=entriesFixture('2026-09',{fetcher});
   // Fire load() twice back-to-back without an intervening cleanup/abort — the harness's
   // useRef-backed sequence counter is the only thing standing between this and a stale write.
-  const cleanupFirst=state.effects[0]();
-  const cleanupSecond=state.effects[0]();
+  const cleanupFirst=state.runEffect('load');
+  const cleanupSecond=state.runEffect('load');
   assert.equal(deferreds.length,8);
   // Resolve the SECOND (latest) call's four requests first...
   for(const record of deferreds.filter(r=>r.batch==='second')) record.resolve(Response.json(respond(record.url)));
@@ -841,7 +852,7 @@ test('a load() call superseded by a newer one can never write state, even if its
 
 test('a card-settlement response for a month the user has already navigated away from is dropped even without abort (body.month guard)',async()=>{
   const state=entriesFixture('2026-09',{cardExpanded:true,fetcher:async()=>Response.json({month:'2026-08',summary:cardSummary})});
-  state.effects[1]();
+  state.runEffect('card');
   await new Promise(resolve=>setImmediate(resolve));
   // slot 23 is cardSettlement — a body whose own month disagrees with the requested
   // month must never be written, independent of the AbortController.
@@ -877,8 +888,8 @@ function raceLoadFetcher(makeError) {
 test('Case A — a stale successful response cannot end loading or write data/payables/closed while a newer request is still pending', async () => {
   const { fetcher, settleBatch } = raceLoadFetcher();
   const state = entriesFixture('2026-09', { fetcher });
-  const cleanupA = state.effects[0](); // request A
-  const cleanupB = state.effects[0](); // request B, started after A — A is now stale
+  const cleanupA = state.runEffect('load'); // request A
+  const cleanupB = state.runEffect('load'); // request B, started after A — A is now stale
   settleBatch('A', true); // A completes (success) first, while B is still pending
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(state.updates.filter(u => u.slot === 1).length, 0, 'stale A must not call setData');
@@ -897,8 +908,8 @@ test('Case A — a stale successful response cannot end loading or write data/pa
 test('Case B — a stale failed response cannot surface its error or end loading while a newer request is still pending', async () => {
   const { fetcher, settleBatch } = raceLoadFetcher();
   const state = entriesFixture('2026-09', { fetcher });
-  const cleanupA = state.effects[0](); // request A
-  const cleanupB = state.effects[0](); // request B, started after A — A is now stale
+  const cleanupA = state.runEffect('load'); // request A
+  const cleanupB = state.runEffect('load'); // request B, started after A — A is now stale
   settleBatch('A', false); // A fails first, while B is still pending
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(state.updates.filter(u => u.slot === 3 && u.value !== '').length, 0, 'stale A\'s failure must not set an error message');
@@ -913,7 +924,7 @@ test('Case B — a stale failed response cannot surface its error or end loading
 
 test('Case C — when the latest (non-stale) request itself fails, the error banner is set and loading ends normally', async () => {
   const state = entriesFixture('2026-09', { fetcher: async () => { throw new Error('network down'); } });
-  const cleanup = state.effects[0]();
+  const cleanup = state.runEffect('load');
   await new Promise(resolve => setImmediate(resolve));
   cleanup();
   assert.ok(state.updates.some(u => u.slot === 3 && u.value !== ''), 'a genuinely-latest failure must still show the error message');
