@@ -6,8 +6,9 @@ import { BarSheet, primaryButtonStyle, secondaryButtonStyle } from "@/components
 import { canReviewPurchaseCorrection, canConfirmPurchaseSupplierChange, canSubmitPurchaseRepair, purchaseRepairState, purchaseRepairError, type PurchaseRepairPreview } from "@/lib/inventory/purchase-repair-contract";
 
 import styles from "./InventoryProjectionResolution.module.css";
+import type { PurchaseCase } from "@/lib/inventory/purchase-cases";
 
-export type InventoryProjectionIssue = {
+export type InventoryProjectionIssue = Partial<PurchaseCase> & {
   inventoryLogId: number; code: string; itemName: string; itemNameVi?: string | null; supplier?: string | null; businessDate: string;
   quantityDelta: number; amountDelta: number; originalQuantity: number | null;
   resolution?: PurchaseRepairPreview;
@@ -33,6 +34,7 @@ export default function InventoryProjectionResolution({ issue, vi, onResolved }:
   const candidate = preview?.candidates.find(row => row.inventoryLogId === selected);
   const supplierConfirmationRequired = candidate?.code === "SUPPLIER_CHANGE_CONFIRMATION_REQUIRED";
   const itemName = vi ? issue.itemNameVi || issue.itemName : issue.itemName;
+  const correctionDate = issue.correctionBusinessDate || issue.businessDate;
   const money = (amount: number | null) => amount == null ? "—" : `${Number(amount).toLocaleString("en-US")}₫`;
   const originalSupplier = candidate?.supplier?.trim();
   const newSupplier = candidate?.newSupplier?.trim();
@@ -92,7 +94,7 @@ export default function InventoryProjectionResolution({ issue, vi, onResolved }:
         {busy ? vi ? "Đang kiểm tra…" : "확인 중…" : vi ? "Liên kết lô nhập gốc và sửa sổ" : "원입고에 연결하고 장부 수정"}
       </button>}>
       <dl className={styles.basics}>
-        <div><dt>{vi ? "Ngày sửa" : "수정일"}</dt><dd><time dateTime={issue.businessDate}>{issue.businessDate ? issue.businessDate.slice(5).replace("-", "/") : "—"}</time></dd></div>
+        <div><dt>{vi ? "Ngày sửa" : "수정일"}</dt><dd><time dateTime={correctionDate}>{correctionDate ? correctionDate.slice(5).replace("-", "/") : "—"}</time></dd></div>
         <div><dt>{vi ? "Nhà cung cấp" : "거래처명"}</dt><dd title={supplier}>{supplier}</dd></div>
         <div><dt>{vi ? "Mặt hàng" : "품목명"}</dt><dd title={itemName}>{itemName}</dd></div>
       </dl>

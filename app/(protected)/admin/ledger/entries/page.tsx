@@ -66,6 +66,7 @@ import {
   payrollAdvanceDefaultMemo,
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
+import InventoryPurchaseCaseSummary from "@/components/ledger/InventoryPurchaseCaseSummary";
 import { entryStatusReason } from "@/lib/ledger/entry-status-reason";
 import MonthCloseSheet from "./MonthCloseSheet";
 import PartnerSelect from "./PartnerSelect";
@@ -910,12 +911,7 @@ function LedgerEntriesContent() {
             <details>
               <summary>{vi ? "Xem chi tiết" : "상세 보기"}</summary>
               {data.inventoryProjectionIssues.map(issue => <div className={styles.projectionWarningRow} key={issue.inventoryLogId}>
-                <span className={styles.projectionWarningSummary}>
-                  <span className={styles.projectionWarningSupplier} title={issue.supplier || undefined}>{issue.supplier || (vi ? "Chưa xác định" : "거래처 미확정")}</span>
-                  <span aria-hidden="true"> · </span>
-                  <strong className={styles.projectionWarningItem} title={vi ? issue.itemNameVi || issue.itemName : issue.itemName}>{vi ? issue.itemNameVi || issue.itemName : issue.itemName}</strong>
-                  <span className={styles.projectionWarningDate}> · {issue.businessDate ? Number(issue.businessDate.slice(5, 7)) + "/" + Number(issue.businessDate.slice(8, 10)) : "—"}</span>
-                </span>
+                <InventoryPurchaseCaseSummary issue={issue} vi={vi} />
                 <InventoryProjectionResolution issue={issue} vi={vi} onResolved={async () => {
                   const refreshed = await load();
                   if (!refreshed) throw new Error("LEDGER_REFRESH_FAILED");

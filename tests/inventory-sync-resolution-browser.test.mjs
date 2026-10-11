@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createRequire} from 'node:module';
 import {mkdir} from 'node:fs/promises';
@@ -8,7 +8,7 @@ test('daily sync details and centered supplier approvals across KO/VI desktop/mo
  const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH);
  const browser=await chromium.launch({headless:true,executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe'});
  try{for(const lang of ['ko','vi'])for(const mobile of [false,true]){
-  const context=await browser.newContext({viewport:mobile?{width:390,height:844}:{width:1280,height:900},isMobile:mobile,hasTouch:mobile});const page=await context.newPage();page.setDefaultTimeout(10000);const requests=[];let synced=false,economic=false,resolved=false,blockedCode=null,postCode='SUPPLIER_CHANGE_CONFIRMATION_STALE',fingerprint='a'.repeat(64);
+  const context=await browser.newContext({viewport:mobile?{width:390,height:844}:{width:1280,height:900},isMobile:mobile,hasTouch:mobile});const page=await context.newPage();page.setDefaultTimeout(10000);const requests=[];let synced=false,economic=false,resolved=false,blockedCode=null,postCode='SUPPLIER_CHANGE_CONFIRMATION_STALE',fingerprint='a'.repeat(64),extraTargets=[],syncFailure=false;
   const user={id:2,name:'QA',role:'owner',part:'kitchen',language:lang};await page.addInitScript(user=>localStorage.setItem('baba_user',JSON.stringify(user)),user);
   const root={id:12848,item_id:314,item_name:'배',item_name_vi:'Lê',part:'kitchen',category:'Fruit',category_vi:'Fruit',code:'QA',unit:'kg',change_quantity:1,prev_quantity:0,new_quantity:1,new_supplier:'Chợ',new_purchase_price:35000,created_at:'2026-10-09T04:00:00Z',reason:'purchase'};
   const candidate=()=>({inventoryLogId:12848,businessDate:'2026-10-09',quantity:1,effectiveQuantity:1,unit:'kg',price:35000,supplier:'Chợ',newSupplier:'An Liên',oldAmount:35000,newAmount:35000,delta:0,quantityDelta:0,safe:false,code:blockedCode||'SUPPLIER_CHANGE_CONFIRMATION_REQUIRED',supplierChange:{valid:true,requiresConfirmation:true,beforeSupplier:'Chợ',afterSupplier:'An Liên',beforePartnerId:'7',afterPartnerId:'27',confirmationFingerprint:fingerprint}});
@@ -19,7 +19,7 @@ test('daily sync details and centered supplier approvals across KO/VI desktop/mo
    else if(url.pathname==='/api/inventory/snapshot/list')json={ok:true,batches:[{id:9,snapshot_date:'2026-10-09'}],currentBusinessDate:'2026-10-09',purchaseDateMap:{'2026-10-09':true,'2026-10-10':true}};
    else if(url.pathname==='/api/inventory/logs')json={ok:true,data:[root]};
    else if(url.pathname==='/api/inventory/snapshot/name-sync'){
-    if(req.method()==='POST'){synced=true;json={ok:true,businessDate:'2026-10-09',syncedCount:economic?0:1,reviewRequiredCount:economic?1:0,failedCount:0,results:[{itemId:314,currentItemName:'배',currentItemNameVi:'Lê',status:economic?'review_required':'synced',targets:[{purchaseLogId:12848,correctionLogId:12849,status:economic?'review_required':'synced',code:economic?'SUPPLIER_CHANGE_CONFIRMATION_REQUIRED':'METADATA_SYNCED'}]}]};}
+    if(req.method()==='POST' && syncFailure){status=500;json={ok:false,error:'QA_SYNC_FAILED'};}else if(req.method()==='POST'){synced=true;json={ok:true,businessDate:'2026-10-09',syncedCount:economic?0:1,reviewRequiredCount:(economic?1:0)+extraTargets.filter(t=>t.status==='review_required').length,failedCount:extraTargets.filter(t=>t.status==='failed').length,results:[{itemId:314,currentItemName:'배',currentItemNameVi:'Lê',status:economic?'review_required':'synced',targets:[{purchaseLogId:12848,correctionLogId:12849,status:economic?'review_required':'synced',code:economic?'SUPPLIER_CHANGE_CONFIRMATION_REQUIRED':'METADATA_SYNCED'},...extraTargets]}]};}
     else json={ok:true,canSync:true,languageMissingItems:[],dailySyncItems:synced?[]:[{itemId:314,currentItemName:'배',currentItemNameVi:'Lê',logIds:[12848],issues:economic?['supplier_changed']:['ko_changed'],quantityReviewRequired:false,changes:economic?[{field:'supplier',from:'Chợ',to:'An Liên'}]:[{field:'item_name',from:'배',to:'신선한 배'}]}]};
    }
    else if(url.pathname==='/api/admin/ledger')json={ok:true,month:'2026-10',fundsView:{month:'2026-10',mode:'live',asOf:'2026-10-10',businessDateExclusive:null},summary:{income:0,salesIncome:0,otherIncome:0,receivedIncome:0,expense:35000,operatingProfit:-35000,paidExpense:0,displayedExpense:35000,actualCashOutflow:0,cardSettlementDifference:0,cardGrossSales:0,monthlySettledGross:0,actualCardDeposits:0,unsettledCardGross:0},accounts:[],categories:[],partners:[],entries:[],inventoryProjectionIssues:resolved?[]:[issue]};
@@ -35,7 +35,21 @@ test('daily sync details and centered supplier approvals across KO/VI desktop/mo
   page.on('dialog',d=>d.accept());
   await page.goto(process.env.QA_UI_BASE_URL+'/inventory/snapshots');
   const banner=page.getByTestId('snapshot-name-sync-banner');await banner.waitFor();await banner.getByRole('button').first().click();await page.getByTestId('snapshot-name-sync-item-314').getByRole('button').click();
-  const details=page.getByTestId('inventory-daily-sync-results');await details.waitFor();assert.match(await details.innerText(),/#12848/);assert.match(await details.innerText(),lang==='ko'?/배/:/Lê/);assert.equal(await details.locator('a').count(),0);assert.equal(requests.some(r=>r.path.includes('/resolve')),false);
+  const details=page.getByTestId('inventory-daily-sync-results');
+  const summary=page.getByRole('status').filter({hasText:lang==='ko'?'1개 동기화 완료':'Đã đồng bộ 1 mặt hàng'});await summary.waitFor();
+  assert.equal(await summary.count(),1);assert.equal(await summary.evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 251, 235)');
+  assert.equal(await details.count(),0);assert.equal(await page.getByText(lang==='ko'?'입고정보 동기화를 완료했습니다.':'Đã đồng bộ thông tin phiếu nhập.',{exact:true}).count(),0);assert.equal(requests.some(r=>r.path.includes('/resolve')),false);
+  // Mixed results keep review/failure targets and hide success in the same item.
+  extraTargets=[{purchaseLogId:12850,correctionLogId:12850,status:'review_required',code:'QUANTITY_CORRECTION_REQUIRED'},{purchaseLogId:12851,correctionLogId:12851,status:'failed',code:'QA_SYNC_FAILED'},{purchaseLogId:12852,correctionLogId:12852,status:'review_required',code:'PURCHASE_AMOUNT_CONFIRMATION_REQUIRED'}];
+  synced=false;await page.reload();await banner.waitFor();await banner.getByRole('button').first().click();await page.getByTestId('snapshot-name-sync-item-314').getByRole('button').click();await details.waitFor();await summary.waitFor();
+  const mixedText=await details.innerText();assert.doesNotMatch(mixedText,/#12848|METADATA_SYNCED/);assert.match(mixedText,/#12850/);assert.match(mixedText,/#12851/);assert.match(mixedText,/#12852/);assert.match(mixedText,lang==='ko'?/배/:/Lê/);assert.equal(await details.locator('a').count(),3);
+  assert.equal(await details.locator('a').first().getAttribute('href'),'/inventory?itemId=314&mode=edit');assert.ok((await details.locator('a').last().getAttribute('href')).includes('month=2026-10'));
+  assert.match(await summary.innerText(),lang==='ko'?/2개 관리자 확인 필요 · 1개 실패/:/2 mặt hàng cần quản trị viên kiểm tra · 1 mặt hàng thất bại/);
+  assert.equal(await page.getByText(lang==='ko'?'입고정보 동기화를 완료했습니다.':'Đã đồng bộ thông tin phiếu nhập.',{exact:true}).count(),0);
+  // Request failures retain the localized retry guidance.
+  extraTargets=[];synced=false;syncFailure=true;await page.reload();await banner.waitFor();await banner.getByRole('button').first().click();await page.getByTestId('snapshot-name-sync-item-314').getByRole('button').click();
+  await page.getByText(lang==='ko'?'당일 입고정보를 동기화하지 못했습니다. 다시 시도해주세요.':'Không thể đồng bộ thông tin nhập hàng hôm nay. Vui lòng thử lại.',{exact:true}).waitFor();assert.equal(await details.count(),0);syncFailure=false;
+  console.log('PASS single yellow summary, mixed review/failure details and links, request failure guidance',lang,mobile?'mobile':'desktop');
   synced=false;economic=true;await page.reload();await banner.waitFor();await banner.getByRole('button').first().click();await page.getByTestId('snapshot-name-sync-item-314').getByRole('button').click();await details.waitFor();assert.match(await details.innerText(),/SUPPLIER_CHANGE_CONFIRMATION_REQUIRED/);assert.match(await details.innerText(),/#12848/);assert.ok((await details.locator('a').getAttribute('href')).includes('month=2026-10'));
   await details.locator('a').click();await page.locator('#inventory-projection-12848').waitFor();await page.locator('#inventory-projection-12848').click();
   const dialog=page.getByRole('dialog');await dialog.locator('select').waitFor();await dialog.locator('select').selectOption('12848');

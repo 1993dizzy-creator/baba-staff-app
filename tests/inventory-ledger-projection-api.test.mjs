@@ -187,13 +187,13 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootL
         logs.push(log);calls.push('inventory-commit','source-commit');
         return {data:{status:'ok',inventoryLogId:log.id},error:null};
       }
-      if(name==='inventory_apply_purchase_correction_v2') {
+      if(name==='inventory_apply_purchase_correction_v3') {
         assert.equal(args.p_purchase_log_id,rootLogs.length ? rootLogs.at(-1).id : 99);assert.equal(args.p_expected_quantity,startingQuantity);
         assert.equal(args.p_actor_user_id,7);calls.push('atomic-correction');
         if(correctionFailure)return {data:{status:'invalid_purchase_reference'},error:null};
         const change_quantity=Number(args.p_payload.quantity)-Number(item.quantity);
         Object.assign(item,args.p_payload);logs.push({id:100+logs.length,correction_of_inventory_log_id:args.p_purchase_log_id,change_quantity,reason:'purchase'});
-        return {data:{status:'ok',inventory:{...item},inventoryLogId:100},error:null};
+        return {data:{status:'ok',inventory:{...item},inventoryLogId:100,ledgerSync:{status:'synced',code:'REBOOKED',inventoryLogId:100}},error:null};
       }
       assert.equal(name, 'ledger_project_inventory_purchase_log_v1');
       assert.equal(args.p_inventory_log_id, logs.at(-1).id);
@@ -346,7 +346,7 @@ test('owner and master can keep using the emergency purchase-correction flow',as
     const state=itemSetup({role});
     const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',correction_of_inventory_log_id:99,expectedQuantity:10,payload:{quantity:6}});
     assert.equal(response.status,200);assert.equal(state.item.quantity,6);assert.equal(state.logs[0].correction_of_inventory_log_id,99);
-    assert.equal((await response.json()).ledgerSync.status,'failed');assert.deepEqual(state.calls,['atomic-correction','ledger-projection']);
+    assert.equal((await response.json()).ledgerSync.status,'synced');assert.deepEqual(state.calls,['atomic-correction']);
   }
 });
 
@@ -378,7 +378,7 @@ test('same-day +72 then -12 uses the correction RPC and retains a 60-unit family
   const state=itemSetup({role:'staff',rootLogs:[root(99,72,'2026-09-01T08:00:00Z')],startingQuantity:72});
   const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',selectedPurchaseRootId:99,expectedQuantity:72,payload:{quantity:60,unit:'can',purchase_price:20000}});
   assert.equal(response.status,200);
-  assert.deepEqual(state.calls,['atomic-correction','ledger-projection']);
+  assert.deepEqual(state.calls,['atomic-correction']);
   assert.equal(state.logs[0].correction_of_inventory_log_id,99);
   assert.equal(72+state.logs[0].change_quantity,60);
 });
@@ -442,7 +442,7 @@ test('Ledger review card hides raw projection codes and log IDs in operator text
 });
 
 test('successful automatic corrections are excluded from the warning query', () => {
-  const loader=readFileSync('lib/ledger/inventory-display.ts','utf8');
+  const loader=readFileSync('lib/ledger/purchase-case-loader.ts','utf8');
   assert.match(loader,/status\.in\.\(failed,review_required\),and\(status\.eq\.synced,code\.eq\.NOT_A_PURCHASE\)/);
   assert.doesNotMatch(loader,/\.in\("status", \["synced"/);
 });
@@ -502,7 +502,7 @@ test('cross-day purchase reduction requires confirmation, then uses the explicit
  assert.equal(state.logs.length,0);assert.equal(state.item.quantity,1.42);
  const selected=await state.invoke('PATCH',{...body,selectedPurchaseRootId:99,expectedQuantity:1.42});
  assert.equal(selected.status,200);assert.equal(state.logs.length,1);assert.equal(state.logs[0].correction_of_inventory_log_id,99);
- assert.deepEqual(state.calls,['atomic-correction','ledger-projection']);
+ assert.deepEqual(state.calls,['atomic-correction']);
 });
 test('multiple cross-day roots require explicit selection and never mutate on preview',async()=>{
  const state=itemSetup({rootLogs:[root(98,10,'2026-08-30T10:00:00Z','2026-08-30'),root(99,10,'2026-08-31T10:00:00Z','2026-08-31')]});

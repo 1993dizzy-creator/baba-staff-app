@@ -970,7 +970,7 @@ export async function PATCH(req: Request) {
 
     if (correctionPurchaseLogId !== null || autoCorrectionRootId !== null) {
       const businessDate = autoCorrectionBusinessDate ?? (await resolveInventoryBusinessDate()).businessDate;
-      const { data: correction, error } = await supabaseAdmin.rpc("inventory_apply_purchase_correction_v2", {
+      const { data: correction, error } = await supabaseAdmin.rpc("inventory_apply_purchase_correction_v3", {
         p_item_id: Number(id), p_purchase_log_id: correctionPurchaseLogId ?? autoCorrectionRootId,
         p_expected_quantity: autoCorrectionRootId !== null ? Number(prevItem.quantity) : Number(expectedQuantity),
         p_expected_item: prevItem, p_payload: serverPayload,
@@ -981,8 +981,9 @@ export async function PATCH(req: Request) {
         return jsonError(correction?.status ?? "purchase_correction_failed", "Purchase correction was not saved.",
           ["quantity_conflict", "inventory_conflict"].includes(correction?.status) ? 409 : correction?.status === "forbidden" ? 403 : correction?.status === "not_found" ? 404 : 400);
       }
-      const ledgerSync = await projectInventoryPurchaseLog(Number(correction.inventoryLogId),actor.id);
-      return NextResponse.json({ok:true,mode,ledgerSync});
+      // v3 commits the inventory correction and its projection together. Never
+      // retry via a second RPC if this operation or the local migration is missing.
+      return NextResponse.json({ok:true,mode,ledgerSync:correction.ledgerSync});
     }
 
     const prevQuantity = roundDecimal(Number(prevItem.quantity ?? 0));

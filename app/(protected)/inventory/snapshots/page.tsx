@@ -2822,7 +2822,14 @@ export default function InventorySnapshotsPage() {
                 </div>
             )}
 
-            <InventoryDailySyncResults results={nameSyncDetails} businessDate={nameSyncBusinessDate || ""} lang={lang} />
+            <InventoryDailySyncResults
+                results={nameSyncDetails.map((item) => ({
+                    ...item,
+                    targets: item.targets.filter((target) => target.status !== "synced"),
+                })).filter((item) => item.targets.length > 0)}
+                businessDate={nameSyncBusinessDate || ""}
+                lang={lang}
+            />
 
             {nameSyncBusinessDate && nameSyncItems.length === 0 && nameSyncResult && (
                 <div

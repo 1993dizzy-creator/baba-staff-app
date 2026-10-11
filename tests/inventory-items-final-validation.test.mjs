@@ -26,7 +26,7 @@ function setup({role='owner',authenticated=true,inactive=false,race=false,closed
  Object.assign(item,args.p_payload,{updated_at:'2026-10-10T05:00:00.000Z'});
  writes.push({table:'inventory',update:args.p_payload},{table:'inventory_logs',insert:{source_actor_user_id:args.p_actor_user_id}});
  return {data:{status:'ok',inventoryLogId:101},error:null};}
- if(name==='inventory_apply_purchase_correction_v2'){writes.push({rpc:name,args});return {data:{status:'ok',inventoryLogId:101},error:null};}throw Error('Unexpected RPC '+name);}};
+ if(name==='inventory_apply_purchase_correction_v3'){writes.push({rpc:name,args});return {data:{status:'ok',inventoryLogId:101,ledgerSync:{status:'synced',code:'REBOOKED',inventoryLogId:101}},error:null};}throw Error('Unexpected RPC '+name);}};
  const auth=authenticated?{ok:true,actor:{id:7,name:'Session actor',username:'qa',role}}:{ok:false,code:'RELOGIN_REQUIRED',status:401};
  const route=load('app/api/inventory/items/route.ts',{
  'next/server':{NextResponse:{json:Response.json}},'@supabase/supabase-js':{createClient:()=>db},
@@ -55,7 +55,7 @@ test('actual PATCH success has ok/mode/ledgerSync, no data; actor identity is se
 test('replayed stale edit is rejected, producing one source log only',async()=>{const s=setup();assert.equal((await s.patch(edit())).status,200);assert.equal((await s.patch(edit())).status,409);assert.equal(s.writes.filter(w=>w.table==='inventory_logs').length,1);});
 test('purchase reduction requires root confirmation; closed month rejects before source/RPC/ledger writes',async()=>{const body=edit({payload:{quantity:1,unit:'bottle',supplier:'QA',purchase_price:30000},reason:'purchase'});const s=setup();let r=await s.patch(body);assert.equal(r.status,409);const rejected=await r.json();assert.equal(rejected.error,'purchase_correction_selection_required');assert.equal(rejected.candidates[0].id,12407);assert.equal(s.writes.length,0);
  const closed=setup({closed:true});r=await closed.patch({...body,selectedPurchaseRootId:12407});assert.equal(r.status,409);assert.equal(closed.writes.length,0);assert.equal(closed.projections.length,0);
- const open=setup();r=await open.patch({...body,selectedPurchaseRootId:12407});assert.equal(r.status,200);assert.equal(open.writes[0].rpc,'inventory_apply_purchase_correction_v2');assert.equal(open.writes[0].args.p_expected_quantity,2);assert.deepEqual(open.projections,[{id:101,actor:7}]);
+ const open=setup();r=await open.patch({...body,selectedPurchaseRootId:12407});assert.equal(r.status,200);assert.equal(open.writes[0].rpc,'inventory_apply_purchase_correction_v3');assert.equal(open.writes[0].args.p_expected_quantity,2);assert.deepEqual(open.projections,[]);assert.equal((await r.json()).ledgerSync.status,'synced');
 });
 
 
@@ -120,7 +120,7 @@ test('missing transaction RPC never falls back to separate writes or displays su
  const s=setup({rpcHandler:async()=>({data:null,error:{code:'PGRST202'}})});const r=await s.patch(edit());assert.equal(r.status,500);assert.equal((await r.json()).ok,false);assert.equal(s.writes.length,0);assert.equal(s.item.item_name,'Oil');
 });
 test('correction passes complete read snapshot and maps DB metadata conflict to 409 without projection',async()=>{
- const s=setup({rpcHandler:async(name,args)=>{assert.equal(name,'inventory_apply_purchase_correction_v2');assert.deepEqual(args.p_expected_item,s.item);return {data:{status:'inventory_conflict'},error:null};}});
+ const s=setup({rpcHandler:async(name,args)=>{assert.equal(name,'inventory_apply_purchase_correction_v3');assert.deepEqual(args.p_expected_item,s.item);return {data:{status:'inventory_conflict'},error:null};}});
  const r=await s.patch(edit({payload:{quantity:1,unit:'bottle',supplier:'QA',purchase_price:30000},reason:'purchase',selectedPurchaseRootId:12407}));assert.equal(r.status,409);assert.equal((await r.json()).ok,false);assert.equal(s.writes.length,0);assert.equal(s.projections.length,0);
 });
 
@@ -128,5 +128,10 @@ test('ordinary RPC correction guard returns 409 without success, source fallback
  const s=setup({rpcHandler:async(name)=>{assert.equal(name,'inventory_update_with_audit_v1');return {data:{status:'purchase_correction_required'},error:null};}});const r=await s.patch(edit());assert.equal(r.status,409);const body=await r.json();assert.equal(body.ok,false);assert.equal(body.error,'purchase_correction_required');assert.equal(s.writes.length,0);assert.equal(s.projections.length,0);
 });
 for(const [dbStatus,httpStatus] of [['not_found',404],['forbidden',403],['quantity_conflict',409],['invalid_payload',400]])test('correction RPC '+dbStatus+' maps to HTTP '+httpStatus+' without success or projection',async()=>{
- const s=setup({rpcHandler:async(name)=>{assert.equal(name,'inventory_apply_purchase_correction_v2');return {data:{status:dbStatus},error:null};}});const r=await s.patch(edit({payload:{quantity:1,unit:'bottle',supplier:'QA',purchase_price:30000},reason:'purchase',selectedPurchaseRootId:12407}));assert.equal(r.status,httpStatus);assert.equal((await r.json()).ok,false);assert.equal(s.projections.length,0);assert.equal(s.writes.length,0);
+ const s=setup({rpcHandler:async(name)=>{assert.equal(name,'inventory_apply_purchase_correction_v3');return {data:{status:dbStatus},error:null};}});const r=await s.patch(edit({payload:{quantity:1,unit:'bottle',supplier:'QA',purchase_price:30000},reason:'purchase',selectedPurchaseRootId:12407}));assert.equal(r.status,httpStatus);assert.equal((await r.json()).ok,false);assert.equal(s.projections.length,0);assert.equal(s.writes.length,0);
+});
+
+test('missing atomic correction v3 fails without legacy or post-commit projection fallback',async()=>{
+ const s=setup({rpcHandler:async(name)=>{assert.equal(name,'inventory_apply_purchase_correction_v3');return {data:null,error:{code:'PGRST202'}};}});
+ const r=await s.patch(edit({payload:{quantity:1,unit:'bottle',supplier:'QA',purchase_price:30000},reason:'purchase',selectedPurchaseRootId:12407}));assert.equal(r.status,500);assert.equal((await r.json()).ok,false);assert.equal(s.writes.length,0);assert.equal(s.projections.length,0);
 });
