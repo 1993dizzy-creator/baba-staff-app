@@ -702,7 +702,12 @@ export async function POST(req: Request) {
       if (snapshot.available) return true;
       if (paymentRequiredRefIds.has(item.refId)) {
         console.warn("[SALES_SYNC_PAYMENT_SNAPSHOT_UNAVAILABLE]", {
+          businessDate,
+          syncRunId,
           refId: item.refId,
+          refNo: receiptRows.find((row) => row.ref_id === item.refId)?.ref_no,
+          failureType: "payment_snapshot_unavailable",
+          identityEvent: "snapshot_invalid",
           field: snapshot.field,
         });
       }
@@ -735,7 +740,8 @@ export async function POST(req: Request) {
 
     const paymentSaveResult = await savePayments(
       paymentRows,
-      authoritativePaymentDetails.map((item) => item.refId)
+      authoritativePaymentDetails.map((item) => item.refId),
+      { syncRunId }
     );
     await markReceiptsInventoryDeductionEligible(
       Array.from(
@@ -875,7 +881,7 @@ export async function POST(req: Request) {
         taxLineUpdatedCount: lineSaveResult.taxLineChangedCount,
         canceledCount,
         statusChangedCount,
-        partial: failedDetails.length > 0,
+        partial: failedDetails.length > 0 || paymentSnapshotUnavailableCount > 0,
         ...(includeReceipts ? { receipts: receiptRows.map(stripRawJson) } : {}),
         ...(includeLines ? { lines: lineRows.map(stripRawJson) } : {}),
       },

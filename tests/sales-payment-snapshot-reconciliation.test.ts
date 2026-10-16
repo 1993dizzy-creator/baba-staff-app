@@ -9,7 +9,7 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const sync = read("lib/pos/cukcuk/sales-receipt-sync.ts");
 const dailySync = read("app/api/pos/cukcuk/sainvoices/sync-to-sales/route.ts");
 const refresh = read("app/api/admin/sales/receipts/[id]/refresh-pos/route.ts");
-const migration = read("supabase/migrations/202609030001_reconcile_sales_receipt_payments.sql");
+const migration = read("supabase/migrations/20261016170140_fix_pos_payment_snapshot_replacement.sql");
 
 test("payment sync removes rows absent from the latest authoritative snapshot", () => {
   assert.match(sync, /reconcile_sales_receipt_payments_v1/);
@@ -119,4 +119,42 @@ test("RPC is service-role-only and uses invoker security with a fixed search pat
   assert.match(migration, /revoke all on function public\.reconcile_sales_receipt_payments_v1\(jsonb\) from authenticated/);
   assert.match(migration, /alter function public\.reconcile_sales_receipt_payments_v1\(jsonb\) owner to postgres/);
   assert.match(migration, /grant execute on function public\.reconcile_sales_receipt_payments_v1\(jsonb\) to postgres, service_role/);
+});
+
+for (const [label, payments] of [
+  ["null row", [null]], ["array row", [[]]], ["missing amount", [{}]],
+  ["invalid amount", [{ Amount: "invalid" }]], ["negative amount", [{ Amount: -1 }]],
+  ["infinite amount", [{ Amount: Infinity }]], ["invalid type", [{ Amount: 1, PaymentType: {} }]],
+  ["invalid name", [{ Amount: 1, PaymentName: [] }]],
+  ["contradictory IDs", [{ Amount: 1, SAInvoicePaymentID: "a", SAInvoicePaymentId: "b" }]],
+] as const) test(`malformed ${label} cannot authorize payment replacement`, () => {
+  assert.equal(getPaymentSnapshotFromInvoicePayload({ SAInvoicePayments: payments }).available, false);
+});
+test("contradictory snapshot aliases are unavailable", () => {
+  assert.equal(getPaymentSnapshotFromInvoicePayload({ SAInvoicePayments: [], Payments: [{ Amount: 1 }] }).available, false);
+});
+test("legacy missing IDs and finite numeric strings remain available", () => {
+  assert.equal(getPaymentSnapshotFromInvoicePayload({ SAInvoicePayments: [{ Amount: "2074200", PaymentType: "2" }] }).available, true);
+});
+test("validated deletion precedes inserts and stable rows have an explicit retain plan", () => {
+  assert.ok(migration.indexOf("delete from public.pos_sales_receipt_payments") < migration.indexOf("insert into public.pos_sales_receipt_payments"));
+  assert.ok(migration.includes("jsonb_array_elements(v_plan)"));
+  assert.ok(migration.includes("payment_snapshot_amount_mismatch"));
+  assert.ok(migration.includes("payment_external_id_missing"));
+  assert.doesNotMatch(migration, /drop\s+index|create\s+.*index/i);
+});
+
+test("receipt duplicate validation uses the same trimmed identity as processing", () => {
+  assert.ok(migration.includes("count(distinct nullif(btrim(value->>'receiptRefId'), ''))"));
+  assert.ok(migration.includes("v_ref_id := nullif(btrim(v_snapshot->>'receiptRefId'), '')"));
+});
+test("reviewed production definition hash precedes replacement without overriding the runner transaction", () => {
+  const guard = migration.indexOf("do $preflight$");
+  const replacement = migration.indexOf("create or replace function");
+  assert.ok(guard >= 0 && guard < replacement);
+  assert.doesNotMatch(migration, /^\s*(?:begin|commit|rollback)\s*;/im);
+  assert.ok(migration.includes("pg_catalog.md5(pg_catalog.pg_get_functiondef(v_function))"));
+  assert.ok(migration.includes("is distinct from 'e6f024dfeda8366453100e60bb023670'"));
+  assert.ok(migration.includes("pos_payment_reconciliation_definition_mismatch"));
+  assert.ok(migration.includes("order by btrim(value->>'receiptRefId')"));
 });

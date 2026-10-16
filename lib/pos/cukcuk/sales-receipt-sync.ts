@@ -1516,7 +1516,8 @@ export async function savePayments(
   rows: PaymentRow[],
   snapshotReceiptRefIds = Array.from(
     new Set(rows.map((row) => row.receipt_ref_id))
-  )
+  ),
+  context: { syncRunId?: number | null } = {}
 ) {
   const emptyTiming = {
     reconcilePaymentsMs: 0,
@@ -1553,7 +1554,27 @@ export async function savePayments(
   );
   const reconcilePaymentsMs = Date.now() - reconcileStartedAt;
   if (error) {
-    throw new Error(`Failed to reconcile sales payments: ${error.message}`);
+    // PostgreSQL DETAIL can contain a whole failing row. Accept only the new
+    // RPC's explicit diagnostic schema; never log the original error/payload.
+    let detail: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(error.details || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) detail = parsed as Record<string, unknown>;
+    } catch { /* Older RPCs have non-JSON DETAIL. */ }
+    const token = (key: string, pattern: RegExp) =>
+      typeof detail[key] === "string" && pattern.test(detail[key] as string) ? detail[key] : null;
+    const diagnostic = {
+      syncRunId: context.syncRunId ?? null,
+      businessDate: token("businessDate", /^\d{4}-\d{2}-\d{2}$/),
+      receiptRefId: token("receiptRefId", /^[a-zA-Z0-9-]{1,80}$/),
+      receiptNo: token("receiptNo", /^[a-zA-Z0-9-]{1,80}$/),
+      failureType: token("failureType", /^[a-z_]{1,80}$/) ??
+        (error.code === "23505" ? "payment_unique_conflict" : "payment_reconciliation_failed"),
+      identityEvent: token("identityEvent", /^[a-z_]{1,80}$/),
+      uniqueConflict: error.code === "23505",
+      sqlState: /^[A-Z0-9]{5}$/.test(error.code || "") ? error.code : null,
+    };
+    throw new Error(`Failed to reconcile sales payments: ${JSON.stringify(diagnostic)}`);
   }
 
   const result = (data || {}) as Record<string, unknown>;

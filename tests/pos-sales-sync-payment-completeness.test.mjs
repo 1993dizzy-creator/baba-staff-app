@@ -78,6 +78,7 @@ async function harness(invoices, options, work) {
     },
     async rpc(name, { p_snapshots }) {
       assert.equal(name, 'reconcile_sales_receipt_payments_v1');
+      if (options.rpcError) return { data: null, error: options.rpcError };
       reconciliationSnapshots.push(structuredClone(p_snapshots));
       let createdCount = 0, deletedCount = 0;
       for (const snapshot of p_snapshots) {
@@ -278,4 +279,32 @@ test('source-invalid translations describe validation failures including incompl
   assert.match(salesCloseText.ko.sourceInvalid, /동기화 누락/);
   assert.match(salesCloseText.vi.sourceInvalid, /dữ liệu nguồn POS/);
   assert.match(salesCloseText.vi.sourceInvalid, /đồng bộ POS/);
+});
+
+test('RPC errors keep sync failed and persist only whitelisted diagnostics with the execution ID', async () => {
+  const diagnostic={businessDate:'2026-10-06',receiptRefId:'receipt-1',receiptNo:'2601006921',failureType:'payment_unique_conflict',identityEvent:'id_changed_or_new',uniqueConflict:true,customerName:'PRIVATE CUSTOMER'};
+  await harness([invoice('paid')], {rpcError:{code:'23505',message:'PRIVATE CUSTOMER',details:JSON.stringify(diagnostic)}}, async h => {
+    const response=await h.sync();assert.equal(response.status,500);const data=await response.json();
+    assert.equal(h.getRun().status,'failed');assert.equal(h.getRun().source_complete,false);
+    assert.ok(data.error.includes('payment_unique_conflict'));assert.ok(data.error.includes('id_changed_or_new'));
+    assert.ok(data.error.includes('"syncRunId":1'));assert.ok(!data.error.includes('PRIVATE'));
+    assert.equal(h.getRun().error_message,data.error);
+  });
+});
+test('legacy PostgreSQL failing-row DETAIL never leaks into server errors', async () => {
+  await harness([invoice('paid')], {rpcError:{code:'23505',message:'PRIVATE CUSTOMER',details:'Failing row contains PRIVATE PHONE'}}, async h => {
+    const response=await h.sync();const data=await response.json();assert.equal(response.status,500);
+    assert.ok(data.error.includes('payment_unique_conflict'));assert.ok(!data.error.includes('PRIVATE'));
+  });
+});
+
+test('malformed detail payments preserve old rows and report partial incomplete source', async () => {
+  await harness([invoice('paid',1_000_000,3,[null])], {
+    storedReceipts:[{id:1,ref_id:'paid'}],storedPayments:[{id:1,receipt_id:1,receipt_ref_id:'paid',business_date:'2026-10-06',payment_type:9,payment_name:'khac',card_name:null,amount:1_000_000}],
+  }, async h => {
+    const data=await (await h.sync()).json();assert.equal(data.result.partial,true);assert.equal(data.result.paymentSnapshotUnavailableCount,1);
+    assert.equal(h.getRun().source_complete,false);assert.equal(h.reconciliationSnapshots.length,0);assert.equal(h.getPayments().length,1);
+    assert.ok(h.warnings.some(([code,detail])=>code==='[SALES_SYNC_PAYMENT_SNAPSHOT_UNAVAILABLE]'&&detail.syncRunId===1&&detail.businessDate==='2026-10-06'));
+    await assert.rejects(h.manual(),/POS_CLOSE_SOURCE_INVALID/);
+  });
 });
