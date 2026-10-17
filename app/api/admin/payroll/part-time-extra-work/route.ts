@@ -92,6 +92,7 @@ export async function POST(request: Request) {
       p_actor_user_id: auth.actor.id,
     });
     if (error) {
+      if (error.message.includes("STALE_SOURCE")) return payrollJson({ ok: false, code: "PAYROLL_EXTRA_WORK_STALE" }, 409);
       if (error.message.includes("PAID")) return payrollJson({ ok: false, code: "PAYROLL_EMPLOYEE_ALREADY_PAID" }, 409);
       if (error.message.includes("FORBIDDEN")) return payrollJson({ ok: false, code: "FORBIDDEN" }, 403);
       throw error;

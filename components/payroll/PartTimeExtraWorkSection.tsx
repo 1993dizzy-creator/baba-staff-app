@@ -106,6 +106,7 @@ export default function PartTimeExtraWorkSection({ employee, month, lang, refres
         const disabled = paid || busyId === row.attendanceRecordId;
         const rowExpanded = expandedAttendanceId === row.attendanceRecordId;
         const detailId = `extra-work-detail-${employee.userId}-${row.attendanceRecordId}`;
+        const earlyWorkIncluded = row.candidateMinutes > row.afterScheduleMinutes;
         const excludedMinutes = row.excludedBeforeOpenMinutes + row.excludedAfterCloseMinutes;
         const excludedParts = [
           row.excludedBeforeOpenMinutes > 0 ? `${vi ? "trước giờ mở cửa " : "오픈 전 "}${row.excludedBeforeOpenMinutes}${vi ? " phút" : "분"}` : "",
@@ -128,12 +129,13 @@ export default function PartTimeExtraWorkSection({ employee, month, lang, refres
       {rowExpanded && <div id={detailId} className={styles.info} data-extra-work-info>
         {hasValidDateTime(row.checkInAt) && hasValidDateTime(row.checkOutAt) && <DetailLine label={vi ? "Chấm công" : "출퇴근"} value={`${formatTime(row.checkInAt, lang)}–${formatTime(row.checkOutAt, lang)}`} />}
         {row.scheduleStartTime && row.scheduleEndTime && <DetailLine label={vi ? "Giờ làm" : "근무시간"} value={`${row.scheduleStartTime}–${row.scheduleEndTime}`} />}
-        {row.beforeScheduleMinutes > 0 && <DetailLine accent label={vi ? "Trước ca" : "출근 전"} value={`+${row.beforeScheduleMinutes}${vi ? " phút" : "분"}`} />}
+        {row.beforeScheduleMinutes > 0 && <DetailLine accent={earlyWorkIncluded} label={earlyWorkIncluded ? (vi ? "Trước ca (được tính)" : "조기근무 (후보 포함)") : (vi ? "Trước ca (không tính)" : "조기출근 (후보 제외)")} value={`${row.beforeScheduleMinutes}${vi ? " phút" : "분"}`} />}
         {row.afterScheduleMinutes > 0 && <DetailLine accent label={vi ? "Sau ca" : "퇴근 후"} value={`+${row.afterScheduleMinutes}${vi ? " phút" : "분"}`} />}
         {excludedMinutes > 0 && <DetailLine wide label={vi ? "Loại trừ" : "제외시간"} value={`${excludedMinutes}${vi ? " phút" : "분"}${excludedParts.length > 0 ? ` (${excludedParts.join(" · ")})` : ""}`} />}
       </div>}
     </article>})}</div>}
     </>}
+    {!paid && <small style={s.help}>{vi ? "Từ 01/10/2026, nhân viên theo giờ/ngày được tính thời gian trước ca sau giờ mở cửa và sau ca đến giờ đóng cửa. Tổng mỗi ngày từ 30 phút cần quản lý duyệt; chỉ cộng phụ cấp sau khi duyệt." : "2026-10-01부터 시급·일급 직원은 오픈 이후 조기근무와 마감 이내 늦은 퇴근을 합산합니다. 하루 합계 30분 이상은 관리자 검토 대상이며 승인 후에만 수당에 합산됩니다."}</small>}
     {paid && <small style={s.help}>{vi ? "Đã trả lương nên không thể thay đổi quyết định." : "지급 완료 직원은 결정을 변경할 수 없습니다."}</small>}
     {error && <p role="alert" style={s.error}>{error}</p>}
   </section>;

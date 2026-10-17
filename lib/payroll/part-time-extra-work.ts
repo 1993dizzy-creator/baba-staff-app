@@ -4,6 +4,8 @@ import type { PayrollContract } from "./types";
 const STORE_OFFSET = "+07:00";
 export const EXTRA_WORK_MINIMUM_CANDIDATE_MINUTES = 30;
 export const MONTHLY_EXTRA_WORK_CUTOFF_EFFECTIVE_DATE = "2026-09-01";
+export const PART_TIME_EARLY_EXTRA_WORK_EFFECTIVE_DATE = "2026-10-01";
+export const PART_TIME_EARLY_EXTRA_WORK_POLICY = "part-time-open-early-v1";
 
 export type PartTimeExtraWorkDecision = {
   id: number;
@@ -64,9 +66,12 @@ function localInstant(date: string, time: string) {
   return value;
 }
 
-function windowFor(date: string, startTime: string, endTime: string) {
-  const start = localInstant(date, startTime);
-  let end = localInstant(date, endTime);
+function windowFor(date: string, startTime: string, endTime: string, useBusinessCutoff = false) {
+  // Opt in only for the new part-time policy so historical/monthly hashes stay
+  // intact. Clock times before 03:00 belong to the following calendar date.
+  const nextDay = 24 * 60 * 60 * 1000;
+  const start = localInstant(date, startTime) + (useBusinessCutoff && startTime.slice(0, 5) < "03:00" ? nextDay : 0);
+  let end = localInstant(date, endTime) + (useBusinessCutoff && endTime.slice(0, 5) < "03:00" ? nextDay : 0);
   if (end <= start) end += 24 * 60 * 60 * 1000;
   return { start, end };
 }
@@ -104,8 +109,10 @@ export function calculatePartTimeExtraWork(input: {
   const actualStart = new Date(input.checkInAt).getTime();
   const actualEnd = new Date(input.checkOutAt).getTime();
   if (!Number.isFinite(actualStart) || !Number.isFinite(actualEnd) || actualEnd <= actualStart) return null;
-  const store = windowFor(input.businessDate, input.storeOpenTime, input.storeCloseTime);
-  const schedule = windowFor(input.businessDate, input.scheduleStartTime, input.scheduleEndTime);
+  const includeEarlyWork = input.businessDate >= PART_TIME_EARLY_EXTRA_WORK_EFFECTIVE_DATE
+    && (payType === "hourly" || payType === "daily");
+  const store = windowFor(input.businessDate, input.storeOpenTime, input.storeCloseTime, includeEarlyWork);
+  const schedule = windowFor(input.businessDate, input.scheduleStartTime, input.scheduleEndTime, includeEarlyWork);
   // Monthly staff may finish after store close, but never accrue beyond the
   // next business-day cutoff (03:00 Vietnam time). Other contracts retain store close.
   const workEnd = payType === "monthly" && input.businessDate >= MONTHLY_EXTRA_WORK_CUTOFF_EFFECTIVE_DATE
@@ -121,9 +128,9 @@ export function calculatePartTimeExtraWork(input: {
     : 0;
   const excludedBeforeOpenMinutes = overlapMinutes(actualStart, actualEnd, actualStart, Math.min(store.start, actualEnd));
   const excludedAfterCloseMinutes = overlapMinutes(actualStart, actualEnd, Math.max(workEnd, actualStart), actualEnd);
-  // Early arrival is audit metadata only. Pay and the minimum threshold use
-  // exclusively work after the scheduled end, clipped to the contract boundary.
-  const candidateMinutes = afterScheduleMinutes;
+  // Keep historical and monthly calculations (including their source hashes)
+  // intact. From October, part-time work before the shift counts after opening.
+  const candidateMinutes = afterScheduleMinutes + (includeEarlyWork ? beforeScheduleMinutes : 0);
   if (candidateMinutes < EXTRA_WORK_MINIMUM_CANDIDATE_MINUTES) return null;
   const candidateAmount = Math.round(candidateMinutes * input.minuteRateAmount);
   const sourceSnapshot = {
@@ -150,6 +157,7 @@ export function calculatePartTimeExtraWork(input: {
     excludedAfterCloseMinutes,
     candidateMinutes,
     candidateAmount,
+    ...(includeEarlyWork ? { extraWorkPolicy: PART_TIME_EARLY_EXTRA_WORK_POLICY, payType } : {}),
   };
   const sourceHash = partTimeExtraWorkSourceHash(sourceSnapshot);
   const decision = input.decision ?? null;
