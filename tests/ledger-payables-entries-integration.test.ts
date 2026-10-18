@@ -48,7 +48,7 @@ test("entries party sheet: 선택 일자 결제 kept, 부분 지급 added with p
   assert.match(entriesCompact, /allocations:selectedPayables\.map\(row=>\(\{payableId:row\.id,allocatedAmount:row\.outstandingAmount\}\)\)/);
   // partial payment: preview list is the plan, and the same plan is posted
   assert.match(entriesCompact, /constpartialPlan=useMemo\(\(\)=>planPartialPayablePayment\(partialRows,parseLedgerAmount\(partialAmount\)\?\?0\),\[partialRows,partialAmount\]\);/);
-  assert.match(entriesCompact, /fetch\("\/api\/admin\/ledger\/payables\/pay",\{method:"POST",headers:\{"Content-Type":"application\/json"\},body:JSON\.stringify\(\{partyId:party\.partyId,fundAccountId:Number\(accountId\),occurredAt:`\$\{date\}T\$\{time\}:00\+07:00`,amount:partialPlan\.amount,allocations:partialPlan\.allocations,memo:memo\|\|null\}\)\}\)/);
+  assert.match(entriesCompact, /sendPayablePayment\(\{partyId:party\.partyId,[^]*?amount:partialPlan\.amount,allocations:partialPlan\.allocations,memo:memo\|\|null\},onPaid\)/);
   assert.match(entriesCompact, /\{partialPlan\.error===null\?<divclassName=\{styles\.allocationPreview\}>/);
   assert.match(entriesCompact, /partialPlan\.allocations\.map\(allocation=>/);
   assert.match(entriesCompact, /\{partialPlan\.error==="exceeds_outstanding"\?<pclassName=\{styles\.error\}role="alert">/);
@@ -62,7 +62,7 @@ test("only current-month ordinary payables use live payment sheets; historical m
   assert.match(entriesCompact, /:<HistoricalPayablePartySheet/);
   const historical = entriesCompact.slice(entriesCompact.indexOf("functionHistoricalPayablePartySheet("), entriesCompact.indexOf("functionPayablePartySheet("));
   assert.doesNotMatch(historical, /payables\/pay|partial|planPartialPayablePayment/);
-  assert.match(entriesCompact, /<PaymentVerificationSectiongroup=\{payableDisplay\.other\}accounts=\{businessAccounts\}vi=\{vi\}canPay=\{month===currentMonth\(\)\}onPaid=\{async\(\)=>\{awaitload\(\);/);
+  assert.match(entriesCompact, /<PaymentVerificationSectiongroup=\{payableDisplay\.other\}accounts=\{businessAccounts\}vi=\{vi\}canPay=\{month===currentMonth\(\)\}onPaid=\{async\(\)=>\{if\(!awaitload\(\)\)thrownewError\("PAYMENT_REFRESH_FAILED"\);/);
 });
 
 test("기타 · 결제 미확인 is the last row inside the party list, hidden when empty, and refreshes via the month load", () => {
@@ -99,7 +99,7 @@ test("old /admin/ledger/payables redirects to entries and keeps a valid ?month",
 
 test("payables API/helpers stay; only the duplicate UI is gone; no separate payables tab", () => {
   for (const file of ["app/api/admin/ledger/payables/route.ts", "app/api/admin/ledger/payables/[partyId]/route.ts", "app/api/admin/ledger/payables/pay/route.ts", "lib/ledger/payables.ts", "lib/ledger/payment-verification.ts"]) assert.ok(existsSync(file), file);
-  assert.match(readFileSync("app/api/admin/ledger/payables/pay/route.ts", "utf8"), /ledger_pay_payables_v1/);
+  assert.match(readFileSync("app/api/admin/ledger/payables/pay/route.ts", "utf8"), /ledger_pay_payables_v2/);
   assert.equal(existsSync("app/(protected)/admin/ledger/payables/PaymentVerificationSection.tsx"), false);
   assert.doesNotMatch(tabs, /\/admin\/ledger\/payables/);
   assert.equal((tabs.match(/href: "/g) ?? []).length, 3, "대시보드 · 장부작성 · 장부설정 only");

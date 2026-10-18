@@ -1,6 +1,6 @@
 import type { PaymentMode } from "@/lib/partners/policy";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
-import { payableDisplayAsOf } from "./payables.ts";
+import { payableDisplayAsOf, calculatePurchaseSettlement, confirmedAllocationsThroughMonth, type PayablePayment, type PurchaseSettlement } from "./payables.ts";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
 import { ledgerPayrollAdvanceRequestId, PAYROLL_ADVANCE_REVERSAL_SOURCE_TYPE } from "./payroll-advance.ts";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
@@ -27,6 +27,7 @@ export type LedgerEntryItem = {
   settlementPaidAmount?: number;
   remainingAmount?: number;
   settlementStatus?: "unpaid" | "partial" | "paid";
+  purchaseSettlement?: PurchaseSettlement;
   memo?: string | null;
   sourceUpdatedAt?: string | null;
   displayTime?: string | null;
@@ -116,7 +117,7 @@ export type TransactionRow = {
   memo?: string | null; category?: { id?: number | string; name?: string | null } | null; party?: { name?: string | null } | null;
   source_snapshot?: Record<string, unknown> | null;
   movements?: Array<{ amount?: number | string; fund_account?: { id?: number | string; code?: string | null; display_name?: string | null } | null }>;
-  payable?: { id?: number|string; original_amount?:number|string; due_date?:string|null; status?:string|null; allocations?:Array<{allocated_amount:number|string;payment?:{business_date:string;status:string;movements?:Array<{amount?:number|string;fund_account?:{id?:number|string;code?:string|null;display_name?:string|null}|null}>}|null}> }|null;
+  payable?: { id?: number|string; original_amount?:number|string; due_date?:string|null; status?:string|null; allocations?:Array<{allocated_amount:number|string;payment?:PayablePayment|null}> }|null;
 };
 
 export type CandidateRow = {
@@ -181,7 +182,7 @@ export function accountFromPaymentNote(note: unknown) {
 
 function transactionPaymentDisplay(row:TransactionRow,month:string){
   if(!row.payable)return null;
-  return payableDisplayAsOf(row.payable.original_amount??row.amount,row.payable.allocations??[],month);
+  return payableDisplayAsOf(row.payable.original_amount??row.amount,row.payable.allocations??[],month,{payableId:row.payable.id,transactionId:row.id});
 }
 
 export function isPayrollPaymentOutflow(entry: Pick<LedgerEntry, "payrollPayment" | "fundFlow">) {
@@ -445,7 +446,13 @@ const inventoryItem = (row: CandidateRow | TransactionRow, viewMonth?:string): L
   const snapshot = row.source_snapshot ?? {};
   const display = (row as TransactionRow).display_snapshot ?? snapshot;
   const time = inventoryTime(row);
+  const transaction=row as TransactionRow;
+  const settlement=!Object.hasOwn(row,"proposed_amount")&&transaction.payable
+    ?calculatePurchaseSettlement(transaction.payable.original_amount??transaction.amount,
+      viewMonth?confirmedAllocationsThroughMonth(transaction.payable.allocations??[],viewMonth):transaction.payable.allocations??[],
+      {payableId:transaction.payable.id,transactionId:transaction.id}):undefined;
   return {
+    ...(settlement?{purchaseSettlement:settlement}:{}),
     ...(Object.hasOwn(row, "proposed_amount") ? { candidateId: value((row as CandidateRow).id) } : { transactionId: value(row.id) }),
     name: String(display.item_name ?? display.item_name_vi ?? "품목"),
     nameVi: display.item_name_vi == null ? null : String(display.item_name_vi),
@@ -606,7 +613,7 @@ export function buildLedgerEntries(
         systemDisplay: { kind: "inventory", itemCount: 0, partyMissing, needsConfirmation: false }, items: [],
       } satisfies LedgerEntry;
       const item = inventoryItem(row,viewMonth);
-      group.amount += amount;
+      group.amount += item.purchaseSettlement?.effectiveAmount ?? amount;
       group.remainingAmount = (group.remainingAmount??0)+(paymentDisplay?.remainingAmount??0);
       group.items.push(item);
       updateInventoryGroupTime(group, item);

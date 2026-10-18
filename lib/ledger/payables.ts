@@ -13,9 +13,42 @@ function amountUnits(value:number|string):bigint{
 }
 const amountValue=(units:bigint)=>Number(units)/1000;
 export const sumPayableAmounts=(values:readonly (number|string)[])=>amountValue(values.reduce<bigint>((sum,value)=>sum+amountUnits(value),BigInt(0)));
-export type PayableBalanceSource={id:number;party_id:number;original_amount:number|string;status:string;expense:{business_date:string;status:string}|null};
-export type PayablePayment={business_date:string;status:string;movements?:readonly {amount?:number|string;fund_account?:{id?:number|string;code?:string|null;display_name?:string|null}|null}[]};
+export type PayableBalanceSource={id:number;party_id:number;original_amount:number|string;status:string;expense:{id?:number|string;business_date:string;status:string}|null};
+export type PayablePayment={id?:number|string;type?:string;source_type?:string;source_key?:string|null;source_snapshot?:Record<string,unknown>|null;amount?:number|string;economic_effect_sign?:number|string;memo?:string|null;business_date:string;status:string;movements?:readonly {amount?:number|string;fund_account?:{id?:number|string;code?:string|null;display_name?:string|null}|null}[]};
 export type DatedPayableAllocation={payable_id:number;allocated_amount:number|string;payment?:PayablePayment|null};
+export type SettlementContext={payableId?:number|string;transactionId?:number|string};
+export type PurchaseSettlement={originalAmount:number;adjustmentAmount:number;effectiveAmount:number;cashPaidAmount:number;remainingAmount:number;status:"unpaid"|"partial"|"paid";adjustments:{transactionId:number;businessDate:string;amount:number;reason:string;sourceKey:string;sourceSnapshot:Record<string,unknown>}[];payments:{transactionId:number|null;businessDate:string;amount:number}[]};
+type SettlementAllocation={payable_id?:number|string;allocated_amount:number|string;payment?:PayablePayment|null};
+
+// Existing writeoffs already credit ledger_payable_allocations. Recognize only
+// the explicit, internally consistent noncash contract; never infer from size,
+// memo, a rounded amount, a date cutoff, or the paid flag.
+export function isPayableNonCashAdjustment(allocation:SettlementAllocation,originalAmount:number|string,context:SettlementContext={}){
+  const p=allocation.payment,s=p?.source_snapshot;
+  return p?.status==="confirmed"&&p.type==="expense"&&p.source_type==="ledger_correction"&&Number(p.economic_effect_sign)===-1
+    &&s?.adjustmentType==="payable_small_difference_writeoff"&&s.nonCash===true&&s.cashMovementAmount===0
+    &&Number(s.payableId)>0&&Number(s.originalTransactionId)>0
+    &&p.source_key===`payable-small-diff:${p.business_date.slice(0,7)}:${s.payableId}`
+    &&Number(s.originalAmount)===Number(originalAmount)&&Number(s.writeoffAmount)>0
+    &&Number(s.writeoffAmount)===Number(p.amount)&&Number(p.amount)===Number(allocation.allocated_amount)
+    &&(allocation.payable_id==null||Number(allocation.payable_id)===Number(s.payableId))
+    &&(context.payableId==null||Number(context.payableId)===Number(s.payableId))
+    &&(context.transactionId==null||Number(context.transactionId)===Number(s.originalTransactionId))
+    &&Array.isArray(p.movements)&&p.movements.every(m=>Number(m.amount)===0);
+}
+export function calculatePurchaseSettlement(originalAmount:number|string,allocations:readonly SettlementAllocation[],context:SettlementContext={}):PurchaseSettlement{
+  const confirmed=allocations.filter(a=>a.payment?.status==="confirmed");
+  const noncash=confirmed.filter(a=>isPayableNonCashAdjustment(a,originalAmount,context));
+  const adjustmentUnits=noncash.reduce((total,a)=>total-amountUnits(a.allocated_amount),BigInt(0));
+  const cashUnits=confirmed.filter(a=>!noncash.includes(a)).reduce((total,a)=>total+amountUnits(a.allocated_amount),BigInt(0));
+  const effectiveUnits=amountUnits(originalAmount)+adjustmentUnits;
+  const remainingUnits=effectiveUnits>cashUnits?effectiveUnits-cashUnits:BigInt(0);
+  const adjustmentAmount=amountValue(adjustmentUnits),cashPaidAmount=amountValue(cashUnits),effectiveAmount=amountValue(effectiveUnits),remainingAmount=amountValue(remainingUnits);
+  return {originalAmount:Number(originalAmount),adjustmentAmount,effectiveAmount,cashPaidAmount,remainingAmount,
+    status:remainingAmount===0?"paid":cashPaidAmount>0?"partial":"unpaid",
+    adjustments:noncash.map(a=>({transactionId:Number(a.payment!.id),businessDate:a.payment!.business_date,amount:-Number(a.allocated_amount),reason:a.payment!.memo||"",sourceKey:a.payment!.source_key!,sourceSnapshot:a.payment!.source_snapshot!})),
+    payments:confirmed.filter(a=>!noncash.includes(a)).map(a=>({transactionId:a.payment?.id==null?null:Number(a.payment.id),businessDate:a.payment!.business_date,amount:Number(a.allocated_amount)}))};
+}
 export function confirmedAllocationThroughMonth(allocation:Pick<DatedPayableAllocation,"payment">,nextMonthStart?:string){
   return allocation.payment?.status==="confirmed"&&(!nextMonthStart||allocation.payment.business_date<nextMonthStart);
 }
@@ -26,14 +59,13 @@ export function confirmedAllocationsThroughMonth<T extends Pick<DatedPayableAllo
 export function sumConfirmedAllocationsThroughMonth(allocations:readonly Pick<DatedPayableAllocation,"allocated_amount"|"payment">[],month:string){
   return sumPayableAmounts(confirmedAllocationsThroughMonth(allocations,month).map(row=>row.allocated_amount));
 }
-export function payableDisplayAsOf(originalAmount:number|string,allocations:readonly Pick<DatedPayableAllocation,"allocated_amount"|"payment">[],month:string){
+export function payableDisplayAsOf(originalAmount:number|string,allocations:readonly SettlementAllocation[],month:string,context:SettlementContext={}){
   const confirmed=confirmedAllocationsThroughMonth(allocations,month);
-  const paidAmount=sumConfirmedAllocationsThroughMonth(allocations,month);
-  const remainingAmount=Math.max(0,sumPayableAmounts([originalAmount,-paidAmount]));
-  const status=paidAmount<=0?"unpaid" as const:remainingAmount<=0?"paid" as const:"partial" as const;
+  const settlement=calculatePurchaseSettlement(originalAmount,confirmed,context);
+  const paidAmount=settlement.cashPaidAmount,remainingAmount=settlement.remainingAmount,status=settlement.status;
   const accounts=new Map<string,string>();
   for(const allocation of confirmed)for(const movement of allocation.payment?.movements??[]){
-    if(Number(movement.amount)>=0||!movement.fund_account)continue;
+    if(isPayableNonCashAdjustment(allocation,originalAmount,context)||Number(movement.amount)>=0||!movement.fund_account)continue;
     const account=movement.fund_account;
     const name=account.display_name?.trim();
     if(name)accounts.set(String(account.id??account.code??name),name);
@@ -55,12 +87,15 @@ export function calculatePayableBalances<T extends PayableBalanceSource>(sources
     const date=source.expense.business_date;
     if(bounds&&date>=bounds.nextMonthStart)continue;
     const original=amountUnits(source.original_amount);
-    let before=BigInt(0),through=BigInt(0),inPeriod=BigInt(0);
+    let before=BigInt(0),through=BigInt(0),inPeriod=BigInt(0),periodAdjustment=BigInt(0);
     for(const allocation of byPayable.get(source.id)??[]){
       const paymentDate=allocation.payment!.business_date,amount=amountUnits(allocation.allocated_amount);
       through+=amount;
       if(bounds&&paymentDate<bounds.monthStart)before+=amount;
-      if(bounds&&paymentDate>=bounds.monthStart&&paymentDate<bounds.nextMonthStart)inPeriod+=amount;
+      if(bounds&&paymentDate>=bounds.monthStart&&paymentDate<bounds.nextMonthStart){
+        if(isPayableNonCashAdjustment(allocation,source.original_amount,{payableId:source.id,transactionId:source.expense?.id}))periodAdjustment-=amount;
+        else inPeriod+=amount;
+      }
     }
     const outstanding=original>through?original-through:BigInt(0);
     closing+=outstanding;
@@ -68,6 +103,7 @@ export function calculatePayableBalances<T extends PayableBalanceSource>(sources
       const party=partyTotals.get(Number(source.party_id))??{opening:BigInt(0),purchases:BigInt(0),payments:BigInt(0),closing:BigInt(0)};
       if(date<bounds.monthStart){const balance=original>before?original-before:BigInt(0);opening+=balance;party.opening+=balance}
       else {purchases+=original;party.purchases+=original}
+      purchases+=periodAdjustment;party.purchases+=periodAdjustment;
       payments+=inPeriod;
       party.payments+=inPeriod;party.closing+=outstanding;
       partyTotals.set(Number(source.party_id),party);

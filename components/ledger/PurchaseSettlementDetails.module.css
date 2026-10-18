@@ -1,0 +1,6 @@
+.panel{grid-column:1/-1;min-width:0;width:100%;padding:8px 0;border-top:1px solid #e5e7eb;color:#4b5563;font-size:11px;overflow-wrap:anywhere}
+.panel summary{cursor:pointer;color:#111827;font-weight:700;line-height:1.6}
+.panel dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;margin:10px 0}
+.panel dt{color:#6b7280;font-size:10px}.panel dd{margin:3px 0 0;font-size:12px;font-variant-numeric:tabular-nums}.panel dd strong{color:#111827}
+.reasons{font-size:11px;line-height:1.6}.audit{margin-top:9px;padding-top:8px;border-top:1px solid #e5e7eb;line-height:1.6}.audit small{color:#6b7280}.audit p{margin:5px 0}
+.audit pre{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;font-size:10px}

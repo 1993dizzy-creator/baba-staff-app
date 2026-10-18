@@ -54,7 +54,7 @@ test("Phương and Ok Mart allocated items show paid accounts and accurate Augus
 test("six reported August party remainders total 77,281,996 without changing fund math",()=>{
   assert.equal([13_532_000,8_332_484,7_460_000,15_662_600,29_579_992,2_714_920].reduce((a,b)=>a+b,0),77_281_996);
   const route=readFileSync("app/api/admin/ledger/route.ts","utf8");
-  assert.match(route,/payment:ledger_transactions!payment_transaction_id\(business_date,status,movements:ledger_movements/);
+  assert.match(route,/payment:ledger_transactions!payment_transaction_id\([^)]*business_date,status,movements:ledger_movements/);
   assert.match(route,/buildLedgerEntries\(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources, month\)/);
   assert.match(route,/buildFundAccountView\(\{/);
   assert.match(route,/operatingProfit: recognizedIncome - expense/);

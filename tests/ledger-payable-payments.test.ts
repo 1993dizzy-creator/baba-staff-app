@@ -16,7 +16,7 @@ test("zero outstanding changes status to paid",()=>assert.match(migration,/when 
 test("one payment allocates to multiple payables",()=>assert.match(migration,/for v_item in select value from jsonb_array_elements\(v_plan\)/));
 test("one payable supports multiple payments",()=>{assert.match(inventoryMigration,/unique\(payable_id,payment_transaction_id\)/);assert.doesNotMatch(inventoryMigration,/unique\(payable_id\)/)});
 test("oldest first allocation is stable",()=>assert.deepEqual(buildOldestFirstAllocations([{id:3,businessDate:"2026-08-10",outstandingAmount:4},{id:1,businessDate:"2026-08-01",outstandingAmount:3},{id:2,businessDate:"2026-08-05",outstandingAmount:5}],6),{allocations:[{payableId:1,allocatedAmount:3},{payableId:2,allocatedAmount:3}],unallocatedAmount:0}));
-test("custom allocations are accepted and validated",()=>{assert.match(migration,/jsonb_typeof\(p_allocations\)<>'array'/);assert.match(pay,/p_allocations:body\.allocations\?\?null/)});
+test("custom allocations are accepted and validated",()=>{assert.match(migration,/jsonb_typeof\(p_allocations\)<>'array'/);assert.match(pay.replace(/\s+/g,""),/p_allocations:body\.allocations\?\?null/)});
 test("zero allocation is rejected",()=>assert.match(migration,/v_allocate<=0/));
 test("allocation above current outstanding is rejected",()=>assert.match(migration,/v_allocate>v_outstanding/));
 test("payables from another party are rejected",()=>assert.match(migration,/v_payable\.party_id<>p_party_id/));
@@ -24,11 +24,11 @@ test("allocation sum must equal payment amount",()=>assert.match(migration,/v_su
 test("movement absolute amount equals payment amount",()=>assert.match(migration,/ledger_movements\(transaction_id,fund_account_id,amount\) values\(v_payment_id,p_fund_account_id,-p_amount\)/));
 test("payment reduces existing fund balance through signed movement",()=>{assert.match(ledger,/sum \+ Number\(row\.amount\)/);assert.match(migration,/-p_amount/)});
 test("payable payment never enters P and L",()=>{assert.match(migration,/'payable_payment'/);assert.match(ledger,/\.in\("type", \["income", "expense", "sales"\]\)/)});
-test("payment transaction movement allocations and statuses share one RPC",()=>{assert.match(pay,/ledger_pay_payables_v1/);assert.doesNotMatch(pay,/\.from\("ledger_/);assert.match(migration,/insert into public\.ledger_transactions[\s\S]*insert into public\.ledger_movements[\s\S]*ledger_payable_allocations[\s\S]*update public\.ledger_payables/)});
+test("payment transaction movement allocations and statuses share one RPC",()=>{assert.match(pay,/ledger_pay_payables_v2/);assert.doesNotMatch(pay,/\.from\("ledger_/);assert.match(migration,/insert into public\.ledger_transactions[\s\S]*insert into public\.ledger_movements[\s\S]*ledger_payable_allocations[\s\S]*update public\.ledger_payables/)});
 test("payables lock in deterministic order",()=>{assert.match(migration,/order by t\.business_date,p\.id for update/);assert.match(migration,/order by p\.id for update/)});
 test("status derives from allocation sum",()=>assert.match(migration,/original_amount-coalesce\(sum\(a\.allocated_amount\),0\)/));
 test("party dashboard aggregates outstanding and dates",()=>{for(const field of["outstandingAmount","openCount","oldestDate","nearestDueDate","recentPaymentDate"])assert.match(dashboard,new RegExp(field))});
-test("party detail returns payable and allocation payment history",()=>{assert.match(detail,/ledger_payable_allocations\(allocated_amount,payment_transaction_id\)/);assert.match(detail,/type","payable_payment/);assert.match(entries,/지급 내역/);assert.match(entries.replace(/\s+/g,""),/dailyPayments=useMemo\(\(\)=>groupPaymentsByDate\(detail\?\.payments\?\?\[\]\),\[detail\]\)/)});
+test("party detail returns payable and allocation payment history",()=>{assert.match(detail,/ledger_payable_allocations\(allocated_amount,payment_transaction_id[,)]/);assert.match(detail,/type","payable_payment/);assert.match(entries,/지급 내역/);assert.match(entries.replace(/\s+/g,""),/dailyPayments=useMemo\(\(\)=>groupPaymentsByDate\(detail\?\.payments\?\?\[\]\),\[detail\]\)/)});
 test("lower roles are rejected by the shared server gate",()=>{for(const route of[pay,dashboard,detail,party])assert.match(route,/requireLedgerActor\(\)/)});
 test("party creation is owner-master RPC only",()=>{assert.match(party,/ledger_create_party_v1/);assert.match(migration,/ledger_create_party_v1[\s\S]*not in\('owner','master'\)/)});
 // The unused HTTP entry point is removed; the DB mapping function and audit action stay.

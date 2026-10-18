@@ -67,6 +67,10 @@ import {
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
 import InventoryPurchaseCaseSummary from "@/components/ledger/InventoryPurchaseCaseSummary";
+import { sendPayablePayment } from "@/lib/ledger/payable-payment-client";
+import { payablePaymentErrorMessage } from "@/lib/ledger/payable-payment-messages";
+import PayablePaymentRecovery, { PayablePaymentRefreshButton } from "@/components/ledger/PayablePaymentRecovery";
+import PurchaseSettlementDetails from "@/components/ledger/PurchaseSettlementDetails";
 import { purchaseCaseReasonCounts } from "@/lib/inventory/purchase-case-display";
 import { entryStatusReason } from "@/lib/ledger/entry-status-reason";
 import MonthCloseSheet from "./MonthCloseSheet";
@@ -1020,7 +1024,7 @@ function LedgerEntriesContent() {
                   accounts={businessAccounts}
                   vi={vi}
                   canPay={month === currentMonth()}
-                  onPaid={async () => { await load(); setNotice(vi ? "Đã ghi nhận thanh toán." : "결제를 기록했습니다."); }}
+                  onPaid={async () => { if (!await load()) throw new Error("PAYMENT_REFRESH_FAILED"); setNotice(vi ? "Đã ghi nhận thanh toán." : "결제를 기록했습니다."); }}
                 /> : null}</div>
               ) : <p className={styles.payableEmpty}>{vi ? "Không có công nợ chưa thanh toán." : "미납금이 없습니다."}</p>}
               </div> : null}
@@ -1383,7 +1387,7 @@ function LedgerEntriesContent() {
         ) : null}
         {payableParty && data && payables?.month === month && payableParty.viewMonth === month ? (
           month === currentMonth()
-            ? <PayablePartySheet key={`${month}:${payableParty.partyId}`} lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { setPayableParty(null); await load(); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} />
+            ? <PayablePartySheet key={`${month}:${payableParty.partyId}`} lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { if (!await load()) throw new Error("PAYMENT_REFRESH_FAILED"); setPayableParty(null); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} />
             : <HistoricalPayablePartySheet key={`${month}:${payableParty.partyId}`} lang={lang} month={month} party={payableParty} onClose={() => setPayableParty(null)} />
         ) : null}
       </main>
@@ -1652,7 +1656,7 @@ function EntryDetailSheet({
               </span>
               <span className={styles.itemAmount}>
                 {item.displayTime ? <small>{item.displayTime}</small> : null}
-                <b>{money(item.amount)}</b>
+                <b>{money(item.purchaseSettlement?.effectiveAmount ?? item.amount)}</b>
               </span>
               {entry.status === "pending" || (confirmedInventory && editMode) ? (
                 <button
@@ -1663,6 +1667,7 @@ function EntryDetailSheet({
                   {vi ? "Sửa" : "수정"}
                 </button>
               ) : null}
+              {item.purchaseSettlement ? <PurchaseSettlementDetails settlement={item.purchaseSettlement} vi={vi} /> : null}
             </article>
           ))}
         </div>
@@ -1972,13 +1977,15 @@ function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
   // 지급 내역: date + daily total only (allocation/item/memo/account stay in the data, not shown).
   const dailyPayments=useMemo(()=>groupPaymentsByDate(detail?.payments??[]),[detail]);
   const canPay=mode==="dates"?!!selectedPayables.length:mode==="partial"&&partialPlan.error===null;
-  async function payPartial(){if(saving||!accountId||partialPlan.error!==null)return;setSaving(true);setError("");try{const response=await fetch("/api/admin/ledger/payables/pay",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({partyId:party.partyId,fundAccountId:Number(accountId),occurredAt:`${date}T${time}:00+07:00`,amount:partialPlan.amount,allocations:partialPlan.allocations,memo:memo||null})}),body=await response.json();if(!response.ok)throw new Error(body.code);setPartialAmount("");await onPaid()}catch(cause){setError(`${vi?"Không thể thanh toán.":"결제하지 못했습니다."} ${(cause as Error).message}`)}finally{setSaving(false)}}
-  async function pay(){if(saving||!accountId||!selectedPayables.length)return;setSaving(true);setError("");try{const response=await fetch("/api/admin/ledger/payables/pay",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({partyId:party.partyId,fundAccountId:Number(accountId),occurredAt:`${date}T${time}:00+07:00`,amount:selectedTotal,allocations:selectedPayables.map(row=>({payableId:row.id,allocatedAmount:row.outstandingAmount})),memo:memo||null})}),body=await response.json();if(!response.ok)throw new Error(body.code);setSelectedDates(new Set());await onPaid()}catch(cause){setError(`${vi?"Không thể thanh toán.":"결제하지 못했습니다."} ${(cause as Error).message}`)}finally{setSaving(false)}}
+  async function payPartial(){if(saving||!accountId||partialPlan.error!==null)return;setSaving(true);setError("");try{await sendPayablePayment({partyId:party.partyId,fundAccountId:Number(accountId),occurredAt:`${date}T${time}:00+07:00`,amount:partialPlan.amount,allocations:partialPlan.allocations,memo:memo||null},onPaid);setPartialAmount("")}catch(cause){setError((cause as Error).message||"PAYMENT_FAILED")}finally{setSaving(false)}}
+  async function pay(){if(saving||!accountId||!selectedPayables.length)return;setSaving(true);setError("");try{await sendPayablePayment({partyId:party.partyId,fundAccountId:Number(accountId),occurredAt:`${date}T${time}:00+07:00`,amount:selectedTotal,allocations:selectedPayables.map(row=>({payableId:row.id,allocatedAmount:row.outstandingAmount})),memo:memo||null},onPaid);setSelectedDates(new Set())}catch(cause){setError((cause as Error).message||"PAYMENT_FAILED")}finally{setSaving(false)}}
   return <BarSheet kind="full" compact topAligned comfortableTop fillAvailable containedBody title={vi?"Chi tiết công nợ":"미납금 상세"} closeLabel={vi?"Đóng":"닫기"} saving={saving} onClose={onClose} footer={<div className={styles.detailFooter}>{mode==="history"?null:<button type="button" disabled={saving||!accountId||!canPay} onClick={()=>void (mode==="dates"?pay():payPartial())} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang thanh toán…":"결제 중…"):mode==="dates"?(vi?`Thanh toán ${selectedDates.size} ngày đã chọn`:`선택 일자 ${selectedDates.size}건 결제`):(vi?`Thanh toán một phần ${money(partialPlan.error===null?partialPlan.amount:0)}`:`부분 지급 ${money(partialPlan.error===null?partialPlan.amount:0)}`)}</button>}<button type="button" disabled={saving} onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button></div>}>
     <div className={styles.payableSheetBody}>
+    <PayablePaymentRecovery partyId={party.partyId} vi={vi} accounts={accounts} onConfirmed={onPaid}/>
     <div className={styles.payableDetailHeader}><strong>🤝 {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(detail?.totalOutstanding??party.outstandingAmount)}</b></span></div>
     <p className={styles.payablePartyMeta}>{vi?"Đầu tiên":"최초"} {party.oldestDate||"-"} · {vi?"Hạn":"예정"} {party.nearestDueDate??(vi?"Chưa định":"미정")} · {vi?"Thanh toán gần nhất":"최근 지급"} {party.recentPaymentDate??(vi?"Không có":"없음")}</p>
-    {error?<p className={styles.error} role="alert">{error}</p>:null}
+    {error?<p className={styles.error} role="alert">{payablePaymentErrorMessage(error,vi)}</p>:null}
+    {error==="IDEMPOTENCY_KEY_REQUIRED"?<PayablePaymentRefreshButton vi={vi}/>:null}
     {detail?<div className={styles.payModeTabs} role="group" aria-label={vi?"Cách thanh toán":"지급 방식"}><button type="button" aria-pressed={mode==="dates"} disabled={saving} onClick={()=>setMode("dates")}>{vi?"Theo ngày":"선택 일자 결제"}</button><button type="button" aria-pressed={mode==="partial"} disabled={saving||!groups.length} onClick={()=>setMode("partial")}>{vi?"Thanh toán một phần":"부분 지급"}</button><button type="button" aria-pressed={mode==="history"} disabled={saving} onClick={()=>setMode("history")}>{vi?"Lịch sử":"지급 내역"} {detail.payments?.length??0}</button></div>:null}
     {mode==="history"
       ?<div className={styles.paymentHistory}>{dailyPayments.length?dailyPayments.map(day=><div key={day.businessDate} className={styles.paymentHistoryRow}><span>{formatDate(day.businessDate,lang)}</span><strong>{money(day.amount)}</strong></div>):<p className={styles.paymentHistoryEmpty}>{vi?"Chưa có lịch sử thanh toán.":"지급 내역이 없습니다."}</p>}</div>

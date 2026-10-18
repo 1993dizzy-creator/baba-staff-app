@@ -6,6 +6,11 @@ import { BarField, BarSheet, keepingInputStyle, primaryButtonStyle, secondaryBut
 import { getBusinessDate } from "@/lib/common/business-time";
 import { groupVerificationItemsByParty, planVerificationDatePayment } from "@/lib/ledger/payable-display-groups";
 import styles from "./entries.module.css";
+import { sendPayablePayment } from "@/lib/ledger/payable-payment-client";
+import { payablePaymentErrorMessage } from "@/lib/ledger/payable-payment-messages";
+import PayablePaymentRecovery, { PayablePaymentRefreshButton } from "@/components/ledger/PayablePaymentRecovery";
+import PurchaseSettlementDetails from "@/components/ledger/PurchaseSettlementDetails";
+import type { PurchaseSettlement } from "@/lib/ledger/payables";
 
 // Same contract as buildPaymentVerificationItems() in lib/ledger/payment-verification.ts.
 export type VerificationItem = {
@@ -13,6 +18,7 @@ export type VerificationItem = {
   supplierName: string; quantity: number | null; unitPrice: number | null;
   amount: number; paidAmount: number; remainingAmount: number;
   appPaymentStatus: "unconfirmed" | "confirmed"; paymentDate: string | null;
+  purchaseSettlement?: PurchaseSettlement;
 };
 export type Verification = { items: VerificationItem[]; totalPending: number; pendingCount: number };
 export type VerificationGroup = { items: VerificationItem[]; count: number; amount: number };
@@ -66,15 +72,10 @@ export default function PaymentVerificationSection({ group, accounts, vi, canPay
       : { partyId: selected.partyId, amount: amountValue, allocations: [{ payableId: selected.items[0].payableId, allocatedAmount: amountValue }] };
     setBusy(true); setError("");
     try {
-      const response = await fetch("/api/admin/ledger/payables/pay", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ partyId: payment.partyId, fundAccountId: Number(accountId), occurredAt: `${date}T12:00:00+07:00`, amount: payment.amount, allocations: payment.allocations, memo: memo || null }),
-      });
-      if (!response.ok) throw new Error("PAYMENT_FAILED");
+      await sendPayablePayment({ partyId: payment.partyId, fundAccountId: Number(accountId), occurredAt: `${date}T12:00:00+07:00`, amount: payment.amount, allocations: payment.allocations, memo: memo || null }, onPaid);
       setSelected(null);
-      await onPaid();
-    } catch {
-      setError(vi ? "Không thể ghi nhận thanh toán. Vui lòng kiểm tra lại." : "결제를 기록하지 못했습니다. 입력 내용을 확인해주세요.");
+    } catch (cause) {
+      setError((cause as Error).message || "PAYMENT_FAILED");
     } finally { setBusy(false); }
   }
 
@@ -89,7 +90,9 @@ export default function PaymentVerificationSection({ group, accounts, vi, canPay
         <p className={styles.payableReadOnlyHint} role="note">{canPay
           ? (vi ? "Chỉ ghi khi đã xác nhận thanh toán thực tế." : "실제 지급을 확인한 건만 기록하세요.")
           : (vi ? "Chỉ xem. Không thể ghi thanh toán cho tháng trước." : "조회만 가능합니다. 과거월은 결제를 기록할 수 없습니다.")}</p>
-        {error ? <p className={styles.error} role="alert">{error}</p> : null}
+        {error ? <p className={styles.error} role="alert">{payablePaymentErrorMessage(error,vi)}</p> : null}
+        {error === "IDEMPOTENCY_KEY_REQUIRED" ? <PayablePaymentRefreshButton vi={vi}/> : null}
+        {canPay ? [...new Set(group.items.map(item => item.partyId))].map(partyId => <PayablePaymentRecovery key={partyId} partyId={partyId} vi={vi} accounts={accounts} onConfirmed={async () => { await onPaid(); setSelected(null); }} />) : null}
         {selected ? <div className={styles.verificationForm}>
           {single ? <div className={styles.detailSummary}>
             <div className={styles.detailTop}><strong>{itemName(single)}</strong><span className={styles.detailStatus}>{vi ? "Thanh toán riêng" : "개별 결제"}</span></div>
@@ -132,6 +135,7 @@ export default function PaymentVerificationSection({ group, accounts, vi, canPay
                 {dateOpen ? dateGroup.items.map((item) => <article key={item.payableId} className={styles.verificationItem}>
                   <strong className={styles.verificationName}>{itemName(item)}</strong><strong className={styles.verificationItemAmount} aria-label={vi ? "Còn lại" : "남은 금액"}>{money(item.remainingAmount)}</strong>
                   {canPay ? <button type="button" className={styles.itemAction} onClick={() => start({ bulk: false, partyId: item.partyId, supplierName: item.supplierName, businessDate: item.businessDate, items: [item] })}>{vi ? "Thanh toán riêng" : "개별 결제"}</button> : null}
+                  {item.purchaseSettlement ? <PurchaseSettlementDetails settlement={item.purchaseSettlement} vi={vi} /> : null}
                 </article>) : null}
               </div>;
             })}

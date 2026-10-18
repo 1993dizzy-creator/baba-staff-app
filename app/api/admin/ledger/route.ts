@@ -6,7 +6,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { withInventoryDisplay, loadInventoryProjectionIssues } from "@/lib/ledger/inventory-display";
 import { buildLedgerEntries, buildReserveLedgerEntries, type CandidateRow, type MealCandidateSource, type PartnerLedgerDefault, type TransactionRow } from "@/lib/ledger/entries";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
-import { computePaidExpenseTotal, sumConfirmedAllocationsThroughMonth } from "@/lib/ledger/payables";
+import { computePaidExpenseTotal, calculatePurchaseSettlement, confirmedAllocationsThroughMonth, type PayablePayment } from "@/lib/ledger/payables";
 import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
 import { computeDisplayedExpense, computeReceivedIncome } from "@/lib/ledger/summary";
 import { computeActualCashOutflow } from "@/lib/ledger/cash-outflow";
@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const TYPES = new Set(["expense", "income", "transfer", "balance_adjustment"]);
-const TRANSACTION_SELECT = "id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,display_snapshot,source_synced_at,memo,party_id,category:ledger_categories(id,name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)),payable:ledger_payables(id,original_amount,due_date,status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(business_date,status,movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)))))";
+const TRANSACTION_SELECT = "id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,display_snapshot,source_synced_at,memo,party_id,category:ledger_categories(id,name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)),payable:ledger_payables(id,original_amount,due_date,status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(id,type,source_type,source_key,source_snapshot,amount,economic_effect_sign,memo,business_date,status,movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)))))";
 
 type BuildFundAccountsInput = Parameters<typeof buildFundAccountView>[0];
 // One balance Source of Truth for the full ledger GET and the settings
@@ -154,7 +154,7 @@ export async function GET(request: Request) {
       .order("id", { ascending: true }).range(from, to));
     // Root expense/expense_recognition transactions recognized this month, with their
     // linked payable (if any) — the base population for the paidExpense formula below.
-    const paidExpenseRootsPromise = loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,source_type,correction_of_id,payable:ledger_payables(status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(business_date,status)))").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["expense", "expense_recognition"]).order("id", { ascending: true }).range(from, to));
+    const paidExpenseRootsPromise = loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,source_type,correction_of_id,payable:ledger_payables(status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(id,type,source_type,source_key,source_snapshot,amount,economic_effect_sign,memo,business_date,status,movements:ledger_movements(amount))))").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["expense", "expense_recognition"]).order("id", { ascending: true }).range(from, to));
     // Confirmed corrections targeting ANY transaction (not date-scoped: ledger_create_correction_v1
     // always books a correction into a different, later month than its — closed — original, so a
     // correction of this month's root can itself be recognized in any later open month).
@@ -237,8 +237,8 @@ export async function GET(request: Request) {
       sourceType: String(row.source_type),
       correctionOfId: row.correction_of_id == null ? null : Number(row.correction_of_id),
       payableStatus: (row.payable as unknown as { status: string; allocations?: { allocated_amount: number | string; payment?: { business_date: string; status: string } | null }[] } | null)?.status ?? null,
-      allocatedAmount: sumConfirmedAllocationsThroughMonth((row.payable as unknown as { allocations?: { allocated_amount: number | string; payment?: { business_date: string; status: string } | null }[] } | null)?.allocations ?? [], month),
-      corrections: correctionsByRoot.get(Number(row.id)) ?? [],
+      allocatedAmount: calculatePurchaseSettlement(row.amount,confirmedAllocationsThroughMonth((row.payable as unknown as {allocations?:{allocated_amount:number|string;payment?:PayablePayment|null}[]}|null)?.allocations??[],month),{transactionId:row.id}).cashPaidAmount,
+      corrections: [...(correctionsByRoot.get(Number(row.id)) ?? []),...calculatePurchaseSettlement(row.amount,confirmedAllocationsThroughMonth((row.payable as unknown as {allocations?:{allocated_amount:number|string;payment?:PayablePayment|null}[]}|null)?.allocations??[],month),{transactionId:row.id}).adjustments.map(a=>({amount:-a.amount,economicEffectSign:-1}))],
     }));
     const paidExpense = computePaidExpenseTotal(paidExpenseRoots);
     const displayedExpense = computeDisplayedExpense(paidExpense, transactions);

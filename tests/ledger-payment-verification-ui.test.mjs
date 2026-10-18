@@ -37,6 +37,9 @@ function load(states, updates = []) {
     '@/components/bar/keeping/KeepingUi': { BarField: Field, BarSheet: Sheet, keepingInputStyle: {}, primaryButtonStyle: {}, secondaryButtonStyle: {} },
     './entries.module.css': { __esModule: true, default: classNames },
     '@/lib/ledger/payable-display-groups': displayGroups,
+    '@/lib/ledger/payable-payment-messages': createRequire(import.meta.url)('../lib/ledger/payable-payment-messages.ts'),
+    '@/lib/ledger/payable-payment-client': { sendPayablePayment: async (body, onPaid) => { const response = await fetch('/api/admin/ledger/payables/pay', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); if(!response.ok) throw Error('PAYMENT_FAILED'); await onPaid(); } },
+    '@/components/ledger/PayablePaymentRecovery': { __esModule:true, default:()=>null },
   })[name], mod, mod.exports);
   return { component: mod.exports.default };
 }
@@ -131,10 +134,10 @@ test('개별 결제 keeps the per-item form and single explicit allocation', asy
   const html = render({ states: { 0: true, 1: { bulk: false, partyId: 20, supplierName: 'Wow Spirit', businessDate: '2026-09-20', items: [items[1]] } } });
   for (const label of ['지급액', '지급 계정', '지급일', '메모', '결제 확정', '목록으로', 'Wow Spirit', '실제 지급을 확인한 건만 기록하세요']) assert.match(html, new RegExp(label));
   assert.doesNotMatch(html, /Jonut|지급 배분/, 'form shows only the selected item');
-  assert.match(compact, /fetch\("\/api\/admin\/ledger\/payables\/pay",/);
+  assert.match(compact, /sendPayablePayment\(/);
   assert.match(compact, /amountValue>0&&amountValue<=single\.remainingAmount/);
   assert.match(compact, /disabled=\{busy\|\|!canSubmit\|\|!accountId\}/);
-  assert.match(compact, /setSelected\(null\);awaitonPaid\(\);/, 'after paying, the parent reload refreshes the group');
+  assert.match(compact, /awaitsendPayablePayment\([^]*?onPaid\);setSelected\(null\);/, 'after paying, the parent reload refreshes the group');
   assert.doesNotMatch(source, /useEffect/, 'nothing is paid automatically');
 
   // Tapping 개별 결제 selects just that item (and never touches the expanded dates).
@@ -147,7 +150,7 @@ test('개별 결제 keeps the per-item form and single explicit allocation', asy
   const calls = [];
   globalThis.fetch = async (url, init) => { calls.push([url, JSON.parse(init.body)]); return { ok: true }; };
   const form = tree({ states: { 0: true, 1: { bulk: false, partyId: 20, supplierName: 'Wow Spirit', businessDate: '2026-09-20', items: [items[1]] }, 2: '400000', 3: '1', 4: '2026-09-25', 5: '' } });
-  await form.button('결제 확정').props.onClick();
+  await form.button('결제 확정').props.onClick(); await new Promise(setImmediate);
   assert.deepEqual(calls, [['/api/admin/ledger/payables/pay', { partyId: 20, fundAccountId: 1, occurredAt: '2026-09-25T12:00:00+07:00', amount: 400_000, allocations: [{ payableId: 9, allocatedAmount: 400_000 }], memo: null }]]);
 });
 
@@ -273,7 +276,7 @@ test('일괄 결제 form: fixed Σ remaining, allocation preview, account/date r
 
   const form = tree({ states: { 0: true, 1: target, 3: '1', 4: '2026-09-26', 5: '시장 정산' } });
   assert.equal(form.button('결제 확정').props.disabled, false);
-  await form.button('결제 확정').props.onClick();
+  await form.button('결제 확정').props.onClick(); await new Promise(setImmediate);
   assert.deepEqual(calls, [['/api/admin/ledger/payables/pay', { partyId: 10, fundAccountId: 1, occurredAt: '2026-09-26T12:00:00+07:00', amount: 27_000, allocations: [{ payableId: 31, allocatedAmount: 22_000 }, { payableId: 34, allocatedAmount: 5_000 }], memo: '시장 정산' }]]);
   assert.ok(form.updates.some(([slot, value]) => slot === 1 && value === null), 'back to the list after paying');
 });

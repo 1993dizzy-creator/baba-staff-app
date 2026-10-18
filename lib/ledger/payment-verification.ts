@@ -1,3 +1,6 @@
+// @ts-expect-error Node's local strip-types test runner requires the extension.
+import { calculatePurchaseSettlement, type PayablePayment, type PurchaseSettlement } from "./payables.ts";
+
 export type VerificationSource = {
   id: number | string;
   party_id: number | string;
@@ -15,7 +18,7 @@ export type VerificationSource = {
 export type VerificationAllocation = {
   payable_id: number | string;
   allocated_amount: number | string;
-  payment?: { business_date: string; status: string } | null;
+  payment?: PayablePayment | null;
 };
 
 export function isPaymentVerification(source: VerificationSource) {
@@ -28,7 +31,8 @@ export function buildPaymentVerificationItems(
 ) {
   const items = sources.filter(source => source.status !== "cancelled" && source.expense?.status === "confirmed" && isPaymentVerification(source)).map(source => {
     const paid = allocations.filter(allocation => Number(allocation.payable_id) === Number(source.id) && allocation.payment?.status === "confirmed");
-    const paidAmount = paid.reduce((total, allocation) => total + Number(allocation.allocated_amount), 0);
+    const settlement:PurchaseSettlement=calculatePurchaseSettlement(source.original_amount,paid,{payableId:source.id,transactionId:source.expense?.id});
+    const paidAmount = settlement.cashPaidAmount;
     const amount = Number(source.original_amount);
     const snapshot = source.expense?.source_snapshot ?? {};
     return {
@@ -42,9 +46,10 @@ export function buildPaymentVerificationItems(
       unitPrice: snapshot.purchase_price == null ? null : Number(snapshot.purchase_price),
       amount,
       paidAmount,
-      remainingAmount: Math.max(0, amount - paidAmount),
-      appPaymentStatus: paidAmount >= amount ? "confirmed" as const : "unconfirmed" as const,
-      paymentDate: paid.map(allocation => allocation.payment!.business_date).sort().at(-1) ?? null,
+      purchaseSettlement:settlement,
+      remainingAmount: settlement.remainingAmount,
+      appPaymentStatus: settlement.status==="paid" ? "confirmed" as const : "unconfirmed" as const,
+      paymentDate: paid.filter(allocation=>allocation.payment?.type!=="expense").map(allocation => allocation.payment!.business_date).sort().at(-1) ?? null,
     };
   });
   return {
