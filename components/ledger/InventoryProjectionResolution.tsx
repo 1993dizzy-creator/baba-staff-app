@@ -14,8 +14,8 @@ export type InventoryProjectionIssue = Partial<PurchaseCase> & {
   resolution?: PurchaseRepairPreview;
 };
 
-export default function InventoryProjectionResolution({ issue, vi, onResolved }: {
-  issue: InventoryProjectionIssue; vi: boolean; onResolved: () => Promise<void>;
+export default function InventoryProjectionResolution({ issue, vi, onResolved, compact = false }: {
+  issue: InventoryProjectionIssue; vi: boolean; onResolved: () => Promise<void>; compact?: boolean;
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -85,7 +85,7 @@ export default function InventoryProjectionResolution({ issue, vi, onResolved }:
     finally { requestLockRef.current = false; setBusy(false); }
   }
   return <>
-    <span className={styles.state}>{purchaseRepairState(issue.code, vi, issue.resolution?.candidates.length === 1 && issue.resolution.candidates[0].newAmount === 0)}</span>
+    {!compact ? <span className={styles.state}>{purchaseRepairState(issue.code, vi, issue.resolution?.candidates.length === 1 && issue.resolution.candidates[0].newAmount === 0)}</span> : null}
     {canReviewPurchaseCorrection(issue.code)
       ? <button id={`inventory-projection-${issue.inventoryLogId}`} ref={triggerRef} type="button" className={styles.action} style={secondaryButtonStyle} onClick={show}>{vi ? "Giải quyết" : "해결하기"}</button> : <span className={styles.action}>{history}</span>}
     {open ? <BarSheet kind="full" compact mobileCentered returnFocusRef={triggerRef} title={vi ? "Liên kết lô nhập gốc" : "원입고 연결 및 장부 수정"}

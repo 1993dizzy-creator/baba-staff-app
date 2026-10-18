@@ -67,6 +67,7 @@ import {
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
 import InventoryPurchaseCaseSummary from "@/components/ledger/InventoryPurchaseCaseSummary";
+import { purchaseCaseReasonCounts } from "@/lib/inventory/purchase-case-display";
 import { entryStatusReason } from "@/lib/ledger/entry-status-reason";
 import MonthCloseSheet from "./MonthCloseSheet";
 import PartnerSelect from "./PartnerSelect";
@@ -900,25 +901,18 @@ function LedgerEntriesContent() {
         ) : null}
         {data && data.month === month && data.inventoryProjectionIssues?.length ? (
           <section className={styles.projectionWarning} role="status">
-            <strong>⚠️ {vi ? "Cần kiểm tra ghi sổ nhập kho" : "입고 수정 장부 반영 확인 필요"}</strong>
-            <p>{data.inventoryProjectionIssues.every(issue => issue.code === "PURCHASE_CORRECTION_REFERENCE_REQUIRED")
-              ? vi
-                ? `${data.inventoryProjectionIssues.length} thay đổi số lượng nhập kho chưa được ghi vào sổ.`
-                : `${data.inventoryProjectionIssues.length}건의 입고 수정이 장부에 반영되지 않았습니다.`
-              : vi
-                ? `${data.inventoryProjectionIssues.length} thay đổi nhập kho cần kiểm tra trong sổ.`
-                : `${data.inventoryProjectionIssues.length}건의 입고 내역에 장부 확인이 필요합니다.`}</p>
-            <details>
-              <summary>{vi ? "Xem chi tiết" : "상세 보기"}</summary>
+            <strong>⚠ {vi ? `Cần kiểm tra sổ ${data.inventoryProjectionIssues.length} mục` : `장부 확인 필요 ${data.inventoryProjectionIssues.length}건`}</strong>
+            {purchaseCaseReasonCounts(data.inventoryProjectionIssues, vi) ? <p>{vi ? "Theo lý do (có thể trùng): " : "사유별(중복 포함): "}{purchaseCaseReasonCounts(data.inventoryProjectionIssues, vi)}</p> : null}
+            <div>
               {data.inventoryProjectionIssues.map(issue => <div className={styles.projectionWarningRow} key={issue.inventoryLogId}>
                 <InventoryPurchaseCaseSummary issue={issue} vi={vi} />
-                <InventoryProjectionResolution issue={issue} vi={vi} onResolved={async () => {
+                <InventoryProjectionResolution issue={issue} vi={vi} compact onResolved={async () => {
                   const refreshed = await load();
                   if (!refreshed) throw new Error("LEDGER_REFRESH_FAILED");
                   setNotice(vi ? "Đã điều chỉnh sổ kế toán" : "장부 정정 완료");
                 }} />
               </div>)}
-            </details>
+            </div>
           </section>
         ) : null}
         {notice ? (

@@ -23,6 +23,11 @@ export type PurchaseCase = PurchaseCaseIssue & {
   correctionBusinessDate: string;
   unit: string | null; ledgerAmount: number | null; finalStatus: "review_required" | "failed";
   timeline: PurchaseCaseEvent[];
+  receiptEvidence?: {
+    booked: { quantity: number | null; price: number | null; amount: number | null; supplier: string | null };
+    current: { quantity: number | null; price: number | null; supplier: string | null };
+    candidateStatus: string | null; transactionStatus: string | null;
+  };
 };
 export type PurchaseCaseCandidate = {
   id: number; source_key: string; status: string; dismissal_reason?: string | null;
@@ -123,7 +128,12 @@ export function buildPurchaseCases({ issues, logs, candidates = [], transactions
       businessDate:root?.business_date || issue.businessDate,originalQuantity:root ? Number(root.change_quantity) : issue.originalQuantity,
       effectiveQuantity:effective,quantityDelta:root && effective!==null ? effective-Number(root.change_quantity) : issue.quantityDelta,
       unit:root?.unit || latest?.unit || null,ledgerAmount:finite(transaction?.amount),
-      finalStatus:members.some(row=>row.status==='failed') ? 'failed' : 'review_required',timeline});
+      finalStatus:members.some(row=>row.status==='failed') ? 'failed' : 'review_required',timeline,
+      receiptEvidence: {
+        booked: {quantity:finite(snapshot?.change_quantity),price:finite(snapshot?.purchase_price),amount:finite(transaction?.amount),supplier:typeof snapshot?.supplier==='string'?snapshot.supplier:null},
+        current: {quantity:effective,price,supplier:latest?.new_supplier ?? null},
+        candidateStatus:candidate?.status ?? null,transactionStatus:transaction?.status ?? null,
+      }});
   }
   return output;
 }

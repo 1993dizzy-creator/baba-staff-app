@@ -1,9 +1,29 @@
 .summary{flex:1;min-width:0;overflow-wrap:anywhere;color:#7c4e2e}
 .heading{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
-.heading strong{font-size:12px}.heading span{font-size:11px}
-.supplier{margin-top:3px;font-size:10px;color:#8b735a}
+.heading strong{font-size:14px;font-weight:800;color:#111827;line-height:1.5}.heading span{font-size:11px}
+.reason{display:flex;flex-wrap:wrap;margin-top:6px}
+/* Reuse the ledger pending badge and expense/party text palette. */
+.badge{display:inline-flex;max-width:100%;padding:3px 7px;border-radius:999px;background:#fff4dc;color:#9a5b10;font-size:10px;font-weight:700;line-height:1.4}
+.changes{margin-top:5px;font-size:12px;line-height:1.7;font-weight:400;color:#4b5563;font-variant-numeric:tabular-nums}
+.changeValue{white-space:normal}
+.amountDelta{color:#b4493e;font-weight:800}
+.changedSupplier{color:#111827;font-weight:800}
+.explanation{font-size:11px;font-weight:400;color:#6b7280}
+.timeline{padding-top:10px;border-top:1px solid #f3e7d1}
+.detailBody{display:grid;gap:12px;margin-top:9px;padding:12px;border:1px solid #f3e7d1;border-radius:10px;background:#fff}
+.detailFacts{display:grid;gap:12px;margin:0;color:#4b5563}
+.detailFacts dt{margin-bottom:3px;font-size:10px;font-weight:700;color:#6b7280}
+.detailFacts dd{margin:0;font-size:12px;line-height:1.6;font-variant-numeric:tabular-nums}
+.detailFacts strong{font-weight:800;color:#111827}
+.detailFacts strong.amountDelta{color:#b4493e}
+.detailFacts dd.reviewExplanation{font-size:11px;font-weight:400}
+.eventMeta{font-size:10px;color:#6b7280}
+.technical{padding-top:9px;border-top:1px solid #e5e7eb;font-size:10px;color:#6b7280}
+.technical>div{margin-top:8px}
+.technical pre{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;font-size:10px;line-height:1.6}
+.supplier{margin-top:3px;font-size:10px;color:#6b7280;line-height:1.5}
 .facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;margin:7px 0 0}
 .facts div{min-width:0}.facts dt{font-size:10px;color:#8b735a}.facts dd{margin:1px 0;font-size:11px}
 .history{margin-top:7px}.history summary{cursor:pointer;font-weight:700}
 .history ol{display:grid;gap:10px;margin:8px 0 0;padding-left:20px;line-height:1.6}
-@media(max-width:560px){.summary{grid-column:1/-1}.facts{gap:6px 8px}}
+@media(max-width:560px){.summary{grid-column:1;grid-row:1}.facts{gap:6px 8px}}

@@ -34,15 +34,14 @@ test('purchase case banner and chronology across KO/VI desktop/mobile, completed
    await route.fulfill({json});
   });
   await page.goto(process.env.QA_UI_BASE_URL+'/admin/ledger/entries?month=2026-10');
-  const warning=page.locator('section').filter({has:page.getByText(lang==='ko'?'⚠️ 입고 수정 장부 반영 확인 필요':'⚠️ Cần kiểm tra ghi sổ nhập kho',{exact:true})});await warning.waitFor();
-  assert.match(await warning.innerText(),lang==='ko'?/4건/:/4 thay đổi/);
-  await warning.locator(':scope > details > summary').click();
+  const warning=page.locator('section').filter({has:page.getByText(lang==='ko'?'⚠ 장부 확인 필요 4건':'⚠ Cần kiểm tra sổ 4 mục',{exact:true})});await warning.waitFor();
+  assert.match(await warning.innerText(),lang==='ko'?/4건/:/4 mục/);
   for(const id of [12971,12972,13001,13002])assert.equal(await page.getByTestId('inventory-purchase-case-'+id).count(),1);
   assert.equal(await page.getByTestId('inventory-purchase-case-13000').count(),0);assert.equal(await page.getByTestId('inventory-purchase-case-12998').count(),0);
-  const tonic=page.getByTestId('inventory-purchase-case-12971');const text=await tonic.innerText();assert.match(text,lang==='ko'?/토닉워터/:/Tonic/);assert.match(text,/12971/);assert.match(text,/2026-10-11/);assert.match(text,/10 → 0can \(-10\)/);assert.match(text,/200,000₫/);assert.match(text,lang==='ko'?/관리자 확인 필요/:/Cần quản trị viên kiểm tra/);
-  await tonic.locator('summary').click();assert.deepEqual(await tonic.locator('ol li').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('data-testid'))),['purchase-case-event-inventory:12971','purchase-case-event-inventory:12982','purchase-case-event-inventory:13000','purchase-case-event-ledger:1']);
+  const tonic=page.getByTestId('inventory-purchase-case-12971');const text=await tonic.innerText();assert.match(text,lang==='ko'?/토닉워터/:/Tonic/);assert.doesNotMatch(text,/#12971|10 → 0can|200,000₫/);assert.match(text,/2026-10-11/);
+  await tonic.locator(':scope > details > summary').click();await tonic.getByTestId('purchase-case-timeline').locator(':scope > summary').click();assert.deepEqual(await tonic.locator('ol li').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('data-testid'))),['purchase-case-event-inventory:12971','purchase-case-event-inventory:12982','purchase-case-event-inventory:13000','purchase-case-event-ledger:1']);
   assert.ok((await tonic.innerText()).includes('QA actor'));assert.ok((await tonic.innerText()).includes('QA reviewer'));assert.match(await tonic.innerText(),lang==='ko'?/재고조사 \(입고 수량 집계 제외\)/:/Kiểm kê \(không đổi số lượng nhập\)/);
-  const o6=page.getByTestId('inventory-purchase-case-13002');await o6.locator('summary').click();assert.deepEqual(await o6.locator('ol li').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('data-testid'))),['purchase-case-event-inventory:12983','purchase-case-event-inventory:13002']);
+  const o6=page.getByTestId('inventory-purchase-case-13002');await o6.locator(':scope > details > summary').click();await o6.getByTestId('purchase-case-timeline').locator(':scope > summary').click();assert.deepEqual(await o6.locator('ol li').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('data-testid'))),['purchase-case-event-inventory:12983','purchase-case-event-inventory:13002']);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);assert.equal(await tonic.evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   await mkdir('.qa-review/purchase-cases-browser',{recursive:true});await page.screenshot({path:'.qa-review/purchase-cases-browser/'+lang+'-'+(mobile?'mobile':'desktop')+'.png',fullPage:true});
   // Already completed state is provided as read-only evidence, never a POST.
