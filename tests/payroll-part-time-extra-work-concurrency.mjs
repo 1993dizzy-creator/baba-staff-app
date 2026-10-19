@@ -14,7 +14,7 @@ assert.ok(bin, 'Set QA_POSTGRES_BIN to local PostgreSQL binaries; no external da
 process.env.QA_POSTGRES_BIN = resolve(bin);
 
 test('real PostgreSQL approval/cancellation contention and duplicate approval', {timeout:120_000}, async t => {
-  const native = await nativeInventoryPostgres();
+  const native = await nativeInventoryPostgres({testContext:t});
   const db = await setup(native.Database);
   const a = await native.connect(db.name), b = await native.connect(db.name);
   let unexpectedDeadlocks = 0;

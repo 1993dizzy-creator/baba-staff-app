@@ -141,6 +141,7 @@ type LedgerSummary = {
 };
 type LedgerData = {
   inventoryProjectionIssues?: InventoryProjectionIssue[];
+  payrollPaymentGroupIssues?: import("@/lib/ledger/payroll-payment-groups").PayrollPaymentGroupIssue[];
   month: string;
   fundsView: {
     month: string;
@@ -902,6 +903,13 @@ function LedgerEntriesContent() {
           <p className={styles.error} role="alert">
             {error}
           </p>
+        ) : null}
+        {data && data.month === month && data.payrollPaymentGroupIssues?.length ? (
+          <section className={styles.projectionWarning} role="status">
+            <strong>{vi ? "Cần kiểm tra liên kết hoàn chi lương" : "급여 역분개 연결 확인 필요"}</strong>
+            <p>{vi ? "Không thể xác minh một số liên kết. Giữ nguyên giao dịch gốc trong danh sách và tổng tiền; cần kiểm tra trước khi sử dụng tổng này." : "일부 연결을 검증하지 못했습니다. 원본을 목록과 합계에 유지했으므로 합계 사용 전 확인이 필요합니다."}</p>
+            <p>{vi ? "Giao dịch gốc / hoàn chi: " : "원본 / 역분개 거래: "}{data.payrollPaymentGroupIssues.map(issue => `#${issue.originalTransactionId ?? "?"} / #${issue.reversalTransactionId ?? "?"}`).join(", ")}</p>
+          </section>
         ) : null}
         {data && data.month === month && data.inventoryProjectionIssues?.length ? (
           <section className={styles.projectionWarning} role="status">

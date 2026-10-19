@@ -63,6 +63,7 @@ function ledgerRoute(db) {
       const map = {
         "@/lib/supabase/server": { supabaseServer: db },
         "@/lib/ledger/server": { requireLedgerActor: async () => ({ actor: { id: 7, role: "owner" } }), ledgerJson: body => body },
+        "@/lib/ledger/payroll-payment-groups": require("../lib/ledger/payroll-payment-groups.ts"),
         "@/lib/ledger/inventory-display": { withInventoryDisplay: async rows => rows, loadInventoryProjectionIssues: async () => [] },
         "@/lib/ledger/entries": { buildLedgerEntries: () => [], buildReserveLedgerEntries: () => [] },
         "@/lib/ledger/reserve-balances": require("../lib/ledger/reserve-balances.ts"),

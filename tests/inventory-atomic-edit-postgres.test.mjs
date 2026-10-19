@@ -14,7 +14,7 @@ async function waitForLock(db,blocker,waiting){
  }throw Error('Second PostgreSQL session did not wait for the first session lock');
 }
 test('native PostgreSQL two-session inventory lock/concurrency regressions',{skip:!process.env.QA_POSTGRES_BIN,timeout:60000},async t=>{
- const runtime=await nativeInventoryPostgres();console.log(runtime.version);
+ const runtime=await nativeInventoryPostgres({testContext:t});console.log(runtime.version);
  try{
   for(const [name,first,second] of [
    ['ordinary / ordinary',save,save],['correction v2 / correction v2',correct,correct],

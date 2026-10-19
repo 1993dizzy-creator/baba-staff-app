@@ -14,14 +14,14 @@ assert.ok(process.env.QA_SUPABASE_CLI_BIN,'QA_SUPABASE_CLI_BIN is required');
 const cli=path.resolve(process.env.QA_SUPABASE_CLI_BIN);
 const version='20261016170140',name='fix_pos_payment_snapshot_replacement';
 const filename=version+'_'+name+'.sql';
-const run=(args,cwd)=>new Promise((resolve,reject)=>{
+const run=(args,cwd,runtime)=>new Promise((resolve,reject)=>{
   const env={};for(const key of ['SystemRoot','SYSTEMROOT','PATH','TEMP','TMP','LOCALAPPDATA','APPDATA'])if(process.env[key])env[key]=process.env[key];
   Object.assign(env,{CI:'true',USERPROFILE:cwd,DOCKER_CONFIG:cwd,PGSSLMODE:'disable'});
-  const child=spawn(cli,args,{cwd,env,windowsHide:true});let output='';
+  const child=spawn(cli,args,{cwd,env,windowsHide:true});runtime?.trackChild(child);let output='';
   child.stdout.on('data',x=>output+=x);child.stderr.on('data',x=>output+=x);
   child.on('error',reject);child.on('exit',code=>resolve({code,output}));
 });
-async function workspace(db,sql){
+async function workspace(db,sql,runtime){
   const root=path.resolve('.tmp');mkdirSync(root,{recursive:true});
   const dir=mkdtempSync(path.join(root,'pos-payment-cli-'));
   mkdirSync(path.join(dir,'supabase','migrations'),{recursive:true});
@@ -31,7 +31,7 @@ async function workspace(db,sql){
   const {host,port,database}=db.client.connectionParameters;
   assert.equal(host,'127.0.0.1');assert.match(database,/^qa_case_\d+$/);assert.ok(Number(port)>1024);
   const url=new URL('postgresql://postgres@127.0.0.1:'+port+'/'+database);url.searchParams.set('sslmode','disable');
-  return {dir,apply:()=>run(['db','push','--db-url',url.toString(),'--workdir',dir,'--yes'],dir)};
+  return {dir,apply:()=>run(['db','push','--db-url',url.toString(),'--workdir',dir,'--yes'],dir,runtime)};
 }
 async function history(db){return (await db.query('select version,name,statements from supabase_migrations.schema_migrations order by version')).rows;}
 async function state(db){return {
@@ -42,13 +42,13 @@ async function state(db){return {
 
 test('Supabase CLI 2.81.3 db push atomically applies payment DDL and migration history',{timeout:120000},async t=>{
   const versionCheck=await run(['--version'],process.cwd());assert.equal(versionCheck.code,0);assert.match(versionCheck.output,/\b2\.81\.3\b/);
-  const runtime=await nativePostgres();console.log(runtime.version);
+  const runtime=await nativePostgres({testContext:t});console.log(runtime.version);
   async function fixture(sqlFor){
     const db=await paymentFixture(runtime.Database,{upgrade:false});
     await db.exec(`create schema supabase_migrations;create table supabase_migrations.schema_migrations(version text primary key,name text,statements text[]);
       insert into supabase_migrations.schema_migrations values('202609030001','reconcile_sales_receipt_payments',array['isolated baseline already applied']);`);
     const id=await addReceipt(db);await seed(db,id);
-    const cliWorkspace=await workspace(db,sqlFor(db));return {db,...cliWorkspace};
+    const cliWorkspace=await workspace(db,sqlFor(db),runtime);return {db,...cliWorkspace};
   }
   async function scenario(label,sqlFor,work){await t.test(label,async()=>{
     const f=await fixture(sqlFor);try{await work(f);}finally{await f.db.close();}

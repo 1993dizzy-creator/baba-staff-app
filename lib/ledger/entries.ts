@@ -6,6 +6,9 @@ import { ledgerPayrollAdvanceRequestId, PAYROLL_ADVANCE_REVERSAL_SOURCE_TYPE } f
 // @ts-expect-error Node's local strip-types test runner requires the extension.
 import { shortLedgerAccountName } from "./entry-display-account.ts";
 
+// @ts-expect-error Node's local strip-types test runner requires the extension.
+import { analyzePayrollPaymentGroups } from "./payroll-payment-groups.ts";
+
 export type LedgerEntryItem = {
   candidateId?: number;
   transactionId?: number;
@@ -492,6 +495,7 @@ export function buildLedgerEntries(
   viewMonth = transactions[0]?.business_date.slice(0,7) ?? "",
 ): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
+  const { reversedOriginalIds: reversedPayrollGroupIds } = analyzePayrollPaymentGroups(transactions);
   const inventoryGroups = new Map<string, LedgerEntry>();
   const mealAdjustmentsByOriginal = new Map<number, TransactionRow[]>();
   const mealOriginalIds = new Set(transactions
@@ -566,6 +570,7 @@ export function buildLedgerEntries(
 
   for (const row of transactions) {
     if (row.type === "opening") continue;
+    if (reversedPayrollGroupIds.has(value(row.id))) continue;
     if (row.type === "expense_recognition" && row.source_type === "payroll_completed_batch") continue;
     if (fullyReversedManualIds.has(value(row.id)) || hiddenManualCorrectionIds.has(value(row.id)) ||
         hiddenPaymentDifferenceIds.has(value(row.id))) continue;

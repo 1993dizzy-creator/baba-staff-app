@@ -6,7 +6,7 @@ import {safeFixture,snapshot,correct} from './helpers/inventory-safe-correction-
 const one=async(db,sql,args=[])=>(await db.query(sql,args)).rows[0];
 const blocked=async(db,pid)=>{for(let i=0;i<100;i++){if((await one(db,'select cardinality(pg_blocking_pids($1)) as n',[pid])).n>0)return;await delay(20);}throw Error('Expected real PostgreSQL lock wait');};
 test('safe auto correction serializes source writes, payment allocation and month closing in native PostgreSQL',{skip:!process.env.QA_POSTGRES_BIN,timeout:60000},async t=>{
- const runtime=await nativeInventoryPostgres();console.log(runtime.version);
+ const runtime=await nativeInventoryPostgres({testContext:t});console.log(runtime.version);
  try{
  for(const mode of ['correction','payment','month-close'])await t.test(mode+' first prevents stale automatic correction',async()=>{
   const db=await safeFixture(runtime.Database),a=await runtime.connect(db.name),b=await runtime.connect(db.name);let pending;

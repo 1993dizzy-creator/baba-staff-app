@@ -14,7 +14,7 @@ const call=(db,rows)=>reconcile(db,[snapshot(rows)]);
 const unchanged=async(db,before)=>assert.deepEqual(await payments(db),before);
 
 test('native PostgreSQL payment reconciliation with real UNIQUE index', {timeout:120000}, async t=>{
-  const runtime=await nativePostgres();
+  const runtime=await nativePostgres({testContext:t});
   console.log(runtime.version);
   const fixture=options=>paymentFixture(runtime.Database,options);
   async function scenario(name,run){await t.test(name,async()=>{const db=await fixture();try{await run(db);}finally{await db.close();}});}

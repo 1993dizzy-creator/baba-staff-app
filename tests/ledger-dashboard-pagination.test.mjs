@@ -28,7 +28,7 @@ function queryKind(table, columns, filters) {
 
 // Read-only Supabase double. The default cap, inclusive ranges, filters and
 // multi-column ordering are enforced; shuffled input cannot accidentally pass.
-function api(tables, failKind) {
+function api(tables, failKind, entriesModule) {
   const calls = [];
   const db = {
     from(table) {
@@ -88,8 +88,9 @@ function api(tables, failKind) {
   const dependencies = {
     '@/lib/supabase/server': { supabaseServer: db },
     '@/lib/ledger/server': { requireLedgerActor: async () => ({ actor: { id: 7, role: 'owner' } }), ledgerJson: (body, status = 200) => Response.json(body, { status }) },
+    '@/lib/ledger/payroll-payment-groups': require('../lib/ledger/payroll-payment-groups.ts'),
     '@/lib/ledger/inventory-display': { withInventoryDisplay: async rows => rows, loadInventoryProjectionIssues: async () => [] },
-    '@/lib/ledger/entries': { buildLedgerEntries: () => [], buildReserveLedgerEntries: () => [] },
+    '@/lib/ledger/entries': entriesModule ?? { buildLedgerEntries: () => [], buildReserveLedgerEntries: () => [] },
     '@/lib/ledger/card-settlement-data': cardModule.exports,
     '@/lib/ledger/card-settlements': cardFunctions,
     '@/lib/common/business-time': {
@@ -298,4 +299,26 @@ test('a later allocation page failure returns no partial receipts or summary', a
   const response = await api(receiptTables({ count: 1001 }), 'priorCardDeposits').get();
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { ok: false, code: 'LEDGER_LOAD_FAILED' });
+});
+
+test('payroll reversal display fix changes only entries: raw movements, company profit and account balances are preserved', async () => {
+  const {octoberHistory} = await import('./helpers/payroll-payment-group-fixture.mjs');
+  const {entryDisplaySubtotal} = require('../lib/ledger/entries.ts');
+  const {entryMatchesListFilter} = require('../lib/ledger/entry-list-filter.ts');
+  const rows=octoberHistory().map(row=>({...row,recognition_month:row.recognition_month??'2026-10-01',occurred_at:'2026-10-10T12:00:00+07:00'}));
+  let movementId=1;
+  const tables={ledger_transactions:rows,ledger_fund_accounts:[account,{...account,id:2,code:'bank_2'},{...account,id:3,code:'bank_3'}],ledger_movements:rows.flatMap(t=>t.movements.map(m=>({id:movementId++,fund_account_id:m.fund_account.id,amount:m.amount,transaction:{status:t.status,type:t.type,business_date:t.business_date,occurred_at:t.occurred_at}})))};
+  const before=JSON.stringify(tables);
+  const state=api(tables,undefined,require('../lib/ledger/entries.ts'));
+  const response=await state.get('2026-10'),body=await response.json();assert.equal(response.status,200);
+  assert.equal(body.transactions.length,rows.length);assert.equal(body.payrollPaymentGroupIssues.length,0);
+  const visible=body.entries.filter(e=>entryMatchesListFilter(e,'all'));
+  assert.equal(visible.length,5);assert.equal(visible.reduce((n,e)=>n+entryDisplaySubtotal(e).expense,0),158654309);
+  assert.equal(visible.reduce((n,e)=>n+entryDisplaySubtotal(e).income,0),41530800);
+  assert.equal(body.summary.expense,7205900);assert.equal(body.summary.income,41530800);
+  assert.equal(body.summary.actualCashOutflow,158654309);
+  assert.equal(body.accounts.reduce((n,a)=>n+a.balance,0),41530800-158654309);
+  const september=await (await api(tables,undefined,require('../lib/ledger/entries.ts')).get('2026-09')).json();
+  assert.equal(september.summary.expense,176185794);
+  assert.equal(JSON.stringify(tables),before);
 });
