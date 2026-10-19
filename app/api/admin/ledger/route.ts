@@ -72,7 +72,25 @@ function buildLedgerFundAccounts<T extends BuildFundAccountsInput["accounts"][nu
 }
 
 export async function GET(request: Request) {
+  // Request-local timings only: fixed stage names and durations, never row data.
+  const clock = () => typeof performance === "undefined" ? Date.now() : performance.now();
+  const started = clock();
+  let stageStarted = started;
+  const timings: string[] = [];
+  const mark = (stage: string) => {
+    const now = clock();
+    timings.push(`${stage};dur=${Math.max(0, now - stageStarted).toFixed(2)}`);
+    stageStarted = now;
+  };
+  const respond: typeof ledgerJson = (body, status = 200) => {
+    mark("postprocess");
+    const response = ledgerJson(body, status);
+    mark("serialize");
+    response.headers?.set("Server-Timing", [...timings, `total;dur=${(clock() - started).toFixed(2)}`].join(", "));
+    return response;
+  };
   const auth = await requireLedgerActor();
+  mark("auth");
   if (auth.response) return auth.response;
   const url = new URL(request.url);
   const month = url.searchParams.get("month") ?? "";
@@ -80,7 +98,7 @@ export async function GET(request: Request) {
   const accountsOnly = url.searchParams.get("scope") === "accounts";
   const dashboardOnly = url.searchParams.get("scope") === "dashboard";
   const entriesOnly = url.searchParams.get("scope") === "entries";
-  if (!MONTH.test(month)) return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400);
+  if (!MONTH.test(month)) return respond({ ok: false, code: "INVALID_MONTH" }, 400);
   const monthStart = `${month}-01`;
   const { businessDateExclusive: nextMonth, cutoffAt: monthEndCutoffAt } = getBusinessMonthEndBoundary(month);
   // Business day starts at 03:00 Asia/Ho_Chi_Minh, so the month window does too.
@@ -96,6 +114,7 @@ export async function GET(request: Request) {
           .eq("month", monthStart)
           .eq("status", "closed")
           .maybeSingle();
+    mark("closure_read");
     if (closureResult.error) throw closureResult.error;
     const fundsViewMode = fundAccountViewMode(month, currentBusinessDate, Boolean(closureResult.data));
     const accountsPromise = supabaseServer.from("ledger_fund_accounts").select("id,code,type,holder_name,display_name,is_active,is_business_fund,sort_order").order("sort_order");
@@ -137,14 +156,16 @@ export async function GET(request: Request) {
       const [accountsResult, movementsResult, openingResult, reservesResult, reserveEntriesResult] = await Promise.all([
         accountsPromise, movementsPromise, openingPromise, reservesPromise, reserveEntriesPromise,
       ]);
+      mark("base_reads");
       for (const result of [accountsResult, movementsResult, openingResult, reservesResult, reserveEntriesResult]) if (result.error) throw result.error;
       const priorConfirmedMovements = (openingResult.data?.length ?? 0) > 0 ? [] : await loadPriorConfirmedFundMovements(monthStart);
+      mark("prior_movements");
       const accounts = buildLedgerFundAccounts({
         fundsViewMode, now, accountRows: accountsResult.data ?? [], openingRows: openingResult.data ?? [], priorConfirmedMovements,
         movementRows: movementsResult.data ?? [], reservePlanRows: reservesResult.data ?? [], reserveEntryRows: reserveEntriesResult.data ?? [],
         closeSummary: closureResult.data?.summary_snapshot,
       });
-      return ledgerJson({ ok: true, month, scope: "accounts", fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, accounts });
+      return respond({ ok: true, month, scope: "accounts", fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, accounts });
     }
     const profitPromise = dashboardOnly
       ? loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales", "expense_recognition"]).order("id", { ascending: true }).range(from, to))
@@ -179,10 +200,12 @@ export async function GET(request: Request) {
       recognitionProfitPromise, movementsPromise, openingPromise, cardGrossSalesPromise, actualCardDepositsPromise, reservesPromise, reserveEntriesPromise, paidExpenseRootsPromise, paidExpenseCorrectionsPromise,
       confirmedMealCandidatesPromise, dashboardOnly ? loadDashboardTransactions(monthStart, nextMonth) : loadMonthTransactions(monthStart, nextMonth), dashboardOnly ? Promise.resolve([] as CandidateRow[]) : loadPendingInventoryCandidates(monthStart, nextMonth), priorMonthCardDepositsPromise,
     ]);
+    mark("base_reads");
     for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,partnerSubtypeResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,reservesResult,reserveEntriesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
     const priorConfirmedMovements = (openingResult.data?.length ?? 0) > 0
       ? []
       : await loadPriorConfirmedFundMovements(monthStart);
+    mark("prior_movements");
     const profitRows = dashboardOnly
       ? [...(profitResult.data ?? []).filter(row => row.type !== "expense_recognition"), ...(profitResult.data ?? []).filter(row => row.type === "expense_recognition")]
       : [...(profitResult.data??[]),...(recognitionProfitResult.data??[])];
@@ -190,10 +213,14 @@ export async function GET(request: Request) {
     const otherIncome = profitRows.filter((row) => row.type === "income").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const recognizedIncome = salesIncome + otherIncome;
     const expense = profitRows.filter((row) => row.type === "expense" || row.type === "expense_recognition").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
+    mark("profit_processing");
     const lines = await loadCardAllocationLines(cardGrossSalesResult.map(row => Number(row.id)));
+    mark("card_allocations_read");
     const cardGross = calculateCardGrossAtMonthEnd(cardGrossSalesResult, lines, monthStart, nextMonth);
     const cardGrossSales = cardGross.monthlyCardGross;
+    mark("card_gross_processing");
     const feeClosureResult = await supabaseServer.from("ledger_card_fee_closures").select("id").eq("fee_month",monthStart).eq("status","confirmed").maybeSingle();
+    mark("card_fee_read");
     if (feeClosureResult.error) throw feeClosureResult.error;
     const cardFeePending = cardGrossSales > 0 && !feeClosureResult.data;
     const reconciledCardGross = cardGross.monthlyReconciledGross;
@@ -212,6 +239,7 @@ export async function GET(request: Request) {
       .filter((account) => account.is_business_fund && account.type !== "card_clearing" && account.code !== "card_clearing")
       .map((account) => Number(account.id)));
     const actualCashOutflow = computeActualCashOutflow(transactions, businessFundAccountIds, month);
+    mark("cash_processing");
     const [payableAllocationCategories, prepaidCategoryIds] = entriesOnly
       ? [[] as PayableAllocationCategory[], new Map<number, number>()] as const
       : await Promise.all([
@@ -220,6 +248,7 @@ export async function GET(request: Request) {
       ),
       loadPrepaidCategoryIds(transactions),
     ]);
+    mark("cash_inputs");
     const cashTransactions = entriesOnly ? [] : transactions.map((row) => {
       if (row.type !== "prepaid_expense_payment") return row;
       const planId = Number(row.source_snapshot?.planId);
@@ -274,7 +303,7 @@ export async function GET(request: Request) {
       // The report helpers receive the same cash/profit/balance inputs. Detail
       // rows below are only the income drilldown; every transaction above was
       // retained when calculating cash flows, including reversals/corrections.
-      return ledgerJson({
+      return respond({
         ok: true, month, scope: "dashboard",
         fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth },
         salesReceiptExplanation,
@@ -312,9 +341,11 @@ export async function GET(request: Request) {
       sourceDriftSnapshot: candidate.source_drift_snapshot as Record<string, unknown> | null,
       sourceDriftFingerprint: candidate.source_drift_fingerprint,
     }));
+    mark("accounting_processing");
     const [displayTransactions, inventoryProjectionIssues] = await Promise.all([
       withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth, auth.actor.id),
     ]);
+    mark("inventory_display");
     const { issues: payrollPaymentGroupIssues } = analyzePayrollPaymentGroups(displayTransactions);
     const entries = [
       ...buildLedgerEntries(displayTransactions, candidates, partnerDefaultsByParty, mealCandidateSources, month),
@@ -330,17 +361,17 @@ export async function GET(request: Request) {
     if (entriesOnly) {
       // Preserve the complete entry/edit/candidate contract. Raw audit rows and
       // dashboard compositions duplicate data that the entries page never reads.
-      return ledgerJson({ ok: true, month, scope: "entries",
+      return respond({ ok: true, month, scope: "entries",
         fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth },
         inventoryProjectionIssues, payrollPaymentGroupIssues,
         summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross, cardFeePending },
         accounts, categories: categoriesResult.data ?? [], partners, entries,
       });
     }
-    return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, payrollPaymentGroupIssues, salesReceiptExplanation, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross, cardFeePending }, cashReport, accounts, categories: categoriesResult.data ?? [], profitTransactions: profitRows, parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
+    return respond({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, payrollPaymentGroupIssues, salesReceiptExplanation, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross, cardFeePending }, cashReport, accounts, categories: categoriesResult.data ?? [], profitTransactions: profitRows, parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
-    return ledgerJson({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);
+    return respond({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);
   }
 }
 

@@ -518,7 +518,8 @@ test("ledger entries header mirrors the monthly summary card hierarchy", () => {
   assert.match(pageCompact, /group\.income\+=subtotal\.income/);
   assert.match(pageCompact, /money\(data\.summary\.actualCashOutflow\)/);
   assert.match(pageCompact, /formatCardSettlementRate\(data\.summary\.cardGrossSales,data\.summary\.monthlySettledGross\)/);
-  assert.match(pageCompact, /money\(payables\?\.totalOutstanding\?\?0\)/);
+  assert.match(pageCompact, /payablesReady\?money\(payables\.totalOutstanding\):payablesFailed\?/);
+  assert.doesNotMatch(pageCompact, /money\(payables\?\.totalOutstanding\?\?0\)/);
   assert.doesNotMatch(pageCompact, /entry\.direction==="income"\)totals\.income\+=entry\.amount/);
   for (const label of ["월 장부 요약", "수입", "지출", "시재 합계", "Tổng số dư đầu tháng"]) {
     assert.match(page, new RegExp(label));
@@ -651,7 +652,9 @@ test("month switch clears stale-month content immediately and stale network resp
   //    actually requested, as a second, independent layer under the sequence guard.
   assert.match(pageCompact, /ledgerBody\.month&&ledgerBody\.month!==requestedMonth/);
   assert.match(pageCompact, /closeBody\.month&&closeBody\.month!==requestedMonth/);
-  assert.match(pageCompact, /payableBody\.month&&payableBody\.month!==requestedMonth/);
+  assert.match(pageCompact, /body\?\.month!==requestedMonth\)thrownewError\("PAYABLES_LOAD_FAILED"\)/);
+  assert.match(pageCompact, /constcurrent=\(\)=>!signal\?\.aborted&&requestSequence===loadRequestSequenceRef\.current/);
+  assert.match(pageCompact, /if\(!current\(\)\)return;setPayables\(body\)/);
   // 5) The card-settlement effect (its own independent fetch) applies the same
   //    body.month cross-check, on top of the AbortController it already had.
   assert.match(pageCompact, /controller\.signal\.aborted\|\|\(body\.month&&body\.month!==requestedMonth\)\)return/);

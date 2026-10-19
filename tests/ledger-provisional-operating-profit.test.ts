@@ -161,7 +161,9 @@ test("dashboard loads payroll cost for every month without blocking the report; 
   for (const url of ["/api/admin/ledger/payroll-cost?month=${month}", "/api/admin/ledger/card-settlements?month=${month}", "/api/admin/ledger/card-settlements?month=${previousMonth}"]) assert.ok(dashboardPage.includes(url), url);
   assert.doesNotMatch(dashboardPage, /\/api\/admin\/payroll\/overview/);
   // The report renders first (payroll loading), then payroll fills in for the same month only.
-  assert.match(dashboardCompact, /provisional:\{payroll:null,payrollLoading:true,cards\},?\}\);constpayroll=awaitpayrollPromise;if\(controller\.signal\.aborted\|\|requestSequence!==requestSequenceRef\.current\|\|payroll\.month!==month\)return;/);
+  assert.doesNotMatch(dashboardPage, /await cardPromise|await payrollPromise/);
+  assert.match(dashboardPage, /void payrollPromise\.then\(payroll =>/);
+  assert.match(dashboardPage, /void cardPromise\.then\(cards =>/);
   assert.match(dashboardCompact, /asyncfunctionloadOptionalMonthBody[^]*?catch\{returnnull;\}/);
   assert.match(dashboardCompact, /body\?\.month===month\?pick\(body\):null/);
   // A failed payroll request is "unavailable", not 0.
@@ -170,11 +172,11 @@ test("dashboard loads payroll cost for every month without blocking the report; 
   assert.match(dashboardCompact, /requestSequence!==requestSequenceRef\.current/);
   assert.match(dashboardCompact, /currentBody\.month!==month\|\|previousBody\.month!==previousMonth/);
   assert.match(dashboardCompact, /controller\.abort\(\);requestSequenceRef\.current\+=1/);
-  assert.match(dashboardCompact, /isCurrentMonth:isCurrentMonth&&dashboardState\.provisional\.cards!==null&&dashboardState\.current\.fundsView\.mode==="live"/);
+  assert.match(dashboardCompact, /isCurrentMonth:isCurrentMonth&&dashboardState\.current\.fundsView\.mode==="live"/);
 });
 
 test("KPI and P&L card switch between provisional (current) and final (past) labels", () => {
-  assert.match(dashboardCompact, /operatingResult\.mode==="provisional"(\/\/[^?]*)?\?<KpiCardicon="📊"label=\{copy\.provisionalOperatingProfit\}amount=\{operatingResult\.operatingProfit\}note=\{operatingResult\.warnings\.includes\("PAYROLL_LOADING"\)\?copy\.checking:operatingResult\.needsCheck\?copy\.needsCheck:copy\.provisional\}trendDirection=\{operatingResult\.needsCheck\?"down":undefined\}action=\{detailButton\}\/>/);
+  assert.match(dashboardCompact, /operatingResult\.mode==="provisional"(\/\/[^?]*)?\?<KpiCardicon="📊"label=\{copy\.provisionalOperatingProfit\}amount=\{operatingResult\.operatingProfit\}note=\{cardsLoading\|\|operatingResult\.warnings\.includes\("PAYROLL_LOADING"\)\?copy\.checking:operatingResult\.needsCheck\?copy\.needsCheck:copy\.provisional\}trendDirection=\{operatingResult\.needsCheck\?"down":undefined\}action=\{detailButton\}\/>/);
   assert.match(dashboardCompact, /:<KpiCardicon="📊"label=\{copy\.operatingProfit\}amount=\{report\.kpis\.operatingProfit\}\{\.\.\.signedTrend\(report\.kpis\.operatingProfitChange,copy\)\}action=\{detailButton\}\/>\}/);
   for (const key of ["operatingIncome", "ledgerExpense", "unrecognizedPayroll", "cardFeeEstimate", "provisionalExpense", "provisionalOperatingProfit", "provisionalNote", "estimateUnavailable", "needsCheck", "payrollCost", "payrollPredicted", "payrollFinalized", "checking"]) assert.match(dashboardPage, new RegExp(`copy\\.${key}`));
   for (const label of ["급여/인건비", "예상", "확정", "확인 중", "Chi phí lương", "Dự kiến", "Đã chốt", "Đang kiểm tra"]) assert.ok(dashboardPage.includes(`"${label}"`), label);
@@ -203,7 +205,7 @@ test("main P&L card is removed and its rows live in the operating-profit detail 
   // Open / close through the shared ledger BarSheet (backdrop, × button, Escape, body scroll lock).
   assert.match(dashboardPage, /import \{ BarSheet \} from "@\/components\/bar\/keeping\/KeepingUi";/);
   assert.match(dashboardCompact, /<buttonref=\{detailButtonRef\}type="button"className=\{styles\.kpiDetailButton\}aria-haspopup="dialog"onClick=\{\(\)=>setOperatingDetailOpen\(true\)\}>\{copy\.detail\}›<\/button>/);
-  assert.match(dashboardCompact, /\{operatingDetailOpen\?<OperatingProfitSheetcopy=\{copy\}report=\{report\}operatingResult=\{operatingResult\}returnFocusRef=\{detailButtonRef\}onClose=\{\(\)=>setOperatingDetailOpen\(false\)\}\/>:null\}/);
+  assert.match(dashboardCompact, /\{operatingDetailOpen\?<OperatingProfitSheetcopy=\{copy\}report=\{report\}operatingResult=\{operatingResult\}cardsLoading=\{cardsLoading\}returnFocusRef=\{detailButtonRef\}onClose=\{\(\)=>setOperatingDetailOpen\(false\)\}\/>:null\}/);
   assert.doesNotMatch(dashboardPage, /<BarSheet kind="bottom"/);
   // Read-only detail uses the shared BarSheet's centered compact mode (all corners rounded, auto height, inner scroll).
   const keepingUi = readFileSync("components/bar/keeping/KeepingUi.tsx", "utf8");
@@ -223,13 +225,13 @@ test("detail sheet renders the same provisional result as the KPI, with fail-saf
     ["copy.operatingIncome", "operatingResult.recognizedRevenue"],
     ["copy.ledgerExpense", "operatingResult.recognizedExpense"],
     ["`+${payrollLabel(operatingResult,copy)}`", "operatingResult.warnings.includes(\"PAYROLL_UNAVAILABLE\")||operatingResult.warnings.includes(\"PAYROLL_LOADING\")?null:operatingResult.payrollAdjustment"],
-    ["`+${copy.cardFeeEstimate}`", "operatingResult.cardFeeRateSource===\"unavailable\"||operatingResult.warnings.includes(\"CARD_SETTLEMENTS_UNAVAILABLE\")||operatingResult.warnings.includes(\"PREVIOUS_CARD_SETTLEMENTS_UNAVAILABLE\")?null:operatingResult.estimatedCardFee"],
+    ["`+${copy.cardFeeEstimate}`", "cardsLoading||operatingResult.cardFeeRateSource===\"unavailable\"||operatingResult.warnings.includes(\"CARD_SETTLEMENTS_UNAVAILABLE\")||operatingResult.warnings.includes(\"PREVIOUS_CARD_SETTLEMENTS_UNAVAILABLE\")?null:operatingResult.estimatedCardFee"],
     ["copy.provisionalExpense", "operatingResult.provisionalExpense"],
     ["copy.provisionalOperatingProfit", "operatingResult.operatingProfit"],
   ]);
   assert.match(provisional, /operatingResult\.warnings\.includes\("CARD_FEE_PENDING"\)\?copy\.cardFeePendingNote:copy\.provisionalNote/);
-  assert.match(provisional, /amount=\{operatingResult\.provisionalExpense\}fallback=\{copy\.needsCheck\}totalexpense\/>/);
-  assert.match(provisional, /amount=\{operatingResult\.operatingProfit\}fallback=\{copy\.needsCheck\}emphasis\/>/);
+  assert.match(provisional, /amount=\{operatingResult\.provisionalExpense\}fallback=\{cardsLoading\|\|operatingResult\.warnings\.includes\("PAYROLL_LOADING"\)\?copy\.checking:copy\.needsCheck\}totalexpense\/>/);
+  assert.match(provisional, /amount=\{operatingResult\.operatingProfit\}fallback=\{cardsLoading\|\|operatingResult\.warnings\.includes\("PAYROLL_LOADING"\)\?copy\.checking:copy\.needsCheck\}emphasis\/>/);
   // null amounts render the fallback text, never a silent 0.
   assert.match(dashboardCompact, /\{amount===null\?fallback:money\(amount\)\}/);
 

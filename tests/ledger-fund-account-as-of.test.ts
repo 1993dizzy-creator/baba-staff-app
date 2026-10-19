@@ -184,7 +184,7 @@ test("UI labels the selected month and only badges non-live views without weaken
 });
 
 test("income, expense, payable, card, and investment contracts remain wired to their existing fields", () => {
-  for (const marker of ["recognizedIncome", "paidExpense", "unsettledCardGross", "payables?.totalOutstanding", "activeInvestments"]) {
+  for (const marker of ["recognizedIncome", "paidExpense", "unsettledCardGross", "payables.totalOutstanding", "activeInvestments"]) {
     assert.match(`${route}\n${page}`, new RegExp(marker.replace("?", "\\?")));
   }
 });

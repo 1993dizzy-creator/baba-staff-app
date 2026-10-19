@@ -155,6 +155,7 @@ type ProvisionalSources = {
   // Month payroll cost (any month); null while the request is in flight.
   payroll: LedgerPayrollCost | null;
   payrollLoading: boolean;
+  cardsLoading: boolean;
   // Card sources: current month only (null otherwise).
   cards: { currentCard: CardSettlementSource | null; previousCard: CardSettlementSource | null } | null;
 };
@@ -235,7 +236,6 @@ function LedgerDashboardContent() {
         if (!currentResponse.ok || !previousResponse.ok) {
           throw new Error("DASHBOARD_LOAD_FAILED");
         }
-        const cards = await cardPromise;
         if (
           controller.signal.aborted ||
           requestSequence !== requestSequenceRef.current ||
@@ -246,13 +246,21 @@ function LedgerDashboardContent() {
           month,
           current: currentBody as DashboardLedgerData,
           previous: previousBody as DashboardLedgerData,
-          provisional: { payroll: null, payrollLoading: true, cards },
+          provisional: { payroll: null, payrollLoading: true, cards: null, cardsLoading: isCurrentMonth },
         });
-        const payroll = await payrollPromise;
-        if (controller.signal.aborted || requestSequence !== requestSequenceRef.current || payroll.month !== month) return;
-        setDashboardState((state) => state && state.month === month
-          ? { ...state, provisional: { ...state.provisional, payroll, payrollLoading: false } }
-          : state);
+        // Optional estimates update independently; neither gates the core report or the other.
+        void cardPromise.then(cards => {
+          if (controller.signal.aborted || requestSequence !== requestSequenceRef.current) return;
+          setDashboardState(state => state && state.month === month
+            ? { ...state, provisional: { ...state.provisional, cards, cardsLoading: false } }
+            : state);
+        });
+        void payrollPromise.then(payroll => {
+          if (controller.signal.aborted || requestSequence !== requestSequenceRef.current || payroll.month !== month) return;
+          setDashboardState(state => state && state.month === month
+            ? { ...state, provisional: { ...state.provisional, payroll, payrollLoading: false } }
+            : state);
+        });
       } catch (cause) {
         if ((cause as Error).name !== "AbortError" && requestSequence === requestSequenceRef.current) setError(true);
       } finally {
@@ -274,7 +282,7 @@ function LedgerDashboardContent() {
   const operatingResult = useMemo(
     () => dashboardState?.month === month
       ? buildProvisionalOperatingProfit({
-        isCurrentMonth: isCurrentMonth && dashboardState.provisional.cards !== null && dashboardState.current.fundsView.mode === "live",
+        isCurrentMonth: isCurrentMonth && dashboardState.current.fundsView.mode === "live",
         summary: dashboardState.current.summary,
         payroll: dashboardState.provisional.payroll,
         payrollLoading: dashboardState.provisional.payrollLoading,
@@ -313,6 +321,7 @@ function LedgerDashboardContent() {
       detailEmoji={buildDashboardDetailEmoji(dashboardState.current)}
       salesReceiptExplanation={dashboardState.current.salesReceiptExplanation}
       operatingResult={operatingResult}
+      cardsLoading={isCurrentMonth && dashboardState.current.fundsView.mode === "live" && dashboardState.provisional.cardsLoading}
       expandedExpenses={expandedExpenses}
       onToggleExpense={(id) => setExpandedExpenses((current) => {
         const next = new Set(current);
@@ -323,7 +332,7 @@ function LedgerDashboardContent() {
   </main></Container>;
 }
 
-function DashboardReport({ detailEmoji, copy, lang, fundsMode, report, month, salesReceiptExplanation, operatingResult, expandedExpenses, onToggleExpense }: {
+function DashboardReport({ detailEmoji, copy, lang, fundsMode, report, month, salesReceiptExplanation, operatingResult, cardsLoading, expandedExpenses, onToggleExpense }: {
   detailEmoji: ReturnType<typeof buildDashboardDetailEmoji>;
   copy: DashboardText;
   lang: "ko" | "vi";
@@ -332,6 +341,7 @@ function DashboardReport({ detailEmoji, copy, lang, fundsMode, report, month, sa
   month: string;
   salesReceiptExplanation: DashboardLedgerData["salesReceiptExplanation"];
   operatingResult: ProvisionalOperatingProfit;
+  cardsLoading: boolean;
   expandedExpenses: Set<number>;
   onToggleExpense: (id: number) => void;
 }) {
@@ -343,11 +353,11 @@ function DashboardReport({ detailEmoji, copy, lang, fundsMode, report, month, sa
       <KpiCard icon="📈" label={copy.cashDifference} amount={report.kpis.cashDifference} {...signedTrend(report.kpis.cashDifferenceChange, copy)} />
       {operatingResult.mode === "provisional"
         // Provisional vs. final profit are different bases, so no month-over-month %.
-        ? <KpiCard icon="📊" label={copy.provisionalOperatingProfit} amount={operatingResult.operatingProfit} note={operatingResult.warnings.includes("PAYROLL_LOADING") ? copy.checking : operatingResult.needsCheck ? copy.needsCheck : copy.provisional} trendDirection={operatingResult.needsCheck ? "down" : undefined} action={detailButton} />
+        ? <KpiCard icon="📊" label={copy.provisionalOperatingProfit} amount={operatingResult.operatingProfit} note={cardsLoading || operatingResult.warnings.includes("PAYROLL_LOADING") ? copy.checking : operatingResult.needsCheck ? copy.needsCheck : copy.provisional} trendDirection={operatingResult.needsCheck ? "down" : undefined} action={detailButton} />
         : <KpiCard icon="📊" label={copy.operatingProfit} amount={report.kpis.operatingProfit} {...signedTrend(report.kpis.operatingProfitChange, copy)} action={detailButton} />}
     </section>
 
-    {operatingDetailOpen ? <OperatingProfitSheet copy={copy} report={report} operatingResult={operatingResult} returnFocusRef={detailButtonRef} onClose={() => setOperatingDetailOpen(false)} /> : null}
+    {operatingDetailOpen ? <OperatingProfitSheet copy={copy} report={report} operatingResult={operatingResult} cardsLoading={cardsLoading} returnFocusRef={detailButtonRef} onClose={() => setOperatingDetailOpen(false)} /> : null}
 
     <BreakdownCard icon="📊" title={copy.incomeComposition} total={report.kpis.income} rows={report.income} detailEmoji={detailEmoji} lang={lang} empty={copy.empty} newLabel={copy.newItem} change={report.kpis.incomeChange} month={month} salesReceiptExplanation={salesReceiptExplanation} />
 
@@ -381,10 +391,11 @@ function signedTrend(change: DashboardReportData["kpis"]["cashDifferenceChange"]
   };
 }
 
-function OperatingProfitSheet({ copy, report, operatingResult, returnFocusRef, onClose }: {
+function OperatingProfitSheet({ copy, report, operatingResult, cardsLoading, returnFocusRef, onClose }: {
   copy: DashboardText;
   report: DashboardReportData;
   operatingResult: ProvisionalOperatingProfit;
+  cardsLoading: boolean;
   returnFocusRef: RefObject<HTMLButtonElement | null>;
   onClose: () => void;
 }) {
@@ -398,9 +409,9 @@ function OperatingProfitSheet({ copy, report, operatingResult, returnFocusRef, o
         <ReportValue label={copy.operatingIncome} amount={operatingResult.recognizedRevenue} />
         <ReportValue label={copy.ledgerExpense} amount={operatingResult.recognizedExpense} expense />
         {!operatingResult.warnings.includes("CARD_FEE_PENDING") && <><ReportValue expense label={`+ ${payrollLabel(operatingResult, copy)}`} amount={operatingResult.warnings.includes("PAYROLL_UNAVAILABLE") || operatingResult.warnings.includes("PAYROLL_LOADING") ? null : operatingResult.payrollAdjustment} fallback={operatingResult.warnings.includes("PAYROLL_LOADING") ? copy.checking : copy.estimateUnavailable} />
-        <ReportValue expense label={`+ ${copy.cardFeeEstimate}`} amount={operatingResult.cardFeeRateSource === "unavailable" || operatingResult.warnings.includes("CARD_SETTLEMENTS_UNAVAILABLE") || operatingResult.warnings.includes("PREVIOUS_CARD_SETTLEMENTS_UNAVAILABLE") ? null : operatingResult.estimatedCardFee} fallback={operatingResult.cardFeeRateSource === "unavailable" ? copy.estimateUnavailable : copy.needsCheck} /></>}
-        <ReportValue label={copy.provisionalExpense} amount={operatingResult.provisionalExpense} fallback={copy.needsCheck} total expense />
-        <ReportValue label={copy.provisionalOperatingProfit} amount={operatingResult.operatingProfit} fallback={copy.needsCheck} emphasis />
+        <ReportValue expense label={`+ ${copy.cardFeeEstimate}`} amount={cardsLoading || operatingResult.cardFeeRateSource === "unavailable" || operatingResult.warnings.includes("CARD_SETTLEMENTS_UNAVAILABLE") || operatingResult.warnings.includes("PREVIOUS_CARD_SETTLEMENTS_UNAVAILABLE") ? null : operatingResult.estimatedCardFee} fallback={cardsLoading ? copy.checking : operatingResult.cardFeeRateSource === "unavailable" ? copy.estimateUnavailable : copy.needsCheck} /></>}
+        <ReportValue label={copy.provisionalExpense} amount={operatingResult.provisionalExpense} fallback={cardsLoading || operatingResult.warnings.includes("PAYROLL_LOADING") ? copy.checking : copy.needsCheck} total expense />
+        <ReportValue label={copy.provisionalOperatingProfit} amount={operatingResult.operatingProfit} fallback={cardsLoading || operatingResult.warnings.includes("PAYROLL_LOADING") ? copy.checking : copy.needsCheck} emphasis />
       </div>
     </div> : <div>
       <p className={styles.sectionNote}>{copy.profitAndLossNote}</p>

@@ -315,6 +315,10 @@ function LedgerEntriesContent() {
   // Collapsed-header summary (mode=summary), loaded with the page. A reducer keeps the
   // existing useState order intact.
   const [investmentSummary,setInvestmentSummary]=useReducer((_:InvestmentHeaderSummary|null,next:InvestmentHeaderSummary|null)=>next,null);
+  const [auxiliaryStatus, setAuxiliaryStatus] = useReducer(
+    (state: { month: string; payables: "loading" | "ready" | "error"; investments: "loading" | "ready" | "error" }, action: Partial<typeof state>) => ({ ...state, ...action }),
+    { month: "", payables: "loading", investments: "loading" },
+  );
   const investmentsLoadedKeyRef = useRef("");
   const [reopenSheetOpen, setReopenSheetOpen] = useState(false),
     [reopenReason, setReopenReason] = useState(""),
@@ -322,6 +326,9 @@ function LedgerEntriesContent() {
     [reopenError, setReopenError] = useState("");
   const [closeSheetOpen, setCloseSheetOpen] = useState(false);
   const closed = monthCloseState?.month === month && monthCloseState.state === "closed";
+  const payablesReady = payables?.month === month;
+  const payablesFailed = auxiliaryStatus.month === month && auxiliaryStatus.payables === "error";
+  const investmentSummaryFailed = auxiliaryStatus.month === month && auxiliaryStatus.investments === "error";
   const addButtonRef = useRef<HTMLButtonElement>(null),
     closeButtonRef = useRef<HTMLButtonElement>(null),
     initializedMonthRef = useRef(""),
@@ -343,39 +350,43 @@ function LedgerEntriesContent() {
       if (!silent) setLoading(true);
       setError("");
       try {
-        // Initial load: ledger, month-close status (closure row only — the preflight runs
-        // when MonthCloseSheet opens), payables and the investment header summary.
-        // Full investments load on demand, below. The summary never fails the load.
-        const investmentSummaryPromise = (async () => {
+        // The ledger and month-close status are required together. Independent
+        // auxiliary reads must not block them, or apply after a newer load/month.
+        const current = () => !signal?.aborted && requestSequence === loadRequestSequenceRef.current;
+        setPayables(null);
+        setInvestmentSummary(null);
+        setAuxiliaryStatus({ month: requestedMonth, payables: "loading", investments: "loading" });
+        void (async () => {
+          try {
+            const response = await fetch(`/api/admin/ledger/payables?month=${requestedMonth}`, { cache: "no-store", signal });
+            const body = await response.json();
+            if (!response.ok || body?.month !== requestedMonth) throw new Error("PAYABLES_LOAD_FAILED");
+            if (!current()) return;
+            setPayables(body);
+            setAuxiliaryStatus({ payables: "ready" });
+          } catch {
+            if (current()) setAuxiliaryStatus({ payables: "error" });
+          }
+        })();
+        void (async () => {
           try {
             const response = await fetch(`/api/admin/ledger/investments?month=${requestedMonth}&mode=summary`, { cache: "no-store", signal });
             const body = await response.json();
-            return response.ok && body?.month === requestedMonth && typeof body.configured === "boolean"
-              ? { month: requestedMonth, configured: body.configured as boolean, periodNetChange: Number(body.periodNetChange) || 0 }
-              : null;
+            if (!response.ok || body?.month !== requestedMonth || typeof body.configured !== "boolean") throw new Error("INVESTMENTS_LOAD_FAILED");
+            if (!current()) return;
+            setInvestmentSummary({ month: requestedMonth, configured: body.configured, periodNetChange: Number(body.periodNetChange) || 0 });
+            setAuxiliaryStatus({ investments: "ready" });
           } catch {
-            return null;
+            if (current()) setAuxiliaryStatus({ investments: "error" });
           }
         })();
-        const [ledgerResponse, closeResponse, payableResponse, summaryResult] = await Promise.all([
-          fetch(`/api/admin/ledger?month=${requestedMonth}&scope=entries`, {
-            cache: "no-store",
-            signal,
-          }),
-          fetch(`/api/admin/ledger/month-close?month=${requestedMonth}&mode=status`, {
-            cache: "no-store",
-            signal,
-          }),
-          fetch(`/api/admin/ledger/payables?month=${requestedMonth}`, { cache: "no-store", signal }),
-          investmentSummaryPromise,
+        const [ledgerResponse, closeResponse] = await Promise.all([
+          fetch(`/api/admin/ledger?month=${requestedMonth}&scope=entries`, { cache: "no-store", signal }),
+          fetch(`/api/admin/ledger/month-close?month=${requestedMonth}&mode=status`, { cache: "no-store", signal }),
         ]);
-        const [ledgerBody, closeBody, payableBody] = await Promise.all([
-          ledgerResponse.json(),
-          closeResponse.json(),
-          payableResponse.json(),
-        ]);
-        if (!ledgerResponse.ok || !closeResponse.ok || !payableResponse.ok)
-          throw new Error(ledgerBody.code ?? closeBody.code ?? payableBody.code ?? "LOAD_FAILED");
+        const [ledgerBody, closeBody] = await Promise.all([ledgerResponse.json(), closeResponse.json()]);
+        if (!ledgerResponse.ok || !closeResponse.ok)
+          throw new Error(ledgerBody.code ?? closeBody.code ?? "LOAD_FAILED");
         // Stale-response guard: this response is applied only if (a) its own fetch
         // wasn't aborted, (b) no newer load() call has started since (sequence ref,
         // covers both AbortController-cancelled and plain manual reloads), and
@@ -383,18 +394,15 @@ function LedgerEntriesContent() {
         if (signal?.aborted || requestSequence !== loadRequestSequenceRef.current) return null;
         if (
           (ledgerBody.month && ledgerBody.month !== requestedMonth) ||
-          (closeBody.month && closeBody.month !== requestedMonth) ||
-          (payableBody.month && payableBody.month !== requestedMonth)
+          (closeBody.month && closeBody.month !== requestedMonth)
         )
           return null;
         setData(ledgerBody);
-        setPayables(payableBody);
         setMonthCloseState({
           month: requestedMonth,
           state: closeBody.state === "closed" || closeBody.state === "reopened" ? closeBody.state : "open",
           revision: typeof closeBody.closure?.revision === "number" ? closeBody.closure.revision : null,
         });
-        setInvestmentSummary(summaryResult);
         // Any applied reload (incl. after a save) makes cached investments stale.
         bumpInvestmentsVersion();
         return ledgerBody as LedgerData;
@@ -1019,10 +1027,12 @@ function LedgerEntriesContent() {
             </section>
             <section className={styles.payableSummary} aria-labelledby="payable-summary-title">
                 <button type="button" className={styles.payableToggle} aria-expanded={payableExpanded} aria-controls="payable-summary-body" onClick={() => setPayableExpanded((value) => !value)}>
-                  <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tình hình công nợ" : "미납금 현황"} ({vi?`T${Number(month.slice(5,7))}`:`${Number(month.slice(5,7))}월`})</h2><strong aria-label={vi?"Công nợ cuối tháng":"월말 미납"}>{money(payables?.totalOutstanding ?? 0)} <i aria-hidden>{payableExpanded ? "⌃" : "⌄"}</i></strong></div>
+                  <div className={styles.payableHeading}><h2 id="payable-summary-title">🧾 {vi ? "Tình hình công nợ" : "미납금 현황"} ({vi?`T${Number(month.slice(5,7))}`:`${Number(month.slice(5,7))}월`})</h2><strong aria-label={vi?"Công nợ cuối tháng":"월말 미납"}>{payablesReady ? money(payables.totalOutstanding) : payablesFailed ? (vi ? "Không thể tải" : "조회 실패") : (vi ? "Đang kiểm tra" : "확인 중")} <i aria-hidden>{payableExpanded ? "⌃" : "⌄"}</i></strong></div>
                 </button>
+              {payablesFailed && !payableExpanded ? <p role="alert" className={styles.error}>{vi ? "Không thể tải công nợ. Vui lòng tải lại trang." : "미납금을 불러오지 못했습니다. 새로고침해주세요."}</p> : null}
               {payableExpanded ? <div className={styles.statusBody} id="payable-summary-body">
-              <PayableMonthTotals summary={payables?.month===month?payables.summary:undefined} vi={vi} />
+              {!payablesReady ? <p role={payablesFailed ? "alert" : "status"} className={payablesFailed ? styles.error : styles.statusHint}>{payablesFailed ? (vi ? "Không thể tải công nợ. Vui lòng tải lại trang." : "미납금을 불러오지 못했습니다. 새로고침해주세요.") : (vi ? "Đang tải công nợ…" : "미납금을 불러오는 중입니다…")}</p> : <>
+              <PayableMonthTotals summary={payables.summary} vi={vi} />
               {payableDisplay.parties.length || payableDisplay.other ? (
                 <div className={styles.payableParties} id="payable-parties-list">{payableDisplay.parties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty({...party,viewMonth:month})}>
                   <span className={styles.payablePartyMain}><span className={styles.payablePartyEmoji} role="img" aria-label={partnerTypeLabel(party.partnerType,lang)}>{ledgerPartyEmoji(partnerByLedgerParty.get(party.partyId)?.emoji,party.partnerType)}</span><span className={styles.payablePartyName}>{party.partyName}</span>
@@ -1037,7 +1047,7 @@ function LedgerEntriesContent() {
                   onPaid={async () => { if (!await load()) throw new Error("PAYMENT_REFRESH_FAILED"); setNotice(vi ? "Đã ghi nhận thanh toán." : "결제를 기록했습니다."); }}
                 /> : null}</div>
               ) : <p className={styles.payableEmpty}>{vi ? "Không có công nợ chưa thanh toán." : "미납금이 없습니다."}</p>}
-              </div> : null}
+              </>} </div> : null}
             </section>
             <section className={styles.statusCard} aria-labelledby="card-settlement-title">
               <button type="button" className={styles.payableToggle} aria-expanded={cardSettlementExpanded} aria-controls="card-settlement-body" onClick={()=>setCardSettlementExpanded(value=>!value)}>
@@ -1065,11 +1075,12 @@ function LedgerEntriesContent() {
                     className={investmentHeader?.configured ? (investmentHeader.periodNetChange > 0 ? styles.amountIncome : investmentHeader.periodNetChange < 0 ? styles.amountExpense : undefined) : undefined}
                     aria-label={vi?"Biến động vốn góp trong tháng":"당월 투자금 변동"}
                   >
-                    {investmentHeader ? (investmentHeader.configured ? `${investmentHeader.periodNetChange > 0 ? "+" : ""}${money(investmentHeader.periodNetChange)}` : (vi?"Chưa thiết lập":"미설정")) : "-"}
+                    {investmentHeader ? (investmentHeader.configured ? `${investmentHeader.periodNetChange > 0 ? "+" : ""}${money(investmentHeader.periodNetChange)}` : (vi?"Chưa thiết lập":"미설정")) : (investmentSummaryFailed ? (vi ? "Không thể tải" : "조회 실패") : (vi ? "Đang kiểm tra" : "확인 중"))}
                     {" "}<i aria-hidden>{investmentExpanded?"⌃":"⌄"}</i>
                   </strong>
                 </div>
               </button>
+              {investmentSummaryFailed && !investmentHeader ? <p role="alert" className={styles.error}>{vi ? "Không thể tải tóm tắt vốn góp. Vui lòng tải lại trang." : "투자금 요약을 불러오지 못했습니다. 새로고침해주세요."}</p> : null}
               {investmentExpanded ? <div className={styles.statusBody} id="investment-body">
                 {!activeInvestments ? (
                   investmentsError?.month===month
