@@ -520,7 +520,7 @@ async function loadPendingInventoryCandidates(start: string, end: string) {
   const pageSize = 1000;
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer.from("ledger_candidates")
-      .select("id,business_date,proposed_amount,proposed_category_id,proposed_party_id,source_snapshot,source_fingerprint,category:ledger_categories(name),party:ledger_parties(name)")
+      .select("id,business_date,proposed_amount,proposed_category_id,proposed_party_id,source_snapshot,source_fingerprint,source_key,category:ledger_categories(name),party:ledger_parties(name)")
       .eq("candidate_type", "inventory_purchase").eq("status", "pending")
       .gte("business_date", start).lt("business_date", end)
       .order("business_date", { ascending: false }).order("id", { ascending: false }).range(from, from + pageSize - 1);

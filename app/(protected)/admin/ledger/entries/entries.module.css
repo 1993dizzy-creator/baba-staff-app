@@ -199,3 +199,11 @@
 .dateFilterAmount{color:#374151;font-weight:800}
 .direction.card{background:#e6f4f7;color:#0e7490}
 .direction.adjustment{background:#eef2f7;color:#334155}
+
+/* Receipt opened from the Inventory daily sync shortcut. */
+.focusedItem {
+  outline: 2px solid #d97706;
+  outline-offset: 2px;
+  border-radius: 8px;
+  background: #fffbeb;
+}

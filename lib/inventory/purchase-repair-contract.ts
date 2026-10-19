@@ -44,6 +44,10 @@ export function purchaseRepairError(code: string, vi: boolean) {
     INVALID_PAYABLE_STATE: ["미납금과 장부의 금액·거래처가 일치하지 않습니다. 지급 이력을 확인하세요.", "Công nợ không khớp số tiền hoặc nhà cung cấp trong sổ. Kiểm tra thanh toán."],
     FORBIDDEN: ["이 작업은 owner/master만 처리할 수 있습니다.", "Chỉ owner/master được xử lý thao tác này."],
     PREVIEW_FAILED: ["연결 정보를 불러오지 못했습니다. 다시 시도해 주세요.", "Không thể tải thông tin liên kết. Hãy thử lại."],
+    RESOLUTION_REQUIRED: ["장부 확정 대기입니다. 거래처 결제방법(미지정 포함)을 확인한 뒤 장부에서 확정하세요.", "Đang chờ xác nhận trong sổ. Kiểm tra phương thức thanh toán của nhà cung cấp rồi xác nhận."],
+    CATEGORY_SYNC_MONTH_CLOSED: ["마감된 월의 확정 장부라 카테고리를 자동 변경하지 않았습니다.", "Sổ đã chốt nên không tự đổi danh mục."],
+    CATEGORY_SYNC_PAYMENT_COMPLETED: ["지급 또는 배분이 완료된 확정 장부라 카테고리를 자동 변경하지 않았습니다.", "Đã thanh toán hoặc phân bổ nên không tự đổi danh mục."],
+    CATEGORY_SYNC_MANUAL_OVERRIDE: ["장부를 수동 수정한 이력이 있어 카테고리를 자동 변경하지 않았습니다.", "Sổ đã được sửa thủ công nên không tự đổi danh mục."],
     REPAIR_PREVIEW_UNAVAILABLE: ["원입고 확인 정보를 불러오지 못했습니다. 다시 조회하세요.", "Không thể tải thông tin phiếu nhập gốc. Hãy thử lại."],
   };
   if (messages[code]) return messages[code][vi ? 1 : 0];

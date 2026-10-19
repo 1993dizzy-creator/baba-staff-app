@@ -12,6 +12,9 @@ import { analyzePayrollPaymentGroups } from "./payroll-payment-groups.ts";
 export type LedgerEntryItem = {
   candidateId?: number;
   transactionId?: number;
+  // Original Inventory receipt behind an inventory purchase row (deep-link target).
+  inventoryLogId?: number | null;
+  sourceKey?: string | null;
   name: string;
   nameVi?: string | null;
   inventoryCategory?: string | null;
@@ -126,7 +129,7 @@ export type TransactionRow = {
 export type CandidateRow = {
   id: number | string; business_date: string; proposed_amount: number | string;
   proposed_category_id?: number | string | null; proposed_party_id?: number | string | null;
-  source_snapshot?: Record<string, unknown> | null;
+  source_snapshot?: Record<string, unknown> | null; source_key?: string | null;
   category?: { name?: string | null } | null; party?: { name?: string | null } | null;
 };
 
@@ -445,6 +448,14 @@ function compareItemsByEarliestTimeFirst(a: LedgerEntryItem, b: LedgerEntryItem)
   return 0;
 }
 
+// Candidates carry the Inventory source key; posted rows keep the receipt id in their snapshot.
+function inventorySourceIdentity(row: CandidateRow | TransactionRow) {
+  const logId = Number(row.source_snapshot?.inventory_log_id);
+  if (!Number.isSafeInteger(logId) || logId < 1) return {};
+  const candidateKey = Object.hasOwn(row, "proposed_amount") ? (row as CandidateRow).source_key : null;
+  return { inventoryLogId: logId, sourceKey: candidateKey || `inventory-log:${logId}` };
+}
+
 const inventoryItem = (row: CandidateRow | TransactionRow, viewMonth?:string): LedgerEntryItem => {
   const snapshot = row.source_snapshot ?? {};
   const display = (row as TransactionRow).display_snapshot ?? snapshot;
@@ -457,6 +468,7 @@ const inventoryItem = (row: CandidateRow | TransactionRow, viewMonth?:string): L
   return {
     ...(settlement?{purchaseSettlement:settlement}:{}),
     ...(Object.hasOwn(row, "proposed_amount") ? { candidateId: value((row as CandidateRow).id) } : { transactionId: value(row.id) }),
+    ...inventorySourceIdentity(row),
     name: String(display.item_name ?? display.item_name_vi ?? "품목"),
     nameVi: display.item_name_vi == null ? null : String(display.item_name_vi),
     inventoryCategory: display.category == null ? null : String(display.category),

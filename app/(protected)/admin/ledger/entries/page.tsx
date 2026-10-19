@@ -69,6 +69,7 @@ import styles from "./entries.module.css";
 import InventoryPurchaseCaseSummary from "@/components/ledger/InventoryPurchaseCaseSummary";
 import { sendPayablePayment } from "@/lib/ledger/payable-payment-client";
 import { payablePaymentErrorMessage } from "@/lib/ledger/payable-payment-messages";
+import { findInventoryLedgerFocus, parseInventoryLedgerFocus } from "@/lib/ledger/inventory-entry-focus";
 import PayablePaymentRecovery, { PayablePaymentRefreshButton } from "@/components/ledger/PayablePaymentRecovery";
 import PurchaseSettlementDetails from "@/components/ledger/PurchaseSettlementDetails";
 import { purchaseCaseReasonCounts } from "@/lib/inventory/purchase-case-display";
@@ -660,6 +661,40 @@ function LedgerEntriesContent() {
       }
     }
   }
+  // Deep link from the Inventory daily sync: ?month=&inventoryLogId=&sourceKey= opens the
+  // exact receipt's entry once per month/receipt, so closing the sheet is respected.
+  const focusParam = parseInventoryLedgerFocus(searchParams);
+  const focusLogId = focusParam?.logId ?? null, focusSourceKey = focusParam?.sourceKey ?? null;
+  const [focusItemKey, setFocusItemKey] = useState<string | null>(null);
+  const focusHandledRef = useRef("");
+  useEffect(() => {
+    if (focusLogId === null || focusSourceKey === null || loading || !data || data.month !== month) return;
+    const handledKey = `${month}:${focusSourceKey}`;
+    if (focusHandledRef.current === handledKey) return;
+    focusHandledRef.current = handledKey;
+    const found = findInventoryLedgerFocus(data.entries, { logId: focusLogId, sourceKey: focusSourceKey });
+    if (found) {
+      setFilter("all");
+      setSearch("");
+      setExpandedDates((dates) => new Set(dates).add(found.entry.businessDate));
+      if (found.entry.businessDate < getBusinessDate()) setHistoryExpanded(true);
+      setFocusItemKey(found.itemKey);
+      setSelected(found.entry);
+      setCandidateDraft(null);
+      setDetailMessage("");
+      setPosDetail(null);
+      return;
+    }
+    const issueRow = document.getElementById(`inventory-projection-row-${focusLogId}`);
+    if (issueRow) {
+      issueRow.scrollIntoView({ block: "center" });
+      issueRow.focus({ preventScroll: true });
+      return;
+    }
+    setNotice(vi
+      ? `Không tìm thấy bút toán của phiếu nhập gốc #${focusLogId} trong tháng ${month}.`
+      : `원입고 #${focusLogId}의 장부내역을 ${month}에서 찾지 못했습니다.`);
+  }, [data, focusLogId, focusSourceKey, loading, month, vi]);
   function editCandidate(item: LedgerEntryItem) {
     if (selected && item.candidateId) {
       const draft: CandidateDraft = {
@@ -926,7 +961,7 @@ function LedgerEntriesContent() {
             <strong>⚠ {vi ? `Cần kiểm tra sổ ${data.inventoryProjectionIssues.length} mục` : `장부 확인 필요 ${data.inventoryProjectionIssues.length}건`}</strong>
             {purchaseCaseReasonCounts(data.inventoryProjectionIssues, vi) ? <p>{vi ? "Theo lý do (có thể trùng): " : "사유별(중복 포함): "}{purchaseCaseReasonCounts(data.inventoryProjectionIssues, vi)}</p> : null}
             <div>
-              {data.inventoryProjectionIssues.map(issue => <div className={styles.projectionWarningRow} key={issue.inventoryLogId}>
+              {data.inventoryProjectionIssues.map(issue => <div className={styles.projectionWarningRow} key={issue.inventoryLogId} id={`inventory-projection-row-${issue.inventoryLogId}`} tabIndex={-1}>
                 <InventoryPurchaseCaseSummary issue={issue} vi={vi} />
                 <InventoryProjectionResolution issue={issue} vi={vi} compact onResolved={async () => {
                   const refreshed = await load();
@@ -1364,6 +1399,7 @@ function LedgerEntriesContent() {
             messageIsSuccess={detailMessage !== "" && detailMessage === notice}
             posDetail={posDetail}
             closed={closed}
+            focusItemKey={focusItemKey}
             onConfirmedEdited={async (transactionId, successMessage, financial = true) => {
               const view = editViewRef.current;
               if (view.month !== month || view.selectionId !== selected.id) return;
@@ -1403,6 +1439,7 @@ function LedgerEntriesContent() {
             onClose={() => {
               setSelected(null);
               setCandidateDraft(null);
+              setFocusItemKey(null);
             }}
           />
         ) : null}
@@ -1438,6 +1475,7 @@ function EntryDetailSheet({
   messageIsSuccess = false,
   posDetail,
   closed,
+  focusItemKey = null,
   onConfirmedEdited,
   onAdvanceCancelled,
   onClose,
@@ -1457,6 +1495,7 @@ function EntryDetailSheet({
   messageIsSuccess?: boolean;
   posDetail: Record<string, unknown> | null;
   closed: boolean;
+  focusItemKey?: string | null;
   onConfirmedEdited: (transactionId: number, successMessage?: string, financial?: boolean) => Promise<void>;
   onAdvanceCancelled: () => Promise<void>;
   onClose: () => void;
@@ -1666,6 +1705,10 @@ function EntryDetailSheet({
           {entry.items.map((item) => (
             <article
               key={item.candidateId ?? item.transactionId}
+              {...(focusItemKey !== null && String(item.candidateId ?? item.transactionId) === focusItemKey ? {
+                "data-focused": "true", "aria-current": "true" as const, className: styles.focusedItem,
+                ref: (node: HTMLElement | null) => { node?.scrollIntoView({ block: "center" }); },
+              } : {})}
             >
               <span className={styles.itemDescription}>
                   <strong>📦 {lang === "vi" ? item.nameVi || item.name : item.name}</strong>

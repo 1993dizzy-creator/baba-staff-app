@@ -2810,6 +2810,7 @@ export default function InventorySnapshotsPage() {
                             {nameSyncResult && (
                                 <div role="status" style={{ fontSize: 12, fontWeight: 700, color: "#1d4ed8" }}>
                                     {nameSyncResult}
+                                    <InventoryDailySyncResults results={nameSyncDetails} businessDate={nameSyncBusinessDate} lang={lang} />
                                 </div>
                             )}
                         </div>
@@ -2835,15 +2836,6 @@ export default function InventorySnapshotsPage() {
                 </div>
             )}
 
-            <InventoryDailySyncResults
-                results={nameSyncDetails.map((item) => ({
-                    ...item,
-                    targets: item.targets.filter((target) => target.status !== "synced"),
-                })).filter((item) => item.targets.length > 0)}
-                businessDate={nameSyncBusinessDate || ""}
-                lang={lang}
-            />
-
             {nameSyncBusinessDate && nameSyncItems.length === 0 && nameSyncResult && (
                 <div
                     role="status"
@@ -2859,6 +2851,7 @@ export default function InventorySnapshotsPage() {
                     }}
                 >
                     {nameSyncResult}
+                    <InventoryDailySyncResults results={nameSyncDetails} businessDate={nameSyncBusinessDate} lang={lang} />
                 </div>
             )}
 

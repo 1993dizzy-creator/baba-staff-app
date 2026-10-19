@@ -11,8 +11,8 @@ import {
   type InventoryDailySyncLogRow,
   type InventoryDailySyncPlan,
 } from "@/lib/inventory/snapshot-name-sync";
-import type { InventoryDailySyncResult, InventoryDailySyncTargetResult } from "@/lib/inventory/daily-sync-result";
-import { projectInventoryPurchaseLogs } from "@/lib/ledger/inventory-projection";
+import { inventoryPurchaseSourceKey, type InventoryDailySyncResult, type InventoryDailySyncTargetResult } from "@/lib/inventory/daily-sync-result";
+import { projectInventoryDisplaySyncLog, projectInventoryPurchaseLogs } from "@/lib/ledger/inventory-projection";
 import {
   findInventoryLanguageMissingItems,
   type InventoryLanguageRow,
@@ -32,6 +32,7 @@ const INVENTORY_SELECT = [
   "id", "item_name", "item_name_vi", "part", "category", "category_vi", "code", "unit",
   "purchase_price", "supplier", "supplier_partner_id", "quantity", "is_active",
 ].join(", ");
+const ECONOMIC_SYNC_FIELDS = new Set(["purchase_price", "supplier", "supplier_partner_id"]);
 const LANGUAGE_INVENTORY_SELECT = "id, item_name, item_name_vi, is_active, created_at, updated_at";
 
 const createSupabaseAdmin = () => {
@@ -150,8 +151,13 @@ async function runItemSync({
   let snapshotRowsUpdated = 0;
   try {
     for (const target of plan.targets) {
-      const syncEconomics = !target.quantityReviewRequired && target.changes.some(change =>
-        ["purchase_price", "supplier", "supplier_partner_id"].includes(change.field));
+      const economicChange = target.changes.some(change => ECONOMIC_SYNC_FIELDS.has(change.field));
+      const syncEconomics = !target.quantityReviewRequired && economicChange;
+      // Same-part display-only changes (names/category/code/unit) keep the pending candidate and
+      // let its category follow. Part, quantity and economic changes keep the existing review path.
+      const displayOnly = !economicChange && !target.quantityReviewRequired &&
+        !target.changes.some(change => change.field === "part");
+      const location = { ledgerMonth: plan.businessDate.slice(0, 7), sourceKey: inventoryPurchaseSourceKey(target.purchaseLogId) };
       await syncInventoryLogRowsFromItem({
         supabase,
         item: target.syncItem,
@@ -161,15 +167,20 @@ async function runItemSync({
       if (target.quantityReviewRequired) {
         await projectInventoryPurchaseLogs([target.purchaseLogId], actorUserId);
         targets.push({ purchaseLogId: target.purchaseLogId, correctionLogId: target.correctionLogId,
-          status: "review_required", code: "QUANTITY_CORRECTION_REQUIRED" });
+          status: "review_required", code: "QUANTITY_CORRECTION_REQUIRED", ...location });
         continue;
       }
-      const ledger = await projectInventoryPurchaseLogs([target.purchaseLogId], actorUserId);
+      const ledger = displayOnly
+        ? await projectInventoryDisplaySyncLog(target.purchaseLogId, actorUserId)
+          .then(result => ({ status: result.status, code: result.code, results: [result] }))
+        : await projectInventoryPurchaseLogs([target.purchaseLogId], actorUserId);
+      const projected = ledger.results.find(row => row.inventoryLogId === target.purchaseLogId) ?? ledger.results[0];
       const status = ledger.status === "pending" ? "review_required" : ledger.status;
       const supplierChanged = target.changes.some(change => change.field === "supplier" || change.field === "supplier_partner_id");
       const code = status === "review_required" && ledger.code === "PURCHASE_AMOUNT_CONFIRMATION_REQUIRED" && supplierChanged
         ? "SUPPLIER_CHANGE_CONFIRMATION_REQUIRED" : ledger.code || (status === "synced" ? "SYNCED" : "INVENTORY_DAILY_SYNC_FAILED");
-      targets.push({ purchaseLogId: target.purchaseLogId, correctionLogId: target.correctionLogId, status, code });
+      targets.push({ purchaseLogId: target.purchaseLogId, correctionLogId: target.correctionLogId, status, code, ...location,
+        candidateId: projected?.candidateId ?? null, transactionId: projected?.transactionId ?? null });
     }
     snapshotRowsUpdated = await syncSnapshotItem(supabase, snapshotBatchId, inventoryItem);
     const blocking = targets.find(target => target.status === "failed") || targets.find(target => target.status === "review_required");
