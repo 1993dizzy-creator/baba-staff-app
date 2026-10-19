@@ -23,6 +23,10 @@ const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const TYPES = new Set(["expense", "income", "transfer", "balance_adjustment"]);
 const TRANSACTION_SELECT = "id,operation_id,type,occurred_at,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,display_snapshot,source_synced_at,memo,party_id,category:ledger_categories(id,name,kind),party:ledger_parties(name),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)),payable:ledger_payables(id,original_amount,due_date,status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(id,type,source_type,source_key,source_snapshot,amount,economic_effect_sign,memo,business_date,status,movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code,display_name)))))";
 
+// Cash/report inputs only: no payable allocations, display snapshots or source item joins.
+const DASHBOARD_TRANSACTION_SELECT = "id,type,business_date,recognition_month,amount,economic_effect_sign,correction_of_id,status,source_type,source_key,source_snapshot,memo,party_id,category:ledger_categories(id),movements:ledger_movements(amount,fund_account:ledger_fund_accounts(id,code))";
+const EMPTY_ROWS = { data: [] as never[], error: null };
+
 type BuildFundAccountsInput = Parameters<typeof buildFundAccountView>[0];
 // One balance Source of Truth for the full ledger GET and the settings
 // accounts scope: same queries, same reserve scope, same buildFundAccountView.
@@ -74,6 +78,8 @@ export async function GET(request: Request) {
   const month = url.searchParams.get("month") ?? "";
   // scope=accounts: 장부설정 자금계정 only needs balances, not the month ledger.
   const accountsOnly = url.searchParams.get("scope") === "accounts";
+  const dashboardOnly = url.searchParams.get("scope") === "dashboard";
+  const entriesOnly = url.searchParams.get("scope") === "entries";
   if (!MONTH.test(month)) return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400);
   const monthStart = `${month}-01`;
   const { businessDateExclusive: nextMonth, cutoffAt: monthEndCutoffAt } = getBusinessMonthEndBoundary(month);
@@ -94,7 +100,7 @@ export async function GET(request: Request) {
     const fundsViewMode = fundAccountViewMode(month, currentBusinessDate, Boolean(closureResult.data));
     const accountsPromise = supabaseServer.from("ledger_fund_accounts").select("id,code,type,holder_name,display_name,is_active,is_business_fund,sort_order").order("sort_order");
     const categoriesPromise = supabaseServer.from("ledger_categories").select("id,name,kind,parent_id,cost_behavior,is_active,parent:ledger_categories!parent_id(name)").eq("is_active", true).order("kind").order("name");
-    const partiesPromise = supabaseServer.from("ledger_parties").select("id,name,type,is_active").eq("is_active", true).order("name");
+    const partiesPromise = dashboardOnly || entriesOnly ? Promise.resolve(EMPTY_ROWS) : supabaseServer.from("ledger_parties").select("id,name,type,is_active").eq("is_active", true).order("name");
     const partnerPromise = supabaseServer.from("business_partners").select("id,name,partner_type,partner_subtype_id,payment_mode,default_fund_account_id,is_active").order("name");
     const partnerSubtypePromise = supabaseServer.from("business_partner_subtypes").select("id,code,emoji");
     const bridgePromise = supabaseServer.from("business_partner_ledger_parties").select("business_partner_id,ledger_party_id");
@@ -110,7 +116,7 @@ export async function GET(request: Request) {
         });
     const openingPromise = loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status,type,business_date,source_type)").eq("transaction.status", "confirmed").eq("transaction.type", "opening").eq("transaction.business_date", monthStart).order("id", { ascending: true }).range(from, to));
     // Plans are also needed in closed months to label the reserve history rows.
-    const reservesPromise = loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_reserve_plans")
+    const reservesPromise = dashboardOnly && fundsViewMode === "closed_snapshot" ? Promise.resolve(EMPTY_ROWS) : loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_reserve_plans")
       .select("id,name,is_active,fund_account_id,linked_recurring_plan:ledger_recurring_expense_plans(source_key_prefix)")
       .order("id", { ascending: true }).range(from, to));
     // One query serves both the cumulative reserve balance and the month's
@@ -120,7 +126,7 @@ export async function GET(request: Request) {
     const reserveEntriesQuery = () => supabaseServer.from("ledger_reserve_entries")
       .select("id,reserve_plan_id,entry_type,amount,occurred_at,memo")
       .lt("occurred_at", monthEndCutoffAt);
-    const reserveEntriesPromise = loadLedgerAggregateRows((from, to) => {
+    const reserveEntriesPromise = dashboardOnly && fundsViewMode === "closed_snapshot" ? Promise.resolve(EMPTY_ROWS) : loadLedgerAggregateRows((from, to) => {
       const query = reserveEntriesQuery();
       const scoped = fundsViewMode === "closed_snapshot"
         ? query.gte("occurred_at", monthStartCutoffAt)
@@ -140,8 +146,10 @@ export async function GET(request: Request) {
       });
       return ledgerJson({ ok: true, month, scope: "accounts", fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, accounts });
     }
-    const profitPromise = loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales"]).order("id", { ascending: true }).range(from, to));
-    const recognitionProfitPromise = loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).eq("type", "expense_recognition").order("id", { ascending: true }).range(from, to));
+    const profitPromise = dashboardOnly
+      ? loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales", "expense_recognition"]).order("id", { ascending: true }).range(from, to))
+      : loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales"]).order("id", { ascending: true }).range(from, to));
+    const recognitionProfitPromise = dashboardOnly ? Promise.resolve(EMPTY_ROWS) : loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).eq("type", "expense_recognition").order("id", { ascending: true }).range(from, to));
     // Card gross sales: this month's POS card-bucket sales (business_date scoped), before card-company fees.
     const cardGrossSalesPromise = loadCardSales(monthStart, nextMonth);
     // Actual card deposits: this month's real bank deposits from the card company (deposit_date scoped, not the sale's month).
@@ -156,12 +164,12 @@ export async function GET(request: Request) {
       .order("id", { ascending: true }).range(from, to));
     // Root expense/expense_recognition transactions recognized this month, with their
     // linked payable (if any) — the base population for the paidExpense formula below.
-    const paidExpenseRootsPromise = loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,source_type,correction_of_id,payable:ledger_payables(status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(id,type,source_type,source_key,source_snapshot,amount,economic_effect_sign,memo,business_date,status,movements:ledger_movements(amount))))").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["expense", "expense_recognition"]).order("id", { ascending: true }).range(from, to));
+    const paidExpenseRootsPromise = dashboardOnly ? Promise.resolve(EMPTY_ROWS) : loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,source_type,correction_of_id,payable:ledger_payables(status,allocations:ledger_payable_allocations(allocated_amount,payment:ledger_transactions!payment_transaction_id(id,type,source_type,source_key,source_snapshot,amount,economic_effect_sign,memo,business_date,status,movements:ledger_movements(amount))))").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["expense", "expense_recognition"]).order("id", { ascending: true }).range(from, to));
     // Confirmed corrections targeting ANY transaction (not date-scoped: ledger_create_correction_v1
     // always books a correction into a different, later month than its — closed — original, so a
     // correction of this month's root can itself be recognized in any later open month).
-    const paidExpenseCorrectionsPromise = loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("correction_of_id,amount,economic_effect_sign").eq("status", "confirmed").eq("source_type", "ledger_correction").not("correction_of_id", "is", null).order("id", { ascending: true }).range(from, to));
-    const confirmedMealCandidatesPromise = supabaseServer.from("ledger_candidates")
+    const paidExpenseCorrectionsPromise = dashboardOnly ? Promise.resolve(EMPTY_ROWS) : loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("correction_of_id,amount,economic_effect_sign").eq("status", "confirmed").eq("source_type", "ledger_correction").not("correction_of_id", "is", null).order("id", { ascending: true }).range(from, to));
+    const confirmedMealCandidatesPromise = dashboardOnly ? Promise.resolve(EMPTY_ROWS) : supabaseServer.from("ledger_candidates")
       .select("resolved_transaction_id,source_snapshot,source_drift_snapshot,source_drift_fingerprint")
       .eq("candidate_type", "employee_meal").eq("source_type", "attendance_meal_daily")
       .eq("status", "confirmed").gte("business_date", monthStart).lt("business_date", nextMonth)
@@ -169,13 +177,15 @@ export async function GET(request: Request) {
     const [accountsResult, categoriesResult, partiesResult, partnerResult, partnerSubtypeResult, bridgeResult, profitResult, recognitionProfitResult, movementsResult, openingResult, cardGrossSalesResult, actualCardDepositsResult, reservesResult, reserveEntriesResult, paidExpenseRootsResult, paidExpenseCorrectionsResult, confirmedMealCandidatesResult, transactions, candidates, priorMonthCardDepositAllocations] = await Promise.all([
       accountsPromise, categoriesPromise, partiesPromise, partnerPromise, partnerSubtypePromise, bridgePromise, profitPromise,
       recognitionProfitPromise, movementsPromise, openingPromise, cardGrossSalesPromise, actualCardDepositsPromise, reservesPromise, reserveEntriesPromise, paidExpenseRootsPromise, paidExpenseCorrectionsPromise,
-      confirmedMealCandidatesPromise, loadMonthTransactions(monthStart, nextMonth), loadPendingInventoryCandidates(monthStart, nextMonth), priorMonthCardDepositsPromise,
+      confirmedMealCandidatesPromise, dashboardOnly ? loadDashboardTransactions(monthStart, nextMonth) : loadMonthTransactions(monthStart, nextMonth), dashboardOnly ? Promise.resolve([] as CandidateRow[]) : loadPendingInventoryCandidates(monthStart, nextMonth), priorMonthCardDepositsPromise,
     ]);
     for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,partnerSubtypeResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,reservesResult,reserveEntriesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
     const priorConfirmedMovements = (openingResult.data?.length ?? 0) > 0
       ? []
       : await loadPriorConfirmedFundMovements(monthStart);
-    const profitRows=[...(profitResult.data??[]),...(recognitionProfitResult.data??[])];
+    const profitRows = dashboardOnly
+      ? [...(profitResult.data ?? []).filter(row => row.type !== "expense_recognition"), ...(profitResult.data ?? []).filter(row => row.type === "expense_recognition")]
+      : [...(profitResult.data??[]),...(recognitionProfitResult.data??[])];
     const salesIncome = profitRows.filter((row) => row.type === "sales").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const otherIncome = profitRows.filter((row) => row.type === "income").reduce((sum,row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1),0);
     const recognizedIncome = salesIncome + otherIncome;
@@ -202,13 +212,15 @@ export async function GET(request: Request) {
       .filter((account) => account.is_business_fund && account.type !== "card_clearing" && account.code !== "card_clearing")
       .map((account) => Number(account.id)));
     const actualCashOutflow = computeActualCashOutflow(transactions, businessFundAccountIds, month);
-    const [payableAllocationCategories, prepaidCategoryIds] = await Promise.all([
+    const [payableAllocationCategories, prepaidCategoryIds] = entriesOnly
+      ? [[] as PayableAllocationCategory[], new Map<number, number>()] as const
+      : await Promise.all([
       loadPayableAllocationCategories(
         transactions.filter((row) => row.type === "payable_payment").map((row) => Number(row.id)),
       ),
       loadPrepaidCategoryIds(transactions),
     ]);
-    const cashTransactions = transactions.map((row) => {
+    const cashTransactions = entriesOnly ? [] : transactions.map((row) => {
       if (row.type !== "prepaid_expense_payment") return row;
       const planId = Number(row.source_snapshot?.planId);
       const categoryId = prepaidCategoryIds.get(planId);
@@ -217,7 +229,7 @@ export async function GET(request: Request) {
         source_snapshot: { ...(row.source_snapshot ?? {}), categoryId },
       };
     });
-    const cashReport = buildDashboardCashReport(
+    const cashReport = entriesOnly ? null : buildDashboardCashReport(
       cashTransactions,
       categoriesResult.data ?? [],
       payableAllocationCategories,
@@ -225,25 +237,6 @@ export async function GET(request: Request) {
       month,
       balanceAccountIds,
     );
-    const correctionsByRoot = new Map<number, { amount: number; economicEffectSign: number }[]>();
-    for (const row of paidExpenseCorrectionsResult.data ?? []) {
-      const key = Number(row.correction_of_id);
-      const list = correctionsByRoot.get(key) ?? [];
-      list.push({ amount: Number(row.amount), economicEffectSign: Number(row.economic_effect_sign) });
-      correctionsByRoot.set(key, list);
-    }
-    const paidExpenseRoots = (paidExpenseRootsResult.data ?? []).map((row) => ({
-      id: Number(row.id),
-      amount: Number(row.amount),
-      economicEffectSign: Number(row.economic_effect_sign),
-      sourceType: String(row.source_type),
-      correctionOfId: row.correction_of_id == null ? null : Number(row.correction_of_id),
-      payableStatus: (row.payable as unknown as { status: string; allocations?: { allocated_amount: number | string; payment?: { business_date: string; status: string } | null }[] } | null)?.status ?? null,
-      allocatedAmount: calculatePurchaseSettlement(row.amount,confirmedAllocationsThroughMonth((row.payable as unknown as {allocations?:{allocated_amount:number|string;payment?:PayablePayment|null}[]}|null)?.allocations??[],month),{transactionId:row.id}).cashPaidAmount,
-      corrections: [...(correctionsByRoot.get(Number(row.id)) ?? []),...calculatePurchaseSettlement(row.amount,confirmedAllocationsThroughMonth((row.payable as unknown as {allocations?:{allocated_amount:number|string;payment?:PayablePayment|null}[]}|null)?.allocations??[],month),{transactionId:row.id}).adjustments.map(a=>({amount:-a.amount,economicEffectSign:-1}))],
-    }));
-    const paidExpense = computePaidExpenseTotal(paidExpenseRoots);
-    const displayedExpense = computeDisplayedExpense(paidExpense, transactions);
     const reserveEntryRows = reserveEntriesResult.data ?? [];
     const accounts = buildLedgerFundAccounts({
       fundsViewMode, now, accountRows: accountsResult.data ?? [], openingRows: openingResult.data ?? [], priorConfirmedMovements,
@@ -277,6 +270,42 @@ export async function GET(request: Request) {
         paymentMode: partner.payment_mode, defaultFundAccountId, isActive: partner.is_active,
       }];
     });
+    if (dashboardOnly) {
+      // The report helpers receive the same cash/profit/balance inputs. Detail
+      // rows below are only the income drilldown; every transaction above was
+      // retained when calculating cash flows, including reversals/corrections.
+      return ledgerJson({
+        ok: true, month, scope: "dashboard",
+        fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth },
+        salesReceiptExplanation,
+        summary: { income: recognizedIncome, expense, operatingProfit: recognizedIncome - expense, receivedIncome, actualCashOutflow, otherIncome, cardFeePending },
+        cashReport,
+        accounts: accounts.map(({ code, type, is_business_fund, balance, openingBalance }) => ({ code, type, is_business_fund, balance, openingBalance })),
+        categories: (categoriesResult.data ?? []).map(({ id, name, kind, parent_id }) => ({ id, name, kind, parent_id })),
+        profitTransactions: profitRows.filter(row => row.type === "income"),
+        partners: partners.map(({ ledgerPartyId, emoji }) => ({ ledgerPartyId, emoji })),
+        transactions: transactions.filter(row => row.type === "income").map(({ id, type, amount, economic_effect_sign, recognition_month, memo, party_id, category }) => ({ id, type, amount, economic_effect_sign, recognition_month, memo, party_id, category })),
+      });
+    }
+    const correctionsByRoot = new Map<number, { amount: number; economicEffectSign: number }[]>();
+    for (const row of paidExpenseCorrectionsResult.data ?? []) {
+      const key = Number(row.correction_of_id);
+      const list = correctionsByRoot.get(key) ?? [];
+      list.push({ amount: Number(row.amount), economicEffectSign: Number(row.economic_effect_sign) });
+      correctionsByRoot.set(key, list);
+    }
+    const paidExpenseRoots = (paidExpenseRootsResult.data ?? []).map((row) => ({
+      id: Number(row.id),
+      amount: Number(row.amount),
+      economicEffectSign: Number(row.economic_effect_sign),
+      sourceType: String(row.source_type),
+      correctionOfId: row.correction_of_id == null ? null : Number(row.correction_of_id),
+      payableStatus: (row.payable as unknown as { status: string; allocations?: { allocated_amount: number | string; payment?: { business_date: string; status: string } | null }[] } | null)?.status ?? null,
+      allocatedAmount: calculatePurchaseSettlement(row.amount,confirmedAllocationsThroughMonth((row.payable as unknown as {allocations?:{allocated_amount:number|string;payment?:PayablePayment|null}[]}|null)?.allocations??[],month),{transactionId:row.id}).cashPaidAmount,
+      corrections: [...(correctionsByRoot.get(Number(row.id)) ?? []),...calculatePurchaseSettlement(row.amount,confirmedAllocationsThroughMonth((row.payable as unknown as {allocations?:{allocated_amount:number|string;payment?:PayablePayment|null}[]}|null)?.allocations??[],month),{transactionId:row.id}).adjustments.map(a=>({amount:-a.amount,economicEffectSign:-1}))],
+    }));
+    const paidExpense = computePaidExpenseTotal(paidExpenseRoots);
+    const displayedExpense = computeDisplayedExpense(paidExpense, transactions);
     const mealCandidateSources: MealCandidateSource[] = (confirmedMealCandidatesResult.data ?? []).map((candidate) => ({
       resolvedTransactionId: Number(candidate.resolved_transaction_id),
       sourceSnapshot: candidate.source_snapshot as Record<string, unknown> | null,
@@ -298,6 +327,16 @@ export async function GET(request: Request) {
         getBusinessDate,
       ),
     ];
+    if (entriesOnly) {
+      // Preserve the complete entry/edit/candidate contract. Raw audit rows and
+      // dashboard compositions duplicate data that the entries page never reads.
+      return ledgerJson({ ok: true, month, scope: "entries",
+        fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth },
+        inventoryProjectionIssues, payrollPaymentGroupIssues,
+        summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross, cardFeePending },
+        accounts, categories: categoriesResult.data ?? [], partners, entries,
+      });
+    }
     return ledgerJson({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, payrollPaymentGroupIssues, salesReceiptExplanation, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross, cardFeePending }, cashReport, accounts, categories: categoriesResult.data ?? [], profitTransactions: profitRows, parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
@@ -394,6 +433,14 @@ async function loadPriorConfirmedFundMovements(monthStart: string) {
     if ((data?.length ?? 0) < pageSize) break;
   }
   return rows;
+}
+
+async function loadDashboardTransactions(start: string, end: string): Promise<TransactionRow[]> {
+  const result = await loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions")
+    .select(DASHBOARD_TRANSACTION_SELECT)
+    .eq("status", "confirmed").gte("business_date", start).lt("business_date", end)
+    .order("business_date", { ascending: false }).order("id", { ascending: false }).range(from, to));
+  return result.data as TransactionRow[];
 }
 
 async function loadMonthTransactions(start: string, end: string) {

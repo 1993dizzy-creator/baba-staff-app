@@ -225,8 +225,8 @@ function LedgerDashboardContent() {
         const payrollPromise = loadPayrollCost(month, controller.signal);
         const cardPromise = isCurrentMonth ? loadCardSources(month, previousMonth, controller.signal) : Promise.resolve(null);
         const [currentResponse, previousResponse] = await Promise.all([
-          fetch(`/api/admin/ledger?month=${month}`, { cache: "no-store", signal: controller.signal }),
-          fetch(`/api/admin/ledger?month=${previousMonth}`, { cache: "no-store", signal: controller.signal }),
+          fetch(`/api/admin/ledger?month=${month}&scope=dashboard`, { cache: "no-store", signal: controller.signal }),
+          fetch(`/api/admin/ledger?month=${previousMonth}&scope=dashboard`, { cache: "no-store", signal: controller.signal }),
         ]);
         const [currentBody, previousBody] = await Promise.all([
           currentResponse.json(),

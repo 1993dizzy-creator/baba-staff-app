@@ -255,7 +255,7 @@ test("month selection uses the BABA business date, URL month query and stale-res
   assert.match(dashboardCompact, /selectedLedgerMonth\(searchParams\.get\("month"\),getBusinessDate\(\)\.slice\(0,7\)\)/);
   assert.doesNotMatch(dashboardPage, /Intl\.DateTimeFormat/);
   assert.match(dashboardCompact, /router\.push\(ledgerMonthHref\(pathname,searchParams\.toString\(\),nextMonth\)/);
-  assert.match(dashboardCompact, /Promise\.all\(\[fetch\(`\/api\/admin\/ledger\?month=\$\{month\}`/);
+  assert.match(dashboardCompact, /Promise\.all\(\[fetch\(`\/api\/admin\/ledger\?month=\$\{month\}&scope=dashboard`/);
   assert.match(dashboardCompact, /requestSequence!==requestSequenceRef\.current/);
   assert.match(dashboardCompact, /currentBody\.month!==month\|\|previousBody\.month!==previousMonth/);
   assert.doesNotMatch(dashboardPage, /periodNetChange|investmentsBody/);

@@ -325,7 +325,9 @@ function LedgerEntriesContent() {
   const addButtonRef = useRef<HTMLButtonElement>(null),
     closeButtonRef = useRef<HTMLButtonElement>(null),
     initializedMonthRef = useRef(""),
-    loadRequestSequenceRef = useRef(0);
+    loadRequestSequenceRef = useRef(0),
+    loadLanguageRef = useRef(vi);
+  useLayoutEffect(() => { loadLanguageRef.current = vi; }, [vi]);
   const editRefreshControllerRef = useRef<AbortController | null>(null);
   const editViewRef = useRef({ month, selectionId: selected?.id ?? null, version: 0 });
   useLayoutEffect(() => {
@@ -356,7 +358,7 @@ function LedgerEntriesContent() {
           }
         })();
         const [ledgerResponse, closeResponse, payableResponse, summaryResult] = await Promise.all([
-          fetch(`/api/admin/ledger?month=${requestedMonth}`, {
+          fetch(`/api/admin/ledger?month=${requestedMonth}&scope=entries`, {
             cache: "no-store",
             signal,
           }),
@@ -399,7 +401,7 @@ function LedgerEntriesContent() {
       } catch (cause) {
         if ((cause as Error).name !== "AbortError" && requestSequence === loadRequestSequenceRef.current)
           setError(
-            vi
+            loadLanguageRef.current
               ? "Không thể tải sổ. Vui lòng thử lại sau."
               : "장부를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
           );
@@ -408,7 +410,7 @@ function LedgerEntriesContent() {
         if (!silent && !signal?.aborted && requestSequence === loadRequestSequenceRef.current) setLoading(false);
       }
     },
-    [month, vi],
+    [month],
   );
   useEffect(() => {
     const controller = new AbortController();

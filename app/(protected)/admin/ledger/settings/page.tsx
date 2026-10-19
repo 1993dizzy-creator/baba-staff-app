@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { Suspense, useCallback, useEffect, useEffectEvent, useMemo, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import PartnerSettingsPanel from "@/components/partners/PartnerSettingsPanel";
@@ -113,10 +113,12 @@ function LedgerSettingsContent() {
     setReserves(body.plans); setEligibleAccounts(body.eligibleAccounts ?? []);
   }, []);
   const load = activeTab === "reserves" ? loadReserves : loadBasic;
+  // Localized errors use the current language without refetching data on locale changes.
+  const onLoadError = useEffectEvent((cause: unknown) => setError(copy.loadFailed((cause as Error).message)));
   useEffect(() => {
     if (activeTab === "partners") return;
-    void load().catch(cause => setError(copy.loadFailed((cause as Error).message)));
-  }, [activeTab, load, copy]);
+    void load().catch(cause => onLoadError(cause));
+  }, [activeTab, load]);
 
   function selectTab(tab: LedgerSettingsTab) {
     setMessage(""); setError("");

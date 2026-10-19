@@ -2,7 +2,7 @@
 
 /* eslint-disable react-hooks/set-state-in-effect -- authenticated API bootstrap. */
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { BarSheet } from "@/components/bar/keeping/KeepingUi";
 import PartnerForm, { type FundAccount, type PartnerFormValue, type PartnerSubtype } from "@/components/PartnerForm";
 import PartnerSubtypeManager from "@/components/PartnerSubtypeManager";
@@ -61,7 +61,9 @@ export default function PartnerSettingsPanel({ lang, view, onViewChange }: { lan
     setFundAccounts(body.fundAccounts);
     setPartnerSubtypes(body.partnerSubtypes);
   }, []);
-  useEffect(() => { void load().catch(() => setError(t.loadFailed)); }, [load, t.loadFailed]);
+  // Language changes only affect presentation; mounting and saves still fetch fresh data.
+  const onLoadError = useEffectEvent(() => setError(t.loadFailed));
+  useEffect(() => { void load().catch(() => onLoadError()); }, [load]);
 
   // 등록대기 = pending Supplier Candidates only; 사용중/사용안함 = regular partners by
   // is_active. Linked/ignored/archived candidates are never listed or counted here.
