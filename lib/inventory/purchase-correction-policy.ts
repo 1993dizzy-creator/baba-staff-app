@@ -5,6 +5,7 @@ export type PurchaseRoot = {
   created_at: string;
   reason: string;
   change_quantity: number;
+  effectiveQuantity?: number;
   correction_of_inventory_log_id: number | null;
   unit: string | null;
   new_supplier: string | null;

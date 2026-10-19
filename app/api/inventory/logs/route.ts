@@ -1,8 +1,10 @@
-import { projectDailyEffectivePurchases } from "@/lib/inventory/daily-effective-purchases";
+import { analyzeDailyEffectivePurchases, type DailyPurchaseDiagnostic } from "@/lib/inventory/daily-effective-purchases";
 import { NextResponse } from "next/server";
 import { getAuthenticatedActor, requireRole } from "@/lib/auth/server-auth";
 import {
   QUICK_REASON_VALUES,
+  inventoryReasonChangeIssue,
+  inventoryPurchaseErrorMessage,
   normalizeInventoryReason,
 } from "@/lib/inventory/reasons";
 import {
@@ -64,6 +66,7 @@ type InventoryLogQueryRow = {
 
 const loadInventoryLogs = async (options: InventoryLogsQueryOptions = {}) => {
   const logs: InventoryLogQueryRow[] = [];
+  let purchaseDiagnostics: Array<DailyPurchaseDiagnostic & { projectionStatuses?: Array<{inventory_log_id:number;status:string;code:string}>; projectionStatusUnavailable?:boolean }> = [];
   let cursor: { id: number; created_at: string | null } | undefined;
   for (;;) {
     let query = supabaseServer
@@ -120,8 +123,22 @@ const loadInventoryLogs = async (options: InventoryLogsQueryOptions = {}) => {
         if ((result.data ?? []).length < LOG_PAGE_SIZE) break;
       }
     }
-    const projected = projectDailyEffectivePurchases(logs, corrections);
-    logs.splice(0, logs.length, ...projected);
+    const analysis = analyzeDailyEffectivePurchases(logs, corrections);
+    purchaseDiagnostics = analysis.diagnostics;
+    // Status reads never re-project or repair historical data. Failure remains explicit.
+    const ids = [...new Set(purchaseDiagnostics.flatMap(row => row.logIds))];
+    const statuses: Array<{inventory_log_id:number;status:string;code:string}> = [];
+    let statusUnavailable = false;
+    for (let offset=0;offset<ids.length;offset+=100) {
+      try {
+        const result = await supabaseServer.from("ledger_inventory_projection_status").select("inventory_log_id,status,code").in("inventory_log_id",ids.slice(offset,offset+100));
+        if(result.error) { statusUnavailable=true; continue; }
+        statuses.push(...(result.data??[]));
+      } catch { statusUnavailable=true; }
+    }
+    purchaseDiagnostics = purchaseDiagnostics.map(row => ({...row,projectionStatusUnavailable:statusUnavailable,
+      projectionStatuses:statuses.filter(status=>row.logIds.includes(Number(status.inventory_log_id)))}));
+    logs.splice(0, logs.length, ...analysis.purchases);
   }
   const kegReplaceLogIds = logs
     .filter((log) => log.source === "keg_replace")
@@ -141,7 +158,7 @@ const loadInventoryLogs = async (options: InventoryLogsQueryOptions = {}) => {
       : log
   );
 
-  return { ok: true as const, data: enrichedLogs };
+  return { ok: true as const, data: enrichedLogs, ...(options.effectivePurchases ? {purchaseDiagnostics} : {}) };
 };
 
 const loadInventoryNotes = async () => {
@@ -265,7 +282,7 @@ export async function GET(req: Request) {
         );
       }
 
-      return NextResponse.json({ ok: true, data: result.data });
+      return NextResponse.json({ ok: true, data: result.data, ...("purchaseDiagnostics" in result ? {purchaseDiagnostics:result.purchaseDiagnostics} : {}) });
     }
 
     if (mode === "recent") {
@@ -375,7 +392,7 @@ export async function PATCH(req: Request) {
 
     const { data: existingRows, error: findError } = await supabaseServer
       .from("inventory_logs")
-      .select("id, item_id, reason, source, change_quantity, business_date, new_purchase_price, item_name, code")
+      .select("id, item_id, reason, source, change_quantity, correction_of_inventory_log_id, business_date, new_purchase_price, item_name, code")
       .in("id", targetLogIds);
 
     if (findError) throw findError;
@@ -404,6 +421,14 @@ export async function PATCH(req: Request) {
       );
     }
 
+    // Reject before supplier resolution, source writes, or Ledger projection. This
+    // endpoint cannot atomically reverse/rebook a purchase while changing its label.
+    if (hasReason) {
+      const nextReason = normalizeInventoryReason(body.reason);
+      if (!QUICK_REASON_VALUES.includes(nextReason as (typeof QUICK_REASON_VALUES)[number])) return NextResponse.json({ok:false,message:"Invalid reason"},{status:400});
+      const issue = existingRows.map(row=>inventoryReasonChangeIssue(row,nextReason)).find(Boolean);
+      if(issue) return NextResponse.json({ok:false,error:issue,message:inventoryPurchaseErrorMessage(issue,"ko")},{status:409});
+    }
     const existing = existingRows[0];
 
     const updatePayload: Record<string, string | number | null> = {};

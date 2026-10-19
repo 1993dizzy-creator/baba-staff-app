@@ -1,4 +1,5 @@
 "use client";
+import { inventoryPurchaseErrorMessage, type InventoryPurchaseErrorDetails } from "@/lib/inventory/reasons";
 import { normalizeInventoryEditText } from "@/lib/inventory/edit-validation";
 import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -7,7 +8,6 @@ import { commonText, inventoryText } from "@/lib/text";
 import { ui } from "@/lib/styles/ui";
 import InventoryLoadingCard from "./InventoryLoadingCard";
 import { fetchInventoryApi } from "@/lib/inventory/client-auth";
-import { type PurchaseRoot } from "@/lib/inventory/purchase-correction-policy";
 import { PART_META } from "@/lib/common/parts";
 import { INVENTORY_PART_VALUES, type InventoryPartValue, isInventoryPart, resolveInventoryDefaultPart } from "@/lib/inventory/parts";
 import { INVENTORY_REASON_EMOJIS, INVENTORY_REASON_LABELS, type QuickReasonValue } from "@/lib/inventory/reasons";
@@ -63,14 +63,13 @@ type SupplierAliasOption = {
     businessPartnerId: number | null;
 };
 type DuplicateInventoryItem = Pick<InventoryItem, "id" | "item_name" | "item_name_vi" | "code" | "part" | "category" | "category_vi" | "is_active">;
-type InventoryItemMutationResult = {
+type InventoryItemMutationResult = InventoryPurchaseErrorDetails & {
+    code?: string;
     ok?: boolean;
     error?: string;
     message?: string;
     data?: InventoryItem;
     duplicateItem?: DuplicateInventoryItem;
-    candidates?: PurchaseRoot[];
-    recommended?: boolean;
 };
 type EditFormPendingSave = {
     id: number;
@@ -194,8 +193,6 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
     const editingId = itemId;
     const [editFormPendingSave, setEditFormPendingSave] = useState<EditFormPendingSave | null>(null);
     const [isEditReasonSaving, setIsEditReasonSaving] = useState(false);
-    const [purchaseCorrectionRoots, setPurchaseCorrectionRoots] = useState<PurchaseRoot[] | null>(null);
-    const [selectedPurchaseRootId, setSelectedPurchaseRootId] = useState<number | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [photoBusyItemId, setPhotoBusyItemId] = useState<number | null>(null);
     const itemNameRef = useRef<HTMLInputElement>(null);
@@ -299,8 +296,7 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
         if (isEditReasonSaving)
             return;
         setEditFormPendingSave(null);
-        setPurchaseCorrectionRoots(null);
-        setSelectedPurchaseRootId(null);
+
     };
     const editSaveLockRef = useRef(false);
     const handleEditReasonConfirm = async (reason: QuickReasonValue) => {
@@ -310,6 +306,9 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
         onBusyChange?.(true);
         setIsEditReasonSaving(true);
         try {
+            if(reason==="purchase" && Number(editFormPendingSave.payload.quantity)<Number(editFormPendingSave.expectedQuantity) && !window.confirm(lang==="vi"
+                ? "Bạn có muốn điều chỉnh số lượng hàng đã nhập hôm nay không?"
+                : "오늘 입고된 수량을 정정하시겠습니까?")) return;
             const res = await fetchInventoryApi("/api/inventory/items", {
                 method: "PATCH",
                 headers: {
@@ -322,23 +321,17 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
                     reason,
                     expectedQuantity: editFormPendingSave.expectedQuantity,
                     expectedUpdatedAt: editFormPendingSave.expectedUpdatedAt,
-                    ...(reason === "purchase" && selectedPurchaseRootId !== null ? {
-                        selectedPurchaseRootId,
-                        expectedQuantity: editFormPendingSave.expectedQuantity,
-                    } : {}),
+                    ...(reason === "purchase" ? {autoSelectPurchaseRoot:true} : {}),
                 }),
             });
             const result = await readInventoryItemMutationResult(res, "edit");
             if (!result)
                 return;
             if (!res.ok || !result.ok) {
-                if (reason === "purchase" && result.error === "purchase_correction_selection_required") {
-                    setPurchaseCorrectionRoots(result.candidates ?? []);
-                    setSelectedPurchaseRootId(result.recommended ? result.candidates?.[0]?.id ?? null : null);
-                    return;
-                }
-                if (reason === "purchase" && result.error === "purchase_correction_root_not_found") {
-                    alert(lang === "vi" ? "Không tìm thấy lô nhập gốc có thể liên kết. Vui lòng kiểm tra lịch sử kho." : "연결 가능한 원입고를 찾지 못했습니다. 재고 이력을 확인해주세요.");
+                const purchaseError=inventoryPurchaseErrorMessage(result.error ?? result.code,lang,result);
+                if(purchaseError){alert(purchaseError);return;}
+                if(reason==="purchase" && Number(editFormPendingSave.payload.quantity)<Number(editFormPendingSave.expectedQuantity)){
+                    alert(lang==="vi" ? "Không thể hoàn tất yêu cầu điều chỉnh. Dữ liệu bạn nhập được giữ nguyên. Vui lòng liên hệ quản lý." : "정정 요청을 완료하지 못했습니다. 입력값은 유지했습니다. 관리자에게 문의해 주세요.");
                     return;
                 }
                 handleInventoryItemMutationFailure(res, result, "edit");
@@ -1140,27 +1133,12 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
                             {t.editReasonModalDescription}
                         </div>
 
-                        {purchaseCorrectionRoots ? <>
-                            <p>{lang === "vi" ? "Đây là sửa lô nhập gốc. Chọn lô nhập để liên kết; số tiền trong sổ sẽ được tính lại theo chính sách hiện có." : "원입고 수정입니다. 연결할 원입고를 선택하면 기존 정책에 따라 장부금액이 다시 계산됩니다."}</p>
-                            <label>{lang === "vi" ? "Chọn lô nhập gốc" : "원입고 선택"}
-                                <select value={selectedPurchaseRootId ?? ""} disabled={isEditReasonSaving} onChange={event => setSelectedPurchaseRootId(Number(event.target.value) || null)} style={ui.input}>
-                                    <option value="">{lang === "vi" ? "Chọn lô nhập" : "원입고를 선택해 주세요"}</option>
-                                    {purchaseCorrectionRoots.map(root => <option key={root.id} value={root.id}>
-                                        {root.business_date} · +{root.change_quantity}{root.unit ?? ""} · {root.new_supplier} · {root.new_purchase_price}₫
-                                    </option>)}
-                                </select>
-                            </label>
-                            <button type="button" disabled={isEditReasonSaving || selectedPurchaseRootId === null} onClick={() => handleEditReasonConfirm("purchase")} style={ui.button}>
-                                {lang === "vi" ? "Liên kết lô nhập gốc và lưu thay đổi" : "원입고에 연결하고 수정 저장"}
-                            </button>
-                        </> : null}
-
                         <div style={{
                 display: "grid",
                 gridTemplateColumns: "1fr 1fr",
                 gap: 8,
             }}>
-                            {(["stock_check", "purchase", "service", "other"] as const).map((reason) => (<button key={reason} type="button" onClick={() => handleEditReasonConfirm(reason)} disabled={isEditReasonSaving || purchaseCorrectionRoots !== null} style={{
+                            {(["stock_check", "purchase", "service", "other"] as const).map((reason) => (<button key={reason} type="button" onClick={() => handleEditReasonConfirm(reason)} disabled={isEditReasonSaving} style={{
                     ...ui.subButton,
                     opacity: isEditReasonSaving ? 0.6 : 1,
                     cursor: isEditReasonSaving

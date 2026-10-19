@@ -45,6 +45,18 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+async function purchaseCorrectionCountIssue(itemId:number,root:{id:number;created_at:string}) {
+  const {data:latestCheck,error}=await supabaseAdmin.from("inventory_logs").select("id,reason,created_at")
+    .eq("item_id",itemId).eq("reason","stock_check").order("created_at",{ascending:false}).order("id",{ascending:false}).limit(1).maybeSingle();
+  if(error)throw error;
+  if(!Number.isFinite(Date.parse(root.created_at)))return "purchase_correction_review_required";
+  if(!latestCheck)return null;
+  if(latestCheck.reason!=="stock_check" || !Number.isFinite(Date.parse(latestCheck.created_at)))return "purchase_correction_review_required";
+  return Date.parse(latestCheck.created_at)>Date.parse(root.created_at) ||
+    (Date.parse(latestCheck.created_at)===Date.parse(root.created_at)&&Number(latestCheck.id)>root.id)
+    ? "purchase_correction_later_stock_check" : null;
+}
+
 const INVENTORY_IMAGE_BUCKET = "inventory-images";
 const POS_ITEM_MAPPING_FK_CONSTRAINT =
   "pos_item_mappings_inventory_item_id_fkey";
@@ -449,6 +461,11 @@ export async function POST(req: Request) {
       );
     }
 
+    const requestedReason = registrationType === "existing_stock" || registrationType === "new_purchase"
+      ? getReasonByRegistrationType(registrationType) : normalizeInventoryReason(reason,"unclassified");
+    if (requestedReason === "purchase" && (!Number.isFinite(Number(payload.quantity)) || Number(payload.quantity)<=0))
+      return jsonError("inventory_purchase_quantity_must_increase","A new receipt needs a positive quantity; use a linked correction for reductions.",400);
+
     if (!normalizePackageContentPayload(payload)) {
       return NextResponse.json(
         {
@@ -600,10 +617,12 @@ export async function PATCH(req: Request) {
 
     const correctionPurchaseLogId = body.correction_of_inventory_log_id == null
       ? null : Number(body.correction_of_inventory_log_id);
-    // Ordinary edit UI confirmation is separate from the privileged emergency path.
+    // Automatic UI corrections only resolve a unique receipt from today.
+    const automaticPurchaseCorrection = mode === "quick-save" || body.autoSelectPurchaseRoot === true;
+    // Retain the validated legacy explicit edit API; current UI uses automatic resolution.
     const selectedPurchaseRootId = body.selectedPurchaseRootId == null ? null : Number(body.selectedPurchaseRootId);
-    if (selectedPurchaseRootId !== null && (!Number.isSafeInteger(selectedPurchaseRootId) || selectedPurchaseRootId <= 0
-      || mode === "quick-save" || body.source !== "edit_form" || normalizeInventoryReason(reason) !== "purchase"
+    if (selectedPurchaseRootId !== null && (automaticPurchaseCorrection || !Number.isSafeInteger(selectedPurchaseRootId) || selectedPurchaseRootId <= 0
+      || (mode !== "quick-save" && body.source !== "edit_form") || normalizeInventoryReason(reason) !== "purchase"
       || correctionPurchaseLogId !== null || expectedQuantity === undefined)) {
       return jsonError("invalid_purchase_correction", "Invalid purchase selection.", 400);
     }
@@ -760,7 +779,7 @@ export async function PATCH(req: Request) {
     // including previous days. Stock checks and sales never imply purchase intent.
     let autoCorrectionRootId: number | null = null;
     let autoCorrectionBusinessDate: string | null = null;
-    if (mode !== "quick-save" && body.source === "edit_form" && normalizeInventoryReason(reason) === "purchase" && correctionPurchaseLogId === null &&
+    if ((mode === "quick-save" || body.source === "edit_form") && normalizeInventoryReason(reason) === "purchase" && correctionPurchaseLogId === null &&
         Object.hasOwn(serverPayload, "quantity")) {
       const previousQuantity = roundDecimal(Number(prevItem.quantity ?? 0));
       const nextQuantity = roundDecimal(Number(serverPayload.quantity));
@@ -769,6 +788,7 @@ export async function PATCH(req: Request) {
       // receipt exists today. Other edits correct the nearest prior receipt.
       if (Number.isFinite(delta) && delta !== 0 &&
           delta < 0) {
+        if(automaticPurchaseCorrection && expectedQuantity === undefined) return jsonError("invalid_purchase_correction","Reload before correcting the purchase.",400);
         const { businessDate } = await resolveInventoryBusinessDate();
         const before = new Date().toISOString();
         const purchaseReduction = normalizeInventoryReason(reason) === "purchase" && delta < 0;
@@ -778,7 +798,7 @@ export async function PATCH(req: Request) {
           .gt("change_quantity", 0).is("correction_of_inventory_log_id", null)
           .lte("created_at", before).order("created_at", { ascending: false })
           .order("id", { ascending: false });
-        rootQuery = purchaseReduction ? rootQuery.lte("business_date", businessDate).limit(1001)
+        rootQuery = automaticPurchaseCorrection ? rootQuery.eq("business_date", businessDate).limit(1001) : purchaseReduction ? rootQuery.lte("business_date", businessDate).limit(1001)
           : rootQuery.eq("business_date", businessDate).limit(2);
         if (selectedPurchaseRootId !== null) rootQuery = rootQuery.eq("id", selectedPurchaseRootId);
         const { data: possibleRoots, error: rootError } = await rootQuery;
@@ -788,18 +808,46 @@ export async function PATCH(req: Request) {
           supplier_partner_id: Object.hasOwn(serverPayload, "supplier_partner_id") ? serverPayload.supplier_partner_id : prevItem.supplier_partner_id,
           purchase_price: serverPayload.purchase_price ?? prevItem.purchase_price,
         };
-        const compatibleRoots = ((possibleRoots ?? []) as PurchaseRoot[]).filter(row => purchaseCorrectionIdentityMatches(row, correctionIdentity));
-        if (purchaseReduction && selectedPurchaseRootId === null) {
+        let compatibleRoots = ((possibleRoots ?? []) as PurchaseRoot[]).filter(row => purchaseCorrectionIdentityMatches(row, correctionIdentity) && (!automaticPurchaseCorrection ||
+          (row.business_date===businessDate && Number(row.new_purchase_price)===Number(correctionIdentity.purchase_price))));
+        if (purchaseReduction && selectedPurchaseRootId === null && compatibleRoots.length) {
+          const correctionTotals = new Map<number,number>();
+          for(let offset=0;offset<compatibleRoots.length;offset+=100){
+            const {data:rows,error} = await supabaseAdmin.from("inventory_logs").select("correction_of_inventory_log_id,change_quantity")
+              .in("correction_of_inventory_log_id",compatibleRoots.slice(offset,offset+100).map(row=>row.id)).limit(1001);
+            if(error)throw error;
+            if((rows?.length??0)>=1001)return jsonError("purchase_correction_review_required", "Correction history requires review.", 409, {blockReason:"correction_history_limit"});
+            for(const row of rows??[]){if(row.correction_of_inventory_log_id==null)continue;
+              const quantity=Number(row.change_quantity);
+              if(!Number.isFinite(quantity))return jsonError("purchase_correction_review_required", "Invalid correction history.", 409, {blockReason:"invalid_correction_history"});
+              const id=Number(row.correction_of_inventory_log_id);correctionTotals.set(id,(correctionTotals.get(id)??0)+quantity);
+            }
+          }
+          compatibleRoots=compatibleRoots.map(row=>({...row,effectiveQuantity:roundDecimal(Number(row.change_quantity)+(correctionTotals.get(row.id)??0))}))
+            .filter(row=>Number(row.effectiveQuantity)>0);
+        }
+        if (purchaseReduction && selectedPurchaseRootId === null && !automaticPurchaseCorrection) {
           return NextResponse.json({ ok: false, error: compatibleRoots.length ? "purchase_correction_selection_required" : "purchase_correction_root_not_found",
             candidates: compatibleRoots.slice(0, 1000),
-            recommended: compatibleRoots.length === 1 && (possibleRoots?.length ?? 0) < 1001,
+            recommended: compatibleRoots.length === 1 && Number(compatibleRoots[0].effectiveQuantity) + delta >= 0 && (possibleRoots?.length ?? 0) < 1001,
           }, { status: 409 });
         }
-        const root = compatibleRoots.find(row => row.id === selectedPurchaseRootId) ?? null;
+        if(automaticPurchaseCorrection){
+          if((possibleRoots?.length??0)>=1001 || compatibleRoots.length>1) return jsonError("purchase_correction_ambiguous","Unable to identify one receipt from today.",409,
+            (possibleRoots?.length??0)>=1001 ? {blockReason:"candidate_limit",candidateCount:compatibleRoots.length,candidateCountExact:false}
+              : {blockReason:"multiple_candidates",candidateCount:compatibleRoots.length,candidateCountExact:true});
+          if(!compatibleRoots.length)return jsonError("purchase_correction_root_not_found","No matching receipt from today.",409);
+        }
+        const root = automaticPurchaseCorrection ? compatibleRoots[0] : compatibleRoots.find(row => row.id === selectedPurchaseRootId) ?? null;
         if (purchaseReduction && !root) return jsonError("invalid_purchase_correction", "Select a compatible original purchase.", 409);
         if (root) {
+          // A later committed physical count already supersedes receipt-derived
+          // stock. Existing expected-item/version checks protect concurrent counts.
+          const countIssue=await purchaseCorrectionCountIssue(Number(id),root);
+          if(countIssue)return jsonError(countIssue,"A later physical count must be preserved.",409,
+            countIssue === "purchase_correction_review_required" ? {blockReason:"physical_count_unverified"} : undefined);
           if (!purchaseCorrectionIdentityMatches(root, correctionIdentity))
-            return jsonError("purchase_correction_review_required", "Purchase details do not match the receipt.", 409);
+            return jsonError("purchase_correction_review_required", "Purchase details do not match the receipt.", 409, {blockReason:"purchase_details_changed"});
           const { data: corrections, error: correctionError } = await supabaseAdmin.from("inventory_logs")
             .select("change_quantity").eq("correction_of_inventory_log_id", root.id);
           if (correctionError) throw correctionError;
@@ -810,34 +858,34 @@ export async function PATCH(req: Request) {
           const { data: closure, error: closureError } = await supabaseAdmin.from("ledger_month_closures")
             .select("month").eq("month", `${root.business_date.slice(0, 7)}-01`).eq("status", "closed").maybeSingle();
           if (closureError) throw closureError;
-          if (closure) return jsonError("purchase_correction_review_required", "The purchase month is closed.", 409);
+          if (closure) return jsonError("purchase_correction_review_required", "The purchase month is closed.", 409, {blockReason:"month_closed"});
           if (root.business_date.slice(0, 7) !== businessDate.slice(0, 7)) {
             const { data: issueClosure, error: issueClosureError } = await supabaseAdmin.from("ledger_month_closures")
               .select("month").eq("month", `${businessDate.slice(0, 7)}-01`).eq("status", "closed").maybeSingle();
             if (issueClosureError) throw issueClosureError;
-            if (issueClosure) return jsonError("purchase_correction_review_required", "The correction month is closed.", 409);
+            if (issueClosure) return jsonError("purchase_correction_review_required", "The correction month is closed.", 409, {blockReason:"month_closed"});
           }
           const { data: candidate, error: candidateError } = await supabaseAdmin.from("ledger_candidates")
             .select("status,proposed_amount,resolved_transaction_id,proposed_recognition_month")
             .eq("source_type", "inventory_purchase_log").eq("source_key", `inventory-log:${root.id}`)
             .order("id", { ascending: false }).limit(1).maybeSingle();
           if (candidateError) throw candidateError;
-          if (candidate?.status === "dismissed") return jsonError("purchase_correction_review_required", "Purchase requires manual review.", 409);
+          if (candidate?.status === "dismissed") return jsonError("purchase_correction_review_required", "Purchase requires manual review.", 409, {blockReason:"purchase_dismissed"});
           if (candidate?.proposed_recognition_month && candidate.proposed_recognition_month !== `${root.business_date.slice(0, 7)}-01`) {
             const { data: recognitionClosure, error: recognitionError } = await supabaseAdmin.from("ledger_month_closures")
               .select("month").eq("month", candidate.proposed_recognition_month).eq("status", "closed").maybeSingle();
             if (recognitionError) throw recognitionError;
-            if (recognitionClosure) return jsonError("purchase_correction_review_required", "The recognition month is closed.", 409);
+            if (recognitionClosure) return jsonError("purchase_correction_review_required", "The recognition month is closed.", 409, {blockReason:"month_closed"});
           }
           if (candidate?.status === "confirmed") {
             const { data: transaction, error: transactionError } = await supabaseAdmin.from("ledger_transactions")
               .select("amount,business_date,recognition_month,status,type,source_type").eq("id", candidate.resolved_transaction_id).maybeSingle();
             if (transactionError) throw transactionError;
             if (!transaction || Number(transaction.amount) !== Number(candidate.proposed_amount))
-              return jsonError("purchase_correction_review_required", "Purchase has a manual Ledger override.", 409);
+              return jsonError("purchase_correction_review_required", "Purchase has a manual Ledger override.", 409, {blockReason:transaction ? "ledger_amount_changed" : "ledger_transaction_missing"});
             if (transaction.status !== "confirmed" || transaction.type !== "expense" ||
                 !["inventory_purchase_candidate", "inventory_purchase_rebook"].includes(transaction.source_type)) {
-              return jsonError("purchase_correction_review_required", "Linked Ledger transaction requires review.", 409);
+              return jsonError("purchase_correction_review_required", "Linked Ledger transaction requires review.", 409, {blockReason:"ledger_status_changed"});
             }
             const { data: payable, error: payableError } = await supabaseAdmin.from("ledger_payables")
               .select("id,status").eq("expense_transaction_id", candidate.resolved_transaction_id).maybeSingle();
@@ -847,14 +895,15 @@ export async function PATCH(req: Request) {
                 .select("allocated_amount").eq("payable_id", payable.id).gt("allocated_amount", 0).limit(1);
               if (allocationError) throw allocationError;
               if (payable.status !== "unpaid" || (allocations?.length ?? 0) > 0)
-                return jsonError("purchase_correction_review_required", "Purchase payment requires manual review.", 409);
+                return jsonError("purchase_correction_review_required", "Purchase payment requires manual review.", 409,
+                  {blockReason:payable.status === "paid" ? "payment_completed" : (allocations?.length??0)>0 ? "payment_allocated" : "payment_state"});
             }
             for (const month of [transaction.business_date?.slice(0, 7), transaction.recognition_month?.slice(0, 7)]) {
               if (!month || month === businessDate.slice(0, 7)) continue;
               const { data: otherClosure, error: otherClosureError } = await supabaseAdmin.from("ledger_month_closures")
                 .select("month").eq("month", `${month}-01`).eq("status", "closed").maybeSingle();
               if (otherClosureError) throw otherClosureError;
-              if (otherClosure) return jsonError("purchase_correction_review_required", "A linked Ledger month is closed.", 409);
+              if (otherClosure) return jsonError("purchase_correction_review_required", "A linked Ledger month is closed.", 409, {blockReason:"month_closed"});
             }
           }
           autoCorrectionRootId = root.id;
@@ -947,7 +996,7 @@ export async function PATCH(req: Request) {
         ? roundDecimal(Number(serverPayload.quantity ?? 0))
         : null;
 
-    if (mode === "quick-save" && quickSaveLogReason === "purchase" && quickSaveNextQuantity !== null &&
+    if (mode === "quick-save" && quickSaveLogReason === "purchase" && autoCorrectionRootId === null && quickSaveNextQuantity !== null &&
       quickSaveNextQuantity < roundDecimal(Number(prevItem.quantity ?? 0))) {
       return jsonError("inventory_purchase_quantity_must_increase", "Select an original purchase in the edit form to reduce a receipt.", 400);
     }
@@ -968,6 +1017,15 @@ export async function PATCH(req: Request) {
       );
     }
 
+    if(correctionPurchaseLogId!==null){
+      const {data:roots,error}=await supabaseAdmin.from("inventory_logs").select("id,created_at")
+        .eq("item_id",Number(id)).eq("id",correctionPurchaseLogId).limit(1);
+      if(error)throw error;
+      if(!roots?.[0])return jsonError("invalid_purchase_correction","Original purchase not found.",400);
+      const countIssue=await purchaseCorrectionCountIssue(Number(id),roots[0]);
+      if(countIssue)return jsonError(countIssue,"A later physical count must be preserved.",409,
+            countIssue === "purchase_correction_review_required" ? {blockReason:"physical_count_unverified"} : undefined);
+    }
     if (correctionPurchaseLogId !== null || autoCorrectionRootId !== null) {
       const businessDate = autoCorrectionBusinessDate ?? (await resolveInventoryBusinessDate()).businessDate;
       const { data: correction, error } = await supabaseAdmin.rpc("inventory_apply_purchase_correction_v3", {

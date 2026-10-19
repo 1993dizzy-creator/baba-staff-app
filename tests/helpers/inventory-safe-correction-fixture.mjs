@@ -1,6 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {atomicInventoryDatabase} from './inventory-atomic-fixture.mjs';
-const migration='supabase/migrations/20261011161314_safe_same_day_inventory_correction.sql';
+const migration='supabase/migrations/20261011165833_safe_same_day_inventory_correction.sql';
 const one=async(db,sql,args=[])=>(await db.query(sql,args)).rows[0];
 export async function safeFixture(Database){
  const db=await atomicInventoryDatabase(Database);

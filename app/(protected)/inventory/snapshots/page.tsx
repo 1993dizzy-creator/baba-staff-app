@@ -1,4 +1,6 @@
 "use client";
+import { inventoryReasonChangeIssue, inventoryPurchaseErrorMessage } from "@/lib/inventory/reasons";
+import type { DailyPurchaseDiagnostic } from "@/lib/inventory/daily-effective-purchases";
 
 import { normalizeInventoryEditText } from "@/lib/inventory/edit-validation";
 import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
@@ -179,6 +181,7 @@ type SnapshotItem = {
     code: string | null;
     prev_quantity: number | null;
     change_quantity: number | null;
+    correction_of_inventory_log_id?: number | null;
     purchase_price: number | null;
     prev_purchase_price?: number | null;
     new_purchase_price?: number | null;
@@ -206,6 +209,7 @@ type InventoryLog = {
     prev_quantity: number | null;
     new_quantity: number | null;
     change_quantity: number | null;
+    correction_of_inventory_log_id?: number | null;
     unit: string | null;
     code: string | null;
     purchase_price?: number | null;
@@ -222,6 +226,8 @@ type InventoryLog = {
     prev_note: string | null;
     previousKegSummary?: PreviousKegSummary | null;
 };
+
+type PurchaseDiagnostic = Omit<DailyPurchaseDiagnostic,"log"> & {log:InventoryLog;projectionStatuses?:Array<{inventory_log_id:number;status:string;code:string}>;projectionStatusUnavailable?:boolean};
 
 type PriceTrend = "up" | "down" | null;
 type MovementReasonTab = "stock_check" | "service" | "other" | "sale_deduction";
@@ -301,7 +307,7 @@ const buildDailyNetPurchasedItems = (items: SnapshotItem[]) => {
         if (item.reason !== "purchase") continue;
 
         const changeQuantity = Number(item.change_quantity ?? 0);
-        if (!Number.isFinite(changeQuantity) || changeQuantity === 0) continue;
+        if (!Number.isFinite(changeQuantity) || changeQuantity <= 0 || item.correction_of_inventory_log_id != null) continue;
 
         const key = getPurchaseGroupKey(item);
         const current = groups.get(key);
@@ -430,6 +436,7 @@ export default function InventorySnapshotsPage() {
     const [dateContentTransitioning, setDateContentTransitioning] = useState(false);
     const [logModalItem, setLogModalItem] = useState<SnapshotItem | null>(null);
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
+    const [purchaseDiagnostics,setPurchaseDiagnostics]=useState<PurchaseDiagnostic[]>([]);
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
     const [itemLogsError, setItemLogsError] = useState("");
     const [changingReasonLogId, setChangingReasonLogId] = useState<number | null>(null);
@@ -1051,6 +1058,7 @@ export default function InventorySnapshotsPage() {
             quantity: log.new_quantity,
             prev_quantity: log.prev_quantity,
             change_quantity: log.change_quantity,
+            correction_of_inventory_log_id: log.correction_of_inventory_log_id,
             unit: log.unit,
             code: log.code,
             purchase_price: purchasePrice,
@@ -1071,6 +1079,7 @@ export default function InventorySnapshotsPage() {
 
     const fetchMovementItems = useCallback(async (businessDate: string) => {
         const requestSequence = ++movementItemsRequestSequenceRef.current;
+        setPurchaseDiagnostics([]);
         setLoadingMovements(true);
         setSupplierTab("all");
 
@@ -1095,6 +1104,7 @@ export default function InventorySnapshotsPage() {
                 ? parsedJson as {
                     ok?: boolean;
                     data?: InventoryLog[];
+                    purchaseDiagnostics?: PurchaseDiagnostic[];
                     error?: string;
                     message?: string;
                 }
@@ -1120,6 +1130,7 @@ export default function InventorySnapshotsPage() {
 
             if (requestSequence !== movementItemsRequestSequenceRef.current) return;
             setMovementItems((json.data || []).map(mapLogToSnapshotItem));
+            setPurchaseDiagnostics(json.purchaseDiagnostics??[]);
         } catch (error) {
             console.warn("[inventory/snapshots] fetchMovementItems exception", {
                 url: `/api/inventory/logs?mode=logs&effectivePurchases=true&businessDate=${encodeURIComponent(businessDate)}`,
@@ -1138,6 +1149,8 @@ export default function InventorySnapshotsPage() {
 
     const changeLogReason = async (log: InventoryLog, reason: QuickReasonValue) => {
         if (changingReasonLogId || log.reason === reason) return;
+        const issue=inventoryReasonChangeIssue(log,reason);
+        if(issue){setItemLogsError(inventoryPurchaseErrorMessage(issue,lang)??c.loadFailed);return;}
 
         setChangingReasonLogId(log.id);
         setItemLogsError("");
@@ -1152,7 +1165,7 @@ export default function InventorySnapshotsPage() {
             const result = await res.json();
 
             if (!res.ok || !result.ok) {
-                setItemLogsError(result.message || c.loadFailed);
+                setItemLogsError(inventoryPurchaseErrorMessage(result.error,lang) || result.message || c.loadFailed);
                 return;
             }
 
@@ -2849,6 +2862,17 @@ export default function InventorySnapshotsPage() {
                 </div>
             )}
 
+            {purchaseDiagnostics.length>0 ? <section style={{...ui.card,padding:12,marginBottom:16}} aria-label={lang==="vi"?"Kiểm tra nhật ký nhập":"입고 기록 확인"}>
+                <h3>{lang==="vi"?"Nhật ký nhập cần kiểm tra / đã hủy":"입고 기록 확인·취소 내역"}</h3>
+                <p style={ui.metaText}>{lang==="vi"?"Không tự sửa nhật ký cũ. Phiếu hủy hoàn toàn không tính vào nhập hàng; số âm chưa liên kết không bù trừ phiếu nhập khác.":"과거 기록을 자동 수정하지 않습니다. 완전 취소 입고는 합계에서 제외하고, 원본에 연결되지 않은 음수 기록은 다른 입고에서 차감하지 않습니다."}</p>
+                {purchaseDiagnostics.map(row=><article key={row.logId} style={{padding:8,borderTop:"1px solid #e5e7eb"}}>
+                    <strong>#{row.logId} · {lang==="vi"?row.log.item_name_vi||row.log.item_name:row.log.item_name||row.log.item_name_vi}</strong>
+                    <p>{row.code==="fully_cancelled"?(lang==="vi"?"Đã hủy hoàn toàn · không tính nhập":"완전 취소 · 입고 합계 제외") :row.code==="linked_correction"?(lang==="vi"?"Sửa lô nhập đã liên kết · xem lô gốc":"원입고 연결 정정 · 원본 기록 확인"):(lang==="vi"?"Cần kiểm tra phân loại/liên kết; không tính là mua mới":"분류·원본 연결 확인 필요 · 신규 구매로 집계하지 않음")} · {row.quantity??"?"}{row.log.unit??""}</p>
+                    <p style={ui.metaText}>{lang==="vi"?"Nhật ký liên quan":"연결 기록"}: {row.logIds.map(id=>'#'+id).join(', ')} · {lang==="vi"?"Trạng thái sổ":"장부 처리 상태"}: {row.projectionStatusUnavailable?(lang==="vi"?"Không thể kiểm tra":"확인 불가"):!row.projectionStatuses?.length?(lang==="vi"?"Chưa xác nhận":"미확인"):row.projectionStatuses.map(status=>'#'+status.inventory_log_id+': '+({synced:lang==="vi"?"Đã đồng bộ":"동기화 완료",pending:lang==="vi"?"Chờ xử lý":"처리 대기",review_required:lang==="vi"?"Cần kiểm tra":"검토 필요",failed:lang==="vi"?"Thất bại":"실패"}[status.status]??status.status)+' ('+status.code+')').join(' · ')}</p>
+                    <button type="button" style={ui.subButton} onClick={()=>void fetchItemLogs(mapLogToSnapshotItem(row.log))}>{lang==="vi"?"Xem nhật ký gốc":"원본 기록 보기"}</button>
+                </article>)}
+            </section> : null}
+
             {purchasedItems.length > 0 && (
                 <div
                     style={{
@@ -4189,6 +4213,7 @@ export default function InventorySnapshotsPage() {
                                                         : "판매차감 로그는 읽기 전용입니다."}
                                                 </div>
                                             )}
+                                            {!isSalesInventoryLog(log) && (log.reason==="purchase" || Number(log.change_quantity??0)<=0 || log.correction_of_inventory_log_id!=null) ? <p style={ui.metaText}>{lang==="vi"?"Số âm nhập hàng phải liên kết lô gốc qua màn hình sửa số lượng. Không đổi phân loại nhật ký để sửa tiền sổ.":"마이너스 입고는 수량 수정 화면에서 원입고에 연결해주세요. 장부금액을 바꾸기 위해 이력 분류를 변경하지 마세요."}</p> : null}
                                             {!isSalesInventoryLog(log) && (
                                             <div
                                                 style={{
@@ -4202,13 +4227,15 @@ export default function InventorySnapshotsPage() {
                                             >
                                                 {QUICK_REASON_VALUES.map((reason) => {
                                                     const active = log.reason === reason;
-                                                    const disabled = changingReasonLogId === log.id;
+                                                    const reasonIssue=inventoryReasonChangeIssue(log,reason);
+                                                    const disabled = changingReasonLogId === log.id || reasonIssue!==null;
 
                                                     return (
                                                         <button
                                                             key={reason}
                                                             type="button"
                                                             disabled={disabled}
+                                                            title={inventoryPurchaseErrorMessage(reasonIssue??undefined,lang)??undefined}
                                                             onClick={() => changeLogReason(log, reason)}
                                                             style={{
                                                                 padding: "3px 7px",

@@ -148,6 +148,7 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootL
         select() { return query; },
         eq(field,value) { filters.push(item => item[field] === value); return query; },
         neq(field,value) { filters.push(item => item[field] !== value); return query; },
+        in(field,values) { filters.push(item => values.includes(item[field])); return query; },
         gt(field,value) { filters.push(item => item[field] > value); return query; },
         lte(field,value) { filters.push(item => item[field] <= value); return query; },
         is(field,value) { filters.push(item => item[field] === value); return query; },
@@ -167,6 +168,7 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootL
           } else if (table === 'inventory_logs') {
             data = [...rootLogs,...logs].filter(row => filters.every(filter => filter(row)))
               .sort((a,b) => { for(const [field,ascending] of orders) { const result=String(a[field]).localeCompare(String(b[field])); if(result)return ascending?result:-result; } return 0; }).slice(0,max);
+            if(single)data=data[0]??null;
           } else if (['ledger_month_closures','ledger_candidates','ledger_transactions','ledger_payables','ledger_payable_allocations'].includes(table)) {
             const sourceRows = table === 'ledger_month_closures' ? closedMonths.map(month => ({month,status:'closed'})) : table === 'ledger_candidates' ? (candidate ? [candidate] : []) : table === 'ledger_transactions' ? (transaction ? [transaction] : []) : table === 'ledger_payables' ? (payable ? [payable] : []) : payableAllocations;
             const filtered = sourceRows.filter(row => filters.every(filter => filter(row)));
@@ -343,7 +345,7 @@ test('ordinary edit-form stock check, service, and other reasons keep their exis
 
 test('owner and master can keep using the emergency purchase-correction flow',async()=>{
   for(const role of ['owner','master']) {
-    const state=itemSetup({role});
+    const state=itemSetup({role,rootLogs:[root(99,10,'2026-09-01T08:00:00Z')]});
     const response=await state.invoke('PATCH',{id:1,source:'edit_form',reason:'purchase',correction_of_inventory_log_id:99,expectedQuantity:10,payload:{quantity:6}});
     assert.equal(response.status,200);assert.equal(state.item.quantity,6);assert.equal(state.logs[0].correction_of_inventory_log_id,99);
     assert.equal((await response.json()).ledgerSync.status,'synced');assert.deepEqual(state.calls,['atomic-correction']);
@@ -526,7 +528,7 @@ test('selected root is revalidated for identity, closed months, quantity bounds 
 
 test('quick-save purchase reduction cannot write an unlinked negative purchase',async()=>{
  const state=itemSetup();const response=await state.invoke('PATCH',{id:1,mode:'quick-save',reason:'purchase',expectedQuantity:10,payload:{quantity:8}});
- assert.equal(response.status,400);assert.equal(state.logs.length,0);assert.equal(state.item.quantity,10);
+ assert.equal(response.status,409);assert.equal((await response.json()).error,'purchase_correction_root_not_found');assert.equal(state.logs.length,0);assert.equal(state.item.quantity,10);
 });
 test('cross-day stock_check and other do not infer purchase intent',async()=>{
  for(const reason of ['stock_check','other']){
@@ -535,4 +537,14 @@ test('cross-day stock_check and other do not infer purchase intent',async()=>{
  assert.equal(response.status,200);assert.equal(state.logs[0].reason,reason);
  assert.equal(state.logs[0].correction_of_inventory_log_id,undefined);assert.equal(state.calls.includes('atomic-correction'),false);
  }
+});
+
+test('history classification cannot turn a negative count into a standalone purchase, even in bulk/sync requests',async()=>{
+ for(const change_quantity of [-4.52,0]){const state=setup({reason:'stock_check'});state.log.change_quantity=change_quantity;const before=JSON.stringify(state.log);const response=await state.patch({id:100,logIds:[100],reason:'purchase',syncCurrentItem:true});assert.equal(response.status,409);assert.equal((await response.json()).error,'inventory_nonpositive_purchase_classification');assert.deepEqual(state.calls,[]);assert.equal(JSON.stringify(state.log),before);}
+});
+test('purchase history relabeling fails before source, inventory, price history or projection writes',async()=>{
+ for(const [reason,next] of [['purchase','stock_check'],['other','purchase']]){const state=setup({reason});const response=await state.patch({id:100,reason:next,syncCurrentItem:true});assert.equal(response.status,409);assert.equal((await response.json()).error,'inventory_purchase_reclassification_requires_review');assert.deepEqual(state.calls,[]);}
+});
+test('new item creation cannot emit an unlinked nonpositive purchase',async()=>{
+ for(const quantity of [-1,0]){const state=itemSetup();const response=await state.invoke('POST',{registrationType:'new_purchase',payload:createPayload({quantity})});assert.equal(response.status,400);assert.equal((await response.json()).error,'inventory_purchase_quantity_must_increase');assert.deepEqual(state.calls,[]);assert.deepEqual(state.logs,[]);}
 });

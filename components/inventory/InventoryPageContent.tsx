@@ -1,4 +1,5 @@
 "use client";
+import { inventoryPurchaseErrorMessage, type InventoryPurchaseErrorDetails } from "@/lib/inventory/reasons";
 
 import { normalizeInventoryEditText } from "@/lib/inventory/edit-validation";
 import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
@@ -11,7 +12,6 @@ import Container from "@/components/Container";
 import { ui } from "@/lib/styles/ui";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { fetchInventoryApi } from "@/lib/inventory/client-auth";
-import type { PurchaseRoot } from "@/lib/inventory/purchase-correction-policy";
 import { readInventoryBootstrapStream } from "@/lib/inventory/bootstrap-stream";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -100,14 +100,13 @@ type DuplicateInventoryItem = Pick<
     "id" | "item_name" | "item_name_vi" | "code" | "part" | "category" | "category_vi" | "is_active"
 >;
 
-type InventoryItemMutationResult = {
+type InventoryItemMutationResult = InventoryPurchaseErrorDetails & {
+    code?: string;
     ok?: boolean;
     error?: string;
     message?: string;
     data?: InventoryItem;
     duplicateItem?: DuplicateInventoryItem;
-    candidates?: PurchaseRoot[];
-    recommended?: boolean;
 };
 
 
@@ -406,6 +405,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
     const [latestSnapshotMap, setLatestSnapshotMap] = useState<Record<number, number>>({});
     const [latestSnapshotDate, setLatestSnapshotDate] = useState<string>("");
     const [quickSaveItem, setQuickSaveItem] = useState<InventoryItem | null>(null);
+    const quickSaveLockRef=useRef(false);
     const [quickSaveReason, setQuickSaveReason] = useState<
         QuickReasonValue | null
     >(null);
@@ -2123,7 +2123,8 @@ alert(c.saveSuccess);
     const handleQuickSaveConfirm = async (
         reason: QuickReasonValue
     ) => {
-        if (isQuickSaving || isKegReplacing) return;
+        if (isQuickSaving || isKegReplacing || quickSaveLockRef.current) return;
+        quickSaveLockRef.current=true;
         setIsQuickSaving(true);
 
         try {
@@ -2152,6 +2153,10 @@ alert(c.saveSuccess);
                 alert(t.otherReason);
                 return;
             }
+
+            if(reason==="purchase" && nextQty<currentQty && !window.confirm(lang==="vi"
+                ? "Bạn có muốn điều chỉnh số lượng hàng đã nhập hôm nay không?"
+                : "오늘 입고된 수량을 정정하시겠습니까?")) return;
 
             const normalizedQuickSupplier = normalizeText(quickPurchaseSupplier);
             const nextPurchasePrice =
@@ -2186,12 +2191,19 @@ alert(c.saveSuccess);
                     payload,
                     expectedQuantity: currentQty,
                     reason,
+
                 }),
             });
 
             const result = await res.json();
 
             if (!res.ok || !result.ok) {
+                const purchaseError=inventoryPurchaseErrorMessage(result.error ?? result.code,lang,result);
+                if(purchaseError){alert(purchaseError);return;}
+                if(reason==="purchase" && nextQty<currentQty){
+                    alert(lang==="vi" ? "Không thể hoàn tất yêu cầu điều chỉnh. Dữ liệu bạn nhập được giữ nguyên. Vui lòng liên hệ quản lý." : "정정 요청을 완료하지 못했습니다. 입력값은 유지했습니다. 관리자에게 문의해 주세요.");
+                    return;
+                }
                 console.error(result);
 
                 if (res.status === 409) {
@@ -2228,6 +2240,7 @@ alert(c.saveSuccess);
                 )
             );
         } finally {
+            quickSaveLockRef.current=false;
             setIsQuickSaving(false);
         }
     };
@@ -5701,9 +5714,9 @@ alert(c.saveSuccess);
                                                 {lang === "vi" ? "Sau nhập" : "최종수량"}:{" "}
                                                 {formatDecimalDisplay(nextQty)}
                                             </span>
-                                            <span style={{ color: "seagreen" }}>
-                                                {INVENTORY_REASON_LABELS[lang].purchase}: +
-                                                {formatDecimalDisplay(changeQty)}
+                                            <span data-testid="quick-purchase-delta" style={{ color: changeQty<0 ? "#dc2626" : "seagreen" }}>
+                                                {INVENTORY_REASON_LABELS[lang].purchase}: {changeQty>0 ? "+" : ""}{formatDecimalDisplay(changeQty)}
+                                                {changeQty<0 ? (lang==="vi" ? " (điều chỉnh số lượng)" : " (수량정정)") : ""}
                                             </span>
                                         </div>
                                     );
@@ -5783,7 +5796,6 @@ alert(c.saveSuccess);
                                     placeholder={t.purchasePrice}
                                     style={ui.input}
                                 />
-
                                 <button
                                     type="button"
                                     onClick={() => handleQuickSaveConfirm("purchase")}

@@ -3,21 +3,25 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 import {atomicInventoryDatabase} from './helpers/inventory-atomic-fixture.mjs';
+import {safeFixture,snapshot as safeSnapshot} from './helpers/inventory-safe-correction-fixture.mjs';
 const load=(file,deps={})=>{const m={exports:{}};const code=ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('require','module','exports',code)(name=>{assert.ok(name in deps,'unexpected dependency '+name);return deps[name];},m,m.exports);return m.exports;};
 const version='2026-10-10T03:00:00.000Z';
-function setup({role='owner',authenticated=true,inactive=false,race=false,closed=false,quantity=2,postCommitFailure=false,rpcHandler=null}={}) {
+function setup({role='owner',authenticated=true,inactive=false,race=false,closed=false,quantity=2,postCommitFailure=false,rpcHandler=null,correctionRows=[],stockCheck=null,paid=false,rootDate="2026-10-03",extraRoots=[],rootOverrides={},itemOverrides={},businessDate="2026-10-10",candidateOverride=undefined,transactionOverride=undefined,payableOverride=undefined,allocations=[]}={}) {
  const calls=[],writes=[],projections=[];
- const item={id:1,item_name:'Oil',item_name_vi:'Dau',part:'kitchen',quantity,purchase_price:30000,supplier:'QA',supplier_partner_id:null,unit:'bottle',code:'QA',is_active:!inactive,updated_at:version};
- const root={id:12407,item_id:1,reason:'purchase',change_quantity:2,correction_of_inventory_log_id:null,business_date:'2026-10-03',created_at:'2026-10-03T03:00:00Z',unit:'bottle',new_supplier:'QA',new_purchase_price:30000,purchase_supplier_partner_id:null};
- const db={from(table){calls.push(table);let update,insert,single=false,filters=[];const q={select(){return q;},eq(k,v){filters.push([k,v]);return q;},is(k,v){filters.push([k,v]);return q;},neq(k,v){filters.push(['!'+k,v]);return q;},in(){return q;},order(){return q;},gt(){return q;},lte(){return q;},limit(){return q;},update(v){update=v;return q;},insert(v){insert=v;return q;},single(){single=true;return q;},maybeSingle(){single=true;return q;},then(resolve,reject){let data=null;
+ const item={id:1,item_name:'Oil',item_name_vi:'Dau',part:'kitchen',quantity,purchase_price:30000,supplier:'QA',supplier_partner_id:null,unit:'bottle',code:'QA',is_active:!inactive,updated_at:version,...itemOverrides};
+ const root={id:12407,item_id:1,reason:'purchase',change_quantity:2,correction_of_inventory_log_id:null,business_date:rootDate,created_at:rootDate+'T03:00:00Z',unit:'bottle',new_supplier:'QA',new_purchase_price:30000,purchase_supplier_partner_id:null,...rootOverrides};
+ const db={from(table){calls.push(table);let update,insert,filters=[];const q={select(){return q;},eq(k,v){filters.push([k,v]);return q;},is(k,v){filters.push([k,v]);return q;},neq(k,v){filters.push(['!'+k,v]);return q;},in(k,v){filters.push(['in:'+k,v]);return q;},order(){return q;},gt(){return q;},lte(){return q;},limit(){return q;},update(v){update=v;return q;},insert(v){insert=v;return q;},single(){return q;},maybeSingle(){return q;},then(resolve,reject){let data=null;
  if(table==='inventory'){
   if(update){if(race)item.updated_at='2026-10-10T04:00:00.000Z';if(filters.every(([k,v])=>k.startsWith('!')?item[k.slice(1)]!==v:item[k]===v)){Object.assign(item,update);writes.push({table,update});data={...item};}}
   else data=filters.some(([k])=>k==='!id')?[]:{...item};
- }else if(table==='inventory_logs'){if(insert){if(postCommitFailure)throw Error('audit transport unavailable');writes.push({table,insert});data={id:101,...insert};}else if(filters.some(([k,v])=>k==='correction_of_inventory_log_id' && v!==null))data=[];else data=[root];}
+ }else if(table==='inventory_logs'){if(insert){if(postCommitFailure)throw Error('audit transport unavailable');writes.push({table,insert});data={id:101,...insert};}else if(filters.some(([k,v])=>k==='reason'&&v==='stock_check'))data=stockCheck;else if(filters.some(([k,v])=>(k==='correction_of_inventory_log_id'&&v!==null)||k==='in:correction_of_inventory_log_id'))data=correctionRows;else data=[root,...extraRoots];}
  else if(table==='business_partners')data=[{id:10,name:'QA'}];
  else if(table==='business_partner_supplier_aliases')data=[{id:20,supplier_name:'Alias',status:'linked',business_partner_id:10}];
  else if(table==='ledger_month_closures')data=closed?{month:'2026-10-01'}:null;
- else if(table==='ledger_candidates')data=null;
+ else if(table==='ledger_candidates')data=candidateOverride!==undefined?candidateOverride:paid?{status:'confirmed',proposed_amount:60000,resolved_transaction_id:1}:null;
+ else if(table==='ledger_transactions')data=transactionOverride!==undefined?transactionOverride:{id:1,status:'confirmed',type:'expense',source_type:'inventory_purchase_candidate',amount:60000,business_date:'2026-10-03',recognition_month:'2026-10-01'};
+ else if(table==='ledger_payables')data=payableOverride!==undefined?payableOverride:paid?{id:1,status:'paid'}:null;
+ else if(table==='ledger_payable_allocations')data=allocations;
  else throw Error('Unexpected table '+table);
  return Promise.resolve({data,error:null}).then(resolve,reject);}};return q;},rpc:async(name,args)=>{calls.push(name);if(rpcHandler)return rpcHandler(name,args);if(name==='inventory_update_with_audit_v1'){
  if(race)item.updated_at='2026-10-10T04:00:00.000Z';
@@ -34,7 +38,7 @@ function setup({role='owner',authenticated=true,inactive=false,race=false,closed
  '@/lib/inventory/keg-progress':{fetchKegProgressByItemId:async()=>new Map()},
  '@/lib/inventory/items-server':{canToggleInventoryItemActiveStatus:r=>['owner','master','manager','leader'].includes(r),fetchInventoryItems:()=>{throw Error('bulk read forbidden in selected route');},fetchActiveKegTrackingMappings:()=>[],getInventoryKegCandidateIds:()=>[],buildInventoryItemsResponse:({items})=>items},
  '@/lib/inventory/normalize':load('lib/inventory/normalize.ts'),
- '@/lib/inventory/inventory-business-time':{resolveInventoryBusinessDate:async()=>({businessDate:'2026-10-10'})},
+ '@/lib/inventory/inventory-business-time':{resolveInventoryBusinessDate:async()=>({businessDate})},
  '@/lib/inventory/purchase-correction-policy':load('lib/inventory/purchase-correction-policy.ts'),
  '@/lib/inventory/price-logs':{insertInventoryPriceLog:async()=>{}},
  '@/lib/ledger/inventory-projection':{projectInventoryPurchaseLog:async(id,actor)=>{projections.push({id,actor});return {status:'synced',code:'REBOOKED',inventoryLogId:id};}},
@@ -134,4 +138,81 @@ for(const [dbStatus,httpStatus] of [['not_found',404],['forbidden',403],['quanti
 test('missing atomic correction v3 fails without legacy or post-commit projection fallback',async()=>{
  const s=setup({rpcHandler:async(name)=>{assert.equal(name,'inventory_apply_purchase_correction_v3');return {data:null,error:{code:'PGRST202'}};}});
  const r=await s.patch(edit({payload:{quantity:1,unit:'bottle',supplier:'QA',purchase_price:30000},reason:'purchase',selectedPurchaseRootId:12407}));assert.equal(r.status,500);assert.equal((await r.json()).ok,false);assert.equal(s.writes.length,0);assert.equal(s.projections.length,0);
+});
+test('quick-save automatically links one receipt from today and calls the existing atomic RPC once',async()=>{
+ const s=setup({role:'staff',rootDate:'2026-10-10',correctionRows:[{id:10,correction_of_inventory_log_id:12407,change_quantity:-0.5}]});
+ const body=edit({mode:'quick-save',source:'quick_save',payload:{quantity:1,unit:'bottle',supplier:'QA',purchase_price:30000},reason:'purchase'});
+ const saved=await s.patch(body);assert.equal(saved.status,200);assert.equal(s.writes.length,1);assert.equal(s.writes[0].rpc,'inventory_apply_purchase_correction_v3');assert.equal(s.writes[0].args.p_purchase_log_id,12407);assert.deepEqual(s.projections,[]);
+});
+test('automatic quick-save cannot overcorrect a partially corrected receipt',async()=>{
+ const s=setup({rootDate:'2026-10-10',correctionRows:[{correction_of_inventory_log_id:12407,change_quantity:-1.5}]});const r=await s.patch(edit({mode:'quick-save',source:'quick_save',payload:{quantity:1},reason:'purchase'}));assert.equal(r.status,409);assert.equal((await r.json()).error,'purchase_correction_exceeds_purchase');assert.deepEqual(s.writes,[]);
+});
+test('fully cancelled receipts are not proposed for another negative correction',async()=>{
+ const s=setup({rootDate:"2026-10-10",correctionRows:[{correction_of_inventory_log_id:12407,change_quantity:-2}]});const r=await s.patch(edit({mode:'quick-save',source:'quick_save',payload:{quantity:1},reason:'purchase'}));assert.equal((await r.json()).error,'purchase_correction_root_not_found');assert.deepEqual(s.writes,[]);
+});
+test('both purchase editors preserve later physical stock, including a zero-delta count',async()=>{
+ for(const mode of ['quick-save','edit']){const s=setup({rootDate:"2026-10-10",stockCheck:{id:13000,reason:'stock_check',created_at:'2026-10-11T00:00:00Z',change_quantity:0}});const r=await s.patch(edit({mode,source:mode==='quick-save'?'quick_save':'edit_form',payload:{quantity:1},reason:'purchase',autoSelectPurchaseRoot:true}));assert.equal(r.status,409);assert.equal((await r.json()).error,'purchase_correction_later_stock_check');assert.deepEqual(s.writes,[]);}
+});
+test('quick correction retains paid and closed-month protections with no writes',async()=>{
+ for(const option of [{paid:true},{closed:true}]){const s=setup({...option,rootDate:"2026-10-10"});const r=await s.patch(edit({mode:'quick-save',source:'quick_save',payload:{quantity:1},reason:'purchase'}));assert.equal(r.status,409);assert.equal((await r.json()).error,'purchase_correction_review_required');assert.deepEqual(s.writes,[]);}
+});
+test('an automatic quick correction preserves the atomic RPC conflict result and never falls back',async()=>{
+ const s=setup({rootDate:"2026-10-10",rpcHandler:async()=>({data:{status:'inventory_conflict'},error:null})});const r=await s.patch(edit({mode:'quick-save',source:'quick_save',payload:{quantity:1},reason:'purchase'}));assert.equal(r.status,409);assert.deepEqual(s.writes,[]);assert.deepEqual(s.projections,[]);
+});
+
+test('privileged emergency corrections also preserve later physical counts',async()=>{
+ const s=setup({stockCheck:{id:13000,reason:'stock_check',created_at:'2026-10-04T00:00:00Z',change_quantity:0}});const response=await s.patch(edit({payload:{quantity:1},reason:'purchase',correction_of_inventory_log_id:12407}));assert.equal(response.status,409);assert.equal((await response.json()).error,'purchase_correction_later_stock_check');assert.deepEqual(s.writes,[]);
+});
+test('unknown physical-count chronology fails closed instead of changing stock',async()=>{
+ const s=setup({stockCheck:{id:13000,reason:'stock_check',created_at:'invalid'}});const response=await s.patch(edit({payload:{quantity:1},reason:'purchase',selectedPurchaseRootId:12407}));assert.equal(response.status,409);assert.equal((await response.json()).error,'purchase_correction_review_required');assert.deepEqual(s.writes,[]);
+});
+
+test('automatic resolution rejects previous-day, wrong-price, missing and ambiguous receipts without any writes',async()=>{
+ for(const options of [{},{rootDate:'2026-10-10',rootOverrides:{new_purchase_price:29000}},{rootDate:'2026-10-10',rootOverrides:{unit:'kg'}},{rootDate:'2026-10-10',rootOverrides:{new_supplier:'Another supplier'}},{rootDate:'2026-10-10',extraRoots:[{id:12408,item_id:1,reason:'purchase',change_quantity:1,correction_of_inventory_log_id:null,business_date:'2026-10-10',created_at:'2026-10-10T04:00:00Z',unit:'bottle',new_supplier:'QA',new_purchase_price:30000,purchase_supplier_partner_id:null}]}]){
+  for(const mode of ['quick-save','edit']){const s=setup(options);const r=await s.patch(edit({mode,reason:'purchase',autoSelectPurchaseRoot:true,payload:{quantity:1}}));assert.equal(r.status,409);assert.ok(['purchase_correction_root_not_found','purchase_correction_ambiguous'].includes((await r.json()).error));assert.deepEqual(s.writes,[]);assert.deepEqual(s.projections,[]);}
+ }
+});
+test('caller cannot force a chosen quick-save root or bypass the expected-quantity requirement',async()=>{
+ for(const body of [edit({mode:'quick-save',reason:'purchase',payload:{quantity:1},selectedPurchaseRootId:12407}),edit({mode:'quick-save',reason:'purchase',payload:{quantity:1},expectedQuantity:undefined})]){const s=setup({rootDate:'2026-10-10'});const r=await s.patch(body);assert.equal(r.status,400);assert.deepEqual(s.writes,[]);}
+});
+test('edit form automatically links today without returning candidate selectors',async()=>{
+ const s=setup({rootDate:'2026-10-10',role:'staff'});const r=await s.patch(edit({reason:'purchase',autoSelectPurchaseRoot:true,payload:{quantity:1}}));assert.equal(r.status,200);const b=await r.json();assert.equal(b.candidates,undefined);assert.equal(s.writes[0].args.p_purchase_log_id,12407);
+});
+test('automatic same-day API -> actual v3 SQL rebooks one expense and preserves audit and unpaid links',async()=>{
+ const db=await safeFixture();try{
+  await db.exec("insert into users(id,role,is_active,app_login_enabled,name,username) values(7,'staff',true,true,'Session actor','qa')");
+  const old=await safeSnapshot(db);const row=(await db.query('select * from inventory_logs where id=100')).rows[0];const root={...row,business_date:row.business_date.toISOString().slice(0,10),created_at:row.created_at.toISOString()};
+  const s=setup({role:'staff',quantity:Number(old.quantity),itemOverrides:old,rootOverrides:root,businessDate:'2026-10-11',rpcHandler:async(name,args)=>{try{const entries=Object.entries(args),data=(await db.query('select '+name+'('+entries.map(([key],i)=>key+'=> $'+(i+1)).join(',')+') as result',entries.map(([,v])=>v!==null&&typeof v==='object'?JSON.stringify(v):v))).rows[0].result;return {data,error:null};}catch(error){return {data:null,error};}}});
+  const response=await s.patch(edit({mode:'quick-save',reason:'purchase',expectedQuantity:Number(old.quantity),expectedUpdatedAt:old.updated_at,payload:{quantity:9}}));
+  assert.equal(response.status,200,JSON.stringify(await response.clone().json()));assert.equal((await response.json()).ledgerSync.code,'REBOOKED');assert.equal(Number((await db.query('select quantity from inventory where id=1')).rows[0].quantity),9);
+  assert.equal(Number((await db.query('select sum(amount*economic_effect_sign) as n from ledger_transactions')).rows[0].n),180000);
+  assert.equal(Number((await db.query("select count(*) as n from ledger_transactions where source_type='inventory_purchase_reversal'")).rows[0].n),1);
+  assert.equal(Number((await db.query('select correction_of_inventory_log_id as id from inventory_logs where correction_of_inventory_log_id=100')).rows[0].id),100);
+  assert.equal(Number((await db.query("select count(*) as n from ledger_audit_logs where action='inventory_purchase_auto_corrected'")).rows[0].n),1);
+  assert.equal(Number((await db.query("select count(*) as n from ledger_payables where status='unpaid' and original_amount=180000")).rows[0].n),1);
+ }finally{await db.close();}
+});
+
+const alertRoot=id=>({id,item_id:1,reason:'purchase',change_quantity:2,correction_of_inventory_log_id:null,business_date:'2026-10-10',created_at:'2026-10-10T03:00:00Z',unit:'bottle',new_supplier:'QA',new_purchase_price:30000,purchase_supplier_partner_id:null});
+test('ambiguous error keeps its code and reports exactly the compatible effective candidate count',async()=>{
+ const s=setup({rootDate:'2026-10-10',extraRoots:[alertRoot(12408),alertRoot(12409),{...alertRoot(12410),unit:'kg'},alertRoot(12411)],correctionRows:[{correction_of_inventory_log_id:12411,change_quantity:-2}]});
+ const response=await s.patch(edit({mode:'quick-save',reason:'purchase',payload:{quantity:1}}));assert.equal(response.status,409);const b=await response.json();assert.equal(b.error,'purchase_correction_ambiguous');assert.equal(b.blockReason,'multiple_candidates');assert.equal(b.candidateCount,3);assert.equal(b.candidateCountExact,true);assert.equal(b.candidates,undefined);assert.deepEqual(s.writes,[]);assert.deepEqual(s.projections,[]);
+});
+test('candidate truncation never claims an exact count or chooses a receipt',async()=>{
+ const s=setup({rootDate:'2026-10-10',extraRoots:Array.from({length:1000},(_,i)=>alertRoot(20000+i))});const r=await s.patch(edit({mode:'quick-save',reason:'purchase',payload:{quantity:1}}));assert.equal(r.status,409);const b=await r.json();assert.equal(b.error,'purchase_correction_ambiguous');assert.equal(b.blockReason,'candidate_limit');assert.equal(b.candidateCountExact,false);assert.deepEqual(s.writes,[]);
+});
+for(const [name,options,code,blockReason] of [
+ ['paid',{paid:true},'purchase_correction_review_required','payment_completed'],
+ ['allocated',{paid:true,payableOverride:{id:1,status:'unpaid'},allocations:[{allocated_amount:100}]},'purchase_correction_review_required','payment_allocated'],
+ ['other payment state',{paid:true,payableOverride:{id:1,status:'cancelled'}},'purchase_correction_review_required','payment_state'],
+ ['closed month',{closed:true},'purchase_correction_review_required','month_closed'],
+ ['missing ledger transaction',{paid:true,transactionOverride:null},'purchase_correction_review_required','ledger_transaction_missing'],
+ ['changed ledger amount',{paid:true,transactionOverride:{amount:50000}},'purchase_correction_review_required','ledger_amount_changed'],
+ ['dismissed source',{candidateOverride:{status:'dismissed'}},'purchase_correction_review_required','purchase_dismissed'],
+ ['unknown physical check',{stockCheck:{id:13000,reason:'stock_check',created_at:'invalid'}},'purchase_correction_review_required','physical_count_unverified'],
+ ['later physical check',{stockCheck:{id:13000,reason:'stock_check',created_at:'2026-10-11T00:00:00Z'}},'purchase_correction_later_stock_check',undefined],
+ ['overcorrection',{correctionRows:[{correction_of_inventory_log_id:12407,change_quantity:-1.5}]},'purchase_correction_exceeds_purchase',undefined],
+ ['quantity conflict',{},'QUANTITY_CONFLICT',undefined],
+])test('server reports '+name+' from the actual guard without source or ledger writes',async()=>{
+ const s=setup({rootDate:'2026-10-10',...options});const r=await s.patch(edit({mode:'quick-save',reason:'purchase',payload:{quantity:1},...(name==='quantity conflict'?{expectedQuantity:1}:{})}));assert.equal(r.status,409);const b=await r.json();assert.equal(b.error,code);assert.equal(b.blockReason,blockReason);assert.deepEqual(s.writes,[]);assert.deepEqual(s.projections,[]);
 });
