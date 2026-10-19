@@ -24,11 +24,13 @@ type InventoryPhotoItem = {
   unit?: string | null;
   code?: string | null;
   supplier?: string | null;
+  supplier_partner_id?: number | null;
   low_stock_threshold?: string | number | null;
   image_path?: string | null;
 };
 
 type InventoryPhotoActor = {
+  id?: number;
   name?: string | null;
   username?: string | null;
 };
@@ -109,6 +111,7 @@ const getInventoryItem = async (supabaseAdmin: SupabaseAdmin, itemId: number) =>
       unit,
       code,
       supplier,
+      supplier_partner_id,
       low_stock_threshold,
       image_path
     `)
@@ -163,6 +166,8 @@ const insertPhotoLog = async ({
       new_note: note,
       prev_supplier: item.supplier ?? null,
       new_supplier: item.supplier ?? null,
+      purchase_supplier_partner_id: item.supplier_partner_id ?? null,
+      source_actor_user_id: actor.id ?? null,
       prev_code: item.code ?? null,
       new_code: item.code ?? null,
       prev_unit: item.unit ?? null,

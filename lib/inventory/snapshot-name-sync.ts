@@ -26,6 +26,7 @@ export type InventoryDailySyncLogRow = {
   business_date: string | null;
   created_at: string | null;
   reason: string | null;
+  source?: string | null;
   change_quantity: number | null;
   correction_of_inventory_log_id?: number | null;
   prev_quantity: number | null;
@@ -125,7 +126,11 @@ export const isInventorySnapshotNameSyncEligible = (businessDate: string) =>
 export const canRunInventorySnapshotNameSync = (role: string | null | undefined) =>
   INVENTORY_SNAPSHOT_NAME_SYNC_ROLES.has(String(role ?? "").trim().toLowerCase());
 
+const isPhotoLog = (log: InventoryDailySyncLogRow) =>
+  String(log.source ?? "").trim().toLowerCase() === "photo";
+
 const isActualPurchase = (log: InventoryDailySyncLogRow) =>
+  !isPhotoLog(log) &&
   String(log.reason ?? "").trim().toLowerCase() === "purchase" &&
   Number(log.change_quantity ?? 0) > 0 && log.correction_of_inventory_log_id == null;
 const isZeroQuantityCorrection = (log: InventoryDailySyncLogRow) =>
@@ -158,20 +163,30 @@ const sortLogs = (left: InventoryDailySyncLogRow, right: InventoryDailySyncLogRo
 };
 
 const toSyncItem = (
-  correction: InventoryDailySyncLogRow,
+  corrections: readonly InventoryDailySyncLogRow[],
   current: CurrentInventoryDailySyncRow,
   root: InventoryDailySyncLogRow,
   isLatestSegment: boolean
 ): InventoryDailySyncTarget["syncItem"] => {
+  const correction = corrections.at(-1)!;
   const result = {} as InventoryDailySyncTarget["syncItem"];
-  for (const field of SYNC_FIELDS) {
-    const recordedValue = logValue(correction, field);
-    const correctionValue = ECONOMIC_FIELDS.includes(field) && recordedValue == null &&
-      (field !== "supplier_partner_id" || correction.new_supplier == null)
-      ? logValue(root, field) : recordedValue;
-    // Master economics can belong to a later purchase on a different day.
-    // Only display fields may use the live item; money and payee are historical.
-    const value = DISPLAY_FIELDS.includes(field) && isLatestSegment ? current[field] : correctionValue;
+  // Replay genuine metadata corrections. A photo is only an audit snapshot and
+  // can have missing or stale money/payee fields, including on historical rows.
+  for (const field of ECONOMIC_FIELDS) Object.assign(result, { [field]: logValue(root, field) ?? null });
+  for (const row of corrections) {
+    if (isPhotoLog(row)) continue;
+    for (const field of ECONOMIC_FIELDS) {
+      const recorded = logValue(row, field);
+      // Retain explicit partner unlinking on real edits that record a supplier.
+      // Sparse display edits inherit the preceding effective economic values.
+      if (recorded != null || (field === "supplier_partner_id" && row.new_supplier != null))
+        Object.assign(result, { [field]: recorded ?? null });
+    }
+  }
+  for (const field of DISPLAY_FIELDS) {
+    // Master money/payee may belong to a later purchase/day. Only display
+    // metadata may use the live item, preserving the existing segment policy.
+    const value = isLatestSegment ? current[field] : logValue(correction, field);
     Object.assign(result, { [field]: value ?? null });
   }
   return result;
@@ -223,7 +238,7 @@ export function findInventoryLogNameSyncItems(
       const correction = corrections.at(-1);
       if (!correction) continue;
 
-      const syncItem = toSyncItem(correction, current, root, !nextRoot);
+      const syncItem = toSyncItem(corrections, current, root, !nextRoot);
       const changes = SYNC_FIELDS.flatMap((field) => {
         const from = logValue(root, field);
         const to = syncItem[field];
@@ -242,11 +257,11 @@ export function findInventoryLogNameSyncItems(
         }
         return [change];
       });
-      const quantityReviewRequired = corrections.some(hasQuantityDiscrepancy);
+      const quantityReviewRequired = corrections.some(log => !isPhotoLog(log) && hasQuantityDiscrepancy(log));
       if (changes.length === 0 && !quantityReviewRequired) continue;
       targets.push({
         purchaseLogId: Number(root.id),
-        correctionLogId: Number(correction.id),
+        correctionLogId: Number((corrections.filter(log => !isPhotoLog(log)).at(-1) ?? correction).id),
         linkedCorrectionLogIds: itemLogs.filter(log => Number(log.correction_of_inventory_log_id) === Number(root.id)).map(log => Number(log.id)),
         changes,
         quantityReviewRequired,

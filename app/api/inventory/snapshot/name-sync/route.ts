@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" } as const;
 const LOG_PAGE_SIZE = 1000;
 const LOG_SELECT = [
-  "id", "item_id", "business_date", "created_at", "reason", "change_quantity", "correction_of_inventory_log_id",
+  "id", "item_id", "business_date", "created_at", "reason", "source", "change_quantity", "correction_of_inventory_log_id",
   "prev_quantity", "new_quantity", "item_name", "item_name_vi", "part", "new_part",
   "category", "category_vi", "new_category", "new_category_vi", "code", "new_code",
   "unit", "new_unit", "new_purchase_price", "new_supplier", "purchase_supplier_partner_id",
@@ -150,11 +150,13 @@ async function runItemSync({
   let snapshotRowsUpdated = 0;
   try {
     for (const target of plan.targets) {
+      const syncEconomics = !target.quantityReviewRequired && target.changes.some(change =>
+        ["purchase_price", "supplier", "supplier_partner_id"].includes(change.field));
       await syncInventoryLogRowsFromItem({
         supabase,
         item: target.syncItem,
-        purchaseLogIds: target.quantityReviewRequired ? [] : [target.purchaseLogId],
-        displayOnlyLogIds: [...target.linkedCorrectionLogIds, ...(target.quantityReviewRequired ? [target.purchaseLogId] : [])],
+        purchaseLogIds: syncEconomics ? [target.purchaseLogId] : [],
+        displayOnlyLogIds: [...target.linkedCorrectionLogIds, ...(!syncEconomics ? [target.purchaseLogId] : [])],
       });
       if (target.quantityReviewRequired) {
         await projectInventoryPurchaseLogs([target.purchaseLogId], actorUserId);
