@@ -229,6 +229,16 @@ type InventoryLog = {
 
 type PurchaseDiagnostic = Omit<DailyPurchaseDiagnostic,"log"> & {log:InventoryLog;projectionStatuses?:Array<{inventory_log_id:number;status:string;code:string}>;projectionStatusUnavailable?:boolean};
 
+// Presentation only: missing or unresolved ledger evidence stays in the review panel.
+function isCompletedCancellation(row: PurchaseDiagnostic) {
+    return row.code === "fully_cancelled" && row.rootLogId === row.logId &&
+        row.logIds.includes(row.rootLogId) && row.logIds.length > 1 &&
+        !row.projectionStatusUnavailable && !!row.projectionStatuses?.length &&
+        row.projectionStatuses.every(status => status.status === "synced" &&
+            ["PURCHASE_CANCELLED", "REBOOKED"].includes(status.code)) &&
+        row.logIds.every(id => row.projectionStatuses?.some(status => status.inventory_log_id === id));
+}
+
 type PriceTrend = "up" | "down" | null;
 type MovementReasonTab = "stock_check" | "service" | "other" | "sale_deduction";
 
@@ -437,6 +447,9 @@ export default function InventorySnapshotsPage() {
     const [logModalItem, setLogModalItem] = useState<SnapshotItem | null>(null);
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
     const [purchaseDiagnostics,setPurchaseDiagnostics]=useState<PurchaseDiagnostic[]>([]);
+    const [completedCancellationsExpanded, setCompletedCancellationsExpanded] = useState(false);
+    const completedCancellations = purchaseDiagnostics.filter(isCompletedCancellation);
+    const reviewPurchaseDiagnostics = purchaseDiagnostics.filter(row => !isCompletedCancellation(row));
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
     const [itemLogsError, setItemLogsError] = useState("");
     const [changingReasonLogId, setChangingReasonLogId] = useState<number | null>(null);
@@ -1457,6 +1470,7 @@ export default function InventorySnapshotsPage() {
 
     useEffect(() => {
         setNameSyncExpanded(false);
+        setCompletedCancellationsExpanded(false);
         setLanguageMissingExpanded(false);
         setNameSyncItems([]);
         setNameSyncCanRun(false);
@@ -2855,10 +2869,62 @@ export default function InventorySnapshotsPage() {
                 </div>
             )}
 
-            {purchaseDiagnostics.length>0 ? <section style={{...ui.card,padding:12,marginBottom:16}} aria-label={lang==="vi"?"Kiểm tra nhật ký nhập":"입고 기록 확인"}>
+            {completedCancellations.length > 0 && (
+                <section
+                    data-testid="snapshot-cancelled-purchases"
+                    style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 14, padding: "10px 12px", marginBottom: 12, display: "grid", gap: 8 }}
+                >
+                    <button
+                        type="button"
+                        aria-expanded={completedCancellationsExpanded}
+                        aria-controls="snapshot-cancelled-purchase-details"
+                        onClick={() => setCompletedCancellationsExpanded(current => !current)}
+                        style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, border: "none", background: "transparent", padding: 0, cursor: "pointer", textAlign: "left", color: "#374151" }}
+                    >
+                        <span style={{ minWidth: 0, display: "grid", gap: 2 }}>
+                            <span style={{ fontSize: 13, fontWeight: 900, lineHeight: "18px" }}>
+                                {lang === "vi" ? `Lịch sử nhập đã hủy: ${completedCancellations.length} mục` : `취소된 입고 이력 ${completedCancellations.length}건`}
+                            </span>
+                            <span style={{ fontSize: 11, lineHeight: "16px", color: "#6b7280" }}>
+                                {lang === "vi" ? "Đã xử lý sổ · không tính vào tổng nhập" : "장부 처리 완료 · 입고 합계 제외"}
+                            </span>
+                        </span>
+                        <span aria-hidden="true" style={{ fontSize: 14, fontWeight: 900, flexShrink: 0 }}>
+                            {completedCancellationsExpanded ? "⌃" : "⌄"}
+                        </span>
+                    </button>
+                    {completedCancellationsExpanded && (
+                        <div id="snapshot-cancelled-purchase-details">
+                            {completedCancellations.map(row => (
+                                <button
+                                    key={row.logId}
+                                    type="button"
+                                    data-testid={`snapshot-cancelled-purchase-${row.logId}`}
+                                    onClick={() => void fetchItemLogs(mapLogToSnapshotItem(row.log))}
+                                    style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, border: "none", borderTop: "1px solid #e5e7eb", background: "transparent", padding: "8px 0", textAlign: "left", cursor: "pointer", color: "#374151" }}
+                                >
+                                    <span style={{ minWidth: 0, display: "grid", gap: 2, overflowWrap: "anywhere" }}>
+                                        <strong style={{ fontSize: 12, fontWeight: 800, color: "#111827" }}>
+                                            {lang === "vi" ? row.log.item_name_vi || row.log.item_name : row.log.item_name || row.log.item_name_vi}
+                                        </strong>
+                                        <span style={{ fontSize: 11, color: "#6b7280" }}>
+                                            #{row.rootLogId} → {row.logIds.filter(id => id !== row.rootLogId).map(id => `#${id}`).join(", ")} · {lang === "vi" ? "Đã hủy hoàn toàn" : "완전 취소"}
+                                        </span>
+                                    </span>
+                                    <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 800 }}>
+                                        {lang === "vi" ? "Xem gốc" : "원본 보기"} <span aria-hidden="true">›</span>
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </section>
+            )}
+
+            {reviewPurchaseDiagnostics.length>0 ? <section style={{...ui.card,padding:12,marginBottom:16}} aria-label={lang==="vi"?"Kiểm tra nhật ký nhập":"입고 기록 확인"}>
                 <h3>{lang==="vi"?"Nhật ký nhập cần kiểm tra / đã hủy":"입고 기록 확인·취소 내역"}</h3>
                 <p style={ui.metaText}>{lang==="vi"?"Không tự sửa nhật ký cũ. Phiếu hủy hoàn toàn không tính vào nhập hàng; số âm chưa liên kết không bù trừ phiếu nhập khác.":"과거 기록을 자동 수정하지 않습니다. 완전 취소 입고는 합계에서 제외하고, 원본에 연결되지 않은 음수 기록은 다른 입고에서 차감하지 않습니다."}</p>
-                {purchaseDiagnostics.map(row=><article key={row.logId} style={{padding:8,borderTop:"1px solid #e5e7eb"}}>
+                {reviewPurchaseDiagnostics.map(row=><article key={row.logId} style={{padding:8,borderTop:"1px solid #e5e7eb"}}>
                     <strong>#{row.logId} · {lang==="vi"?row.log.item_name_vi||row.log.item_name:row.log.item_name||row.log.item_name_vi}</strong>
                     <p>{row.code==="fully_cancelled"?(lang==="vi"?"Đã hủy hoàn toàn · không tính nhập":"완전 취소 · 입고 합계 제외") :row.code==="linked_correction"?(lang==="vi"?"Sửa lô nhập đã liên kết · xem lô gốc":"원입고 연결 정정 · 원본 기록 확인"):(lang==="vi"?"Cần kiểm tra phân loại/liên kết; không tính là mua mới":"분류·원본 연결 확인 필요 · 신규 구매로 집계하지 않음")} · {row.quantity??"?"}{row.log.unit??""}</p>
                     <p style={ui.metaText}>{lang==="vi"?"Nhật ký liên quan":"연결 기록"}: {row.logIds.map(id=>'#'+id).join(', ')} · {lang==="vi"?"Trạng thái sổ":"장부 처리 상태"}: {row.projectionStatusUnavailable?(lang==="vi"?"Không thể kiểm tra":"확인 불가"):!row.projectionStatuses?.length?(lang==="vi"?"Chưa xác nhận":"미확인"):row.projectionStatuses.map(status=>'#'+status.inventory_log_id+': '+({synced:lang==="vi"?"Đã đồng bộ":"동기화 완료",pending:lang==="vi"?"Chờ xử lý":"처리 대기",review_required:lang==="vi"?"Cần kiểm tra":"검토 필요",failed:lang==="vi"?"Thất bại":"실패"}[status.status]??status.status)+' ('+status.code+')').join(' · ')}</p>
