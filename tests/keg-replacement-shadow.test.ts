@@ -217,22 +217,17 @@ test("dry-run and log routes enforce session auth without writes", () => {
     replaceRoute.indexOf("getAuthenticatedActor()") <
       replaceRoute.indexOf("req.json()")
   );
-  assert.match(replaceRoute, /const dryRun = body\?\.dryRun === true/);
+  const safetyServer = read("lib/inventory/keg-safety-server.ts");
+  const safetySql = read("supabase/drafts/keg_safety_p0.sql");
   assert.match(replaceRoute, /actorUsername: auth\.actor\.username/);
-  assert.match(replaceRoute, /writesPerformed: false/);
-  const dryRunBlock = replaceRoute.slice(
-    replaceRoute.indexOf("if (dryRun)"),
-    replaceRoute.indexOf(
-      'const { data, error } = await supabaseServer.rpc("replace_inventory_keg"'
-    )
-  );
-  assert.match(dryRunBlock, /return NextResponse\.json/);
-  assert.doesNotMatch(
-    dryRunBlock,
-    /\.update\(|\.insert\(|\.delete\(|replace_inventory_keg/
-  );
-  assert.match(replaceRoute, /supabaseServer\.rpc\(\s*"calculate_inventory_keg_sales"/);
-  assert.match(replaceRoute, /supabaseServer\.rpc\("replace_inventory_keg"/);
+  assert.match(replaceRoute, /runKegSafetyChange/);
+  assert.match(safetyServer, /const dryRun = body\?\.dryRun === true/);
+  assert.match(safetyServer, /inventory_preview_keg_change/);
+  assert.match(safetyServer, /inventory_apply_keg_change/);
+  assert.doesNotMatch(replaceRoute + safetyServer, /\.update\(|\.insert\(|\.delete\(/);
+  assert.match(safetySql, /'writesPerformed',false/);
+  assert.match(safetySql, /public\.calculate_inventory_keg_sales\(/);
+  assert.match(safetySql, /public\.replace_inventory_keg\(/);
   assert.doesNotMatch(replaceRoute, /body\?\.actorUsername/);
 
   for (const route of [logsRoute, itemLogsRoute]) {

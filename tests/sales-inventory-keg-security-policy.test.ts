@@ -26,8 +26,10 @@ test("keg mutations authenticate the server session and ignore spoofed actors", 
     assert.doesNotMatch(route, /body\??\.actorUsername|missing_actor|invalid_actor/);
     assert.doesNotMatch(route, /createClient/);
   }
-  assert.match(kegReplace, /p_actor_username: auth\.actor\.username/);
-  assert.match(kegReplace, /supabaseServer\.rpc\("replace_inventory_keg"/);
+  assert.match(kegReplace, /actorUsername: auth\.actor\.username/);
+  assert.match(read("lib/inventory/keg-safety-server.ts"), /p_actor_username: actorUsername/);
+  assert.match(kegReplace, /runKegSafetyChange/);
+  assert.match(read("supabase/drafts/keg_safety_p0.sql"), /public\.replace_inventory_keg\(/);
 });
 
 test("sales deduction mutations enforce server-session roles and actors", () => {
@@ -51,22 +53,12 @@ test("sales deduction mutations enforce server-session roles and actors", () => 
 });
 
 test("target mutation clients no longer send actor usernames", () => {
-  const editStartCall = inventoryPage.slice(
-    inventoryPage.indexOf("`/api/inventory/keg-sessions/${sessionId}`"),
-    inventoryPage.indexOf("const result =", inventoryPage.indexOf(
-      "`/api/inventory/keg-sessions/${sessionId}`"
-    ))
-  );
-  const replaceCall = inventoryPage.slice(
-    inventoryPage.indexOf('"/api/inventory/keg-sessions/replace"'),
-    inventoryPage.indexOf("const result =", inventoryPage.indexOf(
-      '"/api/inventory/keg-sessions/replace"'
-    ))
-  );
-  assert.ok(editStartCall.length > 0);
-  assert.ok(replaceCall.length > 0);
-  assert.doesNotMatch(editStartCall, /actorUsername/);
-  assert.doesNotMatch(replaceCall, /actorUsername/);
+  const previewCall = inventoryPage.slice(inventoryPage.indexOf("const runKegReplacementShadow"), inventoryPage.indexOf("const submitKegTimeModal"));
+  const saveCall = inventoryPage.slice(inventoryPage.indexOf("const submitKegTimeModal"), inventoryPage.indexOf("const openQuickPurchaseConfirm"));
+  for (const call of [previewCall, saveCall]) {
+    assert.match(call, /keg-sessions/);
+    assert.doesNotMatch(call, /actorUsername/);
+  }
 
   const unifiedExecuteCall = receiptsPage.slice(
     receiptsPage.indexOf('"/api/admin/sales/inventory-deductions/unified-execute"'),

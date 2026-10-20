@@ -15,6 +15,7 @@ import { fetchInventoryApi } from "@/lib/inventory/client-auth";
 import { readInventoryBootstrapStream } from "@/lib/inventory/bootstrap-stream";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
 import InventoryLoadingCard from "@/components/inventory/InventoryLoadingCard";
+import type { KegSafetyPreview } from "@/lib/inventory/keg-safety";
 import { usePathname, useSearchParams } from "next/navigation";
 import SubNav from "@/components/SubNav";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
@@ -183,24 +184,7 @@ type InventoryLog = {
     previousKegSummary?: PreviousKegSummary | null;
 };
 
-type KegReplacementShadow = {
-    ok: true;
-    dryRun: true;
-    actorUsername: string;
-    itemId: number;
-    currentQuantity: number;
-    projectedQuantity: number;
-    activeSessionId: number | null;
-    replacementAt: string;
-    businessDate: string;
-    capacityMl: number;
-    soldMl: number;
-    lossMl: number;
-    overageMl: number;
-    usagePercent: number;
-    salesBreakdown: KegSalesBreakdown | null;
-    writesPerformed: false;
-};
+type KegReplacementShadow = KegSafetyPreview & { salesBreakdown: KegSalesBreakdown | null };
 
 type InventoryLogGroup = {
     item_id: number;
@@ -419,6 +403,15 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
     const [kegTimeModal, setKegTimeModal] = useState<KegTimeModalState | null>(null);
     const [kegTimeValue, setKegTimeValue] = useState("");
     const [isKegTimeSaving, setIsKegTimeSaving] = useState(false);
+    const [kegSafetyUi, setKegSafetyUi] = useState<typeof import("@/lib/inventory/keg-safety") | null>(null);
+    const kegSafetyModuleRef = useRef<Promise<typeof import("@/lib/inventory/keg-safety")> | null>(null);
+    const kegSafetyModuleLoadingRef = useRef(false);
+    const [kegChangeReason, setKegChangeReason] = useState("");
+    const [kegChangeConfirmed, setKegChangeConfirmed] = useState(false);
+    const [kegChangeError, setKegChangeError] = useState("");
+    const kegMutationBusyRef = useRef(false);
+    const kegRequestIdRef = useRef("");
+    const kegPreviewControllerRef = useRef<AbortController | null>(null);
     
     
     
@@ -1993,165 +1986,139 @@ alert(c.saveSuccess);
         return Math.min(100, Math.max(0, remainingPercent));
     };
 
-    const openKegReplaceModal = (item: InventoryItem) => {
+    const prepareKegSafetyUi = async () => {
+        if (kegSafetyModuleLoadingRef.current) return false;
+        kegSafetyModuleLoadingRef.current = true;
+        try {
+            kegSafetyModuleRef.current ??= import("@/lib/inventory/keg-safety");
+            setKegSafetyUi(await kegSafetyModuleRef.current);
+            return true;
+        } catch {
+            kegSafetyModuleRef.current = null;
+            alert(c.loadFailed);
+            return false;
+        } finally {
+            kegSafetyModuleLoadingRef.current = false;
+        }
+    };
+
+    const openKegReplaceModal = async (item: InventoryItem) => {
         if (isKegReplacing || isQuickSaving || isKegTimeSaving) return;
+        if (!await prepareKegSafetyUi()) return;
+        resetKegSafetyDraft();
         setKegTimeModal({ mode: "replace", item });
         setKegTimeValue(formatVietnamDateTimeInput());
         setKegReplacementShadow(null);
     };
 
-    const openKegStartTimeModal = (item: InventoryItem) => {
+    const openKegStartTimeModal = async (item: InventoryItem) => {
         if (!item.kegProgress || isKegReplacing || isQuickSaving || isKegTimeSaving) {
             return;
         }
 
+        if (!await prepareKegSafetyUi()) return;
+        resetKegSafetyDraft();
         setKegTimeModal({ mode: "edit-start", item });
         setKegTimeValue(formatVietnamDateTimeInput(item.kegProgress.startedAt));
     };
 
+    const resetKegSafetyDraft = () => {
+        kegPreviewControllerRef.current?.abort();
+        kegPreviewControllerRef.current = null;
+        setIsKegShadowLoading(false);
+        setKegReplacementShadow(null);
+        setKegChangeReason("");
+        setKegChangeConfirmed(false);
+        setKegChangeError("");
+        kegRequestIdRef.current = crypto.randomUUID();
+    };
+
     const closeKegTimeModal = () => {
-        if (isKegReplacing || isKegTimeSaving) return;
+        if (kegMutationBusyRef.current) return;
+        resetKegSafetyDraft();
         setKegTimeModal(null);
         setKegTimeValue("");
-        setKegReplacementShadow(null);
     };
 
     const runKegReplacementShadow = async () => {
-        if (!kegTimeModal || kegTimeModal.mode !== "replace" || isKegShadowLoading) {
-            return;
-        }
+        if (!kegTimeModal || !kegSafetyUi || kegPreviewControllerRef.current || kegMutationBusyRef.current) return;
         const selectedTime = parseVietnamDateTimeInput(kegTimeValue);
         if (!selectedTime || selectedTime.getTime() > Date.now()) {
-            alert(t.kegTimeLabel);
+            setKegChangeError(kegSafetyUi.kegSafetyError("KEG_FUTURE_TIME", lang === "vi"));
             return;
         }
-
+        const controller = new AbortController();
+        kegPreviewControllerRef.current = controller;
         setIsKegShadowLoading(true);
         setKegReplacementShadow(null);
+        setKegChangeConfirmed(false);
+        setKegChangeError("");
+        const { item, mode } = kegTimeModal;
         try {
-            const currentQty = roundDecimal(Number(kegTimeModal.item.quantity ?? 0));
-            const res = await fetch("/api/inventory/keg-sessions/replace", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    dryRun: true,
-                    itemId: kegTimeModal.item.id,
-                    expectedQuantity: currentQty,
-                    replacementLocalDateTime: kegTimeValue,
-                }),
+            const response = await fetch(mode === "replace" ? "/api/inventory/keg-sessions/replace" : `/api/inventory/keg-sessions/${item.kegProgress?.activeSessionId}`, {
+                method: mode === "replace" ? "POST" : "PATCH",
+                headers: { "Content-Type": "application/json" }, signal: controller.signal,
+                body: JSON.stringify({ dryRun: true, itemId: item.id, expectedQuantity: Number(item.quantity),
+                    ...(mode === "replace" ? { replacementLocalDateTime: kegTimeValue } : { startedLocalDateTime: kegTimeValue }) }),
             });
-            const result = await res.json();
-            if (!res.ok || !result.ok || result.dryRun !== true) {
-                alert(result.message || c.editFail);
+            const result = await response.json();
+            if (kegPreviewControllerRef.current !== controller) return;
+            if (!response.ok || !result.ok || !result.previewToken) {
+                setKegChangeError(kegSafetyUi.kegSafetyError(result.code, lang === "vi"));
                 return;
             }
             setKegReplacementShadow(result as KegReplacementShadow);
+        } catch {
+            if (!controller.signal.aborted) setKegChangeError(kegSafetyUi.kegSafetyError("KEG_SAFETY_UNAVAILABLE", lang === "vi"));
         } finally {
-            setIsKegShadowLoading(false);
+            if (kegPreviewControllerRef.current === controller) {
+                kegPreviewControllerRef.current = null;
+                setIsKegShadowLoading(false);
+            }
         }
     };
 
     const submitKegTimeModal = async () => {
-        if (!kegTimeModal || isKegReplacing || isQuickSaving || isKegTimeSaving) return;
-        const selectedTime = parseVietnamDateTimeInput(kegTimeValue);
-
-        if (!selectedTime) {
-            alert(t.kegTimeLabel);
+        if (!kegTimeModal || !kegSafetyUi || kegMutationBusyRef.current || isQuickSaving || isKegShadowLoading) return;
+        const preview = kegReplacementShadow;
+        if (!preview || preview.snapshotMismatch ||
+            ((kegTimeModal.mode === "edit-start" || preview.warnings.length > 0) && !kegChangeReason.trim()) ||
+            (preview.warnings.length > 0 && !kegChangeConfirmed)) {
+            setKegChangeError(kegSafetyUi.kegSafetyText[lang].previewFirst);
             return;
         }
-
-        if (selectedTime.getTime() > Date.now()) {
-            alert(lang === "vi" ? "Không thể chọn thời gian tương lai." : "미래 시간은 선택할 수 없습니다.");
-            return;
-        }
-
-        const { item, mode } = kegTimeModal;
+        kegMutationBusyRef.current = true;
         setIsKegTimeSaving(true);
-
-        if (mode === "replace") {
-            setIsKegReplacing(true);
-        }
-
+        const { item, mode } = kegTimeModal;
+        if (mode === "replace") setIsKegReplacing(true);
+        setKegChangeError("");
         try {
-            if (mode === "edit-start") {
-                const sessionId = item.kegProgress?.activeSessionId;
-                if (!sessionId) return;
-
-                const res = await fetch(`/api/inventory/keg-sessions/${sessionId}`, {
-                    method: "PATCH",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        startedLocalDateTime: kegTimeValue,
-                    }),
-                });
-                const result = await res.json();
-
-                if (!res.ok || !result.ok) {
-                    alert(result.message || c.editFail);
-                    return;
-                }
-
-                setKegTimeModal(null);
-                setKegTimeValue("");
-                await fetchInventory();
-                return;
-            }
-
-            const currentQty = roundDecimal(Number(item.quantity ?? 0));
-            const res = await fetch("/api/inventory/keg-sessions/replace", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    itemId: item.id,
-                    expectedQuantity: currentQty,
-                    replacementLocalDateTime: kegTimeValue,
-                }),
+            const response = await fetch(mode === "replace" ? "/api/inventory/keg-sessions/replace" : `/api/inventory/keg-sessions/${item.kegProgress?.activeSessionId}`, {
+                method: mode === "replace" ? "POST" : "PATCH", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ itemId: item.id, expectedQuantity: Number(item.quantity), requestId: kegRequestIdRef.current,
+                    previewToken: preview.previewToken, reason: kegChangeReason.trim(), confirmed: kegChangeConfirmed,
+                    ...(mode === "replace" ? { replacementAt: preview.replacementAt } : { startedAt: preview.replacementAt }) }),
             });
-            const result = await res.json();
-
-            if (!res.ok || !result.ok) {
-                console.error(result);
-
-                if (res.status === 409) {
-                    alert(
-                        lang === "vi"
-                            ? "Tồn kho đã được người khác thay đổi. Vui lòng tải lại rồi thử lại."
-                            : "현재 재고가 다른 사용자에 의해 변경되었습니다. 새로고침 후 다시 시도해주세요."
-                    );
-                    await fetchInventory();
-                    return;
-                }
-
-                alert(result.message || c.editFail);
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                setKegChangeError(kegSafetyUi.kegSafetyError(result.code, lang === "vi"));
+                if (response.status === 409) { setKegReplacementShadow(null); setKegChangeConfirmed(false); }
                 return;
             }
-
             const nextQuantity = Number(result.quantity);
-            if (Number.isFinite(nextQuantity)) {
-                setQuantityDrafts((prev) => ({
-                    ...prev,
-                    [item.id]: String(nextQuantity),
-                }));
+            if (mode === "replace" && Number.isFinite(nextQuantity)) {
+                setQuantityDrafts(current => ({ ...current, [item.id]: String(nextQuantity) }));
             }
-
             setKegTimeModal(null);
             setKegTimeValue("");
-
-            const refreshResults = await Promise.allSettled([
-                fetchInventory(),
-                fetchRecentLogs(),
-            ]);
-
-            refreshResults.forEach((result) => {
-                if (result.status === "rejected") {
-                    console.error(result.reason);
-                }
-            });
+            setKegReplacementShadow(null);
+            if (mode === "edit-start") await fetchInventory();
+            else await Promise.allSettled([fetchInventory(), fetchRecentLogs()]);
+        } catch {
+            // Keep the same id and payload on retry: the transaction may already have committed.
+            setKegChangeError(kegSafetyUi.kegSafetyError("KEG_SAFETY_UNAVAILABLE", lang === "vi"));
         } finally {
+            kegMutationBusyRef.current = false;
             setIsKegReplacing(false);
             setIsKegTimeSaving(false);
         }
@@ -5303,8 +5270,9 @@ alert(c.saveSuccess);
 
             
 
-            {kegTimeModal && (
+            {kegTimeModal && kegSafetyUi && (
                 <div
+                    role="dialog" aria-modal="true" aria-labelledby="keg-safety-title" data-testid="keg-safety-modal"
                     style={{
                         position: "fixed",
                         inset: 0,
@@ -5326,6 +5294,8 @@ alert(c.saveSuccess);
                         style={{
                             width: "100%",
                             maxWidth: 360,
+                            maxHeight: "90dvh",
+                            overflowY: "auto",
                             background: "#fff",
                             borderRadius: 14,
                             padding: 18,
@@ -5335,7 +5305,7 @@ alert(c.saveSuccess);
                             gap: 10,
                         }}
                     >
-                        <div style={{ fontSize: 18, fontWeight: 900, color: "#111827" }}>
+                        <div id="keg-safety-title" style={{ fontSize: 18, fontWeight: 900, color: "#111827" }}>
                             {kegTimeModal.mode === "replace"
                                 ? t.kegReplacementTimeTitle
                                 : t.kegInfoSummaryTitle}
@@ -5398,7 +5368,7 @@ alert(c.saveSuccess);
                                 )}
                             </div>
                         ) : null}
-                        {kegTimeModal.mode === "replace" && kegReplacementShadow ? (
+                        {kegTimeModal.mode === "replace" && kegReplacementShadow?.action === "replace" ? (
                             <div
                                 style={{
                                     display: "grid",
@@ -5419,7 +5389,7 @@ alert(c.saveSuccess);
                                 </strong>
                                 <div>
                                     {t.kegPreviewEndedAt}:{" "}
-                                    {formatDateTime(kegReplacementShadow.replacementAt)}
+                                    {kegSafetyUi.formatKegSafetyTime(kegReplacementShadow.replacementAt)}
                                 </div>
                                 <div>
                                     {t.kegPreviewSalesCapacity}:{" "}
@@ -5465,6 +5435,39 @@ alert(c.saveSuccess);
                                 </div>
                             </div>
                         ) : null}
+                        {kegReplacementShadow && kegTimeModal.mode === "edit-start" && (
+                            <div data-testid="keg-time-preview" style={{ ...ui.card, padding: 10, fontSize: 12, display: "grid", gap: 7 }}>
+                                <div><strong>{kegSafetyUi.kegSafetyText[lang].oldTime}</strong>: {kegReplacementShadow.oldAt ? kegSafetyUi.formatKegSafetyTime(kegReplacementShadow.oldAt) : "-"}</div>
+                                <div><strong>{kegSafetyUi.kegSafetyText[lang].newTime}</strong>: {kegSafetyUi.formatKegSafetyTime(kegReplacementShadow.replacementAt)}</div>
+                                {kegReplacementShadow.previousSessionId === null ? <div>{kegSafetyUi.kegSafetyText[lang].noPrevious}</div> : <>
+                                    {[
+                                        [kegSafetyUi.kegSafetyText[lang].saved, kegReplacementShadow.storedSoldMl, kegReplacementShadow.storedLossMl],
+                                        [kegSafetyUi.kegSafetyText[lang].current, kegReplacementShadow.posBeforeSoldMl, kegReplacementShadow.posBeforeLossMl],
+                                        [kegSafetyUi.kegSafetyText[lang].proposed, kegReplacementShadow.soldMl, kegReplacementShadow.lossMl],
+                                        [kegSafetyUi.kegSafetyText[lang].delta, kegReplacementShadow.soldDeltaMl, kegReplacementShadow.lossDeltaMl],
+                                    ].map(([label, sold, loss]) => <div key={String(label)}>
+                                        <strong>{label}</strong><br />
+                                        {kegSafetyUi.kegSafetyText[lang].sale} {sold === null ? "?" : formatDecimalDisplay(Number(sold) / 1000)}L · {kegSafetyUi.kegSafetyText[lang].unsold} {loss === null ? "?" : formatDecimalDisplay(Number(loss) / 1000)}L
+                                    </div>)}
+                                </>}
+                                {kegReplacementShadow.snapshotMismatch && <div role="alert" style={{ color: "crimson" }}>
+                                    {kegSafetyUi.kegSafetyError("KEG_STORED_SNAPSHOT_MISMATCH", lang === "vi")}<br />
+                                    {kegSafetyUi.kegSafetyText[lang].drift}: {kegReplacementShadow.priorDriftMl === null ? "?" : formatDecimalDisplay(kegReplacementShadow.priorDriftMl / 1000)}L
+                                </div>}
+                            </div>
+                        )}
+                        {kegReplacementShadow && kegReplacementShadow.warnings.length > 0 && <div style={{ fontSize: 12, color: "#9a3412", background: "#fff7ed", padding: 10, borderRadius: 10 }}>
+                            <p style={{ marginTop: 0 }}>{kegSafetyUi.kegSafetyText[lang].short}</p>
+                            <label style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                                <input type="checkbox" checked={kegChangeConfirmed} disabled={isKegTimeSaving} onChange={event => setKegChangeConfirmed(event.target.checked)} />
+                                {kegSafetyUi.kegSafetyText[lang].confirm}
+                            </label>
+                        </div>}
+                        <label style={{ display: "grid", gap: 5, fontSize: 12, fontWeight: 800 }}>
+                            {kegSafetyUi.kegSafetyText[lang].reason}
+                            <textarea value={kegChangeReason} maxLength={500} disabled={isKegTimeSaving} onChange={event => setKegChangeReason(event.target.value)} style={{ ...ui.input, minHeight: 56 }} />
+                        </label>
+                        {kegChangeError && <div role="alert" style={{ fontSize: 12, color: "crimson" }}>{kegChangeError}</div>}
                         <label
                             style={{
                                 display: "flex",
@@ -5480,7 +5483,12 @@ alert(c.saveSuccess);
                                 type="datetime-local"
                                 value={kegTimeValue}
                                 max={formatVietnamDateTimeInput()}
-                                onChange={(event) => setKegTimeValue(event.target.value)}
+                                disabled={isKegTimeSaving}
+                                onChange={(event) => {
+                                    kegPreviewControllerRef.current?.abort(); kegPreviewControllerRef.current = null;
+                                    setIsKegShadowLoading(false); setKegReplacementShadow(null); setKegChangeConfirmed(false); setKegChangeError("");
+                                    setKegTimeValue(event.target.value);
+                                }}
                                 style={ui.input}
                                 required
                             />
@@ -5488,10 +5496,7 @@ alert(c.saveSuccess);
                         <div
                             style={{
                                 display: "grid",
-                                gridTemplateColumns:
-                                    kegTimeModal.mode === "replace"
-                                        ? "1fr 1fr 1fr"
-                                        : "1fr 1fr",
+                                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
                                 gap: 8,
                             }}
                         >
@@ -5510,7 +5515,7 @@ alert(c.saveSuccess);
                             >
                                 {c.cancel}
                             </button>
-                            {kegTimeModal.mode === "replace" ? (
+                            {(
                                 <button
                                     type="button"
                                     onClick={() => void runKegReplacementShadow()}
@@ -5528,10 +5533,12 @@ alert(c.saveSuccess);
                                 >
                                     {isKegShadowLoading ? c.saving : t.kegPreview}
                                 </button>
-                            ) : null}
+                            )}
                             <button
                                 type="submit"
-                                disabled={isKegReplacing || isKegTimeSaving}
+                                disabled={isKegReplacing || isKegTimeSaving || isKegShadowLoading || !kegReplacementShadow || kegReplacementShadow.snapshotMismatch ||
+                                    ((kegTimeModal.mode === "edit-start" || kegReplacementShadow.warnings.length > 0) && !kegChangeReason.trim()) ||
+                                    (kegReplacementShadow.warnings.length > 0 && !kegChangeConfirmed)}
                                 style={{
                                     ...ui.button,
                                     opacity: isKegReplacing || isKegTimeSaving ? 0.6 : 1,
