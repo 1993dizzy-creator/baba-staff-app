@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { ui } from "@/lib/styles/ui";
 
 type ChangeItem = {
@@ -49,6 +49,7 @@ type Props = {
     formatDateTime: (value: string) => string;
     getLogChanges: (log: InventoryLogCardLog, lang: string) => ChangeItem[];
     getReasonBadge?: (log: InventoryLogCardLog) => ReasonBadgeMeta | null;
+    renderLogDetails?: (log: InventoryLogCardLog) => ReactNode;
 };
 
 export default function InventoryLogGroupCard({
@@ -74,6 +75,7 @@ export default function InventoryLogGroupCard({
     formatDateTime,
     getLogChanges,
     getReasonBadge,
+    renderLogDetails,
 }: Props) {
     const log = group.latest;
 
@@ -348,6 +350,7 @@ export default function InventoryLogGroupCard({
                                             </div>
                                         </div>
                                     ))}
+                                    {renderLogDetails?.(history)}
                                 </div>
                             </div>
                         );

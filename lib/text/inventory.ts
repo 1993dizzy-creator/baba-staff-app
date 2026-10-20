@@ -80,6 +80,10 @@ export const inventoryText = {
         `판매량이 Keg 용량을 ${liters}L 초과했습니다. 교체 기록을 확인하세요.`,
     kegSalesBreakdownMismatch:
         "저장된 총 판매량과 판매 구성 합계가 다릅니다. 구성 상세를 확인하세요.",
+    kegSalesDetails: "판매 구성 상세",
+    kegSalesDetailsPending: "판매 구성 및 저장 판매량 일치 여부 미확인",
+    kegSalesDetailsUnavailable: "판매 구성을 확인하지 못했습니다. 다시 시도해 주세요.",
+    kegSalesDetailsEmpty: "해당 세션의 판매 구성 내역이 없습니다.",
     kegTowerAverageLabel: "타워",
     kegRegularAverageUnit: "잔",
     kegTowerAverageUnit: "타워",
@@ -98,6 +102,7 @@ export const inventoryText = {
     logView: "재고 로그 보기",
     logRecent: "최근 변경 로그",
     logItemTitle: "품목 로그",
+    itemLogsRetry: "다시 시도",
 
     sortDesc: "최신순",
     sortAsc: "오래된순",
@@ -265,6 +270,10 @@ export const inventoryText = {
         `Lượng bán vượt dung tích keg ${liters}L. Hãy kiểm tra lịch sử thay keg.`,
     kegSalesBreakdownMismatch:
         "Tổng lượng bán đã lưu khác với tổng chi tiết bán hàng. Vui lòng kiểm tra chi tiết.",
+    kegSalesDetails: "Chi tiết bán hàng",
+    kegSalesDetailsPending: "Chưa kiểm tra chi tiết và độ khớp với lượng bán đã lưu",
+    kegSalesDetailsUnavailable: "Không thể tải chi tiết bán hàng. Vui lòng thử lại.",
+    kegSalesDetailsEmpty: "Không có chi tiết bán hàng trong phiên này.",
     kegTowerAverageLabel: "Tháp",
     kegRegularAverageUnit: "ly",
     kegTowerAverageUnit: "tháp",
@@ -283,6 +292,7 @@ export const inventoryText = {
     logView: "Xem nhật ký kho",
     logRecent: "Nhật ký thay đổi gần đây",
     logItemTitle: "Nhật ký mặt hàng",
+    itemLogsRetry: "Thử lại",
 
     sortDesc: "Mới nhất",
     sortAsc: "Cũ nhất",

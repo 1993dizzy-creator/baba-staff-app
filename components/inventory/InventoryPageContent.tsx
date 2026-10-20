@@ -14,6 +14,7 @@ import { getUser, isAdmin } from "@/lib/supabase/auth";
 import { fetchInventoryApi } from "@/lib/inventory/client-auth";
 import { readInventoryBootstrapStream } from "@/lib/inventory/bootstrap-stream";
 import InventoryLogGroupCard from "@/components/InventoryLogGroupCard";
+import InventoryLoadingCard from "@/components/inventory/InventoryLoadingCard";
 import { usePathname, useSearchParams } from "next/navigation";
 import SubNav from "@/components/SubNav";
 import { getInventoryTabs } from "@/lib/navigation/inventory-tabs";
@@ -425,6 +426,18 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
     const [logModalItem, setLogModalItem] = useState<InventoryItem | null>(null);
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
+    const [itemLogsError, setItemLogsError] = useState(false);
+    const [kegLogDetails, setKegLogDetails] = useState<Record<number, "loading" | "loaded" | "error">>({});
+    const itemLogsRequestRef = useRef<{
+        itemId: number;
+        controller: AbortController;
+        pendingDetails: Set<number>;
+    } | null>(null);
+
+    useEffect(() => () => {
+        itemLogsRequestRef.current?.controller.abort();
+        itemLogsRequestRef.current = null;
+    }, []);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDeletingId, setIsDeletingId] = useState<number | null>(null);
     const [activeStatusBusyId, setActiveStatusBusyId] = useState<number | null>(null);
@@ -1189,25 +1202,76 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
     };
 
     const fetchItemLogs = async (item: InventoryItem) => {
+        itemLogsRequestRef.current?.controller.abort();
+        const request = { itemId: item.id, controller: new AbortController(), pendingDetails: new Set<number>() };
+        itemLogsRequestRef.current = request;
         setLogModalItem(item);
+        setItemLogs([]);
+        setItemLogsError(false);
+        setKegLogDetails({});
         setIsItemLogsLoading(true);
 
         try {
-            const res = await fetch(`/api/inventory/items/${item.id}/logs`, {
+            const res = await fetch(`/api/inventory/items/${item.id}/logs?includeKegSalesBreakdown=false`, {
                 cache: "no-store",
+                signal: request.controller.signal,
             });
 
             const result = await res.json();
+            if (itemLogsRequestRef.current !== request) return;
 
             if (!res.ok || !result.ok) {
-                console.error(result);
-                setItemLogs([]);
-                return;
+                throw new Error("inventory_item_logs_fetch_failed");
             }
 
             setItemLogs(result.data || []);
+        } catch {
+            if (itemLogsRequestRef.current === request && !request.controller.signal.aborted) {
+                setItemLogsError(true);
+            }
         } finally {
-            setIsItemLogsLoading(false);
+            if (itemLogsRequestRef.current === request) setIsItemLogsLoading(false);
+        }
+    };
+
+    const closeItemLogs = () => {
+        itemLogsRequestRef.current?.controller.abort();
+        itemLogsRequestRef.current = null;
+        setLogModalItem(null);
+        setItemLogs([]);
+        setItemLogsError(false);
+        setKegLogDetails({});
+        setIsItemLogsLoading(false);
+    };
+
+    const fetchKegLogDetails = async (log: InventoryLog) => {
+        const request = itemLogsRequestRef.current;
+        if (!request || request.pendingDetails.has(log.id) || kegLogDetails[log.id] === "loaded") return;
+        request.pendingDetails.add(log.id);
+        setKegLogDetails(current => ({ ...current, [log.id]: "loading" }));
+        try {
+            const response = await fetch(`/api/inventory/items/${request.itemId}/logs?kegLogId=${log.id}`, {
+                cache: "no-store",
+                signal: request.controller.signal,
+            });
+            const result = await response.json() as { ok?: boolean; itemId?: number; logId?: number; summary?: PreviousKegSummary };
+            if (itemLogsRequestRef.current !== request) return;
+            if (!response.ok || !result.ok || result.itemId !== request.itemId || result.logId !== log.id ||
+                !result.summary || result.summary.sessionId !== log.previousKegSummary?.sessionId) {
+                throw new Error("keg_sales_breakdown_unavailable");
+            }
+            // Keep the stored summary displayed by the initial response; only attach display detail.
+            const summary = result.summary;
+            setItemLogs(current => current.map(row => row.id === log.id && row.previousKegSummary
+                ? { ...row, previousKegSummary: { ...row.previousKegSummary, salesBreakdown: summary.salesBreakdown, salesBreakdownMismatch: summary.salesBreakdownMismatch } }
+                : row));
+            setKegLogDetails(current => ({ ...current, [log.id]: "loaded" }));
+        } catch {
+            if (itemLogsRequestRef.current === request && !request.controller.signal.aborted) {
+                setKegLogDetails(current => ({ ...current, [log.id]: "error" }));
+            }
+        } finally {
+            request.pendingDetails.delete(log.id);
         }
     };
 
@@ -5835,6 +5899,10 @@ alert(c.saveSuccess);
 
             {logModalItem && (
                 <div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="inventory-item-logs-title"
+                    data-testid="inventory-item-logs-modal"
                     style={{
                         position: "fixed",
                         inset: 0,
@@ -5845,10 +5913,7 @@ alert(c.saveSuccess);
                         zIndex: 1000,
                         padding: 20,
                     }}
-                    onClick={() => {
-                        setLogModalItem(null);
-                        setItemLogs([]);
-                    }}
+                    onClick={closeItemLogs}
                 >
                     <div
                         onClick={(e) => e.stopPropagation()}
@@ -5866,11 +5931,11 @@ alert(c.saveSuccess);
                             gap: 12,
                         }}
                     >
-                        <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
+                        <div id="inventory-item-logs-title" style={{ fontSize: 17, fontWeight: 800, color: "#111827", flexShrink: 0 }}>
                             {t.logItemTitle}
                         </div>
 
-                        <div style={{ ...ui.metaText }}>
+                        <div style={{ ...ui.metaText, flexShrink: 0 }}>
                             {[logModalItem.code ? `[${logModalItem.code}]` : "", getDisplayItemName(logModalItem)]
                                 .filter(Boolean)
                                 .join(" ")}
@@ -5881,12 +5946,18 @@ alert(c.saveSuccess);
                                 display: "flex",
                                 flexDirection: "column",
                                 gap: 8,
+                                minHeight: 0,
                                 overflowY: "auto",
                                 paddingRight: 4,
                             }}
                         >
                             {isItemLogsLoading ? (
-                                <div>{c.loading}</div>
+                                <InventoryLoadingCard lang={lang} testId="inventory-item-logs-loading" />
+                            ) : itemLogsError ? (
+                                <div role="alert">
+                                    <p>{c.loadFailed}</p>
+                                    <button type="button" style={ui.subButton} onClick={() => void fetchItemLogs(logModalItem)}>{t.itemLogsRetry}</button>
+                                </div>
                             ) : itemLogGroups.length === 0 ? (
                                 <div>{c.noLogs}</div>
                             ) : (
@@ -5914,6 +5985,24 @@ alert(c.saveSuccess);
                                             getActionColor={getActionColor}
                                             formatDateTime={formatDateTime}
                                             getLogChanges={getLogChanges}
+                                            renderLogDetails={(history) => {
+                                                const row = history as InventoryLog;
+                                                if (row.source !== "keg_replace" || !row.previousKegSummary || row.previousKegSummary.soldMl <= 0) return null;
+                                                const state = kegLogDetails[row.id];
+                                                if (state === "loaded") return row.previousKegSummary.salesBreakdown?.totalUnits === 0
+                                                    ? <div style={ui.metaText}>{t.kegSalesDetailsEmpty}</div> : null;
+                                                return <div data-testid={`inventory-keg-log-detail-${row.id}`}>
+                                                    <div style={ui.metaText}>{t.kegSalesDetailsPending}</div>
+                                                    {state === "loading" ? (
+                                                        <InventoryLoadingCard lang={lang} minHeight={64} testId={`inventory-keg-log-loading-${row.id}`} />
+                                                    ) : <>
+                                                        {state === "error" && <div role="alert" style={{ ...ui.metaText, color: "crimson" }}>{t.kegSalesDetailsUnavailable}</div>}
+                                                        <button type="button" style={{ ...ui.subButton, width: "auto", fontSize: 12, padding: "6px 10px", marginTop: 4 }} onClick={() => void fetchKegLogDetails(row)}>
+                                                            {state === "error" ? t.itemLogsRetry : t.kegSalesDetails}
+                                                        </button>
+                                                    </>}
+                                                </div>;
+                                            }}
                                         />
                                     );
                                 })
@@ -5922,11 +6011,8 @@ alert(c.saveSuccess);
 
                         <button
                             type="button"
-                            onClick={() => {
-                                setLogModalItem(null);
-                                setItemLogs([]);
-                            }}
-                            style={ui.subButton}
+                            onClick={closeItemLogs}
+                            style={{ ...ui.subButton, flexShrink: 0 }}
                         >
                             {c.close}
                         </button>

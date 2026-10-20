@@ -75,6 +75,7 @@ function inventory(db, authenticated = true) {
     'next/server': { NextResponse: { json: (data, options) => Response.json(data, options) } },
     '@/lib/auth/server-auth': { getAuthenticatedActor: async () => authenticated ? { ok: true } : { ok: false, code: 'UNAUTHENTICATED', status: 401 } },
     '@/lib/inventory/reasons': { normalizeInventoryReason: value => value },
+    '@/lib/inventory/daily-effective-purchases': load('lib/inventory/daily-effective-purchases.ts'),
     '@/lib/inventory/keg-replacement-summary': {
       fetchPreviousKegSessionSummariesByLogId: async () => new Map(),
       fetchPreviousKegSummariesByLogId: async () => new Map(),
