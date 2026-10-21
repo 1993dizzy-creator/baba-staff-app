@@ -1,3 +1,5 @@
+import { pendingResolutionEligibility } from "@/lib/sales/pending-resolution-policy";
+import { requireRole } from "@/lib/auth/server-auth";
 import { NextResponse } from "next/server";
 import {
   resolveAdminSalesBusinessDate,
@@ -7,6 +9,8 @@ import { addStoreDays } from "@/lib/store-settings/business-time-core";
 import { supabaseServer } from "@/lib/supabase/server";
 
 type ReceiptRow = {
+  source: string | null;
+  created_at: string | null;
   id: number;
   ref_id: string;
   ref_no: string | null;
@@ -188,22 +192,7 @@ async function getNextManualRefNoSequence(businessDate: string, prefix: string) 
   return maxSequence + 1;
 }
 
-function canManageManualReceipt(role: unknown) {
-  return role === "owner" || role === "master" || role === "manager";
-}
 
-async function getManualReceiptActor(actorUsername: unknown) {
-  if (typeof actorUsername !== "string" || !actorUsername.trim()) return null;
-  const { data, error } = await supabaseServer
-    .from("users")
-    .select("id, username, name, role, is_active")
-    .eq("username", actorUsername.trim())
-    .eq("is_active", true)
-    .maybeSingle();
-  if (error) throw new Error(`Failed to verify admin actor: ${error.message}`);
-  if (!canManageManualReceipt(data?.role)) return null;
-  return data;
-}
 
 function calcManualTax(finalAmount: number, taxRate: number | null) {
   if (!taxRate || taxRate <= 0 || finalAmount <= 0) return 0;
@@ -260,6 +249,9 @@ function isOptionLine(row: Pick<LineRow, "is_option" | "mapping_status">) {
 }
 
 export async function GET(req: Request) {
+    const auth = await requireRole(["owner", "master", "manager"]);
+    if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
+
   try {
     const { searchParams } = new URL(req.url);
     const { businessDate } = await resolveAdminSalesBusinessDate(
@@ -280,7 +272,7 @@ export async function GET(req: Request) {
     const { data: receipts, error: receiptsError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, ref_id, ref_no, table_name, ref_date, payment_status, is_canceled, total_amount, final_amount, is_modified, review_status, admin_note"
+        "id, source, created_at, ref_id, ref_no, table_name, ref_date, payment_status, is_canceled, total_amount, final_amount, is_modified, review_status, admin_note"
       )
       .eq("business_date", businessDate)
       .order("ref_date", { ascending: false, nullsFirst: false })
@@ -360,6 +352,7 @@ export async function GET(req: Request) {
 
         return {
           id: receipt.id,
+          pendingResolution: pendingResolutionEligibility(receipt),
           refId: receipt.ref_id,
           refNo: receipt.ref_no,
           tableName: receipt.table_name,
@@ -398,13 +391,16 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+    const auth = await requireRole(["owner", "master", "manager"]);
+    if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
+
   try {
     const body = (await req.json().catch(() => null)) as CreateManualReceiptBody | null;
     if (!body || typeof body !== "object") {
       return NextResponse.json({ ok: false, error: "Invalid request body." }, { status: 400 });
     }
 
-    const actor = await getManualReceiptActor(body.actorUsername);
+    const actor = auth.actor;
     if (!actor) {
       return NextResponse.json({ ok: false, error: "Permission denied." }, { status: 403 });
     }

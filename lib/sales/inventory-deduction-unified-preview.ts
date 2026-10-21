@@ -59,6 +59,7 @@ type DeductionReceiptRow = {
   status: string | null;
   workflow_type: string | null;
   receipt_content_fingerprint: string | null;
+  admin_resolution_content_fingerprint?: string | null;
   applied_at: string | null;
   updated_at: string | null;
   created_at: string | null;
@@ -397,7 +398,7 @@ async function fetchReceipts(input: {
   return (data || []) as ReceiptRow[];
 }
 
-function getOptionIdentity(rawJson: unknown) {
+export function getOptionIdentity(rawJson: unknown) {
   if (!rawJson || typeof rawJson !== "object" || Array.isArray(rawJson)) {
     return null;
   }
@@ -455,10 +456,12 @@ async function fetchDeductionReceipts(receiptIds: number[]) {
   if (receiptIds.length === 0) return [] as DeductionReceiptRow[];
   const { data, error } = await supabaseServer
     .from("pos_inventory_deduction_receipts")
-    .select(DEDUCTION_RECEIPT_SELECT)
+    .select(DEDUCTION_RECEIPT_SELECT + (process.env.POS_ADMIN_RESOLUTION_V2_SCHEMA_READY === "true" ? ",admin_resolution_content_fingerprint" : ""))
     .in("receipt_id", receiptIds);
   if (error) throw new Error(error.message);
-  return (data || []) as DeductionReceiptRow[];
+  return ((data || []) as unknown as DeductionReceiptRow[]).map(row => ({ ...row,
+    receipt_content_fingerprint: row.admin_resolution_content_fingerprint || row.receipt_content_fingerprint,
+  }));
 }
 
 function classifyReceipt(params: {

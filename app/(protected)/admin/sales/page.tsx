@@ -67,6 +67,7 @@ function withEmoji(emoji: string, label: string) {
 }
 
 type SalesTodayResponse = {
+  financialReviewReceiptCount?: number;
   ok: boolean;
   businessDate?: string;
   error?: string;
@@ -473,6 +474,10 @@ export default function SalesPage() {
   return (
     <Container noPaddingTop>
       <SubNav tabs={tabs} />
+      {(salesData?.financialReviewReceiptCount ?? 0) > 0 && <p role="alert" style={{ padding: 12, overflowWrap: "anywhere" }}>
+        {lang === "ko" ? `금액·품목 정정이 필요한 ${salesData?.financialReviewReceiptCount}건은 정상 매출 집계에서 보류 중입니다. 관리자 영수증 검토가 필요합니다.`
+          : `${salesData?.financialReviewReceiptCount} hóa đơn cần điều chỉnh tiền và món, chưa tính vào doanh thu chính thức. Cần quản lý kiểm tra hóa đơn.`}
+      </p>}
 
       <div style={sectionStyle}>
         <section style={noticeCardStyle}>

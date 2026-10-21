@@ -593,6 +593,7 @@ export async function POST(req: Request) {
       limit,
     });
     markPhase("invoiceListMs");
+    const listObservedAt = new Date().toISOString();
     const limitReached = invoices.length >= limit;
     const warning = limitReached ? CUKCUK_LIMIT_REACHED_WARNING : undefined;
 
@@ -617,11 +618,17 @@ export async function POST(req: Request) {
           };
         }
 
-        const detailPayload = await fetchSaInvoiceDetail({
-          accessToken: login.accessToken,
-          companyCode: login.companyCode,
-          refId,
-        });
+        let detailPayload: JsonObject;
+        try {
+          detailPayload = await fetchSaInvoiceDetail({
+            accessToken: login.accessToken,
+            companyCode: login.companyCode,
+            refId,
+          });
+        } catch {
+          // Isolate a single POS failure. Do not log auth responses/payloads.
+          return { invoice, refId, detailPayload: null, error: "Invoice detail lookup failed" };
+        }
         if (getInvoiceRefId(detailPayload) !== refId) {
           return {
             invoice,
@@ -635,6 +642,7 @@ export async function POST(req: Request) {
           invoice,
           refId,
           detailPayload,
+          detailObservedAt: new Date().toISOString(),
           error: null,
         };
       })
@@ -649,6 +657,7 @@ export async function POST(req: Request) {
         invoice: CukcukInvoice;
         refId: string;
         detailPayload: JsonObject;
+        detailObservedAt: string;
         error: null;
       } => Boolean(item.refId && item.detailPayload && !item.error)
     );
@@ -663,7 +672,10 @@ export async function POST(req: Request) {
       })
     );
 
-    const receiptSaveResult = await saveReceipts(receiptRows);
+    const receiptSaveResult = await saveReceipts(receiptRows, {
+      listInvoices: new Map(validDetails.map(item => [item.refId, item.invoice])), listObservedAt,
+      detailObservedAt: new Map(validDetails.map(item => [item.refId, item.detailObservedAt])),
+    });
     markPhase("saveReceiptsMs");
 
     const lineRows = validDetails.flatMap((item) => {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isInventoryDeductionBusy, inventoryBusyResponse } from "@/lib/sales/inventory-deduction-lock";
 import { requireRole } from "@/lib/auth/server-auth";
 import { prepareAndApplyReprocessInventoryDeduction } from "@/lib/sales/inventory-deduction-reprocess";
 
@@ -57,6 +58,8 @@ export async function POST(req: Request) {
       status: getResponseStatus(result.result),
     });
   } catch (error) {
+    if (isInventoryDeductionBusy(error)) return NextResponse.json(inventoryBusyResponse,
+      { status: 409, headers: { "Retry-After": "1" } });
     console.error("[ADMIN_SALES_INVENTORY_REPROCESS_ERROR]", error);
     return NextResponse.json(
       {

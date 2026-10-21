@@ -1,3 +1,4 @@
+import { requireRole } from "@/lib/auth/server-auth";
 import { NextResponse } from "next/server";
 import { loginCukcuk } from "@/lib/pos/cukcuk/auth";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -37,32 +38,7 @@ function parseReceiptId(value: string) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function canManageSalesReceipt(role: unknown) {
-  return role === "owner" || role === "master" || role === "manager";
-}
 
-async function getAdminActor(actorUsername: unknown) {
-  if (typeof actorUsername !== "string" || !actorUsername.trim()) {
-    return null;
-  }
-
-  const { data, error } = await supabaseServer
-    .from("users")
-    .select("id, username, name, role, is_active")
-    .eq("username", actorUsername.trim())
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Failed to verify admin actor: ${error.message}`);
-  }
-
-  if (!canManageSalesReceipt(data?.role)) {
-    return null;
-  }
-
-  return data;
-}
 
 // 실제 화면 문구는 lib/text/sales.ts의 receiptsEdit 문구를 blockReason 기준으로
 // 프론트에서 선택해 표시한다. 여기 메시지는 서버 로그·비-UI 용도의 한국어 기본값이다.
@@ -102,6 +78,9 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+    const auth = await requireRole(["owner", "master", "manager"]);
+    if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
+
   const { id } = await context.params;
   const receiptId = parseReceiptId(id);
 
@@ -113,18 +92,6 @@ export async function POST(
   }
 
   try {
-    const body = (await req.json().catch(() => ({}))) as {
-      actorUsername?: string;
-    };
-
-    const actor = await getAdminActor(body.actorUsername);
-    if (!actor) {
-      return NextResponse.json(
-        { ok: false, error: "Forbidden" },
-        { status: 403 }
-      );
-    }
-
     const { data: receipt, error: receiptError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
@@ -253,7 +220,7 @@ export async function POST(
     });
 
     try {
-      const receiptSaveResult = await saveReceipts([receiptForSave]);
+      const receiptSaveResult = await saveReceipts([receiptForSave], { origin: "refresh" });
 
       const details = getDetailsFromInvoicePayload(detailPayload);
       const lineRows = details.map((detail, index) =>

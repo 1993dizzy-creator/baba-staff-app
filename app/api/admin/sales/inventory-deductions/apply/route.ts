@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isInventoryDeductionBusy, inventoryBusyResponse } from "@/lib/sales/inventory-deduction-lock";
 import { requireRole } from "@/lib/auth/server-auth";
 import { getSupabaseErrorCode } from "@/lib/pos/mapping-admin";
 import { buildInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-preview";
@@ -130,6 +131,8 @@ export async function POST(req: Request) {
     );
 
     if (error) {
+      if (isInventoryDeductionBusy(error)) return NextResponse.json(inventoryBusyResponse,
+        { status: 409, headers: { "Retry-After": "1" } });
       const failedValidation = await validateInventoryDeductionBatch(
         savedBatch.batchId
       ).catch(() => validation);
@@ -157,6 +160,8 @@ export async function POST(req: Request) {
       validation,
     });
   } catch (error) {
+    if (isInventoryDeductionBusy(error)) return NextResponse.json(inventoryBusyResponse,
+      { status: 409, headers: { "Retry-After": "1" } });
     console.error("[ADMIN_SALES_INVENTORY_DIRECT_APPLY_ERROR]", error);
     return NextResponse.json(
       {

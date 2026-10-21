@@ -1,3 +1,4 @@
+import { requireRole } from "@/lib/auth/server-auth";
 import { NextResponse } from "next/server";
 import { calculateModifiedReceiptTaxSaving } from "@/lib/sales/tax-saving";
 import { resolveAdminSalesBusinessDate } from "@/lib/sales/admin-sales-business-time";
@@ -13,6 +14,8 @@ type ReceiptRow = {
   total_amount: number | string | null;
   final_amount: number | string | null;
   vat_amount: number | string | null;
+  admin_resolution_version?: number;
+  admin_resolution_financial_review_required?: boolean;
   is_modified: boolean | null;
   original_tax_summary: unknown | null;
   original_amount_summary: unknown | null;
@@ -38,6 +41,7 @@ type LineRow = {
 };
 
 type PaymentRow = {
+  admin_resolution_retired?: boolean;
   receipt_id: number | null;
   payment_type: number | null;
   payment_name: string | null;
@@ -365,6 +369,7 @@ function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
 }
 
 function getReceiptTaxAmount(receipt: ReceiptRow) {
+  if (Number(receipt.admin_resolution_version) > 0) return toNumber(receipt.vat_amount);
   const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
 
   if (receipt.tax_override_mode === "exclude_all") return 0;
@@ -521,6 +526,9 @@ function buildAmountDifferenceAmount(receipts: ReceiptRow[]) {
 }
 
 export async function GET(req: Request) {
+    const auth = await requireRole(["owner", "master", "manager"]);
+    if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
+
   try {
     const { searchParams } = new URL(req.url);
     const { businessDate } = await resolveAdminSalesBusinessDate(
@@ -546,7 +554,7 @@ export async function GET(req: Request) {
       supabaseServer
         .from("pos_sales_receipts")
         .select(
-          "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary, tax_override_mode"
+          "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary, tax_override_mode" + (process.env.POS_ADMIN_RESOLUTION_V2_SCHEMA_READY === "true" ? ", admin_resolution_version, admin_resolution_financial_review_required" : "")
         )
         .eq("business_date", businessDate),
       supabaseServer
@@ -557,7 +565,7 @@ export async function GET(req: Request) {
         .eq("business_date", businessDate),
       supabaseServer
         .from("pos_sales_receipt_payments")
-        .select("receipt_id, payment_type, payment_name, card_name, amount")
+        .select("receipt_id, payment_type, payment_name, card_name, amount" + (process.env.POS_ADMIN_RESOLUTION_V2_SCHEMA_READY === "true" ? ",admin_resolution_retired" : ""))
         .eq("business_date", businessDate),
     ]);
 
@@ -573,9 +581,10 @@ export async function GET(req: Request) {
       throw new Error(`Failed to fetch sales payments: ${paymentsError.message}`);
     }
 
-    const receiptRows = (receipts || []) as ReceiptRow[];
+    const allReceiptRows = (receipts || []) as unknown as ReceiptRow[];
+    const receiptRows = allReceiptRows.filter(r => r.admin_resolution_financial_review_required !== true);
     const lineRows = (lines || []) as LineRow[];
-    const paymentRows = (payments || []) as PaymentRow[];
+    const paymentRows = ((payments || []) as unknown as PaymentRow[]).filter(p => p.admin_resolution_retired !== true);
 
     const paidReceipts = receiptRows.filter((receipt) =>
       isPaid(receipt.payment_status)
@@ -609,6 +618,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       businessDate,
+      financialReviewReceiptCount: allReceiptRows.length - receiptRows.length,
       summary,
       status: {
         paid: paidReceiptCount,

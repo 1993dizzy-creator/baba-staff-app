@@ -1,3 +1,4 @@
+import { requireRole } from "@/lib/auth/server-auth";
 import { NextResponse } from "next/server";
 import { resolveAdminSalesMonth } from "@/lib/sales/admin-sales-business-time";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -15,6 +16,8 @@ type ReceiptRow = {
   total_amount: number | string | null;
   final_amount: number | string | null;
   vat_amount: number | string | null;
+  admin_resolution_version?: number;
+  admin_resolution_financial_review_required?: boolean;
   is_modified: boolean | null;
   original_tax_summary: unknown | null;
   original_amount_summary: unknown | null;
@@ -44,7 +47,7 @@ type LineRow = {
   raw_json: unknown;
 };
 
-type PaymentRow = PosPaymentRow;
+type PaymentRow = PosPaymentRow & { admin_resolution_retired?: boolean };
 
 type ProductCategoryRow = {
   id: number;
@@ -186,6 +189,7 @@ function normalizeAmountSummary(value: unknown): AmountSummarySnapshot | null {
 }
 
 function getReceiptTaxAmount(receipt: ReceiptRow) {
+  if (Number(receipt.admin_resolution_version) > 0) return toNumber(receipt.vat_amount);
   const originalTaxSummary = normalizeTaxSummary(receipt.original_tax_summary);
 
   if (receipt.tax_override_mode === "exclude_all") return 0;
@@ -478,6 +482,9 @@ async function fetchCategoryGroupMappings() {
 }
 
 export async function GET(req: Request) {
+    const auth = await requireRole(["owner", "master", "manager", "leader"]);
+    if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
+
   try {
     const { searchParams } = new URL(req.url);
     const { month } = await resolveAdminSalesMonth(searchParams.get("month"));
@@ -505,7 +512,7 @@ export async function GET(req: Request) {
       supabaseServer
         .from("pos_sales_receipts")
         .select(
-          "id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary, tax_override_mode"
+          "id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary, tax_override_mode" + (process.env.POS_ADMIN_RESOLUTION_V2_SCHEMA_READY === "true" ? ", admin_resolution_version, admin_resolution_financial_review_required" : "")
         )
         .gte("business_date", fromDate)
         .lte("business_date", toDate),
@@ -514,7 +521,7 @@ export async function GET(req: Request) {
       fetchCategoryGroupMappings(),
       supabaseServer
         .from("pos_sales_receipt_payments")
-        .select("receipt_id, business_date, payment_type, payment_name, card_name, amount")
+        .select("receipt_id, business_date, payment_type, payment_name, card_name, amount" + (process.env.POS_ADMIN_RESOLUTION_V2_SCHEMA_READY === "true" ? ",admin_resolution_retired" : ""))
         .gte("business_date", fromDate)
         .lte("business_date", toDate),
     ]);
@@ -527,9 +534,10 @@ export async function GET(req: Request) {
       throw new Error(`Failed to fetch monthly sales payments: ${paymentsError.message}`);
     }
 
-    const receiptRows = (receipts || []) as ReceiptRow[];
+    const allReceiptRows = (receipts || []) as unknown as ReceiptRow[];
+    const receiptRows = allReceiptRows.filter(r => r.admin_resolution_financial_review_required !== true);
     const lineRows = lines;
-    const paymentRows = (payments || []) as PaymentRow[];
+    const paymentRows = ((payments || []) as unknown as PaymentRow[]).filter(p => p.admin_resolution_retired !== true);
 
     return NextResponse.json({
       ok: true,
@@ -539,6 +547,7 @@ export async function GET(req: Request) {
         toDate,
       },
       summary: buildMonthlySummary(receiptRows),
+      financialReviewReceiptCount: allReceiptRows.length - receiptRows.length,
       paymentSummary: buildPaymentSummary(filterPaidPayments(receiptRows, paymentRows)),
       taxSummary: buildTaxSummary(receiptRows, lineRows),
       menuSales: buildMenuSales(

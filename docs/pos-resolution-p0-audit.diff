@@ -1,0 +1,220 @@
+--- before/supabase/migrations/20261021070640_pos_pending_admin_resolutions.sql
++++ after/supabase/migrations/20261021070640_pos_pending_admin_resolutions.sql
+@@ -1,6 +1,10 @@
+ -- LOCAL ONLY until reviewed and manually applied in SQL Editor. No backfill.
+ -- Additive names; rerun intentionally fails on an existing object instead of
+ -- masking schema drift. Apply this whole file in ONE transaction in SQL Editor.
++begin;
++set local lock_timeout='5s';
++set local statement_timeout='60s';
++
+ do $preflight$
+ begin
+  if to_regprocedure('public.sales_close_business_day_v1(date,text,jsonb,jsonb,bigint,text,boolean,bigint)') is null
+@@ -389,3 +393,4 @@
+ end $$;
+ revoke all on function public.sales_claim_pending_rechecks_v1(),public.sales_finish_pending_recheck_v1(bigint,uuid,text) from public,anon,authenticated,service_role;
+ grant execute on function public.sales_claim_pending_rechecks_v1(),public.sales_finish_pending_recheck_v1(bigint,uuid,text) to service_role;
++commit;
+--- before/supabase/migrations/20261021081604_pos_resolution_corrections_inventory_review.sql
++++ after/supabase/migrations/20261021081604_pos_resolution_corrections_inventory_review.sql
+@@ -3,6 +3,22 @@
+ begin;
+ set local lock_timeout='5s';
+ set local statement_timeout='60s';
++
++-- pg_get_functiondef preserves the function body's original CRLF. Normalize
++-- before anchor checks; never use a global BEGIN replacement on nested blocks.
++create function pos_resolution_private.normalized_definition(p_function regprocedure) returns text
++language sql stable set search_path=pg_catalog as $$
++ select replace(replace(pg_get_functiondef(p_function),E'\r\n',E'\n'),E'\r',E'\n')
++$$;
++create function pos_resolution_private.require_anchor(p_definition text,p_anchor text) returns integer
++language plpgsql immutable set search_path=pg_catalog as $$
++declare v_pos integer:=strpos(p_definition,p_anchor);
++begin
++ if v_pos=0 or strpos(substr(p_definition,v_pos+length(p_anchor)),p_anchor)>0 then
++  raise exception 'POS_RESOLUTION_ANCHOR_CONTRACT_MISMATCH' using detail=p_anchor;
++ end if;
++ return v_pos;
++end $$;
+ do $types$
+ begin
+  if exists(select 1 from pg_attribute a join pg_class c on c.oid=a.attrelid join pg_namespace n on n.oid=c.relnamespace
+@@ -145,7 +161,7 @@
+ do $clone$
+ declare d text; a integer; b integer;
+ begin
++ d:=pos_resolution_private.normalized_definition('public.admin_update_paid_sales_receipt(bigint,bigint,uuid,text,text,text,numeric,text,numeric,jsonb,numeric)'::regprocedure);
+- d:=pg_get_functiondef('public.admin_update_paid_sales_receipt(bigint,bigint,uuid,text,text,text,numeric,text,numeric,jsonb,numeric)'::regprocedure);
+  if position('inventory_deduction_processing_paused=false' in d)=0 or position('delete from public.pos_sales_receipt_lines line' in d)=0 then raise exception 'POS_RESOLUTION_EDIT_CONTRACT_MISMATCH';end if;
+  d:=replace(d,'public.admin_update_paid_sales_receipt(','pos_resolution_private.edit_paid_held(');
+  d:=replace(d,'inventory_deduction_auto_eligible_at=v_now','inventory_deduction_auto_eligible_at=null');
+@@ -166,7 +182,7 @@
+  execute d;
+  -- The initial resolution v2 preserves payment rows, and permits existing
+  -- stock history ONLY because it stays held for a separate stock approval.
++ d:=pos_resolution_private.normalized_definition('public.sales_resolve_pending_receipt_v1(bigint,bigint,jsonb)'::regprocedure);
+- d:=pg_get_functiondef('public.sales_resolve_pending_receipt_v1(bigint,bigint,jsonb)'::regprocedure);
+  d:=replace(d,'public.sales_resolve_pending_receipt_v1(','pos_resolution_private.resolve_pending_with_history(');
+  a:=position(' if exists(select 1 from public.pos_inventory_deductions where receipt_id=p_receipt_id)' in d);
+  b:=position(' if v_r.inventory_deduction_processing_paused is true' in d);
+@@ -183,6 +199,11 @@
+  a:=a+b-1;
+  d:=substr(d,1,a-1)||' update public.pos_sales_receipts set admin_resolution_version=1,admin_resolution_financial_review_required=(v_decision=''paid'' and not pos_resolution_private.financial_consistent(p_receipt_id,v_amount)) where id=p_receipt_id;'||E'\n'||
+   ' if v_decision=''paid'' then update public.pos_sales_receipts set original_tax_summary=coalesce(original_tax_summary,jsonb_build_object(''totalTaxAmount'',v_r.vat_amount)),original_amount_summary=coalesce(original_amount_summary,jsonb_build_object(''totalAmount'',v_r.total_amount,''vatAmount'',v_r.vat_amount,''finalAmount'',v_r.final_amount,''paymentTotalAmount'',v_r.final_amount)),total_amount=(select coalesce(sum(final_amount),0) from public.pos_sales_receipt_lines where receipt_id=p_receipt_id and is_excluded is not true and is_canceled is not true),vat_amount=(select coalesce(sum(tax_amount),0) from public.pos_sales_receipt_lines where receipt_id=p_receipt_id and is_excluded is not true and is_canceled is not true),discount_amount=(select coalesce(sum(discount_amount),0) from public.pos_sales_receipt_lines where receipt_id=p_receipt_id and is_excluded is not true and is_canceled is not true) where id=p_receipt_id;end if;'||E'\n'||substr(d,a);
++ -- Closed-day staging: keep the effective status pending until financial
++ -- correction. The immutable administrator decision remains authoritative;
++ -- sync cannot restore/replace it. No closed snapshot or ledger is changed.
++ a:=pos_resolution_private.require_anchor(d,E' if v_close.id is not null then\n  v_source:=pos_sales_close_private.build_source(v_date);\n  v_close_result:=');
++ d:=substr(d,1,a-1)||E' if v_close.id is not null and exists(select 1 from public.pos_sales_receipts where id=p_receipt_id and admin_resolution_financial_review_required) then\n  update public.pos_sales_receipts set payment_status=1 where id=p_receipt_id;\n  update public.pos_sales_receipt_lines set payment_status=1 where receipt_id=p_receipt_id;\n  v_close_result:=jsonb_build_object(''status'',''financial_correction_staged'',''closureFingerprint'',v_close.source_fingerprint);\n elsif v_close.id is not null then\n'||substr(d,a+length(E' if v_close.id is not null then\n'));
+  execute d;
+ end $clone$;
+ 
+@@ -233,10 +254,16 @@
+   or p_request->>'expectedRevision' is distinct from coalesce(v_r.revision,0)::text
+   or p_request->>'fingerprint' is distinct from pos_resolution_private.fingerprint(v_before)
+  then raise exception 'POS_RESOLUTION_STALE';end if;
++ if v_r.is_canceled is true or (v_r.payment_status<>3 and not (v_r.payment_status=1 and v_r.admin_resolution_financial_review_required and v_header.decision='paid')) then raise exception 'POS_RESOLUTION_COMPENSATION_REQUIRES_REVIEW';end if;
+- if v_r.is_canceled is true or v_r.payment_status<>3 then raise exception 'POS_RESOLUTION_COMPENSATION_REQUIRES_REVIEW';end if;
+  v_reclose:=pos_resolution_private.authorize_day(v_date,p_actor_user_id,p_request);
+  v_decision:=p_request->>'decision';
+  insert into pos_resolution_private.capabilities values(txid_current(),p_receipt_id);
++ -- Promote only after locked close/source authorization. If validation or
++ -- official reclose fails, the whole correction returns to held staging.
++ if v_r.payment_status=1 then
++  update public.pos_sales_receipts set payment_status=3 where id=p_receipt_id;
++  update public.pos_sales_receipt_lines set payment_status=3 where receipt_id=p_receipt_id;
++ end if;
+  if v_decision='paid' then
+   v_amount:=(p_request->>'amount')::numeric;perform pos_resolution_private.check_payments(v_amount,p_request->'payments');
+   if jsonb_typeof(p_request->'lines') is distinct from 'array' or jsonb_array_length(p_request->'lines')=0
+@@ -303,6 +330,20 @@
+  return v_result;
+ end $$;
+ 
++create function pos_resolution_private.mapping_ids(p_id bigint) returns bigint[]
++language sql stable set search_path=pg_catalog,public as $$
++ select coalesce(array_agg(distinct m.id),'{}'::bigint[]) from public.pos_item_mappings m
++ where m.pos_item_code in(select item_code from public.pos_sales_receipt_lines where receipt_id=p_id and is_excluded is not true)
++ or m.id in(select mapping_id from public.pos_inventory_deductions where receipt_id=p_id or invoice_ref_id=(select ref_id from public.pos_sales_receipts where id=p_id))
++$$;
++create function pos_resolution_private.inventory_ids(p_id bigint) returns bigint[]
++language sql stable set search_path=pg_catalog,public as $$
++ select coalesce(array_agg(distinct id) filter(where id is not null),'{}'::bigint[]) from (
++  select inventory_item_id id from public.pos_item_mappings where id=any(pos_resolution_private.mapping_ids(p_id))
++  union select inventory_item_id from public.pos_item_mapping_recipes where mapping_id=any(pos_resolution_private.mapping_ids(p_id))
++  union select inventory_item_id from public.pos_inventory_deductions where receipt_id=p_id or invoice_ref_id=(select ref_id from public.pos_sales_receipts where id=p_id)
++ ) affected
++$$;
+ create function pos_resolution_private.inventory_context(p_id bigint) returns text
+ language sql stable set search_path=pg_catalog,public as $$
+  select pos_resolution_private.fingerprint(jsonb_build_object('source',pos_resolution_private.snapshot(p_id),
+@@ -310,10 +351,12 @@
+  'lastObservation',(select to_jsonb(o)-'raw_payload' from public.pos_sales_receipt_pos_observations o where receipt_id=p_id order by observed_at desc,id desc limit 1),
+  'deductions',(select coalesce(jsonb_agg(to_jsonb(d) order by id),'[]') from public.pos_inventory_deductions d where receipt_id=p_id or invoice_ref_id=(select ref_id from public.pos_sales_receipts where id=p_id)),
+  'history',(select coalesce(jsonb_agg(to_jsonb(d) order by id),'[]') from public.pos_inventory_deduction_receipts d where receipt_id=p_id),
++ 'inventory',(select coalesce(jsonb_agg(to_jsonb(i) order by id),'[]') from public.inventory i where id=any(pos_resolution_private.inventory_ids(p_id))),
++ 'mappings',(select coalesce(jsonb_agg(to_jsonb(m) order by id),'[]') from public.pos_item_mappings m where id=any(pos_resolution_private.mapping_ids(p_id))),
++ 'recipes',(select coalesce(jsonb_agg(to_jsonb(m) order by id),'[]') from public.pos_item_mapping_recipes m where mapping_id=any(pos_resolution_private.mapping_ids(p_id))),
++ 'products',(select coalesce(jsonb_agg(to_jsonb(m) order by id),'[]') from public.pos_products m where exists(
++  select 1 from public.pos_sales_receipt_lines l where l.receipt_id=p_id and l.is_excluded is not true and
++  (m.item_code=l.item_code or m.pos_item_id=l.item_id or m.item_id=l.item_id)))))
+- 'inventory',(select coalesce(jsonb_agg(to_jsonb(i) order by id),'[]') from public.inventory i),
+- 'mappings',(select coalesce(jsonb_agg(to_jsonb(m) order by id),'[]') from public.pos_item_mappings m),
+- 'recipes',(select coalesce(jsonb_agg(to_jsonb(m) order by id),'[]') from public.pos_item_mapping_recipes m),
+- 'products',(select coalesce(jsonb_agg(to_jsonb(m) order by id),'[]') from public.pos_products m)))
+ $$;
+ 
+ create function public.sales_get_admin_resolution_work_v2(p_receipt_id bigint,p_actor_user_id bigint) returns jsonb
+@@ -368,7 +411,7 @@
+ -- receipts still use the exact existing implementation. Only the atomic v2
+ -- approval may invoke a legacy engine for a protected receipt.
+ do $engines$
++declare d text;n text;s text;guard text;a integer;v_oid regprocedure;
+-declare d text;n text;s text;guard text;
+ begin
+  for n,s,guard in select * from (values
+  ('apply_sales_inventory_deduction_batch','bigint,text,jsonb',
+@@ -378,9 +421,13 @@
+  ('rollback_canceled_sales_inventory_deduction_receipt','bigint,text,timestamptz,text',
+   'exists(select 1 from public.pos_sales_receipt_admin_resolutions a where a.receipt_id=p_receipt_id and not exists(select 1 from pos_resolution_private.work_capabilities c where c.transaction_id=txid_current() and c.receipt_id=a.receipt_id and purpose=''inventory''))')
+  ) t(n,s,g) loop
++  v_oid:=('public.'||n||'('||s||')')::regprocedure;
++  d:=pos_resolution_private.normalized_definition(v_oid);
++  if not exists(select 1 from pg_proc p join pg_language l on l.oid=p.prolang where p.oid=v_oid and l.lanname='plpgsql' and p.prorettype='jsonb'::regtype and p.prosecdef)
++   or position('for update' in lower(d))=0 or position('p_actor_username' in d)=0
++   or position('updated_at' in d)=0 or position('inventory_log' in d)=0 then raise exception 'POS_RESOLUTION_ENGINE_CONTRACT_MISMATCH';end if;
++  a:=pos_resolution_private.require_anchor(d,E'\nbegin\n');
++  d:=substr(d,1,a+length(E'\nbegin\n')-1)||' if '||guard||' then raise exception ''POS_RESOLUTION_INVENTORY_APPROVAL_REQUIRED'';end if;'||E'\n'||substr(d,a+length(E'\nbegin\n'));
+-  d:=pg_get_functiondef(('public.'||n||'('||s||')')::regprocedure);
+-  if position(E'begin\n' in d)=0 then raise exception 'POS_RESOLUTION_ENGINE_CONTRACT_MISMATCH';end if;
+-  d:=regexp_replace(d,E'begin\n',E'begin\n if '||guard||' then raise exception ''POS_RESOLUTION_INVENTORY_APPROVAL_REQUIRED'';end if;'||E'\n');
+   execute d;
+  end loop;
+ end $engines$;
+@@ -399,8 +446,13 @@
+   if v_old.receipt_id=p_receipt_id and v_old.actor_user_id=p_actor_user_id and v_old.request_payload=p_request then return v_old.result;end if;
+   raise exception 'POS_RESOLUTION_REQUEST_CONFLICT';
+  end if;
++ -- Catalog barriers prevent matching-row INSERT phantoms. Inventory itself
++ -- is locked by affected ID only, so unrelated keg stock updates can proceed.
++ -- Source receipt/line/payment table barriers remain for legacy sync safety.
++ lock table public.pos_item_mappings,public.pos_item_mapping_recipes,public.pos_products in share mode;
++ perform 1 from public.inventory where id=any(pos_resolution_private.inventory_ids(p_receipt_id)) order by id for update;
++ perform 1 from public.pos_inventory_deduction_receipts where receipt_id=p_receipt_id order by id for update;
++ perform 1 from public.pos_inventory_deductions where receipt_id=p_receipt_id or invoice_ref_id=(select ref_id from public.pos_sales_receipts where id=p_receipt_id) order by id for update;
+- -- Hold stock, mappings and history stable until the legacy engine completes.
+- lock table public.inventory,public.pos_item_mappings,public.pos_item_mapping_recipes,public.pos_products,public.pos_inventory_deductions,public.pos_inventory_deduction_receipts in share row exclusive mode;
+  select * into v_review from public.pos_sales_receipt_inventory_reviews where id=(p_request->>'reviewId')::uuid and receipt_id=p_receipt_id;
+  if not found or v_review.expires_at<clock_timestamp() or v_review.resolution_version<>pos_resolution_private.version(p_receipt_id)
+   or v_review.context_fingerprint is distinct from pos_resolution_private.inventory_context(p_receipt_id)
+@@ -418,7 +470,7 @@
+  insert into pos_resolution_private.work_capabilities values(txid_current(),p_receipt_id,'inventory');
+  -- This unpause exists only inside this transaction, while all relevant locks
+  -- and the unforgeable capability are held. Any error rolls it back.
++ update public.pos_sales_receipts set inventory_deduction_processing_paused=false,inventory_deduction_auto_eligible_at=null where id=p_receipt_id returning * into v_r;
+- update public.pos_sales_receipts set inventory_deduction_processing_paused=false,inventory_deduction_auto_eligible_at=null where id=p_receipt_id;
+  v_plan:=v_review.plan;v_work:=v_plan->>'workflow';
+  -- Content may legitimately return to an older value (1 -> 2 -> 1 -> 2).
+  -- Keep the canonical content separately; scope engine idempotency by the
+@@ -469,17 +521,17 @@
+ do $observe$
+ declare d text;
+ begin
++ d:=pos_resolution_private.normalized_definition('public.sales_observe_resolved_receipts_v1(jsonb)'::regprocedure);
+- d:=pg_get_functiondef('public.sales_observe_resolved_receipts_v1(jsonb)'::regprocedure);
+  d:=replace(d,'  v_reconciliation:=case','  select decision,amount into v_a.decision,v_a.confirmed_amount from public.pos_sales_receipt_resolution_versions where receipt_id=v_r.id order by version desc limit 1;'||E'\n'||'  if not found then select * into v_a from public.pos_sales_receipt_admin_resolutions where receipt_id=v_r.id;end if;'||E'\n'||'  v_reconciliation:=case');
+  d:=replace(d,'v_key:=pos_resolution_private.fingerprint(v_item);','v_key:=pos_resolution_private.fingerprint(v_item||jsonb_build_object(''resolutionVersion'',pos_resolution_private.version(v_r.id)));');
+  d:=replace(d,'final_amount,raw_payload,reconciliation)','final_amount,raw_payload,reconciliation,resolution_version)');
+  d:=replace(d,'v_item->''raw'',v_reconciliation)','v_item->''raw'',v_reconciliation,pos_resolution_private.version(v_r.id))');
+  execute d;
++ d:=pos_resolution_private.normalized_definition('public.sales_claim_pending_rechecks_v1()'::regprocedure);
+- d:=pg_get_functiondef('public.sales_claim_pending_rechecks_v1()'::regprocedure);
+  if position('o.reconciliation=''matched''' in d)=0 then raise exception 'POS_RESOLUTION_RECHECK_CONTRACT_MISMATCH';end if;
+  d:=replace(d,'o.reconciliation=''matched''','o.reconciliation=''matched'' and o.resolution_version=pos_resolution_private.version(r.id)');
+  execute d;
++ d:=pos_resolution_private.normalized_definition('public.sales_get_pending_resolution_v1(bigint,bigint)'::regprocedure);
+- d:=pg_get_functiondef('public.sales_get_pending_resolution_v1(bigint,bigint)'::regprocedure);
+  d:=replace(d,'select to_jsonb(o)-''raw_payload'' from public.pos_sales_receipt_pos_observations o',
+   'select (to_jsonb(o)-''raw_payload'')||case when o.resolution_version is distinct from pos_resolution_private.version(p_receipt_id) then jsonb_build_object(''reconciliation'',''unknown'') else ''{}''::jsonb end from public.pos_sales_receipt_pos_observations o');
+  execute d;
+@@ -487,13 +539,14 @@
+ 
+ -- Fail closed instead of allowing a held financial transition to become an
+ -- official closing/ledger source. No source fields or fingerprints change for
++-- normal receipts. A closed-day inconsistent initial decision is staged with
++-- effective status 1; only its validated correction promotes and recloses it.
+--- normal receipts. A held initial resolution cannot reclose an existing day.
+ do $financial_source$
+ declare d text;
+ begin
++ d:=pos_resolution_private.normalized_definition('pos_sales_close_private.build_source(date)'::regprocedure);
++ perform pos_resolution_private.require_anchor(d,E'\nbegin\n');
++ d:=replace(d,E'\nbegin\n',E'\nbegin\n if exists(select 1 from public.pos_sales_receipts where business_date=p_date and payment_status=3 and is_canceled is not true and admin_resolution_financial_review_required=true) then raise exception ''POS_RESOLUTION_FINANCIAL_CORRECTION_REQUIRED'';end if;\n');
+- d:=pg_get_functiondef('pos_sales_close_private.build_source(date)'::regprocedure);
+- if position(E'begin\n' in d)=0 then raise exception 'POS_RESOLUTION_SOURCE_CONTRACT_MISMATCH';end if;
+- d:=replace(d,E'begin\n',E'begin\n if exists(select 1 from public.pos_sales_receipts where business_date=p_date and payment_status=3 and is_canceled is not true and admin_resolution_financial_review_required=true) then raise exception ''POS_RESOLUTION_FINANCIAL_CORRECTION_REQUIRED'';end if;\n');
+  if position('from public.pos_sales_receipt_payments p join public.pos_sales_receipts r on r.id = p.receipt_id' in d)=0 then raise exception 'POS_RESOLUTION_PAYMENT_SOURCE_CONTRACT_MISMATCH';end if;
+  d:=replace(d,'from public.pos_sales_receipt_payments p join public.pos_sales_receipts r on r.id = p.receipt_id','from public.pos_sales_receipt_payments p join public.pos_sales_receipts r on r.id = p.receipt_id and p.admin_resolution_retired is not true');
+  d:=replace(d,'where p.receipt_id = r.id','where p.receipt_id = r.id and p.admin_resolution_retired is not true');

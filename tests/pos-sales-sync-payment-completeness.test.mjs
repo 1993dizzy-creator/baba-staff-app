@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
+import * as pendingResolutionPolicy from '../lib/sales/pending-resolution-policy.ts';
 import * as snapshots from '../lib/pos/cukcuk/payment-snapshot.ts';
 import * as completeness from '../lib/pos/cukcuk/sales-sync-completeness.ts';
 import * as inventoryChange from '../lib/pos/cukcuk/sales-receipt-inventory-change.ts';
@@ -92,6 +93,8 @@ async function harness(invoices, options, work) {
   const serverDependency = { '@/lib/supabase/server': { supabaseServer: supabase } };
   const receiptSync = load('lib/pos/cukcuk/sales-receipt-sync.ts', {
     ...serverDependency, '@/lib/pos/cukcuk/payment-snapshot': snapshots,
+    '@/lib/sales/pending-resolution-policy': pendingResolutionPolicy,
+    '@/lib/sales/admin-resolution-server': { resolutionSchemaReady: () => false, protectedResolutionRefs: async () => new Set() },
     '@/lib/pos/cukcuk/sales-receipt-inventory-change': inventoryChange, '@/lib/pos/cukcuk/sales-receipt-sync-compare': syncCompare,
   });
   const sourceApi = load('lib/ledger/pos-sales.ts', {

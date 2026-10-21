@@ -5,9 +5,10 @@ import { buildPaymentSummary, classifyPaymentBucket, filterPaidPayments, findPay
 export type PosSourceReceipt = {
   id: number; ref_no: string | null; business_date: string; ref_date: string | null;
   payment_status: number | null; is_canceled: boolean | null;
+  admin_resolution_financial_review_required?: boolean;
   final_amount: number | string | null; revision: number | null; updated_at: string | null;
 };
-export type PosSourcePayment = PosPaymentRow & { id: number };
+export type PosSourcePayment = PosPaymentRow & { id: number; admin_resolution_retired?: boolean };
 export type PosLedgerSourceRow = {
   businessDate: string; bucket: PosPaymentBucket; amount: number;
   fingerprint: string; snapshot: Record<string, unknown>;
@@ -49,13 +50,14 @@ function requireFields(row: object, fields: string[]) {
 }
 
 export function buildPosBusinessDaySource(businessDate: string, receipts: PosSourceReceipt[], payments: PosSourcePayment[]) {
+  if (receipts.some(row => row.payment_status === 3 && row.is_canceled !== true && row.admin_resolution_financial_review_required === true)) throw new Error("POS_RESOLUTION_FINANCIAL_CORRECTION_REQUIRED");
   if (!validPosBusinessDate(businessDate)) throw new Error("INVALID_POS_BUSINESS_DATE");
   if (receipts.some(row => row.business_date !== businessDate) || payments.some(row => row.business_date !== businessDate)) {
     throw new Error("POS_SOURCE_DATE_MISMATCH");
   }
   for (const row of receipts) requireFields(row, ["id", "business_date", "payment_status", "is_canceled"]);
   const paid = receipts.filter(row => row.payment_status === 3 && row.is_canceled !== true).sort((a, b) => a.id - b.id);
-  const eligible = filterPaidPayments(paid, payments).sort((a: PosSourcePayment, b: PosSourcePayment) => a.id - b.id);
+  const eligible = filterPaidPayments(paid, payments.filter(p => p.admin_resolution_retired !== true)).sort((a: PosSourcePayment, b: PosSourcePayment) => a.id - b.id);
   const receiptIds = new Set<number>();
   const paymentIds = new Set<number>();
   for (const row of paid) {

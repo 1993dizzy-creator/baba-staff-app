@@ -53,3 +53,4 @@ Crashpad/
 
 # temporary logs, reviews and scratch files from local runs
 /.tmp-*
+/.local-npm-cache/

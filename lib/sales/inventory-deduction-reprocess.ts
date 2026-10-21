@@ -1,4 +1,5 @@
 import "server-only";
+import { inventoryDeductionWriteError, isInventoryDeductionBusy } from "@/lib/sales/inventory-deduction-lock";
 
 import { createHash } from "node:crypto";
 import { buildInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-preview";
@@ -155,7 +156,7 @@ async function findSupersededDeductionReceiptId(receiptId: number) {
     .order("created_at", { ascending: false })
     .limit(1);
 
-  if (error) throw new Error(error.message);
+  if (error) throw inventoryDeductionWriteError(error);
   return data?.[0]?.id ? Number(data[0].id) : null;
 }
 
@@ -200,9 +201,7 @@ async function saveReprocessBatch(params: {
     .single();
 
   if (batchError || !batch) {
-    throw new Error(
-      batchError?.message || "Failed to create reprocess batch."
-    );
+    throw inventoryDeductionWriteError(batchError || { message: "Failed to create reprocess batch." });
   }
 
   const batchId = Number(batch.id);
@@ -241,9 +240,7 @@ async function saveReprocessBatch(params: {
       .single();
 
     if (receiptError || !batchReceipt) {
-      throw new Error(
-        receiptError?.message || "Failed to create reprocess receipt row."
-      );
+      throw inventoryDeductionWriteError(receiptError || { message: "Failed to create reprocess receipt row." });
     }
 
     const batchReceiptId = Number(batchReceipt.id);
@@ -315,7 +312,7 @@ async function saveReprocessBatch(params: {
       const { error } = await supabaseServer
         .from("pos_inventory_deductions")
         .insert(candidateRows.slice(offset, offset + 500));
-      if (error) throw new Error(error.message);
+      if (error) throw inventoryDeductionWriteError(error);
     }
 
     return {
@@ -520,16 +517,16 @@ export async function prepareAndApplyReprocessInventoryDeduction(
   if (error) {
     return {
       ok: false,
-      result: "failed",
+      result: isInventoryDeductionBusy(error) ? "stale_preview" : "failed",
       receiptId: params.receiptId,
       batchId: saved.batchId,
       deductionReceiptId: saved.batchReceiptId,
       fingerprint: unifiedReceipt.currentFingerprint,
       reversedDeductionCount: 0,
-      appliedDeductionCount: saved.candidateCount,
+      appliedDeductionCount: isInventoryDeductionBusy(error) ? 0 : saved.candidateCount,
       affectedInventoryCount: 0,
       rollbackOnly: saved.candidateCount === 0,
-      failureReason: error.message,
+      failureReason: isInventoryDeductionBusy(error) ? "inventory_busy_refresh_required" : error.message,
     };
   }
 

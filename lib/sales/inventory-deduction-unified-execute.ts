@@ -1,4 +1,5 @@
 import "server-only";
+import { isInventoryDeductionBusy } from "@/lib/sales/inventory-deduction-lock";
 
 import { randomUUID } from "node:crypto";
 import { buildInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-preview";
@@ -324,12 +325,12 @@ async function applyInitialReceipt(params: {
     return makeResult({
       item: params.item,
       actualOperationType: params.current.operationType,
-      result: "failed",
+      result: isInventoryDeductionBusy(error) ? "stale_preview" : "failed",
       fingerprint: params.current.currentFingerprint,
       batchId: savedBatch.batchId,
       deductionReceiptId,
-      appliedDeductionCount: deductionCount,
-      failureReason: error.message || "apply_failed",
+      appliedDeductionCount: isInventoryDeductionBusy(error) ? 0 : deductionCount,
+      failureReason: isInventoryDeductionBusy(error) ? "inventory_busy_refresh_required" : error.message || "apply_failed",
       startedAt: params.startedAt,
     });
   }
@@ -605,14 +606,21 @@ export async function executeUnifiedInventoryDeductions(params: {
       businessDateTo: "2999-12-31",
       receiptIds: [item.receiptId],
     });
-    const result = await executeOne({
-      item,
-      current:
-        unified.receipts.find((receipt) => receipt.receiptId === item.receiptId) ??
-        null,
-      actorUsername: params.actorUsername,
-      executionId,
-    });
+    let result: UnifiedExecuteReceiptResult;
+    try {
+      result = await executeOne({
+        item,
+        current:
+          unified.receipts.find((receipt) => receipt.receiptId === item.receiptId) ??
+          null,
+        actorUsername: params.actorUsername,
+        executionId,
+      });
+    } catch (error) {
+      if (!isInventoryDeductionBusy(error)) throw error;
+      result = makeResult({ item, actualOperationType: null, result: "stale_preview",
+        failureReason: "inventory_busy_refresh_required", startedAt: Date.now() });
+    }
     results.push(result);
     console.info(
       "[SALES_INVENTORY_UNIFIED_EXECUTE_RECEIPT]",

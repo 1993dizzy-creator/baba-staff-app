@@ -9,7 +9,7 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const sync = read("lib/pos/cukcuk/sales-receipt-sync.ts");
 const dailySync = read("app/api/pos/cukcuk/sainvoices/sync-to-sales/route.ts");
 const refresh = read("app/api/admin/sales/receipts/[id]/refresh-pos/route.ts");
-const migration = read("supabase/migrations/20261016170140_fix_pos_payment_snapshot_replacement.sql");
+const migration = read("supabase/migrations/20261016180852_fix_pos_payment_snapshot_replacement.sql");
 
 test("payment sync removes rows absent from the latest authoritative snapshot", () => {
   assert.match(sync, /reconcile_sales_receipt_payments_v1/);

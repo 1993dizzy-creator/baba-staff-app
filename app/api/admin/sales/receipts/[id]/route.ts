@@ -1,3 +1,5 @@
+import { pendingResolutionEligibility, duplicateLineGroups } from "@/lib/sales/pending-resolution-policy";
+import { requireRole, type AuthenticatedActor } from "@/lib/auth/server-auth";
 import { NextResponse } from "next/server";
 import { calculateModifiedReceiptTaxSaving } from "@/lib/sales/tax-saving";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -8,6 +10,10 @@ import {
 import { splitReceiptPayment } from "@/lib/sales/receipt-split-payment";
 
 type ReceiptRow = {
+  source: string | null;
+  created_at: string | null;
+  inventory_deduction_processing_error: string | null;
+  admin_resolution_version?: number;
   id: number;
   ref_id: string;
   ref_no: string | null;
@@ -65,6 +71,7 @@ type LineRow = {
 };
 
 type PaymentRow = {
+  admin_resolution_retired?: boolean;
   id: number;
   payment_type: number | null;
   payment_name: string | null;
@@ -315,32 +322,7 @@ function parseReceiptId(value: string) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function canManageSalesReceipt(role: unknown) {
-  return role === "owner" || role === "master" || role === "manager";
-}
 
-async function getAdminActor(actorUsername: unknown) {
-  if (typeof actorUsername !== "string" || !actorUsername.trim()) {
-    return null;
-  }
-
-  const { data, error } = await supabaseServer
-    .from("users")
-    .select("id, username, name, role, is_active")
-    .eq("username", actorUsername.trim())
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Failed to verify admin actor: ${error.message}`);
-  }
-
-  if (!canManageSalesReceipt(data?.role)) {
-    return null;
-  }
-
-  return data;
-}
 
 function normalizeEditableLines(value: unknown): NormalizedLineInput[] | null {
   if (!Array.isArray(value)) return null;
@@ -563,6 +545,9 @@ export async function GET(
   _req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+    const auth = await requireRole(["owner", "master", "manager"]);
+    if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
+
   try {
     const { id } = await context.params;
     const receiptId = parseReceiptId(id);
@@ -577,7 +562,7 @@ export async function GET(
     const { data: receipt, error: receiptError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, customer_name, table_name, is_modified, modified_at, modified_by, modification_note, review_status, admin_note, original_tax_summary, original_amount_summary, tax_override_mode, calculated_vat_amount, calculated_final_amount, final_amount_override, revision"
+        "id, source, created_at, inventory_deduction_processing_error, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, customer_name, table_name, is_modified, modified_at, modified_by, modification_note, review_status, admin_note, original_tax_summary, original_amount_summary, tax_override_mode, calculated_vat_amount, calculated_final_amount, final_amount_override, revision" + (process.env.POS_ADMIN_RESOLUTION_V2_SCHEMA_READY === "true" ? ", admin_resolution_version" : "")
       )
       .eq("id", receiptId)
       .maybeSingle();
@@ -608,7 +593,7 @@ export async function GET(
 
     const { data: payments, error: paymentsError } = await supabaseServer
       .from("pos_sales_receipt_payments")
-      .select("id, payment_type, payment_name, card_name, amount")
+      .select("id, payment_type, payment_name, card_name, amount" + (process.env.POS_ADMIN_RESOLUTION_V2_SCHEMA_READY === "true" ? ",admin_resolution_retired" : ""))
       .eq("receipt_id", receiptId)
       .order("id", { ascending: true });
 
@@ -616,10 +601,10 @@ export async function GET(
       throw new Error(`Failed to fetch sales receipt payments: ${paymentsError.message}`);
     }
 
-    const receiptRow = receipt as ReceiptRow;
+    const receiptRow = receipt as unknown as ReceiptRow;
     const lineRows = (lines || []) as LineRow[];
     const activeLineRows = lineRows.filter((line) => line.is_excluded !== true);
-    const paymentRows = (payments || []) as PaymentRow[];
+    const paymentRows = ((payments || []) as unknown as PaymentRow[]).filter(p => p.admin_resolution_retired !== true);
 
     const adjustedTaxSummary = buildTaxSummary(activeLineRows);
     const savedOriginalTaxSummary = normalizeTaxSummary(
@@ -630,7 +615,7 @@ export async function GET(
     const isVatExcluded = receiptRow.tax_override_mode === "exclude_all";
     const originalTaxAmount =
       savedOriginalTaxSummary?.totalTaxAmount ?? toNumber(receiptRow.vat_amount);
-    const appliedTaxAmount = isVatExcluded
+    const appliedTaxAmount = Number(receiptRow.admin_resolution_version) > 0 ? toNumber(receiptRow.vat_amount) : isVatExcluded
       ? 0
       : hasExplicitTaxMode
         ? originalTaxAmount
@@ -639,7 +624,7 @@ export async function GET(
       totalTaxAmount: appliedTaxAmount,
       taxByRate: isVatExcluded
         ? []
-        : savedOriginalTaxSummary?.taxByRate || adjustedTaxSummary.taxByRate,
+        : Number(receiptRow.admin_resolution_version) > 0 ? adjustedTaxSummary.taxByRate : savedOriginalTaxSummary?.taxByRate || adjustedTaxSummary.taxByRate,
       taxSavingAmount:
         receiptRow.is_modified === true
           ? calculateModifiedReceiptTaxSaving({
@@ -662,6 +647,9 @@ export async function GET(
       ok: true,
       receipt: {
         id: receiptRow.id,
+        pendingResolution: pendingResolutionEligibility(receiptRow),
+        protectedResolution: receiptRow.inventory_deduction_processing_error === "admin_resolution_inventory_review_required",
+        duplicateLineGroups: duplicateLineGroups(lineRows),
         refId: receiptRow.ref_id,
         refNo: receiptRow.ref_no,
         businessDate: receiptRow.business_date,
@@ -761,8 +749,11 @@ export async function PATCH(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+    const auth = await requireRole(["owner", "master", "manager"]);
+    if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
+
   if (req.method === "PATCH") {
-    return handleAtomicReceiptPatch(req, context);
+    return handleAtomicReceiptPatch(req, context, auth.actor);
   }
   let receiptId: number | null = null;
   let pauseAcquired = false;
@@ -786,7 +777,7 @@ export async function PATCH(
       );
     }
 
-    const actor = await getAdminActor(body.actorUsername);
+    const actor = auth.actor;
 
     if (!actor) {
       return NextResponse.json(
@@ -1511,7 +1502,8 @@ export async function PATCH(
 
 async function handleAtomicReceiptPatch(
   req: Request,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
+  actor: AuthenticatedActor
 ) {
   try {
     const { id } = await context.params;
@@ -1519,7 +1511,6 @@ async function handleAtomicReceiptPatch(
     if (!receiptId) return NextResponse.json({ ok: false, error: "Invalid receipt id" }, { status: 400 });
     const body = (await req.json().catch(() => null)) as UpdateReceiptBody | null;
     if (!body) return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
-    const actor = await getAdminActor(body.actorUsername);
     if (!actor) return NextResponse.json({ ok: false, error: "No permission" }, { status: 403 });
     const inputs = normalizeEditableLines(body.lines);
     const paymentMethod = normalizePaymentMethod(body.paymentMethod);

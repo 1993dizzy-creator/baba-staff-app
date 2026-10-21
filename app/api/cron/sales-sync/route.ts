@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { runPendingPosRechecks } from "@/lib/sales/pending-pos-recheck";
 import { getBusinessDate } from "@/lib/common/business-time";
 import {
   authorizeCron,
@@ -34,6 +35,10 @@ export async function GET(req: Request) {
     origin,
     posAdminSecret,
   });
+
+  // Bounded, opt-in observations reuse this schedule and cannot change sources.
+  const pendingRechecks = await runPendingPosRechecks();
+  if (pendingRechecks.enabled) console.info("[POS_PENDING_RECHECK]", pendingRechecks);
 
   return buildSalesSyncCronResponse({
     syncRes,

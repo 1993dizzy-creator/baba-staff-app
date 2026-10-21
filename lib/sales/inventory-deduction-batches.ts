@@ -1,4 +1,5 @@
 import "server-only";
+import { inventoryDeductionWriteError } from "@/lib/sales/inventory-deduction-lock";
 
 import { createHash } from "node:crypto";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -67,9 +68,7 @@ export async function saveInventoryDeductionPreviewBatch(params: {
     .single();
 
   if (batchError || !batch) {
-    throw new Error(
-      batchError?.message || "Failed to create inventory deduction batch."
-    );
+    throw inventoryDeductionWriteError(batchError || { message: "Failed to create inventory deduction batch." });
   }
 
   const batchId = Number(batch.id);
@@ -122,7 +121,7 @@ export async function saveInventoryDeductionPreviewBatch(params: {
             .select("id, receipt_id")
         : { data: [], error: null };
 
-    if (savedReceipts.error) throw new Error(savedReceipts.error.message);
+    if (savedReceipts.error) throw inventoryDeductionWriteError(savedReceipts.error);
 
     const batchReceiptIdByReceiptId = new Map(
       (savedReceipts.data || []).map((row) => [
@@ -214,7 +213,7 @@ export async function saveInventoryDeductionPreviewBatch(params: {
       const { error } = await supabaseServer
         .from("pos_inventory_deductions")
         .insert(candidateRows.slice(offset, offset + 500));
-      if (error) throw new Error(error.message);
+      if (error) throw inventoryDeductionWriteError(error);
     }
 
     return {

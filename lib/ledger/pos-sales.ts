@@ -15,11 +15,11 @@ async function loadPosSourceRange(fromDate: string, toDate: string) {
     const rows: PosSourceReceipt[] = [];
     let expected: number | null = null;
     for (let offset = 0;; offset += 500) {
-      const result = await supabaseServer.from("pos_sales_receipts").select("id,ref_no,business_date,ref_date,payment_status,is_canceled,final_amount,revision,updated_at", { count: "exact" }).gte("business_date",fromDate).lte("business_date",toDate).order("id").range(offset, offset + 499);
+      const result = await supabaseServer.from("pos_sales_receipts").select("id,ref_no,business_date,ref_date,payment_status,is_canceled,final_amount,revision,updated_at" + (process.env.POS_ADMIN_RESOLUTION_V2_SCHEMA_READY === "true" ? ",admin_resolution_financial_review_required" : ""), { count: "exact" }).gte("business_date",fromDate).lte("business_date",toDate).order("id").range(offset, offset + 499);
       if (result.error) throw new Error(`Failed to load POS receipts: ${result.error.message}`);
       if (result.count === null || (expected !== null && expected !== result.count)) throw new Error("POS_SOURCE_SNAPSHOT_INCOMPLETE");
       expected = result.count;
-      rows.push(...(result.data ?? []) as PosSourceReceipt[]);
+      rows.push(...(result.data ?? []) as unknown as PosSourceReceipt[]);
       if (rows.length >= expected) break;
       if (!result.data?.length) throw new Error("POS_SOURCE_SNAPSHOT_INCOMPLETE");
     }
@@ -30,11 +30,11 @@ async function loadPosSourceRange(fromDate: string, toDate: string) {
     const rows: PosSourcePayment[] = [];
     let expected: number | null = null;
     for (let offset = 0;; offset += 500) {
-      const result = await supabaseServer.from("pos_sales_receipt_payments").select("id,receipt_id,business_date,payment_type,payment_name,card_name,amount", { count: "exact" }).gte("business_date",fromDate).lte("business_date",toDate).order("id").range(offset, offset + 499);
+      const result = await supabaseServer.from("pos_sales_receipt_payments").select("id,receipt_id,business_date,payment_type,payment_name,card_name,amount" + (process.env.POS_ADMIN_RESOLUTION_V2_SCHEMA_READY === "true" ? ",admin_resolution_retired" : ""), { count: "exact" }).gte("business_date",fromDate).lte("business_date",toDate).order("id").range(offset, offset + 499);
       if (result.error) throw new Error(`Failed to load POS payments: ${result.error.message}`);
       if (result.count === null || (expected !== null && expected !== result.count)) throw new Error("POS_SOURCE_SNAPSHOT_INCOMPLETE");
       expected = result.count;
-      rows.push(...(result.data ?? []) as PosSourcePayment[]);
+      rows.push(...(result.data ?? []) as unknown as PosSourcePayment[]);
       if (rows.length >= expected) break;
       if (!result.data?.length) throw new Error("POS_SOURCE_SNAPSHOT_INCOMPLETE");
     }
