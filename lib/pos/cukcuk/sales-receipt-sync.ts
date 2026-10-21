@@ -1,5 +1,3 @@
-import { pendingResolutionEligibility } from "@/lib/sales/pending-resolution-policy";
-import { protectedResolutionRefs, resolutionSchemaReady } from "@/lib/sales/admin-resolution-server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { hasInventoryAffectingSalesLineChanged } from "@/lib/pos/cukcuk/sales-receipt-inventory-change";
 import { stripVolatilePosSyncFields } from "@/lib/pos/cukcuk/sales-receipt-sync-compare";
@@ -76,7 +74,6 @@ export type LineRow = {
 };
 
 export type ExistingReceiptRow = ReceiptRow & {
-  created_at?: string | null;
   id: number;
   is_modified?: boolean | null;
 };
@@ -271,7 +268,6 @@ export async function fetchSaInvoiceDetail(params: {
   accessToken: string;
   companyCode: string;
   refId: string;
-  signal?: AbortSignal;
 }) {
   const response = await fetch(
     `${CUKCUK_BASE_URL}/api/v1/sainvoices/${encodeURIComponent(params.refId)}`,
@@ -279,7 +275,6 @@ export async function fetchSaInvoiceDetail(params: {
       method: "GET",
       headers: buildCukcukHeaders(params.accessToken, params.companyCode),
       cache: "no-store",
-      signal: params.signal,
     }
   );
 
@@ -684,7 +679,7 @@ export async function getExistingReceipts(refIds: string[]) {
   const { data, error } = await supabaseServer
     .from("pos_sales_receipts")
     .select(
-      "id, source, branch_id, branch_code, branch_name, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, customer_name, table_name, raw_json, synced_at, updated_at, is_modified, created_at"
+      "id, source, branch_id, branch_code, branch_name, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, customer_name, table_name, raw_json, synced_at, updated_at, is_modified"
     )
     .eq("source", SOURCE)
     .in("ref_id", refIds);
@@ -706,7 +701,6 @@ export async function getExistingReceipts(refIds: string[]) {
 }
 
 export async function getModifiedReceiptRefIds(receiptRefIds: string[]) {
-  const protectedRefs = await protectedResolutionRefs(receiptRefIds);
   if (receiptRefIds.length === 0) return new Set<string>();
 
   const { data, error } = await supabaseServer
@@ -720,7 +714,7 @@ export async function getModifiedReceiptRefIds(receiptRefIds: string[]) {
     throw new Error(`Failed to fetch modified sales receipts: ${error.message}`);
   }
 
-  return new Set([...protectedRefs, ...((data || []) as { ref_id: string }[]).map((row) => row.ref_id)]);
+  return new Set(((data || []) as { ref_id: string }[]).map((row) => row.ref_id));
 }
 
 export async function getExistingLines(receiptRefIds: string[]): Promise<ExistingLineLookup> {
@@ -1100,11 +1094,7 @@ export async function getReceiptPaymentSources(receiptRefIds: string[]) {
   return map;
 }
 
-export async function saveReceipts(rows: ReceiptRow[], context: {
-  origin?: "sync" | "refresh" | "retry"; listInvoices?: Map<string, JsonObject>;
-  listObservedAt?: string; detailObservedAt?: Map<string, string>;
-} = {}) {
-  const protectedRefs = await protectedResolutionRefs(rows.map(row => row.ref_id));
+export async function saveReceipts(rows: ReceiptRow[]) {
   const emptyTiming = {
     getExistingReceiptsMs: 0,
     compareReceiptsMs: 0,
@@ -1128,32 +1118,17 @@ export async function saveReceipts(rows: ReceiptRow[], context: {
   const getExistingStartedAt = Date.now();
   const existingMap = await getExistingReceipts(rows.map((row) => row.ref_id));
   const getExistingReceiptsMs = Date.now() - getExistingStartedAt;
-  const observationRefs = new Set(protectedRefs);
-  if (resolutionSchemaReady()) for (const row of rows) {
-    if (pendingResolutionEligibility({ ...row, created_at: existingMap.get(row.ref_id)?.created_at ?? null }).eligible) observationRefs.add(row.ref_id);
-  }
-  if (observationRefs.size) {
-    const observations = rows.filter(row => observationRefs.has(row.ref_id)).map(row => ({
-      refId: row.ref_id, observedAt: context.detailObservedAt?.get(row.ref_id) ?? row.synced_at, origin: context.origin ?? "sync",
-      listStatus: context.listInvoices ? getPaymentStatus(context.listInvoices.get(row.ref_id) || {}) : null, detailStatus: row.payment_status, amount: row.final_amount,
-      raw: { detail: row.raw_json, list: context.listInvoices?.get(row.ref_id) ?? null,
-        listObservedAt: context.listObservedAt ?? null, detailObservedAt: context.detailObservedAt?.get(row.ref_id) ?? row.synced_at },
-    }));
-    const { error } = await supabaseServer.rpc("sales_observe_resolved_receipts_v1", { p_observations: observations });
-    if (error) throw new Error("POS_RESOLUTION_OBSERVATION_FAILED");
-  }
-
 
   const compareStartedAt = Date.now();
-  const inserts = rows.filter((row) => !protectedRefs.has(row.ref_id) && !existingMap.has(row.ref_id));
+  const inserts = rows.filter((row) => !existingMap.has(row.ref_id));
   const updates = rows.filter((row) => {
     const existing = existingMap.get(row.ref_id);
-    return existing && !protectedRefs.has(row.ref_id) && !existing.is_modified ? hasReceiptChanged(existing, row) : false;
+    return existing && !existing.is_modified ? hasReceiptChanged(existing, row) : false;
   });
   const protectedStatusUpdates = rows.filter((row) => {
     const existing = existingMap.get(row.ref_id);
     return (
-      !protectedRefs.has(row.ref_id) && existing?.is_modified === true &&
+      existing?.is_modified === true &&
       (existing.payment_status !== row.payment_status ||
         existing.is_canceled !== row.is_canceled)
     );
@@ -1275,15 +1250,9 @@ export async function markReceiptsInventoryDeductionEligible(
   eligibleAt: string,
   inventoryChangedReceiptIds: number[] = []
 ) {
-  let ids = Array.from(
+  const ids = Array.from(
     new Set(receiptIds.filter((id) => Number.isInteger(id) && id > 0))
   );
-  if (resolutionSchemaReady() && ids.length) {
-    const { data, error } = await supabaseServer.from("pos_sales_receipt_admin_resolutions").select("receipt_id").in("receipt_id", ids);
-    if (error) throw new Error("POS_RESOLUTION_PROTECTION_UNAVAILABLE");
-    const protectedIds = new Set((data || []).map(row => Number(row.receipt_id)));
-    ids = ids.filter(id => !protectedIds.has(id));
-  }
   if (ids.length === 0) return;
 
   const { error } = await supabaseServer
@@ -1554,9 +1523,7 @@ export async function savePayments(
     reconcilePaymentsMs: 0,
   };
 
-  const protectedRefs = await protectedResolutionRefs(snapshotReceiptRefIds);
-  const receiptRefIds = Array.from(new Set(snapshotReceiptRefIds)).filter(ref => !protectedRefs.has(ref));
-  rows = rows.filter(row => !protectedRefs.has(row.receipt_ref_id));
+  const receiptRefIds = Array.from(new Set(snapshotReceiptRefIds));
   if (receiptRefIds.length === 0) {
     return {
       createdCount: 0,

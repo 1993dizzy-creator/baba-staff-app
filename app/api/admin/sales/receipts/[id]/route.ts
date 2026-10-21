@@ -1,4 +1,3 @@
-import { pendingResolutionEligibility, duplicateLineGroups } from "@/lib/sales/pending-resolution-policy";
 import { requireRole, type AuthenticatedActor } from "@/lib/auth/server-auth";
 import { NextResponse } from "next/server";
 import { calculateModifiedReceiptTaxSaving } from "@/lib/sales/tax-saving";
@@ -10,10 +9,6 @@ import {
 import { splitReceiptPayment } from "@/lib/sales/receipt-split-payment";
 
 type ReceiptRow = {
-  source: string | null;
-  created_at: string | null;
-  inventory_deduction_processing_error: string | null;
-  admin_resolution_version?: number;
   id: number;
   ref_id: string;
   ref_no: string | null;
@@ -71,7 +66,6 @@ type LineRow = {
 };
 
 type PaymentRow = {
-  admin_resolution_retired?: boolean;
   id: number;
   payment_type: number | null;
   payment_name: string | null;
@@ -562,7 +556,7 @@ export async function GET(
     const { data: receipt, error: receiptError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, source, created_at, inventory_deduction_processing_error, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, customer_name, table_name, is_modified, modified_at, modified_by, modification_note, review_status, admin_note, original_tax_summary, original_amount_summary, tax_override_mode, calculated_vat_amount, calculated_final_amount, final_amount_override, revision" + (process.env.POS_ADMIN_RESOLUTION_V2_SCHEMA_READY === "true" ? ", admin_resolution_version" : "")
+        "id, ref_id, ref_no, business_date, ref_date, payment_status, is_canceled, total_amount, discount_amount, vat_amount, final_amount, receive_amount, return_amount, customer_name, table_name, is_modified, modified_at, modified_by, modification_note, review_status, admin_note, original_tax_summary, original_amount_summary, tax_override_mode, calculated_vat_amount, calculated_final_amount, final_amount_override, revision"
       )
       .eq("id", receiptId)
       .maybeSingle();
@@ -593,7 +587,7 @@ export async function GET(
 
     const { data: payments, error: paymentsError } = await supabaseServer
       .from("pos_sales_receipt_payments")
-      .select("id, payment_type, payment_name, card_name, amount" + (process.env.POS_ADMIN_RESOLUTION_V2_SCHEMA_READY === "true" ? ",admin_resolution_retired" : ""))
+      .select("id, payment_type, payment_name, card_name, amount")
       .eq("receipt_id", receiptId)
       .order("id", { ascending: true });
 
@@ -601,10 +595,10 @@ export async function GET(
       throw new Error(`Failed to fetch sales receipt payments: ${paymentsError.message}`);
     }
 
-    const receiptRow = receipt as unknown as ReceiptRow;
+    const receiptRow = receipt as ReceiptRow;
     const lineRows = (lines || []) as LineRow[];
     const activeLineRows = lineRows.filter((line) => line.is_excluded !== true);
-    const paymentRows = ((payments || []) as unknown as PaymentRow[]).filter(p => p.admin_resolution_retired !== true);
+    const paymentRows = (payments || []) as PaymentRow[];
 
     const adjustedTaxSummary = buildTaxSummary(activeLineRows);
     const savedOriginalTaxSummary = normalizeTaxSummary(
@@ -615,7 +609,7 @@ export async function GET(
     const isVatExcluded = receiptRow.tax_override_mode === "exclude_all";
     const originalTaxAmount =
       savedOriginalTaxSummary?.totalTaxAmount ?? toNumber(receiptRow.vat_amount);
-    const appliedTaxAmount = Number(receiptRow.admin_resolution_version) > 0 ? toNumber(receiptRow.vat_amount) : isVatExcluded
+    const appliedTaxAmount = isVatExcluded
       ? 0
       : hasExplicitTaxMode
         ? originalTaxAmount
@@ -624,7 +618,7 @@ export async function GET(
       totalTaxAmount: appliedTaxAmount,
       taxByRate: isVatExcluded
         ? []
-        : Number(receiptRow.admin_resolution_version) > 0 ? adjustedTaxSummary.taxByRate : savedOriginalTaxSummary?.taxByRate || adjustedTaxSummary.taxByRate,
+        : savedOriginalTaxSummary?.taxByRate || adjustedTaxSummary.taxByRate,
       taxSavingAmount:
         receiptRow.is_modified === true
           ? calculateModifiedReceiptTaxSaving({
@@ -647,9 +641,6 @@ export async function GET(
       ok: true,
       receipt: {
         id: receiptRow.id,
-        pendingResolution: pendingResolutionEligibility(receiptRow),
-        protectedResolution: receiptRow.inventory_deduction_processing_error === "admin_resolution_inventory_review_required",
-        duplicateLineGroups: duplicateLineGroups(lineRows),
         refId: receiptRow.ref_id,
         refNo: receiptRow.ref_no,
         businessDate: receiptRow.business_date,

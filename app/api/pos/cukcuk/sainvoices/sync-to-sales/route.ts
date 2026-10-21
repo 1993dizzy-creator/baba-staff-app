@@ -593,7 +593,6 @@ export async function POST(req: Request) {
       limit,
     });
     markPhase("invoiceListMs");
-    const listObservedAt = new Date().toISOString();
     const limitReached = invoices.length >= limit;
     const warning = limitReached ? CUKCUK_LIMIT_REACHED_WARNING : undefined;
 
@@ -642,7 +641,6 @@ export async function POST(req: Request) {
           invoice,
           refId,
           detailPayload,
-          detailObservedAt: new Date().toISOString(),
           error: null,
         };
       })
@@ -657,7 +655,6 @@ export async function POST(req: Request) {
         invoice: CukcukInvoice;
         refId: string;
         detailPayload: JsonObject;
-        detailObservedAt: string;
         error: null;
       } => Boolean(item.refId && item.detailPayload && !item.error)
     );
@@ -672,10 +669,7 @@ export async function POST(req: Request) {
       })
     );
 
-    const receiptSaveResult = await saveReceipts(receiptRows, {
-      listInvoices: new Map(validDetails.map(item => [item.refId, item.invoice])), listObservedAt,
-      detailObservedAt: new Map(validDetails.map(item => [item.refId, item.detailObservedAt])),
-    });
+    const receiptSaveResult = await saveReceipts(receiptRows);
     markPhase("saveReceiptsMs");
 
     const lineRows = validDetails.flatMap((item) => {

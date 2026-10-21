@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import PendingReceiptResolution from "@/components/PendingReceiptResolution";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
@@ -95,7 +94,6 @@ type SalesReceiptsResponse = {
 };
 
 type ReceiptItem = {
-  pendingResolution?: { eligible: boolean };
   id: number;
   refId: string;
   refNo: string | null;
@@ -138,9 +136,6 @@ type AmountSummarySnapshot = {
 };
 
 type ReceiptDetail = {
-  protectedResolution?: boolean;
-  pendingResolution?: { pending: boolean; eligible: boolean; eligibleAt: string | null; fallbackReason: string | null };
-  duplicateLineGroups?: number[][];
   id: number;
   refId: string;
   refNo: string | null;
@@ -3836,7 +3831,6 @@ function ReceiptRow({
   unifiedPreview?: UnifiedPreviewReceipt;
   onToggle: () => void;
 }) {
-  const { lang } = useLanguage();
   const statusLabel = getPaymentStatusLabel(receipt, text);
   const paymentSummaryText = getPaymentSummaryText(receipt.payments, text);
   const isCanceled =
@@ -3872,7 +3866,6 @@ function ReceiptRow({
             >
               {statusLabel}
             </span>
-            {receipt.pendingResolution?.eligible && <span style={{ ...statusBadgeStyle, ...paymentPendingBadgeStyle }}>{lang === "ko" ? "관리자 확인 필요" : "Cần quản lý xác minh"}</span>}
             {receipt.isModified && !isCanceled ? (
               <span style={{ ...statusBadgeStyle, ...modifiedBadgeStyle }}>
                 {text.modified}
@@ -4163,10 +4156,7 @@ function ReceiptDropdown({
         ) : null}
       </DetailSection>
 
-      <PendingReceiptResolution receiptId={receipt.id} pending={receipt.pendingResolution?.pending === true}
-        originalAmount={receipt.finalAmount} duplicateCount={receipt.duplicateLineGroups?.length ?? 0}
-        eligibleAt={receipt.pendingResolution?.eligibleAt} fallbackReason={receipt.pendingResolution?.fallbackReason} protectedResolution={receipt.protectedResolution} />
-      {!receipt.protectedResolution && <ReceiptEditPanel
+      <ReceiptEditPanel
         key={`${receipt.id}-${receipt.modifiedAt || "original"}-${receipt.paymentStatus}-${receipt.isCanceled}`}
         text={editText}
         receipt={receipt}
@@ -4187,7 +4177,7 @@ function ReceiptDropdown({
             ...values,
           })
         }
-      />}
+      />
     </div>
   );
 }

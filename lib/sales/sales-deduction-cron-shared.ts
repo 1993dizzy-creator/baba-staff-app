@@ -125,7 +125,6 @@ async function recoverStaleReceiptEditPauses() {
       inventory_deduction_processing_error: "stale_admin_edit",
     })
     .eq("inventory_deduction_processing_paused", true)
-    .or("inventory_deduction_processing_error.is.null,inventory_deduction_processing_error.neq.admin_resolution_inventory_review_required")
     .lt("inventory_deduction_processing_paused_at", staleBefore);
 
   if (error) {

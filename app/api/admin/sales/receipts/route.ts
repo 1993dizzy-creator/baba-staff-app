@@ -1,4 +1,3 @@
-import { pendingResolutionEligibility } from "@/lib/sales/pending-resolution-policy";
 import { requireRole } from "@/lib/auth/server-auth";
 import { NextResponse } from "next/server";
 import {
@@ -9,8 +8,6 @@ import { addStoreDays } from "@/lib/store-settings/business-time-core";
 import { supabaseServer } from "@/lib/supabase/server";
 
 type ReceiptRow = {
-  source: string | null;
-  created_at: string | null;
   id: number;
   ref_id: string;
   ref_no: string | null;
@@ -272,7 +269,7 @@ export async function GET(req: Request) {
     const { data: receipts, error: receiptsError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, source, created_at, ref_id, ref_no, table_name, ref_date, payment_status, is_canceled, total_amount, final_amount, is_modified, review_status, admin_note"
+        "id, ref_id, ref_no, table_name, ref_date, payment_status, is_canceled, total_amount, final_amount, is_modified, review_status, admin_note"
       )
       .eq("business_date", businessDate)
       .order("ref_date", { ascending: false, nullsFirst: false })
@@ -352,7 +349,6 @@ export async function GET(req: Request) {
 
         return {
           id: receipt.id,
-          pendingResolution: pendingResolutionEligibility(receipt),
           refId: receipt.ref_id,
           refNo: receipt.ref_no,
           tableName: receipt.table_name,

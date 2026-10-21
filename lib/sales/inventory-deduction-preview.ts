@@ -361,8 +361,6 @@ export async function buildInventoryDeductionPreview(input: {
   businessDateFrom: string;
   businessDateTo: string;
   receiptIds?: number[];
-  // Internal resolution preview only. Never authorizes execution or unpauses.
-  resolutionReview?: boolean;
 }) {
   const validation = await validatePosMappings();
   let receiptQuery = supabaseServer
@@ -370,12 +368,11 @@ export async function buildInventoryDeductionPreview(input: {
     .select(RECEIPT_SELECT)
     .eq("payment_status", 3)
     .or("is_canceled.is.null,is_canceled.eq.false")
+    .or(
+      "inventory_deduction_processing_paused.is.null,inventory_deduction_processing_paused.eq.false"
+    )
     .order("business_date", { ascending: true })
     .order("id", { ascending: true });
-
-  if (!input.resolutionReview) receiptQuery = receiptQuery.or(
-    "inventory_deduction_processing_paused.is.null,inventory_deduction_processing_paused.eq.false"
-  );
 
   if (input.receiptIds?.length) {
     receiptQuery = receiptQuery.in("id", input.receiptIds);

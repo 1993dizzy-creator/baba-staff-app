@@ -220,7 +220,7 @@ export async function POST(
     });
 
     try {
-      const receiptSaveResult = await saveReceipts([receiptForSave], { origin: "refresh" });
+      const receiptSaveResult = await saveReceipts([receiptForSave]);
 
       const details = getDetailsFromInvoicePayload(detailPayload);
       const lineRows = details.map((detail, index) =>

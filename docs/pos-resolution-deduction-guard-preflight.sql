@@ -1,3 +1,5 @@
+-- 상태: 폐기(superseded), 2026-10-22. POS 관리자 복구 V1·V2 과거 점검 SQL이며 현재 운영 절차가 아니다.
+-- 현재 기준: docs/reports/20261022-pos-admin-resolution-v1-v2-retirement.md
 -- SELECT ONLY. Not executed on production. No calls to mutating RPCs.
 -- Check actual FK parents/trigger ordering before manually approving migration3.
 select current_setting('server_version') as version;

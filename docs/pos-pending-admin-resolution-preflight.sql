@@ -1,3 +1,5 @@
+-- 상태: 폐기(superseded), 2026-10-22. POS 관리자 복구 V1·V2 과거 점검 SQL이며 현재 운영 절차가 아니다.
+-- 현재 기준: docs/reports/20261022-pos-admin-resolution-v1-v2-retirement.md
 -- SELECT ONLY. Prepared locally; NOT executed against BABA production.
 -- Run only the requested stage after approval. No function in this file writes.
 -- BEFORE migration 1/2: existence, types, constraints, function definitions.
@@ -43,7 +45,7 @@ where n.nspname in('public','pos_sales_close_private','pos_resolution_private')
 and p.proname in('admin_update_paid_sales_receipt','apply_sales_inventory_deduction_batch',
  'reprocess_modified_sales_inventory_deduction_receipt','rollback_canceled_sales_inventory_deduction_receipt',
  'sales_close_business_day_v1','build_source','ledger_month_is_closed_v1','set_pos_sales_updated_at',
- 'sales_resolve_pending_receipt_v1','sales_observe_resolved_receipts_v1','sales_claim_pending_rechecks_v1',
+ 'sales_resolve_pending_receipt_v1','sales_observe_resolved_receipts_v1',
  'sales_get_pending_resolution_v1','source_guard','sales_resolve_pending_receipt_v2',
  'sales_correct_admin_resolution_v2','sales_get_admin_resolution_work_v2',
  'sales_preview_admin_resolution_inventory_v2','sales_confirm_admin_resolution_inventory_v2')

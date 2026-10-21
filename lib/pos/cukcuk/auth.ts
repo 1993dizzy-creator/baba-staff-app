@@ -103,7 +103,7 @@ export function createCukcukSignature(params: {
   };
 }
 
-export async function loginCukcuk(signal?: AbortSignal): Promise<CukcukLoginResult> {
+export async function loginCukcuk(): Promise<CukcukLoginResult> {
   const baseUrl = getBaseUrl();
   const domain = getRequiredEnv("CUKCUK_DOMAIN");
   const appId = getRequiredEnv("CUKCUK_APP_ID");
@@ -131,7 +131,6 @@ export async function loginCukcuk(signal?: AbortSignal): Promise<CukcukLoginResu
     },
     body: JSON.stringify(body),
     cache: "no-store",
-    signal,
   });
 
   const raw = (await response.json()) as CukcukLoginRawResponse;

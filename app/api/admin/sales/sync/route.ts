@@ -1,13 +1,9 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { requireRole } from "@/lib/auth/server-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
 
 type JsonObject = Record<string, unknown>;
 
@@ -26,31 +22,13 @@ function isValidBusinessDate(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
-function canSyncPosSales(role: unknown) {
-  return role === "owner" || role === "master" || role === "manager";
-}
-
-async function getAdminActor(actorUsername: string) {
-  if (!actorUsername) return null;
-
-  const { data } = await supabaseAdmin
-    .from("users")
-    .select("id, username, name, full_name, role, is_active")
-    .eq("username", actorUsername)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (!data) return null;
-  if (!canSyncPosSales(data.role)) return null;
-
-  return data;
-}
-
 async function readJson(res: Response) {
   return (await res.json().catch(() => null)) as JsonObject | null;
 }
 
 export async function POST(req: Request) {
+  const auth = await requireRole(["owner", "master", "manager"]);
+  if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
   try {
     const secret = process.env.POS_ADMIN_SECRET?.trim();
 
@@ -64,23 +42,12 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => ({}))) as JsonObject;
     const businessDate =
       typeof body.businessDate === "string" ? body.businessDate.trim() : "";
-    const actorUsername =
-      typeof body.actorUsername === "string" ? body.actorUsername.trim() : "";
     const force = body.force === true || body.force === "true";
 
     if (businessDate && !isValidBusinessDate(businessDate)) {
       return NextResponse.json(
         { ok: false, error: "businessDate must use YYYY-MM-DD format." },
         { status: 400 }
-      );
-    }
-
-    const actor = await getAdminActor(actorUsername);
-
-    if (!actor) {
-      return NextResponse.json(
-        { ok: false, error: "POS 관리자 권한이 없습니다." },
-        { status: 403 }
       );
     }
 
