@@ -343,7 +343,7 @@ export async function GET(request: Request) {
     }));
     mark("accounting_processing");
     const [displayTransactions, inventoryProjectionIssues] = await Promise.all([
-      withInventoryDisplay(transactions), loadInventoryProjectionIssues(monthStart, nextMonth, auth.actor.id),
+      withInventoryDisplay(transactions, { concurrency: entriesOnly ? 2 : 1 }), loadInventoryProjectionIssues(monthStart, nextMonth, auth.actor.id),
     ]);
     mark("inventory_display");
     const { issues: payrollPaymentGroupIssues } = analyzePayrollPaymentGroups(displayTransactions);

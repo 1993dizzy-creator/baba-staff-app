@@ -68,14 +68,9 @@ export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClos
    {status.latestClose&&status.monthClosed&&check?.result!=='month_closed'?<p role='alert' style={warning}>{t.monthClosed}</p>:null}
    {status.ledgerProjection.status==='mismatch'?<p role='alert' style={warning}>{t.ledgerMismatch}</p>:null}
    {status.needsOwnerReview?<p role='alert' style={warning}>{t.ownerReview}</p>:null}
-   {pending&&pending.count>0?<div role='alert' style={warning}>
-    <strong>{t.pendingTitle} {pending.count}{t.pendingCount} · {money(pending.totalAmount)}</strong>
-    <p style={pendingNote}>{status.latestClose?t.pendingAfterClose:t.pendingBlocked}</p>
-    <ul style={pendingList}>{pending.receipts.slice(0,10).map(receipt=><li key={receipt.id}>
-     <Link href={receiptsHref+'&receiptId='+receipt.id} style={pendingLink}>{receipt.refNo||receipt.id}</Link>
-     {' · '}{receipt.tableName||'-'} · {money(receipt.finalAmount)}{receipt.reviewDue?' · '+t.pendingReview:''}
-    </li>)}{pending.receipts.length>10?<li>+{pending.receipts.length-10}</li>:null}</ul>
-    <Link href={receiptsHref} style={pendingLink}>{t.pendingOpenReceipts} →</Link>
+   {pending&&pending.count>0?<div role='alert' style={{...warning,...pendingBanner}}>
+    <strong style={pendingSummary}>{t.pendingTitle} {pending.count}{t.pendingCount} · <span style={nowrap}>{money(pending.totalAmount)}</span></strong>
+    <Link href={receiptsHref} style={pendingGo}>{t.pendingGo} →</Link>
    </div>:null}
    {!status.latestClose&&pending?.count===0&&status.pendingHoldDates?.includes(businessDate)?<p role='status' style={info}>{t.holdResolved}</p>:null}
    {otherHoldDates.length>0?<p role='alert' style={warning}>{t.holdTitle}:{otherHoldDates.map(date=><button key={date} type='button' style={dateLink}
@@ -108,8 +103,9 @@ const muted:CSSProperties={margin:0,fontSize:11,color:'#6b7280',lineHeight:1.45,
 const warning:CSSProperties={margin:0,border:'1px solid #fde68a',borderRadius:8,padding:'7px 8px',background:'#fffbeb',color:'#92400e',fontSize:12,fontWeight:700,lineHeight:1.45,overflowWrap:'anywhere'};
 const info:CSSProperties={...warning,border:'1px solid #d1d5db',background:'#f9fafb',color:'#4b5563'};
 const messageStyle:CSSProperties={margin:0,fontSize:12,lineHeight:1.45,overflowWrap:'anywhere'};
-const pendingNote:CSSProperties={margin:'4px 0 0',fontWeight:600};
-const pendingList:CSSProperties={margin:'4px 0',paddingLeft:16,fontWeight:600};
-const pendingLink:CSSProperties={color:'#92400e',textDecoration:'underline',fontWeight:800};
+const pendingBanner:CSSProperties={display:'flex',alignItems:'center',justifyContent:'space-between',gap:6};
+const pendingSummary:CSSProperties={minWidth:0,fontWeight:800};
+const nowrap:CSSProperties={whiteSpace:'nowrap'};
+const pendingGo:CSSProperties={flexShrink:0,border:'1px solid #f59e0b',borderRadius:6,padding:'3px 6px',background:'#fff',color:'#92400e',fontSize:11,fontWeight:800,textDecoration:'none',whiteSpace:'nowrap'};
 const dateLink:CSSProperties={marginLeft:6,border:0,padding:0,background:'none',color:'#92400e',textDecoration:'underline',fontSize:12,fontWeight:800,cursor:'pointer'};
 const notice:CSSProperties={borderRadius:12,padding:12,margin:'12px 0',fontSize:13,lineHeight:1.5,background:'#f3f4f6'};

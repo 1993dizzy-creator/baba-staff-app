@@ -189,16 +189,19 @@ const pendingReceipts = { count: 2, totalAmount: 1_744_000, receipts: [
   { id: 8382, refNo: '2601007064', tableName: null, finalAmount: 789_000, pendingSince: '2026-10-06T23:20:00+07:00', reviewDue: false },
 ] };
 
-test('pending POS payments hold an unclosed day: no close button, banner lists receipts with shortcuts', async () => {
+test('pending POS payments hold an unclosed day: no close button, one-line summary banner with a shortcut', async () => {
   const view = await service({ closureMissing: true, pending: pendingReceipts, holdDates: ['2026-10-05', businessDate] })
     .getPosBusinessDayCloseView(businessDate, new Date('2026-10-06T23:31:00+07:00'));
   assert.equal(view.canClose, false);
   assert.equal(view.closeEligibilityReason, 'pending_payment');
   const html = render(view);
-  assert.ok(html.includes(salesCloseText.ko.pendingBlocked));
-  assert.ok(html.includes('2601007063') && html.includes('2601007064'));
-  assert.ok(html.includes('/admin/sales/receipts?businessDate=2026-10-06&amp;receiptId=8381'));
-  assert.ok(html.includes(salesCloseText.ko.pendingReview));
+  const t = salesCloseText.ko;
+  const banner = html.match(/<div role="alert"[^>]*>.*?<\/div>/g).find(part => part.includes(t.pendingTitle));
+  assert.match(banner, new RegExp(`<strong[^>]*>${t.pendingTitle} ${pendingReceipts.count}${t.pendingCount} · <span[^>]*>`));
+  assert.ok(banner.includes('href="/admin/sales/receipts?businessDate=2026-10-06"') && banner.includes(t.pendingGo + ' →'));
+  // Summary only: no receipt numbers, per-receipt links, amounts or long guidance.
+  assert.ok(!html.includes('2601007063') && !html.includes('2601007064') && !html.includes('receiptId='));
+  assert.ok(!html.includes(t.pendingBlocked));
   assert.ok(html.includes(salesCloseText.ko.holdTitle) && html.includes('2026-10-05'));
   assert.match(html, /<button[^>]*disabled=""[^>]*>영업 마감<\/button>/);
 });
@@ -212,7 +215,7 @@ test('resolved hold day can be closed again and says so; closed days only report
   const closed = await service({ pending: pendingReceipts }).getPosBusinessDayCloseView(businessDate, new Date('2026-10-07T09:00:00+07:00'));
   assert.equal(closed.closeEligibilityReason, 'already_closed');
   const html = render(closed);
-  assert.ok(html.includes(salesCloseText.ko.pendingAfterClose));
+  assert.ok(html.includes(salesCloseText.ko.pendingTitle) && html.includes(salesCloseText.ko.pendingGo));
   assert.ok(!html.includes(salesCloseText.ko.pendingBlocked));
   assert.ok(!html.includes(salesCloseText.ko.holdResolved));
 });

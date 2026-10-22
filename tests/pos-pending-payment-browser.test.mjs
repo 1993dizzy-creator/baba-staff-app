@@ -69,6 +69,7 @@ test('pending payment KO/VI x PC/mobile: held date, close banner, badge, button 
   const playwright = require(process.env.PLAYWRIGHT_MODULE_PATH), base = process.env.QA_UI_BASE_URL;
   const browser = await playwright.chromium.launch({ headless: true, executablePath: process.env.QA_BROWSER_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe' });
   await mkdir('.qa-review/pos-pending-payment/browser', { recursive: true });
+  const layout = [];
   try {
     for (const lang of ['ko', 'vi']) for (const mobile of [false, true]) {
       const name = `${lang}-${mobile ? 'mobile' : 'pc'}`, close = salesCloseText[lang], edit = salesText[lang].receiptsEdit, list = salesText[lang].receipts;
@@ -91,17 +92,34 @@ test('pending payment KO/VI x PC/mobile: held date, close banner, badge, button 
       // ④ Default date stays on the held day; existing close panel carries the hold details.
       await page.goto(base + '/admin/sales');
       await page.waitForURL(/businessDate=2026-10-20/);
-      await page.getByText(close.pendingBlocked).waitFor();
+      const summary = page.locator('strong', { hasText: `${close.pendingTitle} 2${close.pendingCount} · ` });
+      await summary.waitFor();
+      assert.match((await summary.innerText()).replace(/\s/g, ' '), /1\.744\.000 ₫$/);
       assert.equal(await page.locator('input[type=date]').inputValue(), HELD);
       assert.equal(await page.getByRole('button', { name: close.close, exact: true }).isDisabled(), true);
-      assert.equal(await page.getByRole('link', { name: '2601007063' }).getAttribute('href'), `/admin/sales/receipts?businessDate=${HELD}&receiptId=8381`);
+      // One-line summary: no receipt numbers, per-receipt amounts, long guidance or second link.
+      for (const gone of ['2601007063', '2601007064', close.pendingBlocked]) assert.equal(await page.getByText(gone).count(), 0, name + ' ' + gone);
+      const go = page.getByRole('link', { name: close.pendingGo + ' →' });
+      assert.equal(await go.getAttribute('href'), `/admin/sales/receipts?businessDate=${HELD}`);
+      const banner = page.locator('[role=alert]', { has: summary });
+      const [bannerBox, summaryBox, goBox] = [await banner.boundingBox(), await summary.boundingBox(), await go.boundingBox()];
+      const lineHeight = await summary.evaluate(el => parseFloat(getComputedStyle(el).lineHeight));
+      // Spare width on the row if the summary were laid out on one line (negative = would wrap).
+      const spare = await banner.evaluate(el => { const s = el.firstElementChild, g = el.lastElementChild, cs = getComputedStyle(el); s.style.whiteSpace = 'nowrap'; const w = s.scrollWidth; s.style.whiteSpace = '';
+        return Math.floor(el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - parseFloat(cs.columnGap) - g.getBoundingClientRect().width - w); });
+      layout.push({ name, bannerHeight: Math.round(bannerBox.height), summaryLines: Math.round(summaryBox.height / lineHeight), spare });
+      assert.ok(goBox.x + goBox.width <= bannerBox.x + bannerBox.width + 1 && goBox.y >= bannerBox.y - 1, name + ' button inside banner');
+      assert.equal(Math.round(summaryBox.height / lineHeight), 1, name + ' one line');
+      assert.ok(await summary.evaluate(el => el.scrollWidth <= el.clientWidth), name + ' summary not clipped');
       await page.getByRole('button', { name: OTHER_HELD }).waitFor();
       await noHorizontalScroll();
       await page.screenshot({ path: `.qa-review/pos-pending-payment/browser/${name}-sales.png`, fullPage: true });
 
-      // Shortcut opens the receipt; ② only the 30+ min pending receipt carries the badge.
-      await page.getByRole('link', { name: '2601007063' }).click();
-      await page.waitForURL(/\/admin\/sales\/receipts\?businessDate=2026-10-20&receiptId=8381/);
+      // Shortcut opens the held day's receipt list; ② only the 30+ min pending receipt carries the badge.
+      await go.click();
+      await page.waitForURL(/\/admin\/sales\/receipts\?businessDate=2026-10-20$/);
+      await page.getByText('2601007064').waitFor();
+      await page.getByText('2601007063').click();
       const statusButton = page.getByRole('button', { name: edit.statusChangeTitle, exact: true });
       await statusButton.waitFor();
       assert.equal(await page.getByText(list.pendingReviewBadge, { exact: true }).count(), 1);
@@ -151,5 +169,5 @@ test('pending payment KO/VI x PC/mobile: held date, close banner, badge, button 
       assert.deepEqual(offOrigin.filter(o => !o.includes('fonts.g')), [], name + ' off-origin requests');
       await context.close();
     }
-  } finally { await browser.close(); }
+  } finally { await browser.close(); console.log('banner layout', JSON.stringify(layout)); }
 });
