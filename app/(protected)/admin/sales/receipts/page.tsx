@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
@@ -10,6 +10,7 @@ import { ui } from "@/lib/styles/ui";
 import { getUser } from "@/lib/supabase/auth";
 import { fetchSalesApi } from "@/lib/sales/client-auth";
 import { splitReceiptPayment } from "@/lib/sales/receipt-split-payment";
+import { isPendingPaymentReviewDue } from "@/lib/sales/pos-pending-payment-policy";
 import { commonText, salesText } from "@/lib/text";
 
 const salesTabs = [
@@ -98,6 +99,7 @@ type ReceiptItem = {
   refId: string;
   refNo: string | null;
   refDate: string | null;
+  statusChangedAt?: string | null;
   tableName?: string | null;
   paymentStatus: number | null;
   isCanceled: boolean;
@@ -242,6 +244,16 @@ type SaveReceiptEditInput = {
   note: string;
   taxOverrideMode: "apply" | "exclude_all";
   finalAmountOverride: number | null;
+  expectedRevision: number;
+  requestId: string;
+};
+
+type ResolvePendingPaymentInput = {
+  receiptId: number;
+  resolution: "paid" | "canceled";
+  paymentMethod: "cash" | "transfer" | "card" | "other" | null;
+  cashReceivedAmount: number | null;
+  evidenceNote: string;
   expectedRevision: number;
   requestId: string;
 };
@@ -1957,6 +1969,9 @@ export default function SalesReceiptsPage() {
   const initialBusinessDate = searchParams.get("businessDate") || "";
   const [businessDate, setBusinessDate] = useState(initialBusinessDate);
   const [receipts, setReceipts] = useState<ReceiptItem[]>([]);
+  // Pending-review badges are evaluated at load time; no polling.
+  const [receiptsLoadedAt, setReceiptsLoadedAt] = useState(0);
+  const focusReceiptIdRef = useRef(Number(searchParams.get("receiptId")) || 0);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [expandedReceiptId, setExpandedReceiptId] = useState<number | null>(null);
@@ -2078,6 +2093,7 @@ export default function SalesReceiptsPage() {
         }
 
         setReceipts(sortReceiptsByRefDateDesc(result.receipts || []));
+        setReceiptsLoadedAt(Date.now());
 
         if (!businessDate && result.businessDate) {
           setBusinessDate(result.businessDate);
@@ -2110,6 +2126,15 @@ export default function SalesReceiptsPage() {
 
     return () => controller.abort();
   }, [businessDate, receiptsText.loadFailed, pathname, router]);
+
+  // Close-banner shortcut (?receiptId=) opens that receipt once after load.
+  useEffect(() => {
+    const focusId = focusReceiptIdRef.current;
+    if (!focusId || isLoading || !receipts.some((receipt) => receipt.id === focusId)) return;
+    focusReceiptIdRef.current = 0;
+    void handleToggleReceipt(focusId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, receipts]);
 
   useEffect(() => {
     if (!canSyncMenu || !currentUser?.username || !receiptIdsKey) {
@@ -2370,13 +2395,15 @@ export default function SalesReceiptsPage() {
     }
   }
 
-  async function handleRequestEdit(receipt: ReceiptItem) {
+  // Returns the POS re-check outcome so the pending-payment status change can
+  // open only while POS still reports the receipt as pending.
+  async function handleRequestEdit(receipt: ReceiptItem): Promise<string | null> {
     // 결제완료 + 미취소 영수증은 ReceiptEditPanel이 이 함수를 호출하지 않고
     // 즉시 수정 화면을 연다(불필요한 POS 재조회 방지). 여기서는 방어적으로만 확인한다.
     const isAlreadyPaid = receipt.paymentStatus === 3 && !receipt.isCanceled;
-    if (isAlreadyPaid) return;
+    if (isAlreadyPaid) return null;
 
-    if (posCheckingIds.has(receipt.id)) return;
+    if (posCheckingIds.has(receipt.id)) return null;
 
     setAutoOpenEditReceiptId(null);
     setPosCheckErrorByReceiptId((current) => ({
@@ -2390,7 +2417,7 @@ export default function SalesReceiptsPage() {
         ...current,
         [receipt.id]: c.loginAgain,
       }));
-      return;
+      return null;
     }
 
     setPosCheckingIds((current) => {
@@ -2436,7 +2463,7 @@ export default function SalesReceiptsPage() {
           ...current,
           [receipt.id]: receiptsEditText.posCheckLookupFailed,
         }));
-        return;
+        return "pos_lookup_failed";
       }
 
       if (!result.editable) {
@@ -2451,7 +2478,7 @@ export default function SalesReceiptsPage() {
           ...current,
           [receipt.id]: message,
         }));
-        return;
+        return result.blockReason;
       }
 
       const detailRes = await fetch(
@@ -2465,7 +2492,7 @@ export default function SalesReceiptsPage() {
           ...current,
           [receipt.id]: receiptsEditText.posCheckRefreshFailed,
         }));
-        return;
+        return null;
       }
 
       setDetailByReceiptId((current) => ({
@@ -2507,17 +2534,94 @@ export default function SalesReceiptsPage() {
         )
       );
       setAutoOpenEditReceiptId(receipt.id);
+      return "editable";
     } catch {
       setPosCheckErrorByReceiptId((current) => ({
         ...current,
         [receipt.id]: receiptsEditText.posCheckLookupFailed,
       }));
+      return "pos_lookup_failed";
     } finally {
       setPosCheckingIds((current) => {
         const next = new Set(current);
         next.delete(receipt.id);
         return next;
       });
+    }
+  }
+
+  async function handleResolvePendingPayment({
+    receiptId,
+    ...input
+  }: ResolvePendingPaymentInput) {
+    if (editSavingId !== null) return;
+    setEditSavingId(receiptId);
+    setEditErrorByReceiptId((current) => ({ ...current, [receiptId]: "" }));
+
+    let errorMessage = "";
+    try {
+      const res = await fetch(
+        `/api/admin/sales/receipts/${receiptId}/payment-status`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        }
+      );
+      const result = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        code?: string;
+      };
+      if (!res.ok || !result.ok) {
+        errorMessage =
+          result.code === "receipt_pending_review_not_due"
+            ? receiptsEditText.statusChangeNotDue
+            : result.code === "receipt_not_pending" ||
+                result.code === "receipt_revision_conflict"
+              ? receiptsEditText.statusChangeNotPending
+              : result.code === "receipt_month_closed"
+                ? receiptsEditText.statusChangeMonthClosed
+                : result.code === "receipt_business_day_closed"
+                  ? receiptsEditText.statusChangeClosedDay
+                  : receiptsEditText.statusChangeFailed;
+      }
+    } catch {
+      errorMessage = receiptsEditText.statusChangeFailed;
+    }
+
+    // Success or a stale view: reload the authoritative receipt either way.
+    try {
+      const refreshed = await fetch(`/api/admin/sales/receipts/${receiptId}`, {
+        cache: "no-store",
+      });
+      const latest = (await refreshed.json()) as ReceiptDetailResponse;
+      if (refreshed.ok && latest.ok && latest.receipt) {
+        const latestReceipt = latest.receipt;
+        setDetailByReceiptId((current) => ({ ...current, [receiptId]: latest }));
+        setReceipts((current) =>
+          current.map((receipt) =>
+            receipt.id === receiptId
+              ? {
+                ...receipt,
+                paymentStatus: latestReceipt.paymentStatus,
+                isCanceled: latestReceipt.isCanceled,
+                isModified: latestReceipt.isModified,
+                payments: (latest.payments || []).map((payment) => ({
+                  paymentName: payment.paymentName,
+                  cardName: payment.cardName,
+                  amount: payment.amount,
+                })),
+              }
+              : receipt
+          )
+        );
+        setReceiptDeductionPreviewRefreshToken((current) => current + 1);
+      }
+    } catch {
+      errorMessage ||= receiptsText.detailLoadFailed;
+    } finally {
+      setEditErrorByReceiptId((current) => ({ ...current, [receiptId]: errorMessage }));
+      setEditSavingId(null);
     }
   }
 
@@ -2872,6 +2976,8 @@ export default function SalesReceiptsPage() {
             onToggleReceipt={handleToggleReceipt}
             onSaveEdit={handleSaveReceiptEdit}
             onRequestEdit={handleRequestEdit}
+            reviewCheckedAt={receiptsLoadedAt}
+            onResolvePendingPayment={handleResolvePendingPayment}
           />
 
           {canSyncMenu ? (
@@ -3723,6 +3829,8 @@ function ReceiptList({
   onToggleReceipt,
   onSaveEdit,
   onRequestEdit,
+  reviewCheckedAt,
+  onResolvePendingPayment,
 }: {
   isLoading: boolean;
   text: SalesReceiptsViewText;
@@ -3745,7 +3853,9 @@ function ReceiptList({
   unifiedPreviewByReceiptId: Map<number, UnifiedPreviewReceipt>;
   onToggleReceipt: (receiptId: number) => void;
   onSaveEdit: (input: SaveReceiptEditInput) => void;
-  onRequestEdit: (receipt: ReceiptItem) => void;
+  onRequestEdit: (receipt: ReceiptItem) => Promise<string | null>;
+  reviewCheckedAt: number;
+  onResolvePendingPayment: (input: ResolvePendingPaymentInput) => void;
 }) {
   if (isLoading) {
     return (
@@ -3769,6 +3879,10 @@ function ReceiptList({
     <div style={receiptListStyle}>
       {receipts.map((receipt, index) => {
         const isExpanded = expandedReceiptId === receipt.id;
+        const pendingReviewDue = isPendingPaymentReviewDue(
+          receipt,
+          new Date(reviewCheckedAt)
+        );
 
         return (
           <div
@@ -3786,6 +3900,7 @@ function ReceiptList({
               deductionText={deductionText}
               deductionPreview={deductionPreviewByReceiptId.get(receipt.id)}
               unifiedPreview={unifiedPreviewByReceiptId.get(receipt.id)}
+              pendingReviewDue={pendingReviewDue}
               onToggle={() => onToggleReceipt(receipt.id)}
             />
             {isExpanded ? (
@@ -3805,6 +3920,8 @@ function ReceiptList({
                 unifiedPreview={unifiedPreviewByReceiptId.get(receipt.id)}
                 onSaveEdit={onSaveEdit}
                 onRequestEdit={() => onRequestEdit(receipt)}
+                pendingReviewDue={pendingReviewDue}
+                onResolvePendingPayment={onResolvePendingPayment}
               />
             ) : null}
           </div>
@@ -3821,6 +3938,7 @@ function ReceiptRow({
   deductionText,
   deductionPreview,
   unifiedPreview,
+  pendingReviewDue,
   onToggle,
 }: {
   text: SalesReceiptsViewText;
@@ -3829,6 +3947,7 @@ function ReceiptRow({
   deductionText: InventoryPreviewCopy;
   deductionPreview?: InventoryDeductionPreview["receipts"][number];
   unifiedPreview?: UnifiedPreviewReceipt;
+  pendingReviewDue: boolean;
   onToggle: () => void;
 }) {
   const statusLabel = getPaymentStatusLabel(receipt, text);
@@ -3866,6 +3985,11 @@ function ReceiptRow({
             >
               {statusLabel}
             </span>
+            {pendingReviewDue ? (
+              <span style={{ ...statusBadgeStyle, ...pendingReviewBadgeStyle }}>
+                {text.pendingReviewBadge}
+              </span>
+            ) : null}
             {receipt.isModified && !isCanceled ? (
               <span style={{ ...statusBadgeStyle, ...modifiedBadgeStyle }}>
                 {text.modified}
@@ -3927,6 +4051,8 @@ function ReceiptDropdown({
   unifiedPreview,
   onSaveEdit,
   onRequestEdit,
+  pendingReviewDue,
+  onResolvePendingPayment,
 }: {
   text: SalesReceiptsViewText;
   editText: SalesReceiptsEditViewText;
@@ -3942,7 +4068,9 @@ function ReceiptDropdown({
   deductionPreview?: InventoryDeductionPreview["receipts"][number];
   unifiedPreview?: UnifiedPreviewReceipt;
   onSaveEdit: (input: SaveReceiptEditInput) => void;
-  onRequestEdit: () => void;
+  onRequestEdit: () => Promise<string | null>;
+  pendingReviewDue: boolean;
+  onResolvePendingPayment: (input: ResolvePendingPaymentInput) => void;
 }) {
   if (isLoading) {
     return (
@@ -4177,7 +4305,157 @@ function ReceiptDropdown({
             ...values,
           })
         }
+        pendingReviewDue={pendingReviewDue}
+        onResolvePendingPayment={(values) =>
+          onResolvePendingPayment({ receiptId: receipt.id, ...values })
+        }
       />
+    </div>
+  );
+}
+
+// Pending (30+ min) -> paid or canceled. One request id per open form makes
+// double clicks and retries idempotent; the server re-validates everything.
+function PendingPaymentStatusForm({
+  text,
+  receipt,
+  isSaving,
+  onClose,
+  onSubmit,
+}: {
+  text: SalesReceiptsEditViewText;
+  receipt: ReceiptDetail;
+  isSaving: boolean;
+  onClose: () => void;
+  onSubmit: (values: Omit<ResolvePendingPaymentInput, "receiptId">) => void;
+}) {
+  const [requestId] = useState(() => crypto.randomUUID());
+  const [resolution, setResolution] = useState<"paid" | "canceled">("paid");
+  const [paymentMethod, setPaymentMethod] = useState<
+    "cash" | "transfer" | "card" | "other" | null
+  >(null);
+  const [cashReceivedAmount, setCashReceivedAmount] = useState(receipt.finalAmount);
+  const [evidenceNote, setEvidenceNote] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [inputError, setInputError] = useState("");
+  const methods = [
+    ["cash", text.cash],
+    ["transfer", text.transfer],
+    ["card", text.card],
+    ["other", text.other],
+  ] as const;
+
+  function handleSubmit() {
+    if (isSaving) return;
+    const note = evidenceNote.trim();
+    const cashInvalid =
+      resolution === "paid" &&
+      paymentMethod === "cash" &&
+      (!Number.isSafeInteger(cashReceivedAmount) || cashReceivedAmount < receipt.finalAmount);
+    if (
+      note.length < 5 ||
+      !confirmed ||
+      (resolution === "paid" && !paymentMethod) ||
+      cashInvalid
+    ) {
+      setInputError(cashInvalid ? text.finalAmountTooHigh : text.statusChangeInputRequired);
+      return;
+    }
+    setInputError("");
+    onSubmit({
+      resolution,
+      paymentMethod: resolution === "paid" ? paymentMethod : null,
+      cashReceivedAmount:
+        resolution === "paid" && paymentMethod === "cash" ? cashReceivedAmount : null,
+      evidenceNote: note,
+      expectedRevision: receipt.revision,
+      requestId,
+    });
+  }
+
+  return (
+    <div style={paymentEditBlockStyle}>
+      <p style={mutedTextStyle}>{text.statusChangeNotice}</p>
+      <span style={paymentMethodButtonsStyle}>
+        <button
+          type="button"
+          onClick={() => { setResolution("paid"); setInputError(""); }}
+          disabled={isSaving}
+          style={{ ...secondaryButtonStyle, ...(resolution === "paid" ? activeSegmentStyle : null) }}
+        >
+          {text.statusChangeToPaid}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setResolution("canceled"); setInputError(""); }}
+          disabled={isSaving}
+          style={{ ...secondaryButtonStyle, ...(resolution === "canceled" ? activeSegmentStyle : null) }}
+        >
+          {text.statusChangeToCanceled}
+        </button>
+      </span>
+      {resolution === "paid" ? (
+        <>
+          <span style={reviewCurrentStatusStyle}>
+            {text.paymentMethod} · {formatVnd(receipt.finalAmount)}
+          </span>
+          <span style={paymentMethodButtonsStyle}>
+            {methods.map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => { setPaymentMethod(value); setInputError(""); }}
+                disabled={isSaving}
+                style={{ ...secondaryButtonStyle, ...(paymentMethod === value ? activeSegmentStyle : null) }}
+              >
+                {label}
+              </button>
+            ))}
+          </span>
+          {paymentMethod === "cash" ? (
+            <label style={cashInputLabelStyle}>
+              <span style={reviewCurrentStatusStyle}>{text.receivedAmount}</span>
+              <input
+                type="number"
+                min={receipt.finalAmount}
+                step="1000"
+                value={cashReceivedAmount}
+                onChange={(event) => { setCashReceivedAmount(Number(event.target.value)); setInputError(""); }}
+                style={editNameInputStyle}
+                disabled={isSaving}
+              />
+            </label>
+          ) : null}
+        </>
+      ) : null}
+      <span style={reviewCurrentStatusStyle}>{text.statusChangeEvidence}</span>
+      <textarea
+        value={evidenceNote}
+        onChange={(event) => { setEvidenceNote(event.target.value); setInputError(""); }}
+        placeholder={text.statusChangeEvidencePlaceholder}
+        maxLength={500}
+        style={editTextareaStyle}
+        disabled={isSaving}
+      />
+      <label style={{ ...reviewCurrentStatusStyle, display: "flex", gap: 6, alignItems: "flex-start" }}>
+        <input
+          type="checkbox"
+          checked={confirmed}
+          onChange={(event) => { setConfirmed(event.target.checked); setInputError(""); }}
+          disabled={isSaving}
+        />
+        <span>{text.statusChangeConfirm}</span>
+      </label>
+      {/* Server errors render once at the bottom of ReceiptEditPanel. */}
+      {inputError ? <p style={errorTextStyle}>{inputError}</p> : null}
+      <span style={paymentMethodButtonsStyle}>
+        <button type="button" onClick={onClose} disabled={isSaving} style={secondaryButtonStyle}>
+          {text.cancel}
+        </button>
+        <button type="button" onClick={handleSubmit} disabled={isSaving} style={editButtonStyle}>
+          {isSaving ? text.saving : text.statusChangeSubmit}
+        </button>
+      </span>
     </div>
   );
 }
@@ -4197,6 +4475,8 @@ function ReceiptEditPanel({
   initialEditing,
   onRequestEdit,
   onSave,
+  pendingReviewDue,
+  onResolvePendingPayment,
 }: {
   text: SalesReceiptsEditViewText;
   receipt: ReceiptDetail;
@@ -4210,11 +4490,19 @@ function ReceiptEditPanel({
   isPosChecking: boolean;
   posCheckError: string;
   initialEditing: boolean;
-  onRequestEdit: () => void;
+  onRequestEdit: () => Promise<string | null>;
   onSave: (values: Omit<SaveReceiptEditInput, "receiptId">) => void;
+  pendingReviewDue: boolean;
+  onResolvePendingPayment: (values: Omit<ResolvePendingPaymentInput, "receiptId">) => void;
 }) {
   const { lang } = useLanguage();
   const [isEditing, setIsEditing] = useState(initialEditing === true);
+  const [isStatusChanging, setIsStatusChanging] = useState(false);
+
+  // Overdue pending: re-check POS first; open the manual change only if POS is still pending.
+  async function handleStatusChangeClick() {
+    if ((await onRequestEdit()) === "pending") setIsStatusChanging(true);
+  }
   const receiptLineRefDetailIds = getReceiptLineRefDetailIds(lines);
   const isReceiptCanceled =
     receipt.isCanceled ||
@@ -4579,7 +4867,32 @@ function ReceiptEditPanel({
           </strong>
         </div>
 
-        {!isEditing ? (
+        {!isEditing && pendingReviewDue ? (
+          isStatusChanging ? (
+            <PendingPaymentStatusForm
+              text={text}
+              receipt={receipt}
+              isSaving={isSaving}
+              onClose={() => setIsStatusChanging(false)}
+              onSubmit={onResolvePendingPayment}
+            />
+          ) : (
+            <>
+              <p style={mutedTextStyle}>{text.statusChangeNotice}</p>
+              {posCheckError ? (
+                <p style={errorTextStyle}>{posCheckError}</p>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void handleStatusChangeClick()}
+                disabled={isPosChecking}
+                style={editButtonStyle}
+              >
+                {isPosChecking ? text.posChecking : text.statusChangeTitle}
+              </button>
+            </>
+          )
+        ) : !isEditing ? (
           <>
             {hasOptionLines ? (
               <p style={mutedTextStyle}>{text.existingOptionReadOnlyNotice}</p>
@@ -6550,6 +6863,10 @@ const paymentPendingBadgeStyle: CSSProperties = {
 
 const canceledBadgeStyle: CSSProperties = {
   background: "#dc2626",
+};
+
+const pendingReviewBadgeStyle: CSSProperties = {
+  background: "#ea580c",
 };
 
 const modifiedBadgeStyle: CSSProperties = {

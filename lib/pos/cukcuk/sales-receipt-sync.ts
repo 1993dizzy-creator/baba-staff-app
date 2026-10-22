@@ -717,6 +717,23 @@ export async function getModifiedReceiptRefIds(receiptRefIds: string[]) {
   return new Set(((data || []) as { ref_id: string }[]).map((row) => row.ref_id));
 }
 
+// Receipts resolved by admin_resolve_pending_sales_receipt_v1 (audit row marker).
+export async function getAdminResolvedPendingReceiptIds(receiptIds: number[]) {
+  if (receiptIds.length === 0) return new Set<number>();
+
+  const { data, error } = await supabaseServer
+    .from("pos_sales_receipt_modifications")
+    .select("receipt_id")
+    .in("receipt_id", [...new Set(receiptIds)])
+    .not("after_state->pendingResolution", "is", null);
+
+  if (error) {
+    throw new Error(`Failed to fetch pending payment resolutions: ${error.message}`);
+  }
+
+  return new Set(((data || []) as { receipt_id: number }[]).map((row) => Number(row.receipt_id)));
+}
+
 export async function getExistingLines(receiptRefIds: string[]): Promise<ExistingLineLookup> {
   if (receiptRefIds.length === 0) {
     return {
@@ -1125,7 +1142,7 @@ export async function saveReceipts(rows: ReceiptRow[]) {
     const existing = existingMap.get(row.ref_id);
     return existing && !existing.is_modified ? hasReceiptChanged(existing, row) : false;
   });
-  const protectedStatusUpdates = rows.filter((row) => {
+  const protectedStatusCandidates = rows.filter((row) => {
     const existing = existingMap.get(row.ref_id);
     return (
       existing?.is_modified === true &&
@@ -1133,6 +1150,28 @@ export async function saveReceipts(rows: ReceiptRow[]) {
         existing.is_canceled !== row.is_canceled)
     );
   });
+  const adminResolvedIds = await getAdminResolvedPendingReceiptIds(
+    protectedStatusCandidates
+      .filter((row) => row.payment_status === 1 && !row.is_canceled)
+      .map((row) => existingMap.get(row.ref_id)!.id)
+  );
+  // A stale CUKCUK "pending" must not undo an admin pending-payment resolution.
+  const protectedStatusUpdates = protectedStatusCandidates.filter(
+    (row) =>
+      !(
+        row.payment_status === 1 &&
+        !row.is_canceled &&
+        adminResolvedIds.has(existingMap.get(row.ref_id)!.id)
+      )
+  );
+  const isStatusChange = (row: ReceiptRow) => {
+    const existing = existingMap.get(row.ref_id);
+    return Boolean(
+      existing &&
+        (existing.payment_status !== row.payment_status ||
+          existing.is_canceled !== row.is_canceled)
+    );
+  };
   const statusChangedCount =
     inserts.filter((row) => row.is_canceled).length +
     updates.filter((row) => {
@@ -1179,10 +1218,13 @@ export async function saveReceipts(rows: ReceiptRow[]) {
     const updateStartedAt = Date.now();
     for (const row of updates) {
       const id = existingMap.get(row.ref_id)?.id;
+      // Conditional on still being unmodified: an admin edit/resolution that
+      // committed after the read above must not be overwritten.
       const { error } = await supabaseServer
         .from("pos_sales_receipts")
-        .update(row)
-        .eq("id", id);
+        .update(isStatusChange(row) ? { ...row, status_changed_at: row.synced_at } : row)
+        .eq("id", id)
+        .or("is_modified.is.null,is_modified.eq.false");
 
       if (error) {
         throw new Error(`Failed to update sales receipt ${row.ref_id}: ${error.message}`);
@@ -1200,6 +1242,7 @@ export async function saveReceipts(rows: ReceiptRow[]) {
         .update({
           payment_status: row.payment_status,
           is_canceled: row.is_canceled,
+          status_changed_at: row.synced_at,
           synced_at: row.synced_at,
           updated_at: row.updated_at,
         })

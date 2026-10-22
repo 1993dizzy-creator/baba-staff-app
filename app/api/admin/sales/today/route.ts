@@ -2,6 +2,7 @@ import { requireRole } from "@/lib/auth/server-auth";
 import { NextResponse } from "next/server";
 import { calculateModifiedReceiptTaxSaving } from "@/lib/sales/tax-saving";
 import { resolveAdminSalesBusinessDate } from "@/lib/sales/admin-sales-business-time";
+import { findOldestPendingCloseHoldDate } from "@/lib/sales/pos-pending-payment";
 import { supabaseServer } from "@/lib/supabase/server";
 
 type ReceiptRow = {
@@ -527,9 +528,12 @@ export async function GET(req: Request) {
 
   try {
     const { searchParams } = new URL(req.url);
-    const { businessDate } = await resolveAdminSalesBusinessDate(
-      searchParams.get("businessDate")
-    );
+    const explicitBusinessDate = searchParams.get("businessDate");
+    const resolved = await resolveAdminSalesBusinessDate(explicitBusinessDate);
+    // A day whose close is held by pending POS payments stays the default until closed.
+    const businessDate = explicitBusinessDate
+      ? resolved.businessDate
+      : (await findOldestPendingCloseHoldDate(resolved.businessDate)) ?? resolved.businessDate;
 
     if (!isValidBusinessDate(businessDate)) {
       return NextResponse.json(

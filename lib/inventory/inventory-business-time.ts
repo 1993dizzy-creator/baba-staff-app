@@ -2,7 +2,7 @@ import "server-only";
 
 import { getBusinessDate } from "@/lib/common/business-time";
 import { getSnapshotDate } from "@/lib/inventory/business-day";
-import { loadBusinessTimeAdapter } from "@/lib/store-settings/business-time-adapter";
+import { resolveConfiguredBusinessDate } from "@/lib/store-settings/business-time-adapter";
 import { addStoreDays } from "@/lib/store-settings/business-time-core";
 
 export type ResolvedInventoryBusinessDate = {
@@ -18,15 +18,15 @@ function logLookupFailed(error: unknown) {
 }
 
 // Resolves the business date for a specific timestamp (or "now" when omitted)
-// via the store settings time module. One settings lookup per call — callers
-// must not call this inside a per-row/per-item loop (see items/status/route.ts
-// for the one deliberate exception, documented there).
+// via the date RPC, which already resolves the configured timezone/cutoff.
+// No hours/revision snapshot is consumed here, so an overview lookup is unnecessary.
+// Keep each invocation fresh; callers must not resolve dates in per-item loops.
 export async function resolveInventoryBusinessDate(
   timestamp?: Date
 ): Promise<ResolvedInventoryBusinessDate> {
   try {
-    const adapter = await loadBusinessTimeAdapter(timestamp ?? new Date());
-    return { businessDate: adapter.databaseBusinessDate, source: "configured" };
+    const businessDate = await resolveConfiguredBusinessDate(timestamp ?? new Date());
+    return { businessDate, source: "configured" };
   } catch (error) {
     logLookupFailed(error);
     return { businessDate: getBusinessDate(timestamp), source: "error_fallback" };

@@ -10,6 +10,7 @@ import { validPosBusinessDate,POS_BUCKETS } from '@/lib/ledger/pos-sales-source'
 import { loadBusinessTimeAdapter } from '@/lib/store-settings/business-time-adapter';
 import { addStoreDays } from '@/lib/store-settings/business-time-core';
 import { isPosFinalCheckPending } from './pos-business-day-close-view';
+import { loadPendingCloseHoldDates,loadPendingPaymentReceipts } from './pos-pending-payment';
 export async function manualClosePosBusinessDay(origin:string,date:string,reclose=false,expectedSourceFingerprint?:string){
   const auth=await getAuthenticatedActor();if(!auth.ok)throw Error(auth.code);
   if(!validPosBusinessDate(date))throw Error('INVALID_POS_BUSINESS_DATE');
@@ -49,7 +50,7 @@ export async function getPosBusinessDayCloseView(date:string,now=new Date()){
   const auth=await getAuthenticatedActor();if(!auth.ok)throw Error(auth.code);
   if(!['owner','master','manager','leader'].includes(auth.actor.role))throw Error('POS_CLOSE_FORBIDDEN');
   if(!validPosBusinessDate(date))throw Error('INVALID_POS_BUSINESS_DATE');
-  const [source,time,latest,check,month,run,ledger]=await Promise.all([
+  const [source,time,latest,check,month,run,ledger,pending,holdDates]=await Promise.all([
     loadPosBusinessDaySource(date).catch(()=>null),getPosBusinessDayManualCloseTime(date,now),
     supabaseServer.from('pos_sales_business_day_closures').select('id,revision,close_method,closed_at,closed_by,source_fingerprint,source_snapshot,actor:users!closed_by(name,full_name,username)')
       .eq('business_date',date).order('revision',{ascending:false}).limit(1).maybeSingle(),
@@ -59,6 +60,7 @@ export async function getPosBusinessDayCloseView(date:string,now=new Date()){
     loadLatestPosSyncRun(date),
     supabaseServer.from('ledger_transactions').select('source_key,amount,status,source_fingerprint,movements:ledger_movements(amount)')
       .eq('source_type','pos_sales_daily_payment').eq('business_date',date),
+    loadPendingPaymentReceipts(date,now),loadPendingCloseHoldDates(),
   ]);
   for(const result of [latest,check,month,ledger])if(result.error)throw result.error;
   const closure=latest.data;
@@ -86,16 +88,17 @@ export async function getPosBusinessDayCloseView(date:string,now=new Date()){
       closedTotal:latestCheck.closed_total===null?null:Number(latestCheck.closed_total),currentTotal:latestCheck.current_total===null?null:Number(latestCheck.current_total),
       totalDelta:latestCheck.total_delta===null?null:Number(latestCheck.total_delta),closedBuckets:latestCheck.closed_buckets,
       currentBuckets:latestCheck.current_buckets,bucketDelta:latestCheck.bucket_delta}:null,
-    drift,delta,canClose:writable&&time.allowed&&!month.data&&!closure&&Boolean(source),
+    drift,delta,canClose:writable&&time.allowed&&!month.data&&!closure&&Boolean(source)&&pending.count===0,
     canReclose:reclosable&&time.allowed&&!month.data&&Boolean(closure)&&drift&&Boolean(source),
     needsOwnerReview:drift&&!reclosable&&Boolean(delta&&Object.values(delta).some(amount=>amount!==0)),monthClosed:Boolean(month.data),
-    closeEligibilityReason:!source?'source_invalid':month.data?'month_closed':!time.allowed?time.reason:!writable?'forbidden':closure?'already_closed':'eligible',
+    closeEligibilityReason:!source?'source_invalid':month.data?'month_closed':!time.allowed?time.reason:!writable?'forbidden':closure?'already_closed':pending.count>0?'pending_payment':'eligible',
     finalCheckPending:isPosFinalCheckPending({businessDate:date,
       latestClose:closure?{method:closure.close_method,closedAt:closure.closed_at}:null,hasFinalCheck:Boolean(latestCheck),now}),
     closeAt:time.closeAt,finalSync:{runId:run?.id??null,lastSyncedAt:run?.finished_at??null,
       cutoffAt:time.cutoffAt,eligible:isEligiblePosFinalSync(run,date,time.cutoffAt,now)},
     ledgerProjection:{status:closure?(matches?'matches_close':'mismatch'):'not_closed',
       total:(ledger.data??[]).filter(t=>t.status==='confirmed').reduce((sum,t)=>sum+Number(t.amount),0)},
+    pendingPayments:pending,pendingHoldDates:holdDates,
     buckets:POS_BUCKETS,
   };
 }

@@ -508,6 +508,7 @@ export default function SalesPage() {
                 refreshKey={closeRefreshKey}
                 onClosed={fetchSalesToday}
                 onBusyChange={setIsClosing}
+                onSelectBusinessDate={handleBusinessDateChange}
                 disabled={isSyncing}
               />
             ) : null}

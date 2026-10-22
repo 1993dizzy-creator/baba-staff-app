@@ -30,7 +30,8 @@ function source(amount = 100_000) {
     ref_date: null, payment_status: 3, is_canceled: false, final_amount: amount, revision: 1, updated_at: null }],
   [{ id: 1, receipt_id: 1, business_date: businessDate, payment_type: 9, payment_name: 'khac', card_name: null, amount }]);
 }
-function service({ closedAt = '2026-10-06T23:30:00+07:00', method = 'manual', check = null, drift = false, closureMissing = false } = {}) {
+const noPending = { count: 0, totalAmount: 0, receipts: [] };
+function service({ closedAt = '2026-10-06T23:30:00+07:00', method = 'manual', check = null, drift = false, closureMissing = false, pending = noPending, holdDates = [] } = {}) {
   const closed = source(), current = drift ? source(110_000) : closed;
   const closure = closureMissing ? null : { id: 10, revision: 1, close_method: method, closed_at: closedAt, closed_by: 55,
     source_snapshot: closed.sourceSnapshot, source_fingerprint: closed.sourceFingerprint, actor: { name: 'HAN' } };
@@ -60,6 +61,7 @@ function service({ closedAt = '2026-10-06T23:30:00+07:00', method = 'manual', ch
     './pos-business-day-refresh': { loadLatestPosSyncRun: async () => null }, './pos-business-day-final-policy': finalPolicy,
     '@/lib/ledger/pos-sales-source': sources, '@/lib/store-settings/business-time-adapter': {},
     '@/lib/store-settings/business-time-core': businessTime,
+    './pos-pending-payment': { loadPendingPaymentReceipts: async () => pending, loadPendingCloseHoldDates: async () => holdDates },
   });
 }
 const checkRow = (result, overrides = {}) => ({ id: 20, closure_id: 10, result, checked_at: '2026-10-07T03:05:00+07:00',
@@ -73,6 +75,7 @@ function render(view) {
     react: hooks, 'react/jsx-runtime': jsxRuntime,
     '@/lib/language-context': { useLanguage: () => ({ lang: 'ko' }) },
     '@/lib/text/sales-close': { salesCloseText }, '@/lib/styles/ui': { ui: { subButton: {}, button: {} } },
+    'next/link': { __esModule: true, default: ({ href, style, children }) => jsxRuntime.jsx('a', { href, style, children }) },
   });
   return renderToStaticMarkup(panel.default({ businessDate, refreshKey: 0, onClosed: async () => {}, onBusyChange: () => {} }));
 }
@@ -166,7 +169,7 @@ test('03:05 cron on October 8 still targets October 7 independently of the late 
   const now = new Date('2026-10-08T03:05:00+07:00');
   const api = load('lib/sales/pos-business-day-final.ts', {
     'server-only': {}, '@/lib/auth/server-auth': {}, '@/lib/supabase/server': {}, '@/lib/ledger/pos-sales': {},
-    './pos-business-day-close-view': closeViewPolicy,
+    './pos-business-day-close-view': closeViewPolicy, './pos-pending-payment': {},
     './pos-business-day-close': { resolvePosCloseSystemActor: async () => ({ id: 2 }), getPosBusinessDayCloseTime: async date => {
       dates.push(date); return { allowed: true, cutoffAt: '2026-10-08T03:00:00+07:00' };
     } },
@@ -179,4 +182,37 @@ test('03:05 cron on October 8 still targets October 7 independently of the late 
   assert.deepEqual(dates, ['2026-10-07']);
   const cron = JSON.parse(readFileSync('vercel.json', 'utf8')).crons.find(row => row.path === '/api/cron/sales-close-final');
   assert.equal(cron.schedule, '5 20 * * *');
+});
+
+const pendingReceipts = { count: 2, totalAmount: 1_744_000, receipts: [
+  { id: 8381, refNo: '2601007063', tableName: 'A1', finalAmount: 955_000, pendingSince: '2026-10-06T22:56:06+07:00', reviewDue: true },
+  { id: 8382, refNo: '2601007064', tableName: null, finalAmount: 789_000, pendingSince: '2026-10-06T23:20:00+07:00', reviewDue: false },
+] };
+
+test('pending POS payments hold an unclosed day: no close button, banner lists receipts with shortcuts', async () => {
+  const view = await service({ closureMissing: true, pending: pendingReceipts, holdDates: ['2026-10-05', businessDate] })
+    .getPosBusinessDayCloseView(businessDate, new Date('2026-10-06T23:31:00+07:00'));
+  assert.equal(view.canClose, false);
+  assert.equal(view.closeEligibilityReason, 'pending_payment');
+  const html = render(view);
+  assert.ok(html.includes(salesCloseText.ko.pendingBlocked));
+  assert.ok(html.includes('2601007063') && html.includes('2601007064'));
+  assert.ok(html.includes('/admin/sales/receipts?businessDate=2026-10-06&amp;receiptId=8381'));
+  assert.ok(html.includes(salesCloseText.ko.pendingReview));
+  assert.ok(html.includes(salesCloseText.ko.holdTitle) && html.includes('2026-10-05'));
+  assert.match(html, /<button[^>]*disabled=""[^>]*>영업 마감<\/button>/);
+});
+
+test('resolved hold day can be closed again and says so; closed days only report leftover pending receipts', async () => {
+  const resolved = await service({ closureMissing: true, holdDates: [businessDate] })
+    .getPosBusinessDayCloseView(businessDate, new Date('2026-10-07T09:00:00+07:00'));
+  assert.equal(resolved.canClose, true);
+  assert.equal(resolved.closeEligibilityReason, 'eligible');
+  assert.ok(render(resolved).includes(salesCloseText.ko.holdResolved));
+  const closed = await service({ pending: pendingReceipts }).getPosBusinessDayCloseView(businessDate, new Date('2026-10-07T09:00:00+07:00'));
+  assert.equal(closed.closeEligibilityReason, 'already_closed');
+  const html = render(closed);
+  assert.ok(html.includes(salesCloseText.ko.pendingAfterClose));
+  assert.ok(!html.includes(salesCloseText.ko.pendingBlocked));
+  assert.ok(!html.includes(salesCloseText.ko.holdResolved));
 });

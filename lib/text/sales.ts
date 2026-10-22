@@ -159,6 +159,7 @@ export const salesText = {
       manualReceiptCreatedOtherDateNotice:
         "자체영수증이 {businessDate}에 생성되었습니다. 해당 날짜로 이동하면 확인할 수 있습니다.",
       manualAdjustmentLineName: "수동 금액 조정",
+      pendingReviewBadge: "관리자 확인 필요",
     },
     receiptsEdit: {
       vatApply: "VAT 적용",
@@ -197,6 +198,26 @@ export const salesText = {
         "최신 POS 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.",
       posCheckRefreshFailed:
         "영수증 정보를 갱신하지 못했습니다. 잠시 후 다시 시도해주세요.",
+      statusChangeTitle: "결제상태 변경",
+      statusChangeNotice:
+        "결제예정 상태가 30분 이상 유지되고 있습니다. 실제 수금 또는 취소 여부를 직접 확인한 뒤 변경해주세요.",
+      statusChangeToPaid: "결제완료로 변경",
+      statusChangeToCanceled: "취소로 변경",
+      statusChangeEvidence: "확인 근거 (필수)",
+      statusChangeEvidencePlaceholder:
+        "예: 카드 승인번호, 이체 내역, 현금 확인자, 취소 사유",
+      statusChangeConfirm: "실제 수금(또는 취소)을 직접 확인했습니다.",
+      statusChangeSubmit: "결제상태 변경 저장",
+      statusChangeInputRequired:
+        "확인 근거를 5자 이상 입력하고 확인란을 선택해주세요.",
+      statusChangeNotDue:
+        "결제예정 후 30분이 지나지 않았습니다. 잠시 후 다시 확인해주세요.",
+      statusChangeNotPending:
+        "이미 결제상태가 변경된 영수증입니다. 최신 정보를 다시 불러왔습니다.",
+      statusChangeMonthClosed: "월마감된 영업일의 영수증은 변경할 수 없습니다.",
+      statusChangeClosedDay:
+        "이미 영업마감된 날짜라 결제완료로 정정할 수 없습니다. 마감 금액·장부·카드정산이 바뀌므로 별도 승인 후 처리해야 합니다. 취소 정정은 가능합니다.",
+      statusChangeFailed: "결제상태 변경에 실패했습니다.",
     },
   },
   vi: {
@@ -360,6 +381,7 @@ export const salesText = {
       manualReceiptCreatedOtherDateNotice:
         "Hóa đơn thủ công đã được tạo cho ngày {businessDate}. Chuyển sang ngày đó để kiểm tra.",
       manualAdjustmentLineName: "Điều chỉnh số tiền thủ công",
+      pendingReviewBadge: "Cần quản lý kiểm tra",
     },
     receiptsEdit: {
       vatApply: "Có VAT",
@@ -398,6 +420,26 @@ export const salesText = {
         "Không thể kiểm tra thông tin POS mới nhất. Vui lòng thử lại sau.",
       posCheckRefreshFailed:
         "Không thể cập nhật thông tin hóa đơn. Vui lòng thử lại sau.",
+      statusChangeTitle: "Đổi trạng thái thanh toán",
+      statusChangeNotice:
+        "Hóa đơn ở trạng thái chờ thanh toán hơn 30 phút. Vui lòng tự xác nhận đã thu tiền hoặc đã hủy trước khi thay đổi.",
+      statusChangeToPaid: "Đổi thành đã thanh toán",
+      statusChangeToCanceled: "Đổi thành đã hủy",
+      statusChangeEvidence: "Căn cứ xác nhận (bắt buộc)",
+      statusChangeEvidencePlaceholder:
+        "VD: mã duyệt thẻ, lịch sử chuyển khoản, người xác nhận tiền mặt, lý do hủy",
+      statusChangeConfirm: "Tôi đã trực tiếp xác nhận việc thu tiền (hoặc hủy).",
+      statusChangeSubmit: "Lưu trạng thái thanh toán",
+      statusChangeInputRequired:
+        "Vui lòng nhập căn cứ xác nhận từ 5 ký tự và chọn ô xác nhận.",
+      statusChangeNotDue:
+        "Chưa đủ 30 phút kể từ khi chờ thanh toán. Vui lòng kiểm tra lại sau.",
+      statusChangeNotPending:
+        "Trạng thái thanh toán của hóa đơn đã thay đổi. Dữ liệu mới nhất đã được tải lại.",
+      statusChangeMonthClosed: "Không thể thay đổi hóa đơn của tháng đã khóa sổ.",
+      statusChangeClosedDay:
+        "Ngày kinh doanh đã chốt nên không thể đổi thành đã thanh toán. Việc này làm thay đổi số tiền chốt, sổ cái và đối soát thẻ nên cần được phê duyệt riêng. Vẫn có thể đổi thành đã hủy.",
+      statusChangeFailed: "Không thể đổi trạng thái thanh toán.",
     },
   },
 } as const;

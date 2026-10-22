@@ -13,6 +13,7 @@ type ReceiptRow = {
   ref_no: string | null;
   table_name: string | null;
   ref_date: string | null;
+  status_changed_at: string | null;
   payment_status: number | null;
   is_canceled: boolean | null;
   total_amount: number | string | null;
@@ -269,7 +270,7 @@ export async function GET(req: Request) {
     const { data: receipts, error: receiptsError } = await supabaseServer
       .from("pos_sales_receipts")
       .select(
-        "id, ref_id, ref_no, table_name, ref_date, payment_status, is_canceled, total_amount, final_amount, is_modified, review_status, admin_note"
+        "id, ref_id, ref_no, table_name, ref_date, status_changed_at, payment_status, is_canceled, total_amount, final_amount, is_modified, review_status, admin_note"
       )
       .eq("business_date", businessDate)
       .order("ref_date", { ascending: false, nullsFirst: false })
@@ -353,6 +354,7 @@ export async function GET(req: Request) {
           refNo: receipt.ref_no,
           tableName: receipt.table_name,
           refDate: receipt.ref_date,
+          statusChangedAt: receipt.status_changed_at,
           paymentStatus: receipt.payment_status,
           isCanceled: receipt.is_canceled === true,
           totalAmount: toNumber(receipt.total_amount),

@@ -11,6 +11,8 @@ export type PosCloseView={
  closeEligibilityReason:string;closeAt:string|null;
  finalSync:{runId:number|null;lastSyncedAt:string|null;cutoffAt:string;eligible:boolean};
  ledgerProjection:{status:string;total:number};
+ pendingPayments:{count:number;totalAmount:number;receipts:{id:number;refNo:string|null;tableName:string|null;finalAmount:number;pendingSince:string|null;reviewDue:boolean}[]};
+ pendingHoldDates:string[];
 };
 
 /** Read-only display policy; does not schedule or execute a final check. */

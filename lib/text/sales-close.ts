@@ -46,7 +46,15 @@ export const salesCloseText = {
     "cash": "현금",
     "transfer": "계좌이체",
     "card": "카드",
-    "other": "기타"
+    "other": "기타",
+    "pendingTitle": "결제예정 영수증",
+    "pendingCount": "건",
+    "pendingBlocked": "결제예정 영수증이 남아 있어 영업 마감을 할 수 없습니다. 결제상태를 정리한 뒤 다시 마감해 주세요.",
+    "pendingAfterClose": "마감 이후에도 결제예정으로 남아 있는 영수증입니다. 마감된 영업일은 결제완료 정정이 차단되며 취소 정정만 가능합니다.",
+    "pendingReview": "확인 필요",
+    "pendingOpenReceipts": "영수증 관리에서 확인",
+    "holdTitle": "마감 보류 영업일",
+    "holdResolved": "결제예정 정리가 끝났습니다. 영업 마감을 진행해 주세요."
   },
   "vi": {
     "title": "Chốt ngày kinh doanh",
@@ -95,6 +103,14 @@ export const salesCloseText = {
     "cash": "Tiền mặt",
     "transfer": "Chuyển khoản",
     "card": "Thẻ",
-    "other": "Khác"
+    "other": "Khác",
+    "pendingTitle": "Hóa đơn chờ thanh toán",
+    "pendingCount": " hóa đơn",
+    "pendingBlocked": "Còn hóa đơn chờ thanh toán nên chưa thể chốt ngày. Vui lòng xử lý trạng thái thanh toán rồi chốt lại.",
+    "pendingAfterClose": "Hóa đơn vẫn ở trạng thái chờ thanh toán sau khi đã chốt ngày. Ngày đã chốt không thể đổi thành đã thanh toán, chỉ có thể đổi thành đã hủy.",
+    "pendingReview": "Cần kiểm tra",
+    "pendingOpenReceipts": "Xem trong quản lý hóa đơn",
+    "holdTitle": "Ngày kinh doanh đang tạm hoãn chốt",
+    "holdResolved": "Đã xử lý xong hóa đơn chờ thanh toán. Vui lòng tiến hành chốt ngày."
   }
 } as const;

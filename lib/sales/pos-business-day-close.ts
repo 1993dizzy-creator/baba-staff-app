@@ -78,7 +78,7 @@ async function closeWithActor(businessDate: string, actorId: number, options: {
     p_close_method: options.method, p_manual_reclose: options.reclose, p_sync_run_id: options.syncRunId ?? null,
   });
   if (error) throw error;
-  return data as { status: "closed" | "reclosed" | "already_closed" | "source_changed_after_close" | "card_settlement_locked" | "month_closed" | "forbidden"; closureId?: number; revision?: number; ledgerResult?: Record<string, unknown> };
+  return data as { status: "closed" | "reclosed" | "already_closed" | "source_changed_after_close" | "card_settlement_locked" | "month_closed" | "forbidden" | "pending_payment"; closureId?: number; revision?: number; ledgerResult?: Record<string, unknown> };
 }
 
 // Future UI entry point. Actor identity always comes from the server session.

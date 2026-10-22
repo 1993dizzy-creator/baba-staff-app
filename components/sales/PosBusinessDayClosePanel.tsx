@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useCallback,useEffect,useState,type CSSProperties } from 'react';
 import { useLanguage } from '@/lib/language-context';
 import { salesCloseText } from '@/lib/text/sales-close';
@@ -8,7 +9,7 @@ import type { PosCloseTotals } from '@/lib/sales/pos-business-day-final-policy';
 const buckets=['cash','transfer','card','other'] as const;
 const money=(amount:number)=>new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(amount);
 const signed=(amount:number)=>(amount>0?'+':'')+money(amount);
-export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClosed,onBusyChange,disabled=false}:{businessDate:string;refreshKey:number;onClosed:()=>Promise<void>;onBusyChange:(busy:boolean)=>void;disabled?:boolean}){
+export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClosed,onBusyChange,onSelectBusinessDate,disabled=false}:{businessDate:string;refreshKey:number;onClosed:()=>Promise<void>;onBusyChange:(busy:boolean)=>void;onSelectBusinessDate?:(date:string)=>void;disabled?:boolean}){
  const {lang}=useLanguage(),t=salesCloseText[lang];
  const [status,setStatus]=useState<PosCloseView|null>(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
  const [message,setMessage]=useState(''),[confirm,setConfirm]=useState(false),[confirmInitialClose,setConfirmInitialClose]=useState(false);
@@ -25,7 +26,7 @@ export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClos
  const errorText=(code:string)=>({card_settlement_locked:t.cardLocked,month_closed:t.monthClosed,forbidden:t.forbidden,
   source_changed_after_close:t.sourceChanged,POS_CLOSE_SOURCE_CHANGED_SINCE_REVIEW:t.sourceChanged,
   POS_CLOSE_BEFORE_CONFIGURED_CLOSE_TIME:t.beforeClose,POS_CLOSE_SYNC_FAILED:t.syncFailed,POS_CLOSE_SOURCE_INVALID:t.sourceInvalid,
-  POS_CLOSE_FORBIDDEN:t.forbidden,RELOGIN_REQUIRED:t.relogin} as Record<string,string>)[code]??t.failed;
+  POS_CLOSE_FORBIDDEN:t.forbidden,RELOGIN_REQUIRED:t.relogin,pending_payment:t.pendingBlocked} as Record<string,string>)[code]??t.failed;
  async function close(reclose:boolean){
   if(busy||disabled)return;
   setBusy(true);onBusyChange(true);setMessage('');
@@ -38,6 +39,9 @@ export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClos
   }catch{setMessage('POS_CLOSE_FAILED');}finally{setBusy(false);onBusyChange(false);}
  }
  const check=status?.latestFinalCheck;
+ const pending=status?.pendingPayments;
+ const otherHoldDates=(status?.pendingHoldDates??[]).filter(date=>date!==businessDate);
+ const receiptsHref='/admin/sales/receipts?businessDate='+encodeURIComponent(businessDate);
  const reason=status?.closeEligibilityReason;
  const eligibility=reason==='source_invalid'?t.sourceInvalid:reason==='month_closed'?t.monthClosed:reason==='future_business_date'?t.future
   :reason==='configured_close_time_unavailable'?t.settings:['configured_close_time','manual_close_time'].includes(reason??'')?t.beforeClose:reason==='forbidden'?t.forbidden:'';
@@ -64,6 +68,18 @@ export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClos
    {status.latestClose&&status.monthClosed&&check?.result!=='month_closed'?<p role='alert' style={warning}>{t.monthClosed}</p>:null}
    {status.ledgerProjection.status==='mismatch'?<p role='alert' style={warning}>{t.ledgerMismatch}</p>:null}
    {status.needsOwnerReview?<p role='alert' style={warning}>{t.ownerReview}</p>:null}
+   {pending&&pending.count>0?<div role='alert' style={warning}>
+    <strong>{t.pendingTitle} {pending.count}{t.pendingCount} · {money(pending.totalAmount)}</strong>
+    <p style={pendingNote}>{status.latestClose?t.pendingAfterClose:t.pendingBlocked}</p>
+    <ul style={pendingList}>{pending.receipts.slice(0,10).map(receipt=><li key={receipt.id}>
+     <Link href={receiptsHref+'&receiptId='+receipt.id} style={pendingLink}>{receipt.refNo||receipt.id}</Link>
+     {' · '}{receipt.tableName||'-'} · {money(receipt.finalAmount)}{receipt.reviewDue?' · '+t.pendingReview:''}
+    </li>)}{pending.receipts.length>10?<li>+{pending.receipts.length-10}</li>:null}</ul>
+    <Link href={receiptsHref} style={pendingLink}>{t.pendingOpenReceipts} →</Link>
+   </div>:null}
+   {!status.latestClose&&pending?.count===0&&status.pendingHoldDates?.includes(businessDate)?<p role='status' style={info}>{t.holdResolved}</p>:null}
+   {otherHoldDates.length>0?<p role='alert' style={warning}>{t.holdTitle}:{otherHoldDates.map(date=><button key={date} type='button' style={dateLink}
+    disabled={busy||disabled||!onSelectBusinessDate} onClick={()=>onSelectBusinessDate?.(date)}>{date}</button>)}</p>:null}
    {status.drift&&status.delta&&Object.values(status.delta).some(value=>value!==0)&&check?.result!=='financial_drift'?<p role='alert' style={warning}>{t.drift}</p>:null}
    {confirmInitialClose&&!status.latestClose?<div role='dialog' aria-modal='true' aria-label={t.manualCloseConfirmTitle} style={notice}>
     <strong>{t.manualCloseConfirmTitle}</strong><p style={{margin:'6px 0 0'}}>{t.manualCloseConfirmDetail}</p>
@@ -92,4 +108,8 @@ const muted:CSSProperties={margin:0,fontSize:11,color:'#6b7280',lineHeight:1.45,
 const warning:CSSProperties={margin:0,border:'1px solid #fde68a',borderRadius:8,padding:'7px 8px',background:'#fffbeb',color:'#92400e',fontSize:12,fontWeight:700,lineHeight:1.45,overflowWrap:'anywhere'};
 const info:CSSProperties={...warning,border:'1px solid #d1d5db',background:'#f9fafb',color:'#4b5563'};
 const messageStyle:CSSProperties={margin:0,fontSize:12,lineHeight:1.45,overflowWrap:'anywhere'};
+const pendingNote:CSSProperties={margin:'4px 0 0',fontWeight:600};
+const pendingList:CSSProperties={margin:'4px 0',paddingLeft:16,fontWeight:600};
+const pendingLink:CSSProperties={color:'#92400e',textDecoration:'underline',fontWeight:800};
+const dateLink:CSSProperties={marginLeft:6,border:0,padding:0,background:'none',color:'#92400e',textDecoration:'underline',fontSize:12,fontWeight:800,cursor:'pointer'};
 const notice:CSSProperties={borderRadius:12,padding:12,margin:'12px 0',fontSize:13,lineHeight:1.5,background:'#f3f4f6'};
