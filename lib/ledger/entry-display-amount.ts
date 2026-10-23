@@ -1,5 +1,7 @@
 // @ts-expect-error Node's local strip-types test runner requires the extension.
 import { isPayrollPaymentOutflow, type LedgerEntry } from "./entries.ts";
+// @ts-expect-error Node's local strip-types test runner requires the extension.
+import { reserveEntryDisplaySign } from "./reserve-text.ts";
 
 // Presentation only. LedgerEntry.amount and direction remain accounting values.
 export function entryDisplayAmount(entry: Pick<LedgerEntry, "amount" | "systemDisplay">) {
@@ -14,6 +16,10 @@ export function entryDisplayAmountSign(entry: Pick<LedgerEntry, "direction" | "p
   if (entry.systemDisplay?.kind === "investment") {
     return entry.systemDisplay.cashFlow === "outflow" ? "−" :
       entry.systemDisplay.cashFlow === "inflow" ? "+" : "";
+  }
+  // Reserve rows keep an unsigned amount; the sign matches the settings 준비금 기록.
+  if (entry.systemDisplay?.kind === "reserve") {
+    return reserveEntryDisplaySign(entry.systemDisplay.entryType, entry.systemDisplay.signedAmount);
   }
   if (entry.direction === "income") return "+";
   if (entry.direction === "expense") return "−";

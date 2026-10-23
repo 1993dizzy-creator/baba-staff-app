@@ -43,7 +43,7 @@ test("settings page renders no hard-coded Korean outside the KO account-name ove
   assert.match(page, /const copy = ledgerSettingsText\[lang\];/);
   assert.match(page, /<ReservePlanCard key=\{row\.id\} row=\{row\} month=\{month\} lang=\{lang\} copy=\{copy\}/);
   assert.match(page, /window\.prompt\(copy\.skipReasonPrompt\)/);
-  assert.match(page, /formatReserveDateTime\(entry\.occurred_at, copy\.dateLocale\)/);
+  assert.match(readFileSync("components/ledger/ReserveEntryHistoryList.tsx", "utf8"), /formatDate\(entry\.occurred_at\)/);
   // Account labels: Korean keeps the stored display_name; VI uses display labels and the ledger's short-name helper.
   assert.match(page, /\{accountUi\?\.name\[lang\] \?\? row\.display_name\}/);
   assert.match(page, /shortLedgerAccountName\(accountUi\?\.ledgerName \?\? row\.display_name, lang\)/);

@@ -9,8 +9,10 @@ import {
   type LedgerEntry,
   type TransactionRow,
 } from "../lib/ledger/entries.ts";
-import { entryMatchesListFilter, LEDGER_ENTRY_FILTERS } from "../lib/ledger/entry-list-filter.ts";
+import { entryFilterHeaderAmount, entryMatchesListFilter, LEDGER_ENTRY_FILTERS } from "../lib/ledger/entry-list-filter.ts";
+import { reserveEntryDisplaySign } from "../lib/ledger/reserve-text.ts";
 import { getBusinessDate } from "../lib/common/business-time.ts";
+import { reserveCurrentAmount } from "../lib/ledger/reserve-balances.ts";
 import { entryDisplayAmountSign, entryDisplayAmountTone } from "../lib/ledger/entry-display-amount.ts";
 import { entryDisplayBadgeKind, entryDisplayBadgeLabel } from "../lib/ledger/entry-display-badge.ts";
 import { entryCategoryEmoji } from "../lib/ledger/entry-display-emoji.ts";
@@ -81,16 +83,99 @@ test("reserve rows follow occurred_at in Asia/Ho_Chi_Minh with the 03:00 busines
   ]);
 });
 
-test("entry types map to labels and keep amounts unsigned", () => {
+test("entry types keep unsigned amounts; release/consume display negative, adjustment keeps its sign", () => {
   const rows = reserveRows([
-    { ...rentReserveAllocate, id: 1, entry_type: "release", amount: 1_000 },
-    { ...rentReserveAllocate, id: 2, entry_type: "consume", amount: 2_000 },
-    { ...rentReserveAllocate, id: 3, entry_type: "adjustment", amount: -3_000 },
+    { ...rentReserveAllocate, id: 1, entry_type: "release", amount: "1000" },
+    { ...rentReserveAllocate, id: 2, entry_type: "consume", amount: "2000" },
+    { ...rentReserveAllocate, id: 3, entry_type: "adjustment", amount: "-3000" },
+    { ...rentReserveAllocate, id: 4, entry_type: "adjustment", amount: "4000" },
+    { ...rentReserveAllocate, id: 5, entry_type: "allocate", amount: "5000" },
   ]);
   assert.deepEqual(rows.map(row => [row.amount, row.systemDisplay?.kind === "reserve" ? row.systemDisplay.signedAmount : null]), [
-    [1_000, -1_000], [2_000, -2_000], [3_000, -3_000],
+    [1_000, -1_000], [2_000, -2_000], [3_000, -3_000], [4_000, 4_000], [5_000, 5_000],
   ]);
-  for (const row of rows) assert.equal(entryDisplayAmountSign(row), "");
+  assert.deepEqual(rows.map(row => entryDisplayAmountSign(row)), ["−", "−", "−", "", ""]);
+  // The sign is display-only: direction, tone and subtotals stay neutral.
+  for (const row of rows) {
+    assert.equal(row.direction, "transfer");
+    assert.equal(entryDisplayAmountTone(row), "transfer");
+    assert.deepEqual(entryDisplaySubtotal(row), { income: 0, expense: 0 });
+  }
+});
+
+test("10/21 rent reserve: allocate +60,000,000 / release -100,000,000 leaves 20,000,000 reserved", () => {
+  const october = buildReserveLedgerEntries([
+    { ...rentReserveAllocate, id: 2, entry_type: "allocate", amount: "60000000.000", occurred_at: "2026-10-21T12:00:00+07:00" },
+    { ...rentReserveAllocate, id: 3, entry_type: "release", amount: "100000000.000", occurred_at: "2026-10-21T13:00:00+07:00" },
+  ], plans, accounts, "2026-10", getBusinessDate);
+  const display = (row: LedgerEntry) => `${entryDisplayAmountSign(row)}${row.amount}`;
+  assert.deepEqual(october.map(display), ["60000000", "−100000000"]);
+  // Stored amounts stay positive; only signedAmount carries the balance effect.
+  assert.deepEqual(october.map(row => row.systemDisplay?.kind === "reserve" ? row.systemDisplay.signedAmount : null), [60_000_000, -100_000_000]);
+  // Balance across 9/30 allocate + 10/21 allocate + 10/21 release is unchanged by display.
+  assert.equal(reserveCurrentAmount([
+    { entry_type: "allocate", amount: "60000000.000" },
+    { entry_type: "allocate", amount: "60000000.000" },
+    { entry_type: "release", amount: "100000000.000" },
+  ]), 20_000_000);
+  // 10/21 net reserve change under the 준비금 filter header.
+  assert.equal(october.reduce((sum, row) => sum + (entryFilterHeaderAmount(row, "reserve") ?? 0), 0), -40_000_000);
+});
+
+test("shared reserve history sign: release/consume negative, allocate positive, adjustment keeps its sign", () => {
+  assert.deepEqual([
+    ["allocate", 60_000_000], ["release", 100_000_000], ["consume", 1], ["adjustment", -5], ["adjustment", 5], ["release", -7],
+  ].map(([type, amount]) => reserveEntryDisplaySign(type as string, amount as number)), ["", "−", "−", "−", "", "−"]);
+  const list = readFileSync("components/ledger/ReserveEntryHistoryList.tsx", "utf8");
+  // Absolute amount + one sign: never a doubled minus.
+  assert.match(list, /const sign = reserveEntryDisplaySign\(entry\.entry_type, amount\);/);
+  assert.match(list, /\{sign\}\{money\(Math\.abs\(amount\)\)\}/);
+  // Newest first; one line of type + YYYY.MM.DD + coloured amount, then the memo itself.
+  assert.match(list, /sort\(\(a, b\) => Date\.parse\(b\.occurred_at\) - Date\.parse\(a\.occurred_at\) \|\| b\.id - a\.id\)/);
+  assert.match(list, /aria-current=\{selected \? "true" : undefined\}/);
+  assert.match(list, /year: "numeric", month: "2-digit", day: "2-digit" \}\)\.format\(new Date\(value\)\)\.replaceAll\("-", "\."\)/);
+  assert.match(list, /<b className=\{sign \? styles\.outflow : styles\.inflow\}>/);
+  assert.match(list, /<p className=\{memo \? styles\.memo : `\$\{styles\.memo\} \$\{styles\.noMemo\}`\}>\{memo \?\? copy\.noMemo\}<\/p>/);
+  assert.doesNotMatch(list, /fetch\(|<button|<input|<form|<details|timeStyle/);
+  const css = readFileSync("components/ledger/ReserveEntryHistoryList.module.css", "utf8");
+  assert.match(css, /\.list\{[^}]*border:2px solid #d1d5db/);
+  assert.match(css, /\.row\{[^}]*border-bottom:1px solid #e5e7eb/);
+  assert.match(css, /\.selected\{background:#fffbeb;box-shadow:inset 3px 0 0 #f59e0b\}/);
+  assert.match(css, /\.inflow\{color:#16805a\}/);
+  assert.match(css, /\.outflow\{color:#b4493e\}/);
+});
+
+test("reserve sheet shows the shared spinner while loading and an error with retry on failure", () => {
+  const sheet = page.slice(page.indexOf("function ReserveEntryDetailSheet"));
+  // Failure is keyed to plan + attempt; retry bumps the attempt and re-runs the GET.
+  assert.match(sheet, /const requestKey = `\$\{planId\}:\$\{attempt\}`;/);
+  assert.match(sheet, /if \(!controller\.signal\.aborted\) setFailedKey\(key\);/);
+  assert.match(sheet, /\}, \[planId, attempt\]\);/);
+  assert.match(sheet, /const failed = !loaded && failedKey === requestKey;/);
+  assert.match(sheet, /onClick=\{\(\) => setAttempt\(\(value\) => value \+ 1\)\}/);
+  assert.match(sheet, /<InventoryLoadingCard lang=\{lang\} inline minHeight=\{120\} testId="reserve-history-loading" label=\{vi \? "Đang tải ghi nhận quỹ dự phòng…" : "준비금 기록을 불러오는 중…"\} \/>/);
+  // The memo correction is data, never a UI literal.
+  assert.doesNotMatch(page, /인테리어 업체 대여금/);
+  assert.doesNotMatch(readFileSync("components/ledger/ReserveEntryHistoryList.tsx", "utf8"), /인테리어 업체 대여금/);
+});
+
+test("reserve detail sheet lists only the clicked entry's own plan via the shared history list", () => {
+  const sheetStart = page.indexOf("function ReserveEntryDetailSheet");
+  const sheet = page.slice(sheetStart);
+  assert.match(sheet, /fetch\(`\/api\/admin\/ledger\/reserves\/\$\{planId\}\/history`, \{ cache: "no-store", signal: controller\.signal \}\)/);
+  assert.match(sheet, /Number\(body\?\.plan\?\.id\) !== planId/);
+  assert.match(sheet, /\.filter\(\(row\) => row\.reserve_plan_id == null \|\| Number\(row\.reserve_plan_id\) === planId\)/);
+  assert.match(sheet, /const loaded = history\?\.planId === planId \? history : null;/);
+  assert.match(sheet, /<ReserveEntryHistoryList entries=\{loaded\.entries\} lang=\{lang\} title=\{copy\.entryCount\} selectedId=\{reserve\.reserveEntryId\} \/>/);
+  assert.match(sheet, /<strong>\{money\(loaded\.currentAmount\)\}<\/strong>/);
+  // No recurring schedule or plan editing in the sheet.
+  assert.doesNotMatch(sheet, /recurring|pendingSchedule|savePlan|addEntry|method:/);
+  const api = readFileSync("app/api/admin/ledger/reserves/[id]/history/route.ts", "utf8");
+  const get = api.slice(api.indexOf("export async function GET"));
+  assert.match(get, /from\("ledger_reserve_entries"\)\.select\("id,reserve_plan_id,entry_type,amount,occurred_at,memo"\)\.eq\("reserve_plan_id", id\)/);
+  assert.match(get, /\.filter\(\(entry\) => Number\(entry\.reserve_plan_id\) === id\)/);
+  assert.match(get, /currentAmount: reserveCurrentAmount\(entries\)/);
+  assert.doesNotMatch(get, /\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/);
 });
 
 test("daily income/expense subtotal is unchanged while the reserve row counts in the date group", () => {
@@ -160,6 +245,8 @@ test("reserve detail is read-only and does not reuse the transaction edit sheet"
   assert.ok(sheetStart > 0);
   const nextFunction = page.indexOf("\nfunction ", sheetStart + 1);
   const sheet = page.slice(sheetStart, nextFunction < 0 ? undefined : nextFunction);
-  assert.doesNotMatch(sheet, /fetch\(|ManualDisplayEditor|onConfirmedEdited|setEditMode|primaryButtonStyle|dangerButtonStyle/);
+  // Its only request is the read-only GET of the plan's own history.
+  assert.equal((sheet.match(/fetch\(/g) ?? []).length, 1);
+  assert.doesNotMatch(sheet, /method:|ManualDisplayEditor|onConfirmedEdited|setEditMode|primaryButtonStyle|dangerButtonStyle/);
   assert.match(page, /selected\?\.systemDisplay\?\.kind === "reserve" \? \(\s*<ReserveEntryDetailSheet/);
 });

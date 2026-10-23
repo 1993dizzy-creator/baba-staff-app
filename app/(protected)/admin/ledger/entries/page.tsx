@@ -16,6 +16,7 @@ import {
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
+import InventoryLoadingCard from "@/components/inventory/InventoryLoadingCard";
 import InventoryProjectionResolution, { type InventoryProjectionIssue } from "@/components/ledger/InventoryProjectionResolution";
 import Link from "next/link";
 import type { PayablePeriodSummary } from "@/lib/ledger/payables";
@@ -39,10 +40,12 @@ import {
   type LedgerEntry,
   type LedgerEntryItem,
 } from "@/lib/ledger/entries";
-import { entryFilterHeaderAmount, entryMatchesListFilter, LEDGER_ENTRY_FILTERS, ledgerEntryFilterLabel, type LedgerEntryFilter } from "@/lib/ledger/entry-list-filter";
+import { entryFilterHeaderAmount, entryMatchesListFilter, LEDGER_ENTRY_FILTERS, ledgerEntryFilterLabel, reviewCountsByDate, type LedgerEntryFilter } from "@/lib/ledger/entry-list-filter";
 import { readEditedLedger } from "@/lib/ledger/entry-save-refresh";
 import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
 import { reserveEntryTypeLabel } from "@/lib/ledger/reserve-text";
+import { ledgerSettingsText } from "@/lib/ledger/settings-text";
+import ReserveEntryHistoryList, { type ReserveHistoryEntry } from "@/components/ledger/ReserveEntryHistoryList";
 import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji, ledgerPartyEmoji } from "@/lib/ledger/entry-display-emoji";
 import { entryDisplayBadgeEmoji, entryDisplayBadgeKind, entryDisplayBadgeLabel } from "@/lib/ledger/entry-display-badge";
 import { entryDisplayAmount, entryDisplayAmountSign, entryDisplayAmountTone } from "@/lib/ledger/entry-display-amount";
@@ -321,6 +324,7 @@ function LedgerEntriesContent() {
     { month: "", payables: "loading", investments: "loading" },
   );
   const investmentsLoadedKeyRef = useRef("");
+  const cardSettlementLoadedKeyRef = useRef("");
   const [reopenSheetOpen, setReopenSheetOpen] = useState(false),
     [reopenReason, setReopenReason] = useState(""),
     [reopening, setReopening] = useState(false),
@@ -434,6 +438,9 @@ function LedgerEntriesContent() {
   useEffect(() => {
     if (!cardSettlementExpanded) return;
     const requestedMonth = month;
+    // Reopening the section reuses this month's loaded summary until the ledger reloads.
+    const key = `${requestedMonth}:${investmentsVersion}`;
+    if (cardSettlementLoadedKeyRef.current === key) return;
     const controller = new AbortController();
     void (async () => {
       try {
@@ -441,6 +448,7 @@ function LedgerEntriesContent() {
         const body = await response.json();
         if (!response.ok) throw new Error(body.code);
         if (controller.signal.aborted || (body.month && body.month !== requestedMonth)) return;
+        cardSettlementLoadedKeyRef.current = key;
         setCardSettlement({month:requestedMonth,summary:body.summary});
         setCardSettlementError(null);
       } catch {
@@ -448,7 +456,7 @@ function LedgerEntriesContent() {
       }
     })();
     return () => controller.abort();
-  }, [cardSettlementExpanded,month,vi]);
+  }, [cardSettlementExpanded,month,vi,investmentsVersion]);
   // Investments load like card settlement: only when the section is opened (or the
   // manual-entry sheet needs participants), once per month and ledger reload.
   const investmentsNeeded = investmentExpanded || manualOpen;
@@ -592,6 +600,13 @@ function LedgerEntriesContent() {
   );
   const historyOpen =
     (Boolean(search.trim()) && pastGroups.length > 0) || historyExpanded;
+  // Whole-month counts, so collapsed headers and 지난 내역 don't depend on the
+  // active filter, search or which dates are expanded.
+  const reviewCounts = useMemo(() => reviewCountsByDate(listEntries), [listEntries]);
+  const pastReviewCount = useMemo(
+    () => [...reviewCounts].reduce((sum, [date, count]) => date < todayKey ? sum + count : sum, 0),
+    [reviewCounts, todayKey],
+  );
   useEffect(() => {
     if (!data || data.month !== month || initializedMonthRef.current === month)
       return;
@@ -846,7 +861,10 @@ function LedgerEntriesContent() {
           aria-controls={panelId}
           onClick={() => toggleDate(group.date)}
         >
-          <strong>{formatDate(group.date, lang)}</strong>
+          <span className={styles.dateTitle}>
+            <strong>{formatDate(group.date, lang)}</strong>
+            <ReviewAlert count={reviewCounts.get(group.date) ?? 0} lang={lang} />
+          </span>
           <span className={styles.dateSummary}>
             <span>{group.rows.length} {vi ? "giao dịch" : "건"}</span>
             {group.filterAmount !== null ? <><i aria-hidden>·</i><b className={styles.dateFilterAmount}>{ledgerEntryFilterLabel(filter, lang)} {group.filterAmount < 0 ? "−" : filter === "investment" && group.filterAmount > 0 ? "+" : ""}{money(Math.abs(group.filterAmount))}</b></> : null}
@@ -945,7 +963,7 @@ function LedgerEntriesContent() {
           </div>
         </section>
         {error ? (
-          <p className={styles.error} role="alert">
+          <p className={`${styles.error} ${styles.stateBlock}`} role="alert">
             {error}
           </p>
         ) : null}
@@ -1066,7 +1084,7 @@ function LedgerEntriesContent() {
                 </button>
               {payablesFailed && !payableExpanded ? <p role="alert" className={styles.error}>{vi ? "Không thể tải công nợ. Vui lòng tải lại trang." : "미납금을 불러오지 못했습니다. 새로고침해주세요."}</p> : null}
               {payableExpanded ? <div className={styles.statusBody} id="payable-summary-body">
-              {!payablesReady ? <p role={payablesFailed ? "alert" : "status"} className={payablesFailed ? styles.error : styles.statusHint}>{payablesFailed ? (vi ? "Không thể tải công nợ. Vui lòng tải lại trang." : "미납금을 불러오지 못했습니다. 새로고침해주세요.") : (vi ? "Đang tải công nợ…" : "미납금을 불러오는 중입니다…")}</p> : <>
+              {!payablesReady ? (payablesFailed ? <p role="alert" className={styles.error}>{vi ? "Không thể tải công nợ. Vui lòng tải lại trang." : "미납금을 불러오지 못했습니다. 새로고침해주세요."}</p> : <InventoryLoadingCard lang={lang} inline minHeight={56} label={vi ? "Đang tải công nợ…" : "미납금을 불러오는 중입니다…"} />) : <>
               <PayableMonthTotals summary={payables.summary} vi={vi} />
               {payableDisplay.parties.length || payableDisplay.other ? (
                 <div className={styles.payableParties} id="payable-parties-list">{payableDisplay.parties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty({...party,viewMonth:month})}>
@@ -1098,7 +1116,7 @@ function LedgerEntriesContent() {
                   ] as const).map(([key,label])=><div key={key}><dt>{label}</dt><dd>{cardSettlement?.month===month&&cardSettlementError?.month!==month?money(cardSettlement.summary[key]):"-"}</dd></div>)}
                 </dl>
                 <p className={styles.statusHint}>{vi?"Tiền thực nhận tính theo tháng nhập tiền; phí/chênh lệch tính theo tháng bán.":"실제 입금은 입금월 기준, 수수료/차액은 매출월 귀속 기준입니다."}</p>
-                {cardSettlementError?.month===month?<p role="alert" className={styles.error}>{cardSettlementError.message}</p>:cardSettlement?.month!==month?<p className={styles.statusHint}>{vi?"Đang tải tình hình thẻ…":"카드 정산 현황을 불러오는 중입니다…"}</p>:null}
+                {cardSettlementError?.month===month?<p role="alert" className={styles.error}>{cardSettlementError.message}</p>:cardSettlement?.month!==month?<InventoryLoadingCard lang={lang} inline minHeight={56} label={vi?"Đang tải tình hình thẻ…":"카드 정산 현황을 불러오는 중입니다…"} />:null}
                 <div className={styles.statusActions}><p className={styles.statusHint}>{vi?"Đăng ký tiền vào và kết nối doanh thu tại trang chi tiết.":"입금 등록과 매출 연결은 상세 페이지에서 진행합니다."}</p><Link href={ledgerMonthHref("/admin/ledger/card-settlements", "", month)} className={styles.statusDetailLink}>{vi?"Xem chi tiết":"상세 보기"} ›</Link></div>
               </div>:null}
             </section>
@@ -1120,7 +1138,7 @@ function LedgerEntriesContent() {
                 {!activeInvestments ? (
                   investmentsError?.month===month
                     ? <p role="alert" className={styles.error}>{investmentsError.message}</p>
-                    : <p className={styles.statusHint}>{vi?"Đang tải tình hình vốn góp…":"투자금 현황을 불러오는 중입니다…"}</p>
+                    : <InventoryLoadingCard lang={lang} inline minHeight={56} label={vi?"Đang tải tình hình vốn góp…":"투자금 현황을 불러오는 중입니다…"} />
                 ) : !activeInvestments.configured ? (
                   <>
                     <p className={styles.payableEmpty}>{vi?"Chưa thiết lập cơ sở vốn góp.":"투자금 기준이 아직 설정되지 않았습니다."}</p>
@@ -1221,9 +1239,7 @@ function LedgerEntriesContent() {
               aria-label={vi ? "Sổ hàng tháng" : "월간 장부"}
             >
               {loading ? (
-                <p className={styles.empty}>
-                  {vi ? "Đang tải sổ..." : "장부를 불러오는 중입니다."}
-                </p>
+                <InventoryLoadingCard lang={lang} inline minHeight={120} testId="ledger-entries-loading" label={vi ? "Đang tải sổ..." : "장부를 불러오는 중입니다."} />
               ) : groups.length === 0 ? (
                 <p className={styles.empty}>
                   {vi
@@ -1241,7 +1257,10 @@ function LedgerEntriesContent() {
                         aria-controls="ledger-history-panel"
                         onClick={() => setHistoryExpanded((value) => !value)}
                       >
-                        <strong>{vi ? "Lịch sử trước đó" : "지난 내역"}</strong>
+                        <span className={styles.dateTitle}>
+                          <strong>{vi ? "Lịch sử trước đó" : "지난 내역"}</strong>
+                          <ReviewCountBadge count={pastReviewCount} lang={lang} />
+                        </span>
                         <span>
                           {formatDateRange(pastGroups[0].date, pastGroups.at(-1)!.date, lang)}
                           {" · "}
@@ -1271,9 +1290,9 @@ function LedgerEntriesContent() {
             </section>
           </>
         ) : loading ? (
-          <p className={styles.empty}>
-            {vi ? "Đang tải sổ..." : "장부를 불러오는 중입니다."}
-          </p>
+          <div className={styles.stateBlock}>
+            <InventoryLoadingCard lang={lang} minHeight={160} testId="ledger-entries-loading" label={vi ? "Đang tải sổ..." : "장부를 불러오는 중입니다."} />
+          </div>
         ) : null}
         {data && data.month === month ? (
           <aside className={styles.balanceBar}>
@@ -1453,8 +1472,14 @@ function LedgerEntriesContent() {
   );
 }
 
+// The route fallback reads the current language like the page itself.
+function LedgerEntriesFallback() {
+  const { lang } = useLanguage();
+  return <Container><main className={styles.page}><InventoryLoadingCard lang={lang} minHeight={160} label={lang === "vi" ? "Đang tải sổ..." : "장부를 불러오는 중입니다."} /></main></Container>;
+}
+
 export default function LedgerEntriesPage() {
-  return <Suspense fallback={<Container><main>장부 불러오는 중...</main></Container>}>
+  return <Suspense fallback={<LedgerEntriesFallback />}>
     <LedgerEntriesContent />
   </Suspense>;
 }
@@ -2018,7 +2043,7 @@ function HistoricalPayablePartySheet({lang,month,party,onClose}:{lang:"ko"|"vi";
     <p className={styles.payableReadOnlyHint} role="status">{vi?"Số dư cuối tháng đã chọn. Không thể thanh toán giao dịch cũ.":"선택월 말 기준 잔액입니다. 과거 내역은 결제할 수 없습니다."}</p>
     <PayableMonthTotals summary={party} vi={vi}/>
     {loadError?<p className={styles.error} role="alert">{vi?"Không thể tải chi tiết công nợ.":"미납 상세를 불러오지 못했습니다."}</p>
-      :rows===null?<p className={styles.payableEmpty}>{vi?"Đang tải…":"불러오는 중…"}</p>
+      :rows===null?<InventoryLoadingCard lang={lang} inline minHeight={80} label={vi?"Đang tải…":"불러오는 중…"} />
       :<><PayableMonthGroups rows={rows} lang={lang}/>{!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}</>}
   </BarSheet>;
 }
@@ -2060,7 +2085,8 @@ function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
         {partialPlan.error==="exceeds_outstanding"?<p className={styles.error} role="alert">{vi?"Vượt quá tổng công nợ.":"총 미납금을 초과할 수 없습니다."}</p>:null}
         {partialPlan.error===null?<div className={styles.allocationPreview}><strong>{vi?"Phân bổ dự kiến (cũ nhất trước)":"배분 예정 (오래된 외상부터)"}</strong>{partialPlan.allocations.map(allocation=>{const row=rowById.get(allocation.payableId);return <span key={allocation.payableId}><em>{row?.expense?.business_date?formatDate(row.expense.business_date,lang):"-"} · {row?payableItemLabel(row,vi):"-"}</em><b>{money(allocation.allocatedAmount)}</b></span>})}</div>:null}
       </div>}
-    {mode!=="history"&&!groups.length&&!error?<p className={styles.payableEmpty}>{vi?"Không có công nợ chưa thanh toán.":"미납금이 없습니다."}</p>:null}
+    {!detail&&!error?<InventoryLoadingCard lang={lang} inline minHeight={80} label={vi?"Đang tải chi tiết công nợ…":"미납 상세를 불러오는 중…"} />:null}
+    {detail&&mode!=="history"&&!groups.length&&!error?<p className={styles.payableEmpty}>{vi?"Không có công nợ chưa thanh toán.":"미납금이 없습니다."}</p>:null}
     {mode==="history"?null:<div className={styles.paymentForm}>{mode==="dates"?<div className={styles.selectedTotal}><span>{vi?"Công nợ đã chọn":"선택 미납금"}</span><strong>{money(selectedTotal)}</strong></div>:null}<div className={styles.manualSingle}><AccountField lang={lang} label={`🏦 ${vi?"Tài khoản chi":"출금 계정"}`} value={accountId} setValue={setAccountId} accounts={accounts}/></div><div className={styles.manualRow}><BarField label={`📅 ${vi?"Ngày thanh toán":"결제일"}`} required compact>{({id})=><input id={id} type="date" value={date} onChange={event=>setDate(event.target.value)} style={keepingInputStyle}/>}</BarField><BarField label={`🕒 ${vi?"Thời gian":"시간"}`} required compact>{({id})=><input id={id} type="time" value={time} onChange={event=>setTime(event.target.value)} style={keepingInputStyle}/>}</BarField></div><BarField label={`📝 ${vi?"Ghi chú":"메모"}`} compact>{({id})=><input id={id} value={memo} onChange={event=>setMemo(event.target.value)} style={keepingInputStyle}/>}</BarField></div>}
     </div>
   </BarSheet>
@@ -2730,6 +2756,23 @@ function EntryListFlags({ entry, lang }: { entry: LedgerEntry; lang: "ko" | "vi"
   );
 }
 
+// Daily date header: a lone ❗ beside the date when any entry needs review.
+function ReviewAlert({ count, lang }: { count: number; lang: "ko" | "vi" }) {
+  if (count <= 0) return null;
+  const label = lang === "vi" ? `Cần xác nhận ${count}` : `확인 필요 ${count}건`;
+  return <span className={styles.dateReviewAlert} role="img" title={label} aria-label={label}>{"❗"}</span>;
+}
+
+// 지난 내역 header: count of entries needing review; nothing when there are none.
+function ReviewCountBadge({ count, lang }: { count: number; lang: "ko" | "vi" }) {
+  if (count <= 0) return null;
+  return (
+    <span className={`${styles.pendingBadge} ${styles.dateReviewBadge}`}>
+      {lang === "vi" ? `Cần xác nhận ${count}` : `확인 필요 ${count}건`}
+    </span>
+  );
+}
+
 // Text status flags for the detail summary.
 function EntryFlags({ entry, lang }: { entry: LedgerEntry; lang: "ko" | "vi" }) {
   const vi = lang === "vi";
@@ -2785,11 +2828,49 @@ function localizedAccountName(account: Account, lang: "ko" | "vi") {
 }
 
 // Read-only: reserve history is informational and has no ledger transaction
-// to edit, cancel or correct.
+// to edit, cancel or correct. Shows the clicked entry inside its own plan's
+// 준비금 기록 (that reserve_plan_id only), newest first.
+type ReservePlanHistory = { planId: number; name: string; fundAccountName: string | null; currentAmount: number; entries: ReserveHistoryEntry[] };
 function ReserveEntryDetailSheet({ lang, entry, onClose }: { lang: "ko" | "vi"; entry: LedgerEntry; onClose: () => void }) {
   const vi = lang === "vi";
-  if (entry.systemDisplay?.kind !== "reserve") return null;
-  const reserve = entry.systemDisplay;
+  const copy = ledgerSettingsText[lang];
+  const reserve = entry.systemDisplay?.kind === "reserve" ? entry.systemDisplay : null;
+  const planId = reserve?.reservePlanId ?? null;
+  const [history, setHistory] = useState<ReservePlanHistory | null>(null);
+  // A failure is tied to one plan and attempt, so retrying shows the spinner again
+  // and another plan never inherits this plan's error or data.
+  const [failedKey, setFailedKey] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const requestKey = `${planId}:${attempt}`;
+  useEffect(() => {
+    if (planId == null) return;
+    const key = `${planId}:${attempt}`;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(`/api/admin/ledger/reserves/${planId}/history`, { cache: "no-store", signal: controller.signal });
+        const body = await response.json();
+        if (!response.ok || Number(body?.plan?.id) !== planId || !Array.isArray(body.entries)) throw new Error(body?.code ?? "RESERVE_HISTORY_FAILED");
+        if (controller.signal.aborted) return;
+        setHistory({
+          planId,
+          name: String(body.plan.name ?? ""),
+          fundAccountName: body.plan.fundAccountName ?? null,
+          currentAmount: Number(body.currentAmount) || 0,
+          entries: (body.entries as Array<ReserveHistoryEntry & { reserve_plan_id?: number }>)
+            .filter((row) => row.reserve_plan_id == null || Number(row.reserve_plan_id) === planId),
+        });
+      } catch {
+        if (!controller.signal.aborted) setFailedKey(key);
+      }
+    })();
+    return () => controller.abort();
+  }, [planId, attempt]);
+  if (!reserve) return null;
+  const loaded = history?.planId === planId ? history : null;
+  const failed = !loaded && failedKey === requestKey;
+  const planName = loaded?.name || reserve.reserveName;
+  const accountName = loaded ? loaded.fundAccountName : entry.accountName;
   return (
     <BarSheet
       kind="full"
@@ -2808,40 +2889,32 @@ function ReserveEntryDetailSheet({ lang, entry, onClose }: { lang: "ko" | "vi"; 
         </div>
       }
     >
-      <div className={styles.detailSummary}>
-        <span className={styles.detailLeft}>
-          <EntryDisplayBadge entry={entry} lang={lang} />
-          <span className={styles.detailEmoji} aria-hidden="true">{entryCategoryEmoji(entry)}</span>
-          <span className={styles.detailTitleText} title={reserve.reserveName}>
-            <span className={styles.detailTitleLine}>
-              <strong>{compactEntryListTitle(reserve.reserveName)}</strong>
-            </span>
-            <span> · {reserveEntryTypeLabel(reserve.entryType, lang)}</span>
-          </span>
-        </span>
-        <span className={styles.detailPayment}>
-          <span className={styles.accountBadge} title={entry.accountName ?? (vi ? "Không có tài khoản" : "계정 없음")}>
-            {accountBadgeLabel(entry.accountName, lang, entry)}
-          </span>
-          <strong className={styles.detailAmount}>{money(entry.amount)}</strong>
-        </span>
+      <div className={styles.reservePlanHeader}>
+        <strong title={planName}>{planName}</strong>
+        <span>🏦 {accountName ?? copy.accountNotSet}</span>
       </div>
-      <p className={styles.policyNote}>
-        {vi
-          ? "Chỉ là thông tin quỹ dự phòng. Không phải thu/chi/chuyển khoản và không ảnh hưởng tổng thu chi theo ngày, lãi lỗ hay số dư tài khoản thực tế."
-          : "준비금 기록은 정보성 장부 행입니다. 수입·지출·이체가 아니며 일별 합계, 손익, 실제 계좌잔액에 영향을 주지 않습니다."}
-      </p>
-      <dl className={styles.cardLegacyFacts}>
-        <div><dt>{vi ? "Thời điểm" : "발생 시각"}</dt><dd>{formatDate(entry.businessDate, lang)} {entry.displayTime ?? ""}</dd></div>
-        <div><dt>{vi ? "Loại" : "구분"}</dt><dd>{reserveEntryTypeLabel(reserve.entryType, lang)}</dd></div>
-        <div><dt>{vi ? "Tài khoản" : "계좌"}</dt><dd>{entry.accountName ?? (vi ? "Chưa rõ" : "미지정")}</dd></div>
-      </dl>
-      {entry.memo?.trim() ? (
-        <details className={styles.detailMemo}>
-          <summary className={styles.detailMemoLabel}>{vi ? "Ghi chú" : "메모"}</summary>
-          <p className={styles.detailMemoText}>{entry.memo}</p>
-        </details>
-      ) : null}
+      {loaded ? (
+        <>
+          <div className={styles.reserveCurrent}>
+            <span>{copy.currentAmount}</span>
+            <strong>{money(loaded.currentAmount)}</strong>
+          </div>
+          {loaded.entries.length ? (
+            <ReserveEntryHistoryList entries={loaded.entries} lang={lang} title={copy.entryCount} selectedId={reserve.reserveEntryId} />
+          ) : <p className={styles.policyNote}>{copy.noHistory}</p>}
+        </>
+      ) : failed ? (
+        <div className={styles.reserveLoadError}>
+          <p className={styles.error} role="alert">
+            {vi ? "Không thể tải ghi nhận quỹ dự phòng. Vui lòng thử lại." : "준비금 기록을 불러오지 못했습니다. 다시 시도해주세요."}
+          </p>
+          <button type="button" onClick={() => setAttempt((value) => value + 1)} style={{ ...secondaryButtonStyle, width: "100%" }}>
+            {vi ? "Thử lại" : "다시 시도"}
+          </button>
+        </div>
+      ) : (
+        <InventoryLoadingCard lang={lang} inline minHeight={120} testId="reserve-history-loading" label={vi ? "Đang tải ghi nhận quỹ dự phòng…" : "준비금 기록을 불러오는 중…"} />
+      )}
     </BarSheet>
   );
 }

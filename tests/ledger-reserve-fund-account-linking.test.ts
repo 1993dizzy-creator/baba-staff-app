@@ -84,8 +84,9 @@ test("settings reserve card exposes target, current and shortfall", () => {
 
 test("settings reserve history shows time / type / amount / memo", () => {
   for (const col of ["일시", "금액", "메모"]) assert.match(settings, new RegExp(col));
-  // Type column: each history row renders its entry-type label.
-  assert.match(settings, /reserveEntryTypeText\(entry\.entry_type, lang\)/);
+  // Type column: each history row renders its entry-type label (shared read-only list).
+  assert.match(settings, /<ReserveEntryHistoryList entries=\{entries\} lang=\{lang\} title=\{copy\.entryCount\} \/>/);
+  assert.match(readFileSync("components/ledger/ReserveEntryHistoryList.tsx", "utf8"), /reserveEntryTypeText\(entry\.entry_type, lang\)/);
 });
 
 test("settings consume control states it is not a ledger expense", () => {

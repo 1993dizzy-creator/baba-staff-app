@@ -61,6 +61,18 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
     './card-settlements.module.css':{default:new Proxy({},{get:(_,key)=>String(key)})},'@/lib/ledger/card-settlements':require('../lib/ledger/card-settlements.ts'),
     '@/lib/ledger/card-deposit-display':transpiled('lib/ledger/card-deposit-display.ts',{'./card-settlements':require('../lib/ledger/card-settlements.ts')}),
   };
+  const cssModule={default:new Proxy({},{get:(_,key)=>String(key)})};
+  deps['@/lib/ledger/settings-text']=require('../lib/ledger/settings-text.ts');
+  deps['@/components/inventory/InventoryLoadingCard']=transpiled('components/inventory/InventoryLoadingCard.tsx',{'react/jsx-runtime':runtime,'@/lib/text':{commonText:{ko:{loading:'불러오는 중...'},vi:{loading:'Đang tải...'}}},'@/lib/styles/ui':{ui:{}},'./InventoryLoadingCard.module.css':cssModule});
+  deps['@/components/ledger/ReserveEntryHistoryList']=transpiled('components/ledger/ReserveEntryHistoryList.tsx',{react,'react/jsx-runtime':runtime,'@/lib/ledger/reserve-text':deps['@/lib/ledger/reserve-text'],'@/lib/ledger/settings-text':deps['@/lib/ledger/settings-text'],'./ReserveEntryHistoryList.module.css':cssModule});
+  // Imports added to the entries page after this harness was written: real pure modules, stubbed UI.
+  deps['@/components/ledger/InventoryPurchaseCaseSummary']={default:()=>null};
+  deps['@/components/ledger/PayablePaymentRecovery']={default:()=>null,PayablePaymentRefreshButton:()=>null};
+  deps['@/components/ledger/PurchaseSettlementDetails']={default:()=>null};
+  deps['@/lib/inventory/purchase-case-display']=transpiled('lib/inventory/purchase-case-display.ts',{'./purchase-repair-contract':require('../lib/inventory/purchase-repair-contract.ts')});
+  deps['@/lib/ledger/inventory-entry-focus']=transpiled('lib/ledger/inventory-entry-focus.ts',{});
+  deps['@/lib/ledger/payable-payment-client']=transpiled('lib/ledger/payable-payment-client.ts',{});
+  deps['@/lib/ledger/payable-payment-messages']=transpiled('lib/ledger/payable-payment-messages.ts',{});
   deps['./PartnerSelect']=transpiled('app/(protected)/admin/ledger/entries/PartnerSelect.tsx',deps);
   deps['@/components/ledger/InventoryProjectionResolution']=transpiled('components/ledger/InventoryProjectionResolution.tsx',deps);
   const testModule={exports:{}};
@@ -531,7 +543,8 @@ test('a previous month\'s ledger/payables payload never paints under the newly s
   // (set synchronously alongside setMonth, before any effect runs).
   const state=pageFixture(entriesPath,{0:'2026-09',1:ledgerFixture('2026-08'),2:true,14:true,15:payableFixture('2026-08')});
   assert.doesNotMatch(state.html,/class="summaryGrid"|class="payableSummary"|class="statusCard"|class="book"/);
-  assert.match(state.html,/class="empty">장부를 불러오는 중입니다\./);
+  // The shared loading spinner (role=status) carries the ledger loading text.
+  assert.match(state.html,/<div data-testid="ledger-entries-loading" role="status" aria-live="polite" aria-atomic="true"[^>]*>.*?장부를 불러오는 중입니다\./);
   // The add-transaction button must not accept new entries while the shown data
   // doesn't yet belong to the selected month.
   assert.match(state.html,/<button type="button" disabled="" class="addButton">/);
@@ -540,7 +553,7 @@ test('a previous month\'s ledger/payables payload never paints under the newly s
 test('once the new month\'s data arrives (data.month matches the selected month again) the content renders normally',()=>{
   const state=entriesFixture('2026-09').html;
   assert.match(state,/class="summaryGrid"/);
-  assert.doesNotMatch(state,/class="empty">장부를 불러오는 중입니다\./);
+  assert.doesNotMatch(state,/data-testid="ledger-entries-loading"/);
   assert.match(state,/<button type="button" class="addButton">/);
 });
 

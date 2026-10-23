@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { buildLedgerEntries, buildReserveLedgerEntries, entryDisplaySubtotal, withPaymentDifferenceAdjustments, type LedgerEntry, type TransactionRow } from "../lib/ledger/entries.ts";
-import { entryFilterHeaderAmount, entryMatchesListFilter, LEDGER_ENTRY_FILTERS, ledgerEntryFilterLabel, type LedgerEntryFilter } from "../lib/ledger/entry-list-filter.ts";
+import { entryFilterHeaderAmount, entryMatchesListFilter, LEDGER_ENTRY_FILTERS, ledgerEntryFilterLabel, reviewCountsByDate, type LedgerEntryFilter } from "../lib/ledger/entry-list-filter.ts";
 import { entryDisplayBadgeEmoji, entryDisplayBadgeKind, entryDisplayBadgeLabel } from "../lib/ledger/entry-display-badge.ts";
 import { entryDisplayAmount, entryDisplayAmountSign } from "../lib/ledger/entry-display-amount.ts";
 import { entryCategoryEmoji } from "../lib/ledger/entry-display-emoji.ts";
@@ -263,4 +263,71 @@ test("pills stay on one horizontally scrolling line with hidden scrollbar and no
   const tabs = page.slice(page.indexOf("<div className={styles.filterTabs}>"), page.indexOf("<input", page.indexOf("<div className={styles.filterTabs}>")));
   assert.match(tabs, /event\.currentTarget\.scrollIntoView\(\{ block: "nearest", inline: "nearest", behavior: "smooth" \}\)/);
   assert.equal((tabs.match(/<button/g) ?? []).length, 1);
+});
+
+// --- 확인 필요 date badges ---------------------------------------------------
+const oct21 = "2026-10-21";
+const oct21Base = withPaymentDifferenceAdjustments(buildLedgerEntries([
+  { id: 3101, type: "expense", status: "confirmed", business_date: oct21, occurred_at: `${oct21}T10:00:00+07:00`, amount: 100_000, source_type: "manual", memo: "소모품", movements: cash(-100_000) },
+  { id: 3102, type: "income", status: "confirmed", business_date: oct21, occurred_at: `${oct21}T11:00:00+07:00`, amount: 200_000, source_type: "manual", memo: "기타 수입", movements: cash(200_000) },
+  // 법인계좌 잔액 조정 (TX#3118 shape): user-facing balance adjustment.
+  { id: 3118, type: "balance_adjustment", status: "confirmed", business_date: oct21, occurred_at: `${oct21}T12:00:00+07:00`, amount: 500_000, source_type: "manual", memo: "법인계좌 잔액 조정", movements: bank(500_000) },
+], [], new Map(), [], "2026-10"));
+const [oct21Expense, oct21Income] = oct21Base.filter(entry => entry.transactionId === 3101 || entry.transactionId === 3102)
+  .sort((a, b) => Number(a.transactionId) - Number(b.transactionId));
+const oct21Reserves = buildReserveLedgerEntries([
+  { id: 2, reserve_plan_id: 7, entry_type: "allocate", amount: "60000000", occurred_at: `${oct21}T13:00:00+07:00`, memo: null },
+  { id: 3, reserve_plan_id: 7, entry_type: "release", amount: "100000000", occurred_at: `${oct21}T14:00:00+07:00`, memo: null },
+], [{ id: 7, name: "임대료 준비금", fund_account_id: 2 }], new Map([[2, "BABA 법인계좌"]]), "2026-10", getBusinessDate);
+
+test("review counts per date use the 확인 필요 rule across the whole month, not the visible rows", () => {
+  const entries = [
+    ...oct21Base.filter(entry => entry !== oct21Expense && entry !== oct21Income),
+    { ...oct21Expense, status: "pending" as const },
+    { ...oct21Income, requiresCorrection: true },
+    { ...oct21Expense, id: "pending:2026-10-20", businessDate: "2026-10-20", status: "pending" as const },
+    ...oct21Reserves,
+  ];
+  assert.deepEqual([...reviewCountsByDate(entries)], [[oct21, 2], ["2026-10-20", 1]]);
+  // Independent of the active filter: under 준비금 neither pending row is visible,
+  // yet the 10/21 header still reports both.
+  assert.equal(entries.filter(entry => entry.businessDate === oct21 && entryMatchesListFilter(entry, "reserve")).length, 2);
+  assert.equal(reviewCountsByDate(entries).get(oct21), 2);
+});
+
+test("review counts exclude resolved, reserve, system and derived adjustment rows and refresh on reload", () => {
+  // No review needed: badge renders nothing.
+  assert.equal(reviewCountsByDate([...oct21Base, ...oct21Reserves]).size, 0);
+  // Resolving makes the next load return the row as confirmed, so the count drops.
+  const pending = [{ ...oct21Expense, status: "pending" as const }];
+  assert.equal(reviewCountsByDate(pending).get(oct21), 1);
+  assert.equal(reviewCountsByDate([{ ...pending[0], status: "confirmed" as const }]).get(oct21), undefined);
+  // Hidden/derived rows are never counted, even when flagged.
+  assert.equal(reviewCountsByDate([
+    { ...oct21Expense, status: "pending" as const, isSystemAdjustment: true },
+    { ...oct21Reserves[0], status: "pending" as const },
+  ]).size, 0);
+  // TX#3118 balance adjustment: unsigned display and no review badge.
+  const balance = oct21Base.find(entry => entry.transactionId === 3118)!;
+  assert.equal(balance.userAdjustment, "balance");
+  assert.equal(entryDisplayAmountSign(balance), "");
+});
+
+test("daily headers show a lone ❗ beside the date; 지난 내역 shows 확인 필요 N건 beside its title", () => {
+  assert.match(page, /const reviewCounts = useMemo\(\(\) => reviewCountsByDate\(listEntries\), \[listEntries\]\);/);
+  assert.match(page, /date < todayKey \? sum \+ count : sum/);
+  const compact = page.replace(/\s+/g, " ");
+  // Left title area: date + ❗ / 지난 내역 + badge; the right summary stays a separate span.
+  assert.match(compact, /<span className=\{styles\.dateTitle\}> <strong>\{formatDate\(group\.date, lang\)\}<\/strong> <ReviewAlert count=\{reviewCounts\.get\(group\.date\) \?\? 0\} lang=\{lang\} \/> <\/span> <span className=\{styles\.dateSummary\}>/);
+  assert.match(compact, /<span className=\{styles\.dateTitle\}> <strong>\{vi \? "Lịch sử trước đó" : "지난 내역"\}<\/strong> <ReviewCountBadge count=\{pastReviewCount\} lang=\{lang\} \/> <\/span> <span> \{formatDateRange/);
+  // Daily headers no longer render the text badge.
+  assert.equal((page.match(/<ReviewCountBadge /g) ?? []).length, 1);
+  const alert = page.slice(page.indexOf("function ReviewAlert"), page.indexOf("function ReviewCountBadge"));
+  assert.match(alert, /if \(count <= 0\) return null;/);
+  assert.match(alert, /role="img" title=\{label\} aria-label=\{label\}>\{"❗"\}<\/span>/);
+  assert.match(page, /`Cần xác nhận \$\{count\}` : `확인 필요 \$\{count\}건`/);
+  // Existing row-level ❗ is kept.
+  assert.match(page, /<EntryListFlags entry=\{entry\} lang=\{lang\} \/>/);
+  assert.match(css, /\.dateHeader \.dateTitle\{min-width:0;display:flex;align-items:center;gap:5px;/);
+  assert.doesNotMatch(css, /\.dateHeader \.dateSummary\{flex-wrap:wrap/);
 });

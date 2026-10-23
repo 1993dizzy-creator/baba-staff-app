@@ -16,3 +16,11 @@ export function reserveEntryTypeLabel(entryType: ReserveEntryTypeKey, lang: "ko"
 export function reserveEntryTypeText(entryType: string, lang: "ko" | "vi") {
   return (RESERVE_ENTRY_TYPE_LABELS[lang] as Record<string, string>)[entryType] ?? entryType;
 }
+
+// Display-only sign for a reserve entry amount. release/consume read as
+// outflows, allocate as unsigned, adjustment keeps its stored sign. The stored
+// amount is never changed.
+export function reserveEntryDisplaySign(entryType: string, amount: number) {
+  if (entryType === "release" || entryType === "consume") return "−";
+  return entryType === "adjustment" && amount < 0 ? "−" : "";
+}

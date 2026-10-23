@@ -8,7 +8,8 @@ import { useLanguage } from "@/lib/language-context";
 import { LEDGER_SETTINGS_TABS, ledgerSettingsHref, ledgerSettingsTabText, parseLedgerSettingsTab, parsePartnerSettingsView, type LedgerSettingsTab } from "@/lib/partners/settings-view";
 import { ownerCompositionStartMonth } from "@/lib/ledger/owner-settings-view";
 import { shortLedgerAccountName } from "@/lib/ledger/entry-display-account";
-import { RESERVE_ENTRY_TYPE_KEYS, reserveEntryTypeLabel, reserveEntryTypeText, type ReserveEntryTypeKey } from "@/lib/ledger/reserve-text";
+import { RESERVE_ENTRY_TYPE_KEYS, reserveEntryTypeLabel, type ReserveEntryTypeKey } from "@/lib/ledger/reserve-text";
+import ReserveEntryHistoryList from "@/components/ledger/ReserveEntryHistoryList";
 import { ledgerSettingsText, type LedgerSettingsCopy } from "@/lib/ledger/settings-text";
 import styles from "../ledger-settings.module.css";
 
@@ -26,7 +27,6 @@ type LedgerData = { accounts: Account[] };
 const currentMonth = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
 const money = (value: number) => `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(value))} ₫`;
 const localDateTime = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 16);
-const formatReserveDateTime = (value: string, locale: string) => new Intl.DateTimeFormat(locale, { timeZone: "Asia/Ho_Chi_Minh", dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 const monthLabel = (value: string) => value.slice(0, 7);
 const formatNumericInput = (value: string) => {
   if (!value) return "";
@@ -276,7 +276,7 @@ function ReservePlanCard({ row, month, lang, copy, eligibleAccounts, working, sa
         <div className={styles.buttonRow}><button className={styles.primary} disabled={working || !recMonthly || !recDay || !recStart} onClick={() => void saveRecurring(row.id, { monthlyAmount: Number(recMonthly), recurringDay: Number(recDay), startMonth: `${recStart}-01`, endMonth: recEnd ? `${recEnd}-01` : null, autoGenerate: recAuto })}>{copy.saveRecurring}</button>{row.recurring ? <button className={`${styles.secondary} ${styles.destructiveSecondary}`} disabled={working} onClick={() => void saveRecurring(row.id, { monthlyAmount: null })}>{copy.clearRecurring}</button> : null}{!pending && row.recurring && !row.targetReached ? <button className={styles.secondary} disabled={working} onClick={() => void generateSchedule()}>{copy.generateThisMonth}</button> : null}</div>
         {row.targetReached ? <p className={styles.infoPanel}>{copy.targetReached}</p> : null}
       </section> : null}
-      {openSection === "history" ? <section className={styles.detailBody}><h4>{copy.sectionHistory}</h4><div className={styles.historyCounts}><span>{copy.scheduledCount} <strong>{copy.itemCount(recentSchedules.length)}</strong></span><span>{copy.entryCount} <strong>{copy.itemCount(entries.length)}</strong></span></div>{!recentSchedules.length && !entries.length ? <p className={styles.compactEmpty}>{copy.noHistory}</p> : <>{recentSchedules.length ? <div className={styles.historyGroup}><strong>{copy.scheduledHistory}</strong><div className={styles.historyList}>{recentSchedules.map(schedule => <div className={styles.historyRow} key={schedule.id}><div><strong>{monthLabel(schedule.scheduledMonth)}</strong><span>{copy.scheduleStatus[schedule.status] ?? schedule.status}</span></div><div><strong>{money(schedule.plannedAmount)}</strong><span>{schedule.skipReason ?? copy.noNote}</span></div></div>)}</div></div> : null}{entries.length ? <div className={styles.historyGroup}><strong>{copy.entryCount}</strong><div className={styles.historyList}>{entries.map(entry => <div className={styles.historyRow} key={entry.id}><div><strong>{reserveEntryTypeText(entry.entry_type, lang)}</strong><span>{formatReserveDateTime(entry.occurred_at, copy.dateLocale)}</span></div><div><strong>{money(Number(entry.amount))}</strong><span>{entry.memo ?? copy.noMemo}</span></div></div>)}</div></div> : null}</>}</section> : null}
+      {openSection === "history" ? <section className={styles.detailBody}><h4>{copy.sectionHistory}</h4><div className={styles.historyCounts}><span>{copy.scheduledCount} <strong>{copy.itemCount(recentSchedules.length)}</strong></span><span>{copy.entryCount} <strong>{copy.itemCount(entries.length)}</strong></span></div>{!recentSchedules.length && !entries.length ? <p className={styles.compactEmpty}>{copy.noHistory}</p> : <>{recentSchedules.length ? <div className={styles.historyGroup}><strong>{copy.scheduledHistory}</strong><div className={styles.historyList}>{recentSchedules.map(schedule => <div className={styles.historyRow} key={schedule.id}><div><strong>{monthLabel(schedule.scheduledMonth)}</strong><span>{copy.scheduleStatus[schedule.status] ?? schedule.status}</span></div><div><strong>{money(schedule.plannedAmount)}</strong><span>{schedule.skipReason ?? copy.noNote}</span></div></div>)}</div></div> : null}{entries.length ? <ReserveEntryHistoryList entries={entries} lang={lang} title={copy.entryCount} /> : null}</>}</section> : null}
     </article>
   );
 }

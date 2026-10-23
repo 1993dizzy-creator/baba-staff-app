@@ -207,3 +207,19 @@
   border-radius: 8px;
   background: #fffbeb;
 }
+/* Review markers stay on the left beside the date / 지난 내역 title; the right summary keeps its place. */
+.dateHeader .dateTitle{min-width:0;display:flex;align-items:center;gap:5px;overflow:visible;color:inherit;font-size:inherit;text-align:left}
+.dateHeader .dateTitle>strong{flex:0 0 auto}
+.dateHeader .dateReviewAlert{flex:0 0 auto;overflow:visible;font-size:11px;line-height:1}
+.dateHeader .dateReviewBadge{flex:0 1 auto;min-width:0;overflow:hidden;color:#9a5b10;font-size:9px;font-weight:800;text-overflow:ellipsis}
+/* Reserve detail: plan name, linked account and current amount above the shared 준비금 기록 list. */
+.reservePlanHeader{display:grid;gap:3px;min-width:0}
+.reservePlanHeader>strong{font-size:14px;font-weight:900;overflow-wrap:anywhere}
+.reservePlanHeader>span{color:#6b7280;font-size:11px;font-weight:700;overflow-wrap:anywhere}
+.reserveCurrent{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:0;padding:9px 10px;border-radius:10px;background:#f9fafb}
+.reserveCurrent>span{color:#6b7280;font-size:11px;font-weight:750}
+.reserveCurrent>strong{font-size:14px;font-weight:900;white-space:nowrap;font-variant-numeric:tabular-nums}
+.reserveLoadError{display:grid;gap:8px}
+.reserveLoadError>.error{margin:0}
+/* Loading and page-level error blocks below the month picker share the KPI grid's 8px vertical spacing. */
+.page .stateBlock{margin:8px 0}

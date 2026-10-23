@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createHash,randomUUID} from 'node:crypto';
-import {existsSync,readFileSync} from 'node:fs';
+import {existsSync,lstatSync,readFileSync,readdirSync,realpathSync,writeFileSync} from 'node:fs';
 import {mkdir,rm} from 'node:fs/promises';
-import {resolve} from 'node:path';
+import {basename,dirname,join,resolve} from 'node:path';
 import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import net from 'node:net';
@@ -63,12 +63,62 @@ async function data(db,{without=[]}={}){
 }
 const V2_COLUMNS=['admin_resolution_version','admin_resolution_financial_review_required','admin_resolution_retired','admin_resolution_content_fingerprint'];
 
+// Teardown follows tests/helpers/native-postgres-lifecycle.mjs: stop with pg_ctl, prove the
+// cluster is down, and delete only this run's identity-checked directory. Anything uncertain
+// preserves the data directory and records why; no other process or directory is touched.
+const OWNER_MARKER='.baba-retire-owner.json';
+const bounded=(promise,ms,message)=>{let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(message)),ms);})]).finally(()=>clearTimeout(timer));};
+function noLinks(path){for(const e of readdirSync(path,{withFileTypes:true})){const f=join(path,e.name),s=lstatSync(f);if(s.isSymbolicLink())throw Error('Linked data is protected: '+f);if(s.isDirectory())noLinks(f);}}
+async function liveChildren(pid){
+ if(process.platform!=='win32')return 0;
+ const {stdout}=await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',
+  `@(Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid} AND Name='postgres.exe'").Count`],{windowsHide:true,timeout:20000});
+ return Number(stdout.trim());
+}
+async function stopCluster({out,dir,identity,ownerText,server,serverClosed,serverLog,clients}){
+ const steps=[];
+ try{
+  const ended=await bounded(Promise.allSettled(clients.map(c=>c.end())),5000,'Client closure timed out');
+  if(ended.some(r=>r.status==='rejected'))throw Error('Client closure failed');
+  steps.push('clients_closed');
+  const pidFile=join(dir,'postmaster.pid');
+  if(server.exitCode===null&&server.signalCode===null){
+   // The live ChildProcess handle and the cluster's own PID file must agree before stopping.
+   if(!existsSync(pidFile)||Number(readFileSync(pidFile,'utf8').split(/\r?\n/)[0])!==server.pid)throw Error('Cannot prove live server identity');
+   try{await run(exe('pg_ctl'),['-D',dir,'-m','fast','-w','-t','10','stop'],{windowsHide:true,timeout:30000});}
+   catch(e){server.kill();throw Error('pg_ctl stop failed: '+(e.stderr||e.message).trim());}
+   steps.push('pg_ctl_stopped');
+  }
+  const exit=await bounded(serverClosed,10000,'Server close event missing');
+  if(exit.code!==0||exit.signal)throw Error('Server did not exit normally: '+JSON.stringify(exit));
+  steps.push('server_closed');
+  if(existsSync(pidFile))throw Error('postmaster.pid still present');
+  if(!serverLog().includes('database system is shut down'))throw Error('Normal shutdown evidence missing');
+  const children=await liveChildren(server.pid);
+  if(children!==0)throw Error(children+' PostgreSQL child process(es) still running');
+  steps.push('no_children');
+  // Only this run's directory: fixed parent, own name pattern, same inode, no links, own marker.
+  const stat=lstatSync(dir,{bigint:true});
+  if(dirname(dir)!==out||!/^pg-\d+$/.test(basename(dir))||stat.isSymbolicLink()||stat.ino!==identity.ino||realpathSync(dir)!==dir
+   ||readFileSync(join(dir,OWNER_MARKER),'utf8')!==ownerText)throw Error('Data directory ownership not verified');
+  noLinks(dir);
+  await rm(dir,{recursive:true,maxRetries:5,retryDelay:200});
+  steps.push('deleted');
+  return {status:'deleted',dir,steps};
+ }catch(e){return {status:existsSync(dir)?'preserved':'unknown',dir,steps,reason:e.message};}
+}
+
 test('POS admin-resolution V1/V2 retirement on native PostgreSQL',{skip:!binDir&&'no local PostgreSQL binaries (set QA_POSTGRES_BIN)',timeout:240000},async t=>{
  const out=resolve('.qa-review/pos-resolution-retire');await mkdir(out,{recursive:true});
  const dir=resolve(out,'pg-'+Date.now());
  await run(exe('initdb'),['-D',dir,'--encoding=UTF8','--locale=C','-U','postgres','-A','trust'],{windowsHide:true,timeout:60000});
+ const ownerText=JSON.stringify({id:randomUUID(),dir,ownerPid:process.pid,createdAt:new Date().toISOString()});
+ writeFileSync(join(dir,OWNER_MARKER),ownerText);const identity=lstatSync(dir,{bigint:true});
  const socket=net.createServer();await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address().port;await new Promise(r=>socket.close(r));
- const server=spawn(exe('postgres'),['-D',dir,'-h','127.0.0.1','-p',String(port),'-c','fsync=off'],{windowsHide:true,stdio:'ignore'});
+ const server=spawn(exe('postgres'),['-D',dir,'-h','127.0.0.1','-p',String(port),'-c','fsync=off'],{windowsHide:true,stdio:['ignore','pipe','pipe']});
+ let serverLog='';for(const stream of [server.stdout,server.stderr])stream.on('data',x=>{serverLog+=x;});
+ const serverClosed=new Promise(r=>server.once('close',(code,signal)=>r({code,signal})));
+ let subtestFailed=false;t.afterEach(c=>{if(!c.passed)subtestFailed=true;});
  const clients=[];let n=0;
  async function connection(database='postgres'){const c=new pg.Client({host:'127.0.0.1',port,user:'postgres',database,connectionTimeoutMillis:1000});await c.connect();clients.push(c);await c.query("set statement_timeout='20s';set lock_timeout='5s';set timezone='UTC'");return c;}
  // Pre-V1 operating state: close/ledger, receipts, the legacy stock engines (production
@@ -101,7 +151,7 @@ test('POS admin-resolution V1/V2 retirement on native PostgreSQL',{skip:!binDir&
  }
  // A rejected retire must leave the database exactly as it was (single transaction).
  async function rejects(db,pattern){const before={catalog:await catalog(db),data:await data(db)};await assert.rejects(db.exec(RETIRE),pattern);await db.exec('rollback');assert.deepEqual(await catalog(db),before.catalog);assert.deepEqual(await data(db),before.data);}
- const report={};
+ const report={};let bodyError;
  try{
   for(let i=0;i<150&&!clients.length;i++){try{await connection();}catch{await wait(100);}}
   assert.ok(clients.length,'local PostgreSQL did not start');
@@ -187,10 +237,17 @@ test('POS admin-resolution V1/V2 retirement on native PostgreSQL',{skip:!binDir&
    await db.exec('insert into pos_resolution_private.recheck_jobs(receipt_id) values(10)');
    await rejects(db,/RETIRE_POS_RESOLUTION_NONEMPTY/);
   });
- }finally{
-  for(const c of clients.reverse())await c.end().catch(()=>{});
-  server.kill();await new Promise(r=>{server.once('exit',r);setTimeout(r,3000);});
-  await rm(dir,{recursive:true,force:true}).catch(()=>{});
+ }catch(e){bodyError=e;throw e;}finally{
   console.log('[POS_RESOLUTION_RETIRE_REPORT]',JSON.stringify(report));
+  const cleanup=await stopCluster({out,dir,identity,ownerText,server,serverClosed,serverLog:()=>serverLog,clients:clients.reverse()});
+  const logDir=join(out,'logs');await mkdir(logDir,{recursive:true});
+  writeFileSync(join(logDir,basename(dir)+'.json'),JSON.stringify({...cleanup,checkedAt:new Date().toISOString(),
+   testFailed:Boolean(bodyError)||subtestFailed,serverLogTail:cleanup.status==='deleted'?undefined:serverLog.slice(-4000)},null,2));
+  console.log('[POS_RESOLUTION_RETIRE_CLEANUP]',JSON.stringify(cleanup));
+  if(cleanup.status!=='deleted'){
+   t.diagnostic('PostgreSQL data preserved: '+dir+'; '+cleanup.reason);
+   // Never replace an existing test failure with a teardown failure.
+   if(!bodyError&&!subtestFailed)throw Error('PostgreSQL cleanup incomplete: '+cleanup.reason+' ('+dir+')');
+  }
  }
 });

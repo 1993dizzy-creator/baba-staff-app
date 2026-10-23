@@ -53,6 +53,17 @@ export function entryMatchesListFilter(entry: LedgerEntry, filter: LedgerEntryFi
   }
 }
 
+// Per-date count of entries that need review (the 확인 필요 filter), read from
+// the whole month regardless of the active filter, search or expanded state.
+export function reviewCountsByDate(entries: readonly LedgerEntry[]) {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    if (!entryMatchesListFilter(entry, "pending")) continue;
+    counts.set(entry.businessDate, (counts.get(entry.businessDate) ?? 0) + 1);
+  }
+  return counts;
+}
+
 // Filters whose date header keeps the existing 수입/지출 subtotal pair.
 const SUBTOTAL_HEADER_FILTERS = new Set<LedgerEntryFilter>(["all", "income", "expense", "unpaid", "payroll", "manual", "pending"]);
 
