@@ -78,7 +78,7 @@ test("closed-source comparison reports total and bucket deltas including allocat
   const closed = buildPosBusinessDaySource(date, [receipt], [payment]);
   const changed = buildPosBusinessDaySource(date, [receipt], [{ ...payment, payment_name: "chuyển khoản" }]);
   assert.deepEqual(comparePosClosedSource(changed, closed.sourceSnapshot, closed.sourceFingerprint), {
-    isClosed: true, drift: true, totalDelta: 0, bucketDeltas: { cash: -100_000, transfer: 100_000, card: 0, other: 0 },
+    isClosed: true, drift: true, timestampOnlyDrift: false, totalDelta: 0, bucketDeltas: { cash: -100_000, transfer: 100_000, card: 0, other: 0 },
   });
   assert.equal(comparePosClosedSource(closed, null, null).isClosed, false);
   assert.throws(() => comparePosClosedSource(closed, {}, closed.sourceFingerprint), /SNAPSHOT_INCOMPLETE/);

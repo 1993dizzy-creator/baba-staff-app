@@ -5,7 +5,7 @@ import { loadPosBusinessDaySource } from '@/lib/ledger/pos-sales';
 import { closePosBusinessDay,getPosBusinessDayCloseTime,getPosBusinessDayManualCloseTime,resolvePosCloseSystemActor } from './pos-business-day-close';
 import { runManualCloseWorkflow,runPosFinalWorkflow } from './pos-business-day-final-workflow';
 import { forceRefreshPosBusinessDay,loadLatestPosSyncRun } from './pos-business-day-refresh';
-import { isEligiblePosFinalSync,posSnapshotTotals } from './pos-business-day-final-policy';
+import { isEligiblePosFinalSync,isPosTimestampOnlyDrift,posSnapshotTotals } from './pos-business-day-final-policy';
 import { validPosBusinessDate,POS_BUCKETS } from '@/lib/ledger/pos-sales-source';
 import { loadBusinessTimeAdapter } from '@/lib/store-settings/business-time-adapter';
 import { addStoreDays } from '@/lib/store-settings/business-time-core';
@@ -74,7 +74,9 @@ export async function getPosBusinessDayCloseView(date:string,now=new Date()){
     return Number(row.amount)===0?tx?.status!=='confirmed':tx?.status==='confirmed'&&Number(tx.amount)===Number(row.amount)
       &&tx.source_fingerprint===row.fingerprint&&tx.movements.reduce((sum,m)=>sum+Number(m.amount),0)===Number(tx.amount);
   });
-  const drift=Boolean(closure&&source&&closure.source_fingerprint!==source.sourceFingerprint);
+  // A receipt updated_at bump alone (inventory deduction check) is not a source change; anything else still is.
+  const timestampOnlyDrift=Boolean(closure&&source&&isPosTimestampOnlyDrift(closure.source_snapshot,closure.source_fingerprint,source));
+  const drift=Boolean(closure&&source&&closure.source_fingerprint!==source.sourceFingerprint)&&!timestampOnlyDrift;
   const writable=['owner','master','manager'].includes(auth.actor.role),reclosable=['owner','master'].includes(auth.actor.role);
   const latestCheck=check.data&&(!closure||Number(check.data.closure_id)===Number(closure.id)
     ||(!check.data.closure_id&&check.data.checked_at>=closure.closed_at))?check.data:null;
@@ -88,7 +90,7 @@ export async function getPosBusinessDayCloseView(date:string,now=new Date()){
       closedTotal:latestCheck.closed_total===null?null:Number(latestCheck.closed_total),currentTotal:latestCheck.current_total===null?null:Number(latestCheck.current_total),
       totalDelta:latestCheck.total_delta===null?null:Number(latestCheck.total_delta),closedBuckets:latestCheck.closed_buckets,
       currentBuckets:latestCheck.current_buckets,bucketDelta:latestCheck.bucket_delta}:null,
-    drift,delta,canClose:writable&&time.allowed&&!month.data&&!closure&&Boolean(source)&&pending.count===0,
+    drift,timestampOnlyDrift,delta,canClose:writable&&time.allowed&&!month.data&&!closure&&Boolean(source)&&pending.count===0,
     canReclose:reclosable&&time.allowed&&!month.data&&Boolean(closure)&&drift&&Boolean(source),
     needsOwnerReview:drift&&!reclosable&&Boolean(delta&&Object.values(delta).some(amount=>amount!==0)),monthClosed:Boolean(month.data),
     closeEligibilityReason:!source?'source_invalid':month.data?'month_closed':!time.allowed?time.reason:!writable?'forbidden':closure?'already_closed':pending.count>0?'pending_payment':'eligible',

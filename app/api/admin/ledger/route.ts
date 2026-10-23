@@ -16,6 +16,7 @@ import { buildDashboardCashReport, type PayableAllocationCategory } from "@/lib/
 import { isPayrollAdvanceManualAction, manualExpenseCategoryNameForPartner } from "@/lib/ledger/manual-entry-policy";
 
 import { analyzePayrollPaymentGroups } from "@/lib/ledger/payroll-payment-groups";
+import { createEntriesDiagnostics, type EntriesDiagnostics, type EntriesQueryGroup } from "@/lib/ledger/entries-diagnostics";
 
 export const dynamic = "force-dynamic";
 
@@ -82,11 +83,15 @@ export async function GET(request: Request) {
     timings.push(`${stage};dur=${Math.max(0, now - stageStarted).toFixed(2)}`);
     stageStarted = now;
   };
+  // scope=entries only: query-group timings and one log line for slow requests.
+  let diagnostics: EntriesDiagnostics | null = null;
   const respond: typeof ledgerJson = (body, status = 200) => {
     mark("postprocess");
     const response = ledgerJson(body, status);
     mark("serialize");
-    response.headers?.set("Server-Timing", [...timings, `total;dur=${(clock() - started).toFixed(2)}`].join(", "));
+    const total = clock() - started;
+    response.headers?.set("Server-Timing", [...timings, ...(diagnostics?.serverTiming() ?? []), `total;dur=${total.toFixed(2)}`].join(", "));
+    diagnostics?.logIfSlow(month, timings.map((timing) => [timing.slice(0, timing.indexOf(";")), Number(timing.slice(timing.indexOf("dur=") + 4))] as const), total);
     return response;
   };
   const auth = await requireLedgerActor();
@@ -99,6 +104,9 @@ export async function GET(request: Request) {
   const dashboardOnly = url.searchParams.get("scope") === "dashboard";
   const entriesOnly = url.searchParams.get("scope") === "entries";
   if (!MONTH.test(month)) return respond({ ok: false, code: "INVALID_MONTH" }, 400);
+  if (entriesOnly) diagnostics = createEntriesDiagnostics();
+  // Settles exactly like the original promise; only records when it did.
+  const tracked = <P extends PromiseLike<unknown>>(group: EntriesQueryGroup, promise: P) => diagnostics ? diagnostics.group(group, promise) : promise;
   const monthStart = `${month}-01`;
   const { businessDateExclusive: nextMonth, cutoffAt: monthEndCutoffAt } = getBusinessMonthEndBoundary(month);
   // Business day starts at 03:00 Asia/Ho_Chi_Minh, so the month window does too.
@@ -115,6 +123,7 @@ export async function GET(request: Request) {
           .eq("status", "closed")
           .maybeSingle();
     mark("closure_read");
+    diagnostics?.startBaseReads();
     if (closureResult.error) throw closureResult.error;
     const fundsViewMode = fundAccountViewMode(month, currentBusinessDate, Boolean(closureResult.data));
     const accountsPromise = supabaseServer.from("ledger_fund_accounts").select("id,code,type,holder_name,display_name,is_active,is_business_fund,sort_order").order("sort_order");
@@ -196,10 +205,11 @@ export async function GET(request: Request) {
       .eq("status", "confirmed").gte("business_date", monthStart).lt("business_date", nextMonth)
       .not("resolved_transaction_id", "is", null);
     const [accountsResult, categoriesResult, partiesResult, partnerResult, partnerSubtypeResult, bridgeResult, profitResult, recognitionProfitResult, movementsResult, openingResult, cardGrossSalesResult, actualCardDepositsResult, reservesResult, reserveEntriesResult, paidExpenseRootsResult, paidExpenseCorrectionsResult, confirmedMealCandidatesResult, transactions, candidates, priorMonthCardDepositAllocations] = await Promise.all([
-      accountsPromise, categoriesPromise, partiesPromise, partnerPromise, partnerSubtypePromise, bridgePromise, profitPromise,
-      recognitionProfitPromise, movementsPromise, openingPromise, cardGrossSalesPromise, actualCardDepositsPromise, reservesPromise, reserveEntriesPromise, paidExpenseRootsPromise, paidExpenseCorrectionsPromise,
-      confirmedMealCandidatesPromise, dashboardOnly ? loadDashboardTransactions(monthStart, nextMonth) : loadMonthTransactions(monthStart, nextMonth), dashboardOnly ? Promise.resolve([] as CandidateRow[]) : loadPendingInventoryCandidates(monthStart, nextMonth), priorMonthCardDepositsPromise,
+      tracked("ref", accountsPromise), tracked("ref", categoriesPromise), partiesPromise, tracked("ref", partnerPromise), tracked("ref", partnerSubtypePromise), tracked("ref", bridgePromise), tracked("prof", profitPromise),
+      tracked("prof", recognitionProfitPromise), fundsViewMode === "closed_snapshot" ? movementsPromise : tracked("fund", movementsPromise), tracked("fund", openingPromise), tracked("card", cardGrossSalesPromise), tracked("card", actualCardDepositsPromise), tracked("fund", reservesPromise), tracked("fund", reserveEntriesPromise), tracked("pexp", paidExpenseRootsPromise), tracked("pcor", paidExpenseCorrectionsPromise),
+      tracked("cand", confirmedMealCandidatesPromise), dashboardOnly ? loadDashboardTransactions(monthStart, nextMonth) : loadMonthTransactions(monthStart, nextMonth, diagnostics), dashboardOnly ? Promise.resolve([] as CandidateRow[]) : tracked("cand", loadPendingInventoryCandidates(monthStart, nextMonth)), tracked("card", priorMonthCardDepositsPromise),
     ]);
+    diagnostics?.endBaseReads();
     mark("base_reads");
     for (const result of [accountsResult,categoriesResult,partiesResult,partnerResult,partnerSubtypeResult,bridgeResult,profitResult,recognitionProfitResult,movementsResult,openingResult,reservesResult,reserveEntriesResult,paidExpenseRootsResult,paidExpenseCorrectionsResult,confirmedMealCandidatesResult]) if (result.error) throw result.error;
     const priorConfirmedMovements = (openingResult.data?.length ?? 0) > 0
@@ -474,10 +484,12 @@ async function loadDashboardTransactions(start: string, end: string): Promise<Tr
   return result.data as TransactionRow[];
 }
 
-async function loadMonthTransactions(start: string, end: string) {
+async function loadMonthTransactions(start: string, end: string, diagnostics?: Pick<EntriesDiagnostics, "monthPagesLoaded" | "monthCorrectionsLoaded"> | null) {
   const rows: TransactionRow[] = [];
   const pageSize = 1000;
+  let pages = 0;
   for (let from = 0; ; from += pageSize) {
+    pages += 1;
     const { data, error } = await supabaseServer.from("ledger_transactions")
       .select(TRANSACTION_SELECT)
       .eq("status", "confirmed").gte("business_date", start).lt("business_date", end)
@@ -493,11 +505,14 @@ async function loadMonthTransactions(start: string, end: string) {
   const mealOriginalIds = rows
     .filter((row) => row.source_type === "attendance_meal_daily_candidate")
     .map((row) => Number(row.id));
+  diagnostics?.monthPagesLoaded(pages);
   const linked: TransactionRow[] = [];
   const idChunkSize = 200;
+  let correctionRequests = 0;
   for (let offset = 0; offset < mealOriginalIds.length; offset += idChunkSize) {
     const ids = mealOriginalIds.slice(offset, offset + idChunkSize);
     for (let from = 0; ; from += pageSize) {
+      correctionRequests += 1;
       const { data, error } = await supabaseServer.from("ledger_transactions")
         .select(TRANSACTION_SELECT)
         .eq("status", "confirmed")
@@ -510,6 +525,7 @@ async function loadMonthTransactions(start: string, end: string) {
       if ((data?.length ?? 0) < pageSize) break;
     }
   }
+  diagnostics?.monthCorrectionsLoaded(correctionRequests);
   const byId = new Map(rows.map((row) => [Number(row.id), row]));
   for (const row of linked) byId.set(Number(row.id), row);
   return [...byId.values()];

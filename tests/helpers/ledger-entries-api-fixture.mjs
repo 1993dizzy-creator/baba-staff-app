@@ -106,7 +106,7 @@ export function entriesApi(tables, { failKind, source = readFileSync('app/api/ad
       },
     },
   };
-  for (const name of ['reserve-balances', 'fund-account-view', 'dashboard-cash-report', 'manual-entry-policy', 'payables', 'summary', 'cash-outflow']) {
+  for (const name of ['reserve-balances', 'fund-account-view', 'dashboard-cash-report', 'manual-entry-policy', 'payables', 'summary', 'cash-outflow', 'entries-diagnostics']) {
     dependencies['@/lib/ledger/' + name] = require('../../lib/ledger/' + name + '.ts');
   }
   dependencies['@/lib/partners/emoji'] = require('../../lib/partners/emoji.ts');

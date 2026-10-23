@@ -89,6 +89,7 @@ function api(tables, failKind, entriesModule) {
     '@/lib/supabase/server': { supabaseServer: db },
     '@/lib/ledger/server': { requireLedgerActor: async () => ({ actor: { id: 7, role: 'owner' } }), ledgerJson: (body, status = 200) => Response.json(body, { status }) },
     '@/lib/ledger/payroll-payment-groups': require('../lib/ledger/payroll-payment-groups.ts'),
+    '@/lib/ledger/entries-diagnostics': require('../lib/ledger/entries-diagnostics.ts'),
     '@/lib/ledger/inventory-display': { withInventoryDisplay: async rows => rows, loadInventoryProjectionIssues: async () => [] },
     '@/lib/ledger/entries': entriesModule ?? { buildLedgerEntries: () => [], buildReserveLedgerEntries: () => [] },
     '@/lib/ledger/card-settlement-data': cardModule.exports,

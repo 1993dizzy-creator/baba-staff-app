@@ -2,6 +2,8 @@
 import { buildPosCollectionWindow, type BusinessTimeSnapshot } from "../store-settings/business-time-adapter-core.ts";
 // @ts-expect-error Node's direct TypeScript tests require explicit extensions.
 import { POS_BUCKETS, validPosBusinessDate, type PosBusinessDaySource } from "../ledger/pos-sales-source.ts";
+// @ts-expect-error Node's direct TypeScript tests require explicit extensions.
+import { isPosTimestampOnlyDrift } from "./pos-business-day-final-policy.ts";
 
 export function canWritePosBusinessDayClose(role: string | null | undefined, reclose = false) {
   return role === "owner" || role === "master" || (!reclose && role === "manager");
@@ -37,7 +39,7 @@ export function evaluatePosManualCloseTime(businessDate: string, currentBusiness
 }
 
 export function comparePosClosedSource(current: PosBusinessDaySource, closedSnapshot: unknown, closedFingerprint: string | null) {
-  if (closedFingerprint === null) return { isClosed: false, drift: false, totalDelta: null, bucketDeltas: null };
+  if (closedFingerprint === null) return { isClosed: false, drift: false, timestampOnlyDrift: false, totalDelta: null, bucketDeltas: null };
   if (!closedSnapshot || typeof closedSnapshot !== "object") throw new Error("POS_CLOSED_SOURCE_SNAPSHOT_INCOMPLETE");
   const snapshot = closedSnapshot as Record<string, unknown>;
   const buckets = snapshot.totalsByBucket as Record<string, unknown> | undefined;
@@ -45,6 +47,7 @@ export function comparePosClosedSource(current: PosBusinessDaySource, closedSnap
     || POS_BUCKETS.some(bucket => !Number.isSafeInteger(buckets[bucket]))) throw new Error("POS_CLOSED_SOURCE_SNAPSHOT_INCOMPLETE");
   const bucketDeltas = { cash: 0, transfer: 0, card: 0, other: 0 };
   for (const bucket of POS_BUCKETS) bucketDeltas[bucket] = current[bucket] - Number(buckets[bucket]);
-  return { isClosed: true, drift: current.sourceFingerprint !== closedFingerprint,
+  const timestampOnlyDrift = isPosTimestampOnlyDrift(closedSnapshot, closedFingerprint, current);
+  return { isClosed: true, drift: current.sourceFingerprint !== closedFingerprint && !timestampOnlyDrift, timestampOnlyDrift,
     totalDelta: current.receiptTotal - Number(snapshot.receiptTotal), bucketDeltas };
 }
