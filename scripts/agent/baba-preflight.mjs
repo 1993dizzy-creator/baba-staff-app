@@ -9,7 +9,7 @@ import {
   AGENTS, HOT_FILES, POLICY_DOC, PRODUCTION_SENSITIVE, apiRouteOf, classifyDomains, collectChanges, committedChanges,
   dbObjectsIn, defaultBaseRef, domainPolicyDocs, expandPlanned, gitOut, gitTry, identifyWorktree, importersOf,
   listSourceFiles, listWorktrees, matchesAny, migrationVersion, parseArgs, parseStatusZ, git, relatedTests, repoRoot,
-  splitList, CREDENTIAL_ENV,
+  splitList, CREDENTIAL_ENV, insideRoot,
 } from './lib/common.mjs';
 
 const args = parseArgs(process.argv.slice(2), {task: 'string', agent: 'string', files: 'string', apis: 'string', tables: 'string', base: 'string', json: 'boolean', help: 'boolean'});
@@ -97,6 +97,8 @@ for (const tree of listWorktrees(root).filter(tree => tree.path.toLowerCase() !=
 // 5. Planned scope: files, APIs, importers, DB objects, related tests, domains.
 const sourceFiles = planned.length ? listSourceFiles(root) : [];
 const scope = planned.map(path => {
+  insideRoot(root, path);
+  if (/(^|[/\\])\.env(?:\.|$)/.test(path)) throw new Error('Environment file contents are excluded from preflight');
   const exists = existsSync(join(root, path));
   const text = exists && statSync(join(root, path)).isFile() ? readFileSync(join(root, path), 'utf8') : '';
   return {path, exists, api: apiRouteOf(path), hot: matchesAny(path, HOT_FILES), importers: exists ? importersOf(root, path, sourceFiles) : [], db: dbObjectsIn(text)};
@@ -129,6 +131,7 @@ for (const other of others) for (const path of other.migrations) if (!knownVersi
 for (const path of myNewMigrations) {
   const clash = knownVersions.get(migrationVersion(path));
   if (clash && !clash.startsWith(path)) blockers.push(`Migration 버전 중복: ${path} ↔ ${clash}`);
+  knownVersions.set(migrationVersion(path), path);
 }
 const exposure = [];
 for (const path of planned) {

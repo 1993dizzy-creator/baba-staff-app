@@ -43,5 +43,7 @@ description: BABA 관리자 앱 코드 변경 후 실행하는 검증. 변경 �
 
 - 테스트·빌드 자식 프로세스에서 Supabase·CUKCUK·POS·cron·세션·DB 계열 환경 변수를 제거한다.
 - `scripts/agent/lib/offline-guard.mjs`를 preload해 loopback 외의 연결을 막는다.
-- 기준선은 OS 임시 폴더에 merge-base 스냅샷을 만들어 비교한다. 별도 index 파일을 쓰므로 Worktree·브랜치·공유 index를 변경하지 않는다.
+- 기준선은 담당 Worktree의 `.tmp-baba/baseline-*`에 실행별 merge-base 스냅샷으로 보존한다. 별도 index를 사용하며 공유 기준선이나 재귀 삭제를 사용하지 않는다. node_modules junction은 만든 실행이 자기 링크임을 확인한 뒤 unlink한다.
+- 환경 파일이 있으면 값을 읽기 전에 중단한다. 프로세스 환경 변수 제거만으로 Next.js의 .env 파일 로딩을 막을 수 없기 때문이다.
+- 외부 연결 차단은 Node API를 위한 방어 장치이며 OS 네트워크 격리가 아니다. 네이티브 자식 프로그램·DNS·로컬 프록시까지 보장하지 않는다. 운영 비밀정보를 제공하지 않고 통제된 로컬 fixture만 실행한다.
 - 운영 DB, Vercel, GitHub에 접속하지 않는다. 운영 데이터가 필요한 검증은 미검증으로 남긴다.

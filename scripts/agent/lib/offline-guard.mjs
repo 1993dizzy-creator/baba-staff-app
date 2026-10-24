@@ -1,6 +1,6 @@
 // Preloaded (NODE_OPTIONS=--import) by baba-verify into every test/build process.
-// Blocks every outbound socket that is not loopback so a test can never reach production
-// Supabase, CUKCUK POS, Vercel or GitHub, even when code falls back to a production default URL.
+// Best-effort guard for Node sockets/fetch, not OS isolation: native children, DNS/UDP,
+// replaced APIs and local proxies remain outside this guard. Never supply production secrets.
 import net from 'node:net';
 
 const LOOPBACK = /^(localhost|.*\.localhost|127(?:\.\d{1,3}){3}|::1|\[::1\]|0\.0\.0\.0|::ffff:127(?:\.\d{1,3}){3})$/i;

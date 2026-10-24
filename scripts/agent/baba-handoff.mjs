@@ -5,22 +5,29 @@
 // Usage: node scripts/agent/baba-handoff.mjs --task-name "<작업명>" [--task-id <id>] [--out <path> | --stdout] [--base origin/main]
 //        node scripts/agent/baba-handoff.mjs --check docs/handoffs/<file>.md
 import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
-import {dirname, join} from 'node:path';
+import {dirname, join, relative} from 'node:path';
 import {
   AGENTS, HANDOFF_DIR, POLICY_DOC, collectChanges, defaultBaseRef, git, gitOut, gitTry, identifyWorktree, migrationVersion, parseArgs,
-  repoRoot, stateFingerprint,
+  repoRoot, stateFingerprint, insideRoot, assertOwnedWorktree,
 } from './lib/common.mjs';
 import {TODO, checkHandoff} from './lib/handoff-format.mjs';
 
 
 const args = parseArgs(process.argv.slice(2), {taskName: 'string', taskId: 'string', out: 'string', stdout: 'boolean', base: 'string', check: 'string', force: 'boolean', help: 'boolean'});
 if (args.help) {
-  console.log('node scripts/agent/baba-handoff.mjs --task-name "<작업명>" [--task-id id] [--out path | --stdout] [--base origin/main] [--force]\nnode scripts/agent/baba-handoff.mjs --check <handoff.md>');
+  console.log('node scripts/agent/baba-handoff.mjs --task-name "<작업명>" [--task-id id] [--out path | --stdout] [--base origin/main]\nnode scripts/agent/baba-handoff.mjs --check <handoff.md>');
   process.exit(0);
 }
 
 if (args.check) {
-  const problems = checkHandoff(readFileSync(args.check, 'utf8'));
+  const root = repoRoot();
+  const text = readFileSync(insideRoot(root, args.check), 'utf8');
+  const problems = checkHandoff(text);
+  const recorded = text.match(/검증 상태 지문: ([0-9a-f]{16})\b/)?.[1];
+  if (!recorded || recorded !== stateFingerprint(root)) problems.push('현재 코드의 검증 상태 지문과 다르거나 지문 누락 — 재검증 필요');
+  const latestPath = insideRoot(root, '.tmp-baba/verify/latest.json');
+  const latest = existsSync(latestPath) ? JSON.parse(readFileSync(latestPath, 'utf8')) : null;
+  if (!latest || latest.fingerprint !== recorded || latest.verdict === 'FAIL' || latest.root !== root) problems.push('현재 Worktree의 일치하는 성공 검증 결과가 없다');
   console.log(problems.length ? `인계서 형식 검사 실패 (${args.check})\n${problems.map(p => `- ${p}`).join('\n')}` : `인계서 형식 검사 통과 (${args.check})`);
   process.exit(problems.length ? 1 : 0);
 }
@@ -30,6 +37,7 @@ if (!args.taskName) {
 }
 
 const root = repoRoot();
+if (!args.stdout) assertOwnedWorktree(root);
 const identity = identifyWorktree(root);
 const agentLabel = {claude: 'Claude Code', codex: 'Codex'}[identity.agent] || '(소유 에이전트 없음)';
 const baseRef = args.base || defaultBaseRef(root);
@@ -40,6 +48,8 @@ const {mergeBase} = changes;
 const prefix = identity.agent ? AGENTS[identity.agent].branchPrefix : '';
 const taskId = args.taskId || (branch.startsWith(prefix) ? branch.slice(prefix.length) : branch.replace(/\//g, '-'));
 const outPath = (args.out || `${HANDOFF_DIR}${identity.agent || 'agent'}-${taskId}.md`).split('\\').join('/');
+const fullOut = insideRoot(root, outPath);
+if (!relative(root, fullOut).split('\\').join('/').startsWith(HANDOFF_DIR) || !outPath.endsWith('.md')) throw new Error('Handoff output must be a Markdown file in docs/handoffs');
 // The handoff being written is not part of the work it describes.
 const files = changes.files.filter(file => file.path !== outPath);
 const commits = gitOut(root, ['log', '--format=%h %s', `${mergeBase}..HEAD`]).split('\n').filter(Boolean);
@@ -88,6 +98,7 @@ for (const file of files) {
 if (!files.length) lines.push('| (변경 없음) | - | - | - |');
 lines.push('', '기능 요약:', `- ${TODO}: 사용자 관점의 변경 기능과 이유를 파일 묶음별로 작성 -->`, '');
 lines.push('## 4. 검증 결과');
+lines.push(`- 검증 상태 지문: ${fingerprint}`);
 if (!verify) lines.push('- baba-verify 결과 없음 → **미검증**. `node scripts/agent/baba-verify.mjs` 실행 후 다시 작성한다.');
 else {
   lines.push(`- baba-verify 판정: **${verify.verdict}** (${verify.generatedAt}, ${verify.savedAs || 'latest.json'})`);
@@ -118,13 +129,13 @@ if (args.stdout) {
   process.stdout.write(content);
 } else {
   const out = outPath;
-  const full = join(root, out);
-  if (existsSync(full) && !args.force) {
-    console.error(`${out}이(가) 이미 있다. 기존 인계서를 보존하려면 --out으로 다른 경로를 지정하고, 덮어쓰려면 --force를 쓴다.`);
+  const full = fullOut;
+  if (existsSync(full) || args.force) {
+    console.error(`${out}: 기존 인계서 덮어쓰기는 지원하지 않는다. --out으로 새 경로를 지정한다.`);
     process.exit(2);
   }
   mkdirSync(dirname(full), {recursive: true});
-  writeFileSync(full, content);
+  writeFileSync(full, content, {flag: 'wx'});
   console.log(`인계서 초안 작성: ${out}\nTODO 항목을 채운 뒤 node scripts/agent/baba-handoff.mjs --check ${out} 로 형식을 검사한다.`);
 }
 

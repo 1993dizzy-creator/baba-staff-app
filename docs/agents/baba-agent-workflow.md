@@ -96,7 +96,7 @@
 ## 6. Supabase 운영 DB·Migration
 
 - 기준은 `AGENTS.md`의 「Supabase 운영 DB 안전 규칙」, 「BABA 운영 Migration 기본 절차」, 「운영 Migration 반복 금지 사항」이며 그대로 적용한다.
-- **역할 대응**: AGENTS.md 절차에서 "Codex"로 적힌 **로컬 SQL 작성·테스트·검증 담당 역할**은 Claude Code에도 똑같이 적용한다.
+- **역할 확대 미승인**: AGENTS.md의 로컬 SQL 작성·테스트·검증 담당은 Codex로 유지한다. Claude Code에 같은 역할을 부여하려면 사용자의 별도 결정이 필요하다. 공통 DB 안전 제한은 두 에이전트 모두에 적용한다.
 - 운영 검증과 Migration 이력 등록("GPT" 단계)은 Worktree의 코딩 에이전트가 대신하지 않는다. 사용자가 해당 작업을 명시적으로 지시한 경우에만 수행한다.
 - 운영 적용은 사용자가 Supabase SQL Editor에서 직접 실행한다. 에이전트는 `supabase db push`, `db reset`, `migration repair`, 운영 DML·DDL을 실행하지 않는다.
 - 이미 적용된 Migration 파일은 수정하지 않고 후속 Migration을 추가한다. `baba-verify`는 기준선에 있는 Migration이 수정되면 실패로 판정한다.
@@ -133,7 +133,7 @@
   - 다음 변경이면 필요하다: 설정·의존성·layout·page/route 추가·삭제, CSS, `proxy.ts`
   - 병합 준비 단계에서도 필요하다.
 - **기존 오류와 신규 오류 구분**
-  - 실패가 있으면 merge-base 스냅샷(OS 임시 폴더, 별도 index 파일 사용)에서 같은 검사를 다시 실행해 비교한다.
+  - 실패가 있으면 담당 Worktree의 `.tmp-baba/baseline-*`에 실행별 merge-base 스냅샷과 별도 index를 만들어 같은 검사를 비교한다. 스냅샷은 보존하며 자동 재귀 삭제하지 않는다. node_modules junction은 만든 실행만 자기 링크임을 확인한 뒤 unlink한다.
   - 기준선에도 있는 오류는 "기존", 새로 생긴 오류는 "신규"로 분류한다.
 - **판정**
   - `PASS`: 실행한 검사가 모두 통과했다.
@@ -170,7 +170,8 @@
   - 미완료 사항, 후속 작업
 - **형식 검사**
   - `node scripts/agent/baba-handoff.mjs --check <파일>`로 검사한다.
-  - TODO가 남았거나, 검증 결과가 현재 상태와 다르거나, 필수 섹션·SHA가 없으면 실패한다.
+  - TODO가 남았거나, 저장된 상태 지문이 현재 코드·해당 Worktree의 최신 검증과 다르거나, 검증이 FAIL이거나, 필수 섹션·SHA가 없으면 실패한다.
+- 출력은 현재 Worktree의 `docs/handoffs/*.md` 범위로 제한하며 기존 파일은 --force로도 덮어쓰지 않는다. 새 경로를 지정한다.
 - 인계서는 작업 브랜치의 마지막 커밋으로 포함한다. 인계서에 적힌 SHA는 인계서 커밋 직전의 코드 상태를 가리킨다.
 - 상태 지문은 `docs/handoffs/`를 제외한 트리 내용으로 계산한다. 따라서 인계서를 쓰거나 커밋해도 검증 일치 여부는 바뀌지 않는다.
 

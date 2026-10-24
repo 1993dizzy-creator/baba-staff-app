@@ -6,15 +6,16 @@
 // Usage: node scripts/agent/baba-verify.mjs [--base origin/main] [--tests a,b] [--all-tests]
 //          [--build] [--no-baseline] [--skip-lint] [--skip-tsc] [--concurrency 4] [--json]
 import {spawn} from 'node:child_process';
-import {existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync} from 'node:fs';
-import {cpus, tmpdir} from 'node:os';
+import {existsSync, mkdirSync, readFileSync, statSync, writeFileSync} from 'node:fs';
+import {cpus} from 'node:os';
 import {join, relative, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {
-  HOT_FILES, POLICY_DOC, allTestFiles, collectChanges, defaultBaseRef, domainTestSuggestions, git, gitOut,
+  HOT_FILES, POLICY_DOC, allTestFiles, collectChanges, defaultBaseRef, domainTestSuggestions, gitOut,
   identifyWorktree, matchesAny, migrationVersion, parseArgs, relatedTests, repoRoot, run, sanitizedEnv, splitList,
-  stateFingerprint,
+  stateFingerprint, assertOwnedWorktree, insideRoot, TEST_FILE,
 } from './lib/common.mjs';
+import {createBaseline} from './lib/baseline.mjs';
 
 const args = parseArgs(process.argv.slice(2), {
   base: 'string', tests: 'string', allTests: 'boolean', build: 'boolean', noBaseline: 'boolean', skipLint: 'boolean',
@@ -26,6 +27,10 @@ if (args.help) {
 }
 
 const root = repoRoot();
+assertOwnedWorktree(root);
+if (['.env', '.env.local', '.env.development', '.env.development.local', '.env.production', '.env.production.local'].some(path => existsSync(join(root, path)))) {
+  throw new Error('Environment files must be isolated before verification; values were not read');
+}
 const baseRef = args.base || defaultBaseRef(root);
 const {mergeBase, files} = collectChanges(root, baseRef);
 const head = gitOut(root, ['rev-parse', 'HEAD']);
@@ -55,6 +60,7 @@ const SECRET_PATTERNS = [
 ];
 for (const file of files) {
   const path = file.path;
+  if (file.from && migrationVersion(file.from) && baseFiles.has(file.from)) fileCheck.findings.push(`${file.from}: 기존 Migration 이동·이름 변경 금지`);
   if (/(^|\/)\.env(\.|$)/.test(path) && !path.endsWith('.example')) fileCheck.findings.push(`${path}: .env 파일은 커밋 대상이 아니다`);
   if (migrationVersion(path) && baseFiles.has(path)) fileCheck.findings.push(`${path}: 기존(기준선에 존재) Migration 수정${file.deleted ? '·삭제' : ''} 금지 — 후속 Migration으로 처리`);
   else if (migrationVersion(path)) fileCheck.info.push(`${path}: 신규 Migration — 로컬 검증까지만, 운영 적용은 사용자 승인·SQL Editor 수동 절차`);
@@ -80,7 +86,11 @@ const related = relatedTests(root, files.filter(file => !file.deleted).map(file 
 const explicit = splitList(args.tests);
 const testTargets = new Map();
 for (const test of related.tests) testTargets.set(test.path, test.reasons);
-for (const test of explicit) testTargets.set(test, ['--tests 지정']);
+for (const test of explicit) {
+  insideRoot(root, test);
+  if (!TEST_FILE.test(test) || !existsSync(join(root, test))) throw new Error('Explicit test must be an existing in-worktree test file');
+  testTargets.set(test, ['--tests 지정']);
+}
 if (args.allTests) for (const test of allTestFiles(root)) if (!testTargets.has(test)) testTargets.set(test, ['--all-tests']);
 const testCheck = {name: '회귀 테스트', status: 'not-run', ran: false, files: [], newFailures: [], preexisting: [], blockedNetwork: []};
 if (testTargets.size) {
@@ -97,8 +107,9 @@ if (testTargets.size) {
       else {
         const before = await runTest(base, result.path);
         const known = new Set(before.failedNames);
-        result.baseline = {status: before.status, failedNames: before.failedNames};
-        result.classification = before.status === 'failed' && result.failedNames.every(name => known.has(name)) ? 'preexisting' : 'new';
+        result.baseline = {status: before.status, failedNames: before.failedNames, failureDetails: before.failureDetails};
+        result.classification = before.status === 'failed' && result.failedNames.length > 0 && result.failureDetails.length > 0 &&
+          result.failedNames.every(name => known.has(name)) && JSON.stringify(result.failureDetails) === JSON.stringify(before.failureDetails) ? 'preexisting' : 'new';
       }
     }
     testCheck.newFailures = failing.filter(result => result.classification !== 'preexisting').map(result => result.path);
@@ -106,6 +117,8 @@ if (testTargets.size) {
   }
   testCheck.status = testCheck.newFailures.length ? 'failed' : testCheck.preexisting.length ? 'passed-with-preexisting' : 'passed';
   if (failing.some(result => result.classification === 'unclassified')) testCheck.status = 'failed';
+  for (const result of testCheck.files.filter(result => result.counts.skipped)) gaps.push(`${result.path}: skip ${result.counts.skipped}건 (실행 통과로 간주하지 않음)`);
+  if (testCheck.files.some(result => result.status === 'skipped')) testCheck.status = 'failed-unclassified';
 } else {
   gaps.push('관련 회귀 테스트를 찾지 못해 테스트를 실행하지 않았다.');
 }
@@ -160,7 +173,10 @@ else {
   tscCheck.ran = true;
   const current = await tsc(root);
   tscCheck.total = current.length;
-  if (current.length) {
+  if (current.some(diag => diag.infrastructure)) {
+    tscCheck.status = 'failed-unclassified';
+    tscCheck.newErrors = current.map(diag => diag.text);
+  } else if (current.length) {
     const base = await baseline();
     if (!base) {
       tscCheck.status = 'failed-unclassified';
@@ -197,7 +213,9 @@ if (args.build) {
     if (base) {
       const before = await exec(process.execPath, [join(base, 'node_modules', 'next', 'dist', 'bin', 'next'), 'build'], {cwd: base, env: childEnv, timeout: 30 * 60 * 1000});
       buildCheck.baselineExitCode = before.code;
-      buildCheck.status = before.code === 0 ? 'failed' : 'failed-preexisting';
+      const signature = text => [...text.matchAll(/^(?:.*Error:.*|.*error TS\d+:.*|.*Module not found:.*)$/gm)].map(match => match[0].replaceAll(root, '<root>').replaceAll(base, '<root>')).sort();
+      const currentErrors = signature(result.output);
+      buildCheck.status = before.code !== 0 && currentErrors.length > 0 && JSON.stringify(currentErrors) === JSON.stringify(signature(before.output)) ? 'failed-preexisting' : 'failed';
     } else buildCheck.status = 'failed-unclassified';
   }
 } else if (buildReasons.length) gaps.push(`Production Build 권장 변경(${buildReasons.join(', ')})이 있으나 --build를 실행하지 않았다.`);
@@ -210,7 +228,7 @@ if (baselineError) notes.push(`기준선 준비 실패: ${baselineError}`);
 if (removedEnv.length) notes.push(`자식 프로세스에서 제거한 자격 증명 계열 환경 변수 이름: ${removedEnv.join(', ')}`);
 
 // ---------- Verdict ----------
-const failed = checks.filter(check => /^(failed|error)/.test(check.status) && check.status !== 'failed-preexisting');
+const failed = checks.filter(check => (/^(failed|error)/.test(check.status) && check.status !== 'failed-preexisting') || check.status === 'blocked-env');
 const preexisting = checks.filter(check => /preexisting/.test(check.status));
 const verdict = failed.length ? 'FAIL' : preexisting.length ? 'PASS_WITH_PREEXISTING' : 'PASS';
 const report = {
@@ -218,7 +236,7 @@ const report = {
   changedFiles: files.map(file => ({path: file.path, committed: file.committed, working: file.working, deleted: file.deleted})),
   checks, gaps, notes, verdict, baselineDir,
 };
-const outDir = join(root, '.tmp-baba', 'verify');
+const outDir = insideRoot(root, '.tmp-baba/verify');
 mkdirSync(outDir, {recursive: true});
 const outFile = join(outDir, `${report.generatedAt.replace(/[:.]/g, '-')}-${head.slice(0, 8)}.json`);
 writeFileSync(outFile, JSON.stringify(report, null, 2));
@@ -276,16 +294,29 @@ async function pool(items, worker) {
 }
 
 async function runTest(cwd, path) {
-  if (!existsSync(join(cwd, path))) return {path, status: 'missing', failedNames: [], counts: {}};
+  if (!existsSync(join(cwd, path))) return {path, status: 'failed', failedNames: [`missing test: ${path}`], counts: {}};
   const started = Date.now();
   const result = await exec(process.execPath, ['--experimental-strip-types', '--no-warnings=ExperimentalWarning', '--test', '--test-reporter=tap', path], {cwd, env: childEnv, timeout: timeoutMs});
   const counts = {};
   for (const m of result.output.matchAll(/^# (tests|suites|pass|fail|cancelled|skipped|todo) (\d+)/gm)) counts[m[1]] = Number(m[2]);
   const failedNames = [...new Set([...result.output.matchAll(/^\s*not ok \d+ - (.+?)(?: # .*)?$/gm)].map(m => m[1].trim()).filter(name => name !== path))];
-  const failed = result.code !== 0 || (counts.fail || 0) > 0 || (counts.cancelled || 0) > 0;
+  const failed = result.code !== 0 || !counts.tests || (counts.fail || 0) > 0 || (counts.cancelled || 0) > 0;
+  // Compare complete TAP diagnostics, including multiline expected/actual and error messages.
+  // Locations, timing and stack traces vary between snapshots and are not failure identity.
+  const failureDetails = [...result.output.matchAll(/^\s+---\r?\n([\s\S]*?)^\s+\.\.\.\s*$/gm)]
+    .map(match => {
+      let stackIndent = null;
+      return match[1].split(/\r?\n/).filter(line => {
+        const indent = line.match(/^\s*/)[0].length;
+        if (stackIndent !== null && indent > stackIndent) return false;
+        stackIndent = null;
+        if (/^\s*stack:/.test(line)) { stackIndent = indent; return false; }
+        return !/^\s*(?:duration_ms|location):/.test(line);
+      }).join('\n').replaceAll(cwd, '<root>').replaceAll(cwd.split('\\').join('/'), '<root>').trim();
+    }).filter(block => /failureType:/.test(block)).sort();
   const allSkipped = !failed && counts.tests > 0 && counts.skipped === counts.tests;
   return {
-    path, status: failed ? 'failed' : allSkipped ? 'skipped' : 'passed', exitCode: result.code, counts, failedNames,
+    path, status: failed ? 'failed' : allSkipped ? 'skipped' : 'passed', exitCode: result.code, counts, failedNames, failureDetails,
     durationMs: Date.now() - started, networkBlocked: /BABA_OFFLINE_GUARD/.test(result.output), tail: failed ? tail(result.output, 30) : undefined,
   };
 }
@@ -309,14 +340,15 @@ function eslintStdin(cwd, path, source) {
 }
 
 async function tsc(cwd) {
-  await exec(process.execPath, [join(cwd, 'node_modules', 'next', 'dist', 'bin', 'next'), 'typegen'], {cwd, env: childEnv, timeout: 5 * 60 * 1000});
+  const generated = await exec(process.execPath, [join(cwd, 'node_modules', 'next', 'dist', 'bin', 'next'), 'typegen'], {cwd, env: childEnv, timeout: 5 * 60 * 1000});
+  if (generated.code !== 0) return [{key: 'typegen|infrastructure', text: `next typegen failed: ${tail(generated.output, 5)}`, infrastructure: true}];
   const result = await exec(process.execPath, [join(cwd, 'node_modules', 'typescript', 'lib', 'tsc.js'), '--noEmit', '--incremental', 'false', '--pretty', 'false', '-p', 'tsconfig.json'], {cwd, env: childEnv, timeout: 15 * 60 * 1000});
   const diags = [];
   for (const m of result.output.matchAll(/^(.+?)\((\d+),(\d+)\): error (TS\d+): (.+)$/gm)) {
     const file = m[1].split('\\').join('/');
     diags.push({key: `${file}|${m[4]}|${m[5].trim()}`, text: `${file}:${m[2]}:${m[3]} ${m[4]} ${m[5].trim()}`});
   }
-  if (!diags.length && result.code !== 0) diags.push({key: `tsc|exit|${result.code}`, text: `tsc exited ${result.code}: ${tail(result.output, 5)}`});
+  if (!diags.length && result.code !== 0) diags.push({key: `tsc|exit|${result.code}`, text: `tsc exited ${result.code}: ${tail(result.output, 5)}`, infrastructure: true});
   return diags;
 }
 
@@ -325,36 +357,16 @@ async function tsc(cwd) {
 async function baseline() {
   if (args.noBaseline) return null;
   if (baselineDir || baselineError) return baselineDir;
-  const dir = join(tmpdir(), 'baba-verify-baseline', mergeBase.slice(0, 12));
-  const marker = join(dir, '.baba-baseline-ready');
   try {
-    if (!existsSync(marker)) {
-      releaseJunction(dir);
-      rmSync(dir, {recursive: true, force: true});
-      mkdirSync(dir, {recursive: true});
-      const indexEnv = {...process.env, GIT_INDEX_FILE: join(dir, '.baba-baseline-index')};
-      git(root, ['read-tree', mergeBase], {env: indexEnv});
-      git(root, [`--work-tree=${dir}`, 'checkout-index', '-a', '-f'], {env: indexEnv});
-      writeFileSync(marker, `${mergeBase}\n`);
-    }
-    // The node_modules junction exists only while this process runs, so a later recursive
-    // cleanup of the temp folder can never follow it into the worktree's real node_modules.
-    if (!existsSync(join(dir, 'node_modules'))) symlinkSync(join(root, 'node_modules'), join(dir, 'node_modules'), 'junction');
-    process.once('exit', () => releaseJunction(dir));
-    baselineDir = dir;
+    const snapshot = createBaseline(root, mergeBase, childEnv);
+    process.once('exit', () => {
+      try { snapshot.release(); } catch (error) { console.error(error.message); process.exitCode = 1; }
+    });
+    baselineDir = snapshot.dir;
   } catch (error) {
     baselineError = error.message.split('\n')[0];
   }
   return baselineDir;
-}
-
-function releaseJunction(dir) {
-  const link = join(dir, 'node_modules');
-  try {
-    if (lstatSync(link).isSymbolicLink()) unlinkSync(link);
-  } catch {
-    // Missing link: nothing to release.
-  }
 }
 
 function statusLabel(check) {

@@ -41,7 +41,7 @@ test('glob, status and static DB extraction helpers', () => {
   assert.ok(globToRegExp('app/**/layout.tsx').test('app/layout.tsx'));
   assert.ok(globToRegExp('app/**/layout.tsx').test('app/(protected)/admin/layout.tsx'));
   assert.ok(!globToRegExp('lib/supabase/**').test('lib/supabase-like.ts'));
-  assert.deepEqual(parseStatusZ(' M a.ts\0R  new.ts\0old.ts\0?? b c.md\0'), [{code: ' M', path: 'a.ts'}, {code: 'R ', path: 'new.ts'}, {code: '??', path: 'b c.md'}]);
+  assert.deepEqual(parseStatusZ(' M a.ts\0R  new.ts\0old.ts\0?? b c.md\0'), [{code: ' M', path: 'a.ts'}, {code: 'R ', path: 'new.ts', from: 'old.ts'}, {code: '??', path: 'b c.md'}]);
   assert.equal(apiRouteOf('app/api/admin/ledger/route.ts'), '/api/admin/ledger');
   assert.equal(apiRouteOf('app/(protected)/admin/page.tsx'), null);
   const db = dbObjectsIn(`supabase.from("inventory").update({a:1}).eq("id",1); supabase.from('users').select('*'); supabase.rpc('ledger_post_v1');

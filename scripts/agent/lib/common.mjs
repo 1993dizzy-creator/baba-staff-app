@@ -3,7 +3,7 @@
 // Git is always called with --no-optional-locks so read-only inspection never refreshes an index.
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {existsSync, readdirSync, readFileSync, statSync} from 'node:fs';
+import {existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync} from 'node:fs';
 import {basename, dirname, join, relative, resolve, sep} from 'node:path';
 
 export const POLICY_DOC = 'docs/agents/baba-agent-workflow.md';
@@ -85,9 +85,37 @@ export function globToRegExp(glob) {
 export const matchesAny = (path, globs) => globs.some(glob => globToRegExp(glob).test(path));
 
 export function identifyWorktree(root) {
-  const dir = basename(root);
+  const dir = basename(root).toLowerCase();
   const agent = Object.entries(AGENTS).find(([, value]) => value.worktreeDir === dir)?.[0] || null;
   return {dir, agent, isOriginal: dir === ORIGINAL_DIR};
+}
+
+// Resolve both lexical paths and existing ancestors: junctions must not escape the worktree.
+export function insideRoot(root, path) {
+  const full = resolve(root, path);
+  const within = (parent, child) => {
+    const rel = relative(parent, child);
+    return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !/^(?:[A-Za-z]:|[\\/])/.test(rel));
+  };
+  if (!within(root, full)) throw new Error('Path must stay inside the current worktree');
+  let ancestor = full;
+  while (true) {
+    try { lstatSync(ancestor); break; } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      ancestor = dirname(ancestor);
+    }
+  }
+  if (!within(realpathSync(root), realpathSync(ancestor))) throw new Error('Path traverses a link outside the current worktree');
+  return full;
+}
+
+export function assertOwnedWorktree(root) {
+  const identity = identifyWorktree(root);
+  const branch = gitOut(root, ['branch', '--show-current']);
+  if (!identity.agent || !branch.startsWith(AGENTS[identity.agent].branchPrefix)) {
+    throw new Error('Writes require an agent-owned worktree and matching branch');
+  }
+  if (!listWorktrees(root).some(tree => tree.path.toLowerCase() === root.toLowerCase())) throw new Error('Unregistered worktree');
 }
 
 export function listWorktrees(root) {
@@ -115,8 +143,9 @@ export function parseStatusZ(text) {
     if (!item) continue;
     const code = item.slice(0, 2);
     const path = item.slice(3);
-    if (code[0] === 'R' || code[0] === 'C') i++;
-    entries.push({code, path});
+    const renamed = /[RC]/.test(code);
+    const from = renamed ? parts[++i] : undefined;
+    entries.push({code, path, ...(from ? {from} : {})});
   }
   return entries;
 }
@@ -149,6 +178,7 @@ export function collectChanges(root, baseRef = defaultBaseRef(root)) {
   for (const entry of workingChanges(root)) {
     const existing = map.get(entry.path) || {path: entry.path, committed: null, working: null};
     existing.working = entry.code;
+    if (entry.from) existing.from = entry.from;
     map.set(entry.path, existing);
   }
   const files = [...map.values()].map(file => ({
