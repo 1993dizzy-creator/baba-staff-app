@@ -93,7 +93,7 @@ else {
   lines.push('', '미검증 항목:');
   for (const gap of verify.gaps.length ? verify.gaps : ['없음']) lines.push(`- ${gap}`);
 }
-lines.push(`- 수동 확인(브라우저·실행 확인 등): ${TODO}: 실제로 수행한 확인만 기록, 없으면 "없음" -->`, '');
+lines.push('', `수동 확인(브라우저·실행 확인 등): ${TODO}: 실제로 수행한 확인만 기록, 없으면 "없음" -->`, '');
 lines.push('## 5. DB·Migration');
 lines.push(`- Migration 변경: ${migrations.length ? migrations.map(file => file.path).join(', ') : '없음'}`);
 lines.push(`- 기타 SQL 변경: ${sqlFiles.length ? sqlFiles.map(file => file.path).join(', ') : '없음'}`);
