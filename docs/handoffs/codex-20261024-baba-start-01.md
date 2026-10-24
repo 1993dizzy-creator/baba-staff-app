@@ -48,7 +48,9 @@
 | Production Build (next build) | 아니오 | not-run |
 
 미검증 항목:
-- 없음
+- 자동 Verify 보고서의 gaps는 비어 있으나 Production Build는 명령에서 요청하지 않아 미실행이다.
+- 전체 앱 테스트·실제 UI·운영 서비스·새 Codex/Claude 세션의 자동 Skill 선택은 미검증이다.
+- skill-creator의 Python quick_validate는 실행기 부재로 미실행이며 저장소 Skills 정합성 검사로 별도 확인했다.
 
 수동 확인(브라우저·실행 확인 등): Windows CMD/PowerShell의 --help 실행, 실제 Node CLI를 사용한 격리 Codex/Claude Git Worktree 시나리오, Skills 4개 정합성 검사, 원본 main·Claude의 HEAD/브랜치/status/추적 파일 SHA-256 비교를 수행했다. 실제 앱 UI·운영 서비스·새 AI 세션의 자율 호출은 실행하지 않았다.
 
