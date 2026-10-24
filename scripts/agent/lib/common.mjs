@@ -159,12 +159,17 @@ export function collectChanges(root, baseRef = defaultBaseRef(root)) {
   return {baseRef, mergeBase, files};
 }
 
+export const HANDOFF_DIR = 'docs/handoffs/';
+
+// Content fingerprint of the verified state. Handoff documents are excluded so writing and
+// committing the handoff itself does not invalidate the verification it reports.
 export function stateFingerprint(root) {
+  const scope = ['--', '.', `:(exclude)${HANDOFF_DIR}`];
   const hash = createHash('sha256');
-  hash.update(gitOut(root, ['rev-parse', 'HEAD']));
-  hash.update(git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']).stdout);
-  hash.update(git(root, ['diff', 'HEAD', '--binary']).stdout);
-  for (const entry of workingChanges(root).filter(e => e.code === '??')) {
+  hash.update(gitOut(root, ['ls-tree', '-r', 'HEAD']).split('\n').filter(line => !line.split('\t')[1]?.startsWith(HANDOFF_DIR)).join('\n'));
+  hash.update(git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all', ...scope]).stdout);
+  hash.update(git(root, ['diff', 'HEAD', '--binary', ...scope]).stdout);
+  for (const entry of workingChanges(root).filter(e => e.code === '??' && !e.path.startsWith(HANDOFF_DIR))) {
     const full = join(root, entry.path);
     if (existsSync(full) && statSync(full).isFile()) hash.update(readFileSync(full));
   }

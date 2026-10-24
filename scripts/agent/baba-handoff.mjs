@@ -7,7 +7,7 @@
 import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {
-  AGENTS, POLICY_DOC, collectChanges, defaultBaseRef, git, gitOut, gitTry, identifyWorktree, migrationVersion, parseArgs,
+  AGENTS, HANDOFF_DIR, POLICY_DOC, collectChanges, defaultBaseRef, git, gitOut, gitTry, identifyWorktree, migrationVersion, parseArgs,
   repoRoot, stateFingerprint,
 } from './lib/common.mjs';
 import {TODO, checkHandoff} from './lib/handoff-format.mjs';
@@ -35,9 +35,13 @@ const agentLabel = {claude: 'Claude Code', codex: 'Codex'}[identity.agent] || '(
 const baseRef = args.base || defaultBaseRef(root);
 const branch = gitOut(root, ['branch', '--show-current']) || '(detached)';
 const head = gitOut(root, ['rev-parse', 'HEAD']);
-const {mergeBase, files} = collectChanges(root, baseRef);
+const changes = collectChanges(root, baseRef);
+const {mergeBase} = changes;
 const prefix = identity.agent ? AGENTS[identity.agent].branchPrefix : '';
 const taskId = args.taskId || (branch.startsWith(prefix) ? branch.slice(prefix.length) : branch.replace(/\//g, '-'));
+const outPath = (args.out || `${HANDOFF_DIR}${identity.agent || 'agent'}-${taskId}.md`).split('\\').join('/');
+// The handoff being written is not part of the work it describes.
+const files = changes.files.filter(file => file.path !== outPath);
 const commits = gitOut(root, ['log', '--format=%h %s', `${mergeBase}..HEAD`]).split('\n').filter(Boolean);
 const uncommitted = files.filter(file => file.working);
 const numstat = new Map();
@@ -113,7 +117,7 @@ const content = `${lines.join('\n')}\n`;
 if (args.stdout) {
   process.stdout.write(content);
 } else {
-  const out = args.out || `docs/handoffs/${identity.agent || 'agent'}-${taskId}.md`;
+  const out = outPath;
   const full = join(root, out);
   if (existsSync(full) && !args.force) {
     console.error(`${out}이(가) 이미 있다. 기존 인계서를 보존하려면 --out으로 다른 경로를 지정하고, 덮어쓰려면 --force를 쓴다.`);
