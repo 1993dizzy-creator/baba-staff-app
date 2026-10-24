@@ -237,6 +237,8 @@ export function startTask(args, cwd = process.cwd()) {
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try {
     const args = parseArgs(process.argv.slice(2), {task: 'string', slug: 'string', agent: 'string', files: 'string', resume: 'string', json: 'boolean', help: 'boolean'});
+    if (args._.length || ['task', 'slug', 'agent', 'files', 'resume'].some(key => Object.hasOwn(args, key) &&
+        (typeof args[key] !== 'string' || !args[key].trim() || args[key].startsWith('--')))) throw new Error('Invalid option value');
     if (args.help) console.log('node scripts/agent/baba-start.mjs --task "작업명" --files "경로,glob" [--slug task-slug] [--agent codex|claude] [--resume 작업-ID] [--json]');
     else {
       const result = startTask(args);

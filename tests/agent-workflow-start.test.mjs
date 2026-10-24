@@ -214,3 +214,11 @@ test('only a current checked Handoff permits a new unrelated task before integra
   assert.equal(r.baseSha, f.seed); assert.equal(head(f.main), f.seed);
   assert.ok(gitOut(f.main, ['rev-parse', first.branch]));
 });
+test('missing option values and positional arguments fail before any side effects', () => {
+  const f = fixture(), before = refs(f.main);
+  for (const extra of [['--resume'], ['--resume='], ['unexpected'], ['--files', '--json']]) {
+    const r = run(process.execPath, [join(f.codex, 'scripts/agent/baba-start.mjs'), ...request(), ...extra], {cwd: f.codex, allowFail: true});
+    assert.equal(r.status, 2); assert.equal(refs(f.main), before);
+    assert.equal(existsSync(join(f.codex, '.tmp-baba/start')), false);
+  }
+});
