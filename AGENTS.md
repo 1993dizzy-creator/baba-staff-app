@@ -47,4 +47,5 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ## 병렬 개발 공통 절차 (Codex · Claude Code)
 
 - Worktree 소유권, 작업 브랜치, 영향 범위·충돌 검사, 병합·배포 승인, 검증 기준, 인계서 규칙은 `docs/agents/baba-agent-workflow.md`를 따른다. 위 운영 DB·Migration 규칙이 그 문서보다 우선한다.
-- 작업 시작·변경 후·완료 시 `.agents/skills/`의 `baba-preflight` → `baba-verify` → `baba-handoff` 절차를 사용한다.
+- 새 개발 요청은 자기 Worktree에서 `.agents/skills/baba-start/SKILL.md`를 읽고 `baba-start`부터 실행한다. 읽기 전용 조사로 작업명·수정 예정 파일을 정한 뒤 실행하며, 기록된 동일 작업은 재개한다. 차단이면 수정하지 않는다.
+- `baba-start`(내부 `baba-preflight`) → 개발(범위 변경 시 Preflight 재실행) → `baba-verify` → `baba-handoff` 절차를 사용한다.

@@ -30,26 +30,23 @@
 
 ## 2. 작업 브랜치 생성·종료
 
-1. **시작**
-   - `baba-preflight`를 실행한다(§3).
-   - 담당 Worktree가 clean이고 대기 브랜치(`<agent>/idle` 또는 `<agent>/ready-*`)인지 확인한다.
-2. **원격 기준 확인**
-   - `git fetch origin`은 원격 참조만 갱신한다. 원격을 변경하지 않으므로 허용한다.
-3. **작업 브랜치 생성**
-   - 형식: `git switch --no-track -c <agent>/<YYYYMMDD>-<작업-slug>-<NN> origin/main`
-   - `--no-track`은 기준 브랜치(`origin/main`)가 upstream으로 설정되는 것을 막는다. 인자 없는 push가 main을 향하지 않게 하기 위해서다.
-   - 작업 ID는 브랜치에서 접두사를 뺀 부분이다(예: `20261024-agent-workflow-skills-01`).
-4. **작업 중**
-   - 커밋은 작업 브랜치에만 한다.
-   - `reset --hard`, `clean`, 강제 전환, 자동 stash, rebase로 다른 사람의 커밋을 다시 쓰는 일은 하지 않는다.
-5. **종료**
-   - `baba-verify` 통과(§8) → `baba-handoff` 작성(§10) → 작업 브랜치에 커밋해 보존한다.
-   - push·병합·배포는 하지 않는다(§7).
-6. **다음 작업**
-   - 변경이 없음을 확인하고 fetch한 뒤, 최신 `origin/main`에서 새 작업 브랜치나 `<agent>/ready-<날짜>-<번호>`를 만든다.
-   - 이전 idle·작업 브랜치는 남겨 둔다. Worktree에서 `main`을 체크아웃하지 않는다.
-7. **의존성**
-   - `package-lock.json`이 바뀌었으면 해당 Worktree에서만 `npm ci`를 실행한다.
+새 개발 요청은 에이전트가 별도 Git 지시를 기다리지 않고 `baba-start`를 먼저 호출한다. 수정 예정 범위를 정하기 위한 읽기 전용 조사는 먼저 할 수 있다. CMD·PowerShell에서 동일하게 실행한다.
+
+```
+node scripts/agent/baba-start.mjs --task "작업명" --slug task-slug --files "app/example/**,tests/example.test.mjs" --json
+```
+
+1. 실행 위치·에이전트·등록된 자기 Worktree·브랜치 접두사·clean 상태를 확인한다. 대기 브랜치는 `<agent>/idle`, `<agent>/ready-*`다. main에 없는 커밋이 있는 대기 브랜치는 보존하고 중단한다.
+2. 기존 `baba-preflight`(§3)를 실행한다. 다른 Worktree를 조사할 수 없거나 수정 예정 경로가 미커밋/미통합 변경과 겹치면 중단한다. 새 파일을 포함한 glob 충돌도 검사한다.
+3. `ls-remote`로 실제 원격 main을 조회하고 캐시와 다르면 main 참조만 fetch한다(강제 갱신·prune 없음). 읽기/인증 실패, 원격만 앞섬, 이력 분기, 관계 불명확이면 중단한다. 원격이 뒤처지면 **최신 로컬 main**을 유지한다. 로컬 main은 자동 수정하지 않는다.
+4. 상태·Preflight를 재확인한 뒤 검증한 로컬 main SHA에서 `git switch --no-track -c <agent>/<YYYYMMDD>-<slug>-<NN> <SHA>`로 생성한다. 번호 충돌·다른 Worktree 사용·기존 예약 기록은 건너뛴다. upstream은 만들지 않는다. 최종 Preflight 후 STARTED를 반환한다.
+5. 작업 ID는 접두사를 뺀 부분이다. `.tmp-baba/start/tasks/`에는 생성 기록, `runs/`에는 실행별 결과를 배타적으로 새 파일에 저장한다. 자기 Worktree의 ignored 경로만 사용하며 기존 기록을 덮어쓰지 않는다. 프로세스 잠금으로 같은 Worktree의 중복 실행을 막는다. 활성 Git 전환/ref hook은 실행하지 않고 중단한다.
+6. 기록된 같은 작업명·slug는 새 브랜치를 만들지 않고 RESUMED로 반환한다. 명시적 재개는 `node scripts/agent/baba-start.mjs --resume <작업-ID> --json`이다. 현재 기록된 브랜치에서만 재개하며 dirty 상태는 항상 중단한다. 사망이 확인된 프로세스 잠금은 명시적 재개에서만 다른 이름으로 보관한다. 전환 후 최종 검사 실패도 브랜치·코드·생성 기록을 남겨 재개할 수 있게 한다.
+7. 기록 없는 작업 브랜치, 다른 미완료 작업, 손상된 기록은 임의 채택하거나 완료 처리하지 않는다. 다음 다른 작업은 clean이고 현재 작업 커밋이 main에 포함되었거나 기본 경로의 현재 코드와 일치하는 Handoff `--check`가 통과해야 시작한다. Handoff만으로 기능 커밋을 main에 자동 포함하지 않는다. 미통합 기능 의존성이 필요하면 별도로 보고한다.
+8. 개발 중 커밋은 작업 브랜치에만 한다. `reset --hard`, 무조건적 `clean`, 강제 전환, 자동 stash, 이력 재작성, 다른 Worktree 브랜치 삭제는 금지한다. 범위 변경 시 Preflight를 다시 실행한다. `package-lock.json`이 바뀌었으면 자기 Worktree에서만 `npm ci`한다.
+9. `baba-verify`(§8) → `baba-handoff`(§10) → 작업 브랜치에 커밋한다. 이전 idle·작업 브랜치를 보존한다. main 병합·push·배포·운영 변경은 별도 승인 대상이다(§6·§7).
+
+Skill 자동 호출은 `AGENTS.md`/`CLAUDE.md` 진입점의 지침으로 연결한다. 사용자 터미널을 강제 제어하는 hook을 설치하지 않으며 Claude 권한 모드나 `bypassPermissions`를 변경하지 않는다. 두 Worktree에 이 구현이 아직 없다면 승인된 main 통합과 clean 상태의 새 브랜치 반영이 먼저 필요하다.
 
 ## 3. 작업 시작 점검 — `baba-preflight`
 
@@ -179,6 +176,7 @@
 
 | Skill | 기준 정의 (Codex·공통) | Claude Code 진입점 | 실행 스크립트 |
 | --- | --- | --- | --- |
+| baba-start | `.agents/skills/baba-start/SKILL.md` | `.claude/skills/baba-start/SKILL.md` | `scripts/agent/baba-start.mjs` |
 | baba-preflight | `.agents/skills/baba-preflight/SKILL.md` | `.claude/skills/baba-preflight/SKILL.md` | `scripts/agent/baba-preflight.mjs` |
 | baba-verify | `.agents/skills/baba-verify/SKILL.md` | `.claude/skills/baba-verify/SKILL.md` | `scripts/agent/baba-verify.mjs` |
 | baba-handoff | `.agents/skills/baba-handoff/SKILL.md` | `.claude/skills/baba-handoff/SKILL.md` | `scripts/agent/baba-handoff.mjs` |
