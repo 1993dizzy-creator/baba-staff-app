@@ -43,3 +43,8 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - CLI, `db push`, DB 비밀번호 설정을 기본 절차로 요구하지 않는다.
 - 과거 수동 적용 Migration을 자동으로 재실행하거나 일괄 이력 등록하지 않는다.
 - 실제 충돌이나 안전상 위험이 발견된 경우에만 구체적인 근거와 함께 중단한다.
+
+## 병렬 개발 공통 절차 (Codex · Claude Code)
+
+- Worktree 소유권, 작업 브랜치, 영향 범위·충돌 검사, 병합·배포 승인, 검증 기준, 인계서 규칙은 `docs/agents/baba-agent-workflow.md`를 따른다. 위 운영 DB·Migration 규칙이 그 문서보다 우선한다.
+- 작업 시작·변경 후·완료 시 `.agents/skills/`의 `baba-preflight` → `baba-verify` → `baba-handoff` 절차를 사용한다.

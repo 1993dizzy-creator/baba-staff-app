@@ -1,0 +1,187 @@
+# BABA 병렬 개발 공통 절차 (Codex · Claude Code)
+
+이 문서는 Codex와 Claude Code가 함께 따르는 **단일 기준 문서**다. 각 에이전트의 진입점은 다음과 같다.
+
+- Codex: `AGENTS.md`, `.agents/skills/*`
+- Claude Code: `CLAUDE.md`(`@AGENTS.md` 포함), `.claude/skills/*`
+
+진입점은 이 문서와 `.agents/skills`를 가리키기만 하고 규칙을 다시 쓰지 않는다.
+
+**우선순위**
+
+1. 사용자의 명시적 지시
+2. `AGENTS.md`의 「Supabase 운영 DB 안전 규칙」·「BABA 운영 Migration 기본 절차」·「운영 Migration 반복 금지 사항」
+3. 이 문서
+
+이 문서는 위 AGENTS.md 규칙을 완화하지 않는다. 둘이 다르게 읽히면 더 엄격한 쪽을 따른다.
+
+## 1. Worktree 소유권
+
+| 용도 | 경로 | 소유 | 브랜치 접두사 | 앱 포트 |
+| --- | --- | --- | --- | --- |
+| 원본 | `C:\workspace\baba-staff-app` | 사용자 | `main` | 3000 |
+| Codex | `C:\workspace\baba-wt-codex` | Codex | `codex/` | 3001 |
+| Claude Code | `C:\workspace\baba-wt-claude` | Claude Code | `claude/` | 3002 |
+
+- 에이전트는 **자기 Worktree 안에서만** 파일을 만들거나 수정한다. 다른 Worktree와 원본 폴더는 읽기 전용으로 조회만 한다(`git --no-optional-locks`).
+- 원본 폴더의 `main`, 원본 개발 서버(3000), 원본의 미커밋 변경은 건드리지 않는다.
+- 다른 에이전트의 개발 서버, 에이전트 프로세스, 브랜치를 종료·삭제·이동하지 않는다.
+- Worktree는 Git 객체·참조·설정을 공유하므로 보안 격리 환경이 아니다. 브랜치 이름 충돌과 공유 ref 변경에 주의한다.
+
+## 2. 작업 브랜치 생성·종료
+
+1. **시작**
+   - `baba-preflight`를 실행한다(§3).
+   - 담당 Worktree가 clean이고 대기 브랜치(`<agent>/idle` 또는 `<agent>/ready-*`)인지 확인한다.
+2. **원격 기준 확인**
+   - `git fetch origin`은 원격 참조만 갱신한다. 원격을 변경하지 않으므로 허용한다.
+3. **작업 브랜치 생성**
+   - 형식: `git switch --no-track -c <agent>/<YYYYMMDD>-<작업-slug>-<NN> origin/main`
+   - `--no-track`은 기준 브랜치(`origin/main`)가 upstream으로 설정되는 것을 막는다. 인자 없는 push가 main을 향하지 않게 하기 위해서다.
+   - 작업 ID는 브랜치에서 접두사를 뺀 부분이다(예: `20261024-agent-workflow-skills-01`).
+4. **작업 중**
+   - 커밋은 작업 브랜치에만 한다.
+   - `reset --hard`, `clean`, 강제 전환, 자동 stash, rebase로 다른 사람의 커밋을 다시 쓰는 일은 하지 않는다.
+5. **종료**
+   - `baba-verify` 통과(§8) → `baba-handoff` 작성(§10) → 작업 브랜치에 커밋해 보존한다.
+   - push·병합·배포는 하지 않는다(§7).
+6. **다음 작업**
+   - 변경이 없음을 확인하고 fetch한 뒤, 최신 `origin/main`에서 새 작업 브랜치나 `<agent>/ready-<날짜>-<번호>`를 만든다.
+   - 이전 idle·작업 브랜치는 남겨 둔다. Worktree에서 `main`을 체크아웃하지 않는다.
+7. **의존성**
+   - `package-lock.json`이 바뀌었으면 해당 Worktree에서만 `npm ci`를 실행한다.
+
+## 3. 작업 시작 점검 — `baba-preflight`
+
+`node scripts/agent/baba-preflight.mjs --task "<작업명>" --agent <claude|codex> --files "<수정 예정 파일·glob>"`
+
+- **읽기 전용이다.** 파일 쓰기, fetch, 브랜치 전환, DB 접속을 하지 않는다.
+- **확인 항목**
+  - Worktree 소유권과 브랜치 접두사
+  - 미커밋 변경
+  - 기준 대비 ahead/behind와 마지막 fetch 시각
+  - `node_modules` 상태, `.env.local` 존재 여부(값은 읽지 않는다)
+  - 다른 Worktree의 미커밋·브랜치 변경과의 파일 겹침
+  - 수정 예정 파일의 API, import하는 파일, 테이블·RPC·쓰기 경로(정적 분석)
+  - 관련 테스트
+  - 확정 정책 영역
+  - Migration 버전 중복과 기존 Migration 수정 여부
+  - 운영 데이터 변경 가능성
+- **판정**
+  - `가능`: 진행한다.
+  - `조건부 가능`: 선행 조건을 해결하거나 사용자에게 보고한 뒤 진행한다.
+  - `불가`(위험도 `BLOCKED`): 진행하지 않고 근거를 보고한다.
+
+## 4. 기존 코드·데이터 보호
+
+- 요청 범위 밖의 소스를 수정하지 않는다. 포맷팅, 이름 변경, 리팩터링을 끼워 넣지 않는다.
+- 기존 문서·보고서·SQL·patch 파일을 삭제하거나 덮어쓰지 않는다. 증거 로그를 보존한다. 캐시 정리 외의 삭제는 사용자 승인 후에만 한다.
+- 운영 자격 증명(service role key, DB password, access token, session secret, POS 키)은 읽기·복사·출력·커밋하지 않는다. 변수 이름만 다룬다.
+- Worktree에 운영 `.env.local`을 복사하지 않는다. 개발 환경 값은 별도로 발급된 것만 쓴다.
+- `CUKCUK_BASE_URL`이 없으면 코드가 운영 POS 주소를 기본값으로 쓴다. POS 동기화·cron·일괄 작업 경로는 mock 없이 실행하지 않는다.
+
+## 5. 변경 전 영향 범위·공통 파일·API 충돌 검사
+
+- 코드를 고치기 전에 수정 예정 파일, 그 파일을 import하는 파일, 영향받는 API 경로, DB 테이블·RPC를 확인한다(§3 preflight가 정적으로 추정한다).
+- **공통 파일**(`scripts/agent/lib/common.mjs`의 `HOT_FILES`)
+  - 설정: `package.json`, `package-lock.json`, `next.config.ts`, `tsconfig.json`, `eslint.config.mjs`, `vercel.json`
+  - 레이아웃·공용 라이브러리: `app/layout.tsx`, `app/(protected)/layout.tsx`, `lib/supabase/**`, `lib/auth/**`, `lib/navigation/**`, `lib/text/**`, `lib/common/**`
+  - Migration: `supabase/migrations/**`
+  - 에이전트 정책·도구: `AGENTS.md`, `CLAUDE.md`, `docs/agents/**`, `.agents/**`, `.claude/**`, `scripts/agent/**`
+  - 이 파일들을 고치면 다른 Worktree의 진행 작업과 병합 순서를 사용자에게 보고한다.
+- 다른 Worktree가 **미커밋으로 수정 중인 파일**은 사용자 확인 없이 수정하지 않는다.
+- API 응답 형태, 쿼리 파라미터, RPC 인자·반환 형태를 바꾸면 모든 호출부(`app/`, `components/`, `lib/`)와 관련 테스트를 함께 확인한다. 하위 호환이 깨지면 사용자에게 먼저 보고한다.
+- Migration 버전은 Worktree 사이에서 중복되면 안 된다. preflight가 기준선과 다른 Worktree의 신규 Migration 버전을 대조한다.
+
+## 6. Supabase 운영 DB·Migration
+
+- 기준은 `AGENTS.md`의 「Supabase 운영 DB 안전 규칙」, 「BABA 운영 Migration 기본 절차」, 「운영 Migration 반복 금지 사항」이며 그대로 적용한다.
+- **역할 대응**: AGENTS.md 절차에서 "Codex"로 적힌 **로컬 SQL 작성·테스트·검증 담당 역할**은 Claude Code에도 똑같이 적용한다.
+- 운영 검증과 Migration 이력 등록("GPT" 단계)은 Worktree의 코딩 에이전트가 대신하지 않는다. 사용자가 해당 작업을 명시적으로 지시한 경우에만 수행한다.
+- 운영 적용은 사용자가 Supabase SQL Editor에서 직접 실행한다. 에이전트는 `supabase db push`, `db reset`, `migration repair`, 운영 DML·DDL을 실행하지 않는다.
+- 이미 적용된 Migration 파일은 수정하지 않고 후속 Migration을 추가한다. `baba-verify`는 기준선에 있는 Migration이 수정되면 실패로 판정한다.
+- DB 동작 검증은 로컬 PGlite·네이티브 Postgres fixture 테스트(`tests/*-db.test.mjs`, `*-postgres.test.mjs`)로만 한다.
+
+## 7. Git 병합·배포 승인
+
+- 에이전트는 다음을 **사용자의 명시적 요청 없이 하지 않는다.**
+  - `git push`
+  - `main` 병합(merge·rebase·cherry-pick 포함)
+  - 원격 브랜치 삭제
+  - PR 생성
+  - Vercel 배포·환경 변수 변경
+- 병합 순서는 사용자가 정한다. 병합 전 조건:
+  - 대상 브랜치의 `baba-verify`가 FAIL이 아니다.
+  - 인계서 `--check`를 통과했다.
+  - 다른 Worktree와 겹치는 파일이 정리됐다.
+- 배포는 AGENTS.md 절차 5단계에 따라 Migration 운영 검증이 끝난 다음에만 진행한다.
+
+## 8. 테스트·회귀 검증 기준 — `baba-verify`
+
+`node scripts/agent/baba-verify.mjs [--build] [--tests a,b] [--all-tests]`
+
+- **변경 파일 검사**
+  - 병합 충돌 표식, 자격 증명 의심 패턴(값은 출력하지 않는다), `.env` 파일
+  - 기존 Migration 수정
+  - 공통 파일 변경
+- **관련 회귀 테스트**
+  - 변경 경로를 문자열로 참조하는 테스트, helper fixture가 참조하는 Migration 파일명, 같은 폴더 테스트의 상대 import를 기준으로 자동 선택한다.
+  - 자격 증명 환경 변수를 제거하고, **오프라인 가드**(loopback 외 연결 차단)를 걸어 실행한다.
+- **ESLint**: 변경된 JS/TS 파일만 검사한다. 파일별로 기준선 내용과 비교한다.
+- **TypeScript**: `next typegen`과 `tsc --noEmit`으로 프로젝트 전체를 검사한다.
+- **Production Build**: `--build`일 때만 실행한다.
+  - 다음 변경이면 필요하다: 설정·의존성·layout·page/route 추가·삭제, CSS, `proxy.ts`
+  - 병합 준비 단계에서도 필요하다.
+- **기존 오류와 신규 오류 구분**
+  - 실패가 있으면 merge-base 스냅샷(OS 임시 폴더, 별도 index 파일 사용)에서 같은 검사를 다시 실행해 비교한다.
+  - 기준선에도 있는 오류는 "기존", 새로 생긴 오류는 "신규"로 분류한다.
+- **판정**
+  - `PASS`: 실행한 검사가 모두 통과했다.
+  - `PASS_WITH_PREEXISTING`: 기존 오류만 있다.
+  - `FAIL`: 신규 오류가 있거나 분류하지 못한 실패가 있다.
+- **실행 여부 표기**
+  - 각 검사에 실제 실행 여부(예/아니오)를 표시한다.
+  - 실행하지 않은 검사, 테스트가 없는 변경 파일, UI 동작, 운영 DB 적용은 「미검증 항목」에 따로 적는다.
+  - 미검증 항목을 통과로 보고하지 않는다.
+- **최소 기준**: 신규 오류 0과 관련 테스트 실행을 충족한다. 테스트가 없는 로직 변경은 회귀 테스트를 추가하거나 미검증으로 명시한다.
+
+## 9. 확정 업무 정책 보호
+
+- POS(매출·영업일 마감·결제 예정·차감), 장부(매입·지급·카드 정산·원장), 재고(입출고·스냅샷·케그), 급여·근태, VAT·세금 계산의 기존 동작은 **확정된 정책**이다.
+- 기준은 `docs/`의 해당 영역 문서·보고서와 기존 테스트다. 예: `docs/pos-resolution-operating-contract-final.md`, `docs/pos-business-day-close*.md`, `docs/inventory-ledger-*.md`, `docs/reports/*`. preflight가 영역별 문서를 나열한다.
+- 에이전트는 이 정책의 의미(계산식, 상태 전이, 권한, 마감·집계 기준)를 임의로 바꾸지 않는다. 바꿔야 한다면 근거와 영향 범위를 보고하고 사용자 승인을 받는다.
+- 정책을 고정하는 기존 테스트의 기대값을 수정해 통과시키지 않는다.
+
+## 10. 작업 완료 인계서 — `baba-handoff`
+
+`node scripts/agent/baba-handoff.mjs --task-name "<작업명>"` → `docs/handoffs/<agent>-<작업 ID>.md`
+
+- **자동 기록 항목**
+  - 작업 ID, 담당 AI
+  - 브랜치, HEAD SHA, 기준 merge-base, 커밋 목록, 미커밋 변경
+  - 변경 파일·변경량
+  - 최신 `baba-verify` 결과: 현재 트리와 상태 지문(fingerprint)이 일치하는지 표시한다.
+  - Migration·SQL 변경
+  - push·병합 상태, 배포 미실시
+- **에이전트 작성 항목**(TODO 표식)
+  - 기능 요약
+  - 실제 수행한 수동 확인
+  - Migration 적용 상태
+  - 미완료 사항, 후속 작업
+- **형식 검사**
+  - `node scripts/agent/baba-handoff.mjs --check <파일>`로 검사한다.
+  - TODO가 남았거나, 검증 결과가 현재 상태와 다르거나, 필수 섹션·SHA가 없으면 실패한다.
+- 인계서는 작업 브랜치의 마지막 커밋으로 포함한다. 인계서에 적힌 SHA는 인계서 커밋 직전의 코드 상태를 가리킨다.
+
+## 11. Skills 구조
+
+| Skill | 기준 정의 (Codex·공통) | Claude Code 진입점 | 실행 스크립트 |
+| --- | --- | --- | --- |
+| baba-preflight | `.agents/skills/baba-preflight/SKILL.md` | `.claude/skills/baba-preflight/SKILL.md` | `scripts/agent/baba-preflight.mjs` |
+| baba-verify | `.agents/skills/baba-verify/SKILL.md` | `.claude/skills/baba-verify/SKILL.md` | `scripts/agent/baba-verify.mjs` |
+| baba-handoff | `.agents/skills/baba-handoff/SKILL.md` | `.claude/skills/baba-handoff/SKILL.md` | `scripts/agent/baba-handoff.mjs` |
+
+- 절차 본문은 `.agents/skills`에만 둔다. Claude 진입점은 같은 `name`·`description`을 갖고, 본문은 기준 파일을 읽도록 지시만 한다.
+- 정합성은 `node scripts/agent/check-agent-skills.mjs`로 검사한다.
+- 스크립트는 Node.js `.mjs`다. Windows PowerShell 실행 정책(.ps1 차단)과 관계없이 실행되고, 외부 의존성이 없다.
+- 이 문서나 Skills를 바꾸는 것은 공통 파일 변경이다. 한 에이전트 브랜치에서 바꾸고 사용자 승인 후 병합한다. 다른 에이전트는 병합된 `main`에서 새 작업 브랜치를 만들어 반영한다.

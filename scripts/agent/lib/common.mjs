@@ -1,0 +1,373 @@
+// Shared helpers for the baba-preflight / baba-verify / baba-handoff skills.
+// The policy these helpers enforce lives in docs/agents/baba-agent-workflow.md.
+// Git is always called with --no-optional-locks so read-only inspection never refreshes an index.
+import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {existsSync, readdirSync, readFileSync, statSync} from 'node:fs';
+import {basename, dirname, join, relative, resolve, sep} from 'node:path';
+
+export const POLICY_DOC = 'docs/agents/baba-agent-workflow.md';
+
+// Worktree ownership (docs/agents/baba-agent-workflow.md section 1).
+export const AGENTS = {
+  codex: {worktreeDir: 'baba-wt-codex', branchPrefix: 'codex/', port: 3001},
+  claude: {worktreeDir: 'baba-wt-claude', branchPrefix: 'claude/', port: 3002},
+};
+export const ORIGINAL_DIR = 'baba-staff-app';
+
+// Files and areas every agent shares. Touching them needs a conflict check (section 5).
+export const HOT_FILES = [
+  'package.json', 'package-lock.json', 'next.config.ts', 'tsconfig.json', 'eslint.config.mjs',
+  'postcss.config.mjs', 'vercel.json', 'proxy.ts', 'middleware.ts', 'AGENTS.md', 'CLAUDE.md',
+  'app/layout.tsx', 'app/(protected)/layout.tsx', 'lib/supabase/**', 'lib/auth/**',
+  'lib/navigation/**', 'lib/text/**', 'lib/common/**', 'supabase/migrations/**',
+  'docs/agents/**', '.agents/**', '.claude/**', 'scripts/agent/**',
+];
+
+// Paths whose change may reach production data or schedules (section 6).
+export const PRODUCTION_SENSITIVE = [
+  {pattern: 'supabase/migrations/**', level: 'high', reason: 'Migration: 운영 DB 스키마·함수·권한 변경 후보 (AGENTS.md 승인 절차 필수)'},
+  {pattern: '**/*.sql', level: 'high', reason: 'SQL 파일: 운영 SQL Editor 실행 후보 (승인 전 실행 금지)'},
+  {pattern: 'app/api/cron/**', level: 'high', reason: 'Vercel cron 경로: 배포 시 운영 데이터 자동 변경'},
+  {pattern: 'vercel.json', level: 'high', reason: 'Vercel cron·배포 설정'},
+  {pattern: 'lib/pos/**', level: 'medium', reason: 'POS(CUKCUK) 연동: CUKCUK_BASE_URL 미설정 시 운영 POS 기본값 사용'},
+  {pattern: 'lib/supabase/**', level: 'medium', reason: 'Supabase 클라이언트·service role 경로'},
+];
+
+// Confirmed BABA business policies. Agents must not change their meaning without user approval.
+export const DOMAINS = {
+  pos: {label: 'POS·매출', match: /(^|[/_-])(pos|cukcuk|sales|receipt)/i},
+  ledger: {label: '장부', match: /(^|[/_-])(ledger|payable|card-settlement|partners?)/i},
+  inventory: {label: '재고', match: /(^|[/_-])(inventory|keg|snapshot|bar)/i},
+  payroll: {label: '급여·근태', match: /(^|[/_-])(payroll|attendance|early-leave|meal|employee)/i},
+  vat: {label: 'VAT·세금', match: /(^|[/_-])(vat|tax|receipt-financials)/i},
+};
+
+export const CREDENTIAL_ENV = /SUPABASE|CUKCUK|^POS_|^CRON_|^BABA_SESSION|^DATABASE_URL$|^DIRECT_URL$|^PG(PASSWORD|HOST|USER|DATABASE|SERVICE)$|^VERCEL_TOKEN$|^GITHUB_TOKEN$|^GH_TOKEN$/i;
+
+export function run(command, args, {cwd, env, allowFail = false, input, timeout} = {}) {
+  const result = spawnSync(command, args, {cwd, env, input, timeout, encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, windowsHide: true});
+  if (result.error && !allowFail) throw result.error;
+  if (result.status !== 0 && !allowFail) {
+    throw new Error(`${command} ${args.join(' ')} failed (${result.status}): ${(result.stderr || '').trim()}`);
+  }
+  return {status: result.status, stdout: result.stdout || '', stderr: result.stderr || '', error: result.error};
+}
+
+export function git(root, args, options = {}) {
+  return run('git', ['--no-optional-locks', '-c', 'core.quotepath=off', ...args], {cwd: root, ...options});
+}
+export const gitOut = (root, args, options) => git(root, args, options).stdout.trim();
+export const gitTry = (root, args) => {
+  const r = git(root, args, {allowFail: true});
+  return r.status === 0 ? r.stdout.trim() : null;
+};
+
+export function repoRoot(cwd = process.cwd()) {
+  return resolve(gitOut(cwd, ['rev-parse', '--show-toplevel']));
+}
+
+export const toPosix = path => path.split(sep).join('/');
+
+export function globToRegExp(glob) {
+  let source = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') {
+      source += glob[i + 2] === '/' ? '(?:.*/)?' : '.*';
+      i += glob[i + 2] === '/' ? 2 : 1;
+    } else if (c === '*') source += '[^/]*';
+    else if (c === '?') source += '[^/]';
+    else source += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${source}$`, 'i');
+}
+export const matchesAny = (path, globs) => globs.some(glob => globToRegExp(glob).test(path));
+
+export function identifyWorktree(root) {
+  const dir = basename(root);
+  const agent = Object.entries(AGENTS).find(([, value]) => value.worktreeDir === dir)?.[0] || null;
+  return {dir, agent, isOriginal: dir === ORIGINAL_DIR};
+}
+
+export function listWorktrees(root) {
+  const out = gitOut(root, ['worktree', 'list', '--porcelain']);
+  const list = [];
+  let current = null;
+  for (const line of out.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) list.push(current = {path: resolve(line.slice(9)), branch: null, head: null});
+    else if (current && line.startsWith('HEAD ')) current.head = line.slice(5);
+    else if (current && line.startsWith('branch ')) current.branch = line.slice(7).replace('refs/heads/', '');
+    else if (current && line === 'detached') current.branch = '(detached)';
+  }
+  return list;
+}
+
+export function defaultBaseRef(root) {
+  return gitTry(root, ['rev-parse', '--verify', '--quiet', 'origin/main']) ? 'origin/main' : 'main';
+}
+
+export function parseStatusZ(text) {
+  const entries = [];
+  const parts = text.split('\0');
+  for (let i = 0; i < parts.length; i++) {
+    const item = parts[i];
+    if (!item) continue;
+    const code = item.slice(0, 2);
+    const path = item.slice(3);
+    if (code[0] === 'R' || code[0] === 'C') i++;
+    entries.push({code, path});
+  }
+  return entries;
+}
+
+export function workingChanges(root) {
+  return parseStatusZ(git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']).stdout);
+}
+
+export function committedChanges(root, fromSha, toRef = 'HEAD') {
+  const parts = git(root, ['diff', '--name-status', '-z', '-M', fromSha, toRef]).stdout.split('\0').filter(Boolean);
+  const list = [];
+  for (let i = 0; i < parts.length; i++) {
+    const status = parts[i];
+    if (/^[RC]/.test(status)) {
+      list.push({status: status[0], from: parts[i + 1], path: parts[i + 2]});
+      i += 2;
+    } else {
+      list.push({status: status[0], path: parts[i + 1]});
+      i += 1;
+    }
+  }
+  return list;
+}
+
+// Union of committed (merge-base..HEAD) and uncommitted changes, one entry per path.
+export function collectChanges(root, baseRef = defaultBaseRef(root)) {
+  const mergeBase = gitOut(root, ['merge-base', 'HEAD', baseRef]);
+  const map = new Map();
+  for (const entry of committedChanges(root, mergeBase)) map.set(entry.path, {path: entry.path, committed: entry.status, working: null, from: entry.from});
+  for (const entry of workingChanges(root)) {
+    const existing = map.get(entry.path) || {path: entry.path, committed: null, working: null};
+    existing.working = entry.code;
+    map.set(entry.path, existing);
+  }
+  const files = [...map.values()].map(file => ({
+    ...file,
+    deleted: file.working ? file.working.includes('D') : file.committed === 'D',
+    added: file.working === '??' || file.working?.includes('A') || (!file.working && file.committed === 'A'),
+  })).sort((a, b) => a.path.localeCompare(b.path));
+  return {baseRef, mergeBase, files};
+}
+
+export function stateFingerprint(root) {
+  const hash = createHash('sha256');
+  hash.update(gitOut(root, ['rev-parse', 'HEAD']));
+  hash.update(git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']).stdout);
+  hash.update(git(root, ['diff', 'HEAD', '--binary']).stdout);
+  for (const entry of workingChanges(root).filter(e => e.code === '??')) {
+    const full = join(root, entry.path);
+    if (existsSync(full) && statSync(full).isFile()) hash.update(readFileSync(full));
+  }
+  return hash.digest('hex').slice(0, 16);
+}
+
+export function classifyDomains(paths) {
+  const hits = {};
+  for (const path of paths) {
+    for (const [key, domain] of Object.entries(DOMAINS)) {
+      if (domain.match.test(path)) (hits[key] ||= {label: domain.label, files: []}).files.push(path);
+    }
+  }
+  return hits;
+}
+
+export function domainPolicyDocs(root, domainKeys) {
+  const docs = [];
+  const walk = dir => {
+    for (const entry of readdirSync(join(root, dir), {withFileTypes: true})) {
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) walk(rel);
+      else if (/\.md$/i.test(entry.name)) docs.push(rel);
+    }
+  };
+  if (existsSync(join(root, 'docs'))) walk('docs');
+  const result = {};
+  for (const key of domainKeys) result[key] = docs.filter(doc => DOMAINS[key].match.test(basename(doc)));
+  return result;
+}
+
+// Related-test discovery: tests reference sources by repo path strings and migrations by file name.
+const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export const TEST_FILE = /\.test\.(ts|mjs)$/;
+
+export function allTestFiles(root) {
+  return gitOut(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']).split('\0')
+    .filter(path => TEST_FILE.test(path) && !path.startsWith('node_modules/') && existsSync(join(root, path))).sort();
+}
+
+function testIndex(root) {
+  const read = rel => ({path: rel, text: readFileSync(join(root, rel), 'utf8')});
+  const tests = allTestFiles(root).map(read);
+  const helperDir = join(root, 'tests', 'helpers');
+  const helpers = existsSync(helperDir) ? readdirSync(helperDir).filter(name => /\.(mjs|ts)$/.test(name)).map(name => read(`tests/helpers/${name}`)) : [];
+  return {tests, helpers};
+}
+
+function tokensFor(path) {
+  if (/^supabase\/migrations\/[^/]+\.sql$/.test(path)) return [basename(path)];
+  const noExt = path.replace(/\.(tsx?|mjs|cjs|jsx?|css)$/, '');
+  return noExt === path ? [path] : [path, noExt];
+}
+
+const mentions = (text, token) => new RegExp(`${escapeRegExp(token)}(?![\\w-])`).test(text);
+
+export function relatedTests(root, paths) {
+  const {tests, helpers} = testIndex(root);
+  const selected = new Map();
+  const add = (test, reason) => {
+    if (!selected.has(test)) selected.set(test, new Set());
+    selected.get(test).add(reason);
+  };
+  const untested = [];
+  for (const path of paths) {
+    let found = false;
+    if (TEST_FILE.test(path) && existsSync(join(root, path))) {
+      add(path, 'self');
+      found = true;
+    }
+    const tokens = tokensFor(path);
+    const sibling = `./${basename(path).replace(/\.(tsx?|mjs|cjs|jsx?)$/, '')}`;
+    const helperHits = helpers.filter(h => h.path === path || tokens.some(token => mentions(h.text, token)));
+    for (const test of tests) {
+      if (test.path === path) continue;
+      const near = dirname(test.path) === dirname(path) && mentions(test.text, sibling);
+      if (near || tokens.some(token => mentions(test.text, token))) {
+        add(test.path, `references ${path}`);
+        found = true;
+      }
+      for (const helper of helperHits) {
+        if (mentions(test.text, `helpers/${basename(helper.path)}`)) {
+          add(test.path, `via ${helper.path} -> ${path}`);
+          found = true;
+        }
+      }
+    }
+    if (!found && /\.(tsx?|mjs|cjs|jsx?|sql|css)$/.test(path) && !path.startsWith('docs/')) untested.push(path);
+  }
+  return {
+    tests: [...selected.entries()].map(([path, reasons]) => ({path, reasons: [...reasons]})).sort((a, b) => a.path.localeCompare(b.path)),
+    untested,
+  };
+}
+
+export function domainTestSuggestions(root, paths) {
+  const prefixes = new Set();
+  for (const path of paths) {
+    const parts = path.replace(/\.[^.]+$/, '').split('/').filter(part => !/^\(.*\)$/.test(part) && !['app', 'lib', 'api', 'admin', 'components', 'tests'].includes(part));
+    if (parts[0]) prefixes.add(parts[0].toLowerCase());
+  }
+  const dir = join(root, 'tests');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter(name => /\.test\.(ts|mjs)$/.test(name) && [...prefixes].some(prefix => name.startsWith(`${prefix}-`))).map(name => `tests/${name}`);
+}
+
+// Static extraction of API routes, tables and RPCs touched by a set of files.
+export function apiRouteOf(path) {
+  const m = path.match(/^app\/(.*)\/route\.(ts|js)$/);
+  if (!m || !m[1].startsWith('api')) return null;
+  return '/' + m[1].split('/').filter(part => !/^\(.*\)$/.test(part)).join('/');
+}
+
+export function dbObjectsIn(text) {
+  const tables = new Set();
+  const rpcs = new Set();
+  const writes = new Set();
+  for (const m of text.matchAll(/\.from\(\s*['"`]([a-z0-9_]+)['"`]\s*\)((?:\s*\.\s*\w+\([^)]*\))*)/gi)) {
+    tables.add(m[1]);
+    const write = m[2].match(/\.\s*(insert|update|upsert|delete)\s*\(/i);
+    if (write) writes.add(`${m[1]}.${write[1].toLowerCase()}`);
+  }
+  for (const m of text.matchAll(/\.rpc\(\s*['"`]([a-z0-9_]+)['"`]/gi)) rpcs.add(m[1]);
+  for (const m of text.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?([a-z0-9_]+)/gi)) rpcs.add(m[1]);
+  for (const m of text.matchAll(/(?:create|alter|drop)\s+table\s+(?:if\s+(?:not\s+)?exists\s+)?(?:public\.)?([a-z0-9_]+)/gi)) {
+    tables.add(m[1]);
+    writes.add(`${m[1]}.ddl`);
+  }
+  for (const m of text.matchAll(/(?:insert\s+into|update|delete\s+from)\s+(?:public\.)?([a-z0-9_]+)/gi)) {
+    if (!['set', 'on', 'of'].includes(m[1].toLowerCase())) writes.add(`${m[1]}.sql-write`);
+  }
+  return {tables: [...tables].sort(), rpcs: [...rpcs].sort(), writes: [...writes].sort()};
+}
+
+export function listSourceFiles(root) {
+  return gitOut(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']).split('\0')
+    .filter(path => path && /\.(tsx?|mjs|cjs|jsx?)$/.test(path) && !path.startsWith('node_modules/'));
+}
+
+// One-level reverse import lookup ("who imports this file"), static and approximate.
+export function importersOf(root, path, sourceFiles = listSourceFiles(root)) {
+  const noExt = path.replace(/\.(tsx?|mjs|cjs|jsx?)$/, '');
+  if (noExt === path) return [];
+  const alias = new RegExp(`['"]@/${escapeRegExp(noExt)}(?:\\.(?:tsx?|mjs|js))?['"]`);
+  const importers = [];
+  for (const file of sourceFiles) {
+    if (file === path || !existsSync(join(root, file))) continue;
+    const text = readFileSync(join(root, file), 'utf8');
+    if (alias.test(text)) {
+      importers.push(file);
+      continue;
+    }
+    for (const m of text.matchAll(/(?:from|import\()\s*['"](\.{1,2}\/[^'"]+)['"]/g)) {
+      const target = toPosix(relative(root, resolve(root, dirname(file), m[1]))).replace(/\.(tsx?|mjs|cjs|jsx?)$/, '');
+      if (target === noExt) {
+        importers.push(file);
+        break;
+      }
+    }
+  }
+  return importers;
+}
+
+export function migrationVersion(path) {
+  return path.match(/^supabase\/migrations\/(\d+)_/)?.[1] || null;
+}
+
+export function sanitizedEnv(extra = {}) {
+  const env = {};
+  const removed = [];
+  for (const [name, value] of Object.entries(process.env)) {
+    if (CREDENTIAL_ENV.test(name)) removed.push(name);
+    else env[name] = value;
+  }
+  return {env: {...env, NEXT_TELEMETRY_DISABLED: '1', ...extra}, removed};
+}
+
+export function parseArgs(argv, spec) {
+  const out = {_: []};
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (!arg.startsWith('--')) {
+      out._.push(arg);
+      continue;
+    }
+    const [rawKey, inline] = arg.slice(2).split(/=(.*)/s);
+    const key = rawKey.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+    if (!(key in spec)) throw new Error(`Unknown option --${rawKey}`);
+    if (spec[key] === 'boolean') out[key] = true;
+    else out[key] = inline ?? argv[++i];
+  }
+  return out;
+}
+
+export const splitList = value => (value ? String(value).split(',').map(item => item.trim()).filter(Boolean) : []);
+
+export function expandPlanned(root, items) {
+  const all = gitOut(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']).split('\0').filter(Boolean);
+  const out = new Set();
+  for (const item of items.map(toPosix)) {
+    if (/[*?]/.test(item)) for (const file of all.filter(file => globToRegExp(item).test(file))) out.add(file);
+    else out.add(item.replace(/^\.\//, ''));
+  }
+  return [...out].sort();
+}
