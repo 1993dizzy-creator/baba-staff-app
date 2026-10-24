@@ -122,3 +122,14 @@ test('additional Build dependencies still fail; fixture metadata cannot convert 
   assert.equal(status, 1); assert.equal(report.verdict, 'FAIL'); assert.equal(build.status, 'blocked-env');
   assert.equal(build.exitCode, 1); assert.equal(build.environment.mode, 'offline-local-fixture');
 });
+test('Verify preserves split UTF-8 child output instead of inventing different failure text', () => {
+  const root = verifierFixture();
+  writeFileSync(join(root, 'node_modules/next/dist/bin/next'), `
+    const out=Buffer.from('한글'), err=Buffer.from('안전');
+    process.stdout.write(out.subarray(0,1)); process.stderr.write(err.subarray(0,1));
+    setTimeout(()=>{process.stdout.write(out.subarray(1));process.stderr.write(err.subarray(1));},100);`);
+  const {status, report} = verifyFixture(root), build = report.checks.find(c => c.name === 'Production Build (next build)');
+  assert.equal(status, 0); assert.equal(build.status, 'passed');
+  assert.doesNotMatch(build.tail, /\uFFFD/);
+  assert.ok(build.tail.includes('한글')); assert.ok(build.tail.includes('안전'));
+});

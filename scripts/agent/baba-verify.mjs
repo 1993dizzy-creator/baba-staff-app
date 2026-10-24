@@ -270,6 +270,9 @@ function tail(text, count) {
 function exec(command, argv, {cwd, env, timeout}) {
   return new Promise(done => {
     const child = spawn(command, argv, {cwd, env, windowsHide: true});
+    // Decode across Buffer boundaries: split Korean TAP/Build text must not become U+FFFD.
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     let output = '';
     const timer = setTimeout(() => {
       output += `\n[baba-verify] timeout after ${timeout}ms`;
