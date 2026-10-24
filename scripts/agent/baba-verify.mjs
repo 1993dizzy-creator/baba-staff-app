@@ -6,7 +6,7 @@
 // Usage: node scripts/agent/baba-verify.mjs [--base origin/main] [--tests a,b] [--all-tests]
 //          [--build] [--no-baseline] [--skip-lint] [--skip-tsc] [--concurrency 4] [--json]
 import {spawn} from 'node:child_process';
-import {existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync} from 'node:fs';
+import {existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync} from 'node:fs';
 import {cpus, tmpdir} from 'node:os';
 import {join, relative, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -329,19 +329,32 @@ async function baseline() {
   const marker = join(dir, '.baba-baseline-ready');
   try {
     if (!existsSync(marker)) {
+      releaseJunction(dir);
       rmSync(dir, {recursive: true, force: true});
       mkdirSync(dir, {recursive: true});
       const indexEnv = {...process.env, GIT_INDEX_FILE: join(dir, '.baba-baseline-index')};
       git(root, ['read-tree', mergeBase], {env: indexEnv});
       git(root, [`--work-tree=${dir}`, 'checkout-index', '-a', '-f'], {env: indexEnv});
-      symlinkSync(join(root, 'node_modules'), join(dir, 'node_modules'), 'junction');
       writeFileSync(marker, `${mergeBase}\n`);
     }
+    // The node_modules junction exists only while this process runs, so a later recursive
+    // cleanup of the temp folder can never follow it into the worktree's real node_modules.
+    if (!existsSync(join(dir, 'node_modules'))) symlinkSync(join(root, 'node_modules'), join(dir, 'node_modules'), 'junction');
+    process.once('exit', () => releaseJunction(dir));
     baselineDir = dir;
   } catch (error) {
     baselineError = error.message.split('\n')[0];
   }
   return baselineDir;
+}
+
+function releaseJunction(dir) {
+  const link = join(dir, 'node_modules');
+  try {
+    if (lstatSync(link).isSymbolicLink()) unlinkSync(link);
+  } catch {
+    // Missing link: nothing to release.
+  }
 }
 
 function statusLabel(check) {
