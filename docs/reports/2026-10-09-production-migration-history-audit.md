@@ -35,10 +35,10 @@ CLI 2.81.3의 `supabase migration list --linked`는 `Access token not provided`�
 
 ## 증거 파일
 
-- [로컬 전체 목록](/C:/workspace/baba-membership/.tmp/migration-history-local.json)
-- [Production 변경 전 목록](/C:/workspace/baba-membership/.tmp/migration-history-remote-before.json)
-- [Production 최종 재조회 목록](/C:/workspace/baba-membership/.tmp/migration-history-remote-after.json)
-- [전체 대조 결과](/C:/workspace/baba-membership/.tmp/migration-history-comparison.json)
+- [로컬 전체 목록](../../.tmp/migration-history-local.json)
+- [Production 변경 전 목록](../../.tmp/migration-history-remote-before.json)
+- [Production 최종 재조회 목록](../../.tmp/migration-history-remote-after.json)
+- [전체 대조 결과](../../.tmp/migration-history-comparison.json)
 - CLI 실패 로그: `.tmp/migration-history-before-cli.log` — 자격 증명은 기록하지 않았다.
 
 ## 재개 조건과 남은 작업

@@ -219,7 +219,7 @@ fixture의 6974/6981/7055/7059/7057 금액 100,000₫ 및 catalog/단가는 개�
 테스트 도구는 루트 package.json/lockfile을 바꾸지 않고 `.qa-review/pos-tools`에 격리 설치했다. 재현용 설치:
 
 ```powershell
-$env:npm_config_cache = 'C:\workspace\baba-membership\.cache\pos-tools'
+$env:npm_config_cache = Join-Path (Get-Location).Path '.cache/pos-tools'
 npm.cmd install --prefix .qa-review/pos-tools --no-save --package-lock=false playwright@1.58.2 esbuild@0.25.12 @embedded-postgres/windows-x64@17.10.0-beta.17
 node --experimental-strip-types --test tests/pos-pending-resolution-*.test.*
 ```
