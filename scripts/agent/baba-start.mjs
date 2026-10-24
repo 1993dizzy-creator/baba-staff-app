@@ -168,9 +168,11 @@ export function startTask(args, cwd = process.cwd()) {
     const waiting = report.branch === `${prefix}idle` || report.branch.startsWith(`${prefix}ready-`);
     const resuming = Boolean(record && record.taskKey === taskKey);
     if (args.resume && !resuming) fail('TASK_MISMATCH', '다른 작업으로 기록된 브랜치를 재개하지 않는다.');
-    if (!waiting && !record) fail('UNRECORDED_BRANCH', '기록 없는 작업 브랜치를 보존하고 중단한다. 임의로 완료 처리하지 않는다.');
+    if (!waiting && !record && (!TASK_ID.test(taskId) || !finished(root, {branch: report.branch, taskId, baseSha: headBefore}))) {
+      fail('UNRECORDED_BRANCH', '기록과 검증된 완료 인계서가 없는 작업 브랜치를 보존하고 중단한다.');
+    }
     if (record && !ancestor(root, record.baseSha, headBefore)) fail('REWRITTEN_TASK', '작업 기준 커밋이 현재 이력에 없다. 기록이나 이력을 고치지 않는다.');
-    if (!waiting && !resuming && !finished(root, record)) fail('UNFINISHED_TASK', '다른 미완료 작업이 있다. 기존 작업 ID로 재개하거나 작업을 먼저 완료한다.');
+    if (!waiting && record && !resuming && !finished(root, record)) fail('UNFINISHED_TASK', '다른 미완료 작업이 있다. 기존 작업 ID로 재개하거나 작업을 먼저 완료한다.');
     if (waiting && !ancestor(root, headBefore, 'refs/heads/main')) fail('UNFINISHED_TASK', '대기 브랜치에 main에 없는 작업 커밋이 있다.');
     for (const hook of ['post-checkout', 'reference-transaction']) {
       const configured = git(root, ['config', '--get', 'core.hooksPath'], {allowFail: true});

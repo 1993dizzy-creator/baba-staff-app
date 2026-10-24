@@ -42,7 +42,7 @@ node scripts/agent/baba-start.mjs --task "작업명" --slug task-slug --files "a
 4. 상태·Preflight를 재확인한 뒤 검증한 로컬 main SHA에서 `git switch --no-track -c <agent>/<YYYYMMDD>-<slug>-<NN> <SHA>`로 생성한다. 번호 충돌·다른 Worktree 사용·기존 예약 기록은 건너뛴다. upstream은 만들지 않는다. 최종 Preflight 후 STARTED를 반환한다.
 5. 작업 ID는 접두사를 뺀 부분이다. `.tmp-baba/start/tasks/`에는 생성 기록, `runs/`에는 실행별 결과를 배타적으로 새 파일에 저장한다. 자기 Worktree의 ignored 경로만 사용하며 기존 기록을 덮어쓰지 않는다. 프로세스 잠금으로 같은 Worktree의 중복 실행을 막는다. 활성 Git 전환/ref hook은 실행하지 않고 중단한다.
 6. 기록된 같은 작업명·slug는 새 브랜치를 만들지 않고 RESUMED로 반환한다. 명시적 재개는 `node scripts/agent/baba-start.mjs --resume <작업-ID> --json`이다. 현재 기록된 브랜치에서만 재개하며 dirty 상태는 항상 중단한다. 사망이 확인된 프로세스 잠금은 명시적 재개에서만 다른 이름으로 보관한다. 전환 후 최종 검사 실패도 브랜치·코드·생성 기록을 남겨 재개할 수 있게 한다.
-7. 기록 없는 작업 브랜치, 다른 미완료 작업, 손상된 기록은 임의 채택하거나 완료 처리하지 않는다. 다음 다른 작업은 clean이고 현재 작업 커밋이 main에 포함되었거나 기본 경로의 현재 코드와 일치하는 Handoff `--check`가 통과해야 시작한다. Handoff만으로 기능 커밋을 main에 자동 포함하지 않는다. 미통합 기능 의존성이 필요하면 별도로 보고한다.
+7. 기록 없는 작업 브랜치, 다른 미완료 작업, 손상된 기록은 임의 채택하거나 완료 처리하지 않는다. 도구 도입 전 브랜치는 기본 경로의 현재 코드와 일치하는 완료 Handoff가 검증된 경우에만 다음 새 작업을 허용한다(과거 재개 기록은 만들지 않음). 기록된 작업의 다음 다른 작업은 clean이고 현재 커밋이 main에 포함되었거나 Handoff `--check`가 통과해야 시작한다. Handoff만으로 기능 커밋을 main에 자동 포함하지 않는다. 미통합 기능 의존성이 필요하면 별도로 보고한다.
 8. 개발 중 커밋은 작업 브랜치에만 한다. `reset --hard`, 무조건적 `clean`, 강제 전환, 자동 stash, 이력 재작성, 다른 Worktree 브랜치 삭제는 금지한다. 범위 변경 시 Preflight를 다시 실행한다. `package-lock.json`이 바뀌었으면 자기 Worktree에서만 `npm ci`한다.
 9. `baba-verify`(§8) → `baba-handoff`(§10) → 작업 브랜치에 커밋한다. 이전 idle·작업 브랜치를 보존한다. main 병합·push·배포·운영 변경은 별도 승인 대상이다(§6·§7).
 

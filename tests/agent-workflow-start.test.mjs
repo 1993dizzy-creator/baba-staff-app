@@ -200,7 +200,13 @@ test('unfinished Git operation is preserved even when status is clean', () => {
   assert.equal(readFileSync(path, 'utf8'), `${f.seed}\n`);
 });
 test('only a current checked Handoff permits a new unrelated task before integration', () => {
+  for (const legacy of [false, true]) {
   const f = fixture(), first = start(f.codex, request()); commit(f.codex, 'app/a.ts', 'completed feature\n');
+  if (legacy) {
+    // Preserve the old manifest as evidence, simulating a branch predating this tool.
+    const manifest = join(f.codex, `.tmp-baba/start/tasks/${first.taskId}.json`);
+    renameSync(manifest, `${manifest}.preserved`);
+  }
   put(f.codex, '.tmp-baba/verify/latest.json', JSON.stringify({root: f.codex, fingerprint: stateFingerprint(f.codex),
     verdict: 'PASS', checks: [], gaps: [], generatedAt: new Date().toISOString()}));
   const out = `docs/handoffs/${first.branch.replace('/', '-')}.md`;
@@ -213,6 +219,7 @@ test('only a current checked Handoff permits a new unrelated task before integra
   const r = start(f.codex, request('next', 'app/b.ts')); assert.equal(r.status, 'STARTED');
   assert.equal(r.baseSha, f.seed); assert.equal(head(f.main), f.seed);
   assert.ok(gitOut(f.main, ['rev-parse', first.branch]));
+  }
 });
 test('missing option values and positional arguments fail before any side effects', () => {
   const f = fixture(), before = refs(f.main);
