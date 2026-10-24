@@ -107,6 +107,7 @@ test('dirty current worktree stops before fetch and preserves file bytes', () =>
 test('other worktree dirty overlap blocks while its source and branch remain untouched', () => {
   const f = fixture(); put(f.claude, 'app/a.ts', 'Claude work\n'); const before = refs(f.main);
   assert.equal(start(f.codex, request()).code, 'WORKTREE_CONFLICT'); assert.equal(refs(f.main), before);
+  assert.equal(start(f.codex, request('directory', 'app')).code, 'WORKTREE_CONFLICT');
   assert.equal(readFileSync(join(f.claude, 'app/a.ts'), 'utf8'), 'Claude work\n');
 });
 test('other worktree committed overlap and new files matching glob block', () => {

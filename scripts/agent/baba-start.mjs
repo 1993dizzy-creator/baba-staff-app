@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Prepare/resume one task in the calling agent's worktree. Never move main or discard work.
 import {createHash, randomUUID} from 'node:crypto';
-import {existsSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync} from 'node:fs';
+import {existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync} from 'node:fs';
 import {join, relative, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {
@@ -160,7 +160,10 @@ export function startTask(args, cwd = process.cwd()) {
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug.length > 48) fail('INVALID_SLUG', 'slug는 소문자·숫자·하이픈 48자 이내다.');
     const requested = args.files ? splitList(args.files) : record?.files;
     if (!requested?.length || requested.some(file => typeof file !== 'string')) fail('MISSING_SCOPE', '--files로 수정 예정 경로/glob을 지정한다. 모르면 읽기 전용 조사부터 한다.');
-    const files = [...new Set(requested.map(file => relative(root, insideRoot(root, file)).split('\\').join('/') || '**'))];
+    const files = [...new Set(requested.map(file => {
+      const full = insideRoot(root, file), path = relative(root, full).split('\\').join('/');
+      return !path ? '**' : existsSync(full) && statSync(full).isDirectory() ? `${path}/**` : path;
+    }))];
     for (const file of files) {
       if (/(^|[/\\])(?:\.env(?:\.|$)|\.git(?:[/\\]|$))/.test(file)) fail('UNSAFE_SCOPE', '환경 값·Git 메타데이터는 작업 범위로 지정하지 않는다.');
     }
