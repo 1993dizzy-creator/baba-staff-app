@@ -42,6 +42,7 @@ description: BABA 관리자 앱 코드 변경 후 실행하는 검증. 변경 �
 ## 안전 장치
 
 - 테스트·빌드 자식 프로세스에서 Supabase·CUKCUK·POS·cron·세션·DB 계열 환경 변수를 제거한다.
+- Build 자식 프로세스에만 제거 후 고정 loopback URL과 실행 시 생성한 테스트 `anon` JWT를 넣는다. 서버 초기화용 `SUPABASE_SERVICE_ROLE_KEY` 변수에도 같은 `anon` 토큰을 넣으며 운영 권한이 없다. 환경 파일이나 실제 프로젝트 키를 사용하지 않는다. JSON의 Build `environment`와 사람용 출력에 가상 환경을 표시한다. 이 `.next`는 검증용이며 배포하지 않는다. 실제 환경·인증·DB는 미검증이다.
 - `scripts/agent/lib/offline-guard.mjs`를 preload해 loopback 외의 연결을 막는다.
 - 기준선은 담당 Worktree의 `.tmp-baba/baseline-*`에 실행별 merge-base 스냅샷으로 보존한다. 별도 index를 사용하며 공유 기준선이나 재귀 삭제를 사용하지 않는다. node_modules junction은 만든 실행이 자기 링크임을 확인한 뒤 unlink한다.
 - 환경 파일이 있으면 값을 읽기 전에 중단한다. 프로세스 환경 변수 제거만으로 Next.js의 .env 파일 로딩을 막을 수 없기 때문이다.

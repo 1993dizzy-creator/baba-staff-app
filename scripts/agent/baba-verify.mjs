@@ -16,6 +16,7 @@ import {
   stateFingerprint, assertOwnedWorktree, insideRoot, TEST_FILE,
 } from './lib/common.mjs';
 import {createBaseline} from './lib/baseline.mjs';
+import {createBuildEnvironment} from './lib/build-env.mjs';
 
 const args = parseArgs(process.argv.slice(2), {
   base: 'string', tests: 'string', allTests: 'boolean', build: 'boolean', noBaseline: 'boolean', skipLint: 'boolean',
@@ -201,7 +202,10 @@ const buildReasons = files.filter(file => matchesAny(file.path, BUILD_TRIGGERS) 
 const buildCheck = {name: 'Production Build (next build)', status: 'not-run', ran: false, recommendedBy: buildReasons};
 if (args.build) {
   buildCheck.ran = true;
-  const result = await exec(process.execPath, [join(root, 'node_modules', 'next', 'dist', 'bin', 'next'), 'build'], {cwd: root, env: childEnv, timeout: 30 * 60 * 1000});
+  const build = createBuildEnvironment();
+  buildCheck.environment = build.description;
+  gaps.push('Build는 offline-local-fixture 환경의 검증이다. 운영 환경·인증·DB 연결은 미검증이며 이 .next 산출물을 배포하지 않는다.');
+  const result = await exec(process.execPath, [join(root, 'node_modules', 'next', 'dist', 'bin', 'next'), 'build'], {cwd: root, env: build.env, timeout: 30 * 60 * 1000});
   buildCheck.exitCode = result.code;
   buildCheck.tail = tail(result.output, 40);
   if (result.code === 0) buildCheck.status = 'passed';
@@ -211,7 +215,7 @@ if (args.build) {
   } else {
     const base = await baseline();
     if (base) {
-      const before = await exec(process.execPath, [join(base, 'node_modules', 'next', 'dist', 'bin', 'next'), 'build'], {cwd: base, env: childEnv, timeout: 30 * 60 * 1000});
+      const before = await exec(process.execPath, [join(base, 'node_modules', 'next', 'dist', 'bin', 'next'), 'build'], {cwd: base, env: build.env, timeout: 30 * 60 * 1000});
       buildCheck.baselineExitCode = before.code;
       const signature = text => [...text.matchAll(/^(?:.*Error:.*|.*error TS\d+:.*|.*Module not found:.*)$/gm)].map(match => match[0].replaceAll(root, '<root>').replaceAll(base, '<root>')).sort();
       const currentErrors = signature(result.output);
@@ -389,7 +393,7 @@ function render(r, saved) {
       summary = `${check.files.length}개 파일: 통과 ${count('passed')}, 실패 ${count('failed')}(신규 ${check.newFailures.length}, 기존 ${check.preexisting.length}), 전부 skip ${count('skipped')}`;
     }
     if (check.ran && 'newErrors' in check && typeof check.preexisting === 'number') summary = `신규 오류 ${check.newErrors.length}, 기존 ${check.preexisting}${check.newWarnings ? `, 신규 경고 ${check.newWarnings.length}` : ''}${check.total !== undefined ? `, 전체 ${check.total}` : ''}`;
-    if (check.recommendedBy) summary = check.ran ? `exit ${check.exitCode}` : check.recommendedBy.length ? `권장 사유: ${check.recommendedBy.length}개 파일` : '권장 사유 없음';
+    if (check.recommendedBy) summary = check.ran ? `exit ${check.exitCode}; 환경 ${check.environment.mode} (운영 미검증·배포 불가)` : check.recommendedBy.length ? `권장 사유: ${check.recommendedBy.length}개 파일` : '권장 사유 없음';
     lines.push(`| ${check.name} | ${check.ran ? '예' : '아니오'} | ${statusLabel(check)} | ${summary} |`);
   }
   lines.push('');

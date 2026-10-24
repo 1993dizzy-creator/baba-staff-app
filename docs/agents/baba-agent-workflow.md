@@ -129,6 +129,8 @@ Skill 자동 호출은 `AGENTS.md`/`CLAUDE.md` 진입점의 지침으로 연결�
 - **Production Build**: `--build`일 때만 실행한다.
   - 다음 변경이면 필요하다: 설정·의존성·layout·page/route 추가·삭제, CSS, `proxy.ts`
   - 병합 준비 단계에서도 필요하다.
+  - 운영 환경 변수를 제거한 후 Build 자식에만 `http://127.0.0.1:9`와 실행 시 생성한 테스트 `anon` JWT를 제공한다. 서버 초기화에 필요한 service-role 이름의 변수에도 같은 `anon` 값을 넣는다. 실제 키·환경 파일·DB·서버는 제공하지 않는다. 테스트·lint·TypeScript·부모 프로세스에는 주입하지 않는다. 오프라인 가드는 유지한다.
+  - 결과에 `offline-local-fixture`를 표시한다. 실제 운영 환경·인증·DB 연결 성공을 뜻하지 않으며 검증용 `.next`를 배포하면 안 된다. 추가 환경 변수·서비스가 필요하면 기존 실패/환경 차단 판정을 유지하며 성공으로 바꾸지 않는다.
 - **기존 오류와 신규 오류 구분**
   - 실패가 있으면 담당 Worktree의 `.tmp-baba/baseline-*`에 실행별 merge-base 스냅샷과 별도 index를 만들어 같은 검사를 비교한다. 스냅샷은 보존하며 자동 재귀 삭제하지 않는다. node_modules junction은 만든 실행만 자기 링크임을 확인한 뒤 unlink한다.
   - 기준선에도 있는 오류는 "기존", 새로 생긴 오류는 "신규"로 분류한다.
