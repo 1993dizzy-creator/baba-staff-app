@@ -27,7 +27,7 @@ identity를 확인하고 unlink하며 의존성 디렉터리와 기존 결과는
 | --- | --- | --- |
 | INSPECTED | 0 | 증거·현재 상태 검사 통과, 병합/Build 준비는 미실행 |
 | PREPARED | 0 | 격리 병합과 Verify/Build 통과, 로컬 main 승인 대기 |
-| MERGED_LOCAL | 0 | 일치하는 별도 사용자 승인으로 로컬 main만 변경 |
+| merge 요청 | 2 | R1: 독립적인 사용자 인증이 없어 실행 비활성화 |
 | BLOCKED | 2 | `code`, `reason`, `inspection.blockers`에 사유 기록 |
 
 `savedAs`는 실행별 JSON 경로이며 `latest.json`은 조회용 포인터다.
@@ -50,32 +50,67 @@ digest, 격리 환경·통합 검증 경로를 포함한다. 차단이 빨라 �
 - main이 바뀌어도 예전 후보의 `prepare`를 새 main 기준으로 다시 수행할 수 있다.
   이전 준비 결과/승인은 사용할 수 없다. 후보 SHA 또는 증거·다른 활성 작업이 바뀌어도 재검증한다.
 
-## 별도 승인 이후 로컬 main
+## R1: main 실행 비활성화와 독립 승인 설계
 
-이번 개발에서는 실제 main 병합을 실행하지 않는다. 향후 사용자가 특정 후보/main에 대한 로컬 병합을
-명시 승인한 후, 승인 주체가 담당 Worktree 내부에 다음 JSON을 제공한다. 도구는 승인을 자동 발급하지 않는다.
+이전 `approvedBy: "user"` JSON은 사용자 출처를 증명하지 못한다. 현재 Full Access 에이전트가
+같은 파일·digest·시각을 만들 수 있으므로 서명 없는 승인 파일을 사용자 승인으로 인정하지 않는다.
+기존 main 실행 코드를 제거했다. `merge` 요청은 원격 최신성을 확인한 뒤
+`LOCAL_MAIN_EXECUTION_DISABLED`로 차단하며 정상/위조 승인 파일 모두 실행을 허용하지 않는다.
+원격 또는 로컬 main이 기존 prepare와 다르면 먼저 재검증 사유로 차단한다.
 
-```json
-{
-  "version": 1,
-  "action": "merge-local-main",
-  "approvedBy": "user",
-  "approvedAt": "사용자가 승인한 ISO 시각",
-  "branch": "codex/YYYYMMDD-task-01",
-  "candidateHead": "후보 40자리 SHA",
-  "mainHead": "승인 대상 main 40자리 SHA",
-  "preparedId": "PREPARED 결과의 id",
-  "preparedDigest": "저장된 PREPARED JSON을 parse한 후 JSON.stringify한 내용의 SHA-256"
-}
-```
+가능한 후속 설계는 다음과 같다. 아직 구현하거나 승인 경로를 설치하지 않았다.
 
-```powershell
-node scripts/agent/baba-integrate.mjs merge --prepared .tmp-baba/integrate/runs/RESULT.json --approval .tmp-baba/USER-APPROVAL.json
-```
+- 사용자가 독립된 터미널에서 후보 SHA·main SHA·실제 원격 SHA·prepare 증거를 확인하고 직접 실행한다.
+  현재 사용자는 main 병합을 금지했으므로 이 작업에서는 수행하지 않는다.
+- 또는 에이전트와 다른 OS 계정/서비스의 승인 UI에서 인증한 뒤, 에이전트가 쓸 수 없는 키로
+  일회성 승인에 서명한다. 검증 키와 실행 주체도 에이전트가 바꿀 수 없는 경계에 두고
+  branch/candidate SHA/main SHA/remote SHA/prepare digest/만료·nonce/사용 이력을 확인한다.
+- workspace 파일, 환경변수, 동일 권한의 로컬 키 파일만으로 독립 인증을 달성했다고 주장하지 않는다.
 
-직전에 후보/main/증거/격리 환경을 다시 확인한다. 실제 테스트한 merge commit을 가져와 원본 main을
-그 commit으로 ff-only 진행한다. 승인 대상이 바뀌면 중단한다. 원본의 활성 Git hook은 자동 실행하지 않고
-검토 대상으로 차단한다. main 작업은 사용자와 다른 도구가 동시에 수정하지 않는 시점에 수행해야 한다.
+## D1: Git Hook 검사
+
+Git 2.55는 파일 Hook 외에 `hook.<name>.event/command`도 실행한다.
+[Git Hook 문서](https://git-scm.com/docs/git-hook/2.55.0)를 기준으로 공통 검사에서
+effective config의 키를 `--includes`로 조사하며 command 값은 읽거나 출력하지 않는다.
+`post-index-change`를 포함한 기본 shared hooks와 core.hooksPath 디렉터리 모두를 확인한다.
+core.hooksPath를 비워 두는 것만으로 config Hook이 차단됐다고 가정하지 않는다.
+조건부 includeIf는 다음 branch/gitdir 문맥에서 활성화될 수 있어 보수적으로 차단한다.
+알 수 없는 Git 환경변수, 깨진 config, 읽지 못한 디렉터리도 차단한다.
+공유 Hook을 삭제하거나 원본 설정을 변경하지 않는다. start의 fetch/switch, Verify의 baseline
+index 쓰기, prepare의 fetch/switch/merge 전에 공통 검사를 실행한다.
+
+## D2: 테스트와 SHA 증거
+
+Verify archive에 `baseSha`와 `testSelection.explicit/allTests/executed`를 기록한다.
+후보 code HEAD·merge-base·실제 diff와 archive의 변경 범위 및 실행 목록을 대조한다.
+prepare는 명시적 테스트를 포함한 후보 실행 목록 전체와 새 main 변경의 관련 테스트를 재실행한다.
+기존 테스트가 사라졌거나 자동 정적 탐색으로 검사 범위를 확보하지 못하면 차단한다.
+테스트 0건·불명확한 목록·skip은 통합 통과가 아니다. 정적 참조 탐색이 의미적 커버리지 증명은 아니다.
+후속 인계서는 기존 파일을 보존하고 `--handoff docs/handoffs/<branch>-<suffix>.md`로 지정한다.
+
+## D3: 실제 원격 main 정책
+
+prepare 시작·종료와 merge 요청 진입 시 `git ls-remote origin refs/heads/main`을 직접 읽는다.
+로컬 origin/main 캐시는 최신성 증거가 아니다. 원격 조회는 읽기 전용이며 push하지 않는다.
+
+| 관계 | 처리 |
+| --- | --- |
+| 실제 원격 = 로컬 main | 후속 검사 가능 |
+| 로컬 선행, 원격 SHA가 조상 | 독립 인증된 선행 커밋 승인 증거가 필요 |
+| 원격 선행 | 차단 |
+| 분기 | 차단 |
+| 조회 실패/원격 객체 부재/관계 불명확 | 차단 |
+
+로컬 선행의 정책상 허용 조건은 유지하되, R1의 독립 승인 검증기가 현재 없으므로
+이 구현은 `LOCAL_AHEAD_APPROVAL_UNVERIFIABLE`로 차단한다. 자기 작성 영수증으로 우회하지 않는다.
+원격·main SHA가 바뀌면 이전 prepare는 무효다. main 실행은 이와 별개로 계속 비활성화다.
+
+## R2: 남아 있는 TOCTOU
+
+검사 직후 외부 프로세스가 config/include/Hook·link·Git 상태를 바꾸는 경쟁은 해결되지 않았다.
+변이 직전 반복 검사는 위험을 줄일 뿐 원자적 인증/격리를 제공하지 않는다. 개선 방향은
+독립 실행 계정, 에이전트가 바꿀 수 없는 config/키/Hook 정책, 보호된 실행 환경과
+승인 SHA를 expected-old로 묶는 원자적 ref 갱신이다. 이 작업에서는 해결됐다고 주장하지 않는다.
 
 ## 출력 경계와 권한 한계
 

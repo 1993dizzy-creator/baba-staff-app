@@ -5,13 +5,14 @@ import {existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSyn
 import {join, relative, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {
-  AGENTS, HOT_FILES, POLICY_DOC, apiRouteOf, assertOwnedWorktree, committedChanges, commitFingerprint,
+  AGENTS, HOT_FILES, POLICY_DOC, apiRouteOf, assertNoGitHooks, guardedGit, assertOwnedWorktree, committedChanges, commitFingerprint,
   dbObjectsIn, git, gitOut, identifyWorktree, insideRoot, listWorktrees, matchesAny, parseArgs, repoRoot,
-  run, stateFingerprint, workingChanges, worktreeEnvironment, writeRecord,
+  relatedTests, run, stateFingerprint, workingChanges, worktreeEnvironment, writeRecord,
 } from './lib/common.mjs';
 import {readTask} from './baba-start.mjs';
 import {checkHandoff} from './lib/handoff-format.mjs';
 import {verifyEvidence} from './lib/verify-evidence.mjs';
+import {remoteMainState} from './lib/remote-main.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 const fail = (code, message = code) => { throw Object.assign(new Error(message), {code}); };
@@ -49,7 +50,7 @@ function contracts(root, changed, ref) {
 }
 
 // Validate committed handoff + immutable report, even after the owner starts another task.
-function candidateEvidence(root, trees, branch) {
+function candidateEvidence(root, trees, branch, handoffPath) {
   const match = branch?.match(/^(codex|claude)\/(\d{8}-[a-z0-9]+(?:-[a-z0-9]+)*-\d{2,})$/);
   if (!match) fail('INVALID_CANDIDATE_BRANCH');
   const [, agent, taskId] = match;
@@ -59,7 +60,9 @@ function candidateEvidence(root, trees, branch) {
   const head = sha(root, `refs/heads/${branch}`);
   if (!ancestor(root, record.baseSha, head)) fail('TASK_HISTORY_MISMATCH');
   if (owner.branch === branch && workingChanges(owner.path).length) fail('DIRTY_CANDIDATE');
-  const handoff = `docs/handoffs/${branch.replace('/', '-')}.md`;
+  const stem = `docs/handoffs/${branch.replace('/', '-')}`;
+  const handoff = handoffPath || `${stem}.md`;
+  if (!(handoff === `${stem}.md` || handoff.startsWith(`${stem}-`)) || !handoff.endsWith('.md') || handoff.includes('..') || handoff.includes('\\')) fail('HANDOFF_PATH_INVALID');
   const raw = git(root, ['show', `${head}:${handoff}`], {allowFail: true});
   if (raw.status !== 0) fail('HANDOFF_MISSING');
   const text = raw.stdout.replace(/\r\n/g, '\n');
@@ -76,21 +79,30 @@ function candidateEvidence(root, trees, branch) {
   const archive = insideRoot(owner.path, savedAs[2]);
   const verify = readJson(archive);
   const problems = verifyEvidence(owner.path, verify, {head: codeHead, branch, fingerprint});
+  if (!SHA.test(verify.baseSha || '') || git(root, ['cat-file', '-e', `${verify.baseSha}^{commit}`], {allowFail: true}).status !== 0 ||
+      !ancestor(root, record.baseSha, verify.baseSha) || !ancestor(root, verify.baseSha, 'refs/heads/main') ||
+      gitOut(root, ['merge-base', codeHead, verify.baseSha]) !== verify.mergeBase) problems.push('VERIFY_BASE_SHA_MISMATCH');
+  const withoutHandoffs = entries => paths(entries).filter(path => !path.startsWith('docs/handoffs/')).sort();
+  if (SHA.test(verify.mergeBase || '') && JSON.stringify(withoutHandoffs(committedChanges(root, verify.mergeBase, codeHead))) !==
+      JSON.stringify(withoutHandoffs(verify.changedFiles || []))) problems.push('VERIFY_CHANGED_SCOPE_MISMATCH');
   if (savedAs[1] !== verify.verdict || verify.savedAs !== savedAs[2]) problems.push('VERIFY_ARCHIVE_MISMATCH');
   if (problems.length) fail('VERIFY_EVIDENCE_REJECTED', problems.join('; '));
   return {agent, taskId, branch, head, codeHead, baseSha: record.baseSha, owner: owner.path,
-    handoff, handoffDigest: digest(text), verify: savedAs[2], verifyDigest: digest(verify), verdict: verify.verdict};
+    handoff, handoffDigest: digest(text), verify: savedAs[2], verifyDigest: digest(verify), verdict: verify.verdict,
+    testSelection: verify.testSelection, verifiedBase: verify.baseSha};
 }
 
-export function inspectCandidate(root, branch) {
+export function inspectCandidate(root, branch, handoff) {
+  assertNoGitHooks(root);
   const trees = listWorktrees(root);
   const main = trees.find(tree => tree.branch === 'main' && identifyWorktree(tree.path).isOriginal);
   if (!main || !existsSync(main.path)) fail('MAIN_WORKTREE_UNAVAILABLE');
+  assertNoGitHooks(main.path);
   noOperation(main.path);
   if (workingChanges(main.path).length) fail('DIRTY_MAIN');
   const mainHead = sha(root, 'refs/heads/main');
   if (sha(main.path, 'HEAD') !== mainHead) fail('MAIN_HEAD_MISMATCH');
-  const candidate = candidateEvidence(root, trees, branch);
+  const candidate = candidateEvidence(root, trees, branch, handoff);
   const base = gitOut(root, ['merge-base', mainHead, candidate.head]);
   if (ancestor(root, candidate.head, mainHead)) fail('ALREADY_IN_MAIN');
   const changed = paths(committedChanges(root, base, candidate.head));
@@ -102,6 +114,7 @@ export function inspectCandidate(root, branch) {
   for (const tree of trees) {
     if (samePath(tree.path, main.path) || tree.branch === branch) continue;
     if (!existsSync(tree.path)) fail('OTHER_WORKTREE_UNAVAILABLE');
+    assertNoGitHooks(tree.path);
     noOperation(tree.path);
     const otherHead = sha(tree.path, 'HEAD');
     const otherBase = gitOut(root, ['merge-base', mainHead, otherHead]);
@@ -129,13 +142,14 @@ export function inspectCandidate(root, branch) {
 }
 
 function stable(root, inspection) {
-  const next = inspectCandidate(root, inspection.candidate.branch);
+  const next = inspectCandidate(root, inspection.candidate.branch, inspection.candidate.handoff);
   // Other active work and immutable verification evidence are approval inputs too.
   if (digest(next) !== digest(inspection)) fail('INPUT_CHANGED_REVALIDATE');
   if (next.blockers.length) fail('INTEGRATION_BLOCKED');
 }
 
 function preparation(root, inspection, report) {
+  report.remote = remoteMainState(root);
   const parent = insideRoot(root, '.tmp-baba/integrate/environments');
   mkdirSync(parent, {recursive: true});
   const directory = mkdtempSync(join(parent, 'prepare-'));
@@ -150,14 +164,14 @@ function preparation(root, inspection, report) {
   const hooks = insideRoot(root, join(sandbox, '.tmp-baba/empty-hooks'));
   mkdirSync(hooks, {recursive: true});
   git(sandbox, ['config', 'core.hooksPath', hooks], options);
-  git(sandbox, ['config', 'user.name', 'BABA isolated integration'], options);
-  git(sandbox, ['config', 'user.email', 'integration@example.invalid'], options);
+  guardedGit(sandbox, ['config', 'user.name', 'BABA isolated integration'], options);
+  guardedGit(sandbox, ['config', 'user.email', 'integration@example.invalid'], options);
   // Independent object database/index/refs: fetching a LOCAL path never mutates source refs.
   for (const [ref, head] of [['main', inspection.main.head], ['candidate', inspection.candidate.head]]) {
-    git(sandbox, ['-c', 'protocol.file.allow=always', 'fetch', '--no-tags', '--no-recurse-submodules', root, `${head}:refs/heads/${ref}`], options);
+    guardedGit(sandbox, ['-c', 'protocol.file.allow=always', 'fetch', '--no-tags', '--no-recurse-submodules', root, `${head}:refs/heads/${ref}`], options);
   }
-  git(sandbox, ['switch', '-c', `${identifyWorktree(root).agent}/integration-${report.id}`, 'main'], options);
-  const merged = git(sandbox, ['merge', '--no-edit', ...(inspection.strategy === 'fast-forward' ? ['--ff-only'] : ['--no-ff']), 'candidate'], {...options, allowFail: true});
+  guardedGit(sandbox, ['switch', '-c', `${identifyWorktree(root).agent}/integration-${report.id}`, 'main'], options);
+  const merged = guardedGit(sandbox, ['merge', '--no-edit', ...(inspection.strategy === 'fast-forward' ? ['--ff-only'] : ['--no-ff']), 'candidate'], {...options, allowFail: true});
   report.merge = {strategy: inspection.strategy, exitCode: merged.status};
   writeRecord(root, join(directory, 'merge.json'), {exitCode: merged.status, unmerged: gitOut(sandbox, ['diff', '--name-only', '--diff-filter=U'])});
   if (merged.status !== 0) fail('CODE_CONFLICT', '격리된 병합 실패. 충돌 환경과 증거를 보존했다.');
@@ -170,14 +184,23 @@ function preparation(root, inspection, report) {
   symlinkSync(dependencyTarget, link, 'junction');
   const identity = lstatSync(link, {bigint: true});
   try {
+    const mainChanged = paths(committedChanges(root, inspection.base, inspection.main.head));
+    const coverage = relatedTests(sandbox, [...new Set([...inspection.changed, ...mainChanged])].filter(path => !path.startsWith('docs/handoffs/')));
+    if (coverage.untested.length) fail('TEST_SCOPE_INSUFFICIENT', coverage.untested.join(', '));
+    const testPaths = [...new Set([...inspection.candidate.testSelection.executed, ...coverage.tests.map(test => test.path)])].sort();
+    for (const path of testPaths) if (!existsSync(insideRoot(sandbox, path))) fail('PREPARE_TEST_MISSING');
+    if (!testPaths.length) fail('PREPARE_TESTS_EMPTY');
+    report.testSelection = {inherited: inspection.candidate.testSelection, executed: testPaths, mainChanged};
     // Use the caller's verifier, not a modified candidate copy of the approval gate.
-    const checked = run(process.execPath, [join(root, 'scripts/agent/baba-verify.mjs'), '--base', 'main', '--build', '--json'],
+    const checked = run(process.execPath, [join(root, 'scripts/agent/baba-verify.mjs'), '--base', 'main', '--build', '--json',
+      '--tests', testPaths.join(','), ...(inspection.candidate.testSelection.allTests ? ['--all-tests'] : [])],
       {cwd: sandbox, env: worktreeEnvironment(root, env, sandbox), allowFail: true, timeout: 60 * 60 * 1000});
     let verify;
     try { verify = JSON.parse(checked.stdout); } catch { fail('INTEGRATED_VERIFY_MISSING'); }
     report.integratedVerify = relative(root, join(sandbox, verify.savedAs || '.tmp-baba/verify/latest.json')).split('\\').join('/');
     report.integratedVerifyDigest = digest(verify);
     const problems = verifyEvidence(sandbox, verify, {head: report.mergedHead, fingerprint: stateFingerprint(sandbox), build: true});
+    if (verify.baseSha !== inspection.main.head || testPaths.some(path => !verify.testSelection?.executed?.includes(path))) problems.push('PREPARE_TEST_EVIDENCE_MISMATCH');
     if (checked.status !== 0 || problems.length) fail('INTEGRATED_VERIFY_FAILED', problems.join('; ') || 'baba-verify FAIL');
     report.integratedVerdict = verify.verdict;
   } finally {
@@ -186,70 +209,44 @@ function preparation(root, inspection, report) {
     unlinkSync(link); // Only the link made by this run; preserve every source/dependency file.
   }
   stable(root, inspection);
+  if (digest(remoteMainState(root)) !== digest(report.remote)) fail('REMOTE_CHANGED_REVALIDATE');
   return sandbox;
-}
-
-function approvedMerge(root, args, report) {
-  if (!args.approval || !args.prepared) fail('LOCAL_MERGE_APPROVAL_REQUIRED');
-  const preparedPath = insideRoot(root, args.prepared);
-  const prepared = readJson(preparedPath);
-  if (prepared.tool !== 'baba-integrate' || prepared.root !== root || prepared.mode !== 'prepare' || prepared.status !== 'PREPARED') fail('PREPARED_EVIDENCE_INVALID');
-  const approval = readJson(insideRoot(root, args.approval));
-  const inspection = prepared.inspection;
-  if (approval.version !== 1 || approval.action !== 'merge-local-main' || approval.approvedBy !== 'user' || !Number.isFinite(Date.parse(approval.approvedAt)) ||
-      approval.branch !== inspection.candidate.branch || approval.candidateHead !== inspection.candidate.head || approval.mainHead !== inspection.main.head ||
-      approval.preparedId !== prepared.id || approval.preparedDigest !== digest(prepared)) fail('APPROVAL_SCOPE_MISMATCH');
-  if (args.branch && args.branch !== inspection.candidate.branch) fail('APPROVAL_SCOPE_MISMATCH');
-  report.inspection = inspection;
-  stable(root, inspection);
-  const sandbox = insideRoot(root, prepared.environment);
-  const verify = readJson(insideRoot(root, prepared.integratedVerify));
-  if (digest(verify) !== prepared.integratedVerifyDigest || sha(sandbox, 'HEAD') !== prepared.mergedHead ||
-      gitOut(sandbox, ['rev-parse', 'HEAD^{tree}']) !== prepared.mergedTree || workingChanges(sandbox).length ||
-      verifyEvidence(sandbox, verify, {head: prepared.mergedHead, fingerprint: stateFingerprint(sandbox), build: true}).length) fail('PREPARED_STATE_CHANGED');
-  const parents = gitOut(sandbox, ['rev-list', '--parents', '-n', '1', prepared.mergedHead]).split(' ').slice(1);
-  if (inspection.strategy === 'fast-forward' ? prepared.mergedHead !== inspection.candidate.head :
-    JSON.stringify(parents) !== JSON.stringify([inspection.main.head, inspection.candidate.head])) fail('PREPARED_PARENTS_MISMATCH');
-  // Never run original worktree hooks automatically, even with a valid merge approval.
-  const configured = git(root, ['config', '--get', 'core.hooksPath'], {allowFail: true});
-  const hooks = configured.status === 0 ? resolve(inspection.main.path, configured.stdout.trim())
-    : resolve(root, gitOut(root, ['rev-parse', '--git-path', 'hooks']));
-  if (['pre-merge-commit', 'post-merge', 'reference-transaction'].some(hook => existsSync(join(hooks, hook)))) fail('ACTIVE_GIT_HOOK');
-  git(root, ['fetch', '--no-write-fetch-head', '--no-tags', '--no-recurse-submodules', sandbox, prepared.mergedHead]);
-  stable(root, inspection);
-  // Only mutation of original main in this tool. It is explicitly outside inspect/prepare.
-  git(inspection.main.path, ['merge', '--ff-only', prepared.mergedHead]);
-  report.mainHeadAfter = sha(root, 'refs/heads/main');
-  if (report.mainHeadAfter !== prepared.mergedHead) fail('MERGED_HEAD_UNEXPECTED');
-  report.approval = {path: relative(root, insideRoot(root, args.approval)), digest: digest(approval)};
-  report.status = 'MERGED_LOCAL';
 }
 
 export function integrate(args, cwd = process.cwd()) {
   const report = {tool: 'baba-integrate', version: 1, policy: POLICY_DOC, id: randomUUID(),
     generatedAt: new Date().toISOString(), mode: args._?.[0] || 'inspect', status: 'BLOCKED',
-    permissions: {push: false, productionDeploy: false, productionDb: false, migrationApply: false}};
+    permissions: {localMainMerge: false, push: false, productionDeploy: false, productionDb: false, migrationApply: false}};
   let root;
   try {
     root = repoRoot(cwd); assertOwnedWorktree(root); report.root = root;
+    assertNoGitHooks(root);
     insideRoot(root, cwd);
     if (!['inspect', 'prepare', 'merge'].includes(report.mode)) fail('UNSUPPORTED_ACTION_NO_REMOTE_OR_DB');
-    if (args._?.length > 1 || Object.keys(args).some(key => !['_', 'branch', 'approval', 'prepared', 'json'].includes(key))) fail('INVALID_ARGUMENTS');
-    if (report.mode === 'merge') approvedMerge(root, args, report);
+    if (args._?.length > 1 || Object.keys(args).some(key => !['_', 'branch', 'handoff', 'approval', 'prepared', 'json'].includes(key))) fail('INVALID_ARGUMENTS');
+    if (report.mode === 'merge') {
+      report.remote = remoteMainState(root);
+      if (args.prepared) {
+        const prepared = readJson(insideRoot(root, args.prepared));
+        if (prepared.remote?.remote !== report.remote.remote || prepared.inspection?.main?.head !== report.remote.local) fail('REMOTE_OR_MAIN_CHANGED_REVALIDATE');
+      }
+      fail('LOCAL_MAIN_EXECUTION_DISABLED', 'Full Access files cannot authenticate user approval. Execute main integration directly or use an independent authority.');
+    }
     else {
       if (args.approval || args.prepared) fail('APPROVAL_ONLY_FOR_EXPLICIT_MERGE');
-      const inspection = inspectCandidate(root, args.branch); report.inspection = inspection;
+      const inspection = inspectCandidate(root, args.branch, args.handoff); report.inspection = inspection;
       if (inspection.blockers.length) fail('INTEGRATION_BLOCKED', inspection.blockers.map(b => b.code).join('; '));
       report.status = 'INSPECTED';
       if (report.mode === 'prepare') {
         preparation(root, inspection, report);
         report.status = 'PREPARED';
         report.approvalRequired = {action: 'merge-local-main', branch: inspection.candidate.branch,
-          candidateHead: inspection.candidate.head, mainHead: inspection.main.head, preparedId: report.id};
+          candidateHead: inspection.candidate.head, mainHead: inspection.main.head, preparedId: report.id, executionDisabled: true};
       }
     }
   } catch (error) {
     report.status = 'BLOCKED'; report.code = error.code || 'UNVERIFIED_STATE';
+    if (error.remote) report.remote = error.remote;
     report.reason = error.code ? error.message : '확인할 수 없는 파일·Git·증거 상태. 기존 결과를 보존하고 중단한다.';
   }
   // Only the owning worktree receives managed output. No report in original main or Claude.
@@ -266,10 +263,10 @@ export function integrate(args, cwd = process.cwd()) {
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try {
-    const args = parseArgs(process.argv.slice(2), {branch: 'string', approval: 'string', prepared: 'string', json: 'boolean', help: 'boolean'});
-    if (args.help) console.log('node scripts/agent/baba-integrate.mjs [inspect|prepare] --branch <agent/task> [--json]\nnode scripts/agent/baba-integrate.mjs merge --prepared <local-report.json> --approval <local-user-approval.json>');
+    const args = parseArgs(process.argv.slice(2), {branch: 'string', handoff: 'string', approval: 'string', prepared: 'string', json: 'boolean', help: 'boolean'});
+    if (args.help) console.log('node scripts/agent/baba-integrate.mjs [inspect|prepare] --branch <agent/task> [--handoff docs/handoffs/file.md] [--json]\nmerge is disabled: independent user authentication is unavailable.');
     else {
-      if (['branch', 'approval', 'prepared'].some(key => Object.hasOwn(args, key) &&
+      if (['branch', 'handoff', 'approval', 'prepared'].some(key => Object.hasOwn(args, key) &&
           (typeof args[key] !== 'string' || !args[key] || args[key].startsWith('--')))) fail('INVALID_ARGUMENTS');
       const result = integrate(args);
       console.log(args.json ? JSON.stringify(result, null, 2) : `BABA Integrate: ${result.status}\n${result.code || ''} ${result.reason || ''}\n기록: ${result.savedAs || '없음'}`);

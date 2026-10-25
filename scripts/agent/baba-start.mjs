@@ -5,7 +5,7 @@ import {existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, un
 import {join, relative, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {
-  AGENTS, POLICY_DOC, assertOwnedWorktree, committedChanges, git, gitOut, identifyWorktree, insideRoot,
+  AGENTS, POLICY_DOC, assertNoGitHooks, guardedGit, assertOwnedWorktree, committedChanges, git, gitOut, identifyWorktree, insideRoot,
   listWorktrees, matchesAny, parseArgs, repoRoot, run, splitList, workingChanges,
 } from './lib/common.mjs';
 
@@ -73,7 +73,7 @@ function synchronize(root, report) {
   const cached = git(root, ['rev-parse', '--verify', 'refs/remotes/origin/main'], {allowFail: true});
   let fetched = false;
   if (cached.status !== 0 || cached.stdout.trim() !== remote) {
-    const result = git(root, ['fetch', '--no-tags', 'origin', 'refs/heads/main:refs/remotes/origin/main'], {allowFail: true, timeout: 120000});
+    const result = guardedGit(root, ['fetch', '--no-tags', 'origin', 'refs/heads/main:refs/remotes/origin/main'], {allowFail: true, timeout: 120000});
     if (result.status !== 0) fail('FETCH_FAILED', 'main 참조 fetch 실패. 강제 갱신·prune·이력 복구를 시도하지 않는다.');
     fetched = true;
   }
@@ -177,11 +177,7 @@ export function startTask(args, cwd = process.cwd()) {
     if (record && !ancestor(root, record.baseSha, headBefore)) fail('REWRITTEN_TASK', '작업 기준 커밋이 현재 이력에 없다. 기록이나 이력을 고치지 않는다.');
     if (!waiting && record && !resuming && !finished(root, record)) fail('UNFINISHED_TASK', '다른 미완료 작업이 있다. 기존 작업 ID로 재개하거나 작업을 먼저 완료한다.');
     if (waiting && !ancestor(root, headBefore, 'refs/heads/main')) fail('UNFINISHED_TASK', '대기 브랜치에 main에 없는 작업 커밋이 있다.');
-    for (const hook of ['post-checkout', 'reference-transaction']) {
-      const configured = git(root, ['config', '--get', 'core.hooksPath'], {allowFail: true});
-      const hooks = configured.status === 0 ? resolve(root, configured.stdout.trim()) : resolve(root, gitOut(root, ['rev-parse', '--git-path', 'hooks']));
-      if (existsSync(join(hooks, hook))) fail('ACTIVE_GIT_HOOK', '자동 전환 전에 사용자 Git hook을 검토해야 한다. hook을 비활성화하지 않는다.');
-    }
+    assertNoGitHooks(root);
     directory = insideRoot(root, RECORD_DIR);
     if (git(root, ['check-ignore', '-q', '--no-index', RECORD_DIR], {allowFail: true}).status !== 0) fail('RECORD_NOT_IGNORED', '작업 기록 경로가 Git에서 제외되지 않았다.');
     mkdirSync(directory, {recursive: true});
@@ -211,7 +207,7 @@ export function startTask(args, cwd = process.cwd()) {
       mkdirSync(tasks, {recursive: true});
       writeFileSync(insideRoot(root, `${RECORD_DIR}/tasks/${selectedId}.json`), JSON.stringify(selected, null, 2), {flag: 'wx'});
       report.taskId = selectedId; report.baseSha = baseSha; report.plannedBranch = branch;
-      const switched = git(root, ['switch', '--no-track', '-c', branch, baseSha], {allowFail: true});
+      const switched = guardedGit(root, ['switch', '--no-track', '-c', branch, baseSha], {allowFail: true});
       if (switched.status !== 0) fail('SWITCH_FAILED', '새 브랜치 전환 실패. 예약 기록과 기존 브랜치를 보존한다.');
       report.branchCreated = true; report.branch = branch;
     }

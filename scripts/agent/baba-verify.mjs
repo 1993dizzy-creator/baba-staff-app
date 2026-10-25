@@ -14,7 +14,7 @@ import {pathToFileURL} from 'node:url';
 import {
   HOT_FILES, POLICY_DOC, allTestFiles, collectChanges, defaultBaseRef, domainTestSuggestions, gitOut,
   identifyWorktree, matchesAny, migrationVersion, parseArgs, relatedTests, repoRoot, run, sanitizedEnv, splitList,
-  stateFingerprint, assertOwnedWorktree, insideRoot, TEST_FILE, worktreeEnvironment, writeRecord,
+  stateFingerprint, assertNoGitHooks, assertOwnedWorktree, insideRoot, TEST_FILE, worktreeEnvironment, writeRecord,
 } from './lib/common.mjs';
 import {createBaseline} from './lib/baseline.mjs';
 import {createBuildEnvironment} from './lib/build-env.mjs';
@@ -30,12 +30,14 @@ if (args.help) {
 
 const root = repoRoot();
 assertOwnedWorktree(root);
+assertNoGitHooks(root);
 if (['.env', '.env.local', '.env.development', '.env.development.local', '.env.production', '.env.production.local'].some(path => existsSync(join(root, path)))) {
   throw new Error('Environment files must be isolated before verification; values were not read');
 }
 const baseRef = args.base || defaultBaseRef(root);
-const {mergeBase, files} = collectChanges(root, baseRef);
+const baseSha = gitOut(root, ['rev-parse', '--verify', `${baseRef}^{commit}`]);
 const head = gitOut(root, ['rev-parse', 'HEAD']);
+const {mergeBase, files} = collectChanges(root, baseSha);
 const branch = gitOut(root, ['branch', '--show-current']) || '(detached)';
 const fingerprint = stateFingerprint(root);
 const present = files.filter(file => !file.deleted && existsSync(join(root, file.path)) && statSync(join(root, file.path)).isFile());
@@ -244,12 +246,16 @@ if (baselineError) notes.push(`기준선 준비 실패: ${baselineError}`);
 if (removedEnv.length) notes.push(`자식 프로세스에서 제거한 자격 증명 계열 환경 변수 이름: ${removedEnv.join(', ')}`);
 
 // ---------- Verdict ----------
+if (gitOut(root, ['rev-parse', 'HEAD']) !== head || gitOut(root, ['rev-parse', '--verify', `${baseRef}^{commit}`]) !== baseSha ||
+    stateFingerprint(root) !== fingerprint) checks.push({name: 'Verify input stability', ran: true, status: 'failed-unclassified', error: 'VERIFY_INPUT_CHANGED'});
 const failed = checks.filter(check => (/^(failed|error)/.test(check.status) && check.status !== 'failed-preexisting') || check.status === 'blocked-env');
 const preexisting = checks.filter(check => /preexisting/.test(check.status));
 const verdict = failed.length ? 'FAIL' : preexisting.length ? 'PASS_WITH_PREEXISTING' : 'PASS';
 const report = {
   tool: 'baba-verify', generatedAt: new Date().toISOString(), policy: POLICY_DOC, worktree: identifyWorktree(root), root, branch, head, baseRef, mergeBase, fingerprint,
   changedFiles: files.map(file => ({path: file.path, committed: file.committed, working: file.working, deleted: file.deleted})),
+  baseSha,
+  testSelection: {explicit, allTests: Boolean(args.allTests), executed: [...testTargets.keys()].sort()},
   checks, gaps, notes, verdict, baselineDir,
 };
 const outDir = insideRoot(root, '.tmp-baba/verify');

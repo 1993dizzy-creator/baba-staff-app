@@ -5,8 +5,9 @@ import {cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, read
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {integrate} from '../scripts/agent/baba-integrate.mjs';
-import {git, gitOut, insideRoot, run, sanitizedEnv, worktreeEnvironment, writeRecord} from '../scripts/agent/lib/common.mjs';
+import {assertNoGitHooks, guardedGit, git, gitOut, insideRoot, run, sanitizedEnv, worktreeEnvironment, writeRecord} from '../scripts/agent/lib/common.mjs';
 import {verifyEvidence} from '../scripts/agent/lib/verify-evidence.mjs';
+import {remoteMainState} from '../scripts/agent/lib/remote-main.mjs';
 
 // Everything, including fixture main merges, is confined to the owning source worktree.
 const source = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -18,7 +19,7 @@ const commit = (root, path, content) => { put(root, path, content); git(root, ['
 const cli = (root, script, args = []) => run(process.execPath, [join(root, 'scripts/agent', script), ...args],
   {cwd: root, env: sanitizedEnv().env, allowFail: true, timeout: 120000});
 
-function fixture({preexisting = false} = {}) {
+function fixture({preexisting = false, explicitGuard = false} = {}) {
   const directory = mkdtempSync(join(parent, '한글 space-'));
   const main = join(directory, 'baba-staff-app'), codex = join(directory, 'baba-wt-codex'), claude = join(directory, 'baba-wt-claude');
   mkdirSync(main); git(main, ['init', '-b', 'main']);
@@ -27,11 +28,21 @@ function fixture({preexisting = false} = {}) {
   put(main, '.gitignore', '.tmp-baba/\nnode_modules/\n');
   put(main, 'package.json', '{"private":true}\n');
   put(main, 'app/a.ts', 'export const a = 1;\n'); put(main, 'app/b.ts', 'export const b = 1;\n');
-  put(main, 'tests/check.test.mjs', `import test from 'node:test'; import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs';
-    // app/a.ts and app/b.ts are both covered by this fixture.
-    test('fixture assertion', () => assert.equal(readFileSync('app/a.ts','utf8').includes('bad'), false));\n`);
+  put(main, 'tests/check.test.mjs', `import test from 'node:test'; import assert from 'node:assert/strict'; import {existsSync,readFileSync} from 'node:fs';
+    test('fixture assertion', () => assert.equal(readFileSync('app/a.ts','utf8').includes('bad'), false));
+    test('fixture secondary source',()=>assert.equal(readFileSync('app/b.ts','utf8').includes('invalid'),false));
+    test('policy resources are inspected only as text',()=>{
+      for(const file of ['supabase/migrations/20261025000000_fixture.sql','app/api/shared/route.ts','lib/candidate.ts']) {
+        if(existsSync(file))assert.ok(readFileSync(file,'utf8').length>0);
+      }
+    });\n`);
   if (preexisting) put(main, 'app/a.ts', 'bad baseline\n');
+  if (explicitGuard) put(main, 'tests/manual-extra.test.mjs', `import test from 'node:test'; import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs';
+    test('explicit invariant',()=>assert.equal(readFileSync('app/'+'a.ts','utf8').includes('= 9;') && readFileSync('app/'+'b.ts','utf8').includes('= 2;'),false));\n`);
   git(main, ['add', '.']); git(main, ['commit', '-m', 'isolated seed']);
+  const origin = join(directory, 'origin.git');
+  git(main, ['init', '--bare', origin]); git(main, ['remote', 'add', 'origin', origin]);
+  git(main, ['push', 'origin', 'main']); // disposable LOCAL bare fixture, never GitHub
   const taskId = '20261025-integration-fixture-01', branch = `codex/${taskId}`;
   git(main, ['worktree', 'add', '--no-track', '-b', branch, codex, 'main']);
   git(main, ['worktree', 'add', '--no-track', '-b', 'claude/ready-fixture', claude, 'main']);
@@ -43,14 +54,14 @@ function fixture({preexisting = false} = {}) {
   put(codex, 'node_modules/next/dist/bin/next', 'process.exit(0);\n');
   put(codex, 'node_modules/eslint/bin/eslint.js', "console.log('[]');\n");
   put(codex, 'node_modules/typescript/lib/tsc.js', "process.exit(0);\n");
-  return {directory, main, codex, claude, seed, taskId, branch};
+  return {directory, main, codex, claude, seed, taskId, branch, origin};
 }
 function verify(f, extra = []) {
   const result = cli(f.codex, 'baba-verify.mjs', ['--base', 'main', '--tests', 'tests/check.test.mjs', '--build', '--json', ...extra]);
   return {result, report: JSON.parse(result.stdout)};
 }
-function finish(f) {
-  const checked = verify(f);
+function finish(f, extra = []) {
+  const checked = verify(f, extra);
   assert.equal(checked.result.status, 0, checked.result.stderr + JSON.stringify(checked.report));
   const path = `docs/handoffs/${f.branch.replace('/', '-')}.md`;
   assert.equal(cli(f.codex, 'baba-handoff.mjs', ['--task-name', 'Integration fixture', '--base', 'main']).status, 0);
@@ -76,24 +87,25 @@ test('actual Verify → committed Handoff → inspect → prepare is non-destruc
   const prepared = prepare(f); assert.equal(prepared.status, 'PREPARED', JSON.stringify(prepared));
   assert.equal(prepared.merge.strategy, 'fast-forward'); assert.equal(prepared.integratedVerdict, 'PASS');
   assert.equal(gitOut(f.main, ['show-ref']), refs); assert.equal(gitOut(f.main, ['status', '--porcelain']), status);
-  assert.equal(integrate({_: ['merge'], branch: f.branch}, f.codex).code, 'LOCAL_MERGE_APPROVAL_REQUIRED');
+  assert.equal(integrate({_: ['merge'], branch: f.branch}, f.codex).code, 'LOCAL_MAIN_EXECUTION_DISABLED');
   assert.equal(head(f.main), f.seed);
   const approved = approval(f, prepared);
   const merged = integrate({_: ['merge'], prepared: prepared.savedAs, approval: approved}, f.codex);
-  assert.equal(merged.status, 'MERGED_LOCAL', JSON.stringify(merged)); // disposable fixture main only
-  assert.equal(head(f.main), head(f.codex));
+  assert.equal(merged.code, 'LOCAL_MAIN_EXECUTION_DISABLED', JSON.stringify(merged));
+  assert.equal(head(f.main), f.seed);
   assert.equal(shaBranch(f.main, 'claude/ready-fixture'), f.seed);
 });
 const shaBranch = (root, branch) => gitOut(root, ['rev-parse', branch]);
 
 test('non-fast-forward candidate is merged and built in an independent environment before local approval', () => {
   const f = ready(); commit(f.main, 'docs/main-progress.md', 'new main\n'); const before = head(f.main);
+  git(f.main, ['push', 'origin', 'main']);
   const prepared = prepare(f); assert.equal(prepared.status, 'PREPARED', JSON.stringify(prepared));
   assert.equal(prepared.merge.strategy, 'merge'); assert.equal(prepared.inspection.revalidationRequired, true);
   assert.equal(head(f.main), before);
   const merged = integrate({_: ['merge'], prepared: prepared.savedAs, approval: approval(f, prepared)}, f.codex);
-  assert.equal(merged.status, 'MERGED_LOCAL', JSON.stringify(merged));
-  assert.deepEqual(gitOut(f.main, ['rev-list', '--parents', '-n', '1', 'HEAD']).split(' ').slice(1), [before, head(f.codex)]);
+  assert.equal(merged.code, 'LOCAL_MAIN_EXECUTION_DISABLED', JSON.stringify(merged));
+  assert.deepEqual(gitOut(join(f.codex, prepared.environment), ['rev-list', '--parents', '-n', '1', 'HEAD']).split(' ').slice(1), [before, head(f.codex)]);
 });
 
 test('first finished task integrates individually; a later Claude task is revalidated against updated main', () => {
@@ -103,7 +115,9 @@ test('first finished task integrates individually; a later Claude task is revali
     task: 'later', slug: 'later-fixture', taskKey: hash('later\0later-fixture'), taskId, branch, baseSha: f.seed, files: ['app/a.ts']});
   const first = prepare(f); assert.equal(first.status, 'PREPARED', JSON.stringify(first));
   const merged = integrate({_: ['merge'], prepared: first.savedAs, approval: approval(f, first)}, f.codex);
-  assert.equal(merged.status, 'MERGED_LOCAL', JSON.stringify(merged));
+  assert.equal(merged.code, 'LOCAL_MAIN_EXECUTION_DISABLED', JSON.stringify(merged));
+  // Simulate a user's DIRECT execution, only in this disposable fixture.
+  git(f.main, ['merge', '--ff-only', f.branch]); git(f.main, ['push', 'origin', 'main']);
   const updatedMain = head(f.main);
   cpSync(join(f.codex, 'node_modules'), join(f.claude, 'node_modules'), {recursive: true});
   commit(f.claude, 'app/a.ts', 'export const a = 2;\n');
@@ -115,6 +129,7 @@ test('first finished task integrates individually; a later Claude task is revali
 
 test('code conflict retains environment and unmerged evidence without touching main', () => {
   const f = ready(); commit(f.main, 'app/b.ts', 'export const b = 9;\n'); const before = head(f.main);
+  git(f.main, ['push', 'origin', 'main']);
   const result = prepare(f); assert.equal(result.code, 'CODE_CONFLICT', JSON.stringify(result));
   assert.equal(head(f.main), before); assert.ok(existsSync(join(f.codex, result.environment)));
   assert.match(gitOut(join(f.codex, result.environment), ['diff', '--name-only', '--diff-filter=U']), /app\/b.ts/);
@@ -129,14 +144,16 @@ test('dirty original main blocks inspect and prepare and preserves exact file by
 test('main or candidate SHA changes revoke a prepared approval; later task can reprepare', () => {
   const f = ready(), first = prepare(f); assert.equal(first.status, 'PREPARED', JSON.stringify(first));
   const approved = approval(f, first); const newer = commit(f.main, 'docs/other.md', 'later main\n');
-  assert.equal(integrate({_: ['merge'], prepared: first.savedAs, approval: approved}, f.codex).code, 'INPUT_CHANGED_REVALIDATE');
+  git(f.main, ['push', 'origin', 'main']);
+  assert.equal(integrate({_: ['merge'], prepared: first.savedAs, approval: approved}, f.codex).code, 'REMOTE_OR_MAIN_CHANGED_REVALIDATE');
   assert.equal(head(f.main), newer);
   const second = prepare(f); assert.equal(second.status, 'PREPARED', JSON.stringify(second));
   // The earlier approval cannot be transferred to a new preparation.
-  assert.equal(integrate({_: ['merge'], prepared: second.savedAs, approval: approved}, f.codex).code, 'APPROVAL_SCOPE_MISMATCH');
+  assert.equal(integrate({_: ['merge'], prepared: second.savedAs, approval: approved}, f.codex).code, 'LOCAL_MAIN_EXECUTION_DISABLED');
   commit(f.codex, 'app/b.ts', 'export const b = 3;\n');
   const changed = integrate({_: ['merge'], prepared: second.savedAs, approval: approval(f, second)}, f.codex);
-  assert.equal(changed.status, 'BLOCKED'); assert.equal(changed.code, 'HANDOFF_SHA_MISMATCH');
+  assert.equal(changed.status, 'BLOCKED'); assert.equal(changed.code, 'LOCAL_MAIN_EXECUTION_DISABLED');
+  assert.equal(inspect(f).code, 'HANDOFF_SHA_MISMATCH');
 });
 
 test('Handoff missing, wrong SHA, wrong task, and unknown/missing Verify evidence fail closed', () => {
@@ -258,16 +275,125 @@ test('push, deploy, DB and malformed CLI actions cannot mutate main or create a 
   for (const args of [['--branch'], ['prepare', '--push'], ['merge', '--approval='], ['inspect', 'extra']]) {
     assert.equal(cli(f.codex, 'baba-integrate.mjs', args).status, 2);
   }
-  assert.equal(gitOut(f.main, ['show-ref']), refs); assert.equal(gitOut(f.main, ['remote']), '');
+  assert.equal(gitOut(f.main, ['show-ref']), refs); assert.equal(gitOut(f.main, ['remote']), 'origin');
 });
 
 test('tampered prepared tree, wrong approval digest and skipped checks cannot authorize merge', () => {
   const f = ready(), prepared = prepare(f); assert.equal(prepared.status, 'PREPARED', JSON.stringify(prepared));
   const path = approval(f, prepared), valid = JSON.parse(readFileSync(join(f.codex, path), 'utf8'));
   writeRecord(f.codex, path, {...valid, preparedDigest: 'wrong'}, {replace: true});
-  assert.equal(integrate({_: ['merge'], prepared: prepared.savedAs, approval: path}, f.codex).code, 'APPROVAL_SCOPE_MISMATCH');
+  assert.equal(integrate({_: ['merge'], prepared: prepared.savedAs, approval: path}, f.codex).code, 'LOCAL_MAIN_EXECUTION_DISABLED');
   writeRecord(f.codex, path, valid, {replace: true});
   put(join(f.codex, prepared.environment), 'app/b.ts', 'tampered\n');
-  assert.equal(integrate({_: ['merge'], prepared: prepared.savedAs, approval: path}, f.codex).code, 'PREPARED_STATE_CHANGED');
+  assert.equal(integrate({_: ['merge'], prepared: prepared.savedAs, approval: path}, f.codex).code, 'LOCAL_MAIN_EXECUTION_DISABLED');
   assert.equal(head(f.main), f.seed);
+});
+
+test('D1: post-index-change file hook is blocked before index writes; isolated positive control proves the hook is executable', () => {
+  const f = fixture(), marker = join(f.directory, 'file-hook-ran.txt');
+  const hooks = gitOut(f.codex, ['rev-parse', '--path-format=absolute', '--git-path', 'hooks']);
+  put(hooks, 'post-index-change', `#!/bin/sh\nprintf ran > '${marker.replaceAll('\\', '/')}'\n`);
+  const before = readFileSync(join(hooks, 'post-index-change'), 'utf8');
+  put(f.codex, 'app/b.ts', 'changed\n');
+  assert.throws(() => guardedGit(f.codex, ['add', '--', 'app/b.ts']), error => error.code === 'ACTIVE_GIT_HOOK');
+  assert.equal(prepare(f).code, 'ACTIVE_GIT_HOOK'); assert.equal(existsSync(marker), false);
+  assert.equal(readFileSync(join(hooks, 'post-index-change'), 'utf8'), before);
+  // Positive control ONLY in this disposable fixture, after checking the protected path.
+  git(f.codex, ['add', '--', 'app/b.ts']); assert.ok(existsSync(marker));
+  assert.equal(head(f.main), f.seed);
+});
+
+test('D1: Git 2.55 config hooks remain blocked even with an empty core.hooksPath', () => {
+  const f = fixture(), marker = join(f.directory, 'config-hook-ran.txt'), empty = join(f.directory, 'empty-hooks'); mkdirSync(empty);
+  git(f.codex, ['config', 'core.hooksPath', empty]);
+  git(f.codex, ['config', 'hook.probe.command', `printf ran > '${marker.replaceAll('\\', '/')}'`]);
+  git(f.codex, ['config', 'hook.probe.event', 'post-index-change']);
+  put(f.codex, 'app/b.ts', 'changed\n');
+  assert.throws(() => guardedGit(f.codex, ['add', '--', 'app/b.ts']), error => error.code === 'ACTIVE_CONFIG_GIT_HOOK');
+  assert.equal(prepare(f).code, 'ACTIVE_CONFIG_GIT_HOOK'); assert.equal(existsSync(marker), false);
+  git(f.codex, ['add', '--', 'app/b.ts']); assert.ok(existsSync(marker));
+});
+
+test('D1: effective include, includeIf future contexts, environment overrides and malformed config fail closed', () => {
+  for (const condition of ['include.path', 'includeIf.onbranch:codex/**.path', 'includeIf.onbranch:not-current.path']) {
+    const f = fixture(), included = join(f.directory, 'included.config');
+    writeFileSync(included, '[hook "probe"]\n command = echo forbidden\n event = post-index-change\n');
+    git(f.codex, ['config', condition, included]);
+    assert.throws(() => assertNoGitHooks(f.codex), error => ['ACTIVE_CONFIG_GIT_HOOK', 'GIT_CONFIG_CONTEXT_UNVERIFIED'].includes(error.code));
+    assert.equal(prepare(f).status, 'BLOCKED'); assert.equal(head(f.main), f.seed);
+  }
+  const f = fixture();
+  for (const override of [{GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'hook.probe.event',GIT_CONFIG_VALUE_0:'post-index-change'},
+    {GIT_CONFIG_GLOBAL:join(f.directory,'mask.config')}, {GIT_CONFIG_PARAMETERS:'unknown'}, {GIT_DIR:join(f.directory,'other.git')}]) {
+    assert.throws(() => assertNoGitHooks(f.codex, {env:{...sanitizedEnv().env,...override}}), error => error.code === 'GIT_ENVIRONMENT_UNVERIFIED');
+  }
+  const config = gitOut(f.codex, ['rev-parse', '--path-format=absolute', '--git-path', 'config']);
+  writeFileSync(config, '[malformed\n');
+  assert.throws(() => assertNoGitHooks(f.codex), error => error.code === 'GIT_CONFIG_UNVERIFIED');
+});
+
+test('D2: unchanged explicitly selected test is inherited and catches a regression introduced by new main', () => {
+  const f = fixture({explicitGuard:true}); commit(f.codex, 'app/b.ts', 'export const b = 2;\n');
+  const completed = finish(f, ['--tests','tests/manual-extra.test.mjs']);
+  assert.deepEqual(completed.verify.testSelection.explicit, ['tests/manual-extra.test.mjs']);
+  const first = prepare(f); assert.equal(first.status, 'PREPARED', JSON.stringify(first));
+  assert.ok(first.testSelection.executed.includes('tests/manual-extra.test.mjs'));
+  commit(f.main,'app/a.ts','export const a = 9;\n'); git(f.main,['push','origin','main']);
+  const second = prepare(f); assert.equal(second.code, 'INTEGRATED_VERIFY_FAILED', JSON.stringify(second));
+  const report = JSON.parse(readFileSync(join(f.codex,second.integratedVerify),'utf8'));
+  assert.equal(report.checks.find(c=>Array.isArray(c.files)).files.find(t=>t.path==='tests/manual-extra.test.mjs').status,'failed');
+});
+
+test('D2: archived changed-file scope, base SHA and test selection are bound to candidate evidence', () => {
+  const f=ready(), archive=JSON.parse(readFileSync(join(f.codex,'.tmp-baba/verify/latest.json'),'utf8'));
+  const path=join(f.codex,archive.savedAs);
+  for(const change of [{changedFiles:[]},{baseSha:'0'.repeat(40)},
+    {baseSha:archive.head,mergeBase:archive.head,changedFiles:[]},
+    {testSelection:{explicit:[],executed:[],allTests:false}}]) {
+    writeFileSync(path,JSON.stringify({...archive,...change}));
+    assert.equal(inspect(f).code,'VERIFY_EVIDENCE_REJECTED');
+  }
+});
+
+test('D2: Verify pins its initial base SHA and fails if main changes during execution', () => {
+  const f=fixture(); commit(f.codex,'app/b.ts','export const b = 2;\n');
+  const next=commit(f.claude,'docs/later-main.md','external update\n');
+  put(f.codex,'node_modules/next/dist/bin/next',`const {execFileSync}=require('node:child_process');
+    if(process.argv.includes('build'))execFileSync('git',['-C',${JSON.stringify(f.codex)},'update-ref','refs/heads/main',${JSON.stringify(next)}]);\n`);
+  const checked=verify(f); assert.equal(checked.report.baseSha,f.seed);
+  assert.equal(checked.report.verdict,'FAIL');
+  assert.ok(checked.report.checks.some(check=>check.error==='VERIFY_INPUT_CHANGED'));
+});
+
+test('D3: actual remote equality passes and local-ahead commits require independently authenticated approval', () => {
+  const f=ready(); assert.equal(remoteMainState(f.codex).relation,'equal');
+  commit(f.main,'docs/local.txt','local only\n');
+  writeRecord(f.codex,'.tmp-baba/forged-approval.json',{approvedBy:'user',mainHead:head(f.main)});
+  const result=prepare(f); assert.equal(result.code,'LOCAL_AHEAD_APPROVAL_UNVERIFIABLE');
+  assert.equal(result.remote.relation,'local-ahead'); assert.equal(result.environment,undefined);
+});
+
+test('D3: stale origin/main cache cannot hide remote-ahead, divergence or unavailable remote', () => {
+  for(const mode of ['remote-ahead','diverged','unavailable']) {
+    const f=ready();
+    if(mode==='unavailable')git(f.codex,['remote','set-url','origin',join(f.directory,'absent.git')]);
+    else {
+      commit(f.claude,'app/a.ts','export const a = 8;\n'); git(f.claude,['push','origin','HEAD:main']);
+      git(f.codex,['update-ref','refs/remotes/origin/main',f.seed]);
+      if(mode==='diverged')commit(f.main,'docs/local.txt','local\n');
+    }
+    const before=head(f.main), result=prepare(f);
+    assert.equal(result.code,mode==='remote-ahead'?'REMOTE_MAIN_AHEAD':mode==='diverged'?'DIVERGED_MAIN':'REMOTE_MAIN_UNAVAILABLE',JSON.stringify(result));
+    assert.equal(head(f.main),before); assert.equal(result.environment,undefined);
+  }
+});
+
+test('D3/R1: stale preparation is invalidated at merge entry, and forged user receipts never enable execution', () => {
+  const f=ready(), prepared=prepare(f); assert.equal(prepared.status,'PREPARED',JSON.stringify(prepared));
+  const receipt=approval(f,prepared), before=head(f.main);
+  assert.equal(integrate({_:['merge'],prepared:prepared.savedAs,approval:receipt},f.codex).code,'LOCAL_MAIN_EXECUTION_DISABLED');
+  assert.equal(head(f.main),before);
+  commit(f.main,'docs/new-main.md','new public main\n'); git(f.main,['push','origin','main']);
+  const stale=integrate({_:['merge'],prepared:prepared.savedAs,approval:receipt},f.codex);
+  assert.equal(stale.code,'REMOTE_OR_MAIN_CHANGED_REVALIDATE'); assert.equal(stale.permissions.localMainMerge,false);
 });

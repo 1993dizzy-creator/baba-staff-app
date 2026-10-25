@@ -55,13 +55,58 @@ export function run(command, args, {cwd, env, allowFail = false, input, timeout}
 }
 
 export function git(root, args, options = {}) {
-  return run('git', ['--no-optional-locks', '-c', 'core.quotepath=off', ...args], {cwd: root, ...options});
+  return run('git', ['--no-pager', '--no-optional-locks', '-c', 'core.quotepath=off', ...args], {cwd: root, ...options});
 }
 export const gitOut = (root, args, options) => git(root, args, options).stdout.trim();
 export const gitTry = (root, args) => {
   const r = git(root, args, {allowFail: true});
   return r.status === 0 ? r.stdout.trim() : null;
 };
+
+// Inspect effective includes/config without reading hook commands (which may contain secrets).
+// Conditional includes are deliberately rejected: later branch/gitdir contexts can activate them.
+// This does not solve another process changing configuration after this check (R2).
+export function assertNoGitHooks(root, {env = process.env} = {}) {
+  const reject = (code, message) => { throw Object.assign(new Error(message), {code}); };
+  const safeVariables = new Set(['GIT_PAGER', 'GIT_TERMINAL_PROMPT', 'GIT_OPTIONAL_LOCKS']);
+  for (const name of Object.keys(env).filter(name => /^GIT_/i.test(name))) {
+    if (safeVariables.has(name.toUpperCase())) continue;
+    if (name.toUpperCase() === 'GIT_INDEX_FILE') { insideRoot(root, env[name]); continue; }
+    reject('GIT_ENVIRONMENT_UNVERIFIED', 'Git environment overrides require independent review (values withheld).');
+  }
+  const query = args => run('git', ['--no-pager', '--no-optional-locks', '-c', 'core.quotepath=off', ...args], {cwd: root, env, allowFail: true});
+  const configured = query(['config', '--includes', '--null', '--name-only', '--get-regexp', '^(hook\\.|includeif\\.|core\\.hookspath$)']);
+  if (![0, 1].includes(configured.status)) reject('GIT_CONFIG_UNVERIFIED', 'Effective Git configuration could not be inspected.');
+  const keys = configured.stdout.split('\0').filter(Boolean);
+  if (keys.some(key => /^includeif\./i.test(key))) reject('GIT_CONFIG_CONTEXT_UNVERIFIED', 'Conditional Git includes may change hooks in a later context.');
+  if (keys.some(key => /^hook\./i.test(key))) reject('ACTIVE_CONFIG_GIT_HOOK', 'Config-based Git hooks require review; commands were not executed or printed.');
+  const common = query(['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  if (common.status !== 0) reject('GIT_DIRECTORY_UNVERIFIED', 'Git common directory could not be inspected.');
+  const directories = new Set([join(common.stdout.trim(), 'hooks')]);
+  const alternate = query(['config', '--includes', '--path', '--get', 'core.hooksPath']);
+  if (![0, 1].includes(alternate.status)) reject('GIT_CONFIG_UNVERIFIED', 'Git hooksPath could not be inspected.');
+  if (alternate.status === 0) {
+    if (!alternate.stdout.trim()) reject('GIT_CONFIG_UNVERIFIED', 'Empty Git hooksPath is ambiguous.');
+    directories.add(resolve(root, alternate.stdout.trim()));
+  }
+  for (const directory of directories) {
+    let entries;
+    try { entries = readdirSync(directory, {withFileTypes: true}); }
+    catch (error) {
+      if (error.code === 'ENOENT') {
+        try { lstatSync(directory); } catch (missing) { if (missing.code === 'ENOENT') continue; }
+      }
+      reject('GIT_HOOK_DIRECTORY_UNVERIFIED', 'Git hook directory could not be inspected.');
+    }
+    if (entries.some(entry => !entry.name.endsWith('.sample'))) reject('ACTIVE_GIT_HOOK', 'File-based Git hooks, including post-index-change, require review.');
+  }
+  return {fileHooks: false, configHooks: false, conditionalIncludes: false};
+}
+
+export function guardedGit(root, args, options = {}) {
+  assertNoGitHooks(root, options);
+  return git(root, args, options);
+}
 
 export function repoRoot(cwd = process.cwd()) {
   return resolve(gitOut(cwd, ['rev-parse', '--show-toplevel']));

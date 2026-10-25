@@ -16,6 +16,12 @@ export function verifyEvidence(root, report, {head, branch, fingerprint, build =
       !Array.isArray(report.checks) || !Array.isArray(report.gaps)) return ['VERIFY_MISSING_OR_INVALID'];
   if ((head && report.head !== head) || (branch && report.branch !== branch) ||
       (fingerprint && report.fingerprint !== fingerprint)) problems.push('VERIFY_STATE_MISMATCH');
+  const selection = report.testSelection;
+  if (!/^[0-9a-f]{40}$/.test(report.baseSha || '') || !selection || typeof selection.allTests !== 'boolean' ||
+      !Array.isArray(selection.explicit) || !Array.isArray(selection.executed) || !selection.executed.length ||
+      selection.executed.some(path => typeof path !== 'string' || !/\.test\.(mjs|ts)$/.test(path)) ||
+      selection.explicit.some(path => !selection.executed.includes(path))) problems.push('VERIFY_TEST_SELECTION_MISSING');
+  if (report.gaps.some(gap => /테스트가 참조하지 않는 변경 파일|관련 회귀 테스트를 찾지 못해/.test(gap))) problems.push('VERIFY_TEST_SCOPE_INSUFFICIENT');
   const map = new Map(report.checks.map(check => [check.name, check]));
   if (map.size !== report.checks.length) problems.push('VERIFY_DUPLICATE_CHECK');
   if ([...map.keys()].some(name => !Object.values(CHECKS).includes(name))) problems.push('VERIFY_UNKNOWN_CHECK');
@@ -35,6 +41,7 @@ export function verifyEvidence(root, report, {head, branch, fingerprint, build =
     if (kind === 'build' && check.ran && (check.status === 'passed' ? check.exitCode !== 0 : check.status === 'failed-preexisting' &&
         (!Number.isInteger(check.exitCode) || check.exitCode === 0 || !Number.isInteger(check.baselineExitCode) || check.baselineExitCode === 0))) problems.push('VERIFY_BUILD_EXIT_MISMATCH');
     if (kind === 'tests' && check.ran) {
+      if (selection && !same([...(selection.executed || [])].sort(), (check.files || []).map(file => file.path).sort())) problems.push('VERIFY_TEST_SELECTION_MISMATCH');
       if (!Array.isArray(check.files) || !check.files.length) problems.push('VERIFY_TEST_RESULTS_MISSING');
       for (const file of check.files || []) {
         if (file.networkBlocked || !file.counts?.tests || file.counts.skipped || file.counts.cancelled || file.counts.todo) problems.push('VERIFY_TEST_INCOMPLETE');
