@@ -484,3 +484,24 @@ test('D2: tests that do not load the changed code, read it only, or forged evide
     const result = inspect(good.f); assert.equal(result.code, 'VERIFY_EVIDENCE_REJECTED', JSON.stringify(exercised));
   }
 });
+
+test('D2: access recorder logs only listed targets, separating module import from file read', () => {
+  const directory = mkdtempSync(join(parent, 'recorder-'));
+  put(directory, 'code.mjs', 'export const value = 1;\n'); put(directory, 'data.sql', 'select 1;\n'); put(directory, 'other.mjs', 'export {};\n');
+  put(directory, 'main.mjs', `import {readFileSync} from 'node:fs'; await import('./code.mjs'); await import('./other.mjs');
+    readFileSync(new URL('./data.sql', import.meta.url), 'utf8');\n`);
+  const log = join(directory, 'access.log'), recorder = join(source, 'scripts/agent/lib/access-recorder.mjs');
+  const targets = ['code.mjs', 'data.sql'].map(name => join(directory, name));
+  const result = run(process.execPath, ['--import', `file:///${slash(recorder)}`, join(directory, 'main.mjs')],
+    {cwd: directory, env: {...sanitizedEnv().env, BABA_ACCESS_LOG: log, BABA_ACCESS_TARGETS: JSON.stringify(targets)}, allowFail: true});
+  assert.equal(result.status, 0, result.stderr);
+  const entries = readFileSync(log, 'utf8').trim().split('\n').flatMap(line => JSON.parse(line).entries);
+  const kinds = Object.fromEntries(entries.map(entry => [entry.path, entry.kinds]));
+  // The ESM loader reads source through fs too, so an imported file is also "read"; only import marks execution.
+  assert.deepEqual(Object.keys(kinds).sort(), [...targets].sort());
+  assert.ok(kinds[targets[0]].includes('import')); assert.deepEqual(kinds[targets[1]], ['read']);
+  // Without a log path the preload is inert and writes nothing.
+  const inert = run(process.execPath, ['--import', `file:///${slash(recorder)}`, join(directory, 'main.mjs')],
+    {cwd: directory, env: sanitizedEnv().env, allowFail: true});
+  assert.equal(inert.status, 0, inert.stderr); assert.equal(readdirSync(directory).filter(name => name.endsWith('.log')).length, 1);
+});
