@@ -1,13 +1,15 @@
 ---
 name: baba-start
-description: BABA 관리자 앱의 새 개발 요청을 시작하거나 기록된 작업을 재개한다. 자기 Worktree 소유권과 미완료 작업을 확인하고 기존 baba-preflight를 재사용하며 원격 main을 조회·필요 시 fetch한 후 검증된 로컬 main에서 고유 작업 브랜치를 만든다. 코드·문서 수정 전에 먼저 사용하고 차단 시 기존 작업을 보존한다.
+description: BABA 관리자 앱 전용 Worktree(격리·병렬 모드)에서 새 개발 요청을 시작하거나 기록된 작업을 재개한다. 자기 Worktree 소유권과 미완료 작업을 확인하고 기존 baba-preflight를 재사용하며 원격 main을 조회·필요 시 fetch한 후 검증된 로컬 main에서 고유 작업 브랜치를 만든다. 코드·문서 수정 전에 먼저 사용하고 차단 시 기존 작업을 보존한다. 원본 main 직렬 모드에서는 사용하지 않는다.
 ---
 
 # baba-start
 
 기준 정책: `docs/agents/baba-agent-workflow.md` §2. 사용자 지시와 `AGENTS.md` 운영 DB·Migration 규칙이 우선한다.
 
-1. 자기 Worktree에서 요청과 코드를 읽기 전용으로 조사해 작업명·수정 예정 경로/glob을 정한다. Codex는 `baba-wt-codex`, Claude Code는 `baba-wt-claude`를 사용한다. 원본 main에서 실행하지 않는다.
+적용 범위: 전용 Worktree(격리·병렬 모드) 전용이다. 원본 main 직렬 모드에서는 사용하지 않고 `docs/agents/baba-agent-workflow.md` §12를 따른다.
+
+1. 자기 Worktree에서 요청과 코드를 읽기 전용으로 조사해 작업명·수정 예정 경로/glob을 정한다. Codex는 `baba-wt-codex`, Claude Code는 `baba-wt-claude`를 사용한다. 원본 main은 직렬 모드(§12)이므로 실행하지 않는다.
 2. 저장소 루트에서 실행한다. 아래 명령은 CMD·PowerShell 모두 동일하다. 에이전트는 위치로 자동 판별하며 `--agent codex` 또는 `--agent claude`로 대조할 수 있다.
 
    ```

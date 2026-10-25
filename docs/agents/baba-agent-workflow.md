@@ -1,4 +1,4 @@
-# BABA 병렬 개발 공통 절차 (Codex · Claude Code)
+# BABA 개발 공통 절차 — 직렬·병렬 모드 (Codex · Claude Code)
 
 이 문서는 Codex와 Claude Code가 함께 따르는 **단일 기준 문서**다. 각 에이전트의 진입점은 다음과 같다.
 
@@ -15,22 +15,26 @@
 
 이 문서는 위 AGENTS.md 규칙을 완화하지 않는다. 둘이 다르게 읽히면 더 엄격한 쪽을 따른다.
 
-## 1. Worktree 소유권
+## 1. 개발 모드와 Worktree 소유권
 
-| 용도 | 경로 | 소유 | 브랜치 접두사 | 앱 포트 |
-| --- | --- | --- | --- | --- |
-| 원본 | `C:\workspace\baba-staff-app` | 사용자 | `main` | 3000 |
-| Codex | `C:\workspace\baba-wt-codex` | Codex | `codex/` | 3001 |
-| Claude Code | `C:\workspace\baba-wt-claude` | Claude Code | `claude/` | 3002 |
+| 용도 | 경로 | 소유 | 브랜치 | 개발 모드 | 앱 포트 |
+| --- | --- | --- | --- | --- | --- |
+| 원본 | `C:\workspace\baba-staff-app` | 사용자 | `main` | 직렬(기본, §12) | 3000 |
+| Codex | `C:\workspace\baba-wt-codex` | Codex | `codex/` | 격리·병렬 | 3001 |
+| Claude Code | `C:\workspace\baba-wt-claude` | Claude Code | `claude/` | 격리·병렬 | 3002 |
 
-- 에이전트는 **자기 Worktree 안에서만** 파일을 만들거나 수정한다. 다른 Worktree와 원본 폴더는 읽기 전용으로 조회만 한다(`git --no-optional-locks`).
-- 원본 폴더의 `main`, 원본 개발 서버(3000), 원본의 미커밋 변경은 건드리지 않는다.
+- 개발 모드는 에이전트 종류가 아니라 **실제 실행 중인 Git 작업 경로와 브랜치**로 정한다. 별도 선언은 필요 없다.
+  - 원본 폴더의 `main`: 직렬 모드(§12). Codex·Claude Code 모두 같은 규칙을 따른다.
+  - 자기 전용 Worktree: 격리·병렬 모드(§2~§11).
+  - 원본 폴더의 다른 브랜치, 등록되지 않은 경로, 다른 에이전트의 Worktree: 수정하지 않고 사용자에게 보고한다.
+- 격리·병렬 모드의 에이전트는 **자기 Worktree 안에서만** 파일을 만들거나 수정한다. 다른 Worktree와 원본 폴더는 읽기 전용으로 조회만 한다(`git --no-optional-locks`).
+- 원본 개발 서버(3000)는 건드리지 않는다. 원본의 미커밋 변경은 직렬 모드에서 이어받는 경우에만 §12에 따라 다룬다.
 - 다른 에이전트의 개발 서버, 에이전트 프로세스, 브랜치를 종료·삭제·이동하지 않는다.
 - Worktree는 Git 객체·참조·설정을 공유하므로 보안 격리 환경이 아니다. 브랜치 이름 충돌과 공유 ref 변경에 주의한다.
 
 ## 2. 작업 브랜치 생성·종료
 
-새 개발 요청은 에이전트가 별도 Git 지시를 기다리지 않고 `baba-start`를 먼저 호출한다. 수정 예정 범위를 정하기 위한 읽기 전용 조사는 먼저 할 수 있다. CMD·PowerShell에서 동일하게 실행한다.
+격리·병렬 모드(전용 Worktree)의 새 개발 요청은 에이전트가 별도 Git 지시를 기다리지 않고 `baba-start`를 먼저 호출한다. 원본 main 직렬 모드에서는 사용하지 않는다(§12). 수정 예정 범위를 정하기 위한 읽기 전용 조사는 먼저 할 수 있다. CMD·PowerShell에서 동일하게 실행한다.
 
 ```
 node scripts/agent/baba-start.mjs --task "작업명" --slug task-slug --files "app/example/**,tests/example.test.mjs" --json
@@ -43,7 +47,7 @@ node scripts/agent/baba-start.mjs --task "작업명" --slug task-slug --files "a
 5. 작업 ID는 접두사를 뺀 부분이다. `.tmp-baba/start/tasks/`에는 생성 기록, `runs/`에는 실행별 결과를 배타적으로 새 파일에 저장한다. 자기 Worktree의 ignored 경로만 사용하며 기존 기록을 덮어쓰지 않는다. 프로세스 잠금으로 같은 Worktree의 중복 실행을 막는다. 활성 Git 전환/ref hook은 실행하지 않고 중단한다.
 6. 기록된 같은 작업명·slug는 새 브랜치를 만들지 않고 RESUMED로 반환한다. 명시적 재개는 `node scripts/agent/baba-start.mjs --resume <작업-ID> --json`이다. 현재 기록된 브랜치에서만 재개하며 dirty 상태는 항상 중단한다. 사망이 확인된 프로세스 잠금은 명시적 재개에서만 다른 이름으로 보관한다. 전환 후 최종 검사 실패도 브랜치·코드·생성 기록을 남겨 재개할 수 있게 한다.
 7. 기록 없는 작업 브랜치, 다른 미완료 작업, 손상된 기록은 임의 채택하거나 완료 처리하지 않는다. 도구 도입 전 브랜치는 기본 경로의 현재 코드와 일치하는 완료 Handoff가 검증된 경우에만 다음 새 작업을 허용한다(과거 재개 기록은 만들지 않음). 기록된 작업의 다음 다른 작업은 clean이고 현재 커밋이 main에 포함되었거나 Handoff `--check`가 통과해야 시작한다. Handoff만으로 기능 커밋을 main에 자동 포함하지 않는다. 미통합 기능 의존성이 필요하면 별도로 보고한다.
-8. 개발 중 커밋은 작업 브랜치에만 한다. `reset --hard`, 무조건적 `clean`, 강제 전환, 자동 stash, 이력 재작성, 다른 Worktree 브랜치 삭제는 금지한다. 범위 변경 시 Preflight를 다시 실행한다. `package-lock.json`이 바뀌었으면 자기 Worktree에서만 `npm ci`한다.
+8. 개발 중 커밋은 작업 브랜치에만 한다(직렬 모드는 §12). `reset --hard`, 무조건적 `clean`, 강제 전환, 자동 stash, 이력 재작성, 다른 Worktree 브랜치 삭제는 금지한다. 범위 변경 시 Preflight를 다시 실행한다. `package-lock.json`이 바뀌었으면 자기 Worktree에서만 `npm ci`한다.
 9. `baba-verify`(§8) → `baba-handoff`(§10) → 작업 브랜치에 커밋한다. 이전 idle·작업 브랜치를 보존한다. main 병합·push·배포·운영 변경은 별도 승인 대상이다(§6·§7).
 
 Skill 자동 호출은 `AGENTS.md`/`CLAUDE.md` 진입점의 지침으로 연결한다. 사용자 터미널을 강제 제어하는 hook을 설치하지 않으며 Claude 권한 모드나 `bypassPermissions`를 변경하지 않는다. 두 Worktree에 이 구현이 아직 없다면 승인된 main 통합과 clean 상태의 새 브랜치 반영이 먼저 필요하다.
@@ -111,6 +115,9 @@ Skill 자동 호출은 `AGENTS.md`/`CLAUDE.md` 진입점의 지침으로 연결�
   - 대상 브랜치의 `baba-verify`가 FAIL이 아니다.
   - 인계서 `--check`를 통과했다.
   - 다른 Worktree와 겹치는 파일이 정리됐다.
+  - 원본 main에 미커밋 변경이 없다. 있으면 병합을 중단하고 보고한다.
+  - 후보의 prepare·검증 이후 main이 바뀌었다면(다른 후보 병합, §12 직렬 모드 커밋 포함) 새 main 기준으로 다시 prepare·`baba-verify`한다. 후보 브랜치 rebase 등 이력 재작성으로 처리하지 않는다.
+- §12 직렬 모드의 원본 main 직접 커밋은 이 절의 "main 병합"이 아니다. push·배포 승인은 똑같이 필요하다.
 - 배포는 AGENTS.md 절차 5단계에 따라 Migration 운영 검증이 끝난 다음에만 진행한다.
 
 ## 8. 테스트·회귀 검증 기준 — `baba-verify`
@@ -190,4 +197,49 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 - 절차 본문은 `.agents/skills`에만 둔다. Claude 진입점은 같은 `name`·`description`을 갖고, 본문은 기준 파일을 읽도록 지시만 한다.
 - 정합성은 `node scripts/agent/check-agent-skills.mjs`로 검사한다.
 - 스크립트는 Node.js `.mjs`다. Windows PowerShell 실행 정책(.ps1 차단)과 관계없이 실행되고, 외부 의존성이 없다.
-- 이 문서나 Skills를 바꾸는 것은 공통 파일 변경이다. 한 에이전트 브랜치에서 바꾸고 사용자 승인 후 병합한다. 다른 에이전트는 병합된 `main`에서 새 작업 브랜치를 만들어 반영한다.
+- 위 Skill과 `baba-integrate`는 격리·병렬 모드 전용이다. 소유권 검사로 원본 폴더에서는 거부되며, 이는 정상 동작이다.
+- 이 문서나 Skills를 바꾸는 것은 공통 파일 변경이다. 격리·병렬 모드에서는 한 에이전트 브랜치에서 바꾸고 사용자 승인 후 병합한다. 직렬 모드에서는 원본 main에서 직접 바꾼다. 다른 에이전트는 바뀐 `main`에서 새 작업 브랜치를 만들어 반영한다.
+
+## 12. 직렬 모드 — 원본 main 직접 개발
+
+**적용**: 원본 폴더(`C:\workspace\baba-staff-app`)의 `main`에서 실행 중인 에이전트. Codex·Claude Code 공통이며 별도 선언 없이 기본으로 적용한다. §4·§5·§6·§9와 AGENTS.md 운영 DB·Migration 규칙은 그대로 적용한다.
+
+**도구**
+
+- `baba-start`·`baba-integrate`는 사용하지 않는다. `baba-preflight`·`baba-verify`·`baba-handoff`도 소유권 검사로 원본 폴더에서 거부된다. 이는 정상이며 우회하거나 검사를 고치지 않는다.
+- 직렬 모드 전용 도구·자동화는 두지 않는다. 일반 Git·npm·node 명령을 쓴다.
+
+**시작·이어받기**
+
+1. `git status`로 브랜치가 `main`이고 진행 중인 merge·rebase·cherry-pick이 없는지 확인한다.
+2. 미커밋 변경이 있으면 보존한다. `git status`·`git diff`·최근 커밋으로 내용을 확인한 뒤 이어서 작업한다. 이어받을 작업인지 판단할 수 없으면 수정 전에 사용자에게 묻는다.
+3. 수정 예정 파일이 전용 Worktree의 미커밋·미통합 변경과 겹치는지 `git --no-optional-locks -C <Worktree> status`로 읽기 전용 확인한다. 겹치면 사용자 확인 전까지 그 파일을 수정하지 않는다.
+4. 수정 전에 아래 검증을 한 번 실행해 기준 결과를 남긴다. 기존·신규 실패를 나누는 근거다.
+
+**에이전트 교체**
+
+- 같은 원본 폴더를 두 에이전트가 동시에 수정하지 않는다. Codex↔Claude Code 교체 전에 이전 에이전트 세션을 종료한다. 이전 세션이 살아 있는지 불확실하면 수정 전에 사용자에게 확인한다.
+- 이어받는 에이전트는 위 1~2단계로 HEAD·최근 커밋·미커밋 변경을 확인하고 그대로 이어서 작업한다. 이전 에이전트의 커밋과 변경을 되돌리지 않는다.
+- 사용자 승인 없이 `reset`, `clean`, `checkout`/`restore`로 파일 되돌리기, 강제 전환, 자동 stash, 이력 재작성으로 기존 작업을 폐기하지 않는다.
+- 검증이 끝나지 않은 작업은 커밋하지 않고 미커밋 상태로 남겨 이어받게 한다. 중단 시 가능한 범위에서 진행 상황(변경 파일, 남은 작업, 검증 상태)을 사용자에게 보고한다.
+
+**검증**
+
+- ESLint: 변경된 JS/TS 파일만 `npx eslint <파일>`
+- TypeScript: `npx tsc --noEmit` (route 타입이 없으면 `npx next typegen`을 먼저 실행)
+- 관련 테스트: 변경 경로를 참조하는 테스트와 같은 폴더 테스트를 `node --import ./scripts/agent/lib/offline-guard.mjs --test <파일>`로 실행한다(TypeScript 테스트는 `--experimental-strip-types` 추가). POS 동기화·cron·일괄 작업 경로는 mock 없이 실행하지 않는다.
+- 기존·신규 구분: 시작 4단계 기준 결과와 비교한다. 기준 결과가 없거나 분류하지 못한 실패는 신규로 본다. ESLint 기존 오류는 `git show HEAD:<파일> | npx eslint --stdin --stdin-filename <파일>`로 확인할 수 있다.
+- 판정과 표기는 §8 기준(`PASS`·`PASS_WITH_PREEXISTING`·`FAIL`, 실제 실행 여부, 미검증 항목)을 따른다. `FAIL`이면 커밋하지 않는다.
+- `.env.local` 보호: 값을 읽기·출력·복사하지 않는다. 원본 폴더에서 Next.js가 `.env.local`을 읽어 운영에 연결될 수 있으므로 `next build`·`next start`·`next dev`를 실행하지 않는다(원본 개발 서버 3000은 사용자 소유). Build 검증이 필요하면 미검증으로 보고하고, 사용자 승인 후 전용 Worktree의 `baba-verify --build`(오프라인 fixture)로 확인한다.
+
+**커밋·보고**
+
+- 검증 후 원본 `main`에 직접 커밋한다. 이번 작업 파일만 지정해 add하고 관련 없는 변경을 섞지 않는다.
+- `git push`, Vercel Production 배포, 운영 DB·Migration 적용은 §6·§7과 AGENTS.md에 따라 별도 사용자 승인을 받는다. 로컬 SQL 작성·테스트·검증 담당이 Codex라는 AGENTS.md 규정은 직렬 모드에서도 같다.
+- `baba-handoff` 파일 대신 사용자에게 시작 SHA, 최종 SHA, 커밋 목록, 변경 파일, 검증 결과·미검증 항목, DB/Migration 변경 여부, push 여부를 보고한다.
+
+**격리·병렬 모드와의 관계**
+
+- 전용 Worktree의 소유권 검사, 도구 동작, `baba-integrate`의 main 실행 비활성화(R1)는 바꾸지 않는다. 전용 Worktree 에이전트는 원본 main을 읽기 전용으로만 본다.
+- 원본 main에 미커밋 변경이 있으면 전용 Worktree 후보의 main 병합을 중단한다(§7).
+- 직렬 모드 커밋으로 main이 바뀌면 그 전의 후보 prepare·검증은 무효다. 후보는 새 main 기준으로 `baba-integrate` prepare와 `baba-verify`를 다시 수행한다(§7).

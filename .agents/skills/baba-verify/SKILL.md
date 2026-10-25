@@ -1,11 +1,13 @@
 ---
 name: baba-verify
-description: BABA 관리자 앱 코드 변경 후 실행하는 검증. 변경 파일 검사(충돌 표식·자격 증명·기존 Migration 수정), 관련 회귀 테스트(자격 증명 제거·오프라인 가드), ESLint, TypeScript, 필요 시 Production Build를 실행하고 merge-base 기준선과 비교해 기존 오류와 신규 오류를 구분하며 실제 실행 항목과 미검증 항목을 분리해 보고한다.
+description: BABA 관리자 앱 전용 Worktree(격리·병렬 모드)의 코드 변경 후 실행하는 검증. 변경 파일 검사(충돌 표식·자격 증명·기존 Migration 수정), 관련 회귀 테스트(자격 증명 제거·오프라인 가드), ESLint, TypeScript, 필요 시 Production Build를 실행하고 merge-base 기준선과 비교해 기존 오류와 신규 오류를 구분하며 실제 실행 항목과 미검증 항목을 분리해 보고한다. 원본 main 직렬 모드에서는 일반 lint·TypeScript·관련 테스트를 쓴다.
 ---
 
 # baba-verify
 
 기준 정책: `docs/agents/baba-agent-workflow.md` §8.
+
+적용 범위: 전용 Worktree(격리·병렬 모드) 전용이다. 원본 main 직렬 모드에서는 사용하지 않고 `docs/agents/baba-agent-workflow.md` §12를 따른다.
 
 ## 언제
 

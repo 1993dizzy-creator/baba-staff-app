@@ -1,11 +1,13 @@
 ---
 name: baba-handoff
-description: BABA 관리자 앱 작업 완료 시 표준 인계서를 작성한다. 작업명·작업 ID·담당 AI·브랜치·Git SHA·변경 파일과 기능·baba-verify 검증 결과·DB/Migration 변경 여부·push/병합/배포 여부·미완료 사항과 후속 작업을 docs/handoffs에 기록하고 형식을 검사한다.
+description: BABA 관리자 앱 전용 Worktree(격리·병렬 모드)의 작업 완료 시 표준 인계서를 작성한다. 작업명·작업 ID·담당 AI·브랜치·Git SHA·변경 파일과 기능·baba-verify 검증 결과·DB/Migration 변경 여부·push/병합/배포 여부·미완료 사항과 후속 작업을 docs/handoffs에 기록하고 형식을 검사한다. 원본 main 직렬 모드에서는 사용하지 않는다.
 ---
 
 # baba-handoff
 
 기준 정책: `docs/agents/baba-agent-workflow.md` §10.
+
+적용 범위: 전용 Worktree(격리·병렬 모드) 전용이다. 원본 main 직렬 모드에서는 사용하지 않고 `docs/agents/baba-agent-workflow.md` §12를 따른다.
 
 ## 언제
 

@@ -44,8 +44,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - 과거 수동 적용 Migration을 자동으로 재실행하거나 일괄 이력 등록하지 않는다.
 - 실제 충돌이나 안전상 위험이 발견된 경우에만 구체적인 근거와 함께 중단한다.
 
-## 병렬 개발 공통 절차 (Codex · Claude Code)
+## 개발 모드 공통 절차 (Codex · Claude Code)
 
-- Worktree 소유권, 작업 브랜치, 영향 범위·충돌 검사, 병합·배포 승인, 검증 기준, 인계서 규칙은 `docs/agents/baba-agent-workflow.md`를 따른다. 위 운영 DB·Migration 규칙이 그 문서보다 우선한다.
-- 새 개발 요청은 자기 Worktree에서 `.agents/skills/baba-start/SKILL.md`를 읽고 `baba-start`부터 실행한다. 읽기 전용 조사로 작업명·수정 예정 파일을 정한 뒤 실행하며, 기록된 동일 작업은 재개한다. 차단이면 수정하지 않는다.
-- `baba-start`(내부 `baba-preflight`) → 개발(범위 변경 시 Preflight 재실행) → `baba-verify` → `baba-handoff` 절차를 사용한다.
+- 개발 모드, Worktree 소유권, 작업 브랜치, 영향 범위·충돌 검사, 병합·배포 승인, 검증 기준, 인계서 규칙은 `docs/agents/baba-agent-workflow.md`를 따른다. 위 운영 DB·Migration 규칙이 그 문서보다 우선한다.
+- 개발 모드는 에이전트 종류가 아니라 실제 실행 중인 Git 작업 경로로 정한다.
+- 원본 폴더(`C:\workspace\baba-staff-app`)의 `main`은 **직렬 모드**가 기본이다. Codex·Claude Code 모두 별도 선언 없이 직접 수정·테스트·커밋하며 `baba-start`·`baba-integrate`는 사용하지 않는다. 검증·에이전트 교체 규칙은 기준 문서 §12를 따른다.
+- 전용 Worktree(`baba-wt-codex`, `baba-wt-claude`)는 **격리·병렬 모드**다. 새 개발 요청은 자기 Worktree에서 `.agents/skills/baba-start/SKILL.md`를 읽고 `baba-start`부터 실행한다. 읽기 전용 조사로 작업명·수정 예정 파일을 정한 뒤 실행하며, 기록된 동일 작업은 재개한다. 차단이면 수정하지 않는다.
+- 격리·병렬 모드는 `baba-start`(내부 `baba-preflight`) → 개발(범위 변경 시 Preflight 재실행) → `baba-verify` → `baba-handoff` 절차를 사용한다.

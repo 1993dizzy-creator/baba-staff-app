@@ -1,6 +1,6 @@
 ---
 name: baba-preflight
-description: BABA 관리자 앱에서 새 작업을 시작하기 전에 실행하는 읽기 전용 점검. Worktree 소유권·작업 브랜치·미커밋 변경, 다른 Worktree와의 파일 겹침, 수정 예정 파일의 API·DB 테이블·RPC, Migration 위험, 운영 데이터 변경 가능성을 확인하고 개발 가능 여부와 위험도를 판정한다. 코드 수정 전 반드시 사용한다.
+description: BABA 관리자 앱 전용 Worktree(격리·병렬 모드)에서 새 작업을 시작하기 전에 실행하는 읽기 전용 점검. Worktree 소유권·작업 브랜치·미커밋 변경, 다른 Worktree와의 파일 겹침, 수정 예정 파일의 API·DB 테이블·RPC, Migration 위험, 운영 데이터 변경 가능성을 확인하고 개발 가능 여부와 위험도를 판정한다. 코드 수정 전 반드시 사용한다. 원본 main 직렬 모드에서는 사용하지 않는다.
 ---
 
 # baba-preflight (Claude Code 진입점)
