@@ -66,12 +66,14 @@ export const gitTry = (root, args) => {
 // Inspect effective includes/config without reading hook commands (which may contain secrets).
 // Conditional includes are deliberately rejected: later branch/gitdir contexts can activate them.
 // This does not solve another process changing configuration after this check (R2).
-export function assertNoGitHooks(root, {env = process.env} = {}) {
+export function assertNoGitHooks(root, {env = process.env, internalIndexFile} = {}) {
   const reject = (code, message) => { throw Object.assign(new Error(message), {code}); };
   const safeVariables = new Set(['GIT_PAGER', 'GIT_TERMINAL_PROMPT', 'GIT_OPTIONAL_LOCKS']);
   for (const name of Object.keys(env).filter(name => /^GIT_/i.test(name))) {
     if (safeVariables.has(name.toUpperCase())) continue;
-    if (name.toUpperCase() === 'GIT_INDEX_FILE') { insideRoot(root, env[name]); continue; }
+    if (name.toUpperCase() === 'GIT_INDEX_FILE' && internalIndexFile && resolve(env[name]) === resolve(internalIndexFile)) {
+      insideRoot(root, internalIndexFile); continue;
+    }
     reject('GIT_ENVIRONMENT_UNVERIFIED', 'Git environment overrides require independent review (values withheld).');
   }
   const query = args => run('git', ['--no-pager', '--no-optional-locks', '-c', 'core.quotepath=off', ...args], {cwd: root, env, allowFail: true});

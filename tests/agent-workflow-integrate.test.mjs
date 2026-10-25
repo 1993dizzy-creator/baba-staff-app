@@ -324,7 +324,8 @@ test('D1: effective include, includeIf future contexts, environment overrides an
   }
   const f = fixture();
   for (const override of [{GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'hook.probe.event',GIT_CONFIG_VALUE_0:'post-index-change'},
-    {GIT_CONFIG_GLOBAL:join(f.directory,'mask.config')}, {GIT_CONFIG_PARAMETERS:'unknown'}, {GIT_DIR:join(f.directory,'other.git')}]) {
+    {GIT_CONFIG_GLOBAL:join(f.directory,'mask.config')}, {GIT_CONFIG_PARAMETERS:'unknown'}, {GIT_DIR:join(f.directory,'other.git')},
+    {GIT_INDEX_FILE:join(f.codex,'.tmp-baba/foreign-index')}]) {
     assert.throws(() => assertNoGitHooks(f.codex, {env:{...sanitizedEnv().env,...override}}), error => error.code === 'GIT_ENVIRONMENT_UNVERIFIED');
   }
   const config = gitOut(f.codex, ['rev-parse', '--path-format=absolute', '--git-path', 'config']);

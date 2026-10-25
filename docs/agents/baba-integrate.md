@@ -76,6 +76,8 @@ effective config의 키를 `--includes`로 조사하며 command 값은 읽거나
 core.hooksPath를 비워 두는 것만으로 config Hook이 차단됐다고 가정하지 않는다.
 조건부 includeIf는 다음 branch/gitdir 문맥에서 활성화될 수 있어 보수적으로 차단한다.
 알 수 없는 Git 환경변수, 깨진 config, 읽지 못한 디렉터리도 차단한다.
+외부에서 지정한 GIT_INDEX_FILE도 차단한다. baseline helper가 명시한 담당 Worktree 내부
+전용 index에만 제한적인 내부 허용을 부여한다. 원격 조회의 대화형 인증 요청도 비활성화한다.
 공유 Hook을 삭제하거나 원본 설정을 변경하지 않는다. start의 fetch/switch, Verify의 baseline
 index 쓰기, prepare의 fetch/switch/merge 전에 공통 검사를 실행한다.
 

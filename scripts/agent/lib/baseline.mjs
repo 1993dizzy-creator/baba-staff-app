@@ -8,8 +8,8 @@ export function createBaseline(root, sha, env) {
   mkdirSync(parent, {recursive: true});
   const dir = mkdtempSync(join(parent, 'baseline-'));
   const indexEnv = {...env, GIT_INDEX_FILE: join(dir, '.baba-baseline-index')};
-  guardedGit(root, ['read-tree', sha], {env: indexEnv});
-  guardedGit(root, [`--work-tree=${dir}`, 'checkout-index', '-a', '-f'], {env: indexEnv});
+  guardedGit(root, ['read-tree', sha], {env: indexEnv, internalIndexFile: indexEnv.GIT_INDEX_FILE});
+  guardedGit(root, [`--work-tree=${dir}`, 'checkout-index', '-a', '-f'], {env: indexEnv, internalIndexFile: indexEnv.GIT_INDEX_FILE});
   writeRecord(root, join(dir, '.baba-baseline.json'), {version: 1, root, sha});
   const link = join(dir, 'node_modules');
   const target = realpathSync(join(root, 'node_modules'));
