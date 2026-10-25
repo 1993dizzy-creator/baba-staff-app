@@ -6,14 +6,15 @@
 // Usage: node scripts/agent/baba-verify.mjs [--base origin/main] [--tests a,b] [--all-tests]
 //          [--build] [--no-baseline] [--skip-lint] [--skip-tsc] [--concurrency 4] [--json]
 import {spawn} from 'node:child_process';
-import {existsSync, mkdirSync, readFileSync, statSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, readFileSync, statSync} from 'node:fs';
+import {randomUUID} from 'node:crypto';
 import {cpus} from 'node:os';
 import {join, relative, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {
   HOT_FILES, POLICY_DOC, allTestFiles, collectChanges, defaultBaseRef, domainTestSuggestions, gitOut,
   identifyWorktree, matchesAny, migrationVersion, parseArgs, relatedTests, repoRoot, run, sanitizedEnv, splitList,
-  stateFingerprint, assertOwnedWorktree, insideRoot, TEST_FILE,
+  stateFingerprint, assertOwnedWorktree, insideRoot, TEST_FILE, worktreeEnvironment, writeRecord,
 } from './lib/common.mjs';
 import {createBaseline} from './lib/baseline.mjs';
 import {createBuildEnvironment} from './lib/build-env.mjs';
@@ -40,7 +41,8 @@ const fingerprint = stateFingerprint(root);
 const present = files.filter(file => !file.deleted && existsSync(join(root, file.path)) && statSync(join(root, file.path)).isFile());
 const changedPaths = present.map(file => file.path);
 const guardUrl = pathToFileURL(resolve(import.meta.dirname, 'lib', 'offline-guard.mjs')).href;
-const {env: childEnv, removed: removedEnv} = sanitizedEnv();
+const {env: sanitized, removed: removedEnv} = sanitizedEnv();
+const childEnv = worktreeEnvironment(root, sanitized);
 childEnv.NODE_OPTIONS = `--import=${guardUrl}${process.env.NODE_OPTIONS ? ` ${process.env.NODE_OPTIONS}` : ''}`;
 const concurrency = Math.max(1, Number(args.concurrency) || Math.min(4, Math.max(1, cpus().length >> 1)));
 const timeoutMs = Number(args.timeoutMs) || 10 * 60 * 1000;
@@ -149,6 +151,11 @@ else if (lintTargets.length) {
       }
       if (!result.messages.length) continue;
       const before = baseFiles.has(path) && !args.noBaseline ? eslintStdin(root, path, gitOut(root, ['show', `${mergeBase}:${path}`])) : [];
+      const currentKeys = result.messages.filter(m => m.severity === 2).map(m => `${path}|${lintKey(m)}`);
+      const beforeKeys = before.filter(m => m.severity === 2).map(m => `${path}|${lintKey(m)}`);
+      lintCheck.baselineEvidence ||= {sha: mergeBase, current: [], before: []};
+      lintCheck.baselineEvidence.current.push(...currentKeys);
+      lintCheck.baselineEvidence.before.push(...beforeKeys);
       const remaining = countKeys(before.map(lintKey));
       for (const message of result.messages) {
         const key = lintKey(message);
@@ -162,6 +169,7 @@ else if (lintTargets.length) {
       }
     }
     lintCheck.status = lintCheck.newErrors.length ? 'failed' : 'passed';
+    if (lintCheck.preexisting && !lintCheck.newErrors.length) { lintCheck.status = 'passed-with-preexisting'; await baseline(); }
     if (args.noBaseline && lintCheck.newErrors.length) lintCheck.status = 'failed-unclassified';
   }
 }
@@ -183,7 +191,9 @@ else {
       tscCheck.status = 'failed-unclassified';
       tscCheck.newErrors = current.map(diag => diag.text);
     } else {
-      const remaining = countKeys((await tsc(base)).map(diag => diag.key));
+      const before = (await tsc(base)).map(diag => diag.key);
+      tscCheck.baselineEvidence = {sha: mergeBase, current: current.map(diag => diag.key), before};
+      const remaining = countKeys(before);
       for (const diag of current) {
         if (remaining.get(diag.key) > 0) {
           remaining.set(diag.key, remaining.get(diag.key) - 1);
@@ -205,6 +215,7 @@ if (args.build) {
   const build = createBuildEnvironment();
   buildCheck.environment = build.description;
   gaps.push('Build는 offline-local-fixture 환경의 검증이다. 운영 환경·인증·DB 연결은 미검증이며 이 .next 산출물을 배포하지 않는다.');
+  build.env = worktreeEnvironment(root, build.env);
   const result = await exec(process.execPath, [join(root, 'node_modules', 'next', 'dist', 'bin', 'next'), 'build'], {cwd: root, env: build.env, timeout: 30 * 60 * 1000});
   buildCheck.exitCode = result.code;
   buildCheck.tail = tail(result.output, 40);
@@ -219,6 +230,7 @@ if (args.build) {
       buildCheck.baselineExitCode = before.code;
       const signature = text => [...text.matchAll(/^(?:.*Error:.*|.*error TS\d+:.*|.*Module not found:.*)$/gm)].map(match => match[0].replaceAll(root, '<root>').replaceAll(base, '<root>')).sort();
       const currentErrors = signature(result.output);
+      buildCheck.baselineEvidence = {sha: mergeBase, current: currentErrors, before: signature(before.output)};
       buildCheck.status = before.code !== 0 && currentErrors.length > 0 && JSON.stringify(currentErrors) === JSON.stringify(signature(before.output)) ? 'failed-preexisting' : 'failed';
     } else buildCheck.status = 'failed-unclassified';
   }
@@ -243,9 +255,10 @@ const report = {
 const outDir = insideRoot(root, '.tmp-baba/verify');
 mkdirSync(outDir, {recursive: true});
 const outFile = join(outDir, `${report.generatedAt.replace(/[:.]/g, '-')}-${head.slice(0, 8)}.json`);
-writeFileSync(outFile, JSON.stringify(report, null, 2));
-writeFileSync(join(outDir, 'latest.json'), JSON.stringify({...report, savedAs: relPath(outFile)}, null, 2));
-console.log(args.json ? JSON.stringify(report, null, 2) : render(report, relPath(outFile)));
+report.savedAs = relPath(outFile).replace(/\.json$/, `-${randomUUID()}.json`);
+writeRecord(root, report.savedAs, report);
+writeRecord(root, '.tmp-baba/verify/latest.json', report, {replace: true});
+console.log(args.json ? JSON.stringify(report, null, 2) : render(report, report.savedAs));
 process.exitCode = verdict === 'FAIL' ? 1 : 0;
 
 // ---------- helpers ----------
@@ -268,6 +281,7 @@ function tail(text, count) {
 }
 
 function exec(command, argv, {cwd, env, timeout}) {
+  env = worktreeEnvironment(root, env, cwd);
   return new Promise(done => {
     const child = spawn(command, argv, {cwd, env, windowsHide: true});
     // Decode across Buffer boundaries: split Korean TAP/Build text must not become U+FFFD.
@@ -359,7 +373,7 @@ async function tsc(cwd) {
   return diags;
 }
 
-// Baseline = merge-base snapshot outside the worktree (OS temp), checked out through a private
+// Baseline = merge-base snapshot inside the worktree, checked out through a private
 // index file so no worktree, branch or shared index is created or modified.
 async function baseline() {
   if (args.noBaseline) return null;

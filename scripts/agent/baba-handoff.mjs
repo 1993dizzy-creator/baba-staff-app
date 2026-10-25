@@ -5,7 +5,7 @@
 // Usage: node scripts/agent/baba-handoff.mjs --task-name "<작업명>" [--task-id <id>] [--out <path> | --stdout] [--base origin/main]
 //        node scripts/agent/baba-handoff.mjs --check docs/handoffs/<file>.md
 import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
-import {dirname, join, relative} from 'node:path';
+import {dirname, relative} from 'node:path';
 import {
   AGENTS, HANDOFF_DIR, POLICY_DOC, collectChanges, defaultBaseRef, git, gitOut, gitTry, identifyWorktree, migrationVersion, parseArgs,
   repoRoot, stateFingerprint, insideRoot, assertOwnedWorktree,
@@ -61,7 +61,7 @@ for (const line of gitOut(root, ['diff', '--numstat', mergeBase]).split('\n').fi
 }
 
 // Verify result: only trusted when its state fingerprint matches the current tree.
-const latestPath = join(root, '.tmp-baba', 'verify', 'latest.json');
+const latestPath = insideRoot(root, '.tmp-baba/verify/latest.json');
 const verify = existsSync(latestPath) ? JSON.parse(readFileSync(latestPath, 'utf8')) : null;
 const fingerprint = stateFingerprint(root);
 const verifyMatches = verify && verify.fingerprint === fingerprint;

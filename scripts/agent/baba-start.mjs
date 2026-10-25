@@ -26,7 +26,7 @@ const ancestor = (root, older, newer) => {
   return result.status === 0;
 };
 
-function readTask(root, agent, taskId) {
+export function readTask(root, agent, taskId) {
   if (!TASK_ID.test(taskId)) fail('INVALID_TASK_ID', '재개 작업 ID 형식이 잘못됐다.');
   const path = insideRoot(root, `${RECORD_DIR}/tasks/${taskId}.json`);
   if (!existsSync(path)) fail('MISSING_RECORD', '기존 작업 기록이 없다. 브랜치를 임의로 채택하지 않는다.');

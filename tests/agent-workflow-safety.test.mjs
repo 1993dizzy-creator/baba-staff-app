@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync} from 'node:fs';
-import {join} from 'node:path';
+import {join, resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {createBaseline} from '../scripts/agent/lib/baseline.mjs';
 import {insideRoot, sanitizedEnv, stateFingerprint} from '../scripts/agent/lib/common.mjs';
 
-const source = process.cwd();
-const parent = join(source, '.tmp-baba', 'safety-fixtures');
+const source = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const parent = insideRoot(source, '.tmp-baba/safety-fixtures');
 mkdirSync(parent, {recursive: true});
 const {env} = sanitizedEnv();
 const git = (root, ...args) => {

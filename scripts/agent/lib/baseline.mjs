@@ -1,7 +1,7 @@
 // Every verification gets a private snapshot. Never recursively delete a snapshot or dependency tree.
 import {lstatSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, unlinkSync} from 'node:fs';
 import {join} from 'node:path';
-import {git, insideRoot} from './common.mjs';
+import {git, insideRoot, writeRecord} from './common.mjs';
 
 export function createBaseline(root, sha, env) {
   const parent = insideRoot(root, '.tmp-baba');
@@ -10,6 +10,7 @@ export function createBaseline(root, sha, env) {
   const indexEnv = {...env, GIT_INDEX_FILE: join(dir, '.baba-baseline-index')};
   git(root, ['read-tree', sha], {env: indexEnv});
   git(root, [`--work-tree=${dir}`, 'checkout-index', '-a', '-f'], {env: indexEnv});
+  writeRecord(root, join(dir, '.baba-baseline.json'), {version: 1, root, sha});
   const link = join(dir, 'node_modules');
   const target = realpathSync(join(root, 'node_modules'));
   symlinkSync(target, link, 'junction');

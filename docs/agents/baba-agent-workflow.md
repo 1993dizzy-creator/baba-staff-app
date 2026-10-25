@@ -176,6 +176,10 @@ Skill 자동 호출은 `AGENTS.md`/`CLAUDE.md` 진입점의 지침으로 연결�
 
 ## 11. Skills 구조
 
+P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·상태·승인 증거·한계는
+`docs/agents/baba-integrate.md`를 따른다. 기본 inspect/prepare는 담당 Worktree 안에서 결과를 기록하고
+원본 main을 보존한다. 실제 로컬 main 병합, push, Production, 운영 DB 승인 경계는 §6·§7 그대로다.
+
 | Skill | 기준 정의 (Codex·공통) | Claude Code 진입점 | 실행 스크립트 |
 | --- | --- | --- | --- |
 | baba-start | `.agents/skills/baba-start/SKILL.md` | `.claude/skills/baba-start/SKILL.md` | `scripts/agent/baba-start.mjs` |

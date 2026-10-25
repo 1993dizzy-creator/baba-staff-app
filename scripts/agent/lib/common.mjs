@@ -3,7 +3,7 @@
 // Git is always called with --no-optional-locks so read-only inspection never refreshes an index.
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync} from 'node:fs';
+import {existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync} from 'node:fs';
 import {basename, dirname, join, relative, resolve, sep} from 'node:path';
 
 export const POLICY_DOC = 'docs/agents/baba-agent-workflow.md';
@@ -92,12 +92,15 @@ export function identifyWorktree(root) {
 
 // Resolve both lexical paths and existing ancestors: junctions must not escape the worktree.
 export function insideRoot(root, path) {
+  if (typeof path !== 'string' || !path || path.includes('\0') || /^[A-Za-z]:(?![\\/])/.test(path)) throw new Error('Invalid worktree path');
   const full = resolve(root, path);
   const within = (parent, child) => {
     const rel = relative(parent, child);
     return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !/^(?:[A-Za-z]:|[\\/])/.test(rel));
   };
   if (!within(root, full)) throw new Error('Path must stay inside the current worktree');
+  // Reject Windows alternate streams and drive-relative paths on every platform.
+  if (relative(root, full).includes(':')) throw new Error('Invalid worktree path (stream/drive)');
   let ancestor = full;
   while (true) {
     try { lstatSync(ancestor); break; } catch (error) {
@@ -106,6 +109,28 @@ export function insideRoot(root, path) {
     }
   }
   if (!within(realpathSync(root), realpathSync(ancestor))) throw new Error('Path traverses a link outside the current worktree');
+  return full;
+}
+
+// Managed tool output is always rooted in the caller's registered worktree, never cwd/TEMP.
+// This is path validation for our tools, not an OS sandbox for arbitrary shell programs.
+export function worktreeEnvironment(root, env = sanitizedEnv().env, cwd = root) {
+  insideRoot(root, cwd);
+  const temp = insideRoot(root, '.tmp-baba/tmp');
+  mkdirSync(temp, {recursive: true});
+  return {...env, TEMP: temp, TMP: temp, TMPDIR: temp};
+}
+
+export function writeRecord(root, path, value, {replace = false} = {}) {
+  const full = insideRoot(root, path);
+  mkdirSync(dirname(full), {recursive: true});
+  // Check again after mkdir; do not follow an externally redirected parent or file.
+  insideRoot(root, path);
+  if (existsSync(full)) {
+    const previous = lstatSync(full);
+    if (!previous.isFile() || previous.isSymbolicLink() || previous.nlink !== 1) throw new Error('Record output must be an unshared regular file');
+  }
+  writeFileSync(full, JSON.stringify(value, null, 2) + '\n', {flag: replace ? 'w' : 'wx'});
   return full;
 }
 
@@ -193,10 +218,14 @@ export const HANDOFF_DIR = 'docs/handoffs/';
 
 // Content fingerprint of the verified state. Handoff documents are excluded so writing and
 // committing the handoff itself does not invalidate the verification it reports.
+export function commitFingerprint(root, ref = 'HEAD') {
+  return createHash('sha256').update(gitOut(root, ['ls-tree', '-r', ref]).split('\n')
+    .filter(line => !line.split('\t')[1]?.startsWith(HANDOFF_DIR)).join('\n'));
+}
+
 export function stateFingerprint(root) {
   const scope = ['--', '.', `:(exclude)${HANDOFF_DIR}`];
-  const hash = createHash('sha256');
-  hash.update(gitOut(root, ['ls-tree', '-r', 'HEAD']).split('\n').filter(line => !line.split('\t')[1]?.startsWith(HANDOFF_DIR)).join('\n'));
+  const hash = commitFingerprint(root);
   hash.update(git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all', ...scope]).stdout);
   hash.update(git(root, ['diff', 'HEAD', '--binary', ...scope]).stdout);
   for (const entry of workingChanges(root).filter(e => e.code === '??' && !e.path.startsWith(HANDOFF_DIR))) {
@@ -373,6 +402,8 @@ export function sanitizedEnv(extra = {}) {
   const removed = [];
   for (const [name, value] of Object.entries(process.env)) {
     if (CREDENTIAL_ENV.test(name)) removed.push(name);
+    // A nested verifier must emit its own TAP, not inherit the parent's test IPC channel.
+    else if (/^NODE_TEST_/.test(name)) continue;
     else env[name] = value;
   }
   return {env: {...env, NEXT_TELEMETRY_DISABLED: '1', ...extra}, removed};

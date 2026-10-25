@@ -5,7 +5,7 @@ import {join, resolve} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {createClient} from '@supabase/supabase-js';
 import {createBuildEnvironment} from '../scripts/agent/lib/build-env.mjs';
-import {CREDENTIAL_ENV, git, run, sanitizedEnv} from '../scripts/agent/lib/common.mjs';
+import {CREDENTIAL_ENV, git, insideRoot, run, sanitizedEnv} from '../scripts/agent/lib/common.mjs';
 
 const source = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const decode = token => JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
@@ -72,7 +72,7 @@ test('Build child retains offline guard and rejects external fetch and sockets',
 });
 
 function verifierFixture() {
-  const parent = join(source, '.tmp-baba/build-env-fixtures'); mkdirSync(parent, {recursive: true});
+  const parent = insideRoot(source, '.tmp-baba/build-env-fixtures'); mkdirSync(parent, {recursive: true});
   const container = mkdtempSync(join(parent, 'run-')), root = join(container, 'baba-wt-codex'); mkdirSync(root);
   cpSync(join(source, 'scripts/agent'), join(root, 'scripts/agent'), {recursive: true});
   mkdirSync(join(root, 'tests')); mkdirSync(join(root, 'node_modules/next/dist/bin'), {recursive: true});

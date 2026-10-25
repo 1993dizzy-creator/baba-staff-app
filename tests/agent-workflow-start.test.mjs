@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import {cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, symlinkSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {git, gitOut, run, sanitizedEnv, stateFingerprint} from '../scripts/agent/lib/common.mjs';
+import {git, gitOut, insideRoot, run, sanitizedEnv, stateFingerprint} from '../scripts/agent/lib/common.mjs';
 
 // All writes (including pushes) target disposable LOCAL repositories. Keep fixtures as evidence.
 const source = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const fixtures = join(source, '.tmp-baba/start-fixtures');
+const fixtures = insideRoot(source, '.tmp-baba/start-fixtures');
 mkdirSync(fixtures, {recursive: true});
 function put(root, path, text) {
   const full = join(root, path);
@@ -130,6 +130,24 @@ test('a different task cannot replace unfinished or unrecorded work', () => {
   assert.equal(start(f.codex, request('different')).code, 'UNFINISHED_TASK'); assert.equal(branch(f.codex), first.branch);
   git(f.claude, ['switch', '-c', 'claude/legacy', 'main']);
   assert.equal(start(f.claude, request('legacy')).code, 'UNRECORDED_BRANCH');
+});
+
+test('Claude smoke without Handoff blocks on smoke branch, but preserved historical records do not block a clean waiting branch', () => {
+  const f = fixture();
+  const smoke = start(f.claude, request('p0-1-claude-smoke', 'docs/agent-smoke-claude-20261025.md'));
+  assert.equal(smoke.status, 'STARTED');
+  const manifest = join(f.claude, `.tmp-baba/start/tasks/${smoke.taskId}.json`);
+  const before = readFileSync(manifest, 'utf8'), refsBefore = refs(f.main);
+  assert.equal(start(f.claude, request('next')).code, 'UNFINISHED_TASK');
+  assert.equal(start(f.claude, ['--resume', smoke.taskId]).status, 'RESUMED');
+  assert.equal(refs(f.main), refsBefore);
+  // Match the actual clean Claude ready state. No exception to unfinished task protection.
+  git(f.claude, ['switch', 'claude/ready-fixture']);
+  const next = start(f.claude, request('next', 'app/b.ts'));
+  assert.equal(next.status, 'STARTED');
+  assert.equal(readFileSync(manifest, 'utf8'), before);
+  assert.equal(gitOut(f.main, ['rev-parse', smoke.branch]), f.seed);
+  assert.ok(existsSync(join(f.claude, smoke.savedAs)));
 });
 test('wrong agent and original main are rejected before any record or branch write', () => {
   const f = fixture(), before = refs(f.main);

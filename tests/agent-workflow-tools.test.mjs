@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import test from 'node:test';
-import {pathToFileURL} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import {apiRouteOf, dbObjectsIn, globToRegExp, parseStatusZ, relatedTests} from '../scripts/agent/lib/common.mjs';
 import {checkHandoff, REQUIRED_SECTIONS} from '../scripts/agent/lib/handoff-format.mjs';
 
-const root = process.cwd();
+const root = fileURLToPath(new URL('..', import.meta.url));
 const node = (args, options = {}) => spawnSync(process.execPath, args, {cwd: root, encoding: 'utf8', ...options});
 const status = () => spawnSync('git', ['--no-optional-locks', 'status', '--porcelain=v1', '--untracked-files=all'], {cwd: root, encoding: 'utf8'}).stdout;
 
