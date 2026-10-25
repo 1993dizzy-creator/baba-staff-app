@@ -19,8 +19,10 @@ const commit = (root, path, content) => { put(root, path, content); git(root, ['
 const cli = (root, script, args = []) => run(process.execPath, [join(root, 'scripts/agent', script), ...args],
   {cwd: root, env: sanitizedEnv().env, allowFail: true, timeout: 120000});
 
-function fixture({preexisting = false, explicitGuard = false, dynamicImport = false} = {}) {
-  const directory = mkdtempSync(join(parent, '한글 space-'));
+function fixture({preexisting = false, explicitGuard = false, dynamicImport = false, deep = false} = {}) {
+  const temporary = mkdtempSync(join(parent, '한글 space-'));
+  const directory = deep ? join(temporary, 'd'.repeat(Math.max(8, 161 - temporary.length - 15))) : temporary;
+  if (deep) mkdirSync(directory);
   const main = join(directory, 'baba-staff-app'), codex = join(directory, 'baba-wt-codex'), claude = join(directory, 'baba-wt-claude');
   mkdirSync(main); git(main, ['init', '-b', 'main']);
   git(main, ['config', 'user.name', 'Fixture']); git(main, ['config', 'user.email', 'fixture@example.invalid']);
@@ -408,6 +410,48 @@ test('D3/R1: stale preparation is invalidated at merge entry, and forged user re
 
 const slash = path => path.split('\\').join('/');
 const NEUTRALIZED = ['GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_ASKPASS', 'SSH_ASKPASS'];
+
+test('Windows Git subprocesses read long object paths and write long refs without changing config', () => {
+  const directory = mkdtempSync(join(parent, 'longpaths-'));
+  const root = join(directory, 'x'.repeat(Math.max(8, 210 - directory.length - 1)));
+  mkdirSync(root);
+  git(root, ['init', '-b', 'fixture']);
+  git(root, ['config', '--local', 'core.longpaths', 'false']);
+  const config = readFileSync(join(root, '.git/config'));
+  const sha = gitOut(root, ['hash-object', '-w', '--stdin'], {input: 'long path control\n'});
+  const object = join(root, '.git/objects', sha.slice(0, 2), sha.slice(2));
+  assert.ok(object.length > 260);
+  assert.ok(readFileSync(object).length > 0); // Node can read the same long file Git must open.
+  if (process.platform === 'win32') {
+    const disabled = git(root, ['-c', 'core.longpaths=false', 'cat-file', '-p', sha], {allowFail: true});
+    assert.notEqual(disabled.status, 0);
+    assert.match(disabled.stderr, /Filename too long/);
+  }
+  assert.equal(gitOut(root, ['cat-file', '-p', sha]), 'long path control');
+  const ref = 'refs/heads/codex/long-path-regression-' + 'r'.repeat(32);
+  // Use a tag ref: a branch must point to a commit, whereas this fixture object is a blob.
+  const tag = ref.replace('refs/heads/', 'refs/tags/');
+  assert.ok(join(root, '.git', tag + '.lock').length > 260);
+  guardedGit(root, ['update-ref', tag, sha]);
+  assert.equal(gitOut(root, ['rev-parse', tag]), sha);
+  assert.equal(readFileSync(join(root, '.git', tag), 'utf8').trim(), sha);
+  assert.equal(gitOut(root, ['config', '--local', '--get', 'core.longpaths']), 'false');
+  assert.deepEqual(readFileSync(join(root, '.git/config')), config);
+});
+
+test('deep prepare preserves real baseline comparison without exhausting native temporary paths', () => {
+  const f = ready({preexisting: true, deep: true});
+  assert.ok(f.codex.length >= 161);
+  const prepared = prepare(f);
+  assert.equal(prepared.status, 'PREPARED', JSON.stringify(prepared));
+  assert.match(prepared.environment, /^\.tmp-baba\/i\/p-[^/]+\/baba-wt-codex$/);
+  assert.equal(prepared.integratedVerdict, 'PASS_WITH_PREEXISTING');
+  const verified = JSON.parse(readFileSync(join(f.codex, prepared.integratedVerify), 'utf8'));
+  assert.ok(verified.baselineDir);
+  assert.ok(existsSync(join(verified.baselineDir, '.baba-baseline.json')));
+  assert.deepEqual(verified.checks.find(check => check.name === '회귀 테스트').newFailures, []);
+  assert.equal(head(f.main), f.seed);
+});
 
 test('N1: agent-shell editor/askpass variables are neutralized for Git while other Git overrides stay rejected', () => {
   const f = ready(), marker = join(f.directory, 'editor-or-askpass-ran.txt'), program = `printf ran > '${slash(marker)}'`;

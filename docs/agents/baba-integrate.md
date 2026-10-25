@@ -144,6 +144,17 @@ managed output은 `insideRoot`의 lexical·realpath 검사 후 Worktree 내부�
 Windows 일반 symlink 생성 권한이 없으면 native symlink 테스트는 skip으로 기록한다.
 이 경우 junction 검증과 구별하며 통합 게이트의 미완전 테스트 정책상 자동 승인 가능한 증거로 보지 않는다.
 
+Windows의 prepare → 회귀 fixture → prepare 중첩은 Git object/ref 경로가 260자를 넘을 수 있다.
+공통 Git helper는 Windows subprocess에만 `-c core.longpaths=true`를 지정한다.
+원본·공유·전역 Git config와 Windows `LongPathsEnabled`는 변경하지 않는다.
+이 옵션은 Git for Windows의 긴 경로 처리이며 Node/다른 네이티브 도구 전체의 긴 경로 지원을 보장하지 않는다.
+회귀 테스트는 긴 object 경로에서 명시적인 `core.longpaths=false` 실패와 helper 성공을 대조하고,
+긴 ref 쓰기 및 fixture의 local config 불변을 확인한다. 기존 테스트의 기대값·SKIP 정책은 유지한다.
+prepare 환경은 담당 Worktree의 짧은 `.tmp-baba/i/p-*/<worktree>`에 생성한다.
+기존 `.tmp-baba/integrate/environments/prepare-*` 증거는 이동하거나 삭제하지 않는다.
+중첩 환경에서 Node의 `mkdtemp`가 기준선 snapshot을 생성할 경로 여유를 확보하며,
+깊은 fixture의 실제 기존 실패 비교도 회귀 검증한다. 실행 결과 JSON 위치는 그대로다.
+
 `push`, `deploy`, `production`, `db`, `migration` action/옵션은 지원하지 않고 차단한다.
 GitHub push 및 그에 따른 Vercel Production은 로컬 main 승인과 별도 사용자 승인이 필요하다.
 향후 별도 승인 후 배포 SHA·READY·공개 read-only smoke를 검증해야 하며 접근 실패는 미확인으로 남긴다.

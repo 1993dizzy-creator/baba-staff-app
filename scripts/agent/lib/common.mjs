@@ -60,6 +60,9 @@ export function run(command, args, {cwd, env, allowFail = false, input, timeout}
 export const NEUTRALIZED_GIT_ENV = ['GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_ASKPASS', 'SSH_ASKPASS'];
 // core.fsmonitor runs a configured program even for read-only status/diff; disable it per call.
 const HARDENED_GIT = ['--no-pager', '--no-optional-locks', '-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false'];
+// Nested prepare/fixture repositories exceed MAX_PATH. Enable Git for Windows' extended-path
+// handling per subprocess, without changing repository/shared config or Windows system policy.
+if (process.platform === 'win32') HARDENED_GIT.push('-c', 'core.longpaths=true');
 
 export function gitEnvironment(env = process.env) {
   const clean = Object.fromEntries(Object.entries(env).filter(([name]) => !NEUTRALIZED_GIT_ENV.includes(name.toUpperCase())));

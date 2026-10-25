@@ -150,9 +150,10 @@ function stable(root, inspection) {
 
 function preparation(root, inspection, report) {
   report.remote = remoteMainState(root);
-  const parent = insideRoot(root, '.tmp-baba/integrate/environments');
+  // Keep nested prepare + fixture + baseline paths below native temporary-path limits.
+  const parent = insideRoot(root, '.tmp-baba/i');
   mkdirSync(parent, {recursive: true});
-  const directory = mkdtempSync(join(parent, 'prepare-'));
+  const directory = mkdtempSync(join(parent, 'p-'));
   const sandbox = insideRoot(root, join(directory, AGENTS[identifyWorktree(root).agent].worktreeDir));
   mkdirSync(sandbox);
   report.environment = relative(root, sandbox).split('\\').join('/');
