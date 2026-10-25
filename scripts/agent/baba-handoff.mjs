@@ -55,7 +55,7 @@ const files = changes.files.filter(file => file.path !== outPath);
 const commits = gitOut(root, ['log', '--format=%h %s', `${mergeBase}..HEAD`]).split('\n').filter(Boolean);
 const uncommitted = files.filter(file => file.working);
 const numstat = new Map();
-for (const line of gitOut(root, ['diff', '--numstat', mergeBase]).split('\n').filter(Boolean)) {
+for (const line of gitOut(root, ['diff', '--no-ext-diff', '--no-textconv', '--numstat', mergeBase]).split('\n').filter(Boolean)) {
   const [added, removed, path] = line.split('\t');
   numstat.set(path, `+${added} −${removed}`);
 }

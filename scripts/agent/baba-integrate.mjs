@@ -186,7 +186,11 @@ function preparation(root, inspection, report) {
   try {
     const mainChanged = paths(committedChanges(root, inspection.base, inspection.main.head));
     const coverage = relatedTests(sandbox, [...new Set([...inspection.changed, ...mainChanged])].filter(path => !path.startsWith('docs/handoffs/')));
-    if (coverage.untested.length) fail('TEST_SCOPE_INSUFFICIENT', coverage.untested.join(', '));
+    // Unreferenced files pass only with the candidate's recorded execution evidence (D2), which the
+    // integrated Verify below must reproduce on the merged tree. No evidence still blocks.
+    const inherited = inspection.candidate.testSelection.exercised || {};
+    const unproven = coverage.untested.filter(path => !inherited[path]?.length);
+    if (unproven.length) fail('TEST_SCOPE_INSUFFICIENT', unproven.join(', '));
     const testPaths = [...new Set([...inspection.candidate.testSelection.executed, ...coverage.tests.map(test => test.path)])].sort();
     for (const path of testPaths) if (!existsSync(insideRoot(sandbox, path))) fail('PREPARE_TEST_MISSING');
     if (!testPaths.length) fail('PREPARE_TESTS_EMPTY');
@@ -201,6 +205,7 @@ function preparation(root, inspection, report) {
     report.integratedVerifyDigest = digest(verify);
     const problems = verifyEvidence(sandbox, verify, {head: report.mergedHead, fingerprint: stateFingerprint(sandbox), build: true});
     if (verify.baseSha !== inspection.main.head || testPaths.some(path => !verify.testSelection?.executed?.includes(path))) problems.push('PREPARE_TEST_EVIDENCE_MISMATCH');
+    if (coverage.untested.some(path => !verify.testSelection?.exercised?.[path]?.length)) problems.push('PREPARE_EXERCISE_NOT_REPRODUCED');
     if (checked.status !== 0 || problems.length) fail('INTEGRATED_VERIFY_FAILED', problems.join('; ') || 'baba-verify FAIL');
     report.integratedVerdict = verify.verdict;
   } finally {

@@ -5,7 +5,7 @@ import {cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, read
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {integrate} from '../scripts/agent/baba-integrate.mjs';
-import {assertNoGitHooks, guardedGit, git, gitOut, insideRoot, run, sanitizedEnv, worktreeEnvironment, writeRecord} from '../scripts/agent/lib/common.mjs';
+import {assertNoGitHooks, guardedGit, git, gitOut, insideRoot, run, sanitizedEnv, stateFingerprint, worktreeEnvironment, writeRecord} from '../scripts/agent/lib/common.mjs';
 import {verifyEvidence} from '../scripts/agent/lib/verify-evidence.mjs';
 import {remoteMainState} from '../scripts/agent/lib/remote-main.mjs';
 
@@ -19,7 +19,7 @@ const commit = (root, path, content) => { put(root, path, content); git(root, ['
 const cli = (root, script, args = []) => run(process.execPath, [join(root, 'scripts/agent', script), ...args],
   {cwd: root, env: sanitizedEnv().env, allowFail: true, timeout: 120000});
 
-function fixture({preexisting = false, explicitGuard = false} = {}) {
+function fixture({preexisting = false, explicitGuard = false, dynamicImport = false} = {}) {
   const directory = mkdtempSync(join(parent, '한글 space-'));
   const main = join(directory, 'baba-staff-app'), codex = join(directory, 'baba-wt-codex'), claude = join(directory, 'baba-wt-claude');
   mkdirSync(main); git(main, ['init', '-b', 'main']);
@@ -39,6 +39,13 @@ function fixture({preexisting = false, explicitGuard = false} = {}) {
   if (preexisting) put(main, 'app/a.ts', 'bad baseline\n');
   if (explicitGuard) put(main, 'tests/manual-extra.test.mjs', `import test from 'node:test'; import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs';
     test('explicit invariant',()=>assert.equal(readFileSync('app/'+'a.ts','utf8').includes('= 9;') && readFileSync('app/'+'b.ts','utf8').includes('= 2;'),false));\n`);
+  // Loads modules by directory listing, so no source path is named and auto-matching finds nothing.
+  if (dynamicImport) put(main, 'tests/dynamic-exercise.test.mjs', `import test from 'node:test'; import assert from 'node:assert/strict';
+    import {readdirSync} from 'node:fs'; import {join} from 'node:path'; import {pathToFileURL} from 'node:url';
+    test('every listed module loads', async () => {
+      for (const name of readdirSync('app').filter(name => name.endsWith('.ts')))
+        assert.ok(await import(pathToFileURL(join(process.cwd(), 'app', name)).href));
+    });\n`);
   git(main, ['add', '.']); git(main, ['commit', '-m', 'isolated seed']);
   const origin = join(directory, 'origin.git');
   git(main, ['init', '--bare', origin]); git(main, ['remote', 'add', 'origin', origin]);
@@ -397,4 +404,83 @@ test('D3/R1: stale preparation is invalidated at merge entry, and forged user re
   commit(f.main,'docs/new-main.md','new public main\n'); git(f.main,['push','origin','main']);
   const stale=integrate({_:['merge'],prepared:prepared.savedAs,approval:receipt},f.codex);
   assert.equal(stale.code,'REMOTE_OR_MAIN_CHANGED_REVALIDATE'); assert.equal(stale.permissions.localMainMerge,false);
+});
+
+const slash = path => path.split('\\').join('/');
+const NEUTRALIZED = ['GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_ASKPASS', 'SSH_ASKPASS'];
+
+test('N1: agent-shell editor/askpass variables are neutralized for Git while other Git overrides stay rejected', () => {
+  const f = ready(), marker = join(f.directory, 'editor-or-askpass-ran.txt'), program = `printf ran > '${slash(marker)}'`;
+  const agentEnv = {...sanitizedEnv().env, ...Object.fromEntries(NEUTRALIZED.map(name => [name, program]))};
+  assert.doesNotThrow(() => assertNoGitHooks(f.codex, {env: agentEnv}));
+  // An alias shell shows the environment Git hands to programs it starts: the variables are gone.
+  const seen = gitOut(f.codex, ['-c', 'alias.probe-env=!env', 'probe-env'], {env: agentEnv});
+  for (const name of NEUTRALIZED) assert.doesNotMatch(seen, new RegExp(`^${name}=`, 'm'));
+  assert.match(seen, /^GIT_TERMINAL_PROMPT=0$/m);
+  const inspected = run(process.execPath, [join(f.codex, 'scripts/agent/baba-integrate.mjs'), '--branch', f.branch, '--json'],
+    {cwd: f.codex, env: agentEnv, allowFail: true, timeout: 120000});
+  assert.equal(JSON.parse(inspected.stdout).status, 'INSPECTED', inspected.stdout);
+  const prepared = run(process.execPath, [join(f.codex, 'scripts/agent/baba-integrate.mjs'), 'prepare', '--branch', f.branch, '--json'],
+    {cwd: f.codex, env: agentEnv, allowFail: true, timeout: 300000});
+  assert.equal(JSON.parse(prepared.stdout).status, 'PREPARED', prepared.stdout);
+  assert.equal(existsSync(marker), false);
+  for (const override of [{GIT_SSH_COMMAND: program}, {GIT_EXEC_PATH: f.directory}, {GIT_CONFIG_NOSYSTEM: '1'}, {GIT_TRACE: '1'}]) {
+    assert.throws(() => assertNoGitHooks(f.codex, {env: {...agentEnv, ...override}}), error => error.code === 'GIT_ENVIRONMENT_UNVERIFIED');
+  }
+});
+
+test('D1: core.fsmonitor and diff textconv programs never run in tool Git subprocesses; positive controls prove they are live', () => {
+  const f = ready(), monitor = join(f.directory, 'fsmonitor-ran.txt'), converted = join(f.directory, 'textconv-ran.txt');
+  git(f.main, ['config', 'core.fsmonitor', `printf ran >> '${slash(monitor)}'; :`]);
+  git(f.main, ['config', 'diff.probe.textconv', `printf ran >> '${slash(converted)}'; cat`]);
+  const prepared = prepare(f); assert.equal(prepared.status, 'PREPARED', JSON.stringify(prepared));
+  put(f.claude, '.gitattributes', '*.ts diff=probe\n'); put(f.claude, 'app/a.ts', 'export const a = 3;\n');
+  assert.match(stateFingerprint(f.claude), /^[0-9a-f]{16}$/);
+  assert.equal(cli(f.codex, 'baba-handoff.mjs', ['--stdout', '--task-name', 'probe', '--base', 'main']).status, 0);
+  assert.equal(existsSync(monitor), false); assert.equal(existsSync(converted), false);
+  // Positive controls ONLY in this disposable fixture: plain Git runs both configured programs.
+  run('git', ['status', '--porcelain'], {cwd: f.claude}); assert.ok(existsSync(monitor));
+  run('git', ['diff'], {cwd: f.claude}); assert.ok(existsSync(converted));
+  assert.equal(head(f.main), f.seed);
+});
+
+function exercisedCandidate(tests = 'tests/dynamic-exercise.test.mjs') {
+  const f = fixture({dynamicImport: true}); commit(f.codex, 'app/exercised-only.ts', 'export const exercised = 1;\n');
+  return {f, completed: finish(f, ['--tests', tests])};
+}
+
+test('D2: zero auto-matched tests are accepted only with recorded execution evidence, then reproduced on the merged tree', () => {
+  const {f, completed} = exercisedCandidate();
+  assert.deepEqual(completed.verify.testSelection.explicit, ['tests/dynamic-exercise.test.mjs']);
+  assert.deepEqual(completed.verify.testSelection.exercised, {'app/exercised-only.ts': ['tests/dynamic-exercise.test.mjs']});
+  assert.equal(completed.verify.gaps.some(gap => /테스트가 참조하지 않는 변경 파일/.test(gap)), false);
+  assert.equal(inspect(f).status, 'INSPECTED');
+  const prepared = prepare(f); assert.equal(prepared.status, 'PREPARED', JSON.stringify(prepared));
+  const merged = JSON.parse(readFileSync(join(f.codex, prepared.integratedVerify), 'utf8'));
+  assert.deepEqual(merged.testSelection.exercised, {'app/exercised-only.ts': ['tests/dynamic-exercise.test.mjs']});
+  // New main stops loading the file: the inherited evidence is not reproduced and prepare is blocked.
+  commit(f.main, 'tests/dynamic-exercise.test.mjs', `import test from 'node:test'; import assert from 'node:assert/strict';
+    test('loads nothing', () => assert.ok(true));\n`); git(f.main, ['push', 'origin', 'main']);
+  const stale = prepare(f); assert.equal(stale.code, 'INTEGRATED_VERIFY_FAILED', JSON.stringify(stale));
+  assert.match(stale.reason, /PREPARE_EXERCISE_NOT_REPRODUCED|VERIFY_TEST_SCOPE_INSUFFICIENT/);
+});
+
+test('D2: tests that do not load the changed code, read it only, or forged evidence stay blocked', () => {
+  const unrelated = exercisedCandidate('tests/check.test.mjs');
+  assert.ok(unrelated.completed.verify.gaps.some(gap => /app\/exercised-only\.ts/.test(gap)));
+  assert.equal(inspect(unrelated.f).code, 'VERIFY_EVIDENCE_REJECTED');
+  // Reading source text is not execution evidence for a code file.
+  const f = fixture({dynamicImport: true}); commit(f.codex, 'app/exercised-only.ts', 'export const exercised = 1;\n');
+  commit(f.codex, 'tests/read-only.test.mjs', `import test from 'node:test'; import assert from 'node:assert/strict'; import {readdirSync, readFileSync} from 'node:fs';
+    test('reads sources', () => { for (const name of readdirSync('app')) assert.ok(readFileSync('app/' + name, 'utf8').length); });\n`);
+  const readOnly = finish(f, ['--tests', 'tests/read-only.test.mjs']);
+  assert.equal(readOnly.verify.testSelection.exercised['app/exercised-only.ts'], undefined);
+  assert.equal(inspect(f).code, 'VERIFY_EVIDENCE_REJECTED');
+  const good = exercisedCandidate(), archive = JSON.parse(readFileSync(join(good.f.codex, '.tmp-baba/verify/latest.json'), 'utf8'));
+  const path = join(good.f.codex, archive.savedAs);
+  for (const exercised of [{'app/exercised-only.ts': ['tests/check.test.mjs']}, {'app/a.ts': ['tests/dynamic-exercise.test.mjs']},
+    {'app/exercised-only.ts': []}, []]) {
+    writeFileSync(path, JSON.stringify({...archive, testSelection: {...archive.testSelection, exercised}}));
+    const result = inspect(good.f); assert.equal(result.code, 'VERIFY_EVIDENCE_REJECTED', JSON.stringify(exercised));
+  }
 });

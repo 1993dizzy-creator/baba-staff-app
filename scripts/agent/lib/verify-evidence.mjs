@@ -23,6 +23,21 @@ export function verifyEvidence(root, report, {head, branch, fingerprint, build =
       selection.explicit.some(path => !selection.executed.includes(path))) problems.push('VERIFY_TEST_SELECTION_MISSING');
   if (report.gaps.some(gap => /테스트가 참조하지 않는 변경 파일|관련 회귀 테스트를 찾지 못해/.test(gap))) problems.push('VERIFY_TEST_SCOPE_INSUFFICIENT');
   const map = new Map(report.checks.map(check => [check.name, check]));
+  // D2: files proven only by execution evidence must be changed files, exercised by passing executed tests.
+  const exercised = selection?.exercised ?? {};
+  if (!exercised || typeof exercised !== 'object' || Array.isArray(exercised)) problems.push('VERIFY_EXERCISE_EVIDENCE_INVALID');
+  else {
+    const changed = new Set(report.changedFiles.filter(file => !file.deleted).map(file => file.path));
+    const results = new Map((map.get(CHECKS.tests)?.files || []).map(file => [file.path, file]));
+    for (const [path, tests] of Object.entries(exercised)) {
+      const code = /\.(tsx?|jsx?|mjs|cjs)$/.test(path);
+      if (!changed.has(path) || !Array.isArray(tests) || !tests.length || tests.some(test => {
+        const result = results.get(test);
+        return !selection.executed.includes(test) || result?.status !== 'passed' || !result.counts?.tests ||
+          !(result.access?.[path] || []).some(kind => !code || kind === 'import');
+      })) problems.push('VERIFY_EXERCISE_EVIDENCE_INVALID');
+    }
+  }
   if (map.size !== report.checks.length) problems.push('VERIFY_DUPLICATE_CHECK');
   if ([...map.keys()].some(name => !Object.values(CHECKS).includes(name))) problems.push('VERIFY_UNKNOWN_CHECK');
   const js = report.changedFiles.some(file => !file.deleted && /\.(tsx?|jsx?|mjs|cjs)$/.test(file.path));

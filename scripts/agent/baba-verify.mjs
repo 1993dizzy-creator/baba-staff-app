@@ -43,6 +43,7 @@ const fingerprint = stateFingerprint(root);
 const present = files.filter(file => !file.deleted && existsSync(join(root, file.path)) && statSync(join(root, file.path)).isFile());
 const changedPaths = present.map(file => file.path);
 const guardUrl = pathToFileURL(resolve(import.meta.dirname, 'lib', 'offline-guard.mjs')).href;
+const recorderUrl = pathToFileURL(resolve(import.meta.dirname, 'lib', 'access-recorder.mjs')).href;
 const {env: sanitized, removed: removedEnv} = sanitizedEnv();
 const childEnv = worktreeEnvironment(root, sanitized);
 childEnv.NODE_OPTIONS = `--import=${guardUrl}${process.env.NODE_OPTIONS ? ` ${process.env.NODE_OPTIONS}` : ''}`;
@@ -97,10 +98,14 @@ for (const test of explicit) {
   testTargets.set(test, ['--tests 지정']);
 }
 if (args.allTests) for (const test of allTestFiles(root)) if (!testTargets.has(test)) testTargets.set(test, ['--all-tests']);
+// Changed files that no test names by path need recorded execution evidence instead (D2).
+const accessTargets = related.untested.filter(path => existsSync(join(root, path)));
+const accessDir = accessTargets.length && testTargets.size ? insideRoot(root, `.tmp-baba/verify/access-${randomUUID()}`) : null;
+if (accessDir) mkdirSync(accessDir, {recursive: true});
 const testCheck = {name: '회귀 테스트', status: 'not-run', ran: false, files: [], newFailures: [], preexisting: [], blockedNetwork: []};
 if (testTargets.size) {
   testCheck.ran = true;
-  testCheck.files = await pool([...testTargets.keys()], test => runTest(root, test));
+  testCheck.files = await pool([...testTargets.keys()], test => runTest(root, test, accessDir));
   for (const result of testCheck.files) result.reasons = testTargets.get(result.path);
   const failing = testCheck.files.filter(result => result.status === 'failed');
   testCheck.blockedNetwork = testCheck.files.filter(result => result.networkBlocked).map(result => result.path);
@@ -127,9 +132,19 @@ if (testTargets.size) {
 } else {
   gaps.push('관련 회귀 테스트를 찾지 못해 테스트를 실행하지 않았다.');
 }
-if (related.untested.length) {
-  const suggestions = domainTestSuggestions(root, related.untested);
-  gaps.push(`테스트가 참조하지 않는 변경 파일: ${related.untested.join(', ')}${suggestions.length ? ` (도메인 테스트 후보 ${suggestions.length}개: --tests로 지정 가능)` : ''}`);
+// A passing test counts only if it loaded the changed code (import) or, for non-code files, read it.
+const exercised = {};
+for (const path of accessTargets) {
+  const code = /\.(tsx?|jsx?|mjs|cjs)$/.test(path);
+  const tests = testCheck.files.filter(file => file.status === 'passed' && file.counts.tests > 0 &&
+    (file.access?.[path] || []).some(kind => !code || kind === 'import')).map(file => file.path).sort();
+  if (tests.length) exercised[path] = tests;
+}
+if (Object.keys(exercised).length) notes.push(`경로를 참조하는 테스트는 없지만 통과한 테스트의 실행 증거가 있는 변경 파일: ${Object.keys(exercised).join(', ')}`);
+const unexercised = related.untested.filter(path => !exercised[path]);
+if (unexercised.length) {
+  const suggestions = domainTestSuggestions(root, unexercised);
+  gaps.push(`테스트가 참조하지 않는 변경 파일: ${unexercised.join(', ')}${suggestions.length ? ` (도메인 테스트 후보 ${suggestions.length}개: --tests로 지정 가능)` : ''}`);
 }
 if (testCheck.blockedNetwork.length) notes.push(`오프라인 가드가 외부 연결을 차단한 테스트: ${testCheck.blockedNetwork.join(', ')} — 운영 연결 시도 여부를 확인한다.`);
 checks.push(testCheck);
@@ -255,7 +270,7 @@ const report = {
   tool: 'baba-verify', generatedAt: new Date().toISOString(), policy: POLICY_DOC, worktree: identifyWorktree(root), root, branch, head, baseRef, mergeBase, fingerprint,
   changedFiles: files.map(file => ({path: file.path, committed: file.committed, working: file.working, deleted: file.deleted})),
   baseSha,
-  testSelection: {explicit, allTests: Boolean(args.allTests), executed: [...testTargets.keys()].sort()},
+  testSelection: {explicit, allTests: Boolean(args.allTests), executed: [...testTargets.keys()].sort(), exercised},
   checks, gaps, notes, verdict, baselineDir,
 };
 const outDir = insideRoot(root, '.tmp-baba/verify');
@@ -320,10 +335,16 @@ async function pool(items, worker) {
   return results;
 }
 
-async function runTest(cwd, path) {
+async function runTest(cwd, path, accessDir = null) {
   if (!existsSync(join(cwd, path))) return {path, status: 'failed', failedNames: [`missing test: ${path}`], counts: {}};
   const started = Date.now();
-  const result = await exec(process.execPath, ['--experimental-strip-types', '--no-warnings=ExperimentalWarning', '--test', '--test-reporter=tap', path], {cwd, env: childEnv, timeout: timeoutMs});
+  let env = childEnv, accessLog = null;
+  if (accessDir) {
+    accessLog = join(accessDir, `${path.replace(/[^A-Za-z0-9.-]/g, '_')}.log`);
+    env = {...childEnv, BABA_ACCESS_LOG: accessLog, BABA_ACCESS_TARGETS: JSON.stringify(accessTargets.map(target => join(cwd, target))),
+      NODE_OPTIONS: `--import=${recorderUrl} ${childEnv.NODE_OPTIONS}`};
+  }
+  const result = await exec(process.execPath, ['--experimental-strip-types', '--no-warnings=ExperimentalWarning', '--test', '--test-reporter=tap', path], {cwd, env, timeout: timeoutMs});
   const counts = {};
   for (const m of result.output.matchAll(/^# (tests|suites|pass|fail|cancelled|skipped|todo) (\d+)/gm)) counts[m[1]] = Number(m[2]);
   const failedNames = [...new Set([...result.output.matchAll(/^\s*not ok \d+ - (.+?)(?: # .*)?$/gm)].map(m => m[1].trim()).filter(name => name !== path))];
@@ -345,7 +366,23 @@ async function runTest(cwd, path) {
   return {
     path, status: failed ? 'failed' : allSkipped ? 'skipped' : 'passed', exitCode: result.code, counts, failedNames, failureDetails,
     durationMs: Date.now() - started, networkBlocked: /BABA_OFFLINE_GUARD/.test(result.output), tail: failed ? tail(result.output, 30) : undefined,
+    access: accessLog ? readAccess(cwd, accessLog) : undefined,
   };
+}
+
+// Merge recorder lines from every process of one test file; unreadable evidence counts as none.
+function readAccess(cwd, log) {
+  const access = {};
+  if (!existsSync(log)) return access;
+  for (const line of readFileSync(log, 'utf8').split('\n').filter(Boolean)) {
+    let record;
+    try { record = JSON.parse(line); } catch { return {}; }
+    for (const entry of record.entries || []) {
+      const path = relative(cwd, entry.path).split('\\').join('/');
+      access[path] = [...new Set([...(access[path] || []), ...(entry.kinds || [])])].sort();
+    }
+  }
+  return access;
 }
 
 function eslintJson(cwd, targets) {

@@ -81,6 +81,15 @@ core.hooksPath를 비워 두는 것만으로 config Hook이 차단됐다고 가�
 공유 Hook을 삭제하거나 원본 설정을 변경하지 않는다. start의 fetch/switch, Verify의 baseline
 index 쓰기, prepare의 fetch/switch/merge 전에 공통 검사를 실행한다.
 
+Hook이 아닌 config도 읽기 전용 명령에서 외부 프로그램을 실행할 수 있다. 공통 `git()` helper는
+모든 도구 Git subprocess에 `-c core.fsmonitor=false`를 지정하고, 내용 diff(`--binary`, `--numstat`)에는
+`--no-ext-diff --no-textconv`를 붙인다. 사용자 config를 바꾸거나 거부하지 않고 호출 단위로 무력화한다.
+Claude Code 등 에이전트 셸이 내보내는 `GIT_EDITOR`·`GIT_SEQUENCE_EDITOR`·`GIT_ASKPASS`·`SSH_ASKPASS`는
+신뢰하지 않고 Git subprocess 환경에서 제거하며 `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`를 지정한다.
+원격 인증은 사용자가 설정한 credential helper만 사용한다. 그 밖의 `GIT_*` override는 계속 차단한다.
+LFS 등 filter driver·credential helper·`core.sshCommand`는 사용자/시스템 config로 실행될 수 있으며
+이 helper가 격리하지 않는다. 테스트·Build 자식 프로세스가 직접 실행하는 Git에도 이 무력화는 적용되지 않는다.
+
 ## D2: 테스트와 SHA 증거
 
 Verify archive에 `baseSha`와 `testSelection.explicit/allTests/executed`를 기록한다.
@@ -88,6 +97,14 @@ Verify archive에 `baseSha`와 `testSelection.explicit/allTests/executed`를 기
 prepare는 명시적 테스트를 포함한 후보 실행 목록 전체와 새 main 변경의 관련 테스트를 재실행한다.
 기존 테스트가 사라졌거나 자동 정적 탐색으로 검사 범위를 확보하지 못하면 차단한다.
 테스트 0건·불명확한 목록·skip은 통합 통과가 아니다. 정적 참조 탐색이 의미적 커버리지 증명은 아니다.
+
+경로를 참조하는 테스트가 없는 변경 파일은 실행 증거로만 보완할 수 있다. Verify는 그런 파일이 있으면
+`lib/access-recorder.mjs`를 테스트 프로세스에 preload해 해당 파일의 실제 import/read를 기록한다.
+코드 파일은 **통과한** 테스트가 import했을 때, SQL/CSS는 읽었을 때만 `testSelection.exercised`에 남는다.
+증거가 없으면 기존처럼 "테스트가 참조하지 않는 변경 파일" gap으로 차단된다. evidence 검사는 archive의
+테스트별 기록과 대조하며, prepare는 상속한 증거를 병합 트리의 재Verify에서 다시 확보하지 못하면
+`PREPARE_EXERCISE_NOT_REPRODUCED`로 차단한다. 이는 실행 증거이지 assertion 품질 증명이 아니며,
+테스트 코드는 같은 프로세스의 계측을 우회·위조할 수 있다(독립 검토 대상).
 후속 인계서는 기존 파일을 보존하고 `--handoff docs/handoffs/<branch>-<suffix>.md`로 지정한다.
 
 ## D3: 실제 원격 main 정책

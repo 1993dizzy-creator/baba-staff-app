@@ -54,8 +54,20 @@ export function run(command, args, {cwd, env, allowFail = false, input, timeout}
   return {status: result.status, stdout: result.stdout || '', stderr: result.stderr || '', error: result.error};
 }
 
+// Agent shells (e.g. Claude Code) export an editor and a credential prompt program. Tool Git calls
+// never open an editor or prompt, so these are removed from every Git subprocess instead of trusted.
+// All other GIT_* overrides remain rejected by assertNoGitHooks.
+export const NEUTRALIZED_GIT_ENV = ['GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_ASKPASS', 'SSH_ASKPASS'];
+// core.fsmonitor runs a configured program even for read-only status/diff; disable it per call.
+const HARDENED_GIT = ['--no-pager', '--no-optional-locks', '-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false'];
+
+export function gitEnvironment(env = process.env) {
+  const clean = Object.fromEntries(Object.entries(env).filter(([name]) => !NEUTRALIZED_GIT_ENV.includes(name.toUpperCase())));
+  return {...clean, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never'};
+}
+
 export function git(root, args, options = {}) {
-  return run('git', ['--no-pager', '--no-optional-locks', '-c', 'core.quotepath=off', ...args], {cwd: root, ...options});
+  return run('git', [...HARDENED_GIT, ...args], {cwd: root, ...options, env: gitEnvironment(options.env || process.env)});
 }
 export const gitOut = (root, args, options) => git(root, args, options).stdout.trim();
 export const gitTry = (root, args) => {
@@ -70,13 +82,13 @@ export function assertNoGitHooks(root, {env = process.env, internalIndexFile} = 
   const reject = (code, message) => { throw Object.assign(new Error(message), {code}); };
   const safeVariables = new Set(['GIT_PAGER', 'GIT_TERMINAL_PROMPT', 'GIT_OPTIONAL_LOCKS']);
   for (const name of Object.keys(env).filter(name => /^GIT_/i.test(name))) {
-    if (safeVariables.has(name.toUpperCase())) continue;
+    if (safeVariables.has(name.toUpperCase()) || NEUTRALIZED_GIT_ENV.includes(name.toUpperCase())) continue;
     if (name.toUpperCase() === 'GIT_INDEX_FILE' && internalIndexFile && resolve(env[name]) === resolve(internalIndexFile)) {
       insideRoot(root, internalIndexFile); continue;
     }
     reject('GIT_ENVIRONMENT_UNVERIFIED', 'Git environment overrides require independent review (values withheld).');
   }
-  const query = args => run('git', ['--no-pager', '--no-optional-locks', '-c', 'core.quotepath=off', ...args], {cwd: root, env, allowFail: true});
+  const query = args => git(root, args, {env, allowFail: true});
   const configured = query(['config', '--includes', '--null', '--name-only', '--get-regexp', '^(hook\\.|includeif\\.|core\\.hookspath$)']);
   if (![0, 1].includes(configured.status)) reject('GIT_CONFIG_UNVERIFIED', 'Effective Git configuration could not be inspected.');
   const keys = configured.stdout.split('\0').filter(Boolean);
@@ -274,7 +286,7 @@ export function stateFingerprint(root) {
   const scope = ['--', '.', `:(exclude)${HANDOFF_DIR}`];
   const hash = commitFingerprint(root);
   hash.update(git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all', ...scope]).stdout);
-  hash.update(git(root, ['diff', 'HEAD', '--binary', ...scope]).stdout);
+  hash.update(git(root, ['diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--binary', ...scope]).stdout);
   for (const entry of workingChanges(root).filter(e => e.code === '??' && !e.path.startsWith(HANDOFF_DIR))) {
     const full = join(root, entry.path);
     if (existsSync(full) && statSync(full).isFile()) hash.update(readFileSync(full));
@@ -450,7 +462,8 @@ export function sanitizedEnv(extra = {}) {
   for (const [name, value] of Object.entries(process.env)) {
     if (CREDENTIAL_ENV.test(name)) removed.push(name);
     // A nested verifier must emit its own TAP, not inherit the parent's test IPC channel.
-    else if (/^NODE_TEST_/.test(name)) continue;
+    // A nested verifier must not append to its parent's execution evidence either.
+    else if (/^(NODE_TEST_|BABA_ACCESS_)/.test(name)) continue;
     else env[name] = value;
   }
   return {env: {...env, NEXT_TELEMETRY_DISABLED: '1', ...extra}, removed};
