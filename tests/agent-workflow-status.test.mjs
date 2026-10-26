@@ -78,8 +78,10 @@ test('1. clean and integrated worktrees pass every Git check but never claim tes
   assert.match(result.stdout, /\| Codex +\| [0-9a-f]{7} \| codex\/ready-fixture +\| CLEAN +\| +0 \| +0 \|/);
   assert.match(result.stdout, /\| 원격 확인 +\| 성공 +\|/);
   assert.match(result.stdout, /\| 동기화 +\| 동기화됨 +\|/);
-  assert.match(result.stdout, /\| 통합 검사 +\| PASS +\|\n\| Git 상태 +\| PASS +\|/);
-  assert.match(result.stdout, /\| 테스트\/보안 검증 \| 이 도구 범위 아님/);
+  assert.match(result.stdout, /\| 활성 Worktree 통합 \| PASS +\|\n\| 기타 로컬 브랜치 +\| 정상 +\|\n\| Git 상태 +\| PASS +\|/);
+  assert.match(result.stdout, /\| GitHub Push +\| 대기 0, Push 불필요 +\|/);
+  assert.match(result.stdout, /\| 테스트\/보안 검증 +\| Git 검사와 별개/);
+  assert.doesNotMatch(result.stdout, /기타 로컬 브랜치의 통합을 뜻하지 않는다/);
   assert.match(result.stdout, /\| 배포 승인 +\| 별도 필요 +\|/);
   assert.match(result.stdout, /실행 위치 {2}main \/ main → 직렬 모드/);
 });
@@ -146,7 +148,7 @@ test('5. main committed but not pushed shows pending push commits', () => {
   assert.equal(report.github.verified, true);
   const out = cli(f).stdout;
   assert.match(out, /\| 동기화 +\| Push 대기 2커밋 +\|/);
-  assert.match(out, /\| Push 준비 +\| 검토 필요\(2커밋/);
+  assert.match(out, /\| GitHub Push +\| 대기 2커밋, Push 가능\(사용자 승인 필요\) +\|/);
 });
 
 test('6. unreachable remote is marked unverified; remote HEAD mismatch and divergence are detected', () => {
@@ -288,7 +290,7 @@ test('colors mark status but the plain text is identical without ANSI', () => {
   git(f.main, ['switch', '-c', 'feature']);
   const failed = renderStatus(status(f), {color: true, unicode: false});
   assert.match(failed, /\x1b\[31m\[FAIL\]/);
-  assert.match(failed, /\x1b\[31mFAIL Git 상태 먼저 해결/);
+  assert.match(failed, /\x1b\[31m대기 0커밋, Push 보류\(Git 상태 FAIL\)/);
 });
 
 test('terminal detection: no color for CI, redirects, NO_COLOR or dumb terminals; ASCII borders in legacy Windows console', () => {
@@ -312,18 +314,29 @@ test('narrow terminals switch to a compact layout without table borders', () => 
   assert.doesNotMatch(narrow, /^[+|]/m);
   assert.match(narrow, /^Claude +CLEAN [0-9a-f]{7} {2}미통합 1 · 뒤처짐 0$/m);
   assert.match(narrow, /^ {7}claude\/20261026-한글-정렬-01$/m);
-  assert.match(narrow, /^ {2}통합 검사 +WARN 검토 필요$/m);
+  assert.match(narrow, /^ {2}활성 Worktree 통합 +WARN 검토 필요$/m);
   for (const line of narrow.split('\n').slice(3, 9)) assert.ok(displayWidth(line) <= 60, line);
 });
 
-test('parked branches show only a count unless --branches is given', () => {
+test('other local branches are reviewed separately from active worktree integration', () => {
   const f = fixture();
   git(f.main, ['switch', '-q', '-c', 'old/parked']); commit(f.main, 'old.txt', 'x\n'); git(f.main, ['switch', '-q', 'main']);
-  const plain = cli(f).stdout;
-  assert.match(plain, /\[INFO\] Worktree 밖 main 미통합 브랜치 1개 \(목록: baba-status --branches\)/);
+  const result = cli(f);
+  const plain = result.stdout;
+  assert.equal(result.status, 0, 'parked branches do not change the exit code');
+  assert.match(plain, /\| 활성 Worktree 통합 \| PASS +\|\n\| 기타 로컬 브랜치 +\| 검토 필요 1개 +\|/);
+  assert.match(plain, /활성 Worktree 통합은 main·Claude·Codex만 판정한다\. 기타 로컬 브랜치의 통합을 뜻하지 않는다\./);
+  assert.match(plain, /\[INFO\] 기타 로컬 브랜치 1개가 main에 미통합이다\. 필요·중복·폐기 여부를 검토한다 \(목록: baba-status --branches\)\./);
   assert.doesNotMatch(plain, /old\/parked/);
-  assert.match(cli(f, ['--branches']).stdout, /미통합 브랜치 1개\n {7}old\/parked/);
-  assert.deepEqual(cli(f, ['--json']).report.parked, ['old/parked']);
+  assert.match(cli(f, ['--branches']).stdout, /검토한다\.\n {7}old\/parked/);
+  assertAligned(plain);
+  const report = cli(f, ['--json']).report;
+  assert.deepEqual(report.parked, ['old/parked']);
+  assert.equal(report.verdicts.integration, 'PASS');
+  assert.equal(report.verdicts.overall, 'PASS');
+  const colored = renderStatus(status(f), {color: true, unicode: false});
+  assert.match(colored, /\x1b\[33m검토 필요 1개/);
+  assert.match(colored, /\x1b\[32m정상|\x1b\[32mPASS/);
 });
 
 test('--json keeps the previous fields and stays free of ANSI codes', () => {

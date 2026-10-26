@@ -78,14 +78,16 @@ function remoteCheck(g) {
   return g.reason === '--offline' ? ['생략(--offline), 마지막 fetch 기준', 'yellow'] : [`실패(${g.reason}), 마지막 fetch 기준`, 'yellow'];
 }
 
+// Pending commit count and whether a fast-forward push is possible. Pushing always needs user approval.
 function pushReady(r) {
   const g = r.github;
-  if (r.verdicts.git === 'FAIL') return ['FAIL Git 상태 먼저 해결', 'red'];
-  if (g.relation === 'diverged') return ['FAIL 갈라짐', 'red'];
+  const pending = g.ahead == null ? '대기 ?' : `대기 ${g.ahead}커밋`;
+  if (r.verdicts.git === 'FAIL') return [`${pending}, Push 보류(Git 상태 FAIL)`, 'red'];
+  if (g.relation === 'diverged') return [`${pending}, Push 불가(갈라짐)`, 'red'];
   if (g.relation === 'remote-ahead') return ['Push 불가(원격이 앞섬)', 'red'];
-  if (!g.verified) return ['검토 필요(원격 미확인)', 'yellow'];
-  if (g.relation === 'equal') return ['대기 커밋 없음', 'green'];
-  return [`검토 필요(${g.ahead}커밋, 테스트/보안 확인 후 사용자 승인)`, 'yellow'];
+  if (!g.verified) return [`${pending}(추정), 원격 미확인`, 'yellow'];
+  if (g.relation === 'equal') return ['대기 0, Push 불필요', 'green'];
+  return [`${pending}, Push 가능(사용자 승인 필요)`, 'yellow'];
 }
 
 function stamp(iso) {
@@ -137,8 +139,11 @@ export function renderStatus(r, {color = false, unicode = true, columns = null, 
   const g = r.github;
   const sync = syncText(g), check = remoteCheck(g), ready = pushReady(r);
   const github = [['로컬 main', [short(g.local), 'cyan']], ['원격 main', [short(g.remote || g.tracking), 'cyan']], ['원격 확인', check], ['동기화', sync]];
-  const results = [['통합 검사', VERDICT[r.verdicts.integration]], ['Git 상태', VERDICT[r.verdicts.git]], ['Push 준비', ready],
-    ['배포 승인', ['별도 필요', 'yellow']], ['테스트/보안 검증', ['이 도구 범위 아님(별도 실행)', 'dim']]];
+  // Active worktree integration covers main, Claude and Codex only; other local branches are reviewed separately.
+  const parked = r.parked || [];
+  const others = parked.length ? [`검토 필요 ${parked.length}개`, 'yellow'] : ['정상', 'green'];
+  const results = [['활성 Worktree 통합', VERDICT[r.verdicts.integration]], ['기타 로컬 브랜치', others], ['Git 상태', VERDICT[r.verdicts.git]],
+    ['GitHub Push', ready], ['배포 승인', ['별도 필요', 'yellow']], ['테스트/보안 검증', ['Git 검사와 별개(별도 실행)', 'dim']]];
   const pairs = (title, items) => {
     out.push('', paint('bold', title));
     if (compact) {
@@ -148,6 +153,7 @@ export function renderStatus(r, {color = false, unicode = true, columns = null, 
   };
   pairs('GitHub', github);
   pairs('결과', results);
+  if (parked.length) out.push(paint('dim', '  활성 Worktree 통합은 main·Claude·Codex만 판정한다. 기타 로컬 브랜치의 통합을 뜻하지 않는다.'));
 
   const issues = r.findings.filter(f => f.level !== 'INFO');
   const notes = r.findings.filter(f => f.level === 'INFO' && f.target !== '로컬 브랜치');
@@ -155,12 +161,11 @@ export function renderStatus(r, {color = false, unicode = true, columns = null, 
     out.push('', paint('bold', '문제'));
     for (const f of issues) out.push(`${tag(f.level)} ${paint('bold', f.target)}: ${f.cause}`, `       조치: ${f.action}`);
   }
-  const parked = r.parked || [];
   if (notes.length || parked.length) {
     out.push('', paint('bold', '참고'));
     for (const f of notes) out.push(`${tag('INFO')} ${f.target}: ${f.cause}`);
     if (parked.length) {
-      out.push(`${tag('INFO')} Worktree 밖 main 미통합 브랜치 ${parked.length}개${branches ? '' : ' (목록: baba-status --branches)'}`);
+      out.push(`${tag('INFO')} 기타 로컬 브랜치 ${parked.length}개가 main에 미통합이다. 필요·중복·폐기 여부를 검토한다${branches ? '.' : ' (목록: baba-status --branches).'}`);
       if (branches) out.push(...parked.map(branch => `       ${paint('cyan', branch)}`));
     }
   }
