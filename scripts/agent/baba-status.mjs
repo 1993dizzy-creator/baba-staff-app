@@ -2,11 +2,12 @@
 // baba-status: read-only Git state summary of the BABA worktrees (docs/agents/baba-status.md).
 // It never writes files, never fetches, never moves refs, the index or working files.
 // Remote main is read with `git ls-remote` only (no ref update); --offline skips that query.
-// Usage: node scripts/agent/baba-status.mjs [--mode serial|parallel] [--offline] [--json]
+// Usage: node scripts/agent/baba-status.mjs [--mode serial|parallel] [--offline] [--branches] [--no-color] [--json]
 import {existsSync} from 'node:fs';
 import {dirname, resolve, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {AGENTS, git, gitTry, identifyWorktree, listWorktrees, parseArgs, parseStatusZ, repoRoot, sanitizedEnv} from './lib/common.mjs';
+import {detectTerminal, renderStatus} from './lib/status-view.mjs';
 
 const OPERATIONS = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-apply', 'rebase-merge', 'BISECT_LOG'];
 const LABELS = {main: 'main', claude: 'Claude', codex: 'Codex'};
@@ -81,7 +82,7 @@ export function collectStatus({root, cwd = process.cwd(), mode = null, offline =
   const overall = findings.some(f => f.level === 'FAIL') ? 'FAIL' : findings.some(f => f.level === 'WARN') ? 'WARN' : 'PASS';
   return {
     tool: 'baba-status', readOnly: true, generatedAt: new Date().toISOString(), root, location, requestedMode: mode,
-    main: mainSha, trees, github, findings,
+    main: mainSha, trees, github, findings, parked,
     verdicts: {integration: verdict('integration'), git: verdict('git'), github: verdict('github'), overall},
     notCovered: ['ESLint·TypeScript·테스트', '보안·자격 증명 검사', 'Production 배포 승인'],
   };
@@ -134,58 +135,22 @@ function remoteState(root, local, offline) {
   return {...state, relation, ahead, behind};
 }
 
-export function render(r) {
-  const at = new Date(r.generatedAt), pad = n => String(n).padStart(2, '0');
-  const out = [`BABA Git 상태  (읽기 전용 · ${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())})`];
-  const modeName = {serial: '직렬 모드', parallel: '병렬 모드'}[r.location.mode];
-  out.push(`실행 위치  ${r.location.tree ? `${r.location.tree} / ${r.location.branch}${modeName ? ` → ${modeName}` : ''}` : 'BABA Worktree 밖'}`, '');
-  for (const t of r.trees) {
-    if (!t.exists) { out.push(`${t.label.padEnd(7)} 경로 없음 / ${t.path}`); continue; }
-    const state = t.clean ? 'CLEAN' : `DIRTY(수정 ${t.changed.length}·미추적 ${t.untracked.length})`;
-    const extra = t.unintegrated ? ` / 미통합 ${t.unintegrated.length}${t.behind ? ` · main보다 ${t.behind} 뒤` : ''}` : '';
-    out.push(`${t.label.padEnd(7)} ${state} / ${short(t.head)} / ${t.branch}${extra}`);
-    for (const file of [...t.changed, ...t.untracked.map(path => `?? ${path}`)].slice(0, 10)) out.push(`          ${file}`);
-    if (t.changed.length + t.untracked.length > 10) out.push(`          … 외 ${t.changed.length + t.untracked.length - 10}개 (--json으로 전체 확인)`);
-    for (const commit of (t.unintegrated || []).slice(0, 5)) out.push(`          + ${short(commit.sha)} ${commit.subject}${commit.equivalent ? ' (main에 같은 변경 있음)' : ''}`);
-    if ((t.unintegrated || []).length > 5) out.push(`          … 외 ${t.unintegrated.length - 5}개`);
-  }
-  const g = r.github;
-  const source = g.verified ? '원격 직접 확인' : `미확인 — 마지막 fetch 기준 추정${g.reason ? `, ${g.reason}` : ''}`;
-  const sync = {equal: '동기화됨', 'local-ahead': `Push 대기 ${g.ahead}커밋`, 'remote-ahead': `원격이 앞섬${g.behind ? ` ${g.behind}커밋` : ''}(Push 불가)`, diverged: `갈라짐(로컬 +${g.ahead} / 원격 +${g.behind})`, unknown: '판단 불가'}[g.relation];
-  out.push('', `GitHub  ${sync} (로컬 main ${short(g.local)} · origin/main ${short(g.remote || g.tracking)}, ${source})`, '');
-  const label = {PASS: 'PASS', WARN: '검토 필요', FAIL: 'FAIL'};
-  out.push(`통합 검사: ${label[r.verdicts.integration]}`);
-  out.push(`Git 상태: ${label[r.verdicts.git]}`);
-  out.push(`Push 전 검토: ${g.relation === 'local-ahead' ? `필요(${g.ahead}커밋 — 테스트·보안 결과 확인 후 사용자 승인)` : g.relation === 'equal' ? '대기 커밋 없음' : '필요(원격 상태 확인)'}`);
-  out.push('테스트·보안 검증: 이 도구 범위 아님(lint·tsc·테스트 결과 별도 확인)');
-  out.push('배포 승인: 별도 필요');
-  const issues = r.findings.filter(f => f.level !== 'INFO');
-  const notes = r.findings.filter(f => f.level === 'INFO');
-  if (issues.length) {
-    out.push('', '문제');
-    for (const f of issues) out.push(`- [${f.level}] ${f.target}: ${f.cause}`, `  조치: ${f.action}`);
-  }
-  if (notes.length) {
-    out.push('', '참고');
-    for (const f of notes) out.push(`- ${f.target}: ${f.cause} ${f.action}`);
-  }
-  return out.join('\n');
-}
-
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let args;
   try {
-    args = parseArgs(process.argv.slice(2), {mode: 'string', offline: 'boolean', json: 'boolean', help: 'boolean'});
+    args = parseArgs(process.argv.slice(2), {mode: 'string', offline: 'boolean', branches: 'boolean', noColor: 'boolean', json: 'boolean', help: 'boolean'});
     if (args._.length || (args.mode !== undefined && !['serial', 'parallel'].includes(args.mode))) throw new Error('invalid');
   } catch {
     console.error('옵션이 잘못됐다. node scripts/agent/baba-status.mjs --help');
     process.exit(2);
   }
   if (args.help) {
-    console.log('baba-status [--mode serial|parallel] [--offline] [--json]\n  읽기 전용. 파일·브랜치·index를 바꾸지 않고 fetch하지 않는다. 원격은 git ls-remote로만 조회한다.');
+    console.log('baba-status [--mode serial|parallel] [--offline] [--branches] [--no-color] [--json]\n  읽기 전용. 파일·브랜치·index를 바꾸지 않고 fetch하지 않는다. 원격은 git ls-remote로만 조회한다.\n  --branches: Worktree 밖 main 미통합 브랜치 목록 표시 · --no-color: 색상 끄기(NO_COLOR와 같음)');
     process.exit(0);
   }
   const report = collectStatus({root: repoRoot(dirname(fileURLToPath(import.meta.url))), mode: args.mode || null, offline: Boolean(args.offline)});
-  console.log(args.json ? JSON.stringify(report, null, 2) : render(report));
+  const terminal = detectTerminal();
+  if (args.noColor) terminal.color = false;
+  console.log(args.json ? JSON.stringify(report, null, 2) : renderStatus(report, {...terminal, branches: Boolean(args.branches)}));
   process.exitCode = {PASS: 0, WARN: 1, FAIL: 2}[report.verdicts.overall];
 }

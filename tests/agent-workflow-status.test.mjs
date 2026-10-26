@@ -6,6 +6,7 @@ import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {git, gitOut, insideRoot, run, sanitizedEnv} from '../scripts/agent/lib/common.mjs';
 import {collectStatus} from '../scripts/agent/baba-status.mjs';
+import {detectTerminal, displayWidth, renderStatus, stripAnsi} from '../scripts/agent/lib/status-view.mjs';
 
 // Every scenario runs in a disposable local repository with a local bare "origin".
 const source = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -32,6 +33,7 @@ function fixture() {
   git(main, ['config', 'user.email', 'fixture@example.invalid']); git(main, ['config', 'user.name', 'Fixture']);
   git(main, ['init', '--bare', remote]);
   cpSync(join(source, 'scripts/agent'), join(main, 'scripts/agent'), {recursive: true});
+  cpSync(join(source, 'baba-status.cmd'), join(main, 'baba-status.cmd'));
   put(main, '.gitignore', '.tmp-baba/\nnode_modules/\n');
   put(main, 'app/a.ts', 'export const a = 1;\n');
   git(main, ['add', '.']); git(main, ['commit', '-m', 'seed']);
@@ -43,8 +45,14 @@ function fixture() {
 const status = (f, options = {}) => collectStatus({root: f.main, cwd: f.main, ...options});
 const tree = (report, label) => report.trees.find(item => item.label === label);
 const finding = (report, target, pattern) => report.findings.find(item => item.target === target && pattern.test(item.cause));
-function cli(f, args = [], cwd = f.main) {
-  const result = run(process.execPath, [join(f.main, 'scripts/agent/baba-status.mjs'), ...args], {cwd, env: sanitizedEnv().env, allowFail: true, timeout: 120000});
+// Child output is piped, so the default view must be plain text unless color is forced.
+const plainEnv = (extra = {}) => {
+  const env = {...sanitizedEnv().env, ...extra};
+  for (const name of ['FORCE_COLOR', 'NO_COLOR', 'CI', 'WT_SESSION', 'TERM_PROGRAM']) if (!(name in extra)) delete env[name];
+  return env;
+};
+function cli(f, args = [], cwd = f.main, env = {}) {
+  const result = run(process.execPath, [join(f.main, 'scripts/agent/baba-status.mjs'), ...args], {cwd, env: plainEnv(env), allowFail: true, timeout: 120000});
   return {...result, report: args.includes('--json') ? JSON.parse(result.stdout) : null};
 }
 function snapshot(dir) {
@@ -64,13 +72,15 @@ test('1. clean and integrated worktrees pass every Git check but never claim tes
   const f = fixture();
   const result = cli(f);
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /main {4}CLEAN/);
-  assert.match(result.stdout, /Claude {2}CLEAN .* 미통합 0/);
-  assert.match(result.stdout, /Codex {3}CLEAN .* 미통합 0/);
-  assert.match(result.stdout, /GitHub {2}동기화됨 .*원격 직접 확인/);
-  assert.match(result.stdout, /통합 검사: PASS\nGit 상태: PASS/);
-  assert.match(result.stdout, /테스트·보안 검증: 이 도구 범위 아님/);
-  assert.match(result.stdout, /배포 승인: 별도 필요/);
+  assert.doesNotMatch(result.stdout, /\x1b\[/);
+  assert.match(result.stdout, /\| main +\| [0-9a-f]{7} \| main +\| CLEAN +\| +- \| +- \|/);
+  assert.match(result.stdout, /\| Claude +\| [0-9a-f]{7} \| claude\/ready-fixture +\| CLEAN +\| +0 \| +0 \|/);
+  assert.match(result.stdout, /\| Codex +\| [0-9a-f]{7} \| codex\/ready-fixture +\| CLEAN +\| +0 \| +0 \|/);
+  assert.match(result.stdout, /\| 원격 확인 +\| 성공 +\|/);
+  assert.match(result.stdout, /\| 동기화 +\| 동기화됨 +\|/);
+  assert.match(result.stdout, /\| 통합 검사 +\| PASS +\|\n\| Git 상태 +\| PASS +\|/);
+  assert.match(result.stdout, /\| 테스트\/보안 검증 \| 이 도구 범위 아님/);
+  assert.match(result.stdout, /\| 배포 승인 +\| 별도 필요 +\|/);
   assert.match(result.stdout, /실행 위치 {2}main \/ main → 직렬 모드/);
 });
 
@@ -135,8 +145,8 @@ test('5. main committed but not pushed shows pending push commits', () => {
   assert.equal(report.github.ahead, 2);
   assert.equal(report.github.verified, true);
   const out = cli(f).stdout;
-  assert.match(out, /GitHub {2}Push 대기 2커밋/);
-  assert.match(out, /Push 전 검토: 필요\(2커밋/);
+  assert.match(out, /\| 동기화 +\| Push 대기 2커밋 +\|/);
+  assert.match(out, /\| Push 준비 +\| 검토 필요\(2커밋/);
 });
 
 test('6. unreachable remote is marked unverified; remote HEAD mismatch and divergence are detected', () => {
@@ -146,7 +156,8 @@ test('6. unreachable remote is marked unverified; remote HEAD mismatch and diver
   assert.equal(report.github.verified, false);
   assert.equal(report.github.relation, 'equal');
   assert.ok(finding(report, 'GitHub', /원격 상태 미확인/));
-  assert.match(cli(f).stdout, /미확인 — 마지막 fetch 기준 추정/);
+  assert.match(cli(f).stdout, /\| 원격 확인 +\| 실패\(원격 연결 실패\), 마지막 fetch 기준 +\|/);
+  assert.match(cli(f, ['--offline']).stdout, /\| 원격 확인 +\| 생략\(--offline\), 마지막 fetch 기준 +\|/);
   assert.equal(status(f, {offline: true}).github.reason, '--offline');
 
   git(f.main, ['remote', 'set-url', 'origin', f.remote]);
@@ -207,4 +218,141 @@ test('real repository: offline status is read-only and machine-readable', () => 
   assert.equal(report.readOnly, true);
   assert.ok(report.trees.some(item => item.label === 'main'));
   assert.equal(state(), before);
+});
+
+// Display: every border of a table block sits in the same terminal column, counting Hangul as two cells.
+function borderColumns(line) {
+  const columns = [];
+  let width = 0;
+  for (const char of line) {
+    if ('|+┌┬┐├┼┤└┴┘│'.includes(char)) columns.push(width);
+    width += displayWidth(char);
+  }
+  return columns;
+}
+function assertAligned(text) {
+  const blocks = [];
+  let current = null;
+  for (const line of stripAnsi(text).split('\n')) {
+    if (/^[|+┌├└│]/.test(line)) (current ||= blocks[blocks.push([]) - 1]).push(line);
+    else current = null;
+  }
+  assert.ok(blocks.length >= 3, 'worktree, GitHub and result tables');
+  for (const block of blocks) {
+    const expected = borderColumns(block[0]);
+    for (const line of block) assert.deepEqual(borderColumns(line), expected, `${line}\n${block[0]}`);
+    assert.equal(new Set(block.map(displayWidth)).size, 1);
+  }
+}
+function koreanFixture() {
+  const f = fixture();
+  git(f.claude, ['switch', '--no-track', '-c', 'claude/20261026-한글-정렬-01']);
+  commit(f.claude, 'app/한글 파일.ts', 'export {};\n', '한글 커밋 제목');
+  put(f.codex, 'app/a.ts', 'dirty\n');
+  return f;
+}
+
+test('display width counts Hangul as two cells and ignores ANSI codes', () => {
+  assert.equal(displayWidth('abc'), 3);
+  assert.equal(displayWidth('한글'), 4);
+  assert.equal(displayWidth('main 대비 뒤처짐'), 16);
+  assert.equal(displayWidth('\x1b[32m통과\x1b[0m'), 4);
+});
+
+test('Korean branches and labels keep table borders aligned in Unicode and ASCII layouts', () => {
+  const f = koreanFixture();
+  const report = status(f);
+  for (const unicode of [true, false]) {
+    for (const color of [true, false]) assertAligned(renderStatus(report, {unicode, color}));
+  }
+  const ascii = renderStatus(report, {unicode: false});
+  assert.match(ascii, /\| Claude +\| [0-9a-f]{7} \| claude\/20261026-한글-정렬-01 \| CLEAN +\| +1 \|/);
+  assert.match(ascii, /\| Codex +\| [0-9a-f]{7} \| codex\/ready-fixture +\| DIRTY\(1\) +\|/);
+  assert.match(ascii, /\+ [0-9a-f]{7} 한글 커밋 제목/);
+  assert.doesNotMatch(ascii, /[┌│─]/);
+  assert.match(renderStatus(report, {unicode: true}), /┌─+┬/);
+});
+
+test('colors mark status but the plain text is identical without ANSI', () => {
+  const f = koreanFixture();
+  const report = status(f);
+  const colored = renderStatus(report, {color: true, unicode: false});
+  const plain = renderStatus(report, {color: false, unicode: false});
+  assert.doesNotMatch(plain, /\x1b\[/);
+  assert.equal(stripAnsi(colored), plain);
+  assert.match(colored, /\x1b\[32mCLEAN/);
+  assert.match(colored, /\x1b\[33mDIRTY\(1\)/);
+  assert.match(colored, /\x1b\[33mWARN 검토 필요/);
+  assert.match(colored, /\x1b\[36mclaude\/20261026-한글-정렬-01/);
+  assert.match(colored, /\x1b\[33m\[WARN\]/);
+  git(f.main, ['switch', '-c', 'feature']);
+  const failed = renderStatus(status(f), {color: true, unicode: false});
+  assert.match(failed, /\x1b\[31m\[FAIL\]/);
+  assert.match(failed, /\x1b\[31mFAIL Git 상태 먼저 해결/);
+});
+
+test('terminal detection: no color for CI, redirects, NO_COLOR or dumb terminals; ASCII borders in legacy Windows console', () => {
+  const tty = {isTTY: true, columns: 120, hasColors: () => true};
+  assert.deepEqual(detectTerminal({stream: tty, env: {WT_SESSION: 'x'}, platform: 'win32'}), {color: true, unicode: true, columns: 120});
+  assert.deepEqual(detectTerminal({stream: tty, env: {}, platform: 'win32'}), {color: true, unicode: false, columns: 120});
+  assert.equal(detectTerminal({stream: tty, env: {CI: 'true'}, platform: 'win32'}).color, false);
+  assert.equal(detectTerminal({stream: tty, env: {NO_COLOR: '1', FORCE_COLOR: '1'}, platform: 'win32'}).color, false);
+  assert.equal(detectTerminal({stream: tty, env: {TERM: 'dumb'}, platform: 'linux'}).color, false);
+  assert.equal(detectTerminal({stream: {isTTY: true, columns: 80, hasColors: () => false}, env: {}, platform: 'win32'}).color, false);
+  assert.deepEqual(detectTerminal({stream: {isTTY: false}, env: {}, platform: 'win32'}), {color: false, unicode: false, columns: null});
+  assert.equal(detectTerminal({stream: {isTTY: false}, env: {FORCE_COLOR: '1'}, platform: 'win32'}).color, true);
+});
+
+test('narrow terminals switch to a compact layout without table borders', () => {
+  const f = koreanFixture();
+  const report = status(f);
+  const wide = renderStatus(report, {unicode: false, columns: 200});
+  const narrow = renderStatus(report, {unicode: false, columns: 60});
+  assert.match(wide, /^\+-+\+/m);
+  assert.doesNotMatch(narrow, /^[+|]/m);
+  assert.match(narrow, /^Claude +CLEAN [0-9a-f]{7} {2}미통합 1 · 뒤처짐 0$/m);
+  assert.match(narrow, /^ {7}claude\/20261026-한글-정렬-01$/m);
+  assert.match(narrow, /^ {2}통합 검사 +WARN 검토 필요$/m);
+  for (const line of narrow.split('\n').slice(3, 9)) assert.ok(displayWidth(line) <= 60, line);
+});
+
+test('parked branches show only a count unless --branches is given', () => {
+  const f = fixture();
+  git(f.main, ['switch', '-q', '-c', 'old/parked']); commit(f.main, 'old.txt', 'x\n'); git(f.main, ['switch', '-q', 'main']);
+  const plain = cli(f).stdout;
+  assert.match(plain, /\[INFO\] Worktree 밖 main 미통합 브랜치 1개 \(목록: baba-status --branches\)/);
+  assert.doesNotMatch(plain, /old\/parked/);
+  assert.match(cli(f, ['--branches']).stdout, /미통합 브랜치 1개\n {7}old\/parked/);
+  assert.deepEqual(cli(f, ['--json']).report.parked, ['old/parked']);
+});
+
+test('--json keeps the previous fields and stays free of ANSI codes', () => {
+  const f = koreanFixture();
+  const {report, stdout} = cli(f, ['--json'], f.main, {FORCE_COLOR: '1'});
+  assert.doesNotMatch(stdout, /\x1b\[/);
+  for (const key of ['tool', 'readOnly', 'generatedAt', 'root', 'location', 'requestedMode', 'main', 'trees', 'github', 'findings', 'verdicts', 'notCovered']) assert.ok(key in report, key);
+  assert.deepEqual(Object.keys(report.trees[0]).sort(), ['agent', 'behind', 'branch', 'changed', 'clean', 'conflicted', 'exists', 'handoff', 'head', 'label', 'operation', 'path', 'role', 'unintegrated', 'untracked', 'waiting']);
+  assert.deepEqual(Object.keys(report.verdicts).sort(), ['git', 'github', 'integration', 'overall']);
+  assert.ok(report.findings.some(item => item.target === 'Codex' && /미커밋 변경/.test(item.cause)));
+});
+
+test('Windows CMD: baba-status.cmd prints the table, honors color settings and returns the exit code', {skip: process.platform !== 'win32'}, () => {
+  const f = koreanFixture();
+  const cmd = (args, extra = {}) => {
+    const env = plainEnv(extra);
+    delete env.NoDefaultCurrentDirectoryInExePath;
+    return run('cmd.exe', ['/d', '/c', `baba-status ${args}`], {cwd: f.main, env, allowFail: true, timeout: 120000});
+  };
+  const plain = cmd('--offline');
+  assert.equal(plain.status, 1, plain.stderr);
+  assert.doesNotMatch(plain.stdout, /\x1b\[/);
+  assert.match(plain.stdout, /\| Claude +\| [0-9a-f]{7} \| claude\/20261026-한글-정렬-01 \|/);
+  assertAligned(plain.stdout.replace(/\r\n/g, '\n'));
+  const colored = cmd('--offline', {FORCE_COLOR: '1'});
+  assert.match(colored.stdout, /\x1b\[32mCLEAN/);
+  assert.equal(stripAnsi(colored.stdout).replace(/\d\d:\d\d/, ''), plain.stdout.replace(/\d\d:\d\d/, ''));
+  assert.doesNotMatch(cmd('--offline --no-color', {FORCE_COLOR: '1'}).stdout, /\x1b\[/);
+  assert.doesNotMatch(cmd('--offline', {FORCE_COLOR: '1', NO_COLOR: '1'}).stdout, /\x1b\[/);
+  assert.equal(cmd('--mode parallel --offline').status, 2);
+  assert.equal(JSON.parse(cmd('--offline --json').stdout).trees.length, 3);
 });

@@ -12,8 +12,16 @@ baba-status
 - 다른 폴더에서: `C:\workspace\baba-staff-app\baba-status` 또는 `node C:\workspace\baba-staff-app\scripts\agent\baba-status.mjs`
 - 어디서나 `baba-status`로 쓰려면 사용자가 직접 `C:\workspace\baba-staff-app`를 사용자 PATH에 추가한다(도구가 PATH를 바꾸지 않는다).
 - PowerShell에서는 `.\baba-status`로 실행한다.
-- 옵션: `--mode serial|parallel`(선택한 모드와 실행 경로 일치 검사), `--offline`(원격 조회 생략), `--json`
+- 옵션: `--mode serial|parallel`(선택한 모드와 실행 경로 일치 검사), `--offline`(원격 조회 생략), `--branches`(Worktree 밖 main 미통합 브랜치 목록), `--no-color`, `--json`
 - 종료 코드: 0 PASS · 1 검토 필요(WARN) · 2 FAIL
+
+## 화면
+
+- Worktree 표(구분·HEAD·브랜치·상태·미통합·main 대비 뒤처짐), GitHub 표, 결과 표, 문제·참고 순서로 표시한다. 한글은 2칸 폭으로 계산해 세로줄을 맞춘다.
+- 색상: 초록 PASS·CLEAN·정상, 노랑 검토 필요·DIRTY·Push 대기·미통합, 빨강 FAIL·충돌·Push 불가, 청록 브랜치·SHA. 색이 없어도 PASS/WARN/FAIL 텍스트로 구분된다.
+- 색상은 터미널이 ANSI를 지원할 때만 켠다. 리다이렉션·파이프, `CI`, `TERM=dumb`, `NO_COLOR`, `--no-color`에서는 끈다. `FORCE_COLOR=1`이면 강제로 켠다. `--json`에는 색상이 없다.
+- Windows Terminal과 Windows 외 터미널은 상자 문자(┌─┐), 기존 CMD 콘솔은 ASCII(+-|) 테두리를 쓴다. 한글 글꼴에서 상자 문자가 2칸으로 그려져 줄이 어긋나는 것을 막기 위해서다.
+- 터미널 폭이 표보다 좁으면 표 없이 줄 단위의 간결한 형식으로 바꾼다.
 
 ## 검사 항목
 
