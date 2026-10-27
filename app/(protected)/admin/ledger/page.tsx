@@ -73,6 +73,34 @@ const text = {
     cashExpense: "실제 현금지출",
     empty: "표시할 내역이 없습니다.",
     newItem: "신규",
+    accrualCheck: "발생 기준 점검",
+    accrualCheckNote: "영업이익의 비용을 귀속 월 기준으로 나누고, 기술적 보정·상쇄와 마감 이후 변경을 따로 보여줍니다.",
+    closeComparison: "마감 스냅샷 대조",
+    closedProfit: (revision: number | null) => revision ? `${revision}차 마감 영업이익` : "마감 영업이익",
+    ledgerChangeAfterClose: "마감 후 원장 변경",
+    revenueDelta: "매출 변경",
+    expenseDelta: "비용 변경",
+    cardAttribution: "마감 손익비용과의 카드 귀속 차이",
+    otherIncomeOutsideClose: "기타 수입 (마감 영업이익 제외)",
+    currentOperatingProfit: "현재 원장 기준 영업이익",
+    driftNote: "마감 이후 원장이 변경되었습니다. 재마감 전까지 마감 금액과 현재 금액이 다릅니다.",
+    noDriftNote: "마감 이후 원장 변경이 없습니다.",
+    accrualExpense: "영업비용 구성 (발생 기준)",
+    accrualExpenseNote: "실제 지급일이 아닌 귀속 월 기준입니다. 기술적 보정·상쇄는 일반 비용 분류와 분리해 표시합니다.",
+    preCorrectionExpense: "보정 전 원장 비용",
+    postCorrectionExpense: "보정 후 원장 비용",
+    closeBasisExpense: "마감 기준 손익비용 (현재 원장)",
+    technicalCorrections: "기술적 보정·상쇄",
+    technicalNote: "2026년 8월 시트 합계보정(#1055)과 그 금액을 상세 거래로 옮기며 만든 상쇄입니다. 실제 운영비가 아니며, 상세 거래와 합쳐 시트 총액에 맞춥니다. 음수는 상세 거래로 이미 옮겨진 금액입니다.",
+    revenueAdjustments: "매출 정정 내역",
+    revenueAdjustmentsNote: "정정이 기록된 날짜와 실제 귀속 날짜를 함께 표시합니다.",
+    recordedOn: "기록일",
+    otherDate: "날짜 미지정",
+    nonExpense: "비용이 아닌 자금 이동",
+    nonExpenseNote: "임대료 선납은 지급 시 비용이 아니며, 월 임대료는 매월 발생 비용으로만 반영됩니다. 준비금 적립·해제는 보유금 안의 구분이며 영업비용이 아닙니다.",
+    prepaidPayments: "선급비용 지급 (임대료 선납 등)",
+    reserveAllocated: "준비금 적립",
+    reserveReleased: "준비금 해제·사용",
   },
   vi: {
     monthInput: "Tháng báo cáo",
@@ -121,6 +149,34 @@ const text = {
     cashExpense: "Tiền thực chi",
     empty: "Không có dữ liệu để hiển thị.",
     newItem: "Mới",
+    accrualCheck: "Kiểm tra theo phát sinh",
+    accrualCheckNote: "Chia chi phí của lợi nhuận theo tháng ghi nhận, tách riêng điều chỉnh kỹ thuật·bù trừ và thay đổi sau khi chốt sổ.",
+    closeComparison: "Đối chiếu bản chốt sổ",
+    closedProfit: (revision: number | null) => revision ? `Lợi nhuận bản chốt lần ${revision}` : "Lợi nhuận bản chốt",
+    ledgerChangeAfterClose: "Thay đổi sổ sau khi chốt",
+    revenueDelta: "Thay đổi doanh thu",
+    expenseDelta: "Thay đổi chi phí",
+    cardAttribution: "Chênh lệch phân bổ thẻ so với chi phí chốt sổ",
+    otherIncomeOutsideClose: "Thu nhập khác (ngoài lợi nhuận chốt sổ)",
+    currentOperatingProfit: "Lợi nhuận theo sổ hiện tại",
+    driftNote: "Sổ đã thay đổi sau khi chốt. Số chốt và số hiện tại khác nhau cho đến khi chốt lại.",
+    noDriftNote: "Không có thay đổi sổ sau khi chốt.",
+    accrualExpense: "Cơ cấu chi phí kinh doanh (theo phát sinh)",
+    accrualExpenseNote: "Theo tháng ghi nhận, không theo ngày chi thực tế. Điều chỉnh kỹ thuật·bù trừ được tách khỏi các phân loại chi phí thông thường.",
+    preCorrectionExpense: "Chi phí sổ trước điều chỉnh",
+    postCorrectionExpense: "Chi phí sổ sau điều chỉnh",
+    closeBasisExpense: "Chi phí theo chuẩn chốt sổ (sổ hiện tại)",
+    technicalCorrections: "Điều chỉnh kỹ thuật·bù trừ",
+    technicalNote: "Điều chỉnh tổng theo bảng tính tháng 8/2026 (#1055) và các bút toán bù trừ khi chuyển số tiền đó sang giao dịch chi tiết. Không phải chi phí vận hành thực tế; cộng với giao dịch chi tiết để khớp tổng bảng tính. Số âm là phần đã chuyển sang giao dịch chi tiết.",
+    revenueAdjustments: "Điều chỉnh doanh thu",
+    revenueAdjustmentsNote: "Hiển thị cả ngày ghi điều chỉnh và ngày phát sinh thực tế.",
+    recordedOn: "Ngày ghi",
+    otherDate: "Không rõ ngày",
+    nonExpense: "Dòng tiền không phải chi phí",
+    nonExpenseNote: "Tiền thuê trả trước không phải chi phí khi trả; tiền thuê hằng tháng chỉ ghi nhận là chi phí phát sinh mỗi tháng. Trích lập·giải phóng quỹ dự phòng chỉ phân loại trong tiền hiện có, không phải chi phí kinh doanh.",
+    prepaidPayments: "Chi trả trước (tiền thuê trả trước, v.v.)",
+    reserveAllocated: "Trích lập quỹ dự phòng",
+    reserveReleased: "Giải phóng·sử dụng quỹ dự phòng",
   },
 } as const;
 
@@ -149,6 +205,14 @@ const vietnameseCategoryNames: Record<string, string> = {
   "장부 정정": "Điều chỉnh sổ",
   "세부분류 없음": "Chưa phân loại chi tiết",
   "분류 미지정": "Chưa phân loại",
+  "급여/인건비": "Lương/nhân sự",
+  "보험·복리후생": "Bảo hiểm·phúc lợi",
+  "보험": "Bảo hiểm",
+  "복리후생": "Phúc lợi",
+  "직원 식대": "Tiền ăn nhân viên",
+  "직원 주거비": "Nhà ở nhân viên",
+  "임대료": "Tiền thuê mặt bằng",
+  "기타 비용": "Chi phí khác",
 };
 
 type ProvisionalSources = {
@@ -321,6 +385,7 @@ function LedgerDashboardContent() {
       detailEmoji={buildDashboardDetailEmoji(dashboardState.current)}
       salesReceiptExplanation={dashboardState.current.salesReceiptExplanation}
       operatingResult={operatingResult}
+      accrual={dashboardState.current.accrual}
       cardsLoading={isCurrentMonth && dashboardState.current.fundsView.mode === "live" && dashboardState.provisional.cardsLoading}
       expandedExpenses={expandedExpenses}
       onToggleExpense={(id) => setExpandedExpenses((current) => {
@@ -332,7 +397,7 @@ function LedgerDashboardContent() {
   </main></Container>;
 }
 
-function DashboardReport({ detailEmoji, copy, lang, fundsMode, report, month, salesReceiptExplanation, operatingResult, cardsLoading, expandedExpenses, onToggleExpense }: {
+function DashboardReport({ detailEmoji, copy, lang, fundsMode, report, month, salesReceiptExplanation, operatingResult, accrual, cardsLoading, expandedExpenses, onToggleExpense }: {
   detailEmoji: ReturnType<typeof buildDashboardDetailEmoji>;
   copy: DashboardText;
   lang: "ko" | "vi";
@@ -341,6 +406,7 @@ function DashboardReport({ detailEmoji, copy, lang, fundsMode, report, month, sa
   month: string;
   salesReceiptExplanation: DashboardLedgerData["salesReceiptExplanation"];
   operatingResult: ProvisionalOperatingProfit;
+  accrual: DashboardLedgerData["accrual"];
   cardsLoading: boolean;
   expandedExpenses: Set<number>;
   onToggleExpense: (id: number) => void;
@@ -380,6 +446,8 @@ function DashboardReport({ detailEmoji, copy, lang, fundsMode, report, month, sa
         <div className={styles.cashBalance}><span>{fundsMode === "live" ? copy.balance : copy.monthEndBalance}</span><strong>{money(report.cashFlow.closingBalance)}</strong></div>
       </div>
     </section>
+
+    {accrual ? <AccrualCheckCard copy={copy} lang={lang} accrual={accrual} /> : null}
   </>;
 }
 
@@ -496,6 +564,101 @@ function CategoryRow({ name, change, amount, total, barClass, details, detailEmo
 
 function CashLine({ sign, label, amount, positive = false }: { sign: string; label: string; amount: number; positive?: boolean }) {
   return <div className={`${styles.cashLine} ${positive ? styles.cashPositive : styles.cashNegative}`}><span>{sign} {label}</span><strong>{money(amount)}</strong></div>;
+}
+
+const shortDate = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
+// Ledger amounts keep up to 3 decimals (e.g. 551.657.006,5 ₫), so the accrual view
+// shows them exactly instead of rounding like the cash report.
+const exactMoney = (amount: number) => `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(amount)} ₫`;
+const signedMoney = (amount: number) => `${amount > 0 ? "+" : amount < 0 ? "−" : ""}${exactMoney(Math.abs(amount))}`;
+
+// Accrual check card under the cash flow: a compact summary plus its own read-only
+// sheet. The KPI operating-profit sheet keeps its fixed rows.
+function AccrualCheckCard({ copy, lang, accrual }: { copy: DashboardText; lang: "ko" | "vi"; accrual: NonNullable<DashboardLedgerData["accrual"]> }) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  return <section className={styles.reportCard} aria-label={copy.accrualCheck}>
+    <div className={styles.sectionHeader}>
+      <h2 className={styles.sectionTitle}><span className={styles.titleEmoji} aria-hidden="true">🧾</span>{copy.accrualCheck}</h2>
+      <button ref={buttonRef} type="button" className={styles.kpiDetailButton} aria-haspopup="dialog" onClick={() => setOpen(true)}>{copy.detail} ›</button>
+    </div>
+    <p className={styles.accrualNote}>{copy.accrualCheckNote}</p>
+    {accrual.technical.items.length ? <>
+      <AccrualLine label={copy.preCorrectionExpense} value={exactMoney(accrual.operatingExpense)} />
+      <AccrualLine label={copy.technicalCorrections} value={signedMoney(accrual.technical.total)} />
+    </> : null}
+    <AccrualLine label={copy.postCorrectionExpense} value={exactMoney(accrual.totalExpense)} strong />
+    {accrual.close ? <AccrualLine label={copy.ledgerChangeAfterClose} value={signedMoney(accrual.close.ledgerChange)} tone={accrual.close.drift ? "warn" : undefined} /> : null}
+    {open ? <BarSheet kind="full" compact title={`🧾 ${copy.accrualCheck}`} closeLabel={copy.close} onClose={() => setOpen(false)} returnFocusRef={buttonRef}
+      footer={<button type="button" className={styles.sheetCloseButton} onClick={() => setOpen(false)}>{copy.close}</button>}>
+      <AccrualDetails copy={copy} lang={lang} accrual={accrual} />
+    </BarSheet> : null}
+  </section>;
+}
+
+// Display-only accrual view (lib/ledger/accrual-report.ts): the same recognized rows
+// as the dashboard totals, regrouped. Native <details> keeps long lists collapsible.
+function AccrualDetails({ copy, lang, accrual }: { copy: DashboardText; lang: "ko" | "vi"; accrual: NonNullable<DashboardLedgerData["accrual"]> }) {
+  const { close, technical, nonExpense } = accrual;
+  return <>
+    {close ? <section className={styles.accrualSection} aria-label={copy.closeComparison}>
+      <h3 className={styles.accrualHeading}>{copy.closeComparison}</h3>
+      <div className={styles.comparisonList}>
+        <AccrualLine label={copy.closedProfit(close.revision)} value={exactMoney(close.snapshotOperatingProfit)} />
+        <AccrualLine label={copy.ledgerChangeAfterClose} value={signedMoney(close.ledgerChange)} tone={close.drift ? "warn" : undefined} />
+        {close.drift ? <>
+          <AccrualLine sub label={copy.revenueDelta} value={signedMoney(close.revenueChange)} />
+          <AccrualLine sub label={copy.expenseDelta} value={signedMoney(close.expenseChange)} />
+        </> : null}
+        {Math.abs(close.cardAttribution) >= 0.5 ? <AccrualLine label={copy.cardAttribution} value={signedMoney(close.cardAttribution)} /> : null}
+        {Math.abs(close.otherIncome) >= 0.5 ? <AccrualLine label={copy.otherIncomeOutsideClose} value={signedMoney(close.otherIncome)} /> : null}
+        <AccrualLine label={copy.currentOperatingProfit} value={exactMoney(close.dashboardOperatingProfit)} strong />
+      </div>
+      <p className={`${styles.accrualNote} ${close.drift ? styles.accrualWarn : ""}`}>{close.drift ? copy.driftNote : copy.noDriftNote}</p>
+    </section> : null}
+
+    <section className={styles.accrualSection} aria-label={copy.accrualExpense}>
+      <h3 className={styles.accrualHeading}>{copy.accrualExpense}</h3>
+      <p className={styles.accrualNote}>{copy.accrualExpenseNote}</p>
+      <AccrualLine label={copy.preCorrectionExpense} value={exactMoney(accrual.operatingExpense)} strong />
+      {accrual.expenses.map(row => <details key={row.id} className={styles.accrualGroup}>
+        <summary className={styles.accrualSummary}><span>{categoryLabel(row.name, lang)}</span><strong className={styles.expenseAmount}>{exactMoney(row.amount)}</strong></summary>
+        {row.details.map(detail => <AccrualLine key={detail.id} sub label={categoryLabel(detail.name, lang)} value={exactMoney(detail.amount)} />)}
+      </details>)}
+      {technical.items.length ? <details className={`${styles.accrualGroup} ${styles.accrualTechnical}`}>
+        <summary className={styles.accrualSummary}><span>{copy.technicalCorrections}</span><strong>{signedMoney(technical.total)}</strong></summary>
+        <p className={styles.accrualNote}>{copy.technicalNote}</p>
+        {technical.items.map(item => <AccrualLine key={item.id} sub label={`#${item.id} · ${shortDate(item.date)} · ${item.name}`} value={signedMoney(item.amount)} />)}
+      </details> : null}
+      <AccrualLine label={copy.postCorrectionExpense} value={exactMoney(accrual.totalExpense)} strong />
+      {/* Month-close expense = ledger expense + sale-month card attribution recorded at close. */}
+      {close && Math.abs(close.cardAttribution) >= 0.0005 ? <>
+        <AccrualLine label={copy.cardAttribution} value={signedMoney(close.cardAttribution)} />
+        <AccrualLine label={copy.closeBasisExpense} value={exactMoney(accrual.totalExpense + close.cardAttribution)} />
+      </> : null}
+    </section>
+
+    {accrual.revenueAdjustments.length ? <section className={styles.accrualSection} aria-label={copy.revenueAdjustments}>
+      <h3 className={styles.accrualHeading}>{copy.revenueAdjustments}</h3>
+      <p className={styles.accrualNote}>{copy.revenueAdjustmentsNote}</p>
+      {accrual.revenueAdjustments.map(adjustment => <details key={adjustment.id} className={styles.accrualGroup}>
+        <summary className={styles.accrualSummary}><span>{`#${adjustment.id} · ${adjustment.name} · ${copy.recordedOn} ${shortDate(adjustment.recordedDate)}`}</span><strong>{signedMoney(adjustment.amount)}</strong></summary>
+        {adjustment.items.map((item, index) => <AccrualLine key={index} sub label={`${item.date ? shortDate(item.date) : copy.otherDate}${item.note ? ` · ${item.note}` : ""}`} value={signedMoney(item.amount)} />)}
+      </details>)}
+    </section> : null}
+
+    {nonExpense.prepaidPayments || nonExpense.reserveAllocated || nonExpense.reserveReleased ? <section className={styles.accrualSection} aria-label={copy.nonExpense}>
+      <h3 className={styles.accrualHeading}>{copy.nonExpense}</h3>
+      {nonExpense.prepaidPayments ? <AccrualLine label={copy.prepaidPayments} value={exactMoney(nonExpense.prepaidPayments)} /> : null}
+      {nonExpense.reserveAllocated ? <AccrualLine label={copy.reserveAllocated} value={exactMoney(nonExpense.reserveAllocated)} /> : null}
+      {nonExpense.reserveReleased ? <AccrualLine label={copy.reserveReleased} value={exactMoney(nonExpense.reserveReleased)} /> : null}
+      <p className={styles.accrualNote}>{copy.nonExpenseNote}</p>
+    </section> : null}
+  </>;
+}
+
+function AccrualLine({ label, value, sub = false, strong = false, tone }: { label: string; value: string; sub?: boolean; strong?: boolean; tone?: "warn" }) {
+  return <div className={`${styles.accrualLine} ${sub ? styles.accrualSub : ""} ${strong ? styles.accrualStrong : ""} ${tone === "warn" ? styles.accrualWarn : ""}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
 export default function LedgerDashboardPage() {

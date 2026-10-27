@@ -70,6 +70,7 @@ function ledgerRoute(db) {
         "@/lib/ledger/reserve-balances": require("../lib/ledger/reserve-balances.ts"),
         "@/lib/ledger/fund-account-view": require("../lib/ledger/fund-account-view.ts"),
         "@/lib/ledger/dashboard-cash-report": require("../lib/ledger/dashboard-cash-report.ts"),
+        "@/lib/ledger/accrual-report": require("../lib/ledger/accrual-report.ts"),
         "@/lib/ledger/manual-entry-policy": require("../lib/ledger/manual-entry-policy.ts"),
         "@/lib/partners/emoji": require("../lib/partners/emoji.ts"),
         "@/lib/ledger/payables": require("../lib/ledger/payables.ts"),

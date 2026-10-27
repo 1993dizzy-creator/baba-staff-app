@@ -13,6 +13,7 @@ import { computeActualCashOutflow } from "@/lib/ledger/cash-outflow";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
 import { buildFundAccountView, fundAccountViewMode, type FundAccountReservePlan, type FundAccountViewMode } from "@/lib/ledger/fund-account-view";
 import { buildDashboardCashReport, type PayableAllocationCategory } from "@/lib/ledger/dashboard-cash-report";
+import { buildAccrualReport, type AccrualCloseSnapshot, type AccrualCorrectionRow } from "@/lib/ledger/accrual-report";
 import { isPayrollAdvanceManualAction, manualExpenseCategoryNameForPartner } from "@/lib/ledger/manual-entry-policy";
 
 import { analyzePayrollPaymentGroups } from "@/lib/ledger/payroll-payment-groups";
@@ -118,7 +119,7 @@ export async function GET(request: Request) {
     const closureResult = month === currentBusinessDate.slice(0, 7)
       ? { data: null, error: null }
       : await supabaseServer.from("ledger_month_closures")
-          .select("status,summary_snapshot")
+          .select("status,revision,summary_snapshot")
           .eq("month", monthStart)
           .eq("status", "closed")
           .maybeSingle();
@@ -154,7 +155,9 @@ export async function GET(request: Request) {
     const reserveEntriesQuery = () => supabaseServer.from("ledger_reserve_entries")
       .select("id,reserve_plan_id,entry_type,amount,occurred_at,memo")
       .lt("occurred_at", monthEndCutoffAt);
-    const reserveEntriesPromise = dashboardOnly && fundsViewMode === "closed_snapshot" ? Promise.resolve(EMPTY_ROWS) : loadLedgerAggregateRows((from, to) => {
+    // The dashboard's accrual view lists the month's reserve entries (not costs), so a
+    // closed month loads its month window too; closed balances still use the snapshot.
+    const reserveEntriesPromise = loadLedgerAggregateRows((from, to) => {
       const query = reserveEntriesQuery();
       const scoped = fundsViewMode === "closed_snapshot"
         ? query.gte("occurred_at", monthStartCutoffAt)
@@ -204,6 +207,14 @@ export async function GET(request: Request) {
       .eq("candidate_type", "employee_meal").eq("source_type", "attendance_meal_daily")
       .eq("status", "confirmed").gte("business_date", monthStart).lt("business_date", nextMonth)
       .not("resolved_transaction_id", "is", null);
+    // Dashboard-only accrual view inputs (display only, lib/ledger/accrual-report.ts):
+    // every category incl. inactive ones, and this month's ledger corrections.
+    const accrualInputsPromise = dashboardOnly ? Promise.all([
+      supabaseServer.from("ledger_categories").select("id,name,kind,parent_id").order("id"),
+      loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("id,type,business_date,amount,economic_effect_sign,category_id,source_type,source_key,correction_of_id,memo,source_snapshot").eq("status", "confirmed").eq("source_type", "ledger_correction").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["sales", "expense", "expense_recognition"]).order("id", { ascending: true }).range(from, to)),
+    ]) : null;
+    // Awaited in the dashboard branch; a failure before that must not be unhandled.
+    accrualInputsPromise?.catch(() => undefined);
     const [accountsResult, categoriesResult, partiesResult, partnerResult, partnerSubtypeResult, bridgeResult, profitResult, recognitionProfitResult, movementsResult, openingResult, cardGrossSalesResult, actualCardDepositsResult, reservesResult, reserveEntriesResult, paidExpenseRootsResult, paidExpenseCorrectionsResult, confirmedMealCandidatesResult, transactions, candidates, priorMonthCardDepositAllocations] = await Promise.all([
       tracked("ref", accountsPromise), tracked("ref", categoriesPromise), partiesPromise, tracked("ref", partnerPromise), tracked("ref", partnerSubtypePromise), tracked("ref", bridgePromise), tracked("prof", profitPromise),
       tracked("prof", recognitionProfitPromise), fundsViewMode === "closed_snapshot" ? movementsPromise : tracked("fund", movementsPromise), tracked("fund", openingPromise), tracked("card", cardGrossSalesPromise), tracked("card", actualCardDepositsPromise), tracked("fund", reservesPromise), tracked("fund", reserveEntriesPromise), tracked("pexp", paidExpenseRootsPromise), tracked("pcor", paidExpenseCorrectionsPromise),
@@ -310,11 +321,25 @@ export async function GET(request: Request) {
       }];
     });
     if (dashboardOnly) {
+      const [reportCategoriesResult, accrualCorrectionsResult] = await accrualInputsPromise!;
+      if (reportCategoriesResult.error) throw reportCategoriesResult.error;
+      const monthWindow = [Date.parse(monthStartCutoffAt), Date.parse(monthEndCutoffAt)];
+      const accrual = buildAccrualReport({
+        categories: reportCategoriesResult.data ?? [],
+        profitRows,
+        corrections: (accrualCorrectionsResult.data ?? []) as AccrualCorrectionRow[],
+        prepaidRows: transactions,
+        businessFundAccountIds,
+        reserveEntries: reserveEntryRows.filter((entry) => Date.parse(entry.occurred_at) >= monthWindow[0] && Date.parse(entry.occurred_at) < monthWindow[1]),
+        summary: { income: recognizedIncome, otherIncome, expense, operatingProfit: recognizedIncome - expense },
+        closeSnapshot: closureResult.data?.summary_snapshot as AccrualCloseSnapshot,
+        closeRevision: closureResult.data?.revision == null ? null : Number(closureResult.data.revision),
+      });
       // The report helpers receive the same cash/profit/balance inputs. Detail
       // rows below are only the income drilldown; every transaction above was
       // retained when calculating cash flows, including reversals/corrections.
       return respond({
-        ok: true, month, scope: "dashboard",
+        ok: true, month, scope: "dashboard", accrual,
         fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth },
         salesReceiptExplanation,
         summary: { income: recognizedIncome, expense, operatingProfit: recognizedIncome - expense, receivedIncome, actualCashOutflow, otherIncome, cardFeePending },

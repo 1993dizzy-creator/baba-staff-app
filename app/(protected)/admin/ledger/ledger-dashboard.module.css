@@ -486,3 +486,24 @@
 
 .cashBalance strong, .cashLine strong { white-space: nowrap; text-align: right; }
 .cashBalance > span, .cashLine > span { min-width: 0; overflow-wrap: anywhere; }
+
+/* Operating-profit sheet: display-only accrual view (lib/ledger/accrual-report.ts). */
+.accrualSection { margin-top: 14px; padding-top: 10px; border-top: 1px solid #e5e7eb; }
+.accrualHeading { margin: 0 0 4px; color: #111827; font-size: 12px; font-weight: 900; }
+.accrualNote { margin: 4px 0 6px; color: #9ca3af; font-size: 10px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.accrualWarn { color: #b45309; }
+.accrualLine { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 5px 0; border-bottom: 1px solid #f1f2f4; font-size: 11px; }
+.accrualLine > span { min-width: 0; color: #374151; font-weight: 750; overflow-wrap: anywhere; }
+.accrualLine > strong { font-weight: 850; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.accrualSub { padding-left: 14px; font-size: 10px; }
+.accrualSub > span { color: #6b7280; font-weight: 650; }
+.accrualStrong > span, .accrualStrong > strong { color: #111827; font-weight: 900; }
+.accrualLine.accrualWarn > span, .accrualLine.accrualWarn > strong { color: #b45309; }
+.accrualGroup { border-bottom: 1px solid #f1f2f4; }
+.accrualSummary { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 6px 0; font-size: 11px; cursor: pointer; list-style: none; }
+.accrualSummary::-webkit-details-marker { display: none; }
+.accrualSummary > span { min-width: 0; color: #374151; font-weight: 800; overflow-wrap: anywhere; }
+.accrualSummary > span::before { content: "▶"; display: inline-block; width: 14px; color: #9ca3af; font-size: 9px; }
+.accrualGroup[open] > .accrualSummary > span::before { content: "▼"; }
+.accrualSummary > strong { font-weight: 900; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.accrualTechnical { background: #f9fafb; border-radius: 8px; padding: 0 6px; }

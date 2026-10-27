@@ -1,3 +1,4 @@
+import type { AccrualReport } from "./accrual-report";
 import type { SalesReceiptExplanation } from "./card-settlements";
 
 export type DashboardCategory = {
@@ -53,6 +54,8 @@ export type DashboardLedgerData = {
   categories: DashboardCategory[];
   profitTransactions: DashboardProfitTransaction[];
   transactions?: DashboardIncomeDetailTransaction[];
+  // Dashboard scope only: display-only accrual view (lib/ledger/accrual-report.ts).
+  accrual?: AccrualReport;
   cashReport: {
     expenseBreakdown: ExpenseBreakdownRow[];
     investmentCashFlow: number;

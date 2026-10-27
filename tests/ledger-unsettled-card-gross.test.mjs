@@ -62,6 +62,7 @@ async function summary(sales, lines, { failAllocations = false, parties = [] } =
     exports, URL, console: { error() {} },
     require(name) {
       if (name === "@/lib/ledger/dashboard-cash-report") return require("../lib/ledger/dashboard-cash-report.ts");
+      if (name === "@/lib/ledger/accrual-report") return require("../lib/ledger/accrual-report.ts");
       if (name === "@/lib/ledger/manual-entry-policy") return require("../lib/ledger/manual-entry-policy.ts");
       if (name === "@/lib/partners/emoji") return require("../lib/partners/emoji.ts");
       if (name === "@/lib/supabase/server") return { supabaseServer: db };
