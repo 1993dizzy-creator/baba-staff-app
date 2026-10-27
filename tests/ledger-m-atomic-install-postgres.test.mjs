@@ -107,6 +107,17 @@ test('M atomic SQL Editor artifacts on native PostgreSQL',{
     assert.equal(await installed(db),null);assert.deepEqual(await history(db),before);
   });
 
+  await scenario('retired failed version blocks installation and registration without rewriting history',async({db,a})=>{
+    await a.query(install);
+    await db.query("insert into supabase_migrations.schema_migrations values('20261027160650','retired',array['unverified old source'])");
+    const before=await history(db);
+    await assert.rejects(a.query(register),failCode('P0001',/M_STAGE_RETIRED_VERSION_PRESENT/));await a.query('rollback');
+    assert.deepEqual(await history(db),before);
+    await db.query(`drop function ${signature}`);
+    await assert.rejects(a.query(install),failCode('P0001',/M_STAGE_HISTORY_ALREADY_EXISTS/));await a.query('rollback');
+    assert.equal(await installed(db),null);assert.deepEqual(await history(db),before);
+  });
+
   await scenario('second-version content collision aborts first-version registration too; unrelated history is preserved',async({db,a})=>{
     await a.query(install);
     await db.query('insert into supabase_migrations.schema_migrations values($1,$2,$3)',[migrations[1].version,'wrong',['select 2;']]);
@@ -117,7 +128,7 @@ test('M atomic SQL Editor artifacts on native PostgreSQL',{
   await scenario('second history INSERT fails after first INSERT; both registrations roll back',async({db,a})=>{
     await a.query(install);const before=await history(db);
     await db.exec(`create function qa_fail_second_history() returns trigger language plpgsql as $$begin
-      if new.version='20261027160650' then raise exception 'QA_SECOND_HISTORY_FAILURE';end if;return new;end$$;
+      if new.version='20261027175537' then raise exception 'QA_SECOND_HISTORY_FAILURE';end if;return new;end$$;
       create trigger qa_fail_second_history before insert on supabase_migrations.schema_migrations for each row execute function qa_fail_second_history();`);
     await assert.rejects(a.query(register),failCode('P0001',/QA_SECOND_HISTORY_FAILURE/));await a.query('rollback');
     assert.deepEqual(await history(db),before);assert.equal(await bodyHash(db),expectedBodyHash);

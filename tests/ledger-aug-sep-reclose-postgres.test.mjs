@@ -8,7 +8,7 @@ import { nativeRecloseFixture, preserved } from './helpers/ledger-aug-sep-reclos
 
 const migrationPath='supabase/migrations/20261027112354_aug_sep_reclose_corrections.sql';
 const migration=readFileSync(migrationPath,'utf8');
-const fixPath='supabase/migrations/20261027160650_fix_aug_sep_reclose_lock_order.sql';
+const fixPath='supabase/migrations/20261027175537_reclose_patch_line_endings.sql';
 const lockFix=readFileSync(fixPath,'utf8');
 const signature='public.ledger_aug_sep_reclose_corrections_v1(date,bigint,bigint)';
 const one=async(c,sql,args=[]) => (await c.query(sql,args)).rows[0];
