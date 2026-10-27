@@ -48,9 +48,21 @@ node scripts/agent/baba-start.mjs --task "작업명" --slug task-slug --files "a
 6. 기록된 같은 작업명·slug는 새 브랜치를 만들지 않고 RESUMED로 반환한다. 명시적 재개는 `node scripts/agent/baba-start.mjs --resume <작업-ID> --json`이다. 현재 기록된 브랜치에서만 재개하며 dirty 상태는 항상 중단한다. 사망이 확인된 프로세스 잠금은 명시적 재개에서만 다른 이름으로 보관한다. 전환 후 최종 검사 실패도 브랜치·코드·생성 기록을 남겨 재개할 수 있게 한다.
 7. 기록 없는 작업 브랜치, 다른 미완료 작업, 손상된 기록은 임의 채택하거나 완료 처리하지 않는다. 도구 도입 전 브랜치는 기본 경로의 현재 코드와 일치하는 완료 Handoff가 검증된 경우에만 다음 새 작업을 허용한다(과거 재개 기록은 만들지 않음). 기록된 작업의 다음 다른 작업은 clean이고 현재 커밋이 main에 포함되었거나 Handoff `--check`가 통과해야 시작한다. Handoff만으로 기능 커밋을 main에 자동 포함하지 않는다. 미통합 기능 의존성이 필요하면 별도로 보고한다.
 8. 개발 중 커밋은 작업 브랜치에만 한다(직렬 모드는 §12). `reset --hard`, 무조건적 `clean`, 강제 전환, 자동 stash, 이력 재작성, 다른 Worktree 브랜치 삭제는 금지한다. 범위 변경 시 Preflight를 다시 실행한다. `package-lock.json`이 바뀌었으면 자기 Worktree에서만 `npm ci`한다.
-9. `baba-verify`(§8) → `baba-handoff`(§10) → 작업 브랜치에 커밋한다. 이전 idle·작업 브랜치를 보존한다. main 병합·push·배포·운영 변경은 별도 승인 대상이다(§6·§7).
+9. `baba-verify`(§8) → `baba-handoff`(§10) → 작업 브랜치에 커밋한다. 인계서 커밋만으로 종료하지 않는다. §2.1의 종료 점검을 끝내거나 차단 사유와 보존 상태를 보고한다. main 병합·push·배포·운영 변경은 별도 승인 대상이다(§6·§7).
 
 Skill 자동 호출은 `AGENTS.md`/`CLAUDE.md` 진입점의 지침으로 연결한다. 사용자 터미널을 강제 제어하는 hook을 설치하지 않으며 Claude 권한 모드나 `bypassPermissions`를 변경하지 않는다. 두 Worktree에 이 구현이 아직 없다면 승인된 main 통합과 clean 상태의 새 브랜치 반영이 먼저 필요하다.
+
+### 2.1. 모든 Worktree 작업의 종료 점검
+
+종료 순서는 **통합 또는 docs/history 아카이브 → Worktree 대기 전환 → 불필요한 로컬 브랜치 정리 → baba-status 확인**이다. 중단·인계 시에도 점검한다. 진행 중이거나 안전 조건을 충족하지 못한 작업은 브랜치와 기록을 보존하고 종료 보류로 보고한다. 다음 작업 시작으로 이 절차를 대신하지 않는다.
+
+1. **읽기 전용 사전 점검**: 원본 main에서 `node scripts/agent/baba-status.mjs --branches --no-color`를 실행한다. 대상 Worktree의 `git --no-optional-locks -C <경로> status --porcelain=v1`, 현재 브랜치·전체 HEAD SHA, `git worktree list --porcelain`, `git log main..<대상 브랜치>`, `git diff main...<대상 브랜치> --stat`를 확인한다. status의 PASS·CLEAN이나 Handoff 존재만으로 완료·보존을 판정하지 않는다. 진행 중 작업, 미커밋 변경(미추적 포함), Git 작업 진행, 조사 실패가 있으면 전환·삭제를 중단한다.
+2. **종료 판정과 보존**: 통합 대상은 승인된 main 통합과 대상 SHA의 포함 여부를 검증한다. 통합하지 않는 기록·초안은 사용자 승인 범위에서 `docs/history/`에 원문과 출처 브랜치·SHA·변경 내역을 보존한다. 과거 미완료 상태와 이후 완료·보류 상태 및 근거를 구분한다. 원본 blob과 보존 파일을 바이트 단위로 대조하고 자격 증명 의심 패턴과 내용을 검사하되 비밀값을 출력하지 않는다. 보존 문서를 main에 커밋한 뒤 해당 커밋의 파일도 원본과 재대조한다. 기능 커밋은 Handoff 아카이브만으로 보존된 것으로 간주하지 않는다. 미확인 기능·보존되지 않은 변경이 있으면 중단한다.
+3. **대기 전환**: clean이고 종료 판정이 끝난 자기 Worktree만 검증된 최신 로컬 main SHA에서 새 `<agent>/ready-<날짜>-<고유번호>` 브랜치로 전환한다(`git switch --no-track -c <새 ready 브랜치> <main SHA>`). 기존 ready 브랜치는 덮어쓰지 않는다. main SHA·대상 HEAD·clean 상태·활성 hook을 직전에 재확인하고 변경 시 중단한다. 다른 Worktree는 별도 명시 승인 없이 전환하지 않는다. Worktree 디렉터리와 ignored 설정·증거·task/run 기록은 보존한다.
+4. **불필요한 로컬 브랜치 정리**: 삭제가 승인된 대상 이름·전체 SHA를 다시 확인한다. 어느 Worktree에도 연결되지 않았고 통합 또는 전체 고유 변경의 보존 검증이 끝난 대상만 개별 삭제한다. 통합된 브랜치는 `git branch -d <정확한 이름>`을 사용한다. 아카이브로 종료한 미병합 브랜치의 강제 삭제는 정확한 대상에 대한 명시 승인 후에만 허용한다. `-d` 실패를 자동으로 `-D`로 재시도하지 않는다. 일괄 삭제·진행 중 작업·미확인 기능 커밋의 자동 삭제는 금지한다. 승인·쓰기 권한이 없거나 단계가 실패하면 현재 상태를 보존하고 중단한다.
+5. **최종 확인**: `node scripts/agent/baba-status.mjs --branches --no-color`와 Worktree 목록으로 미통합 잔여·DIRTY·새 ready HEAD·대상 ref 부재를 확인한다. 삭제 브랜치와 이전 SHA, 보존 문서·main SHA, 테스트 결과, 종료 보류·미확인 사항을 보고한다. `--offline` 사용 또는 원격 조회 실패 시 원격 미확인을 명시한다. 정리 대상 밖 브랜치·Worktree·인계 기록은 변경하지 않는다.
+
+기본 종료 점검은 기존 읽기 전용 `baba-status`와 Git 조회로 수행한다. 자동 삭제 명령은 추가하지 않는다. 로컬 전용 `.claude/settings.local.json`은 내용을 읽거나 변경하지 않고, 미추적임을 확인한 뒤 필요하면 공유 저장소의 `.git/info/exclude`에 `/.claude/settings.local.json`만 등록한다. 추적 파일·전역 Git 설정·MCP 권한은 변경하지 않는다.
 
 ## 3. 작업 시작 점검 — `baba-preflight`
 
