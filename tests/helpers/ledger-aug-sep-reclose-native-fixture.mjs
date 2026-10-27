@@ -78,6 +78,7 @@ export async function nativeRecloseFixture(Database) {
       take(inactive,'create or replace function public.ledger_sync_recurring_expenses_v2'),
       take(reopenMigration,'create or replace function public.ledger_reopen_month_v1('),
       take(reopenMigration,'create or replace function public.ledger_close_month_v1('),correction,
+      read('20261027160650_fix_aug_sep_reclose_lock_order.sql'),
     ]) await db.exec(sql);
     await db.exec('create trigger ledger_transactions_month_guard before insert or update or delete on ledger_transactions for each row execute function ledger_transaction_month_guard_v1();');
     await db.exec("select ledger_create_recurring_plan_version_v1('매장 임대료 (현 계약)',3,50000000,1::smallint,'2026-08-01',null,'store-rent','Local R1',1);");
