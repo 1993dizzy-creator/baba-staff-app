@@ -4,11 +4,13 @@ import { pathToFileURL } from 'node:url';
 
 export const signature='public.ledger_aug_sep_reclose_corrections_v1(date,bigint,bigint)';
 export const expectedBodyHash='beebd06ff35eb3eaf0a68dfde8494412';
+export const normalizeSqlNewlines=sql=>sql.replace(/\r\n?/g,'\n');
+export const retiredMigrationVersions=['20261027160650'];
 export const migrations=[
   ['20261027112354','aug_sep_reclose_corrections'],
-  ['20261027160650','fix_aug_sep_reclose_lock_order'],
+  ['20261027175537','reclose_patch_line_endings'],
 ].map(([version,name])=>{
-  const sql=readFileSync(new URL(`../../supabase/migrations/${version}_${name}.sql`,import.meta.url),'utf8').replaceAll('\r\n','\n');
+  const sql=normalizeSqlNewlines(readFileSync(new URL(`../../supabase/migrations/${version}_${name}.sql`,import.meta.url),'utf8'));
   return {version,name,sql,sha256:createHash('sha256').update(sql).digest('hex')};
 });
 
@@ -16,8 +18,7 @@ const setup=`begin;
 set local lock_timeout='5s';
 set local statement_timeout='30s';
 select pg_advisory_xact_lock(hashtext('baba_m_stage_install'));
-select pg_advisory_xact_lock(hashtext('baba_migration_history:20261027112354'));
-select pg_advisory_xact_lock(hashtext('baba_migration_history:20261027160650'));
+${[...migrations.map(m=>m.version),...retiredMigrationVersions].sort().map(version=>`select pg_advisory_xact_lock(hashtext('baba_migration_history:${version}'));`).join('\n')}
 `;
 const metadata=`do $m_stage_verify$
 declare v public.pg_proc%rowtype;
@@ -44,12 +45,13 @@ export function buildBundles() {
   const install=`-- REVIEW ONLY UNTIL SEPARATE OPERATIONAL APPROVAL. User SQL Editor installation.
 -- Run the WHOLE file in one session/batch. Never execute the original alone.
 -- On any error issue ROLLBACK in that session. Do not continue from a fragment.
+-- Retired UNAPPLIED patch 20261027160650 must not be executed or registered.
 ${provenance}
 ${setup}
 do $m_stage_precheck$
 begin
   if to_regprocedure('${signature}') is not null then raise exception 'M_STAGE_FUNCTION_ALREADY_EXISTS';end if;
-  if exists(select 1 from supabase_migrations.schema_migrations where version in('20261027112354','20261027160650')) then
+  if exists(select 1 from supabase_migrations.schema_migrations where version in(${[...migrations.map(m=>m.version),...retiredMigrationVersions].map(v=>`'${v}'`).join(',')})) then
     raise exception 'M_STAGE_HISTORY_ALREADY_EXISTS';
   end if;
 end;
@@ -67,13 +69,21 @@ commit;
   const values=migrations.map(m=>{
     const delimiter=`$source_${m.version}$`;
     if(m.sql.includes(delimiter))throw Error('Unsafe SQL delimiter');
-    return `('${m.version}','${m.name}',array[${delimiter}${m.sql}${delimiter}]::text[])`;
+    return `('${m.version}','${m.name}',array[replace(replace(${delimiter}${m.sql}${delimiter},E'\\r\\n',E'\\n'),E'\\r',E'\\n')]::text[])`;
   }).join(',\n');
   const register=`-- REVIEW ONLY. After the user confirms installation and GPT verifies approved/executed SQL.
 -- No function DDL, accounting DML or unrelated history repair is performed here.
 -- Run the WHOLE file. On error ROLLBACK. Repeating identical registration is a no-op.
+-- Register only 20261027112354 and 20261027175537, never retired 20261027160650.
 ${provenance}
 ${setup}
+do $m_stage_retired_guard$
+begin
+  if exists(select 1 from supabase_migrations.schema_migrations where version in(${retiredMigrationVersions.map(v=>`'${v}'`).join(',')})) then
+    raise exception 'M_STAGE_RETIRED_VERSION_PRESENT';
+  end if;
+end;
+$m_stage_retired_guard$;
 ${metadata}
 do $m_stage_history$
 declare v record;v_actual record;

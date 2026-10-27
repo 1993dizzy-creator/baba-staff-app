@@ -18,6 +18,7 @@ import {
 } from './lib/common.mjs';
 import {createBaseline} from './lib/baseline.mjs';
 import {createBuildEnvironment} from './lib/build-env.mjs';
+import {migrationRetirementEvidence} from './lib/migration-retirement.mjs';
 
 const args = parseArgs(process.argv.slice(2), {
   base: 'string', tests: 'string', allTests: 'boolean', build: 'boolean', noBaseline: 'boolean', skipLint: 'boolean',
@@ -66,7 +67,13 @@ const SECRET_PATTERNS = [
 ];
 for (const file of files) {
   const path = file.path;
-  if (file.from && migrationVersion(file.from) && baseFiles.has(file.from)) fileCheck.findings.push(`${file.from}: 기존 Migration 이동·이름 변경 금지`);
+  if (file.from && migrationVersion(file.from) && baseFiles.has(file.from)) {
+    const archived=migrationRetirementEvidence(root,mergeBase,file);
+    if(archived.allowed) {
+      fileCheck.retiredMigrations??=[];fileCheck.retiredMigrations.push(archived);
+      fileCheck.info.push(`${file.from}: 명시 승인된 미적용 160650 아카이브 — 원본 blob/SHA-256 동일; 환경 이력·승인은 별도 검토`);
+    } else fileCheck.findings.push(`${file.from}: 기존 Migration 이동·이름 변경 금지 (${archived.reason})`);
+  }
   if (/(^|\/)\.env(\.|$)/.test(path) && !path.endsWith('.example')) fileCheck.findings.push(`${path}: .env 파일은 커밋 대상이 아니다`);
   if (migrationVersion(path) && baseFiles.has(path)) fileCheck.findings.push(`${path}: 기존(기준선에 존재) Migration 수정${file.deleted ? '·삭제' : ''} 금지 — 후속 Migration으로 처리`);
   else if (migrationVersion(path)) fileCheck.info.push(`${path}: 신규 Migration — 로컬 검증까지만, 운영 적용은 사용자 승인·SQL Editor 수동 절차`);

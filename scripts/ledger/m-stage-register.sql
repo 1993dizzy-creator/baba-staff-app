@@ -1,15 +1,24 @@
 -- REVIEW ONLY. After the user confirms installation and GPT verifies approved/executed SQL.
 -- No function DDL, accounting DML or unrelated history repair is performed here.
 -- Run the WHOLE file. On error ROLLBACK. Repeating identical registration is a no-op.
+-- Register only 20261027112354 and 20261027175537, never retired 20261027160650.
 -- 20261027112354 aug_sep_reclose_corrections; normalized-LF SHA256 1afa18682ea2b407691ff9190e65b3aeaeace98ccfd8ab752e900d1fe1ed9b63
--- 20261027160650 fix_aug_sep_reclose_lock_order; normalized-LF SHA256 185d0b8aec5757c7f569d426a9cdee2153e7f7362abc22fde758244adf05ce6e
+-- 20261027175537 reclose_patch_line_endings; normalized-LF SHA256 8de4012ac67dd7d7aedeca0fa755db6aef85d0b8006c1924de8422815cca282d
 begin;
 set local lock_timeout='5s';
 set local statement_timeout='30s';
 select pg_advisory_xact_lock(hashtext('baba_m_stage_install'));
 select pg_advisory_xact_lock(hashtext('baba_migration_history:20261027112354'));
 select pg_advisory_xact_lock(hashtext('baba_migration_history:20261027160650'));
+select pg_advisory_xact_lock(hashtext('baba_migration_history:20261027175537'));
 
+do $m_stage_retired_guard$
+begin
+  if exists(select 1 from supabase_migrations.schema_migrations where version in('20261027160650')) then
+    raise exception 'M_STAGE_RETIRED_VERSION_PRESENT';
+  end if;
+end;
+$m_stage_retired_guard$;
 do $m_stage_verify$
 declare v pg_catalog.pg_proc%rowtype;
 begin
@@ -32,7 +41,7 @@ $m_stage_verify$;
 do $m_stage_history$
 declare v record;v_actual record;
 begin
-  for v in select * from (values ('20261027112354','aug_sep_reclose_corrections',array[$source_20261027112354$-- Installation only. No ledger data is changed until this function is invoked.
+  for v in select * from (values ('20261027112354','aug_sep_reclose_corrections',array[replace(replace($source_20261027112354$-- Installation only. No ledger data is changed until this function is invoked.
 -- Invoke only after separate operational approval, with a short lock_timeout.
 -- Each month combines C1/C2/C3 and R1 in one atomic statement.
 create function public.ledger_aug_sep_reclose_corrections_v1(
@@ -198,15 +207,17 @@ end$$;
 alter function public.ledger_aug_sep_reclose_corrections_v1(date,bigint,bigint) owner to postgres;
 revoke all on function public.ledger_aug_sep_reclose_corrections_v1(date,bigint,bigint) from public,anon,authenticated;
 grant execute on function public.ledger_aug_sep_reclose_corrections_v1(date,bigint,bigint) to service_role;
-$source_20261027112354$]::text[]),
-('20261027160650','fix_aug_sep_reclose_lock_order',array[$source_20261027160650$-- Follow-up only: preserve the immutable original migration and all accounting
--- rules. Install after 20261027112354, before invoking the correction RPC.
--- No accounting rows are changed by either installation statement.
+$source_20261027112354$,E'\r\n',E'\n'),E'\r',E'\n')]::text[]),
+('20261027175537','reclose_patch_line_endings',array[replace(replace($source_20261027175537$-- Replacement for the failed, UNAPPLIED 20261027160650 patch. Preserve that file
+-- as historical evidence; execute this after 20261027112354 INSTEAD of it.
+-- Normalize the definition and both dollar-quoted blocks identically. No DML.
 do $fix_reclose_lock_order$
 declare
   v_oid regprocedure := to_regprocedure('public.ledger_aug_sep_reclose_corrections_v1(date,bigint,bigint)');
   v_hash text;
   v_definition text;
+  v_old_normalized text;
+  v_new_normalized text;
   v_old constant text := $old$  -- Deliberately conservative for this one-time maintenance operation. Prevent
   -- non-cooperating writers changing source rows or adding phantom movements.
   -- Stop other ledger writers first; lock_timeout/deadlocks must roll back.
@@ -259,16 +270,18 @@ begin
   if v_hash is distinct from '5429554141424f2fa75aa3492350eb2c' then
     raise exception 'RECLOSE_LOCK_ORDER_FUNCTION_DRIFT';
   end if;
-  v_definition := replace(pg_get_functiondef(v_oid),E'\r\n',E'\n');
-  if strpos(v_definition,v_old)=0 then raise exception 'RECLOSE_LOCK_ORDER_PATCH_NOT_FOUND'; end if;
-  execute replace(v_definition,v_old,v_new);
+  v_definition := replace(replace(pg_get_functiondef(v_oid),E'\r\n',E'\n'),E'\r',E'\n');
+  v_old_normalized := replace(replace(v_old,E'\r\n',E'\n'),E'\r',E'\n');
+  v_new_normalized := replace(replace(v_new,E'\r\n',E'\n'),E'\r',E'\n');
+  if strpos(v_definition,v_old_normalized)=0 then raise exception 'RECLOSE_LOCK_ORDER_PATCH_NOT_FOUND'; end if;
+  execute replace(v_definition,v_old_normalized,v_new_normalized);
   if (select md5(regexp_replace(prosrc,'\s+','','g')) from pg_proc where oid=v_oid)
     is distinct from 'beebd06ff35eb3eaf0a68dfde8494412' then
     raise exception 'RECLOSE_LOCK_ORDER_PATCH_FAILED';
   end if;
 end;
 $fix_reclose_lock_order$;
-$source_20261027160650$]::text[])) expected(version,name,statements) loop
+$source_20261027175537$,E'\r\n',E'\n'),E'\r',E'\n')]::text[])) expected(version,name,statements) loop
     select name,statements into v_actual from supabase_migrations.schema_migrations where version=v.version for update;
     if found and (v_actual.name is distinct from v.name or v_actual.statements is distinct from v.statements) then
       raise exception 'M_STAGE_HISTORY_CONTENT_MISMATCH: %',v.version;
