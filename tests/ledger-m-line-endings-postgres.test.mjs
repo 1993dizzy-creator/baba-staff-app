@@ -10,7 +10,7 @@ const lf=s=>s.replace(/\r\n?/g,'\n');
 const crlf=s=>lf(s).replaceAll('\n','\r\n');
 const mixed=s=>lf(s).split('\n').map((line,i,lines)=>line+(i===lines.length-1?'':i%2?'\r\n':'\n')).join('');
 const bareCR=s=>lf(s).replaceAll('\n','\r');
-const legacy=lf(readFileSync('supabase/migrations/20261027160650_fix_aug_sep_reclose_lock_order.sql','utf8'));
+const legacy=lf(readFileSync('docs/history/migrations-retired/20261027160650_fix_aug_sep_reclose_lock_order.sql','utf8'));
 const install=lf(readFileSync('scripts/ledger/m-stage-install.sql','utf8'));
 const register=lf(readFileSync('scripts/ledger/m-stage-register.sql','utf8'));
 const one=async(c,sql,args=[]) => (await c.query(sql,args)).rows[0];
