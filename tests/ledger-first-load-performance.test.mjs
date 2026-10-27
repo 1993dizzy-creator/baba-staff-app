@@ -174,9 +174,12 @@ test("C: the month payables view no longer ships history; the historical sheet r
 });
 
 test("F: removed dead entry points have no imports left; recurring DB contract stays", () => {
-  for (const path of ["app/(protected)/admin/ledger/InventoryCandidatePanel.tsx", "app/api/admin/ledger/bep/route.ts", "lib/ledger/bep.ts", "app/api/admin/ledger/recurring-expenses/route.ts", "app/api/admin/ledger/recurring-expenses/payments/route.ts", "app/api/admin/ledger/recurring-expenses/sync/route.ts", "app/api/admin/ledger/supplier-party-mappings/route.ts"]) {
+  for (const path of ["app/(protected)/admin/ledger/InventoryCandidatePanel.tsx", "app/api/admin/ledger/bep/route.ts", "lib/ledger/bep.ts", "app/api/admin/ledger/recurring-expenses/payments/route.ts", "app/api/admin/ledger/recurring-expenses/sync/route.ts", "app/api/admin/ledger/supplier-party-mappings/route.ts"]) {
     assert.equal(existsSync(path), false, path);
   }
+  // 2026-10-27 (R1, user-approved): store rent is recognized through the recurring
+  // plan, so the recurring-expenses route is live again and used by settings/close.
+  assert.equal(existsSync("app/api/admin/ledger/recurring-expenses/route.ts"), true);
   for (const path of ["lib/ledger/bep-core.ts", "lib/ledger/month-close.ts", "supabase/migrations/202608210007_add_recurring_reserves_bep.sql", "supabase/migrations/20261002062405_fix_preflight_inactive_recurring_plans.sql", "supabase/migrations/202608210004_add_ledger_payable_payments.sql"]) {
     assert.equal(existsSync(path), true, path);
   }

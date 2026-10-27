@@ -12,6 +12,7 @@ import { RESERVE_ENTRY_TYPE_KEYS, reserveEntryTypeLabel, type ReserveEntryTypeKe
 import ReserveEntryHistoryList from "@/components/ledger/ReserveEntryHistoryList";
 import { ledgerSettingsText, type LedgerSettingsCopy } from "@/lib/ledger/settings-text";
 import styles from "../ledger-settings.module.css";
+import RecurringExpensePanel from "./RecurringExpensePanel";
 
 type Account = { id: number; code: string; type: string; display_name: string; is_active: boolean; is_business_fund?: boolean };
 type ReserveEntry = { id: number; entry_type: string; amount: number | string; occurred_at: string; memo: string | null };
@@ -205,6 +206,7 @@ function LedgerSettingsContent() {
           </div>
         </div> : null}
       </section>
+      <RecurringExpensePanel lang={lang} />
     </section> : null}
 
     {activeTab === "partners" ? <section className={styles.sectionStack} role="tabpanel">

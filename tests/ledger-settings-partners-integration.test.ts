@@ -103,10 +103,13 @@ test("E: each tab loads only its own data and price history stays lazy", () => {
 test("F: 준비금 keeps the reserve features; recurring-expense UI is gone but its backend and history stay", () => {
   for (const marker of ["ReservePlanCard", "/api/admin/ledger/reserves/${id}/entries", "/api/admin/ledger/reserves/${id}/recurring", "/api/admin/ledger/reserves/schedule", "정기 적립 저장", "적립 확정", "+ 준비금 추가"]) assert.ok(settings.includes(marker), marker);
   assert.equal(existsSync("app/(protected)/admin/ledger/RecurringReserveBepPanel.tsx"), false);
-  // Unused recurring HTTP routes are gone; the migrations (tables, functions, preflight) stay.
-  for (const path of ["app/api/admin/ledger/recurring-expenses/route.ts", "app/api/admin/ledger/recurring-expenses/sync/route.ts", "app/api/admin/ledger/recurring-expenses/payments/route.ts"]) {
+  // Unused recurring HTTP sub-routes stay gone; the migrations (tables, functions, preflight) stay.
+  for (const path of ["app/api/admin/ledger/recurring-expenses/sync/route.ts", "app/api/admin/ledger/recurring-expenses/payments/route.ts"]) {
     assert.equal(existsSync(path), false, path);
   }
+  // 2026-10-27 (R1, user-approved): 기본설정 › 정기비용 uses the single recurring route.
+  assert.ok(settings.includes("<RecurringExpensePanel lang={lang} />"));
+  assert.equal(existsSync("app/api/admin/ledger/recurring-expenses/route.ts"), true);
   for (const path of ["supabase/migrations/202608210007_add_recurring_reserves_bep.sql", "supabase/migrations/20261002062405_fix_preflight_inactive_recurring_plans.sql"]) {
     assert.equal(existsSync(path), true, path);
   }

@@ -79,6 +79,27 @@ export default function MonthCloseSheet({ month, revision, vi, onClose, onClosed
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // RECURRING_NOT_SYNCED: book this month's recurring expenses (e.g. rent) through the
+  // sync RPC, then re-run the preflight. No fund movement is created.
+  async function syncRecurring() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/admin/ledger/recurring-expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "sync", month }),
+      });
+      if (!response.ok) throw new Error("SYNC_FAILED");
+      await refresh();
+    } catch {
+      setError(vi ? "Không ghi nhận được chi phí định kỳ. Vui lòng thử lại." : "정기비용을 반영하지 못했습니다. 다시 시도해주세요.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function closeMonth() {
     const preflight = check?.preflight;
     if (busy || !preflight?.canClose || preflight.blockers?.length || !preflight.preflightHash) return;
@@ -140,6 +161,10 @@ export default function MonthCloseSheet({ month, revision, vi, onClose, onClosed
           </div>)}
         </div>
       </section>
+      {blockers.some(issue => issue.code === "RECURRING_NOT_SYNCED") ? <div className={styles.closeNoticeCard}>
+        <p>{vi ? "Chi phí định kỳ (ví dụ tiền thuê) của tháng này chưa được ghi nhận. Ghi nhận chỉ tạo chi phí phát sinh, không tạo dòng tiền, tiền trả trước hay quỹ dự phòng." : "이번 달 정기비용(예: 임대료)이 아직 비용으로 반영되지 않았습니다. 반영은 발생 비용만 기록하며 자금 이동·선납금·준비금은 바뀌지 않습니다."}</p>
+        <button type="button" className={styles.monthCloseAction} disabled={busy} onClick={() => void syncRecurring()}>{vi ? "Ghi nhận chi phí định kỳ" : "정기비용 반영"}</button>
+      </div> : null}
       {warnings.some(issue => issue.code === "CARD_FEE_PENDING") ? <p>{vi ? "Phí thẻ sẽ được xác nhận tự động khi ghi nhận tiền thẻ tháng sau." : "익월 카드입금 처리 중 자동 확정됩니다."}</p> : null}
       <div className={styles.closeNoticeCard}>
         {reclose ? <p>{vi ? `Bản chốt lần ${revision} được lưu trong lịch sử.` : `${revision}차 마감본은 이력으로 보존됩니다.`}</p> : null}

@@ -48,3 +48,15 @@
 .settingEditor .rateTotal{display:flex;align-items:center;justify-content:space-between;padding:8px 0 0;border:0;border-top:1px solid #f0f1f3;border-radius:0;background:transparent;font-size:12px}
 .rateTotalInvalid{color:#b45309}
 .rateTotalHint{margin:0;color:#b45309;font-size:11px;font-weight:750}
+
+/* 정기비용 card (settings/RecurringExpensePanel.tsx) */
+.recurringMonths{display:grid;gap:8px}
+.recurringMonthsTitle{font-size:12px;font-weight:900}
+.recurringMonthRow{display:grid;gap:4px;padding:8px 10px;border:1px solid #eef0f2;border-radius:10px}
+.recurringMonthHead{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.recurringMonthHead>strong{font-size:13px;font-weight:900}
+.recurringMonthHead>button{margin-left:auto}
+.recurringItem{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px;font-size:12px}
+.recurringItem>span:first-child{min-width:0;overflow-wrap:anywhere}
+.recurringItem>strong{white-space:nowrap;font-variant-numeric:tabular-nums}
+.recurringMissing{color:#b45309;font-weight:800}
