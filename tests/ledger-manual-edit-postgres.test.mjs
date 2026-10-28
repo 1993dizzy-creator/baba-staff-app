@@ -186,6 +186,55 @@ test('manual transaction edit/cancel and TX#2415 party link on native PostgreSQL
     assert.deepEqual(await movements(db, id).then(rows => rows.map(m => m.amount)), [-41000]);
   });
 
+  await t.test('migration install: atomic first run, idempotent re-run, full rollback on failure', async () => {
+    const sql = readMigration();
+    assert.match(sql, /^begin;$/m); assert.match(sql, /^commit;\s*$/m);
+    assert.equal((sql.match(/^create or replace function public\./gm) || []).length, 4);
+    assert.doesNotMatch(sql, /^create function /m);
+    const commitAt = sql.lastIndexOf('commit;');
+    const failing = sql.slice(0, commitAt) + 'select 1/0;\n' + sql.slice(commitAt);
+    const state = async c => ({
+      functions: (await c.query(`select proname, md5(prosrc) body, prosecdef, proconfig::text cfg,
+        has_function_privilege('anon',oid,'execute') anon, has_function_privilege('authenticated',oid,'execute') auth,
+        has_function_privilege('service_role',oid,'execute') svc, coalesce(proacl::text,'') acl
+        from pg_proc where pronamespace='public'::regnamespace and proname like 'ledger_%manual_transaction%' order by proname`)).rows,
+      transactions: (await c.query('select * from ledger_transactions order by id')).rows,
+      movements: (await c.query('select * from ledger_movements order by id')).rows,
+      audits: (await c.query('select count(*)::int n from ledger_audit_logs')).rows[0].n,
+      closures: (await c.query('select * from ledger_month_closures order by id')).rows,
+    });
+    const fresh = new runtime.Database();
+    try {
+      await fresh.exec(fixtureSql);
+      const empty = await state(fresh);
+      assert.deepEqual(empty.functions, []);
+      // Failure before COMMIT on an empty database: nothing is left behind.
+      await assert.rejects(fresh.exec(failing), /division by zero/);
+      await fresh.query('rollback');
+      assert.deepEqual(await state(fresh), empty);
+      // First run.
+      await fresh.exec(sql);
+      const installed = await state(fresh);
+      assert.equal(installed.functions.length, 4);
+      for (const fn of installed.functions) {
+        assert.equal(fn.prosecdef, true, fn.proname); assert.equal(fn.cfg, '{"search_path=pg_catalog, public"}', fn.proname);
+        assert.equal(fn.anon, false, fn.proname); assert.equal(fn.auth, false, fn.proname);
+        assert.equal(fn.svc, ['ledger_update_manual_transaction_v2', 'ledger_cancel_manual_transaction_v1'].includes(fn.proname), fn.proname);
+      }
+      assert.deepEqual({ ...installed, functions: [] }, { ...empty, functions: [] }, 'install writes no data');
+      // Re-run: same bodies, same grants, same data.
+      await fresh.exec(sql);
+      assert.deepEqual(await state(fresh), installed);
+      // Failure during a re-run: the installed functions and grants stay exactly as they were.
+      await assert.rejects(fresh.exec(failing), /division by zero/);
+      await fresh.query('rollback');
+      assert.deepEqual(await state(fresh), installed);
+      // Still callable after the failed re-run.
+      const version = (await one(fresh, 'select updated_at::text u from ledger_transactions where id=3000')).u;
+      assert.equal((await call(fresh, 'select ledger_update_manual_transaction_v2(3000,$1,$2,$3,1) r', [version, { memo: '재실행 후' }, 'QA'])).status, 'updated');
+    } finally { await fresh.close(); }
+  });
+
   await t.test('closures unchanged; audit log only appended', async () => {
     assert.deepEqual(await closures(db), closed);
     const all = await audits(db);

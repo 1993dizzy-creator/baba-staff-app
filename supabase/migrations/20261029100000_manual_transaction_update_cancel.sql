@@ -17,9 +17,15 @@
 -- locks as ledger_edit_manual_transaction_v1 (taken in month order, so no lock cycle).
 -- Business date = occurred_at in Asia/Ho_Chi_Minh minus 3 hours (03:00 cut-off).
 -- No existing row, function or grant is changed.
+--
+-- Atomic and re-runnable: one transaction (any failure rolls everything back), and
+-- CREATE OR REPLACE with the same signatures, so a second run reinstalls the same bodies
+-- and re-applies the same revoke/grant without touching data.
+
+begin;
 
 -- Shared eligibility check (row must already be locked by the caller).
-create function public.ledger_manual_transaction_blocker_v1(p_transaction public.ledger_transactions)
+create or replace function public.ledger_manual_transaction_blocker_v1(p_transaction public.ledger_transactions)
 returns text
 language plpgsql
 stable
@@ -61,7 +67,7 @@ $$;
 
 -- Movements of an income/expense/transfer must be exactly one -amount (from) and/or one
 -- +amount (to). Returns the from/to account ids or null when the shape is unexpected.
-create function public.ledger_manual_transaction_accounts_v1(p_transaction public.ledger_transactions)
+create or replace function public.ledger_manual_transaction_accounts_v1(p_transaction public.ledger_transactions)
 returns jsonb
 language plpgsql
 stable
@@ -86,7 +92,7 @@ begin
 end
 $$;
 
-create function public.ledger_update_manual_transaction_v2(
+create or replace function public.ledger_update_manual_transaction_v2(
   p_transaction_id bigint,
   p_expected_updated_at timestamptz,
   p_changes jsonb,
@@ -262,7 +268,7 @@ begin
 end
 $$;
 
-create function public.ledger_cancel_manual_transaction_v1(
+create or replace function public.ledger_cancel_manual_transaction_v1(
   p_transaction_id bigint,
   p_expected_updated_at timestamptz,
   p_reason text,
@@ -330,3 +336,5 @@ revoke all on function public.ledger_update_manual_transaction_v2(bigint, timest
 revoke all on function public.ledger_cancel_manual_transaction_v1(bigint, timestamptz, text, bigint) from public, anon, authenticated;
 grant execute on function public.ledger_update_manual_transaction_v2(bigint, timestamptz, jsonb, text, bigint) to service_role;
 grant execute on function public.ledger_cancel_manual_transaction_v1(bigint, timestamptz, text, bigint) to service_role;
+
+commit;
