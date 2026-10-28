@@ -102,7 +102,7 @@ test("payables API/helpers stay; only the duplicate UI is gone; no separate paya
   assert.match(readFileSync("app/api/admin/ledger/payables/pay/route.ts", "utf8"), /ledger_pay_payables_v2/);
   assert.equal(existsSync("app/(protected)/admin/ledger/payables/PaymentVerificationSection.tsx"), false);
   assert.doesNotMatch(tabs, /\/admin\/ledger\/payables/);
-  assert.equal((tabs.match(/href: "/g) ?? []).length, 3, "대시보드 · 장부작성 · 장부설정 only");
+  assert.equal((tabs.match(/^\s+href: /gm) ?? []).length, 3, "대시보드 · 장부작성 · 장부설정 only");
   assert.doesNotMatch(readFileSync("app/(protected)/admin/ledger/page.tsx", "utf8"), /\/admin\/ledger\/payables/);
 });
 

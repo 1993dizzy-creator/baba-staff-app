@@ -245,7 +245,7 @@ test("ledger keeps reopen confirmation and close sheet protects the hash", () =>
 test("ledger dashboard routes the selected month to entries and old page is removed", () => {
   // The dashboard shortcut section was removed on request; 장부작성 stays reachable from the ledger tabs.
   assert.doesNotMatch(ledgerPage, /admin\/ledger\/entries\?month=/);
-  assert.match(readFileSync("lib/navigation/ledger-tabs.ts", "utf8"), /href: "\/admin\/ledger\/entries"/);
+  assert.match(readFileSync("lib/navigation/ledger-tabs.ts", "utf8"), /href: withMonth\("\/admin\/ledger\/entries"\)/);
   assert.equal(existsSync("app/(protected)/admin/ledger/month-close/page.tsx"), false);
   assert.equal(existsSync("app/(protected)/admin/ledger/MonthClosePanel.tsx"), false);
 });
