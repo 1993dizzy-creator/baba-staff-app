@@ -250,3 +250,4 @@
 .reserveLoadError>.error{margin:0}
 /* Loading and page-level error blocks below the month picker share the KPI grid's 8px vertical spacing. */
 .page .stateBlock{margin:8px 0}
+.cancelledSection{margin-top:10px;padding:8px 10px;border:1px dashed #d1d5db;border-radius:11px;background:#fafafa;font-size:12px;color:#4b5563}.cancelledSection>summary{cursor:pointer;font-weight:800}.cancelledEmpty{margin:6px 0 0;color:#6b7280;font-size:11px}.cancelledList{display:grid;gap:6px;margin:8px 0 0;padding:0;list-style:none}.cancelledList li{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid #eee}.cancelledList li>div{display:grid;gap:2px;min-width:0;overflow-wrap:anywhere}.cancelledList span{color:#6b7280;font-size:11px}.cancelledList s{flex-shrink:0;color:#9ca3af;font-weight:700;white-space:nowrap}

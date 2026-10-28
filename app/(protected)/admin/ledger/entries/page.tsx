@@ -59,14 +59,10 @@ import {
 } from "@/lib/ledger/manual-entry-amount";
 import {
   inventoryManualCategoryOptions,
-  isManualExpenseCategory,
-  isManualIncomeCategory,
   isPayrollAdvanceManualAction,
   MANUAL_EXPENSE_SPECIAL_ACTIONS,
   manualExpenseCategoryLabel,
-  manualExpenseCategorySort,
   manualExpenseSpecialActionLabel,
-  manualIncomeCategorySort,
   payrollAdvanceDefaultMemo,
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
@@ -81,6 +77,8 @@ import { entryStatusReason } from "@/lib/ledger/entry-status-reason";
 import MonthCloseSheet from "./MonthCloseSheet";
 import PartnerSelect from "./PartnerSelect";
 import ManualDisplayEditor, { LedgerEditShell } from "./ManualDisplayEditor";
+import { AccountField, ManualTransactionDelete, ManualTransactionEditor, manualCategoryOptions } from "./ManualTransactionForm";
+import CancelledManualTransactions from "./CancelledManualTransactions";
 import ManualDisplayHistory from "./ManualDisplayHistory";
 import PaymentVerificationSection, { type Verification } from "./PaymentVerificationSection";
 import { InventoryPurchaseStatus, PrepaidExpenseStatus, inventoryEntryIssues } from "./EntryStatusSections";
@@ -321,6 +319,7 @@ function LedgerEntriesContent() {
     [investmentsError,setInvestmentsError]=useState<{month:string;message:string}|null>(null);
   // Bumped by every applied load() so a later investments read can't reuse pre-mutation data.
   const [investmentsVersion,bumpInvestmentsVersion]=useReducer((version:number)=>version+1,0);
+  const [cancelledVersion, setCancelledVersion] = useState(0);
   // Collapsed-header summary (mode=summary), loaded with the page. A reducer keeps the
   // existing useState order intact.
   const [investmentSummary,setInvestmentSummary]=useReducer((_:InvestmentHeaderSummary|null,next:InvestmentHeaderSummary|null)=>next,null);
@@ -1321,6 +1320,7 @@ function LedgerEntriesContent() {
                   {remainingGroups.map(renderDateGroup)}
                 </>
               )}
+              <CancelledManualTransactions lang={lang} month={month} version={cancelledVersion} />
             </section>
           </>
         ) : loading ? (
@@ -1510,6 +1510,12 @@ function LedgerEntriesContent() {
               setNotice(notice);
               setDetailMessage(notice);
             }}
+            onManualDeleted={async () => {
+              setSelected(null);
+              setCancelledVersion(value => value + 1);
+              const fresh = await load();
+              if (fresh) setNotice(vi ? "Đã xóa giao dịch. Bản gốc và lịch sử vẫn được lưu." : "거래를 삭제했습니다. 원본과 이력은 보존됩니다.");
+            }}
             onAdvanceCancelled={async () => {
               setSelected(null);
               await load();
@@ -1567,6 +1573,7 @@ function EntryDetailSheet({
   onOpenPayableParty,
   onConfirmedEdited,
   onAdvanceCancelled,
+  onManualDeleted,
   onClose,
 }: {
   lang: "ko" | "vi";
@@ -1591,6 +1598,7 @@ function EntryDetailSheet({
   onOpenPayableParty?: () => void;
   onConfirmedEdited: (transactionId: number, successMessage?: string, financial?: boolean) => Promise<void>;
   onAdvanceCancelled: () => Promise<void>;
+  onManualDeleted: () => Promise<void>;
   onClose: () => void;
 }) {
   const vi = lang === "vi";
@@ -1600,6 +1608,9 @@ function EntryDetailSheet({
   const [advanceCancelReason,setAdvanceCancelReason]=useState<string|null>(null),[advanceCancelError,setAdvanceCancelError]=useState(""),[advanceCancelling,setAdvanceCancelling]=useState(false);
   const [manualDisplayOpen, setManualDisplayOpen] = useState(false);
   const [manualDisplaySaving, setManualDisplaySaving] = useState(false);
+  // Plain manual income/expense/transfer: full edit and "삭제" (audited cancel).
+  const manualEdit = entry.manualEdit && entry.transactionId != null ? entry.manualEdit : null;
+  const [manualPanel, setManualPanel] = useState<"edit" | "delete" | null>(null);
   async function cancelAdvance(){
     if(!cancellableAdvance||advanceCancelReason==null||!advanceCancelReason.trim())return;
     setAdvanceCancelling(true);setAdvanceCancelError("");
@@ -1708,7 +1719,10 @@ function EntryDetailSheet({
       onClose={onClose}
       footer={
         <div className={styles.detailFooter}>
-          {entry.editableManualDisplay ? <button type="button" disabled={saving || manualDisplaySaving || closed} onClick={() => setManualDisplayOpen(value => !value)} style={{ ...primaryButtonStyle, width: "100%" }}>{manualDisplayOpen ? (vi ? "Đóng chỉnh sửa" : "수정 닫기") : (vi ? "Sửa" : "수정")}</button> : null}
+          {manualEdit ? <>
+            <button type="button" data-manual-action="edit" disabled={saving || manualDisplaySaving || closed} onClick={() => setManualPanel(value => value === "edit" ? null : "edit")} style={{ ...primaryButtonStyle, width: "100%" }}>{manualPanel === "edit" ? (vi ? "Đóng chỉnh sửa" : "수정 닫기") : (vi ? "Sửa" : "수정")}</button>
+            <button type="button" data-manual-action="delete" disabled={saving || manualDisplaySaving || closed} onClick={() => setManualPanel(value => value === "delete" ? null : "delete")} style={{ ...(manualPanel === "delete" ? secondaryButtonStyle : dangerButtonStyle), width: "100%" }}>{manualPanel === "delete" ? (vi ? "Đóng xóa" : "삭제 닫기") : (vi ? "Xóa" : "삭제")}</button>
+          </> : entry.editableManualDisplay ? <button type="button" disabled={saving || manualDisplaySaving || closed} onClick={() => setManualDisplayOpen(value => !value)} style={{ ...primaryButtonStyle, width: "100%" }}>{manualDisplayOpen ? (vi ? "Đóng chỉnh sửa" : "수정 닫기") : (vi ? "Sửa" : "수정")}</button> : null}
           {cancellableAdvance ? <button type="button" disabled={saving||advanceCancelling||closed} onClick={()=>{setAdvanceCancelReason(value=>value==null?"":null);setAdvanceCancelError("")}} style={{...(advanceCancelReason==null?dangerButtonStyle:secondaryButtonStyle),width:"100%"}}>{advanceCancelReason==null?(vi?"Hủy ứng lương":"가불 취소"):(vi?"Đóng hủy ứng lương":"가불 취소 닫기")}</button>:null}
           {confirmedInventory ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setEditMode(value=>!value);setEditDraft(null);setEditError("")}} style={{...primaryButtonStyle,width:"100%"}}>{editMode?(vi?"Kết thúc chỉnh sửa":"수정 종료"):(vi?"Sửa":"수정")}</button>:null}
           {confirmedMeal ? <button type="button" disabled={saving||editSaving||closed} onClick={()=>{setMealDraft(value=>value?null:{finalAmount:String(entry.effectiveAmount??entry.amount),reason:""});setMealError("");setMealNotice("")}} style={{...primaryButtonStyle,width:"100%"}}>{mealDraft?(vi?"Đóng chỉnh sửa":"수정 닫기"):(vi?"Sửa":"수정")}</button>:null}
@@ -1748,7 +1762,15 @@ function EntryDetailSheet({
       {entryStatusReason(entry, lang) ? <p className={styles.entryStatusReason}>{entryStatusReason(entry, lang)}</p> : null}
       <InventoryPurchaseStatus entry={entry} issues={projectionIssues} lang={lang} onOpenPayableParty={onOpenPayableParty} onShowPayables={onShowPayables} onShowIssue={onShowIssue} />
       <PrepaidExpenseStatus entry={entry} lang={lang} />
-      {manualDisplayOpen && entry.editableManualDisplay && entry.transactionId != null ? (
+      {manualEdit && manualPanel === "edit" ? (
+        <ManualTransactionEditor lang={lang} transactionId={entry.transactionId!} source={manualEdit} partners={partners} categories={categories} accounts={accounts}
+          closed={closed} onSavingChange={setManualDisplaySaving} onSaved={id => onConfirmedEdited(id)} onClose={() => setManualPanel(null)} />
+      ) : null}
+      {manualEdit && manualPanel === "delete" ? (
+        <ManualTransactionDelete lang={lang} transactionId={entry.transactionId!} source={manualEdit} closed={closed}
+          onSavingChange={setManualDisplaySaving} onDeleted={onManualDeleted} onClose={() => setManualPanel(null)} />
+      ) : null}
+      {!manualEdit && manualDisplayOpen && entry.editableManualDisplay && entry.transactionId != null ? (
         <ManualDisplayEditor
           lang={lang}
           transactionId={entry.transactionId}
@@ -2209,16 +2231,7 @@ function ManualEntrySheet({
     // One idempotency key per advance being entered; a retry after a network
     // error reuses it, and a new key is issued only after a successful save.
     [advanceRequestId, setAdvanceRequestId] = useState(() => crypto.randomUUID());
-  const categories =
-      type === "expense"
-        ? data.categories
-            .filter(isManualExpenseCategory)
-            .sort(manualExpenseCategorySort)
-        : type === "income"
-          ? data.categories
-              .filter(isManualIncomeCategory)
-              .sort(manualIncomeCategorySort)
-          : [],
+  const categories = manualCategoryOptions(type, data.categories),
     accounts = data.accounts.filter((row) => row.is_active),
     investmentAccounts = accounts.filter((row) => row.is_business_fund && ["cash", "bank", "personal_custody"].includes(row.type)),
     selectedPartner = data.partners.find((row) => String(row.id) === partnerId),
@@ -2656,43 +2669,6 @@ function ManualEntrySheet({
         ) : null}
       </form>
     </BarSheet>
-  );
-}
-function AccountField({
-  lang,
-  label,
-  fieldName,
-  value,
-  setValue,
-  accounts,
-}: {
-  lang: "ko" | "vi";
-  label: string;
-  fieldName?: string;
-  value: string;
-  setValue: (value: string) => void;
-  accounts: Account[];
-}) {
-  return (
-    <BarField label={label} required compact>
-      {({ id }) => (
-        <select
-          id={id}
-          data-manual-field={fieldName}
-          required
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          style={keepingInputStyle}
-        >
-          <option value="">{lang === "vi" ? "Chọn" : "선택"}</option>
-          {accounts.map((account) => (
-            <option key={account.id} value={account.id}>
-              {account.display_name}
-            </option>
-          ))}
-        </select>
-      )}
-    </BarField>
   );
 }
 function entryDisplayEmoji(entry: LedgerEntry, partnersByParty: ReadonlyMap<number, Partner>) {

@@ -543,7 +543,9 @@ test("manual entry uses its own canonical expense whitelist", () => {
   for (const automatic of ["급여/인건비", "식자재", "건어물", "생맥주", "시럽", "소모품·잡화"]) {
     assert.equal(isManualExpenseCategory({ kind: "expense", name: automatic }), false);
   }
-  assert.match(pageCompact, /data\.categories\.filter\(isManualExpenseCategory\)\.sort\(manualExpenseCategorySort\)/);
+  // Shared by the "장부 내역 추가" sheet and the full manual edit (manualCategoryOptions).
+  assert.match(pageCompact, /manualCategoryOptions\(type,data\.categories\)/);
+  assert.match(readFileSync("app/(protected)/admin/ledger/entries/ManualTransactionForm.tsx", "utf8"), /categories\.filter\(isManualExpenseCategory\)\.sort\(manualExpenseCategorySort\)/);
 });
 
 test("manual ledger amount input formats display text without changing the numeric payload", () => {

@@ -98,6 +98,9 @@ export type LedgerEntry = {
   // Cash payments applied to this payable row, shown in its detail.
   payablePayments?: PayablePaymentHistory[];
   editableManualDisplay?: boolean;
+  // Full edit / audited cancel ("삭제") of a plain manual income, expense or transfer: the
+  // current values and the version the server must still see (ledger_update_manual_transaction_v2).
+  manualEdit?: import("./manual-transaction-form").ManualEditSource;
   // Advance created by the ledger 👥 가불 path (cancellable from the ledger);
   // cancelled once its append-only reversal exists. Historical advances: unset.
   ledgerPayrollAdvance?: { requestId: string; cancelled: boolean };
@@ -151,6 +154,7 @@ export type TransactionRow = {
   display_snapshot?: Record<string, unknown> | null;
   id: number | string; type: string; status?: string; business_date: string; amount: number | string;
   occurred_at?: string | null;
+  updated_at?: string | null;
   recognition_month?: string | null;
   party_id?: number | string | null;
   correction_of_id?: number | string | null;
@@ -196,6 +200,28 @@ function isEmployeeCostTransaction(row: TransactionRow) {
 
 // User-facing adjustments only: never corrections, reversals or technical rows.
 // Explicit sheet differences are created with a sheet-adjustment:* source key.
+// A plain manual income / expense / transfer the full edit and "삭제" can handle: no special
+// metadata, no payable, no correction link and the usual movement shape. The server
+// re-checks everything (including any other linked table) before writing.
+function manualEditSource(row: TransactionRow): LedgerEntry["manualEdit"] | null {
+  if (row.source_type !== "manual" || (row.status ?? "confirmed") !== "confirmed" || row.correction_of_id != null || row.payable
+    || !["income", "expense", "transfer"].includes(row.type) || !row.updated_at || !row.occurred_at
+    || Object.keys(row.source_snapshot ?? {}).length) return null;
+  const amount = Number(row.amount);
+  const movements = row.movements ?? [];
+  const from = movements.filter(movement => Number(movement.amount) === -amount);
+  const to = movements.filter(movement => Number(movement.amount) === amount);
+  const expected = row.type === "expense" ? [1, 0] : row.type === "income" ? [0, 1] : [1, 1];
+  if (movements.length !== expected[0] + expected[1] || from.length !== expected[0] || to.length !== expected[1]) return null;
+  const accountId = (rows: typeof movements) => rows[0]?.fund_account?.id == null ? null : Number(rows[0].fund_account.id);
+  const title = typeof row.display_snapshot?.titleOverride === "string" && row.display_snapshot.titleOverride.trim() ? row.display_snapshot.titleOverride.trim() : null;
+  return {
+    type: row.type as "income" | "expense" | "transfer", occurredAt: row.occurred_at, amount,
+    categoryId: row.category?.id == null ? null : Number(row.category.id), partyId: row.party_id == null ? null : Number(row.party_id),
+    fromAccountId: accountId(from), toAccountId: accountId(to), title, memo: row.memo ?? null, updatedAt: row.updated_at,
+  };
+}
+
 function userAdjustmentKind(row: TransactionRow): LedgerEntry["userAdjustment"] {
   if (row.source_type !== "manual" || row.correction_of_id != null) return undefined;
   if (row.type === "balance_adjustment") return "balance";
@@ -848,6 +874,7 @@ export function buildLedgerEntries(
       ...(paymentSettledInPayables ? { paymentSettledInPayables: true } : {}),
       ...(payableHistory.length ? { payablePayments: payableHistory } : {}),
       editableManualDisplay,
+      ...(manualEditSource(row) ? { manualEdit: manualEditSource(row)! } : {}),
       ...(userAdjustmentKind(row) ? { userAdjustment: userAdjustmentKind(row) } : {}),
       ...(row.type === "transfer" ? { transferTransaction: true } : {}),
       ...(prepaidAllocation ? { prepaidAllocation } : {}),

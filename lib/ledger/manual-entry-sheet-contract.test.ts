@@ -30,7 +30,9 @@ test("expense fields keep amount -> partner -> category -> account -> date -> ti
 test("partner selection switches category between mapped readonly and the existing dropdown", () => {
   assert.match(sheet, /selectedPartner \? \(\s*<input[\s\S]*?readOnly[\s\S]*?manualExpenseCategoryName/);
   assert.match(sheet, /\) : \(\s*<select[^>]*data-manual-field="expense-category"/);
-  assert.match(sheet, /data\.categories\s*\.filter\(isManualExpenseCategory\)/);
+  // The category lists moved to manualCategoryOptions, shared with the full manual edit.
+  assert.match(sheet, /const categories = manualCategoryOptions\(type, data\.categories\),/);
+  assert.match(readFileSync("app/(protected)/admin/ledger/entries/ManualTransactionForm.tsx", "utf8"), /type === "expense" \? categories\.filter\(isManualExpenseCategory\)\.sort\(manualExpenseCategorySort\)/);
   assert.match(sheet, /onChange=\{setPartnerId\}/);
   assert.doesNotMatch(sheet, /재고 입고·기존 미납금 지급은 해당 기능에서 처리하세요|Hãy xử lý nhập kho|manualHelp|manualFieldStack/);
 });
@@ -44,7 +46,7 @@ test("partner select keeps none first and renders policy groups as optgroups", (
 });
 
 test("manual income select uses only the fixed income policy and preserves categoryId POST", () => {
-  assert.match(sheet, /type === "income"[\s\S]*?\.filter\(isManualIncomeCategory\)[\s\S]*?\.sort\(manualIncomeCategorySort\)/);
+  assert.match(readFileSync("app/(protected)/admin/ledger/entries/ManualTransactionForm.tsx", "utf8"), /type === "income" \? categories\.filter\(isManualIncomeCategory\)\.sort\(manualIncomeCategorySort\)/);
   assert.match(sheet, /data-manual-field="income-category"[\s\S]*?value=\{categoryId\}[\s\S]*?setCategoryId\(event\.target\.value\)/);
   assert.match(sheet, /categoryId:[\s\S]*?Number\(selectedPartner\?\.manualExpenseCategoryId \?\? categoryId\)/);
   assert.doesNotMatch(sheet, /POS 매출/);
