@@ -8,6 +8,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {purchaseRepairError} from '../lib/inventory/purchase-repair-contract.ts';
 import {buildLedgerEntries} from '../lib/ledger/entries.ts';
 import {inventoryPurchaseStatusSummary} from '../lib/ledger/inventory-purchase-status.ts';
+import {entryStatusReason} from '../lib/ledger/entry-status-reason.ts';
 
 // Compact inventory purchase status in the transaction detail sheet: paid shows nothing,
 // open 미납 only the 미납금 현황 button, 장부 반영 전 / 결제 미확인 one short notice,
@@ -132,4 +133,38 @@ test('common amount boxes: thin #E2E8F0 border, white, 8px radius, stronger labe
  assert.match(sheet,/\.statusFacts dt\{color:#64748b;/);
  assert.match(sheet,/\.statusFacts dd\{margin:2px 0 0;color:#0f172a;font-size:13px;font-weight:800;/);
  assert.match(sheet,/\.purchaseNotice\{[^}]*border:1px solid #e2e8f0;border-radius:10px;background:#fcfcfd;/);
+});
+
+test('detail top line: 장부 반영 전 purchase drops only the generic 결제 확인 필요; supplier and correction warnings stay',()=>{
+ const candidate=(id,partyId)=>({id,business_date:'2026-10-21',proposed_amount:275000,proposed_category_id:42,proposed_party_id:partyId,source_key:`inventory-log:${id}`,
+  source_snapshot:{supplier:'Minh Thắm',item_name:'QA 닭고기',item_name_vi:'QA Gà',inventory_log_id:id},party:partyId?{name:'Minh Thắm'}:null});
+ const [mapped,missing]=[candidate(19500,70),candidate(19501,null)].map(row=>buildLedgerEntries([],[row],new Map(),[],'2026-10')[0]);
+ assert.deepEqual([mapped.status,mapped.drilldown,mapped.systemDisplay.partyMissing],['pending','inventory',false]);
+ assert.deepEqual([missing.status,missing.drilldown,missing.systemDisplay.partyMissing],['pending','inventory',true]);
+ const shown={paymentNoticeShown:true};
+ const payment={ko:'결제 확인 필요 · 실제 지급 여부와 결제계정을 확인해야 합니다.',vi:'Cần xác nhận thanh toán · Cần xác nhận đã thực sự thanh toán hay chưa và tài khoản thanh toán.'};
+ const supplier={ko:"거래처 확인 필요 · 입고 거래처 'Minh Thắm'이(가) 거래처와 연결되지 않았습니다. 실제 거래처와 결제방식을 확인해주세요.",
+  vi:"Cần xác nhận nhà cung cấp · Nhà cung cấp nhập hàng 'Minh Thắm' chưa được liên kết với đối tác. Vui lòng xác nhận nhà cung cấp thực tế và phương thức thanh toán."};
+ const correction={ko:'금액 정정 필요 · 최신 원천 금액과 현재 장부 반영 금액이 다릅니다. · 최신 원천 300,000₫ · 현재 반영 275,000₫',
+  vi:'Cần điều chỉnh số tiền · Số tiền nguồn mới nhất khác với số tiền hiện ghi trong sổ. · Nguồn mới nhất 300,000₫ · Hiện ghi 275,000₫'};
+ const corrected=entry=>({...entry,requiresCorrection:true,sourceAmount:300000,effectiveAmount:275000});
+ for(const lang of ['ko','vi']){
+  // pending, mapped supplier: the generic line goes; without the option (old callers) it stays.
+  assert.equal(entryStatusReason(mapped,lang,shown),null,lang);
+  assert.equal(entryStatusReason(mapped,lang),payment[lang]);
+  // pending + partyMissing: unchanged.
+  assert.equal(entryStatusReason(missing,lang,shown),supplier[lang]);
+  // pending + requiresCorrection: only the correction warning remains.
+  assert.equal(entryStatusReason(corrected(mapped),lang,shown),correction[lang]);
+  // pending + partyMissing + requiresCorrection: both warnings.
+  assert.equal(entryStatusReason(corrected(missing),lang,shown),`${supplier[lang]} · ${correction[lang]}`);
+  // confirmed purchase needing correction: unchanged.
+  assert.equal(entryStatusReason(corrected(cases.unpaid),lang,shown),correction[lang]);
+  // Other kinds keep their line even if the option were passed.
+  assert.equal(entryStatusReason({status:'pending',accountName:null,systemDisplay:{kind:'meal',employeeCount:3}},lang,shown),payment[lang]);
+  assert.equal(entryStatusReason({status:'pending',accountName:null},lang,shown),payment[lang]);
+ }
+ // The pending purchase still shows its own payment notice in the same sheet.
+ assert.match(html(mapped,'ko'),/data-status-kind="pending"/);
+ assert.match(html(missing,'vi'),/data-status-kind="pending"/);
 });

@@ -819,5 +819,6 @@ test("normal entries have no status explanation even when amounts are provided",
 });
 test("detail modal renders the shared explanation only when it exists", () => {
   const detail = page.slice(page.indexOf("function EntryDetailSheet"));
-  assert.ok(detail.includes('{entryStatusReason(entry, lang) ? <p className={styles.entryStatusReason}>{entryStatusReason(entry, lang)}</p> : null}'));
+  assert.ok(detail.includes('const statusReason = entryStatusReason(entry, lang, { paymentNoticeShown: entry.drilldown === "inventory" });'));
+  assert.ok(detail.includes('{statusReason ? <p className={styles.entryStatusReason}>{statusReason}</p> : null}'));
 });

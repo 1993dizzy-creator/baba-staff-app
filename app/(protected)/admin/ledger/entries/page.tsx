@@ -1706,6 +1706,8 @@ function EntryDetailSheet({
   const payments = (posDetail?.payments ?? []) as Array<
     Record<string, unknown>
   >;
+  // InventoryPurchaseStatus already tells a 장부 반영 전 purchase how to choose its payment.
+  const statusReason = entryStatusReason(entry, lang, { paymentNoticeShown: entry.drilldown === "inventory" });
   return (
     <BarSheet
       kind="full"
@@ -1759,7 +1761,7 @@ function EntryDetailSheet({
           <strong className={`${styles.detailAmount} ${isPayrollPaymentOutflow(entry) ? styles.amountExpense : ""}`}>{entryDisplayAmountSign(entry)}{money(entryDisplayAmount(entry))}</strong>
         </span>
       </div>
-      {entryStatusReason(entry, lang) ? <p className={styles.entryStatusReason}>{entryStatusReason(entry, lang)}</p> : null}
+      {statusReason ? <p className={styles.entryStatusReason}>{statusReason}</p> : null}
       <InventoryPurchaseStatus entry={entry} issues={projectionIssues} lang={lang} onOpenPayableParty={onOpenPayableParty} onShowPayables={onShowPayables} onShowIssue={onShowIssue} />
       <PrepaidExpenseStatus entry={entry} lang={lang} />
       {manualEdit && manualPanel === "edit" ? (
