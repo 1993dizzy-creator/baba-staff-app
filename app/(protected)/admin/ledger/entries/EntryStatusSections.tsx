@@ -33,6 +33,23 @@ function StatusPanel({ testId, state, headline, facts, checks, steps, lang }: {
   );
 }
 
+// 장부 반영 전 / 결제 미확인 / 원입고 차이: short title, the key amounts, one line of what to do.
+function PurchaseNotice({ testId, kind, title, facts, children }: {
+  testId: string; kind: "pending" | "verificationPending" | "issue"; title: string; facts?: [string, string][]; children: ReactNode;
+}) {
+  return (
+    <section className={styles.purchaseNotice} data-testid={testId} data-status-kind={kind}>
+      <p className={styles.purchaseNoticeTitle}><span className={styles.purchaseNoticeIcon} aria-hidden="true">!</span>{title}</p>
+      {facts ? (
+        <dl className={styles.statusFacts}>
+          {facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+        </dl>
+      ) : null}
+      {children}
+    </section>
+  );
+}
+
 // Issues from the ledger's "장부 확인 필요" list that belong to this row's receipts.
 export function inventoryEntryIssues(entry: LedgerEntry, issues: readonly InventoryProjectionIssue[]) {
   const logIds = new Set(entry.items.map(item => item.inventoryLogId).filter((id): id is number => id != null));
@@ -41,7 +58,9 @@ export function inventoryEntryIssues(entry: LedgerEntry, issues: readonly Invent
     (issue.relatedLogIds ?? []).some(id => logIds.has(id)));
 }
 
-// Inventory purchase detail, first screen: 현재 상태 → 확인할 내용 → 해결 방법.
+// Inventory purchase detail, first screen. A paid purchase (immediate, or 미납 paid in
+// full) shows nothing; open 미납 shows only the way to 미납금 현황; 장부 반영 전 and
+// 결제 미확인 show one compact notice; a receipt's 원입고 issue is always shown.
 // Settlement internals, audit rows and raw JSON stay in the advanced section.
 export function InventoryPurchaseStatus({ entry, issues, lang, onOpenPayableParty, onShowPayables, onShowIssue }: {
   entry: LedgerEntry; issues: readonly InventoryProjectionIssue[]; lang: Lang;
@@ -50,84 +69,63 @@ export function InventoryPurchaseStatus({ entry, issues, lang, onOpenPayablePart
   const vi = lang === "vi";
   if (entry.drilldown !== "inventory") return null;
   const matched = inventoryEntryIssues(entry, issues);
-  const differenceChecks = matched.map(issue => {
-    const display = purchaseCaseDisplay(issue, vi);
-    const name = vi ? issue.itemNameVi || issue.itemName : issue.itemName;
-    return (
-      <span key={issue.inventoryLogId} data-testid={`inventory-status-issue-${issue.inventoryLogId}`}>
-        <strong>{name} · {display.reason}</strong>
-        {display.changes.map(change => <span key={change.kind} className={styles.statusDiff}>{change.text}</span>)}
-        {display.explanation ? <span className={styles.statusDiff}>{display.explanation}</span> : null}
-      </span>
-    );
-  });
-  const issueStep = matched.length ? (
-    <span>
-      {vi ? "Đối chiếu với phiếu nhập gốc rồi chỉnh sổ trong mục “Cần kiểm tra sổ” phía trên danh sách." : "원입고와 대조한 뒤 목록 위 [장부 확인 필요]에서 장부를 정정하세요."}{" "}
-      <button type="button" className={styles.statusLink} onClick={() => onShowIssue(matched[0].inventoryLogId)}>
-        {vi ? "Đi tới mục cần kiểm tra" : "확인 필요 항목으로 이동"} ›
-      </button>
-    </span>
+  const issueNotice = matched.length ? (
+    <PurchaseNotice testId="inventory-status-issues" kind="issue" title={vi ? "Khác với phiếu nhập gốc" : "원입고와 차이"}>
+      <ul className={styles.purchaseNoticeList}>
+        {matched.map(issue => {
+          const display = purchaseCaseDisplay(issue, vi);
+          const name = vi ? issue.itemNameVi || issue.itemName : issue.itemName;
+          return (
+            <li key={issue.inventoryLogId} data-testid={`inventory-status-issue-${issue.inventoryLogId}`}>
+              <strong>{name} · {display.reason}</strong>
+              {display.changes.map(change => <span key={change.kind} className={styles.statusDiff}>{change.text}</span>)}
+            </li>
+          );
+        })}
+      </ul>
+      <p className={styles.purchaseNoticeAction}>
+        {vi ? "Đối chiếu phiếu nhập gốc rồi chỉnh sổ." : "원입고와 대조해 장부를 정정하세요."}{" "}
+        <button type="button" className={styles.statusLink} onClick={() => onShowIssue(matched[0].inventoryLogId)}>
+          {vi ? "Đi tới mục cần kiểm tra" : "확인 필요 항목으로 이동"} ›
+        </button>
+      </p>
+    </PurchaseNotice>
   ) : null;
 
   if (entry.status === "pending") {
-    return <StatusPanel testId="inventory-status" state="review" lang={lang}
-      headline={vi ? "Chưa ghi sổ · cần chọn cách thanh toán" : "장부 반영 전 · 결제 방식 선택 필요"}
-      facts={[[vi ? "Số tiền mua" : "매입금액", money(entry.amount), true], [vi ? "Thực trả" : "실제 지급액", vi ? "Chưa ghi sổ" : "미반영"]]}
-      checks={differenceChecks}
-      steps={[vi ? "Bấm [Sửa] ở mặt hàng, chọn Thanh toán ngay / Ghi nhận công nợ / Chưa xác minh rồi ghi sổ." : "품목의 [수정]에서 즉시 결제·미지급 등록·결제 미확인 중 하나를 골라 반영하세요.", issueStep].filter(Boolean)} />;
+    return <>
+      <PurchaseNotice testId="inventory-status" kind="pending" title={vi ? "Chưa ghi sổ" : "장부 반영 전"}
+        facts={[[vi ? "Số tiền mua" : "매입금액", money(entry.amount)], [vi ? "Thực trả" : "실제 지급액", vi ? "Chưa ghi sổ" : "미반영"]]}>
+        <p className={styles.purchaseNoticeAction}>{vi ? "Chọn cách thanh toán ở [Sửa] của mặt hàng bên dưới." : "아래 품목의 [수정]에서 결제 방식을 선택하세요."}</p>
+      </PurchaseNotice>
+      {issueNotice}
+    </>;
   }
 
-  const { payable, original, paid, remaining, adjustment, state, verificationPending } = inventoryPurchaseStatusSummary(entry);
-  const party = entry.title.trim() || (vi ? "nhà cung cấp" : "거래처");
-  const headline = !payable
-    ? (vi ? `Đã thanh toán ngay · ${entry.accountName ?? "chưa rõ tài khoản"}` : `즉시 결제 완료 · ${entry.accountName ?? "계정 미지정"}`)
-    : state === "paid" ? (vi ? "Đã thanh toán đủ" : "지급 완료")
-    : state === "partial" ? (vi ? `Đã trả một phần · còn ${money(remaining)}` : `일부 지급 · ${money(remaining)} 남음`)
-    : verificationPending ? (vi ? "Chưa xác minh thanh toán · chưa trả" : "결제 미확인 · 실제 지급 기록 없음")
-    : (vi ? "Chưa thanh toán (công nợ)" : "미납 · 아직 지급하지 않았습니다");
-
-  const checks: ReactNode[] = [];
-  if (payable && remaining > 0) checks.push(vi
-    ? `Còn ${money(remaining)} chưa thanh toán cho ${party}.`
-    : `${party}에 ${money(remaining)}이 아직 지급되지 않았습니다.`);
-  if (verificationPending) checks.push(vi
-    ? "Giao dịch được ghi là “Chưa xác minh thanh toán”: chưa rõ đã trả thực tế hay chưa, và không tính vào công nợ cuối tháng."
-    : "결제 미확인으로 반영된 거래입니다. 실제 지급 여부가 확인되지 않았고, 월말 미납 합계에는 포함되지 않습니다.");
-  if (adjustment !== 0) checks.push(vi
-    ? `Thực trả chênh ${money(Math.abs(adjustment))} so với số tiền mua; phần này đã được điều chỉnh không dùng tiền, không cần trả thêm.`
-    : `실제 지급액이 매입금액과 ${money(Math.abs(adjustment))} 다릅니다. 이 차액은 비현금 조정으로 정산되어 추가 지급은 필요 없습니다.`);
-  checks.push(...differenceChecks);
-
-  const steps: ReactNode[] = [];
+  const { payable, original, paid, remaining, verificationPending } = inventoryPurchaseStatusSummary(entry);
   if (verificationPending) {
-    steps.push(<span key="verify">
-      {vi
-        ? "Nếu đã trả: mở “Tình hình công nợ” › “Khác · Chưa xác minh thanh toán”, chọn [Thanh toán riêng] cho mặt hàng này và ghi tài khoản chi, ngày thanh toán. Sau khi ghi, giao dịch đổi sang [Trả một phần] hoặc [Thanh toán]."
-        : "이미 지급했다면 [미납금 현황] › [기타 · 결제 미확인]에서 이 품목의 [개별 결제]로 지급 계정과 지급일을 기록하세요. 기록하면 이 매입이 [일부결제] 또는 [결제]로 바뀝니다."}
-      {onShowPayables ? <>{" "}<button type="button" className={styles.statusLink} onClick={onShowPayables}>{vi ? "Đi tới tình hình công nợ" : "미납금 현황으로 이동"} ›</button></> : null}
-    </span>);
-    steps.push(vi ? "Nếu chưa trả hoặc chưa rõ: đừng ghi. Khoản này vẫn ở mục chưa xác minh." : "지급하지 않았거나 확인되지 않았다면 기록하지 마세요. 결제 미확인으로 계속 남습니다.");
-  } else if (payable && remaining > 0) {
-    steps.push(<span key="pay">
-      {vi
-        ? "Nếu đã trả: ghi nhận thanh toán ở “Tình hình công nợ” của nhà cung cấp này. Sau khi ghi, giao dịch tự đổi sang [Trả một phần] hoặc [Thanh toán]."
-        : "이미 지급했다면 [미납금 현황]에서 이 거래처를 열어 지급을 등록하세요. 등록하면 이 매입이 자동으로 [일부결제] 또는 [결제]로 바뀝니다."}
-      {onOpenPayableParty ? <>{" "}<button type="button" className={styles.statusLink} onClick={onOpenPayableParty}>{vi ? "Mở công nợ của nhà cung cấp" : "이 거래처 미납금 열기"} ›</button></> : null}
-    </span>);
-    steps.push(vi ? "Nếu chưa trả: không cần làm gì thêm, khoản này vẫn nằm trong công nợ." : "아직 지급 전이라면 조치할 필요가 없습니다. 미납금으로 계속 관리됩니다.");
+    return <>
+      <PurchaseNotice testId="inventory-status" kind="verificationPending" title={vi ? "Chưa xác minh thanh toán" : "결제 미확인"}
+        facts={[[vi ? "Số tiền mua" : "매입금액", money(original)], [vi ? "Thực trả" : "실제 지급액", money(paid)], [vi ? "Còn phải trả" : "미지급 잔액", money(remaining)]]}>
+        <p className={styles.purchaseNoticeAction}>
+          {vi ? "Nếu đã trả, ghi ở “Công nợ” › “Khác · Chưa xác minh” bằng [Thanh toán riêng]." : "지급했다면 [미납금 현황] › [기타 · 결제 미확인]에서 [개별 결제]로 기록하세요."}
+          {onShowPayables ? <>{" "}<button type="button" className={styles.statusLink} onClick={onShowPayables}>{vi ? "Đi tới tình hình công nợ" : "미납금 현황으로 이동"} ›</button></> : null}
+        </p>
+      </PurchaseNotice>
+      {issueNotice}
+    </>;
   }
-  if (issueStep) steps.push(issueStep);
-  if (!steps.length) steps.push(vi ? "Không cần xử lý thêm." : "추가 조치가 필요 없습니다.");
 
-  return <StatusPanel testId="inventory-status" state={matched.length ? "review" : state === "paid" ? "ok" : "open"} lang={lang}
-    headline={headline}
-    facts={[
-      [vi ? "Số tiền mua" : "매입금액", money(original)],
-      [vi ? "Thực trả" : "실제 지급액", money(paid)],
-      [vi ? "Còn phải trả" : "미지급 잔액", money(remaining), true],
-    ]}
-    checks={checks} steps={steps} />;
+  const openPayables = payable && remaining > 0 ? onOpenPayableParty ?? onShowPayables : undefined;
+  if (!openPayables && !issueNotice) return null;
+  return <>
+    {openPayables ? (
+      <button type="button" className={styles.purchasePayableLink} data-testid="inventory-status-payable" onClick={openPayables}>
+        {vi ? "Mở tình hình công nợ" : "미납금 현황 열기"} ›
+      </button>
+    ) : null}
+    {issueNotice}
+  </>;
 }
 
 // A recurring plan's monthly recognition with no money movement, and the

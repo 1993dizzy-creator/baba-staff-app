@@ -129,7 +129,7 @@ test("#3307 10/22 flour: 미납, purchase 1,101,600 · paid 0 · remaining 1,101
   assert.equal(flour.items[0].inventoryLogId, 13849);
   // Booked as 결제 미확인: paid from 미납금 현황 › 기타, not from a party's 미납금.
   assert.equal(flour.items[0].paymentVerificationPending, true);
-  assert.match(sections, /\[미납금 현황\] › \[기타 · 결제 미확인\]에서 이 품목의 \[개별 결제\]로 지급 계정과 지급일을 기록하세요/);
+  assert.match(sections, /"지급했다면 \[미납금 현황\] › \[기타 · 결제 미확인\]에서 \[개별 결제\]로 기록하세요\."/);
   assert.deepEqual(inventoryPurchaseStatusSummary(flour), { payable: true, original: 1_101_600, effective: 1_101_600, paid: 0, remaining: 1_101_600, adjustment: 0, state: "unpaid", verificationPending: true });
   // The unpaid purchase still counts in the day's 지출 (an obligation that will be paid).
   assert.deepEqual(entryDisplaySubtotal(flour), { income: 0, expense: 1_101_600 });
@@ -149,12 +149,11 @@ test("purchase status: partial, paid, a non-cash small difference and an immedia
   assert.deepEqual(inventoryPurchaseStatusSummary(immediate), { payable: false, original: 1_101_600, effective: 1_101_600, paid: 1_101_600, remaining: 0, adjustment: 0, state: "paid", verificationPending: false });
 });
 
-test("purchase detail: 현재 상태 → 확인할 내용 → 해결 방법 first; settlement, audit and JSON only under 고급 상세", () => {
-  const order = ["현재 상태", "확인할 내용", "해결 방법"].map(label => sections.indexOf(`"${label}"`));
-  assert.ok(order.every((index, i) => index > 0 && (i === 0 || index > order[i - 1])), String(order));
+test("purchase detail: compact status first; settlement, audit and JSON only under 고급 상세", () => {
+  // Per-state rendering is covered in ledger-inventory-purchase-status.test.mjs.
   for (const label of ["매입금액", "실제 지급액", "미지급 잔액"]) assert.match(sections, new RegExp(`"${label}"`));
-  assert.match(sections, /\[미납금 현황\]에서 이 거래처를 열어 지급을 등록하세요/);
-  assert.match(sections, /비현금 조정으로 정산되어 추가 지급은 필요 없습니다/);
+  assert.match(sections, /"미납금 현황 열기"/);
+  assert.match(sections, /const openPayables = payable && remaining > 0 \? onOpenPayableParty \?\? onShowPayables : undefined;/);
   assert.match(sections, /display\.changes\.map\(change =>/);
   const sheet = page.slice(page.indexOf("function EntryDetailSheet("), page.indexOf("function editRefreshFailureMessage"));
   assert.match(sections, /if \(entry\.drilldown !== "inventory"\) return null;/);
