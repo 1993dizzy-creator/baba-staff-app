@@ -81,7 +81,9 @@ test("Ledger rendering hides superseded effects and refreshes every dashboard so
   assert.match(ledgerApi,/payable:ledger_payables\(id,original_amount,due_date,status,allocations:ledger_payable_allocations\(allocated_amount,payment:ledger_transactions!payment_transaction_id/);
   assert.match(page,/const fresh = await load\(\)/);
   assert.match(page,/entry\.items\.some\(\(item\) => item\.transactionId === transactionId\)/);
-  assert.match(page,/setPayables\(payableBody\)/);
+  // After an edit, payables are re-read with the ledger (entry-save-refresh) and set.
+  assert.match(page,/if \(result\.payables\) setPayables\(result\.payables\);/);
+  assert.match(read("lib/ledger/entry-save-refresh.ts"),/fetcher\(`\/api\/admin\/ledger\/payables\?month=\$\{month\}`/);
 });
 
 test("candidate pointer follows every effective rebook without changing provenance fields",()=>{

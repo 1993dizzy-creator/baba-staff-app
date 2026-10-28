@@ -98,8 +98,11 @@ test("opening balance and payable selection UI preserve one-request allocation p
   assert.match(page,/useState\(false\)/);
   assert.match(page,/\/api\/admin\/ledger\/payables\/\$\{party\.partyId\}/);
   assert.match(page,/selectedDates\.has\(group\.businessDate\)/);
-  assert.match(page,/fetch\("\/api\/admin\/ledger\/payables\/pay"/);
-  assert.match(page,/allocations:selectedPayables\.map/);
+  // The one allocation payment request is sent by the shared payable payment client.
+  assert.match(page,/sendPayablePayment\(\{[\s\S]{0,200}?allocations:selectedPayables\.map/);
+  const paymentClient=readFileSync("lib/ledger/payable-payment-client.ts","utf8");
+  assert.equal(paymentClient.match(/fetch\("\/api\/admin\/ledger\/payables\/pay"/g)?.length,1);
+  assert.doesNotMatch(paymentClient,/for\s*\([^)]*\)[\s\S]{0,120}fetch/);
   assert.match(page,/allocatedAmount:row\.outstandingAmount/);
   assert.doesNotMatch(page,/for\s*\([^)]*payable[^)]*\)[\s\S]{0,120}fetch/);
   for(const label of ["미납금 현황","Tình hình công nợ","선택 미납금","Công nợ đã chọn","출금 계정","Tài khoản chi"]) assert.match(page,new RegExp(label));

@@ -438,9 +438,17 @@ test('metadata-only edit still uses the ordinary same-day sync log contract', as
 test('Ledger review card hides raw projection codes and log IDs in operator text', () => {
   const page=readFileSync('app/(protected)/admin/ledger/entries/page.tsx','utf8');
   assert.match(page,/className=\{styles\.projectionWarning\}/);
-  assert.match(page,/issue\.code === "PURCHASE_CORRECTION_REFERENCE_REQUIRED"/);
-  assert.doesNotMatch(page,/#\{issue\.inventoryLogId\}/);
-  assert.doesNotMatch(page,/\{issue\.code\}/);
+  // The card renders each issue through the shared resolution component, which
+  // turns codes (incl. PURCHASE_CORRECTION_REFERENCE_REQUIRED) into operator text.
+  const resolution=readFileSync('components/ledger/InventoryProjectionResolution.tsx','utf8');
+  const contract=readFileSync('lib/inventory/purchase-repair-contract.ts','utf8');
+  assert.match(page,/<InventoryProjectionResolution issue=\{issue\}/);
+  assert.match(resolution,/purchaseRepairState\(issue\.code, vi/);
+  assert.match(contract,/export function canReviewPurchaseCorrection\(code: string\) \{\s*return \[[^\]]*"PURCHASE_CORRECTION_REFERENCE_REQUIRED"/);
+  for (const source of [page,resolution]) {
+    assert.doesNotMatch(source,/#\{issue\.inventoryLogId\}/);
+    assert.doesNotMatch(source,/\{issue\.code\}/);
+  }
 });
 
 test('successful automatic corrections are excluded from the warning query', () => {
