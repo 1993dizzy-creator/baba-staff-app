@@ -85,6 +85,12 @@ test("UI wiring: shared form, 삭제 needs reason + confirmation, cancelled rows
   assert.doesNotMatch(page, /^function AccountField\(/m, "one shared AccountField");
   assert.match(page, /const categories = manualCategoryOptions\(type, data\.categories\),/);
   assert.match(page, /data-manual-action="delete"/);
+  assert.match(page, /\{manualEdit \? <div className=\{styles\.manualActions\}>/, "수정·삭제 share one row");
+  const css = readFileSync("app/(protected)/admin/ledger/entries/entries.module.css", "utf8");
+  assert.match(css, /\.manualActions\{display:grid;grid-template-columns:1fr 1fr;gap:8px;/);
+  assert.match(css, /\.manualActionButton\{[^}]*height:42px;[^}]*border:1px solid;border-radius:10px;/);
+  assert.match(css, /\.manualActionEdit\{[^}]*background:#f1f5f9;color:#334155\}/);
+  assert.match(css, /\.manualActionDelete\{[^}]*background:#fff5f5;color:#ad4545\}/);
   assert.match(page, /<CancelledManualTransactions lang=\{lang\} month=\{month\} version=\{cancelledVersion\} \/>/);
   assert.match(form, /if \(!reason\.trim\(\)\) \{ setError\(manualFormMessage\("reason", lang\)\); return; \}\n    const amount = [^\n]+\n    if \(!window\.confirm\(/);
   assert.match(form, /\/api\/admin\/ledger\/transactions\/\$\{transactionId\}\/cancel/);
