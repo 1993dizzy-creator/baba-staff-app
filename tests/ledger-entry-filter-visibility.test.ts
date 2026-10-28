@@ -91,5 +91,6 @@ test("page applies every filter through the shared helper only", () => {
   assert.doesNotMatch(loop, /isSystemAdjustment|filter ===/);
   const filterSource = readFileSync("lib/ledger/entry-list-filter.ts", "utf8");
   assert.match(filterSource, /^  if \(entry\.isSystemAdjustment\) return filter === "adjustment" && entry\.userAdjustment === "balance";$/m);
-  assert.match(filterSource, /^  if \(entry\.paymentDifference\) return filter === "adjustment";$/m);
+  assert.match(filterSource, /^  if \(entry\.paymentDifference\) return filter === "adjustment" \|\| \(filter === "all" && entry\.paymentDifference\.shownInAll === true\);$/m);
+  assert.match(filterSource, /^  if \(entry\.paymentSettledInPayables\) return false;$/m);
 });

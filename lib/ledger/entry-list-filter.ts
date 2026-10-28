@@ -8,15 +8,15 @@ import { entryDisplayAmount, entryDisplayAmountSign } from "./entry-display-amou
 // Display filters for the daily ledger list. They only choose visible rows;
 // amounts, directions and the 전체 subtotal rules are unchanged.
 export const LEDGER_ENTRY_FILTERS = [
-  "all", "income", "expense", "utilities", "unpaid", "payment", "card", "transfer",
+  "all", "income", "expense", "utilities", "unpaid", "partial", "payment", "card", "transfer",
   "payroll", "adjustment", "investment", "manual", "reserve", "pending",
 ] as const;
 export type LedgerEntryFilter = (typeof LEDGER_ENTRY_FILTERS)[number];
 
 export function ledgerEntryFilterLabel(filter: LedgerEntryFilter, lang: "ko" | "vi") {
   const labels = lang === "vi"
-    ? { all: "Tất cả", income: "Thu", expense: "Chi", unpaid: "Công nợ", payment: "Thanh toán", card: "Thẻ", transfer: "Chuyển", payroll: "Lương", manual: "Thủ công", pending: "Cần xác nhận", adjustment: "Điều chỉnh", investment: "Vốn góp", reserve: "Dự phòng" }
-    : { all: "전체", income: "수입", expense: "지출", unpaid: "미납", payment: "결제", card: "카드", transfer: "이체", payroll: "급여", manual: "수동", pending: "확인 필요", adjustment: "조정", investment: "투자금", reserve: "준비금" };
+    ? { all: "Tất cả", income: "Thu", expense: "Chi", unpaid: "Công nợ", partial: "Trả một phần", payment: "Thanh toán", card: "Thẻ", transfer: "Chuyển", payroll: "Lương", manual: "Thủ công", pending: "Cần xác nhận", adjustment: "Điều chỉnh", investment: "Vốn góp", reserve: "Dự phòng" }
+    : { all: "전체", income: "수입", expense: "지출", unpaid: "미납", partial: "일부결제", payment: "결제", card: "카드", transfer: "이체", payroll: "급여", manual: "수동", pending: "확인 필요", adjustment: "조정", investment: "투자금", reserve: "준비금" };
   if (filter === "utilities") return lang === "vi" ? "Điện nước" : "공과금";
   return labels[filter];
 }
@@ -28,8 +28,12 @@ export function entryMatchesListFilter(entry: LedgerEntry, filter: LedgerEntryFi
   // System adjustments stay out of the list; only a user-facing manual balance
   // adjustment surfaces, and only under 조정.
   if (entry.isSystemAdjustment) return filter === "adjustment" && entry.userAdjustment === "balance";
-  // Derived payment-difference rows exist for 조정 only; 전체 keeps them inside the payment row.
-  if (entry.paymentDifference) return filter === "adjustment";
+  // Derived payment-difference rows exist for 조정; 전체 keeps them inside the
+  // payment row, or lists them when that payment row is read inside its purchases.
+  if (entry.paymentDifference) return filter === "adjustment" || (filter === "all" && entry.paymentDifference.shownInAll === true);
+  // A payment fully applied to listed purchases is read inside them, so each
+  // purchase is listed once (미납 → 일부결제 → 결제). The transaction is kept.
+  if (entry.paymentSettledInPayables) return false;
   if (filter === "all") return true;
   // Reserve history rows are informational: 전체 and 준비금 only.
   if (isReserveLedgerEntry(entry)) return filter === "reserve";
@@ -43,8 +47,8 @@ export function entryMatchesListFilter(entry: LedgerEntry, filter: LedgerEntryFi
       !entry.paymentTransaction && !entry.transferTransaction &&
       !entry.employeeCost && !entry.payrollPayment &&
       UTILITY_CATEGORIES.has(entry.categoryName ?? "");
-    // 미납 / 결제 / 투자금 follow the row's own display badge.
-    case "unpaid": case "payment": case "investment": return entryDisplayBadgeKind(entry) === filter;
+    // 미납 / 일부결제 / 결제 / 투자금 follow the row's own display badge.
+    case "unpaid": case "partial": case "payment": case "investment": return entryDisplayBadgeKind(entry) === filter;
     case "transfer": return entry.transferTransaction === true;
     case "payroll": return entry.employeeCost === true || entry.payrollPayment === true;
     case "manual": return entry.origin === "manual";
@@ -65,7 +69,7 @@ export function reviewCountsByDate(entries: readonly LedgerEntry[]) {
 }
 
 // Filters whose date header keeps the existing 수입/지출 subtotal pair.
-const SUBTOTAL_HEADER_FILTERS = new Set<LedgerEntryFilter>(["all", "income", "expense", "unpaid", "payroll", "manual", "pending"]);
+const SUBTOTAL_HEADER_FILTERS = new Set<LedgerEntryFilter>(["all", "income", "expense", "unpaid", "partial", "payroll", "manual", "pending"]);
 
 // Date-header amount of one visible row for a single-amount filter, from the
 // row's own display amount and display sign (never movement nets). Returns
@@ -74,6 +78,8 @@ export function entryFilterHeaderAmount(entry: LedgerEntry, filter: LedgerEntryF
   if (filter === "utilities") return entryMatchesListFilter(entry, filter)
     ? entryDisplaySubtotal(entry).expense : 0;
   if (SUBTOTAL_HEADER_FILTERS.has(filter)) return null;
+  // 결제 lists paid purchases and stand-alone payments: an unsigned paid total.
+  if (filter === "payment") return Math.abs(entryDisplayAmount(entry));
   const amount = Math.abs(entryDisplayAmount(entry));
   return entryDisplayAmountSign(entry) === "−" ? -amount : amount;
 }

@@ -229,7 +229,7 @@ test("reserve rows are excluded from every filter except 전체 and 준비금", 
 });
 
 test("search covers reserve name, account and memo through the shared search text", () => {
-  assert.match(page, /`\$\{entryDisplayTitle\(entry, lang\)\} \$\{entryMeta\(entry, lang\)\} \$\{entry\.accountName \?\? ""\} \$\{entry\.categoryName \?\? ""\} \$\{entry\.memo \?\? ""\}`/);
+  assert.match(page, /`\$\{entryDisplayTitle\(entry, lang\)\} \$\{entryMeta\(entry, lang\)\} \$\{entry\.accountName \?\? ""\} \$\{entry\.categoryName \?\? ""\} \$\{entry\.memo \?\? ""\} /);
 });
 
 test("reserve rows sort chronologically with same-day transactions and before POS close", () => {

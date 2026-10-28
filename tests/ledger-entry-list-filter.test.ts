@@ -20,7 +20,7 @@ const at = (hour: number) => `${day}T${String(hour).padStart(2, "0")}:00:00+07:0
 const sept11 = "2026-09-11";
 const sept11Transactions: TransactionRow[] = [
   { id: 1001, type: "expense", status: "confirmed", business_date: sept11, occurred_at: `${sept11}T09:00:00+07:00`, amount: 11_862_000, source_type: "inventory_purchase_candidate", party_id: 50, party: { name: "Mega Market" }, category: { name: "식자재 매입" },
-    source_snapshot: { item_name: "식자재" }, payable: { id: 500, original_amount: 11_862_000, status: "paid", allocations: [{ allocated_amount: 11_862_000, payment: { business_date: sept11, status: "confirmed", movements: bank(-11_862_000) } }] } },
+    source_snapshot: { item_name: "식자재" }, payable: { id: 500, original_amount: 11_862_000, status: "paid", allocations: [{ allocated_amount: 11_862_000, payment: { id: 1002, type: "payable_payment", business_date: sept11, status: "confirmed", movements: bank(-11_862_000) } }] } },
   { id: 1002, type: "payable_payment", status: "confirmed", business_date: sept11, occurred_at: `${sept11}T15:00:00+07:00`, amount: 11_862_000, source_type: "manual", party_id: 50, party: { name: "Mega Market" }, memo: "Mega Market 지급",
     movements: bank(-11_862_000), display_snapshot: { actualPaidAmount: 11_862_600, paymentDifferenceAmount: 600, linkedDifferenceTransactionId: 1003 } },
   { id: 1003, type: "expense", status: "confirmed", business_date: sept11, occurred_at: `${sept11}T15:00:00+07:00`, amount: 600, source_type: "manual", party_id: 50, source_key: "sheet-adjustment:2026-09-11:mega-market:600",
@@ -42,12 +42,14 @@ function dayHeader(entries: readonly LedgerEntry[], filter: LedgerEntryFilter, d
 }
 const badge = (entry: LedgerEntry) => entryDisplayBadgeLabel(entryDisplayBadgeKind(entry), "ko");
 
-test("9/11 A — 결제 shows only the Mega Market payment at its actual 11,862,600₫, with no 지출 600₫ in the header", () => {
+test("9/11 A — 결제 shows the paid Mega Market purchase once, with no separate payment row", () => {
   const header = dayHeader(sept11Entries, "payment", sept11);
-  assert.deepEqual(header.rows.map(entry => entry.transactionId), [1002]);
+  assert.deepEqual(header.rows.map(entry => entry.transactionId), [1001]);
   assert.equal(badge(header.rows[0]), "결제");
-  assert.equal(entryDisplayAmount(header.rows[0]), 11_862_600);
-  assert.equal(header.filterAmount, 11_862_600);
+  assert.equal(entryDisplayAmount(header.rows[0]), 11_862_000);
+  assert.equal(header.filterAmount, 11_862_000);
+  // The purchase detail carries the actual payment.
+  assert.deepEqual(header.rows[0].payablePayments?.map(payment => [payment.transactionId, payment.amount, payment.accountName]), [[1002, 11_862_000, "BABA 법인계좌"]]);
   assert.equal(ledgerEntryFilterLabel("payment", "ko"), "결제");
   // The page shows the filter amount instead of the 수입/지출 pair whenever filterAmount is set.
   assert.match(page, /\{group\.filterAmount === null && group\.expense > 0 \?/);
@@ -89,14 +91,14 @@ test("9/11 D — 지출 neither repeats the 600₫ difference nor shows the card
   assert.ok(!dayHeader(sept11Entries, "manual", sept11).rows.some(entry => entry.userAdjustment));
 });
 
-test("9/11 E — 전체 keeps the same visible rows and the same 수입/지출 subtotal, including the 600₫ cash-out", () => {
-  const before = sept11Raw.filter(entry => !entry.isSystemAdjustment);
+test("9/11 E — 전체 lists the purchase once and keeps the same 수입/지출 subtotal, including the 600₫ cash-out", () => {
   const all = dayHeader(sept11Entries, "all", sept11);
-  assert.deepEqual(all.rows, before);
-  assert.equal(all.rows.some(entry => entry.transactionId === 1003 || entry.paymentDifference), false);
-  const beforeTotal = before.reduce((sum, entry) => sum + entryDisplaySubtotal(entry).expense, 0);
-  assert.equal(all.expense, beforeTotal);
-  // inventory 11,862,000 + payment difference 600 (via the payment row).
+  // The payment #1002 is read inside the purchase; its 600₫ difference keeps a row.
+  assert.deepEqual(all.rows.map(entry => entry.id).sort(), ["confirmed-inventory:2026-09-11:party:50:BABA 법인계좌:paid", "transaction:1002:payment-difference", "transaction:1004"]);
+  assert.equal(all.rows.some(entry => entry.transactionId === 1002 || entry.transactionId === 1003), false);
+  // Unchanged from the payment-row display: inventory 11,862,000 + difference 600.
+  const previous = sept11Raw.filter(entry => !entry.isSystemAdjustment);
+  assert.equal(all.expense, previous.reduce((sum, entry) => sum + entryDisplaySubtotal(entry).expense, 0));
   assert.equal(all.expense, 11_862_600);
   assert.equal(all.filterAmount, null);
 });
@@ -172,8 +174,8 @@ test("utilities header stays date-scoped and reuses signed expense subtotals", (
 });
 
 test("pill order and labels come from the shared filter list", () => {
-  assert.deepEqual([...LEDGER_ENTRY_FILTERS], ["all", "income", "expense", "utilities", "unpaid", "payment", "card", "transfer", "payroll", "adjustment", "investment", "manual", "reserve", "pending"]);
-  assert.deepEqual(LEDGER_ENTRY_FILTERS.map(filter => ledgerEntryFilterLabel(filter, "ko")), ["전체", "수입", "지출", "공과금", "미납", "결제", "카드", "이체", "급여", "조정", "투자금", "수동", "준비금", "확인 필요"]);
+  assert.deepEqual([...LEDGER_ENTRY_FILTERS], ["all", "income", "expense", "utilities", "unpaid", "partial", "payment", "card", "transfer", "payroll", "adjustment", "investment", "manual", "reserve", "pending"]);
+  assert.deepEqual(LEDGER_ENTRY_FILTERS.map(filter => ledgerEntryFilterLabel(filter, "ko")), ["전체", "수입", "지출", "공과금", "미납", "일부결제", "결제", "카드", "이체", "급여", "조정", "투자금", "수동", "준비금", "확인 필요"]);
   assert.match(page, /\{LEDGER_ENTRY_FILTERS\.map\(\(value\) => \[value, ledgerEntryFilterLabel\(value, lang\)\] as const\)\.map\(\(\[value, label\]\) => \(/);
 });
 
@@ -223,6 +225,7 @@ test("every filter's date header uses its visible rows only; 전체 subtotal is 
     expense: { filterAmount: null, income: 0, expense: 200 + 300 + 800 + 120 },
     utilities: { filterAmount: null, income: 0, expense: 0 },
     unpaid: { filterAmount: null, income: 0, expense: 300 },
+    partial: { filterAmount: null, income: 0, expense: 0 },
     payment: { filterAmount: 400 },
     card: { filterAmount: 500 - 60 - 20 },
     transfer: { filterAmount: 700 },

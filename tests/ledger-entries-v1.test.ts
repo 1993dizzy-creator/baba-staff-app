@@ -581,7 +581,7 @@ test("entry detail and inventory candidate editor expose complete Vietnamese UI 
   assert.match(page, /Chi tiết giao dịch/);
   assert.match(page, /거래 상세/);
   assert.doesNotMatch(pageCompact, /반영완료|Đãghisổ/);
-  assert.match(read("lib/ledger/entry-display-badge.ts"), /income: "Thu", expense: "Chi", transfer: "Chuyển", unpaid: "Công nợ", payment: "Thanh toán"/);
+  assert.match(read("lib/ledger/entry-display-badge.ts"), /income: "Thu", expense: "Chi", transfer: "Chuyển", unpaid: "Công nợ", partial: "Trả một phần", payment: "Thanh toán"/);
   assert.match(pageCompact, /className=\{styles\.itemDescription\}/);
   assert.match(pageCompact, /className=\{`\$\{styles\.candidateFields\}/);
   assert.match(css, /\.detailSummary\{display:grid;gap:5px;padding:10px 11px/);
@@ -663,7 +663,7 @@ test("month switch clears stale-month content immediately and stale network resp
 const { entryDisplayBadgeKind, entryDisplayBadgeLabel } = createRequire(import.meta.url)("../lib/ledger/entry-display-badge.ts") as typeof import("../lib/ledger/entry-display-badge");
 const { entryCategoryEmoji, EMPLOYEE_COST_EMOJI } = createRequire(import.meta.url)("../lib/ledger/entry-display-emoji.ts") as typeof import("../lib/ledger/entry-display-emoji");
 
-test("display badge separates unpaid and payment rows without changing accounting direction", () => {
+test("display badge reads payable purchases as 미납 → 일부결제 → 결제 without changing accounting direction", () => {
   const paidOn = (date: string, amount: number) => ({ allocated_amount: amount, payment: { business_date: date, status: "confirmed", movements: [{ amount: -amount, fund_account: { id: 2, display_name: "법인" } }] } });
   const postpaid = (id: number, allocations: ReturnType<typeof paidOn>[]) => ({
     id, type: "expense", business_date: "2026-09-01", amount: 425_000, source_type: "manual", category: { name: "식자재 매입" },
@@ -682,16 +682,18 @@ test("display badge separates unpaid and payment rows without changing accountin
   const entries = buildLedgerEntries(rows, [], new Map(), [], "2026-09");
   const byId = (id: number) => entries.find(entry => entry.transactionId === id)!;
   const kinds = Object.fromEntries(rows.map(row => [row.id, entryDisplayBadgeKind(byId(row.id))]));
-  assert.deepEqual(kinds, { 1: "expense", 2: "unpaid", 3: "unpaid", 4: "expense", 5: "payment", 6: "payment", 7: "income", 8: "transfer" });
+  assert.deepEqual(kinds, { 1: "expense", 2: "unpaid", 3: "partial", 4: "payment", 5: "payment", 6: "payment", 7: "income", 8: "transfer" });
   assert.deepEqual(rows.map(row => byId(row.id).direction), ["expense", "expense", "expense", "expense", "transfer", "transfer", "income", "transfer"]);
   assert.equal(byId(3).settlementStatus, "partial");
-  // Partially paid originals keep 미납 + 미지급; the paying account shows on the 결제 row.
+  // Partially paid originals read 일부결제 + 미지급; the paying account shows in the purchase detail.
   assert.equal(byId(3).accountName, "미지급");
   assert.equal(byId(4).accountName, "법인");
   assert.equal(byId(2).accountName, "미지급");
   const prepaidDisplay = byId(6).systemDisplay;
   assert.equal(prepaidDisplay?.kind === "payablePayment" ? prepaidDisplay.prepaid : null, true);
   assert.equal(entryDisplayBadgeLabel("unpaid", "ko"), "미납");
+  assert.equal(entryDisplayBadgeLabel("partial", "ko"), "일부결제");
+  assert.equal(entryDisplayBadgeLabel("partial", "vi"), "Trả một phần");
   assert.equal(entryDisplayBadgeLabel("payment", "ko"), "결제");
   assert.equal(entryDisplayBadgeLabel("transfer", "ko"), "이체");
   // remaining > 0 alone keeps the row unpaid even without a status.

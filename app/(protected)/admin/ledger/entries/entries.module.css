@@ -163,6 +163,9 @@
 .cardLegacyFacts{display:grid;gap:5px;margin:10px 0 0}.cardLegacyFacts>div{display:flex;justify-content:space-between;gap:12px}.cardLegacyFacts dt{color:#6b7280}.cardLegacyFacts dd{margin:0;font-weight:700;text-align:right}
 /* Display-only badges: unpaid reuses the pending/payable yellow, payment is blue. */
 .direction.unpaid{background:#fff4dc;color:#9a5b10}
+.direction.partial{background:#fdecd8;color:#b45309}
+.paymentHistoryTitle{margin:6px 0 0;color:#111827;font-size:12px}
+.paymentHistoryMeta{grid-column:1/-1;min-width:0;color:#6b7280;font-size:10px;line-height:1.4;overflow-wrap:anywhere}
 .direction.payment{background:#e8f0fe;color:#1d4ed8}
 .direction.investment{background:#f1edfa;color:#68459a}
 .cancelledBadge{padding:3px 5px;border-radius:999px;background:#f3f4f6;color:#6b7280;font-size:9px;font-weight:800;white-space:nowrap}

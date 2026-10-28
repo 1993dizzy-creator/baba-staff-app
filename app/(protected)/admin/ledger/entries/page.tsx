@@ -500,7 +500,7 @@ function LedgerEntriesContent() {
       if (!entryMatchesListFilter(entry, filter)) continue;
       if (
         keyword &&
-        !`${entryDisplayTitle(entry, lang)} ${entryMeta(entry, lang)} ${entry.accountName ?? ""} ${entry.categoryName ?? ""} ${entry.memo ?? ""}`
+        !`${entryDisplayTitle(entry, lang)} ${entryMeta(entry, lang)} ${entry.accountName ?? ""} ${entry.categoryName ?? ""} ${entry.memo ?? ""} ${entryDisplayBadgeLabel(entryDisplayBadgeKind(entry), lang)} ${(entry.payablePayments ?? []).map((payment) => `#${payment.transactionId}`).join(" ")}`
           .toLocaleLowerCase()
           .includes(keyword)
       )
@@ -1761,6 +1761,7 @@ function EntryDetailSheet({
           ))}
         </div>
       ) : null}
+      <PayablePaymentHistorySection entry={entry} lang={lang} />
       {payments.length ? (
         <div className={styles.itemList}>
           {payments.map((payment, index) => (
@@ -2784,6 +2785,36 @@ function EntryFlags({ entry, lang }: { entry: LedgerEntry; lang: "ko" | "vi" }) 
       {entry.requiresCorrection ? <span className={styles.correctionBadge}>{vi ? "Cần điều chỉnh" : "정정 필요"}</span> : null}
       {advanceCancelled ? <span className={styles.cancelledBadge}>{vi ? "Đã hủy ứng lương" : "가불 취소됨"}</span> : null}
     </span>
+  );
+}
+
+// Purchase detail: each actual payment applied to this row — payment date,
+// account, applied amount, split history and the 청구서 it settled together.
+// The payment itself has no list row (see paymentSettledInPayables).
+function PayablePaymentHistorySection({ entry, lang }: { entry: LedgerEntry; lang: "ko" | "vi" }) {
+  const vi = lang === "vi", payments = entry.payablePayments ?? [];
+  if (!payments.length) return null;
+  return (
+    <section className={styles.itemList} data-testid="payable-payment-history">
+      <h3 className={styles.paymentHistoryTitle}>
+        {vi ? `Lịch sử thanh toán · ${payments.length} lần` : `지급 내역 · ${payments.length}회`}
+      </h3>
+      {payments.map((payment) => (
+        <article key={payment.transactionId} data-payment-transaction-id={payment.transactionId}>
+          <div className={styles.itemLine}>
+            <span className={styles.itemDescription}>
+              <strong>💳 {formatDate(payment.businessDate, lang)} · {payment.accountName ? shortLedgerAccountName(payment.accountName, lang) : (vi ? "Chưa rõ tài khoản" : "계정 확인 필요")}</strong>
+            </span>
+            <b>{money(payment.amount)}</b>
+          </div>
+          <small className={styles.paymentHistoryMeta}>
+            {`${vi ? "Thanh toán" : "지급"} #${payment.transactionId}`}
+            {payment.paymentAmount !== payment.amount ? ` · ${vi ? "Tổng thanh toán" : "총 지급액"} ${money(payment.paymentAmount)}` : ""}
+            {` · ${vi ? "Hóa đơn liên kết" : "연결 청구서"} ${payment.linkedTransactionIds.map((id) => `#${id}`).join(", ")}`}
+          </small>
+        </article>
+      ))}
+    </section>
   );
 }
 

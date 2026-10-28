@@ -1,6 +1,6 @@
 import type { PaymentMode } from "@/lib/partners/policy";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
-import { payableDisplayAsOf, calculatePurchaseSettlement, confirmedAllocationsThroughMonth, type PayablePayment, type PurchaseSettlement } from "./payables.ts";
+import { payableDisplayAsOf, calculatePurchaseSettlement, confirmedAllocationsThroughMonth, sumPayableAmounts, type PayablePayment, type PurchaseSettlement } from "./payables.ts";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
 import { ledgerPayrollAdvanceRequestId, PAYROLL_ADVANCE_REVERSAL_SOURCE_TYPE } from "./payroll-advance.ts";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
@@ -40,6 +40,18 @@ export type LedgerEntryItem = {
   sortTimestamp?: number;
 };
 
+// One cash payment applied to a payable row, as of the view month. `amount` is
+// the part applied to this row; `linkedTransactionIds` are the listed payable
+// rows (청구서) the same payment settled.
+export type PayablePaymentHistory = {
+  transactionId: number;
+  businessDate: string;
+  amount: number;
+  paymentAmount: number;
+  accountName: string | null;
+  linkedTransactionIds: number[];
+};
+
 export type LedgerEntry = {
   id: string;
   businessDate: string;
@@ -76,6 +88,12 @@ export type LedgerEntry = {
   // Display identity only: an actual supplier payable payment (payable_payment);
   // direction stays "transfer" so the cost is never counted twice.
   paymentTransaction?: boolean;
+  // Display identity only: a payable payment fully applied to payable rows
+  // listed in this view. It is read inside those rows' detail, never as its own
+  // list row; the transaction, allocations and movements are unchanged.
+  paymentSettledInPayables?: boolean;
+  // Cash payments applied to this payable row, shown in its detail.
+  payablePayments?: PayablePaymentHistory[];
   editableManualDisplay?: boolean;
   // Advance created by the ledger 👥 가불 path (cancellable from the ledger);
   // cancelled once its append-only reversal exists. Historical advances: unset.
@@ -87,8 +105,10 @@ export type LedgerEntry = {
   // Display identity only: an actual account-to-account transfer transaction.
   transferTransaction?: boolean;
   // Display-only row derived from a payable payment's linked difference (see
-  // withPaymentDifferenceAdjustments); never part of 전체 or its subtotal.
-  paymentDifference?: { paymentEntryId: string; partyName: string };
+  // withPaymentDifferenceAdjustments); not part of 전체 or its subtotal, except:
+  // shownInAll: its payment row is read inside the purchase (paymentSettledInPayables),
+  // so this row carries the difference in 전체 and its subtotal instead.
+  paymentDifference?: { paymentEntryId: string; partyName: string; shownInAll?: boolean };
   categoryName: string | null;
   transactionId: number | null;
   drilldown: "inventory" | "pos" | "payroll" | "meal" | "generic";
@@ -213,8 +233,9 @@ export function entryMatchesExpenseFilter(entry: Pick<LedgerEntry, "direction" |
 
 export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign" | "systemDisplay" | "payrollPayment" | "fundFlow" | "paymentDifference">) {
   // Informational rows: reserve history and derived payment-difference rows
-  // (their expense is already in the payment row's subtotal).
-  if (isReserveLedgerEntry(entry) || entry.paymentDifference) return { income: 0, expense: 0 };
+  // (their expense is already in the payment row's subtotal, unless that
+  // payment row is read inside its purchases — then this row carries it).
+  if (isReserveLedgerEntry(entry) || (entry.paymentDifference && !entry.paymentDifference.shownInAll)) return { income: 0, expense: 0 };
   const signedAmount = entry.amount * entry.economicEffectSign;
   return {
     income: entry.direction === "income" ? signedAmount : 0,
@@ -499,6 +520,47 @@ function paymentBucket(sourceKey: string | null | undefined) {
   return bucket === "cash" || bucket === "transfer" || bucket === "card" ? bucket : "other";
 }
 
+function paymentAccountName(payment: PayablePayment | null | undefined) {
+  const names = new Set<string>();
+  for (const movement of payment?.movements ?? []) {
+    const name = movement.fund_account?.display_name?.trim();
+    if (value(movement.amount) < 0 && name) names.add(name);
+  }
+  return names.size > 1 ? "복수계정" : names.values().next().value ?? null;
+}
+
+function payablePaymentHistory(row: TransactionRow, viewMonth: string, linkedByPayment: ReadonlyMap<number, number[]>): PayablePaymentHistory[] {
+  if (!row.payable) return [];
+  const allocations = viewMonth
+    ? confirmedAllocationsThroughMonth(row.payable.allocations ?? [], viewMonth)
+    : row.payable.allocations ?? [];
+  const paymentsById = new Map(allocations.map(allocation => [value(allocation.payment?.id), allocation.payment]));
+  // Cash payments only; non-cash small-difference writeoffs stay in the settlement panel.
+  const cash = calculatePurchaseSettlement(row.payable.original_amount ?? row.amount, allocations,
+    { payableId: row.payable.id, transactionId: row.id }).payments;
+  return cash.flatMap(payment => {
+    if (payment.transactionId === null) return [];
+    const source = paymentsById.get(payment.transactionId);
+    return [{
+      transactionId: payment.transactionId,
+      businessDate: payment.businessDate,
+      amount: payment.amount,
+      paymentAmount: value(source?.amount ?? payment.amount),
+      accountName: paymentAccountName(source),
+      linkedTransactionIds: linkedByPayment.get(payment.transactionId) ?? [value(row.id)],
+    }];
+  });
+}
+
+function mergePayablePaymentHistory(into: PayablePaymentHistory[], next: readonly PayablePaymentHistory[]) {
+  for (const payment of next) {
+    const existing = into.find(item => item.transactionId === payment.transactionId);
+    if (existing) existing.amount = sumPayableAmounts([existing.amount, payment.amount]);
+    else into.push({ ...payment, linkedTransactionIds: [...payment.linkedTransactionIds] });
+  }
+  into.sort((a, b) => a.businessDate.localeCompare(b.businessDate) || a.transactionId - b.transactionId);
+}
+
 export function buildLedgerEntries(
   transactions: readonly TransactionRow[],
   candidates: readonly CandidateRow[],
@@ -580,6 +642,27 @@ export function buildLedgerEntries(
     for (const correction of linked) hiddenManualCorrectionIds.add(value(correction.id));
   }
 
+  // A payable payment fully applied to payable rows this view lists is read in
+  // their detail, whichever date of the view it was paid on. A payment for rows
+  // outside the view (another month) keeps its own row.
+  const appliedToListedPayables = new Map<number, (number | string)[]>();
+  const linkedPayablesByPayment = new Map<number, number[]>();
+  for (const row of transactions) {
+    if (!row.payable || row.status !== "confirmed" || reversedInventoryIds.has(value(row.id)) ||
+        fullyReversedManualIds.has(value(row.id))) continue;
+    const allocations = viewMonth ? confirmedAllocationsThroughMonth(row.payable.allocations ?? [], viewMonth) : row.payable.allocations ?? [];
+    for (const allocation of allocations) {
+      const payment = allocation.payment;
+      if (payment?.type !== "payable_payment" || payment.status !== "confirmed" || payment.id == null) continue;
+      const paymentId = value(payment.id);
+      appliedToListedPayables.set(paymentId, [...(appliedToListedPayables.get(paymentId) ?? []), allocation.allocated_amount]);
+      const linked = linkedPayablesByPayment.get(paymentId) ?? [];
+      if (!linked.includes(value(row.id))) linked.push(value(row.id));
+      linkedPayablesByPayment.set(paymentId, linked);
+    }
+  }
+  for (const linked of linkedPayablesByPayment.values()) linked.sort((a, b) => a - b);
+
   for (const row of transactions) {
     if (row.type === "opening") continue;
     if (reversedPayrollGroupIds.has(value(row.id))) continue;
@@ -632,6 +715,8 @@ export function buildLedgerEntries(
       const item = inventoryItem(row,viewMonth);
       group.amount += item.purchaseSettlement?.effectiveAmount ?? amount;
       group.remainingAmount = (group.remainingAmount??0)+(paymentDisplay?.remainingAmount??0);
+      const history = payablePaymentHistory(row, viewMonth, linkedPayablesByPayment);
+      if (history.length) mergePayablePaymentHistory(group.payablePayments ??= [], history);
       group.items.push(item);
       updateInventoryGroupTime(group, item);
       if (group.systemDisplay?.kind === "inventory") group.systemDisplay.itemCount = group.items.length;
@@ -707,6 +792,9 @@ export function buildLedgerEntries(
       row.correction_of_id == null;
     const titleOverride = editableManualDisplay && typeof row.display_snapshot?.titleOverride === "string"
       ? row.display_snapshot.titleOverride.trim() : "";
+    const payableHistory = payablePaymentHistory(row, viewMonth, linkedPayablesByPayment);
+    const paymentSettledInPayables = payablePayment && row.status === "confirmed" &&
+      amount > 0 && sumPayableAmounts(appliedToListedPayables.get(transactionId) ?? []) === amount;
     const snapshotNumber = (key: string) => {
       const number = Number(snapshot[key]);
       return snapshot[key] == null || !Number.isFinite(number) ? null : number;
@@ -722,6 +810,8 @@ export function buildLedgerEntries(
       employeeCost: isEmployeeCostTransaction(row),
       payrollPayment: row.type === "payroll_payment",
       paymentTransaction: payablePayment,
+      ...(paymentSettledInPayables ? { paymentSettledInPayables: true } : {}),
+      ...(payableHistory.length ? { payablePayments: payableHistory } : {}),
       editableManualDisplay,
       ...(userAdjustmentKind(row) ? { userAdjustment: userAdjustmentKind(row) } : {}),
       ...(row.type === "transfer" ? { transferTransaction: true } : {}),
@@ -884,7 +974,7 @@ export function withPaymentDifferenceAdjustments(entries: readonly LedgerEntry[]
       partyId: entry.partyId ?? null,
       drilldown: "generic",
       userAdjustment: "paymentDifference",
-      paymentDifference: { paymentEntryId: entry.id, partyName: display.partyName },
+      paymentDifference: { paymentEntryId: entry.id, partyName: display.partyName, ...(entry.paymentSettledInPayables ? { shownInAll: true } : {}) },
       items: [],
     });
   }
