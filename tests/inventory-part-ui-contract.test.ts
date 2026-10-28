@@ -205,8 +205,10 @@ test("similarity candidates are hidden while editing an existing item", () => {
 test("duplicate UI accepts legacy and current error codes and explains inactive duplicates", () => {
   assert.match(inventoryPage, /inventory_item_duplicate_name_vi/);
   assert.match(inventoryPage, /inventory_item_duplicate_name_code/);
+  // The inactive-duplicate explanation now lives in the shared message, which also names the item.
+  assert.match(inventoryPage, /duplicateInventoryItemMessage\(\{ lang, duplicateItem, matchedFields, location \}\)/);
   assert.match(
-    inventoryPage,
-    /동일한 품목이 비활성 상태로 등록되어 있습니다\. 기존 품목을 확인해주세요\./
+    readFileSync("lib/inventory/duplicate-item.ts", "utf8"),
+    /같은 품목이 비활성 상태로 등록되어 있습니다\.\\n\$\{target\}\\n기존 품목을 확인해주세요\./
   );
 });

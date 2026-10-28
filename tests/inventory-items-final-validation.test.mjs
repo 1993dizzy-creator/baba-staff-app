@@ -7,14 +7,15 @@ import {safeFixture,snapshot as safeSnapshot} from './helpers/inventory-safe-cor
 import * as partnerSelectOptionsModule from '../lib/partners/select-options.ts';
 const load=(file,deps={})=>{const m={exports:{}};const code=ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('require','module','exports',code)(name=>{assert.ok(name in deps,'unexpected dependency '+name);return deps[name];},m,m.exports);return m.exports;};
 const version='2026-10-10T03:00:00.000Z';
-function setup({role='owner',authenticated=true,inactive=false,race=false,closed=false,quantity=2,postCommitFailure=false,rpcHandler=null,correctionRows=[],stockCheck=null,paid=false,rootDate="2026-10-03",extraRoots=[],rootOverrides={},itemOverrides={},businessDate="2026-10-10",candidateOverride=undefined,transactionOverride=undefined,payableOverride=undefined,allocations=[]}={}) {
+function setup({role='owner',authenticated=true,inactive=false,race=false,closed=false,quantity=2,postCommitFailure=false,rpcHandler=null,correctionRows=[],stockCheck=null,paid=false,rootDate="2026-10-03",extraRoots=[],rootOverrides={},itemOverrides={},businessDate="2026-10-10",candidateOverride=undefined,transactionOverride=undefined,payableOverride=undefined,allocations=[],others=[]}={}) {
  const calls=[],writes=[],projections=[];
  const item={id:1,item_name:'Oil',item_name_vi:'Dau',part:'kitchen',quantity,purchase_price:30000,supplier:'QA',supplier_partner_id:null,unit:'bottle',code:'QA',is_active:!inactive,updated_at:version,...itemOverrides};
  const root={id:12407,item_id:1,reason:'purchase',change_quantity:2,correction_of_inventory_log_id:null,business_date:rootDate,created_at:rootDate+'T03:00:00Z',unit:'bottle',new_supplier:'QA',new_purchase_price:30000,purchase_supplier_partner_id:null,...rootOverrides};
  const db={from(table){calls.push(table);let update,insert,filters=[];const q={select(){return q;},eq(k,v){filters.push([k,v]);return q;},is(k,v){filters.push([k,v]);return q;},neq(k,v){filters.push(['!'+k,v]);return q;},in(k,v){filters.push(['in:'+k,v]);return q;},order(){return q;},gt(){return q;},lte(){return q;},limit(){return q;},update(v){update=v;return q;},insert(v){insert=v;return q;},single(){return q;},maybeSingle(){return q;},then(resolve,reject){let data=null;
  if(table==='inventory'){
   if(update){if(race)item.updated_at='2026-10-10T04:00:00.000Z';if(filters.every(([k,v])=>k.startsWith('!')?item[k.slice(1)]!==v:item[k]===v)){Object.assign(item,update);writes.push({table,update});data={...item};}}
-  else data=filters.some(([k])=>k==='!id')?[]:{...item};
+  // The duplicate scan (id <> edited item, active only) sees the other items.
+  else data=filters.some(([k])=>k==='!id')?others.filter(row=>filters.every(([k,v])=>k.startsWith('!')?row[k.slice(1)]!==v:row[k]===v)):{...item};
  }else if(table==='inventory_logs'){if(insert){if(postCommitFailure)throw Error('audit transport unavailable');writes.push({table,insert});data={id:101,...insert};}else if(filters.some(([k,v])=>k==='reason'&&v==='stock_check'))data=stockCheck;else if(filters.some(([k,v])=>(k==='correction_of_inventory_log_id'&&v!==null)||k==='in:correction_of_inventory_log_id'))data=correctionRows;else data=[root,...extraRoots];}
  else if(table==='business_partners')data=[{id:10,name:'QA',partner_type:'food',partner_subtype_id:3,is_active:true}];
  else if(table==='business_partner_subtypes')data=[{id:3,emoji:'🥩'}];
@@ -40,6 +41,7 @@ function setup({role='owner',authenticated=true,inactive=false,race=false,closed
  '@/lib/inventory/keg-progress':{fetchKegProgressByItemId:async()=>new Map()},
  '@/lib/inventory/items-server':{canToggleInventoryItemActiveStatus:r=>['owner','master','manager','leader'].includes(r),fetchInventoryItems:()=>{throw Error('bulk read forbidden in selected route');},fetchActiveKegTrackingMappings:()=>[],getInventoryKegCandidateIds:()=>[],buildInventoryItemsResponse:({items})=>items},
  '@/lib/inventory/normalize':load('lib/inventory/normalize.ts'),
+ '@/lib/inventory/duplicate-item':load('lib/inventory/duplicate-item.ts',{'./normalize.ts':load('lib/inventory/normalize.ts')}),
  '@/lib/inventory/inventory-business-time':{resolveInventoryBusinessDate:async()=>({businessDate})},
  '@/lib/inventory/purchase-correction-policy':load('lib/inventory/purchase-correction-policy.ts'),
  '@/lib/inventory/price-logs':{insertInventoryPriceLog:async()=>{}},
@@ -220,4 +222,37 @@ for(const [name,options,code,blockReason] of [
  ['quantity conflict',{},'QUANTITY_CONFLICT',undefined],
 ])test('server reports '+name+' from the actual guard without source or ledger writes',async()=>{
  const s=setup({rootDate:'2026-10-10',...options});const r=await s.patch(edit({mode:'quick-save',reason:'purchase',payload:{quantity:1},...(name==='quantity conflict'?{expectedQuantity:1}:{})}));assert.equal(r.status,409);const b=await r.json();assert.equal(b.error,code);assert.equal(b.blockReason,blockReason);assert.deepEqual(s.writes,[]);assert.deepEqual(s.projections,[]);
+});
+
+// #624 (production, read only 2026-10-29): Korean name blank, Vietnamese "Dầu ớt cay nóng 500ml",
+// kitchen/조미료, code ''. Same-category active items as stored, incl. the two closest names.
+const item624={id:1,item_name:'',item_name_vi:'Dầu ớt cay nóng 500ml',part:'kitchen',category:'조미료',category_vi:'Gia vị',code:'',supplier:'QA',supplier_partner_id:null};
+const seasoning=[
+ {id:189,item_name:'해표)고추맛기름 1.8L',item_name_vi:'Dầu ớt',code:'',part:'kitchen',category:'조미료',category_vi:'Gia vị',is_active:true},
+ {id:343,item_name:'사테 고추기름',item_name_vi:'Sốt cô gái thái',code:'',part:'kitchen',category:'조미료',category_vi:'Gia vị',is_active:true},
+ {id:613,item_name:'',item_name_vi:'Dầu oliu extra virgin 750ml',code:'',part:'kitchen',category:'기타',category_vi:'Khác',is_active:false},
+];
+// The editor's KO-language payload: the typed Korean name and the unchanged Vietnamese name.
+const addKorean=name=>edit({payload:{item_name:name,item_name_vi:'Dầu ớt cay nóng 500ml',code:'',part:'kitchen',category:'조미료',category_vi:'Gia vị'}});
+test('#624: adding only a Korean name saves; the item never matches itself (id excluded, active only)',async()=>{
+ const s=setup({itemOverrides:item624,others:seasoning});
+ const r=await s.patch(addKorean('고추기름 500ml'));
+ assert.equal(r.status,200);assert.equal(s.item.item_name,'고추기름 500ml');assert.equal(s.item.item_name_vi,'Dầu ớt cay nóng 500ml');
+ // Its own Vietnamese name is unchanged and unique: no 409 even with the same code '' everywhere.
+ const again=setup({itemOverrides:{...item624},others:[{...item624,id:1,is_active:true}]});
+ assert.equal((await again.patch(addKorean('칠리오일 500ml'))).status,200,'a row with the same id is excluded by the query');
+});
+test('#624: a Korean name equal to another active item is still a 409 that names that item; nothing is written',async()=>{
+ const s=setup({itemOverrides:item624,others:seasoning});
+ const r=await s.patch(addKorean(' 해표)고추맛기름  1.8l '));
+ assert.equal(r.status,409);const body=await r.json();
+ assert.equal(body.error,'inventory_item_duplicate_name_code');assert.equal(body.duplicateItem.id,189);
+ assert.deepEqual(body.duplicateMatchedFields,['item_name']);assert.equal(s.writes.length,0);assert.equal(s.item.item_name,'');
+ // A Vietnamese collision (accent/case-insensitive) is reported as such.
+ const vi=setup({itemOverrides:item624,others:seasoning});
+ const viBody=await (await vi.patch(edit({payload:{item_name:'새 고추기름',item_name_vi:'DẦU ỚT',code:''}}))).json();
+ assert.deepEqual([viBody.duplicateItem.id,viBody.duplicateMatchedFields],[189,['item_name_vi']]);
+ // A different code is not a duplicate (existing policy), an inactive namesake is ignored on edit.
+ assert.equal((await setup({itemOverrides:item624,others:seasoning}).patch(edit({payload:{item_name:'해표)고추맛기름 1.8L',item_name_vi:'Dầu ớt cay nóng 500ml',code:'624'}}))).status,200);
+ assert.equal((await setup({itemOverrides:item624,others:seasoning}).patch(addKorean('Dầu oliu extra virgin 750ml'))).status,200);
 });

@@ -11,6 +11,7 @@ const InventoryEditor = dynamic(() => import("@/components/inventory/InventoryIt
 function InventoryEditorLoading() { const { lang } = useLanguage(); return <InventoryLoadingCard lang={lang} minHeight="min(512px, 52dvh)" testId="inventory-editor-loading" />; }
 import Container from "@/components/Container";
 import InventoryDailySyncResults from "@/components/inventory/InventoryDailySyncResults";
+import MonthlyNameSyncPanel from "@/components/inventory/MonthlyNameSyncPanel";
 import type { InventoryDailySyncResult } from "@/lib/inventory/daily-sync-result";
 import InventoryLoadingCard from "@/components/inventory/InventoryLoadingCard";
 import editorStyles from "@/components/inventory/InventoryEditorModal.module.css";
@@ -129,13 +130,14 @@ const snapshotNameSyncText = {
 
 const inventoryLanguageMissingText = {
     ko: {
-        banner: (count: number) => `품목명 언어 미설정 ${count}개 품목`,
+        // All active items, not limited to the selected month or date.
+        banner: (count: number) => `전체 활성 품목 중 품목명 언어 미설정 ${count}개`,
         missingKo: "한글명 미설정",
         missingVi: "베트남어명 미설정",
         editItem: "품목 수정",
     },
     vi: {
-        banner: (count: number) => `${count} mặt hàng chưa thiết lập đủ ngôn ngữ tên`,
+        banner: (count: number) => `Toàn bộ mặt hàng đang dùng: ${count} mặt hàng chưa thiết lập đủ ngôn ngữ tên`,
         missingKo: "Chưa thiết lập tên tiếng Hàn",
         missingVi: "Chưa thiết lập tên tiếng Việt",
         editItem: "Sửa mặt hàng",
@@ -465,6 +467,8 @@ export default function InventorySnapshotsPage() {
     const [nameSyncError, setNameSyncError] = useState("");
     const [nameSyncResult, setNameSyncResult] = useState("");
     const [nameSyncDetails, setNameSyncDetails] = useState<InventoryDailySyncResult[]>([]);
+    // Bumped after a daily sync or an item save so the monthly sync list re-reads its month.
+    const [monthlySyncReloadKey, setMonthlySyncReloadKey] = useState(0);
     const nameSyncRequestSequenceRef = useRef(0);
     const nameSyncBusinessDateRef = useRef("");
     const nameSyncT = snapshotNameSyncText[lang];
@@ -975,6 +979,7 @@ export default function InventorySnapshotsPage() {
                 Number(json.failedCount ?? 0)
             ));
 
+            setMonthlySyncReloadKey((key) => key + 1);
             const reloads: Promise<void>[] = [
                 fetchMovementItems(businessDate),
                 fetchNameSyncIssues(businessDate),
@@ -1466,6 +1471,34 @@ export default function InventorySnapshotsPage() {
         setLoadingMovements(true);
         setNameSyncLoading(true);
         setDateContentTransitioning(true);
+    };
+
+    // The monthly sync list moves to a date the same way the calendar does: its snapshot,
+    // or the current business date.
+    const batchForBusinessDate = (businessDate: string) => batchList.find((batch) => batch.snapshot_date === businessDate);
+    const canGoToBusinessDate = (businessDate: string) =>
+        Boolean(batchForBusinessDate(businessDate)?.id) || businessDate === activeBusinessDateKey;
+    const goToBusinessDate = (businessDate: string) => {
+        const batch = batchForBusinessDate(businessDate);
+        if (batch?.id) {
+            const nextBatchId = Number(batch.id);
+            if (viewMode === "snapshot" && nextBatchId === selectedBatchId) return;
+            beginDateContentTransition("snapshot");
+            setViewMode("snapshot");
+            setSelectedBatchId(nextBatchId);
+            return;
+        }
+        if (businessDate !== activeBusinessDateKey || viewMode === "current") return;
+        beginDateContentTransition("current");
+        setViewMode("current");
+        setSelectedBatchId(null);
+    };
+    // After a monthly-list sync, the open date's banner and rows are re-read when it is that date.
+    const refreshSyncedBusinessDate = async (businessDate: string) => {
+        if (nameSyncBusinessDateRef.current !== businessDate) return;
+        const reloads: Promise<void>[] = [fetchMovementItems(businessDate), fetchNameSyncIssues(businessDate)];
+        if (viewMode === "snapshot" && selectedBatchId) reloads.push(fetchSnapshotItems(selectedBatchId));
+        await Promise.all(reloads);
     };
 
     useEffect(() => {
@@ -2635,6 +2668,9 @@ export default function InventorySnapshotsPage() {
                     )}
                 </div>
             )}
+
+            <MonthlyNameSyncPanel month={calendarMonth} lang={lang} reloadKey={monthlySyncReloadKey}
+                canGoToDate={canGoToBusinessDate} onGoToDate={goToBusinessDate} onSynced={refreshSyncedBusinessDate} />
 
             {isDateContentLoading ? (
                 <InventoryLoadingCard lang={lang} testId="snapshot-date-content-loading" marginBottom={16} />
@@ -4464,6 +4500,7 @@ export default function InventorySnapshotsPage() {
                             return missingLanguages.length ? [{ ...row, currentItemName: savedItem.item_name || null, currentItemNameVi: savedItem.item_name_vi || null, missingLanguages }] : [];
                         }));
                         closeInventoryEditor(true);
+                        setMonthlySyncReloadKey((key) => key + 1);
                         void fetchNameSyncIssues(activeBusinessDateKey);
                         if (viewMode === "snapshot" && selectedBatchId) void fetchSnapshotItems(selectedBatchId);
                         else void fetchMovementItems(activeBusinessDateKey);

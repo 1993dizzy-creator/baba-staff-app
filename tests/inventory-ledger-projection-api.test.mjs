@@ -214,6 +214,7 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootL
     '@/lib/inventory/number': load('lib/inventory/number.ts'),
     '@/lib/inventory/keg-progress': {}, '@/lib/inventory/items-server': {},
     '@/lib/inventory/normalize': load('lib/inventory/normalize.ts'),
+    '@/lib/inventory/duplicate-item': load('lib/inventory/duplicate-item.ts', { './normalize.ts': load('lib/inventory/normalize.ts') }),
     '@/lib/inventory/inventory-business-time': { resolveInventoryBusinessDate: async () => ({ businessDate }) },
     '@/lib/inventory/purchase-correction-policy': load('lib/inventory/purchase-correction-policy.ts'),
     '@/lib/inventory/price-logs': { insertInventoryPriceLog: async () => { calls.push('price-history'); } },

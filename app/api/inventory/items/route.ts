@@ -16,10 +16,8 @@ import {
   fetchInventoryItems,
   getInventoryKegCandidateIds,
 } from "@/lib/inventory/items-server";
-import {
-  normalizeInventoryCode,
-  normalizeInventoryName,
-} from "@/lib/inventory/normalize";
+import { normalizeInventoryName } from "@/lib/inventory/normalize";
+import { matchDuplicateInventoryItem, type DuplicateInventoryItem, type DuplicateMatchedField } from "@/lib/inventory/duplicate-item";
 import { resolveInventoryBusinessDate } from "@/lib/inventory/inventory-business-time";
 import {
   purchaseCorrectionIdentityMatches,
@@ -264,29 +262,14 @@ const isInventoryRelatedHistoryFkError = (error: unknown) => {
 
 type InventoryLogPayload = Record<string, unknown>;
 
-type DuplicateInventoryItem = {
-  id: number;
-  item_name: string | null;
-  item_name_vi: string | null;
-  code: string | null;
-  part: string | null;
-  category: string | null;
-  category_vi: string | null;
-  is_active: boolean | null;
-};
-
 const findDuplicateInventoryItem = async (
   itemName: unknown,
   itemNameVi: unknown,
   code: unknown,
   options: { excludeId?: number; activeOnly: boolean }
 ) => {
-  const normalizedItemName = normalizeInventoryName(itemName);
-  const normalizedItemNameVi = normalizeInventoryName(itemNameVi);
+  if (!normalizeInventoryName(itemName) && !normalizeInventoryName(itemNameVi)) return null;
 
-  if (!normalizedItemName && !normalizedItemNameVi) return null;
-
-  const normalizedCode = normalizeInventoryCode(code);
   let query = supabaseAdmin
     .from("inventory")
     .select("id, item_name, item_name_vi, code, part, category, category_vi, is_active");
@@ -303,27 +286,18 @@ const findDuplicateInventoryItem = async (
 
   if (error) throw error;
 
-  return ((data || []) as DuplicateInventoryItem[]).find((item) => {
-    const sameName =
-      (normalizedItemName !== "" &&
-        normalizeInventoryName(item.item_name) === normalizedItemName) ||
-      (normalizedItemNameVi !== "" &&
-        normalizeInventoryName(item.item_name_vi) === normalizedItemNameVi);
-
-    return (
-      sameName &&
-      normalizeInventoryCode(item.code) === normalizedCode
-    );
-  }) ?? null;
+  return matchDuplicateInventoryItem((data || []) as DuplicateInventoryItem[], { itemName, itemNameVi, code });
 };
 
-const duplicateInventoryItemResponse = (duplicateItem: DuplicateInventoryItem) =>
+const duplicateInventoryItemResponse = (duplicate: { item: DuplicateInventoryItem; matchedFields: DuplicateMatchedField[] }) =>
   NextResponse.json(
     {
       ok: false,
       error: "inventory_item_duplicate_name_code",
       message: "Duplicate inventory item.",
-      duplicateItem,
+      duplicateItem: duplicate.item,
+      // Which of our names equals the other item's: lets the UI say "#id 이름" instead of a bare duplicate.
+      duplicateMatchedFields: duplicate.matchedFields,
     },
     { status: 409 }
   );

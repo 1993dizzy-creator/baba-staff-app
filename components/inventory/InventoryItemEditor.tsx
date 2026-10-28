@@ -16,6 +16,7 @@ import { parseDecimal } from "@/lib/inventory/number";
 import { formatNumber, parsePrice } from "@/lib/inventory/money";
 import { InventoryImageCompressionError, compressInventoryImage, formatFileSize } from "@/lib/inventory/image-compression";
 import type { PartnerSelectOption } from "@/lib/partners/select-options";
+import { duplicateInventoryItemMessage, type DuplicateMatchedField } from "@/lib/inventory/duplicate-item";
 import SupplierSelectOptions from "@/components/inventory/SupplierSelectOptions";
 type InventoryItem = {
     id: number;
@@ -69,6 +70,7 @@ type InventoryItemMutationResult = InventoryPurchaseErrorDetails & {
     message?: string;
     data?: InventoryItem;
     duplicateItem?: DuplicateInventoryItem;
+    duplicateMatchedFields?: DuplicateMatchedField[];
 };
 type EditFormPendingSave = {
     id: number;
@@ -245,18 +247,12 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
             return c.etc;
         return "";
     };
-    const getDuplicateItemAlertMessage = (duplicateItem?: DuplicateInventoryItem | null) => {
-        if (duplicateItem?.is_active === false) {
-            return lang === "ko"
-                ? "동일한 품목이 비활성 상태로 등록되어 있습니다. 기존 품목을 확인해주세요."
-                : "Mặt hàng trùng đã được đăng ký ở trạng thái không hoạt động. Vui lòng kiểm tra mặt hàng hiện có.";
-        }
+    const getDuplicateItemAlertMessage = (duplicateItem?: DuplicateInventoryItem | null, matchedFields?: DuplicateMatchedField[]) => {
         const partLabel = getDuplicatePartLabel(duplicateItem?.part);
         const categoryLabel = getInventoryCategoryLabel(duplicateItem?.part, duplicateItem?.category, duplicateItem?.category_vi, lang);
         const location = [partLabel, categoryLabel].filter(Boolean).join("/");
-        return location
-            ? t.duplicateItemRegistered(location)
-            : t.duplicateItemRegisteredFallback;
+        // Names the other item (#id, both names) so a real conflict is distinguishable from this item.
+        return duplicateInventoryItemMessage({ lang, duplicateItem, matchedFields, location });
     };
     const isDuplicateInventoryItemResult = (res: Response, result: InventoryItemMutationResult) => res.status === 409 &&
         (result.error === "inventory_item_duplicate_name_vi" ||
@@ -282,7 +278,7 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
     };
     const handleInventoryItemMutationFailure = (res: Response, result: InventoryItemMutationResult, action: "save" | "edit") => {
         if (isDuplicateInventoryItemResult(res, result)) {
-            alert(getDuplicateItemAlertMessage(result.duplicateItem));
+            alert(getDuplicateItemAlertMessage(result.duplicateItem, result.duplicateMatchedFields));
             return;
         }
         console.error(`inventory ${action} failed`, {
@@ -334,6 +330,9 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
                     return;
                 }
                 handleInventoryItemMutationFailure(res, result, "edit");
+                // A duplicate name needs a new name: close the reason sheet so the next 저장 sends the
+                // corrected form instead of this request's payload. The form keeps what was typed.
+                if (isDuplicateInventoryItemResult(res, result)) setEditFormPendingSave(null);
                 return;
             }
             onSaved?.({ ...inventoryList[0], ...editFormPendingSave.payload } as InventoryItem);

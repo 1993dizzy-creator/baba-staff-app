@@ -44,6 +44,7 @@ import { parseDecimal,formatDecimalDisplay,roundDecimal,} from "@/lib/inventory/
 import { formatNumber,parsePrice,formatMoneyDisplay,} from "@/lib/inventory/money";
 import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
 import type { PartnerSelectOption } from "@/lib/partners/select-options";
+import { duplicateInventoryItemMessage, type DuplicateMatchedField } from "@/lib/inventory/duplicate-item";
 import SupplierSelectOptions from "@/components/inventory/SupplierSelectOptions";
 import { findSimilarInventoryItems } from "@/lib/inventory/similarity";
 import {
@@ -111,6 +112,7 @@ type InventoryItemMutationResult = InventoryPurchaseErrorDetails & {
     message?: string;
     data?: InventoryItem;
     duplicateItem?: DuplicateInventoryItem;
+    duplicateMatchedFields?: DuplicateMatchedField[];
 };
 
 
@@ -1348,13 +1350,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
         return "";
     };
 
-    const getDuplicateItemAlertMessage = (duplicateItem?: DuplicateInventoryItem | null) => {
-        if (duplicateItem?.is_active === false) {
-            return lang === "ko"
-                ? "동일한 품목이 비활성 상태로 등록되어 있습니다. 기존 품목을 확인해주세요."
-                : "Mặt hàng trùng đã được đăng ký ở trạng thái không hoạt động. Vui lòng kiểm tra mặt hàng hiện có.";
-        }
-
+    const getDuplicateItemAlertMessage = (duplicateItem?: DuplicateInventoryItem | null, matchedFields?: DuplicateMatchedField[]) => {
         const partLabel = getDuplicatePartLabel(duplicateItem?.part);
         const categoryLabel = getInventoryCategoryLabel(
             duplicateItem?.part,
@@ -1364,9 +1360,8 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
         );
         const location = [partLabel, categoryLabel].filter(Boolean).join("/");
 
-        return location
-            ? t.duplicateItemRegistered(location)
-            : t.duplicateItemRegisteredFallback;
+        // Names the other item (#id, both names) so a real conflict is distinguishable from this item.
+        return duplicateInventoryItemMessage({ lang, duplicateItem, matchedFields, location });
     };
 
     const isDuplicateInventoryItemResult = (
@@ -1401,7 +1396,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
         action: "save" | "edit"
     ) => {
         if (isDuplicateInventoryItemResult(res, result)) {
-            alert(getDuplicateItemAlertMessage(result.duplicateItem));
+            alert(getDuplicateItemAlertMessage(result.duplicateItem, result.duplicateMatchedFields));
             return;
         }
 

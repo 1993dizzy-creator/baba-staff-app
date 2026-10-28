@@ -19,6 +19,7 @@ function setup({rename=false,economic=false,code='PURCHASE_AMOUNT_CONFIRMATION_R
  '@/lib/inventory/log-sync-server':load('lib/inventory/log-sync-server.ts',{'server-only':{},'@/lib/inventory/ledger-sync-contract':contract}),
  '@/lib/inventory/snapshot-name-sync':load('lib/inventory/snapshot-name-sync.ts'),
  '@/lib/inventory/language-missing':load('lib/inventory/language-missing.ts'),
+ '@/lib/inventory/monthly-name-sync':load('lib/inventory/monthly-name-sync.ts',{'./snapshot-name-sync.ts':load('lib/inventory/snapshot-name-sync.ts')}),
  '@/lib/inventory/daily-sync-result':load('lib/inventory/daily-sync-result.ts'),
  '@/lib/ledger/inventory-projection':{projectInventoryPurchaseLogs:async(ids,actor)=>{calls.push({projection:ids,actor});assert.equal(actor,2);return {status:economic?'review_required':'synced',code:economic?code:'METADATA_SYNCED',results:[{status:economic?'review_required':'synced',code:economic?code:'METADATA_SYNCED',inventoryLogId:ids[0],candidateId:null,transactionId:2944}]};},
   projectInventoryDisplaySyncLog:async(id,actor)=>{calls.push({displayProjection:id,actor});assert.equal(actor,2);return {...display,inventoryLogId:id};}},

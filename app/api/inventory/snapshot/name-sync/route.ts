@@ -17,6 +17,7 @@ import {
   findInventoryLanguageMissingItems,
   type InventoryLanguageRow,
 } from "@/lib/inventory/language-missing";
+import { findMonthlyInventoryNameSyncItems, inventoryNameSyncMonthRange, isInventoryNameSyncMonth } from "@/lib/inventory/monthly-name-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -198,11 +199,67 @@ async function runItemSync({
   }
 }
 
+// One month of logs in date/time/id order, paged so no row is skipped.
+async function loadMonthlySyncLogs(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+  range: { start: string; endExclusive: string }
+) {
+  const logs: InventoryDailySyncLogRow[] = [];
+  for (let from = 0; ; from += LOG_PAGE_SIZE) {
+    const result = await supabase.from("inventory_logs").select(LOG_SELECT)
+      .gte("business_date", range.start).lt("business_date", range.endExclusive).not("item_id", "is", null)
+      .order("business_date", { ascending: true }).order("created_at", { ascending: true }).order("id", { ascending: true })
+      .range(from, from + LOG_PAGE_SIZE - 1);
+    if (result.error) return { ok: false as const, error: "inventory_monthly_sync_logs_query_failed" };
+    const page = (result.data ?? []) as unknown as InventoryDailySyncLogRow[];
+    logs.push(...page);
+    if (page.length < LOG_PAGE_SIZE) return { ok: true as const, logs };
+  }
+}
+
+// All active items once (sync fields + language fields), paged.
+async function loadActiveInventoryForMonth(supabase: ReturnType<typeof createSupabaseAdmin>) {
+  const rows: (CurrentInventoryDailySyncRow & InventoryLanguageRow)[] = [];
+  for (let from = 0; ; from += LOG_PAGE_SIZE) {
+    const result = await supabase.from("inventory").select(`${INVENTORY_SELECT}, created_at, updated_at`)
+      .eq("is_active", true).order("id", { ascending: true }).range(from, from + LOG_PAGE_SIZE - 1);
+    if (result.error) return { ok: false as const, error: "inventory_monthly_sync_inventory_query_failed" };
+    const page = (result.data ?? []) as unknown as typeof rows;
+    rows.push(...page);
+    if (page.length < LOG_PAGE_SIZE) return { ok: true as const, inventoryItems: rows };
+  }
+}
+
+async function getMonthlySync(month: string, canSync: boolean) {
+  const range = inventoryNameSyncMonthRange(month);
+  const supabase = createSupabaseAdmin();
+  const [inventory, logs] = await Promise.all([
+    loadActiveInventoryForMonth(supabase),
+    range ? loadMonthlySyncLogs(supabase, range) : Promise.resolve({ ok: true as const, logs: [] as InventoryDailySyncLogRow[] }),
+  ]);
+  if (!inventory.ok) return NextResponse.json({ ok: false, error: inventory.error }, { status: 500, headers: NO_STORE_HEADERS });
+  if (!logs.ok) return NextResponse.json({ ok: false, error: logs.error }, { status: 500, headers: NO_STORE_HEADERS });
+  return NextResponse.json({
+    ok: true,
+    month,
+    canSync,
+    // Not limited to the month: every active item whose name is missing in a language.
+    languageMissingItems: findInventoryLanguageMissingItems(inventory.inventoryItems),
+    monthlySyncItems: findMonthlyInventoryNameSyncItems(month, logs.logs, inventory.inventoryItems),
+  }, { headers: NO_STORE_HEADERS });
+}
+
 export async function GET(request: Request) {
   try {
     const auth = await getAuthenticatedActor();
     if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code, code: auth.code }, { status: auth.status, headers: NO_STORE_HEADERS });
-    const businessDate = new URL(request.url).searchParams.get("businessDate");
+    const searchParams = new URL(request.url).searchParams;
+    if (searchParams.has("month")) {
+      const month = searchParams.get("month");
+      if (!isInventoryNameSyncMonth(month)) return NextResponse.json({ ok: false, error: "inventory_monthly_sync_invalid_month" }, { status: 400, headers: NO_STORE_HEADERS });
+      return await getMonthlySync(month, canRunInventorySnapshotNameSync(auth.actor.role));
+    }
+    const businessDate = searchParams.get("businessDate");
     if (!isValidBusinessDate(businessDate)) return NextResponse.json({ ok: false, error: "inventory_daily_sync_invalid_business_date" }, { status: 400, headers: NO_STORE_HEADERS });
 
     const supabase = createSupabaseAdmin();
