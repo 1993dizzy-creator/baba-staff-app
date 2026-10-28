@@ -192,6 +192,8 @@ type DateGroup = {
   expense: number;
   // Single-amount filters (결제/카드/이체/조정/투자금/준비금): sum of visible display amounts.
   filterAmount: number | null;
+  // Prepaid allocations listed that day: monthly P&L only, never in 지출.
+  allocation: number;
 };
 type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null };
 type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[]; verification?:Verification };
@@ -513,8 +515,10 @@ function LedgerEntriesContent() {
         income: 0,
         expense: 0,
         filterAmount: null,
+        allocation: 0,
       };
       group.rows.push(entry);
+      if (entry.prepaidAllocation) group.allocation += entry.amount * entry.economicEffectSign;
       const headerAmount = entryFilterHeaderAmount(entry, filter);
       if (headerAmount !== null) {
         group.filterAmount = (group.filterAmount ?? 0) + headerAmount;
@@ -875,6 +879,7 @@ function LedgerEntriesContent() {
             {group.filterAmount !== null ? <><i aria-hidden>·</i><b className={styles.dateFilterAmount}>{ledgerEntryFilterLabel(filter, lang)} {group.filterAmount < 0 ? "−" : filter === "investment" && group.filterAmount > 0 ? "+" : ""}{money(Math.abs(group.filterAmount))}</b></> : null}
             {group.filterAmount === null && group.income > 0 ? <><i aria-hidden>·</i><b className={styles.dateIncome}>{vi ? "Thu" : "수입"} {money(group.income)}</b></> : null}
             {group.filterAmount === null && group.expense > 0 ? <><i aria-hidden>·</i><b className={styles.dateExpense}>{vi ? "Chi" : "지출"} {money(group.expense)}</b></> : null}
+            {group.filterAmount === null && group.allocation > 0 ? <><i aria-hidden>·</i><b className={styles.dateAllocation} title={vi ? "Chỉ tính vào lãi lỗ tháng; không phải tiền chi trong ngày" : "월 손익에만 반영, 이날 현금 지출 아님"}>{vi ? "Phân bổ" : "선납배분"} {money(group.allocation)} ({vi ? "lãi lỗ" : "손익만"})</b></> : null}
           </span>
           <i
             aria-hidden
@@ -2697,7 +2702,7 @@ function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
     return [items, settlement].filter(Boolean).join(" · ");
   }
   // P&L only: this month's share of an amount already paid in advance.
-  if (entry.prepaidAllocation) return lang === "vi" ? "Phân bổ chi phí trả trước · Thực trả 0₫" : "선납 비용배분 · 실제 지급 0₫";
+  if (entry.prepaidAllocation) return lang === "vi" ? "Tính vào lãi lỗ tháng · Thực trả 0₫" : "월 손익 반영 · 실제 지급 0₫";
   if (entry.systemDisplay?.kind === "rent") return lang === "vi" ? "Tiền thuê" : "임대료";
   if (entry.prepaidPayment) return lang === "vi" ? "Thanh toán trả trước · chi phí phân bổ hằng tháng" : "선납 지급 · 손익은 월별 배분";
   if (entry.systemDisplay?.kind === "payablePayment" && entry.systemDisplay.listedPayablesAmount) {

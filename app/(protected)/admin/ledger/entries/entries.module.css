@@ -168,6 +168,8 @@
 .paymentHistoryMeta{grid-column:1/-1;min-width:0;color:#6b7280;font-size:10px;line-height:1.4;overflow-wrap:anywhere}
 .direction.payment{background:#e8f0fe;color:#1d4ed8}
 .direction.allocation{background:#eef2f7;color:#475569}
+.dateAllocation{color:#475569;font-weight:700}
+.dateHeader .dateSummary>b.dateAllocation{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .statusPanel{display:grid;gap:6px;min-width:0;margin:8px 0;padding:10px 12px;border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;font-size:12px}
 .statusPanel_ok{border-color:#d1e7dd;background:#f3faf6}
 .statusPanel_open{border-color:#fde2c3;background:#fffaf3}

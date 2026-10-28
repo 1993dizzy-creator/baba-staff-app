@@ -84,7 +84,16 @@ test("#3305/#3306 monthly rent: 선납배분, actual payment 0₫, outside the d
     for (const filter of ["unpaid", "partial", "payment"] as const) assert.equal(entryMatchesListFilter(rent, filter), false, filter);
   }
   assert.match(page, /if \(entry\?\.prepaidAllocation\) return lang === "vi" \? "Đã trả trước" : "선납";/);
-  assert.match(page, /"선납 비용배분 · 실제 지급 0₫"/);
+  assert.match(page, /"월 손익 반영 · 실제 지급 0₫"/);
+  // The day header names the allocation separately from 지출: P&L only.
+  assert.match(page, /if \(entry\.prepaidAllocation\) group\.allocation \+= entry\.amount \* entry\.economicEffectSign;/);
+  assert.match(page, /group\.filterAmount === null && group\.allocation > 0/);
+  assert.match(page, /"선납배분"\} \{money\(group\.allocation\)\} \(\{vi \? "lãi lỗ" : "손익만"\}\)/);
+  // At 360px the allocation note shrinks first, so the row count stays visible.
+  const css = readFileSync("app/(protected)/admin/ledger/entries/entries.module.css", "utf8");
+  assert.match(css, /\.dateHeader \.dateSummary>b\.dateAllocation\{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\}/);
+  assert.match(sections, /`월 손익: 비용 \$\{money\(entry\.amount\)\}에 포함됩니다\.`/);
+  assert.match(sections, /날짜별 지출 합계와 실제 지출에 넣지 않으며/);
   assert.match(sections, /"선납 비용배분 · 추가 결제 불필요"/);
   assert.match(sections, /\[vi \? "Thực trả" : "실제 지급", money\(0\)\]/);
 });

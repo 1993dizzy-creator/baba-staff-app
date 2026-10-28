@@ -150,7 +150,9 @@ export function PrepaidExpenseStatus({ entry, lang }: { entry: LedgerEntry; lang
         rent
           ? (vi ? "Tiền thuê năm đã được trả trước; đây là phần chi phí của tháng này." : "연간 임대료는 이미 선납했고, 이 기록은 그중 이번 달 몫을 비용으로 배분한 것입니다.")
           : (vi ? "Khoản này đã được trả trước; đây là phần chi phí của tháng này." : "미리 지급한 금액 중 이번 달 몫을 비용으로 배분한 기록입니다."),
-        vi ? "Không làm thay đổi tiền mặt, số dư tài khoản hay công nợ, và không cộng vào tổng chi theo ngày." : "현금·계좌 잔액과 미지급금은 바뀌지 않으며, 일별 지출 합계에도 넣지 않습니다.",
+        vi ? `Lãi lỗ tháng: tính ${money(entry.amount)} vào chi phí.` : `월 손익: 비용 ${money(entry.amount)}에 포함됩니다.`,
+        vi ? "Tiền mặt: không có tiền chi trong ngày. Không cộng vào tổng chi theo ngày hay “Thực chi”; số dư tài khoản và công nợ không đổi."
+          : "현금: 이날 나간 돈이 없습니다. 날짜별 지출 합계와 실제 지출에 넣지 않으며, 계좌 잔액과 미지급금도 바뀌지 않습니다.",
         ...(basis ? [`${vi ? "Căn cứ" : "기준"}: ${basis}`] : []),
       ]}
       steps={[vi ? "Không cần xử lý. Khoản chi thực tế được ghi ở giao dịch thanh toán trả trước." : "조치할 필요가 없습니다. 실제 현금 지급은 선납 지급 거래에 따로 기록되어 있습니다."]} />;
