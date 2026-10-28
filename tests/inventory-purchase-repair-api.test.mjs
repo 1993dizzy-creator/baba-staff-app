@@ -47,7 +47,7 @@ test('missing root ID never executes a repair',async()=>{
  }assert.equal(state.calls.length,0);
 });
 const candidate={safe:true,code:'READY',inventoryLogId:12581,businessDate:'2026-10-05',quantity:1.42,effectiveQuantity:1.42,unit:'kg',price:35000,supplier:'Ch?',oldAmount:49700,newAmount:46200,delta:-3500};
-function client({candidates=[candidate],recommended=true,vi=false,postCode=null,supplier=null,previewResponse=null,postResponse=null,code="PURCHASE_CORRECTION_REFERENCE_REQUIRED"}={}){
+function client({candidates=[candidate],recommended=true,vi=false,postCode=null,supplier=null,previewResponse=null,postResponse=null,code="PURCHASE_CORRECTION_REFERENCE_REQUIRED",issueExtra={},compact=false}={}){
  const states=[],refs=[],elements=[],requests=[];let cursor=0,refCursor=0,reloaded=0;
  const hooks={...React,useRef(initial){const n=refCursor++;if(!(n in refs))refs[n]={current:initial};return refs[n];},useState(initial){const n=cursor++;if(!(n in states))states[n]=initial;return [states[n],value=>{states[n]=value;}];}};
  const captured={...jsxRuntime,jsx(...args){const element=jsxRuntime.jsx(...args);elements.push(element);return element;},jsxs(...args){const element=jsxRuntime.jsxs(...args);elements.push(element);return element;}};
@@ -57,11 +57,11 @@ function client({candidates=[candidate],recommended=true,vi=false,postCode=null,
   './InventoryProjectionResolution.module.css':{default:{decrease:'decrease'}},
   '@/lib/inventory/purchase-repair-contract':load('lib/inventory/purchase-repair-contract.ts',{}),
  }).default;
- const issue={inventoryLogId:12655,code,itemName:'배',itemNameVi:'Lê',supplier,businessDate:'2026-10-06',quantityDelta:-0.1,amountDelta:-3500,originalQuantity:null,resolution:{candidates,recommended}};
+ const issue={inventoryLogId:12655,code,itemName:'배',itemNameVi:'Lê',supplier,businessDate:'2026-10-06',quantityDelta:-0.1,amountDelta:-3500,originalQuantity:null,resolution:{candidates,recommended},...issueExtra};
  const oldFetch=globalThis.fetch;
  globalThis.fetch=async(url,options={})=>{requests.push({url,options});if(options.method==='POST'&&postResponse)return postResponse();if(options.method!=='POST'&&previewResponse)return previewResponse();return Response.json(options.method==='POST'?{ok:!postCode,code:postCode}:{ok:true,candidates,recommended},{status:options.method==='POST'&&postCode?409:200});};
  return {
- render(){cursor=0;refCursor=0;elements.length=0;return renderToStaticMarkup(React.createElement(Component,{issue,vi,onResolved:async()=>{reloaded++;}}));},
+ render(){cursor=0;refCursor=0;elements.length=0;return renderToStaticMarkup(React.createElement(Component,{issue,vi,compact,onResolved:async()=>{reloaded++;}}));},
  button(label){return elements.find(e=>e.type==='button'&&e.props.children===label);},
  select(){return elements.find(e=>e.type==='select');},
  checkbox(){return elements.find(e=>e.type==='input'&&e.props.type==='checkbox');},
@@ -185,7 +185,8 @@ test('pending submission hides the previous preview; existing failure feedback i
   const state=client({vi,postResponse:()=>pending});try{
    state.render();await state.button(labels(vi).open).props.onClick();state.render();
    const saving=state.button(labels(vi).save).props.onClick();const html=state.render();
-   assert.ok(!html.includes(labels(vi).result));assert.doesNotMatch(html,/49,700₫|46,200₫/);assert.equal(state.select().props.disabled,true);
+   // One recommended original: no selector to change while saving (fixed, read-only original).
+   assert.ok(!html.includes(labels(vi).result));assert.doesNotMatch(html,/49,700₫|46,200₫/);assert.equal(state.select(),undefined);assert.match(html,/data-testid="linked-original"/);
    finish(Response.json({ok:false,code:'MONTH_CLOSED'},{status:409}));await saving;const failed=state.render();
    assert.match(failed,vi?/Tháng liên quan đã chốt sổ/:/관련 월의 장부가 마감되었습니다/);assert.equal(state.reloaded(),0);
   }finally{state.close();}
@@ -265,5 +266,94 @@ test('failed supplier approval releases the request lock for a fresh preview',as
  const state=client({candidates:[supplierCandidate],postCode:'SUPPLIER_CHANGE_CONFIRMATION_STALE'});try{
   state.render();await state.button(labels(false).open).props.onClick();state.render();state.checkbox().props.onChange({target:{checked:true}});state.render();await state.button(labels(false).save).props.onClick();state.render();
   await state.button('최신 정보 다시 조회').props.onClick();state.render();assert.equal(state.requests.filter(row=>!row.options.method).length,2);assert.equal(state.checkbox().props.checked,false);assert.equal(state.button(labels(false).save).props.disabled,true);
+ }finally{state.close();}
+});
+
+// ── Banner fast path (compact): one linked original, supplier-only change ─────────
+const okMart={...supplierCandidate,inventoryLogId:12581,supplier:'Ok Mart',newSupplier:'K-Market',supplierChange:{...supplierCandidate.supplierChange,beforeSupplier:'Ok Mart',afterSupplier:'K-Market'}};
+const linked={rootInventoryLogId:12581};
+test('quick supplier eligibility: only a linked single original with a supplier-only change and a valid fingerprint',()=>{
+ const contract=load('lib/inventory/purchase-repair-contract.ts',{});
+ const issue=(overrides={},candidates=[okMart],recommended=false)=>({code:'PURCHASE_CORRECTION_REFERENCE_REQUIRED',rootInventoryLogId:12581,resolution:{candidates,recommended},...overrides});
+ assert.deepEqual(contract.quickSupplierConfirmation(issue()),{purchaseLogId:12581,beforeSupplier:'Ok Mart',afterSupplier:'K-Market',fingerprint:'a'.repeat(64)});
+ const rejected={
+  'two candidates':issue({},[okMart,{...okMart,inventoryLogId:12580}]),
+  'single candidate that is not the linked original (e.g. same-day guess)':issue({rootInventoryLogId:null}),
+  'linked to another original':issue({rootInventoryLogId:12579}),
+  'amount changed':issue({},[{...okMart,newAmount:46200,delta:-3500}]),
+  'quantity changed':issue({},[{...okMart,quantityDelta:-0.1}]),
+  'unknown amounts':issue({},[{...okMart,oldAmount:null}]),
+  'month closed':issue({code:'MONTH_CLOSED'}),
+  'payment completed':issue({code:'PAYABLE_ALREADY_PAID'}),
+  'original cancelled':issue({code:'PURCHASE_ORIGINAL_CANCELLED'}),
+  'amount confirmation state':issue({code:'PURCHASE_AMOUNT_CONFIRMATION_REQUIRED'}),
+  'invalid fingerprint':issue({},[{...okMart,supplierChange:{...okMart.supplierChange,confirmationFingerprint:'stale'}}]),
+  'server marked the change invalid':issue({},[{...okMart,supplierChange:{...okMart.supplierChange,valid:false}}]),
+  'no supplier confirmation needed (ordinary repair)':issue({},[candidate]),
+  'no preview':issue({resolution:undefined}),
+ };
+ for(const [name,value] of Object.entries(rejected))assert.equal(contract.quickSupplierConfirmation(value),null,name);
+ // The selection step is skipped only for the server's recommendation or the DB-linked original.
+ assert.equal(contract.linkedPurchaseCandidate({candidates:[candidate],recommended:true},null)?.inventoryLogId,12581);
+ assert.equal(contract.linkedPurchaseCandidate({candidates:[candidate],recommended:false},12581)?.inventoryLogId,12581);
+ assert.equal(contract.linkedPurchaseCandidate({candidates:[candidate],recommended:false},null),null);
+ assert.equal(contract.linkedPurchaseCandidate({candidates:[candidate,{...candidate,inventoryLogId:12580}],recommended:false},12581),null);
+ for(const [name,particle] of [['K-Market','를'],['이마트','를'],['농협','을'],['Chợ','를']])assert.equal(contract.koreanObjectParticle(name),particle,name);
+});
+test('banner button confirms the supplier with a fresh fingerprint, once, then reloads',async()=>{
+ for(const vi of [false,true]){
+  let finish;const pending=new Promise(resolve=>{finish=resolve;});
+  const state=client({vi,compact:true,candidates:[okMart],recommended:false,issueExtra:linked,postResponse:()=>pending});try{
+   const label=vi?'Xác nhận K-Market là nhà cung cấp thực tế và cập nhật sổ':'K-Market를 실제 거래처로 확인·반영';
+   const html=state.render();assert.ok(html.includes(label));assert.match(html,/data-testid="inventory-quick-supplier-12655"/);
+   // Two clicks on the same rendered button (stale closure, busy still false): the request lock lets one through.
+   const button=state.button(label);const first=button.props.onClick();
+   await button.props.onClick();state.render();
+   finish(Response.json({ok:true,status:'synced'}));await first;
+   const posts=state.requests.filter(r=>r.options.method==='POST');
+   assert.equal(posts.length,1);assert.equal(state.requests.filter(r=>r.options.method!=='POST').length,1,'fresh preview read first');
+   assert.deepEqual(JSON.parse(posts[0].options.body),{purchaseLogId:12581,supplierConfirmation:{confirmed:true,fingerprint:'a'.repeat(64)}});
+   assert.equal(state.reloaded(),1);
+  }finally{state.close();}
+ }
+});
+test('banner button: server rejection keeps the original, explains and allows a retry',async()=>{
+ for(const vi of [false,true]){
+  const state=client({vi,compact:true,candidates:[okMart],recommended:false,issueExtra:linked,postCode:'SUPPLIER_CHANGE_CONFIRMATION_STALE'});try{
+   const label=vi?'Xác nhận K-Market là nhà cung cấp thực tế và cập nhật sổ':'K-Market를 실제 거래처로 확인·반영';
+   state.render();await state.button(label).props.onClick();const html=state.render();
+   assert.match(html,vi?/Thông tin nhập hàng hoặc sổ đã thay đổi/:/확인 정보가 만료되었습니다/);
+   assert.match(html,vi?/Nhấn lại để thử lại/:/버튼을 다시 누르거나/);assert.equal(state.reloaded(),0);
+   assert.equal(state.button(label).props.disabled,false,'retry is possible');
+  }finally{state.close();}
+ }
+});
+test('banner button: a changed fresh preview never submits',async()=>{
+ const changed={...okMart,newSupplier:'Other',supplierChange:{...okMart.supplierChange,afterSupplier:'Other',confirmationFingerprint:'b'.repeat(64)}};
+ const state=client({compact:true,candidates:[okMart],recommended:false,issueExtra:linked,previewResponse:()=>Response.json({ok:true,candidates:[changed],recommended:false})});try{
+  state.render();await state.button('K-Market를 실제 거래처로 확인·반영').props.onClick();const html=state.render();
+  assert.match(html,/최신 정보가 달라졌습니다/);assert.equal(state.requests.filter(r=>r.options.method==='POST').length,0);assert.equal(state.reloaded(),0);
+ }finally{state.close();}
+});
+test('risky cases keep the review sheet only: no banner button',()=>{
+ for(const options of [
+  {candidates:[okMart,{...okMart,inventoryLogId:12580}],recommended:false,issueExtra:linked},
+  {candidates:[{...okMart,newAmount:46200,delta:-3500}],recommended:false,issueExtra:linked},
+  {candidates:[okMart],recommended:false,issueExtra:{rootInventoryLogId:null}},
+  {candidates:[okMart],recommended:false,issueExtra:linked,code:'PAYABLE_ALREADY_PAID'},
+  {candidates:[okMart],recommended:false,issueExtra:linked,code:'MONTH_CLOSED'},
+ ]){
+  const state=client({...options,compact:true});try{
+   const html=state.render();assert.doesNotMatch(html,/inventory-quick-supplier|실제 거래처로 확인·반영/);assert.match(html,/해결하기/);
+  }finally{state.close();}
+ }
+});
+test('review sheet skips the selector for the DB-linked original and still requires explicit approval',async()=>{
+ const state=client({candidates:[okMart],recommended:false,issueExtra:linked});try{
+  state.render();await state.button('해결하기').props.onClick();const html=state.render();
+  assert.equal(state.select(),undefined);assert.match(html,/data-testid="linked-original"/);assert.match(html,/Ok Mart/);
+  assert.equal(state.button('원입고에 연결하고 장부 수정').props.disabled,true,'supplier approval still required');
+  state.checkbox().props.onChange({target:{checked:true}});state.render();
+  assert.equal(state.button('원입고에 연결하고 장부 수정').props.disabled,false);
  }finally{state.close();}
 });

@@ -55,3 +55,13 @@ export function purchaseCaseReasonCounts(issues: DisplayIssue[], vi: boolean) {
     return `${label} ${counts[kind]}${vi ? " mục" : "건"}`;
   }).join(" · ");
 }
+
+// Banner header line. Nothing for a single item (its own row already says why). The
+// "may overlap" note appears only when one item counts under several reasons.
+export function purchaseCaseReasonSummary(issues: DisplayIssue[], vi: boolean) {
+  if (issues.length <= 1) return null;
+  const counts = purchaseCaseReasonCounts(issues, vi);
+  if (!counts) return null;
+  const overlap = issues.some(issue => purchaseCaseDisplay(issue, vi).changes.length > 1);
+  return `${vi ? overlap ? "Theo lý do (có thể trùng)" : "Theo lý do" : overlap ? "사유별(중복 포함)" : "사유별"}: ${counts}`;
+}

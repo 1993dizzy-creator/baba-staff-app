@@ -72,3 +72,39 @@ export function canSubmitPurchaseRepair(candidate: PurchaseRepairCandidate | und
   if (candidate.code === "SUPPLIER_CHANGE_CONFIRMATION_REQUIRED") return supplierConfirmed && canConfirmPurchaseSupplierChange(candidate);
   return candidate.safe === true && candidate.code === "READY" && candidate.supplierChange?.requiresConfirmation !== true;
 }
+
+// The original purchase that needs no choosing: the server's own recommendation (exactly one
+// safe candidate), or the single candidate that is the receipt's DB-linked original
+// (correction_of_inventory_log_id). Never inferred from dates or a same-day match.
+export function linkedPurchaseCandidate(preview: PurchaseRepairPreview | undefined, rootInventoryLogId: number | null | undefined) {
+  const candidates = preview?.candidates ?? [];
+  if (candidates.length !== 1) return null;
+  if (preview?.recommended === true) return candidates[0];
+  return rootInventoryLogId != null && candidates[0].inventoryLogId === rootInventoryLogId ? candidates[0] : null;
+}
+
+// States that always go through the full review sheet.
+const QUICK_SUPPLIER_BLOCKED_CODES = new Set(["MONTH_CLOSED", "PAYABLE_ALREADY_PAID", "PURCHASE_ORIGINAL_CANCELLED", "PURCHASE_AMOUNT_CONFIRMATION_REQUIRED"]);
+const exactlyZero = (value: number | null | undefined) => typeof value === "number" && Number.isFinite(value) && value === 0;
+
+// One-click supplier confirmation from the banner: a linked original whose only change is the
+// supplier (amount and quantity unchanged) and whose server preview carries a valid
+// confirmation fingerprint. The server re-validates everything on submit.
+export function quickSupplierConfirmation(issue: { code: string; rootInventoryLogId?: number | null; resolution?: PurchaseRepairPreview }) {
+  const candidate = linkedPurchaseCandidate(issue.resolution, issue.rootInventoryLogId);
+  if (!candidate || QUICK_SUPPLIER_BLOCKED_CODES.has(issue.code) || !canConfirmPurchaseSupplierChange(candidate)) return null;
+  const amounts = [candidate.oldAmount, candidate.newAmount];
+  if (!amounts.every(value => typeof value === "number" && Number.isFinite(value)) || candidate.oldAmount !== candidate.newAmount
+    || !exactlyZero(candidate.delta) || !exactlyZero(candidate.quantityDelta ?? 0)) return null;
+  const change = candidate.supplierChange!;
+  const beforeSupplier = (change.beforeSupplier || candidate.supplier)?.trim() || null;
+  const afterSupplier = (change.afterSupplier || candidate.newSupplier)?.trim() || null;
+  if (!afterSupplier) return null;
+  return { purchaseLogId: candidate.inventoryLogId, beforeSupplier, afterSupplier, fingerprint: change.confirmationFingerprint };
+}
+
+// Korean object particle for a supplier name: 을 after a final consonant, otherwise 를.
+export function koreanObjectParticle(name: string) {
+  const code = name.trim().charCodeAt(name.trim().length - 1);
+  return code >= 0xac00 && code <= 0xd7a3 && (code - 0xac00) % 28 !== 0 ? "을" : "를";
+}

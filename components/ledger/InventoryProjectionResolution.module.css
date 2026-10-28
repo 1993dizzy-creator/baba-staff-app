@@ -25,3 +25,10 @@
 
 .confirmation { display: flex; align-items: flex-start; gap: 9px; padding: 12px; border: 1px solid #d1d5db; border-radius: 10px; background: #f9fafb; font-size: 13px; line-height: 1.5; }
 .confirmation input { width: 18px; height: 18px; flex-shrink: 0; margin: 2px 0 0; accent-color: #111827; }
+/* Banner one-click supplier confirmation: its own full-width line under the item. */
+.quick { order: 2; flex: 1 0 100%; display: grid; gap: 4px; min-width: 0; }
+.quickButton { width: 100%; min-height: 34px !important; padding: 6px 10px !important; font-size: 12px !important; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
+.quickButton:disabled { opacity: .6; cursor: default; }
+.quickError { margin: 0; color: #b4493e; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+@media (max-width: 560px) { .quick { grid-column: 1 / -1; } }
+@media (min-width: 561px) { .quick { justify-items: start; } .quickButton { width: auto; max-width: 100%; } }
