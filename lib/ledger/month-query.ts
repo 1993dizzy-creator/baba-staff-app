@@ -8,5 +8,8 @@ export function ledgerMonthHref(pathname: string, search: string, month: string)
   if (!MONTH.test(month)) throw new Error("INVALID_MONTH");
   const params = new URLSearchParams(search);
   params.set("month", month);
+  // An Inventory receipt deep link belongs to the month it was opened for.
+  params.delete("inventoryLogId");
+  params.delete("sourceKey");
   return `${pathname}?${params.toString()}`;
 }

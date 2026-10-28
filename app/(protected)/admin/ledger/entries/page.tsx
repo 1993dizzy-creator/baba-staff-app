@@ -72,7 +72,7 @@ import styles from "./entries.module.css";
 import InventoryPurchaseCaseSummary from "@/components/ledger/InventoryPurchaseCaseSummary";
 import { sendPayablePayment } from "@/lib/ledger/payable-payment-client";
 import { payablePaymentErrorMessage } from "@/lib/ledger/payable-payment-messages";
-import { findInventoryLedgerFocus, parseInventoryLedgerFocus } from "@/lib/ledger/inventory-entry-focus";
+import { findInventoryLedgerFocus, ledgerHrefWithoutInventoryFocus, parseInventoryLedgerFocus } from "@/lib/ledger/inventory-entry-focus";
 import PayablePaymentRecovery, { PayablePaymentRefreshButton } from "@/components/ledger/PayablePaymentRecovery";
 import PurchaseSettlementDetails from "@/components/ledger/PurchaseSettlementDetails";
 import { purchaseCaseReasonCounts } from "@/lib/inventory/purchase-case-display";
@@ -82,6 +82,8 @@ import PartnerSelect from "./PartnerSelect";
 import ManualDisplayEditor, { LedgerEditShell } from "./ManualDisplayEditor";
 import ManualDisplayHistory from "./ManualDisplayHistory";
 import PaymentVerificationSection, { type Verification } from "./PaymentVerificationSection";
+import { InventoryPurchaseStatus, PrepaidExpenseStatus, inventoryEntryIssues } from "./EntryStatusSections";
+import InventoryPurchaseCaseDetails from "@/components/ledger/InventoryPurchaseCaseDetails";
 import { planPartialPayablePayment } from "@/lib/ledger/partial-payable-payment";
 import { groupPayablesForDisplay, groupPaymentsByDate } from "@/lib/ledger/payable-display-groups";
 import { getBusinessDate } from "@/lib/common/business-time";
@@ -677,7 +679,9 @@ function LedgerEntriesContent() {
     }
   }
   // Deep link from the Inventory daily sync: ?month=&inventoryLogId=&sourceKey= opens the
-  // exact receipt's entry once per month/receipt, so closing the sheet is respected.
+  // exact receipt's entry once. The parameters are then dropped from the URL (replace,
+  // no new history entry), so closing the sheet, a remount, a month switch or
+  // back/forward never reopens it; only an explicit new link does.
   const focusParam = parseInventoryLedgerFocus(searchParams);
   const focusLogId = focusParam?.logId ?? null, focusSourceKey = focusParam?.sourceKey ?? null;
   const [focusItemKey, setFocusItemKey] = useState<string | null>(null);
@@ -687,6 +691,7 @@ function LedgerEntriesContent() {
     const handledKey = `${month}:${focusSourceKey}`;
     if (focusHandledRef.current === handledKey) return;
     focusHandledRef.current = handledKey;
+    router.replace(ledgerHrefWithoutInventoryFocus(pathname, searchParams.toString()), { scroll: false });
     const found = findInventoryLedgerFocus(data.entries, { logId: focusLogId, sourceKey: focusSourceKey });
     if (found) {
       setFilter("all");
@@ -709,7 +714,7 @@ function LedgerEntriesContent() {
     setNotice(vi
       ? `Không tìm thấy bút toán của phiếu nhập gốc #${focusLogId} trong tháng ${month}.`
       : `원입고 #${focusLogId}의 장부내역을 ${month}에서 찾지 못했습니다.`);
-  }, [data, focusLogId, focusSourceKey, loading, month, vi]);
+  }, [data, focusLogId, focusSourceKey, loading, month, pathname, router, searchParams, vi]);
   function editCandidate(item: LedgerEntryItem) {
     if (selected && item.candidateId) {
       const draft: CandidateDraft = {
@@ -1419,6 +1424,32 @@ function LedgerEntriesContent() {
             posDetail={posDetail}
             closed={closed}
             focusItemKey={focusItemKey}
+            projectionIssues={data?.month === month ? data.inventoryProjectionIssues ?? [] : []}
+            onShowIssue={(inventoryLogId) => {
+              setSelected(null);
+              setCandidateDraft(null);
+              setFocusItemKey(null);
+              const row = document.getElementById(`inventory-projection-row-${inventoryLogId}`);
+              row?.scrollIntoView({ block: "center" });
+              row?.focus({ preventScroll: true });
+            }}
+            onShowPayables={() => {
+              setSelected(null);
+              setCandidateDraft(null);
+              setFocusItemKey(null);
+              setPayableExpanded(true);
+              requestAnimationFrame(() => document.getElementById("payable-summary-title")?.scrollIntoView({ block: "start" }));
+            }}
+            onOpenPayableParty={(() => {
+              const party = selected.partyId == null || payables?.month !== month ? undefined
+                : payableDisplay.parties.find(row => row.partyId === selected.partyId);
+              return party ? () => {
+                setSelected(null);
+                setCandidateDraft(null);
+                setFocusItemKey(null);
+                setPayableParty({ ...party, viewMonth: month });
+              } : undefined;
+            })()}
             onConfirmedEdited={async (transactionId, successMessage, financial = true) => {
               const view = editViewRef.current;
               if (view.month !== month || view.selectionId !== selected.id) return;
@@ -1501,6 +1532,10 @@ function EntryDetailSheet({
   posDetail,
   closed,
   focusItemKey = null,
+  projectionIssues = [],
+  onShowIssue = () => {},
+  onShowPayables,
+  onOpenPayableParty,
   onConfirmedEdited,
   onAdvanceCancelled,
   onClose,
@@ -1521,6 +1556,10 @@ function EntryDetailSheet({
   posDetail: Record<string, unknown> | null;
   closed: boolean;
   focusItemKey?: string | null;
+  projectionIssues?: readonly InventoryProjectionIssue[];
+  onShowIssue?: (inventoryLogId: number) => void;
+  onShowPayables?: () => void;
+  onOpenPayableParty?: () => void;
   onConfirmedEdited: (transactionId: number, successMessage?: string, financial?: boolean) => Promise<void>;
   onAdvanceCancelled: () => Promise<void>;
   onClose: () => void;
@@ -1678,6 +1717,8 @@ function EntryDetailSheet({
         </span>
       </div>
       {entryStatusReason(entry, lang) ? <p className={styles.entryStatusReason}>{entryStatusReason(entry, lang)}</p> : null}
+      <InventoryPurchaseStatus entry={entry} issues={projectionIssues} lang={lang} onOpenPayableParty={onOpenPayableParty} onShowPayables={onShowPayables} onShowIssue={onShowIssue} />
+      <PrepaidExpenseStatus entry={entry} lang={lang} />
       {manualDisplayOpen && entry.editableManualDisplay && entry.transactionId != null ? (
         <ManualDisplayEditor
           lang={lang}
@@ -1756,12 +1797,12 @@ function EntryDetailSheet({
                   {vi ? "Sửa" : "수정"}
                 </button>
               ) : null}
-              {item.purchaseSettlement ? <PurchaseSettlementDetails settlement={item.purchaseSettlement} vi={vi} /> : null}
             </article>
           ))}
         </div>
       ) : null}
       <PayablePaymentHistorySection entry={entry} lang={lang} />
+      {entry.drilldown === "inventory" ? <InventoryAdvancedDetails entry={entry} issues={projectionIssues} lang={lang} /> : null}
       {payments.length ? (
         <div className={styles.itemList}>
           {payments.map((payment, index) => (
@@ -1926,7 +1967,7 @@ function EntryDetailSheet({
       {mealDraft ? <MealAdjustmentEditor lang={lang} draft={mealDraft} setDraft={setMealDraft} saving={editSaving} error={mealError} onSave={saveMealAdjustment}/>:null}
       {confirmedMeal&&mealNotice?<p role="status" className={styles.policyNote}>{mealNotice}</p>:null}
       {confirmedMeal&&closed?<p className={styles.policyNote}>{vi?"Không thể sửa giao dịch của tháng đã khóa.":"마감된 월의 거래는 일반 수정할 수 없습니다."}</p>:null}
-      {entry.status === "confirmed" && entry.origin === "auto" ? (
+      {entry.status === "confirmed" && entry.origin === "auto" && entry.drilldown !== "inventory" ? (
         <p className={styles.policyNote}>
           {vi
             ? "Ảnh chụp dữ liệu nguồn được giữ nguyên. Thay đổi trong tháng đã khóa được xử lý theo chính sách điều chỉnh sổ hiện hành."
@@ -2655,7 +2696,10 @@ function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
       : `${entry.systemDisplay.itemCount.toLocaleString("ko-KR")}품목`;
     return [items, settlement].filter(Boolean).join(" · ");
   }
+  // P&L only: this month's share of an amount already paid in advance.
+  if (entry.prepaidAllocation) return lang === "vi" ? "Phân bổ chi phí trả trước · Thực trả 0₫" : "선납 비용배분 · 실제 지급 0₫";
   if (entry.systemDisplay?.kind === "rent") return lang === "vi" ? "Tiền thuê" : "임대료";
+  if (entry.prepaidPayment) return lang === "vi" ? "Thanh toán trả trước · chi phí phân bổ hằng tháng" : "선납 지급 · 손익은 월별 배분";
   if (entry.systemDisplay?.kind === "payablePayment" && entry.systemDisplay.listedPayablesAmount) {
     // The row shows only the prior-month part; this month's part is on its purchase rows.
     return lang === "vi"
@@ -2734,6 +2778,8 @@ function isPayableAccount(accountName: string | null) {
 function accountBadgeLabel(accountName: string | null, lang: "ko" | "vi", entry?: LedgerEntry) {
   if (entry?.systemDisplay?.kind === "cardSettlementDeposit") return lang === "vi" ? "Đối soát thẻ" : "카드정산";
   if (entry?.systemDisplay?.kind === "accountTransfer") return accountTransferBadgeLabel(entry.systemDisplay, lang);
+  // No account pays a prepaid allocation; never read it as 미지정 or 미지급.
+  if (entry?.prepaidAllocation) return lang === "vi" ? "Đã trả trước" : "선납";
   if (entry?.systemDisplay?.kind === "pos" && entry.systemDisplay.paymentBucket === "card") {
     return lang === "vi" ? "Thẻ" : "카드";
   }
@@ -2791,6 +2837,38 @@ function EntryFlags({ entry, lang }: { entry: LedgerEntry; lang: "ko" | "vi" }) 
       {entry.requiresCorrection ? <span className={styles.correctionBadge}>{vi ? "Cần điều chỉnh" : "정정 필요"}</span> : null}
       {advanceCancelled ? <span className={styles.cancelledBadge}>{vi ? "Đã hủy ứng lương" : "가불 취소됨"}</span> : null}
     </span>
+  );
+}
+
+// Purchase detail, collapsed: 원입고 정산 (incl. 비현금 소액조정), the
+// receipt's processing history, audit rows and raw JSON. Kept in full, only
+// moved out of the first screen.
+function InventoryAdvancedDetails({ entry, issues, lang }: { entry: LedgerEntry; issues: readonly InventoryProjectionIssue[]; lang: "ko" | "vi" }) {
+  const vi = lang === "vi";
+  const settled = entry.items.filter(item => item.purchaseSettlement);
+  const matched = inventoryEntryIssues(entry, issues);
+  return (
+    <details className={styles.advancedDetails} data-testid="inventory-advanced-details">
+      <summary>{vi ? "Chi tiết nâng cao · quyết toán, kiểm toán" : "고급 상세 · 정산·감사 기록"}</summary>
+      <div className={styles.advancedBody}>
+        {settled.map(item => (
+          <div key={item.transactionId ?? item.candidateId}>
+            <p className={styles.advancedItemName}>📦 {vi ? item.nameVi || item.name : item.name}</p>
+            <PurchaseSettlementDetails settlement={item.purchaseSettlement!} vi={vi} />
+          </div>
+        ))}
+        {matched.map(issue => <InventoryPurchaseCaseDetails key={issue.inventoryLogId} issue={issue} vi={vi} />)}
+        {entry.status === "confirmed" && entry.origin === "auto" ? (
+          <p className={styles.policyNote}>
+            {vi
+              ? "Ảnh chụp dữ liệu nguồn được giữ nguyên. Thay đổi trong tháng đã khóa được xử lý theo chính sách điều chỉnh sổ hiện hành."
+              : "원본 snapshot은 보존됩니다. 마감된 월의 변경은 기존 장부 정정 정책으로 처리됩니다."}
+          </p>
+        ) : null}
+        {!settled.length && !matched.length && !(entry.status === "confirmed" && entry.origin === "auto")
+          ? <p className={styles.policyNote}>{vi ? "Không có thêm chi tiết." : "추가 상세가 없습니다."}</p> : null}
+      </div>
+    </details>
   );
 }
 

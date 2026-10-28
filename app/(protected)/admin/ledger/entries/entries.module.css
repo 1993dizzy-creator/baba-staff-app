@@ -167,6 +167,28 @@
 .paymentHistoryTitle{margin:6px 0 0;color:#111827;font-size:12px}
 .paymentHistoryMeta{grid-column:1/-1;min-width:0;color:#6b7280;font-size:10px;line-height:1.4;overflow-wrap:anywhere}
 .direction.payment{background:#e8f0fe;color:#1d4ed8}
+.direction.allocation{background:#eef2f7;color:#475569}
+.statusPanel{display:grid;gap:6px;min-width:0;margin:8px 0;padding:10px 12px;border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;font-size:12px}
+.statusPanel_ok{border-color:#d1e7dd;background:#f3faf6}
+.statusPanel_open{border-color:#fde2c3;background:#fffaf3}
+.statusPanel_review{border-color:#fecaca;background:#fff7f7}
+.statusPanelTitle{margin:4px 0 0;color:#6b7280;font-size:11px;font-weight:800}
+.statusHeadline{margin:0;color:#111827;font-size:14px;font-weight:800;overflow-wrap:anywhere}
+.statusFacts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:0}
+.statusFacts>div{min-width:0;padding:6px 8px;border-radius:8px;background:#fff}
+.statusFacts dt{color:#6b7280;font-size:10px;line-height:1.3;overflow-wrap:anywhere}
+.statusFacts dd{margin:2px 0 0;color:#111827;font-size:12px;font-weight:700;overflow-wrap:anywhere}
+.statusList{display:grid;gap:4px;margin:0;padding-left:16px;color:#374151;line-height:1.45;overflow-wrap:anywhere}
+.statusList strong{display:block}
+.statusDiff{display:block;color:#b45309;font-weight:700}
+.statusNone{margin:0;color:#6b7280}
+.statusLink{padding:0;border:0;background:none;color:#1d4ed8;font:inherit;font-weight:800;cursor:pointer;text-decoration:underline}
+.advancedDetails{margin-top:8px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;font-size:12px}
+.advancedDetails>summary{padding:9px 12px;color:#6b7280;font-weight:800;cursor:pointer}
+.advancedBody{display:grid;gap:8px;min-width:0;padding:0 12px 10px;overflow-wrap:anywhere}
+.advancedBody pre{max-width:100%;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
+.advancedItemName{margin:0 0 4px;font-weight:700;color:#111827}
+@media (max-width:380px){.statusFacts{grid-template-columns:1fr}}
 .direction.investment{background:#f1edfa;color:#68459a}
 .cancelledBadge{padding:3px 5px;border-radius:999px;background:#f3f4f6;color:#6b7280;font-size:9px;font-weight:800;white-space:nowrap}
 .manualDisplayHistory{border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;padding:10px 12px;font-size:12px}

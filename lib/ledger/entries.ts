@@ -34,6 +34,9 @@ export type LedgerEntryItem = {
   remainingAmount?: number;
   settlementStatus?: "unpaid" | "partial" | "paid";
   purchaseSettlement?: PurchaseSettlement;
+  // A payable booked as 결제 미확인 (snapshot paymentVerification "pending"):
+  // listed under 미납금 현황 › 기타, outside the month-end 미납 total.
+  paymentVerificationPending?: boolean;
   memo?: string | null;
   sourceUpdatedAt?: string | null;
   displayTime?: string | null;
@@ -104,6 +107,13 @@ export type LedgerEntry = {
   userAdjustment?: "balance" | "paymentDifference";
   // Display identity only: an actual account-to-account transfer transaction.
   transferTransaction?: boolean;
+  // Display identity only: a recurring plan's monthly expense_recognition with
+  // no fund movement and no payable (e.g. this month's share of rent paid in
+  // advance). It is P&L only: actual payment 0₫, nothing left to pay.
+  prepaidAllocation?: { planName: string | null; monthlyAmount: number | null; effectiveFrom: string | null };
+  // Display identity only: the actual cash payment of an expense paid in
+  // advance (prepaid_expense_payment). Cash only; P&L follows the allocations.
+  prepaidPayment?: boolean;
   // Display-only row derived from a payable payment's linked difference (see
   // withPaymentDifferenceAdjustments); not part of 전체 or its subtotal, except:
   // shownInAll: its payment row is read inside the purchase (paymentSettledInPayables),
@@ -234,11 +244,13 @@ export function entryMatchesExpenseFilter(entry: Pick<LedgerEntry, "direction" |
   return entry.direction === "expense" || isPayrollPaymentOutflow(entry);
 }
 
-export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign" | "systemDisplay" | "payrollPayment" | "fundFlow" | "paymentDifference">) {
+export function entryDisplaySubtotal(entry: Pick<LedgerEntry, "direction" | "amount" | "economicEffectSign" | "systemDisplay" | "payrollPayment" | "fundFlow" | "paymentDifference" | "prepaidAllocation">) {
   // Informational rows: reserve history and derived payment-difference rows
   // (their expense is already in the payment row's subtotal, unless that
   // payment row is read inside its purchases — then this row carries it).
-  if (isReserveLedgerEntry(entry) || (entry.paymentDifference && !entry.paymentDifference.shownInAll)) return { income: 0, expense: 0 };
+  // A prepaid allocation is P&L only (no money moves that day), so it stays
+  // out of the day's 지출; the monthly P&L still recognizes it.
+  if (isReserveLedgerEntry(entry) || entry.prepaidAllocation || (entry.paymentDifference && !entry.paymentDifference.shownInAll)) return { income: 0, expense: 0 };
   const signedAmount = entry.amount * entry.economicEffectSign;
   return {
     income: entry.direction === "income" ? signedAmount : 0,
@@ -491,6 +503,7 @@ const inventoryItem = (row: CandidateRow | TransactionRow, viewMonth?:string): L
       {payableId:transaction.payable.id,transactionId:transaction.id}):undefined;
   return {
     ...(settlement?{purchaseSettlement:settlement}:{}),
+    ...(settlement&&snapshot.paymentVerification==="pending"?{paymentVerificationPending:true}:{}),
     ...(Object.hasOwn(row, "proposed_amount") ? { candidateId: value((row as CandidateRow).id) } : { transactionId: value(row.id) }),
     ...inventorySourceIdentity(row),
     name: String(display.item_name ?? display.item_name_vi ?? "품목"),
@@ -803,6 +816,14 @@ export function buildLedgerEntries(
       const number = Number(snapshot[key]);
       return snapshot[key] == null || !Number.isFinite(number) ? null : number;
     };
+    const prepaidAllocation = row.type === "expense_recognition" && row.source_type === "recurring_expense" &&
+      !row.movements?.length && !row.payable
+      ? {
+        planName: typeof snapshot.planName === "string" && snapshot.planName.trim() ? snapshot.planName.trim() : null,
+        monthlyAmount: snapshotNumber("amount"),
+        effectiveFrom: typeof snapshot.effectiveFrom === "string" ? snapshot.effectiveFrom : null,
+      }
+      : null;
     entries.push({
       id: `transaction:${transactionId}`, businessDate: row.business_date, direction, participatesInProfit,
       origin: automatic ? "auto" : "manual", status: "confirmed", isSystemAdjustment: isSystemAdjustmentTransaction(row),
@@ -819,6 +840,8 @@ export function buildLedgerEntries(
       editableManualDisplay,
       ...(userAdjustmentKind(row) ? { userAdjustment: userAdjustmentKind(row) } : {}),
       ...(row.type === "transfer" ? { transferTransaction: true } : {}),
+      ...(prepaidAllocation ? { prepaidAllocation } : {}),
+      ...(row.type === "prepaid_expense_payment" ? { prepaidPayment: true } : {}),
       ...(ledgerPayrollAdvanceRequestId(row)
         ? { ledgerPayrollAdvance: { requestId: ledgerPayrollAdvanceRequestId(row)!, cancelled: cancelledPayrollAdvanceIds.has(transactionId) } }
         : {}),

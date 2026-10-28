@@ -13,7 +13,17 @@ export function parseInventoryLedgerFocus(params: { get(name: string): string | 
   return sourceKey === expected ? { logId, sourceKey } : null;
 }
 
-const itemMatches = (item: LedgerEntryItem, focus: InventoryLedgerFocus) =>
+// The same URL without the one-shot focus parameters, so a later remount, month
+// switch or back/forward never reopens the receipt's sheet by itself.
+export function ledgerHrefWithoutInventoryFocus(pathname: string, search: string) {
+  const params = new URLSearchParams(search);
+  params.delete("inventoryLogId");
+  params.delete("sourceKey");
+  const query = params.toString();
+  return query ? `${pathname}?${query}` : pathname;
+}
+
+const itemMatches =(item: LedgerEntryItem, focus: InventoryLedgerFocus) =>
   item.inventoryLogId === focus.logId && (item.sourceKey ?? `inventory-log:${item.inventoryLogId}`) === focus.sourceKey;
 
 // The pending candidate is the actionable row; otherwise the currently posted expense.

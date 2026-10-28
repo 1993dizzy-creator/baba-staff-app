@@ -11,9 +11,10 @@ export function entryDisplayAmount(entry: Pick<LedgerEntry, "amount" | "systemDi
     : entry.amount;
 }
 
-export function entryDisplayAmountSign(entry: Pick<LedgerEntry, "direction" | "paymentTransaction" | "payrollPayment" | "fundFlow" | "systemDisplay" | "userAdjustment">) {
-  // Payments and user-facing adjustments show a plain, unsigned amount.
-  if (entry.paymentTransaction || entry.userAdjustment) return "";
+export function entryDisplayAmountSign(entry: Pick<LedgerEntry, "direction" | "paymentTransaction" | "payrollPayment" | "fundFlow" | "systemDisplay" | "userAdjustment" | "prepaidAllocation">) {
+  // Payments, user-facing adjustments and prepaid allocations (no money moves)
+  // show a plain, unsigned amount.
+  if (entry.paymentTransaction || entry.userAdjustment || entry.prepaidAllocation) return "";
   if (entry.systemDisplay?.kind === "investment") {
     return entry.systemDisplay.cashFlow === "outflow" ? "−" :
       entry.systemDisplay.cashFlow === "inflow" ? "+" : "";
@@ -28,8 +29,8 @@ export function entryDisplayAmountSign(entry: Pick<LedgerEntry, "direction" | "p
   return "";
 }
 
-export function entryDisplayAmountTone(entry: Pick<LedgerEntry, "direction" | "payrollPayment" | "fundFlow" | "userAdjustment">): "income" | "expense" | "transfer" {
-  if (entry.userAdjustment) return "transfer";
+export function entryDisplayAmountTone(entry: Pick<LedgerEntry, "direction" | "payrollPayment" | "fundFlow" | "userAdjustment" | "prepaidAllocation">): "income" | "expense" | "transfer" {
+  if (entry.userAdjustment || entry.prepaidAllocation) return "transfer";
   if (entry.direction === "income") return "income";
   if (entry.direction === "expense" || isPayrollPaymentOutflow(entry)) return "expense";
   return "transfer";
