@@ -59,7 +59,10 @@ test("partner info and Ledger authoring use one effective partner emoji source",
   assert.match(manager, /effectivePartnerEmoji\(subtype\.partnerType, subtype\)/);
   assert.match(ledgerApi, /emoji: effectivePartnerEmoji\(partner\.partner_type as PartnerType, partnerSubtype\)/);
   assert.match(ledger, /<PartnerSelect /);
-  assert.match(read("app/(protected)/admin/ledger/entries/PartnerSelect.tsx"), /\{partner\.emoji\} \{partner\.name\}/);
+  // The ledger and inventory selects share one label rule: effective emoji, then the name.
+  assert.match(read("app/(protected)/admin/ledger/entries/PartnerSelect.tsx"), /renderPartnerOptionGroups\(activePartners, lang, partner => String\(partner\.id\)\)/);
+  assert.match(read("components/partners/PartnerOptionGroups.tsx"), /\{partnerOptionLabel\(partner\)\}/);
+  assert.match(read("lib/partners/select-options.ts"), /return `\$\{partner\.emoji\?\.trim\(\) \|\| partnerTypeEmoji\[partnerTypeOrOther\(partner\.partnerType\)\]\} \$\{partner\.name\}`;/);
   assert.match(ledger, /partnerByLedgerParty\.get\(entry\.partyId\)/);
   assert.match(ledger, /chooseLedgerEntryEmoji\(partner\.emoji, entryCategoryEmoji\(entry\)\)/);
 });

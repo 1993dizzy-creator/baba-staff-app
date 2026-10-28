@@ -86,8 +86,11 @@ test("general form and quick purchase share the supplier contract", () => {
 });
 
 test("pending supplier optgroups keep their labels without repeating status per option", () => {
-  assert.equal((inventoryUi.match(/lang === "vi" \? "Cần xác nhận" : "확인 필요"/g) ?? []).length, 2);
-  assert.doesNotMatch(inventoryUi, /supplierName\} \(\{lang === "vi" \? "cần xác nhận" : "확인 필요"\}\)/);
+  // Both inventory selects (and the item editor) render the one shared supplier option list.
+  const supplierOptions = read("components/inventory/SupplierSelectOptions.tsx");
+  assert.equal((inventoryUi.match(/<SupplierSelectOptions partners=\{supplierPartners\} aliases=\{supplierAliases\}/g) ?? []).length, 2);
+  assert.equal((supplierOptions.match(/lang === "vi" \? "Cần xác nhận" : "확인 필요"/g) ?? []).length, 1);
+  assert.doesNotMatch(supplierOptions, /supplierName\} \(\{lang === "vi" \? "cần xác nhận" : "확인 필요"\}\)/);
 });
 
 test("bootstrap adds minimal supplier options without another client fetch", () => {

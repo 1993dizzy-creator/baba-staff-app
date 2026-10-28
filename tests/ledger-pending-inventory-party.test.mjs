@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import * as jsxRuntime from 'react/jsx-runtime';
 import ts from 'typescript';
 import { inventoryManualCategoryOptions, groupManualEntryPartners } from '../lib/ledger/manual-entry-policy.ts';
+import * as partnerSelectOptionsModule from '../lib/partners/select-options.ts';
 const read = path => readFileSync(path,'utf8');
 const source = read('app/(protected)/admin/ledger/entries/page.tsx');
 const ast = ts.createSourceFile('page.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
@@ -24,7 +25,10 @@ function compile(text,bindings,returnName) {
 const partners=[{id:1012,ledgerPartyId:12,name:'Postpaid',isActive:true,partnerType:'food',emoji:'Food'},{id:1011,ledgerPartyId:11,name:'Inactive',isActive:false,partnerType:'other',emoji:'Inactive'},{id:1033,ledgerPartyId:33,name:'kh\u00e1c',isActive:true,partnerType:'other',emoji:'Other'}];
 const partnerModule={exports:{}};
 const partnerCode=ts.transpileModule(read('app/(protected)/admin/ledger/entries/PartnerSelect.tsx'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
-new Function('require','module','exports',partnerCode)(name=>({'react/jsx-runtime':jsxRuntime,'@/lib/ledger/manual-entry-policy':{groupManualEntryPartners},'@/components/bar/keeping/KeepingUi':{keepingInputStyle:{}}})[name],partnerModule,partnerModule.exports);
+// PartnerSelect renders the shared 거래처 optgroups (the same helper the inventory selects use).
+const optionGroupsModule={exports:{}};
+new Function('require','module','exports',ts.transpileModule(read('components/partners/PartnerOptionGroups.tsx'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText)(name=>({'react/jsx-runtime':jsxRuntime,'@/lib/partners/select-options':partnerSelectOptionsModule})[name],optionGroupsModule,optionGroupsModule.exports);
+new Function('require','module','exports',partnerCode)(name=>({'react/jsx-runtime':jsxRuntime,'@/components/partners/PartnerOptionGroups':optionGroupsModule.exports,'@/components/bar/keeping/KeepingUi':{keepingInputStyle:{}}})[name],partnerModule,partnerModule.exports);
 const PartnerSelect=partnerModule.exports.default;
 const draft=resolution=>({item:{candidateId:1450,name:'냅킨',nameVi:'Giấy ăn'},resolution,categoryId:'4',fundAccountId:'1',partyId:'',memo:''});
 function fixture({resolution='payable',partyId=null,lang='ko',response={ok:true,body:{result:{status:'confirmed'}}},fetchImpl,partnerRows=partners}={}) {

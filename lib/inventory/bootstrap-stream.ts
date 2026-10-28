@@ -1,10 +1,12 @@
+import type { PartnerSelectOption } from "../partners/select-options";
+
 export type InventoryBootstrapStreamTiming = Record<string, number>;
 
 export type InventoryBootstrapStreamEvent<TItem, TStatus, TKeg> =
   | {
       type: "items";
       items: TItem[];
-      supplierPartners?: Array<{ id: number; name: string }>;
+      supplierPartners?: PartnerSelectOption[];
       supplierAliases?: Array<{ id: number; supplierName: string; status: "pending" | "linked" | "ignored"; businessPartnerId: number | null }>;
     }
   | {
@@ -26,7 +28,7 @@ export type InventoryBootstrapStreamResult<TItem, TStatus, TKeg> = {
   statusMap: Record<string, TStatus>;
   kegProgressMap: Record<string, TKeg>;
   activeKegTrackingItemIds: number[];
-  supplierPartners: Array<{ id: number; name: string }>;
+  supplierPartners: PartnerSelectOption[];
   supplierAliases: Array<{ id: number; supplierName: string; status: "pending" | "linked" | "ignored"; businessPartnerId: number | null }>;
   timing: InventoryBootstrapStreamTiming | null;
 };
@@ -70,7 +72,7 @@ export async function readInventoryBootstrapStream<TItem, TStatus, TKeg>(
   response: Response,
   handlers: {
     onItems: (items: TItem[], suppliers: {
-      supplierPartners: Array<{ id: number; name: string }>;
+      supplierPartners: PartnerSelectOption[];
       supplierAliases: Array<{ id: number; supplierName: string; status: "pending" | "linked" | "ignored"; businessPartnerId: number | null }>;
     }) => void;
     onEnrichment: (event: {

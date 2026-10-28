@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 import {atomicInventoryDatabase} from './helpers/inventory-atomic-fixture.mjs';
 import {safeFixture,snapshot as safeSnapshot} from './helpers/inventory-safe-correction-fixture.mjs';
+import * as partnerSelectOptionsModule from '../lib/partners/select-options.ts';
 const load=(file,deps={})=>{const m={exports:{}};const code=ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('require','module','exports',code)(name=>{assert.ok(name in deps,'unexpected dependency '+name);return deps[name];},m,m.exports);return m.exports;};
 const version='2026-10-10T03:00:00.000Z';
 function setup({role='owner',authenticated=true,inactive=false,race=false,closed=false,quantity=2,postCommitFailure=false,rpcHandler=null,correctionRows=[],stockCheck=null,paid=false,rootDate="2026-10-03",extraRoots=[],rootOverrides={},itemOverrides={},businessDate="2026-10-10",candidateOverride=undefined,transactionOverride=undefined,payableOverride=undefined,allocations=[]}={}) {
@@ -15,7 +16,8 @@ function setup({role='owner',authenticated=true,inactive=false,race=false,closed
   if(update){if(race)item.updated_at='2026-10-10T04:00:00.000Z';if(filters.every(([k,v])=>k.startsWith('!')?item[k.slice(1)]!==v:item[k]===v)){Object.assign(item,update);writes.push({table,update});data={...item};}}
   else data=filters.some(([k])=>k==='!id')?[]:{...item};
  }else if(table==='inventory_logs'){if(insert){if(postCommitFailure)throw Error('audit transport unavailable');writes.push({table,insert});data={id:101,...insert};}else if(filters.some(([k,v])=>k==='reason'&&v==='stock_check'))data=stockCheck;else if(filters.some(([k,v])=>(k==='correction_of_inventory_log_id'&&v!==null)||k==='in:correction_of_inventory_log_id'))data=correctionRows;else data=[root,...extraRoots];}
- else if(table==='business_partners')data=[{id:10,name:'QA'}];
+ else if(table==='business_partners')data=[{id:10,name:'QA',partner_type:'food',partner_subtype_id:3,is_active:true}];
+ else if(table==='business_partner_subtypes')data=[{id:3,emoji:'🥩'}];
  else if(table==='business_partner_supplier_aliases')data=[{id:20,supplier_name:'Alias',status:'linked',business_partner_id:10}];
  else if(table==='ledger_month_closures')data=closed?{month:'2026-10-01'}:null;
  else if(table==='ledger_candidates')data=candidateOverride!==undefined?candidateOverride:paid?{status:'confirmed',proposed_amount:60000,resolved_transaction_id:1}:null;
@@ -43,6 +45,7 @@ function setup({role='owner',authenticated=true,inactive=false,race=false,closed
  '@/lib/inventory/price-logs':{insertInventoryPriceLog:async()=>{}},
  '@/lib/ledger/inventory-projection':{projectInventoryPurchaseLog:async(id,actor)=>{projections.push({id,actor});return {status:'synced',code:'REBOOKED',inventoryLogId:id};}},
  '@/lib/inventory/supplier-partners-server':{resolveInventorySupplier:async()=>{calls.push('supplier-resolve');return null;},applyResolvedInventorySupplier:p=>p},
+ '@/lib/partners/select-options':partnerSelectOptionsModule,
  '@/lib/inventory/reasons':load('lib/inventory/reasons.ts'),
  '@/lib/inventory/parts':load('lib/inventory/parts.ts'),
  });
@@ -50,7 +53,9 @@ function setup({role='owner',authenticated=true,inactive=false,race=false,closed
 }
 const edit=overrides=>({id:1,payload:{item_name:'Renamed'},source:'edit_form',reason:'other',expectedQuantity:2,expectedUpdatedAt:version,...overrides});
 test('selected item GET rejects unauthenticated/invalid IDs before table reads',async()=>{const a=setup({authenticated:false});assert.equal((await a.get()).status,401);assert.equal(a.calls.length,0);const b=setup();for(const id of ['abc',0,-1,1.5])assert.equal((await b.get(id)).status,400);assert.equal(b.calls.length,0);});
-test('selected GET actual response is a one-item array with mapped supplier aliases',async()=>{const s=setup();const r=await s.get();assert.equal(r.status,200);const body=await r.json();assert.equal(body.data.length,1);assert.equal(body.data[0].updated_at,version);assert.deepEqual(body.supplierAliases,[{id:20,supplierName:'Alias',status:'linked',businessPartnerId:10}]);assert.equal(s.calls.filter(t=>t==='inventory').length,1);});
+test('selected GET actual response is a one-item array with mapped supplier aliases',async()=>{const s=setup();const r=await s.get();assert.equal(r.status,200);const body=await r.json();assert.equal(body.data.length,1);assert.equal(body.data[0].updated_at,version);assert.deepEqual(body.supplierAliases,[{id:20,supplierName:'Alias',status:'linked',businessPartnerId:10}]);assert.equal(s.calls.filter(t=>t==='inventory').length,1);
+ // Same partner option shape as the bootstrap stream: type, effective emoji, active flag.
+ assert.deepEqual(body.supplierPartners,[{id:10,name:'QA',partnerType:'food',emoji:'🥩',isActive:true}]);assert.equal(s.calls.filter(t=>t==='business_partner_subtypes').length,1);});
 test('inactive selected GET/PATCH require leader permission; active staff edit remains allowed',async()=>{for(const role of ['staff','manager','leader','owner','master']){const s=setup({role,inactive:true});const status=role==='staff'?403:200;assert.equal((await s.get()).status,status);assert.equal((await s.patch(edit())).status,status);if(status===403)assert.equal(s.writes.length,0);}assert.equal((await setup({role:'staff'}).patch(edit())).status,200);});
 test('PATCH 401 and active-status bypass cannot write',async()=>{const a=setup({authenticated:false});assert.equal((await a.patch(edit())).status,401);assert.equal(a.writes.length,0);const b=setup({role:'staff'});assert.equal((await b.patch(edit({payload:{is_active:false}}))).status,400);assert.equal(b.writes.length,0);});
 test('stale metadata/quantity rejects before supplier resolution and all source writes',async()=>{for(const body of [edit({expectedUpdatedAt:'2026-10-09T00:00:00Z'}),edit({expectedQuantity:1})]){const s=setup();const r=await s.patch(body);assert.equal(r.status,409);assert.equal(s.writes.length,0);assert.ok(!s.calls.includes('supplier-resolve'));}});

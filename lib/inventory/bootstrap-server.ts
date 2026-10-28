@@ -19,6 +19,7 @@ import {
   type InventoryStatusTimingMetric,
 } from "@/lib/inventory/stock-check-status-server";
 import type { InventoryStatus } from "@/lib/inventory/stock-check-status-core";
+import { PARTNER_OPTION_COLUMNS, PARTNER_SUBTYPE_EMOJI_COLUMNS, partnerSelectOptions, type PartnerSelectOption } from "@/lib/partners/select-options";
 
 type SupabaseClientLike = Pick<SupabaseClient, "from" | "rpc">;
 
@@ -47,7 +48,7 @@ export type InventoryBootstrapTiming = ReturnType<
 
 export type InventoryBootstrapBase = {
   inventoryItems: InventoryReadItem[];
-  supplierPartners: Array<{ id: number; name: string }>;
+  supplierPartners: PartnerSelectOption[];
   supplierAliases: Array<{ id: number; supplierName: string; status: "pending" | "linked" | "ignored"; businessPartnerId: number | null }>;
   supplierPartnerNames: Map<number, string>;
   activeItemIds: number[];
@@ -95,18 +96,22 @@ export async function fetchInventoryBootstrapBase(params: {
 }) {
   const itemsStartedAt = performance.now();
   let inventoryItems: InventoryReadItem[];
-  let partnerRows: Array<{ id: number | string; name: string }>;
+  let partnerRows: Array<{ id: number | string; name: string; partner_type: string | null; partner_subtype_id: number | string | null; is_active: boolean | null }>;
+  let subtypeRows: Array<{ id: number | string; emoji: string | null }>;
   let aliasRows: Array<{ id: number | string; supplier_name: string; status: "pending" | "linked" | "ignored"; business_partner_id: number | string | null }>;
   try {
-    const [items, partners, aliases] = await Promise.all([
+    const [items, partners, subtypes, aliases] = await Promise.all([
       fetchInventoryItems({ supabase: params.supabase, includeInactive: params.includeInactive }),
-      params.supabase.from("business_partners").select("id,name").eq("is_active", true).order("name"),
+      params.supabase.from("business_partners").select(PARTNER_OPTION_COLUMNS).eq("is_active", true).order("name"),
+      params.supabase.from("business_partner_subtypes").select(PARTNER_SUBTYPE_EMOJI_COLUMNS),
       params.supabase.from("business_partner_supplier_aliases").select("id,supplier_name,status,business_partner_id").in("status", ["pending", "linked", "ignored"]).order("supplier_name"),
     ]);
     if (partners.error) throw partners.error;
+    if (subtypes.error) throw subtypes.error;
     if (aliases.error) throw aliases.error;
     inventoryItems = items;
     partnerRows = (partners.data ?? []) as typeof partnerRows;
+    subtypeRows = (subtypes.data ?? []) as typeof subtypeRows;
     aliasRows = (aliases.data ?? []) as typeof aliasRows;
   } finally {
     params.timing.record("items", performance.now() - itemsStartedAt);
@@ -114,7 +119,7 @@ export async function fetchInventoryBootstrapBase(params: {
 
   return {
     inventoryItems,
-    supplierPartners: partnerRows.map(row => ({ id: Number(row.id), name: row.name })),
+    supplierPartners: partnerSelectOptions(partnerRows, subtypeRows),
     supplierAliases: aliasRows.map(row => ({ id: Number(row.id), supplierName: row.supplier_name, status: row.status, businessPartnerId: row.business_partner_id === null ? null : Number(row.business_partner_id) })),
     supplierPartnerNames: new Map(partnerRows.map(row => [Number(row.id), row.name])),
     activeItemIds: inventoryItems

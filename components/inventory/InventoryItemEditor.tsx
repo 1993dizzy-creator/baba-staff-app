@@ -15,6 +15,8 @@ import { CATEGORY_OPTIONS_BY_PART, getInventoryCategoryLabel, resolveInventoryCa
 import { parseDecimal } from "@/lib/inventory/number";
 import { formatNumber, parsePrice } from "@/lib/inventory/money";
 import { InventoryImageCompressionError, compressInventoryImage, formatFileSize } from "@/lib/inventory/image-compression";
+import type { PartnerSelectOption } from "@/lib/partners/select-options";
+import SupplierSelectOptions from "@/components/inventory/SupplierSelectOptions";
 type InventoryItem = {
     id: number;
     item_name?: string | null;
@@ -52,10 +54,7 @@ type InventoryItem = {
     updated_at?: string | null;
     updated_by_name?: string | null;
 };
-type SupplierPartnerOption = {
-    id: number;
-    name: string;
-};
+type SupplierPartnerOption = PartnerSelectOption;
 type SupplierAliasOption = {
     id: number;
     supplierName: string;
@@ -957,18 +956,7 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
                 setSupplier("");
             }
         }} style={ui.input}>
-                                <option value="">{c.supplier}</option>
-
-                                <optgroup label={lang === "vi" ? "Đối tác chính thức" : "정규 거래처"}>
-                                    {supplierPartners.map((option) => <option key={option.id} value={`partner:${option.id}`}>{option.name}</option>)}
-                                </optgroup>
-                                <optgroup label={lang === "vi" ? "Cần xác nhận" : "확인 필요"}>
-                                    {supplierAliases.filter((alias) => alias.status === "pending").map((alias) => <option key={alias.id} value={`alias:${alias.id}`}>{alias.supplierName}</option>)}
-                                </optgroup>
-
-                                <option value="__custom__">
-                                    {c.directInput}
-                                </option>
+                                <SupplierSelectOptions partners={supplierPartners} aliases={supplierAliases} lang={lang} placeholder={c.supplier} directInput={c.directInput} />
                             </select>
                         </div>
 

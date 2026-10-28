@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
+import * as partnerSelectOptionsModule from '../lib/partners/select-options.ts';
 
 function load(path, dependencies = {}) {
   const testModule = { exports: {} };
@@ -218,6 +219,7 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootL
     '@/lib/inventory/price-logs': { insertInventoryPriceLog: async () => { calls.push('price-history'); } },
     '@/lib/ledger/inventory-projection': projection,
     '@/lib/inventory/supplier-partners-server': { resolveInventorySupplier: async ({payload}) => ({ supplier: payload.supplier ?? 'Won Mart', supplier_partner_id: payload.supplierPartnerId ?? 10 }), applyResolvedInventorySupplier: (payload, supplier) => ({ ...payload, ...supplier }) },
+    '@/lib/partners/select-options': partnerSelectOptionsModule,
     '@/lib/inventory/reasons': load('lib/inventory/reasons.ts'),
     '@/lib/inventory/parts': load('lib/inventory/parts.ts'),
   });

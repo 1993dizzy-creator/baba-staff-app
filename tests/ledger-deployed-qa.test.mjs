@@ -73,6 +73,8 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
   deps['@/lib/ledger/inventory-entry-focus']=transpiled('lib/ledger/inventory-entry-focus.ts',{});
   deps['@/lib/ledger/payable-payment-client']=transpiled('lib/ledger/payable-payment-client.ts',{});
   deps['@/lib/ledger/payable-payment-messages']=transpiled('lib/ledger/payable-payment-messages.ts',{});
+  deps['@/lib/partners/select-options']=require('../lib/partners/select-options.ts');
+  deps['@/components/partners/PartnerOptionGroups']=transpiled('components/partners/PartnerOptionGroups.tsx',deps);
   deps['./PartnerSelect']=transpiled('app/(protected)/admin/ledger/entries/PartnerSelect.tsx',deps);
   deps['@/components/ledger/InventoryProjectionResolution']=transpiled('components/ledger/InventoryProjectionResolution.tsx',deps);
   const testModule={exports:{}};

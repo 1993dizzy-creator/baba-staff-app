@@ -29,6 +29,7 @@ import {
 import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
 import { projectInventoryPurchaseLog } from "@/lib/ledger/inventory-projection";
 import { applyResolvedInventorySupplier, resolveInventorySupplier } from "@/lib/inventory/supplier-partners-server";
+import { PARTNER_OPTION_COLUMNS, PARTNER_SUBTYPE_EMOJI_COLUMNS, partnerSelectOptions } from "@/lib/partners/select-options";
 import {
   type InventoryReasonValue,
   type InventorySourceValue,
@@ -378,17 +379,19 @@ export async function GET(req: Request) {
     if (selectedId !== null) {
       const itemId = Number(selectedId);
       if (!Number.isSafeInteger(itemId) || itemId <= 0) return jsonError("invalid_item_id", "Invalid item id", 400);
-      const [itemResult, partners, aliases] = await Promise.all([
+      const [itemResult, partners, subtypes, aliases] = await Promise.all([
         supabaseAdmin.from("inventory").select("*").eq("id", itemId).maybeSingle(),
-        supabaseAdmin.from("business_partners").select("id,name").eq("is_active", true),
+        supabaseAdmin.from("business_partners").select(PARTNER_OPTION_COLUMNS).eq("is_active", true),
+        supabaseAdmin.from("business_partner_subtypes").select(PARTNER_SUBTYPE_EMOJI_COLUMNS),
         supabaseAdmin.from("business_partner_supplier_aliases").select("id,supplier_name,status,business_partner_id").in("status", ["pending", "linked", "ignored"]),
       ]);
       if (itemResult.error) throw itemResult.error;
       if (partners.error) throw partners.error;
+      if (subtypes.error) throw subtypes.error;
       if (aliases.error) throw aliases.error;
       if (!itemResult.data) return jsonError("inventory_item_not_found", "Item not found", 404);
       if (itemResult.data.is_active !== true && !canToggleInventoryItemActiveStatus(actor.role)) return jsonError("inventory_item_inactive_list_forbidden", "Inactive inventory items require leader permission.", 403);
-      return NextResponse.json({ ok: true, data: [itemResult.data], supplierPartners: partners.data ?? [], supplierAliases: (aliases.data ?? []).map(row => ({ id: row.id, supplierName: row.supplier_name, status: row.status, businessPartnerId: row.business_partner_id })) }, { headers: { "Cache-Control": "no-store" } });
+      return NextResponse.json({ ok: true, data: [itemResult.data], supplierPartners: partnerSelectOptions(partners.data ?? [], subtypes.data ?? []), supplierAliases: (aliases.data ?? []).map(row => ({ id: row.id, supplierName: row.supplier_name, status: row.status, businessPartnerId: row.business_partner_id })) }, { headers: { "Cache-Control": "no-store" } });
     }
     const includeInactive = searchParams.get("includeInactive") === "true";
     const includeKegProgress =
