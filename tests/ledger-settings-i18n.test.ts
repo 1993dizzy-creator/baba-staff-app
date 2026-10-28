@@ -62,8 +62,9 @@ test("reserve entry-type labels are one shared mapping, reused by 장부작성 a
 
 test("API values and enums are untouched; only labels are translated", () => {
   // The entry type sent to the API is still the enum key.
-  assert.match(page, /addEntry\(row\.id, \{ entryType, amount: Number\(entryAmount\)/);
-  assert.match(page, /useState<ReserveEntryTypeKey>\("allocate"\)/);
+  // v2 (A plan): the kind key (extra/restore/release/consume) is sent, never a label or a date.
+  assert.match(page, /addEntry\(row\.id, \{ kind: entryKind, amount: Number\(entryAmount\)/);
+  assert.match(page, /useState<ReserveManualKind>\("extra"\)/);
   assert.match(page, /resolveSchedule\(pending\.id, \{ action: "confirm" \}\)/);
   assert.match(page, /resolveSchedule\(pending\.id, \{ action: "skip", reason: reason\.trim\(\) \}\)/);
   assert.match(page, /\{copy\.scheduleStatus\[schedule\.status\] \?\? schedule\.status\}/);

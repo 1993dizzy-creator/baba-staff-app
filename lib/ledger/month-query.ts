@@ -11,5 +11,6 @@ export function ledgerMonthHref(pathname: string, search: string, month: string)
   // An Inventory receipt deep link belongs to the month it was opened for.
   params.delete("inventoryLogId");
   params.delete("sourceKey");
+  params.delete("transactionId");
   return `${pathname}?${params.toString()}`;
 }

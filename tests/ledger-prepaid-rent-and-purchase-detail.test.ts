@@ -64,7 +64,8 @@ test("#3305/#3306 monthly rent: 선납배분, actual payment 0₫, outside the d
   const entries = buildLedgerEntries([recognition(3305, "2026-09"), recognition(3306, "2026-10")], [], new Map(), [], "2026-10");
   for (const id of [3305, 3306]) {
     const rent = byId(entries, id);
-    assert.deepEqual(rent.prepaidAllocation, { planName: "매장 임대료 (현 계약)", monthlyAmount: 50_000_000, effectiveFrom: "2026-08-01" });
+    // rent: true → hidden from the daily list since the A plan (shown in 임대료 관리); see tests/ledger-rent-a-integration.test.ts.
+    assert.deepEqual(rent.prepaidAllocation, { planName: "매장 임대료 (현 계약)", monthlyAmount: 50_000_000, effectiveFrom: "2026-08-01", rent: true });
     assert.deepEqual(rent.systemDisplay, { kind: "rent" });
     // The accounting identity is unchanged: still a profit expense of 50M.
     assert.equal(rent.direction, "expense");

@@ -1,5 +1,5 @@
 // Pure helpers for the recurring reserve allocation feature. These mirror the SQL
-// in ledger_generate_reserve_schedule_v1 / ledger_confirm_reserve_schedule_v1 so the
+// in ledger_generate_reserve_schedule_v2 / ledger_confirm_reserve_schedule_v2 so the
 // UI can preview the same numbers the RPCs will produce.
 
 export type ReserveRecurringRule = {
@@ -22,6 +22,28 @@ export function isReserveRecurringActiveForMonth(
   if (month < monthKey(rule.startMonth)) return false;
   if (rule.endMonth != null && month > monthKey(rule.endMonth)) return false;
   return true;
+}
+
+export type ReserveOffsetEntry = {
+  id: number;
+  entry_type: string;
+  amount: number | string;
+  occurred_at: string;
+  allocation_kind?: string | null;
+};
+
+// Business month (03:00 Asia/Ho_Chi_Minh cut-off) of a timestamp, as YYYY-MM.
+export function reserveBusinessMonth(occurredAt: string) {
+  return new Date(Date.parse(occurredAt) + 4 * 3_600_000).toISOString().slice(0, 7);
+}
+
+// "Manual this month" for the v2 RPCs: only legacy (v1) unlinked allocate rows of that
+// month. v2 extra/restore never offset the recurring amount, so 60M + extra both count.
+export function reserveManualOffset(entries: readonly ReserveOffsetEntry[], scheduledMonth: string, scheduleLinkedEntryIds: ReadonlySet<number>) {
+  return entries
+    .filter(entry => entry.entry_type === "allocate" && entry.allocation_kind == null
+      && !scheduleLinkedEntryIds.has(entry.id) && reserveBusinessMonth(entry.occurred_at) === monthKey(scheduledMonth))
+    .reduce((sum, entry) => sum + Number(entry.amount), 0);
 }
 
 // monthly amount, minus what was already put aside manually this month, capped so the

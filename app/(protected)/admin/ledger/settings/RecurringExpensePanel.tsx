@@ -4,6 +4,8 @@ import { useCallback, useState, type FormEvent } from "react";
 import type { RecurringMonthStatus, RecurringPlanRow } from "@/lib/ledger/recurring-expenses";
 import styles from "../ledger-settings.module.css";
 
+// Not mounted since the 2026-10-28 A plan (임대료·준비금 manages rent); kept for creating
+// the next lease's plan version once its terms are confirmed.
 // 정기비용 (e.g. 매장 임대료): monthly accrual recognitions only. Loaded when the card
 // is opened, so the 기본설정 tab keeps its two reads. Plan creation and monthly sync
 // go through the deployed RPCs; the database rejects closed months.

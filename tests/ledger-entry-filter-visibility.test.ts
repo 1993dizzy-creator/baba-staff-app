@@ -87,7 +87,8 @@ test("카드 shows only visible deposits, valid differences and fees; reversals 
 
 test("page applies every filter through the shared helper only", () => {
   const loop = page.slice(page.indexOf("const groups = useMemo"), page.indexOf("const businessAccounts = useMemo"));
-  assert.match(loop, /for \(const entry of listEntries\) \{\s*if \(!entryMatchesListFilter\(entry, filter\)\) continue;/);
+  // The rent's monthly allocation is listed in 임대료 관리, not the daily list (A plan).
+  assert.match(loop, /for \(const entry of listEntries\) \{\s*if \(isHiddenRentAllocation\(entry\)\) continue;\s*if \(!entryMatchesListFilter\(entry, filter\)\) continue;/);
   assert.doesNotMatch(loop, /isSystemAdjustment|filter ===/);
   const filterSource = readFileSync("lib/ledger/entry-list-filter.ts", "utf8");
   assert.match(filterSource, /^  if \(entry\.isSystemAdjustment\) return filter === "adjustment" && entry\.userAdjustment === "balance";$/m);

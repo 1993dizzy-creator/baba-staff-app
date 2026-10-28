@@ -21,8 +21,9 @@ const css = read("app/(protected)/admin/ledger/ledger-settings.module.css");
 
 test("A: 장부설정 has exactly 기본설정 / 거래처 / 준비금 and no category, automation or recurring-expense UI", () => {
   assert.deepEqual([...LEDGER_SETTINGS_TABS], ["basic", "partners", "reserves"]);
-  assert.deepEqual(LEDGER_SETTINGS_TABS.map(tab => ledgerSettingsTabText.ko[tab]), ["기본설정", "거래처", "준비금"]);
-  assert.deepEqual(LEDGER_SETTINGS_TABS.map(tab => ledgerSettingsTabText.vi[tab]), ["Cài đặt cơ bản", "Đối tác", "Quỹ dự phòng"]);
+  // 2026-10-28 A plan: the reserve tab is the integrated rent + reserve screen.
+  assert.deepEqual(LEDGER_SETTINGS_TABS.map(tab => ledgerSettingsTabText.ko[tab]), ["기본설정", "거래처", "임대료·준비금"]);
+  assert.deepEqual(LEDGER_SETTINGS_TABS.map(tab => ledgerSettingsTabText.vi[tab]), ["Cài đặt cơ bản", "Đối tác", "Tiền thuê·Quỹ"]);
   assert.match(settings, /\{LEDGER_SETTINGS_TABS\.map\(value => <button key=\{value\} type="button" role="tab" aria-selected=\{activeTab === value\}/);
   for (const removed of [/수입·비용 분류/, /계획 · 자동화/, /반복비용/, /recurring-expenses/, /ExpenseCategoryBranch/, /async function createPlan/, /거래처 관리로 이동/, /"automation"/, /"owners"\]/]) {
     assert.doesNotMatch(settings, removed);
@@ -107,8 +108,10 @@ test("F: 준비금 keeps the reserve features; recurring-expense UI is gone but 
   for (const path of ["app/api/admin/ledger/recurring-expenses/sync/route.ts", "app/api/admin/ledger/recurring-expenses/payments/route.ts"]) {
     assert.equal(existsSync(path), false, path);
   }
-  // 2026-10-27 (R1, user-approved): 기본설정 › 정기비용 uses the single recurring route.
-  assert.ok(settings.includes("<RecurringExpensePanel lang={lang} />"));
+  // 2026-10-28 (A plan, user-approved): the 정기비용 panel is off screen; the monthly rent
+  // recognition, its route and the close-sheet sync stay (rent lives in 임대료·준비금).
+  assert.ok(!settings.includes("RecurringExpensePanel"));
+  assert.ok(settings.includes("<RentManagementPanel "));
   assert.equal(existsSync("app/api/admin/ledger/recurring-expenses/route.ts"), true);
   for (const path of ["supabase/migrations/202608210007_add_recurring_reserves_bep.sql", "supabase/migrations/20261002062405_fix_preflight_inactive_recurring_plans.sql"]) {
     assert.equal(existsSync(path), true, path);

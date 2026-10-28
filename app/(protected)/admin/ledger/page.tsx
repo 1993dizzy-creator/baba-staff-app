@@ -23,6 +23,8 @@ import {
 } from "@/lib/ledger/provisional-operating-profit";
 import type { LedgerPayrollCost } from "@/lib/ledger/payroll-cost";
 import { useLanguage } from "@/lib/language-context";
+import { calculateOperatingResidual } from "@/lib/ledger/operating-residual";
+import { rentText } from "@/lib/ledger/rent-text";
 import styles from "./ledger-dashboard.module.css";
 
 const text = {
@@ -423,6 +425,8 @@ function DashboardReport({ detailEmoji, copy, lang, fundsMode, report, month, sa
         : <KpiCard icon="📊" label={copy.operatingProfit} amount={report.kpis.operatingProfit} {...signedTrend(report.kpis.operatingProfitChange, copy)} action={detailButton} />}
     </section>
 
+    <OperatingResidualCard month={month} lang={lang} operatingProfit={operatingResult.mode === "provisional" ? operatingResult.operatingProfit : report.kpis.operatingProfit} />
+
     {operatingDetailOpen ? <OperatingProfitSheet copy={copy} report={report} operatingResult={operatingResult} cardsLoading={cardsLoading} returnFocusRef={detailButtonRef} onClose={() => setOperatingDetailOpen(false)} /> : null}
 
     <BreakdownCard icon="📊" title={copy.incomeComposition} total={report.kpis.income} rows={report.income} detailEmoji={detailEmoji} lang={lang} empty={copy.empty} newLabel={copy.newItem} change={report.kpis.incomeChange} month={month} salesReceiptExplanation={salesReceiptExplanation} />
@@ -508,6 +512,34 @@ function KpiCard({ icon, label, amount, change, note, trendLabel, trendDirection
   const trend = change == null || unchanged ? "-" : `${change > 0 ? "▲" : "▼"} ${Math.abs(change).toFixed(1)}%`;
   const trendClass = trendDirection ? (trendDirection === "up" ? styles.trendUp : styles.trendDown) : change == null || unchanged ? "" : change > 0 ? styles.trendUp : styles.trendDown;
   return <article className={styles.kpiCard}><span className={styles.kpiLabel}><span className={styles.titleEmoji} aria-hidden="true">{icon}</span>{label}</span><strong className={`${styles.kpiAmount} ${amountClass}`}>{amount === null ? "-" : money(amount)}</strong><span className={styles.kpiMetaRow}><span className={`${styles.kpiMeta} ${trendClass}`}>{note ?? trendLabel ?? trend}</span>{action}</span></article>;
+}
+
+type ResidualInputs = { month: string; rentRecognized: number; newReserve: number; closed: { revision: number; operatingProfit: number | null; residual?: number } | null };
+
+// 운영상 잔여이익: a separate management figure next to (never replacing) 영업이익.
+// Closed months use the close snapshot's operating profit; open months use the profit
+// shown above. Rent recognition and new reserve come from /api/admin/ledger/rent-contracts.
+function OperatingResidualCard({ month, lang, operatingProfit }: { month: string; lang: "ko" | "vi"; operatingProfit: number | null }) {
+  const [inputs, setInputs] = useState<ResidualInputs | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadOptionalMonthBody(`/api/admin/ledger/rent-contracts?month=${month}`, month, controller.signal, body => body.residual as ResidualInputs)
+      .then(value => { if (!controller.signal.aborted) setInputs(value); });
+    return () => controller.abort();
+  }, [month]);
+  if (!inputs || inputs.month !== month) return null;
+  const copy = rentText[lang];
+  const basis = inputs.closed?.operatingProfit ?? (inputs.closed ? null : operatingProfit);
+  const result = calculateOperatingResidual({ operatingProfit: basis, rentRecognized: inputs.rentRecognized, newReserve: inputs.newReserve });
+  return <section className={styles.reportCard} aria-label={copy.residualTitle} data-operating-residual>
+    <div className={styles.sectionHeader}><h2 className={styles.sectionTitle}><span className={styles.titleEmoji} aria-hidden="true">🧾</span>{copy.residualTitle}</h2><strong className={styles.sectionTotal}>{result ? money(result.residual) : "-"}</strong></div>
+    <p className={styles.sectionNote}>{copy.residualNote}{inputs.closed ? ` · ${copy.residualClosed(inputs.closed.revision)}` : ""}</p>
+    <div className={styles.comparisonList}>
+      <ReportValue label={lang === "vi" ? "Lợi nhuận hoạt động" : "영업이익"} amount={basis} fallback={copy.residualUnavailable} />
+      <ReportValue label={lang === "vi" ? "+ Chi phí thuê tháng (cộng lại)" : "+ 임대료 월 비용 (되더함)"} amount={inputs.rentRecognized} />
+      <ReportValue label={lang === "vi" ? "− Quỹ dự phòng mới trong tháng" : "− 이번 달 신규 준비금"} amount={inputs.newReserve} expense />
+    </div>
+  </section>;
 }
 
 // `expense` colors only the amount of cost rows red; labels stay neutral.

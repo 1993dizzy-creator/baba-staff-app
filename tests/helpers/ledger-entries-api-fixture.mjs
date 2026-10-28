@@ -72,6 +72,7 @@ export function entriesApi(tables, { failKind, source = readFileSync('app/api/ad
         select(selection) { columns = selection; return query; },
         order(key, options = {}) { orders.push([key, options.ascending !== false]); return query; },
         range(start, end) { from = start; to = end; return query; },
+        limit(count) { to = from + count - 1; return query; },
         maybeSingle: async () => execute(true),
         then(resolve, reject) { return Promise.resolve(execute()).then(resolve, reject); },
       };
@@ -106,7 +107,7 @@ export function entriesApi(tables, { failKind, source = readFileSync('app/api/ad
       },
     },
   };
-  for (const name of ['reserve-balances', 'fund-account-view', 'dashboard-cash-report', 'accrual-report', 'manual-entry-policy', 'payables', 'summary', 'cash-outflow', 'entries-diagnostics']) {
+  for (const name of ['reserve-balances', 'fund-account-view', 'dashboard-cash-report', 'accrual-report', 'manual-entry-policy', 'payables', 'summary', 'cash-outflow', 'entries-diagnostics', 'operating-residual', 'rent-contracts']) {
     dependencies['@/lib/ledger/' + name] = require('../../lib/ledger/' + name + '.ts');
   }
   dependencies['@/lib/partners/emoji'] = require('../../lib/partners/emoji.ts');

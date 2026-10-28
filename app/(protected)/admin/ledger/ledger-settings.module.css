@@ -60,3 +60,5 @@
 .recurringItem>span:first-child{min-width:0;overflow-wrap:anywhere}
 .recurringItem>strong{white-space:nowrap;font-variant-numeric:tabular-nums}
 .recurringMissing{color:#b45309;font-weight:800}
+.rentPanel .reserveCard{gap:9px}.rentPanel .reserveSummary>div{flex-wrap:wrap}.rentPanel .reserveSummary span{min-width:0;overflow-wrap:anywhere}.rentPanel .reserveSummary strong{margin-left:auto;white-space:normal;overflow-wrap:anywhere}.rentUsageGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}.rentUsageCell{display:grid;gap:2px;min-width:0;padding:6px 7px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;font-size:11px}.rentUsageCell b{font-size:12px}.rentUsageCell span,.rentUsageCell a{min-width:0;color:#6b7280;overflow-wrap:anywhere}.rentUsageCell a{color:#1d4ed8;font-weight:800}.rentUsage_recognized{background:#f0fdf4;border-color:#bbf7d0}.rentUsage_pre_ledger{background:#fffbeb;border-color:#fde68a}.rentUsage_missing{background:#fef2f2;border-color:#fecaca}.historyRow a{color:#1d4ed8;font-weight:800}
+@media(max-width:640px){.rentUsageGrid{grid-template-columns:repeat(3,minmax(0,1fr))}}

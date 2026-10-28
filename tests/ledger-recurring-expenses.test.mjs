@@ -126,7 +126,9 @@ test('UI: settings card loads only when opened; the close sheet offers sync on R
   const settings = readFileSync('app/(protected)/admin/ledger/settings/page.tsx', 'utf8');
   const panel = readFileSync('app/(protected)/admin/ledger/settings/RecurringExpensePanel.tsx', 'utf8');
   const sheet = readFileSync('app/(protected)/admin/ledger/entries/MonthCloseSheet.tsx', 'utf8');
-  assert.match(settings, /<RecurringExpensePanel lang=\{lang\} \/>\n\s+<\/section> : null\}\n\n\s+\{activeTab === "partners"/);
+  // 2026-10-28 A plan: the card is not mounted in 기본설정 any more (rent lives in 임대료·준비금);
+  // the component, the recurring route and the close-sheet sync below stay.
+  assert.doesNotMatch(settings, /<RecurringExpensePanel/);
   // The 기본설정 tab keeps exactly its two reads; the card fetches on first open.
   assert.doesNotMatch(settings, /recurring-expenses/);
   assert.match(panel, /if \(next && !data && !loading\) void load\(\);/);

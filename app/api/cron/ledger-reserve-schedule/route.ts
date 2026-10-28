@@ -34,7 +34,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, code: "NO_LEDGER_ACTOR" }, { status: 422 });
     }
 
-    const { data, error } = await supabaseServer.rpc("ledger_generate_reserve_schedule_v1", {
+    const { data, error } = await supabaseServer.rpc("ledger_generate_reserve_schedule_v2", {
       p_month: `${month}-01`,
       p_require_auto_generate: true,
       p_actor_user_id: actor.id,

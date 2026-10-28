@@ -13,12 +13,21 @@ export function parseInventoryLedgerFocus(params: { get(name: string): string | 
   return sourceKey === expected ? { logId, sourceKey } : null;
 }
 
+// ?transactionId= opens one ledger transaction's detail (e.g. a rent month or payment
+// linked from 임대료 관리). Anything but a positive integer is ignored.
+export function parseTransactionLedgerFocus(params: { get(name: string): string | null }) {
+  const raw = params.get("transactionId");
+  const id = raw && /^\d{1,15}$/.test(raw) ? Number(raw) : NaN;
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 // The same URL without the one-shot focus parameters, so a later remount, month
 // switch or back/forward never reopens the receipt's sheet by itself.
 export function ledgerHrefWithoutInventoryFocus(pathname: string, search: string) {
   const params = new URLSearchParams(search);
   params.delete("inventoryLogId");
   params.delete("sourceKey");
+  params.delete("transactionId");
   const query = params.toString();
   return query ? `${pathname}?${query}` : pathname;
 }

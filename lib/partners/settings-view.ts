@@ -33,8 +33,8 @@ export function legacyPartnerRedirectHref(view: PartnerSettingsView, searchParam
 }
 
 export const ledgerSettingsTabText = {
-  ko: { basic: "기본설정", partners: "거래처", reserves: "준비금", tabsLabel: "장부설정 유형", fundAccounts: "자금계정", ownerSettlement: "사장 정산", accountCount: (count: number) => `${count}개`, participantCount: (count: number) => `참여자 ${count}명` },
-  vi: { basic: "Cài đặt cơ bản", partners: "Đối tác", reserves: "Quỹ dự phòng", tabsLabel: "Loại cài đặt sổ", fundAccounts: "Tài khoản quỹ", ownerSettlement: "Quyết toán chủ", accountCount: (count: number) => `${count} tài khoản`, participantCount: (count: number) => `${count} người tham gia` },
+  ko: { basic: "기본설정", partners: "거래처", reserves: "임대료·준비금", tabsLabel: "장부설정 유형", fundAccounts: "자금계정", ownerSettlement: "사장 정산", accountCount: (count: number) => `${count}개`, participantCount: (count: number) => `참여자 ${count}명` },
+  vi: { basic: "Cài đặt cơ bản", partners: "Đối tác", reserves: "Tiền thuê·Quỹ", tabsLabel: "Loại cài đặt sổ", fundAccounts: "Tài khoản quỹ", ownerSettlement: "Quyết toán chủ", accountCount: (count: number) => `${count} tài khoản`, participantCount: (count: number) => `${count} người tham gia` },
 } as const;
 
 export const partnerSettingsText = {

@@ -46,7 +46,7 @@ test("page groups regular entries only and renders no system-adjustment section"
   assert.match(page, /regularEntries = useMemo\(\(\) => \(data\?\.entries \?\? \[\]\)\.filter\(\(entry\) => !entry\.isSystemAdjustment\)/);
   // The list filter hides every system adjustment except manual balance adjustments under 조정.
   assert.match(page, /const listEntries = useMemo\(\(\) => withPaymentDifferenceAdjustments\(data\?\.entries \?\? \[\]\), \[data\?\.entries\]\);/);
-  assert.match(page, /for \(const entry of listEntries\) \{\s*if \(!entryMatchesListFilter\(entry, filter\)\) continue;/);
+  assert.match(page, /for \(const entry of listEntries\) \{\s*if \(isHiddenRentAllocation\(entry\)\) continue;\s*if \(!entryMatchesListFilter\(entry, filter\)\) continue;/);
   assert.match(readFileSync("lib/ledger/entry-list-filter.ts", "utf8"), /if \(entry\.isSystemAdjustment\) return filter === "adjustment" && entry\.userAdjustment === "balance";/);
   assert.match(page, /group\.rows\.push\(entry\);[\s\S]*entryDisplaySubtotal\(entry\)/);
   assert.match(page, /new Set\(regularEntries\.map\(\(entry\) => entry\.businessDate\)\)/);

@@ -52,8 +52,8 @@ test("plan create / update go through the existing v2 RPCs with the fund-account
   assert.match(reserveIdApi, /p_fund_account_id/);
 });
 
-test("reserve entry route uses only ledger_create_reserve_entry_v1", () => {
-  assert.match(reserveEntryApi, /ledger_create_reserve_entry_v1/);
+test("reserve entry route uses only ledger_create_reserve_entry_v2", () => {
+  assert.match(reserveEntryApi, /ledger_create_reserve_entry_v2/);
   assert.doesNotMatch(reserveEntryApi, /from\("ledger_reserve_/);
   assert.doesNotMatch(reserveEntryApi, /ledger_movements/);
   assert.doesNotMatch(reserveEntryApi, /ledger_transactions/);
@@ -86,7 +86,8 @@ test("settings reserve history shows time / type / amount / memo", () => {
   for (const col of ["일시", "금액", "메모"]) assert.match(settings, new RegExp(col));
   // Type column: each history row renders its entry-type label (shared read-only list).
   assert.match(settings, /<ReserveEntryHistoryList entries=\{entries\} lang=\{lang\} title=\{copy\.entryCount\} \/>/);
-  assert.match(readFileSync("components/ledger/ReserveEntryHistoryList.tsx", "utf8"), /reserveEntryTypeText\(entry\.entry_type, lang\)/);
+  // v2 allocate rows show their kind (정기/추가 적립, 해제금 복구); v1 rows keep the entry-type label.
+  assert.match(readFileSync("components/ledger/ReserveEntryHistoryList.tsx", "utf8"), /reserveEntryLabel\(entry, lang\)/);
 });
 
 test("settings consume control states it is not a ledger expense", () => {

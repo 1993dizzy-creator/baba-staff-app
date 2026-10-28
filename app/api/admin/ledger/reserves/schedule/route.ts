@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null) as { month?: string } | null;
   if (!body?.month || !MONTH.test(body.month)) return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400);
   try {
-    const { data, error } = await supabaseServer.rpc("ledger_generate_reserve_schedule_v1", {
+    const { data, error } = await supabaseServer.rpc("ledger_generate_reserve_schedule_v2", {
       p_month: `${body.month}-01`,
       p_require_auto_generate: false,
       p_actor_user_id: auth.actor.id,

@@ -3,7 +3,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-// Confirm (runs ledger_create_reserve_entry_v1 'allocate') or skip a pending proposal.
+// Confirm (books a v2 'regular' allocate in the confirmation month) or skip a pending proposal.
 export async function POST(request: Request, context: { params: Promise<{ scheduleId: string }> }) {
   const auth = await requireLedgerActor();
   if (auth.response || !auth.actor) return auth.response;
@@ -15,7 +15,7 @@ export async function POST(request: Request, context: { params: Promise<{ schedu
   if (action !== "confirm" && action !== "skip") return ledgerJson({ ok: false, code: "INVALID_ACTION" }, 400);
   try {
     const { data, error } = action === "confirm"
-      ? await supabaseServer.rpc("ledger_confirm_reserve_schedule_v1", {
+      ? await supabaseServer.rpc("ledger_confirm_reserve_schedule_v2", {
           p_schedule_id: id, p_actor_user_id: auth.actor.id,
         })
       : await supabaseServer.rpc("ledger_skip_reserve_schedule_v1", {

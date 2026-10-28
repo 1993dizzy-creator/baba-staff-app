@@ -204,10 +204,11 @@ test("recurring route -> ledger_set_reserve_recurring_v1, clears when monthlyAmo
 });
 
 test("schedule routes -> generate / confirm / skip RPCs only", () => {
-  assert.match(scheduleApi, /ledger_generate_reserve_schedule_v1/);
+  // v2 (A plan): extra/restore never offset the recurring amount.
+  assert.match(scheduleApi, /ledger_generate_reserve_schedule_v2/);
   // manual trigger: NOT auto-generate-gated
   assert.match(scheduleApi, /p_require_auto_generate: false/);
-  assert.match(scheduleResolveApi, /ledger_confirm_reserve_schedule_v1/);
+  assert.match(scheduleResolveApi, /ledger_confirm_reserve_schedule_v2/);
   assert.match(scheduleResolveApi, /ledger_skip_reserve_schedule_v1/);
   assert.match(scheduleResolveApi, /action !== "confirm" && action !== "skip"/);
   for (const src of [scheduleApi, scheduleResolveApi]) {
@@ -218,7 +219,7 @@ test("schedule routes -> generate / confirm / skip RPCs only", () => {
 // ── cron ────────────────────────────────────────────────────────────────────────
 test("cron: authorized, generation-only, daily after Vietnam 03:00, isolated failure", () => {
   assert.match(cron, /authorizeCron\(req\)/);
-  assert.match(cron, /ledger_generate_reserve_schedule_v1/);
+  assert.match(cron, /ledger_generate_reserve_schedule_v2/);
   // cron: auto-generate-gated
   assert.match(cron, /p_require_auto_generate: true/);
   assert.doesNotMatch(cron, /ledger_create_reserve_entry_v1|ledger_confirm_reserve_schedule|ledger_skip_reserve_schedule/);

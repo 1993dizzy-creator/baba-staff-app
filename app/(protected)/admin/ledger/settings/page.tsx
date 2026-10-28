@@ -8,14 +8,15 @@ import { useLanguage } from "@/lib/language-context";
 import { LEDGER_SETTINGS_TABS, ledgerSettingsHref, ledgerSettingsTabText, parseLedgerSettingsTab, parsePartnerSettingsView, type LedgerSettingsTab } from "@/lib/partners/settings-view";
 import { ownerCompositionStartMonth } from "@/lib/ledger/owner-settings-view";
 import { shortLedgerAccountName } from "@/lib/ledger/entry-display-account";
-import { RESERVE_ENTRY_TYPE_KEYS, reserveEntryTypeLabel, type ReserveEntryTypeKey } from "@/lib/ledger/reserve-text";
+import { reserveKindLabel } from "@/lib/ledger/reserve-text";
+import { RESERVE_MANUAL_KINDS, restorableReleases, type ReserveManualKind } from "@/lib/ledger/reserve-entry-request";
 import ReserveEntryHistoryList from "@/components/ledger/ReserveEntryHistoryList";
 import { ledgerSettingsText, type LedgerSettingsCopy } from "@/lib/ledger/settings-text";
 import styles from "../ledger-settings.module.css";
-import RecurringExpensePanel from "./RecurringExpensePanel";
+import RentManagementPanel from "./RentManagementPanel";
 
 type Account = { id: number; code: string; type: string; display_name: string; is_active: boolean; is_business_fund?: boolean };
-type ReserveEntry = { id: number; entry_type: string; amount: number | string; occurred_at: string; memo: string | null };
+type ReserveEntry = { id: number; entry_type: string; amount: number | string; occurred_at: string; memo: string | null; allocation_kind?: string | null; restores_entry_id?: number | null };
 type ReserveFundAccount = { id: number; code: string; displayName: string };
 type ReserveRecurring = { monthlyAmount: number; recurringDay: number; startMonth: string; endMonth: string | null; autoGenerate: boolean };
 type ReserveSchedule = { id: number; scheduledMonth: string; scheduledDate: string; plannedAmount: number; status: string; skipReason: string | null; reserveEntryId: number | null; resolvedAt: string | null };
@@ -27,7 +28,6 @@ type OwnerData = { users: User[]; participants: Participant[]; settings: { track
 type LedgerData = { accounts: Account[] };
 const currentMonth = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
 const money = (value: number) => `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(value))} ₫`;
-const localDateTime = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 16);
 const monthLabel = (value: string) => value.slice(0, 7);
 const formatNumericInput = (value: string) => {
   if (!value) return "";
@@ -128,15 +128,15 @@ function LedgerSettingsContent() {
 
   async function mutate(url: string, body: Record<string, unknown>, method = "POST") {
     setWorking(true); setError(""); setMessage("");
-    try { const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const result = await response.json(); if (!response.ok) throw new Error(result.code); setMessage(copy.saved); await load(); }
-    catch (cause) { setError(copy.saveFailed((cause as Error).message)); }
+    try { const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const result = await response.json(); if (!response.ok) throw new Error(result.code); setMessage(copy.saved); await load(); return true; }
+    catch (cause) { setError(copy.saveFailed((cause as Error).message)); return false; }
     finally { setWorking(false); }
   }
   // Creating a plan only records a target and (optionally) where the money will be kept.
   // It never books an allocate entry — actual reserved money grows only via the entry controls below.
   async function createReserve(event: FormEvent) { event.preventDefault(); await mutate("/api/admin/ledger/reserves", { name: reserve.name, targetAmount: Number(reserve.targetAmount), targetDate: reserve.targetDate || null, linkedRecurringPlanId: null, fundAccountId: reserve.fundAccountId ? Number(reserve.fundAccountId) : null, memo: reserve.memo }); setReserve({ name: "", targetAmount: "", targetDate: "", fundAccountId: "", memo: "" }); }
   async function saveReservePlan(id: number, body: Record<string, unknown>) { await mutate(`/api/admin/ledger/reserves/${id}`, body, "PATCH"); }
-  async function addReserveEntry(id: number, body: Record<string, unknown>) { await mutate(`/api/admin/ledger/reserves/${id}/entries`, body); }
+  async function addReserveEntry(id: number, body: Record<string, unknown>) { return mutate(`/api/admin/ledger/reserves/${id}/entries`, body); }
   async function saveReserveRecurring(id: number, body: Record<string, unknown>) { await mutate(`/api/admin/ledger/reserves/${id}/recurring`, body, "PUT"); }
   async function generateReserveSchedule() { await mutate("/api/admin/ledger/reserves/schedule", { month }); }
   async function resolveReserveSchedule(scheduleId: number, body: Record<string, unknown>) { await mutate(`/api/admin/ledger/reserves/schedule/${scheduleId}`, body); }
@@ -206,7 +206,6 @@ function LedgerSettingsContent() {
           </div>
         </div> : null}
       </section>
-      <RecurringExpensePanel lang={lang} />
     </section> : null}
 
     {activeTab === "partners" ? <section className={styles.sectionStack} role="tabpanel">
@@ -214,6 +213,7 @@ function LedgerSettingsContent() {
     </section> : null}
 
     {activeTab === "reserves" ? <section className={styles.sectionStack} role="tabpanel">
+      <RentManagementPanel lang={lang} eligibleAccounts={eligibleAccounts} />
       <section className={styles.card}><div className={styles.cardHeader}><div><h2>{copy.reserves}</h2></div><button type="button" className={`${styles.secondarySmall} ${styles.reserveAddButton}`} aria-expanded={reserveFormOpen} onClick={() => setReserveFormOpen(value => !value)}>{reserveFormOpen ? copy.closeAdd : copy.addReserve}</button></div><div className={`${styles.infoPanel} ${styles.compactInfo}`}>{copy.reserveInfo}</div>{reserveFormOpen ? <form className={styles.formGrid} onSubmit={createReserve}><label>{copy.reserveName}<input required className={styles.input} value={reserve.name} onChange={event => setReserve({ ...reserve, name: event.target.value })} /></label><label>{copy.targetAmount}<input required type="number" min="0.001" step="0.001" className={styles.input} value={reserve.targetAmount} onChange={event => setReserve({ ...reserve, targetAmount: event.target.value })} /></label><label>{copy.targetDate}<input type="date" className={styles.input} value={reserve.targetDate} onChange={event => setReserve({ ...reserve, targetDate: event.target.value })} /></label><label>{copy.linkedAccount}<select className={styles.input} value={reserve.fundAccountId} onChange={event => setReserve({ ...reserve, fundAccountId: event.target.value })}><option value="">{copy.unlinked}</option>{eligibleAccounts.map(account => <option key={account.id} value={account.id}>{account.displayName}</option>)}</select></label><label className={styles.spanTwo}>{copy.memo}<input className={styles.input} value={reserve.memo} onChange={event => setReserve({ ...reserve, memo: event.target.value })} /></label><p className={`${styles.infoPanel} ${styles.spanTwo}`}>{copy.createPlanHelp}</p><button className={styles.primary} disabled={working}>{copy.createPlan}</button></form> : null}<div className={styles.reserveList}>{reserves.map(row => <ReservePlanCard key={row.id} row={row} month={month} lang={lang} copy={copy} eligibleAccounts={eligibleAccounts} working={working} savePlan={saveReservePlan} addEntry={addReserveEntry} saveRecurring={saveReserveRecurring} generateSchedule={generateReserveSchedule} resolveSchedule={resolveReserveSchedule} />)}</div></section>
     </section> : null}
   </main></Container>;
@@ -227,7 +227,7 @@ function ReservePlanCard({ row, month, lang, copy, eligibleAccounts, working, sa
   eligibleAccounts: EligibleAccount[];
   working: boolean;
   savePlan: (id: number, body: Record<string, unknown>) => Promise<void>;
-  addEntry: (id: number, body: Record<string, unknown>) => Promise<void>;
+  addEntry: (id: number, body: Record<string, unknown>) => Promise<boolean>;
   saveRecurring: (id: number, body: Record<string, unknown>) => Promise<void>;
   generateSchedule: () => Promise<void>;
   resolveSchedule: (scheduleId: number, body: Record<string, unknown>) => Promise<void>;
@@ -236,10 +236,12 @@ function ReservePlanCard({ row, month, lang, copy, eligibleAccounts, working, sa
   const [date, setDate] = useState(row.target_date ?? "");
   const [memo, setMemo] = useState(row.memo ?? "");
   const [account, setAccount] = useState(row.fund_account_id ? String(row.fund_account_id) : "");
-  const [entryType, setEntryType] = useState<ReserveEntryTypeKey>("allocate");
+  const [entryKind, setEntryKind] = useState<ReserveManualKind>("extra");
   const [entryAmount, setEntryAmount] = useState("");
   const [entryMemo, setEntryMemo] = useState("");
-  const [occurredAt, setOccurredAt] = useState(localDateTime);
+  const [restoreTarget, setRestoreTarget] = useState("");
+  // One key per intended entry: a retried submit returns the first result instead of booking twice.
+  const [requestKey, setRequestKey] = useState(() => crypto.randomUUID());
   const [recMonthly, setRecMonthly] = useState(row.recurring ? String(row.recurring.monthlyAmount) : "");
   const [recDay, setRecDay] = useState(row.recurring ? String(row.recurring.recurringDay) : "1");
   const [recStart, setRecStart] = useState(row.recurring ? monthLabel(row.recurring.startMonth) : month);
@@ -249,6 +251,8 @@ function ReservePlanCard({ row, month, lang, copy, eligibleAccounts, working, sa
   const entries = row.entries ?? [];
   const recentSchedules = row.recentSchedules ?? [];
   const pending = row.pendingSchedule;
+  const restorable = restorableReleases(entries);
+  const inflow = entryKind === "extra" || entryKind === "restore";
   // ledger_reserve_plans_fund_account_guard blocks a fund-account change on a non-empty plan.
   const accountLocked = row.currentAmount !== 0;
   return (
@@ -266,10 +270,14 @@ function ReservePlanCard({ row, month, lang, copy, eligibleAccounts, working, sa
       </section> : null}
       {openSection === "entry" ? <section className={styles.detailBody}>
         <h4>{copy.sectionEntry}</h4>
-        <div className={styles.entryTypes}>{RESERVE_ENTRY_TYPE_KEYS.map(value => <button type="button" key={value} className={entryType === value ? styles.entryTypeActive : undefined} onClick={() => setEntryType(value)}>{reserveEntryTypeLabel(value, lang)}</button>)}</div>
-        <p className={`${entryType === "allocate" ? styles.infoPanel : styles.warningPanel} ${styles.compactDetailInfo}`}>{copy.entryDescriptions[entryType]}</p>
-        <div className={styles.reserveFormGrid}><label>💰 {copy.amount}<input className={styles.input} type="number" step="0.001" value={entryAmount} onChange={event => setEntryAmount(event.target.value)} /></label><label>🕒 {copy.occurredAt}<input className={styles.input} type="datetime-local" value={occurredAt} onChange={event => setOccurredAt(event.target.value)} /></label><label className={styles.reserveFullField}>🗒️ {copy.memo}<input className={styles.input} value={entryMemo} onChange={event => setEntryMemo(event.target.value)} /></label></div>
-        <button className={`${entryType === "allocate" ? styles.primary : styles.secondary} ${entryType === "allocate" ? "" : styles.riskAction} ${styles.detailAction}`} disabled={working || !entryAmount} onClick={() => void addEntry(row.id, { entryType, amount: Number(entryAmount), occurredAt: `${occurredAt}:00+07:00`, memo: entryMemo || null }).then(() => { setEntryAmount(""); setEntryMemo(""); })}>{copy.recordEntry(reserveEntryTypeLabel(entryType, lang))}</button>
+        <div className={styles.entryTypes}>{RESERVE_MANUAL_KINDS.map(value => <button type="button" key={value} className={entryKind === value ? styles.entryTypeActive : undefined} onClick={() => { setEntryKind(value); setRequestKey(crypto.randomUUID()); }}>{reserveKindLabel(value, lang)}</button>)}</div>
+        <p className={`${inflow ? styles.infoPanel : styles.warningPanel} ${styles.compactDetailInfo}`}>{copy.entryDescriptions[entryKind]} {copy.entryNowHelp}</p>
+        <div className={styles.reserveFormGrid}>
+          {entryKind === "restore" ? <label className={styles.reserveFullField}>↩️ {copy.restoreTarget}{restorable.length ? <select className={styles.input} value={restoreTarget} onChange={event => setRestoreTarget(event.target.value)}><option value="" />{restorable.map(item => <option key={item.id} value={item.id}>{copy.restoreOption(item.occurredAt.slice(0, 10), money(item.remaining))}</option>)}</select> : <span className={styles.mutedHelp}>{copy.noRestorable}</span>}</label> : null}
+          <label>💰 {copy.amount}<input className={styles.input} type="text" inputMode="decimal" value={formatNumericInput(entryAmount)} onChange={event => setEntryAmount(normalizeNumericInput(event.target.value))} /></label>
+          <label className={styles.reserveFullField}>🗒️ {copy.memo}<input className={styles.input} value={entryMemo} onChange={event => setEntryMemo(event.target.value)} /></label>
+        </div>
+        <button className={`${inflow ? styles.primary : styles.secondary} ${inflow ? "" : styles.riskAction} ${styles.detailAction}`} disabled={working || !entryAmount || (entryKind === "restore" && !restoreTarget)} onClick={() => void addEntry(row.id, { kind: entryKind, amount: Number(entryAmount), restoresEntryId: entryKind === "restore" ? Number(restoreTarget) : null, memo: entryMemo || null, requestKey }).then(ok => { if (!ok) return; setEntryAmount(""); setEntryMemo(""); setRestoreTarget(""); setRequestKey(crypto.randomUUID()); })}>{copy.recordEntry(reserveKindLabel(entryKind, lang))}</button>
       </section> : null}
       {openSection === "recurring" ? <section className={styles.detailBody}>
         <h4>{copy.sectionRecurring}</h4><p className={`${styles.infoPanel} ${styles.compactDetailInfo}`}>{copy.recurringInfoLine1}<br />{copy.recurringInfoLine2}</p>

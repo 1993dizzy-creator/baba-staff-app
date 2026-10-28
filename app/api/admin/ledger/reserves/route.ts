@@ -10,7 +10,7 @@ export async function GET() {
   try {
     const [planResult, accountResult, movementResult, scheduleResult] = await Promise.all([
       supabaseServer.from("ledger_reserve_plans")
-        .select("id,name,target_amount,target_date,is_active,memo,linked_recurring_plan_id,fund_account_id,recurring_monthly_amount,recurring_day,recurring_start_month,recurring_end_month,recurring_auto_generate,entries:ledger_reserve_entries(id,entry_type,amount,occurred_at,memo)")
+        .select("id,name,target_amount,target_date,is_active,memo,linked_recurring_plan_id,fund_account_id,recurring_monthly_amount,recurring_day,recurring_start_month,recurring_end_month,recurring_auto_generate,entries:ledger_reserve_entries(id,entry_type,amount,occurred_at,memo,allocation_kind,restores_entry_id,attribution_month)")
         .eq("is_active", true).order("id"),
       supabaseServer.from("ledger_fund_accounts").select("id,type,code,display_name,is_active,is_business_fund,sort_order").eq("is_active", true).order("sort_order"),
       supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status)").eq("transaction.status", "confirmed"),

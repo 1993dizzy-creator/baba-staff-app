@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { reserveEntryDisplaySign, reserveEntryTypeText } from "@/lib/ledger/reserve-text";
+import { reserveEntryDisplaySign, reserveEntryLabel } from "@/lib/ledger/reserve-text";
 import { ledgerSettingsText } from "@/lib/ledger/settings-text";
 import styles from "./ReserveEntryHistoryList.module.css";
 
-export type ReserveHistoryEntry = { id: number; entry_type: string; amount: number | string; occurred_at: string; memo: string | null };
+export type ReserveHistoryEntry = { id: number; entry_type: string; amount: number | string; occurred_at: string; memo: string | null; allocation_kind?: string | null };
 
 const money = (value: number) => `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(value))} ₫`;
 // YYYY.MM.DD in business time (Asia/Ho_Chi_Minh), the same for KO and VI.
@@ -44,7 +44,7 @@ export default function ReserveEntryHistoryList({ entries, lang, title, selected
             >
               <div className={styles.head}>
                 <span className={styles.label}>
-                  <strong>{reserveEntryTypeText(entry.entry_type, lang)}</strong>
+                  <strong>{reserveEntryLabel(entry, lang)}</strong>
                   <time dateTime={entry.occurred_at}>{formatDate(entry.occurred_at)}</time>
                 </span>
                 <b className={sign ? styles.outflow : styles.inflow}>{sign}{money(Math.abs(amount))}</b>

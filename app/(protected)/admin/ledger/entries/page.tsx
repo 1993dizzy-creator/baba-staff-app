@@ -39,6 +39,7 @@ import {
   withPaymentDifferenceAdjustments,
   type LedgerEntry,
   type LedgerEntryItem,
+  isHiddenRentAllocation,
 } from "@/lib/ledger/entries";
 import { entryFilterHeaderAmount, entryMatchesListFilter, LEDGER_ENTRY_FILTERS, ledgerEntryFilterLabel, reviewCountsByDate, type LedgerEntryFilter } from "@/lib/ledger/entry-list-filter";
 import { readEditedLedger } from "@/lib/ledger/entry-save-refresh";
@@ -72,7 +73,7 @@ import styles from "./entries.module.css";
 import InventoryPurchaseCaseSummary from "@/components/ledger/InventoryPurchaseCaseSummary";
 import { sendPayablePayment } from "@/lib/ledger/payable-payment-client";
 import { payablePaymentErrorMessage } from "@/lib/ledger/payable-payment-messages";
-import { findInventoryLedgerFocus, ledgerHrefWithoutInventoryFocus, parseInventoryLedgerFocus } from "@/lib/ledger/inventory-entry-focus";
+import { findInventoryLedgerFocus, ledgerHrefWithoutInventoryFocus, parseInventoryLedgerFocus, parseTransactionLedgerFocus } from "@/lib/ledger/inventory-entry-focus";
 import PayablePaymentRecovery, { PayablePaymentRefreshButton } from "@/components/ledger/PayablePaymentRecovery";
 import PurchaseSettlementDetails from "@/components/ledger/PurchaseSettlementDetails";
 import { purchaseCaseReasonCounts } from "@/lib/inventory/purchase-case-display";
@@ -501,6 +502,7 @@ function LedgerEntriesContent() {
     // The filter keeps system adjustments hidden (only user-facing
     // adjustments, under 조정) and reserve rows to 전체/준비금.
     for (const entry of listEntries) {
+      if (isHiddenRentAllocation(entry)) continue;
       if (!entryMatchesListFilter(entry, filter)) continue;
       if (
         keyword &&
@@ -719,6 +721,28 @@ function LedgerEntriesContent() {
       ? `Không tìm thấy bút toán của phiếu nhập gốc #${focusLogId} trong tháng ${month}.`
       : `원입고 #${focusLogId}의 장부내역을 ${month}에서 찾지 못했습니다.`);
   }, [data, focusLogId, focusSourceKey, loading, month, pathname, router, searchParams, vi]);
+  // ?month=&transactionId= (e.g. from 임대료 관리) opens that transaction's detail once,
+  // including rows the daily list hides; the parameter is then dropped like the receipt link.
+  const focusTransactionId = parseTransactionLedgerFocus(searchParams);
+  const transactionFocusHandledRef = useRef("");
+  useEffect(() => {
+    if (focusTransactionId === null || loading || !data || data.month !== month) return;
+    const handledKey = `${month}:${focusTransactionId}`;
+    if (transactionFocusHandledRef.current === handledKey) return;
+    transactionFocusHandledRef.current = handledKey;
+    router.replace(ledgerHrefWithoutInventoryFocus(pathname, searchParams.toString()), { scroll: false });
+    const found = data.entries.find(entry => entry.transactionId === focusTransactionId);
+    if (found) {
+      setSelected(found);
+      setCandidateDraft(null);
+      setDetailMessage("");
+      setPosDetail(null);
+      return;
+    }
+    setNotice(vi
+      ? `Không tìm thấy giao dịch #${focusTransactionId} trong tháng ${month}.`
+      : `장부 #${focusTransactionId}를 ${month}에서 찾지 못했습니다.`);
+  }, [data, focusTransactionId, loading, month, pathname, router, searchParams, vi]);
   function editCandidate(item: LedgerEntryItem) {
     if (selected && item.candidateId) {
       const draft: CandidateDraft = {

@@ -110,7 +110,9 @@ export type LedgerEntry = {
   // Display identity only: a recurring plan's monthly expense_recognition with
   // no fund movement and no payable (e.g. this month's share of rent paid in
   // advance). It is P&L only: actual payment 0₫, nothing left to pay.
-  prepaidAllocation?: { planName: string | null; monthlyAmount: number | null; effectiveFrom: string | null };
+  // rent: the store rent's monthly share. The rent management screen shows those months;
+  // the daily list hides them (see isHiddenRentAllocation), the P&L keeps them.
+  prepaidAllocation?: { planName: string | null; monthlyAmount: number | null; effectiveFrom: string | null; rent: boolean };
   // Display identity only: the actual cash payment of an expense paid in
   // advance (prepaid_expense_payment). Cash only; P&L follows the allocations.
   prepaidPayment?: boolean;
@@ -238,6 +240,13 @@ export function isCardSettlementEntry(entry: Pick<LedgerEntry, "systemDisplay">)
 
 export function isReserveLedgerEntry(entry: Pick<LedgerEntry, "systemDisplay">) {
   return entry.systemDisplay?.kind === "reserve";
+}
+
+// The rent's monthly allocation (P&L only, no money moves) is listed in 임대료 관리, not in
+// the daily list. Display only: the row stays in data.entries, so the detail sheet, deep
+// links (?transactionId=) and every server-side total are unchanged.
+export function isHiddenRentAllocation(entry: Pick<LedgerEntry, "prepaidAllocation">) {
+  return entry.prepaidAllocation?.rent === true;
 }
 
 export function entryMatchesExpenseFilter(entry: Pick<LedgerEntry, "direction" | "payrollPayment" | "fundFlow">) {
@@ -822,6 +831,7 @@ export function buildLedgerEntries(
         planName: typeof snapshot.planName === "string" && snapshot.planName.trim() ? snapshot.planName.trim() : null,
         monthlyAmount: snapshotNumber("amount"),
         effectiveFrom: typeof snapshot.effectiveFrom === "string" ? snapshot.effectiveFrom : null,
+        rent,
       }
       : null;
     entries.push({
