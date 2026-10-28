@@ -1473,26 +1473,6 @@ export default function InventorySnapshotsPage() {
         setDateContentTransitioning(true);
     };
 
-    // The monthly sync list moves to a date the same way the calendar does: its snapshot,
-    // or the current business date.
-    const batchForBusinessDate = (businessDate: string) => batchList.find((batch) => batch.snapshot_date === businessDate);
-    const canGoToBusinessDate = (businessDate: string) =>
-        Boolean(batchForBusinessDate(businessDate)?.id) || businessDate === activeBusinessDateKey;
-    const goToBusinessDate = (businessDate: string) => {
-        const batch = batchForBusinessDate(businessDate);
-        if (batch?.id) {
-            const nextBatchId = Number(batch.id);
-            if (viewMode === "snapshot" && nextBatchId === selectedBatchId) return;
-            beginDateContentTransition("snapshot");
-            setViewMode("snapshot");
-            setSelectedBatchId(nextBatchId);
-            return;
-        }
-        if (businessDate !== activeBusinessDateKey || viewMode === "current") return;
-        beginDateContentTransition("current");
-        setViewMode("current");
-        setSelectedBatchId(null);
-    };
     // After a monthly-list sync, the open date's banner and rows are re-read when it is that date.
     const refreshSyncedBusinessDate = async (businessDate: string) => {
         if (nameSyncBusinessDateRef.current !== businessDate) return;
@@ -2669,8 +2649,7 @@ export default function InventorySnapshotsPage() {
                 </div>
             )}
 
-            <MonthlyNameSyncPanel month={calendarMonth} lang={lang} reloadKey={monthlySyncReloadKey}
-                canGoToDate={canGoToBusinessDate} onGoToDate={goToBusinessDate} onSynced={refreshSyncedBusinessDate} />
+            <MonthlyNameSyncPanel month={calendarMonth} lang={lang} reloadKey={monthlySyncReloadKey} onSynced={refreshSyncedBusinessDate} />
 
             {isDateContentLoading ? (
                 <InventoryLoadingCard lang={lang} testId="snapshot-date-content-loading" marginBottom={16} />

@@ -107,9 +107,9 @@ test('snapshot page: monthly panel above the date content, language list labelle
  assert.match(page,/<MonthlyNameSyncPanel month=\{calendarMonth\} lang=\{lang\} reloadKey=\{monthlySyncReloadKey\}/);
  assert.ok(page.indexOf('<MonthlyNameSyncPanel ')<page.indexOf('testId="snapshot-date-content-loading"'));
  assert.match(page,/전체 활성 품목 중 품목명 언어 미설정/);
- // Sync uses the item's own business date and the existing daily POST; no month-wide write.
+ // 동기화 uses the item's own business date and the daily POST; 일괄 동기화 is sync_month (never the daily sync_all).
  assert.match(panel,/JSON\.stringify\(\{ action: "sync_item", business_date: item\.businessDate, item_id: item\.itemId \}\)/);
- assert.doesNotMatch(panel,/sync_all|sync_month/);
+ assert.doesNotMatch(panel,/sync_all/);assert.match(panel,/action: "sync_month"/);
  // A response for a month already left never replaces the list.
  assert.match(panel,/if \(sequence !== sequenceRef\.current\) return;/);
  assert.match(panel,/json\.month !== targetMonth/);

@@ -57,3 +57,49 @@ export function findMonthlyInventoryNameSyncItems(
       return [{ ...item, businessDate }];
     }));
 }
+
+export type MonthlySyncTargetKey = { businessDate: string; itemId: number };
+export const MONTHLY_SYNC_MAX_TARGETS = 300;
+const monthlySyncKey = (target: MonthlySyncTargetKey) => `${target.businessDate}:${target.itemId}`;
+
+// The 일괄 동기화 request: the (businessDate, itemId) rows the user saw, each inside the
+// month's sync range, de-duplicated. null when anything is malformed (nothing is synced).
+export function parseMonthlySyncTargets(month: unknown, targets: unknown): MonthlySyncTargetKey[] | null {
+  if (!isInventoryNameSyncMonth(month) || !Array.isArray(targets) || targets.length === 0 || targets.length > MONTHLY_SYNC_MAX_TARGETS) return null;
+  const range = inventoryNameSyncMonthRange(month);
+  if (!range) return null;
+  const seen = new Set<string>();
+  const parsed: MonthlySyncTargetKey[] = [];
+  for (const target of targets) {
+    const businessDate = (target as { businessDate?: unknown } | null)?.businessDate;
+    const itemId = Number((target as { itemId?: unknown } | null)?.itemId);
+    if (typeof businessDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(businessDate) || businessDate < range.start || businessDate >= range.endExclusive
+      || Number.isNaN(Date.parse(`${businessDate}T00:00:00Z`)) || new Date(`${businessDate}T00:00:00Z`).toISOString().slice(0, 10) !== businessDate
+      || !Number.isSafeInteger(itemId) || itemId < 1) return null;
+    const key = monthlySyncKey({ businessDate, itemId });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    parsed.push({ businessDate, itemId });
+  }
+  return parsed;
+}
+
+// Requested rows that still need a sync by a fresh read of the month; the rest are skipped
+// (already synced, or no longer pending) and are never run again.
+export function selectMonthlySyncPlans(
+  month: string,
+  logs: readonly InventoryDailySyncLogRow[],
+  inventoryItems: readonly CurrentInventoryDailySyncRow[],
+  targets: readonly MonthlySyncTargetKey[]
+) {
+  const pending = new Map(findMonthlyInventoryNameSyncItems(month, logs, inventoryItems).map(item => [monthlySyncKey(item), item]));
+  const plans: MonthlyInventoryNameSyncItem[] = [];
+  const skipped: MonthlySyncTargetKey[] = [];
+  for (const target of targets) {
+    const plan = pending.get(monthlySyncKey(target));
+    if (plan) plans.push(plan); else skipped.push(target);
+  }
+  // Oldest business date first, whatever order the request listed.
+  plans.sort((left, right) => left.businessDate.localeCompare(right.businessDate) || left.itemId - right.itemId);
+  return { plans, skipped };
+}

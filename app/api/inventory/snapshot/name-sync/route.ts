@@ -17,7 +17,13 @@ import {
   findInventoryLanguageMissingItems,
   type InventoryLanguageRow,
 } from "@/lib/inventory/language-missing";
-import { findMonthlyInventoryNameSyncItems, inventoryNameSyncMonthRange, isInventoryNameSyncMonth } from "@/lib/inventory/monthly-name-sync";
+import {
+  findMonthlyInventoryNameSyncItems,
+  inventoryNameSyncMonthRange,
+  isInventoryNameSyncMonth,
+  parseMonthlySyncTargets,
+  selectMonthlySyncPlans,
+} from "@/lib/inventory/monthly-name-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -249,6 +255,45 @@ async function getMonthlySync(month: string, canSync: boolean) {
   }, { headers: NO_STORE_HEADERS });
 }
 
+// 일괄 동기화: the rows the user saw, re-checked against a fresh read of the month. Only rows that
+// still need a sync run, each through the same runItemSync as the daily sync (same ledger review
+// rules, per-item failure isolation, its own businessDate and snapshot batch). No new economics.
+async function syncMonth(month: unknown, rawTargets: unknown, actorUserId: number) {
+  const targets = parseMonthlySyncTargets(month, rawTargets);
+  if (!targets) return NextResponse.json({ ok: false, error: "inventory_monthly_sync_invalid_request" }, { status: 400, headers: NO_STORE_HEADERS });
+  const syncMonthKey = month as string;
+  const range = inventoryNameSyncMonthRange(syncMonthKey)!;
+  const supabase = createSupabaseAdmin();
+  const [inventory, logs] = await Promise.all([loadActiveInventoryForMonth(supabase), loadMonthlySyncLogs(supabase, range)]);
+  if (!inventory.ok) return NextResponse.json({ ok: false, error: inventory.error }, { status: 500, headers: NO_STORE_HEADERS });
+  if (!logs.ok) return NextResponse.json({ ok: false, error: logs.error }, { status: 500, headers: NO_STORE_HEADERS });
+  const { plans, skipped } = selectMonthlySyncPlans(syncMonthKey, logs.logs, inventory.inventoryItems, targets);
+
+  // Snapshot batches are read for every date before the first write.
+  const batchIdByDate = new Map<string, number | null>();
+  for (const businessDate of new Set(plans.map(plan => plan.businessDate))) {
+    const batch = await loadOptionalSnapshotBatchId(supabase, businessDate);
+    if (!batch.ok) return NextResponse.json({ ok: false, error: batch.error }, { status: 500, headers: NO_STORE_HEADERS });
+    batchIdByDate.set(businessDate, batch.batchId);
+  }
+  const inventoryById = new Map(inventory.inventoryItems.map(item => [Number(item.id), item] as const));
+  const results = [];
+  for (const plan of plans) {
+    const result = await runItemSync({ supabase, plan, inventoryItem: inventoryById.get(plan.itemId)!, actorUserId, snapshotBatchId: batchIdByDate.get(plan.businessDate) ?? null });
+    results.push({ ...result, businessDate: plan.businessDate });
+  }
+  return NextResponse.json({
+    ok: true,
+    month: syncMonthKey,
+    results,
+    skipped,
+    syncedCount: results.filter(result => result.status === "synced").length,
+    reviewRequiredCount: results.filter(result => result.status === "review_required").length,
+    failedCount: results.filter(result => result.status === "failed").length,
+    skippedCount: skipped.length,
+  }, { headers: NO_STORE_HEADERS });
+}
+
 export async function GET(request: Request) {
   try {
     const auth = await getAuthenticatedActor();
@@ -295,9 +340,10 @@ export async function POST(request: Request) {
     if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code, code: auth.code }, { status: auth.status, headers: NO_STORE_HEADERS });
     if (!canRunInventorySnapshotNameSync(auth.actor.role)) return NextResponse.json({ ok: false, error: "inventory_snapshot_name_sync_forbidden" }, { status: 403, headers: NO_STORE_HEADERS });
 
-    let body: { action?: unknown; business_date?: unknown; item_id?: unknown };
+    let body: { action?: unknown; business_date?: unknown; item_id?: unknown; month?: unknown; targets?: unknown };
     try { body = await request.json(); }
     catch { return NextResponse.json({ ok: false, error: "inventory_daily_sync_invalid_body" }, { status: 400, headers: NO_STORE_HEADERS }); }
+    if (body.action === "sync_month") return await syncMonth(body.month, body.targets, auth.actor.id);
     const action = body.action;
     const businessDate = body.business_date;
     const itemId = action === "sync_item" ? Number(body.item_id) : undefined;
