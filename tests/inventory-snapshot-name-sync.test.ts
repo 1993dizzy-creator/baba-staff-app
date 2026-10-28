@@ -459,3 +459,13 @@ test("null economics on a display correction preserve the original economic valu
   assert.equal(items[0].targets[0].syncItem.supplier, "Chợ");
   assert.equal(items[0].targets[0].syncItem.supplier_partner_id, 7);
 });
+
+test("part filter row wraps instead of overflowing narrow screens (VI 📦 Khác at 360/390px)", () => {
+  const row = page.slice(page.indexOf('data-testid="snapshot-part-filter"'), page.indexOf("{c.all}"));
+  assert.match(row, /display: "flex",\s*flexWrap: "wrap",\s*gap: 6,/);
+  assert.doesNotMatch(row, /gridTemplateColumns: "repeat\(5, 1fr\)"/);
+  assert.match(row, /flex: "1 0 auto",/);
+  assert.match(page, /return \{\s*flex: "1 0 auto",\s*padding: "8px 10px",/);
+  // Every part keeps its button.
+  for (const part of ["kitchen", "hall", "bar", "etc"]) assert.match(page, new RegExp(`\{ value: "${part}", label: c\.${part} \}`));
+});

@@ -1969,6 +1969,7 @@ export default function InventorySnapshotsPage() {
         const meta = PART_META[value];
 
         return {
+            flex: "1 0 auto",
             padding: "8px 10px",
             borderRadius: 8,
             border: active ? `1px solid ${meta.color}` : "1px solid #d1d5db",
@@ -3062,10 +3063,13 @@ export default function InventorySnapshotsPage() {
                 }}
             >
                 <div style={ui.filterBox}>
+                    {/* A five-column grid could not shrink below the buttons' text width (e.g. VI
+                        "📦 Khác" at 360px); a wrapping row keeps every button whole and on screen. */}
                     <div
+                        data-testid="snapshot-part-filter"
                         style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(5, 1fr)",
+                            display: "flex",
+                            flexWrap: "wrap",
                             gap: 6,
                             marginBottom: 10,
                         }}
@@ -3074,6 +3078,7 @@ export default function InventorySnapshotsPage() {
                             type="button"
                             onClick={() => setPartFilter("all")}
                             style={{
+                                flex: "1 0 auto",
                                 padding: "8px 10px",
                                 borderRadius: 8,
                                 border:
