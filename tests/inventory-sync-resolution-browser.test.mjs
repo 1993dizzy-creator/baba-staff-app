@@ -4,7 +4,7 @@ import {createRequire} from 'node:module';
 import {mkdir} from 'node:fs/promises';
 import {purchaseRepairError} from '../lib/inventory/purchase-repair-contract.ts';
 const require=createRequire(import.meta.url);
-test('daily sync details and centered supplier approvals across KO/VI desktop/mobile',{skip:!process.env.PLAYWRIGHT_MODULE_PATH || !process.env.QA_UI_BASE_URL},async()=>{
+test('monthly-panel sync details and centered supplier approvals across KO/VI desktop/mobile',{skip:!process.env.PLAYWRIGHT_MODULE_PATH || !process.env.QA_UI_BASE_URL},async()=>{
  const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH);
  const browser=await chromium.launch({headless:true,executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe'});
  try{for(const lang of ['ko','vi'])for(const mobile of [false,true]){
@@ -20,7 +20,12 @@ test('daily sync details and centered supplier approvals across KO/VI desktop/mo
    else if(url.pathname==='/api/inventory/logs')json={ok:true,data:[root]};
    else if(url.pathname==='/api/inventory/snapshot/name-sync'){
     if(req.method()==='POST' && syncFailure){status=500;json={ok:false,error:'QA_SYNC_FAILED'};}else if(req.method()==='POST'){synced=true;json={ok:true,businessDate:'2026-10-09',syncedCount:economic?0:1,reviewRequiredCount:(economic?1:0)+extraTargets.filter(t=>t.status==='review_required').length,failedCount:extraTargets.filter(t=>t.status==='failed').length,results:[{itemId:314,currentItemName:'배',currentItemNameVi:'Lê',status:economic?'review_required':'synced',targets:[{purchaseLogId:12848,correctionLogId:12849,status:economic?'review_required':'synced',code:economic?'SUPPLIER_CHANGE_CONFIRMATION_REQUIRED':'METADATA_SYNCED'},...extraTargets]}]};}
-    else json={ok:true,canSync:true,languageMissingItems:[],dailySyncItems:synced?[]:[{itemId:314,currentItemName:'배',currentItemNameVi:'Lê',logIds:[12848],issues:economic?['supplier_changed']:['ko_changed'],quantityReviewRequired:false,changes:economic?[{field:'supplier',from:'Chợ',to:'An Liên'}]:[{field:'item_name',from:'배',to:'신선한 배'}]}]};
+    else{
+     // The monthly panel reads ?month=; the per-date read only feeds the language list now.
+     const pending=synced?[]:[{itemId:314,currentItemName:'배',currentItemNameVi:'Lê',logIds:[12848],issues:economic?['supplier_changed']:['ko_changed'],quantityReviewRequired:false,changes:economic?[{field:'supplier',from:'Chợ',to:'An Liên'}]:[{field:'item_name',from:'배',to:'신선한 배'}]}];
+     json=url.searchParams.has('month')?{ok:true,month:url.searchParams.get('month'),canSync:true,languageMissingItems:[],monthlySyncItems:pending.map(item=>({...item,businessDate:'2026-10-09',targets:[]}))}
+      :{ok:true,canSync:true,languageMissingItems:[],dailySyncItems:pending};
+    }
    }
    else if(url.pathname==='/api/admin/ledger')json={ok:true,month:'2026-10',fundsView:{month:'2026-10',mode:'live',asOf:'2026-10-10',businessDateExclusive:null},summary:{income:0,salesIncome:0,otherIncome:0,receivedIncome:0,expense:35000,operatingProfit:-35000,paidExpense:0,displayedExpense:35000,actualCashOutflow:0,cardSettlementDifference:0,cardGrossSales:0,monthlySettledGross:0,actualCardDeposits:0,unsettledCardGross:0},accounts:[],categories:[],partners:[],entries:[],inventoryProjectionIssues:resolved?[]:[issue]};
    else if(url.pathname==='/api/admin/ledger/month-close')json={ok:true,month:'2026-10',state:'open'};
@@ -34,14 +39,20 @@ test('daily sync details and centered supplier approvals across KO/VI desktop/mo
   });
   page.on('dialog',d=>d.accept());
   await page.goto(process.env.QA_UI_BASE_URL+'/inventory/snapshots');
-  const banner=page.getByTestId('snapshot-name-sync-banner');await banner.waitFor();await banner.getByRole('button').first().click();await page.getByTestId('snapshot-name-sync-item-314').getByRole('button').click();
+  // The 당일 banner was replaced by the monthly panel: open it and sync the 10/9 row of #314.
+  const syncPanel=page.getByTestId('monthly-name-sync');
+  const syncItem=async()=>{await syncPanel.getByTestId('monthly-name-sync-toggle').click();await syncPanel.getByTestId('monthly-name-sync-item-2026-10-09:314').getByRole('button').click();};
+  assert.equal(await page.getByTestId('snapshot-name-sync-banner').count(),0);
+  await syncItem();
+  assert.deepEqual(requests.filter(r=>r.method==='POST').at(-1).body,{action:'sync_item',business_date:'2026-10-09',item_id:314});
   const details=page.getByTestId('inventory-daily-sync-actions');assert.equal(await page.getByTestId('inventory-daily-sync-results').count(),0);
   const summary=page.getByRole('status').filter({hasText:lang==='ko'?'1개 동기화 완료':'Đã đồng bộ 1 mặt hàng'});await summary.waitFor();
-  assert.equal(await summary.count(),1);assert.equal(await summary.evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 251, 235)');
+  // One summary, inside the monthly panel (no separate card elsewhere on the page).
+  assert.equal(await summary.count(),1);assert.equal(await summary.evaluate(el=>el.closest('[data-testid="monthly-name-sync"]')!==null),true);
   assert.equal(await details.count(),0);assert.equal(await page.getByText(lang==='ko'?'입고정보 동기화를 완료했습니다.':'Đã đồng bộ thông tin phiếu nhập.',{exact:true}).count(),0);assert.equal(requests.some(r=>r.path.includes('/resolve')),false);
   // Mixed results keep review/failure targets and hide success in the same item.
   extraTargets=[{purchaseLogId:12850,correctionLogId:12850,status:'review_required',code:'QUANTITY_CORRECTION_REQUIRED'},{purchaseLogId:12851,correctionLogId:12851,status:'failed',code:'QA_SYNC_FAILED'},{purchaseLogId:12852,correctionLogId:12852,status:'review_required',code:'PURCHASE_AMOUNT_CONFIRMATION_REQUIRED'}];
-  synced=false;await page.reload();await banner.waitFor();await banner.getByRole('button').first().click();await page.getByTestId('snapshot-name-sync-item-314').getByRole('button').click();await details.waitFor();await summary.waitFor();
+  synced=false;await page.reload();await syncItem();await details.waitFor();await summary.waitFor();
   // One summary banner; shortcuts only for admin-review receipts (failed ones are counted in the summary text).
 assert.equal(await summary.getByTestId('inventory-daily-sync-actions').count(),1);const mixedText=await details.innerText();assert.doesNotMatch(mixedText,/#12848|METADATA_SYNCED|QA_SYNC_FAILED/);assert.match(mixedText,lang==='ko'?/배/:/Lê/);assert.equal(await details.locator('a').count(),2);
 assert.deepEqual(await details.locator('a').evaluateAll(a=>a.map(n=>n.dataset.purchaseLogId)),['12850','12852']);
@@ -49,10 +60,10 @@ assert.deepEqual(await details.locator('a').evaluateAll(a=>a.map(n=>n.dataset.pu
   assert.match(await summary.innerText(),lang==='ko'?/2개 관리자 확인 필요 · 1개 실패/:/2 mặt hàng cần quản trị viên kiểm tra · 1 mặt hàng thất bại/);
   assert.equal(await page.getByText(lang==='ko'?'입고정보 동기화를 완료했습니다.':'Đã đồng bộ thông tin phiếu nhập.',{exact:true}).count(),0);
   // Request failures retain the localized retry guidance.
-  extraTargets=[];synced=false;syncFailure=true;await page.reload();await banner.waitFor();await banner.getByRole('button').first().click();await page.getByTestId('snapshot-name-sync-item-314').getByRole('button').click();
-  await page.getByText(lang==='ko'?'당일 입고정보를 동기화하지 못했습니다. 다시 시도해주세요.':'Không thể đồng bộ thông tin nhập hàng hôm nay. Vui lòng thử lại.',{exact:true}).waitFor();assert.equal(await details.count(),0);syncFailure=false;
-  console.log('PASS single yellow summary, mixed review/failure details and links, request failure guidance',lang,mobile?'mobile':'desktop');
-  synced=false;economic=true;await page.reload();await banner.waitFor();await banner.getByRole('button').first().click();await page.getByTestId('snapshot-name-sync-item-314').getByRole('button').click();await details.waitFor();assert.equal(await details.locator('a').getAttribute('data-purchase-log-id'),'12848');assert.doesNotMatch(await page.locator('body').innerText(),/SUPPLIER_CHANGE_CONFIRMATION_REQUIRED/);assert.ok((await details.locator('a').getAttribute('href')).includes('month=2026-10'));
+  extraTargets=[];synced=false;syncFailure=true;await page.reload();await syncItem();
+  await syncPanel.getByText(lang==='ko'?'입고정보를 동기화하지 못했습니다. 다시 시도해주세요.':'Không thể đồng bộ thông tin nhập hàng. Vui lòng thử lại.',{exact:true}).waitFor();assert.equal(await details.count(),0);syncFailure=false;
+  console.log('PASS single panel summary, mixed review/failure details and links, request failure guidance',lang,mobile?'mobile':'desktop');
+  synced=false;economic=true;await page.reload();await syncItem();await details.waitFor();assert.equal(await details.locator('a').getAttribute('data-purchase-log-id'),'12848');assert.doesNotMatch(await page.locator('body').innerText(),/SUPPLIER_CHANGE_CONFIRMATION_REQUIRED/);assert.ok((await details.locator('a').getAttribute('href')).includes('month=2026-10'));
   await details.locator('a').click();await page.locator('#inventory-projection-12848').waitFor();await page.locator('#inventory-projection-12848').click();
   const dialog=page.getByRole('dialog');await dialog.locator('select').waitFor();await dialog.locator('select').selectOption('12848');
   const save=dialog.locator('footer button');const panel=dialog.locator(':scope > div');const box=await panel.boundingBox(),vp=page.viewportSize();assert.ok(box.width<=540 && box.y>=0 && box.y+box.height<=vp.height);assert.ok(Math.abs((box.y+box.height/2)-vp.height/2)<=20);assert.equal(await dialog.evaluate(el=>getComputedStyle(el).alignItems),'center');assert.equal(await panel.locator(':scope > div').evaluate(el=>getComputedStyle(el).overflowY),'auto');

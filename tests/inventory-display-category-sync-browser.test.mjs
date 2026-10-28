@@ -11,7 +11,7 @@ const snapshot=(id,item,amount)=>({inventory_log_id:id,item_id:item,item_name:'�
 const candidates=[[1900,13561,620,270000],[1901,13563,621,65000]].map(([id,log,item,amount])=>({id,business_date:'2026-10-19',proposed_amount:amount,proposed_category_id:31,proposed_party_id:33,source_key:'inventory-log:'+log,source_snapshot:snapshot(log,item,amount),category:{name:'가공식품'},party:{name:'Unspecified Mart'}}));
 const entries=buildLedgerEntries([],candidates,new Map([[33,{paymentMode:'unspecified',defaultFundAccountId:null,defaultFundAccountName:null}]]),[],'2026-10');
 
-test('daily sync summary keeps one banner with exact Ledger shortcuts that open 13561/13563 across KO/VI desktop/mobile',{skip:!process.env.PLAYWRIGHT_MODULE_PATH || !process.env.QA_UI_BASE_URL},async()=>{
+test('monthly 일괄 동기화 summary keeps one banner with exact Ledger shortcuts that open 13561/13563 across KO/VI desktop/mobile',{skip:!process.env.PLAYWRIGHT_MODULE_PATH || !process.env.QA_UI_BASE_URL},async()=>{
  const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH);
  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe'});
  try{for(const lang of ['ko','vi'])for(const mobile of [false,true]){
@@ -26,10 +26,15 @@ test('daily sync summary keeps one banner with exact Ledger shortcuts that open 
    else if(url.pathname==='/api/inventory/snapshot/list')json={ok:true,batches:[{id:9,snapshot_date:'2026-10-19'}],currentBusinessDate:'2026-10-19',purchaseDateMap:{'2026-10-19':true}};
    else if(url.pathname==='/api/inventory/logs')json={ok:true,data:[root(13561,620,270000),root(13563,621,65000)]};
    else if(url.pathname==='/api/inventory/snapshot/name-sync'){
-    if(req.method()==='POST'){synced=true;posts.push(req.postDataJSON());json={ok:true,businessDate:'2026-10-19',syncedCount:0,reviewRequiredCount:2,failedCount:0,results:[
-     {itemId:620,currentItemName:'품목620',currentItemNameVi:'Mặt hàng 620',status:'review_required',code:'RESOLUTION_REQUIRED',targets:[target(13561,1900)]},
-     {itemId:621,currentItemName:'품목621',currentItemNameVi:'Mặt hàng 621',status:'review_required',code:'RESOLUTION_REQUIRED',targets:[target(13563,1901)]}]};}
-    else json={ok:true,canSync:true,languageMissingItems:[],dailySyncItems:synced?[]:[620,621].map(item=>({itemId:item,currentItemName:'품목'+item,currentItemNameVi:'Mặt hàng '+item,logIds:[item===620?13561:13563],issues:['category_changed','category_vi_changed'],quantityReviewRequired:false,changes:[{field:'category',from:'기타',to:'가공식품'},{field:'category_vi',from:'Khác',to:'Thực phẩm chế biến'}]}))};
+    if(req.method()==='POST'){synced=true;posts.push(req.postDataJSON());json={ok:true,month:'2026-10',syncedCount:0,reviewRequiredCount:2,failedCount:0,skippedCount:0,skipped:[],results:[
+     {businessDate:'2026-10-19',itemId:620,currentItemName:'품목620',currentItemNameVi:'Mặt hàng 620',status:'review_required',code:'RESOLUTION_REQUIRED',targets:[target(13561,1900)]},
+     {businessDate:'2026-10-19',itemId:621,currentItemName:'품목621',currentItemNameVi:'Mặt hàng 621',status:'review_required',code:'RESOLUTION_REQUIRED',targets:[target(13563,1901)]}]};}
+    else{
+     // The monthly panel reads ?month=; the per-date read only feeds the language list now.
+     const pending=synced?[]:[620,621].map(item=>({itemId:item,currentItemName:'품목'+item,currentItemNameVi:'Mặt hàng '+item,logIds:[item===620?13561:13563],issues:['category_changed','category_vi_changed'],quantityReviewRequired:false,changes:[{field:'category',from:'기타',to:'가공식품'},{field:'category_vi',from:'Khác',to:'Thực phẩm chế biến'}]}));
+     json=url.searchParams.has('month')?{ok:true,month:url.searchParams.get('month'),canSync:true,languageMissingItems:[],monthlySyncItems:pending.map(item=>({...item,businessDate:'2026-10-19',targets:[]}))}
+      :{ok:true,canSync:true,languageMissingItems:[],dailySyncItems:pending};
+    }
    }
    else if(url.pathname==='/api/admin/ledger')json={ok:true,month:'2026-10',fundsView:{month:'2026-10',mode:'live',asOf:'2026-10-20',businessDateExclusive:null},summary:{income:0,salesIncome:0,otherIncome:0,receivedIncome:0,expense:0,operatingProfit:0,paidExpense:0,displayedExpense:0,actualCashOutflow:0,cardSettlementDifference:0,cardGrossSales:0,monthlySettledGross:0,actualCardDeposits:0,unsettledCardGross:0},accounts:[],categories:[{id:31,name:'가공식품',kind:'expense',parent_id:null},{id:66,name:'기타 재고매입',kind:'expense',parent_id:null}],partners:[],entries,inventoryProjectionIssues:[]};
    else if(url.pathname==='/api/admin/ledger/month-close')json={ok:true,month:'2026-10',state:'open'};
@@ -39,12 +44,13 @@ test('daily sync summary keeps one banner with exact Ledger shortcuts that open 
   });
   page.on('dialog',d=>d.accept());
   await page.goto(process.env.QA_UI_BASE_URL+'/inventory/snapshots');
-  const banner=page.getByTestId('snapshot-name-sync-banner');await banner.waitFor();await banner.getByRole('button').first().click();
-  await banner.getByRole('button',{name:lang==='ko'?'전체 동기화':'Đồng bộ tất cả',exact:true}).click();
-  const summary=page.getByRole('status').filter({hasText:lang==='ko'?'2개 관리자 확인 필요':'2 mặt hàng cần quản trị viên kiểm tra'});await summary.waitFor();
-  assert.deepEqual(posts,[{action:'sync_all',business_date:'2026-10-19'}]);
-  // Single bottom summary: the separate duplicate warning card is gone.
-  assert.equal(await summary.count(),1);assert.equal(await page.getByTestId('inventory-daily-sync-results').count(),0);
+  // The 당일 banner's 전체 동기화 is now the monthly panel's 일괄 동기화 (confirmed by the dialog handler).
+  assert.equal(await page.getByTestId('snapshot-name-sync-banner').count(),0);
+  const syncAll=page.getByTestId('monthly-name-sync-all');await syncAll.click();
+  const summary=page.getByRole('status').filter({hasText:lang==='ko'?'2개 관리자 확인 필요':'2 cần quản trị viên kiểm tra'});await summary.waitFor();
+  assert.deepEqual(posts,[{action:'sync_month',month:'2026-10',targets:[{businessDate:'2026-10-19',itemId:620},{businessDate:'2026-10-19',itemId:621}]}]);
+  // Single summary inside the monthly panel: no separate duplicate warning card.
+  assert.equal(await summary.count(),1);assert.equal(await summary.evaluate(el=>el.closest('[data-testid="monthly-name-sync"]')!==null),true);assert.equal(await page.getByTestId('inventory-daily-sync-results').count(),0);
   assert.equal(await page.getByText('RESOLUTION_REQUIRED').count(),0);
   const links=summary.getByTestId('inventory-daily-sync-actions').getByRole('link');assert.equal(await links.count(),2);
   assert.deepEqual(await links.evaluateAll(nodes=>nodes.map(node=>node.getAttribute('href'))),[
@@ -58,7 +64,7 @@ test('daily sync summary keeps one banner with exact Ledger shortcuts that open 
   // Real navigation opens the exact receipt in the shared partner group.
   for(const [index,log,candidate,amount] of [[1,13563,1901,'65.000'],[0,13561,1900,'270.000']]){
    await page.goto(process.env.QA_UI_BASE_URL+'/inventory/snapshots');synced=false;
-   await banner.waitFor();await banner.getByRole('button').first().click();await banner.getByRole('button',{name:lang==='ko'?'전체 동기화':'Đồng bộ tất cả',exact:true}).click();await summary.waitFor();
+   await syncAll.click();await summary.waitFor();
    await Promise.all([page.waitForURL(url=>url.pathname==='/admin/ledger/entries'&&url.searchParams.get('inventoryLogId')===String(log)),links.nth(index).click()]);
    const focused=page.locator('article[data-focused="true"]');await focused.waitFor();
    assert.equal(await focused.count(),1);assert.equal(await focused.getAttribute('aria-current'),'true');
