@@ -331,57 +331,54 @@ test("language alert is separate, hidden at zero, labels gaps, falls back by UI 
   assert.match(page, /setEditingItemId\(itemId\)/);
 });
 
-test("current view banner, focus refresh and post-sync movement reload remain wired", () => {
-  assert.match(page, /당일 입고정보 동기화 필요/);
-  assert.match(page, /Cần đồng bộ thông tin nhập hàng hôm nay/);
+// The per-date 당일 banner was replaced by the monthly panel (MonthlyNameSyncPanel); the same
+// display and action contracts now apply there. The per-date read still feeds the language list.
+const monthlyPanel = read("components/inventory/MonthlyNameSyncPanel.tsx");
+
+test("current view: focus refresh, language list and post-sync reload remain wired; the 당일 banner is gone", () => {
+  assert.doesNotMatch(page, /당일 입고정보 동기화 필요|Cần đồng bộ thông tin nhập hàng hôm nay|snapshot-name-sync-banner/);
   assert.match(page, /const nameSyncBusinessDate = viewMode === "snapshot"[\s\S]*: activeBusinessDateKey/);
   assert.match(page, /window\.addEventListener\("focus", handleWindowFocus\)/);
   assert.match(page, /setLanguageMissingItems\(json\.languageMissingItems \|\| \[\]\)/);
-  assert.match(page, /fetchMovementItems\(businessDate\),\s*fetchNameSyncIssues\(businessDate\)/);
-  assert.match(page, /전체 동기화/);
-  assert.match(page, /수량 변경은 별도 입고보정 필요/);
+  assert.match(page, /\[fetchMovementItems\(businessDate\), fetchNameSyncIssues\(businessDate\)\]/);
+  assert.match(monthlyPanel, /입고정보 동기화 필요/);
+  assert.match(monthlyPanel, /일괄 동기화/);
+  assert.match(monthlyPanel, /수량 변경은 별도 입고보정 필요/);
 });
 
-test("daily sync cards keep every field on one compact overflow-safe row", () => {
-  const dailyBanner = page.slice(
-    page.indexOf('data-testid="snapshot-name-sync-banner"'),
-    page.indexOf("{nameSyncBusinessDate && nameSyncItems.length === 0 && nameSyncError")
-  );
-  assert.match(page, /change\.displayFrom !== undefined \? change\.displayFrom : change\.from/);
-  assert.match(page, /change\.displayTo !== undefined \? change\.displayTo : change\.to/);
-  assert.match(dailyBanner, /title=\{`\$\{change\.label\}  \$\{change\.from\} → \$\{change\.to\}`\}/);
-  assert.match(dailyBanner, /whiteSpace: "nowrap"/);
-  assert.match(dailyBanner, /textOverflow: "ellipsis"/);
-  assert.doesNotMatch(dailyBanner, /<br \/>/);
-  assert.match(page, /if \(change\.field === "purchase_price"\) return `\$\{Number\(value\)\.toLocaleString\(\)\} ₫`/);
+test("monthly sync cards keep every field on one compact overflow-safe row", () => {
+  assert.match(monthlyPanel, /change\.displayFrom !== undefined \? change\.displayFrom : change\.from/);
+  assert.match(monthlyPanel, /change\.displayTo !== undefined \? change\.displayTo : change\.to/);
+  assert.match(monthlyPanel, /title=\{`\$\{t\.fields\[change\.field\]\}  \$\{from\} → \$\{to\}`\}/);
+  assert.match(monthlyPanel, /whiteSpace: "nowrap"/);
+  assert.match(monthlyPanel, /textOverflow: "ellipsis"/);
+  assert.doesNotMatch(monthlyPanel, /<br \/>/);
+  assert.match(monthlyPanel, /change\.field === "purchase_price" \? `\$\{Number\(value\)\.toLocaleString\(\)\} ₫`/);
 });
 
-test("daily sync actions distinguish one-item, multi-item, active, processing and disabled states", () => {
-  assert.match(page, /nameSyncCanRun && nameSyncItems\.length > 1/);
-  assert.match(page, /background: isProcessing[\s\S]*: isDisabled \? "#f3f4f6" : "#2563eb"/);
-  assert.match(page, /color: isDisabled && !isProcessing \? "#6b7280" : "#fff"/);
-  assert.match(page, /isProcessing \? nameSyncT\.processing : nameSyncT\.syncOne/);
+test("monthly sync actions distinguish processing, busy and idle states", () => {
+  assert.match(monthlyPanel, /background: processingKey === key \? "#1d4ed8" : busy \? "#f3f4f6" : "#2563eb"/);
+  assert.match(monthlyPanel, /color: busy && processingKey !== key \? "#6b7280" : "#fff"/);
+  assert.match(monthlyPanel, /processingKey === key \? t\.processing : t\.syncOne/);
+  assert.match(monthlyPanel, /processingKey === "all" \? t\.processingAll\(items\.length\) : t\.syncAll/);
 });
 
-test("language warning and daily work banners retain distinct visual semantics", () => {
-  const languageBanner = page.slice(
-    page.indexOf('data-testid="inventory-language-missing-banner"'),
-    page.indexOf('data-testid="snapshot-name-sync-banner"')
-  );
-  const dailyBanner = page.slice(page.indexOf('data-testid="snapshot-name-sync-banner"'));
+test("language warning and monthly sync panel retain distinct visual semantics", () => {
+  const languageBanner = page.slice(page.indexOf('data-testid="inventory-language-missing-banner"'), page.indexOf("<MonthlyNameSyncPanel "));
   assert.match(languageBanner, /⚠/);
   assert.match(languageBanner, /#fff7ed/);
-  assert.match(dailyBanner, /↻/);
-  assert.match(dailyBanner, /#eff6ff/);
+  assert.match(monthlyPanel, /📅/);
+  assert.match(monthlyPanel, /background: "#f8fafc"/);
 });
 
 test("date selection immediately clears dated content and shows a scoped loading result", () => {
   assert.match(page, /const beginDateContentTransition = \(nextViewMode: "current" \| "snapshot"\)/);
-  assert.match(page, /setSnapshotItems\(\[\]\);[\s\S]*setMovementItems\(\[\]\);[\s\S]*setNameSyncItems\(\[\]\)/);
+  assert.match(page, /setSnapshotItems\(\[\]\);[\s\S]*setMovementItems\(\[\]\);/);
   assert.match(page, /beginDateContentTransition\("snapshot"\);[\s\S]*setSelectedBatchId\(nextBatchId\)/);
   assert.match(page, /beginDateContentTransition\("current"\);[\s\S]*setSelectedBatchId\(null\)/);
   assert.match(page, /testId="snapshot-date-content-loading"/);
-  assert.match(page, /\{isDateContentLoading \? \([\s\S]*\{nameSyncBusinessDate && nameSyncItems\.length > 0/);
+  // The monthly panel stays outside the date-scoped loading area.
+  assert.ok(page.indexOf("<MonthlyNameSyncPanel ") < page.indexOf("{isDateContentLoading ? ("));
 });
 
 test("date loading card uses a compact accessible CSS-only spinner", () => {
@@ -412,7 +409,7 @@ test("snapshot and movement requests ignore stale success, failure and finally p
 
 test("date transitions retain global language warnings while daily sync stays date-gated", () => {
   const transitionBlock = page.slice(page.indexOf("const beginDateContentTransition"), page.indexOf("useEffect(() =>", page.indexOf("const beginDateContentTransition")));
-  const nameSyncBlock = page.slice(page.indexOf("const fetchNameSyncIssues"), page.indexOf("const syncSnapshotNames"));
+  const nameSyncBlock = page.slice(page.indexOf("const fetchNameSyncIssues"), page.indexOf("const fetchItemLogs"));
   assert.doesNotMatch(transitionBlock, /setLanguageMissingItems\(\[\]\)/);
   assert.doesNotMatch(nameSyncBlock, /setLanguageMissingItems\(\[\]\)/);
   assert.match(page, /setLanguageMissingItems\(json\.languageMissingItems \|\| \[\]\)/);

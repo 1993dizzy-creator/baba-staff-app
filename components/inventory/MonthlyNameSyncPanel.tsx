@@ -16,6 +16,8 @@ const text = {
     loading: "월간 동기화 항목 확인 중...",
     loadFailed: "월간 동기화 항목을 확인하지 못했습니다.",
     syncAll: "일괄 동기화",
+    expand: "펼치기",
+    collapse: "접기",
     processingAll: (count: number) => `${count}개 처리 중...`,
     confirmMonth: (month: string, count: number, days: number) =>
       `${Number(month.slice(5))}월 ${days}일, ${count}개 품목의 입고정보를 동기화합니다. 표시정보는 반영하고, 금액·거래처 변경은 기존 장부 확인 절차를 유지합니다.`,
@@ -39,6 +41,8 @@ const text = {
     loading: "Đang kiểm tra mục cần đồng bộ trong tháng...",
     loadFailed: "Không thể kiểm tra mục cần đồng bộ trong tháng.",
     syncAll: "Đồng bộ tất cả",
+    expand: "Mở rộng",
+    collapse: "Thu gọn",
     processingAll: (count: number) => `Đang xử lý ${count} mặt hàng...`,
     confirmMonth: (month: string, count: number, days: number) =>
       `Đồng bộ thông tin nhập hàng của ${count} mặt hàng trong ${days} ngày của tháng ${Number(month.slice(5))}. Cập nhật thông tin hiển thị; thay đổi tiền và nhà cung cấp vẫn cần xác nhận trong sổ như hiện tại.`,
@@ -195,20 +199,24 @@ export default function MonthlyNameSyncPanel({ month, lang, reloadKey, onSynced 
 
   return (
     <section data-testid="monthly-name-sync" data-month={month} style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: 14, padding: "10px 12px", marginBottom: 12, display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-        {/* 일괄 동기화 sits left of the title; shown only to sync roles when the month has rows. */}
-        {canSync && items.length ? <button type="button" data-testid="monthly-name-sync-all" disabled={processingKey !== null || loading} onClick={() => void syncAll()}
+      {/* [title] [일괄 동기화] [⌄]: the title area and the chevron fold the list; 일괄 동기화 never does
+          (its click stops here), and it runs whether the list is folded or open. */}
+      <div data-testid="monthly-name-sync-header" onClick={() => { if (items.length) setExpanded(current => !current); }}
+        style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, cursor: items.length ? "pointer" : "default" }}>
+        <span data-testid="monthly-name-sync-title" style={{ flex: 1, fontSize: 13, fontWeight: 900, color: items.length ? "#334155" : "#64748b", minWidth: 0, overflowWrap: "anywhere" }}>
+          📅 {loading && !items.length ? t.loading : items.length ? t.title(month, items.length, dates.length) : t.none(month)}
+        </span>
+        {canSync && items.length ? <button type="button" data-testid="monthly-name-sync-all" disabled={processingKey !== null || loading}
+          onClick={event => { event.stopPropagation(); void syncAll(); }}
           style={{ flexShrink: 0, padding: "6px 10px", minHeight: 30, borderRadius: 8, border: "1px solid #1d4ed8", background: "#1d4ed8", color: "#fff",
             fontSize: 11, fontWeight: 800, whiteSpace: "nowrap", cursor: processingKey !== null || loading ? "not-allowed" : "pointer", opacity: processingKey !== null && processingKey !== "all" || loading ? 0.6 : 1 }}>
           {processingKey === "all" ? t.processingAll(items.length) : t.syncAll}
         </button> : null}
-        <button type="button" aria-expanded={expanded} disabled={!items.length} onClick={() => setExpanded(current => !current)}
-          style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, border: "none", background: "transparent", padding: 0, cursor: items.length ? "pointer" : "default", textAlign: "left" }}>
-          <span data-testid="monthly-name-sync-title" style={{ fontSize: 13, fontWeight: 900, color: items.length ? "#334155" : "#64748b", minWidth: 0, overflowWrap: "anywhere" }}>
-            📅 {loading && !items.length ? t.loading : items.length ? t.title(month, items.length, dates.length) : t.none(month)}
-          </span>
-          {items.length ? <span aria-hidden="true" style={{ fontSize: 14, fontWeight: 900, color: "#334155", flexShrink: 0 }}>{expanded ? "⌃" : "⌄"}</span> : null}
-        </button>
+        {items.length ? <button type="button" data-testid="monthly-name-sync-toggle" aria-expanded={expanded} aria-label={expanded ? t.collapse : t.expand}
+          onClick={event => { event.stopPropagation(); setExpanded(current => !current); }}
+          style={{ flexShrink: 0, minWidth: 28, minHeight: 30, padding: 0, border: "none", background: "transparent", fontSize: 14, fontWeight: 900, color: "#334155", cursor: "pointer" }}>
+          <span aria-hidden="true">{expanded ? "⌃" : "⌄"}</span>
+        </button> : null}
       </div>
       {error ? <div role="alert" style={{ fontSize: 12, fontWeight: 700, color: "#b91c1c" }}>{error}</div> : null}
       {result ? <div role="status" data-testid="monthly-name-sync-result" style={{ fontSize: 12, fontWeight: 700, color: "#1d4ed8" }}>

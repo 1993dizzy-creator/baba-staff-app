@@ -129,12 +129,19 @@ test('parse helper: YYYY-MM, rows inside the month, de-duplicated, at most 300',
  assert.equal(monthly.MONTHLY_SYNC_MAX_TARGETS,300);
 });
 
-test('panel: 일괄 동기화 left of the title, no 이 날짜로 이동, confirm with counts, one request at a time',()=>{
+test('panel: [title] [일괄 동기화] [⌄], no 이 날짜로 이동, confirm with counts, one request at a time',()=>{
  const panel=readFileSync('components/inventory/MonthlyNameSyncPanel.tsx','utf8');
- assert.ok(panel.indexOf('data-testid="monthly-name-sync-all"')<panel.indexOf('data-testid="monthly-name-sync-title"'));
+ const order=['monthly-name-sync-title','monthly-name-sync-all','monthly-name-sync-toggle'].map(id=>panel.indexOf(`data-testid="${id}"`));
+ assert.ok(order.every((index,i)=>index>0&&(i===0||index>order[i-1])),String(order));
+ // The batch button never folds the list.
+ assert.ok(panel.includes('onClick={event => { event.stopPropagation(); void syncAll(); }}'));
  assert.doesNotMatch(panel,/goToDate|이 날짜로 이동|Đi tới ngày này/);
  assert.match(panel,/if \(!window\.confirm\(t\.confirmMonth\(requestMonth, targets\.length, days\)\)\) return;/);
  assert.match(panel,/JSON\.stringify\(\{ action: "sync_month", month: requestMonth, targets \}\)/);
  assert.match(panel,/if \(busyRef\.current \|\| !items\.length\) return;/);
  assert.match(panel,/\{canSync && items\.length \? <button type="button" data-testid="monthly-name-sync-all"/);
+ // The per-date 당일 banner is gone; the monthly panel is the only sync UI on the page.
+ const page=readFileSync('app/(protected)/inventory/snapshots/page.tsx','utf8');
+ assert.doesNotMatch(page,/snapshot-name-sync-banner|당일 입고정보|syncSnapshotNames|dailySyncItems/);
+ assert.equal((page.match(/<MonthlyNameSyncPanel /g)??[]).length,1);
 });

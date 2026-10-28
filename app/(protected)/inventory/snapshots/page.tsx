@@ -10,9 +10,7 @@ import dynamic from "next/dynamic";
 const InventoryEditor = dynamic(() => import("@/components/inventory/InventoryItemEditor"), { ssr: false, loading: InventoryEditorLoading });
 function InventoryEditorLoading() { const { lang } = useLanguage(); return <InventoryLoadingCard lang={lang} minHeight="min(512px, 52dvh)" testId="inventory-editor-loading" />; }
 import Container from "@/components/Container";
-import InventoryDailySyncResults from "@/components/inventory/InventoryDailySyncResults";
 import MonthlyNameSyncPanel from "@/components/inventory/MonthlyNameSyncPanel";
-import type { InventoryDailySyncResult } from "@/lib/inventory/daily-sync-result";
 import InventoryLoadingCard from "@/components/inventory/InventoryLoadingCard";
 import editorStyles from "@/components/inventory/InventoryEditorModal.module.css";
 import { ui } from "@/lib/styles/ui";
@@ -39,43 +37,6 @@ type SnapshotBatch = {
     snapshot_date: string;
 };
 
-type SnapshotNameSyncIssueCode =
-    | "missing_ko"
-    | "missing_vi"
-    | "ko_changed"
-    | "vi_changed"
-    | "part_changed"
-    | "category_changed"
-    | "category_vi_changed"
-    | "code_changed"
-    | "unit_changed"
-    | "purchase_price_changed"
-    | "supplier_changed"
-    | "supplier_partner_changed"
-    | "quantity_review_required";
-
-type SnapshotNameSyncField =
-    | "item_name" | "item_name_vi" | "part" | "category" | "category_vi"
-    | "code" | "unit" | "purchase_price" | "supplier" | "supplier_partner_id";
-
-type SnapshotNameSyncChange = {
-    field: SnapshotNameSyncField;
-    from: string | number | null;
-    to: string | number | null;
-    displayFrom?: string | null;
-    displayTo?: string | null;
-};
-
-type SnapshotNameSyncItem = {
-    itemId: number;
-    logIds: number[];
-    currentItemName: string | null;
-    currentItemNameVi: string | null;
-    issues: SnapshotNameSyncIssueCode[];
-    changes: SnapshotNameSyncChange[];
-    quantityReviewRequired: boolean;
-};
-
 type SnapshotLanguageMissingItem = {
     itemId: number;
     registeredAt?: string | null;
@@ -84,49 +45,6 @@ type SnapshotLanguageMissingItem = {
     currentItemNameVi: string | null;
     missingLanguages: ("ko" | "vi")[];
 };
-
-const snapshotNameSyncText = {
-    ko: {
-        banner: (count: number) => `당일 입고정보 동기화 필요 ${count}개 품목`,
-        syncAll: "전체 동기화",
-        syncOne: "동기화",
-        processing: "처리 중...",
-        empty: "없음",
-        quantityReview: "수량 변경은 별도 입고보정 필요",
-        confirmAll: (count: number) =>
-            `선택한 날짜의 입고정보 ${count}개 품목을 동기화합니다. 표시정보는 반영하고, 해당 입고 수정 이력의 금액·거래처 변경은 장부 확인 절차를 유지합니다.`,
-        loadFailed: "당일 입고정보 동기화 상태를 확인하지 못했습니다.",
-        syncFailed: "당일 입고정보를 동기화하지 못했습니다. 다시 시도해주세요.",
-        result: (synced: number, review: number, failed: number) =>
-            `${synced}개 동기화 완료${review ? ` · ${review}개 관리자 확인 필요` : ""}${failed ? ` · ${failed}개 실패` : ""}`,
-        fields: {
-            item_name: "한글명", item_name_vi: "베트남어명", part: "파트",
-            category: "카테고리", category_vi: "베트남어 카테고리", code: "코드",
-            unit: "단위", purchase_price: "단가", supplier: "거래처",
-            supplier_partner_id: "거래처 연결",
-        },
-    },
-    vi: {
-        banner: (count: number) => `Cần đồng bộ thông tin nhập hàng hôm nay: ${count} mặt hàng`,
-        syncAll: "Đồng bộ tất cả",
-        syncOne: "Đồng bộ",
-        processing: "Đang xử lý...",
-        empty: "Không có",
-        quantityReview: "Thay đổi số lượng cần dùng quy trình điều chỉnh nhập hàng riêng",
-        confirmAll: (count: number) =>
-            `Đồng bộ ${count} mặt hàng của ngày đã chọn. Cập nhật thông tin hiển thị; thay đổi tiền và nhà cung cấp theo lịch sử phiếu nhập vẫn cần xác nhận trong sổ.`,
-        loadFailed: "Không thể kiểm tra trạng thái đồng bộ thông tin nhập hàng hôm nay.",
-        syncFailed: "Không thể đồng bộ thông tin nhập hàng hôm nay. Vui lòng thử lại.",
-        result: (synced: number, review: number, failed: number) =>
-            `Đã đồng bộ ${synced} mặt hàng${review ? ` · ${review} mặt hàng cần quản trị viên kiểm tra` : ""}${failed ? ` · ${failed} mặt hàng thất bại` : ""}`,
-        fields: {
-            item_name: "Tên tiếng Hàn", item_name_vi: "Tên tiếng Việt", part: "Bộ phận",
-            category: "Danh mục", category_vi: "Danh mục tiếng Việt", code: "Mã",
-            unit: "Đơn vị", purchase_price: "Đơn giá", supplier: "Nhà cung cấp",
-            supplier_partner_id: "Liên kết nhà cung cấp",
-        },
-    },
-} as const;
 
 const inventoryLanguageMissingText = {
     ko: {
@@ -457,51 +375,20 @@ export default function InventorySnapshotsPage() {
     const [changingReasonLogId, setChangingReasonLogId] = useState<number | null>(null);
     const [syncingPurchaseLogId, setSyncingPurchaseLogId] = useState<number | null>(null);
     const [purchaseLogGroupFilter, setPurchaseLogGroupFilter] = useState("all");
-    const [nameSyncItems, setNameSyncItems] = useState<SnapshotNameSyncItem[]>([]);
     const [languageMissingItems, setLanguageMissingItems] = useState<SnapshotLanguageMissingItem[]>([]);
     const [languageMissingExpanded, setLanguageMissingExpanded] = useState(false);
-    const [nameSyncCanRun, setNameSyncCanRun] = useState(false);
-    const [nameSyncExpanded, setNameSyncExpanded] = useState(false);
+    // The per-date name-sync read now only feeds the language list; sync items show in the monthly panel.
     const [nameSyncLoading, setNameSyncLoading] = useState(false);
-    const [nameSyncProcessingKey, setNameSyncProcessingKey] = useState<number | "all" | null>(null);
-    const [nameSyncError, setNameSyncError] = useState("");
-    const [nameSyncResult, setNameSyncResult] = useState("");
-    const [nameSyncDetails, setNameSyncDetails] = useState<InventoryDailySyncResult[]>([]);
-    // Bumped after a daily sync or an item save so the monthly sync list re-reads its month.
+    // Bumped after an item save so the monthly sync list re-reads its month.
     const [monthlySyncReloadKey, setMonthlySyncReloadKey] = useState(0);
     const nameSyncRequestSequenceRef = useRef(0);
     const nameSyncBusinessDateRef = useRef("");
-    const nameSyncT = snapshotNameSyncText[lang];
     const languageMissingT = inventoryLanguageMissingText[lang];
-
-    const getNameSyncItemLabel = (item: SnapshotNameSyncItem) =>
-        (lang === "vi"
-            ? item.currentItemNameVi || item.currentItemName
-            : item.currentItemName || item.currentItemNameVi) || "-";
 
     const getLanguageMissingItemLabel = (item: SnapshotLanguageMissingItem) =>
         (lang === "vi"
             ? item.currentItemNameVi || item.currentItemName
             : item.currentItemName || item.currentItemNameVi) || "-";
-
-    const formatNameSyncValue = (change: SnapshotNameSyncChange, value: string | number | null) => {
-        if (value === null || value === undefined || String(value).trim() === "") return nameSyncT.empty;
-        if (change.field === "purchase_price") return `${Number(value).toLocaleString()} ₫`;
-        return String(value);
-    };
-
-    const getNameSyncChanges = (item: SnapshotNameSyncItem) => item.changes.map((change) => ({
-        key: `${change.field}:${String(change.from)}:${String(change.to)}`,
-        label: nameSyncT.fields[change.field],
-        from: formatNameSyncValue(
-            change,
-            change.displayFrom !== undefined ? change.displayFrom : change.from
-        ),
-        to: formatNameSyncValue(
-            change,
-            change.displayTo !== undefined ? change.displayTo : change.to
-        ),
-    }));
 
     const getSelectedBusinessDate = () => {
         if (viewMode === "snapshot") {
@@ -882,10 +769,10 @@ export default function InventorySnapshotsPage() {
         }
     };
 
+    // The per-date read now only feeds the all-items language list; the monthly panel owns sync rows.
     const fetchNameSyncIssues = useCallback(async (businessDate: string) => {
         const requestSequence = ++nameSyncRequestSequenceRef.current;
         setNameSyncLoading(true);
-        setNameSyncError("");
 
         try {
             const res = await fetchInventoryApi(
@@ -894,109 +781,21 @@ export default function InventorySnapshotsPage() {
             );
             const json = await res.json() as {
                 ok?: boolean;
-                canSync?: boolean;
                 languageMissingItems?: SnapshotLanguageMissingItem[];
-                dailySyncItems?: SnapshotNameSyncItem[];
             };
 
             if (requestSequence !== nameSyncRequestSequenceRef.current) return;
-
-            if (!res.ok || !json.ok) {
-                setNameSyncItems([]);
-                setNameSyncCanRun(false);
-                setNameSyncError(snapshotNameSyncText[lang].loadFailed);
-                return;
-            }
+            if (!res.ok || !json.ok) return;
 
             setLanguageMissingItems(json.languageMissingItems || []);
-            setNameSyncItems(json.dailySyncItems || []);
-            setNameSyncCanRun(json.canSync === true);
         } catch (error) {
             console.error("[INVENTORY_SNAPSHOT_NAME_SYNC_LOAD_FAILED]", error);
-            if (requestSequence === nameSyncRequestSequenceRef.current) {
-                setNameSyncItems([]);
-                setNameSyncCanRun(false);
-                setNameSyncError(snapshotNameSyncText[lang].loadFailed);
-            }
         } finally {
             if (requestSequence === nameSyncRequestSequenceRef.current) {
                 setNameSyncLoading(false);
             }
         }
-    }, [lang]);
-
-    const syncSnapshotNames = async (
-        action: "sync_item" | "sync_all",
-        item?: SnapshotNameSyncItem
-    ) => {
-        const businessDate = getSelectedBusinessDate();
-        if (!businessDate || nameSyncProcessingKey !== null) {
-            return;
-        }
-
-        if (
-            action === "sync_all" &&
-            !window.confirm(nameSyncT.confirmAll(nameSyncItems.length))
-        ) {
-            return;
-        }
-
-        const processingKey = action === "sync_all" ? "all" : Number(item?.itemId);
-        setNameSyncProcessingKey(processingKey);
-        setNameSyncError("");
-        setNameSyncResult("");
-        setNameSyncDetails([]);
-
-        try {
-            const res = await fetchInventoryApi("/api/inventory/snapshot/name-sync", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    action,
-                    business_date: businessDate,
-                    ...(action === "sync_item" ? { item_id: item?.itemId } : {}),
-                }),
-            });
-            const json = await res.json() as {
-                ok?: boolean;
-                error?: string;
-                results?: InventoryDailySyncResult[];
-                syncedCount?: number;
-                reviewRequiredCount?: number;
-                failedCount?: number;
-            };
-
-            if (!res.ok || !json.ok) {
-                setNameSyncError(nameSyncT.syncFailed);
-                return;
-            }
-
-            if (nameSyncBusinessDateRef.current !== businessDate) return;
-            setNameSyncDetails(json.results || []);
-            setNameSyncResult(nameSyncT.result(
-                Number(json.syncedCount ?? 0),
-                Number(json.reviewRequiredCount ?? 0),
-                Number(json.failedCount ?? 0)
-            ));
-
-            setMonthlySyncReloadKey((key) => key + 1);
-            const reloads: Promise<void>[] = [
-                fetchMovementItems(businessDate),
-                fetchNameSyncIssues(businessDate),
-            ];
-            if (viewMode === "snapshot" && selectedBatchId) {
-                reloads.push(fetchSnapshotItems(selectedBatchId));
-            }
-            await Promise.all(reloads);
-        } catch (error) {
-            console.error("[INVENTORY_SNAPSHOT_NAME_SYNC_UPDATE_FAILED]", error);
-            if (nameSyncBusinessDateRef.current === businessDate) {
-                setNameSyncError(nameSyncT.syncFailed);
-            }
-        } finally {
-            setNameSyncProcessingKey(null);
-        }
-    };
+    }, []);
 
     const fetchItemLogs = async (item: SnapshotItem) => {
         const itemId = Number(item.item_id);
@@ -1461,11 +1260,6 @@ export default function InventorySnapshotsPage() {
         nameSyncRequestSequenceRef.current += 1;
         setSnapshotItems([]);
         setMovementItems([]);
-        setNameSyncItems([]);
-        setNameSyncCanRun(false);
-        setNameSyncError("");
-        setNameSyncResult("");
-        setNameSyncDetails([]);
         setLogModalItem(null);
         setLoadingItems(nextViewMode === "snapshot");
         setLoadingMovements(true);
@@ -1473,7 +1267,7 @@ export default function InventorySnapshotsPage() {
         setDateContentTransitioning(true);
     };
 
-    // After a monthly-list sync, the open date's banner and rows are re-read when it is that date.
+    // After a monthly-list sync, the open date's rows and language list are re-read when it is that date.
     const refreshSyncedBusinessDate = async (businessDate: string) => {
         if (nameSyncBusinessDateRef.current !== businessDate) return;
         const reloads: Promise<void>[] = [fetchMovementItems(businessDate), fetchNameSyncIssues(businessDate)];
@@ -1482,15 +1276,8 @@ export default function InventorySnapshotsPage() {
     };
 
     useEffect(() => {
-        setNameSyncExpanded(false);
         setCompletedCancellationsExpanded(false);
         setLanguageMissingExpanded(false);
-        setNameSyncItems([]);
-        setNameSyncCanRun(false);
-        setNameSyncError("");
-        setNameSyncResult("");
-        setNameSyncDetails([]);
-        setNameSyncProcessingKey(null);
 
         if (!nameSyncBusinessDate) {
             nameSyncRequestSequenceRef.current += 1;
@@ -2655,234 +2442,6 @@ export default function InventorySnapshotsPage() {
                 <InventoryLoadingCard lang={lang} testId="snapshot-date-content-loading" marginBottom={16} />
             ) : (
                 <>
-
-            {nameSyncBusinessDate && nameSyncItems.length > 0 && (
-                <div
-                    data-testid="snapshot-name-sync-banner"
-                    style={{
-                        background: "#eff6ff",
-                        border: "1px solid #bfdbfe",
-                        borderRadius: 14,
-                        padding: "10px 12px",
-                        marginBottom: 12,
-                        display: "grid",
-                        gap: 8,
-                    }}
-                >
-                    <button
-                        type="button"
-                        aria-expanded={nameSyncExpanded}
-                        style={{
-                            width: "100%",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: 8,
-                            border: "none",
-                            background: "transparent",
-                            padding: 0,
-                            cursor: "pointer",
-                            textAlign: "left",
-                        }}
-                        onClick={() => setNameSyncExpanded((current) => !current)}
-                    >
-                        <span style={{ fontSize: 13, fontWeight: 900, color: "#1d4ed8" }}>
-                            ↻ {nameSyncT.banner(nameSyncItems.length)}
-                        </span>
-                        <span
-                            aria-hidden="true"
-                            style={{ fontSize: 14, fontWeight: 900, color: "#1d4ed8", flexShrink: 0 }}
-                        >
-                            {nameSyncExpanded ? "⌃" : "⌄"}
-                        </span>
-                    </button>
-
-                    {nameSyncExpanded && (
-                        <div style={{ display: "grid", gap: 7 }}>
-                            {nameSyncCanRun && nameSyncItems.length > 1 && (
-                                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                                    <button
-                                        type="button"
-                                        disabled={nameSyncProcessingKey !== null || nameSyncLoading}
-                                        onClick={() => syncSnapshotNames("sync_all")}
-                                        style={{
-                                            padding: "6px 10px",
-                                            minHeight: 28,
-                                            borderRadius: 8,
-                                            border: "1px solid #1d4ed8",
-                                            background: "#1d4ed8",
-                                            color: "#fff",
-                                            fontSize: 11,
-                                            fontWeight: 800,
-                                            cursor: nameSyncProcessingKey !== null ? "not-allowed" : "pointer",
-                                            opacity: nameSyncProcessingKey !== null || nameSyncLoading ? 0.6 : 1,
-                                        }}
-                                    >
-                                        {nameSyncProcessingKey === "all"
-                                            ? nameSyncT.processing
-                                            : nameSyncT.syncAll}
-                                    </button>
-                                </div>
-                            )}
-
-                            {nameSyncItems.map((item) => {
-                                const isProcessing = nameSyncProcessingKey === item.itemId;
-                                const isDisabled = nameSyncProcessingKey !== null || nameSyncLoading;
-
-                                return (
-                                    <div
-                                        key={item.itemId}
-                                        data-testid={`snapshot-name-sync-item-${item.itemId}`}
-                                        style={{
-                                            display: "grid",
-                                            gridTemplateColumns: "minmax(0, 1fr) auto",
-                                            alignItems: "end",
-                                            gap: 8,
-                                            border: "1px solid #bfdbfe",
-                                            background: "#fff",
-                                            borderRadius: 10,
-                                            padding: "6px 8px",
-                                        }}
-                                    >
-                                        <div style={{ minWidth: 0, display: "grid", gap: 2 }}>
-                                            <span
-                                                style={{
-                                                    fontSize: 12,
-                                                    fontWeight: 800,
-                                                    color: "#111827",
-                                                    overflow: "hidden",
-                                                    textOverflow: "ellipsis",
-                                                    whiteSpace: "nowrap",
-                                                }}
-                                            >
-                                                {getNameSyncItemLabel(item)}
-                                            </span>
-                                            {getNameSyncChanges(item).map((change) => (
-                                                <div
-                                                    key={change.key}
-                                                    title={`${change.label}  ${change.from} → ${change.to}`}
-                                                    style={{
-                                                        minWidth: 0,
-                                                        display: "flex",
-                                                        alignItems: "baseline",
-                                                        gap: 5,
-                                                        overflow: "hidden",
-                                                        whiteSpace: "nowrap",
-                                                        fontSize: 11,
-                                                    }}
-                                                >
-                                                    <span style={{ flexShrink: 0, color: "#9ca3af", fontSize: 10 }}>
-                                                        {change.label}
-                                                    </span>
-                                                    <span style={{
-                                                        minWidth: 0,
-                                                        maxWidth: "42%",
-                                                        overflow: "hidden",
-                                                        textOverflow: "ellipsis",
-                                                        color: "#6b7280",
-                                                    }}>
-                                                        {change.from}
-                                                    </span>
-                                                    <span aria-hidden="true" style={{ flexShrink: 0, color: "#9ca3af" }}>→</span>
-                                                    <span style={{
-                                                        minWidth: 0,
-                                                        flex: 1,
-                                                        overflow: "hidden",
-                                                        textOverflow: "ellipsis",
-                                                        color: "#1f2937",
-                                                        fontWeight: 800,
-                                                    }}>
-                                                        {change.to}
-                                                    </span>
-                                                </div>
-                                            ))}
-                                            {item.quantityReviewRequired && (
-                                                <span style={{ fontSize: 11, fontWeight: 800, color: "#b45309" }}>
-                                                    {nameSyncT.quantityReview}
-                                                </span>
-                                            )}
-                                        </div>
-
-                                        {nameSyncCanRun && (
-                                            <button
-                                                type="button"
-                                                disabled={isDisabled}
-                                                onClick={() => syncSnapshotNames("sync_item", item)}
-                                                style={{
-                                                    flexShrink: 0,
-                                                    padding: "6px 10px",
-                                                    minHeight: 28,
-                                                    borderRadius: 8,
-                                                    border: `1px solid ${isDisabled && !isProcessing ? "#d1d5db" : "#2563eb"}`,
-                                                    background: isProcessing
-                                                        ? "#1d4ed8"
-                                                        : isDisabled ? "#f3f4f6" : "#2563eb",
-                                                    color: isDisabled && !isProcessing ? "#6b7280" : "#fff",
-                                                    fontSize: 11,
-                                                    fontWeight: 800,
-                                                    cursor: isDisabled ? "not-allowed" : "pointer",
-                                                    opacity: 1,
-                                                }}
-                                            >
-                                                {isProcessing ? nameSyncT.processing : nameSyncT.syncOne}
-                                            </button>
-                                        )}
-                                    </div>
-                                );
-                            })}
-
-                            {nameSyncError && (
-                                <div role="alert" style={{ fontSize: 12, fontWeight: 700, color: "#b91c1c" }}>
-                                    {nameSyncError}
-                                </div>
-                            )}
-                            {nameSyncResult && (
-                                <div role="status" style={{ fontSize: 12, fontWeight: 700, color: "#1d4ed8" }}>
-                                    {nameSyncResult}
-                                    <InventoryDailySyncResults results={nameSyncDetails} businessDate={nameSyncBusinessDate} lang={lang} />
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {nameSyncBusinessDate && nameSyncItems.length === 0 && nameSyncError && (
-                <div
-                    role="alert"
-                    style={{
-                        background: "#fef2f2",
-                        border: "1px solid #fecaca",
-                        borderRadius: 10,
-                        padding: "9px 11px",
-                        marginBottom: 12,
-                        color: "#b91c1c",
-                        fontSize: 12,
-                        fontWeight: 700,
-                    }}
-                >
-                    {nameSyncError}
-                </div>
-            )}
-
-            {nameSyncBusinessDate && nameSyncItems.length === 0 && nameSyncResult && (
-                <div
-                    role="status"
-                    style={{
-                        background: "#fffbeb",
-                        border: "1px solid #fde68a",
-                        borderRadius: 10,
-                        padding: "9px 11px",
-                        marginBottom: 12,
-                        color: "#92400e",
-                        fontSize: 12,
-                        fontWeight: 700,
-                    }}
-                >
-                    {nameSyncResult}
-                    <InventoryDailySyncResults results={nameSyncDetails} businessDate={nameSyncBusinessDate} lang={lang} />
-                </div>
-            )}
 
             {completedCancellations.length > 0 && (
                 <section

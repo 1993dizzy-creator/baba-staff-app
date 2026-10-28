@@ -56,7 +56,11 @@ test("focus opens the exact pending candidate of 13561/13563 within the shared p
 test("snapshots UI keeps one summary banner with real shortcut links and no separate duplicate warning card", () => {
   const page = readFileSync("app/(protected)/inventory/snapshots/page.tsx", "utf8");
   const component = readFileSync("components/inventory/InventoryDailySyncResults.tsx", "utf8");
-  assert.equal((page.match(/<InventoryDailySyncResults /g) ?? []).length, 2);
+  // The 당일 banner is gone; its result links now render once, in the monthly sync panel.
+  const monthlyPanel = readFileSync("components/inventory/MonthlyNameSyncPanel.tsx", "utf8");
+  assert.equal((page.match(/<InventoryDailySyncResults /g) ?? []).length, 0);
+  assert.equal((monthlyPanel.match(/<InventoryDailySyncResults /g) ?? []).length, 1);
+  assert.doesNotMatch(monthlyPanel, /target\.status !== "synced"/);
   assert.doesNotMatch(page, /target\.status !== "synced"/);
   assert.doesNotMatch(component, /inventory-daily-sync-results/);
   assert.match(component, /inventoryLedgerEntryHref\(target, businessDate\)/);
