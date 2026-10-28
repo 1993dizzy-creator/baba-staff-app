@@ -2656,6 +2656,12 @@ function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
     return [items, settlement].filter(Boolean).join(" · ");
   }
   if (entry.systemDisplay?.kind === "rent") return lang === "vi" ? "Tiền thuê" : "임대료";
+  if (entry.systemDisplay?.kind === "payablePayment" && entry.systemDisplay.listedPayablesAmount) {
+    // The row shows only the prior-month part; this month's part is on its purchase rows.
+    return lang === "vi"
+      ? `Tổng thanh toán ${money(entry.systemDisplay.actualPaidAmount ?? entry.amount)} · ${money(entry.systemDisplay.listedPayablesAmount)} thuộc phiếu nhập tháng này`
+      : `총 지급 ${money(entry.systemDisplay.actualPaidAmount ?? entry.amount)} · 당월 매입분 ${money(entry.systemDisplay.listedPayablesAmount)} 제외`;
+  }
   const vi = lang === "vi",
     subtitle = entry.subtitle.replace(/\s*·\s*확인 필요/g, "");
   return [

@@ -120,7 +120,10 @@ export type LedgerEntry = {
     | { kind: "meal"; employeeCount: number }
     | { kind: "inventory"; itemCount: number; partyMissing: boolean; needsConfirmation: boolean }
     | { kind: "rent" }
-    | { kind: "payablePayment"; partyName: string; prepaid: boolean; actualPaidAmount?: number; paymentDifferenceAmount?: number }
+    // listedPayablesAmount: the part of a kept payment row already read inside
+    // this view's purchase rows (e.g. one payment for prior- and current-month
+    // 청구서); the row displays only the rest.
+    | { kind: "payablePayment"; partyName: string; prepaid: boolean; actualPaidAmount?: number; paymentDifferenceAmount?: number; listedPayablesAmount?: number }
     | { kind: "accountTransfer"; fromAccountName: string; toAccountName: string }
     | { kind: "investment"; cashFlow: "inflow" | "outflow" | "none" }
     | { kind: "cardSettlementDeposit" }
@@ -793,8 +796,9 @@ export function buildLedgerEntries(
     const titleOverride = editableManualDisplay && typeof row.display_snapshot?.titleOverride === "string"
       ? row.display_snapshot.titleOverride.trim() : "";
     const payableHistory = payablePaymentHistory(row, viewMonth, linkedPayablesByPayment);
+    const listedPayablesAmount = payablePayment ? sumPayableAmounts(appliedToListedPayables.get(transactionId) ?? []) : 0;
     const paymentSettledInPayables = payablePayment && row.status === "confirmed" &&
-      amount > 0 && sumPayableAmounts(appliedToListedPayables.get(transactionId) ?? []) === amount;
+      amount > 0 && listedPayablesAmount === amount;
     const snapshotNumber = (key: string) => {
       const number = Number(snapshot[key]);
       return snapshot[key] == null || !Number.isFinite(number) ? null : number;
@@ -822,7 +826,8 @@ export function buildLedgerEntries(
       ...(pos ? { systemDisplay: { kind: "pos" as const, paymentBucket: posPaymentBucket, receiptCount: value(snapshot.receiptCount) } } : {}),
       ...(rent ? { systemDisplay: { kind: "rent" as const } } : {}),
       ...(payablePayment ? { systemDisplay: { kind: "payablePayment" as const, partyName: row.party?.name?.trim() || "", prepaid: hasPrepaymentFlag(row.source_snapshot),
-        ...(linkedPaymentDifference ? { actualPaidAmount: linkedPaymentDifference.actualPaidAmount, paymentDifferenceAmount: linkedPaymentDifference.differenceAmount } : {}) } } : {}),
+        ...(linkedPaymentDifference ? { actualPaidAmount: linkedPaymentDifference.actualPaidAmount, paymentDifferenceAmount: linkedPaymentDifference.differenceAmount } : {}),
+        ...(!paymentSettledInPayables && listedPayablesAmount > 0 ? { listedPayablesAmount } : {}) } } : {}),
       ...(accountTransfer ? { systemDisplay: accountTransfer } : {}),
       ...(investmentFlow !== null ? { systemDisplay: { kind: "investment" as const, cashFlow: investmentFlow } } : {}),
       ...(cardSettlementDeposit ? { systemDisplay: { kind: "cardSettlementDeposit" as const } } : {}),

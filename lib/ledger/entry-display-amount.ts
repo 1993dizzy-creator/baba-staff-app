@@ -5,8 +5,9 @@ import { reserveEntryDisplaySign } from "./reserve-text.ts";
 
 // Presentation only. LedgerEntry.amount and direction remain accounting values.
 export function entryDisplayAmount(entry: Pick<LedgerEntry, "amount" | "systemDisplay">) {
+  // A kept payment row omits the part already shown on this month's purchase rows.
   return entry.systemDisplay?.kind === "payablePayment"
-    ? entry.systemDisplay.actualPaidAmount ?? entry.amount
+    ? (entry.systemDisplay.actualPaidAmount ?? entry.amount) - (entry.systemDisplay.listedPayablesAmount ?? 0)
     : entry.amount;
 }
 

@@ -72,7 +72,8 @@ const oct3Purchases = [
 ];
 const oct3Raw = buildLedgerEntries([...oct3Purchases, ...oct3Payments], [], new Map(), [], "2026-10");
 const oct3Entries = withPaymentDifferenceAdjustments(oct3Raw);
-const groupOf = (transactionId: number) => oct3Entries.find(entry => entry.items.some(item => item.transactionId === transactionId))!;
+const groupOfIn = (entries: readonly LedgerEntry[], transactionId: number) => entries.find(entry => entry.items.some(item => item.transactionId === transactionId))!;
+const groupOf = (transactionId: number) => groupOfIn(oct3Entries, transactionId);
 
 test("10/3 — every purchase is listed once and no payment row (#2398 #2403~#2406) appears in any filter", () => {
   const all = listed(oct3Entries, "all", oct3);
@@ -206,11 +207,27 @@ test("month boundary: a purchase reads as of its view month; a payment for anoth
   assert.equal(novRow.paymentSettledInPayables, undefined);
   assert.equal(badge(novRow), "결제");
   assert.deepEqual(dayPair(november, "all", "2026-11-02"), { income: 0, expense: 0 });
-  // A payment split between this month's and an earlier month's purchase keeps its row too.
+});
+
+test("one payment for prior- and current-month 청구서: the payment row shows only the prior-month part", () => {
+  // #3035 pays 300,000 of a September 청구서 and 200,000 of October #3034.
   const mixed = payment(3035, "2026-10-10", 500_000, CASH, PARTY);
   const entries = buildLedgerEntries([purchase(3034, "2026-10-04", 200_000, PARTY, [applied(mixed, 200_000)]), mixed], [], new Map(), [], "2026-10");
-  assert.equal(entries.find(entry => entry.transactionId === 3035)?.paymentSettledInPayables, undefined);
-  assert.equal(listed(entries, "all").length, 2);
+  const paymentRow = entries.find(entry => entry.transactionId === 3035)!;
+  const purchaseRow = groupOfIn(entries, 3034);
+  assert.equal(paymentRow.paymentSettledInPayables, undefined);
+  assert.deepEqual(listed(entries, "all").map(entry => entry.id).sort(), [purchaseRow.id, paymentRow.id].sort());
+  assert.equal(badge(paymentRow), "결제");
+  assert.equal(entryDisplayAmount(paymentRow), 300_000);
+  assert.equal(paymentRow.amount, 500_000);
+  assert.equal(badge(purchaseRow), "결제");
+  assert.deepEqual(purchaseRow.payablePayments?.map(item => [item.transactionId, item.amount, item.paymentAmount]), [[3035, 200_000, 500_000]]);
+  // 결제 total = cash actually paid once (300,000 + 200,000); 전체 expense = October purchase only.
+  assert.equal(listed(entries, "payment").reduce((sum, entry) => sum + (entryFilterHeaderAmount(entry, "payment") ?? 0), 0), 500_000);
+  assert.deepEqual(dayPair(entries, "all", "2026-10-10"), { income: 0, expense: 0 });
+  assert.deepEqual(dayPair(entries, "all", "2026-10-04"), { income: 0, expense: 200_000 });
+  assert.match(page, /당월 매입분 \$\{money\(entry\.systemDisplay\.listedPayablesAmount\)\} 제외/);
+  assert.match(page, /thuộc phiếu nhập tháng này/);
 });
 
 test("manual expense, POS, payroll and card rows keep their badges, filters and subtotals", () => {
