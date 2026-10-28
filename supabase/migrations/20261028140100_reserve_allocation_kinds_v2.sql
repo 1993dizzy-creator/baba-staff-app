@@ -206,8 +206,15 @@ begin
   return public.ledger_reserve_insert_entry_v2(v_plan.id, v_entry_type, v_kind, p_amount,
     p_restores_entry_id, p_memo, p_request_key, p_actor_user_id);
 exception when unique_violation then
+  -- A concurrent request with the same key committed first. It is a retry only when
+  -- it booked exactly this request; any other payload under the key is a conflict.
   select * into v_existing from public.ledger_reserve_entries where request_key = p_request_key;
-  return jsonb_build_object('status', 'duplicate', 'reserveEntryId', v_existing.id);
+  if v_existing.id is not null and v_existing.reserve_plan_id = p_reserve_plan_id
+    and v_existing.entry_type = v_entry_type and v_existing.allocation_kind is not distinct from v_kind
+    and v_existing.amount = p_amount and v_existing.restores_entry_id is not distinct from p_restores_entry_id then
+    return jsonb_build_object('status', 'duplicate', 'reserveEntryId', v_existing.id);
+  end if;
+  return jsonb_build_object('status', 'request_key_conflict');
 end
 $$;
 
@@ -308,10 +315,11 @@ begin
 end
 $$;
 
--- Same as v1 except: the manual offset ignores extra/restore, and the entry is booked as
--- allocation_kind='regular' with attribution_month = the confirmation month. A schedule
--- of an earlier (even closed) month confirmed late therefore counts in the month it was
--- actually confirmed; no closed month's figures change.
+-- Same as v1 except: the manual offset ignores extra/restore, the entry is booked as
+-- allocation_kind='regular' with attribution_month = the confirmation month, and a
+-- future month's schedule is refused (future_schedule). A schedule of an earlier (even
+-- closed) month confirmed late therefore counts in the month it was actually confirmed;
+-- no closed month's figures change.
 create function public.ledger_confirm_reserve_schedule_v2(p_schedule_id bigint, p_actor_user_id bigint)
 returns jsonb
 language plpgsql
@@ -350,6 +358,11 @@ begin
   v_now_month := date_trunc('month', ((now() at time zone 'Asia/Ho_Chi_Minh') - interval '3 hours')::date)::date;
   if public.ledger_month_is_closed_v1(v_now_month) then
     return jsonb_build_object('status', 'current_month_closed');
+  end if;
+  -- A future month's schedule cannot be confirmed early (nothing is written). An earlier
+  -- month's schedule confirmed late still books in the current open month (below).
+  if v_occ.scheduled_month > v_now_month then
+    return jsonb_build_object('status', 'future_schedule', 'scheduledMonth', v_occ.scheduled_month, 'currentMonth', v_now_month);
   end if;
 
   select coalesce(sum(case entry_type when 'allocate' then amount when 'release' then -amount

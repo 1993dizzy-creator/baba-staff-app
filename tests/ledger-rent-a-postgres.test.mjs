@@ -163,6 +163,51 @@ test('rent A-plan migrations on native PostgreSQL',{
     } finally { await db.query('rollback'); }
   });
 
+  await t.test('request key race: same payload is a duplicate, another payload under the key is a conflict (unique_violation path)',async()=>{
+    const count=async()=>(await one(db,'select count(*)::int n from ledger_reserve_entries')).n;
+    const race=async(firstSql,firstArgs,secondSql,secondArgs)=>{
+      const a=await runtime.connect(db.name),b=await runtime.connect(db.name);
+      try {
+        await a.query('begin');
+        const first=await call(a,firstSql,firstArgs);
+        assert.equal(first.status,'created');
+        const pending=call(b,secondSql,secondArgs);
+        await new Promise(resolve=>setTimeout(resolve,300));
+        await a.query('commit');
+        return {first,second:await pending};
+      } finally { await a.query('rollback').catch(()=>{});await a.end();await b.end(); }
+    };
+    // Different plan, same key: B does not wait on A's plan lock, so it reaches the unique
+    // index and gets unique_violation. Before the fix this returned 'duplicate'.
+    const before=await count();
+    const conflict=await race("select ledger_create_reserve_entry_v2(2,'extra',7000000,null,'race a',$1,1) r",[uuid(40)],
+      "select ledger_create_reserve_entry_v2(1,'release',1000000,null,'race b',$1,1) r",[uuid(40)]);
+    assert.equal(conflict.second.status,'request_key_conflict');
+    assert.equal(await count(),before+1,'only the first request is booked');
+    assert.equal((await one(db,'select count(*)::int n from ledger_reserve_entries where request_key=$1',[uuid(40)])).n,1);
+    // Same plan, same payload: B waits on the plan lock and returns A's entry as a duplicate.
+    const same=await race("select ledger_create_reserve_entry_v2(2,'extra',8000000,null,'retry',$1,1) r",[uuid(41)],
+      "select ledger_create_reserve_entry_v2(2,'extra',8000000,null,'retry',$1,1) r",[uuid(41)]);
+    assert.equal(same.second.status,'duplicate');
+    assert.equal(Number(same.second.reserveEntryId),Number(same.first.reserveEntryId));
+    assert.equal(await count(),before+2);
+  });
+
+  await t.test('a future month schedule cannot be confirmed early; nothing is written',async()=>{
+    const next=(await one(db,"select (date_trunc('month',((now() at time zone 'Asia/Ho_Chi_Minh')-interval '3 hours')::date)+interval '1 month')::date::text m")).m;
+    const row=await one(db,`insert into ledger_reserve_scheduled_allocations(reserve_plan_id,scheduled_month,scheduled_date,planned_amount,rule_snapshot)
+      values(2,$1,$1,60000000,'{"monthlyAmount":60000000}') returning id`,[next]);
+    const entries=(await one(db,'select count(*)::int n from ledger_reserve_entries')).n;
+    const audits=(await one(db,'select count(*)::int n from ledger_audit_logs')).n;
+    const result=await call(db,'select ledger_confirm_reserve_schedule_v2($1,1) r',[row.id]);
+    assert.equal(result.status,'future_schedule');assert.equal(result.scheduledMonth,next);assert.equal(result.currentMonth,month);
+    const after=await one(db,'select status,reserve_entry_id from ledger_reserve_scheduled_allocations where id=$1',[row.id]);
+    assert.deepEqual([after.status,after.reserve_entry_id],['pending',null]);
+    assert.equal((await one(db,'select count(*)::int n from ledger_reserve_entries')).n,entries);
+    assert.equal((await one(db,'select count(*)::int n from ledger_audit_logs')).n,audits);
+    // The late-confirm policy is unchanged (covered above): an earlier month books in the current month.
+  });
+
   await t.test('nothing protected changed; audit log only grew',async()=>{
     assert.deepEqual(await protectedState(db),before);
     const audits=(await db.query('select * from ledger_audit_logs order by id')).rows;
