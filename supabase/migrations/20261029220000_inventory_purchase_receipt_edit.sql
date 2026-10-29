@@ -113,6 +113,12 @@ begin
       and source_key='inventory-log:' || v_root.id order by id desc limit 1)='dismissed' then
     return jsonb_build_object('status','purchase_correction_review_required','code','DISMISSED_SOURCE','blockReason','purchase_dismissed');
   end if;
+  -- One open Ledger review per receipt: an earlier-day edit (or any other projection issue)
+  -- waits for the owner repair screen before the receipt can be edited again.
+  if exists(select 1 from public.ledger_inventory_projection_status s join public.inventory_logs l on l.id=s.inventory_log_id
+      where (l.id=v_root.id or l.correction_of_inventory_log_id=v_root.id) and s.status in ('review_required','failed')) then
+    return jsonb_build_object('status','purchase_correction_review_required','code','LEDGER_REVIEW_PENDING','blockReason','ledger_review_pending');
+  end if;
 
   -- All writes below commit together or not at all.
   begin

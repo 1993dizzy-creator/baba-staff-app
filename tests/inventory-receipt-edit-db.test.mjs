@@ -166,3 +166,26 @@ test('concurrent edits with the same item version: exactly one commits',async()=
   assert.equal(Number((await one(db,'select count(*) as n from inventory_logs where correction_of_inventory_log_id=100')).n),1);
  }finally{await db.close();}
 });
+
+test('earlier-day edit: stock only until the owner repair; retries are idempotent and further edits wait',async()=>{
+ const db=await receiptEditFixture();try{
+  await db.exec("update inventory_logs set business_date='2026-10-10' where id=100");
+  const first=await editReceipt(db,await item(db),{quantity:9,reason:'전일 정정'});
+  assert.equal(first.status,'ok');assert.equal(first.ledgerSync.status,'review_required');
+  assert.equal((await one(db,'select status from ledger_inventory_projection_status where inventory_log_id=$1',[first.inventoryLogId])).status,'review_required');
+  assert.equal(await net(db),200000);
+  // Same absolute values again (double click, retry after a timeout): nothing new is written.
+  const settled=await state(db);
+  assert.equal((await editReceipt(db,await item(db),{quantity:9,reason:'전일 정정'})).status,'no_change');
+  // A different follow-up edit waits for the owner instead of stacking a second open review.
+  const pending=await editReceipt(db,await item(db),{quantity:8,reason:'추가 정정'});
+  assert.equal(pending.status,'purchase_correction_review_required');assert.equal(pending.blockReason,'ledger_review_pending');
+  assert.deepEqual(await state(db),settled);
+  // Owner confirms through the existing repair RPC: the Ledger now follows the stock.
+  const repair=(await one(db,'select ledger_resolve_inventory_purchase_correction_v2($1,100,2,null) as r',[first.inventoryLogId])).r;
+  assert.equal(repair.status,'synced',JSON.stringify(repair));assert.equal(await net(db),180000);
+  assert.equal((await one(db,'select status from ledger_inventory_projection_status where inventory_log_id=$1',[first.inventoryLogId])).status,'synced');
+  const next=await editReceipt(db,await item(db),{quantity:8,reason:'추가 정정'});
+  assert.equal(next.status,'ok');assert.equal(Number((await item(db)).quantity),8);
+ }finally{await db.close();}
+});

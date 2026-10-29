@@ -8,6 +8,7 @@ export type DailyItemLogRow = {
   new_purchase_price?: number | string | null;
   new_supplier?: string | null;
   purchase_supplier_partner_id?: number | null;
+  ledger_projection_status?: string | null;
 };
 
 export type DailyItemLogEntry<T extends DailyItemLogRow> =
@@ -16,6 +17,8 @@ export type DailyItemLogEntry<T extends DailyItemLogRow> =
     kind: "purchase"; key: string; root: T; corrections: T[];
     /** Root with the family's effective quantity and latest purchase details. */
     final: T; effectiveQuantity: number; cancelled: boolean; invalid: boolean;
+    /** Stock already changed but the Ledger waits for the owner (or failed). */
+    ledgerReviewPending: boolean;
     rootOutsideDay: boolean; sortAt: string;
   };
 
@@ -65,6 +68,7 @@ export function buildDailyItemLogEntries<T extends DailyItemLogRow>(logs: readon
     entries.push({
       kind: "purchase", key: `purchase-${root.id}`, root, corrections, final, effectiveQuantity,
       cancelled: !invalid && effectiveQuantity === 0, invalid: invalid || effectiveQuantity < 0,
+      ledgerReviewPending: [root, ...corrections].some(row => row.ledger_projection_status === "review_required" || row.ledger_projection_status === "failed"),
       rootOutsideDay: root.business_date !== businessDate, sortAt: latestAt([root, ...corrections]),
     });
   }

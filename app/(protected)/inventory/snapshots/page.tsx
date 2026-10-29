@@ -142,6 +142,7 @@ type InventoryLog = {
     supplier?: string | null;
     new_supplier?: string | null;
     purchase_supplier_partner_id?: number | null;
+    ledger_projection_status?: string | null;
     reason?: InventoryReasonValue | null;
     source?: string | null;
     business_date?: string | null;
@@ -383,6 +384,7 @@ export default function InventorySnapshotsPage() {
     // 당일 로그 (03:00 business day of the opened card) and its per-receipt edit form.
     const [itemLogsBusinessDate, setItemLogsBusinessDate] = useState("");
     const [expandedLogEntryKey, setExpandedLogEntryKey] = useState<string | null>(null);
+    const [receiptEditNotice, setReceiptEditNotice] = useState<{ rootId: number; message: string } | null>(null);
     const [purchaseEdit, setPurchaseEdit] = useState<{
         rootId: number; itemId: number; final: InventoryLog;
         quantity: string; price: string; partnerId: string; note: string; reason: string;
@@ -1709,6 +1711,7 @@ export default function InventorySnapshotsPage() {
 
     const openPurchaseEdit = async (entry: Extract<DailyItemLogEntry<InventoryLog>, { kind: "purchase" }>) => {
         const itemId = Number(entry.root.item_id);
+        setReceiptEditNotice(null);
         setPurchaseEdit({
             rootId: entry.root.id,
             itemId,
@@ -1781,9 +1784,11 @@ export default function InventorySnapshotsPage() {
                 return fail(inventoryPurchaseErrorMessage(result.error ?? result.code, lang, result) || result.message || c.loadFailed);
             }
 
-            setPurchaseEdit(null);
+            // Stock saved but the Ledger did not follow (earlier day, pending, failed): this is
+            // not a completed edit. Keep the state visible on the card instead of closing quietly.
             const ledgerNotice = ledgerSyncNotice(result.ledgerSync, vi);
-            if (ledgerNotice) alert(ledgerNotice);
+            setReceiptEditNotice(ledgerNotice ? { rootId: purchaseEdit.rootId, message: ledgerNotice } : null);
+            setPurchaseEdit(null);
             setMonthlySyncReloadKey((key) => key + 1);
             void fetchNameSyncIssues(activeBusinessDateKey);
             if (viewMode === "snapshot" && selectedBatchId) void fetchSnapshotItems(selectedBatchId);
@@ -1799,7 +1804,8 @@ export default function InventorySnapshotsPage() {
         const vi = lang === "vi";
         const expanded = expandedLogEntryKey === entry.key;
         const editing = purchaseEdit?.rootId === entry.root.id ? purchaseEdit : null;
-        const editable = !entry.cancelled && !entry.invalid && Number(entry.root.item_id) > 0;
+        const editable = !entry.cancelled && !entry.invalid && !entry.ledgerReviewPending && Number(entry.root.item_id) > 0;
+        const notice = receiptEditNotice?.rootId === entry.root.id ? receiptEditNotice.message : null;
         const chipStyle = {
             ...ui.badgeMini,
             minWidth: "auto",
@@ -1834,6 +1840,7 @@ export default function InventorySnapshotsPage() {
                     )}
                     {entry.cancelled && <span style={{ ...chipStyle, color: "crimson" }}>{vi ? "Đã hủy toàn bộ" : "전체 취소됨"}</span>}
                     {entry.invalid && <span style={{ ...chipStyle, color: "crimson" }}>{vi ? "Cần quản lý kiểm tra" : "관리자 확인 필요"}</span>}
+                    {entry.ledgerReviewPending && <span data-testid={`daily-log-ledger-pending-${entry.root.id}`} style={{ ...chipStyle, color: "#b45309", borderColor: "#fcd34d", background: "#fffbeb" }}>{vi ? "Sổ chờ quản lý xác nhận" : "장부 관리자 확인 대기"}</span>}
                     <span style={{ flex: "1 1 auto" }} />
                     {entry.corrections.length > 0 && (
                         <button type="button" style={actionButtonStyle} aria-expanded={expanded}
@@ -1849,6 +1856,14 @@ export default function InventorySnapshotsPage() {
                         </button>
                     )}
                 </div>
+
+                {(notice || entry.ledgerReviewPending) && (
+                    <div role="status" data-testid={`receipt-edit-notice-${entry.root.id}`} style={{ fontSize: 12, fontWeight: 700, color: "#b45309", overflowWrap: "anywhere" }}>
+                        {notice ?? (vi
+                            ? "Tồn kho đã được sửa nhưng sổ đang chờ quản lý xác nhận. Việc sửa chỉ hoàn tất sau khi quản lý xác nhận trên màn hình sổ."
+                            : "재고는 반영됐지만 장부는 관리자 확인 대기 중입니다. 관리자가 장부 화면에서 확인해야 정정이 완료됩니다.")}
+                    </div>
+                )}
 
                 {expanded && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 8, borderLeft: "2px solid #e5e7eb" }}>

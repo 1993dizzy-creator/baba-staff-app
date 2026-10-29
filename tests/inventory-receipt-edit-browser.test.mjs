@@ -5,9 +5,12 @@ import {mkdir} from 'node:fs/promises';
 import {projectDailyEffectivePurchases} from '../lib/inventory/daily-effective-purchases.ts';
 import {inventoryText} from '../lib/text/inventory.ts';
 import {inventoryPurchaseErrorMessage} from '../lib/inventory/reasons.ts';
+import {ledgerSyncNotice} from '../lib/inventory/ledger-sync-contract.ts';
+import {offlineUiBase} from './helpers/offline-ui-base.mjs';
+const BASE=offlineUiBase();
 const require=createRequire(import.meta.url);
 // Real UI against an offline build. Every /api request is intercepted; nothing reaches a database.
-test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!process.env.PLAYWRIGHT_MODULE_PATH||!process.env.QA_UI_BASE_URL,timeout:240000},async()=>{
+test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!process.env.PLAYWRIGHT_MODULE_PATH||!BASE,timeout:240000},async()=>{
  const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH);
  const browser=await chromium.launch({headless:true,executablePath:process.env.QA_BROWSER_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe'});
  await mkdir('.qa-review/receipt-edit',{recursive:true});
@@ -19,7 +22,10 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
   const base={item_id:1,item_name:'배',item_name_vi:'Lê',part:'kitchen',category:'Fruit',category_vi:'Fruit',unit:'kg',code:'P',action:'update',source:'edit_form',reason:'purchase',business_date:DAY,actor_name:'QA'};
   const longSupplier='Hà Giang Mart cửa hàng trái cây nhập khẩu rất dài';
   const rootA={...base,id:100,change_quantity:10,prev_quantity:0,new_quantity:10,new_purchase_price:30000,new_supplier:'Chợ A',purchase_supplier_partner_id:7,correction_of_inventory_log_id:null,created_at:'2026-10-09T21:00:00Z'};
-  const rootB={...base,id:110,change_quantity:5,prev_quantity:10,new_quantity:15,new_purchase_price:28000,new_supplier:longSupplier,purchase_supplier_partner_id:8,correction_of_inventory_log_id:null,created_at:'2026-10-10T02:00:00Z'};
+  // #110 has an earlier inventory-only edit waiting for the owner's Ledger review.
+  const rootB={...base,id:110,change_quantity:5,prev_quantity:10,new_quantity:15,new_purchase_price:28000,new_supplier:longSupplier,purchase_supplier_partner_id:8,correction_of_inventory_log_id:null,created_at:'2026-10-10T02:00:00Z',ledger_projection_status:'review_required'};
+  // Staff variant: the save itself returns an inventory-only result (Ledger review required).
+  const savedLedger=role==='staff'?{status:'review_required',code:'PURCHASE_AMOUNT_CONFIRMATION_REQUIRED'}:{status:'synced',code:'REBOOKED'};
   const corrections=[
    {...rootA,id:101,change_quantity:-1,correction_of_inventory_log_id:100,created_at:'2026-10-09T22:00:00Z'},
    {...rootA,id:102,change_quantity:-1,correction_of_inventory_log_id:100,created_at:'2026-10-09T23:00:00Z'},
@@ -34,7 +40,7 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
   await page.route('**/api/**',async route=>{
    const req=route.request(),url=new URL(req.url());reads.push(url.pathname+url.search);let status=200,json={ok:true,data:[],items:[]};
    if(req.method()==='PATCH'){const body=req.postDataJSON();patches.push(body);
-    if(patchResult==='ok'){corrections.push({...rootA,id:200+corrections.length,change_quantity:Number(body.payload.quantity)-10,new_purchase_price:body.payload.purchase_price,new_supplier:body.payload.supplier,purchase_supplier_partner_id:body.payload.supplierPartnerId,correction_of_inventory_log_id:100,created_at:'2026-10-10T04:00:00Z',action:'receipt_edit',new_note:body.payload.reason});item.updated_at=new Date().toISOString();json={ok:true,mode:body.mode,ledgerSync:{status:'synced',code:'REBOOKED'}};}
+    if(patchResult==='ok'){corrections.push({...rootA,id:200+corrections.length,change_quantity:Number(body.payload.quantity)-10,new_purchase_price:body.payload.purchase_price,new_supplier:body.payload.supplier,purchase_supplier_partner_id:body.payload.supplierPartnerId,correction_of_inventory_log_id:100,created_at:'2026-10-10T04:00:00Z',action:'receipt_edit',new_note:body.payload.reason});item.updated_at=new Date().toISOString();json={ok:true,mode:body.mode,ledgerSync:savedLedger};}
     else{status=409;json={ok:false,error:'purchase_correction_review_required',blockReason:'payment_completed'};}}
    else if(url.pathname==='/api/session')json={authenticated:true,user};
    else if(url.pathname==='/api/inventory/snapshot/list')json={ok:true,batches:[],currentBusinessDate:DAY,purchaseDateMap:{[DAY]:true}};
@@ -48,7 +54,7 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
   const shot=name=>page.screenshot({path:`.qa-review/receipt-edit/${lang}-${label}-${role}-${name}.png`,fullPage:false});
   const noOverflow=async()=>assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'page must not scroll horizontally');
   try{
-   await page.goto(process.env.QA_UI_BASE_URL.replace(/\/$/,'')+'/inventory/snapshots');
+   await page.goto(BASE+'/inventory/snapshots');
    const card=page.getByTestId('snapshot-purchase-card-100');await card.waitFor();await noOverflow();
    await card.click();
    const entryA=page.getByTestId('daily-log-purchase-100'),entryB=page.getByTestId('daily-log-purchase-110');await entryA.waitFor();await entryB.waitFor();
@@ -61,6 +67,10 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    // Mobile: supplier/price-change tags wrap inside the modal instead of being clipped.
    const tabs=page.getByTestId('daily-log-group-tabs');await tabs.waitFor();
    assert.ok(await tabs.evaluate(el=>[...el.children].every(child=>child.getBoundingClientRect().right<=el.getBoundingClientRect().right+1)),'tags fit the row');
+   // Inventory-only state is visible and the receipt cannot be edited again until reviewed.
+   await page.getByTestId('daily-log-ledger-pending-110').waitFor();await page.getByTestId('receipt-edit-notice-110').waitFor();
+   assert.equal(await entryB.getByRole('button',{name:lang==='vi'?'Sửa nhập hàng':'입고 수정'}).count(),0);
+   assert.equal(await page.getByTestId('daily-log-ledger-pending-100').count(),0);
    await shot('daily-log');
    await entryA.getByRole('button',{name:lang==='vi'?'Xem lịch sử sửa':'수정 이력 보기'}).click();
    assert.equal(await entryA.locator(':scope > div').nth(1).locator(':scope > div').count(),4,'root plus three corrections in history');
@@ -84,6 +94,9 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    assert.equal(Object.hasOwn(body,'selectedPurchaseRootId'),false);
    await page.getByTestId('daily-log-purchase-100').waitFor();
    await page.waitForFunction(()=>/수정 4회|Đã sửa 4 lần/.test(document.querySelector('[data-testid="daily-log-purchase-100"]')?.textContent??''));
+   // An inventory-only save is not reported as a completed edit.
+   if(role==='staff')assert.equal(await page.getByTestId('receipt-edit-notice-100').innerText(),ledgerSyncNotice(savedLedger,lang==='vi'));
+   else assert.equal(await page.getByTestId('receipt-edit-notice-100').count(),0);
    await shot('saved');
    // A paid receipt is refused by the server; the reason is shown and the input kept.
    patchResult='paid';

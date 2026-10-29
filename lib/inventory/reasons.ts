@@ -228,6 +228,7 @@ export function inventoryPurchaseErrorMessage(code: string | undefined, lang: "k
     correction_history_limit: ["정정 이력이 많아 안전한 정정 수량을 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Lịch sử điều chỉnh quá nhiều nên không xác định được số lượng an toàn và chưa lưu. Vui lòng liên hệ quản lý."],
     invalid_correction_history: ["기존 정정 이력의 수량을 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được số lượng trong lịch sử điều chỉnh nên chưa lưu. Vui lòng liên hệ quản lý."],
     supplier_mapping_required: ["거래처의 장부 상대방·지급 방식 연결 또는 이전 거래처 기록을 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được liên kết sổ, phương thức thanh toán hoặc nhà cung cấp trước đó nên chưa lưu. Vui lòng liên hệ quản lý."],
+    ledger_review_pending: ["이 입고의 이전 수정이 장부 관리자 확인을 기다리고 있어 저장하지 않았습니다. 관리자가 장부에서 확인한 뒤 다시 수정해 주세요.", "Lần sửa trước của phiếu nhập này đang chờ quản lý xác nhận sổ nên chưa lưu. Hãy sửa lại sau khi quản lý xác nhận."],
     receipt_edit_review: ["입고와 연결된 장부 상태를 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được trạng thái sổ liên kết với phiếu nhập nên chưa lưu. Vui lòng liên hệ quản lý."],
     physical_count_unverified: ["입고·재고확인의 시간 순서를 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được thứ tự thời gian nhập hàng và kiểm kho nên chưa lưu. Vui lòng liên hệ quản lý."],
   };

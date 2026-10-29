@@ -470,12 +470,23 @@ test("part filter row wraps instead of overflowing narrow screens (VI 📦 Khác
   for (const part of ["kitchen", "hall", "bar", "etc"]) assert.match(page, new RegExp(`\{ value: "${part}", label: c\.${part} \}`));
 });
 
-test("a receipt edited through 입고 수정 is not a daily sync target; other linked corrections still are", () => {
+test("a receipt edited through 입고 수정 syncs display fields only; other linked corrections still sync economics", () => {
   const edited = detect([
     log(),
     correction({ reason: "purchase", source: "edit_form", action: "receipt_edit", correction_of_inventory_log_id: 101 }),
   ]);
-  assert.deepEqual(edited, []);
+  assert.equal(edited.length, 1);
+  const target = edited[0].targets[0];
+  assert.deepEqual(target.changes.map(change => change.field), ["item_name"]);
+  assert.equal(target.syncItem.item_name, "대형 지퍼백");
+  assert.equal(target.syncItem.purchase_price, 75000);
+  assert.equal(target.syncItem.supplier, "Chợ");
+  assert.equal(target.syncItem.supplier_partner_id, 7);
+  // Economic-only differences on an edited receipt are not a sync target at all.
+  assert.deepEqual(detect([
+    log(),
+    correction({ item_name: "지퍼백", reason: "purchase", source: "edit_form", action: "receipt_edit", correction_of_inventory_log_id: 101 }),
+  ], inventory({ item_name: "지퍼백" })), []);
   const linked = detect([
     log(),
     correction({ reason: "purchase", source: "edit_form", action: "update", correction_of_inventory_log_id: 101 }),

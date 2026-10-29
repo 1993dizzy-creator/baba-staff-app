@@ -33,7 +33,7 @@ test('business-day item logs: day rows plus the linked family of every receipt t
  assert.deepEqual(r.body.data.map(row=>row.id).sort((a,b)=>a-b),[90,100,101,102,103,110,120,130,131,140,160,161]);
  assert.ok(r.body.data.every(row=>row.item_id===1));
  assert.equal(JSON.stringify(tables),original);
- assert.ok(db.reads.every(read=>read.table==='inventory_logs'||read.table==='inventory_keg_sessions'));
+ assert.ok(db.reads.every(read=>['inventory_logs','inventory_keg_sessions','ledger_inventory_projection_status'].includes(read.table)));
  for(const bad of ['2026-13-01','2026-02-30','28-10-2026','','x'])assert.equal((await call(route(database(tables)),1,'?businessDate='+encodeURIComponent(bad))).status,400,bad);
  // Without businessDate the existing latest-50 read is unchanged.
  const legacy=await call(route(database(tables)),1);assert.equal(legacy.status,200);assert.equal(legacy.body.businessDate,undefined);assert.equal(legacy.body.data.length,14);
@@ -87,4 +87,26 @@ test('snapshot modal: 당일 로그, per-receipt 입고 수정 through the recei
  assert.ok(!/\.rpc\(|\/api\/ledger\//.test(page));
  // Mobile: supplier/price-change tags wrap instead of being clipped.
  assert.match(page,/data-testid="daily-log-group-tabs"[\s\S]{0,500}flexWrap: "wrap"/);
+});
+
+test('business-day logs carry the Ledger state; an inventory-only edit is not a completed card',async()=>{
+ const tables={inventory_logs:rows,ledger_inventory_projection_status:[{inventory_log_id:120,status:'review_required',code:'PURCHASE_AMOUNT_CONFIRMATION_REQUIRED'},{inventory_log_id:103,status:'synced',code:'REBOOKED'},{inventory_log_id:140,status:'review_required',code:'X'}]};
+ const r=await call(route(database(tables)),1,'?businessDate='+DAY);assert.equal(r.status,200);
+ const byId=Object.fromEntries(r.body.data.map(row=>[row.id,row]));
+ assert.equal(byId[120].ledger_projection_status,'review_required');assert.equal(byId[103].ledger_projection_status,'synced');
+ assert.equal(byId[140].ledger_projection_status,undefined);   // stock checks are not purchase-family rows
+ const entries=Object.fromEntries(buildDailyItemLogEntries(r.body.data,DAY).filter(e=>e.kind==='purchase').map(e=>[e.root.id,e]));
+ assert.equal(entries[90].ledgerReviewPending,true);assert.equal(entries[100].ledgerReviewPending,false);assert.equal(entries[110].ledgerReviewPending,false);
+ const page=readFileSync('app/(protected)/inventory/snapshots/page.tsx','utf8');
+ assert.match(page,/const editable = !entry\.cancelled && !entry\.invalid && !entry\.ledgerReviewPending/);
+ assert.ok(!/if \(ledgerNotice\) alert\(ledgerNotice\);\s*setMonthlySyncReloadKey/.test(page.slice(page.indexOf('const savePurchaseEdit'))));
+});
+
+test('browser QA base: only a loopback offline build, never the original dev server on 3000',async()=>{
+ const {offlineUiBase}=await import('./helpers/offline-ui-base.mjs');
+ assert.equal(offlineUiBase(''),'');assert.equal(offlineUiBase('http://127.0.0.1:3002/'),'http://127.0.0.1:3002');
+ for(const bad of ['http://localhost:3000','http://127.0.0.1:3000/inventory','https://baba.example.com'])assert.throws(()=>offlineUiBase(bad),bad);
+ for(const file of ['tests/inventory-snapshots-browser.test.mjs','tests/inventory-receipt-edit-browser.test.mjs']){
+  const source=readFileSync(file,'utf8');assert.ok(source.includes('offlineUiBase()'),file);assert.ok(!source.includes('localhost:3000'),file);
+ }
 });

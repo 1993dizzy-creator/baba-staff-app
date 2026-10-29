@@ -6,8 +6,9 @@ import {mkdir} from 'node:fs/promises';
 import {commonText} from '../lib/text/common.ts';
 const require=createRequire(import.meta.url);
 // API requests are all intercepted; this suite never writes to a database.
-// QA_UI_BASE_URL must be an offline build (never a server started with real project settings).
-const BASE=(process.env.QA_UI_BASE_URL??'').replace(/\/$/,'');
+import {offlineUiBase} from './helpers/offline-ui-base.mjs';
+// QA_UI_BASE_URL must be an offline loopback build; port 3000 (original dev server) is refused.
+const BASE=offlineUiBase();
 test('snapshot UI and quick-save across KO/VI and desktop/mobile', {skip:!process.env.PLAYWRIGHT_MODULE_PATH||!BASE}, async () => {
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH);
 const browser=await chromium.launch({executablePath:process.env.QA_BROWSER_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});

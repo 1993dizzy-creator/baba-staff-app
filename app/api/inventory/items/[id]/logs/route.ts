@@ -41,6 +41,19 @@ async function fetchBusinessDayLogs(itemId: number, businessDate: string) {
     if (corrections.error) return { data: null, error: corrections.error };
     for (const row of [...(roots.data ?? []), ...(corrections.data ?? [])] as ItemLogRow[]) rows.set(Number(row.id), row);
   }
+  // Ledger state of each purchase-family row, so an inventory-only result (e.g. an
+  // earlier-day 입고 수정 awaiting the owner) is not shown as a completed edit.
+  const familyIds = [...rows.values()].filter(row => row.reason === "purchase" &&
+    (row.correction_of_inventory_log_id != null || Number(row.change_quantity) > 0)).map(row => Number(row.id));
+  if (familyIds.length) {
+    const statuses = await supabaseServer.from("ledger_inventory_projection_status")
+      .select("inventory_log_id,status,code").in("inventory_log_id", familyIds);
+    if (statuses.error) return { data: null, error: statuses.error };
+    for (const status of (statuses.data ?? []) as { inventory_log_id: number; status: string; code: string | null }[]) {
+      const row = rows.get(Number(status.inventory_log_id));
+      if (row) rows.set(row.id, { ...row, ledger_projection_status: status.status, ledger_projection_code: status.code });
+    }
+  }
   const data = [...rows.values()].sort((a, b) =>
     String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")) || Number(b.id) - Number(a.id));
   return { data, error: null };

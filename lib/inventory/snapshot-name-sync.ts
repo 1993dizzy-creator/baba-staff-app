@@ -229,9 +229,9 @@ export function findInventoryLogNameSyncItems(
     for (let rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
       const root = roots[rootIndex];
       const nextRoot = roots[rootIndex + 1];
-      // A receipt edited through 입고 수정 already carries its own price/supplier and
-      // Ledger result. Copying those values back onto the receipt row is not a sync.
-      if (itemLogs.some(log => Number(log.correction_of_inventory_log_id) === Number(root.id) && log.action === "receipt_edit")) continue;
+      // A receipt edited through 입고 수정 is booked by its edit logs. Its price/supplier
+      // are never copied back onto the receipt row; display metadata still syncs.
+      const receiptEdited = itemLogs.some(log => Number(log.correction_of_inventory_log_id) === Number(root.id) && log.action === "receipt_edit");
       const corrections = itemLogs.filter((log) =>
         isZeroQuantityCorrection(log) && sortLogs(log, root) > 0 && (
           log.correction_of_inventory_log_id != null
@@ -243,7 +243,8 @@ export function findInventoryLogNameSyncItems(
       if (!correction) continue;
 
       const syncItem = toSyncItem(corrections, current, root, !nextRoot);
-      const changes = SYNC_FIELDS.flatMap((field) => {
+      if (receiptEdited) for (const field of ECONOMIC_FIELDS) Object.assign(syncItem, { [field]: logValue(root, field) ?? null });
+      const changes = (receiptEdited ? DISPLAY_FIELDS : SYNC_FIELDS).flatMap((field) => {
         const from = logValue(root, field);
         const to = syncItem[field];
         if (valuesEqual(field, from, to)) return [];
