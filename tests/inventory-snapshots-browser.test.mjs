@@ -6,7 +6,9 @@ import {mkdir} from 'node:fs/promises';
 import {commonText} from '../lib/text/common.ts';
 const require=createRequire(import.meta.url);
 // API requests are all intercepted; this suite never writes to a database.
-test('snapshot UI and quick-save across KO/VI and desktop/mobile', {skip:!process.env.PLAYWRIGHT_MODULE_PATH}, async () => {
+// QA_UI_BASE_URL must be an offline build (never a server started with real project settings).
+const BASE=(process.env.QA_UI_BASE_URL??'').replace(/\/$/,'');
+test('snapshot UI and quick-save across KO/VI and desktop/mobile', {skip:!process.env.PLAYWRIGHT_MODULE_PATH||!BASE}, async () => {
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH);
 const browser=await chromium.launch({executablePath:process.env.QA_BROWSER_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
 try {
@@ -47,7 +49,7 @@ try {
    await route.fulfill({status,json});
   });
   page.on('dialog',d=>d.dismiss());
-  await page.goto('http://localhost:3000/inventory/snapshots');
+  await page.goto(BASE+'/inventory/snapshots');
   const calendarLoading=page.getByTestId('snapshot-calendar-loading');await calendarLoading.waitFor();
   assert.equal(await calendarLoading.getAttribute('role'),'status');
   assert.equal(await calendarLoading.innerText(),commonText[lang].loading);
@@ -120,35 +122,14 @@ try {
   releaseLogs();await logsLoading.waitFor({state:'hidden'});
   await page.getByText(commonText[lang].loadFailed,{exact:true}).waitFor();
   logsFailure=false;
-  await page.getByRole('button',{name:lang==='ko'?'\uc218\uc815':'S\u1eeda',exact:true}).click();
-  const initialScroll=await page.evaluate(()=>window.scrollY);
-  const dialog=page.getByRole('dialog');await dialog.locator('input').first().waitFor();
-  assert.equal(reads.filter(u=>u==='/api/inventory/items?itemId=1').length,2);
-  assert.equal(reads.some(u=>u.includes('bootstrap')),false);
-  assert.equal((await dialog.getByTestId('inventory-editor-panel').boundingBox()).width,panelBox.width);
-  const form=dialog.getByTestId('inventory-edit-form');
-  const itemName=dialog.locator('[data-name-language="'+lang+'"]');
-  await itemName.fill('Updated name');
-  const saveName=lang==='ko'?'\uc800\uc7a5':'L\u01b0u';
-  await form.getByRole('button',{name:saveName,exact:true}).click();
-  fail=true;
-  const confirm=dialog.getByRole('button').filter({hasText:lang==='ko'?'\uc7ac\uace0\ud655\uc778':'Kiem tra kho'}).last();
-  const confirmCount=writes.length;await confirm.evaluate(button=>{button.click();button.click();});
-  assert.equal(await dialog.getByRole('button',{name:lang==='ko'?'\ub2eb\uae30':'\u0110\u00f3ng',exact:true}).first().isDisabled(),true);
-  await page.waitForTimeout(200);assert.equal(writes.length,confirmCount+1);
-  assert.equal(await itemName.inputValue(),'Updated name');
-  assert.equal(await dialog.count(),1);
-  fail=false;await confirm.click();await dialog.waitFor({state:'hidden'});
-  assert.equal(await page.evaluate(()=>window.scrollY),initialScroll);
-  assert.equal(await page.locator('input').first().inputValue(),'QA');
-  assert.ok(await page.getByRole('button',{name:lang==='ko'?'\uc218\uc815':'S\u1eeda',exact:true}).count());
-  const editWrite=writes.at(-1);assert.equal(editWrite.source,'edit_form');assert.equal(editWrite.expectedQuantity,2);assert.equal(typeof editWrite.expectedUpdatedAt,'string');
-  assert.equal(editWrite.payload.quantity,2);assert.equal(editWrite.payload.purchase_price,item.purchase_price);assert.equal(editWrite.payload.supplier,'QA');
+  // The modal no longer opens the item editor; receipts are edited per card in \ub2f9\uc77c \ub85c\uadf8
+  // (tests/inventory-receipt-edit-browser.test.mjs). The editor itself is covered above.
+  await page.getByRole('button',{name:lang==='ko'?'\ub2eb\uae30':'\u0110\u00f3ng',exact:true}).last().click();
+  await page.getByRole('button').filter({hasText:lang==='ko'?'Oil':'Dau'}).first().click();
+  await page.getByText(lang==='ko'?'\ub2f9\uc77c \ub85c\uadf8':'Nh\u1eadt k\u00fd trong ng\u00e0y').first().waitFor();
+  assert.equal(await page.getByRole('button',{name:lang==='ko'?'\uc218\uc815':'S\u1eeda',exact:true}).count(),0);
   assert.equal(new URL(page.url()).pathname,'/inventory/snapshots');
-  await page.getByRole('button',{name:lang==='ko'?'\uc218\uc815':'S\u1eeda',exact:true}).click();
-  await page.getByRole('dialog').getByTestId('inventory-edit-form').waitFor();
-  const cancelWrites=writes.length;await page.getByRole('dialog').getByRole('button',{name:lang==='ko'?'\ub2eb\uae30':'\u0110\u00f3ng',exact:true}).first().click();
-  assert.equal(writes.length,cancelWrites);assert.equal(await page.locator('input').first().inputValue(),'QA');
+  assert.equal(await page.locator('input').first().inputValue(),'QA');
   // Historical date: select day 3 and retain it while the editor opens/closes.
   await page.getByRole('button',{name:lang==='ko'?'\ub2eb\uae30':'\u0110\u00f3ng',exact:true}).last().click();
   await page.evaluate(()=>window.scrollTo(0,0));
@@ -160,7 +141,7 @@ try {
   releaseDate();await dateLoading.waitFor({state:'hidden'});
   await page.waitForTimeout(100);
   assert.ok(reads.some(u=>u==='/api/inventory/snapshot/10'));
-  await page.goto('http://localhost:3000/inventory/snapshots');
+  await page.goto(BASE+'/inventory/snapshots');
   const failureBanner=page.getByTestId('inventory-language-missing-banner');
   missing=true;await page.reload();await failureBanner.waitFor();await failureBanner.locator('button').first().click();
   loadFailure=true;const releaseFailure=hold('/api/inventory/items');
@@ -172,11 +153,11 @@ try {
   await page.getByRole('dialog').locator('header button').click();loadFailure=false;missing=false;
   console.log('PASS shared banner failure/success, lazy modal failure/success, immutable accounting, date',lang,mobile?'mobile':'desktop');
   const selectedReads=reads.filter(u=>u==='/api/inventory/items?itemId=1').length;
-  await page.goto('http://localhost:3000/inventory?itemId=1&mode=edit');
+  await page.goto(BASE+'/inventory?itemId=1&mode=edit');
   await page.getByTestId('inventory-edit-form').waitFor();
-  assert.equal(await page.locator('[data-name-language="'+lang+'"]').inputValue(),'Updated name');
+  assert.equal(await page.locator('[data-name-language="'+lang+'"]').inputValue(),item[lang==='ko'?'item_name':'item_name_vi']);
   assert.equal(reads.filter(u=>u==='/api/inventory/items?itemId=1').length,selectedReads);
-  await page.goto('http://localhost:3000/inventory?itemId=1');
+  await page.goto(BASE+'/inventory?itemId=1');
   await page.locator('input[type=number]').first().fill('3');
   await page.getByRole('button',{name:lang==='ko'?'\ube60\ub978\uc800\uc7a5':'L\u01b0u nhanh',exact:true}).click();
   await page.getByRole('button').filter({hasText:lang==='ko'?'\uad6c\ub9e4\uc785\uace0':'Nhap mua'}).last().click();
