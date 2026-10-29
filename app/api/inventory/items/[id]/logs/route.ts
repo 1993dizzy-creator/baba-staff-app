@@ -6,6 +6,46 @@ import { supabaseServer } from "@/lib/supabase/server";
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
+const BUSINESS_DAY_LOG_LIMIT = 500;
+
+const isBusinessDate = (value: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const time = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === value;
+};
+
+type ItemLogRow = { id: number; reason?: string | null; change_quantity?: number | string | null; correction_of_inventory_log_id?: number | null; [key: string]: unknown };
+
+// Read-only. One business day (stored business_date, 03:00 boundary) plus the
+// explicitly linked purchase family of every receipt touched that day, so the
+// UI can show each original receipt in its final state.
+async function fetchBusinessDayLogs(itemId: number, businessDate: string) {
+  const day = await supabaseServer.from("inventory_logs").select("*")
+    .eq("item_id", itemId).eq("business_date", businessDate)
+    .order("created_at", { ascending: false }).limit(BUSINESS_DAY_LOG_LIMIT);
+  if (day.error) return { data: null, error: day.error };
+  const rows = new Map<number, ItemLogRow>(((day.data ?? []) as ItemLogRow[]).map(row => [Number(row.id), row]));
+  const rootIds = new Set<number>();
+  for (const row of rows.values()) {
+    if (row.correction_of_inventory_log_id != null) rootIds.add(Number(row.correction_of_inventory_log_id));
+    else if (row.reason === "purchase" && Number(row.change_quantity) > 0) rootIds.add(Number(row.id));
+  }
+  const ids = [...rootIds].filter(id => Number.isSafeInteger(id) && id > 0);
+  if (ids.length) {
+    const [roots, corrections] = await Promise.all([
+      supabaseServer.from("inventory_logs").select("*").eq("item_id", itemId).in("id", ids),
+      supabaseServer.from("inventory_logs").select("*").eq("item_id", itemId)
+        .in("correction_of_inventory_log_id", ids).order("id", { ascending: true }).limit(BUSINESS_DAY_LOG_LIMIT),
+    ]);
+    if (roots.error) return { data: null, error: roots.error };
+    if (corrections.error) return { data: null, error: corrections.error };
+    for (const row of [...(roots.data ?? []), ...(corrections.data ?? [])] as ItemLogRow[]) rows.set(Number(row.id), row);
+  }
+  const data = [...rows.values()].sort((a, b) =>
+    String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")) || Number(b.id) - Number(a.id));
+  return { data, error: null };
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -59,12 +99,19 @@ export async function GET(
       return NextResponse.json({ ok: true, itemId, logId: kegLogId, summary });
     }
 
-    const { data, error } = await supabaseServer
-      .from("inventory_logs")
-      .select("*")
-      .eq("item_id", itemId)
-      .order("created_at", { ascending: false })
-      .limit(50);
+    const businessDate = searchParams.get("businessDate");
+    if (businessDate !== null && !isBusinessDate(businessDate)) {
+      return NextResponse.json({ ok: false, error: "invalid_business_date" }, { status: 400 });
+    }
+
+    const { data, error } = businessDate !== null
+      ? await fetchBusinessDayLogs(itemId, businessDate)
+      : await supabaseServer
+        .from("inventory_logs")
+        .select("*")
+        .eq("item_id", itemId)
+        .order("created_at", { ascending: false })
+        .limit(50);
 
     if (error) {
       return NextResponse.json(
@@ -99,6 +146,7 @@ export async function GET(
     return NextResponse.json({
       ok: true,
       data: enrichedLogs,
+      ...(businessDate !== null ? { businessDate } : {}),
     });
   } catch (error) {
     console.error("[INVENTORY_ITEM_LOGS_GET_ERROR]", error);

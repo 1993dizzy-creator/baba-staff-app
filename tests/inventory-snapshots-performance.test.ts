@@ -31,7 +31,7 @@ test("movement and snapshot detail requests remain independently lazy", () => {
   assert.match(page, /if \(viewMode !== "current" \|\| !activeBusinessDateKey\) return;\s*fetchMovementItems\(activeBusinessDateKey\);/);
   assert.match(page, /if \(viewMode !== "snapshot"\) return;[\s\S]*?if \(!selectedBatchId\) return;[\s\S]*?fetchSnapshotItems\(selectedBatchId\);/);
   assert.match(page, /`\/api\/inventory\/snapshot\/\$\{safeBatchId\}`/);
-  assert.match(page, /`\/api\/inventory\/items\/\$\{itemId\}\/logs`/);
+  assert.match(page, /`\/api\/inventory\/items\/\$\{itemId\}\/logs\?businessDate=\$\{encodeURIComponent\(logsBusinessDate\)\}`/);
 });
 
 test("snapshot list validates auth and month before protected reads", () => {

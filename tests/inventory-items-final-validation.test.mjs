@@ -256,3 +256,27 @@ test('#624: a Korean name equal to another active item is still a 409 that names
  assert.equal((await setup({itemOverrides:item624,others:seasoning}).patch(edit({payload:{item_name:'해표)고추맛기름 1.8L',item_name_vi:'Dầu ớt cay nóng 500ml',code:'624'}}))).status,200);
  assert.equal((await setup({itemOverrides:item624,others:seasoning}).patch(addKorean('Dầu oliu extra virgin 750ml'))).status,200);
 });
+
+// /inventory/snapshots 입고 수정 sends only the new item quantity for one selected receipt.
+const receiptEdit=overrides=>({id:1,source:'edit_form',reason:'purchase',selectedPurchaseRootId:12407,expectedQuantity:2,expectedUpdatedAt:version,payload:{quantity:1},...overrides});
+test('snapshot receipt edit: quantity-only payload reaches v3 for same-day and earlier receipts without item detail keys',async()=>{
+ for(const rootDate of ['2026-10-10','2026-10-03']){const s=setup({rootDate});const r=await s.patch(receiptEdit());assert.equal(r.status,200);
+  assert.equal(s.writes.length,1);assert.equal(s.writes[0].rpc,'inventory_apply_purchase_correction_v3');assert.equal(s.writes[0].args.p_purchase_log_id,12407);
+  assert.equal(s.writes[0].args.p_payload.quantity,1);for(const key of ['purchase_price','supplier','supplier_partner_id','note','item_name','unit','part','category'])assert.ok(!Object.hasOwn(s.writes[0].args.p_payload,key),key);
+  assert.equal(s.item.purchase_price,30000);assert.equal(s.item.supplier,'QA');}
+});
+test('snapshot receipt edit: paid, allocated, closed, later stock check, stale version and increases are rejected before any write',async()=>{
+ const cases=[
+  [{paid:true},409,'purchase_correction_review_required','payment_completed'],
+  [{candidateOverride:{status:'confirmed',proposed_amount:60000,resolved_transaction_id:1},payableOverride:{id:1,status:'unpaid'},allocations:[{allocated_amount:1}]},409,'purchase_correction_review_required','payment_allocated'],
+  [{closed:true},409,'purchase_correction_review_required','month_closed'],
+  [{stockCheck:{id:13000,reason:'stock_check',created_at:'2026-10-04T00:00:00Z',change_quantity:0}},409,'purchase_correction_later_stock_check',undefined],
+  [{rootOverrides:{new_supplier:'Another supplier'}},409,'invalid_purchase_correction',undefined],
+ ];
+ for(const [options,status,error,blockReason] of cases){const s=setup(options);const r=await s.patch(receiptEdit());const body=await r.json();
+  assert.equal(r.status,status,JSON.stringify(options));assert.equal(body.error,error);assert.equal(body.blockReason,blockReason);assert.deepEqual(s.writes,[]);assert.deepEqual(s.projections,[]);}
+ for(const body of [receiptEdit({expectedUpdatedAt:'2026-10-09T00:00:00Z'}),receiptEdit({payload:{quantity:3}})]){const s=setup();const r=await s.patch(body);assert.equal(r.status,409);assert.deepEqual(s.writes,[]);}
+});
+// The selected-receipt path does not compare price; the correction log takes the item's current price.
+// The snapshot UI therefore blocks a quantity-only edit when the item price differs (purchaseEntryMatchesCurrentItem).
+test('snapshot receipt edit: server records the current item price, which is why the UI guards price drift',async()=>{const s=setup({rootOverrides:{new_purchase_price:29000}});assert.equal((await s.patch(receiptEdit())).status,200);assert.equal(s.writes[0].args.p_expected_item.purchase_price,30000);});

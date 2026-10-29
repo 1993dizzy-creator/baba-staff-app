@@ -1,10 +1,11 @@
 "use client";
 import { inventoryReasonChangeIssue, inventoryPurchaseErrorMessage } from "@/lib/inventory/reasons";
 import type { DailyPurchaseDiagnostic } from "@/lib/inventory/daily-effective-purchases";
+import { buildDailyItemLogEntries, purchaseEntryMatchesCurrentItem, purchaseEntryQuantityDelta, type DailyItemLogEntry } from "@/lib/inventory/daily-item-log-entries";
 
 import { normalizeInventoryEditText } from "@/lib/inventory/edit-validation";
 import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLanguage } from "@/lib/language-context";
 import dynamic from "next/dynamic";
 const InventoryEditor = dynamic(() => import("@/components/inventory/InventoryItemEditor"), { ssr: false, loading: InventoryEditorLoading });
@@ -137,6 +138,7 @@ type InventoryLog = {
     new_purchase_price?: number | null;
     supplier?: string | null;
     new_supplier?: string | null;
+    purchase_supplier_partner_id?: number | null;
     reason?: InventoryReasonValue | null;
     source?: string | null;
     business_date?: string | null;
@@ -375,6 +377,10 @@ export default function InventorySnapshotsPage() {
     const [changingReasonLogId, setChangingReasonLogId] = useState<number | null>(null);
     const [syncingPurchaseLogId, setSyncingPurchaseLogId] = useState<number | null>(null);
     const [purchaseLogGroupFilter, setPurchaseLogGroupFilter] = useState("all");
+    // 당일 로그 (03:00 business day of the opened card) and its per-receipt edit form.
+    const [itemLogsBusinessDate, setItemLogsBusinessDate] = useState("");
+    const [expandedLogEntryKey, setExpandedLogEntryKey] = useState<string | null>(null);
+    const [purchaseEdit, setPurchaseEdit] = useState<{ rootId: number; itemId: number; effectiveQuantity: number; final: InventoryLog; value: string; busy: boolean; error: string } | null>(null);
     const [languageMissingItems, setLanguageMissingItems] = useState<SnapshotLanguageMissingItem[]>([]);
     const [languageMissingExpanded, setLanguageMissingExpanded] = useState(false);
     // The per-date name-sync read now only feeds the language list; sync items show in the monthly panel.
@@ -800,12 +806,17 @@ export default function InventorySnapshotsPage() {
     const fetchItemLogs = async (item: SnapshotItem) => {
         const itemId = Number(item.item_id);
 
+        const logsBusinessDate = item.business_date || getSelectedBusinessDate();
+
         setLogModalItem(item);
         setItemLogs([]);
         setItemLogsError("");
         setPurchaseLogGroupFilter("all");
+        setItemLogsBusinessDate(logsBusinessDate);
+        setExpandedLogEntryKey(null);
+        setPurchaseEdit(null);
 
-        if (!Number.isFinite(itemId) || itemId <= 0) {
+        if (!Number.isFinite(itemId) || itemId <= 0 || !logsBusinessDate) {
             setItemLogsError(c.noData);
             return;
         }
@@ -813,7 +824,7 @@ export default function InventorySnapshotsPage() {
         setIsItemLogsLoading(true);
 
         try {
-            const url = `/api/inventory/items/${itemId}/logs`;
+            const url = `/api/inventory/items/${itemId}/logs?businessDate=${encodeURIComponent(logsBusinessDate)}`;
             const res = await fetch(url, {
                 cache: "no-store",
             });
@@ -1057,10 +1068,6 @@ export default function InventorySnapshotsPage() {
         editingItemIdRef.current = itemId;
         setEditorFocusLanguage(focusLanguage);
         setEditingItemId(itemId);
-    };
-
-    const openInventoryEdit = (item: SnapshotItem) => {
-        openInventoryItemEdit(item.item_id);
     };
 
     const syncPurchaseInfoFromCurrentItem = async (item: SnapshotItem) => {
@@ -1600,6 +1607,12 @@ export default function InventorySnapshotsPage() {
         [noSupplierLabel]
     );
 
+    // One card per original receipt (final state); other logs of the day as-is.
+    const dailyLogEntries = useMemo(
+        () => buildDailyItemLogEntries(itemLogs, itemLogsBusinessDate),
+        [itemLogs, itemLogsBusinessDate]
+    );
+
     const purchaseLogSupplierTabs = useMemo(() => {
         const map = new Map<
             string,
@@ -1610,10 +1623,10 @@ export default function InventorySnapshotsPage() {
             }
         >();
 
-        itemLogs.forEach((log) => {
-            if (log.reason !== "purchase") return;
+        dailyLogEntries.forEach((entry) => {
+            if (entry.kind !== "purchase") return;
 
-            const key = getPurchaseLogSupplierKey(log);
+            const key = getPurchaseLogSupplierKey(entry.final);
             const current = map.get(key);
 
             if (current) {
@@ -1623,80 +1636,235 @@ export default function InventorySnapshotsPage() {
 
             map.set(key, {
                 key,
-                supplierLabel: getPurchaseLogSupplierLabel(log),
+                supplierLabel: getPurchaseLogSupplierLabel(entry.final),
                 count: 1,
             });
         });
 
         return Array.from(map.values());
-    }, [itemLogs, getPurchaseLogSupplierLabel]);
+    }, [dailyLogEntries, getPurchaseLogSupplierLabel]);
 
-    const purchasePriceChangeLogIds = useMemo(() => {
-        const sortedPurchaseLogs = itemLogs
-            .filter((log) => log.reason === "purchase")
+    const purchasePriceChangeEntryKeys = useMemo(() => {
+        const sortedPurchaseEntries = dailyLogEntries
+            .flatMap((entry) => entry.kind === "purchase" ? [entry] : [])
             .sort((a, b) => {
-                const createdCompare = String(a.created_at || "").localeCompare(
-                    String(b.created_at || "")
+                const createdCompare = String(a.root.created_at || "").localeCompare(
+                    String(b.root.created_at || "")
                 );
                 if (createdCompare !== 0) return createdCompare;
 
-                return Number(a.id) - Number(b.id);
+                return Number(a.root.id) - Number(b.root.id);
             });
-        const changedLogIds = new Set<number>();
+        const changedEntryKeys = new Set<string>();
         let previousPriceKey: string | null = null;
 
-        sortedPurchaseLogs.forEach((log) => {
-            const priceKey = getPurchasePriceGroupKey(log.new_purchase_price);
+        sortedPurchaseEntries.forEach((entry) => {
+            const priceKey = getPurchasePriceGroupKey(entry.final.new_purchase_price);
             if (priceKey === PURCHASE_GROUP_NO_PRICE) return;
 
             if (previousPriceKey !== null && priceKey !== previousPriceKey) {
-                changedLogIds.add(Number(log.id));
+                changedEntryKeys.add(entry.key);
             }
 
             previousPriceKey = priceKey;
         });
 
-        return changedLogIds;
-    }, [itemLogs]);
+        return changedEntryKeys;
+    }, [dailyLogEntries]);
 
-    const visibleTimelineLogs = useMemo(() => {
-        let logs = selectedTimelineReason
-            ? itemLogs.filter((log) => log.reason === selectedTimelineReason)
-            : itemLogs;
+    const visibleTimelineEntries = useMemo(() => {
+        const entryLog = (entry: DailyItemLogEntry<InventoryLog>) =>
+            entry.kind === "purchase" ? entry.final : entry.log;
+        let entries = selectedTimelineReason
+            ? dailyLogEntries.filter((entry) => entryLog(entry).reason === selectedTimelineReason)
+            : dailyLogEntries;
 
         if (selectedTimelineReason === "purchase" && purchaseLogGroupFilter !== "all") {
-            if (purchaseLogGroupFilter === "price_change") {
-                logs = logs.filter(
-                    (log) =>
-                        log.reason === "purchase" &&
-                        purchasePriceChangeLogIds.has(Number(log.id))
+            entries = purchaseLogGroupFilter === "price_change"
+                ? entries.filter((entry) => purchasePriceChangeEntryKeys.has(entry.key))
+                : entries.filter(
+                    (entry) =>
+                        entry.kind === "purchase" &&
+                        getPurchaseLogSupplierKey(entry.final) === purchaseLogGroupFilter
                 );
-            } else {
-                logs = logs.filter(
-                    (log) =>
-                        log.reason === "purchase" &&
-                        getPurchaseLogSupplierKey(log) === purchaseLogGroupFilter
-                );
-            }
         }
 
-        return [...logs]
-            .sort((a, b) => {
-                const createdCompare = String(b.created_at || "").localeCompare(
-                    String(a.created_at || "")
-                );
-                if (createdCompare !== 0) return createdCompare;
-
-                return Number(b.id) - Number(a.id);
-            });
-    }, [itemLogs, selectedTimelineReason, purchaseLogGroupFilter, purchasePriceChangeLogIds]);
+        return entries;
+    }, [dailyLogEntries, selectedTimelineReason, purchaseLogGroupFilter, purchasePriceChangeEntryKeys]);
 
     const selectedPurchaseAggregate =
         logModalItem?.reason === "purchase" && (logModalItem.syncLogIds?.length ?? 0) > 1
             ? logModalItem
             : null;
 
-    const renderLogCard = (log: InventoryLog) => {
+    // Corrects one original receipt through the existing selected-receipt path of
+    // PATCH /api/inventory/items (server checks stock checks, payment, month close
+    // and versions, then calls inventory_apply_purchase_correction_v3). Only the
+    // quantity is sent, so the item's own details are not changed.
+    const savePurchaseEdit = async () => {
+        if (!purchaseEdit || purchaseEdit.busy) return;
+        const vi = lang === "vi";
+        const fail = (error: string) => setPurchaseEdit((prev) => prev ? { ...prev, busy: false, error } : prev);
+        const nextQuantity = Number(purchaseEdit.value.trim().replace(",", "."));
+        const delta = purchaseEdit.value.trim() === "" ? null : purchaseEntryQuantityDelta(purchaseEdit.effectiveQuantity, nextQuantity);
+        if (delta === null) return fail(vi ? "Nhập số lượng hợp lệ (0 trở lên)." : "0 이상의 올바른 수량을 입력해 주세요.");
+        if (delta === 0) return fail(vi ? "Số lượng không thay đổi." : "수량이 변경되지 않았습니다.");
+        if (delta > 0) return fail(vi
+            ? "Chưa hỗ trợ tăng số lượng lô nhập. Hãy nhập phần thêm như một lần nhập mới hoặc liên hệ quản lý."
+            : "입고 수량 증가는 아직 지원하지 않습니다. 추가분은 신규 입고로 등록하거나 관리자에게 문의해 주세요.");
+
+        setPurchaseEdit((prev) => prev ? { ...prev, busy: true, error: "" } : prev);
+        try {
+            const itemRes = await fetch(`/api/inventory/items?itemId=${purchaseEdit.itemId}`, { cache: "no-store" });
+            const itemJson = await itemRes.json().catch(() => ({}));
+            const current = itemJson?.data?.[0];
+            if (!itemRes.ok || !itemJson.ok || !current) return fail(c.loadFailed);
+            // expectedUpdatedAt below makes this check and the save one version.
+            if (!purchaseEntryMatchesCurrentItem(purchaseEdit.final, current)) return fail(vi
+                ? "Đơn giá, đơn vị hoặc nhà cung cấp hiện tại của mặt hàng khác với lô nhập này nên chưa lưu. Vui lòng liên hệ quản lý."
+                : "품목의 현재 단가·단위·거래처가 이 입고와 달라 저장하지 않았습니다. 관리자에게 문의해 주세요.");
+            const currentQuantity = Number(current.quantity ?? 0);
+            const nextItemQuantity = Number((currentQuantity + delta).toFixed(6));
+            if (!Number.isFinite(nextItemQuantity) || nextItemQuantity < 0) return fail(vi
+                ? "Tồn kho hiện tại nhỏ hơn số lượng cần giảm nên chưa lưu. Vui lòng liên hệ quản lý."
+                : "현재 재고가 줄일 수량보다 적어 저장하지 않았습니다. 관리자에게 문의해 주세요.");
+
+            const res = await fetch("/api/inventory/items", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    id: purchaseEdit.itemId,
+                    source: "edit_form",
+                    reason: "purchase",
+                    selectedPurchaseRootId: purchaseEdit.rootId,
+                    expectedQuantity: currentQuantity,
+                    expectedUpdatedAt: current.updated_at ?? null,
+                    payload: { quantity: nextItemQuantity },
+                }),
+            });
+            const result = await res.json().catch(() => ({}));
+            if (!res.ok || !result.ok) {
+                return fail(inventoryPurchaseErrorMessage(result.error ?? result.code, lang, result) || result.message || c.loadFailed);
+            }
+
+            setPurchaseEdit(null);
+            const ledgerNotice = ledgerSyncNotice(result.ledgerSync, vi);
+            if (ledgerNotice) alert(ledgerNotice);
+            setMonthlySyncReloadKey((key) => key + 1);
+            void fetchNameSyncIssues(activeBusinessDateKey);
+            if (viewMode === "snapshot" && selectedBatchId) void fetchSnapshotItems(selectedBatchId);
+            else void fetchMovementItems(activeBusinessDateKey);
+            if (logModalItem) void fetchItemLogs(logModalItem);
+        } catch (error) {
+            console.error("savePurchaseEdit exception", error);
+            fail(c.loadFailed);
+        }
+    };
+
+    const renderPurchaseEntryCard = (entry: Extract<DailyItemLogEntry<InventoryLog>, { kind: "purchase" }>) => {
+        const vi = lang === "vi";
+        const expanded = expandedLogEntryKey === entry.key;
+        const editing = purchaseEdit?.rootId === entry.root.id ? purchaseEdit : null;
+        const editable = !entry.cancelled && !entry.invalid && Number(entry.root.item_id) > 0;
+        const chipStyle = {
+            ...ui.badgeMini,
+            minWidth: "auto",
+            background: "#f3f4f6",
+            color: "#374151",
+            border: "1px solid #e5e7eb",
+        };
+        const actionButtonStyle = {
+            width: "auto",
+            minHeight: 28,
+            padding: "4px 10px",
+            borderRadius: 999,
+            border: "1px solid #d1d5db",
+            background: "#fff",
+            color: "#111827",
+            fontSize: 12,
+            fontWeight: 800,
+            lineHeight: 1.2,
+            whiteSpace: "nowrap" as const,
+            cursor: "pointer",
+        };
+
+        const footer = (
+            <div data-testid={`daily-log-purchase-${entry.root.id}`} style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
+                    {entry.corrections.length > 0 && (
+                        <span style={chipStyle}>{vi ? `Đã sửa ${entry.corrections.length} lần` : `수정 ${entry.corrections.length}회`}</span>
+                    )}
+                    {entry.rootOutsideDay && (
+                        <span style={chipStyle}>{vi ? `Lô nhập ngày ${entry.root.business_date ?? "-"}` : `원입고 ${entry.root.business_date ?? "-"}`}</span>
+                    )}
+                    {entry.cancelled && <span style={{ ...chipStyle, color: "crimson" }}>{vi ? "Đã hủy toàn bộ" : "전체 취소됨"}</span>}
+                    {entry.invalid && <span style={{ ...chipStyle, color: "crimson" }}>{vi ? "Cần quản lý kiểm tra" : "관리자 확인 필요"}</span>}
+                    <span style={{ flex: "1 1 auto" }} />
+                    {entry.corrections.length > 0 && (
+                        <button type="button" style={actionButtonStyle} aria-expanded={expanded}
+                            onClick={() => setExpandedLogEntryKey(expanded ? null : entry.key)}>
+                            {expanded ? (vi ? "Ẩn lịch sử sửa" : "수정 이력 접기") : (vi ? "Xem lịch sử sửa" : "수정 이력 보기")}
+                        </button>
+                    )}
+                    {editable && !editing && (
+                        <button type="button" style={{ ...actionButtonStyle, border: "1px solid royalblue", background: "royalblue", color: "#fff" }}
+                            disabled={purchaseEdit?.busy === true}
+                            onClick={() => setPurchaseEdit({
+                                rootId: entry.root.id,
+                                itemId: Number(entry.root.item_id),
+                                effectiveQuantity: entry.effectiveQuantity,
+                                final: entry.final,
+                                value: String(entry.effectiveQuantity),
+                                busy: false,
+                                error: "",
+                            })}>
+                            {vi ? "Sửa nhập hàng" : "입고 수정"}
+                        </button>
+                    )}
+                </div>
+
+                {expanded && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 8, borderLeft: "2px solid #e5e7eb" }}>
+                        {[entry.root, ...entry.corrections].map((log) => renderLogCard(log))}
+                    </div>
+                )}
+
+                {editing && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, borderRadius: 10, background: "#f9fafb", border: "1px solid #e5e7eb" }}>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, fontWeight: 800, color: "#111827" }}>
+                            {vi ? `Số lượng nhập (${entry.final.unit || "-"})` : `입고 수량 (${entry.final.unit || "-"})`}
+                            <input type="number" inputMode="decimal" step="any" min={0} value={editing.value} disabled={editing.busy}
+                                onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, value: event.target.value, error: "" } : prev)}
+                                style={ui.input} />
+                        </label>
+                        <div style={{ ...ui.metaText, overflowWrap: "anywhere" }}>
+                            {getPurchaseLogSupplierLabel(entry.final)} · {vi ? "Đơn giá" : "단가"}{" "}
+                            {Number(entry.final.new_purchase_price ?? 0).toLocaleString()} ₫
+                        </div>
+                        <div style={{ ...ui.metaText, overflowWrap: "anywhere" }}>
+                            {vi
+                                ? "Chỉ lưu được khi giảm số lượng của lô nhập này. Sửa đơn giá, nhà cung cấp, ghi chú hoặc tăng số lượng: vui lòng liên hệ quản lý."
+                                : "이 입고의 수량 감소만 저장할 수 있습니다. 단가·거래처·메모 정정이나 수량 증가는 관리자에게 요청해 주세요."}
+                        </div>
+                        {editing.error && <div role="alert" style={{ fontSize: 12, fontWeight: 700, color: "crimson", overflowWrap: "anywhere" }}>{editing.error}</div>}
+                        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                            <button type="button" style={actionButtonStyle} disabled={editing.busy} onClick={() => setPurchaseEdit(null)}>
+                                {vi ? "Hủy" : "취소"}
+                            </button>
+                            <button type="button" style={{ ...actionButtonStyle, border: "1px solid royalblue", background: "royalblue", color: "#fff", opacity: editing.busy ? 0.6 : 1 }}
+                                disabled={editing.busy} onClick={() => void savePurchaseEdit()}>
+                                {editing.busy ? c.saving : vi ? "Lưu sửa đổi" : "수정 저장"}
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+
+        return renderLogCard(entry.final, footer);
+    };
+
+    const renderLogCard = (log: InventoryLog, footer?: ReactNode) => {
         const changeQuantity = Number(log.change_quantity ?? 0);
         const changeText =
             changeQuantity === 0
@@ -1879,6 +2047,7 @@ export default function InventorySnapshotsPage() {
                 {isKegReplaceInventoryLog(log) && log.previousKegSummary &&
                     renderPreviousKegSummaryLines(log.previousKegSummary)}
 
+                {footer}
             </div>
         );
     };
@@ -3508,27 +3677,6 @@ export default function InventorySnapshotsPage() {
                                             : t.syncLog}
                                     </button>
                                 )}
-
-                                <button
-                                    type="button"
-                                    onClick={() => openInventoryEdit(logModalItem)}
-                                    style={{
-                                        width: "auto",
-                                        minHeight: 30,
-                                        padding: "6px 10px",
-                                        borderRadius: 999,
-                                        border: "1px solid royalblue",
-                                        background: "royalblue",
-                                        color: "#fff",
-                                        fontSize: 12,
-                                        fontWeight: 800,
-                                        lineHeight: 1.2,
-                                        whiteSpace: "nowrap",
-                                        cursor: "pointer",
-                                    }}
-                                >
-                                    {t.editItem}
-                                </button>
                             </div>
                         </div>
 
@@ -3904,7 +4052,7 @@ export default function InventorySnapshotsPage() {
                             )}
                         </div>
 
-                        {!isItemLogsLoading && !itemLogsError && visibleTimelineLogs.length > 0 && (
+                        {!isItemLogsLoading && !itemLogsError && visibleTimelineEntries.length > 0 && (
                             <div
                                 style={{
                                     display: "flex",
@@ -3923,20 +4071,26 @@ export default function InventorySnapshotsPage() {
                                         color: "#111827",
                                     }}
                                 >
-                                    {lang === "vi" ? "Tất cả nhật ký" : "전체 로그"}
+                                    {lang === "vi" ? "Nhật ký trong ngày" : "당일 로그"}
+                                    {itemLogsBusinessDate && (
+                                        <span style={{ ...ui.metaText, marginLeft: 6, fontWeight: 600 }}>
+                                            {itemLogsBusinessDate}
+                                        </span>
+                                    )}
                                 </div>
 
                                 {selectedTimelineReason === "purchase" &&
                                     (purchaseLogSupplierTabs.length >= 2 ||
-                                        purchasePriceChangeLogIds.size > 0) && (
+                                        purchasePriceChangeEntryKeys.size > 0) && (
                                         <div
+                                            data-testid="daily-log-group-tabs"
                                             style={{
                                                 display: "flex",
                                                 alignItems: "center",
+                                                flexWrap: "wrap",
                                                 gap: 5,
-                                                overflowX: "auto",
+                                                minWidth: 0,
                                                 paddingBottom: 2,
-                                                WebkitOverflowScrolling: "touch",
                                             }}
                                         >
                                             {[
@@ -3951,11 +4105,11 @@ export default function InventorySnapshotsPage() {
                                                     key: tab.key,
                                                     label: `${tab.supplierLabel} ${tab.count}`,
                                                 })),
-                                                ...(purchasePriceChangeLogIds.size > 0
+                                                ...(purchasePriceChangeEntryKeys.size > 0
                                                     ? [
                                                         {
                                                             key: "price_change",
-                                                            label: `${priceChangeLabel} ${purchasePriceChangeLogIds.size}`,
+                                                            label: `${priceChangeLabel} ${purchasePriceChangeEntryKeys.size}`,
                                                         },
                                                     ]
                                                     : []),
@@ -3968,8 +4122,9 @@ export default function InventorySnapshotsPage() {
                                                         type="button"
                                                         onClick={() => setPurchaseLogGroupFilter(tab.key)}
                                                         style={{
-                                                            flexShrink: 0,
-                                                            maxWidth: 220,
+                                                            flexShrink: 1,
+                                                            minWidth: 0,
+                                                            maxWidth: "100%",
                                                             overflow: "hidden",
                                                             textOverflow: "ellipsis",
                                                             whiteSpace: "nowrap",
@@ -4008,7 +4163,11 @@ export default function InventorySnapshotsPage() {
                                         WebkitOverflowScrolling: "touch",
                                     }}
                                 >
-                                    {visibleTimelineLogs.map((log) => renderLogCard(log))}
+                                    {visibleTimelineEntries.map((entry) =>
+                                        entry.kind === "purchase"
+                                            ? <div key={entry.key}>{renderPurchaseEntryCard(entry)}</div>
+                                            : renderLogCard(entry.log)
+                                    )}
                                 </div>
                             </div>
                         )}
