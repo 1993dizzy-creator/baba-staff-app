@@ -261,14 +261,21 @@ test('#624: a Korean name equal to another active item is still a 409 that names
 const receiptEdit=overrides=>({mode:'purchase-receipt-edit',id:1,purchaseLogId:12407,expectedQuantity:2,expectedUpdatedAt:version,payload:{quantity:3,purchase_price:31000,supplier:'QA',supplierPartnerId:null,note:'memo',reason:'영수증 확인'},...overrides});
 const receiptRpc=(result,calls=[])=>async(name,args)=>{calls.push({name,args});assert.equal(name,'inventory_apply_purchase_receipt_edit_v1');return {data:result,error:null};};
 test('receipt edit: server date, session actor and expected item reach the RPC; item details are not sent as a payload',async()=>{
- const calls=[],s=setup({rpcHandler:receiptRpc({status:'ok',inventoryLogId:101,ledgerSync:{status:'synced',code:'REBOOKED'}},calls)});
- const r=await s.patch(receiptEdit());assert.equal(r.status,200);const body=await r.json();assert.equal(body.ok,true);assert.equal(body.ledgerSync.code,'REBOOKED');
+ const calls=[],s=setup({rpcHandler:receiptRpc({status:'ok',inventoryLogId:101,completion:'complete',ledgerSync:{status:'synced',code:'REBOOKED'}},calls)});
+ const r=await s.patch(receiptEdit());assert.equal(r.status,200);const body=await r.json();assert.equal(body.ok,true);assert.equal(body.ledgerSync.code,'REBOOKED');assert.equal(body.completion,'complete');
+ // A name-only supplier is passed as recorded (no partner id attached by the resolver).
+ assert.equal(s.calls.includes('supplier-resolve'),false);
  assert.equal(calls.length,1);const args=calls[0].args;
  assert.deepEqual(Object.keys(args).sort(),['p_actor_user_id','p_business_date','p_edit','p_expected_item','p_expected_quantity','p_item_id','p_purchase_log_id']);
  assert.equal(args.p_item_id,1);assert.equal(args.p_purchase_log_id,12407);assert.equal(args.p_actor_user_id,7);assert.equal(args.p_business_date,'2026-10-10');
  assert.equal(args.p_expected_quantity,2);assert.equal(args.p_expected_item.updated_at,version);
  assert.deepEqual(args.p_edit,{quantity:3,purchase_price:31000,supplier:'QA',supplier_partner_id:null,note:'memo',reason:'영수증 확인'});
  assert.equal(s.writes.length,0);assert.equal(s.projections.length,0);assert.equal(s.item.purchase_price,30000);
+ // A selected partner goes through the shared resolver; partial completions are passed on as such.
+ const partner=[],p=setup({rpcHandler:receiptRpc({status:'ok',completion:'ledger_pending',ledgerSync:{status:'pending',code:'RESOLUTION_REQUIRED'}},partner)});
+ const pr=await p.patch(receiptEdit({payload:{quantity:3,purchase_price:31000,supplier:'QA',supplierPartnerId:10,note:null,reason:'x'}}));
+ assert.equal(pr.status,200);assert.equal((await pr.json()).completion,'ledger_pending');assert.ok(p.calls.includes('supplier-resolve'));
+ assert.equal(partner[0].args.p_edit.supplier_partner_id,10);
 });
 test('receipt edit: malformed requests and stale versions never reach the RPC',async()=>{
  for(const [body,status] of [

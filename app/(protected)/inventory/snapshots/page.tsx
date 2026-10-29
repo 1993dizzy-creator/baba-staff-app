@@ -1786,7 +1786,11 @@ export default function InventorySnapshotsPage() {
 
             // Stock saved but the Ledger did not follow (earlier day, pending, failed): this is
             // not a completed edit. Keep the state visible on the card instead of closing quietly.
-            const ledgerNotice = ledgerSyncNotice(result.ledgerSync, vi);
+            // completion: complete | ledger_pending (unconfirmed candidate) | ledger_review (owner review).
+            const ledgerNotice = result.completion === "complete" ? null
+                : ledgerSyncNotice(result.ledgerSync, vi) ?? (vi
+                    ? "Đã lưu kho. Sổ kế toán chưa hoàn tất; cần quản lý xác nhận."
+                    : "재고 정보는 저장되었습니다. 장부는 아직 완료되지 않아 관리자 확인이 필요합니다.");
             setReceiptEditNotice(ledgerNotice ? { rootId: purchaseEdit.rootId, message: ledgerNotice } : null);
             setPurchaseEdit(null);
             setMonthlySyncReloadKey((key) => key + 1);

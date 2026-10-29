@@ -52,7 +52,6 @@ test('staff supplier change, inactive actor and invalid input are rejected witho
   assert.equal((await editReceipt(db,old,{quantity:9},3)).status,'forbidden');
   for(const edit of [{quantity:-1},{quantity:'NaN'},{quantity:'abc'},{purchase_price:0},{purchase_price:'Infinity'},{reason:'  '},{reason:null},{supplier:null,supplier_partner_id:null},{extra:1},{reason:'x'.repeat(201)},{note:'x'.repeat(501)}])
    assert.equal((await editReceipt(db,old,edit)).status,'invalid_payload',JSON.stringify(edit));
-  assert.equal((await editReceipt(db,old,{})).status,'no_change');
   assert.equal((await editReceipt(db,old,{quantity:9},1,'2026-10-11',999)).status,'invalid_purchase_reference');
   assert.deepEqual(await state(db),before);
  }finally{await db.close();}
@@ -187,5 +186,89 @@ test('earlier-day edit: stock only until the owner repair; retries are idempoten
   assert.equal((await one(db,'select status from ledger_inventory_projection_status where inventory_log_id=$1',[first.inventoryLogId])).status,'synced');
   const next=await editReceipt(db,await item(db),{quantity:8,reason:'추가 정정'});
   assert.equal(next.status,'ok');assert.equal(Number((await item(db)).quantity),8);
+ }finally{await db.close();}
+});
+
+test('memo or reason only: saved as a zero-quantity edit log; an identical retry writes nothing',async()=>{
+ const db=await receiptEditFixture();try{
+  const before=await state(db);
+  const memo=await editReceipt(db,await item(db),{reason:'메모 정정',note:'영수증 사진 첨부'});
+  assert.equal(memo.status,'ok');assert.equal(memo.completion,'complete');assert.equal(Number(memo.quantityDelta),0);
+  const log=await one(db,'select * from inventory_logs where id=$1',[memo.inventoryLogId]);
+  assert.equal(Number(log.change_quantity),0);assert.equal(log.new_note,'메모 정정 · 영수증 사진 첨부');assert.equal(Number(log.new_purchase_price),20000);
+  assert.equal(Number((await item(db)).quantity),10);assert.equal(await net(db),200000);
+  assert.equal(Number((await one(db,"select count(*) as n from ledger_transactions where source_type='inventory_purchase_reversal'")).n),0);
+  assert.deepEqual((await state(db)).ledger_payables,before.ledger_payables);
+  const settled=await state(db);
+  assert.equal((await editReceipt(db,await item(db),{reason:'메모 정정',note:'영수증 사진 첨부'})).status,'no_change');
+  assert.deepEqual(await state(db),settled);
+  // Reason alone also counts; a note removal too.
+  assert.equal((await editReceipt(db,await item(db),{reason:'사유 변경',note:'영수증 사진 첨부'})).status,'ok');
+  assert.equal((await editReceipt(db,await item(db),{reason:'사유 변경'})).status,'ok');
+  assert.equal((await editReceipt(db,await item(db),{reason:'사유 변경'})).status,'no_change');
+  assert.equal(Number((await one(db,"select count(*) as n from inventory_logs where action='receipt_edit'")).n),3);
+ }finally{await db.close();}
+});
+
+test('supplier identity is partner id and name: a new or removed partner id with the same name is a supplier change',async()=>{
+ const db=await receiptEditFixture();try{
+  const old=await item(db),before=await state(db);
+  // Receipt #100 is name-only ("Won Mart", no partner id). Attaching partner 10 is a change.
+  assert.equal((await editReceipt(db,old,{quantity:9,supplier_partner_id:10})).status,'supplier_change_forbidden');
+  assert.deepEqual(await state(db),before);
+  // Same name (case/space only) and still no id: not a supplier change, staff may edit.
+  const sameName=await editReceipt(db,old,{quantity:9,supplier:' won mart'});
+  assert.equal(sameName.status,'ok');assert.equal(sameName.ledgerSync.code,'REBOOKED');
+  assert.equal((await one(db,'select new_supplier from inventory_logs where id=$1',[sameName.inventoryLogId])).new_supplier,'Won Mart');
+  const owner=await editReceipt(db,await item(db),{quantity:9,supplier_partner_id:10,reason:'거래처 연결'},2);
+  assert.equal(owner.status,'ok');assert.equal(Number((await one(db,'select purchase_supplier_partner_id as p from inventory_logs where id=$1',[owner.inventoryLogId])).p),10);
+  // Now id-bound: removing the id (same name) is again a change; a renamed partner with the same id is not.
+  assert.equal((await editReceipt(db,await item(db),{quantity:8,supplier_partner_id:null},1)).status,'supplier_change_forbidden');
+  const renamed=await editReceipt(db,await item(db),{quantity:8,supplier:'Won Mart (renamed)',supplier_partner_id:10},1);
+  assert.equal(renamed.status,'ok');assert.equal((await one(db,'select new_supplier from inventory_logs where id=$1',[renamed.inventoryLogId])).new_supplier,'Won Mart');
+ }finally{await db.close();}
+});
+
+test('projector pending: an unbooked receipt is a partial completion, never a success; pending after a booking rolls back',async()=>{
+ const db=await receiptEditFixture();try{
+  await db.exec(`insert into inventory_logs(id,item_id,item_name,item_name_vi,category,category_vi,unit,change_quantity,new_purchase_price,new_supplier,business_date,source,reason,actor_username,source_actor_user_id,created_at)
+   values(300,1,'Coca','Cola','Drinks','Nuoc','can',5,10000,'Unknown Vendor','2026-10-11','edit_form','purchase','staff',1,'2026-10-11T04:00:00Z')`);
+  assert.equal((await one(db,'select ledger_project_inventory_purchase_log_v1(300,2) as r')).r.status,'pending');
+  const txBefore=(await state(db)).ledger_transactions;
+  const r=await editReceipt(db,await item(db),{quantity:3,purchase_price:11000,supplier:'Unknown Vendor',reason:'미확정 입고 정정'},1,'2026-10-11',300);
+  assert.equal(r.status,'ok');assert.equal(r.completion,'ledger_pending');assert.equal(r.ledgerSync.status,'pending');
+  const candidate=await one(db,"select * from ledger_candidates where source_key='inventory-log:300' order by id desc limit 1");
+  assert.equal(candidate.status,'pending');assert.equal(Number(candidate.proposed_amount),33000);
+  assert.deepEqual((await state(db)).ledger_transactions,txBefore);
+  // Owner changes the unbooked receipt to another unmapped name: still pending, still partial.
+  const moved=await editReceipt(db,await item(db),{quantity:3,purchase_price:11000,supplier:'Another Unknown',reason:'거래처 정정'},2,'2026-10-11',300);
+  assert.equal(moved.status,'ok');assert.equal(moved.completion,'ledger_pending');
+  // Normal booked receipt stays complete.
+  assert.equal((await editReceipt(db,await item(db),{quantity:9})).completion,'complete');
+ }finally{await db.close();}
+ // A booked receipt whose projection unexpectedly answers pending: everything rolls back.
+ const db2=await receiptEditFixture();try{
+  await db2.exec(`alter function public.ledger_project_inventory_purchase_log_v1(bigint,bigint) rename to qa_original_purchase_projector;
+   create function public.ledger_project_inventory_purchase_log_v1(p_inventory_log_id bigint,p_request_actor_user_id bigint)
+   returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
+   begin perform public.qa_original_purchase_projector(p_inventory_log_id,p_request_actor_user_id); return '{"status":"pending","code":"RESOLUTION_REQUIRED"}'::jsonb; end;$$;`);
+  const before=await state(db2),r=await editReceipt(db2,await item(db2),{quantity:9});
+  assert.equal(r.status,'purchase_correction_review_required');assert.equal(r.code,'LEDGER_PENDING_UNEXPECTED');assert.equal(r.blockReason,'ledger_status_changed');
+  assert.deepEqual(await state(db2),before);
+ }finally{await db2.close();}
+});
+
+test('a booked receipt whose amount changed is never reported complete without a rebook',async()=>{
+ const db=await receiptEditFixture();try{
+  await db.exec(`alter function public.ledger_project_inventory_purchase_log_v1(bigint,bigint) rename to qa_original_purchase_projector;
+   create function public.ledger_project_inventory_purchase_log_v1(p_inventory_log_id bigint,p_request_actor_user_id bigint)
+   returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
+   begin return '{"status":"synced","code":"UNCHANGED"}'::jsonb; end;$$;`);
+  const before=await state(db);
+  for(const edit of [{quantity:9},{purchase_price:21000},{supplier:'Postpaid',supplier_partner_id:12}]){
+   const r=await editReceipt(db,await item(db),edit,2);
+   assert.equal(r.status,'purchase_correction_review_required',JSON.stringify(edit));assert.equal(r.code,'INVENTORY_LEDGER_ATOMIC_FAILED');
+   assert.deepEqual(await state(db),before);
+  }
  }finally{await db.close();}
 });

@@ -40,7 +40,7 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
   await page.route('**/api/**',async route=>{
    const req=route.request(),url=new URL(req.url());reads.push(url.pathname+url.search);let status=200,json={ok:true,data:[],items:[]};
    if(req.method()==='PATCH'){const body=req.postDataJSON();patches.push(body);
-    if(patchResult==='ok'){corrections.push({...rootA,id:200+corrections.length,change_quantity:Number(body.payload.quantity)-10,new_purchase_price:body.payload.purchase_price,new_supplier:body.payload.supplier,purchase_supplier_partner_id:body.payload.supplierPartnerId,correction_of_inventory_log_id:100,created_at:'2026-10-10T04:00:00Z',action:'receipt_edit',new_note:body.payload.reason});item.updated_at=new Date().toISOString();json={ok:true,mode:body.mode,ledgerSync:savedLedger};}
+    if(patchResult==='ok'){corrections.push({...rootA,id:200+corrections.length,change_quantity:Number(body.payload.quantity)-10,new_purchase_price:body.payload.purchase_price,new_supplier:body.payload.supplier,purchase_supplier_partner_id:body.payload.supplierPartnerId,correction_of_inventory_log_id:100,created_at:'2026-10-10T04:00:00Z',action:'receipt_edit',new_note:body.payload.reason});item.updated_at=new Date().toISOString();json={ok:true,mode:body.mode,completion:role==='staff'?'ledger_review':'complete',ledgerSync:savedLedger};}
     else{status=409;json={ok:false,error:'purchase_correction_review_required',blockReason:'payment_completed'};}}
    else if(url.pathname==='/api/session')json={authenticated:true,user};
    else if(url.pathname==='/api/inventory/snapshot/list')json={ok:true,batches:[],currentBusinessDate:DAY,purchaseDateMap:{[DAY]:true}};

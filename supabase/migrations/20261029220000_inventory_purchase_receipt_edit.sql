@@ -12,7 +12,11 @@
 --   is otherwise safe stays review-only for the owner (existing repair screen). Every
 --   other state (paid, allocated, closed, manual edit, dismissed, unmapped supplier,
 --   later stock check for a quantity change) rolls back everything and is reported.
--- * A supplier change requires owner/master, matching the existing repair policy.
+-- * A supplier change (partner id or name) requires owner/master, matching the repair policy.
+-- * A memo/reason-only edit is a zero-quantity edit log; an identical retry returns no_change.
+-- * Result "completion": complete (booked or nothing to book), ledger_pending (not booked yet:
+--   the unconfirmed candidate carries the new amount), ledger_review (earlier day, owner review).
+--   Only complete is a finished edit; the app shows the other two as partial.
 begin;
 
 create function public.inventory_apply_purchase_receipt_edit_v1(
@@ -25,7 +29,7 @@ declare
   v_root public.inventory_logs%rowtype; v_latest public.inventory_logs%rowtype;
   v_quantity numeric; v_price numeric; v_supplier text; v_partner bigint; v_reason text; v_note text;
   v_effective numeric; v_delta numeric; v_prev_price numeric; v_prev_supplier text; v_prev_partner bigint;
-  v_supplier_changed boolean; v_same_day boolean;
+  v_supplier_changed boolean; v_same_day boolean; v_note_text text; v_candidate_status text; v_completion text:='complete';
   v_log jsonb; v_log_id bigint; v_columns text; v_values text; v_field text;
   v_projection jsonb; v_check jsonb; v_confirmation text; v_audit_id bigint;
   v_code text; v_block text; v_payable public.ledger_payables%rowtype;
@@ -94,9 +98,21 @@ begin
   v_prev_price:=v_latest.new_purchase_price; v_prev_supplier:=nullif(btrim(v_latest.new_supplier),'');
   v_prev_partner:=v_latest.purchase_supplier_partner_id;
   v_delta:=v_quantity-v_effective;
-  v_supplier_changed:=case when v_partner is not null and v_prev_partner is not null then v_partner<>v_prev_partner
-    else lower(coalesce(v_supplier,'')) <> lower(coalesce(v_prev_supplier,'')) end;
-  if v_delta=0 and v_price is not distinct from v_prev_price and not v_supplier_changed then
+  -- Supplier identity = partner id and name. Both ids present: the id decides, and a renamed
+  -- partner keeps the recorded name. Otherwise any id change (null <-> id) or name change counts.
+  if v_partner is not null and v_prev_partner is not null then
+    v_supplier_changed:=v_partner<>v_prev_partner;
+    if not v_supplier_changed then v_supplier:=coalesce(v_prev_supplier,v_supplier); end if;
+  else
+    v_supplier_changed:=v_partner is distinct from v_prev_partner
+      or lower(coalesce(v_supplier,'')) <> lower(coalesce(v_prev_supplier,''));
+    if not v_supplier_changed then v_supplier:=coalesce(v_prev_supplier,v_supplier); end if;
+  end if;
+  v_note_text:=v_reason || coalesce(' · ' || v_note,'');
+  -- A memo/reason-only edit is saved as a zero-quantity edit log. The same request again
+  -- (retry, double click) matches the latest log in every field and writes nothing.
+  if v_delta=0 and v_price is not distinct from v_prev_price and not v_supplier_changed
+     and v_note_text is not distinct from v_latest.new_note then
     return jsonb_build_object('status','no_change');
   end if;
   if v_supplier_changed and v_role <> all(array['owner','master']) then
@@ -108,9 +124,11 @@ begin
     return jsonb_build_object('status','purchase_correction_later_stock_check');
   end if;
   if v_old.quantity+v_delta < 0 then return jsonb_build_object('status','inventory_quantity_negative'); end if;
+  -- Ledger state before the edit decides which projector results are acceptable below.
+  select status into v_candidate_status from public.ledger_candidates where source_type='inventory_purchase_log'
+    and source_key='inventory-log:' || v_root.id order by id desc limit 1;
   -- A dismissed (excluded or fully cancelled) receipt would otherwise get a new pending candidate.
-  if (select status from public.ledger_candidates where source_type='inventory_purchase_log'
-      and source_key='inventory-log:' || v_root.id order by id desc limit 1)='dismissed' then
+  if v_candidate_status='dismissed' then
     return jsonb_build_object('status','purchase_correction_review_required','code','DISMISSED_SOURCE','blockReason','purchase_dismissed');
   end if;
   -- One open Ledger review per receipt: an earlier-day edit (or any other projection issue)
@@ -137,7 +155,7 @@ begin
       'prev_quantity',v_old.quantity,'new_quantity',v_new.quantity,'change_quantity',v_delta,
       'prev_purchase_price',v_prev_price,'new_purchase_price',v_price,
       'prev_supplier',v_prev_supplier,'new_supplier',v_supplier,'purchase_supplier_partner_id',v_partner,
-      'prev_note',null,'new_note',v_reason || coalesce(' · ' || v_note,'')
+      'prev_note',null,'new_note',v_note_text
     );
     foreach v_field in array array['code','unit','category','category_vi','part'] loop
       v_log:=v_log || jsonb_build_object('prev_' || v_field,to_jsonb(v_old)->v_field,'new_' || v_field,to_jsonb(v_new)->v_field);
@@ -152,6 +170,15 @@ begin
     perform set_config('baba.purchase_confirmation','',true);
     v_projection:=public.ledger_project_inventory_purchase_log_v1(v_log_id,p_actor_user_id);
     if v_projection->>'status'='failed' then raise exception 'INVENTORY_LEDGER_ATOMIC_FAILED'; end if;
+    -- pending = the receipt is not booked yet: its unconfirmed candidate (or a new one for an
+    -- unmapped supplier) now carries the edited amount and still needs the owner's confirmation.
+    -- That is a partial completion, never a success, and only valid if nothing was booked before.
+    if v_projection->>'status'='pending' then
+      if v_candidate_status is not null and v_candidate_status<>'pending' then raise exception 'LEDGER_PENDING_UNEXPECTED'; end if;
+      v_completion:='ledger_pending';
+    elsif v_projection->>'status' is distinct from 'synced' and v_projection->>'status' is distinct from 'review_required' then
+      raise exception 'INVENTORY_LEDGER_ATOMIC_FAILED';
+    end if;
     if v_projection->>'status'='review_required' then
       if v_projection->>'code' in ('MONTH_CLOSED','DISMISSED_SOURCE') then raise exception '%',v_projection->>'code'; end if;
       v_check:=inventory_ledger_private.inspect_purchase_repair(v_log_id,v_root.id);
@@ -196,8 +223,17 @@ begin
                   and p.status='unpaid' and p.original_amount=t.amount and p.party_id=t.party_id)))) then
           raise exception 'INVENTORY_LEDGER_ATOMIC_FAILED';
         end if;
+      else
+        -- An earlier day stays committed as review_required for the owner's repair screen.
+        v_completion:='ledger_review';
       end if;
-      -- An earlier day stays committed as review_required for the owner's repair screen.
+    end if;
+    -- A booked receipt whose amount changed must have been rebooked (or be in review). A
+    -- supplier-only change may also be the projector's same-party partner enrichment.
+    if v_candidate_status='confirmed' and v_completion='complete' and v_projection->>'code' is distinct from 'REBOOKED'
+       and (v_delta<>0 or v_price is distinct from v_prev_price
+         or (v_supplier_changed and v_projection->>'code' is distinct from 'METADATA_SYNCED')) then
+      raise exception 'INVENTORY_LEDGER_ATOMIC_FAILED';
     end if;
     perform set_config('baba.purchase_confirmation',coalesce(v_confirmation,''),true);
 
@@ -207,7 +243,7 @@ begin
           'supplier',v_prev_supplier,'supplierPartnerId',v_prev_partner,'itemQuantity',v_old.quantity,'preview',v_check),
         jsonb_build_object('purchaseLogId',v_root.id,'quantity',v_quantity,'purchasePrice',v_price,
           'supplier',v_supplier,'supplierPartnerId',v_partner,'itemQuantity',v_new.quantity,
-          'editReason',v_reason,'note',v_note,'projection',v_projection),
+          'editReason',v_reason,'note',v_note,'completion',v_completion,'projection',v_projection),
         'Inventory receipt edit') returning id into v_audit_id;
     if v_audit_id is null then raise exception 'INVENTORY_REQUIRED_AUDIT_MISSING'; end if;
   exception when others then
@@ -229,12 +265,13 @@ begin
         when v_code in ('SUPPLIER_PAYMENT_MAPPING_REQUIRED','SUPPLIER_MISMATCH','SUPPLIER_REFERENCE_REQUIRED',
           'SUPPLIER_CORRECTION_ORDER_REQUIRED','UNIT_MISMATCH','INVALID_PURCHASE_CORRECTION_REFERENCE') then 'supplier_mapping_required'
         when v_code in ('PURCHASE_CORRECTION_EXCEEDS_PURCHASE') then 'invalid_correction_history'
+        when v_code='LEDGER_PENDING_UNEXPECTED' then 'ledger_status_changed'
         else 'receipt_edit_review' end;
     end if;
     return jsonb_build_object('status','purchase_correction_review_required','code',v_code,'blockReason',v_block);
   end;
   return jsonb_build_object('status','ok','inventoryLogId',v_log_id,'inventory',to_jsonb(v_new),
-    'quantity',v_quantity,'quantityDelta',v_delta,'ledgerSync',v_projection);
+    'quantity',v_quantity,'quantityDelta',v_delta,'completion',v_completion,'ledgerSync',v_projection);
 end;
 $$;
 alter function public.inventory_apply_purchase_receipt_edit_v1(bigint,bigint,numeric,jsonb,jsonb,date,bigint) owner to postgres;

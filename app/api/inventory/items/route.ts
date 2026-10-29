@@ -758,10 +758,14 @@ export async function PATCH(req: Request) {
           !Object.hasOwn(body, "expectedUpdatedAt") || Object.keys(payload).some(key => !editKeys.has(key))) {
         return jsonError("invalid_purchase_correction", "Invalid receipt edit.", 400);
       }
-      const resolvedSupplier = await resolveInventorySupplier({
+      // A selected partner is validated and named by the shared resolver. A name-only receipt
+      // supplier is passed as recorded: resolving it here would attach a partner id and turn
+      // an unchanged supplier into a supplier change (owner/master only in the RPC).
+      const partnerId = payload.supplierPartnerId ?? null;
+      const resolvedSupplier = (partnerId === null ? null : await resolveInventorySupplier({
         supabase: supabaseAdmin, actorUserId: actor.id,
-        payload: { supplier: payload.supplier ?? null, supplierPartnerId: payload.supplierPartnerId ?? null },
-      }) ?? { supplier: payload.supplier ?? null, supplier_partner_id: payload.supplierPartnerId ?? null };
+        payload: { supplier: payload.supplier ?? null, supplierPartnerId: partnerId },
+      })) ?? { supplier: payload.supplier ?? null, supplier_partner_id: partnerId };
       const { businessDate } = await resolveInventoryBusinessDate();
       const { data: edited, error } = await supabaseAdmin.rpc("inventory_apply_purchase_receipt_edit_v1", {
         p_item_id: Number(id), p_purchase_log_id: purchaseLogId,
@@ -782,7 +786,7 @@ export async function PATCH(req: Request) {
         return jsonError(edited?.status ?? "purchase_correction_failed", "Receipt edit was not saved.", status,
           edited?.blockReason ? { blockReason: edited.blockReason, reviewCode: edited.code } : undefined);
       }
-      return NextResponse.json({ ok: true, mode, ledgerSync: edited.ledgerSync });
+      return NextResponse.json({ ok: true, mode, completion: edited.completion, ledgerSync: edited.ledgerSync });
     }
     const supplierResolution = await resolveInventorySupplier({ supabase: supabaseAdmin, payload, actorUserId: actor.id });
     serverPayload = applyResolvedInventorySupplier(serverPayload, supplierResolution);

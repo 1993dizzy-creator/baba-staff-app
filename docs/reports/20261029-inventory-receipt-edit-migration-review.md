@@ -1,7 +1,7 @@
 # 입고 수정 RPC Migration 적용 전 검토 — 2026-10-29
 
 대상: `supabase/migrations/20261029220000_inventory_purchase_receipt_edit.sql` (로컬 작성·검증 완료, **운영 미적용**)
-관련 커밋: `06332ea`(최초) → `9cf23a0`(검토 반영: 장부 확인 대기 중 재수정 차단)
+관련 커밋: `06332ea`(최초) → `9cf23a0`(검토 반영: 장부 확인 대기 중 재수정 차단) → SQL 원문 검토 3건 반영(아래 7절)
 
 이 보고서는 정적 검토와 격리 테스트 결과다. 운영 DB 조회·실행, Migration history 변경은 하지 않았다.
 
@@ -70,9 +70,20 @@ select count(*) from public.ledger_audit_logs where action = 'inventory_purchase
 - 앱을 이전 버전으로 되돌린 뒤 `drop function public.inventory_apply_purchase_receipt_edit_v1(bigint,bigint,numeric,jsonb,jsonb,date,bigint);`
 - 이미 함수로 생성된 정정 로그·감사·재기장은 회계 이력이므로 삭제하지 않는다(기존 정정과 동일 정책).
 
-## 7. 남은 위험
+## 7. SQL 원문 검토 반영 (2026-10-29)
+
+| 지적 | 수정 | 격리 테스트 |
+|---|---|---|
+| 메모·사유만 바꾸면 `no_change`로 저장 안 됨 | `new_note`(`사유 · 메모`)가 최신 계열 로그와 다르면 수량 0 정정 로그로 저장. 수량·단가·거래처·문구가 모두 같으면 `no_change` | 메모 저장 → 장부 불변(재기장 없음), 동일 재시도 `no_change`·상태 불변, 사유만/메모 삭제도 저장 |
+| 거래처 권한 검사가 이름만 같으면 partner ID 변경을 놓침 | 양쪽 ID가 있으면 ID로 판정(같은 ID의 이름 변경은 기록 이름 유지). 그 외에는 ID 변화(null↔ID) 또는 이름 변화를 변경으로 판정 → owner/master만. API는 이름 전용 거래처를 resolver로 다시 해석하지 않고 그대로 전달 | 이름 전용 원입고에 ID 연결: staff 거부·owner 허용, ID 제거 staff 거부, 대소문자·공백 차이는 변경 아님(기록 이름 유지), 같은 ID 이름 변경은 변경 아님 |
+| projector `pending`을 명시적으로 처리하지 않음 | 결과 `completion` 추가: `complete` / `ledger_pending`(미확정 후보에 새 금액 반영, 수정 전 후보가 없거나 pending일 때만) / `ledger_review`(과거 날짜). 수정 전 확정 후보인데 `pending`이면 `LEDGER_PENDING_UNEXPECTED`로 전체 롤백. 확정 후보의 금액 변경이 재기장 없이 `synced`로 오면 `INVENTORY_LEDGER_ATOMIC_FAILED`로 롤백(거래처만 바뀐 같은 상대방 보강 `METADATA_SYNCED`는 허용). 앱은 `complete`만 정상 완료로 표시 | 미매핑 거래처 미확정 입고 → `ledger_pending`, 후보 금액 갱신·거래 없음, owner의 미매핑 거래처 변경도 `ledger_pending`; 확정 후보에 강제 `pending`·`UNCHANGED` 응답 → 차단·상태 불변 |
+
+검증: PGlite 입고 수정 DB 30건, native PostgreSQL 17.6 19건 통과. 재고·장부 회귀 792건 중 실패 31건은 기존과 동일 파일·건수.
+
+## 8. 남은 위험
 
 - 과거 날짜 수정은 대표의 장부 확인 전까지 재고와 장부가 다르다. 앱은 카드에 "장부 관리자 확인 대기"를 표시하고 같은 입고의 재수정을 막는다.
 - 이미 `review_required`/`failed` 장부 상태가 남아 있는 기존 원입고는 관리자 처리 전까지 입고 수정이 차단된다(보수적 동작).
 - 거래처 변경 후 과거 날짜 확인은 기존 장부 화면의 거래처 변경 확인(fingerprint) 절차를 거친다.
+- `ledger_pending`은 원래 미확정이던 입고에만 생긴다. 대표가 기존 후보 확정 절차로 마무리해야 하며, 앱은 확정 대기 안내를 표시한다.
 - 10/9 배 #12848·장부 #2485/#1161은 대상이 아니며 변경하지 않았다.
