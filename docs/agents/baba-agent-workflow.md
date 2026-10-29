@@ -110,7 +110,7 @@ Skill 자동 호출은 `AGENTS.md`/`CLAUDE.md` 진입점의 지침으로 연결�
 ## 6. Supabase 운영 DB·Migration
 
 - 기준은 `AGENTS.md`의 「Supabase 운영 DB 안전 규칙」, 「BABA 운영 Migration 기본 절차」, 「운영 Migration 반복 금지 사항」이며 그대로 적용한다.
-- **역할 확대 미승인**: AGENTS.md의 로컬 SQL 작성·테스트·검증 담당은 Codex로 유지한다. Claude Code에 같은 역할을 부여하려면 사용자의 별도 결정이 필요하다. 공통 DB 안전 제한은 두 에이전트 모두에 적용한다.
+- **로컬 SQL 담당**: 직렬 모드(§12)에서는 현재 실행 중인 에이전트가 로컬 SQL 작성·테스트·검증을 담당한다. 격리·병렬 모드에서는 Codex로 유지하며, Claude Code에 같은 역할을 부여하려면 사용자의 별도 결정이 필요하다. 공통 DB 안전 제한은 두 에이전트 모두에 적용한다.
 - 운영 검증과 Migration 이력 등록("GPT" 단계)은 Worktree의 코딩 에이전트가 대신하지 않는다. 사용자가 해당 작업을 명시적으로 지시한 경우에만 수행한다.
 - 운영 적용은 사용자가 Supabase SQL Editor에서 직접 실행한다. 에이전트는 `supabase db push`, `db reset`, `migration repair`, 운영 DML·DDL을 실행하지 않는다.
 - 이미 적용된 Migration 파일은 수정하지 않고 후속 Migration을 추가한다. `baba-verify`는 기준선에 있는 Migration이 수정되면 실패로 판정한다.
@@ -231,7 +231,7 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 
 **에이전트 교체**
 
-- 같은 원본 폴더를 두 에이전트가 동시에 수정하지 않는다. Codex↔Claude Code 교체 전에 이전 에이전트 세션을 종료한다. 이전 세션이 살아 있는지 불확실하면 수정 전에 사용자에게 확인한다.
+- 같은 원본 폴더를 두 에이전트가 동시에 수정하지 않는다. 다른 에이전트 프로세스(PID)가 있다는 이유만으로 작업을 차단하거나 종료를 요구하지 않는다. 예상하지 못한 미커밋 변경·커밋 등 원본 main을 실제로 동시에 수정하는 충돌이 확인될 때만 중단하고 사용자에게 보고한다.
 - 이어받는 에이전트는 위 1~2단계로 HEAD·최근 커밋·미커밋 변경을 확인하고 그대로 이어서 작업한다. 이전 에이전트의 커밋과 변경을 되돌리지 않는다.
 - 사용자 승인 없이 `reset`, `clean`, `checkout`/`restore`로 파일 되돌리기, 강제 전환, 자동 stash, 이력 재작성으로 기존 작업을 폐기하지 않는다.
 - 검증이 끝나지 않은 작업은 커밋하지 않고 미커밋 상태로 남겨 이어받게 한다. 중단 시 가능한 범위에서 진행 상황(변경 파일, 남은 작업, 검증 상태)을 사용자에게 보고한다.
@@ -248,7 +248,7 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 **커밋·보고**
 
 - 검증 후 원본 `main`에 직접 커밋한다. 이번 작업 파일만 지정해 add하고 관련 없는 변경을 섞지 않는다.
-- `git push`, Vercel Production 배포, 운영 DB·Migration 적용은 §6·§7과 AGENTS.md에 따라 별도 사용자 승인을 받는다. 로컬 SQL 작성·테스트·검증 담당이 Codex라는 AGENTS.md 규정은 직렬 모드에서도 같다.
+- `git push`, Vercel Production 배포, 운영 DB·Migration 적용은 §6·§7과 AGENTS.md에 따라 별도 사용자 승인을 받는다. 직렬 모드에서는 현재 실행 중인 에이전트가 SQL·Migration·RPC·코드·테스트를 모두 담당한다.
 - `baba-handoff` 파일 대신 사용자에게 시작 SHA, 최종 SHA, 커밋 목록, 변경 파일, 검증 결과·미검증 항목, DB/Migration 변경 여부, push 여부를 보고한다.
 
 **격리·병렬 모드와의 관계**
