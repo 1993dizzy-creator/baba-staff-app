@@ -78,7 +78,9 @@ select count(*) from public.ledger_audit_logs where action = 'inventory_purchase
 | 거래처 권한 검사가 이름만 같으면 partner ID 변경을 놓침 | 양쪽 ID가 있으면 ID로 판정(같은 ID의 이름 변경은 기록 이름 유지). 그 외에는 ID 변화(null↔ID) 또는 이름 변화를 변경으로 판정 → owner/master만. API는 이름 전용 거래처를 resolver로 다시 해석하지 않고 그대로 전달 | 이름 전용 원입고에 ID 연결: staff 거부·owner 허용, ID 제거 staff 거부, 대소문자·공백 차이는 변경 아님(기록 이름 유지), 같은 ID 이름 변경은 변경 아님 |
 | projector `pending`을 명시적으로 처리하지 않음 | 결과 `completion` 추가: `complete` / `ledger_pending`(미확정 후보에 새 금액 반영, 수정 전 후보가 없거나 pending일 때만) / `ledger_review`(과거 날짜). 수정 전 확정 후보인데 `pending`이면 `LEDGER_PENDING_UNEXPECTED`로 전체 롤백. 확정 후보의 금액 변경이 재기장 없이 `synced`로 오면 `INVENTORY_LEDGER_ATOMIC_FAILED`로 롤백(거래처만 바뀐 같은 상대방 보강 `METADATA_SYNCED`는 허용). 앱은 `complete`만 정상 완료로 표시 | 미매핑 거래처 미확정 입고 → `ledger_pending`, 후보 금액 갱신·거래 없음, owner의 미매핑 거래처 변경도 `ledger_pending`; 확정 후보에 강제 `pending`·`UNCHANGED` 응답 → 차단·상태 불변 |
 
-검증: PGlite 입고 수정 DB 30건, native PostgreSQL 17.6 19건 통과. 재고·장부 회귀 792건 중 실패 31건은 기존과 동일 파일·건수.
+| 확정 입고의 메모·사유만 수정은 projector가 `METADATA_SYNCED`로 처리해 지급·배분·마감·수동 정정 검사를 거치지 않음 | 확정 후보가 있는 입고는 모든 수정 전에 장부 거래·payable·배분·월마감(관련 월 advisory lock 후)·수동 금액/상대방 변경을 검사하고, 해당하면 쓰기 없이 `CONFIRMED_RECEIPT_PROTECTED`로 차단 | 수정 전 SQL(`8413c26`)에서 지급·배분·마감·수동 금액 상태의 메모 수정이 `ok/complete`로 저장됨을 재현. 수정 후 7개 상태 모두 차단·상태 불변. native: 지급·배분·월마감 선행 시 메모 수정 대기 후 차단, deadlock 0 |
+
+검증: PGlite 입고 수정 DB 37건, native PostgreSQL 17.6 22건 통과. 재고·장부 회귀 792건 중 실패 31건은 기존과 동일 파일·건수.
 
 ## 8. 남은 위험
 

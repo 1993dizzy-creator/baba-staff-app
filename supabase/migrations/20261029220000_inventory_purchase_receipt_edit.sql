@@ -14,6 +14,8 @@
 --   later stock check for a quantity change) rolls back everything and is reported.
 -- * A supplier change (partner id or name) requires owner/master, matching the repair policy.
 -- * A memo/reason-only edit is a zero-quantity edit log; an identical retry returns no_change.
+--   A booked receipt that is paid, allocated, in a closed month or manually edited in the Ledger
+--   is refused for every edit, memo-only included, before any write.
 -- * Result "completion": complete (booked or nothing to book), ledger_pending (not booked yet:
 --   the unconfirmed candidate carries the new amount), ledger_review (earlier day, owner review).
 --   Only complete is a finished edit; the app shows the other two as partial.
@@ -33,6 +35,7 @@ declare
   v_log jsonb; v_log_id bigint; v_columns text; v_values text; v_field text;
   v_projection jsonb; v_check jsonb; v_confirmation text; v_audit_id bigint;
   v_code text; v_block text; v_payable public.ledger_payables%rowtype;
+  v_candidate public.ledger_candidates%rowtype; v_tx public.ledger_transactions%rowtype; v_month date;
 begin
   -- Input contract. Unknown keys and non-finite numbers are rejected before any lock.
   if p_expected_quantity is null or p_business_date is null or jsonb_typeof(p_edit) is distinct from 'object'
@@ -136,6 +139,36 @@ begin
   if exists(select 1 from public.ledger_inventory_projection_status s join public.inventory_logs l on l.id=s.inventory_log_id
       where (l.id=v_root.id or l.correction_of_inventory_log_id=v_root.id) and s.status in ('review_required','failed')) then
     return jsonb_build_object('status','purchase_correction_review_required','code','LEDGER_REVIEW_PENDING','blockReason','ledger_review_pending');
+  end if;
+  -- A booked receipt is protected for every edit. A memo/reason-only edit keeps the economics,
+  -- so the projector records it as metadata without its payment/close/manual-edit gates.
+  -- Same checks as inspect_purchase_repair, under the payable row locks taken above and the
+  -- month-close locks the projector uses (ascending month order).
+  if v_candidate_status='confirmed' then
+    select * into v_candidate from public.ledger_candidates where source_type='inventory_purchase_log'
+      and source_key='inventory-log:' || v_root.id order by id desc limit 1;
+    select * into v_tx from public.ledger_transactions where id=v_candidate.resolved_transaction_id;
+    select * into v_payable from public.ledger_payables where expense_transaction_id=v_tx.id;
+    for v_month in select distinct m from unnest(array[date_trunc('month',v_root.business_date)::date,
+        v_candidate.proposed_recognition_month,date_trunc('month',v_tx.business_date)::date,v_tx.recognition_month,
+        date_trunc('month',p_business_date)::date]) m where m is not null order by 1 loop
+      perform pg_advisory_xact_lock(hashtext('ledger_month_close:' || to_char(v_month,'YYYY-MM')));
+      if public.ledger_month_is_closed_v1(v_month) then v_block:='month_closed'; end if;
+    end loop;
+    v_block:=coalesce(v_block,case
+      when v_tx.id is null then 'ledger_transaction_missing'
+      when v_tx.amount is distinct from v_candidate.proposed_amount then 'ledger_amount_changed'
+      when v_tx.status is distinct from 'confirmed' or v_tx.type is distinct from 'expense'
+        or v_tx.source_type not in ('inventory_purchase_candidate','inventory_purchase_rebook') then 'ledger_status_changed'
+      when v_payable.id is null or v_payable.status='paid' then 'payment_completed'
+      when exists(select 1 from public.ledger_payable_allocations where payable_id=v_payable.id) then 'payment_allocated'
+      when v_payable.status is distinct from 'unpaid' then 'payment_state'
+      when v_payable.original_amount is distinct from v_tx.amount or v_payable.party_id is distinct from v_tx.party_id
+        then 'ledger_status_changed'
+    end);
+    if v_block is not null then
+      return jsonb_build_object('status','purchase_correction_review_required','code','CONFIRMED_RECEIPT_PROTECTED','blockReason',v_block);
+    end if;
   end if;
 
   -- All writes below commit together or not at all.

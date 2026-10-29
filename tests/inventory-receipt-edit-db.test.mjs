@@ -272,3 +272,20 @@ test('a booked receipt whose amount changed is never reported complete without a
   }
  }finally{await db.close();}
 });
+
+for(const [name,setup,blockReason] of [
+ ['paid',"update ledger_payables set status='paid'",'payment_completed'],
+ ['partially paid',"update ledger_payables set status='partially_paid'",'payment_state'],
+ ['allocated',"insert into ledger_payable_allocations(payable_id,payment_transaction_id,allocated_amount) select p.id,p.expense_transaction_id,1 from ledger_payables p",'payment_allocated'],
+ ['closed source month',"insert into ledger_month_closures(month) values('2026-10-01')",'month_closed'],
+ ['closed recognition month',"update ledger_candidates set proposed_recognition_month='2026-09-01';update ledger_transactions set recognition_month='2026-09-01';insert into ledger_month_closures(month) values('2026-09-01')",'month_closed'],
+ ['manual Ledger amount',"update ledger_transactions set amount=199000 where type='expense'",'ledger_amount_changed'],
+ ['manual Ledger payee',"update ledger_payables set party_id=12",'ledger_status_changed'],
+])test('booked receipt '+name+': a memo-only edit is refused with nothing written',async()=>{
+ const db=await receiptEditFixture();try{
+  await db.exec(setup);const before=await state(db);
+  const r=await editReceipt(db,await item(db),{reason:'메모만 정정',note:'영수증'});
+  assert.equal(r.status,'purchase_correction_review_required',JSON.stringify(r));assert.equal(r.code,'CONFIRMED_RECEIPT_PROTECTED');assert.equal(r.blockReason,blockReason);
+  assert.deepEqual(await state(db),before);
+ }finally{await db.close();}
+});
