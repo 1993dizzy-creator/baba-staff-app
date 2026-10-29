@@ -23,7 +23,7 @@ try {
   let loadFailure=false,logsFailure=true;
   const user={id:1,name:'QA',role:'owner',part:'kitchen',language:lang};
   const item={id:1,item_name:lang==='ko'?'Oil':'',item_name_vi:lang==='ko'?'':'Dau',part:'kitchen',category:'Food',category_vi:'Food',quantity:2,unit:'bottle',purchase_price:lang==='vi'&&mobile?30000.5:30000,supplier:'QA',supplier_partner_id:10,image_path:'qa.png',code:'QA',is_active:true,updated_at:'2026-10-10T03:00:00.000Z',low_stock_threshold:1,low_stock_enabled:false,package_content_quantity:null,package_content_unit:null};
-  const log={id:100,item_id:1,item_name:'Oil',item_name_vi:'Dau',part:'kitchen',category:'Food',category_vi:'Food',change_quantity:2,prev_quantity:0,new_quantity:2,unit:'bottle',code:'QA',reason:'purchase',new_purchase_price:item.purchase_price,new_supplier:'QA',created_at:'2026-10-10T03:00:00Z'};
+  const log={id:100,item_id:1,item_name:'Oil',item_name_vi:'Dau',part:'kitchen',category:'Food',category_vi:'Food',change_quantity:2,prev_quantity:0,new_quantity:2,unit:'bottle',code:'QA',reason:'purchase',new_purchase_price:item.purchase_price,new_supplier:'QA',created_at:'2026-10-10T03:00:00Z',business_date:'2026-10-10'};
   await page.addInitScript(user=>localStorage.setItem('baba_user',JSON.stringify(user)),user);
   await page.route('**/storage/v1/object/public/**',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9S8AAAAASUVORK5CYII=','base64')}));
   await page.route('**/api/**',async route=>{
@@ -127,7 +127,9 @@ try {
   // (tests/inventory-receipt-edit-browser.test.mjs). The editor itself is covered above.
   await page.getByRole('button',{name:lang==='ko'?'\ub2eb\uae30':'\u0110\u00f3ng',exact:true}).last().click();
   await page.getByRole('button').filter({hasText:lang==='ko'?'Oil':'Dau'}).first().click();
-  await page.getByText(lang==='ko'?'\ub2f9\uc77c \ub85c\uadf8':'Nh\u1eadt k\u00fd trong ng\u00e0y').first().waitFor();
+  await page.getByTestId('daily-log-purchase-100').waitFor();
+  await page.getByText(new RegExp('^'+(lang==='ko'?'\ub2f9\uc77c \ub85c\uadf8':'Nh\u1eadt k\u00fd trong ng\u00e0y')+'\\s*2026-10-10$')).waitFor();
+  assert.equal(await page.getByText(lang==='ko'?'\uc120\ud0dd\ud55c \ub85c\uadf8':'Nh\u1eadt k\u00fd \u0111\u00e3 ch\u1ecdn',{exact:true}).count(),0);
   assert.equal(await page.getByRole('button',{name:lang==='ko'?'\uc218\uc815':'S\u1eeda',exact:true}).count(),0);
   assert.equal(new URL(page.url()).pathname,'/inventory/snapshots');
   assert.equal(await page.locator('input').first().inputValue(),'QA');

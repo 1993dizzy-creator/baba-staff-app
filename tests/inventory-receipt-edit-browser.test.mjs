@@ -17,7 +17,7 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
  const DAY='2026-10-10';
  try{for(const lang of ['ko','vi'])for(const [label,viewport] of [['360',{width:360,height:780}],['390',{width:390,height:844}],['pc',{width:1280,height:900}]])for(const role of label==='390'?['owner','staff']:['owner']){
   const mobile=label!=='pc',context=await browser.newContext({viewport,isMobile:mobile,hasTouch:mobile}),page=await context.newPage();page.setDefaultTimeout(8000);
-  const t=inventoryText[lang],errors=[],reads=[],patches=[];let patchResult='ok';
+  const t=inventoryText[lang],errors=[],reads=[],patches=[];let patchResult='ok',singleReceipt=false;
   const user={id:1,name:'QA',role,part:'kitchen',language:lang};
   const base={item_id:1,item_name:'배',item_name_vi:'Lê',part:'kitchen',category:'Fruit',category_vi:'Fruit',unit:'kg',code:'P',action:'update',source:'edit_form',reason:'purchase',business_date:DAY,actor_name:'QA'};
   const longSupplier='Hà Giang Mart cửa hàng trái cây nhập khẩu rất dài';
@@ -47,7 +47,7 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    else if(url.pathname==='/api/inventory/snapshot/name-sync')json={ok:true,canSync:true,dailySyncItems:[],languageMissingItems:[]};
    else if(url.pathname==='/api/inventory/logs')json={ok:true,data:projectDailyEffectivePurchases([rootA,rootB,stockCheck],corrections)};
    else if(url.pathname==='/api/inventory/items'&&url.searchParams.get('itemId')==='1')json={ok:true,data:[item],supplierPartners:partners,supplierAliases:[]};
-   else if(url.pathname==='/api/inventory/items/1/logs')json={ok:true,data:[rootA,rootB,...corrections,stockCheck],businessDate:url.searchParams.get('businessDate')};
+   else if(url.pathname==='/api/inventory/items/1/logs')json={ok:true,data:singleReceipt?[rootA,...corrections]:[rootA,rootB,...corrections,stockCheck],businessDate:url.searchParams.get('businessDate')};
    else if(url.pathname==='/api/inventory/bootstrap-stream'){await route.fulfill({contentType:'application/x-ndjson',body:[{type:'items',items:[item],supplierPartners:partners,supplierAliases:[]},{type:'enrichment',statusMap:{},kegProgressMap:{},activeKegTrackingItemIds:[]},{type:'complete',timing:{}}].map(r=>JSON.stringify(r)).join('\n')+'\n'});return;}
    await route.fulfill({status,json});
   });
@@ -64,6 +64,13 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    // Three corrections of #100 are one card in its final state; #110 stays separate.
    assert.match(await entryA.innerText(),lang==='vi'?/Đã sửa 3 lần/:/수정 3회/);
    assert.equal(await page.locator('[data-testid^="daily-log-purchase-"]').count(),2);
+   // Simplified modal: the opened receipt is in the daily log, so no separate 선택한 로그 block,
+   // no modal 동기화 button, no reclassification chips for receipts; the opened card is highlighted.
+   assert.equal(await page.getByText(lang==='vi'?'Nhật ký đã chọn':'선택한 로그',{exact:true}).count(),0);
+   assert.equal(await page.getByRole('button',{name:t.syncLog,exact:true}).count(),0);
+   assert.equal(await page.locator('[data-testid^="log-reason-buttons-"]').count(),0);
+   assert.equal(await entryA.locator('xpath=..').getAttribute('data-selected'),'true');
+   assert.equal(await entryB.locator('xpath=..').getAttribute('data-selected'),null);
    // Mobile: supplier/price-change tags wrap inside the modal instead of being clipped.
    const tabs=page.getByTestId('daily-log-group-tabs');await tabs.waitFor();
    assert.ok(await tabs.evaluate(el=>[...el.children].every(child=>child.getBoundingClientRect().right<=el.getBoundingClientRect().right+1)),'tags fit the row');
@@ -107,6 +114,16 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    await page.waitForFunction(m=>document.querySelector('[data-testid="receipt-edit-form-100"] [role=alert]')?.textContent===m,inventoryPurchaseErrorMessage('purchase_correction_review_required',lang,{blockReason:'payment_completed'}));
    assert.equal(await again.locator('input').nth(1).inputValue(),'33000');
    await noOverflow();await shot('blocked');
+   // One receipt that day: a single plain card, no highlight or tags, and the modal fits its content.
+   await page.getByRole('button',{name:lang==='vi'?'Đóng':'닫기',exact:true}).last().click();
+   singleReceipt=true;await page.getByTestId('snapshot-purchase-card-100').click();
+   const single=page.getByTestId('daily-log-purchase-100');await single.waitFor();
+   assert.equal(await page.locator('[data-testid^="daily-log-purchase-"]').count(),1);
+   assert.equal(await single.locator('xpath=..').getAttribute('data-selected'),null);
+   assert.equal(await page.getByTestId('daily-log-group-tabs').count(),0);
+   assert.equal(await page.getByTestId('receipt-edit-notice-100').count(),0,'old notice cleared when the modal reopens');
+   assert.ok(await single.evaluate(el=>{let node=el;while(node&&getComputedStyle(node).overflowY!=='auto')node=node.parentElement;return !!node&&node.scrollHeight<=node.clientHeight+1;}),'single receipt modal needs no scroll');
+   await noOverflow();await shot('single');
    assert.deepEqual(errors,[]);
   }finally{await context.close();}
  }}finally{await browser.close();}

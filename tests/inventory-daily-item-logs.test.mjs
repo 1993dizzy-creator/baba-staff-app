@@ -110,3 +110,14 @@ test('browser QA base: only a loopback offline build, never the original dev ser
   const source=readFileSync(file,'utf8');assert.ok(source.includes('offlineUiBase()'),file);assert.ok(!source.includes('localhost:3000'),file);
  }
 });
+
+test('item log modal: no 동기화 button, 선택한 로그 only when not already in 당일 로그, reason chips only when reclassifiable',()=>{
+ const page=readFileSync('app/(protected)/inventory/snapshots/page.tsx','utf8');
+ assert.ok(!page.includes('syncPurchaseInfoFromCurrentItem')&&!page.includes('t.syncLog'));
+ assert.match(page,/\{!selectedShownInDailyLog && <div/);
+ assert.match(page,/const changeable = QUICK_REASON_VALUES\.filter\(\(reason\) => reason !== log\.reason && inventoryReasonChangeIssue\(log, reason\) === null\);\s*if \(changeable\.length === 0\) return null;/);
+ assert.ok(!page.includes('입고 수량·단가·거래처 정정은 아래 당일 로그'));
+ assert.match(page,/const highlighted = selected && visibleTimelineEntries\.length > 1;/);
+ // The daily/monthly sync features themselves stay.
+ assert.ok(page.includes('MonthlyNameSyncPanel')&&page.includes('/api/inventory/snapshot/name-sync'));
+});

@@ -379,7 +379,6 @@ export default function InventorySnapshotsPage() {
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
     const [itemLogsError, setItemLogsError] = useState("");
     const [changingReasonLogId, setChangingReasonLogId] = useState<number | null>(null);
-    const [syncingPurchaseLogId, setSyncingPurchaseLogId] = useState<number | null>(null);
     const [purchaseLogGroupFilter, setPurchaseLogGroupFilter] = useState("all");
     // 당일 로그 (03:00 business day of the opened card) and its per-receipt edit form.
     const [itemLogsBusinessDate, setItemLogsBusinessDate] = useState("");
@@ -1079,144 +1078,6 @@ export default function InventorySnapshotsPage() {
         setEditingItemId(itemId);
     };
 
-    const syncPurchaseInfoFromCurrentItem = async (item: SnapshotItem) => {
-        if (syncingPurchaseLogId) return;
-        setSyncingPurchaseLogId(item.id);
-        const syncLogIds = [item.id]
-            .map((logId) => Number(logId))
-            .filter((logId) => Number.isFinite(logId) && logId > 0);
-        const syncLogIdSet = new Set(syncLogIds);
-
-        try {
-            const res = await fetch("/api/inventory/logs", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    id: item.id,
-                    logIds: syncLogIds,
-                    businessDate: item.business_date,
-                    syncCurrentItem: true,
-                }),
-            });
-            const result = await res.json();
-
-            if (!res.ok || !result.ok) {
-                console.error(result);
-                alert(c.editFail);
-                return;
-            }
-
-            const ledgerNotice = ledgerSyncNotice(result.ledgerSync, lang === "vi");
-            if (ledgerNotice) alert(ledgerNotice);
-            const syncedLogs = Array.isArray(result.data) ? result.data : [result.data];
-            const syncedById = new Map<number, InventoryLog>(
-                syncedLogs.map((log: InventoryLog) => [Number(log.id), log])
-            );
-            const representativeLog = syncedById.get(item.id) ?? syncedLogs[0];
-
-            if (!representativeLog) {
-                alert(c.editFail);
-                return;
-            }
-
-            setMovementItems((prev) =>
-                prev.map((movementItem) => {
-                    if (!syncLogIdSet.has(Number(movementItem.id))) return movementItem;
-
-                    const syncedLog = syncedById.get(Number(movementItem.id)) ?? representativeLog;
-                    const nextPurchasePrice = syncedLog.new_purchase_price ?? null;
-                    const nextSupplier = syncedLog.new_supplier ?? null;
-                    const nextItemName = syncedLog.item_name ?? movementItem.item_name;
-                    const nextItemNameVi = syncedLog.item_name_vi ?? movementItem.item_name_vi;
-                    const nextCategory = syncedLog.category ?? movementItem.category;
-                    const nextCategoryVi = syncedLog.category_vi ?? movementItem.category_vi;
-                    const nextUnit = syncedLog.unit ?? movementItem.unit;
-                    const changeQuantity = Number(movementItem.change_quantity ?? 0);
-                    const totalPurchasePrice =
-                        nextPurchasePrice === null
-                            ? null
-                            : changeQuantity * Number(nextPurchasePrice);
-
-                    return {
-                        ...movementItem,
-                        item_name: nextItemName,
-                        item_name_vi: nextItemNameVi,
-                        category: nextCategory,
-                        category_vi: nextCategoryVi,
-                        unit: nextUnit,
-                        supplier: nextSupplier,
-                        purchase_price: nextPurchasePrice,
-                        new_purchase_price: nextPurchasePrice,
-                        total_purchase_price: totalPurchasePrice,
-                    };
-                })
-            );
-
-            setLogModalItem((prev) => {
-                if (!prev || !syncLogIdSet.has(Number(prev.id))) return prev;
-
-                const syncedLog = syncedById.get(Number(prev.id)) ?? representativeLog;
-                const nextPurchasePrice = syncedLog.new_purchase_price ?? null;
-                const nextSupplier = syncedLog.new_supplier ?? null;
-                const nextItemName = syncedLog.item_name ?? prev.item_name;
-                const nextItemNameVi = syncedLog.item_name_vi ?? prev.item_name_vi;
-                const nextCategory = syncedLog.category ?? prev.category;
-                const nextCategoryVi = syncedLog.category_vi ?? prev.category_vi;
-                const nextUnit = syncedLog.unit ?? prev.unit;
-                const changeQuantity = Number(prev.change_quantity ?? 0);
-                const totalPurchasePrice =
-                    nextPurchasePrice === null
-                        ? null
-                        : changeQuantity * Number(nextPurchasePrice);
-
-                return {
-                    ...prev,
-                    item_name: nextItemName,
-                    item_name_vi: nextItemNameVi,
-                    category: nextCategory,
-                    category_vi: nextCategoryVi,
-                    unit: nextUnit,
-                    supplier: nextSupplier,
-                    purchase_price: nextPurchasePrice,
-                    new_purchase_price: nextPurchasePrice,
-                    total_purchase_price: totalPurchasePrice,
-                };
-            });
-
-            setItemLogs((prev) =>
-                prev.map((log) =>
-                    syncLogIdSet.has(Number(log.id))
-                        ? {
-                            ...log,
-                            item_name:
-                                syncedById.get(Number(log.id))?.item_name ?? log.item_name,
-                            item_name_vi:
-                                syncedById.get(Number(log.id))?.item_name_vi ??
-                                log.item_name_vi,
-                            category:
-                                syncedById.get(Number(log.id))?.category ?? log.category,
-                            category_vi:
-                                syncedById.get(Number(log.id))?.category_vi ??
-                                log.category_vi,
-                            unit: syncedById.get(Number(log.id))?.unit ?? log.unit,
-                            new_supplier:
-                                syncedById.get(Number(log.id))?.new_supplier ??
-                                log.new_supplier,
-                            new_purchase_price:
-                                syncedById.get(Number(log.id))?.new_purchase_price ??
-                                log.new_purchase_price,
-                        }
-                        : log
-                )
-            );
-        } catch (error) {
-            console.error(error);
-            alert(c.editFail);
-        } finally {
-            setSyncingPurchaseLogId(null);
-        }
-    };
-
 
     const moveCalendarMonth = (diff: number) => {
         if (!calendarMonth) return;
@@ -1706,6 +1567,59 @@ export default function InventorySnapshotsPage() {
             ? logModalItem
             : null;
 
+    // Log ids the opened card stands for: one log, or the receipts of an aggregated purchase card.
+    const selectedLogIds = new Set(
+        (logModalItem?.syncLogIds?.length ? logModalItem.syncLogIds : logModalItem ? [logModalItem.id] : []).map(Number)
+    );
+    const entryHasSelectedLog = (entry: DailyItemLogEntry<InventoryLog>) =>
+        entry.kind === "purchase"
+            ? [entry.root, ...entry.corrections].some((log) => selectedLogIds.has(Number(log.id)))
+            : selectedLogIds.has(Number(entry.log.id));
+    // The daily log already shows the selected record(s), so no separate 선택한 로그 block.
+    const selectedShownInDailyLog = !isItemLogsLoading && !itemLogsError && selectedLogIds.size > 0 &&
+        [...selectedLogIds].every((id) => visibleTimelineEntries.some((entry) =>
+            entry.kind === "purchase"
+                ? [entry.root, ...entry.corrections].some((log) => Number(log.id) === id)
+                : Number(entry.log.id) === id));
+
+    // Reason chips only when the log can actually be reclassified; otherwise none at all.
+    const renderReasonButtons = (log: InventoryLog) => {
+        if (isSalesInventoryLog(log)) return null;
+        const changeable = QUICK_REASON_VALUES.filter((reason) => reason !== log.reason && inventoryReasonChangeIssue(log, reason) === null);
+        if (changeable.length === 0) return null;
+        return (
+            <div data-testid={`log-reason-buttons-${log.id}`} style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+                {QUICK_REASON_VALUES.filter((reason) => reason === log.reason || changeable.includes(reason)).map((reason) => {
+                    const active = log.reason === reason;
+                    const disabled = active || changingReasonLogId === log.id;
+                    return (
+                        <button
+                            key={reason}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => changeLogReason(log, reason)}
+                            style={{
+                                padding: "3px 7px",
+                                borderRadius: 999,
+                                border: active ? "1px solid #111827" : "1px solid #d1d5db",
+                                background: active ? "#111827" : "#ffffff",
+                                color: active ? "#ffffff" : "#374151",
+                                fontSize: 11,
+                                fontWeight: 700,
+                                lineHeight: 1.2,
+                                whiteSpace: "nowrap",
+                                cursor: disabled ? "default" : "pointer",
+                                opacity: disabled && !active ? 0.55 : 1,
+                            }}
+                        >
+                            {getReasonEmoji(reason)} {getCompactReasonLabel(reason)}
+                        </button>
+                    );
+                })}
+            </div>
+        );
+    };
+
     // Display only; the RPC enforces owner/master for a receipt supplier change.
     const canChangeReceiptSupplier = ["owner", "master"].includes(String(getUser()?.role ?? "").trim().toLowerCase());
 
@@ -1804,7 +1718,7 @@ export default function InventorySnapshotsPage() {
         }
     };
 
-    const renderPurchaseEntryCard = (entry: Extract<DailyItemLogEntry<InventoryLog>, { kind: "purchase" }>) => {
+    const renderPurchaseEntryCard = (entry: Extract<DailyItemLogEntry<InventoryLog>, { kind: "purchase" }>, highlighted = false) => {
         const vi = lang === "vi";
         const expanded = expandedLogEntryKey === entry.key;
         const editing = purchaseEdit?.rootId === entry.root.id ? purchaseEdit : null;
@@ -1939,10 +1853,10 @@ export default function InventorySnapshotsPage() {
             </div>
         );
 
-        return renderLogCard(entry.final, footer);
+        return renderLogCard(entry.final, footer, highlighted);
     };
 
-    const renderLogCard = (log: InventoryLog, footer?: ReactNode) => {
+    const renderLogCard = (log: InventoryLog, footer?: ReactNode, highlighted = false) => {
         const changeQuantity = Number(log.change_quantity ?? 0);
         const changeText =
             changeQuantity === 0
@@ -1971,11 +1885,13 @@ export default function InventorySnapshotsPage() {
         return (
             <div
                 key={`timeline-${log.id}`}
+                data-selected={highlighted ? "true" : undefined}
                 style={{
                     ...ui.card,
                     padding: "7px 9px",
                     borderLeft: `4px solid ${getActionColor(log.action)}`,
-                    background: "#fff",
+                    background: highlighted ? "#eff6ff" : "#fff",
+                    ...(highlighted ? { boxShadow: "0 0 0 2px #2563eb" } : {}),
                 }}
             >
                 <div
@@ -3677,6 +3593,7 @@ export default function InventorySnapshotsPage() {
                         setLogModalItem(null);
                         setItemLogs([]);
                         setItemLogsError("");
+                        setReceiptEditNotice(null);
                     }}
                 >
                     <div
@@ -3685,7 +3602,10 @@ export default function InventorySnapshotsPage() {
                             width: "100%",
                             maxWidth: 560,
                             maxHeight: "80vh",
-                            overflow: "hidden",
+                            // One scroll area: the modal fits its content and scrolls only when taller.
+                            overflowX: "hidden",
+                            overflowY: "auto",
+                            overscrollBehavior: "contain",
                             background: "#fff",
                             borderRadius: 14,
                             padding: 18,
@@ -3706,64 +3626,14 @@ export default function InventorySnapshotsPage() {
                             <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
                                 {t.logItemTitle}
                             </div>
-                            <div
-                                style={{
-                                    display: "flex",
-                                    gap: 6,
-                                    flexShrink: 0,
-                                    flexWrap: "wrap",
-                                    justifyContent: "flex-end",
-                                }}
-                            >
-                                {selectedLog && !isSalesInventoryLog(selectedLog) && (
-                                    <button
-                                        type="button"
-                                        onClick={() =>
-                                            syncPurchaseInfoFromCurrentItem({
-                                                ...logModalItem,
-                                                id: selectedLog.id,
-                                                business_date:
-                                                    selectedLog.business_date ??
-                                                    logModalItem.business_date,
-                                                syncLogIds: [selectedLog.id],
-                                            })
-                                        }
-                                        disabled={syncingPurchaseLogId === selectedLog.id}
-                                        style={{
-                                            width: "auto",
-                                            minHeight: 30,
-                                            padding: "6px 10px",
-                                            borderRadius: 999,
-                                            border: "1px solid #d1d5db",
-                                            background: "#f9fafb",
-                                            color: "#111827",
-                                            fontSize: 12,
-                                            fontWeight: 800,
-                                            lineHeight: 1.2,
-                                            whiteSpace: "nowrap",
-                                            cursor:
-                                                syncingPurchaseLogId === selectedLog.id
-                                                    ? "not-allowed"
-                                                    : "pointer",
-                                            opacity:
-                                                syncingPurchaseLogId === selectedLog.id
-                                                    ? 0.6
-                                                    : 1,
-                                        }}
-                                    >
-                                        {syncingPurchaseLogId === selectedLog.id
-                                            ? c.saving
-                                            : t.syncLog}
-                                    </button>
-                                )}
-                            </div>
                         </div>
 
-                        <div
+                        {!selectedShownInDailyLog && <div
                             style={{
                                 display: "flex",
                                 flexDirection: "column",
                                 gap: 8,
+                                flexShrink: 0,
                                 paddingRight: 4,
                             }}
                         >
@@ -4078,68 +3948,21 @@ export default function InventorySnapshotsPage() {
                                                         : "판매차감 로그는 읽기 전용입니다."}
                                                 </div>
                                             )}
-                                            {!isSalesInventoryLog(log) && (log.reason==="purchase" || Number(log.change_quantity??0)<=0 || log.correction_of_inventory_log_id!=null) ? <p style={ui.metaText}>{lang==="vi"?"Sửa số lượng, đơn giá hoặc nhà cung cấp của phiếu nhập bằng [Sửa nhập hàng] trên thẻ nhập trong nhật ký trong ngày bên dưới. Không đổi phân loại nhật ký để sửa tiền sổ.":"입고 수량·단가·거래처 정정은 아래 당일 로그의 입고 카드에서 [입고 수정]을 사용해주세요. 장부금액을 바꾸기 위해 이력 분류를 변경하지 마세요."}</p> : null}
-                                            {!isSalesInventoryLog(log) && (
-                                            <div
-                                                style={{
-                                                    display: "flex",
-                                                    flexWrap: "nowrap",
-                                                    gap: 5,
-                                                    marginTop: 6,
-                                                    overflowX: "auto",
-                                                    WebkitOverflowScrolling: "touch",
-                                                }}
-                                            >
-                                                {QUICK_REASON_VALUES.map((reason) => {
-                                                    const active = log.reason === reason;
-                                                    const reasonIssue=inventoryReasonChangeIssue(log,reason);
-                                                    const disabled = changingReasonLogId === log.id || reasonIssue!==null;
-
-                                                    return (
-                                                        <button
-                                                            key={reason}
-                                                            type="button"
-                                                            disabled={disabled}
-                                                            title={inventoryPurchaseErrorMessage(reasonIssue??undefined,lang)??undefined}
-                                                            onClick={() => changeLogReason(log, reason)}
-                                                            style={{
-                                                                padding: "3px 7px",
-                                                                borderRadius: 999,
-                                                                border: active
-                                                                    ? "1px solid #111827"
-                                                                    : "1px solid #d1d5db",
-                                                                background: active ? "#111827" : "#ffffff",
-                                                                color: active ? "#ffffff" : "#374151",
-                                                                fontSize: 11,
-                                                                fontWeight: 700,
-                                                                lineHeight: 1.2,
-                                                                whiteSpace: "nowrap",
-                                                                flexShrink: 0,
-                                                                cursor: disabled ? "default" : "pointer",
-                                                                opacity: disabled && !active ? 0.55 : 1,
-                                                            }}
-                                                        >
-                                                            {getReasonEmoji(reason)} {getCompactReasonLabel(reason)}
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                            )}
+                                            {renderReasonButtons(log)}
                                         </div>
                                     );
                                 })
                             )}
-                        </div>
+                        </div>}
 
                         {!isItemLogsLoading && !itemLogsError && visibleTimelineEntries.length > 0 && (
                             <div
                                 style={{
                                     display: "flex",
                                     flexDirection: "column",
-                                    flex: "1 1 auto",
                                     gap: 8,
-                                    paddingTop: 10,
-                                    borderTop: "1px solid #e5e7eb",
+                                    flexShrink: 0,
+                                    ...(selectedShownInDailyLog ? {} : { paddingTop: 10, borderTop: "1px solid #e5e7eb" }),
                                     minHeight: 0,
                                 }}
                             >
@@ -4228,25 +4051,22 @@ export default function InventorySnapshotsPage() {
                                     )}
 
                                 <div
+                                    data-testid="daily-log-list"
                                     style={{
                                         display: "flex",
-                                        flex: "1 1 auto",
                                         flexDirection: "column",
                                         gap: 8,
-                                        maxHeight: "min(42vh, 360px)",
-                                        minHeight: 0,
-                                        overflowY: "auto",
-                                        overflowX: "hidden",
-                                        overscrollBehavior: "contain",
-                                        paddingRight: 4,
-                                        WebkitOverflowScrolling: "touch",
+                                        minWidth: 0,
                                     }}
                                 >
-                                    {visibleTimelineEntries.map((entry) =>
-                                        entry.kind === "purchase"
-                                            ? <div key={entry.key}>{renderPurchaseEntryCard(entry)}</div>
-                                            : renderLogCard(entry.log)
-                                    )}
+                                    {visibleTimelineEntries.map((entry) => {
+                                        // Highlight the opened record only when there is a choice to tell apart.
+                                        const selected = entryHasSelectedLog(entry);
+                                        const highlighted = selected && visibleTimelineEntries.length > 1;
+                                        return entry.kind === "purchase"
+                                            ? <div key={entry.key}>{renderPurchaseEntryCard(entry, highlighted)}</div>
+                                            : renderLogCard(entry.log, selected ? renderReasonButtons(entry.log) : undefined, highlighted);
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -4257,6 +4077,7 @@ export default function InventorySnapshotsPage() {
                                 setLogModalItem(null);
                                 setItemLogs([]);
                                 setItemLogsError("");
+                                setReceiptEditNotice(null);
                             }}
                             style={{ ...ui.subButton, flexShrink: 0 }}
                         >
