@@ -255,6 +255,7 @@ export function inventoryPurchaseErrorMessage(code: string | undefined, lang: "k
     forbidden: ["입고 정정 권한이 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Bạn không có quyền điều chỉnh phiếu nhập nên chưa lưu. Vui lòng liên hệ quản lý."],
     invalid_payload: ["정정할 입력값이 유효하지 않아 저장하지 않았습니다. 수량·거래처·단가를 확인해 주세요.", "Dữ liệu điều chỉnh không hợp lệ nên chưa lưu. Vui lòng kiểm tra số lượng, nhà cung cấp và đơn giá."],
     no_change: ["변경된 내용이 없습니다.", "Không có thay đổi."],
+    inventory_receipt_edit_protected: ["입고 수정으로 정정된 입고의 단가·거래처는 당일 로그의 [입고 수정]에서만 변경할 수 있습니다.", "Đơn giá và nhà cung cấp của phiếu nhập đã sửa chỉ được đổi bằng [Sửa nhập hàng] trong nhật ký trong ngày."],
     supplier_change_forbidden: ["입고 거래처 변경은 대표·관리자(owner/master)만 할 수 있습니다.", "Chỉ owner/master mới được đổi nhà cung cấp của phiếu nhập."],
     inventory_quantity_negative: ["현재 재고가 줄일 수량보다 적어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Tồn kho hiện tại nhỏ hơn số lượng cần giảm nên chưa lưu. Vui lòng liên hệ quản lý."],
     purchase_correction_root_not_found: ["오늘 조건에 맞는 입고 기록이 없습니다. 관리자에게 확인해주세요.", "Không có lô nhập hôm nay phù hợp. Vui lòng hỏi quản lý."],

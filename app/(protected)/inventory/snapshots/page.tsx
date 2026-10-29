@@ -4059,7 +4059,7 @@ export default function InventorySnapshotsPage() {
                                                         : "판매차감 로그는 읽기 전용입니다."}
                                                 </div>
                                             )}
-                                            {!isSalesInventoryLog(log) && (log.reason==="purchase" || Number(log.change_quantity??0)<=0 || log.correction_of_inventory_log_id!=null) ? <p style={ui.metaText}>{lang==="vi"?"Số âm nhập hàng phải liên kết lô gốc qua màn hình sửa số lượng. Không đổi phân loại nhật ký để sửa tiền sổ.":"마이너스 입고는 수량 수정 화면에서 원입고에 연결해주세요. 장부금액을 바꾸기 위해 이력 분류를 변경하지 마세요."}</p> : null}
+                                            {!isSalesInventoryLog(log) && (log.reason==="purchase" || Number(log.change_quantity??0)<=0 || log.correction_of_inventory_log_id!=null) ? <p style={ui.metaText}>{lang==="vi"?"Sửa số lượng, đơn giá hoặc nhà cung cấp của phiếu nhập bằng [Sửa nhập hàng] trên thẻ nhập trong nhật ký trong ngày bên dưới. Không đổi phân loại nhật ký để sửa tiền sổ.":"입고 수량·단가·거래처 정정은 아래 당일 로그의 입고 카드에서 [입고 수정]을 사용해주세요. 장부금액을 바꾸기 위해 이력 분류를 변경하지 마세요."}</p> : null}
                                             {!isSalesInventoryLog(log) && (
                                             <div
                                                 style={{

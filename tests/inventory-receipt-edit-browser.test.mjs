@@ -53,7 +53,7 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    await card.click();
    const entryA=page.getByTestId('daily-log-purchase-100'),entryB=page.getByTestId('daily-log-purchase-110');await entryA.waitFor();await entryB.waitFor();
    assert.ok(reads.includes(`/api/inventory/items/1/logs?businessDate=${DAY}`),JSON.stringify(reads));
-   await page.getByText(lang==='vi'?'Nhật ký trong ngày':'당일 로그',{exact:true}).waitFor();
+   await page.getByText(new RegExp('^'+(lang==='vi'?'Nhật ký trong ngày':'당일 로그')+'\\s*'+DAY+'$')).waitFor();
    assert.equal(await page.getByRole('button',{name:t.editItem,exact:true}).count(),0,'item edit button removed from the modal');
    // Three corrections of #100 are one card in its final state; #110 stays separate.
    assert.match(await entryA.innerText(),lang==='vi'?/Đã sửa 3 lần/:/수정 3회/);

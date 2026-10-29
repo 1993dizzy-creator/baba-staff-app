@@ -431,6 +431,22 @@ export async function PATCH(req: Request) {
     }
     const existing = existingRows[0];
 
+    // A receipt edited through 입고 수정 is booked by its linked edit logs. Its price and
+    // supplier are changed only there; a log edit or item sync must not overwrite them.
+    const receiptEditQueries = await Promise.all(["id", "correction_of_inventory_log_id"].map(column =>
+      supabaseServer.from("inventory_logs").select("id, action, correction_of_inventory_log_id")
+        .eq("action", "receipt_edit").in(column, targetLogIds)));
+    const receiptEditError = receiptEditQueries.find(result => result.error)?.error;
+    if (receiptEditError) throw receiptEditError;
+    const receiptEditedIds = new Set(receiptEditQueries.flatMap(result => result.data ?? [])
+      .filter(row => row.action === "receipt_edit")
+      .flatMap(row => [Number(row.id), Number(row.correction_of_inventory_log_id)])
+      .filter(logId => targetLogIds.includes(logId)));
+    if (receiptEditedIds.size > 0 && (hasNewSupplier || hasNewPurchasePrice)) {
+      return NextResponse.json({ ok: false, error: "inventory_receipt_edit_protected",
+        message: inventoryPurchaseErrorMessage("inventory_receipt_edit_protected", "ko") }, { status: 409 });
+    }
+
     const updatePayload: Record<string, string | number | null> = {};
     let currentItem: InventoryLogSyncItem | null = null;
     let latestPurchaseLogId: number | null = null;
@@ -536,7 +552,8 @@ export async function PATCH(req: Request) {
         .filter(
           (row) =>
             normalizeInventoryReason(row.reason) === "purchase" &&
-            Number(row.id) === latestPurchaseLogId
+            Number(row.id) === latestPurchaseLogId &&
+            !receiptEditedIds.has(Number(row.id))
         )
         .map((row) => Number(row.id));
       const displayOnlyLogIds = existingRows

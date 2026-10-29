@@ -14,10 +14,10 @@ function load(path, dependencies = {}) {
   return testModule.exports;
 }
 
-function setup({ ledgerFailure = false, logId = 100, latestLogId = logId, reason = 'purchase', businessDate = '2026-09-10', purchasePrice = 23333 } = {}) {
+function setup({ ledgerFailure = false, logId = 100, latestLogId = logId, reason = 'purchase', businessDate = '2026-09-10', purchasePrice = 23333, logOverrides = {} } = {}) {
   const calls = [];
   const projectedAmounts = [];
-  const log = { id: logId, item_id: 1, item_name: 'Coca', reason, source: 'create', change_quantity: 3, business_date: businessDate, new_supplier: 'Old supplier', new_purchase_price: purchasePrice, purchase_supplier_partner_id: 7 };
+  const log = { id: logId, item_id: 1, item_name: 'Coca', reason, source: 'create', change_quantity: 3, business_date: businessDate, new_supplier: 'Old supplier', new_purchase_price: purchasePrice, purchase_supplier_partner_id: 7, ...logOverrides };
   const item = { item_name: 'Coca-Cola', item_name_vi: 'Cola moi', category: 'Soda', category_vi: 'Nuoc', unit: 'can', supplier: 'Shopee', purchase_price: 19000, supplier_partner_id: 42 };
   const supabase = {
     from(table) {
@@ -558,4 +558,22 @@ test('purchase history relabeling fails before source, inventory, price history 
 });
 test('new item creation cannot emit an unlinked nonpositive purchase',async()=>{
  for(const quantity of [-1,0]){const state=itemSetup();const response=await state.invoke('POST',{registrationType:'new_purchase',payload:createPayload({quantity})});assert.equal(response.status,400);assert.equal((await response.json()).error,'inventory_purchase_quantity_must_increase');assert.deepEqual(state.calls,[]);assert.deepEqual(state.logs,[]);}
+});
+
+test('a receipt edited through 입고 수정 keeps its price and supplier against log edits and item sync', async () => {
+  for (const body of [{ id: 100, new_purchase_price: 19000 }, { id: 100, new_supplier: 'Shopee' }]) {
+    const state = setup({ logOverrides: { action: 'receipt_edit', correction_of_inventory_log_id: 90 } });
+    const response = await state.patch(body);
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error, 'inventory_receipt_edit_protected');
+    assert.deepEqual(state.calls, []);
+    assert.equal(state.log.new_purchase_price, 23333);
+  }
+  const synced = setup({ logOverrides: { action: 'receipt_edit', correction_of_inventory_log_id: 90 } });
+  const response = await synced.patch({ id: 100, syncCurrentItem: true, logIds: [100] });
+  assert.equal(response.status, 200);
+  assert.equal(synced.log.new_purchase_price, 23333);
+  assert.equal(synced.log.new_supplier, 'Old supplier');
+  assert.equal(synced.log.item_name, 'Coca-Cola');
+  assert.ok(!synced.calls.includes('master-update'));
 });
