@@ -273,7 +273,7 @@ test('receipt edit: server date, session actor and expected item reach the RPC; 
 test('receipt edit: malformed requests and stale versions never reach the RPC',async()=>{
  for(const [body,status] of [
   [receiptEdit({purchaseLogId:0}),400],[receiptEdit({purchaseLogId:'x'}),400],[receiptEdit({expectedQuantity:undefined}),400],
-  [(({expectedUpdatedAt,...rest})=>rest)(receiptEdit()),400],[receiptEdit({payload:{quantity:1,item_name:'Renamed',reason:'x'}}),400],
+  [Object.fromEntries(Object.entries(receiptEdit()).filter(([key])=>key!=='expectedUpdatedAt')),400],[receiptEdit({payload:{quantity:1,item_name:'Renamed',reason:'x'}}),400],
   [receiptEdit({payload:{quantity:1,is_active:false,reason:'x'}}),400],
   [receiptEdit({expectedUpdatedAt:'2026-10-09T00:00:00Z'}),409],[receiptEdit({expectedQuantity:1}),409],
  ]){const calls=[],s=setup({rpcHandler:receiptRpc({status:'ok'},calls)});const r=await s.patch(body);assert.equal(r.status,status,JSON.stringify(body));assert.equal(calls.length,0);}

@@ -2854,6 +2854,7 @@ export default function InventorySnapshotsPage() {
                             return (
                                 <div
                                     key={item.id}
+                                    data-testid={`snapshot-purchase-card-${item.id}`}
                                     role="button"
                                     tabIndex={0}
                                     onClick={() => openPurchaseLogModal(item)}
