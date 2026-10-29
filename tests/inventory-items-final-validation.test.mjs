@@ -257,26 +257,40 @@ test('#624: a Korean name equal to another active item is still a 409 that names
  assert.equal((await setup({itemOverrides:item624,others:seasoning}).patch(addKorean('Dầu oliu extra virgin 750ml'))).status,200);
 });
 
-// /inventory/snapshots 입고 수정 sends only the new item quantity for one selected receipt.
-const receiptEdit=overrides=>({id:1,source:'edit_form',reason:'purchase',selectedPurchaseRootId:12407,expectedQuantity:2,expectedUpdatedAt:version,payload:{quantity:1},...overrides});
-test('snapshot receipt edit: quantity-only payload reaches v3 for same-day and earlier receipts without item detail keys',async()=>{
- for(const rootDate of ['2026-10-10','2026-10-03']){const s=setup({rootDate});const r=await s.patch(receiptEdit());assert.equal(r.status,200);
-  assert.equal(s.writes.length,1);assert.equal(s.writes[0].rpc,'inventory_apply_purchase_correction_v3');assert.equal(s.writes[0].args.p_purchase_log_id,12407);
-  assert.equal(s.writes[0].args.p_payload.quantity,1);for(const key of ['purchase_price','supplier','supplier_partner_id','note','item_name','unit','part','category'])assert.ok(!Object.hasOwn(s.writes[0].args.p_payload,key),key);
-  assert.equal(s.item.purchase_price,30000);assert.equal(s.item.supplier,'QA');}
+// /inventory/snapshots 입고 수정: PATCH mode "purchase-receipt-edit" calls only the receipt-edit RPC.
+const receiptEdit=overrides=>({mode:'purchase-receipt-edit',id:1,purchaseLogId:12407,expectedQuantity:2,expectedUpdatedAt:version,payload:{quantity:3,purchase_price:31000,supplier:'QA',supplierPartnerId:null,note:'memo',reason:'영수증 확인'},...overrides});
+const receiptRpc=(result,calls=[])=>async(name,args)=>{calls.push({name,args});assert.equal(name,'inventory_apply_purchase_receipt_edit_v1');return {data:result,error:null};};
+test('receipt edit: server date, session actor and expected item reach the RPC; item details are not sent as a payload',async()=>{
+ const calls=[],s=setup({rpcHandler:receiptRpc({status:'ok',inventoryLogId:101,ledgerSync:{status:'synced',code:'REBOOKED'}},calls)});
+ const r=await s.patch(receiptEdit());assert.equal(r.status,200);const body=await r.json();assert.equal(body.ok,true);assert.equal(body.ledgerSync.code,'REBOOKED');
+ assert.equal(calls.length,1);const args=calls[0].args;
+ assert.deepEqual(Object.keys(args).sort(),['p_actor_user_id','p_business_date','p_edit','p_expected_item','p_expected_quantity','p_item_id','p_purchase_log_id']);
+ assert.equal(args.p_item_id,1);assert.equal(args.p_purchase_log_id,12407);assert.equal(args.p_actor_user_id,7);assert.equal(args.p_business_date,'2026-10-10');
+ assert.equal(args.p_expected_quantity,2);assert.equal(args.p_expected_item.updated_at,version);
+ assert.deepEqual(args.p_edit,{quantity:3,purchase_price:31000,supplier:'QA',supplier_partner_id:null,note:'memo',reason:'영수증 확인'});
+ assert.equal(s.writes.length,0);assert.equal(s.projections.length,0);assert.equal(s.item.purchase_price,30000);
 });
-test('snapshot receipt edit: paid, allocated, closed, later stock check, stale version and increases are rejected before any write',async()=>{
- const cases=[
-  [{paid:true},409,'purchase_correction_review_required','payment_completed'],
-  [{candidateOverride:{status:'confirmed',proposed_amount:60000,resolved_transaction_id:1},payableOverride:{id:1,status:'unpaid'},allocations:[{allocated_amount:1}]},409,'purchase_correction_review_required','payment_allocated'],
-  [{closed:true},409,'purchase_correction_review_required','month_closed'],
-  [{stockCheck:{id:13000,reason:'stock_check',created_at:'2026-10-04T00:00:00Z',change_quantity:0}},409,'purchase_correction_later_stock_check',undefined],
-  [{rootOverrides:{new_supplier:'Another supplier'}},409,'invalid_purchase_correction',undefined],
- ];
- for(const [options,status,error,blockReason] of cases){const s=setup(options);const r=await s.patch(receiptEdit());const body=await r.json();
-  assert.equal(r.status,status,JSON.stringify(options));assert.equal(body.error,error);assert.equal(body.blockReason,blockReason);assert.deepEqual(s.writes,[]);assert.deepEqual(s.projections,[]);}
- for(const body of [receiptEdit({expectedUpdatedAt:'2026-10-09T00:00:00Z'}),receiptEdit({payload:{quantity:3}})]){const s=setup();const r=await s.patch(body);assert.equal(r.status,409);assert.deepEqual(s.writes,[]);}
+test('receipt edit: malformed requests and stale versions never reach the RPC',async()=>{
+ for(const [body,status] of [
+  [receiptEdit({purchaseLogId:0}),400],[receiptEdit({purchaseLogId:'x'}),400],[receiptEdit({expectedQuantity:undefined}),400],
+  [(({expectedUpdatedAt,...rest})=>rest)(receiptEdit()),400],[receiptEdit({payload:{quantity:1,item_name:'Renamed',reason:'x'}}),400],
+  [receiptEdit({payload:{quantity:1,is_active:false,reason:'x'}}),400],
+  [receiptEdit({expectedUpdatedAt:'2026-10-09T00:00:00Z'}),409],[receiptEdit({expectedQuantity:1}),409],
+ ]){const calls=[],s=setup({rpcHandler:receiptRpc({status:'ok'},calls)});const r=await s.patch(body);assert.equal(r.status,status,JSON.stringify(body));assert.equal(calls.length,0);}
+ const a=setup({authenticated:false});assert.equal((await a.patch(receiptEdit())).status,401);
+ const inactive=setup({role:'staff',inactive:true,rpcHandler:receiptRpc({status:'ok'})});assert.equal((await inactive.patch(receiptEdit())).status,403);
 });
-// The selected-receipt path does not compare price; the correction log takes the item's current price.
-// The snapshot UI therefore blocks a quantity-only edit when the item price differs (purchaseEntryMatchesCurrentItem).
-test('snapshot receipt edit: server records the current item price, which is why the UI guards price drift',async()=>{const s=setup({rootOverrides:{new_purchase_price:29000}});assert.equal((await s.patch(receiptEdit())).status,200);assert.equal(s.writes[0].args.p_expected_item.purchase_price,30000);});
+test('receipt edit: RPC statuses map to HTTP status and keep the block reason for the message',async()=>{
+ for(const [result,status,error,blockReason] of [
+  [{status:'quantity_conflict'},409,'quantity_conflict'],[{status:'inventory_conflict'},409,'inventory_conflict'],
+  [{status:'supplier_change_forbidden'},403,'supplier_change_forbidden'],[{status:'forbidden'},403,'forbidden'],
+  [{status:'not_found'},404,'not_found'],[{status:'invalid_payload'},400,'invalid_payload'],[{status:'no_change'},400,'no_change'],
+  [{status:'purchase_correction_later_stock_check'},409,'purchase_correction_later_stock_check'],
+  [{status:'inventory_quantity_negative'},409,'inventory_quantity_negative'],
+  [{status:'purchase_correction_review_required',code:'PAYABLE_ALREADY_PAID',blockReason:'payment_completed'},409,'purchase_correction_review_required','payment_completed'],
+  [{status:'purchase_correction_review_required',code:'MONTH_CLOSED',blockReason:'month_closed'},409,'purchase_correction_review_required','month_closed'],
+  [null,409,'purchase_correction_failed'],
+ ]){const s=setup({rpcHandler:receiptRpc(result)});const r=await s.patch(receiptEdit());const body=await r.json();
+  assert.equal(r.status,status,JSON.stringify(result));assert.equal(body.ok,false);assert.equal(body.error,error);assert.equal(body.blockReason,blockReason);}
+ const failing=setup({rpcHandler:async()=>({data:null,error:{code:'PGRST202'}})});assert.equal((await failing.patch(receiptEdit())).status,500);
+});

@@ -469,3 +469,17 @@ test("part filter row wraps instead of overflowing narrow screens (VI 📦 Khác
   // Every part keeps its button.
   for (const part of ["kitchen", "hall", "bar", "etc"]) assert.match(page, new RegExp(`\{ value: "${part}", label: c\.${part} \}`));
 });
+
+test("a receipt edited through 입고 수정 is not a daily sync target; other linked corrections still are", () => {
+  const edited = detect([
+    log(),
+    correction({ reason: "purchase", source: "edit_form", action: "receipt_edit", correction_of_inventory_log_id: 101 }),
+  ]);
+  assert.deepEqual(edited, []);
+  const linked = detect([
+    log(),
+    correction({ reason: "purchase", source: "edit_form", action: "update", correction_of_inventory_log_id: 101 }),
+  ]);
+  assert.equal(linked.length, 1);
+  assert.ok(route.includes('"action"'));
+});

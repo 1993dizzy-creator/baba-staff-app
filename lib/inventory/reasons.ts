@@ -227,6 +227,8 @@ export function inventoryPurchaseErrorMessage(code: string | undefined, lang: "k
     purchase_details_changed: ["원입고의 거래처·단위 등 정정 조건이 일치하지 않아 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Nhà cung cấp, đơn vị hoặc điều kiện của phiếu nhập gốc không khớp nên chưa lưu. Vui lòng liên hệ quản lý."],
     correction_history_limit: ["정정 이력이 많아 안전한 정정 수량을 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Lịch sử điều chỉnh quá nhiều nên không xác định được số lượng an toàn và chưa lưu. Vui lòng liên hệ quản lý."],
     invalid_correction_history: ["기존 정정 이력의 수량을 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được số lượng trong lịch sử điều chỉnh nên chưa lưu. Vui lòng liên hệ quản lý."],
+    supplier_mapping_required: ["거래처의 장부 상대방·지급 방식 연결 또는 이전 거래처 기록을 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được liên kết sổ, phương thức thanh toán hoặc nhà cung cấp trước đó nên chưa lưu. Vui lòng liên hệ quản lý."],
+    receipt_edit_review: ["입고와 연결된 장부 상태를 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được trạng thái sổ liên kết với phiếu nhập nên chưa lưu. Vui lòng liên hệ quản lý."],
     physical_count_unverified: ["입고·재고확인의 시간 순서를 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được thứ tự thời gian nhập hàng và kiểm kho nên chưa lưu. Vui lòng liên hệ quản lý."],
   };
   if (code === "purchase_correction_review_required" && details?.blockReason && Object.hasOwn(reviewMessages, details.blockReason))
@@ -252,6 +254,9 @@ export function inventoryPurchaseErrorMessage(code: string | undefined, lang: "k
     not_found: ["품목 또는 원입고 기록을 찾을 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không tìm thấy mặt hàng hoặc phiếu nhập gốc nên chưa lưu. Vui lòng liên hệ quản lý."],
     forbidden: ["입고 정정 권한이 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Bạn không có quyền điều chỉnh phiếu nhập nên chưa lưu. Vui lòng liên hệ quản lý."],
     invalid_payload: ["정정할 입력값이 유효하지 않아 저장하지 않았습니다. 수량·거래처·단가를 확인해 주세요.", "Dữ liệu điều chỉnh không hợp lệ nên chưa lưu. Vui lòng kiểm tra số lượng, nhà cung cấp và đơn giá."],
+    no_change: ["변경된 내용이 없습니다.", "Không có thay đổi."],
+    supplier_change_forbidden: ["입고 거래처 변경은 대표·관리자(owner/master)만 할 수 있습니다.", "Chỉ owner/master mới được đổi nhà cung cấp của phiếu nhập."],
+    inventory_quantity_negative: ["현재 재고가 줄일 수량보다 적어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Tồn kho hiện tại nhỏ hơn số lượng cần giảm nên chưa lưu. Vui lòng liên hệ quản lý."],
     purchase_correction_root_not_found: ["오늘 조건에 맞는 입고 기록이 없습니다. 관리자에게 확인해주세요.", "Không có lô nhập hôm nay phù hợp. Vui lòng hỏi quản lý."],
     purchase_correction_review_required: ["서버에서 자동 정정의 안전성을 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Hệ thống chưa xác minh được điều kiện điều chỉnh an toàn nên chưa lưu. Vui lòng liên hệ quản lý."],
   };

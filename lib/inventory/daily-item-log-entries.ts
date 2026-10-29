@@ -76,25 +76,3 @@ export function buildDailyItemLogEntries<T extends DailyItemLogRow>(logs: readon
     Number(b.kind === "log" ? b.log.id : b.root.id) - Number(a.kind === "log" ? a.log.id : a.root.id));
 }
 
-/**
- * The correction RPC records the item's current price/supplier on the new log,
- * and the Ledger uses the latest log's price. A quantity-only edit is therefore
- * safe only while the item still matches the receipt's final purchase details.
- */
-export function purchaseEntryMatchesCurrentItem(
-  final: { unit?: string | null; new_purchase_price?: number | string | null; new_supplier?: string | null; purchase_supplier_partner_id?: number | null },
-  item: { unit?: string | null; purchase_price?: number | string | null; supplier?: string | null; supplier_partner_id?: number | null },
-) {
-  const price = Number(item.purchase_price);
-  if ((final.unit ?? null) !== (item.unit ?? null) || !Number.isFinite(price) || price <= 0 || price !== Number(final.new_purchase_price)) return false;
-  const finalPartner = final.purchase_supplier_partner_id ?? null;
-  const itemPartner = item.supplier_partner_id ?? null;
-  if (finalPartner != null && itemPartner != null) return Number(finalPartner) === Number(itemPartner);
-  return String(final.new_supplier ?? "").trim().toLowerCase() === String(item.supplier ?? "").trim().toLowerCase();
-}
-
-/** Change to the original receipt's effective quantity that an edit requests. */
-export function purchaseEntryQuantityDelta(effectiveQuantity: number, nextQuantity: number) {
-  if (!Number.isFinite(effectiveQuantity) || !Number.isFinite(nextQuantity) || nextQuantity < 0) return null;
-  return Number((nextQuantity - effectiveQuantity).toFixed(6));
-}

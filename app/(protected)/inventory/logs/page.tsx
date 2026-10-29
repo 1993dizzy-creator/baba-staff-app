@@ -224,7 +224,9 @@ export default function InventoryLogsPage() {
         const keyword = search.trim().toLowerCase();
         const nextFilteredLogs = logs
             .filter((log) => {
-                const matchType = filterType === "all" || log.action === filterType;
+                // A receipt edit (입고 수정) is an update of that receipt.
+                const matchType = filterType === "all" || log.action === filterType ||
+                    (filterType === "update" && log.action === "receipt_edit");
                 const displayItemName = (lang === "vi"
                     ? log.item_name_vi || log.item_name || "-"
                     : log.item_name || log.item_name_vi || "-").toLowerCase();

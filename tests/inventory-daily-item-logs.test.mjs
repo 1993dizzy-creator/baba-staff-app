@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {database,route,call} from './helpers/inventory-item-logs-fixture.mjs';
-import {buildDailyItemLogEntries,purchaseEntryMatchesCurrentItem,purchaseEntryQuantityDelta} from '../lib/inventory/daily-item-log-entries.ts';
+import {buildDailyItemLogEntries} from '../lib/inventory/daily-item-log-entries.ts';
 
 // Synthetic rows only. business_date is the stored 03:00 store business day.
 const DAY='2026-10-28';
@@ -72,28 +72,18 @@ test('daily entries: invalid families need review and are not editable states',(
  assert.equal(unlinked[0].kind,'log');
 });
 
-test('quantity delta and current-item guard for quantity-only receipt edits',()=>{
- assert.equal(purchaseEntryQuantityDelta(6,4),-2);assert.equal(purchaseEntryQuantityDelta(6,6),0);assert.equal(purchaseEntryQuantityDelta(6,7.5),1.5);
- assert.equal(purchaseEntryQuantityDelta(0.3,0.1),-0.2);
- for(const bad of [-1,NaN,Infinity])assert.equal(purchaseEntryQuantityDelta(6,bad),null);
- const final={unit:'kg',new_purchase_price:31000,new_supplier:'Chợ A',purchase_supplier_partner_id:7};
- assert.equal(purchaseEntryMatchesCurrentItem(final,{unit:'kg',purchase_price:31000,supplier:'Other name',supplier_partner_id:7}),true);
- assert.equal(purchaseEntryMatchesCurrentItem(final,{unit:'kg',purchase_price:30000,supplier:'Chợ A',supplier_partner_id:7}),false);
- assert.equal(purchaseEntryMatchesCurrentItem(final,{unit:'g',purchase_price:31000,supplier:'Chợ A',supplier_partner_id:7}),false);
- assert.equal(purchaseEntryMatchesCurrentItem(final,{unit:'kg',purchase_price:31000,supplier:'Chợ A',supplier_partner_id:27}),false);
- assert.equal(purchaseEntryMatchesCurrentItem({...final,purchase_supplier_partner_id:null},{unit:'kg',purchase_price:'31000',supplier:' chợ a ',supplier_partner_id:null}),true);
- assert.equal(purchaseEntryMatchesCurrentItem({...final,purchase_supplier_partner_id:null},{unit:'kg',purchase_price:31000,supplier:'An Liên',supplier_partner_id:null}),false);
-});
-
-test('snapshot modal: 당일 로그, per-receipt 입고 수정 via the existing selected-receipt path, no item edit button',()=>{
+test('snapshot modal: 당일 로그, per-receipt 입고 수정 through the receipt-edit mode, no item edit button',()=>{
  const page=readFileSync('app/(protected)/inventory/snapshots/page.tsx','utf8');
  assert.ok(page.includes('"당일 로그"')&&page.includes('"Nhật ký trong ngày"'));
  assert.ok(!page.includes('"전체 로그"'));
  assert.ok(!page.includes('openInventoryEdit(logModalItem)'));
- assert.match(page,/selectedPurchaseRootId: purchaseEdit\.rootId/);
- assert.match(page,/payload: \{ quantity: nextItemQuantity \}/);
+ assert.match(page,/mode: "purchase-receipt-edit",\s*id: purchaseEdit\.itemId,\s*purchaseLogId: purchaseEdit\.rootId/);
+ assert.match(page,/payload: \{ quantity, purchase_price: price, \.\.\.supplier, note: note \|\| null, reason \}/);
  assert.match(page,/expectedUpdatedAt: current\.updated_at \?\? null/);
- assert.match(page,/purchaseEntryMatchesCurrentItem\(purchaseEdit\.final, current\)/);
+ assert.ok(!page.includes('selectedPurchaseRootId'));
+ // Reason is required; the supplier select is shown to owner/master only (the RPC enforces it).
+ assert.match(page,/if \(!reason \|\| reason\.length > 200\)/);
+ assert.match(page,/canChangeReceiptSupplier = \["owner", "master"\]/);
  assert.ok(!/\.rpc\(|\/api\/ledger\//.test(page));
  // Mobile: supplier/price-change tags wrap instead of being clipped.
  assert.match(page,/data-testid="daily-log-group-tabs"[\s\S]{0,500}flexWrap: "wrap"/);

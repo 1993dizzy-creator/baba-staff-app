@@ -749,6 +749,41 @@ export async function PATCH(req: Request) {
       roundDecimal(Number(expectedQuantity)) !== roundDecimal(Number(prevItem.quantity ?? 0)))) {
       return jsonError("QUANTITY_CONFLICT", "Quantity changed. Reload before saving.", 409);
     }
+    // /inventory/snapshots 입고 수정: one receipt's quantity, unit price, supplier, memo and
+    // reason. The item's own price/supplier/note never change (enforced in the RPC).
+    if (mode === "purchase-receipt-edit") {
+      const purchaseLogId = Number(body.purchaseLogId);
+      const editKeys = new Set(["quantity", "purchase_price", "supplier", "supplierPartnerId", "note", "reason"]);
+      if (!Number.isSafeInteger(purchaseLogId) || purchaseLogId <= 0 || expectedQuantity === undefined ||
+          !Object.hasOwn(body, "expectedUpdatedAt") || Object.keys(payload).some(key => !editKeys.has(key))) {
+        return jsonError("invalid_purchase_correction", "Invalid receipt edit.", 400);
+      }
+      const resolvedSupplier = await resolveInventorySupplier({
+        supabase: supabaseAdmin, actorUserId: actor.id,
+        payload: { supplier: payload.supplier ?? null, supplierPartnerId: payload.supplierPartnerId ?? null },
+      }) ?? { supplier: payload.supplier ?? null, supplier_partner_id: payload.supplierPartnerId ?? null };
+      const { businessDate } = await resolveInventoryBusinessDate();
+      const { data: edited, error } = await supabaseAdmin.rpc("inventory_apply_purchase_receipt_edit_v1", {
+        p_item_id: Number(id), p_purchase_log_id: purchaseLogId,
+        p_expected_quantity: Number(prevItem.quantity), p_expected_item: prevItem,
+        p_edit: {
+          quantity: payload.quantity, purchase_price: payload.purchase_price,
+          supplier: resolvedSupplier.supplier, supplier_partner_id: resolvedSupplier.supplier_partner_id,
+          note: payload.note ?? null, reason: payload.reason ?? null,
+        },
+        p_business_date: businessDate, p_actor_user_id: actor.id,
+      });
+      if (error) throw error;
+      if (edited?.status !== "ok") {
+        const status = ["quantity_conflict", "inventory_conflict"].includes(edited?.status) ? 409
+          : ["forbidden", "supplier_change_forbidden"].includes(edited?.status) ? 403
+          : edited?.status === "not_found" ? 404
+          : ["invalid_payload", "no_change", "invalid_purchase_reference"].includes(edited?.status) ? 400 : 409;
+        return jsonError(edited?.status ?? "purchase_correction_failed", "Receipt edit was not saved.", status,
+          edited?.blockReason ? { blockReason: edited.blockReason, reviewCode: edited.code } : undefined);
+      }
+      return NextResponse.json({ ok: true, mode, ledgerSync: edited.ledgerSync });
+    }
     const supplierResolution = await resolveInventorySupplier({ supabase: supabaseAdmin, payload, actorUserId: actor.id });
     serverPayload = applyResolvedInventorySupplier(serverPayload, supplierResolution);
 

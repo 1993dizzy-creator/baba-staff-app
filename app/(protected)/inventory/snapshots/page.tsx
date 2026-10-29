@@ -1,7 +1,10 @@
 "use client";
 import { inventoryReasonChangeIssue, inventoryPurchaseErrorMessage } from "@/lib/inventory/reasons";
 import type { DailyPurchaseDiagnostic } from "@/lib/inventory/daily-effective-purchases";
-import { buildDailyItemLogEntries, purchaseEntryMatchesCurrentItem, purchaseEntryQuantityDelta, type DailyItemLogEntry } from "@/lib/inventory/daily-item-log-entries";
+import { buildDailyItemLogEntries, type DailyItemLogEntry } from "@/lib/inventory/daily-item-log-entries";
+import { renderPartnerOptionGroups } from "@/components/partners/PartnerOptionGroups";
+import type { PartnerSelectOption } from "@/lib/partners/select-options";
+import { getUser } from "@/lib/supabase/auth";
 
 import { normalizeInventoryEditText } from "@/lib/inventory/edit-validation";
 import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
@@ -380,7 +383,11 @@ export default function InventorySnapshotsPage() {
     // 당일 로그 (03:00 business day of the opened card) and its per-receipt edit form.
     const [itemLogsBusinessDate, setItemLogsBusinessDate] = useState("");
     const [expandedLogEntryKey, setExpandedLogEntryKey] = useState<string | null>(null);
-    const [purchaseEdit, setPurchaseEdit] = useState<{ rootId: number; itemId: number; effectiveQuantity: number; final: InventoryLog; value: string; busy: boolean; error: string } | null>(null);
+    const [purchaseEdit, setPurchaseEdit] = useState<{
+        rootId: number; itemId: number; final: InventoryLog;
+        quantity: string; price: string; partnerId: string; note: string; reason: string;
+        partners: PartnerSelectOption[]; busy: boolean; error: string;
+    } | null>(null);
     const [languageMissingItems, setLanguageMissingItems] = useState<SnapshotLanguageMissingItem[]>([]);
     const [languageMissingExpanded, setLanguageMissingExpanded] = useState(false);
     // The per-date name-sync read now only feeds the language list; sync items show in the monthly panel.
@@ -1697,21 +1704,58 @@ export default function InventorySnapshotsPage() {
             ? logModalItem
             : null;
 
-    // Corrects one original receipt through the existing selected-receipt path of
-    // PATCH /api/inventory/items (server checks stock checks, payment, month close
-    // and versions, then calls inventory_apply_purchase_correction_v3). Only the
-    // quantity is sent, so the item's own details are not changed.
+    // Display only; the RPC enforces owner/master for a receipt supplier change.
+    const canChangeReceiptSupplier = ["owner", "master"].includes(String(getUser()?.role ?? "").trim().toLowerCase());
+
+    const openPurchaseEdit = async (entry: Extract<DailyItemLogEntry<InventoryLog>, { kind: "purchase" }>) => {
+        const itemId = Number(entry.root.item_id);
+        setPurchaseEdit({
+            rootId: entry.root.id,
+            itemId,
+            final: entry.final,
+            quantity: String(entry.effectiveQuantity),
+            price: String(Number(entry.final.new_purchase_price ?? 0) || ""),
+            partnerId: "",
+            note: "",
+            reason: "",
+            partners: [],
+            busy: false,
+            error: "",
+        });
+        if (!canChangeReceiptSupplier) return;
+        try {
+            const res = await fetch(`/api/inventory/items?itemId=${itemId}`, { cache: "no-store" });
+            const json = await res.json().catch(() => ({}));
+            if (res.ok && json.ok) {
+                setPurchaseEdit((prev) => prev?.rootId === entry.root.id ? { ...prev, partners: json.supplierPartners ?? [] } : prev);
+            }
+        } catch (error) {
+            console.error("openPurchaseEdit partners", error);
+        }
+    };
+
+    // Edits one original receipt (quantity, unit price, supplier, memo, reason) through
+    // PATCH /api/inventory/items mode "purchase-receipt-edit". The RPC keeps the item's
+    // own price/supplier/note and blocks paid, allocated, closed or manually edited receipts.
     const savePurchaseEdit = async () => {
         if (!purchaseEdit || purchaseEdit.busy) return;
         const vi = lang === "vi";
         const fail = (error: string) => setPurchaseEdit((prev) => prev ? { ...prev, busy: false, error } : prev);
-        const nextQuantity = Number(purchaseEdit.value.trim().replace(",", "."));
-        const delta = purchaseEdit.value.trim() === "" ? null : purchaseEntryQuantityDelta(purchaseEdit.effectiveQuantity, nextQuantity);
-        if (delta === null) return fail(vi ? "Nhập số lượng hợp lệ (0 trở lên)." : "0 이상의 올바른 수량을 입력해 주세요.");
-        if (delta === 0) return fail(vi ? "Số lượng không thay đổi." : "수량이 변경되지 않았습니다.");
-        if (delta > 0) return fail(vi
-            ? "Chưa hỗ trợ tăng số lượng lô nhập. Hãy nhập phần thêm như một lần nhập mới hoặc liên hệ quản lý."
-            : "입고 수량 증가는 아직 지원하지 않습니다. 추가분은 신규 입고로 등록하거나 관리자에게 문의해 주세요.");
+        const quantity = Number(purchaseEdit.quantity.trim().replace(",", "."));
+        const price = Number(purchaseEdit.price.trim().replace(/[,\s]/g, ""));
+        const reason = purchaseEdit.reason.trim();
+        const note = purchaseEdit.note.trim();
+        if (purchaseEdit.quantity.trim() === "" || !Number.isFinite(quantity) || quantity < 0)
+            return fail(vi ? "Nhập số lượng hợp lệ (0 trở lên)." : "0 이상의 올바른 수량을 입력해 주세요.");
+        if (!Number.isFinite(price) || price <= 0)
+            return fail(vi ? "Nhập đơn giá lớn hơn 0." : "0보다 큰 단가를 입력해 주세요.");
+        if (!reason || reason.length > 200)
+            return fail(vi ? "Nhập lý do sửa (tối đa 200 ký tự)." : "수정 사유를 입력해 주세요(최대 200자).");
+        if (note.length > 500) return fail(vi ? "Ghi chú tối đa 500 ký tự." : "메모는 최대 500자입니다.");
+        const selectedPartner = purchaseEdit.partners.find((partner) => String(partner.id) === purchaseEdit.partnerId);
+        const supplier = selectedPartner
+            ? { supplier: selectedPartner.name, supplierPartnerId: selectedPartner.id }
+            : { supplier: purchaseEdit.final.new_supplier ?? null, supplierPartnerId: purchaseEdit.final.purchase_supplier_partner_id ?? null };
 
         setPurchaseEdit((prev) => prev ? { ...prev, busy: true, error: "" } : prev);
         try {
@@ -1719,27 +1763,17 @@ export default function InventorySnapshotsPage() {
             const itemJson = await itemRes.json().catch(() => ({}));
             const current = itemJson?.data?.[0];
             if (!itemRes.ok || !itemJson.ok || !current) return fail(c.loadFailed);
-            // expectedUpdatedAt below makes this check and the save one version.
-            if (!purchaseEntryMatchesCurrentItem(purchaseEdit.final, current)) return fail(vi
-                ? "Đơn giá, đơn vị hoặc nhà cung cấp hiện tại của mặt hàng khác với lô nhập này nên chưa lưu. Vui lòng liên hệ quản lý."
-                : "품목의 현재 단가·단위·거래처가 이 입고와 달라 저장하지 않았습니다. 관리자에게 문의해 주세요.");
-            const currentQuantity = Number(current.quantity ?? 0);
-            const nextItemQuantity = Number((currentQuantity + delta).toFixed(6));
-            if (!Number.isFinite(nextItemQuantity) || nextItemQuantity < 0) return fail(vi
-                ? "Tồn kho hiện tại nhỏ hơn số lượng cần giảm nên chưa lưu. Vui lòng liên hệ quản lý."
-                : "현재 재고가 줄일 수량보다 적어 저장하지 않았습니다. 관리자에게 문의해 주세요.");
 
             const res = await fetch("/api/inventory/items", {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    mode: "purchase-receipt-edit",
                     id: purchaseEdit.itemId,
-                    source: "edit_form",
-                    reason: "purchase",
-                    selectedPurchaseRootId: purchaseEdit.rootId,
-                    expectedQuantity: currentQuantity,
+                    purchaseLogId: purchaseEdit.rootId,
+                    expectedQuantity: Number(current.quantity ?? 0),
                     expectedUpdatedAt: current.updated_at ?? null,
-                    payload: { quantity: nextItemQuantity },
+                    payload: { quantity, purchase_price: price, ...supplier, note: note || null, reason },
                 }),
             });
             const result = await res.json().catch(() => ({}));
@@ -1787,6 +1821,7 @@ export default function InventorySnapshotsPage() {
             whiteSpace: "nowrap" as const,
             cursor: "pointer",
         };
+        const editFieldStyle = { display: "flex", flexDirection: "column" as const, gap: 4, minWidth: 0, fontSize: 12, fontWeight: 800, color: "#111827" };
 
         const footer = (
             <div data-testid={`daily-log-purchase-${entry.root.id}`} style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1809,15 +1844,7 @@ export default function InventorySnapshotsPage() {
                     {editable && !editing && (
                         <button type="button" style={{ ...actionButtonStyle, border: "1px solid royalblue", background: "royalblue", color: "#fff" }}
                             disabled={purchaseEdit?.busy === true}
-                            onClick={() => setPurchaseEdit({
-                                rootId: entry.root.id,
-                                itemId: Number(entry.root.item_id),
-                                effectiveQuantity: entry.effectiveQuantity,
-                                final: entry.final,
-                                value: String(entry.effectiveQuantity),
-                                busy: false,
-                                error: "",
-                            })}>
+                            onClick={() => void openPurchaseEdit(entry)}>
                             {vi ? "Sửa nhập hàng" : "입고 수정"}
                         </button>
                     )}
@@ -1830,21 +1857,53 @@ export default function InventorySnapshotsPage() {
                 )}
 
                 {editing && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, borderRadius: 10, background: "#f9fafb", border: "1px solid #e5e7eb" }}>
-                        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, fontWeight: 800, color: "#111827" }}>
-                            {vi ? `Số lượng nhập (${entry.final.unit || "-"})` : `입고 수량 (${entry.final.unit || "-"})`}
-                            <input type="number" inputMode="decimal" step="any" min={0} value={editing.value} disabled={editing.busy}
-                                onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, value: event.target.value, error: "" } : prev)}
+                    <div data-testid={`receipt-edit-form-${entry.root.id}`} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, borderRadius: 10, background: "#f9fafb", border: "1px solid #e5e7eb", minWidth: 0 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6 }}>
+                            <label style={editFieldStyle}>
+                                {vi ? `Số lượng nhập (${entry.final.unit || "-"})` : `입고 수량 (${entry.final.unit || "-"})`}
+                                <input type="number" inputMode="decimal" step="any" min={0} value={editing.quantity} disabled={editing.busy}
+                                    onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, quantity: event.target.value, error: "" } : prev)}
+                                    style={ui.input} />
+                            </label>
+                            <label style={editFieldStyle}>
+                                {vi ? "Đơn giá (₫)" : "단가 (₫)"}
+                                <input type="number" inputMode="decimal" step="any" min={0} value={editing.price} disabled={editing.busy}
+                                    onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, price: event.target.value, error: "" } : prev)}
+                                    style={ui.input} />
+                            </label>
+                        </div>
+                        <label style={editFieldStyle}>
+                            {vi ? "Nhà cung cấp" : "거래처"}
+                            {canChangeReceiptSupplier ? (
+                                <select value={editing.partnerId} disabled={editing.busy}
+                                    onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, partnerId: event.target.value, error: "" } : prev)}
+                                    style={{ ...ui.input, maxWidth: "100%" }}>
+                                    <option value="">{vi ? "Giữ nguyên: " : "현재 유지: "}{getPurchaseLogSupplierLabel(entry.final)}</option>
+                                    {renderPartnerOptionGroups(editing.partners, lang, (partner) => String(partner.id))}
+                                </select>
+                            ) : (
+                                <span style={{ ...ui.metaText, overflowWrap: "anywhere" }}>
+                                    {getPurchaseLogSupplierLabel(entry.final)}{" "}
+                                    ({vi ? "chỉ owner/master đổi được" : "변경은 대표·관리자만 가능"})
+                                </span>
+                            )}
+                        </label>
+                        <label style={editFieldStyle}>
+                            {vi ? "Lý do sửa (bắt buộc)" : "수정 사유 (필수)"}
+                            <input type="text" maxLength={200} value={editing.reason} disabled={editing.busy}
+                                onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, reason: event.target.value, error: "" } : prev)}
+                                style={ui.input} />
+                        </label>
+                        <label style={editFieldStyle}>
+                            {vi ? "Ghi chú" : "메모"}
+                            <input type="text" maxLength={500} value={editing.note} disabled={editing.busy}
+                                onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, note: event.target.value, error: "" } : prev)}
                                 style={ui.input} />
                         </label>
                         <div style={{ ...ui.metaText, overflowWrap: "anywhere" }}>
-                            {getPurchaseLogSupplierLabel(entry.final)} · {vi ? "Đơn giá" : "단가"}{" "}
-                            {Number(entry.final.new_purchase_price ?? 0).toLocaleString()} ₫
-                        </div>
-                        <div style={{ ...ui.metaText, overflowWrap: "anywhere" }}>
                             {vi
-                                ? "Chỉ lưu được khi giảm số lượng của lô nhập này. Sửa đơn giá, nhà cung cấp, ghi chú hoặc tăng số lượng: vui lòng liên hệ quản lý."
-                                : "이 입고의 수량 감소만 저장할 수 있습니다. 단가·거래처·메모 정정이나 수량 증가는 관리자에게 요청해 주세요."}
+                                ? "Chỉ sửa lô nhập này. Đơn giá, nhà cung cấp và ghi chú cơ bản của mặt hàng không thay đổi. Phiếu đã thanh toán hoặc tháng đã chốt sẽ không được lưu."
+                                : "이 입고만 정정합니다. 품목의 기본 단가·거래처·메모는 바뀌지 않습니다. 지급 완료·월마감된 입고는 저장되지 않습니다."}
                         </div>
                         {editing.error && <div role="alert" style={{ fontSize: 12, fontWeight: 700, color: "crimson", overflowWrap: "anywhere" }}>{editing.error}</div>}
                         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>

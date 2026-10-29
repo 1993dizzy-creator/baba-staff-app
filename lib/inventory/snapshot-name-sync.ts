@@ -27,6 +27,7 @@ export type InventoryDailySyncLogRow = {
   created_at: string | null;
   reason: string | null;
   source?: string | null;
+  action?: string | null;
   change_quantity: number | null;
   correction_of_inventory_log_id?: number | null;
   prev_quantity: number | null;
@@ -228,6 +229,9 @@ export function findInventoryLogNameSyncItems(
     for (let rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
       const root = roots[rootIndex];
       const nextRoot = roots[rootIndex + 1];
+      // A receipt edited through 입고 수정 already carries its own price/supplier and
+      // Ledger result. Copying those values back onto the receipt row is not a sync.
+      if (itemLogs.some(log => Number(log.correction_of_inventory_log_id) === Number(root.id) && log.action === "receipt_edit")) continue;
       const corrections = itemLogs.filter((log) =>
         isZeroQuantityCorrection(log) && sortLogs(log, root) > 0 && (
           log.correction_of_inventory_log_id != null
