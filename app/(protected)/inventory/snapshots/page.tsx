@@ -4,7 +4,6 @@ import type { DailyPurchaseDiagnostic } from "@/lib/inventory/daily-effective-pu
 import { buildDailyItemLogEntries, type DailyItemLogEntry } from "@/lib/inventory/daily-item-log-entries";
 import { renderPartnerOptionGroups } from "@/components/partners/PartnerOptionGroups";
 import type { PartnerSelectOption } from "@/lib/partners/select-options";
-import { getUser } from "@/lib/supabase/auth";
 
 import { normalizeInventoryEditText } from "@/lib/inventory/edit-validation";
 import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
@@ -1641,9 +1640,6 @@ export default function InventorySnapshotsPage() {
         );
     };
 
-    // Display only; the RPC enforces owner/master for a receipt supplier change.
-    const canChangeReceiptSupplier = ["owner", "master"].includes(String(getUser()?.role ?? "").trim().toLowerCase());
-
     const openPurchaseEdit = async (entry: Extract<DailyItemLogEntry<InventoryLog>, { kind: "purchase" }>) => {
         const itemId = Number(entry.root.item_id);
         setReceiptEditNotice(null);
@@ -1662,7 +1658,6 @@ export default function InventorySnapshotsPage() {
             busy: false,
             error: "",
         });
-        if (!canChangeReceiptSupplier) return;
         try {
             const res = await fetch(`/api/inventory/items?itemId=${itemId}`, { cache: "no-store" });
             const json = await res.json().catch(() => ({}));
@@ -1873,19 +1868,12 @@ export default function InventorySnapshotsPage() {
                         />
                         <label style={editFieldStyle}>
                             <span><span aria-hidden="true">🏪 </span>{vi ? "Nhà cung cấp" : "거래처"}</span>
-                            {canChangeReceiptSupplier ? (
-                                <select value={editing.partnerId} disabled={editing.busy}
-                                    onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, partnerId: event.target.value, error: "" } : prev)}
-                                    style={editInputStyle}>
-                                    <option value="">{vi ? "Giữ nguyên: " : "현재 유지: "}{getPurchaseLogSupplierLabel(entry.final)}</option>
-                                    {renderPartnerOptionGroups(editing.partners, lang, (partner) => String(partner.id))}
-                                </select>
-                            ) : (
-                                <span style={{ ...ui.metaText, overflowWrap: "anywhere" }}>
-                                    {getPurchaseLogSupplierLabel(entry.final)}{" "}
-                                    ({vi ? "chỉ owner/master đổi được" : "변경은 대표·관리자만 가능"})
-                                </span>
-                            )}
+                            <select value={editing.partnerId} disabled={editing.busy}
+                                onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, partnerId: event.target.value, error: "" } : prev)}
+                                style={editInputStyle}>
+                                <option value="">{vi ? "Giữ nguyên: " : "현재 유지: "}{getPurchaseLogSupplierLabel(entry.final)}</option>
+                                {renderPartnerOptionGroups(editing.partners, lang, (partner) => String(partner.id))}
+                            </select>
                         </label>
                         <label style={editFieldStyle}>
                             <span><span aria-hidden="true">✏️ </span>{vi ? "Lý do sửa (bắt buộc)" : "수정 사유 (필수)"}</span>

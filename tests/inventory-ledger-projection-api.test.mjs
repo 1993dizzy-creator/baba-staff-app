@@ -138,7 +138,7 @@ test('latest purchase correction updates supplier binding and price history befo
 });
 
 function itemSetup({createFailure=null,correctionFailure=false,role='staff',duplicateItems=[],rootLogs=[],businessDate='2026-09-01',startingQuantity=10,closedMonths=[],candidate=null,transaction=null,payable=null,payableAllocations=[]}={}) {
-  const calls = [], logs = [], creates = [];
+  const calls = [], logs = [], creates = [], receiptEdits = [];
   const item = { id: 1, item_name: 'Coca', item_name_vi: 'Cola', quantity: startingQuantity, purchase_price: 20000, supplier: 'Won Mart', supplier_partner_id: 10, unit: 'can', part: 'bar', updated_at:null,is_active:true };
   const supabase = {
     from(table) {
@@ -170,6 +170,10 @@ function itemSetup({createFailure=null,correctionFailure=false,role='staff',dupl
             data = [...rootLogs,...logs].filter(row => filters.every(filter => filter(row)))
               .sort((a,b) => { for(const [field,ascending] of orders) { const result=String(a[field]).localeCompare(String(b[field])); if(result)return ascending?result:-result; } return 0; }).slice(0,max);
             if(single)data=data[0]??null;
+          } else if (table === 'business_partners') {
+            data=[{id:10,name:'Won Mart',partner_type:'food',partner_subtype_id:null,is_active:true},{id:12,name:'Postpaid',partner_type:'food',partner_subtype_id:null,is_active:true},{id:13,name:'Inactive',partner_type:'food',partner_subtype_id:null,is_active:false}].filter(row=>filters.every(filter=>filter(row)));
+          } else if (['business_partner_subtypes','business_partner_supplier_aliases'].includes(table)) {
+            data=[];
           } else if (['ledger_month_closures','ledger_candidates','ledger_transactions','ledger_payables','ledger_payable_allocations'].includes(table)) {
             const sourceRows = table === 'ledger_month_closures' ? closedMonths.map(month => ({month,status:'closed'})) : table === 'ledger_candidates' ? (candidate ? [candidate] : []) : table === 'ledger_transactions' ? (transaction ? [transaction] : []) : table === 'ledger_payables' ? (payable ? [payable] : []) : payableAllocations;
             const filtered = sourceRows.filter(row => filters.every(filter => filter(row)));
@@ -181,6 +185,10 @@ function itemSetup({createFailure=null,correctionFailure=false,role='staff',dupl
       return query;
     },
     async rpc(name, args) {
+      if(name==='inventory_apply_purchase_receipt_edit_v1') {
+        receiptEdits.push(args);
+        return {data:{status:'ok',completion:'complete',inventoryLogId:101,ledgerSync:{status:'synced',code:'REBOOKED'}},error:null};
+      }
       // POST: item, first log, price history and purchase projection in one DB transaction.
       if(name==='inventory_create_with_receipt_v1') {
         calls.push('atomic-create');creates.push(args);
@@ -239,8 +247,22 @@ function itemSetup({createFailure=null,correctionFailure=false,role='staff',dupl
     '@/lib/inventory/reasons': load('lib/inventory/reasons.ts'),
     '@/lib/inventory/parts': load('lib/inventory/parts.ts'),
   });
-  return { item, calls, logs, creates, invoke: (method, body) => route[method](new Request('http://test/api/inventory/items', { method, body: JSON.stringify(body) })) };
+  return { item, calls, logs, creates, receiptEdits, getSelectedItem: () => route.GET(new Request('http://test/api/inventory/items?itemId=1')), invoke: (method, body) => route[method](new Request('http://test/api/inventory/items', { method, body: JSON.stringify(body) })) };
 }
+
+test('every app role can read active receipt suppliers and submit a receipt-only supplier change',async()=>{
+ for(const role of ['staff','leader','manager','owner','master']){
+  const state=itemSetup({role}),before={...state.item};
+  const read=await state.getSelectedItem();assert.equal(read.status,200,role);
+  const options=(await read.json()).supplierPartners;assert.deepEqual(options.map(p=>p.id),[10,12]);assert.ok(options.every(p=>p.isActive));
+  const response=await state.invoke('PATCH',{id:1,mode:'purchase-receipt-edit',purchaseLogId:100,expectedQuantity:10,expectedUpdatedAt:null,
+   payload:{quantity:10,purchase_price:20000,supplier:'Postpaid',supplierPartnerId:12,reason:'Receipt supplier correction'},purchaseBilledAmount:{mode:'auto'}});
+  assert.equal(response.status,200,role);assert.equal((await response.json()).ledgerSync.code,'REBOOKED');
+  assert.equal(state.receiptEdits.length,1);assert.equal(state.receiptEdits[0].p_actor_user_id,7);
+  assert.equal(state.receiptEdits[0].p_edit.supplier,'Postpaid');assert.equal(state.receiptEdits[0].p_edit.supplier_partner_id,12);
+  assert.deepEqual(state.item,before,'API does not update the item master');assert.deepEqual(state.logs,[],'only the receipt RPC writes the edit');assert.deepEqual(state.creates,[]);
+ }
+});
 
 test('new_purchase POST commits inventory and source before a separately reported Ledger failure', async () => {
   const state = itemSetup();

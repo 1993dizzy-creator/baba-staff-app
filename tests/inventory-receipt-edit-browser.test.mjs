@@ -15,7 +15,7 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
  const browser=await chromium.launch({headless:true,executablePath:process.env.QA_BROWSER_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe'});
  await mkdir('.qa-review/receipt-edit',{recursive:true});
  const DAY='2026-10-10';
- try{for(const lang of ['ko','vi'])for(const [label,viewport] of [['360',{width:360,height:780}],['390',{width:390,height:844}],['pc',{width:1280,height:900}]])for(const role of label==='390'?['owner','staff']:['owner']){
+ try{for(const lang of ['ko','vi'])for(const [label,viewport] of [['360',{width:360,height:780}],['390',{width:390,height:844}],['pc',{width:1280,height:900}]])for(const role of ['staff','leader','manager','owner','master']){
   const mobile=label!=='pc',context=await browser.newContext({viewport,isMobile:mobile,hasTouch:mobile}),page=await context.newPage();page.setDefaultTimeout(8000);
   const t=inventoryText[lang],errors=[],reads=[],patches=[];let patchResult='ok',singleReceipt=false;
   const user={id:1,name:'QA',role,part:'kitchen',language:lang};
@@ -86,18 +86,21 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    const form=page.getByTestId('receipt-edit-form-100');await form.waitFor();
    const input=field=>page.getByTestId('receipt-edit-'+field+'-100');
    assert.equal(await input('quantity').inputValue(),'10');assert.equal(await input('price').inputValue(),'31,000');
-   const select=form.locator('select');assert.equal(await select.count(),role==='owner'?1:0);
+   const select=form.locator('select');assert.equal(await select.count(),1);
+   assert.equal(await select.inputValue(),'','keep-current supplier is the default for every role');
+   assert.equal(await select.locator('option[value=""]').innerText(),(lang==='vi'?'Giữ nguyên: ':'현재 유지: ')+'Chợ A');
+   assert.doesNotMatch(await form.innerText(),/chỉ owner\/master|변경은 대표·관리자만 가능/);
    // Reason is required: no request is sent without it.
    await form.getByRole('button',{name:lang==='vi'?'Lưu sửa đổi':'수정 저장'}).click();
    await form.getByRole('alert').waitFor();assert.equal(patches.length,0);
    await input('quantity').fill('12');await input('price').fill('32000');await input('reason').fill('QA 정정');await input('note').fill('메모');
-   if(role==='owner'){await page.waitForFunction(()=>document.querySelectorAll('[data-testid="receipt-edit-form-100"] select option').length>3);await select.selectOption('12');}
+   await page.waitForFunction(()=>document.querySelectorAll('[data-testid="receipt-edit-form-100"] select option').length>3);await select.selectOption('12');
    await noOverflow();await shot('form');
    await form.getByRole('button',{name:lang==='vi'?'Lưu sửa đổi':'수정 저장'}).click();
    await form.waitFor({state:'detached'});
    assert.equal(patches.length,1);const body=patches[0];
    assert.equal(body.mode,'purchase-receipt-edit');assert.equal(body.id,1);assert.equal(body.purchaseLogId,100);assert.equal(body.expectedQuantity,14);assert.ok(body.expectedUpdatedAt);
-   assert.deepEqual(body.payload,{quantity:12,purchase_price:32000,supplier:role==='owner'?'Postpaid':'Chợ A',supplierPartnerId:role==='owner'?12:7,note:'메모',reason:'QA 정정'});
+   assert.deepEqual(body.payload,{quantity:12,purchase_price:32000,supplier:'Postpaid',supplierPartnerId:12,note:'메모',reason:'QA 정정'});
    assert.equal(Object.hasOwn(body,'selectedPurchaseRootId'),false);
    await page.getByTestId('daily-log-purchase-100').waitFor();
    await page.waitForFunction(()=>/수정 4회|Đã sửa 4 lần/.test(document.querySelector('[data-testid="daily-log-purchase-100"]')?.textContent??''));
