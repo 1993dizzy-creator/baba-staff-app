@@ -68,7 +68,8 @@ from (select pg_get_functiondef('public.ledger_project_inventory_purchase_log_v1
 -- 3) 테이블·제약·트리거
 select column_name, data_type, numeric_precision, numeric_scale from information_schema.columns
  where table_schema='public' and table_name='inventory_logs' and column_name like 'billed_amount%' order by 1;  -- 2행: numeric(16,3), text
-select conname, convalidated from pg_constraint where conrelid='public.inventory_logs'::regclass and conname like 'inventory_logs_billed_amount%' order by 1; -- 2행, true
+select conname, convalidated, pg_get_constraintdef(oid) from pg_constraint where conrelid='public.inventory_logs'::regclass and conname like 'inventory_logs_billed_amount%' order by 1;
+-- 2행, true. purchase_check 정의는 "billed_amount_mode IS NULL OR reason IS NOT DISTINCT FROM 'purchase'" (reason NULL + 모드 차단)
 select tgname, tgenabled from pg_trigger where tgrelid='public.inventory_logs'::regclass and not tgisinternal order by 1;
 -- inventory_purchase_correction_guard, inventory_purchase_correction_guard_billed_amount (둘 다 O)
 

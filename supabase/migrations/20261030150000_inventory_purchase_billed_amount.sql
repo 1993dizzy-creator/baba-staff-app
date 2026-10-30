@@ -53,7 +53,8 @@ alter table public.inventory_logs
     or (billed_amount_mode='manual' and billed_amount is not null and billed_amount>0
       and billed_amount<>'NaN'::numeric and billed_amount<10000000000000)),
   add constraint inventory_logs_billed_amount_purchase_check check (
-    billed_amount_mode is null or reason='purchase');
+    -- reason='purchase' alone is NULL (= passes) for a NULL reason; a billed mode needs a purchase.
+    billed_amount_mode is null or reason is not distinct from 'purchase');
 comment on column public.inventory_logs.billed_amount is
   '실청구금액 entered for this purchase log when billed_amount_mode=manual; NULL means automatic quantity x price.';
 comment on column public.inventory_logs.billed_amount_mode is

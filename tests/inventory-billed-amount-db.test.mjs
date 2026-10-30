@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {billedFixture,billedMigration} from './helpers/inventory-billed-amount-fixture.mjs';
 import {receiptEditFixture,item,editReceipt,state} from './helpers/inventory-receipt-edit-fixture.mjs';
 import {correct} from './helpers/inventory-safe-correction-fixture.mjs';
+import {nativeInventoryPostgres} from './helpers/inventory-native-postgres.mjs';
 const one=async(db,sql,args=[])=>(await db.query(sql,args)).rows[0];
 const net=async db=>Number((await one(db,'select coalesce(sum(amount*economic_effect_sign),0) as n from ledger_transactions')).n);
 const openPayable=async db=>one(db,"select * from ledger_payables where status='unpaid'");
@@ -280,4 +281,26 @@ test('projector failure, then retries and monthly reconcile: one booking at the 
   assert.equal(Number((await one(db,"select count(*) as n from ledger_transactions where source_type='inventory_purchase_reversal'")).n),0);
   assert.equal(Number((await one(db,"select count(*) as n from ledger_transactions where source_type='inventory_purchase_rebook'")).n),0);
  }finally{await db.close();}
+});
+
+// inventory_logs_billed_amount_purchase_check: a billed mode only on a purchase log; a NULL
+// reason must not slip through (reason='purchase' alone is NULL, which a CHECK accepts).
+async function assertBilledPurchaseCheck(db){
+ let id=700;
+ const insert=(reason,mode,amount)=>db.query(`insert into inventory_logs(id,item_id,item_name,unit,change_quantity,new_purchase_price,new_supplier,business_date,source,reason,billed_amount_mode,billed_amount)
+  values($1,1,'QA','can',1,1000,'Won Mart','2026-10-11','create',$2,$3,$4)`,[++id,reason,mode,amount]);
+ const rejected=/inventory_logs_billed_amount_purchase_check/;
+ await insert(null,null,null);                                                // mode NULL + reason NULL: allowed
+ await insert('other',null,null);                                             // mode NULL + another reason: allowed
+ await insert('purchase','auto',null);await insert('purchase','manual',900);  // manual/auto + purchase: allowed
+ for(const [reason,mode,amount] of [['other','auto',null],['other','manual',900],[null,'auto',null],[null,'manual',900],['stock_check','auto',null]])
+  await assert.rejects(insert(reason,mode,amount),rejected,JSON.stringify({reason,mode}));
+ assert.equal(Number((await one(db,'select count(*) as n from inventory_logs where id>700')).n),4);
+}
+test('billed mode needs a purchase log: NULL or other reasons are refused (PGlite)',async()=>{
+ const db=await billedFixture();try{await assertBilledPurchaseCheck(db);}finally{await db.close();}
+});
+test('billed mode needs a purchase log: NULL or other reasons are refused (native PostgreSQL)',{skip:!process.env.QA_POSTGRES_BIN,timeout:90000},async t=>{
+ const runtime=await nativeInventoryPostgres({testContext:t});
+ try{const db=await billedFixture(runtime.Database);try{await assertBilledPurchaseCheck(db);}finally{await db.close();}}finally{await runtime.stop();}
 });
