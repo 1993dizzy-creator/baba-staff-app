@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {git, gitOut, insideRoot, run, sanitizedEnv} from '../scripts/agent/lib/common.mjs';
+import {git, gitOut, identifyWorktree, insideRoot, run, sanitizedEnv} from '../scripts/agent/lib/common.mjs';
 import {collectStatus} from '../scripts/agent/baba-status.mjs';
 import {detectTerminal, displayWidth, renderStatus, stripAnsi} from '../scripts/agent/lib/status-view.mjs';
 
@@ -24,10 +24,10 @@ function commit(root, path, text, message = 'fixture') {
   put(root, path, text); git(root, ['add', '--', path]); git(root, ['commit', '-m', message]);
   return gitOut(root, ['rev-parse', 'HEAD']);
 }
-function fixture() {
+function fixture({mainName = 'baba-staff-app'} = {}) {
   const dir = mkdtempSync(join(fixtures, '한글 space-'));
   created.push(dir);
-  const main = join(dir, 'baba-staff-app'), codex = join(dir, 'baba-wt-codex'), claude = join(dir, 'baba-wt-claude');
+  const main = join(dir, mainName), codex = join(dir, 'baba-wt-codex'), claude = join(dir, 'baba-wt-claude');
   const remote = join(dir, 'origin.git');
   mkdirSync(main); git(main, ['init', '-b', 'main']);
   git(main, ['config', 'user.email', 'fixture@example.invalid']); git(main, ['config', 'user.name', 'Fixture']);
@@ -84,6 +84,44 @@ test('1. clean and integrated worktrees pass every Git check but never claim tes
   assert.doesNotMatch(result.stdout, /기타 로컬 브랜치의 통합을 뜻하지 않는다/);
   assert.match(result.stdout, /\| 배포 승인 +\| 별도 필요 +\|/);
   assert.match(result.stdout, /실행 위치 {2}main \/ main → 직렬 모드/);
+});
+
+test('a same-named detached QA worktree is never the original, even when the original has another name', () => {
+  for (const mainName of ['baba-staff-app', 'renamed-original']) {
+    const f = fixture({mainName});
+    const qa = join(f.dir, 'qa', 'baba-staff-app');
+    git(f.main, ['worktree', 'add', '--detach', qa, 'main']);
+    commit(f.main, 'app/a.ts', 'export const a = 2;\n', 'one pending commit');
+    const before = snapshot(f.dir);
+    assert.equal(identifyWorktree(f.main).isOriginal, true);
+    assert.equal(identifyWorktree(qa).isOriginal, false);
+    for (const root of [f.main, qa, f.codex]) {
+      const report = collectStatus({root, cwd: root});
+      assert.deepEqual(report.trees.filter(item => item.role === 'main').map(item => item.path), [f.main]);
+      const extra = report.trees.find(item => item.path === qa);
+      assert.equal(extra.role, 'other');
+      assert.equal(extra.branch, '(detached)');
+      assert.equal(report.verdicts.git, 'WARN', 'the extra worktree is a warning, not a false FAIL');
+      assert.ok(!report.findings.some(item => item.level === 'FAIL'));
+      assert.equal(report.github.verified, true);
+      assert.equal(report.github.ahead, 1);
+      assert.equal(report.github.relation, 'local-ahead');
+    }
+    const result = cli(f, ['--no-color']);
+    assert.match(result.stdout, /대기 1커밋, Push 가능\(사용자 승인 필요\)/);
+    assert.doesNotMatch(result.stdout, /Push 보류|원본 폴더가 main이 아닌/);
+    assert.equal((result.stdout.match(/\| main +\| [0-9a-f]{7} \| main +\|/g) || []).length, 1);
+    assert.deepEqual(snapshot(f.dir), before, 'status and identity checks change no files, index or refs');
+
+    git(f.main, ['switch', '-c', 'feature/original']);
+    const wrongBranch = snapshot(f.dir);
+    const failed = cli(f, ['--json']);
+    assert.equal(failed.status, 2);
+    assert.equal(failed.report.verdicts.git, 'FAIL');
+    assert.ok(finding(failed.report, 'main', /main이 아닌 feature\/original/));
+    assert.equal(failed.report.trees.filter(item => item.role === 'main').length, 1);
+    assert.deepEqual(snapshot(f.dir), wrongBranch);
+  }
 });
 
 test('2. uncommitted Claude edits are listed with staged, modified and untracked files', () => {

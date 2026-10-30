@@ -23,7 +23,8 @@ export function collectStatus({root, cwd = process.cwd(), mode = null, offline =
   if (!mainSha) add('FAIL', 'git', 'main', '로컬 main 브랜치를 찾을 수 없다.', '저장소 경로를 확인한다.');
 
   // A·B. Registered worktrees: identity, cleanliness, operations, commits not in main.
-  const trees = listWorktrees(root).map(tree => inspectTree(root, tree, mainSha));
+  const registered = listWorktrees(root);
+  const trees = registered.map(tree => inspectTree(root, tree, mainSha, registered[0]?.path));
   for (const role of ['main', 'claude', 'codex']) {
     if (!trees.some(tree => tree.role === role)) add('FAIL', 'git', LABELS[role], 'Worktree가 등록되어 있지 않다.', 'git worktree list로 확인하고 사용자에게 보고한다(자동 생성 안 함).');
   }
@@ -88,8 +89,8 @@ export function collectStatus({root, cwd = process.cwd(), mode = null, offline =
   };
 }
 
-function inspectTree(root, tree, mainSha) {
-  const identity = identifyWorktree(tree.path);
+function inspectTree(root, tree, mainSha, originalPath) {
+  const identity = identifyWorktree(tree.path, originalPath);
   const role = identity.isOriginal ? 'main' : identity.agent || 'other';
   const info = {role, agent: identity.agent, label: LABELS[role] || identity.dir, path: tree.path, branch: tree.branch || '(unknown)', head: tree.head,
     exists: existsSync(tree.path), clean: true, changed: [], untracked: [], conflicted: [], operation: null,

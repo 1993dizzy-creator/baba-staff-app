@@ -146,10 +146,13 @@ export function globToRegExp(glob) {
 }
 export const matchesAny = (path, globs) => globs.some(glob => globToRegExp(glob).test(path));
 
-export function identifyWorktree(root) {
+export function identifyWorktree(root, originalPath) {
   const dir = basename(root).toLowerCase();
   const agent = Object.entries(AGENTS).find(([, value]) => value.worktreeDir === dir)?.[0] || null;
-  return {dir, agent, isOriginal: dir === ORIGINAL_DIR};
+  // Git lists its original worktree first, regardless of its name or branch.
+  // A supplied registry path also works when inspecting a missing linked worktree.
+  const original = originalPath ?? gitTry(root, ['worktree', 'list', '--porcelain'])?.match(/^worktree ([^\r\n]+)/)?.[1];
+  return {dir, agent, isOriginal: Boolean(original) && resolve(root).toLowerCase() === resolve(original).toLowerCase()};
 }
 
 // Resolve both lexical paths and existing ancestors: junctions must not escape the worktree.
