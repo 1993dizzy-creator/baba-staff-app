@@ -5939,6 +5939,8 @@ alert(c.saveSuccess);
                                     />
                                 )}
 
+                                <label style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0, fontSize: 12, fontWeight: 800 }}>
+                                <span>{lang === "vi" ? "Đơn giá (₫)" : "단가 (₫)"}</span>
                                 <input
                                     type="text"
                                     value={quickPurchasePrice}
@@ -5957,17 +5959,20 @@ alert(c.saveSuccess);
                                     placeholder={t.purchasePrice}
                                     style={ui.input}
                                 />
+                                </label>
                                 {/* 실청구금액 of this receipt = the stock increase x unit price, never the final stock. */}
                                 {(() => {
                                     const changeQty = roundDecimal(parseDecimal(quantityDrafts[quickSaveItem.id]) - roundDecimal(Number(quickSaveItem.quantity ?? 0)));
-                                    if (!(changeQty > 0)) return null;
                                     return (
                                         <BilledAmountField
                                             lang={lang}
-                                            calculated={calculatePurchaseAmount(changeQty, parsePrice(quickPurchasePrice))}
+                                            calculated={changeQty > 0 ? calculatePurchaseAmount(changeQty, parsePrice(quickPurchasePrice)) : null}
                                             draft={quickBilledDraft}
                                             onChange={setQuickBilledDraft}
-                                            disabled={isQuickSaving || isKegReplacing}
+                                            disabled={!(changeQty > 0) || isQuickSaving || isKegReplacing}
+                                            disabledHint={!(changeQty > 0) ? (lang === "vi"
+                                                ? "Tăng tồn kho so với số lượng hiện tại để nhập số tiền thực tính."
+                                                : "현재 재고보다 수량을 늘리면 실청구금액을 입력할 수 있습니다.") : undefined}
                                             testId="quick-billed-amount"
                                         />
                                     );
@@ -6044,7 +6049,7 @@ alert(c.saveSuccess);
                         }}
                     >
                         <div id="inventory-item-logs-title" style={{ fontSize: 17, fontWeight: 800, color: "#111827", flexShrink: 0 }}>
-                            {t.logItemTitle}
+                            <span aria-hidden="true">📋 </span>{t.logItemTitle}
                         </div>
 
                         <div style={{ ...ui.metaText, flexShrink: 0 }}>

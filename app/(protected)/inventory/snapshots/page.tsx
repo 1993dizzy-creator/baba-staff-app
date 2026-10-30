@@ -35,6 +35,7 @@ import {
 import { formatKegSessionDuration } from "@/lib/inventory/keg-duration";
 import { fetchInventoryApi } from "@/lib/inventory/client-auth";
 import BilledAmountField from "@/components/inventory/BilledAmountField";
+import { formatReceiptPriceInput, receiptPriceCaret } from "@/lib/inventory/receipt-price-input";
 import { AUTO_BILLED_AMOUNT, billedAmountRequest, calculatePurchaseAmount, effectiveBilledAmount, manualBilledDraft, resolveBilledAmount, type BilledAmountDraft } from "@/lib/inventory/billed-amount";
 
 const formatWholeMoney = (value: number) => `${Math.round(value).toLocaleString("en-US")} ₫`;
@@ -1651,7 +1652,7 @@ export default function InventorySnapshotsPage() {
             itemId,
             final: entry.final,
             quantity: String(entry.effectiveQuantity),
-            price: String(Number(entry.final.new_purchase_price ?? 0) || ""),
+            price: formatReceiptPriceInput(String(Number(entry.final.new_purchase_price ?? 0) || "")) ?? "",
             partnerId: "",
             note: "",
             reason: "",
@@ -1772,6 +1773,7 @@ export default function InventorySnapshotsPage() {
             whiteSpace: "nowrap" as const,
             cursor: "pointer",
         };
+        const editInputStyle = { ...ui.input, minWidth: 0, maxWidth: "100%", fontSize: 16 };
         const editFieldStyle = { display: "flex", flexDirection: "column" as const, gap: 4, minWidth: 0, fontSize: 12, fontWeight: 800, color: "#111827" };
 
         const footer = (
@@ -1830,16 +1832,34 @@ export default function InventorySnapshotsPage() {
                     <div data-testid={`receipt-edit-form-${entry.root.id}`} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8, borderRadius: 10, background: "#f9fafb", border: "1px solid #e5e7eb", minWidth: 0 }}>
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6 }}>
                             <label style={editFieldStyle}>
-                                {vi ? `Số lượng nhập (${entry.final.unit || "-"})` : `입고 수량 (${entry.final.unit || "-"})`}
+                                <span><span aria-hidden="true">🔢 </span>{vi ? `Số lượng nhập (${entry.final.unit || "-"})` : `입고 수량 (${entry.final.unit || "-"})`}</span>
                                 <input type="number" inputMode="decimal" step="any" min={0} value={editing.quantity} data-testid={`receipt-edit-quantity-${entry.root.id}`} disabled={editing.busy}
                                     onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, quantity: event.target.value, error: "" } : prev)}
-                                    style={ui.input} />
+                                    style={editInputStyle} />
                             </label>
                             <label style={editFieldStyle}>
-                                {vi ? "Đơn giá (₫)" : "단가 (₫)"}
-                                <input type="number" inputMode="decimal" step="any" min={0} value={editing.price} data-testid={`receipt-edit-price-${entry.root.id}`} disabled={editing.busy}
-                                    onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, price: event.target.value, error: "" } : prev)}
-                                    style={ui.input} />
+                                <span><span aria-hidden="true">💵 </span>{vi ? "Đơn giá (₫)" : "단가 (₫)"}</span>
+                                <input type="text" inputMode="decimal" autoComplete="off" value={editing.price} data-testid={`receipt-edit-price-${entry.root.id}`} disabled={editing.busy}
+                                    onKeyDown={(event) => {
+                                        const input = event.currentTarget;
+                                        const start = input.selectionStart ?? 0;
+                                        if (start !== input.selectionEnd) return;
+                                        // Delete across a grouping separator, rather than getting stuck on it.
+                                        if (event.key === "Backspace" && input.value[start - 1] === ",") input.setSelectionRange(start - 2, start);
+                                        if (event.key === "Delete" && input.value[start] === ",") input.setSelectionRange(start, start + 2);
+                                    }}
+                                    onChange={(event) => {
+                                        const input = event.currentTarget;
+                                        const raw = input.value;
+                                        const formatted = formatReceiptPriceInput(raw);
+                                        if (formatted === null) { input.value = editing.price; return; }
+                                        const start = receiptPriceCaret(raw, input.selectionStart ?? raw.length, formatted);
+                                        const end = receiptPriceCaret(raw, input.selectionEnd ?? raw.length, formatted);
+                                        setPurchaseEdit((prev) => prev ? { ...prev, price: formatted, error: "" } : prev);
+                                        input.value = formatted;
+                                        input.setSelectionRange(start, end);
+                                    }}
+                                    style={editInputStyle} />
                             </label>
                         </div>
                         <BilledAmountField
@@ -1849,13 +1869,14 @@ export default function InventorySnapshotsPage() {
                             onChange={(billed) => setPurchaseEdit((prev) => prev ? { ...prev, billed, error: "" } : prev)}
                             disabled={editing.busy}
                             testId={`receipt-edit-billed-${entry.root.id}`}
+                            labelEmoji="🧾"
                         />
                         <label style={editFieldStyle}>
-                            {vi ? "Nhà cung cấp" : "거래처"}
+                            <span><span aria-hidden="true">🏪 </span>{vi ? "Nhà cung cấp" : "거래처"}</span>
                             {canChangeReceiptSupplier ? (
                                 <select value={editing.partnerId} disabled={editing.busy}
                                     onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, partnerId: event.target.value, error: "" } : prev)}
-                                    style={{ ...ui.input, maxWidth: "100%" }}>
+                                    style={editInputStyle}>
                                     <option value="">{vi ? "Giữ nguyên: " : "현재 유지: "}{getPurchaseLogSupplierLabel(entry.final)}</option>
                                     {renderPartnerOptionGroups(editing.partners, lang, (partner) => String(partner.id))}
                                 </select>
@@ -1867,16 +1888,16 @@ export default function InventorySnapshotsPage() {
                             )}
                         </label>
                         <label style={editFieldStyle}>
-                            {vi ? "Lý do sửa (bắt buộc)" : "수정 사유 (필수)"}
+                            <span><span aria-hidden="true">✏️ </span>{vi ? "Lý do sửa (bắt buộc)" : "수정 사유 (필수)"}</span>
                             <input type="text" maxLength={200} value={editing.reason} data-testid={`receipt-edit-reason-${entry.root.id}`} disabled={editing.busy}
                                 onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, reason: event.target.value, error: "" } : prev)}
-                                style={ui.input} />
+                                style={editInputStyle} />
                         </label>
                         <label style={editFieldStyle}>
-                            {vi ? "Ghi chú" : "메모"}
+                            <span><span aria-hidden="true">📝 </span>{vi ? "Ghi chú" : "메모"}</span>
                             <input type="text" maxLength={500} value={editing.note} data-testid={`receipt-edit-note-${entry.root.id}`} disabled={editing.busy}
                                 onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, note: event.target.value, error: "" } : prev)}
-                                style={ui.input} />
+                                style={editInputStyle} />
                         </label>
                         <div style={{ ...ui.metaText, overflowWrap: "anywhere" }}>
                             {vi
@@ -3670,7 +3691,7 @@ export default function InventorySnapshotsPage() {
                             }}
                         >
                             <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
-                                {t.logItemTitle}
+                                <span><span aria-hidden="true">📋 </span>{t.logItemTitle}</span>
                             </div>
                         </div>
 
@@ -4019,7 +4040,7 @@ export default function InventorySnapshotsPage() {
                                         color: "#111827",
                                     }}
                                 >
-                                    {lang === "vi" ? "Nhật ký trong ngày" : "당일 로그"}
+                                    <span><span aria-hidden="true">📅 </span>{lang === "vi" ? "Nhật ký trong ngày" : "당일 로그"}</span>
                                     {itemLogsBusinessDate && (
                                         <span style={{ ...ui.metaText, marginLeft: 6, fontWeight: 600 }}>
                                             {itemLogsBusinessDate}

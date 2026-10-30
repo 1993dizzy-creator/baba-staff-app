@@ -46,6 +46,8 @@ export default function BilledAmountField({
   onChange,
   disabled = false,
   testId = "billed-amount",
+  labelEmoji,
+  disabledHint,
 }: {
   lang: "ko" | "vi";
   calculated: number | null;
@@ -53,6 +55,8 @@ export default function BilledAmountField({
   onChange: (draft: BilledAmountDraft) => void;
   disabled?: boolean;
   testId?: string;
+  labelEmoji?: string;
+  disabledHint?: string;
 }) {
   const t = TEXT[lang];
   const resolved = resolveBilledAmount(draft, calculated);
@@ -66,7 +70,7 @@ export default function BilledAmountField({
         border: `1px solid ${manual ? "#fcd34d" : "#e5e7eb"}`, background: manual ? "#fffbeb" : "#f9fafb" }}>
       <label style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0, fontSize: 12, fontWeight: 800, color: "#111827" }}>
         <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
-          {t.label}
+          {labelEmoji && <span aria-hidden="true">{labelEmoji}</span>}{t.label}
           <span data-testid={`${testId}-mode`} style={{ padding: "1px 7px", borderRadius: 999, fontSize: 11, fontWeight: 800, whiteSpace: "nowrap",
             background: manual ? "#f59e0b" : "#e5e7eb", color: manual ? "#fff" : "#374151" }}>
             {manual ? t.manual : t.auto}
@@ -75,6 +79,7 @@ export default function BilledAmountField({
         <input type="text" inputMode="numeric" autoComplete="off" value={inputValue} disabled={disabled}
           placeholder={calculated == null ? t.waiting : undefined}
           data-testid={`${testId}-input`}
+          aria-describedby={disabled && disabledHint ? `${testId}-disabled-hint` : undefined}
           onChange={(event) => onChange(editBilledAmountDraft(event.target.value))}
           style={{ width: "100%", minWidth: 0, boxSizing: "border-box", padding: "9px 10px", borderRadius: 8,
             border: "1px solid #d1d5db", background: "#fff", fontSize: 16, fontWeight: 800, color: "#111827" }} />
@@ -94,7 +99,9 @@ export default function BilledAmountField({
           </button>
         )}
       </div>
-      {manual && !resolved.valid
+      {disabled && disabledHint
+        ? <div id={`${testId}-disabled-hint`} role="status" style={{ fontSize: 12, color: "#6b7280", overflowWrap: "anywhere" }}>{disabledHint}</div>
+        : manual && !resolved.valid
         ? <div role="alert" style={{ fontSize: 12, fontWeight: 700, color: "#b91c1c" }}>{t.invalid}</div>
         : <div style={{ fontSize: 11, color: "#6b7280", overflowWrap: "anywhere" }}>{t.hint}</div>}
     </div>

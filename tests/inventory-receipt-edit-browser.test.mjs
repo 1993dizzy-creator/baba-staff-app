@@ -59,7 +59,7 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    await card.click();
    const entryA=page.getByTestId('daily-log-purchase-100'),entryB=page.getByTestId('daily-log-purchase-110');await entryA.waitFor();await entryB.waitFor();
    assert.ok(reads.includes(`/api/inventory/items/1/logs?businessDate=${DAY}`),JSON.stringify(reads));
-   await page.getByText(new RegExp('^'+(lang==='vi'?'Nhật ký trong ngày':'당일 로그')+'\\s*'+DAY+'$')).waitFor();
+   await page.getByText(new RegExp('^(?:📅\\s*)?'+(lang==='vi'?'Nhật ký trong ngày':'당일 로그')+'\\s*'+DAY+'$')).waitFor();
    assert.equal(await page.getByRole('button',{name:t.editItem,exact:true}).count(),0,'item edit button removed from the modal');
    // Three corrections of #100 are one card in its final state; #110 stays separate.
    assert.match(await entryA.innerText(),lang==='vi'?/Đã sửa 3 lần/:/수정 3회/);
@@ -85,7 +85,7 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    await entryA.getByRole('button',{name:lang==='vi'?'Sửa nhập hàng':'입고 수정'}).click();
    const form=page.getByTestId('receipt-edit-form-100');await form.waitFor();
    const input=field=>page.getByTestId('receipt-edit-'+field+'-100');
-   assert.equal(await input('quantity').inputValue(),'10');assert.equal(await input('price').inputValue(),'31000');
+   assert.equal(await input('quantity').inputValue(),'10');assert.equal(await input('price').inputValue(),'31,000');
    const select=form.locator('select');assert.equal(await select.count(),role==='owner'?1:0);
    // Reason is required: no request is sent without it.
    await form.getByRole('button',{name:lang==='vi'?'Lưu sửa đổi':'수정 저장'}).click();
@@ -112,7 +112,7 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    await input('price').fill('33000');await input('reason').fill('재정정');
    await again.getByRole('button',{name:lang==='vi'?'Lưu sửa đổi':'수정 저장'}).click();
    await page.waitForFunction(m=>document.querySelector('[data-testid="receipt-edit-form-100"] [role=alert]')?.textContent===m,inventoryPurchaseErrorMessage('purchase_correction_review_required',lang,{blockReason:'payment_completed'}));
-   assert.equal(await input('price').inputValue(),'33000');
+   assert.equal(await input('price').inputValue(),'33,000');
    await noOverflow();await shot('blocked');
    // One receipt that day: a single plain card, no highlight or tags, and the modal fits its content.
    await page.getByRole('button',{name:lang==='vi'?'Đóng':'닫기',exact:true}).last().click();
