@@ -185,6 +185,7 @@ function itemSetup({createFailure=null,correctionFailure=false,role='staff',dupl
       if(name==='inventory_create_with_receipt_v1') {
         calls.push('atomic-create');creates.push(args);
         if(createFailure==='error')return {data:null,error:{message:'PURCHASE_BILLED_AMOUNT_INVALID'}};
+        if(createFailure==='duplicate')return {data:{status:'duplicate',duplicateItemId:item.id,matchedFields:['item_name_vi']},error:null};
         if(createFailure)return {data:{status:createFailure},error:null};
         const {billed_amount,billed_amount_mode,...itemPayload}=args.p_payload;
         Object.assign(item,itemPayload);
@@ -617,4 +618,12 @@ test('new purchase registration: zero-rounding quantity never reaches the DB; a 
  // Registering an item without a receipt (existing stock) keeps working, including 0 quantity.
  const stock=itemSetup();const stockResponse=await stock.invoke('POST',{registrationType:'existing_stock',payload:createPayload({quantity:0})});
  assert.equal(stockResponse.status,200);assert.equal(stock.creates[0].p_reason,'stock_check');assert.equal(Object.hasOwn(stock.creates[0].p_payload,'billed_amount_mode'),false);
+});
+
+test('POST: a duplicate found inside the create transaction is the usual 409 naming the existing item',async()=>{
+ const state=itemSetup({createFailure:'duplicate'});
+ const response=await state.invoke('POST',{registrationType:'new_purchase',payload:createPayload({quantity:3.57}),purchaseBilledAmount:{mode:'auto'}});
+ assert.equal(response.status,409);const body=await response.json();
+ assert.equal(body.error,'inventory_item_duplicate_name_code');assert.equal(body.duplicateItem.id,1);assert.deepEqual(body.duplicateMatchedFields,['item_name_vi']);
+ assert.equal(state.logs.length,0,'no receipt');assert.equal(state.calls.filter(call=>call==='atomic-create').length,1,'never retried');
 });

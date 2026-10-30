@@ -144,3 +144,52 @@ test('native PostgreSQL: create waits for a month close, no deadlock, item and r
   }finally{await a.query('rollback').catch(()=>{});await b.query('rollback').catch(()=>{});if(pending)await pending.catch(()=>{});await a.end();await b.end();await db.close();}
  }finally{await runtime.stop();}
 });
+
+test('duplicate key matches lib/inventory/normalize.ts; policy = same code and same KO or VI name, inactive included',async()=>{
+ const db=await createFixture();try{
+  const {normalizeInventoryName}=await import('../lib/inventory/normalize.ts');
+  const samples=['  Nước ép nho ','NUOC EP NHO','Đá viên','đá  viên','로쿠 진','로쿠  진 ','Cà Phê Sữa Đá','ÁO','Crème Brûlée','Gin\tTonic','PC','',null];
+  for(const value of samples)assert.equal((await one(db,'select inventory_ledger_private.inventory_name_key_v1($1) as k',[value])).k,normalizeInventoryName(value),String(value));
+  // Existing duplicate pair in the data stays as it is; only the new item is checked.
+  await db.exec(`insert into inventory(id,item_name,item_name_vi,code,unit,quantity,purchase_price,part) values(201,'레몬','Chanh','LM','kg',1,1000,'kitchen'),(202,'레몬','Chanh','LM','kg',1,1000,'kitchen')`);
+  assert.equal((await create(db,{...orange,item_name:'레몬 슬라이스',item_name_vi:'Chanh lát',code:'LM'})).status,'ok','other names, same code');
+  assert.equal((await create(db,{...orange,item_name:'레몬',item_name_vi:'',code:'LM2'})).status,'ok','same name, different code');
+  const ko=await create(db,{...orange,item_name:' 레몬 ',item_name_vi:'Other',code:'lm'});
+  assert.equal(ko.status,'duplicate');assert.equal(Number(ko.duplicateItemId),201);assert.deepEqual(ko.matchedFields,['item_name']);
+  const vi=await create(db,{...orange,item_name:'',item_name_vi:'CHANH',code:'LM'});assert.deepEqual(vi.matchedFields,['item_name_vi']);
+  await db.exec("update inventory set is_active=false where id in (201,202)");
+  assert.equal((await create(db,{...orange,item_name:'레몬',code:'LM'})).status,'duplicate','inactive items count, like the app');
+  assert.equal(Number((await one(db,"select count(*) as n from inventory where code in ('LM','lm')")).n),3,'existing pair untouched, one new item');
+ }finally{await db.close();}
+});
+
+test('a receipt created by the RPC keeps the existing correction, payment and month-close protections',async()=>{
+ const db=await createFixture();try{
+  const r=await create(db,{...orange,billed_amount_mode:'manual',billed_amount:303000});
+  const itemId=Number(r.item.id),rootId=Number(r.inventoryLogId);
+  const expected=async()=>(await one(db,'select to_jsonb(i) as item from inventory i where id=$1',[itemId])).item;
+  const edit=async(change,date='2026-10-11')=>{const old=await expected();return (await one(db,'select inventory_apply_purchase_receipt_edit_v1($1,$2,$3,$4::jsonb,$5::jsonb,$6::date,1) as r',
+   [itemId,rootId,old.quantity,JSON.stringify(old),JSON.stringify({quantity:3.57,purchase_price:85000,supplier:'Won Mart',supplier_partner_id:10,reason:'QA',...change}),date])).r;};
+  const v3=async payload=>{const old=await expected();return (await one(db,'select inventory_apply_purchase_correction_v3($1,$2,$3,$4::jsonb,$5::jsonb,$6::date,1) as r',
+   [itemId,rootId,old.quantity,JSON.stringify(old),JSON.stringify(payload),'2026-10-11'])).r;};
+  const booked=await one(db,"select t.* from ledger_transactions t join ledger_candidates c on c.resolved_transaction_id=t.id where c.source_key=$1 and t.status='confirmed' order by t.id desc limit 1",['inventory-log:'+rootId]);
+  assert.equal(Number(booked.amount),303000,'booked at the billed amount');
+  // A quick-save reduction cannot silently keep or drop the manual amount.
+  await assert.rejects(v3({quantity:3,purchase_price:85000}),/PURCHASE_BILLED_AMOUNT_EDIT_REQUIRED/);
+  // 입고 수정 rebooks the unpaid receipt at the new billed amount.
+  const e=await edit({billed_amount_mode:'manual',billed_amount:302000});assert.equal(e.status,'ok');assert.equal(e.ledgerSync.code,'REBOOKED');
+  // Paid, allocated or closed: every further edit is refused without writes.
+  for(const [setup,blockReason] of [
+   ["insert into ledger_payable_allocations(payable_id,payment_transaction_id,allocated_amount) select id,expense_transaction_id,1 from ledger_payables where status='unpaid'",'payment_allocated'],
+   ["delete from ledger_payable_allocations;update ledger_payables set status='paid' where status='unpaid'",'payment_completed'],
+   ["update ledger_payables set status='unpaid' where status='paid';insert into ledger_month_closures(month) values('2026-10-01')",'month_closed']]){
+   await db.exec(setup);const before=(await db.query('select count(*)::int as n from inventory_logs')).rows[0].n;
+   const blocked=await edit({billed_amount_mode:'manual',billed_amount:301000});
+   assert.equal(blocked.status,'purchase_correction_review_required');assert.equal(blocked.blockReason,blockReason);
+   assert.equal((await db.query('select count(*)::int as n from inventory_logs')).rows[0].n,before);
+  }
+  // Creating a new receipt in the closed month records MONTH_CLOSED and books nothing.
+  const closed=await create(db,{...orange,code:'OR3'});assert.equal(closed.ledgerSync.code,'MONTH_CLOSED');
+  assert.equal(Number((await one(db,'select count(*) as n from ledger_candidates where source_key=$1',['inventory-log:'+closed.inventoryLogId])).n),0);
+ }finally{await db.close();}
+});

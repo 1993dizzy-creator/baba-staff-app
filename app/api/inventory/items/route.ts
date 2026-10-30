@@ -466,6 +466,15 @@ export async function POST(req: Request) {
       p_reason: logReason, p_business_date: businessDate, p_actor_user_id: actor.id,
     });
     if (error) throw error;
+    // The same duplicate found inside the transaction (double submit, retry after a lost response).
+    if (created?.status === "duplicate") {
+      const { data: existing, error: existingError } = await supabaseAdmin.from("inventory")
+        .select("id, item_name, item_name_vi, code, part, category, category_vi, is_active")
+        .eq("id", Number(created.duplicateItemId)).maybeSingle();
+      if (existingError) throw existingError;
+      if (existing) return duplicateInventoryItemResponse({ item: existing, matchedFields: created.matchedFields ?? [] });
+      return jsonError("inventory_item_duplicate_name_code", "Duplicate inventory item.", 409);
+    }
     if (created?.status !== "ok") {
       const status = created?.status === "forbidden" ? 403 : 400;
       const code = created?.status === "purchase_quantity_must_increase" ? "inventory_purchase_quantity_must_increase"

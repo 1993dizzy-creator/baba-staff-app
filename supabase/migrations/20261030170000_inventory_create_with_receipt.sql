@@ -11,7 +11,9 @@
 --   state follows the 실청구금액 rules (auto | manual with a positive amount and price).
 -- * The projector records its own status (synced/pending/review_required/failed) in this
 --   transaction; any other failure rolls back the item, log and price history together.
--- * Duplicate-name checks stay in the route (existing behavior).
+-- * Duplicates: the route keeps its pre-check; the RPC re-checks the same policy under one
+--   creation lock, so a double submit or a retry after a lost response returns 'duplicate'
+--   instead of a second item and receipt. Existing duplicate items are not touched.
 begin;
 
 do $contract$
@@ -25,13 +27,25 @@ begin
 end;
 $contract$;
 
+-- The app's duplicate key (lib/inventory/normalize.ts): trim, lowercase, NFD without combining
+-- marks, đ -> d, whitespace collapsed. Compared only against the NEW item; existing duplicate
+-- items are left as they are (no unique constraint).
+create function inventory_ledger_private.inventory_name_key_v1(p_value text)
+returns text language sql immutable set search_path=pg_catalog,public as $$
+  select regexp_replace(lower(replace(replace(
+    regexp_replace(normalize(regexp_replace(coalesce(p_value,''),'^\s+|\s+$','','g'),NFD),'[̀-ͯ]','','g'),
+    'đ','d'),'Đ','d')),'\s+',' ','g');
+$$;
+alter function inventory_ledger_private.inventory_name_key_v1(text) owner to postgres;
+revoke all on function inventory_ledger_private.inventory_name_key_v1(text) from public,anon,authenticated,service_role;
+
 create function public.inventory_create_with_receipt_v1(
   p_payload jsonb,p_reason text,p_business_date date,p_actor_user_id bigint
 ) returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
 declare
   v_actor jsonb; v_new public.inventory%rowtype; v_columns text; v_values text;
   v_log jsonb; v_log_id bigint; v_billed numeric; v_billed_mode text; v_quantity numeric; v_price numeric;
-  v_projection jsonb;
+  v_projection jsonb; v_name_ko text; v_name_vi text; v_code text; v_duplicate_id bigint; v_matched text[];
 begin
   select to_jsonb(u) into v_actor from public.users u where id=p_actor_user_id and is_active and app_login_enabled;
   if v_actor is null then return jsonb_build_object('status','forbidden'); end if;
@@ -66,6 +80,28 @@ begin
     return jsonb_build_object('status','invalid_billed_amount');
   end if;
   if p_reason<>'purchase' then v_billed_mode:=null; v_billed:=null; end if;
+
+  -- Duplicate guard inside the transaction: the app checks before calling, but a double submit
+  -- or a retry after a lost response passes that check. New-item creation is serialized by one
+  -- transaction lock (rare writes), then the same policy as the app is re-checked against
+  -- committed items: same code and the same Korean or Vietnamese name, active or not.
+  perform pg_advisory_xact_lock(hashtext('inventory_item_create'));
+  v_name_ko:=inventory_ledger_private.inventory_name_key_v1(p_payload->>'item_name');
+  v_name_vi:=inventory_ledger_private.inventory_name_key_v1(p_payload->>'item_name_vi');
+  v_code:=inventory_ledger_private.inventory_name_key_v1(p_payload->>'code');
+  if v_name_ko<>'' or v_name_vi<>'' then
+    select i.id,array_remove(array[
+        case when v_name_ko<>'' and inventory_ledger_private.inventory_name_key_v1(i.item_name)=v_name_ko then 'item_name' end,
+        case when v_name_vi<>'' and inventory_ledger_private.inventory_name_key_v1(i.item_name_vi)=v_name_vi then 'item_name_vi' end],null)
+      into v_duplicate_id,v_matched from public.inventory i
+      where inventory_ledger_private.inventory_name_key_v1(i.code)=v_code
+        and ((v_name_ko<>'' and inventory_ledger_private.inventory_name_key_v1(i.item_name)=v_name_ko)
+          or (v_name_vi<>'' and inventory_ledger_private.inventory_name_key_v1(i.item_name_vi)=v_name_vi))
+      order by i.id limit 1;
+    if v_duplicate_id is not null then
+      return jsonb_build_object('status','duplicate','duplicateItemId',v_duplicate_id,'matchedFields',to_jsonb(v_matched));
+    end if;
+  end if;
 
   -- All writes below commit together or not at all.
   p_payload:=p_payload || jsonb_build_object('updated_at',clock_timestamp(),
