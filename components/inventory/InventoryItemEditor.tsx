@@ -18,6 +18,8 @@ import { InventoryImageCompressionError, compressInventoryImage, formatFileSize 
 import type { PartnerSelectOption } from "@/lib/partners/select-options";
 import { duplicateInventoryItemMessage, type DuplicateMatchedField } from "@/lib/inventory/duplicate-item";
 import SupplierSelectOptions from "@/components/inventory/SupplierSelectOptions";
+import BilledAmountField from "@/components/inventory/BilledAmountField";
+import { AUTO_BILLED_AMOUNT, billedAmountRequest, calculatePurchaseAmount, resolveBilledAmount, type BilledAmountDraft } from "@/lib/inventory/billed-amount";
 type InventoryItem = {
     id: number;
     item_name?: string | null;
@@ -78,6 +80,11 @@ type EditFormPendingSave = {
     expectedQuantity: number;
     expectedUpdatedAt?: string | null;
 };
+// Stock increase and unit price of a pending edit-form save (the receipt if saved as 입고).
+const editPendingIncrease = (pending: EditFormPendingSave) =>
+    Math.round((Number(pending.payload.quantity) - Number(pending.expectedQuantity)) * 1000) / 1000;
+const editPendingPrice = (pending: EditFormPendingSave) =>
+    pending.payload.purchase_price == null ? null : Number(pending.payload.purchase_price);
 type KegSalesBreakdown = {
     totalUnits: number;
     expectedTotalMl?: number;
@@ -193,6 +200,8 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
     const [inventoryList, setInventoryList] = useState<InventoryItem[]>(initialItem ? [initialItem] : []);
     const editingId = itemId;
     const [editFormPendingSave, setEditFormPendingSave] = useState<EditFormPendingSave | null>(null);
+    // 실청구금액 of the receipt when this edit increases stock and is saved as 입고.
+    const [editBilledDraft, setEditBilledDraft] = useState<BilledAmountDraft>(AUTO_BILLED_AMOUNT);
     const [isEditReasonSaving, setIsEditReasonSaving] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [photoBusyItemId, setPhotoBusyItemId] = useState<number | null>(null);
@@ -304,6 +313,13 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
             if(reason==="purchase" && Number(editFormPendingSave.payload.quantity)<Number(editFormPendingSave.expectedQuantity) && !window.confirm(lang==="vi"
                 ? "Bạn có muốn điều chỉnh số lượng hàng đã nhập hôm nay không?"
                 : "오늘 입고된 수량을 정정하시겠습니까?")) return;
+            const pendingIncrease = editPendingIncrease(editFormPendingSave);
+            const billedRequest = reason === "purchase" && pendingIncrease > 0 ? billedAmountRequest(editBilledDraft) : null;
+            if (reason === "purchase" && pendingIncrease > 0 && (!billedRequest || !resolveBilledAmount(editBilledDraft,
+                calculatePurchaseAmount(pendingIncrease, editPendingPrice(editFormPendingSave))).valid)) {
+                alert(lang === "vi" ? "Nhập số tiền thực tính hoặc khôi phục tự động." : "실청구금액을 입력하거나 자동계산을 복원해 주세요.");
+                return;
+            }
             const res = await fetchInventoryApi("/api/inventory/items", {
                 method: "PATCH",
                 headers: {
@@ -317,6 +333,7 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
                     expectedQuantity: editFormPendingSave.expectedQuantity,
                     expectedUpdatedAt: editFormPendingSave.expectedUpdatedAt,
                     ...(reason === "purchase" ? {autoSelectPurchaseRoot:true} : {}),
+                    ...(billedRequest ? { purchaseBilledAmount: billedRequest } : {}),
                 }),
             });
             const result = await readInventoryItemMutationResult(res, "edit");
@@ -507,6 +524,7 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
                     updated_at: new Date().toISOString(),
                 };
             payload[lang === "ko" ? "item_name_vi" : "item_name"] = normalizeText(otherItemName);
+            setEditBilledDraft(AUTO_BILLED_AMOUNT);
             setEditFormPendingSave({
                 id: editingId,
                 payload,
@@ -1119,6 +1137,22 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
                         <div style={{ ...ui.metaText, marginBottom: 4 }}>
                             {t.editReasonModalDescription}
                         </div>
+
+                        {editPendingIncrease(editFormPendingSave) > 0 && (
+                            <>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>
+                                    {lang === "vi" ? "Áp dụng khi chọn Nhập hàng" : "입고로 저장할 때 적용됩니다"}
+                                </div>
+                                <BilledAmountField
+                                    lang={lang}
+                                    calculated={calculatePurchaseAmount(editPendingIncrease(editFormPendingSave), editPendingPrice(editFormPendingSave))}
+                                    draft={editBilledDraft}
+                                    onChange={setEditBilledDraft}
+                                    disabled={isEditReasonSaving}
+                                    testId="edit-billed-amount"
+                                />
+                            </>
+                        )}
 
                         <div style={{
                 display: "grid",

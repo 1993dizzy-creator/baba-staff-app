@@ -28,6 +28,7 @@ export type InventoryDailySyncLogRow = {
   reason: string | null;
   source?: string | null;
   action?: string | null;
+  billed_amount_mode?: string | null;
   change_quantity: number | null;
   correction_of_inventory_log_id?: number | null;
   prev_quantity: number | null;
@@ -230,8 +231,10 @@ export function findInventoryLogNameSyncItems(
       const root = roots[rootIndex];
       const nextRoot = roots[rootIndex + 1];
       // A receipt edited through 입고 수정 is booked by its edit logs. Its price/supplier
-      // are never copied back onto the receipt row; display metadata still syncs.
-      const receiptEdited = itemLogs.some(log => Number(log.correction_of_inventory_log_id) === Number(root.id) && log.action === "receipt_edit");
+      // are never copied back onto the receipt row; display metadata still syncs. A receipt
+      // saved with a manual 실청구금액 is kept the same way (amount changes only in 입고 수정).
+      const receiptEdited = root.billed_amount_mode === "manual" ||
+        itemLogs.some(log => Number(log.correction_of_inventory_log_id) === Number(root.id) && log.action === "receipt_edit");
       const corrections = itemLogs.filter((log) =>
         isZeroQuantityCorrection(log) && sortLogs(log, root) > 0 && (
           log.correction_of_inventory_log_id != null

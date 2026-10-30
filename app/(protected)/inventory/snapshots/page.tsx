@@ -34,6 +34,13 @@ import {
 } from "@/lib/inventory/reasons";
 import { formatKegSessionDuration } from "@/lib/inventory/keg-duration";
 import { fetchInventoryApi } from "@/lib/inventory/client-auth";
+import BilledAmountField from "@/components/inventory/BilledAmountField";
+import { AUTO_BILLED_AMOUNT, billedAmountRequest, calculatePurchaseAmount, effectiveBilledAmount, manualBilledDraft, resolveBilledAmount, type BilledAmountDraft } from "@/lib/inventory/billed-amount";
+
+// 실청구금액 of a purchase card: the family's effective billed amount (what the Ledger books).
+const entryBilledAmount = (entry: Extract<DailyItemLogEntry<InventoryLog>, { kind: "purchase" }>) =>
+    effectiveBilledAmount([entry.root, ...entry.corrections], entry.invalid ? null : entry.effectiveQuantity,
+        entry.final.new_purchase_price == null ? null : Number(entry.final.new_purchase_price));
 
 
 type SnapshotBatch = {
@@ -143,6 +150,8 @@ type InventoryLog = {
     new_supplier?: string | null;
     purchase_supplier_partner_id?: number | null;
     ledger_projection_status?: string | null;
+    billed_amount?: number | string | null;
+    billed_amount_mode?: string | null;
     reason?: InventoryReasonValue | null;
     source?: string | null;
     business_date?: string | null;
@@ -387,6 +396,7 @@ export default function InventorySnapshotsPage() {
     const [purchaseEdit, setPurchaseEdit] = useState<{
         rootId: number; itemId: number; final: InventoryLog;
         quantity: string; price: string; partnerId: string; note: string; reason: string;
+        billed: BilledAmountDraft;
         partners: PartnerSelectOption[]; busy: boolean; error: string;
     } | null>(null);
     const [languageMissingItems, setLanguageMissingItems] = useState<SnapshotLanguageMissingItem[]>([]);
@@ -1635,6 +1645,8 @@ export default function InventorySnapshotsPage() {
             partnerId: "",
             note: "",
             reason: "",
+            // The receipt's current 실청구금액 state; a manual amount is carried until restored.
+            billed: entryBilledAmount(entry).mode === "manual" ? manualBilledDraft(entryBilledAmount(entry).billed) : AUTO_BILLED_AMOUNT,
             partners: [],
             busy: false,
             error: "",
@@ -1669,6 +1681,9 @@ export default function InventorySnapshotsPage() {
         if (!reason || reason.length > 200)
             return fail(vi ? "Nhập lý do sửa (tối đa 200 ký tự)." : "수정 사유를 입력해 주세요(최대 200자).");
         if (note.length > 500) return fail(vi ? "Ghi chú tối đa 500 ký tự." : "메모는 최대 500자입니다.");
+        const billed = billedAmountRequest(purchaseEdit.billed);
+        if (!billed || !resolveBilledAmount(purchaseEdit.billed, calculatePurchaseAmount(quantity, price)).valid)
+            return fail(vi ? "Nhập số tiền thực tính lớn hơn 0 hoặc khôi phục tự động." : "0보다 큰 실청구금액을 입력하거나 자동계산을 복원해 주세요.");
         const selectedPartner = purchaseEdit.partners.find((partner) => String(partner.id) === purchaseEdit.partnerId);
         const supplier = selectedPartner
             ? { supplier: selectedPartner.name, supplierPartnerId: selectedPartner.id }
@@ -1691,6 +1706,7 @@ export default function InventorySnapshotsPage() {
                     expectedQuantity: Number(current.quantity ?? 0),
                     expectedUpdatedAt: current.updated_at ?? null,
                     payload: { quantity, purchase_price: price, ...supplier, note: note || null, reason },
+                    purchaseBilledAmount: billed,
                 }),
             });
             const result = await res.json().catch(() => ({}));
@@ -1724,6 +1740,7 @@ export default function InventorySnapshotsPage() {
         const editing = purchaseEdit?.rootId === entry.root.id ? purchaseEdit : null;
         const editable = !entry.cancelled && !entry.invalid && !entry.ledgerReviewPending && Number(entry.root.item_id) > 0;
         const notice = receiptEditNotice?.rootId === entry.root.id ? receiptEditNotice.message : null;
+        const billed = entryBilledAmount(entry);
         const chipStyle = {
             ...ui.badgeMini,
             minWidth: "auto",
@@ -1749,6 +1766,23 @@ export default function InventorySnapshotsPage() {
 
         const footer = (
             <div data-testid={`daily-log-purchase-${entry.root.id}`} style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+                {!entry.cancelled && !entry.invalid && billed.billed != null && (
+                    <div data-testid={`daily-log-billed-${entry.root.id}`} data-mode={billed.mode}
+                        style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "2px 8px", fontSize: 12, color: "#374151" }}>
+                        <span style={{ fontWeight: 800, color: "#111827" }}>
+                            {vi ? "Thực tính" : "실청구금액"} {Math.round(billed.billed).toLocaleString("en-US")} ₫
+                        </span>
+                        <span style={{ ...chipStyle, ...(billed.mode === "manual" ? { background: "#fffbeb", color: "#b45309", borderColor: "#fcd34d" } : {}) }}>
+                            {billed.mode === "manual" ? (vi ? "Nhập tay" : "직접 입력") : (vi ? "Tự động" : "자동계산")}
+                        </span>
+                        {billed.mode === "manual" && billed.calculated != null && (
+                            <span>
+                                {vi ? "Tiền tính" : "계산금액"} {Math.round(billed.calculated).toLocaleString("en-US")} ₫ · {vi ? "Chênh lệch" : "차액"}{" "}
+                                {(billed.difference ?? 0) > 0 ? "+" : (billed.difference ?? 0) < 0 ? "−" : ""}{Math.abs(Math.round(billed.difference ?? 0)).toLocaleString("en-US")} ₫
+                            </span>
+                        )}
+                    </div>
+                )}
                 <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
                     {entry.corrections.length > 0 && (
                         <span style={chipStyle}>{vi ? `Đã sửa ${entry.corrections.length} lần` : `수정 ${entry.corrections.length}회`}</span>
@@ -1805,6 +1839,14 @@ export default function InventorySnapshotsPage() {
                                     style={ui.input} />
                             </label>
                         </div>
+                        <BilledAmountField
+                            lang={lang}
+                            calculated={calculatePurchaseAmount(Number(editing.quantity.trim().replace(",", ".")), Number(editing.price.trim().replace(/[,\s]/g, "")))}
+                            draft={editing.billed}
+                            onChange={(billed) => setPurchaseEdit((prev) => prev ? { ...prev, billed, error: "" } : prev)}
+                            disabled={editing.busy}
+                            testId={`receipt-edit-billed-${entry.root.id}`}
+                        />
                         <label style={editFieldStyle}>
                             {vi ? "Nhà cung cấp" : "거래처"}
                             {canChangeReceiptSupplier ? (

@@ -25,6 +25,7 @@ import {
   type PurchaseRoot,
 } from "@/lib/inventory/purchase-correction-policy";
 import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
+import { parseBilledAmountRequest, type BilledAmountRequest } from "@/lib/inventory/billed-amount";
 import { projectInventoryPurchaseLog } from "@/lib/ledger/inventory-projection";
 import { applyResolvedInventorySupplier, resolveInventorySupplier } from "@/lib/inventory/supplier-partners-server";
 import { PARTNER_OPTION_COLUMNS, PARTNER_SUBTYPE_EMOJI_COLUMNS, partnerSelectOptions } from "@/lib/partners/select-options";
@@ -81,6 +82,16 @@ const jsonError = (
     },
     { status }
   );
+
+// 실청구금액 of a new receipt as inventory_logs columns. Auto stores no amount.
+const billedAmountColumns = (request: BilledAmountRequest) => ({
+  billed_amount_mode: request.mode,
+  billed_amount: request.mode === "manual" ? request.amount : null,
+});
+
+// The DB refuses a correction without a billed mode on a receipt with a manual billed amount.
+const isBilledAmountEditRequired = (error: unknown) =>
+  (getSupabaseErrorField(error, "message") ?? getErrorMessage(error)).includes("PURCHASE_BILLED_AMOUNT_EDIT_REQUIRED");
 
 const canDeleteInventoryItem = (role: unknown) =>
   role === "owner" || role === "master";
@@ -442,6 +453,11 @@ export async function POST(req: Request) {
       ? getReasonByRegistrationType(registrationType) : normalizeInventoryReason(reason,"unclassified");
     if (requestedReason === "purchase" && (!Number.isFinite(Number(payload.quantity)) || Number(payload.quantity)<=0))
       return jsonError("inventory_purchase_quantity_must_increase","A new receipt needs a positive quantity; use a linked correction for reductions.",400);
+    // 실청구금액 belongs to a purchase receipt; manual needs a unit price to compare with.
+    const billedRequest = parseBilledAmountRequest(body.purchaseBilledAmount);
+    if (billedRequest === "invalid" || (billedRequest?.mode === "manual" &&
+        (requestedReason !== "purchase" || !(Number(payload.purchase_price) > 0))))
+      return jsonError("invalid_billed_amount", "Invalid billed amount.", 400);
 
     if (!normalizePackageContentPayload(payload)) {
       return NextResponse.json(
@@ -544,6 +560,7 @@ export async function POST(req: Request) {
 
         prev_low_stock_threshold: null,
         new_low_stock_threshold: insertedData.low_stock_threshold ?? 1,
+        ...(logReason === "purchase" && billedRequest ? billedAmountColumns(billedRequest) : {}),
       },
       {
         reason: logReason,
@@ -592,6 +609,8 @@ export async function PATCH(req: Request) {
       reason,
     } = body;
 
+    const billedRequest = parseBilledAmountRequest(body.purchaseBilledAmount);
+    if (billedRequest === "invalid") return jsonError("invalid_billed_amount", "Invalid billed amount.", 400);
     const correctionPurchaseLogId = body.correction_of_inventory_log_id == null
       ? null : Number(body.correction_of_inventory_log_id);
     // Automatic UI corrections only resolve a unique receipt from today.
@@ -774,6 +793,7 @@ export async function PATCH(req: Request) {
           quantity: payload.quantity, purchase_price: payload.purchase_price,
           supplier: resolvedSupplier.supplier, supplier_partner_id: resolvedSupplier.supplier_partner_id,
           note: payload.note ?? null, reason: payload.reason ?? null,
+          ...(billedRequest ? billedAmountColumns(billedRequest) : {}),
         },
         p_business_date: businessDate, p_actor_user_id: actor.id,
       });
@@ -786,7 +806,8 @@ export async function PATCH(req: Request) {
         return jsonError(edited?.status ?? "purchase_correction_failed", "Receipt edit was not saved.", status,
           edited?.blockReason ? { blockReason: edited.blockReason, reviewCode: edited.code } : undefined);
       }
-      return NextResponse.json({ ok: true, mode, completion: edited.completion, ledgerSync: edited.ledgerSync });
+      return NextResponse.json({ ok: true, mode, completion: edited.completion, ledgerSync: edited.ledgerSync,
+        billedAmount: { mode: edited.billedAmountMode, amount: edited.amount, calculated: edited.calculatedAmount } });
     }
     const supplierResolution = await resolveInventorySupplier({ supabase: supabaseAdmin, payload, actorUserId: actor.id });
     serverPayload = applyResolvedInventorySupplier(serverPayload, supplierResolution);
@@ -1043,6 +1064,8 @@ export async function PATCH(req: Request) {
             countIssue === "purchase_correction_review_required" ? {blockReason:"physical_count_unverified"} : undefined);
     }
     if (correctionPurchaseLogId !== null || autoCorrectionRootId !== null) {
+      // A correction reduces an existing receipt; its 실청구금액 is changed only in 입고 수정.
+      if (billedRequest?.mode === "manual") return jsonError("invalid_billed_amount", "A billed amount belongs to a new receipt.", 400);
       const businessDate = autoCorrectionBusinessDate ?? (await resolveInventoryBusinessDate()).businessDate;
       const { data: correction, error } = await supabaseAdmin.rpc("inventory_apply_purchase_correction_v3", {
         p_item_id: Number(id), p_purchase_log_id: correctionPurchaseLogId ?? autoCorrectionRootId,
@@ -1050,6 +1073,9 @@ export async function PATCH(req: Request) {
         p_expected_item: prevItem, p_payload: serverPayload,
         p_business_date: businessDate, p_actor_user_id: actor.id,
       });
+      if (error && isBilledAmountEditRequired(error))
+        return jsonError("purchase_billed_amount_edit_required", "This receipt has a manual billed amount. Use the receipt edit.", 409,
+          { blockReason: "billed_amount_manual" });
       if (error) throw error;
       if (correction?.status !== "ok") {
         return jsonError(correction?.status ?? "purchase_correction_failed", "Purchase correction was not saved.",
@@ -1071,8 +1097,11 @@ export async function PATCH(req: Request) {
     const businessDate = (await resolveInventoryBusinessDate()).businessDate;
     // A single DB transaction commits the item, required source audit and price history.
     // Never fall back to separate writes if the migration/RPC is unavailable.
+    // A purchase save carries its 실청구금액; the RPC keeps it only for a new receipt and then
+    // projects that receipt to the Ledger in the same transaction.
+    const billedPayload = logReason === "purchase" && billedRequest ? billedAmountColumns(billedRequest) : {};
     const { data: saved, error: saveError } = await supabaseAdmin.rpc("inventory_update_with_audit_v1", {
-      p_item_id: Number(id), p_expected_item: prevItem, p_payload: serverPayload,
+      p_item_id: Number(id), p_expected_item: prevItem, p_payload: { ...serverPayload, ...billedPayload },
       p_business_date: businessDate, p_actor_user_id: actor.id, p_reason: logReason, p_source: logSource,
       p_price_business_date: mode !== "quick-save" && typeof body.business_date === "string" ? body.business_date : businessDate,
     });
@@ -1082,9 +1111,9 @@ export async function PATCH(req: Request) {
       return jsonError(saved?.status === "inventory_conflict" ? "INVENTORY_CONFLICT" : saved?.status ?? "inventory_save_failed",
         "Item was not saved. Reload before retrying if it changed.", status);
     }
-    const ledgerSync = logReason === "purchase"
+    const ledgerSync = saved.ledgerSync ?? (logReason === "purchase"
       ? await projectInventoryPurchaseLog(Number(saved.inventoryLogId), actor.id)
-      : undefined;
+      : undefined);
     return NextResponse.json({ ok: true, mode, ledgerSync });
   } catch (error) {
     console.error("[INVENTORY_PATCH_ERROR]", error);

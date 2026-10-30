@@ -46,6 +46,8 @@ import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
 import type { PartnerSelectOption } from "@/lib/partners/select-options";
 import { duplicateInventoryItemMessage, type DuplicateMatchedField } from "@/lib/inventory/duplicate-item";
 import SupplierSelectOptions from "@/components/inventory/SupplierSelectOptions";
+import BilledAmountField from "@/components/inventory/BilledAmountField";
+import { AUTO_BILLED_AMOUNT, billedAmountRequest, calculatePurchaseAmount, resolveBilledAmount, type BilledAmountDraft } from "@/lib/inventory/billed-amount";
 import { findSimilarInventoryItems } from "@/lib/inventory/similarity";
 import {
     InventoryImageCompressionError,
@@ -379,6 +381,9 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
     const [isRegistrationTypeModalOpen, setIsRegistrationTypeModalOpen] = useState(false);
     const [registrationType, setRegistrationType] =
         useState<InventoryRegistrationType | null>(null);
+    // 실청구금액 of a new receipt (registration form and quick save).
+    const [billedDraft, setBilledDraft] = useState<BilledAmountDraft>(AUTO_BILLED_AMOUNT);
+    const [quickBilledDraft, setQuickBilledDraft] = useState<BilledAmountDraft>(AUTO_BILLED_AMOUNT);
 
     const [search, setSearch] = useState("");
     const [partFilter, setPartFilter] = useState<InventoryPartValue>(defaultPart);
@@ -1319,6 +1324,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
     };
 
     const resetForm = () => {
+        setBilledDraft(AUTO_BILLED_AMOUNT);
         setItemName("");
         setQuantity("");
         setUnit("");
@@ -1693,6 +1699,12 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
             const nextQuantity = parseDecimal(quantity);
             const nextPurchasePrice =
                 purchasePrice.trim() === "" ? null : preserveUnchangedPurchasePrice(purchasePrice, inventoryList.find(item => item.id === editingId)?.purchase_price);
+            const billedRequest = registrationType === "new_purchase" ? billedAmountRequest(billedDraft) : null;
+            if (registrationType === "new_purchase" &&
+                (!billedRequest || !resolveBilledAmount(billedDraft, calculatePurchaseAmount(nextQuantity, nextPurchasePrice)).valid)) {
+                alert(lang === "vi" ? "Nhập số tiền thực tính hoặc khôi phục tự động." : "실청구금액을 입력하거나 자동계산을 복원해 주세요.");
+                return;
+            }
 
             // ===================== 수정 =====================
             const payload =
@@ -1743,6 +1755,7 @@ const res = await fetchInventoryApi("/api/inventory/items", {
                     body: JSON.stringify({
                         payload,
                         registrationType,
+                        ...(billedRequest ? { purchaseBilledAmount: billedRequest } : {}),
                     }),
                 });
 const result = await readInventoryItemMutationResult(res, "save");
@@ -1800,6 +1813,7 @@ alert(c.saveSuccess);
         }
 
         setQuickSaveItem(item);
+        setQuickBilledDraft(AUTO_BILLED_AMOUNT);
         setQuickSaveReason("stock_check");
         setQuickSaveOtherText("");
         setQuickPurchaseSupplier(item.supplier || "");
@@ -1810,6 +1824,7 @@ alert(c.saveSuccess);
 
     const closeQuickSaveModal = () => {
         setQuickSaveItem(null);
+        setQuickBilledDraft(AUTO_BILLED_AMOUNT);
         setQuickSaveReason(null);
         setQuickSaveOtherText("");
         setQuickPurchaseSupplier("");
@@ -2282,6 +2297,14 @@ alert(c.saveSuccess);
                     ? null
                     : preserveUnchangedPurchasePrice(quickPurchasePrice, quickSaveItem.purchase_price);
 
+            // 실청구금액 for the stock increase of this receipt (the delta, not the final stock).
+            const quickBilledRequest = reason === "purchase" && nextQty > currentQty ? billedAmountRequest(quickBilledDraft) : null;
+            if (reason === "purchase" && nextQty > currentQty && (!quickBilledRequest ||
+                !resolveBilledAmount(quickBilledDraft, calculatePurchaseAmount(roundDecimal(nextQty - currentQty), nextPurchasePrice)).valid)) {
+                alert(lang === "vi" ? "Nhập số tiền thực tính hoặc khôi phục tự động." : "실청구금액을 입력하거나 자동계산을 복원해 주세요.");
+                return;
+            }
+
             const payload = {
                 quantity: nextQty,
                 updated_at: new Date().toISOString(),
@@ -2309,7 +2332,7 @@ alert(c.saveSuccess);
                     payload,
                     expectedQuantity: currentQty,
                     reason,
-
+                    ...(quickBilledRequest ? { purchaseBilledAmount: quickBilledRequest } : {}),
                 }),
             });
 
@@ -4818,6 +4841,18 @@ alert(c.saveSuccess);
                             />
                         </div>
 
+                        {/* 실청구금액: every new receipt; auto = 수량 × 단가 */}
+                        {registrationType === "new_purchase" && (
+                            <BilledAmountField
+                                lang={lang}
+                                calculated={calculatePurchaseAmount(parseDecimal(quantity), parsePrice(purchasePrice))}
+                                draft={billedDraft}
+                                onChange={setBilledDraft}
+                                disabled={isSubmitting}
+                                testId="registration-billed-amount"
+                            />
+                        )}
+
                         {/* 단위 */}
                         <div>
                             <div style={labelStyle}>
@@ -5917,6 +5952,21 @@ alert(c.saveSuccess);
                                     placeholder={t.purchasePrice}
                                     style={ui.input}
                                 />
+                                {/* 실청구금액 of this receipt = the stock increase x unit price, never the final stock. */}
+                                {(() => {
+                                    const changeQty = roundDecimal(parseDecimal(quantityDrafts[quickSaveItem.id]) - roundDecimal(Number(quickSaveItem.quantity ?? 0)));
+                                    if (!(changeQty > 0)) return null;
+                                    return (
+                                        <BilledAmountField
+                                            lang={lang}
+                                            calculated={calculatePurchaseAmount(changeQty, parsePrice(quickPurchasePrice))}
+                                            draft={quickBilledDraft}
+                                            onChange={setQuickBilledDraft}
+                                            disabled={isQuickSaving || isKegReplacing}
+                                            testId="quick-billed-amount"
+                                        />
+                                    );
+                                })()}
                                 <button
                                     type="button"
                                     onClick={() => handleQuickSaveConfirm("purchase")}

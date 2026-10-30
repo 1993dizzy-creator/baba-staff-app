@@ -6,6 +6,7 @@ export type PurchaseCaseLog = {
   reason: string; source?: string; change_quantity: number; new_purchase_price: number | null;
   new_supplier: string | null; purchase_supplier_partner_id?: number | null; unit?: string | null;
   actor_name?: string | null; actor_username?: string | null;
+  billed_amount?: number | string | null; billed_amount_mode?: string | null;
 };
 export type PurchaseCaseIssue = {
   inventoryLogId: number; status: string; code: string; itemName: string; itemNameVi?: string | null;
@@ -46,6 +47,12 @@ const byTime = (a: {created_at: string; id: number}, b: {created_at: string; id:
 const finite = (value: unknown): number | null => value == null || value === "" || !Number.isFinite(Number(value)) ? null : Number(value);
 const equal = (a: number | null, b: number | null) => a !== null && b !== null && Math.abs(a - b) < 0.000001;
 const normalized = (value: unknown) => String(value ?? "").trim().toLowerCase();
+// 실청구금액: the latest family log with an explicit billed mode decides (same rule as the
+// projector and lib/inventory/billed-amount); null = automatic quantity x price.
+const manualBilledAmount = (family: PurchaseCaseLog[]) => {
+  const latest = family.filter(log => log.billed_amount_mode === "auto" || log.billed_amount_mode === "manual").sort((a,b) => b.id-a.id)[0];
+  return latest?.billed_amount_mode === "manual" ? finite(latest.billed_amount) : null;
+};
 
 // Explicit root IDs establish identity. Names, stock checks and independent
 // positive receipts never establish a correction link or affect receipt totals.
@@ -84,7 +91,9 @@ export function buildPurchaseCases({ issues, logs, candidates = [], transactions
       && (snapshot?.purchase_supplier_partner_id == null || Number(snapshot.purchase_supplier_partner_id)===Number(latest.purchase_supplier_partner_id));
     const booked = effective !== null && price !== null && snapshot && supplierMatches
       && equal(finite(snapshot.change_quantity),effective) && equal(finite(snapshot.purchase_price),price)
-      && equal(finite(snapshot.purchase_amount),Number((effective*price).toFixed(3)))
+      // Booked amount = the effective 실청구금액 (manual billed or quantity x price).
+      && equal(finite(snapshot.purchase_amount),effective > 0 && manualBilledAmount(family) !== null
+        ? manualBilledAmount(family) : Number((effective*price).toFixed(3)))
       && family.filter(log=>log.id!==root?.id).every(log=>coveredIds.includes(log.id));
     const completed = booked && ((candidate?.status === "dismissed" && candidate.dismissal_reason === "Inventory purchase fully cancelled" && equal(effective,0))
       || (candidate?.status === "confirmed" && transaction?.status === "confirmed"

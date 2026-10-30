@@ -52,7 +52,7 @@ type InventoryLogsQueryOptions = {
 const LOG_CARD_COLUMNS = [
   "id", "item_id", "item_name", "item_name_vi", "category", "category_vi",
   "part", "code", "unit", "action", "reason", "source", "created_at", "actor_name",
-  "change_quantity", "business_date", "correction_of_inventory_log_id",
+  "change_quantity", "business_date", "correction_of_inventory_log_id", "billed_amount", "billed_amount_mode",
   ...["quantity", "purchase_price", "note", "supplier", "code", "unit", "category",
     "category_vi", "part", "low_stock_threshold"].flatMap((field) => [`prev_${field}`, `new_${field}`]),
 ].join(", ");
@@ -438,9 +438,15 @@ export async function PATCH(req: Request) {
         .eq("action", "receipt_edit").in(column, targetLogIds)));
     const receiptEditError = receiptEditQueries.find(result => result.error)?.error;
     if (receiptEditError) throw receiptEditError;
+    // A receipt registered with a manual 실청구금액 is protected the same way: its amount is
+    // kept by 입고 수정 logs, never by rewriting the receipt row (the DB also refuses it).
+    const { data: manualBilledRows, error: manualBilledError } = await supabaseServer.from("inventory_logs")
+      .select("id, billed_amount_mode").eq("billed_amount_mode", "manual").in("id", targetLogIds);
+    if (manualBilledError) throw manualBilledError;
     const receiptEditedIds = new Set(receiptEditQueries.flatMap(result => result.data ?? [])
       .filter(row => row.action === "receipt_edit")
       .flatMap(row => [Number(row.id), Number(row.correction_of_inventory_log_id)])
+      .concat((manualBilledRows ?? []).filter(row => row.billed_amount_mode === "manual").map(row => Number(row.id)))
       .filter(logId => targetLogIds.includes(logId)));
     if (receiptEditedIds.size > 0 && (hasNewSupplier || hasNewPurchasePrice)) {
       return NextResponse.json({ ok: false, error: "inventory_receipt_edit_protected",

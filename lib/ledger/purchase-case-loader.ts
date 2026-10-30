@@ -5,7 +5,7 @@ import { canReviewPurchaseCorrection } from "@/lib/inventory/purchase-repair-con
 import { buildPurchaseCases, type PurchaseCaseLog, type PurchaseCaseIssue, type PurchaseCaseCandidate,
   type PurchaseCaseTransaction, type PurchaseCaseAudit } from "@/lib/inventory/purchase-cases";
 
-const logColumns = "id,item_id,item_name,item_name_vi,correction_of_inventory_log_id,business_date,created_at,reason,source,change_quantity,new_purchase_price,new_supplier,purchase_supplier_partner_id,unit,actor_name,actor_username";
+const logColumns = "id,item_id,item_name,item_name_vi,correction_of_inventory_log_id,business_date,created_at,reason,source,change_quantity,new_purchase_price,new_supplier,purchase_supplier_partner_id,unit,actor_name,actor_username,billed_amount,billed_amount_mode";
 
 export async function loadPurchaseCases(start: string, end: string, actorUserId: number) {
   const issues: PurchaseCaseIssue[] = [];

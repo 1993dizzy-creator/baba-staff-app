@@ -44,6 +44,7 @@ function setup({role='owner',authenticated=true,inactive=false,race=false,closed
  '@/lib/inventory/duplicate-item':load('lib/inventory/duplicate-item.ts',{'./normalize.ts':load('lib/inventory/normalize.ts')}),
  '@/lib/inventory/inventory-business-time':{resolveInventoryBusinessDate:async()=>({businessDate})},
  '@/lib/inventory/purchase-correction-policy':load('lib/inventory/purchase-correction-policy.ts'),
+ '@/lib/inventory/billed-amount':load('lib/inventory/billed-amount.ts'),
  '@/lib/inventory/price-logs':{insertInventoryPriceLog:async()=>{}},
  '@/lib/ledger/inventory-projection':{projectInventoryPurchaseLog:async(id,actor)=>{projections.push({id,actor});return {status:'synced',code:'REBOOKED',inventoryLogId:id};}},
  '@/lib/inventory/supplier-partners-server':{resolveInventorySupplier:async()=>{calls.push('supplier-resolve');return null;},applyResolvedInventorySupplier:p=>p},
@@ -300,4 +301,37 @@ test('receipt edit: RPC statuses map to HTTP status and keep the block reason fo
  ]){const s=setup({rpcHandler:receiptRpc(result)});const r=await s.patch(receiptEdit());const body=await r.json();
   assert.equal(r.status,status,JSON.stringify(result));assert.equal(body.ok,false);assert.equal(body.error,error);assert.equal(body.blockReason,blockReason);}
  const failing=setup({rpcHandler:async()=>({data:null,error:{code:'PGRST202'}})});assert.equal((await failing.patch(receiptEdit())).status,500);
+});
+
+// 실청구금액: every receipt path forwards the billed state; corrections never carry a manual amount.
+test('billed amount: receipt edit and new-receipt saves forward it; invalid values and corrections stop before any RPC',async()=>{
+ const calls=[],s=setup({rpcHandler:receiptRpc({status:'ok',completion:'complete',billedAmountMode:'manual',amount:303000,calculatedAmount:303450,ledgerSync:{status:'synced',code:'REBOOKED'}},calls)});
+ const r=await s.patch(receiptEdit({purchaseBilledAmount:{mode:'manual',amount:303000}}));assert.equal(r.status,200);
+ assert.deepEqual((await r.json()).billedAmount,{mode:'manual',amount:303000,calculated:303450});
+ assert.deepEqual(calls[0].args.p_edit,{quantity:3,purchase_price:31000,supplier:'QA',supplier_partner_id:null,note:'memo',reason:'영수증 확인',billed_amount_mode:'manual',billed_amount:303000});
+ const auto=[],a=setup({rpcHandler:receiptRpc({status:'ok',completion:'complete'},auto)});
+ await a.patch(receiptEdit({purchaseBilledAmount:{mode:'auto'}}));assert.equal(auto[0].args.p_edit.billed_amount_mode,'auto');assert.equal(auto[0].args.p_edit.billed_amount,null);
+ // An older client sends nothing: the RPC carries the receipt's current state.
+ const legacy=[],l=setup({rpcHandler:receiptRpc({status:'ok',completion:'complete'},legacy)});
+ await l.patch(receiptEdit());assert.equal(Object.hasOwn(legacy[0].args.p_edit,'billed_amount_mode'),false);
+ for(const value of [{mode:'manual',amount:0},{mode:'manual'},{mode:'auto',amount:5},{mode:'x'},'manual']){
+  const bad=setup({rpcHandler:async()=>{throw Error('RPC must not run');}});
+  const br=await bad.patch(receiptEdit({purchaseBilledAmount:value}));assert.equal(br.status,400,JSON.stringify(value));assert.equal((await br.json()).error,'invalid_billed_amount');
+ }
+ // Edit-form purchase increase: billed keys reach inventory_update_with_audit_v1 and its in-transaction projection is used.
+ const saves=[],u=setup({rpcHandler:async(name,args)=>{saves.push({name,args});return {data:{status:'ok',inventoryLogId:101,ledgerSync:{status:'synced',code:'PROJECTED'}},error:null};}});
+ const ur=await u.patch(edit({payload:{quantity:5.57,purchase_price:85000},reason:'purchase',purchaseBilledAmount:{mode:'manual',amount:303000}}));
+ assert.equal(ur.status,200);assert.equal((await ur.json()).ledgerSync.code,'PROJECTED');assert.equal(u.projections.length,0,'no second projection');
+ assert.equal(saves[0].name,'inventory_update_with_audit_v1');assert.equal(saves[0].args.p_payload.billed_amount_mode,'manual');assert.equal(saves[0].args.p_payload.billed_amount,303000);
+ // A stock check never carries billed keys.
+ const checks=[],c=setup({rpcHandler:async(name,args)=>{checks.push(args);return {data:{status:'ok',inventoryLogId:101},error:null};}});
+ await c.patch(edit({payload:{quantity:1},reason:'stock_check',purchaseBilledAmount:{mode:'auto'}}));assert.equal(Object.hasOwn(checks[0].p_payload,'billed_amount_mode'),false);
+ // A same-day reduction is a correction of an existing receipt: manual is refused before v3.
+ const q=setup({rootDate:'2026-10-10'});
+ const qr=await q.patch(edit({mode:'quick-save',source:'quick_save',payload:{quantity:1,unit:'bottle',supplier:'QA',purchase_price:30000},reason:'purchase',purchaseBilledAmount:{mode:'manual',amount:5}}));
+ assert.equal(qr.status,400);assert.equal((await qr.json()).error,'invalid_billed_amount');assert.deepEqual(q.writes,[]);
+ // The DB guard on a manual receipt surfaces as a 409 pointing to 입고 수정.
+ const g=setup({rootDate:'2026-10-10',rpcHandler:async name=>name==='inventory_apply_purchase_correction_v3'?{data:null,error:{message:'PURCHASE_BILLED_AMOUNT_EDIT_REQUIRED'}}:{data:{status:'ok',inventoryLogId:101},error:null}});
+ const gr=await g.patch(edit({mode:'quick-save',source:'quick_save',payload:{quantity:1,unit:'bottle',supplier:'QA',purchase_price:30000},reason:'purchase'}));
+ assert.equal(gr.status,409);const gb=await gr.json();assert.equal(gb.error,'purchase_billed_amount_edit_required');assert.equal(gb.blockReason,'billed_amount_manual');
 });

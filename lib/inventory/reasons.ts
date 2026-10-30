@@ -231,6 +231,7 @@ export function inventoryPurchaseErrorMessage(code: string | undefined, lang: "k
     ledger_review_pending: ["이 입고의 이전 수정이 장부 관리자 확인을 기다리고 있어 저장하지 않았습니다. 관리자가 장부에서 확인한 뒤 다시 수정해 주세요.", "Lần sửa trước của phiếu nhập này đang chờ quản lý xác nhận sổ nên chưa lưu. Hãy sửa lại sau khi quản lý xác nhận."],
     receipt_edit_review: ["입고와 연결된 장부 상태를 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được trạng thái sổ liên kết với phiếu nhập nên chưa lưu. Vui lòng liên hệ quản lý."],
     physical_count_unverified: ["입고·재고확인의 시간 순서를 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được thứ tự thời gian nhập hàng và kiểm kho nên chưa lưu. Vui lòng liên hệ quản lý."],
+    billed_amount_invalid: ["실청구금액을 확인할 수 없어 저장하지 않았습니다. 수량이 0보다 클 때만 금액을 직접 입력할 수 있습니다.", "Không xác minh được số tiền thực tính nên chưa lưu. Chỉ nhập tay số tiền khi số lượng lớn hơn 0."],
   };
   if (code === "purchase_correction_review_required" && details?.blockReason && Object.hasOwn(reviewMessages, details.blockReason))
     return reviewMessages[details.blockReason][vi ? 1 : 0];
@@ -261,6 +262,9 @@ export function inventoryPurchaseErrorMessage(code: string | undefined, lang: "k
     inventory_quantity_negative: ["현재 재고가 줄일 수량보다 적어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Tồn kho hiện tại nhỏ hơn số lượng cần giảm nên chưa lưu. Vui lòng liên hệ quản lý."],
     purchase_correction_root_not_found: ["오늘 조건에 맞는 입고 기록이 없습니다. 관리자에게 확인해주세요.", "Không có lô nhập hôm nay phù hợp. Vui lòng hỏi quản lý."],
     purchase_correction_review_required: ["서버에서 자동 정정의 안전성을 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Hệ thống chưa xác minh được điều kiện điều chỉnh an toàn nên chưa lưu. Vui lòng liên hệ quản lý."],
+    invalid_billed_amount: ["실청구금액이 올바르지 않아 저장하지 않았습니다. 0보다 큰 금액을 입력하거나 자동계산을 복원해 주세요.", "Số tiền thực tính không hợp lệ nên chưa lưu. Hãy nhập số tiền lớn hơn 0 hoặc khôi phục tự động."],
+    purchase_billed_amount_edit_required: ["실청구금액을 직접 입력한 입고는 수량을 이곳에서 줄일 수 없습니다. 재고 로그의 [입고 수정]에서 수량과 실청구금액을 함께 정정해 주세요.", "Phiếu nhập có số tiền thực tính nhập tay không thể giảm số lượng ở đây. Hãy sửa số lượng và số tiền cùng lúc bằng [Sửa nhập hàng] trong nhật ký."],
+    inventory_billed_amount_protected: ["실청구금액을 직접 입력한 입고의 단가·수량은 당일 로그의 [입고 수정]에서만 변경할 수 있습니다.", "Đơn giá và số lượng của phiếu nhập có số tiền thực tính nhập tay chỉ được đổi bằng [Sửa nhập hàng] trong nhật ký trong ngày."],
   };
   return code ? messages[code]?.[lang === "vi" ? 1 : 0] ?? null : null;
 }

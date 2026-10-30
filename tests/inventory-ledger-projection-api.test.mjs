@@ -217,6 +217,7 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootL
     '@/lib/inventory/duplicate-item': load('lib/inventory/duplicate-item.ts', { './normalize.ts': load('lib/inventory/normalize.ts') }),
     '@/lib/inventory/inventory-business-time': { resolveInventoryBusinessDate: async () => ({ businessDate }) },
     '@/lib/inventory/purchase-correction-policy': load('lib/inventory/purchase-correction-policy.ts'),
+    '@/lib/inventory/billed-amount': load('lib/inventory/billed-amount.ts'),
     '@/lib/inventory/price-logs': { insertInventoryPriceLog: async () => { calls.push('price-history'); } },
     '@/lib/ledger/inventory-projection': projection,
     '@/lib/inventory/supplier-partners-server': { resolveInventorySupplier: async ({payload}) => ({ supplier: payload.supplier ?? 'Won Mart', supplier_partner_id: payload.supplierPartnerId ?? 10 }), applyResolvedInventorySupplier: (payload, supplier) => ({ ...payload, ...supplier }) },
