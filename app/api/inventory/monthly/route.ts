@@ -238,7 +238,8 @@ const addMovement = (
   target: ItemAccumulator,
   reason: MovementReason,
   changeQuantity: number,
-  purchasePrice?: number | null
+  purchasePrice?: number | null,
+  billedAmount: number | null = null
 ) => {
   if (reason === "purchase") {
     if (changeQuantity > 0) {
@@ -247,7 +248,11 @@ const addMovement = (
       );
       target.purchaseLogCount += 1;
 
-      if (purchasePrice !== null && purchasePrice !== undefined) {
+      // 실청구금액: a manual billed amount replaces quantity x price for this receipt.
+      if (billedAmount !== null) {
+        target.purchaseAmountKnown = roundDecimal(target.purchaseAmountKnown + billedAmount);
+        target.purchaseHasKnownPrice = true;
+      } else if (purchasePrice !== null && purchasePrice !== undefined) {
         target.purchaseAmountKnown = roundDecimal(
           target.purchaseAmountKnown + changeQuantity * purchasePrice
         );
@@ -451,7 +456,7 @@ const buildSupplierSummary = (
       } satisfies SupplierSummaryAccumulator);
 
     const purchasePrice = toNullableNumber(log.new_purchase_price);
-    const purchaseAmount = calculateInventoryPurchaseAmount(changeQuantity,purchasePrice);
+    const purchaseAmount = log.billedAmount ?? calculateInventoryPurchaseAmount(changeQuantity,purchasePrice);
     const itemKey =
       log.item_id !== null && log.item_id !== undefined
         ? String(log.item_id)
@@ -558,7 +563,9 @@ const fetchMonthlyInventoryLogs = async (
           reason,
           source,
           business_date,
-          correction_of_inventory_log_id
+          correction_of_inventory_log_id,
+          billed_amount,
+          billed_amount_mode
         `
       )
       .gte("business_date", monthStart)
@@ -615,7 +622,9 @@ const fetchLinkedPurchaseCorrections = async (
             reason,
             source,
             business_date,
-            correction_of_inventory_log_id
+            correction_of_inventory_log_id,
+            billed_amount,
+            billed_amount_mode
           `
         )
         .in("correction_of_inventory_log_id", rootIdChunk)
@@ -882,7 +891,8 @@ export async function GET(request: Request) {
         itemAccumulator,
         "purchase",
         purchase.effectiveQuantity,
-        toNullableNumber(purchase.new_purchase_price)
+        toNullableNumber(purchase.new_purchase_price),
+        purchase.billedAmount
       );
       itemMovementMap.set(itemId, itemAccumulator);
     }

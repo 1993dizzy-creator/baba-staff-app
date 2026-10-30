@@ -251,3 +251,33 @@ test('projector anchors apply to the deployed CRLF body that already carries the
   assert.equal(r.ledgerSync.code,'REBOOKED');assert.equal(await net(db),303000);
  }finally{await db.close();}
 });
+
+test('projector failure, then retries and monthly reconcile: one booking at the billed amount, existing receipts untouched',async()=>{
+ const db=await billedFixture();try{
+  // A new-item receipt (POST path) with a manual billed amount whose first projection fails.
+  await db.exec(`insert into inventory_logs(id,item_id,item_name,unit,change_quantity,new_purchase_price,new_supplier,purchase_supplier_partner_id,business_date,source,reason,created_at,billed_amount_mode,billed_amount)
+   values(300,1,'Orange','can',3.57,85000,'Won Mart',10,'2026-10-11','create','purchase','2026-10-11T05:00:00Z','manual',303000);
+   create function qa_fail_candidate() returns trigger language plpgsql as $$begin raise exception 'QA_PROJECTION_DOWN';end$$;
+   create trigger qa_fail_candidate before insert on ledger_candidates for each row execute function qa_fail_candidate();`);
+  const before100=await state(db);
+  const failed=(await one(db,'select ledger_project_inventory_purchase_log_v1(300,2) as r')).r;
+  assert.equal(failed.status,'failed');
+  assert.equal((await one(db,'select status from ledger_inventory_projection_status where inventory_log_id=300')).status,'failed');
+  assert.equal(Number((await one(db,"select count(*) as n from ledger_candidates where source_key='inventory-log:300'")).n),0);
+  await db.exec('drop trigger qa_fail_candidate on ledger_candidates');
+  // Retry by the projector, twice, then the owner's monthly reconcile, twice.
+  for(let i=0;i<2;i++)await one(db,'select ledger_project_inventory_purchase_log_v1(300,2) as r');
+  for(let i=0;i<2;i++)assert.equal((await one(db,"select ledger_reconcile_inventory_month_v1('2026-10-01',2) as r")).r.status,'ok');
+  const candidates=(await db.query("select * from ledger_candidates where source_key='inventory-log:300' and status<>'superseded'")).rows;
+  assert.equal(candidates.length,1,'one live candidate');assert.equal(Number(candidates[0].proposed_amount),303000);
+  assert.equal(candidates[0].source_snapshot.billed_amount_mode,'manual');
+  const bookings=(await db.query("select t.* from ledger_transactions t join ledger_candidates c on c.resolved_transaction_id=t.id where c.source_key='inventory-log:300'")).rows;
+  assert.ok(bookings.length<=1,'never booked twice');for(const t of bookings)assert.equal(Number(t.amount),303000);
+  // The existing confirmed receipt #100 and its payable were not rebooked by the retries.
+  const after=await state(db);
+  for(const table of ['ledger_payables','ledger_movements','ledger_transactions'])for(const row of before100[table])
+   assert.ok(after[table].some(next=>JSON.stringify(next)===JSON.stringify(row)),`${table} row unchanged: ${JSON.stringify(row)}`);
+  assert.equal(Number((await one(db,"select count(*) as n from ledger_transactions where source_type='inventory_purchase_reversal'")).n),0);
+  assert.equal(Number((await one(db,"select count(*) as n from ledger_transactions where source_type='inventory_purchase_rebook'")).n),0);
+ }finally{await db.close();}
+});

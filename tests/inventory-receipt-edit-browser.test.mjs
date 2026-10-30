@@ -80,17 +80,17 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    assert.equal(await page.getByTestId('daily-log-ledger-pending-100').count(),0);
    await shot('daily-log');
    await entryA.getByRole('button',{name:lang==='vi'?'Xem lịch sử sửa':'수정 이력 보기'}).click();
-   assert.equal(await entryA.locator(':scope > div').nth(1).locator(':scope > div').count(),4,'root plus three corrections in history');
+   assert.equal(await page.getByTestId('daily-log-history-100').locator(':scope > div').count(),4,'root plus three corrections in history');
    await shot('history');
    await entryA.getByRole('button',{name:lang==='vi'?'Sửa nhập hàng':'입고 수정'}).click();
    const form=page.getByTestId('receipt-edit-form-100');await form.waitFor();
-   const inputs=form.locator('input');
-   assert.equal(await inputs.nth(0).inputValue(),'10');assert.equal(await inputs.nth(1).inputValue(),'31000');
+   const input=field=>page.getByTestId('receipt-edit-'+field+'-100');
+   assert.equal(await input('quantity').inputValue(),'10');assert.equal(await input('price').inputValue(),'31000');
    const select=form.locator('select');assert.equal(await select.count(),role==='owner'?1:0);
    // Reason is required: no request is sent without it.
    await form.getByRole('button',{name:lang==='vi'?'Lưu sửa đổi':'수정 저장'}).click();
    await form.getByRole('alert').waitFor();assert.equal(patches.length,0);
-   await inputs.nth(0).fill('12');await inputs.nth(1).fill('32000');await inputs.nth(2).fill('QA 정정');await inputs.nth(3).fill('메모');
+   await input('quantity').fill('12');await input('price').fill('32000');await input('reason').fill('QA 정정');await input('note').fill('메모');
    if(role==='owner'){await page.waitForFunction(()=>document.querySelectorAll('[data-testid="receipt-edit-form-100"] select option').length>3);await select.selectOption('12');}
    await noOverflow();await shot('form');
    await form.getByRole('button',{name:lang==='vi'?'Lưu sửa đổi':'수정 저장'}).click();
@@ -109,10 +109,10 @@ test('당일 로그 merge and 입고 수정 across KO/VI and 360/390/PC',{skip:!
    patchResult='paid';
    await page.getByTestId('daily-log-purchase-100').getByRole('button',{name:lang==='vi'?'Sửa nhập hàng':'입고 수정'}).click();
    const again=page.getByTestId('receipt-edit-form-100');await again.waitFor();
-   await again.locator('input').nth(1).fill('33000');await again.locator('input').nth(2).fill('재정정');
+   await input('price').fill('33000');await input('reason').fill('재정정');
    await again.getByRole('button',{name:lang==='vi'?'Lưu sửa đổi':'수정 저장'}).click();
    await page.waitForFunction(m=>document.querySelector('[data-testid="receipt-edit-form-100"] [role=alert]')?.textContent===m,inventoryPurchaseErrorMessage('purchase_correction_review_required',lang,{blockReason:'payment_completed'}));
-   assert.equal(await again.locator('input').nth(1).inputValue(),'33000');
+   assert.equal(await input('price').inputValue(),'33000');
    await noOverflow();await shot('blocked');
    // One receipt that day: a single plain card, no highlight or tags, and the modal fits its content.
    await page.getByRole('button',{name:lang==='vi'?'Đóng':'닫기',exact:true}).last().click();

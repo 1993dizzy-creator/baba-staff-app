@@ -37,6 +37,15 @@ import { fetchInventoryApi } from "@/lib/inventory/client-auth";
 import BilledAmountField from "@/components/inventory/BilledAmountField";
 import { AUTO_BILLED_AMOUNT, billedAmountRequest, calculatePurchaseAmount, effectiveBilledAmount, manualBilledDraft, resolveBilledAmount, type BilledAmountDraft } from "@/lib/inventory/billed-amount";
 
+const formatWholeMoney = (value: number) => `${Math.round(value).toLocaleString("en-US")} ₫`;
+const formatSignedMoney = (value: number) =>
+    `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(Math.round(value)).toLocaleString("en-US")} ₫`;
+
+// Manual 실청구금액 of an effective receipt row (already folded with its corrections), or null.
+const manualReceiptAmount = (log: { reason?: string | null; change_quantity?: number | null; billed_amount?: number | string | null; billed_amount_mode?: string | null }) =>
+    log.reason === "purchase" && log.billed_amount_mode === "manual" && Number(log.change_quantity) > 0 &&
+        Number.isFinite(Number(log.billed_amount)) && Number(log.billed_amount) > 0 ? Number(log.billed_amount) : null;
+
 // 실청구금액 of a purchase card: the family's effective billed amount (what the Ledger books).
 const entryBilledAmount = (entry: Extract<DailyItemLogEntry<InventoryLog>, { kind: "purchase" }>) =>
     effectiveBilledAmount([entry.root, ...entry.corrections], entry.invalid ? null : entry.effectiveQuantity,
@@ -911,7 +920,8 @@ export default function InventorySnapshotsPage() {
             prev_purchase_price: log.prev_purchase_price ?? null,
             new_purchase_price: log.new_purchase_price ?? null,
             supplier: log.new_supplier ?? log.supplier ?? null,
-            total_purchase_price: purchasePrice !== null ? changeQuantity * Number(purchasePrice) : null,
+            // A receipt's actual purchase amount is its 실청구금액: manual billed, else quantity x price.
+            total_purchase_price: manualReceiptAmount(log) ?? (purchasePrice !== null ? changeQuantity * Number(purchasePrice) : null),
             reason: log.reason ?? null,
             source: log.source ?? null,
             business_date: log.business_date ?? null,
@@ -1766,24 +1776,17 @@ export default function InventorySnapshotsPage() {
 
         const footer = (
             <div data-testid={`daily-log-purchase-${entry.root.id}`} style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
-                {!entry.cancelled && !entry.invalid && billed.billed != null && (
-                    <div data-testid={`daily-log-billed-${entry.root.id}`} data-mode={billed.mode}
-                        style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "2px 8px", fontSize: 12, color: "#374151" }}>
-                        <span style={{ fontWeight: 800, color: "#111827" }}>
-                            {vi ? "Thực tính" : "실청구금액"} {Math.round(billed.billed).toLocaleString("en-US")} ₫
-                        </span>
-                        <span style={{ ...chipStyle, ...(billed.mode === "manual" ? { background: "#fffbeb", color: "#b45309", borderColor: "#fcd34d" } : {}) }}>
-                            {billed.mode === "manual" ? (vi ? "Nhập tay" : "직접 입력") : (vi ? "Tự động" : "자동계산")}
-                        </span>
-                        {billed.mode === "manual" && billed.calculated != null && (
-                            <span>
-                                {vi ? "Tiền tính" : "계산금액"} {Math.round(billed.calculated).toLocaleString("en-US")} ₫ · {vi ? "Chênh lệch" : "차액"}{" "}
-                                {(billed.difference ?? 0) > 0 ? "+" : (billed.difference ?? 0) < 0 ? "−" : ""}{Math.abs(Math.round(billed.difference ?? 0)).toLocaleString("en-US")} ₫
-                            </span>
-                        )}
-                    </div>
-                )}
                 <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
+                    {/* 실청구금액 (the amount the Ledger books); a manual amount also shows its difference. */}
+                    {!entry.cancelled && !entry.invalid && billed.billed != null && (
+                        <span data-testid={`daily-log-billed-${entry.root.id}`} data-mode={billed.mode}
+                            style={{ ...chipStyle, ...(billed.mode === "manual" ? { background: "#fffbeb", color: "#b45309", borderColor: "#fcd34d" } : {}), whiteSpace: "normal" }}>
+                            {vi ? "Thực tính" : "실청구"} {formatWholeMoney(billed.billed)}
+                            {billed.mode === "manual" && billed.calculated != null
+                                ? ` · ${vi ? "Nhập tay" : "직접 입력"} · ${vi ? "Tiền tính" : "계산"} ${formatWholeMoney(billed.calculated)} · ${vi ? "Chênh lệch" : "차액"} ${formatSignedMoney(billed.difference ?? 0)}`
+                                : ` · ${vi ? "Tự động" : "자동계산"}`}
+                        </span>
+                    )}
                     {entry.corrections.length > 0 && (
                         <span style={chipStyle}>{vi ? `Đã sửa ${entry.corrections.length} lần` : `수정 ${entry.corrections.length}회`}</span>
                     )}
@@ -1818,7 +1821,7 @@ export default function InventorySnapshotsPage() {
                 )}
 
                 {expanded && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 8, borderLeft: "2px solid #e5e7eb" }}>
+                    <div data-testid={`daily-log-history-${entry.root.id}`} style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 8, borderLeft: "2px solid #e5e7eb" }}>
                         {[entry.root, ...entry.corrections].map((log) => renderLogCard(log))}
                     </div>
                 )}
@@ -1828,13 +1831,13 @@ export default function InventorySnapshotsPage() {
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6 }}>
                             <label style={editFieldStyle}>
                                 {vi ? `Số lượng nhập (${entry.final.unit || "-"})` : `입고 수량 (${entry.final.unit || "-"})`}
-                                <input type="number" inputMode="decimal" step="any" min={0} value={editing.quantity} disabled={editing.busy}
+                                <input type="number" inputMode="decimal" step="any" min={0} value={editing.quantity} data-testid={`receipt-edit-quantity-${entry.root.id}`} disabled={editing.busy}
                                     onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, quantity: event.target.value, error: "" } : prev)}
                                     style={ui.input} />
                             </label>
                             <label style={editFieldStyle}>
                                 {vi ? "Đơn giá (₫)" : "단가 (₫)"}
-                                <input type="number" inputMode="decimal" step="any" min={0} value={editing.price} disabled={editing.busy}
+                                <input type="number" inputMode="decimal" step="any" min={0} value={editing.price} data-testid={`receipt-edit-price-${entry.root.id}`} disabled={editing.busy}
                                     onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, price: event.target.value, error: "" } : prev)}
                                     style={ui.input} />
                             </label>
@@ -1865,13 +1868,13 @@ export default function InventorySnapshotsPage() {
                         </label>
                         <label style={editFieldStyle}>
                             {vi ? "Lý do sửa (bắt buộc)" : "수정 사유 (필수)"}
-                            <input type="text" maxLength={200} value={editing.reason} disabled={editing.busy}
+                            <input type="text" maxLength={200} value={editing.reason} data-testid={`receipt-edit-reason-${entry.root.id}`} disabled={editing.busy}
                                 onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, reason: event.target.value, error: "" } : prev)}
                                 style={ui.input} />
                         </label>
                         <label style={editFieldStyle}>
                             {vi ? "Ghi chú" : "메모"}
-                            <input type="text" maxLength={500} value={editing.note} disabled={editing.busy}
+                            <input type="text" maxLength={500} value={editing.note} data-testid={`receipt-edit-note-${entry.root.id}`} disabled={editing.busy}
                                 onChange={(event) => setPurchaseEdit((prev) => prev ? { ...prev, note: event.target.value, error: "" } : prev)}
                                 style={ui.input} />
                         </label>
@@ -1895,10 +1898,11 @@ export default function InventorySnapshotsPage() {
             </div>
         );
 
-        return renderLogCard(entry.final, footer, highlighted);
+        return renderLogCard(entry.final, footer, highlighted, entry.cancelled || entry.invalid ? null : billed.billed);
     };
 
-    const renderLogCard = (log: InventoryLog, footer?: ReactNode, highlighted = false) => {
+    // receiptTotal: a purchase card's 실청구금액 (manual billed or quantity x price); log cards use their own amount.
+    const renderLogCard = (log: InventoryLog, footer?: ReactNode, highlighted = false, receiptTotal: number | null = null) => {
         const changeQuantity = Number(log.change_quantity ?? 0);
         const changeText =
             changeQuantity === 0
@@ -1923,7 +1927,7 @@ export default function InventorySnapshotsPage() {
         const logPriceTrendStyle = getPurchasePriceTrendStyle(logPriceTrend);
         const priceLabel = lang === "vi" ? "Đơn giá" : "단가";
         const totalLabel = lang === "vi" ? "Tổng" : "합계";
-        const totalPrice = Math.abs(changeQuantity) * unitPrice;
+        const totalPrice = receiptTotal ?? Math.abs(changeQuantity) * unitPrice;
         return (
             <div
                 key={`timeline-${log.id}`}

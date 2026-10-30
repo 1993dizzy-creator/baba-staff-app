@@ -82,3 +82,60 @@ test('API and screens send the billed amount on every receipt path; corrections 
  assert.match(page,/calculatePurchaseAmount\(roundDecimal\(nextQty - currentQty\), nextPurchasePrice\)/);
  assert.match(page,/calculatePurchaseAmount\(changeQty, parsePrice\(quickPurchasePrice\)\)/);
 });
+
+// @ts-expect-error Node strip-types uses explicit TypeScript extensions.
+import {buildMonthlyEffectivePurchases} from '../lib/inventory/monthly-effective-purchases.ts';
+// @ts-expect-error Node strip-types uses explicit TypeScript extensions.
+import {analyzeDailyEffectivePurchases} from '../lib/inventory/daily-effective-purchases.ts';
+
+// Orange receipt #100: 3 kg + linked receipt edits to 3.57 kg; the last edit sets billed 303,000.
+const orangeLogs=(billedOnRoot=false)=>{
+ const base={item_id:1,item_name:'Orange',item_name_vi:'Cam',part:'kitchen',category:'Fruit',category_vi:'Fruit',unit:'kg',code:'OR',new_supplier:'Chợ',reason:'purchase',business_date:'2026-10-27'};
+ const root={...base,id:100,change_quantity:billedOnRoot?3.57:3,new_purchase_price:85000,correction_of_inventory_log_id:null,
+  billed_amount:billedOnRoot?303000:null,billed_amount_mode:billedOnRoot?'manual':null};
+ const corrections=billedOnRoot?[]:[
+  {...base,id:101,change_quantity:0.5,new_purchase_price:85000,correction_of_inventory_log_id:100,billed_amount:null,billed_amount_mode:'auto'},
+  {...base,id:102,change_quantity:0.07,new_purchase_price:85000,correction_of_inventory_log_id:100,billed_amount:303000,billed_amount_mode:'manual'},
+  {...base,id:103,change_quantity:0,new_purchase_price:85000,correction_of_inventory_log_id:100,billed_amount:303000,billed_amount_mode:'manual'}];
+ return {root,corrections};
+};
+
+test('daily 일자별재고: one effective row per receipt carries the billed amount once, never the correction history',()=>{
+ for(const billedOnRoot of [false,true]){
+  const {root,corrections}=orangeLogs(billedOnRoot),other={...root,id:110,change_quantity:2,new_purchase_price:20000,billed_amount:null,billed_amount_mode:null};
+  const {purchases}=analyzeDailyEffectivePurchases([root,other],corrections);
+  assert.equal(purchases.length,2,'repeated edits are folded into the receipt');
+  const orange=purchases.find((row:{id:number})=>row.id===100)!;
+  assert.equal(orange.change_quantity,3.57);assert.equal(orange.billed_amount_mode,'manual');assert.equal(Number(orange.billed_amount),303000);
+  const auto=purchases.find((row:{id:number})=>row.id===110)!;assert.equal(auto.billed_amount_mode,null,'legacy receipt stays automatic');
+ }
+ // Restored auto: the latest explicit mode wins and no amount is carried.
+ const {root,corrections}=orangeLogs();
+ const restored=analyzeDailyEffectivePurchases([root],[...corrections,{...corrections[0],id:104,change_quantity:0,billed_amount:null,billed_amount_mode:'auto'}]).purchases[0];
+ assert.equal(restored.billed_amount_mode,'auto');assert.equal(restored.billed_amount,null);
+});
+
+test('monthly 월간현황: manual billed replaces quantity x price once per receipt; auto keeps the calculation',()=>{
+ const {root,corrections}=orangeLogs();
+ const other={...root,id:110,change_quantity:2,new_purchase_price:20000,billed_amount:null,billed_amount_mode:null};
+ const purchases=buildMonthlyEffectivePurchases([root,other,...corrections],corrections);
+ assert.equal(purchases.length,2);
+ const orange=purchases.find((row:{rootLogId:number})=>row.rootLogId===100)!;
+ assert.equal(orange.effectiveQuantity,3.57);assert.equal(orange.billedAmount,303000);
+ assert.equal(calculatePurchaseAmount(orange.effectiveQuantity,Number(orange.new_purchase_price)),303450,'original calculated amount');
+ assert.equal(purchases.find((row:{rootLogId:number})=>row.rootLogId===110)!.billedAmount,null);
+ // Manual billed on the original receipt itself (registration / quick save).
+ const registered=orangeLogs(true);assert.equal(buildMonthlyEffectivePurchases([registered.root],[])[0].billedAmount,303000);
+});
+
+test('screens and monthly route use the effective billed amount for receipt totals only',()=>{
+ const page=readFileSync('app/(protected)/inventory/snapshots/page.tsx','utf8');
+ assert.match(page,/total_purchase_price: manualReceiptAmount\(log\) \?\?/);
+ assert.match(page,/renderLogCard\(entry\.final, footer, highlighted, entry\.cancelled \|\| entry\.invalid \? null : billed\.billed\)/);
+ const monthly=readFileSync('app/api/inventory/monthly/route.ts','utf8');
+ assert.match(monthly,/const purchaseAmount = log\.billedAmount \?\? calculateInventoryPurchaseAmount/);
+ assert.match(monthly,/purchase\.billedAmount\n/);
+ assert.equal(monthly.match(/billed_amount_mode/g)?.length,2,'both purchase selects read the billed state');
+ // Snapshot batch estimates (stock delta x item price) are a different metric and stay unchanged.
+ assert.doesNotMatch(readFileSync('app/api/inventory/snapshot/route.ts','utf8'),/billed/);
+});

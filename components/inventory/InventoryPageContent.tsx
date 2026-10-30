@@ -1699,6 +1699,11 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
             const nextQuantity = parseDecimal(quantity);
             const nextPurchasePrice =
                 purchasePrice.trim() === "" ? null : preserveUnchangedPurchasePrice(purchasePrice, inventoryList.find(item => item.id === editingId)?.purchase_price);
+            // A new receipt must increase stock after the stored 2-decimal rounding.
+            if (registrationType === "new_purchase" && !(Math.round(nextQuantity * 100) > 0)) {
+                alert(lang === "vi" ? "Số lượng nhập phải từ 0.01 trở lên." : "입고 수량은 0.01 이상이어야 합니다.");
+                return;
+            }
             const billedRequest = registrationType === "new_purchase" ? billedAmountRequest(billedDraft) : null;
             if (registrationType === "new_purchase" &&
                 (!billedRequest || !resolveBilledAmount(billedDraft, calculatePurchaseAmount(nextQuantity, nextPurchasePrice)).valid)) {
@@ -4841,18 +4846,6 @@ alert(c.saveSuccess);
                             />
                         </div>
 
-                        {/* 실청구금액: every new receipt; auto = 수량 × 단가 */}
-                        {registrationType === "new_purchase" && (
-                            <BilledAmountField
-                                lang={lang}
-                                calculated={calculatePurchaseAmount(parseDecimal(quantity), parsePrice(purchasePrice))}
-                                draft={billedDraft}
-                                onChange={setBilledDraft}
-                                disabled={isSubmitting}
-                                testId="registration-billed-amount"
-                            />
-                        )}
-
                         {/* 단위 */}
                         <div>
                             <div style={labelStyle}>
@@ -4959,6 +4952,18 @@ alert(c.saveSuccess);
                                 }
                             />
                         </div>
+
+                        {/* 실청구금액: every new receipt, right under its quantity; auto = 수량 × 구매단가 */}
+                        {registrationType === "new_purchase" && (
+                            <BilledAmountField
+                                lang={lang}
+                                calculated={calculatePurchaseAmount(parseDecimal(quantity), parsePrice(purchasePrice))}
+                                draft={billedDraft}
+                                onChange={setBilledDraft}
+                                disabled={isSubmitting}
+                                testId="registration-billed-amount"
+                            />
+                        )}
 
                         {/* 부족기준 */}
                         <div>

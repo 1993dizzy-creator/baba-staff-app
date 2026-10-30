@@ -24,14 +24,11 @@ import {
   purchaseFamilyAllowsDelta,
   type PurchaseRoot,
 } from "@/lib/inventory/purchase-correction-policy";
-import { insertInventoryPriceLog } from "@/lib/inventory/price-logs";
 import { parseBilledAmountRequest, type BilledAmountRequest } from "@/lib/inventory/billed-amount";
 import { projectInventoryPurchaseLog } from "@/lib/ledger/inventory-projection";
 import { applyResolvedInventorySupplier, resolveInventorySupplier } from "@/lib/inventory/supplier-partners-server";
 import { PARTNER_OPTION_COLUMNS, PARTNER_SUBTYPE_EMOJI_COLUMNS, partnerSelectOptions } from "@/lib/partners/select-options";
 import {
-  type InventoryReasonValue,
-  type InventorySourceValue,
   getReasonByRegistrationType,
   normalizeInventoryReason,
 } from "@/lib/inventory/reasons";
@@ -271,8 +268,6 @@ const isInventoryRelatedHistoryFkError = (error: unknown) => {
   );
 };
 
-type InventoryLogPayload = Record<string, unknown>;
-
 const findDuplicateInventoryItem = async (
   itemName: unknown,
   itemNameVi: unknown,
@@ -312,47 +307,6 @@ const duplicateInventoryItemResponse = (duplicate: { item: DuplicateInventoryIte
     },
     { status: 409 }
   );
-
-const insertInventoryLog = async (
-  payload: InventoryLogPayload,
-  meta: {
-    reason: InventoryReasonValue;
-    source: InventorySourceValue;
-    businessDate?: string;
-  }
-) => {
-  const businessDate =
-    meta.businessDate ?? (await resolveInventoryBusinessDate()).businessDate;
-  const logPayload = {
-    ...payload,
-    reason: meta.reason,
-    source: meta.source,
-    business_date: businessDate,
-  };
-
-  const { data, error } = await supabaseAdmin
-    .from("inventory_logs")
-    .insert([logPayload])
-    .select("id, reason, source, business_date")
-    .single();
-
-  if (error) throw error;
-
-  if (data && (!data.reason || !data.source || !data.business_date)) {
-    const { error: metadataError } = await supabaseAdmin
-      .from("inventory_logs")
-      .update({
-        reason: meta.reason,
-        source: meta.source,
-        business_date: businessDate,
-      })
-      .eq("id", data.id);
-
-    if (metadataError) throw metadataError;
-  }
-
-  return data;
-};
 
 export async function GET(req: Request) {
   try {
@@ -451,7 +405,9 @@ export async function POST(req: Request) {
 
     const requestedReason = registrationType === "existing_stock" || registrationType === "new_purchase"
       ? getReasonByRegistrationType(registrationType) : normalizeInventoryReason(reason,"unclassified");
-    if (requestedReason === "purchase" && (!Number.isFinite(Number(payload.quantity)) || Number(payload.quantity)<=0))
+    // Quantities are stored as numeric(10,2): a receipt must still increase stock after that
+    // rounding, checked before the item INSERT so a refused receipt never leaves an item behind.
+    if (requestedReason === "purchase" && (!Number.isFinite(Number(payload.quantity)) || Math.round(Number(payload.quantity)*100)<=0))
       return jsonError("inventory_purchase_quantity_must_increase","A new receipt needs a positive quantity; use a linked correction for reductions.",400);
     // 실청구금액 belongs to a purchase receipt; manual needs a unit price to compare with.
     const billedRequest = parseBilledAmountRequest(body.purchaseBilledAmount);
@@ -496,96 +452,27 @@ export async function POST(req: Request) {
       return duplicateInventoryItemResponse(duplicateItem);
     }
 
-    const { data: insertedData, error } = await supabaseAdmin
-      .from("inventory")
-      .insert([serverPayload])
-      .select()
-      .single();
-
-    if (error || !insertedData) throw error;
-
     const logReason =
       registrationType === "existing_stock" || registrationType === "new_purchase"
         ? getReasonByRegistrationType(registrationType)
         : normalizeInventoryReason(reason, "unclassified");
-
     const businessDate = (await resolveInventoryBusinessDate()).businessDate;
 
-    const purchaseLog = await insertInventoryLog(
-      {
-        item_id: insertedData.id,
-        source_actor_user_id: actor.id,
-        purchase_supplier_partner_id: insertedData.supplier_partner_id ?? null,
-        item_name: insertedData.item_name ?? null,
-        item_name_vi: insertedData.item_name_vi ?? null,
-        action: "create",
-
-        part: insertedData.part ?? null,
-        category: insertedData.category ?? null,
-        category_vi: insertedData.category_vi ?? null,
-
-        prev_quantity: 0,
-        new_quantity: insertedData.quantity ?? 0,
-        change_quantity: insertedData.quantity ?? 0,
-
-        prev_purchase_price: null,
-        new_purchase_price: insertedData.purchase_price ?? null,
-
-        prev_note: null,
-        new_note: insertedData.note ?? null,
-
-        prev_supplier: null,
-        new_supplier: insertedData.supplier ?? null,
-
-        prev_code: null,
-        new_code: insertedData.code ?? null,
-
-        prev_unit: null,
-        new_unit: insertedData.unit ?? null,
-
-        prev_category: null,
-        new_category: insertedData.category ?? null,
-
-        prev_category_vi: null,
-        new_category_vi: insertedData.category_vi ?? null,
-
-        prev_part: null,
-        new_part: insertedData.part ?? null,
-
-        unit: insertedData.unit ?? null,
-        code: insertedData.code ?? null,
-
-        actor_name: actor.name || "",
-        actor_username: actor.username || "",
-
-        prev_low_stock_threshold: null,
-        new_low_stock_threshold: insertedData.low_stock_threshold ?? 1,
-        ...(logReason === "purchase" && billedRequest ? billedAmountColumns(billedRequest) : {}),
-      },
-      {
-        reason: logReason,
-        source: "create",
-        businessDate,
-      }
-    );
-
-    await insertInventoryPriceLog({
-      supabase: supabaseAdmin,
-      itemId: insertedData.id,
-      itemName: insertedData.item_name,
-      itemCode: insertedData.code,
-      oldPrice: null,
-      newPrice: insertedData.purchase_price,
-      businessDate,
-      source: "create",
-      reason: "create",
-      actorUsername: actor.username,
+    // One DB transaction writes the item, its first log, the first price history and (for a
+    // purchase) the Ledger projection. A refused log leaves no item behind; never fall back to
+    // separate writes if the RPC is missing.
+    const { data: created, error } = await supabaseAdmin.rpc("inventory_create_with_receipt_v1", {
+      p_payload: { ...serverPayload, ...(logReason === "purchase" && billedRequest ? billedAmountColumns(billedRequest) : {}) },
+      p_reason: logReason, p_business_date: businessDate, p_actor_user_id: actor.id,
     });
-
-    const ledgerSync = logReason === "purchase"
-      ? await projectInventoryPurchaseLog(Number(purchaseLog.id), actor.id)
-      : undefined;
-    return NextResponse.json({ ok: true, data: insertedData, ledgerSync });
+    if (error) throw error;
+    if (created?.status !== "ok") {
+      const status = created?.status === "forbidden" ? 403 : 400;
+      const code = created?.status === "purchase_quantity_must_increase" ? "inventory_purchase_quantity_must_increase"
+        : created?.status ?? "inventory_save_failed";
+      return jsonError(code, "Item was not saved.", status);
+    }
+    return NextResponse.json({ ok: true, data: created.item, ledgerSync: created.ledgerSync ?? undefined });
   } catch (error) {
     console.error("[INVENTORY_POST_ERROR]", error);
     return NextResponse.json(

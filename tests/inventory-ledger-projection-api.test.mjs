@@ -137,8 +137,8 @@ test('latest purchase correction updates supplier binding and price history befo
   assert.deepEqual(state.calls, ['source-commit', 'master-update', 'price-history', 'ledger-projection']);
 });
 
-function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootLogs=[],businessDate='2026-09-01',startingQuantity=10,closedMonths=[],candidate=null,transaction=null,payable=null,payableAllocations=[]}={}) {
-  const calls = [], logs = [];
+function itemSetup({createFailure=null,correctionFailure=false,role='staff',duplicateItems=[],rootLogs=[],businessDate='2026-09-01',startingQuantity=10,closedMonths=[],candidate=null,transaction=null,payable=null,payableAllocations=[]}={}) {
+  const calls = [], logs = [], creates = [];
   const item = { id: 1, item_name: 'Coca', item_name_vi: 'Cola', quantity: startingQuantity, purchase_price: 20000, supplier: 'Won Mart', supplier_partner_id: 10, unit: 'can', part: 'bar', updated_at:null,is_active:true };
   const supabase = {
     from(table) {
@@ -181,6 +181,19 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootL
       return query;
     },
     async rpc(name, args) {
+      // POST: item, first log, price history and purchase projection in one DB transaction.
+      if(name==='inventory_create_with_receipt_v1') {
+        calls.push('atomic-create');creates.push(args);
+        if(createFailure==='error')return {data:null,error:{message:'PURCHASE_BILLED_AMOUNT_INVALID'}};
+        if(createFailure)return {data:{status:createFailure},error:null};
+        const {billed_amount,billed_amount_mode,...itemPayload}=args.p_payload;
+        Object.assign(item,itemPayload);
+        logs.push({id:100+logs.length,item_id:item.id,action:'create',source:'create',reason:args.p_reason,business_date:args.p_business_date,
+          source_actor_user_id:args.p_actor_user_id,purchase_supplier_partner_id:item.supplier_partner_id,change_quantity:Number(item.quantity),
+          ...(args.p_reason==='purchase'&&billed_amount_mode?{billed_amount,billed_amount_mode}:{})});
+        return {data:{status:'ok',item:{...item},inventoryLogId:logs.at(-1).id,
+          ledgerSync:args.p_reason==='purchase'?{status:'failed',code:'XX000',inventoryLogId:logs.at(-1).id}:null},error:null};
+      }
       if(name==='inventory_update_with_audit_v1') {
         assert.deepEqual(args.p_expected_item,item);assert.equal(args.p_actor_user_id,7);
         const before=item.quantity;Object.assign(item,args.p_payload,{updated_at:'2026-10-10T05:00:00Z'});
@@ -225,7 +238,7 @@ function itemSetup({correctionFailure=false,role='staff',duplicateItems=[],rootL
     '@/lib/inventory/reasons': load('lib/inventory/reasons.ts'),
     '@/lib/inventory/parts': load('lib/inventory/parts.ts'),
   });
-  return { item, calls, logs, invoke: (method, body) => route[method](new Request('http://test/api/inventory/items', { method, body: JSON.stringify(body) })) };
+  return { item, calls, logs, creates, invoke: (method, body) => route[method](new Request('http://test/api/inventory/items', { method, body: JSON.stringify(body) })) };
 }
 
 test('new_purchase POST commits inventory and source before a separately reported Ledger failure', async () => {
@@ -237,7 +250,11 @@ test('new_purchase POST commits inventory and source before a separately reporte
   assert.equal(body.ledgerSync.status, 'failed');
   assert.equal(state.logs[0].source_actor_user_id, 7);
   assert.equal(state.logs[0].purchase_supplier_partner_id, 10);
-  assert.deepEqual(state.calls, ['inventory-commit', 'source-commit', 'price-history', 'ledger-projection']);
+  // One RPC writes the item, log, price history and projection; no separate writes or projection call.
+  assert.deepEqual(state.calls, ['atomic-create']);
+  const args = state.creates[0];
+  assert.equal(args.p_reason, 'purchase'); assert.equal(args.p_actor_user_id, 7); assert.equal(args.p_business_date, '2026-09-01');
+  assert.equal(Object.hasOwn(args.p_payload, 'supplierPartnerId'), false);
 });
 
 test('existing_stock POST never projects a purchase expense', async () => {
@@ -247,6 +264,7 @@ test('existing_stock POST never projects a purchase expense', async () => {
   assert.equal(state.logs[0].reason, 'stock_check');
   assert.equal((await response.json()).ledgerSync, undefined);
   assert.ok(!state.calls.includes('ledger-projection'));
+  assert.equal(state.creates[0].p_reason, 'stock_check');
 });
 
 const createPayload = overrides => ({
@@ -287,7 +305,7 @@ test('POST allows the same Korean or Vietnamese name when the code differs',asyn
   ]) {
     const state=itemSetup({duplicateItems:[existing]});
     const response=await state.invoke('POST',{registrationType:'existing_stock',payload});
-    assert.equal(response.status,200);assert.ok(state.calls.includes('inventory-commit'));
+    assert.equal(response.status,200);assert.ok(state.calls.includes('atomic-create'));
   }
 });
 
@@ -577,4 +595,26 @@ test('a receipt edited through 입고 수정 keeps its price and supplier agains
   assert.equal(synced.log.new_supplier, 'Old supplier');
   assert.equal(synced.log.item_name, 'Coca-Cola');
   assert.ok(!synced.calls.includes('master-update'));
+});
+
+// 실청구금액 v1: a purchase registration is one DB transaction; a refused receipt leaves no item.
+test('new purchase registration: zero-rounding quantity never reaches the DB; a refused create writes nothing and is never retried as separate writes',async()=>{
+ for(const quantity of [0.004,0.001]){const state=itemSetup();const response=await state.invoke('POST',{registrationType:'new_purchase',payload:createPayload({quantity}),purchaseBilledAmount:{mode:'manual',amount:340}});
+  assert.equal(response.status,400);assert.equal((await response.json()).error,'inventory_purchase_quantity_must_increase');
+  assert.deepEqual(state.calls.filter(call=>call!=='inventory'),[],'no item write and no RPC');}
+ // The billed state travels with the atomic create.
+ const ok=itemSetup();const okResponse=await ok.invoke('POST',{registrationType:'new_purchase',payload:createPayload({quantity:3.57,purchase_price:85000}),purchaseBilledAmount:{mode:'manual',amount:303000}});
+ assert.equal(okResponse.status,200);assert.equal(ok.creates[0].p_payload.billed_amount_mode,'manual');assert.equal(ok.creates[0].p_payload.billed_amount,303000);
+ assert.equal(ok.logs[0].billed_amount,303000);
+ // A refused create (DB status or exception): the request fails and nothing else is written.
+ for(const [failure,status,error] of [['purchase_quantity_must_increase',400,'inventory_purchase_quantity_must_increase'],['invalid_billed_amount',400,'invalid_billed_amount'],['invalid_payload',400,'invalid_payload'],['forbidden',403,'forbidden'],['error',500,'inventory_request_failed']]){
+  const refused=itemSetup({createFailure:failure});
+  const response=await refused.invoke('POST',{registrationType:'new_purchase',payload:createPayload({quantity:3.57}),purchaseBilledAmount:{mode:'manual',amount:303000}});
+  assert.equal(response.status,status,failure);assert.equal((await response.json()).error,error,failure);
+  assert.deepEqual(refused.calls.filter(call=>!['inventory'].includes(call)),['atomic-create'],failure+': no separate item, log, price or projection write');
+  assert.equal(refused.logs.length,0);
+ }
+ // Registering an item without a receipt (existing stock) keeps working, including 0 quantity.
+ const stock=itemSetup();const stockResponse=await stock.invoke('POST',{registrationType:'existing_stock',payload:createPayload({quantity:0})});
+ assert.equal(stockResponse.status,200);assert.equal(stock.creates[0].p_reason,'stock_check');assert.equal(Object.hasOwn(stock.creates[0].p_payload,'billed_amount_mode'),false);
 });

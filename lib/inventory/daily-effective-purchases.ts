@@ -30,7 +30,11 @@ export function analyzeDailyEffectivePurchases<T extends DailyPurchaseRow>(logs:
       return [];
     }
     const latest = linked.at(-1);
-    return [{...root,...(latest?{item_name:latest.item_name,item_name_vi:latest.item_name_vi,new_purchase_price:latest.new_purchase_price,new_supplier:latest.new_supplier}:{}),change_quantity:quantity}];
+    // 실청구금액: the latest family log with an explicit mode decides (projector rule). One row per
+    // receipt, so the correction history is never added on top of it.
+    const billed = [root,...linked].filter(row => row.billed_amount_mode === "auto" || row.billed_amount_mode === "manual").at(-1);
+    return [{...root,...(latest?{item_name:latest.item_name,item_name_vi:latest.item_name_vi,new_purchase_price:latest.new_purchase_price,new_supplier:latest.new_supplier}:{}),
+      ...(billed?{billed_amount:billed.billed_amount_mode==="manual"?billed.billed_amount:null,billed_amount_mode:billed.billed_amount_mode}:{}),change_quantity:quantity}];
   });
   const remaining = logs.filter(row => !rootIds.has(row.id) && row.correction_of_inventory_log_id == null);
   for (const log of remaining) if (log.reason === "purchase") {

@@ -14,6 +14,8 @@ export type MonthlyPurchaseLog = {
   reason: string | null;
   business_date: string | null;
   correction_of_inventory_log_id: number | null;
+  billed_amount?: string | number | null;
+  billed_amount_mode?: string | null;
 };
 
 export type MonthlyEffectivePurchase = {
@@ -31,6 +33,8 @@ export type MonthlyEffectivePurchase = {
   new_supplier: string | null;
   business_date: string | null;
   effectiveQuantity: number;
+  /** Manual 실청구금액 of the receipt; null = automatic quantity x price. */
+  billedAmount: number | null;
 };
 
 const toFiniteNumber = (value: unknown) => {
@@ -84,6 +88,10 @@ export function buildMonthlyEffectivePurchases(
     if (effectiveQuantity <= 0) continue;
 
     const latest = corrections.at(-1);
+    // 실청구금액: the latest log of the family with an explicit mode decides (projector rule).
+    const billed = [root, ...corrections].filter((log) => log.billed_amount_mode === "auto" || log.billed_amount_mode === "manual").at(-1);
+    const billedAmount = billed?.billed_amount_mode === "manual" && Number.isFinite(Number(billed.billed_amount)) && Number(billed.billed_amount) > 0
+      ? Number(billed.billed_amount) : null;
     effectivePurchases.push({
       rootLogId: Number(root.id),
       correctionLogIds: corrections.map((correction) => Number(correction.id)),
@@ -101,6 +109,7 @@ export function buildMonthlyEffectivePurchases(
       new_supplier: latest ? latest.new_supplier : root.new_supplier,
       business_date: root.business_date,
       effectiveQuantity,
+      billedAmount,
     });
   }
 

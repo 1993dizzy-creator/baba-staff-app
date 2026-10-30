@@ -25,11 +25,19 @@
 - 프로젝터·inspect 앵커는 운영 본문에서 각각 정확히 1회 존재함을 읽기 전용으로 확인했다(CRLF·display-sync 패치 포함 본문).
 - 재적용·본문 불일치 시 예외로 전체 롤백(부분 적용 없음) — 테스트로 확인.
 
+## 후속 Migration — 신규 품목 원자 등록
+
+- 대상 파일: `supabase/migrations/20261030170000_inventory_create_with_receipt.sql` (운영 미적용)
+- 신규 함수 `public.inventory_create_with_receipt_v1(jsonb,text,date,bigint)` 1개만 추가한다. 테이블·기존 함수·데이터 변경 없음. 권한은 `service_role` 실행만.
+- `POST /api/inventory/items`가 품목·최초 로그(`action/source=create`)·최초 단가 이력·구매입고 장부 반영을 이 RPC 한 번으로 저장한다. 로그·단가 이력 저장이 실패하면 품목도 함께 롤백되어 품목만 남지 않는다. 구매입고는 numeric(10,2) 반올림 후 수량이 0보다 커야 한다.
+- 실청구금액 Migration이 없으면 `INVENTORY_CREATE_REQUIRES_BILLED_AMOUNT_MIGRATION`으로, 재적용이면 `INVENTORY_CREATE_WITH_RECEIPT_ALREADY_APPLIED`로 중단한다.
+- 신규 앱은 이 RPC를 호출하므로 **두 Migration 모두 적용 후** 앱을 배포한다. 적용 전 배포 시 신규 품목 등록이 500으로 실패한다(쓰기는 일어나지 않음).
+
 ## 적용 순서
 
-1. 사용자 승인 후 Supabase SQL Editor에서 위 파일 1개 실행(단일 트랜잭션).
-2. GPT 원격 postflight(아래) → 해당 신규 Migration 이력만 확인·등록.
-3. 그 다음 앱 배포. **앱을 먼저 배포하면 안 된다**: 새 앱은 `billed_amount_mode` 키를 보내므로 구 RPC가 `invalid_payload`로 입고 저장을 거부하고, 신규 품목 등록은 없는 컬럼 때문에 실패한다. DB 먼저 적용하면 구 앱은 기존과 동일하게 동작한다.
+1. 사용자 승인 후 Supabase SQL Editor에서 `20261030150000_inventory_purchase_billed_amount.sql`, 이어서 `20261030170000_inventory_create_with_receipt.sql`을 각각 실행(각 단일 트랜잭션).
+2. GPT 원격 postflight(아래, 신규 함수 `inventory_create_with_receipt_v1` 권한 포함) → 두 신규 Migration 이력만 확인·등록.
+3. 그 다음 앱 배포. **앱을 먼저 배포하면 안 된다**: 새 앱은 `billed_amount_mode` 키를 보내므로 구 RPC가 `invalid_payload`로 입고 저장을 거부하고, 신규 품목 등록은 없는 RPC 때문에 실패한다. DB 먼저 적용하면 구 앱은 기존과 동일하게 동작한다.
 
 ## Postflight (읽기 전용)
 
