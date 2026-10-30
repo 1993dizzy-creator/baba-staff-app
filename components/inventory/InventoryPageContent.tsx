@@ -44,7 +44,8 @@ import { parseDecimal,formatDecimalDisplay,roundDecimal,} from "@/lib/inventory/
 import { formatNumber,parsePrice,formatMoneyDisplay,} from "@/lib/inventory/money";
 import { isInCurrentBusinessDay } from "@/lib/inventory/business-day";
 import type { PartnerSelectOption } from "@/lib/partners/select-options";
-import { duplicateInventoryItemMessage, type DuplicateMatchedField } from "@/lib/inventory/duplicate-item";
+import { duplicateInventoryItemMessage, matchDuplicateInventoryItem, type DuplicateMatchedField } from "@/lib/inventory/duplicate-item";
+import { createInventoryRegistration } from "@/lib/inventory/registration-recovery";
 import SupplierSelectOptions from "@/components/inventory/SupplierSelectOptions";
 import BilledAmountField from "@/components/inventory/BilledAmountField";
 import { AUTO_BILLED_AMOUNT, billedAmountRequest, calculatePurchaseAmount, resolveBilledAmount, type BilledAmountDraft } from "@/lib/inventory/billed-amount";
@@ -442,6 +443,17 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
         itemLogsRequestRef.current = null;
     }, []);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const registrationSubmitLockRef = useRef(false);
+    const registrationAttemptRef = useRef(createInventoryRegistration<InventoryItem>());
+    const recentLogsRequestIdRef = useRef(0);
+    const [registrationNotice, setRegistrationNotice] = useState<{
+        kind: "saved" | "photo-failed" | "existing" | "uncertain";
+        item?: InventoryItem;
+    } | null>(null);
+    const registrationNoticeRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        registrationNoticeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, [registrationNotice?.kind, registrationNotice?.item?.id]);
     const [isDeletingId, setIsDeletingId] = useState<number | null>(null);
     const [activeStatusBusyId, setActiveStatusBusyId] = useState<number | null>(null);
     const [isQuickSaving, setIsQuickSaving] = useState(false);
@@ -1146,6 +1158,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
 
     const fetchRecentLogs = async (options: { force?: boolean } = {}) => {
         if (embeddedItemId) return;
+        const requestId = ++recentLogsRequestIdRef.current;
         const url = "/api/inventory/logs/recent";
 
         try {
@@ -1194,7 +1207,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                 force: options.force ?? true,
             });
 
-            setRecentLogs(logs);
+            if (recentLogsRequestIdRef.current === requestId) setRecentLogs(logs);
         } catch (error) {
             console.warn("[inventory] fetchRecentLogs exception", {
                 url,
@@ -1637,8 +1650,39 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
 
     const handleEdit = (item: InventoryItem) => { setIsRegistrationTypeModalOpen(false); clearFormPhotoDraft(); setEditingId(item.id); setOpenItemId(item.id); setIsFormOpen(true); setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
 
+    const rememberRegisteredItem = (item: InventoryItem) => {
+        setInventoryList((previous) => [{ ...previous.find((row) => row.id === item.id), ...item }, ...previous.filter((row) => row.id !== item.id)]);
+        setRegistrationNotice((previous) => previous?.item?.id === item.id ? { ...previous, item: { ...previous.item, ...item } } : previous);
+    };
+
+    const readRegisteredItem = async (id: number) => {
+        const response = await fetchInventoryApi(`/api/inventory/items?itemId=${id}`, { cache: "no-store" });
+        const result = await response.json();
+        if (!response.ok || !result.ok || result.data?.[0]?.id !== id) throw new Error(result.message || c.noData);
+        const item: InventoryItem = result.data[0];
+        rememberRegisteredItem(item);
+        return item;
+    };
+
+    const refreshRegistration = async (item: InventoryItem) => {
+        await Promise.allSettled([fetchInventory({ force: true }), fetchRecentLogs({ force: true })]);
+        try { await readRegisteredItem(item.id); }
+        catch { rememberRegisteredItem(item); }
+    };
+
+    const openRegisteredItem = async (id: number) => {
+        try {
+            const item = await readRegisteredItem(id);
+            setSearch(""); setCategoryFilter("all"); setPartFilter(isInventoryPart(item.part) ? item.part : defaultPart);
+            setShowLowStockOnly(false); setShowTodayUpdatedOnly(false); setShowStockCheckNeededOnly(false);
+            if (item.is_active === false && canToggleInventoryActive) setShowInactiveItems(true);
+            handleEdit(item);
+        } catch { alert(lang === "vi" ? "Không thể tải mặt hàng. Vui lòng thử lại." : "품목을 불러오지 못했습니다. 다시 시도해 주세요."); }
+    };
+
     const handleSubmit = async () => {
-        if (isSubmitting) return;
+        if (isSubmitting || registrationSubmitLockRef.current || isFormPhotoProcessing) return;
+        registrationSubmitLockRef.current = true;
         setIsSubmitting(true);
 
         try {
@@ -1752,7 +1796,9 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                             package_content_unit: nextPackageContentUnit,
                             updated_at: new Date().toISOString(),
                         };
-const res = await fetchInventoryApi("/api/inventory/items", {
+            const photoToUpload = formPhotoFile;
+            const outcome = await registrationAttemptRef.current.submit({
+                create: () => fetchInventoryApi("/api/inventory/items", {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -1762,28 +1808,48 @@ const res = await fetchInventoryApi("/api/inventory/items", {
                         registrationType,
                         ...(billedRequest ? { purchaseBilledAmount: billedRequest } : {}),
                     }),
-                });
-const result = await readInventoryItemMutationResult(res, "save");
-if (!result) return;
-if (!res.ok || !result.ok) {
-                    handleInventoryItemMutationFailure(res, result, "save");
-                    return;
+                }),
+                recover: async () => {
+                    const response = await fetchInventoryApi("/api/inventory/items?includeKegProgress=false", { cache: "no-store" });
+                    const result = await response.json();
+                    if (!response.ok || !result.ok || !Array.isArray(result.data)) throw new Error("Registration lookup failed");
+                    const items: InventoryItem[] = result.data;
+                    setInventoryList(items);
+                    const duplicate = matchDuplicateInventoryItem(items.map((item) => ({
+                        id: item.id, item_name: item.item_name ?? null, item_name_vi: item.item_name_vi ?? null,
+                        code: item.code ?? null, part: item.part ?? null, category: item.category ?? null,
+                        category_vi: item.category_vi ?? null, is_active: item.is_active ?? null,
+                    })), { itemName: payload.item_name, itemNameVi: payload.item_name_vi, code: payload.code });
+                    return duplicate ? items.find((item) => item.id === duplicate.item.id) ?? null : null;
+                },
+                onConfirmed: (item, kind) => {
+                    // Confirm the ID before waiting for photo upload or refreshing lists.
+                    rememberRegisteredItem(item);
+                    setRegistrationNotice({ kind, item });
+                    resetForm(); setIsFormOpen(false);
+                    setSearch(""); setCategoryFilter("all"); setPartFilter(isInventoryPart(item.part) ? item.part : defaultPart);
+                    setShowLowStockOnly(false); setShowTodayUpdatedOnly(false); setShowStockCheckNeededOnly(false);
+                    setOpenItemId(item.id);
+                },
+                refresh: refreshRegistration,
+                upload: photoToUpload ? (id) => uploadInventoryPhoto(id, photoToUpload, { silent: true }) : undefined,
+            });
+            if (outcome.kind === "saved") {
+                if (photoToUpload) {
+                    try { await readRegisteredItem(outcome.item.id); } catch { /* Keep the confirmed item visible. */ }
                 }
-if (formPhotoFile && result.data?.id) {
-                    const uploaded = await uploadInventoryPhoto(result.data.id, formPhotoFile);
-
-                    if (!uploaded) {
-                        alert("Item was saved, but image upload failed.");
-                    }
-                }
-alert(c.saveSuccess);
-
-            await Promise.all([fetchInventory(), fetchRecentLogs()]);
-
-            resetForm();
-            setIsFormOpen(false);
-            itemNameRef.current?.focus();
+                setRegistrationNotice((previous) => previous?.item?.id === outcome.item.id
+                    ? { ...previous, kind: outcome.photoFailed ? "photo-failed" : "saved" } : previous);
+                const notice = ledgerSyncNotice(outcome.reply.ledgerSync, lang === "vi");
+                if (notice) alert(notice);
+                if (!outcome.photoFailed) alert(c.saveSuccess);
+            } else if (outcome.kind === "uncertain") {
+                setRegistrationNotice({ kind: "uncertain" });
+            } else if (outcome.kind === "rejected") {
+                handleInventoryItemMutationFailure(outcome.response, outcome.reply, "save");
+            }
         } finally {
+            registrationSubmitLockRef.current = false;
             setIsSubmitting(false);
         }
     };
@@ -2391,7 +2457,7 @@ alert(c.saveSuccess);
         }
     };
 
-    const uploadInventoryPhoto = async (itemId: number, file: File) => {
+    const uploadInventoryPhoto = async (itemId: number, file: File, { silent = false } = {}) => {
         setPhotoBusyItemId(itemId);
 
         try {
@@ -2406,7 +2472,7 @@ alert(c.saveSuccess);
 
             if (!res.ok || !result.ok) {
                 console.error(result);
-                alert(getPhotoUploadErrorMessage(result.error, result.message));
+                if (!silent) alert(getPhotoUploadErrorMessage(result.error, result.message));
                 return false;
             }
 
@@ -2424,7 +2490,8 @@ alert(c.saveSuccess);
                 )
             );
 
-            alert(t.photoSaved);
+            setRegistrationNotice((previous) => previous?.kind === "photo-failed" && previous.item?.id === itemId ? { ...previous, kind: "saved" } : previous);
+            if (!silent) alert(t.photoSaved);
             return true;
         } finally {
             setPhotoBusyItemId(null);
@@ -3044,6 +3111,29 @@ alert(c.saveSuccess);
             {embeddedItemId && embeddedError && <div role="alert">{embeddedError}<button onClick={() => void fetchInventory()}>{c.edit}</button></div>}
             {!embeddedItemId && <>
             <SubNav tabs={inventoryTabs} />
+
+            {registrationNotice && <div ref={registrationNoticeRef} data-testid="registration-result" role={registrationNotice.kind === "photo-failed" || registrationNotice.kind === "uncertain" ? "alert" : "status"}
+                style={{ padding: 12, marginBottom: 12, borderRadius: 10, background: registrationNotice.kind === "saved" ? "#f0fdf4" : "#fffbeb", color: "#111827", overflowWrap: "anywhere" }}>
+                <div>{registrationNotice.kind === "photo-failed"
+                    ? (lang === "vi" ? "Mặt hàng đã được lưu, nhưng tải ảnh lên thất bại." : "품목은 저장됐지만 사진 업로드는 실패했습니다.")
+                    : registrationNotice.kind === "existing"
+                        ? (lang === "vi" ? "Mặt hàng đã tồn tại. Hãy mở mặt hàng hiện có, không đăng ký lại." : "이미 등록된 품목입니다. 다시 등록하지 말고 기존 품목을 열어주세요.")
+                        : registrationNotice.kind === "uncertain"
+                            ? (lang === "vi" ? "Chưa xác nhận được kết quả lưu. Kiểm tra mặt hàng hiện có trước khi đăng ký lại." : "저장 결과를 확인하지 못했습니다. 다시 등록하기 전에 기존 품목을 확인해 주세요.")
+                            : c.saveSuccess}</div>
+                {registrationNotice.item && <>
+                    <div style={{ fontWeight: 800, marginTop: 4 }}>#{registrationNotice.item.id} {getDisplayItemName(registrationNotice.item)}</div>
+                    <button type="button" data-testid="registration-open-item" disabled={isSubmitting}
+                        onClick={() => void openRegisteredItem(registrationNotice.item!.id)} style={{ ...ui.subButton, marginTop: 8 }}>
+                        {lang === "vi" ? "Mở mặt hàng hiện có" : "기존 품목 열기"}
+                    </button>
+                    {registrationNotice.kind === "photo-failed" && <label style={{ display: "block", marginTop: 8, fontWeight: 700 }}>
+                        {lang === "vi" ? "Tải lại ảnh cho mặt hàng này" : "이 품목의 사진만 다시 업로드"}
+                        <input data-testid="registration-retry-photo" type="file" accept="image/*" disabled={photoBusyItemId === registrationNotice.item.id}
+                            onChange={(event) => void handleInventoryPhotoChange(event, registrationNotice.item!.id)} style={{ display: "block", maxWidth: "100%", marginTop: 4 }} />
+                    </label>}
+                </>}
+            </div>}
 
             <div
                 style={{
@@ -4182,6 +4272,7 @@ alert(c.saveSuccess);
 
             {/* 재고입력 */}
             <button
+                disabled={isSubmitting}
                 onClick={() => {
                     if (isFormOpen) {
                         setIsFormOpen(false);
@@ -4261,6 +4352,9 @@ alert(c.saveSuccess);
                                 key={option.value}
                                 type="button"
                                 onClick={() => {
+                                    if (registrationSubmitLockRef.current) return;
+                                    registrationAttemptRef.current = createInventoryRegistration<InventoryItem>();
+                                    setRegistrationNotice(null);
                                     resetForm();
                                     setRegistrationType(option.value);
                                     setIsRegistrationTypeModalOpen(false);
@@ -5035,7 +5129,7 @@ alert(c.saveSuccess);
 
                         <button
                             onClick={handleSubmit}
-                            disabled={isSubmitting}
+                            disabled={isSubmitting || isFormPhotoProcessing}
                             style={{
                                 ...ui.button,
                                 opacity: isSubmitting ? 0.6 : 1,
@@ -5044,8 +5138,8 @@ alert(c.saveSuccess);
                         >
                             {isSubmitting
                                 ? (c.saving)
-                                : editingId
-                                    ? c.save
+                                : registrationNotice?.kind === "uncertain"
+                                    ? (lang === "vi" ? "Kiểm tra kết quả lưu" : "저장 결과 확인")
                                     : c.save}
                         </button>
 
@@ -5068,6 +5162,7 @@ alert(c.saveSuccess);
             {/* 최근 변경 로그 */}
             {!embeddedItemId && <>
             <div
+                data-testid="inventory-recent-logs"
                 style={{
                     ...ui.card,
                     padding: 16,
