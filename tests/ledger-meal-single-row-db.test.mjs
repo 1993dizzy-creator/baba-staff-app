@@ -85,9 +85,58 @@ async function cases(t,Database){
     // Execute the actual postflight report (history table is a local fixture).
     const report=await db.exec(readFileSync('scripts/ledger/oct-meal-consolidation-postflight.sql','utf8'));
     const results=Array.isArray(report)?report:[report];const row=results.flatMap(r=>r.rows??[]).find(r=>'completed_once' in r);
-    assert.ok(row);for(const key of ['completed_once','all_daily_movements_unchanged','monthly_profit_unchanged','tx2112_tx2163_unchanged','closures_unchanged','source_drift_unchanged'])assert.equal(row[key],true,key);
-    assert.equal(Number(row.matching_account_days),108);
+    assert.ok(row);for(const key of [
+      'completed_once','batch_declares_20','batch_declares_630000','manifest_exact_20_630000',
+      'cancelled_manual_count_ok','original_meals_ok','correction_count_ok',
+      'target_cash_and_profit_delta_zero','correction_audits_ok','no_extra_batch_transactions',
+      'all_daily_movements_unchanged_at_apply','monthly_profit_unchanged_at_apply',
+      'source_and_other_history_unchanged_at_apply','tx2112_tx2163_still_intact',
+      'september_close_still_intact','account_days_108_verified_at_apply',
+      'expected_pairs_20_at_apply','batch_integrity_pass'
+    ])assert.equal(row[key],true,key);
+    assert.equal(Number(row.current_account_days_matching_old_sheet),108);
     await assert.rejects(db.exec(sql),/BATCH_ALREADY_APPLIED/);await db.exec('rollback');assert.deepEqual(await snapshot(db),after);
+  });
+  await t.test('postflight ignores later legitimate journals, source updates and monthly close without masking target tampering',async()=>{
+    const db=await make(),sql=await approvedSql(db);
+    await db.exec('create schema supabase_migrations; create table supabase_migrations.schema_migrations(version text,name text)');
+    await db.exec(sql);
+    const report=async()=> {
+      const results=await db.exec(readFileSync('scripts/ledger/oct-meal-consolidation-postflight.sql','utf8'));
+      return (Array.isArray(results)?results:[results]).flatMap(r=>r.rows??[]).find(r=>'batch_integrity_pass' in r);
+    };
+    const first=await report();assert.equal(first.batch_integrity_pass,true);
+    const saved=(await one(db,"select after_snapshot s from ledger_audit_logs where action='meal_manual_consolidation_completed'")).s;
+    assert.equal(saved.beforeDaily,undefined,'audit must not retain every account-day as raw full-ledger rows');
+    assert.equal(saved.beforeProfit,undefined);
+    assert.equal(saved.preserved,undefined,'avoid copying every candidate and movement into audit');
+    assert.equal(saved.atApplyChecks.dailyBeforeHash,saved.atApplyChecks.dailyAfterHash);
+    assert.equal(saved.atApplyChecks.profitBeforeHash,saved.atApplyChecks.profitAfterHash);
+
+    // A later valid non-meal expense changes the live daily and P&L totals.
+    const later=await one(db,`insert into ledger_transactions(type,occurred_at,business_date,recognition_month,amount,category_id,status,source_type,confirmed_by,memo)
+      values('expense','2026-10-10T12:00Z','2026-10-10','2026-10-01',12345,7,'confirmed','later_unrelated_expense',1,'later POS or purchase equivalent') returning id`);
+    await db.query('insert into ledger_movements(transaction_id,fund_account_id,amount) values($1,1,-12345)',[later.id]);
+    await db.exec(`update ledger_candidates set source_drift_snapshot='{"total_amount":390000,"employee_count":13,"laterUpdate":true}'::jsonb
+      where id=6001`);
+    const after=await report();assert.equal(after.batch_integrity_pass,true,'new legitimate transactions must not invalidate completed batch');
+    assert.equal(Number(after.current_account_days_matching_old_sheet),107,'separate live 108/108 deviation is informational');
+    assert.equal(after.target_cash_and_profit_delta_zero,true);
+    assert.equal(after.source_and_other_history_unchanged_at_apply,true);
+
+    // Detect a real batch change while October is open, then restore the test
+    // mutation before closing. The production month guard remains active.
+    const batchTx=await one(db,"select id from ledger_transactions where source_snapshot->>'batch'='oct-2026-meal-consolidation-20-630000-v1' order by id limit 1");
+    await db.query('update ledger_movements set amount=amount+1 where transaction_id=$1',[batchTx.id]);
+    const tampered=await report();assert.equal(tampered.batch_integrity_pass,false);
+    assert.equal(Number(tampered.movement_profit_ok),19);
+    await db.query('update ledger_movements set amount=amount-1 where transaction_id=$1',[batchTx.id]);
+    assert.equal((await report()).batch_integrity_pass,true);
+    await db.exec("insert into ledger_month_closures(month,status) values('2026-10-01','closed')");
+    assert.equal((await report()).batch_integrity_pass,true,'later month close must not invalidate the completed batch');
+    const closed=await snapshot(db);
+    await assert.rejects(db.query('update ledger_movements set amount=amount+1 where transaction_id=$1',[batchTx.id]),/LEDGER_MONTH_CLOSED/);
+    assert.deepEqual(await snapshot(db),closed,'closed-month mutation must leave every row unchanged');
   });
   await t.test('late failure rolls back the ENTIRE batch including prior cancellations and audits',async()=>{
     const db=await make();let sql=await approvedSql(db);const before=await snapshot(db);
@@ -96,15 +145,25 @@ async function cases(t,Database){
     await assert.rejects(db.exec(sql));await db.exec('rollback');assert.deepEqual(await snapshot(db),before);
   });
   await t.test('empty/unverified evidence, stale hashes, wrong account, September parent and closed October refuse without writes',async()=>{
-    for(const mode of ['empty','evidence','nullDate','hash','account','parent','closed']){
+    for(const mode of ['empty','evidence','nullDate','nullManifestDate','hash','account','parent','closed']){
       const db=await make();let sql=mode==='empty'?applySql():await approvedSql(db);
       if(mode==='evidence')sql=sql.replace(/"amount":"-390000"/,'"amount":"-390001"');
-      if(mode==='nullDate')sql=sql.replace(/"business_date":"2026-10-01"/,'"business_date":null');
+      if(mode==='nullDate'){
+        const match=sql.match(/v_expected_daily jsonb := '([^']*)'/);assert.ok(match,'daily evidence declaration must exist');
+        const evidence=JSON.parse(match[1]);evidence[0].business_date=null;
+        sql=sql.replace(match[0],`v_expected_daily jsonb := '${JSON.stringify(evidence)}'`);
+      }
+      if(mode==='nullManifestDate'){
+        const match=sql.match(/v_manifest jsonb := '([^']*)'/);assert.ok(match,'manifest declaration must exist');
+        const manifest=JSON.parse(match[1]);manifest[0].business_date=null;
+        sql=sql.replace(match[0],`v_manifest jsonb := '${JSON.stringify(manifest)}'`);
+      }
       if(mode==='hash')sql=sql.replace(/"manual_hash":"[a-f0-9]+"/,'"manual_hash":"stale"');
       if(mode==='account')await db.exec('update ledger_movements set fund_account_id=2 where transaction_id=7020');
       if(mode==='parent')sql=sql.replace(/"automatic_id":(?:"6020"|6020)/,'"automatic_id":2112');
       if(mode==='closed')await db.exec("insert into ledger_month_closures(month,status) values('2026-10-01','closed')");
-      const before=await snapshot(db);await assert.rejects(db.exec(sql),undefined,mode);await db.exec('rollback');assert.deepEqual(await snapshot(db),before,mode);
+      const expected=mode==='nullDate'?/INVALID_108_ACCOUNT_DAY_EVIDENCE/:mode==='nullManifestDate'?/STALE_OR_PROTECTED_MANIFEST/:undefined;
+      const before=await snapshot(db);await assert.rejects(db.exec(sql),expected,mode);await db.exec('rollback');assert.deepEqual(await snapshot(db),before,mode);
     }
   });
   await t.test('supplied operating snapshot: exact 20 IDs, Oct24 +60000, 30 single rows and real 108 account-day baseline preserved',async()=>{
@@ -147,5 +206,8 @@ test('single-row meals on native PostgreSQL',{skip:!process.env.QA_POSTGRES_BIN,
     const row=await one(db,"select count(*) n,sum(amount*economic_effect_sign) amount from ledger_transactions where correction_of_id=6001");
     assert.equal(Number(row.n),1);assert.equal(Number(row.amount),30000);
     assert.equal(Number((await one(db,"select sum(m.amount) amount from ledger_movements m join ledger_transactions t on t.id=m.transaction_id where correction_of_id=6001 and business_date='2026-10-01'")).amount),-30000);
+    // Flush this isolated cluster before teardown: its shutdown checkpoint can
+    // otherwise exceed the existing harness's five-second pg_ctl wait on Windows.
+    await db.exec('checkpoint');
   });
 });

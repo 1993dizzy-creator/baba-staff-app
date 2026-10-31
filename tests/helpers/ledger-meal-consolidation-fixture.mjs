@@ -27,6 +27,7 @@ export async function install(db){
   await db.exec(sql);await db.exec(manualMigration());await db.exec(mealMigration());
 }
 export async function manifest(db){return (await db.query(`select m.id manual_id,a.id automatic_id,
+  m.business_date::text business_date,m.amount::numeric amount,
   md5(to_jsonb(m)::text) manual_hash,md5(to_jsonb(a)::text) automatic_hash,md5(to_jsonb(c)::text) candidate_hash,
   (select md5(jsonb_agg(to_jsonb(mv) order by mv.id)::text) from ledger_movements mv where transaction_id=m.id) movement_hash
   from ledger_transactions m join ledger_transactions a on a.business_date=m.business_date and a.source_type='attendance_meal_daily_candidate'

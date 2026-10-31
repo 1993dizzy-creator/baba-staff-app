@@ -23,6 +23,10 @@ declare
   v_item jsonb; v_result jsonb; v_snapshot jsonb;
   v_id bigint; v_cash bigint; v_before_effective numeric;
   v_daily jsonb; v_profit jsonb; v_preserved jsonb; v_after jsonb;
+  v_daily_hash_before text; v_daily_hash_after text;
+  v_profit_hash_before text; v_profit_hash_after text;
+  v_history_hash_before text; v_history_hash_after text;
+  v_protected_tx_hash text; v_sep_closure_snapshot jsonb;
   v_operation uuid := gen_random_uuid();
   v_batch constant text := 'oct-2026-meal-consolidation-20-630000-v1';
 begin
@@ -81,6 +85,14 @@ begin
     'closures',(select jsonb_agg(to_jsonb(c) order by id) from public.ledger_month_closures c),
     'candidates',(select jsonb_agg(to_jsonb(c) order by id) from public.ledger_candidates c),
     'movements',(select jsonb_agg(to_jsonb(m) order by id) from public.ledger_movements m)) into v_preserved;
+  -- Keep complete before-state only inside this locked transaction. Audit stores
+  -- compact hashes and the 20-row manifest, never a full 3+ MB candidate dump.
+  v_daily_hash_before := md5(coalesce(v_daily::text,'null'));
+  v_profit_hash_before := md5(coalesce(v_profit::text,'null'));
+  v_history_hash_before := md5(coalesce(v_preserved::text,'null'));
+  v_protected_tx_hash := md5(coalesce((v_preserved->'protectedTransactions')::text,'null'));
+  select coalesce(jsonb_agg(to_jsonb(c) order by id),'[]'::jsonb) into v_sep_closure_snapshot
+    from public.ledger_month_closures c where month='2026-09-01'::date;
   if (select count(*) from public.ledger_transactions where id in(2112,2163))<>2
     or not exists(select 1 from public.ledger_transactions where id=2163 and correction_of_id=2112
       and business_date='2026-10-01' and source_type='ledger_correction') then raise exception 'TX2163_LINK_CHANGED'; end if;
@@ -90,6 +102,7 @@ begin
     select * into strict v_original from public.ledger_transactions where id=(v_item->>'automatic_id')::bigint for update;
     select * into strict v_candidate from public.ledger_candidates where v_original.source_key='candidate:'||id::text for update;
     if v_manual.id in(2112,2163) or v_original.id in(2112,2163)
+      or (v_item->>'business_date')::date is distinct from v_manual.business_date
       or md5(to_jsonb(v_manual)::text) is distinct from v_item->>'manual_hash'
       or md5(to_jsonb(v_original)::text) is distinct from v_item->>'automatic_hash'
       or md5(to_jsonb(v_candidate)::text) is distinct from v_item->>'candidate_hash'
@@ -147,20 +160,29 @@ begin
     select t.business_date,m.fund_account_id,sum(m.amount) amount from public.ledger_transactions t
     join public.ledger_movements m on m.transaction_id=t.id where t.status='confirmed' group by 1,2) s;
   if v_after is distinct from v_daily then raise exception 'DAILY_ACCOUNT_MOVEMENTS_CHANGED'; end if;
+  v_daily_hash_after := md5(coalesce(v_after::text,'null'));
   select jsonb_agg(to_jsonb(s) order by recognition_month,category_id,type) into v_after from (
     select recognition_month,category_id,type,sum(amount*economic_effect_sign) amount from public.ledger_transactions
     where status='confirmed' group by 1,2,3) s;
   if v_after is distinct from v_profit then raise exception 'MONTHLY_PROFIT_CHANGED'; end if;
+  v_profit_hash_after := md5(coalesce(v_after::text,'null'));
   select jsonb_build_object('protectedTransactions',(select jsonb_agg(to_jsonb(t) order by id) from public.ledger_transactions t where id in(2112,2163)),
     'closures',(select jsonb_agg(to_jsonb(c) order by id) from public.ledger_month_closures c),
     'candidates',(select jsonb_agg(to_jsonb(c) order by id) from public.ledger_candidates c),
     'movements',(select jsonb_agg(to_jsonb(m) order by id) from public.ledger_movements m where transaction_id not in (
       select id from public.ledger_transactions where source_snapshot->>'batch'=v_batch))) into v_after;
   if v_after is distinct from v_preserved then raise exception 'PROTECTED_HISTORY_CHANGED'; end if;
+  v_history_hash_after := md5(coalesce(v_after::text,'null'));
   insert into public.ledger_audit_logs(actor_user_id,action,entity_type,entity_id,after_snapshot,reason)
   values(v_actor,'meal_manual_consolidation_completed','transaction',null,
-    jsonb_build_object('batch',v_batch,'operationId',v_operation,'manifest',v_manifest,'verifiedDaily',v_expected_daily,
-      'beforeDaily',v_daily,'beforeProfit',v_profit,'preserved',v_preserved,'count',20,'amount',630000),
+    jsonb_build_object('batch',v_batch,'operationId',v_operation,'manifest',v_manifest,
+      'expectedPairs',v_expected_pairs,'verifiedDaily',v_expected_daily,
+      'atApplyChecks',jsonb_build_object(
+        'dailyBeforeHash',v_daily_hash_before,'dailyAfterHash',v_daily_hash_after,
+        'profitBeforeHash',v_profit_hash_before,'profitAfterHash',v_profit_hash_after,
+        'historyBeforeHash',v_history_hash_before,'historyAfterHash',v_history_hash_after),
+      'protectedTxHash',v_protected_tx_hash,'septemberClosureSnapshot',v_sep_closure_snapshot,
+      'count',20,'amount',630000),
     '20건 630,000 VND 통합 · 전계좌 일변동 및 월손익 동일 · 108/108 검산 유지');
 end;
 $consolidate$;
