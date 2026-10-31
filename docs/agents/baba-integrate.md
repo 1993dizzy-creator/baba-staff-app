@@ -158,7 +158,7 @@ prepare 환경은 담당 Worktree의 짧은 `.tmp-baba/i/p-*/<worktree>`에 생�
 
 `push`, `deploy`, `production`, `db`, `migration` action/옵션은 지원하지 않고 차단한다.
 GitHub push 및 그에 따른 Vercel Production은 로컬 main 승인과 별도 사용자 승인이 필요하다.
-단, P0-2B가 상시 승인한 직렬 후처리의 조건부 일반 push는 별도 `baba-after-commit` 게이트를 따른다. 이 CLI에는 push 경로를 추가하지 않는다.
+기존 P0-2B의 조건부 자동 Push 상시 승인은 비활성화한다. `baba-after-commit`은 로컬 상태 보고만 수행하며, Push·Production은 별도 사용자 승인 후 검증한다. 이 CLI에는 push 경로를 추가하지 않는다.
 향후 별도 승인 후 배포 SHA·READY·공개 read-only smoke를 검증해야 하며 접근 실패는 미확인으로 남긴다.
 운영 SQL/Migration 자동 실행 경로는 없다. SQL Editor → GPT 운영 객체·권한 검증 → 해당 신규 Migration의
 조건부 history 등록 → 배포 SOP를 그대로 유지한다.

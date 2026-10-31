@@ -124,7 +124,7 @@ Skill 자동 호출은 `AGENTS.md`/`CLAUDE.md` 진입점의 지침으로 연결�
   - 원격 브랜치 삭제
   - PR 생성
   - Vercel 배포·환경 변수 변경
-- P0-2B의 상시 승인 예외는 §15의 검증된 직렬 커밋·후보 없음·전체 게이트 통과 후 `baba-after-commit`의 일반 push와 그 Production 확인에만 적용한다. 그 밖의 push·배포·main 병합은 위 별도 승인 규칙을 유지한다. 작업별 실행 금지 지시가 상시 승인보다 우선한다.
+- 기존 P0-2B의 조건부 자동 Push·Production 상시 승인은 비활성화한다. `baba-after-commit`은 로컬 종료 전용이며, Push·배포·main 병합은 위 별도 사용자 승인 규칙을 따른다(§15).
 - 병합 순서는 사용자가 정한다. 병합 전 조건:
   - 대상 브랜치의 `baba-verify`가 FAIL이 아니다.
   - 인계서 `--check`를 통과했다.
@@ -221,14 +221,14 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 **도구**
 
 - `baba-start`·`baba-integrate`는 사용하지 않는다. `baba-preflight`·`baba-verify`·`baba-handoff`도 소유권 검사로 원본 폴더에서 거부된다. 이는 정상이며 우회하거나 검사를 고치지 않는다.
-- 검증·개발은 일반 Git·npm·node 명령을 쓴다. 검증된 로컬 커밋 후의 공통 종료 명령은 §15의 `baba-after-commit`이다. 기존 병렬 도구의 소유권 검사는 우회하지 않는다.
+- 검증·개발은 일반 Git·npm·node 명령을 쓴다. 로컬 커밋 후 §15의 `baba-after-commit`은 상태 확인·보고만 수행한다. 기존 병렬 도구의 소유권 검사는 우회하지 않는다.
 
 **시작·이어받기**
 
 1. `git status`로 브랜치가 `main`이고 진행 중인 merge·rebase·cherry-pick이 없는지 확인한다.
 2. 미커밋 변경이 있으면 보존한다. `git status`·`git diff`·최근 커밋으로 내용을 확인한 뒤 이어서 작업한다. 이어받을 작업인지 판단할 수 없으면 수정 전에 사용자에게 묻는다.
 3. 수정 예정 파일이 전용 Worktree의 미커밋·미통합 변경과 겹치는지 `git --no-optional-locks -C <Worktree> status`로 읽기 전용 확인한다. 겹치면 사용자 확인 전까지 그 파일을 수정하지 않는다.
-4. 수정 전에 아래 검증을 한 번 실행해 기준 결과를 남긴다. 기존·신규 실패를 나누는 근거다.
+4. 변경 범위와 기존 검증 증거를 확인하고 필요한 검증을 선정한다. 일반 작업은 변경 후 관련 필수 검증을 한 번 수행하며, 기존 실패 구분에 필요한 경우에만 기준 결과와 대조한다.
 
 **에이전트 교체**
 
@@ -240,8 +240,8 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 **검증**
 
 - ESLint: 변경된 JS/TS 파일만 `npx eslint <파일>`
-- TypeScript: `npx tsc --noEmit` (route 타입이 없으면 `npx next typegen`을 먼저 실행)
-- 관련 테스트: 변경 경로를 참조하는 테스트와 같은 폴더 테스트를 `node --import ./scripts/agent/lib/offline-guard.mjs --test <파일>`로 실행한다(TypeScript 테스트는 `--experimental-strip-types` 추가). POS 동기화·cron·일괄 작업 경로는 mock 없이 실행하지 않는다.
+- TypeScript: 변경의 타입 영향 때문에 필요한 경우에 확인한다. 전체 `tsc --noEmit`·typegen·Build를 일반 개발 종료의 기본 검사로 실행하지 않는다. 전체 배포 적격성 검증은 §15의 별도 승인 단계로 분리한다.
+- 관련 테스트: 변경에 필요한 테스트를 명시해 `node --import ./scripts/agent/lib/offline-guard.mjs --test <파일>`로 한 번 실행한다(TypeScript 테스트는 `--experimental-strip-types` 추가). 변경·신규 실패·미해결 우려가 없으면 재실행하지 않는다. POS 동기화·cron·일괄 작업 경로는 mock 없이 실행하지 않는다.
 - 기존·신규 구분: 시작 4단계 기준 결과와 비교한다. 기준 결과가 없거나 분류하지 못한 실패는 신규로 본다. ESLint 기존 오류는 `git show HEAD:<파일> | npx eslint --stdin --stdin-filename <파일>`로 확인할 수 있다.
 - 판정과 표기는 §8 기준(`PASS`·`PASS_WITH_PREEXISTING`·`FAIL`, 실제 실행 여부, 미검증 항목)을 따른다. `FAIL`이면 커밋하지 않는다.
 - `.env.local` 보호: 값을 읽기·출력·복사하지 않는다. 원본 폴더에서 Next.js가 `.env.local`을 읽어 운영에 연결될 수 있으므로 `next build`·`next start`·`next dev`를 실행하지 않는다(원본 개발 서버 3000은 사용자 소유). Build 검증이 필요하면 미검증으로 보고하고, 사용자 승인 후 전용 Worktree의 `baba-verify --build`(오프라인 fixture)로 확인한다.
@@ -249,7 +249,7 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 **커밋·보고**
 
 - 검증 후 원본 `main`에 직접 커밋한다. 이번 작업 파일만 지정해 add하고 관련 없는 변경을 섞지 않는다.
-- 검증 후 로컬 커밋을 완료하면 Codex·Claude Code 모두 §15의 공통 후처리를 실행한다. `git push`·Production의 상시 승인 범위 밖 실행과 운영 DB·Migration 적용은 §6·§7에 따라 별도 사용자 승인을 받는다.
+- 검증 후 로컬 커밋을 완료하면 §15의 상태 확인·보고로 종료한다. 커밋만을 이유로 같은 검증을 반복하지 않는다. `git push`·Production 및 운영 DB·Migration 적용은 §6·§7에 따라 별도 사용자 승인을 받는다.
 - `baba-handoff` 파일 대신 사용자에게 시작 SHA, 최종 SHA, 커밋 목록, 변경 파일, 검증 결과·미검증 항목, DB/Migration 변경 여부, push 여부를 보고한다.
 
 **격리·병렬 모드와의 관계**
@@ -285,7 +285,7 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 
 ### 13.4. 유지되는 보호 규칙
 
-이 절은 다음을 바꾸지 않는다: 운영 DB 읽기 전용 원칙과 Migration·운영 변경의 명시적 승인(AGENTS.md, §6), 로컬 SQL 작성·검증 담당 제한(AGENTS.md, §6), Worktree 소유권·충돌 보호(§1, §5), 변경 파일만 커밋(§12), §15 상시 승인 범위 밖 `git push`·배포의 별도 승인(§7), 신규 테스트 실패 0건 기준(§8).
+이 절은 다음을 바꾸지 않는다: 운영 DB 읽기 전용 원칙과 Migration·운영 변경의 명시적 승인(AGENTS.md, §6), 로컬 SQL 작성·검증 담당 제한(AGENTS.md, §6), Worktree 소유권·충돌 보호(§1, §5), 변경 파일만 커밋(§12), `git push`·배포의 별도 승인(§7), 신규 테스트 실패 0건 기준(§8).
 
 ## 14. 역할 분담·수정 전달·종료 정리 (직렬·병렬 공통)
 
@@ -295,13 +295,12 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 4. **종료 전 점검**: 완료·중단·인계 시 이번 작업의 임시 산출물을 목록화하고 정확한 절대 경로, 실제 내용, 링크 여부, 실행·참조·파일 사용 여부와 원본 반영·보존 상태를 확인한다. 원본 프로젝트, 미커밋·미추적 파일, 운영 증거·검증 로그, 다른 작업물은 정리 대상에서 제외한다.
 5. **승인 범위 정리·보고**: 사용자가 삭제를 승인한 이번 작업의 불필요한 임시물만 정리한다. 삭제 직전 실제 경로가 승인된 대상 안에 있는지와 내용·사용 상태를 다시 확인한다. 링크·사용 중·보존 여부가 불명확한 대상은 남기고, 추가 발견 폴더는 목록만 보고하여 확인 전에는 삭제하지 않는다. `git clean`, 강제 reset, 무차별 삭제로 정리하지 않으며, 종료 보고에 정리 목록·보존 대상·미확인 사항·최종 SHA를 포함한다.
 
-## 15. P0-2B — 직렬 커밋 후 공통 자동 분기
+## 15. 로컬 개발 종료와 배포 적격성 검증 분리
 
-승인 정본: [Notion P0-2B](https://app.notion.com/p/40a7ad2aac7981da963ecdb0dc1adff0). 구현·증거 형식은 `docs/agents/baba-after-commit.md`를 따른다.
+구현·증거 형식은 `docs/agents/baba-after-commit.md`를 따른다. 기존 조건부 자동 Push·Production 상시 승인은 사용하지 않는다.
 
-- 원본 main의 담당 Codex·Claude Code는 검증 통과 후 지정 파일만 로컬 커밋하고 `node scripts/agent/baba-after-commit.mjs --project baba-staff-app --scope baba333`를 실행한다. Git Hook을 설치하거나 전역 설정을 변경하지 않는다.
-- **A / INTEGRATION_PENDING**: 활성·보존 브랜치의 실제 SHA, Task·Handoff·Verify와 변경·의존 범위를 조사한다. 후보가 있으면 건수·상태·prepare 명령을 알리고 push·배포를 보류한다. 병합은 자동 실행하지 않는다.
-- **B / ELIGIBLE → DEPLOYED**: 후보·미완료·불명확·보류 작업이 없고 원본 main CLEAN, Git 작업 없음, 실제 원격이 동일/조상, 전체 미배포 커밋 검토, 독립 저장소의 필수 테스트·lint·typecheck·오프라인 Build와 필요한 운영 적용·postflight 증거가 통과해야 한다. 상시 승인 범위에서 정확한 main SHA를 일반 push하고 Production의 같은 SHA·READY를 실제 확인한다. 확인 실패는 PUSHED_UNCONFIRMED이며 성공으로 기록하지 않는다.
-- **C / BLOCKED**: 상태·증거·대상·관계가 불명확하거나 검증 실패·운영 변경 미검증이면 push하지 않는다. 이전 커밋·브랜치·인계서는 보존한다. 보존 브랜치도 승인 없이 완료·폐기 처리하지 않는다.
-- `--check`는 동일 분기를 검토하되 절대 push하지 않는다. 이번처럼 실제 병합·push·Production 금지인 작업은 커밋 후 반드시 `--check`를 사용한다.
-- 다른 Worktree, 원본 서버·환경, 운영 DB는 변경하지 않는다. 운영 SQL 실행, 자동 main 병합, force push, PR, 임의 증거 생성은 상시 승인에 포함되지 않는다.
+1. **개발 검증·커밋**: §12의 관련 필수 검증 후 이번 파일만 로컬 커밋한다. 이미 수행한 검증은 커밋 뒤 반복하지 않는다.
+2. **로컬 종료**: `node scripts/agent/baba-after-commit.mjs --project baba-staff-app --scope baba333`으로 main 상태·SHA·후보·보류 사항을 보고한다. `--check`도 같은 로컬 확인이다. 독립 Git 환경 생성, 테스트·전체 TypeScript·Build 재실행, 원격·Vercel 조회, Push·배포는 수행하지 않는다. 다른 작업의 후보·보류는 알림이며 로컬 커밋의 배포 적격성을 뜻하지 않는다.
+3. **별도 배포 승인**: 사용자가 Push·Production을 별도로 승인할 때만 해당 SHA의 전체 배포 적격성 검증을 수행한다. 개발 종료 명령으로 승인을 대신하지 않는다.
+4. **기존 증거 재사용**: 기존 PASS 증거의 SHA·코드 상태·검증 범위·환경·도구/의존성 및 기준선이 같고 필요한 검사와 로그가 온전하면 재사용한다. 기존 `validateSerial`·`verifyEvidence` 등으로 증거를 확인하고, 조건이 다르거나 증거가 부족한 검사만 다시 수행한다. 별도 캐시·검증 프레임워크는 만들지 않는다.
+5. **배포 결과 확인**: 승인 단계에서 원격·후보/보류·Production 대상과 필요한 운영 Postflight를 재확인한다. 실제 Push·Production은 승인 범위 안에서만 수행하고 동일 SHA·READY를 확인한다. main 병합·운영 DB 변경 승인은 별개이며 미검증 항목을 PASS로 기록하지 않는다.
