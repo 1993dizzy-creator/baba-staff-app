@@ -6,7 +6,7 @@ import { browserFixture } from './login-keeping-browser.mjs';
 
 const options = {skip:!process.env.PLAYWRIGHT_MODULE_PATH};
 test('a response or error queued before selection cannot reopen the keeping dropdown, even when abort is ignored', async () => {
-  for (const fail of [false,true]) {
+  for (const scenario of ['success','error','debounce']) {
     const slots=[], effects=[], timers=new Map(), requests=[];
     let cursor=0, timerId=0;
     const hooks={
@@ -20,7 +20,7 @@ test('a response or error queued before selection cannot reopen the keeping drop
     const imports={
       react:hooks,
       'react/jsx-runtime':{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},
-      '@/lib/text/bar-keeping-new':{keepingNewText:{ko:{productSearchError:'retry'}}},
+      '@/lib/text/bar-keeping-new':{keepingNewText:{ko:{productSearchError:'retry',searching:'searching'}}},
       '@/lib/bar/client-auth':{handleBarApiUnauthorized:async()=>false,fetchBarApi:()=>new Promise((resolve,reject)=>requests.push({resolve,reject}))},
     };
     const code=ts.transpileModule(readFileSync('components/bar/keeping/KeepingProductAutocomplete.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText;
@@ -35,13 +35,15 @@ test('a response or error queued before selection cannot reopen the keeping drop
     input(render()).props.onChange({target:{value:'W'}});render();
     let pending=runTimer();requests.shift().resolve(Response.json({items:[item]}));await pending;
     const option=nodes(render()).find(n=>n.props?.role==='option');assert.ok(option);
-    input(render()).props.onChange({target:{value:'위스키'}});render();pending=runTimer();
+    input(render()).props.onChange({target:{value:'위스키'}});render();
+    if(scenario!=='debounce')pending=runTimer();
     // A queued selection handler can run while the old result is settling.
     option.props.onClick();render();
-    const request=requests.shift();if(fail)request.reject(new Error('late failure'));else request.resolve(Response.json({items:[{...item,id:99}]}));
-    await pending;
+    if(scenario==='debounce') {await runTimer();assert.equal(requests.length,0);}
+    else {const request=requests.shift();if(scenario==='error')request.reject(new Error('late failure'));else request.resolve(Response.json({items:[{...item,id:99}]}));await pending;}
     const tree=render();assert.equal(input(tree).props['aria-expanded'],false);
     assert.equal(input(tree).props.value,'위스키');assert.deepEqual(selected,{product:item,name:'위스키'});
+    assert.equal(nodes(tree).some(n=>n.props?.children==='searching'),false);
     assert.equal(timers.size,0);
     input(tree).props.onChange({target:{value:'new'}});render();assert.equal(timers.size,1);
   }

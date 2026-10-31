@@ -46,6 +46,7 @@ export default function KeepingProductAutocomplete({
     const controller = new AbortController();
     const currentRequest = ++requestId.current;
     const timer = window.setTimeout(async () => {
+      if (selectionComplete.current || controller.signal.aborted || currentRequest !== requestId.current) return;
       setLoading(true);
       setError("");
       try {
