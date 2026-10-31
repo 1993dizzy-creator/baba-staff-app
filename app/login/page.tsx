@@ -25,30 +25,42 @@ export default function LoginPage() {
         if (loading) return;
         setLoading(true);
 
-        const res = await fetch("/api/login", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                username,
-                password,
-                lang,
-            }),
-        });
+        try {
+            const res = await fetch("/api/login", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    username,
+                    password,
+                    lang,
+                }),
+            });
 
-        const result = await res.json();
+            const result = await res.json();
+            if (!result || typeof result !== "object" || typeof result.ok !== "boolean"
+                || (result.ok && (!result.user || typeof result.user !== "object" || Array.isArray(result.user)))) {
+                throw new Error("Invalid login response");
+            }
 
-        if (!res.ok || !result.ok) {
+            if (!res.ok || !result.ok) {
+                setLoading(false);
+                alert(result.message || "Login failed");
+                return;
+            }
+
+            localStorage.setItem("baba_user", JSON.stringify(result.user));
+
+            const returnPath = takeAttendanceReturnPath(window.sessionStorage);
+            router.replace(returnPath || (isAdmin(result.user) ? "/admin" : "/inventory"));
+        } catch {
+            alert(lang === "ko"
+                ? "로그인 요청을 처리하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요."
+                : "Không thể xử lý yêu cầu đăng nhập. Vui lòng kiểm tra kết nối và thử lại.");
+        } finally {
             setLoading(false);
-            alert(result.message || "Login failed");
-            return;
         }
-
-        localStorage.setItem("baba_user", JSON.stringify(result.user));
-
-        const returnPath = takeAttendanceReturnPath(window.sessionStorage);
-        router.replace(returnPath || (isAdmin(result.user) ? "/admin" : "/inventory"));
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
