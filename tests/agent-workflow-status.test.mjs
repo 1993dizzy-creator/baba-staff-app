@@ -350,10 +350,10 @@ test('narrow terminals switch to a compact layout without table borders', () => 
   const narrow = renderStatus(report, {unicode: false, columns: 60});
   assert.match(wide, /^\+-+\+/m);
   assert.doesNotMatch(narrow, /^[+|]/m);
-  assert.match(narrow, /^Claude +CLEAN [0-9a-f]{7} {2}미통합 1 · 뒤처짐 0$/m);
+  assert.match(narrow, /^Claude +CLEAN [0-9a-f]{7} {2}미통합 1 · 뒤처짐 0 · ahead 1$/m);
   assert.match(narrow, /^ {7}claude\/20261026-한글-정렬-01$/m);
   assert.match(narrow, /^ {2}활성 Worktree 통합 +WARN 검토 필요$/m);
-  for (const line of narrow.split('\n').slice(3, 9)) assert.ok(displayWidth(line) <= 60, line);
+  for (const line of narrow.split('Worktree 상세\n')[1].split('\n').slice(0, 6)) assert.ok(displayWidth(line) <= 60, line);
 });
 
 test('other local branches are reviewed separately from active worktree integration', () => {
@@ -406,4 +406,28 @@ test('Windows CMD: baba-status.cmd prints the table, honors color settings and r
   assert.doesNotMatch(cmd('--offline', {FORCE_COLOR: '1', NO_COLOR: '1'}).stdout, /\x1b\[/);
   assert.equal(cmd('--mode parallel --offline').status, 2);
   assert.equal(JSON.parse(cmd('--offline --json').stdout).trees.length, 3);
+});
+
+test('relationship graph shows the shared fork and advances the Worktree pointer without changing main',()=>{
+  const f=fixture();const a=gitOut(f.main,['rev-parse','HEAD']);
+  const b=commit(f.main,'shared.txt','b\n');git(f.codex,['switch','--no-track','-c','codex/graph-fixture',b]);
+  const c=commit(f.main,'main-only.txt','c\n');
+  const d=commit(f.codex,'candidate.txt','d\n');const e=commit(f.codex,'candidate.txt','e\n');
+  let report=status(f,{offline:true});let relation=report.relationships.find(r=>r.path===f.codex);
+  assert.deepEqual(relation.bases,[b]);assert.deepEqual(relation.shared,[a,b]);assert.equal(relation.ahead,2);assert.equal(relation.behind,1);
+  let view=renderStatus(report,{unicode:false});
+  assert.ok(view.indexOf('요약')<view.indexOf('main 기준 브랜치 관계도'));assert.ok(view.indexOf('main 기준 브랜치 관계도')<view.indexOf('Worktree 상세'));
+  assert.ok(view.includes([a,b,c].map(s=>s.slice(0,7)).join(' -- ')));
+  assert.ok(view.includes([a,b,d,e].map(s=>s.slice(0,7)).join(' -- ')));assert.match(view,/\^ codex\/graph-fixture/);
+  const next=commit(f.codex,'candidate.txt','f\n');report=status(f,{offline:true});view=renderStatus(report,{unicode:false});
+  assert.ok(view.includes([a,b,d,e,next].map(s=>s.slice(0,7)).join(' -- ')));assert.equal(gitOut(f.main,['rev-parse','HEAD']),c);
+});
+
+test('relationship graph retains merge edges and identifies detached and shared HEADs',()=>{
+  const f=fixture();const initial=status(f,{offline:true});assert.match(renderStatus(initial,{unicode:false}),/같은 HEAD/);
+  const seed=gitOut(f.main,['rev-parse','HEAD']);commit(f.main,'main-only.txt','main\n');commit(f.codex,'candidate.txt','work\n');
+  git(f.codex,['merge','--no-edit','main']);git(f.claude,['switch','--detach',seed]);
+  const report=status(f,{offline:true});const detached=report.relationships.find(r=>r.path===f.claude);assert.equal(detached.detached,true);
+  const view=renderStatus(report,{unicode:false});assert.match(view,/merge 포함 \/ 실제 Git 연결선/);assert.match(view,/\[detached HEAD\]/);
+  assert.ok(view.includes(gitOut(f.codex,['rev-parse','HEAD']).slice(0,7)));
 });

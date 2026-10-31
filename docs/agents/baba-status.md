@@ -17,7 +17,10 @@ baba-status
 
 ## 화면
 
-- Worktree 표(구분·HEAD·브랜치·상태·미통합·main 대비 뒤처짐), GitHub 표, 결과 표, 문제·참고 순서로 표시한다. 한글은 2칸 폭으로 계산해 세로줄을 맞춘다.
+- 상단 요약(main HEAD·CLEAN/DIRTY·미통합 수) → main 기준 브랜치 관계도 → Worktree 상세표·GitHub·결과·문제·참고 순서로 표시한다. 한글은 2칸 폭으로 계산해 세로줄을 맞춘다.
+- 관계도는 실제 Git 공통 조상과 부모 연결을 조회한다. 선형 이력은 공통 이력에서 각 HEAD까지 왼쪽→오른쪽으로 표시하고, 마지막 SHA 아래에 브랜치 포인터를 둔다. 같은 HEAD와 detached HEAD를 구분한다. merge가 있으면 실제 Git 그래프 연결선을 표시한다.
+- 공통 이력은 최근 first-parent 2개, 분기 후 그래프는 최대 18개 커밋을 표시하며 긴 이력의 생략을 명시한다. 서로 공통 조상을 확인할 수 없으면 연결선을 추정하지 않는다. 미통합 요약은 Worktree별 합계이므로 같은 커밋이 여러 Worktree에 있으면 중복 집계된다.
+- 상세표의 미통합은 기존과 같이 main에 없는 커밋 수이며 ahead와 같다. behind는 main에만 있는 커밋 수다. `--json`은 기존 필드를 유지하고 그래프용 `relationships`를 추가한다.
 - 색상: 초록 PASS·CLEAN·정상, 노랑 검토 필요·DIRTY·Push 대기·미통합, 빨강 FAIL·충돌·Push 불가, 청록 브랜치·SHA. 색이 없어도 PASS/WARN/FAIL 텍스트로 구분된다.
 - 색상은 터미널이 ANSI를 지원할 때만 켠다. 리다이렉션·파이프, `CI`, `TERM=dumb`, `NO_COLOR`, `--no-color`에서는 끈다. `FORCE_COLOR=1`이면 강제로 켠다. `--json`에는 색상이 없다.
 - Windows Terminal과 Windows 외 터미널은 상자 문자(┌─┐), 기존 CMD 콘솔은 ASCII(+-|) 테두리를 쓴다. 한글 글꼴에서 상자 문자가 2칸으로 그려져 줄이 어긋나는 것을 막기 위해서다.

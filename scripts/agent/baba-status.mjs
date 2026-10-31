@@ -83,10 +83,20 @@ export function collectStatus({root, cwd = process.cwd(), mode = null, offline =
   const overall = findings.some(f => f.level === 'FAIL') ? 'FAIL' : findings.some(f => f.level === 'WARN') ? 'WARN' : 'PASS';
   return {
     tool: 'baba-status', readOnly: true, generatedAt: new Date().toISOString(), root, location, requestedMode: mode,
-    main: mainSha, trees, github, findings, parked,
+    main: mainSha, trees, relationships: trees.filter(tree => tree.role !== 'main').map(tree => branchRelationship(root, mainSha, tree)), github, findings, parked,
     verdicts: {integration: verdict('integration'), git: verdict('git'), github: verdict('github'), overall},
     notCovered: ['ESLint·TypeScript·테스트', '보안·자격 증명 검사', 'Production 배포 승인'],
   };
+}
+
+function branchRelationship(root, main, tree) {
+  const limit = 18;
+  const bases = main && tree.head && tree.exists ? lines(gitTry(root, ['merge-base', '--all', main, tree.head]) || '') : [];
+  const history = bases.length && main !== tree.head
+    ? lines(gitTry(root, ['log', '--no-color', '--graph', '--topo-order', '--boundary', `--max-count=${limit}`, '--format=%H%x09%P%x09%s', main, tree.head, '--not', ...bases]) || '') : [];
+  const shared = bases.length === 1 ? lines(gitTry(root, ['log', '--first-parent', '--max-count=2', '--format=%H', bases[0]]) || '').reverse() : [];
+  return {path: tree.path, bases, detached: tree.branch === '(detached)', ahead: tree.unintegrated?.length ?? null,
+    behind: tree.behind, shared, history, truncated: (tree.unintegrated?.length || 0) + (tree.behind || 0) > limit};
 }
 
 function inspectTree(root, tree, mainSha, originalPath) {

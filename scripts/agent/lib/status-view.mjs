@@ -95,6 +95,43 @@ function stamp(iso) {
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
 
+// Only draw horizontal edges when the recorded parents prove a linear path.
+function relationshipLines(relation, main, tree, paint, unicode) {
+  const nodes = new Map();
+  for (const line of relation.history) {
+    const match = line.match(/([0-9a-f]{40})\t([^\t]*)\t/);
+    if (match) nodes.set(match[1], match[2].split(' ').filter(Boolean));
+  }
+  const base = relation.bases[0];
+  const path = head => {
+    const commits = [], seen = new Set();
+    while (head !== base) {
+      if (seen.has(head)) return null;
+      seen.add(head);
+      const parents = nodes.get(head);
+      if (!parents) return ['...', head, ...commits.reverse()];
+      if (parents.length !== 1) return null;
+      commits.push(head); head = parents[0];
+    }
+    return commits.reverse();
+  };
+  const mainPath = path(main), worktreePath = path(tree.head);
+  const out = [];
+  if (relation.bases.length === 1 && mainPath && worktreePath) {
+    const shared = relation.shared?.length ? relation.shared : [base];
+    const edge = unicode ? ' ── ' : ' -- ', arrow = unicode ? '↑' : '^';
+    for (const [label, commits, pointer] of [['main', mainPath, 'main'], [tree.label + ' Worktree', worktreePath, relation.detached ? 'detached HEAD' : tree.branch]]) {
+      const chain = [...shared, ...commits].map(short).join(edge);
+      out.push(`    ${label}`, `    ${paint('cyan', chain)}`,
+        `    ${' '.repeat(Math.max(0, displayWidth(chain) - 7))}${arrow} ${paint('cyan', pointer)}${main === tree.head ? ' (같은 HEAD)' : ''}`);
+    }
+  } else {
+    out.push('    merge 포함 / 실제 Git 연결선 (위: HEAD, 아래: 조상)');
+    for (const line of relation.history) out.push(`    ${line.replace(/([0-9a-f]{40})\t[^\t]*\t/, (_, sha) => paint('cyan', `${short(sha)}${sha === main ? ' [main HEAD]' : ''}${sha === tree.head ? ` [${relation.detached ? 'detached HEAD' : tree.branch}]` : ''}${relation.bases.includes(sha) ? ' [공통 조상]' : ''} `))}`);
+  }
+  return out;
+}
+
 export function renderStatus(r, {color = false, unicode = true, columns = null, branches = false} = {}) {
   const paint = (style, text) => (color && style ? `\x1b[${CODES[style]}m${text}\x1b[0m` : text);
   const tag = level => paint({FAIL: 'red', WARN: 'yellow', INFO: 'cyan'}[level], `[${level}]`);
@@ -102,20 +139,38 @@ export function renderStatus(r, {color = false, unicode = true, columns = null, 
   const out = [`${paint('bold', 'BABA Git 상태')}  ${paint('dim', `읽기 전용 · ${stamp(r.generatedAt)}`)}`,
     `실행 위치  ${r.location.tree ? `${paint('cyan', `${r.location.tree} / ${r.location.branch}`)}${modeName ? ` → ${modeName}` : ''}` : 'BABA Worktree 밖'}`, ''];
 
+  const dirty = r.trees.filter(t => t.exists && !t.clean).length;
+  const pendingTrees = r.trees.filter(t => t.unintegrated?.length);
+  out.push(paint('bold', '요약'), `main HEAD ${paint('cyan', short(r.main))}`,
+    `Worktree ${r.trees.length}개 · CLEAN ${r.trees.filter(t => t.exists && t.clean).length} / DIRTY ${dirty}`,
+    `미통합 ${pendingTrees.length}개 Worktree · ${pendingTrees.reduce((sum, t) => sum + t.unintegrated.length, 0)}커밋 (Worktree별 합계)`,
+    '', paint('bold', 'main 기준 브랜치 관계도'), '  왼쪽: 공통 이력 / 오른쪽: 현재 HEAD');
+  for (const t of r.trees.filter(t => t.role !== 'main')) {
+    const relation = r.relationships?.find(item => item.path === t.path);
+    out.push('', `  ${paint('bold', t.label)}  ${paint('cyan', t.branch)} @ ${short(t.head)}${relation?.detached ? ' [detached HEAD]' : ''}`);
+    if (!relation?.bases.length) { out.push('    공통 조상 확인 불가'); continue; }
+    out.push(`    공통 조상: ${relation.bases.map(short).join(', ')}`);
+    out.push(...relationshipLines(relation, r.main, t, paint, unicode));
+    if (relation.truncated) out.push('    ... 긴 이력 일부 생략 (--json의 HEAD·공통 조상으로 전체 조회 가능)');
+    else if (r.main !== t.head && !relation.history.length) out.push('    커밋 흐름 확인 불가');
+  }
+  out.push('', paint('bold', 'Worktree 상세'));
+
   const rows = r.trees.map(t => {
     const agent = Boolean(t.unintegrated);
     const pending = agent ? t.unintegrated.length : null;
     return [[t.label, 'bold'], [t.exists ? short(t.head) : '-', 'cyan'], [t.branch, 'cyan'], treeState(t),
       agent ? [String(pending), pending ? 'yellow' : 'green'] : ['-', 'dim'],
-      agent ? [String(t.behind), t.behind && pending ? 'yellow' : null] : ['-', 'dim']];
+      agent ? [String(t.behind), t.behind && pending ? 'yellow' : null] : ['-', 'dim'],
+      agent ? [String(pending), pending ? 'yellow' : 'green'] : ['-', 'dim']];
   });
   const options = {paint, unicode, align: [null, null, null, null, 'right', 'right']};
-  const grid = table(['Worktree', 'HEAD', '브랜치', '상태', '미통합', 'main 대비 뒤처짐'], rows, options);
+  const grid = table(['Worktree', 'HEAD', '브랜치', '상태', '미통합', 'main 대비 뒤처짐', 'ahead'], rows, options);
   const compact = columns && displayWidth(grid[0]) > columns;
   if (compact) {
     // Narrow terminals: two short lines per worktree instead of a table.
     for (const [t, [name, head, branch, state, pending, behind]] of r.trees.map((t, i) => [t, rows[i]])) {
-      out.push(`${paint('bold', fill(name[0], 7))}${paint(state[1], state[0])} ${paint('cyan', head[0])}${t.unintegrated ? `  미통합 ${paint(pending[1], pending[0])} · 뒤처짐 ${behind[0]}` : ''}`);
+      out.push(`${paint('bold', fill(name[0], 7))}${paint(state[1], state[0])} ${paint('cyan', head[0])}${t.unintegrated ? `  미통합 ${paint(pending[1], pending[0])} · 뒤처짐 ${behind[0]} · ahead ${pending[0]}` : ''}`);
       out.push(`       ${paint('cyan', branch[0])}`);
     }
   } else out.push(...grid);
