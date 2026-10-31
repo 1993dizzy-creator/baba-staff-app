@@ -13,7 +13,7 @@ node scripts/agent/baba-after-commit.mjs --check --project baba-staff-app --scop
 1. 변경에 필요한 테스트·lint 등 필수 검증을 한 번 수행하고 이번 파일만 로컬 커밋한다.
 2. 원본 main에서 종료 명령을 실행한다. CLEAN·Git 작업·Hook 안전성, 현재 SHA와 로컬 후보·보류 정보를 확인하고 ignored `.tmp-baba/after-commit/`에 보고서를 보존한다.
 3. 정상 결과는 `LOCAL_COMMIT_RECORDED`이며 `deploymentStatus=NOT_REQUESTED`다. 후보·미검증 보류는 보고만 하고 삭제·병합하지 않는다. 원본 main DIRTY·Git 작업 진행·잠금 등은 `BLOCKED`로 남긴다.
-4. 결과·SHA·실제 실행한 검증·미검증 항목을 보고하고 종료한다. 다른 Worktree의 보류 사항은 배포 판단과 분리한다.
+4. 결과·SHA·실제 실행한 검증·미검증 항목을 보고하고 종료한다. 다른 작업의 보류 사항은 배포 판단과 분리한다.
 
 독립 Git 검증 환경, `verifySerial`, 테스트 재실행, 전체 TypeScript·typegen·Build, 원격 main·Vercel 조회, Push·Production 대기는 이 명령에서 실행하지 않는다. `--operations`·`--tests`·`--wait-ms` 배포 옵션은 더 이상 지원하지 않는다. 테스트용 Git fixture 자동선택 규칙은 변경하지 않는다.
 
@@ -40,11 +40,3 @@ node scripts/agent/baba-after-commit.mjs --check --project baba-staff-app --scop
 ## 경합·보존
 
 배타적 wx 잠금과 실행별 보고서 보존은 유지한다. 자기 잠금만 identity 확인 후 해제하며 기존 로그·검증 snapshot·Build·기준선은 삭제하지 않는다. 다른 Worktree·서버·환경·설정·브랜치는 변경하지 않는다.
-
-## 보존된 639bef9 후보
-
-`codex/20261031-login-keeping-recovery-01` @ `639bef9bec26b8965571a92a7d13cbd6927b1080`는 삭제·재작성하지 않는다. P0-2B를 main에 먼저 커밋하면 개발 기준 `75d7897e`에서 분기되어 기존 ff-only 직접 병합은 불가능하다.
-
-사용자 승인 전에는 최신 도구를 **caller로** 사용해 담당 Worktree에서 prepare만 수행한다. 예: Codex Worktree에서 `node C:/workspace/baba-staff-app/scripts/agent/baba-integrate.mjs prepare --branch codex/20261031-login-keeping-recovery-01 --json`. 기존 Worktree 소스·Handoff는 바꾸지 않는다. 새 main과 후보를 두 부모로 갖는 독립 환경에서 전체 통합 검증을 다시 수행한다.
-
-PREPARED와 정확한 main/candidate/mergedHead/mergedTree를 검토하고 실제 main 병합을 별도로 승인한 후에만, 사용자의 독립 터미널에서 검증된 독립 환경의 mergedHead 객체를 로컬 fetch하고 그 정확한 SHA를 main에 ff-only로 반영하는 경로를 사용할 수 있다. main이 바뀌면 재prepare한다. 기존 main/후보의 rebase·cherry-pick·reset이나 무승인 merge는 필요하지 않다.

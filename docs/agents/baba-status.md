@@ -30,7 +30,6 @@ baba-status
 | Worktree | 원본 main·Claude·Codex의 경로, 브랜치, HEAD, 수정·미추적 파일, clean 여부, 진행 중인 merge·rebase |
 | main 통합 | 각 Worktree에서 main에 없는 커밋 수·SHA·제목, main보다 뒤처진 커밋 수, 같은 패치가 이미 main에 있는지(`git cherry`), 인계서 유무 |
 | GitHub | 로컬 main, 원격 main(`git ls-remote`로 직접 조회), Push 대기·원격 앞섬·갈라짐, `origin/main` 참조가 오래됐는지 |
-| 안전성 | 실행 경로·브랜치가 정책과 맞는지, 브랜치 접두사, 없는 경로·추가 Worktree, 선택 모드 불일치 |
 
 - 결과 표의 "활성 Worktree 통합"은 원본 main·Claude·Codex 3개만 판정한다. Worktree에 연결되지 않은 로컬 브랜치는 "기타 로컬 브랜치"(정상 / 검토 필요 N개)로 따로 표시하며 종료 코드에 영향을 주지 않는다. "GitHub Push"는 대기 커밋 수와 fast-forward Push 가능 여부를 보여준다. Push 자체는 항상 사용자 승인 대상이다.
 - clean이어도 main에 없는 커밋이 있으면 통합 검사는 "검토 필요"다. 그 커밋이 필요한 작업인지, 중복·폐기 대상인지는 도구가 정하지 않고 사용자가 검토한다.
@@ -40,4 +39,3 @@ baba-status
 
 - commit·merge·push·fetch·checkout·reset·clean·stash·브랜치 삭제, 파일·index·ref 변경, 기록 파일 생성
 - 테스트·ESLint·TypeScript·보안 검사, Production 배포 승인. "Git 상태: PASS"는 이들의 통과를 뜻하지 않는다.
-- `baba-start`·`baba-preflight`·`baba-verify`·`baba-handoff`·`baba-integrate`의 판정을 대신하지 않는다.
