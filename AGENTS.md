@@ -52,3 +52,4 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - 전용 Worktree(`baba-wt-codex`, `baba-wt-claude`)는 **격리·병렬 모드**다. 새 개발 요청은 자기 Worktree에서 `.agents/skills/baba-start/SKILL.md`를 읽고 `baba-start`부터 실행한다. 읽기 전용 조사로 작업명·수정 예정 파일을 정한 뒤 실행하며, 기록된 동일 작업은 재개한다. 차단이면 수정하지 않는다.
 - 격리·병렬 모드는 `baba-start`(내부 `baba-preflight`) → 개발(범위 변경 시 Preflight 재실행) → `baba-verify` → `baba-handoff` 절차를 사용한다.
 - 고위험 기능의 개발 착수 게이트, 검토 범위, 검증 중단 게이트는 기준 문서 §13을 따른다. 범위가 커지는 개발은 착수 전 사용자 승인을 받고, 사용자가 요청하지 않은 교차 검토는 반복하지 않는다. 위 운영 DB·Migration 보호 규칙은 그대로 유지한다.
+- GPT와 지정 에이전트의 역할 분담, 수정 지시 전달, 작업 종료 시 임시 산출물 점검·정리는 기준 문서 §14를 따른다.
