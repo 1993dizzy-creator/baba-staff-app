@@ -27,6 +27,7 @@ export default function KeepingProductAutocomplete({
   const text = keepingNewText[lang];
   const listId = useId();
   const requestId = useRef(0);
+  const selectionComplete = useRef(false);
   const [query, setQuery] = useState(initialValue);
   const [items, setItems] = useState<KeepingProduct[]>([]);
   const [loading, setLoading] = useState(false);
@@ -34,6 +35,7 @@ export default function KeepingProductAutocomplete({
   const [error, setError] = useState("");
 
   useEffect(() => {
+    if (selectionComplete.current) return;
     const normalized = query.trim();
     if (!normalized) {
       setItems([]);
@@ -54,18 +56,18 @@ export default function KeepingProductAutocomplete({
         if (await handleBarApiUnauthorized(response)) return;
         if (!response.ok) throw new Error();
         const result = await response.json();
-        if (currentRequest !== requestId.current) return;
+        if (controller.signal.aborted || currentRequest !== requestId.current) return;
         setItems(result.items ?? []);
         setOpen(true);
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
-        if (currentRequest === requestId.current) {
+        if (!controller.signal.aborted && currentRequest === requestId.current) {
           setError(text.productSearchError);
           setItems([]);
           setOpen(true);
         }
       } finally {
-        if (currentRequest === requestId.current) setLoading(false);
+        if (!controller.signal.aborted && currentRequest === requestId.current) setLoading(false);
       }
     }, 280);
     return () => {
@@ -82,7 +84,12 @@ export default function KeepingProductAutocomplete({
   };
   const chooseItem = (item: KeepingProduct) => {
     const name = displayName(item);
+    selectionComplete.current = true;
+    ++requestId.current;
     setQuery(name);
+    setLoading(false);
+    setError("");
+    setItems([]);
     setOpen(false);
     onSelect(item, name);
   };
@@ -98,8 +105,10 @@ export default function KeepingProductAutocomplete({
         aria-controls={listId}
         aria-autocomplete="list"
         placeholder={text.productPlaceholder}
-        onFocus={() => query.trim() && setOpen(true)}
+        onFocus={() => !selectionComplete.current && query.trim() && setOpen(true)}
         onChange={(event) => {
+          selectionComplete.current = false;
+          ++requestId.current;
           setQuery(event.target.value);
           onSelect(null, "");
         }}
