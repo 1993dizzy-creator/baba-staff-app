@@ -115,14 +115,15 @@ prepare 시작·종료와 merge 요청 진입 시 `git ls-remote origin refs/hea
 | 관계 | 처리 |
 | --- | --- |
 | 실제 원격 = 로컬 main | 후속 검사 가능 |
-| 로컬 선행, 원격 SHA가 조상 | 독립 인증된 선행 커밋 승인 증거가 필요 |
+| 로컬 선행, 원격 SHA가 조상 | inspect/prepare의 격리 검증 허용(P0-2B) |
 | 원격 선행 | 차단 |
 | 분기 | 차단 |
 | 조회 실패/원격 객체 부재/관계 불명확 | 차단 |
 
-로컬 선행의 정책상 허용 조건은 유지하되, R1의 독립 승인 검증기가 현재 없으므로
-이 구현은 `LOCAL_AHEAD_APPROVAL_UNVERIFIABLE`로 차단한다. 자기 작성 영수증으로 우회하지 않는다.
-원격·main SHA가 바뀌면 이전 prepare는 무효다. main 실행은 이와 별개로 계속 비활성화다.
+P0-2B는 비교·격리 검증에 병합 승인 증거를 요구하지 않는다. 실제 원격 SHA와 조상 관계는 계속 직접 검증한다.
+inspect/prepare에서만 `allowLocalAhead` 비교 정책을 명시하며 원격 선행·분기·조회 실패·관계 불명확은 차단한다.
+이 허용은 main 변경·push·배포 승인이 아니다. merge 요청은 기존 엄격한 비교와 R1 실행 비활성화를 유지한다.
+원격·main SHA가 바뀌면 이전 prepare는 무효다. 직렬 커밋 후 push 정책은 `docs/agents/baba-after-commit.md`로 분리한다.
 
 ## R2: 남아 있는 TOCTOU
 
@@ -157,6 +158,7 @@ prepare 환경은 담당 Worktree의 짧은 `.tmp-baba/i/p-*/<worktree>`에 생�
 
 `push`, `deploy`, `production`, `db`, `migration` action/옵션은 지원하지 않고 차단한다.
 GitHub push 및 그에 따른 Vercel Production은 로컬 main 승인과 별도 사용자 승인이 필요하다.
+단, P0-2B가 상시 승인한 직렬 후처리의 조건부 일반 push는 별도 `baba-after-commit` 게이트를 따른다. 이 CLI에는 push 경로를 추가하지 않는다.
 향후 별도 승인 후 배포 SHA·READY·공개 read-only smoke를 검증해야 하며 접근 실패는 미확인으로 남긴다.
 운영 SQL/Migration 자동 실행 경로는 없다. SQL Editor → GPT 운영 객체·권한 검증 → 해당 신규 Migration의
 조건부 history 등록 → 배포 SOP를 그대로 유지한다.

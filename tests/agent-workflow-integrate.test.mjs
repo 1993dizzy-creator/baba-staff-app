@@ -375,12 +375,18 @@ test('D2: Verify pins its initial base SHA and fails if main changes during exec
   assert.ok(checked.report.checks.some(check=>check.error==='VERIFY_INPUT_CHANGED'));
 });
 
-test('D3: actual remote equality passes and local-ahead commits require independently authenticated approval', () => {
+test('D3: equality and ancestor local-ahead permit inspect/prepare without main execution authority', () => {
   const f=ready(); assert.equal(remoteMainState(f.codex).relation,'equal');
   commit(f.main,'docs/local.txt','local only\n');
   writeRecord(f.codex,'.tmp-baba/forged-approval.json',{approvedBy:'user',mainHead:head(f.main)});
-  const result=prepare(f); assert.equal(result.code,'LOCAL_AHEAD_APPROVAL_UNVERIFIABLE');
-  assert.equal(result.remote.relation,'local-ahead'); assert.equal(result.environment,undefined);
+  assert.equal(remoteMainState(f.codex,{allowLocalAhead:true}).relation,'local-ahead');
+  assert.throws(()=>remoteMainState(f.codex),e=>e.code==='LOCAL_AHEAD_APPROVAL_UNVERIFIABLE');
+  assert.equal(inspect(f).status,'INSPECTED');
+  const before=head(f.main),refs=gitOut(f.main,['show-ref']);
+  const result=prepare(f); assert.equal(result.status,'PREPARED',JSON.stringify(result));
+  assert.equal(result.remote.relation,'local-ahead');assert.equal(result.merge.strategy,'merge');
+  assert.equal(head(f.main),before);assert.equal(gitOut(f.main,['show-ref']),refs);
+  assert.equal(integrate({_:['merge'],branch:f.branch},f.codex).status,'BLOCKED');
 });
 
 test('D3: stale origin/main cache cannot hide remote-ahead, divergence or unavailable remote', () => {
@@ -395,6 +401,7 @@ test('D3: stale origin/main cache cannot hide remote-ahead, divergence or unavai
     const before=head(f.main), result=prepare(f);
     assert.equal(result.code,mode==='remote-ahead'?'REMOTE_MAIN_AHEAD':mode==='diverged'?'DIVERGED_MAIN':'REMOTE_MAIN_UNAVAILABLE',JSON.stringify(result));
     assert.equal(head(f.main),before); assert.equal(result.environment,undefined);
+    assert.equal(inspect(f).code,result.code);
   }
 });
 

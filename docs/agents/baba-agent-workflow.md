@@ -124,6 +124,7 @@ Skill 자동 호출은 `AGENTS.md`/`CLAUDE.md` 진입점의 지침으로 연결�
   - 원격 브랜치 삭제
   - PR 생성
   - Vercel 배포·환경 변수 변경
+- P0-2B의 상시 승인 예외는 §15의 검증된 직렬 커밋·후보 없음·전체 게이트 통과 후 `baba-after-commit`의 일반 push와 그 Production 확인에만 적용한다. 그 밖의 push·배포·main 병합은 위 별도 승인 규칙을 유지한다. 작업별 실행 금지 지시가 상시 승인보다 우선한다.
 - 병합 순서는 사용자가 정한다. 병합 전 조건:
   - 대상 브랜치의 `baba-verify`가 FAIL이 아니다.
   - 인계서 `--check`를 통과했다.
@@ -220,7 +221,7 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 **도구**
 
 - `baba-start`·`baba-integrate`는 사용하지 않는다. `baba-preflight`·`baba-verify`·`baba-handoff`도 소유권 검사로 원본 폴더에서 거부된다. 이는 정상이며 우회하거나 검사를 고치지 않는다.
-- 직렬 모드 전용 도구·자동화는 두지 않는다. 일반 Git·npm·node 명령을 쓴다.
+- 검증·개발은 일반 Git·npm·node 명령을 쓴다. 검증된 로컬 커밋 후의 공통 종료 명령은 §15의 `baba-after-commit`이다. 기존 병렬 도구의 소유권 검사는 우회하지 않는다.
 
 **시작·이어받기**
 
@@ -248,7 +249,7 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 **커밋·보고**
 
 - 검증 후 원본 `main`에 직접 커밋한다. 이번 작업 파일만 지정해 add하고 관련 없는 변경을 섞지 않는다.
-- `git push`, Vercel Production 배포, 운영 DB·Migration 적용은 §6·§7과 AGENTS.md에 따라 별도 사용자 승인을 받는다. 직렬 모드에서는 현재 실행 중인 에이전트가 SQL·Migration·RPC·코드·테스트를 모두 담당한다.
+- 검증 후 로컬 커밋을 완료하면 Codex·Claude Code 모두 §15의 공통 후처리를 실행한다. `git push`·Production의 상시 승인 범위 밖 실행과 운영 DB·Migration 적용은 §6·§7에 따라 별도 사용자 승인을 받는다.
 - `baba-handoff` 파일 대신 사용자에게 시작 SHA, 최종 SHA, 커밋 목록, 변경 파일, 검증 결과·미검증 항목, DB/Migration 변경 여부, push 여부를 보고한다.
 
 **격리·병렬 모드와의 관계**
@@ -284,7 +285,7 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 
 ### 13.4. 유지되는 보호 규칙
 
-이 절은 다음을 바꾸지 않는다: 운영 DB 읽기 전용 원칙과 Migration·운영 변경의 명시적 승인(AGENTS.md, §6), 로컬 SQL 작성·검증 담당 제한(AGENTS.md, §6), Worktree 소유권·충돌 보호(§1, §5), 변경 파일만 커밋(§12), `git push`·배포 별도 승인(§7), 신규 테스트 실패 0건 기준(§8).
+이 절은 다음을 바꾸지 않는다: 운영 DB 읽기 전용 원칙과 Migration·운영 변경의 명시적 승인(AGENTS.md, §6), 로컬 SQL 작성·검증 담당 제한(AGENTS.md, §6), Worktree 소유권·충돌 보호(§1, §5), 변경 파일만 커밋(§12), §15 상시 승인 범위 밖 `git push`·배포의 별도 승인(§7), 신규 테스트 실패 0건 기준(§8).
 
 ## 14. 역할 분담·수정 전달·종료 정리 (직렬·병렬 공통)
 
@@ -293,3 +294,14 @@ P0-2 통합 준비 CLI는 `scripts/agent/baba-integrate.mjs`이며 사용법·�
 3. **검증 완료**: 지정 에이전트는 현재 개발 모드의 검증·커밋 절차를 수행한다(§8·§12). GPT의 독립 검증은 이를 대체하지 않으며, 추가 교차 검토는 §13.2를 따른다.
 4. **종료 전 점검**: 완료·중단·인계 시 이번 작업의 임시 산출물을 목록화하고 정확한 절대 경로, 실제 내용, 링크 여부, 실행·참조·파일 사용 여부와 원본 반영·보존 상태를 확인한다. 원본 프로젝트, 미커밋·미추적 파일, 운영 증거·검증 로그, 다른 작업물은 정리 대상에서 제외한다.
 5. **승인 범위 정리·보고**: 사용자가 삭제를 승인한 이번 작업의 불필요한 임시물만 정리한다. 삭제 직전 실제 경로가 승인된 대상 안에 있는지와 내용·사용 상태를 다시 확인한다. 링크·사용 중·보존 여부가 불명확한 대상은 남기고, 추가 발견 폴더는 목록만 보고하여 확인 전에는 삭제하지 않는다. `git clean`, 강제 reset, 무차별 삭제로 정리하지 않으며, 종료 보고에 정리 목록·보존 대상·미확인 사항·최종 SHA를 포함한다.
+
+## 15. P0-2B — 직렬 커밋 후 공통 자동 분기
+
+승인 정본: [Notion P0-2B](https://app.notion.com/p/40a7ad2aac7981da963ecdb0dc1adff0). 구현·증거 형식은 `docs/agents/baba-after-commit.md`를 따른다.
+
+- 원본 main의 담당 Codex·Claude Code는 검증 통과 후 지정 파일만 로컬 커밋하고 `node scripts/agent/baba-after-commit.mjs --project baba-staff-app --scope baba333`를 실행한다. Git Hook을 설치하거나 전역 설정을 변경하지 않는다.
+- **A / INTEGRATION_PENDING**: 활성·보존 브랜치의 실제 SHA, Task·Handoff·Verify와 변경·의존 범위를 조사한다. 후보가 있으면 건수·상태·prepare 명령을 알리고 push·배포를 보류한다. 병합은 자동 실행하지 않는다.
+- **B / ELIGIBLE → DEPLOYED**: 후보·미완료·불명확·보류 작업이 없고 원본 main CLEAN, Git 작업 없음, 실제 원격이 동일/조상, 전체 미배포 커밋 검토, 독립 저장소의 필수 테스트·lint·typecheck·오프라인 Build와 필요한 운영 적용·postflight 증거가 통과해야 한다. 상시 승인 범위에서 정확한 main SHA를 일반 push하고 Production의 같은 SHA·READY를 실제 확인한다. 확인 실패는 PUSHED_UNCONFIRMED이며 성공으로 기록하지 않는다.
+- **C / BLOCKED**: 상태·증거·대상·관계가 불명확하거나 검증 실패·운영 변경 미검증이면 push하지 않는다. 이전 커밋·브랜치·인계서는 보존한다. 보존 브랜치도 승인 없이 완료·폐기 처리하지 않는다.
+- `--check`는 동일 분기를 검토하되 절대 push하지 않는다. 이번처럼 실제 병합·push·Production 금지인 작업은 커밋 후 반드시 `--check`를 사용한다.
+- 다른 Worktree, 원본 서버·환경, 운영 DB는 변경하지 않는다. 운영 SQL 실행, 자동 main 병합, force push, PR, 임의 증거 생성은 상시 승인에 포함되지 않는다.

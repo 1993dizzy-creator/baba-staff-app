@@ -149,7 +149,7 @@ function stable(root, inspection) {
 }
 
 function preparation(root, inspection, report) {
-  report.remote = remoteMainState(root);
+  report.remote = remoteMainState(root, {allowLocalAhead: true});
   // Keep nested prepare + fixture + baseline paths below native temporary-path limits.
   const parent = insideRoot(root, '.tmp-baba/i');
   mkdirSync(parent, {recursive: true});
@@ -215,7 +215,7 @@ function preparation(root, inspection, report) {
     unlinkSync(link); // Only the link made by this run; preserve every source/dependency file.
   }
   stable(root, inspection);
-  if (digest(remoteMainState(root)) !== digest(report.remote)) fail('REMOTE_CHANGED_REVALIDATE');
+  if (digest(remoteMainState(root, {allowLocalAhead: true})) !== digest(report.remote)) fail('REMOTE_CHANGED_REVALIDATE');
   return sandbox;
 }
 
@@ -242,6 +242,7 @@ export function integrate(args, cwd = process.cwd()) {
       if (args.approval || args.prepared) fail('APPROVAL_ONLY_FOR_EXPLICIT_MERGE');
       const inspection = inspectCandidate(root, args.branch, args.handoff); report.inspection = inspection;
       if (inspection.blockers.length) fail('INTEGRATION_BLOCKED', inspection.blockers.map(b => b.code).join('; '));
+      report.remote = remoteMainState(root, {allowLocalAhead: true});
       report.status = 'INSPECTED';
       if (report.mode === 'prepare') {
         preparation(root, inspection, report);

@@ -2,7 +2,7 @@
 import {assertNoGitHooks, git, gitOut, sanitizedEnv} from './common.mjs';
 
 const fail = (code, state) => { throw Object.assign(new Error(code), {code, remote: state}); };
-export function remoteMainState(root) {
+export function remoteMainState(root, {allowLocalAhead = false} = {}) {
   assertNoGitHooks(root);
   const local = gitOut(root, ['rev-parse', '--verify', 'refs/heads/main^{commit}']);
   const state = {local, remote: null, relation: 'unknown', localAheadApproval: 'not-applicable'};
@@ -18,6 +18,8 @@ export function remoteMainState(root) {
   if (![0, 1].includes(remoteAncestor) || ![0, 1].includes(localAncestor)) fail('REMOTE_RELATION_UNVERIFIED', state);
   if (remoteAncestor === 0) {
     state.relation = 'local-ahead';
+    // Comparison/isolation is not permission to mutate main, push or deploy.
+    if (allowLocalAhead) {state.localAheadApproval = 'comparison-only'; return state;}
     // R1: a receipt writable by this Full Access agent cannot authenticate a user.
     // No independent authority is configured. Do not accept self-asserted approvals.
     state.localAheadApproval = 'independent-authentication-required';
