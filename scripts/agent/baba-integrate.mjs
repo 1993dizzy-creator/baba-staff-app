@@ -5,7 +5,7 @@ import {existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSyn
 import {join, relative, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {
-  AGENTS, HOT_FILES, POLICY_DOC, apiRouteOf, assertNoGitHooks, guardedGit, assertOwnedWorktree, committedChanges, commitFingerprint,
+  AGENTS, AGENT_WORKFLOW_PATHS, HOT_FILES, POLICY_DOC, apiRouteOf, assertNoGitHooks, guardedGit, assertOwnedWorktree, committedChanges, commitFingerprint,
   dbObjectsIn, git, gitOut, identifyWorktree, insideRoot, listWorktrees, matchesAny, parseArgs, repoRoot,
   relatedTests, run, stateFingerprint, workingChanges, worktreeEnvironment, writeRecord,
 } from './lib/common.mjs';
@@ -148,6 +148,16 @@ function stable(root, inspection) {
   if (next.blockers.length) fail('INTEGRATION_BLOCKED');
 }
 
+export function prepareTestSelection(root, changed, mainChanged, selection) {
+  const agentChanged = changed.some(path => matchesAny(path, AGENT_WORKFLOW_PATHS));
+  // Already-integrated tool history is not a reason to rerun its fixtures for a UI candidate.
+  const relevantMain = mainChanged.filter(path => agentChanged || !matchesAny(path, AGENT_WORKFLOW_PATHS));
+  const coverage = relatedTests(root, [...new Set([...changed, ...relevantMain])].filter(path => !path.startsWith('docs/handoffs/')));
+  const required = new Set([...(selection.explicit || []), ...Object.values(selection.exercised || {}).flat()]);
+  const inherited = selection.executed.filter(test => agentChanged || !test.startsWith('tests/agent-workflow-') || required.has(test));
+  return {coverage, testPaths: [...new Set([...inherited, ...coverage.tests.map(test => test.path)])].sort()};
+}
+
 function preparation(root, inspection, report) {
   report.remote = remoteMainState(root, {allowLocalAhead: true});
   // Keep nested prepare + fixture + baseline paths below native temporary-path limits.
@@ -186,13 +196,12 @@ function preparation(root, inspection, report) {
   const identity = lstatSync(link, {bigint: true});
   try {
     const mainChanged = paths(committedChanges(root, inspection.base, inspection.main.head));
-    const coverage = relatedTests(sandbox, [...new Set([...inspection.changed, ...mainChanged])].filter(path => !path.startsWith('docs/handoffs/')));
+    const {coverage, testPaths} = prepareTestSelection(sandbox, inspection.changed, mainChanged, inspection.candidate.testSelection);
     // Unreferenced files pass only with the candidate's recorded execution evidence (D2), which the
     // integrated Verify below must reproduce on the merged tree. No evidence still blocks.
     const inherited = inspection.candidate.testSelection.exercised || {};
     const unproven = coverage.untested.filter(path => !inherited[path]?.length);
     if (unproven.length) fail('TEST_SCOPE_INSUFFICIENT', unproven.join(', '));
-    const testPaths = [...new Set([...inspection.candidate.testSelection.executed, ...coverage.tests.map(test => test.path)])].sort();
     for (const path of testPaths) if (!existsSync(insideRoot(sandbox, path))) fail('PREPARE_TEST_MISSING');
     if (!testPaths.length) fail('PREPARE_TESTS_EMPTY');
     report.testSelection = {inherited: inspection.candidate.testSelection, executed: testPaths, mainChanged};

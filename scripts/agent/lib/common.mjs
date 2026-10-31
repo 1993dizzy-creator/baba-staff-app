@@ -329,6 +329,7 @@ export function domainPolicyDocs(root, domainKeys) {
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export const TEST_FILE = /\.test\.(ts|mjs)$/;
+export const AGENT_WORKFLOW_PATHS = ['scripts/agent/**','docs/agents/**','.agents/**','.claude/**','AGENTS.md','CLAUDE.md','tests/agent-workflow-*'];
 
 export function allTestFiles(root) {
   return gitOut(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']).split('\0')
@@ -352,7 +353,9 @@ function tokensFor(path) {
 const mentions = (text, token) => new RegExp(`${escapeRegExp(token)}(?![\\w-])`).test(text);
 
 export function relatedTests(root, paths) {
-  const {tests, helpers} = testIndex(root);
+  const {tests: indexed, helpers} = testIndex(root);
+  const agentChanged = paths.some(path => matchesAny(path, AGENT_WORKFLOW_PATHS) || ['package.json','package-lock.json'].includes(path));
+  const tests = indexed.filter(test => agentChanged || !test.path.startsWith('tests/agent-workflow-'));
   const selected = new Map();
   const add = (test, reason) => {
     if (!selected.has(test)) selected.set(test, new Set());
