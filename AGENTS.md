@@ -53,4 +53,4 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - 격리·병렬 모드는 `baba-start`(내부 `baba-preflight`) → 개발(범위 변경 시 Preflight 재실행) → `baba-verify` → `baba-handoff` 절차를 사용한다.
 - 고위험 기능의 개발 착수 게이트, 검토 범위, 검증 중단 게이트는 기준 문서 §13을 따른다. 범위가 커지는 개발은 착수 전 사용자 승인을 받고, 사용자가 요청하지 않은 교차 검토는 반복하지 않는다. 위 운영 DB·Migration 보호 규칙은 그대로 유지한다.
 - GPT와 지정 에이전트의 역할 분담, 수정 지시 전달, 작업 종료 시 임시 산출물 점검·정리는 기준 문서 §14를 따른다.
-- 원본 main의 로컬 커밋 후 `baba-after-commit`은 상태 확인·결과 보고만 수행한다. 테스트·전체 TypeScript·Build·독립 Git 검증 환경을 다시 실행하거나 만들지 않는다. 전체 배포 적격성 검증은 Push·Production의 별도 사용자 승인 시에만 수행하고 유효한 기존 PASS 증거를 재사용한다(기준 문서 §12·§15). 기존 조건부 자동 Push·Production 상시 승인은 사용하지 않는다.
+- 검증 실행 조건·PASS 증거 재사용·형식 오류 처리는 기준 문서 §8, 안전 중단 조건은 §13.3, 로컬 종료와 배포 검증 분리는 §15를 따른다.
