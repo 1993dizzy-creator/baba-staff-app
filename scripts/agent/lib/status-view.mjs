@@ -132,8 +132,38 @@ function relationshipLines(relation, main, tree, paint, unicode) {
   return out;
 }
 
-export function renderStatus(r, {color = false, unicode = true, columns = null, branches = false} = {}) {
+function renderBriefStatus(r, {paint, unicode, columns, branches}) {
+  const g = r.github;
+  const out = [`${paint('bold', 'main')} ${paint('cyan', short(r.main))} · GitHub Push 대기 ${paint(g.verified && g.ahead === 0 ? 'green' : 'yellow', `${g.ahead ?? '?'}커밋`)}${g.verified ? '' : ' (추정·원격 미확인)'}`, ''];
+  const rows = r.trees.map(t => [[t.label, 'bold'], [short(t.head), 'cyan'], [t.branch, 'cyan'], treeState(t),
+    [t.behind == null ? '-' : t.behind ? `-${t.behind}` : '0', t.behind ? 'dim' : null],
+    [t.unintegrated == null ? '-' : String(t.unintegrated.length), t.unintegrated?.length ? 'yellow' : null]]);
+  const grid = table(['Worktree', 'HEAD', '브랜치', '상태', 'main 대비', '미통합(커밋)'], rows, {paint, unicode, align: [null, null, null, null, 'right', 'right']});
+  if (columns && displayWidth(grid[0]) > columns) {
+    for (const row of rows) {
+      out.push(`${paint('bold', row[0][0])} ${paint(row[3][1], row[3][0])} ${paint('cyan', row[1][0])} · main 대비 ${row[4][0]} · 미통합 ${row[5][0]}`,
+        `  ${paint('cyan', row[2][0])}`);
+    }
+  } else out.push(...grid);
+  out.push('main 대비 -N: 뒤처진 커밋 수 (미커밋 파일 수 아님)');
+  const warnings = new Map();
+  for (const f of r.findings.filter(f => f.level !== 'INFO')) {
+    const entry = warnings.get(f.target) || {level: f.level, causes: new Set()};
+    if (f.level === 'FAIL') entry.level = 'FAIL';
+    entry.causes.add(f.cause.replace(/\s+/g, ' ')); warnings.set(f.target, entry);
+  }
+  if (warnings.size) {
+    out.push('', paint('bold', '주의사항'));
+    for (const [target, entry] of warnings) out.push(`${paint(entry.level === 'FAIL' ? 'red' : 'yellow', `[${entry.level}]`)} ${target}: ${[...entry.causes].join(' / ')}`);
+  }
+  if (branches) out.push('', paint('bold', '브랜치 목록 (Worktree 밖 미통합)'), ...(r.parked?.length ? r.parked.map(branch => `  ${paint('cyan', branch)}`) : ['  없음']));
+  out.push('', '상세 관계도: baba-status --graph · 브랜치 목록: baba-status --branches');
+  return out.join('\n');
+}
+
+export function renderStatus(r, {color = false, unicode = true, columns = null, branches = false, graph = false} = {}) {
   const paint = (style, text) => (color && style ? `\x1b[${CODES[style]}m${text}\x1b[0m` : text);
+  if (!graph) return renderBriefStatus(r, {paint, unicode, columns, branches});
   const tag = level => paint({FAIL: 'red', WARN: 'yellow', INFO: 'cyan'}[level], `[${level}]`);
   const modeName = {serial: '직렬 모드', parallel: '병렬 모드'}[r.location.mode];
   const out = [`${paint('bold', 'BABA Git 상태')}  ${paint('dim', `읽기 전용 · ${stamp(r.generatedAt)}`)}`,

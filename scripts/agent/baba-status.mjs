@@ -2,7 +2,7 @@
 // baba-status: read-only Git state summary of the BABA worktrees (docs/agents/baba-status.md).
 // It never writes files, never fetches, never moves refs, the index or working files.
 // Remote main is read with `git ls-remote` only (no ref update); --offline skips that query.
-// Usage: node scripts/agent/baba-status.mjs [--mode serial|parallel] [--offline] [--branches] [--no-color] [--json]
+// Usage: node scripts/agent/baba-status.mjs [--mode serial|parallel] [--offline] [--graph] [--branches] [--no-color] [--json]
 import {existsSync} from 'node:fs';
 import {dirname, resolve, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -149,19 +149,19 @@ function remoteState(root, local, offline) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let args;
   try {
-    args = parseArgs(process.argv.slice(2), {mode: 'string', offline: 'boolean', branches: 'boolean', noColor: 'boolean', json: 'boolean', help: 'boolean'});
+    args = parseArgs(process.argv.slice(2), {mode: 'string', offline: 'boolean', graph: 'boolean', branches: 'boolean', noColor: 'boolean', json: 'boolean', help: 'boolean'});
     if (args._.length || (args.mode !== undefined && !['serial', 'parallel'].includes(args.mode))) throw new Error('invalid');
   } catch {
     console.error('옵션이 잘못됐다. node scripts/agent/baba-status.mjs --help');
     process.exit(2);
   }
   if (args.help) {
-    console.log('baba-status [--mode serial|parallel] [--offline] [--branches] [--no-color] [--json]\n  읽기 전용. 파일·브랜치·index를 바꾸지 않고 fetch하지 않는다. 원격은 git ls-remote로만 조회한다.\n  --branches: Worktree 밖 main 미통합 브랜치 목록 표시 · --no-color: 색상 끄기(NO_COLOR와 같음)');
+    console.log('baba-status [--mode serial|parallel] [--offline] [--graph] [--branches] [--no-color] [--json]\n  읽기 전용. 파일·브랜치·index를 바꾸지 않고 fetch하지 않는다. 원격은 git ls-remote로만 조회한다.\n  --graph: 상세 관계도 · --branches: Worktree 밖 main 미통합 브랜치 목록 표시 · --no-color: 색상 끄기(NO_COLOR와 같음)');
     process.exit(0);
   }
   const report = collectStatus({root: repoRoot(dirname(fileURLToPath(import.meta.url))), mode: args.mode || null, offline: Boolean(args.offline)});
   const terminal = detectTerminal();
   if (args.noColor) terminal.color = false;
-  console.log(args.json ? JSON.stringify(report, null, 2) : renderStatus(report, {...terminal, branches: Boolean(args.branches)}));
+  console.log(args.json ? JSON.stringify(report, null, 2) : renderStatus(report, {...terminal, branches: Boolean(args.branches), graph: Boolean(args.graph)}));
   process.exitCode = {PASS: 0, WARN: 1, FAIL: 2}[report.verdicts.overall];
 }

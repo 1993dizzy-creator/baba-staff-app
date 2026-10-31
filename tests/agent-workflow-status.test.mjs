@@ -70,7 +70,7 @@ function snapshot(dir) {
 
 test('1. clean and integrated worktrees pass every Git check but never claim test or deploy approval', () => {
   const f = fixture();
-  const result = cli(f);
+  const result = cli(f, ['--graph']);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.doesNotMatch(result.stdout, /\x1b\[/);
   assert.match(result.stdout, /\| main +\| [0-9a-f]{7} \| main +\| CLEAN +\| +- \| +- \|/);
@@ -107,7 +107,7 @@ test('a same-named detached QA worktree is never the original, even when the ori
       assert.equal(report.github.ahead, 1);
       assert.equal(report.github.relation, 'local-ahead');
     }
-    const result = cli(f, ['--no-color']);
+    const result = cli(f, ['--graph', '--no-color']);
     assert.match(result.stdout, /대기 1커밋, Push 가능\(사용자 승인 필요\)/);
     assert.doesNotMatch(result.stdout, /Push 보류|원본 폴더가 main이 아닌/);
     assert.equal((result.stdout.match(/\| main +\| [0-9a-f]{7} \| main +\|/g) || []).length, 1);
@@ -148,7 +148,7 @@ test('3. a clean Codex worktree with commits missing from main is not reported a
   assert.deepEqual(codex.unintegrated.map(c => [c.sha, c.subject, c.equivalent]), [[sha, 'codex work', false]]);
   assert.ok(finding(report, 'Codex', /커밋 1개 — 인계서가 없다/));
   assert.equal(report.verdicts.integration, 'WARN');
-  assert.match(cli(f).stdout, /\+ [0-9a-f]{7} codex work/);
+  assert.match(cli(f, ['--graph']).stdout, /\+ [0-9a-f]{7} codex work/);
 
   commit(f.codex, 'docs/handoffs/codex-20261026-task-01.md', '# handoff\n');
   report = status(f);
@@ -184,7 +184,7 @@ test('5. main committed but not pushed shows pending push commits', () => {
   assert.equal(report.github.relation, 'local-ahead');
   assert.equal(report.github.ahead, 2);
   assert.equal(report.github.verified, true);
-  const out = cli(f).stdout;
+  const out = cli(f, ['--graph']).stdout;
   assert.match(out, /\| 동기화 +\| Push 대기 2커밋 +\|/);
   assert.match(out, /\| GitHub Push +\| 대기 2커밋, Push 가능\(사용자 승인 필요\) +\|/);
 });
@@ -196,8 +196,8 @@ test('6. unreachable remote is marked unverified; remote HEAD mismatch and diver
   assert.equal(report.github.verified, false);
   assert.equal(report.github.relation, 'equal');
   assert.ok(finding(report, 'GitHub', /원격 상태 미확인/));
-  assert.match(cli(f).stdout, /\| 원격 확인 +\| 실패\(원격 연결 실패\), 마지막 fetch 기준 +\|/);
-  assert.match(cli(f, ['--offline']).stdout, /\| 원격 확인 +\| 생략\(--offline\), 마지막 fetch 기준 +\|/);
+  assert.match(cli(f, ['--graph']).stdout, /\| 원격 확인 +\| 실패\(원격 연결 실패\), 마지막 fetch 기준 +\|/);
+  assert.match(cli(f, ['--graph', '--offline']).stdout, /\| 원격 확인 +\| 생략\(--offline\), 마지막 fetch 기준 +\|/);
   assert.equal(status(f, {offline: true}).github.reason, '--offline');
 
   git(f.main, ['remote', 'set-url', 'origin', f.remote]);
@@ -245,7 +245,7 @@ test('8. running baba-status changes no HEAD, index, ref or file in any worktree
   put(f.claude, 'app/a.ts', 'dirty\n');
   git(f.codex, ['switch', '--no-track', '-c', 'codex/20261026-ro-01']); commit(f.codex, 'app/c.ts', 'export {};\n');
   const before = snapshot(f.dir);
-  for (const args of [[], ['--json'], ['--offline'], ['--mode', 'parallel']]) cli(f, args);
+  for (const args of [[], ['--graph'], ['--json'], ['--offline'], ['--mode', 'parallel']]) cli(f, args);
   cli(f, [], f.codex);
   assert.deepEqual(snapshot(f.dir), before);
 });
@@ -270,14 +270,14 @@ function borderColumns(line) {
   }
   return columns;
 }
-function assertAligned(text) {
+function assertAligned(text, minimumTables = 3) {
   const blocks = [];
   let current = null;
   for (const line of stripAnsi(text).split('\n')) {
     if (/^[|+┌├└│]/.test(line)) (current ||= blocks[blocks.push([]) - 1]).push(line);
     else current = null;
   }
-  assert.ok(blocks.length >= 3, 'worktree, GitHub and result tables');
+  assert.ok(blocks.length >= minimumTables, `expected at least ${minimumTables} table(s)`);
   for (const block of blocks) {
     const expected = borderColumns(block[0]);
     for (const line of block) assert.deepEqual(borderColumns(line), expected, `${line}\n${block[0]}`);
@@ -303,21 +303,21 @@ test('Korean branches and labels keep table borders aligned in Unicode and ASCII
   const f = koreanFixture();
   const report = status(f);
   for (const unicode of [true, false]) {
-    for (const color of [true, false]) assertAligned(renderStatus(report, {unicode, color}));
+    for (const color of [true, false]) assertAligned(renderStatus(report, {graph: true,unicode, color}));
   }
-  const ascii = renderStatus(report, {unicode: false});
+  const ascii = renderStatus(report, {graph: true,unicode: false});
   assert.match(ascii, /\| Claude +\| [0-9a-f]{7} \| claude\/20261026-한글-정렬-01 \| CLEAN +\| +1 \|/);
   assert.match(ascii, /\| Codex +\| [0-9a-f]{7} \| codex\/ready-fixture +\| DIRTY\(1\) +\|/);
   assert.match(ascii, /\+ [0-9a-f]{7} 한글 커밋 제목/);
   assert.doesNotMatch(ascii, /[┌│─]/);
-  assert.match(renderStatus(report, {unicode: true}), /┌─+┬/);
+  assert.match(renderStatus(report, {graph: true,unicode: true}), /┌─+┬/);
 });
 
 test('colors mark status but the plain text is identical without ANSI', () => {
   const f = koreanFixture();
   const report = status(f);
-  const colored = renderStatus(report, {color: true, unicode: false});
-  const plain = renderStatus(report, {color: false, unicode: false});
+  const colored = renderStatus(report, {graph: true,color: true, unicode: false});
+  const plain = renderStatus(report, {graph: true,color: false, unicode: false});
   assert.doesNotMatch(plain, /\x1b\[/);
   assert.equal(stripAnsi(colored), plain);
   assert.match(colored, /\x1b\[32mCLEAN/);
@@ -326,7 +326,7 @@ test('colors mark status but the plain text is identical without ANSI', () => {
   assert.match(colored, /\x1b\[36mclaude\/20261026-한글-정렬-01/);
   assert.match(colored, /\x1b\[33m\[WARN\]/);
   git(f.main, ['switch', '-c', 'feature']);
-  const failed = renderStatus(status(f), {color: true, unicode: false});
+  const failed = renderStatus(status(f), {graph: true,color: true, unicode: false});
   assert.match(failed, /\x1b\[31m\[FAIL\]/);
   assert.match(failed, /\x1b\[31m대기 0커밋, Push 보류\(Git 상태 FAIL\)/);
 });
@@ -346,8 +346,8 @@ test('terminal detection: no color for CI, redirects, NO_COLOR or dumb terminals
 test('narrow terminals switch to a compact layout without table borders', () => {
   const f = koreanFixture();
   const report = status(f);
-  const wide = renderStatus(report, {unicode: false, columns: 200});
-  const narrow = renderStatus(report, {unicode: false, columns: 60});
+  const wide = renderStatus(report, {graph: true,unicode: false, columns: 200});
+  const narrow = renderStatus(report, {graph: true,unicode: false, columns: 60});
   assert.match(wide, /^\+-+\+/m);
   assert.doesNotMatch(narrow, /^[+|]/m);
   assert.match(narrow, /^Claude +CLEAN [0-9a-f]{7} {2}미통합 1 · 뒤처짐 0 · ahead 1$/m);
@@ -359,20 +359,20 @@ test('narrow terminals switch to a compact layout without table borders', () => 
 test('other local branches are reviewed separately from active worktree integration', () => {
   const f = fixture();
   git(f.main, ['switch', '-q', '-c', 'old/parked']); commit(f.main, 'old.txt', 'x\n'); git(f.main, ['switch', '-q', 'main']);
-  const result = cli(f);
+  const result = cli(f, ['--graph']);
   const plain = result.stdout;
   assert.equal(result.status, 0, 'parked branches do not change the exit code');
   assert.match(plain, /\| 활성 Worktree 통합 \| PASS +\|\n\| 기타 로컬 브랜치 +\| 검토 필요 1개 +\|/);
   assert.match(plain, /활성 Worktree 통합은 main·Claude·Codex만 판정한다\. 기타 로컬 브랜치의 통합을 뜻하지 않는다\./);
   assert.match(plain, /\[INFO\] 기타 로컬 브랜치 1개가 main에 미통합이다\. 필요·중복·폐기 여부를 검토한다 \(목록: baba-status --branches\)\./);
   assert.doesNotMatch(plain, /old\/parked/);
-  assert.match(cli(f, ['--branches']).stdout, /검토한다\.\n {7}old\/parked/);
+  assert.match(cli(f, ['--graph', '--branches']).stdout, /검토한다\.\n {7}old\/parked/);
   assertAligned(plain);
   const report = cli(f, ['--json']).report;
   assert.deepEqual(report.parked, ['old/parked']);
   assert.equal(report.verdicts.integration, 'PASS');
   assert.equal(report.verdicts.overall, 'PASS');
-  const colored = renderStatus(status(f), {color: true, unicode: false});
+  const colored = renderStatus(status(f), {graph: true,color: true, unicode: false});
   assert.match(colored, /\x1b\[33m검토 필요 1개/);
   assert.match(colored, /\x1b\[32m정상|\x1b\[32mPASS/);
 });
@@ -398,7 +398,7 @@ test('Windows CMD: baba-status.cmd prints the table, honors color settings and r
   assert.equal(plain.status, 1, plain.stderr);
   assert.doesNotMatch(plain.stdout, /\x1b\[/);
   assert.match(plain.stdout, /\| Claude +\| [0-9a-f]{7} \| claude\/20261026-한글-정렬-01 \|/);
-  assertAligned(plain.stdout.replace(/\r\n/g, '\n'));
+  assertAligned(plain.stdout.replace(/\r\n/g, '\n'), 1);
   const colored = cmd('--offline', {FORCE_COLOR: '1'});
   assert.match(colored.stdout, /\x1b\[32mCLEAN/);
   assert.equal(stripAnsi(colored.stdout).replace(/\d\d:\d\d/, ''), plain.stdout.replace(/\d\d:\d\d/, ''));
@@ -415,19 +415,41 @@ test('relationship graph shows the shared fork and advances the Worktree pointer
   const d=commit(f.codex,'candidate.txt','d\n');const e=commit(f.codex,'candidate.txt','e\n');
   let report=status(f,{offline:true});let relation=report.relationships.find(r=>r.path===f.codex);
   assert.deepEqual(relation.bases,[b]);assert.deepEqual(relation.shared,[a,b]);assert.equal(relation.ahead,2);assert.equal(relation.behind,1);
-  let view=renderStatus(report,{unicode:false});
+  let view=renderStatus(report,{graph:true,unicode:false});
   assert.ok(view.indexOf('요약')<view.indexOf('main 기준 브랜치 관계도'));assert.ok(view.indexOf('main 기준 브랜치 관계도')<view.indexOf('Worktree 상세'));
   assert.ok(view.includes([a,b,c].map(s=>s.slice(0,7)).join(' -- ')));
   assert.ok(view.includes([a,b,d,e].map(s=>s.slice(0,7)).join(' -- ')));assert.match(view,/\^ codex\/graph-fixture/);
-  const next=commit(f.codex,'candidate.txt','f\n');report=status(f,{offline:true});view=renderStatus(report,{unicode:false});
+  const next=commit(f.codex,'candidate.txt','f\n');report=status(f,{offline:true});view=renderStatus(report,{graph:true,unicode:false});
   assert.ok(view.includes([a,b,d,e,next].map(s=>s.slice(0,7)).join(' -- ')));assert.equal(gitOut(f.main,['rev-parse','HEAD']),c);
 });
 
 test('relationship graph retains merge edges and identifies detached and shared HEADs',()=>{
-  const f=fixture();const initial=status(f,{offline:true});assert.match(renderStatus(initial,{unicode:false}),/같은 HEAD/);
+  const f=fixture();const initial=status(f,{offline:true});assert.match(renderStatus(initial,{graph:true,unicode:false}),/같은 HEAD/);
   const seed=gitOut(f.main,['rev-parse','HEAD']);commit(f.main,'main-only.txt','main\n');commit(f.codex,'candidate.txt','work\n');
   git(f.codex,['merge','--no-edit','main']);git(f.claude,['switch','--detach',seed]);
   const report=status(f,{offline:true});const detached=report.relationships.find(r=>r.path===f.claude);assert.equal(detached.detached,true);
-  const view=renderStatus(report,{unicode:false});assert.match(view,/merge 포함 \/ 실제 Git 연결선/);assert.match(view,/\[detached HEAD\]/);
+  const view=renderStatus(report,{graph:true,unicode:false});assert.match(view,/merge 포함 \/ 실제 Git 연결선/);assert.match(view,/\[detached HEAD\]/);
   assert.ok(view.includes(gitOut(f.codex,['rev-parse','HEAD']).slice(0,7)));
+});
+
+test('default view separates behind commits from dirty files and preserves risks, graph opt-in and JSON',()=>{
+  const f=fixture();commit(f.main,'main.txt','a\n');commit(f.main,'main.txt','b\n');
+  commit(f.codex,'work.txt','work\n','unique work message');put(f.codex,'dirty.txt','uncommitted\n');
+  git(f.main,['branch','old/parked',gitOut(f.codex,['rev-parse','HEAD'])]);
+  const report=status(f);
+  report.findings.push({level:'FAIL',target:'risk',cause:'conflict requires attention',action:'long action'},
+    {level:'FAIL',target:'risk',cause:'conflict requires attention',action:'long action'});
+  const before=JSON.stringify(report), brief=renderStatus(report,{unicode:false});
+  assert.match(brief,/^main [0-9a-f]{7} · GitHub Push 대기 2커밋/);
+  assert.match(brief,/DIRTY\(1\).*\| +-2 +\| +1 +\|/);
+  assert.match(brief,/main 대비 -N: 뒤처진 커밋 수 \(미커밋 파일 수 아님\)/);
+  assert.doesNotMatch(brief,/main 기준 브랜치 관계도|unique work message|\[INFO\]|조치:|old\/parked/);
+  assert.equal(brief.split('\n').filter(line=>line.startsWith('[FAIL] risk:')).length,1);
+  assert.equal(brief.split('\n').filter(line=>line.startsWith('[WARN] Codex:')).length,1);
+  for(const finding of report.findings.filter(f=>f.level!=='INFO'))assert.ok(brief.includes(finding.cause.replace(/\s+/g,' ')));
+  assert.equal(JSON.stringify(report),before);
+  assert.match(cli(f,['--graph']).stdout,/main 기준 브랜치 관계도/);
+  const listed=cli(f,['--branches']).stdout;assert.match(listed,/old\/parked/);assert.doesNotMatch(listed,/main 기준 브랜치 관계도/);
+  const plainJson=cli(f,['--json']).report, graphJson=cli(f,['--json','--graph']).report;
+  assert.deepEqual({...plainJson,generatedAt:null},{...graphJson,generatedAt:null});
 });
