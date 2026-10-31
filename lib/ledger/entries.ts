@@ -80,6 +80,7 @@ export type LedgerEntry = {
   adjustmentAmount?: number;
   effectiveAmount?: number;
   adjustmentCount?: number;
+  mealAdjustments?: { transactionId: number; amount: number; reason: string | null; adjustedAt: string | null }[];
   sourceAmount?: number;
   requiresCorrection?: boolean;
   accountName: string | null;
@@ -812,6 +813,12 @@ export function buildLedgerEntries(
         adjustmentAmount,
         effectiveAmount,
         adjustmentCount: linked.length,
+        mealAdjustments: [...linked].sort((a, b) => value(a.id) - value(b.id)).map(adjustment => ({
+          transactionId: value(adjustment.id),
+          amount: value(adjustment.amount) * value(adjustment.economic_effect_sign ?? 1),
+          reason: adjustment.memo?.trim() || null,
+          adjustedAt: adjustment.occurred_at ?? null,
+        })),
         sourceAmount,
         requiresCorrection,
         accountName,

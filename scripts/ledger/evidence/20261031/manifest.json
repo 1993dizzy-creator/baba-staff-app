@@ -1,0 +1,17 @@
+{
+  "snapshot_date_vn": "2026-10-31",
+  "source": "Supabase & Google Sheet connector live read only",
+  "manual_count": 20,
+  "manual_sum_vnd": 630000,
+  "daily_pairs_passed_20261001_to_27": 108,
+  "daily_pairs_total_20261001_to_27": 108,
+  "daily_pairs_20261028_to_30_passed": 2,
+  "daily_pairs_20261028_to_30_total": 12,
+  "files": {
+    "confirmed_manual_meals_20.csv": "c34a18fa030218d204b35fc20839920fa956636b8643fd509afcf57d5ff9d9db",
+    "preflight_manual_meal_20_READONLY.sql": "45dd43e3c6c5d2fbac0fc9ae81d92b5c23a9103f2cec654101fb8157f1cb0cd8",
+    "app_vs_sheet_daily_120_cells.csv": "cd8c8dec30f73e89a5d7da9b34d26bf6ebf22fb2e47273907c4d4500b5284716",
+    "README_handoff.md": "ca75012ab50ef937934553b6507cab3cc597e42f2d1065899c85ce2483625220",
+    "preflight_108_recheck_READONLY.sql": "3c53ad8c3fbc81d99eba7c243654cf712ca5b35fe56a5773b8fbcee5df0048fd"
+  }
+}

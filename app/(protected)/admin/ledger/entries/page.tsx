@@ -1884,6 +1884,10 @@ function EntryDetailSheet({
         <article><span className={styles.itemDescription}>{vi?"Số tiền tổng hợp tự động":"자동집계 원본"}</span><b>{money(entry.originalAmount??entry.amount)}</b></article>
         <article><span className={styles.itemDescription}>{vi?"Tổng điều chỉnh thủ công":"수동 정정 합계"}</span><b>{(entry.adjustmentAmount??0)>0?"+":""}{money(entry.adjustmentAmount??0)}</b></article>
         <article><span className={styles.itemDescription}><strong>{vi?"Số tiền hiện áp dụng":"현재 반영 금액"}</strong></span><b>{money(entry.effectiveAmount??entry.amount)}</b></article>
+        {(entry.mealAdjustments ?? []).map(adjustment => <article key={adjustment.transactionId}>
+          <span className={styles.itemDescription} style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}><strong style={{ display: "block" }}>{vi ? "Lý do chỉnh sửa" : "수정 사유"} · #{adjustment.transactionId}</strong><span>{adjustment.reason || (vi ? "Không có lý do trong lịch sử" : "기존 이력에 사유 없음")}</span></span>
+          <b>{adjustment.amount > 0 ? "+" : ""}{money(adjustment.amount)}</b>
+        </article>)}
         {entry.requiresCorrection ? <article><span className={styles.itemDescription}><strong>{vi?"Nguồn mới nhất · cần điều chỉnh":"최신 원천 · 정정 필요"}</strong></span><b>{money(entry.sourceAmount??0)}</b></article>:null}
       </div>:null}
       {candidateDraft ? (
@@ -2055,7 +2059,7 @@ function MealAdjustmentEditor({lang,draft,setDraft,saving,error,onSave}:{lang:"k
     onSave={()=>void onSave()} onCancel={()=>setDraft(null)}>
     <BarField label={vi?"Số tiền ăn cuối cùng":"최종 식대 금액"} required compact>{({id})=><input id={id} inputMode="decimal" value={formatLedgerDecimalAmount(draft.finalAmount)} onChange={event=>setDraft({...draft,finalAmount:sanitizeLedgerDecimalAmount(event.target.value)})} style={keepingInputStyle}/>}</BarField>
     <BarField label={vi?"Lý do chỉnh sửa":"수정 사유"} required compact>{({id})=><input id={id} value={draft.reason} onChange={event=>setDraft({...draft,reason:event.target.value})} style={keepingInputStyle} placeholder={vi?"Ví dụ: thêm 1 nhân viên đến muộn":"예: 18시 이후 추가 출근 1명"}/>}</BarField>
-    <p className={styles.editorHelp}>{vi?"Hệ thống tự tính phần chênh lệch và điều chỉnh tiền mặt cửa hàng.":"차액과 매장 현금 조정은 자동으로 계산됩니다."}</p>
+    <p className={styles.editorHelp}>{vi?"Chênh lệch được tính tự động và ghi vào tiền mặt của ngày tiền ăn gốc.":"차액은 자동으로 계산되어 원자동식대의 영업일 현금에 반영됩니다."}</p>
   </LedgerEditShell>
 }
 
@@ -2233,7 +2237,12 @@ function ManualEntrySheet({
     // One idempotency key per advance being entered; a retry after a network
     // error reuses it, and a new key is issued only after a successful save.
     [advanceRequestId, setAdvanceRequestId] = useState(() => crypto.randomUUID());
-  const categories = manualCategoryOptions(type, data.categories),
+  // The server independently checks the date, including dates outside this view.
+  const manualBusinessDate = occurredDate && occurredTime < "03:00"
+    ? new Date(Date.parse(occurredDate + "T12:00:00Z") - 86400000).toISOString().slice(0, 10)
+    : occurredDate;
+  const hasAutomaticMeal = data.entries.some(entry => entry.drilldown === "meal" && entry.businessDate === manualBusinessDate);
+  const categories = manualCategoryOptions(type, data.categories).filter(category => !hasAutomaticMeal || category.name !== "직원 식대"),
     accounts = data.accounts.filter((row) => row.is_active),
     investmentAccounts = accounts.filter((row) => row.is_business_fund && ["cash", "bank", "personal_custody"].includes(row.type)),
     selectedPartner = data.partners.find((row) => String(row.id) === partnerId),
@@ -2342,7 +2351,8 @@ function ManualEntrySheet({
           }),
         }),
         body = await response.json();
-      if (!response.ok) throw new Error(body.code);
+      if (!response.ok) throw new Error(body.code === "AUTOMATIC_MEAL_REQUIRES_ADJUSTMENT"
+        ? (vi ? "Hãy sửa giao dịch tiền ăn tự động của ngày này." : "해당 날짜의 자동식대 거래에서 수정하세요.") : body.code);
       if (payrollAdvance) setAdvanceRequestId(crypto.randomUUID());
       if (!manualSheetMountedRef.current) return;
       await onSaved();
@@ -2618,6 +2628,9 @@ function ManualEntrySheet({
               ? "Ứng lương được trừ vào lương tháng này và không được tính thêm là chi phí nhân công."
               : "가불은 이번 달 급여에서 차감되며 인건비로 추가 인식되지 않습니다."}</p>
           ) : null}
+          {type === "expense" && hasAutomaticMeal ? <p className={styles.manualNotice}>{vi
+            ? "Ngày này đã có tiền ăn tự động. Hãy sửa số tiền và lý do trong giao dịch đó."
+            : "자동식대가 있는 날입니다. 해당 거래에서 최종 금액과 수정 사유를 입력하세요."}</p> : null}
           {employeesError ? <p className={styles.error} role="alert">{employeesError}</p> : null}
           {type === "balance_adjustment" && adjustmentType === "investment" && !investments?.configured ? (
             <p className={styles.manualNotice}>{vi ? "Tháng đã chọn chưa được thiết lập nhà đầu tư." : "선택월 투자금 현황이 설정되지 않아 투자금 조정을 저장할 수 없습니다."}</p>
