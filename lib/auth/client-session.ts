@@ -41,7 +41,3 @@ export async function attendanceFetch(
   if (response.status === 401) handleSessionUnauthorized(response);
   return response;
 }
-
-export function resetSessionUnauthorizedHandlerForTests() {
-  handlingUnauthorized = false;
-}
