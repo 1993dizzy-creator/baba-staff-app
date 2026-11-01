@@ -640,6 +640,9 @@ export default function AdminUsersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [savingId, setSavingId] = useState<number | string | null>(null);
   const [message, setMessage] = useState("");
+  const [hasLoadedUsers, setHasLoadedUsers] = useState(false);
+  const [queryError, setQueryError] = useState<"login" | "forbidden" | "fetch" | null>(null);
+  const [queryAttempt, setQueryAttempt] = useState(0);
   const loadFailedTextRef = useRef(text.loadFailed);
   loadFailedTextRef.current = text.loadFailed;
 
@@ -661,23 +664,28 @@ export default function AdminUsersPage() {
     async function fetchUsers() {
       setIsLoading(true);
       setMessage("");
+      setQueryError(null);
 
       try {
         const res = await attendanceFetch("/api/admin/users", { cache: "no-store" });
-        const result = (await res.json()) as UsersResponse;
+        const result = (await res.json().catch(() => null)) as UsersResponse | null;
+        if (cancelled) return;
+        if (res.status === 401 || res.status === 403) {
+          setQueryError(res.status === 401 ? "login" : "forbidden");
+          return;
+        }
 
-        if (!res.ok || !result.ok) {
-          throw new Error(result.error || loadFailedTextRef.current);
+        if (!res.ok || !result?.ok || !Array.isArray(result.users)) {
+          throw new Error(result?.error || loadFailedTextRef.current);
         }
 
         if (!cancelled) {
           setUsers(result.users || []);
+          setHasLoadedUsers(true);
         }
-      } catch (error) {
+      } catch {
         if (!cancelled) {
-          setMessage(
-            error instanceof Error ? error.message : loadFailedTextRef.current
-          );
+          setQueryError("fetch");
         }
       } finally {
         if (!cancelled) {
@@ -691,7 +699,7 @@ export default function AdminUsersPage() {
     return () => {
       cancelled = true;
     };
-  }, [canAccess, checked]);
+  }, [canAccess, checked, queryAttempt]);
 
   const activeEmployeeCount = useMemo(
     () =>
@@ -831,13 +839,20 @@ export default function AdminUsersPage() {
       <section style={styles.summaryCard}>
         <span>{text.summaryLabel}</span>
         <strong>
-          {activeEmployeeCount}{text.peopleUnit}
+          {hasLoadedUsers ? `${activeEmployeeCount}${text.peopleUnit}` : "—"}
         </strong>
       </section>
 
       {message ? <p style={styles.message}>{message}</p> : null}
+      {queryError ? (
+        <div role="alert" style={styles.notice}>
+          <p>{queryError === "login" ? text.queryLoginRequired : queryError === "forbidden" ? text.queryForbidden : text.loadFailed}</p>
+          {hasLoadedUsers ? <p>{text.queryStale}</p> : null}
+          <button type="button" disabled={isLoading} onClick={() => setQueryAttempt(current => current + 1)} style={ui.subButton}>{text.retry}</button>
+        </div>
+      ) : null}
       {isLoading ? <p style={styles.notice}>{text.loading}</p> : null}
-      {!isLoading && users.length === 0 ? (
+      {!isLoading && hasLoadedUsers && !queryError && users.length === 0 ? (
         <p style={styles.notice}>{text.noUsers}</p>
       ) : null}
 
