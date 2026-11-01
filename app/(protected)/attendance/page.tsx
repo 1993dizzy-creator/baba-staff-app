@@ -179,6 +179,9 @@ const attendanceActionCopy = {
     refreshing: "근태 현황을 갱신하고 있습니다.",
     refreshFailed: "출퇴근은 저장됐지만 월간 현황 갱신에 실패했습니다.",
     monthLoadFailed: "월간 근태 정보를 불러오지 못했습니다.",
+    todayLoadFailed: "오늘 근태를 확인하지 못했습니다. 다시 조회해 주세요.",
+    todayLoginRequired: "로그인 정보를 확인할 수 없습니다. 다시 로그인해 주세요.",
+    todayRetry: "다시 조회",
     checkInSuccess: "출근 완료",
     checkOutSuccess: "퇴근 완료",
     permissionDenied: "위치 권한이 거부되었습니다. 브라우저 설정에서 위치 권한을 허용해 주세요.",
@@ -194,6 +197,9 @@ const attendanceActionCopy = {
     refreshing: "Đang cập nhật tình hình chấm công.",
     refreshFailed: "Đã lưu chấm công nhưng không thể cập nhật dữ liệu tháng.",
     monthLoadFailed: "Không thể tải dữ liệu chấm công tháng.",
+    todayLoadFailed: "Không thể kiểm tra chấm công hôm nay. Vui lòng thử lại.",
+    todayLoginRequired: "Không tìm thấy thông tin đăng nhập. Vui lòng đăng nhập lại.",
+    todayRetry: "Tải lại",
     checkInSuccess: "Đã chấm công vào",
     checkOutSuccess: "Đã chấm công ra",
     permissionDenied: "Quyền vị trí đã bị từ chối. Vui lòng cho phép vị trí trong cài đặt trình duyệt.",
@@ -443,6 +449,10 @@ export default function AttendancePage() {
 
 function MyAttendance() {
   const [isLoadingToday, setIsLoadingToday] = useState(true);
+  const [hasLoadedToday, setHasLoadedToday] = useState(false);
+  const [todayLoadError, setTodayLoadError] = useState<"login" | "fetch" | null>(null);
+  const todayRequestSequenceRef = useRef(0);
+  const todayUnavailable = isLoadingToday || !hasLoadedToday || todayLoadError !== null;
   const { lang } = useLanguage();
   const c = commonText[lang];
   const t = attendanceText[lang];
@@ -493,11 +503,16 @@ function MyAttendance() {
   }, []);
 
   const fetchTodayAttendance = async () => {
+    const requestSequence = ++todayRequestSequenceRef.current;
     setIsLoadingToday(true);
+    setTodayLoadError(null);
 
     try {
       const user = getUser();
-      if (!user?.id) return;
+      if (!user?.id) {
+        setTodayLoadError("login");
+        return;
+      }
 
       const workDate = getBusinessDate();
 
@@ -505,13 +520,18 @@ function MyAttendance() {
         `/api/attendance/records?scope=self_day&work_date=${workDate}`
       );
 
-      const result = await res.json();
+      const result = await res.json().catch(() => null);
+      if (!isMountedRef.current || requestSequence !== todayRequestSequenceRef.current) return;
 
-      if (!res.ok || !result.ok) {
-        console.log("fetch today attendance error:", result);
+      if (res.status === 401) {
+        setTodayLoadError("login");
         return;
       }
+      if (!res.ok || !result?.ok || !Array.isArray(result.records)) {
+        throw new Error("TODAY_ATTENDANCE_LOAD_FAILED");
+      }
 
+      setHasLoadedToday(true);
       const data = result.records?.[0] || null;
 
       if (!data) {
@@ -542,8 +562,14 @@ function MyAttendance() {
         lateMinutes: data.late_minutes || 0,
         earlyLeaveMinutes: data.early_leave_minutes || 0,
       }));
+    } catch {
+      if (isMountedRef.current && requestSequence === todayRequestSequenceRef.current) {
+        setTodayLoadError("fetch");
+      }
     } finally {
-      setIsLoadingToday(false);
+      if (isMountedRef.current && requestSequence === todayRequestSequenceRef.current) {
+        setIsLoadingToday(false);
+      }
     }
   };
 
@@ -668,7 +694,7 @@ function MyAttendance() {
 
   const handleCheckIn = async () => {
     if (actionInFlightRef.current || isSubmittingAttendance) return;
-    if (isLoadingToday) return;
+    if (todayUnavailable) return;
     if (attendance.status !== "before") return;
     if (attendance.checkInTime !== "-") return;
     if (hasPendingLeaveToday) return;
@@ -788,12 +814,14 @@ function MyAttendance() {
   };
 
   const handleCheckOutClick = () => {
+    if (todayUnavailable) return;
     if (attendance.checkInTime === "-" || attendance.checkOutTime !== "-") return;
     void handleConfirmCheckOut();
   };
 
   const handleConfirmCheckOut = async () => {
     if (actionInFlightRef.current || isSubmittingAttendance) return;
+    if (todayUnavailable) return;
 
     const user = getUser();
 
@@ -915,23 +943,23 @@ function MyAttendance() {
     attendance.checkOutTime === "-";
 
   const checkInDisabled =
-    isLoadingToday ||
+    todayUnavailable ||
     isSubmittingAttendance ||
     attendance.status !== "before" ||
     attendance.checkInTime !== "-" ||
     hasPendingLeaveToday;
 
   const checkOutDisabled =
-    isLoadingToday ||
+    todayUnavailable ||
     isSubmittingAttendance ||
     !isCurrentlyWorking;
 
-  const lateDisplayText =
+  const lateDisplayText = !hasLoadedToday ? "-" :
     attendance.lateMinutes > 0
       ? t.lateText.replace("{minutes}", String(attendance.lateMinutes))
       : t.workNormal;
 
-  const lateDisplayColor = attendance.lateMinutes > 0 ? "#f59e0b" : "#10b981";
+  const lateDisplayColor = !hasLoadedToday ? "#6b7280" : attendance.lateMinutes > 0 ? "#f59e0b" : "#10b981";
   const p = profileCopy[lang];
   const ps = payrollSummaryCopy[lang];
   const payrollSummary = payrollData?.summary ?? null;
@@ -976,6 +1004,14 @@ function MyAttendance() {
           ) : null}
         </div>
 
+        {todayLoadError ? (
+          <div role="alert" style={{ ...monthFeedbackStyle, marginBottom: 10 }}>
+            <span>{todayLoadError === "login" ? actionCopy.todayLoginRequired : actionCopy.todayLoadFailed}</span>{" "}
+            <button type="button" disabled={isLoadingToday} onClick={() => void fetchTodayAttendance()} style={ui.subButton}>
+              {actionCopy.todayRetry}
+            </button>
+          </div>
+        ) : null}
         <div style={todayStatusPanel}>
           <TodayInfoBlock label={t.checkInTimeLabel}>
             {attendance.checkInTime}
@@ -1004,7 +1040,7 @@ function MyAttendance() {
             }
             subColor="#ef4444"
           >
-            {attendance.workDuration}
+            {hasLoadedToday ? attendance.workDuration : "-"}
           </TodayInfoBlock>
         </div>
 
