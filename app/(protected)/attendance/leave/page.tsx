@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePathname } from "next/navigation";
 import Container from "@/components/Container";
+import LoadingState from "@/components/LoadingState";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
@@ -994,7 +995,7 @@ export default function AttendanceLeavePage() {
             </div>
 
             {isInitialLoading ? (
-              <div style={selectedEmptyStyle}>{c.loading}</div>
+              <LoadingState label={c.loading} />
             ) : selectedDateLeaves.length === 0 ? (
               <div style={selectedEmptyStyle}>{c.noLogs}</div>
             ) : (
@@ -1126,7 +1127,7 @@ export default function AttendanceLeavePage() {
 
         <div style={cardStyle}>
           {isInitialLoading ? (
-            <Empty text={c.loading} />
+            <LoadingState label={c.loading} />
           ) : staffSummaryGroups.length === 0 ? (
             <Empty text={c.noLogs} />
           ) : (

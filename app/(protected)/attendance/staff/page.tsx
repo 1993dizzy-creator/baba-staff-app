@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Container from "@/components/Container";
+import LoadingState from "@/components/LoadingState";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
 import { getAttendanceTabs } from "@/lib/navigation/attendance-tabs";
@@ -575,7 +576,7 @@ export default function AttendanceStaffPage() {
           </div>
         ) : null}
         {isLoading ? (
-          <div style={emptyStyle}>{c.loading}</div>
+          <LoadingState label={c.loading} variant="page" />
         ) : (usersLoadFailed && users.length === 0) || (recordsLoadFailed && records.length === 0) ? null
         : groupedUsers.length === 0 ? (
           <div style={emptyStyle}>{c.noData}</div>
