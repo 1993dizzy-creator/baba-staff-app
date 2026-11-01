@@ -87,7 +87,7 @@ function pushReady(r) {
   if (g.relation === 'remote-ahead') return ['Push 불가(원격이 앞섬)', 'red'];
   if (!g.verified) return [`${pending}(추정), 원격 미확인`, 'yellow'];
   if (g.relation === 'equal') return ['대기 0, Push 불필요', 'green'];
-  return [`${pending}, Push 가능(사용자 승인 필요)`, 'yellow'];
+  return [`${pending}, Push 가능(승인 범위에서 진행)`, 'yellow'];
 }
 
 function stamp(iso) {
@@ -135,6 +135,8 @@ function relationshipLines(relation, main, tree, paint, unicode) {
 function renderBriefStatus(r, {paint, unicode, columns, branches}) {
   const g = r.github;
   const out = [`${paint('bold', 'main')} ${paint('cyan', short(r.main))} · GitHub Push 대기 ${paint(g.verified && g.ahead === 0 ? 'green' : 'yellow', `${g.ahead ?? '?'}커밋`)}${g.verified ? '' : ' (추정·원격 미확인)'}`, ''];
+  const modeName = {serial: '직렬 모드', parallel: '병렬 모드'}[r.location.mode];
+  if (modeName) out.splice(1, 0, `실행 위치  ${r.location.tree} / ${r.location.branch} → ${modeName}`);
   const rows = r.trees.map(t => [[t.label, 'bold'], [short(t.head), 'cyan'], [t.branch, 'cyan'], treeState(t),
     [t.behind == null ? '-' : t.behind ? `-${t.behind}` : '0', t.behind ? 'dim' : null],
     [t.unintegrated == null ? '-' : String(t.unintegrated.length), t.unintegrated?.length ? 'yellow' : null]]);
@@ -228,7 +230,7 @@ export function renderStatus(r, {color = false, unicode = true, columns = null, 
   const parked = r.parked || [];
   const others = parked.length ? [`검토 필요 ${parked.length}개`, 'yellow'] : ['정상', 'green'];
   const results = [['활성 Worktree 통합', VERDICT[r.verdicts.integration]], ['기타 로컬 브랜치', others], ['Git 상태', VERDICT[r.verdicts.git]],
-    ['GitHub Push', ready], ['배포 승인', ['별도 필요', 'yellow']], ['테스트/보안 검증', ['Git 검사와 별개(별도 실행)', 'dim']]];
+    ['GitHub Push', ready], ['배포 승인', ['사용자 승인 범위에 따름', 'yellow']], ['테스트/보안 검증', ['Git 상태만 표시(검증 재실행 없음)', 'dim']]];
   const pairs = (title, items) => {
     out.push('', paint('bold', title));
     if (compact) {
