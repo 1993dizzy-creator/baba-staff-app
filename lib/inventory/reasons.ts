@@ -150,8 +150,13 @@ export function getKegReplaceLabel(lang: "ko" | "vi"): string {
 export function getInventoryReasonBadgeMeta(
   reason: string | null | undefined,
   source: string | null | undefined,
-  lang: "ko" | "vi"
+  lang: "ko" | "vi",
+  changeQuantity?: number | string | null
 ): InventoryReasonBadgeMeta | null {
+  // Existing POS reversals already have a positive movement; do not rewrite audit rows.
+  if (source === "pos_sales" && Number(changeQuantity) > 0) {
+    return { text: lang === "vi" ? "↩️ Hủy bán" : "↩️ 판매취소", style: REASON_BADGE_STYLE };
+  }
   const effectiveReason: InventoryReasonValue =
     source === "pos_sales"
       ? "sale_deduction"

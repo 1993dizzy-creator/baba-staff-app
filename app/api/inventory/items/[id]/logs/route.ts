@@ -22,7 +22,7 @@ type ItemLogRow = { id: number; reason?: string | null; change_quantity?: number
 async function fetchBusinessDayLogs(itemId: number, businessDate: string) {
   const day = await supabaseServer.from("inventory_logs").select("*")
     .eq("item_id", itemId).eq("business_date", businessDate)
-    .order("created_at", { ascending: false }).limit(BUSINESS_DAY_LOG_LIMIT);
+    .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(BUSINESS_DAY_LOG_LIMIT);
   if (day.error) return { data: null, error: day.error };
   const rows = new Map<number, ItemLogRow>(((day.data ?? []) as ItemLogRow[]).map(row => [Number(row.id), row]));
   const rootIds = new Set<number>();
@@ -124,6 +124,7 @@ export async function GET(
         .select("*")
         .eq("item_id", itemId)
         .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
         .limit(50);
 
     if (error) {

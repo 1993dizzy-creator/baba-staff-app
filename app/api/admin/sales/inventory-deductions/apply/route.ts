@@ -148,6 +148,10 @@ export async function POST(req: Request) {
       );
     }
 
+    if ((data as JsonObject)?.result === "needs_check") {
+      return NextResponse.json(data, { status: 409 });
+    }
+
     const appliedPreview = await buildInventoryDeductionPreview({
       businessDateFrom: "1970-01-01",
       businessDateTo: "2999-12-31",

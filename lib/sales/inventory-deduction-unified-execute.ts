@@ -290,7 +290,7 @@ async function applyInitialReceipt(params: {
     currentReceiptUpdatedAt: receipt.currentReceiptUpdatedAt,
     applyAllowed: receipt.applyAllowed,
   }));
-  const { error } = await supabaseServer.rpc(
+  const { data, error } = await supabaseServer.rpc(
     "apply_sales_inventory_deduction_batch",
     {
       p_batch_id: savedBatch.batchId,
@@ -331,6 +331,19 @@ async function applyInitialReceipt(params: {
       deductionReceiptId,
       appliedDeductionCount: isInventoryDeductionBusy(error) ? 0 : deductionCount,
       failureReason: isInventoryDeductionBusy(error) ? "inventory_busy_refresh_required" : error.message || "apply_failed",
+      startedAt: params.startedAt,
+    });
+  }
+
+  const applyResult = data as Record<string, unknown> | null;
+  if (applyResult?.result === "needs_check") {
+    return makeResult({
+      item: params.item,
+      actualOperationType: params.current.operationType,
+      result: "needs_check",
+      fingerprint: params.current.currentFingerprint,
+      batchId: savedBatch.batchId,
+      failureReason: typeof applyResult.failureReason === "string" ? applyResult.failureReason : null,
       startedAt: params.startedAt,
     });
   }

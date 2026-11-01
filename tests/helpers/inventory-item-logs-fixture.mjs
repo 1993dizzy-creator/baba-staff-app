@@ -36,7 +36,7 @@ export function database(tables,{delay=0,failTable=null}={}){
   },order(k,{ascending=true}={}){orders.push({k,ascending});return q;},range(a,b){start=a;end=b;return q;},limit(n){limit=n;return q;},async then(resolve,reject){try{
    const began=performance.now();if(delay)await new Promise(r=>setTimeout(r,delay));
    let rows=(tables[table]||[]).filter(r=>filters.every(f=>f(r)));
-   for(const{k,ascending}of orders)rows.sort((a,b)=>(a[k]<b[k]?-1:a[k]>b[k]?1:0)*(ascending?1:-1));
+   rows.sort((a,b)=>{for(const{k,ascending}of orders){const c=(a[k]<b[k]?-1:a[k]>b[k]?1:0)*(ascending?1:-1);if(c)return c;}return 0;});
    rows=rows.slice(start,Math.min(end+1,start+limit)).map(r=>columns==='*'?{...r}:Object.fromEntries(columns.split(',').map(c=>c.trim()).map(c=>[c,r[c]])));
    reads.push({table,ms:performance.now()-began,count:rows.length});return resolve({data:table===failTable?null:rows,error:table===failTable?{message:'isolated failure'}:null});
   }catch(e){return reject(e);}}};return q;

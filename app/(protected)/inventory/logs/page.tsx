@@ -204,7 +204,8 @@ export default function InventoryLogsPage() {
         getInventoryReasonBadgeMeta(
             log.reason as string | null,
             log.source as string | null,
-            lang
+            lang,
+            log.change_quantity as number | string | null
         );
 
 

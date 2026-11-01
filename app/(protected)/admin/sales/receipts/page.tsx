@@ -756,6 +756,8 @@ const inventoryPreviewText = {
         blocking_status: "확인이 필요한 품목이 있습니다",
         insufficient_stock_after_reversal: "재처리 후 재고가 부족합니다",
         legacy_metadata_missing: "과거 차감 정보가 부족합니다",
+        stock_check_boundary_requires_review:
+          "판매 이후 재고확인과 충돌할 수 있어 자동 처리를 중단했습니다. 관리자가 판매·재고확인 이력을 검토해 주세요",
         canceled_without_active_deduction:
           "취소됐지만 복구할 활성 차감 이력을 찾을 수 없습니다",
         no_inventory_movement: "변경할 재고가 없습니다",
@@ -949,6 +951,8 @@ const inventoryPreviewText = {
         blocking_status: "Có món cần kiểm tra",
         insufficient_stock_after_reversal: "Không đủ tồn kho sau khi xử lý lại",
         legacy_metadata_missing: "Thiếu dữ liệu trừ kho cũ",
+        stock_check_boundary_requires_review:
+          "Đã dừng xử lý tự động vì có thể xung đột với kiểm kho sau bán. Quản lý cần kiểm tra lịch sử bán và kiểm kho",
         canceled_without_active_deduction:
           "Không tìm thấy lịch sử trừ kho đang hoạt động để hoàn lại",
         no_inventory_movement: "Không có tồn kho cần thay đổi",
@@ -3349,7 +3353,8 @@ function UnifiedReceiptPreviewRow({
           </span>
         </span>
       </div>
-      {reason ? <p style={previewLineErrorStyle}>{reason}</p> : null}
+      {reason ? <p style={previewLineErrorStyle}>{reason === "stock_check_boundary_requires_review"
+        ? getUnifiedFailureReasonLabel(reason, text) : reason}</p> : null}
     </div>
   );
 }

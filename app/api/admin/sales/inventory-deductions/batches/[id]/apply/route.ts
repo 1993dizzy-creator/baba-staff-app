@@ -91,6 +91,10 @@ export async function POST(
       );
     }
 
+    if ((data as JsonObject)?.result === "needs_check") {
+      return NextResponse.json(data, { status: 409 });
+    }
+
     return NextResponse.json({
       ...(data as JsonObject),
       validation,
