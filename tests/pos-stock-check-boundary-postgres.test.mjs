@@ -152,4 +152,45 @@ test('POS stock-check boundary: atomic engines and concurrent physical counts',{
   assert.equal((await q(db,"select to_regprocedure('guard_pos_inventory_stock_check_boundary()') f"))[0].f,null);
   assert.equal((await q(db,"select count(*)::int n from pg_trigger where tgname='inventory_logs_pos_stock_check_boundary'"))[0].n,0);
  });
+ await t.test('final verification: Glenfiddich and Saero rollback preserve all history and commit review for a new connection',async t=>{
+  for(const checkedItems of [[1,2],[2]]){
+   const db=await setup();
+   await db.exec("update pos_sales_receipts set ref_date='2026-10-09T13:00:09.387Z' where id=10;update inventory set quantity=case id when 1 then 0.6 else 54 end");
+   const initial=await candidate(db,{items:[1,2]});
+   await db.query('update pos_inventory_deductions set deduct_quantity_total=case inventory_item_id when 1 then 0.0714 else 2 end,deduct_quantity=case inventory_item_id when 1 then 0.0714 else 2 end where batch_id=$1',[initial.b]);
+   assert.equal((await apply(db,initial)).ok,true);
+   assert.deepEqual((await snapshot(db)).stock.map(r=>Number(r.quantity)),[0.53,52]);
+   for(const item of checkedItems)await db.query("insert into inventory_logs(item_id,reason,source,created_at,new_quantity) values($1,'stock_check','edit_form',$2,$3)",[item,item===1?'2026-10-11T11:12:18.771293Z':'2026-10-10T09:36:23.109832Z',item===1?0.2:92]);
+   await db.exec('update inventory set quantity=case id when 1 then 1.2 else 88 end');
+   const c=await candidate(db,{workflow:'reprocess_modified',quantity:1}),before=await snapshot(db);
+   const writer=await rt.connect(db.name),observer=await rt.connect(db.name);
+   await writer.query('begin');
+   assert.equal((await reprocess(writer,c)).result,'needs_check');
+   assert.deepEqual(await snapshot(writer),before);
+   assert.equal((await q(observer,'select inventory_deduction_processing_error e from pos_sales_receipts where id=10'))[0].e,null,'Review must not be advertised before RPC commit');
+   await writer.query('commit');
+   // A different connection and read-only transaction prove committed visibility.
+   await observer.query('begin read only');
+   assert.deepEqual(await snapshot(observer),before);
+   const review=(await q(observer,'select inventory_deduction_processing_error reason,inventory_deduction_pending_status status from pos_sales_receipts where id=10'))[0];
+   assert.deepEqual(review,{reason:'stock_check_boundary_requires_review',status:'needs_check'});
+   const pending=(await q(observer,'select status,review_reason,selected_for_apply,review_required_at is not null reviewed from pos_inventory_deduction_receipts where id=$1',[c.br]))[0];
+   assert.deepEqual(pending,{status:'failed',review_reason:review.reason,selected_for_apply:false,reviewed:true});
+   await observer.query('commit');
+   // A review/edit may requeue a receipt, but cannot bypass a still-present count.
+   await db.exec('update pos_sales_receipts set inventory_deduction_processing_error=null,inventory_deduction_pending_status=null where id=10');
+   const retry=await candidate(db,{workflow:'reprocess_modified',quantity:1}),retryBefore=await snapshot(db);
+   assert.equal((await reprocess(db,retry)).result,'needs_check');assert.deepEqual(await snapshot(db),retryBefore);
+   await writer.query('begin');assert.equal((await cancel(writer)).result,'needs_check');await writer.query('commit');
+   assert.deepEqual(await snapshot(observer),retryBefore);
+   assert.equal((await q(observer,'select inventory_deduction_processing_error e from pos_sales_receipts where id=10'))[0].e,review.reason);
+   // Explicitly document the boundary: this is not an autonomous transaction.
+   await db.exec('update pos_sales_receipts set is_canceled=false,inventory_deduction_processing_error=null,inventory_deduction_pending_status=null where id=10');
+   const aborted=await candidate(db,{workflow:'reprocess_modified',quantity:1}),abortedBefore=await snapshot(db);
+   await writer.query('begin');assert.equal((await reprocess(writer,aborted)).result,'needs_check');await writer.query('rollback');
+   assert.equal((await q(observer,'select inventory_deduction_processing_error e from pos_sales_receipts where id=10'))[0].e,null);
+   assert.deepEqual(await snapshot(observer),abortedBefore);
+  }
+  t.diagnostic('Review survives the movement subtransaction rollback and outer RPC COMMIT; explicit outer ROLLBACK discards review metadata as well. No autonomous commit is implemented.');
+ });
 });

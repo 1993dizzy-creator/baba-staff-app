@@ -99,6 +99,8 @@ async function getDeductionCandidateReceiptIds() {
     .select("id")
     .not("inventory_deduction_auto_eligible_at", "is", null)
     .eq("inventory_deduction_processing_paused", false)
+    // A physical-count conflict waits for administrator review, not a timed retry.
+    .or("inventory_deduction_processing_error.is.null,inventory_deduction_processing_error.neq.stock_check_boundary_requires_review")
     .or(
       `inventory_deduction_last_checked_at.is.null,inventory_deduction_last_checked_at.lt.${retryBefore}`
     )
