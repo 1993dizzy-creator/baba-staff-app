@@ -23,6 +23,7 @@ export default function BarLogsPage() {
   const isTargetFilter = Boolean(code || entityId);
   const filterKey = `${entityType}:${code ?? ""}:${entityId ?? ""}:${actionType ?? ""}`;
   const [logs, setLogs] = useState<BarActivityLog[]>([]), [nextCursor, setNextCursor] = useState<string | null>(null), [hasMore, setHasMore] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState("");
+  const [failedRequest, setFailedRequest] = useState<{ cursor: string | null; append: boolean } | null>(null);
   const abortRef = useRef<AbortController | null>(null), requestRef = useRef(0);
 
   const changeTab = (nextType: LogEntityType) => {
@@ -32,7 +33,7 @@ export default function BarLogsPage() {
   };
   const load = useCallback(async (cursor: string | null, append: boolean) => {
     abortRef.current?.abort(); const controller = new AbortController(); abortRef.current = controller; const requestId = ++requestRef.current;
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setFailedRequest(null);
     try {
       const query = new URLSearchParams({ pageSize: "20", entityType });
       if (cursor) query.set("cursor", cursor); if (code) query.set("code", code); if (entityId) query.set("id", entityId); if (actionType) query.set("actionType", actionType);
@@ -40,9 +41,14 @@ export default function BarLogsPage() {
       if (await handleBarApiUnauthorized(response)) return; if (!response.ok) throw new Error(t.logsLoadError);
       const result = await response.json(); if (requestRef.current !== requestId) return;
       setLogs(current => append ? [...current, ...(result.logs ?? [])] : result.logs ?? []); setNextCursor(result.nextCursor ?? null); setHasMore(Boolean(result.hasMore));
-    } catch (caught) { if (!controller.signal.aborted && requestRef.current === requestId) setError(caught instanceof Error ? caught.message : t.logsLoadError); }
+    } catch {
+      if (!controller.signal.aborted && requestRef.current === requestId) {
+        setError(append ? t.logsMoreLoadError : t.logsLoadError);
+        setFailedRequest({ cursor, append });
+      }
+    }
     finally { if (requestRef.current === requestId) setLoading(false); }
-  }, [actionType, code, entityId, entityType, t.logsLoadError]);
+  }, [actionType, code, entityId, entityType, t.logsLoadError, t.logsMoreLoadError]);
 
   useEffect(() => { setLogs([]); setNextCursor(null); setHasMore(false); void load(null, false); return () => abortRef.current?.abort(); }, [filterKey, load]);
 
@@ -52,11 +58,11 @@ export default function BarLogsPage() {
       <button type="button" role="tab" aria-selected={entityType === "keeping"} onClick={() => changeTab("keeping")} style={tabStyle(entityType === "keeping")}>{t.keepingTab}</button>
     </div>
     {isTargetFilter ? <div style={{ marginBottom: 8, padding: "7px 9px", borderRadius: 8, background: "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, color: "#374151", fontSize: 11 }}><strong>{code ? (lang === "vi" ? `${t.zoneLogsSuffix} ${code}` : `${code} ${t.zoneLogsSuffix}`) : (lang === "vi" ? `Nhật ký giữ rượu #${entityId}` : `키핑 #${entityId} 기록`)}</strong><Link href={`/bar/logs?entityType=${entityType}`} style={{ color: "#4b5563", fontWeight: 800, textDecoration: "underline", textUnderlineOffset: 2 }}>{t.viewAllLogs}</Link></div> : null}
-    {error ? <section role="alert" style={{ ...ui.card, padding: 14, color: "#b91c1c", fontSize: 12 }}>{error} <button type="button" onClick={() => void load(null, false)} style={{ marginLeft: 6, border: 0, background: "transparent", color: "inherit", fontWeight: 800, textDecoration: "underline" }}>{t.retry}</button></section> : null}
+    {error ? <section role="alert" style={{ ...ui.card, padding: 14, color: "#b91c1c", fontSize: 12 }}>{error} <button type="button" onClick={() => void load(failedRequest?.cursor ?? null, failedRequest?.append ?? false)} style={{ marginLeft: 6, border: 0, background: "transparent", color: "inherit", fontWeight: 800, textDecoration: "underline" }}>{t.retry}</button></section> : null}
     {!error && !loading && logs.length === 0 ? <section style={{ ...ui.card, padding: 20, textAlign: "center", color: "#6b7280", fontSize: 12 }}>{t.logsEmpty}</section> : null}
-    {!error ? <div aria-busy={loading} style={{ display: "grid", gap: 8 }}>{logs.map(log => <BarLogEntry key={log.id} log={log} lang={lang} />)}</div> : null}
+    <div aria-busy={loading} style={{ display: "grid", gap: 8 }}>{logs.map(log => <BarLogEntry key={log.id} log={log} lang={lang} />)}</div>
     {loading ? <div role="status" aria-live="polite" style={{ minHeight: logs.length ? 52 : 120, display: "grid", placeItems: "center", color: "#6b7280", fontSize: 12 }}>{t.recentLogsLoading}</div> : null}
-    {hasMore && nextCursor && !loading ? <button type="button" onClick={() => void load(nextCursor, true)} style={{ ...ui.subButton, minHeight: 44, marginTop: 10 }}>{t.loadMore}</button> : null}
+    {hasMore && nextCursor && !loading && !error ? <button type="button" onClick={() => void load(nextCursor, true)} style={{ ...ui.subButton, minHeight: 44, marginTop: 10 }}>{t.loadMore}</button> : null}
   </div>;
 }
 

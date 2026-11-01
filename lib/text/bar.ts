@@ -1,5 +1,6 @@
 export const barText = {
   ko: {
+    logsMoreLoadError: "추가 로그를 불러오지 못했습니다. 기존 목록은 유지됩니다.",
     selectZone: "구조도에서 구역을 선택해 주세요.", enlargeMap: "확대해서 구역 선택", selectedZone: "선택한 구역",
     upper: "상단", middle: "중단", lower: "하단", leftShort: "좌", rightShort: "우", unavailable: "없음",
     equipmentShort: "가습기", mapAriaLabel: "BAR 정면도 구역 선택", keepingUnavailable: "키핑 보관 불가 구역", close: "닫기",
@@ -13,6 +14,7 @@ export const barText = {
     recentLogs: "최근 기록", recentLogsEmpty: "이 구역의 기록이 없습니다.", allZoneRecentLogs: "전체 구역 최근 기록", allZoneLogsEmpty: "최근 구역 기록이 없습니다.", recentLogsLoading: "기록을 불러오는 중…", recentLogsError: "최근 기록을 불러오지 못했습니다.", retry: "다시 시도", viewAllLogs: "전체 기록 보기", allBarLogs: "전체 BAR 기록 보기", zoneLogsSuffix: "구역 기록", zoneTab: "구역", keepingTab: "키핑",
   },
   vi: {
+    logsMoreLoadError: "Không thể tải thêm nhật ký. Danh sách hiện tại được giữ nguyên.",
     selectZone: "Vui lòng chọn một khu vực trên sơ đồ.", enlargeMap: "Phóng to để chọn khu vực", selectedZone: "Khu vực đã chọn",
     upper: "Trên", middle: "Giữa", lower: "Dưới", leftShort: "T", rightShort: "P", unavailable: "Không có",
     equipmentShort: "Máy ẩm", mapAriaLabel: "Chọn khu vực trên mặt trước BAR", keepingUnavailable: "Không được lưu rượu tại khu vực này", close: "Đóng",
