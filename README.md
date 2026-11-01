@@ -1,36 +1,30 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# BABA 관리자 앱
 
-## Getting Started
+장부·POS 매출·재고·직원·근태·급여를 관리하는 Next.js 16 / React 19 / TypeScript 프로젝트입니다.
 
-First, run the development server:
+## 프로젝트 구성
 
-```bash
+- `app/`: 관리자 화면, API, 레이아웃
+- `components/`, `lib/`: 화면 컴포넌트와 업무 로직
+- `supabase/migrations/`: 데이터베이스 Migration SQL
+- `tests/`, `scripts/`: 회귀 테스트와 개발·검증 도구
+- `docs/`: 업무 문서와 검토 기록. 과거 보관 자료는 `docs/archive/before-2026-11-01/`에 있습니다.
+- `public/`: 정적 자산
+
+## 로컬 실행
+
+개발 경로는 `C:\workspace\baba-staff-app`입니다. 필요한 로컬 환경 설정이 준비된 상태에서 실행합니다.
+
+```powershell
+cd C:\workspace\baba-staff-app
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+기본 접속 주소는 <http://localhost:3000>입니다.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 연결 서비스
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- GitHub: [1993dizzy-creator/baba-staff-app](https://github.com/1993dizzy-creator/baba-staff-app) — 소스와 Git 이력 관리
+- Supabase: PostgreSQL 데이터와 SQL/RPC 처리
+- Vercel: Next.js 앱 배포와 `vercel.json`에 정의된 Cron 실행

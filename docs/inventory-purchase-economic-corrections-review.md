@@ -17,7 +17,7 @@
 - `tests/inventory-purchase-repair-api.test.mjs`
 - `tests/inventory-ledger-projection-api.test.mjs`
 - `tests/ledger-inventory-supplier-display.test.mjs`
-- 이 보고서 및 `artifacts/purchase-economic-ui/`, `artifacts/purchase-economic-validation/`의 검증 증거.
+- 이 보고서 및 `docs/archive/before-2026-11-01/artifacts/purchase-economic-ui/`, `artifacts/purchase-economic-validation/`의 검증 증거.
 
 ## 2. 정확한 원인
 
@@ -61,7 +61,7 @@ KO/VI에 취소, 금액변경 확인, 원입고 연결 확인, 정정 완료를 
 
 - `npm run test:purchase-economic`: **43 통과 / 0 실패**. 실제 migration·projection·guard·repair SQL을 PGlite 안에서 실행하고 API/React UI를 검증한다.
 - `npm run test:inventory-ledger`: **349건 중 348 통과 / 1 실패**. 남은 실패는 기존 `tests/ledger-payroll-advance.test.ts:266`의 EntryFlags JSX 문자열 개수 기대값 2와 실제 1의 불일치다. 변경 전 첫 회귀 실행에서도 동일 실패가 있었고 이 작업은 가불 표시 구간을 변경하지 않았다. 무관한 기능 수정은 하지 않았다.
-- Chrome 실제 컴포넌트·CSS 검증: **10 통과 / 0 실패**. KO/VI × 320/360/390/430/768px에서 배너, 상세, 정정 완료, 가로 overflow 부재를 확인했다. 스크린샷과 `artifacts/purchase-economic-ui/results.json`을 남겼다.
+- Chrome 실제 컴포넌트·CSS 검증: **10 통과 / 0 실패**. KO/VI × 320/360/390/430/768px에서 배너, 상세, 정정 완료, 가로 overflow 부재를 확인했다. 스크린샷과 `docs/archive/before-2026-11-01/artifacts/purchase-economic-ui/results.json`을 남겼다.
 - 포함한 시나리오: quick_save 전량·부분 취소, edit_form 수정, 품목명·메모 변경, 단가·거래처 변경, 복수 원입고, 지급·부분 지급·현금 지급·배분, 마감 월, 반복 요청, #12655 합성 회귀, 수량 초과·수동 장부 override·권한 제한·실패 rollback.
 
 월마감 검증은 실제 `ledger_reopen_month_v1`/`ledger_close_month_v1` SQL로 revision 2 보관 및 revision 3 생성을 검사했다. 다른 사업 영역은 deterministic preflight fixture로 격리했으며 실 운영 전체 preflight, 실제 운영 데이터 복제, 다중 PostgreSQL 세션 경쟁 검증은 수행하지 않았다. 브라우저 검증은 실제 컴포넌트와 CSS를 사용하고 fetch만 격리 응답으로 대체했다. 운영 로그인/API/DB까지 연결한 테스트는 아니다.

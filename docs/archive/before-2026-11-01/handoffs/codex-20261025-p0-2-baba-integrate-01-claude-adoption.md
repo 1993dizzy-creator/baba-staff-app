@@ -29,7 +29,7 @@
 | `docs/agents/baba-agent-workflow.md` | 수정 | +4 −0 | 커밋됨 |
 | `docs/agents/baba-integrate.md` | 추가 | +163 −0 | 커밋됨 |
 | `docs/handoffs/claude-20261025-p0-2-claude-fixes-01.md` | 추가 | +99 −0 | 커밋됨 |
-| `docs/handoffs/codex-20261025-p0-2-baba-integrate-01-review-fixes.md` | 추가 | +104 −0 | 커밋됨 |
+| `docs/archive/before-2026-11-01/handoffs/codex-20261025-p0-2-baba-integrate-01-review-fixes.md` | 추가 | +104 −0 | 커밋됨 |
 | `docs/handoffs/codex-20261025-p0-2-baba-integrate-01.md` | 추가 | +95 −0 | 커밋됨 |
 | `scripts/agent/baba-handoff.mjs` | 수정 | +3 −3 | 커밋됨 |
 | `scripts/agent/baba-integrate.mjs` | 추가 | +281 −0 | 커밋됨 |

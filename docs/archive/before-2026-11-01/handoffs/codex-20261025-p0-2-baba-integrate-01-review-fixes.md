@@ -99,6 +99,6 @@
 ## 8. 후속 작업
 - Claude가 수정본을 읽기 전용으로 검토하거나 자기 격리 fixture에 반영하여 Git 2.55 파일/config Hook 및 includeIf/env, 내부 index 예외, 후보/main 조합에서만 실패하는 명시 테스트, 변경 범위·SHA 변조, 실제 remote equal/ahead/diverged/unavailable/캐시 stale, 정상·위조 승인 파일의 실행 비활성화를 재검증한다. 이 세션에서 Claude Worktree를 수정하지 않는다.
 - Native Windows symlink 실행 환경과 기존 전체 실패·skip/P1 문제를 별도 해결·검증해야 한다. 기존 실패를 승인 또는 지문 일치만으로 허용하지 않는다.
-- 기존 P0-2 Handoff는 역사 기록으로 유지한다. 현재 후보 검사에는 `--handoff docs/handoffs/codex-20261025-p0-2-baba-integrate-01-review-fixes.md`를 명시한다. 이 인계서 커밋 뒤에도 code HEAD는 위 자동 SHA를 뜻하며 Handoff 파일만 추가된다.
+- 기존 P0-2 Handoff는 역사 기록으로 유지한다. 현재 후보 검사에는 `--handoff docs/archive/before-2026-11-01/handoffs/codex-20261025-p0-2-baba-integrate-01-review-fixes.md`를 명시한다. 이 인계서 커밋 뒤에도 code HEAD는 위 자동 SHA를 뜻하며 Handoff 파일만 추가된다.
 - R1 독립 인증 및 보호된 실행 경로, R2 개선은 별도 설계/작업이다. 현재 사용자 지시에 따라 main 병합·push·Production·운영 DB/Migration은 실행하지 않는다. 운영 SQL Editor → GPT 운영 검증 → 조건부 해당 신규 history → 배포 SOP를 유지한다.
 

@@ -138,7 +138,7 @@ codex.cmd --no-daemon --cd C:\workspace\baba-wt-codex --sandbox workspace-write 
 node --test tests/agent-workflow-tools.test.mjs tests/agent-workflow-safety.test.mjs
 node scripts/agent/check-agent-skills.mjs
 node scripts/agent/baba-verify.mjs --tests tests/agent-workflow-safety.test.mjs,tests/ledger-deployed-qa.test.mjs,tests/ledger-inventory-rebook.test.ts,tests/ledger-reserve-history-entries.test.ts,tests/ledger-summary-cards.test.ts --json
-node scripts/agent/baba-handoff.mjs --check docs/handoffs/codex-skills-final-integration-validation-20261024.md
+node scripts/agent/baba-handoff.mjs --check docs/archive/before-2026-11-01/handoffs/codex-skills-final-integration-validation-20261024.md
 ```
 
 최종 성공 Verify는 새 Codex elevated 세션에서 실행됐다. 160개 중 152 통과·기존 실패 8개·신규 실패 0·skip 0이다. 8건은 merge-base aba24f3에서 같은 실패 진단을 다시 확인했다. TypeScript 기존 오류 40·신규 0, ESLint 신규 오류 0·경고 0이다. Skills 정합성도 3개 모두 통과했다.
@@ -179,7 +179,7 @@ CLAUDE.md
 docs/agents/baba-agent-workflow.md
 docs/handoffs/claude-20261024-agent-workflow-skills-01.md
 docs/handoffs/codex-skills-validation.md
-docs/handoffs/codex-skills-final-integration-validation-20261024.md
+docs/archive/before-2026-11-01/handoffs/codex-skills-final-integration-validation-20261024.md
 scripts/agent/baba-handoff.mjs
 scripts/agent/baba-preflight.mjs
 scripts/agent/baba-verify.mjs
