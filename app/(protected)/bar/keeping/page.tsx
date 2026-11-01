@@ -28,6 +28,7 @@ export default function BarKeepingPage() {
   const [loading, setLoading] = useState(true);
   const [more, setMore] = useState(false);
   const [error, setError] = useState("");
+  const [failedCursor, setFailedCursor] = useState<string | undefined>(undefined);
   const [manage, setManage] = useState(false);
   const [counts, setCounts] = useState({ active: 0, closed: 0 });
   const [search, setSearch] = useState(params.get("q") ?? "");
@@ -64,6 +65,7 @@ export default function BarKeepingPage() {
       setManage(false);
     }
     setError("");
+    setFailedCursor(undefined);
     try {
       const requestParams = new URLSearchParams(queryKey);
       requestParams.set("sort", sort);
@@ -78,7 +80,10 @@ export default function BarKeepingPage() {
       setNext(result.hasMore ? result.nextCursor : null);
       setManage(result.capabilities.manage);
     } catch (caught) {
-      if (isCurrent() && !(caught instanceof DOMException && caught.name === "AbortError")) setError(caught instanceof Error ? caught.message : t.error);
+      if (isCurrent() && !(caught instanceof DOMException && caught.name === "AbortError")) {
+        setError(caught instanceof Error ? caught.message : t.error);
+        setFailedCursor(cursor);
+      }
     } finally {
       if (isCurrent()) {
         activeRequestRef.current = null;
@@ -135,13 +140,12 @@ export default function BarKeepingPage() {
 
       {manage ? <Link href="/bar/keeping/new" style={{ ...primaryButtonStyle, display: "block", textAlign: "center", textDecoration: "none", marginBottom: 10, fontSize: 14, fontWeight: 700, letterSpacing: "-0.2px" }}>{t.newKeeping}</Link> : null}
       <div className="bar-keeping-scroll">
-      {error ? <State message={error} action={<button onClick={() => void load(undefined)} style={secondaryButtonStyle}>{t.retry}</button>} /> : (
+      {error ? <State message={failedCursor ? (lang === "vi" ? "Không thể tải thêm danh sách giữ rượu. Danh sách hiện tại được giữ nguyên." : "추가 키핑을 불러오지 못했습니다. 기존 목록은 유지됩니다.") : error} action={<button disabled={loading || more} onClick={() => void load(failedCursor)} style={secondaryButtonStyle}>{t.retry}</button>} /> : null}
         <div aria-busy={loading} style={{ display: "grid", gap: 8 }}>
           {initialLoading ? [0, 1, 2, 3].map((index) => <KeepingSkeleton key={index} />) : initialized && loading ? <div role="status" aria-live="polite" style={{ minHeight: 150, display: "grid", placeItems: "center", color: "#6b7280", fontSize: 12, fontWeight: 700 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><span aria-hidden="true" style={{ width: 16, height: 16, border: "2px solid #d1d5db", borderTopColor: "#374151", borderRadius: "50%", animation: "bar-keeping-spin .8s linear infinite" }} />{t.loading}</span><style>{`@keyframes bar-keeping-spin{to{transform:rotate(360deg)}}`}</style></div> : items.map((item) => <KeepingListCard key={item.id} item={item} lang={lang} href={`/bar/keeping/${item.id}${detailSuffix}`} />)}
         </div>
-      )}
       {empty ? <State message={hasSearchOrZone ? t.noResults : status === "active" ? t.noActive : t.noClosed} action={hasSearchOrZone ? <button onClick={() => { setSearch(""); replace({ q: null, zone: null }); }} style={secondaryButtonStyle}>{t.reset}</button> : undefined} /> : null}
-      {next ? <button disabled={more} onClick={() => void load(next)} style={{ ...secondaryButtonStyle, width: "100%", marginTop: 10 }}>{more ? t.loading : t.loadMore}</button> : null}
+      {next && !error ? <button disabled={more} onClick={() => void load(next)} style={{ ...secondaryButtonStyle, width: "100%", marginTop: 10 }}>{more ? t.loading : t.loadMore}</button> : null}
       </div>
     </div>
   );
