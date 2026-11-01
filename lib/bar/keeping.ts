@@ -1,5 +1,4 @@
 export const KEEPING_EXPIRY_WARNING_DAYS = 14;
-export const KEEPING_STORAGE_MONTHS = 3;
 export const KEEPING_LIST_LIMIT = 20;
 export const KEEPING_LIST_MAX_LIMIT = 50;
 export const KEEPING_DETAIL_IMAGE_MAX_BYTES = 900 * 1024;
