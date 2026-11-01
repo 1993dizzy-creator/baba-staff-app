@@ -72,10 +72,45 @@ test('POS stock-check boundary: atomic engines and concurrent physical counts',{
  });
  await t.test('later count blocks reprocess and cancel without changing prior audit history',async()=>{
   const db=await setup();await apply(db,await candidate(db));await count(db);
+  await db.exec("update pos_sales_receipts set inventory_deduction_auto_eligible_at=clock_timestamp() where id=10");
   const c=await candidate(db,{workflow:'reprocess_modified',quantity:2});const before=await snapshot(db);
   assert.equal((await reprocess(db,c)).result,'needs_check');assert.deepEqual(await snapshot(db),before);
+  assert.equal((await q(db,'select inventory_deduction_auto_eligible_at e from pos_sales_receipts where id=10'))[0].e,null);
+  await db.exec("update pos_sales_receipts set inventory_deduction_auto_eligible_at=clock_timestamp() where id=10");
   assert.equal((await cancel(db)).result,'needs_check');assert.deepEqual(await snapshot(db),before);
+  assert.equal((await q(db,'select inventory_deduction_auto_eligible_at e from pos_sales_receipts where id=10'))[0].e,null);
   assert.equal((await q(db,"select count(*)::int n from pos_inventory_deduction_receipts where workflow_type='rollback_canceled'"))[0].n,0);
+ });
+ await t.test('mixed batch conflict reviews only its receipt, clears its queue flag and leaves normal receipt retryable',async()=>{
+  const db=await setup(),c=await candidate(db,{items:[1,2]});
+  await db.exec("insert into pos_sales_receipts(id,ref_id,ref_no,business_date,ref_date,payment_status,is_canceled,final_amount,revision,updated_at) select 11,'ref-11','other',business_date,ref_date,payment_status,is_canceled,final_amount,revision,updated_at from pos_sales_receipts where id=10");
+  const line=(await q(db,"insert into pos_sales_receipt_lines(receipt_id,receipt_ref_id,item_code,item_name,quantity,unit_price,payment_status,is_canceled,raw_json) values(11,'ref-11','OTHER','Other',1,100000,3,false,'{}') returning id"))[0].id;
+  const br=(await q(db,"insert into pos_inventory_deduction_receipts(batch_id,receipt_id,business_date,status,inventory_affecting_hash,amount_hash,previewed_receipt_updated_at,selected_for_apply,workflow_type,receipt_content_fingerprint,line_summary) select batch_id,11,business_date,status,inventory_affecting_hash,amount_hash,previewed_receipt_updated_at,selected_for_apply,workflow_type,receipt_content_fingerprint||'-other',line_summary from pos_inventory_deduction_receipts where id=$1 returning id",[c.br]))[0].id;
+  await db.query("update pos_inventory_deductions set receipt_id=11,invoice_ref_id='ref-11',receipt_line_id=$1,batch_receipt_id=$2 where batch_id=$3 and inventory_item_id=2",[line,br,c.b]);
+  await db.query('update pos_inventory_deduction_batches set receipt_count=2,ready_receipt_count=2 where id=$1',[c.b]);
+  await db.exec("update pos_sales_receipts set inventory_deduction_auto_eligible_at=clock_timestamp() where id in(10,11)");
+  await count(db,undefined,2);
+  const before=await snapshot(db);
+  const normalReceipt=(await q(db,'select to_jsonb(r) r from pos_sales_receipts r where id=10'))[0].r;
+  const normalPreview=(await q(db,'select to_jsonb(r) r from pos_inventory_deduction_receipts r where id=$1',[c.br]))[0].r;
+  const other=(await q(db,'select to_jsonb(r) r from pos_sales_receipts r where id=11'))[0].r;
+  await db.exec('begin');
+  const result=(await q(db,"select apply_sales_inventory_deduction_batch($1,'owner',$2::jsonb) r",[c.b,JSON.stringify([normalReceipt,other].map(r=>({receiptId:r.id,currentInventoryHash:c.hash,currentReceiptUpdatedAt:r.updated_at,applyAllowed:true})))]))[0].r;
+  assert.equal(result.result,'needs_check');assert.equal(result.ok,false);assert.equal(result.batchRolledBack,true);
+  assert.deepEqual(result.conflictingReceiptIds,[11]);assert.equal(result.remainingSelectedReceiptCount,1);
+  assert.deepEqual(result.summary,{appliedReceiptCount:0,appliedDeductionCount:0});
+  assert.deepEqual(await snapshot(db),before,'Even the earlier normal movement must roll back');
+  assert.deepEqual((await q(db,'select to_jsonb(r) r from pos_sales_receipts r where id=10'))[0].r,normalReceipt);
+  assert.deepEqual((await q(db,'select to_jsonb(r) r from pos_inventory_deduction_receipts r where id=$1',[c.br]))[0].r,normalPreview);
+  const review=(await q(db,'select inventory_deduction_pending_status status,inventory_deduction_processing_error reason,inventory_deduction_auto_eligible_at eligible from pos_sales_receipts where id=11'))[0];
+  assert.deepEqual(review,{status:'needs_check',reason:'stock_check_boundary_requires_review',eligible:null});
+  assert.equal((await q(db,'select selected_for_apply from pos_inventory_deduction_receipts where id=$1',[br]))[0].selected_for_apply,false);
+  assert.deepEqual((await q(db,'select status,ready_receipt_count,review_required_count from pos_inventory_deduction_batches where id=$1',[c.b]))[0],{status:'previewed',ready_receipt_count:1,review_required_count:1});
+  const second=await rt.connect(db.name),pid=(await q(second,'select pg_backend_pid() pid'))[0].pid;
+  const pending=apply(second,c);await locked(db,pid);await db.exec('commit');
+  const retry=await pending;assert.equal(retry.ok,true);assert.equal(retry.status,'partially_applied');
+  assert.deepEqual((await snapshot(db)).stock.map(r=>Number(r.quantity)),[99,50]);
+  assert.equal((await q(db,'select inventory_deduction_processing_error reason from pos_sales_receipts where id=11'))[0].reason,review.reason);
  });
  await t.test('synthetic replay of 2601006796: October 11 count blocks October 12 restore/reapply',async()=>{
   const db=await setup();

@@ -74,24 +74,57 @@ begin
     if v_signature like 'public.apply_sales_inventory_deduction_batch(%' then
       v_handler := $handler$
 exception when sqlstate 'P0S01' then -- POS_STOCK_CHECK_P0_GUARD
+ declare
+  v_guard_detail text;
+  v_conflict_receipt_id bigint;
+  v_remaining_selected integer;
+ begin
+  get stacked diagnostics v_guard_detail = pg_exception_detail;
+  v_conflict_receipt_id := (v_guard_detail::jsonb ->> 'receiptId')::bigint;
+  -- The failed subtransaction released its locks. Reacquire in engine order
+  -- before review writes, so a queued retry cannot hold the batch and wait on us.
+  perform id from public.pos_inventory_deduction_batches
+  where id = p_batch_id for update;
+  perform id from public.pos_inventory_deduction_receipts
+  where batch_id = p_batch_id and receipt_id = v_conflict_receipt_id
+  order by id for update;
+  -- The entire batch movement rolled back, but only the receipt identified by
+  -- the guard needs review. Other selected receipts keep their preview/state.
+  if not exists (select 1 from public.pos_inventory_deduction_receipts
+    where batch_id = p_batch_id and selected_for_apply
+      and receipt_id = v_conflict_receipt_id) then
+    raise;
+  end if;
   update public.pos_sales_receipts r set
     inventory_deduction_processing_error = 'stock_check_boundary_requires_review',
     inventory_deduction_pending_status = 'needs_check',
+    inventory_deduction_auto_eligible_at = null,
     inventory_deduction_last_checked_at = clock_timestamp()
-  where r.id in (select receipt_id from public.pos_inventory_deduction_receipts
-    where batch_id = p_batch_id and selected_for_apply);
+  where r.id = v_conflict_receipt_id;
   update public.pos_inventory_deduction_receipts set status = 'failed', selected_for_apply = false,
     error_message = 'stock_check_boundary_requires_review',
     review_reason = 'stock_check_boundary_requires_review',
     review_required_at = clock_timestamp(), updated_at = clock_timestamp()
-  where batch_id = p_batch_id and selected_for_apply;
-  update public.pos_inventory_deduction_batches set status = 'failed',
+  where batch_id = p_batch_id and selected_for_apply
+    and receipt_id = v_conflict_receipt_id;
+  select count(*) into v_remaining_selected
+  from public.pos_inventory_deduction_receipts
+  where batch_id = p_batch_id and selected_for_apply and status = 'ready';
+  update public.pos_inventory_deduction_batches set
+    status = case when v_remaining_selected > 0 then 'previewed' else 'failed' end,
+    ready_receipt_count = (select count(*) from public.pos_inventory_deduction_receipts
+      where batch_id = p_batch_id and status = 'ready'),
+    review_required_count = (select count(*) from public.pos_inventory_deduction_receipts
+      where batch_id = p_batch_id and review_required_at is not null),
     error_message = 'stock_check_boundary_requires_review', updated_at = clock_timestamp()
   where id = p_batch_id;
   return jsonb_build_object('ok', false, 'result', 'needs_check',
     'batchId', p_batch_id, 'requiresReview', true,
+    'conflictingReceiptIds', jsonb_build_array(v_conflict_receipt_id),
+    'batchRolledBack', true, 'remainingSelectedReceiptCount', v_remaining_selected,
     'failureReason', 'stock_check_boundary_requires_review',
     'summary', jsonb_build_object('appliedReceiptCount', 0, 'appliedDeductionCount', 0));
+ end;
 $handler$;
     elsif v_signature like 'public.reprocess_modified_sales_inventory_deduction_receipt(%' then
       v_handler := $handler$
@@ -99,6 +132,7 @@ exception when sqlstate 'P0S01' then -- POS_STOCK_CHECK_P0_GUARD
   update public.pos_sales_receipts set
     inventory_deduction_processing_error = 'stock_check_boundary_requires_review',
     inventory_deduction_pending_status = 'needs_check',
+    inventory_deduction_auto_eligible_at = null,
     inventory_deduction_last_checked_at = clock_timestamp()
   where id = v_receipt.id;
   update public.pos_inventory_deduction_receipts set status = 'failed', selected_for_apply = false,
@@ -120,6 +154,7 @@ exception when sqlstate 'P0S01' then -- POS_STOCK_CHECK_P0_GUARD
   update public.pos_sales_receipts set
     inventory_deduction_processing_error = 'stock_check_boundary_requires_review',
     inventory_deduction_pending_status = 'needs_check',
+    inventory_deduction_auto_eligible_at = null,
     inventory_deduction_last_checked_at = clock_timestamp()
   where id = p_receipt_id;
   return jsonb_build_object('result', 'needs_check', 'receiptId', p_receipt_id,

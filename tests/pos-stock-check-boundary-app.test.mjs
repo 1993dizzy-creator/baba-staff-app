@@ -67,3 +67,18 @@ test('direct and saved-batch apply endpoints return 409 for committed review met
   assert.equal(response.status,409);assert.deepEqual(await response.json(),result);
  }
 });
+
+test('cancellation needs_check RPC JSON is never counted as a completed restoration',async()=>{
+ const current={receiptId:10,operationType:'rollback_canceled',blockingReasons:[],currentFingerprint:'fp'};
+ const deps={
+  'server-only':{},'node:crypto':{randomUUID:()=> 'cancel-test'},
+  '@/lib/sales/inventory-deduction-lock':{isInventoryDeductionBusy:()=>false},
+  '@/lib/sales/inventory-deduction-preview':{},'@/lib/sales/inventory-deduction-batches':{},'@/lib/sales/inventory-deduction-batch-validation':{},'@/lib/sales/inventory-deduction-reprocess':{},
+  '@/lib/sales/inventory-deduction-unified-preview':{buildUnifiedInventoryDeductionPreview:async()=>({receipts:[current]})},
+  '@/lib/supabase/server':{supabaseServer:{rpc:async()=>({data:{result:'needs_check',rollbackOnly:true,reversedDeductionCount:0,appliedDeductionCount:0,failureReason:'stock_check_boundary_requires_review'},error:null})}},
+ };
+ const {executeUnifiedInventoryDeductions}=load('lib/sales/inventory-deduction-unified-execute.ts',deps);
+ const result=await executeUnifiedInventoryDeductions({actorUsername:'owner',items:[{receiptId:10,expectedOperationType:'rollback_canceled'}]});
+ assert.equal(result.results[0].result,'needs_check');assert.equal(result.summary.appliedCount,0);assert.equal(result.summary.rollbackOnlyCount,0);
+ assert.deepEqual(result.processedReceiptIds,[]);assert.deepEqual(result.needsCheckReceiptIds,[10]);
+});
