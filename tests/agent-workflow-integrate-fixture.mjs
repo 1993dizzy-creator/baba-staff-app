@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import {after} from 'node:test';
 import {createHash} from 'node:crypto';
-import {cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
+import {cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {integrate} from '../scripts/agent/baba-integrate.mjs';
@@ -11,6 +12,20 @@ import {git, gitOut, insideRoot, run, sanitizedEnv, writeRecord} from '../script
 // Everything, including fixture main merges, is confined to the owning source worktree.
 const source = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const parent = insideRoot(source, '.tmp-baba/integrate-fixtures'); mkdirSync(parent, {recursive: true});
+const realParent = realpathSync(parent);
+function temporaryDirectory(prefix = '한글 space-') {
+  const directory = mkdtempSync(join(parent, prefix));
+  after(() => {
+    if (process.env.BABA_KEEP_TEST_FIXTURES === '1') {
+      console.error(`[fixture] preserved for debugging: ${directory}`);
+      return;
+    }
+    assert.equal(realpathSync(parent), realParent, 'Fixture parent must not be redirected');
+    // rmSync unlinks symlinks/junctions without traversing their targets.
+    rmSync(directory, {recursive: true, force: true});
+  });
+  return directory;
+}
 const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 const put = (root, path, text) => { const full = insideRoot(root, path); mkdirSync(resolve(full, '..'), {recursive: true}); writeFileSync(full, text); };
 const head = root => gitOut(root, ['rev-parse', 'HEAD']);
@@ -19,7 +34,7 @@ const cli = (root, script, args = []) => run(process.execPath, [join(root, 'scri
   {cwd: root, env: sanitizedEnv().env, allowFail: true, timeout: 120000});
 
 function fixture({preexisting = false, explicitGuard = false, dynamicImport = false, deep = false} = {}) {
-  const temporary = mkdtempSync(join(parent, '한글 space-'));
+  const temporary = temporaryDirectory();
   const directory = deep ? join(temporary, 'd'.repeat(Math.max(8, 161 - temporary.length - 15))) : temporary;
   if (deep) mkdirSync(directory);
   const main = join(directory, 'baba-staff-app'), codex = join(directory, 'baba-wt-codex'), claude = join(directory, 'baba-wt-claude');
@@ -91,4 +106,4 @@ function approval(f, prepared) {
 
 const shaBranch = (root, branch) => gitOut(root, ['rev-parse', branch]);
 
-export {source, parent, hash, put, head, commit, cli, fixture, verify, finish, ready, inspect, prepare, approval, shaBranch};
+export {source, parent, temporaryDirectory, hash, put, head, commit, cli, fixture, verify, finish, ready, inspect, prepare, approval, shaBranch};

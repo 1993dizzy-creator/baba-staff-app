@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {integrate} from '../scripts/agent/baba-integrate.mjs';
 import {assertNoGitHooks, guardedGit, git, gitOut, run, sanitizedEnv, stateFingerprint, writeRecord} from '../scripts/agent/lib/common.mjs';
 import {remoteMainState} from '../scripts/agent/lib/remote-main.mjs';
 
-import {source, parent, put, head, commit, cli, fixture, verify, finish, ready, inspect, prepare, approval} from './agent-workflow-integrate-fixture.mjs';
+import {source, temporaryDirectory, put, head, commit, cli, fixture, verify, finish, ready, inspect, prepare, approval} from './agent-workflow-integrate-fixture.mjs';
 
 test('shared DB references conflict across different source paths', () => {
   const f = fixture(); commit(f.codex, 'lib/candidate.ts', "export const query = db => db.from('shared_table').select('*');\n"); finish(f);
@@ -159,7 +159,7 @@ const slash = path => path.split('\\').join('/');
 const NEUTRALIZED = ['GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_ASKPASS', 'SSH_ASKPASS'];
 
 test('Windows Git subprocesses read long object paths and write long refs without changing config', () => {
-  const directory = mkdtempSync(join(parent, 'longpaths-'));
+  const directory = temporaryDirectory('longpaths-');
   const root = join(directory, 'x'.repeat(Math.max(8, 210 - directory.length - 1)));
   mkdirSync(root);
   git(root, ['init', '-b', 'fixture']);
@@ -277,7 +277,7 @@ test('D2: tests that do not load the changed code, read it only, or forged evide
 });
 
 test('D2: access recorder logs only listed targets, separating module import from file read', () => {
-  const directory = mkdtempSync(join(parent, 'recorder-'));
+  const directory = temporaryDirectory('recorder-');
   put(directory, 'code.mjs', 'export const value = 1;\n'); put(directory, 'data.sql', 'select 1;\n'); put(directory, 'other.mjs', 'export {};\n');
   put(directory, 'main.mjs', `import {readFileSync} from 'node:fs'; await import('./code.mjs'); await import('./other.mjs');
     readFileSync(new URL('./data.sql', import.meta.url), 'utf8');\n`);

@@ -1,14 +1,16 @@
-import test from 'node:test';
+import test, {after} from 'node:test';
 import assert from 'node:assert/strict';
-import {cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, symlinkSync, writeFileSync} from 'node:fs';
+import {cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {git, gitOut, insideRoot, run, sanitizedEnv, stateFingerprint} from '../scripts/agent/lib/common.mjs';
 
-// All writes (including pushes) target disposable LOCAL repositories. Keep fixtures as evidence.
+// All writes (including pushes) target disposable LOCAL repositories.
+// Set BABA_KEEP_TEST_FIXTURES=1 only when retaining fixtures for debugging.
 const source = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const fixtures = insideRoot(source, '.tmp-baba/start-fixtures');
 mkdirSync(fixtures, {recursive: true});
+const realFixtures = realpathSync(fixtures);
 function put(root, path, text) {
   const full = join(root, path);
   mkdirSync(resolve(full, '..'), {recursive: true});
@@ -20,6 +22,15 @@ function commit(root, path, text) {
 }
 function fixture({failFinal = false} = {}) {
   const dir = mkdtempSync(join(fixtures, '한글 space-'));
+  after(() => {
+    if (process.env.BABA_KEEP_TEST_FIXTURES === '1') {
+      console.error(`[fixture] preserved for debugging: ${dir}`);
+      return;
+    }
+    assert.equal(realpathSync(fixtures), realFixtures, 'Fixture parent must not be redirected');
+    // rmSync unlinks symlinks/junctions without traversing their targets.
+    rmSync(dir, {recursive: true, force: true});
+  });
   const main = join(dir, 'baba-staff-app'), codex = join(dir, 'baba-wt-codex'), claude = join(dir, 'baba-wt-claude');
   const remote = join(dir, 'origin.git');
   mkdirSync(main); git(main, ['init', '-b', 'main']);
