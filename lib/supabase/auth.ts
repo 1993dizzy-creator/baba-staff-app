@@ -45,21 +45,3 @@ export const canAccessAdmin = (user = getUser()) => {
     role === "leader"
   );
 };
-
-export const canAccessSalesRoot = (user = getUser()) =>
-  ["owner", "master", "manager"].includes(getRole(user));
-
-export const canAccessSalesMonthly = (user = getUser()) =>
-  ["owner", "master", "manager", "leader"].includes(getRole(user));
-
-export const canAccessSalesReceipts = (user = getUser()) =>
-  ["owner", "master", "manager"].includes(getRole(user));
-
-export const canAccessPosMappings = (user = getUser()) =>
-  ["owner", "master", "manager", "leader"].includes(getRole(user));
-
-export const canManageUsers = (user = getUser()) =>
-  ["owner", "master"].includes(getRole(user));
-
-export const canManageMappingDangerousActions = (user = getUser()) =>
-  ["owner", "master", "manager", "leader"].includes(getRole(user));
