@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import BarLogEntry from "@/components/bar/BarLogEntry";
+import LoadingState from "@/components/LoadingState";
 import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import type { BarActivityLog } from "@/lib/bar/types";
 import { useLanguage } from "@/lib/language-context";
@@ -61,7 +62,7 @@ export default function BarLogsPage() {
     {error ? <section role="alert" style={{ ...ui.card, padding: 14, color: "#b91c1c", fontSize: 12 }}>{error} <button type="button" onClick={() => void load(failedRequest?.cursor ?? null, failedRequest?.append ?? false)} style={{ marginLeft: 6, border: 0, background: "transparent", color: "inherit", fontWeight: 800, textDecoration: "underline" }}>{t.retry}</button></section> : null}
     {!error && !loading && logs.length === 0 ? <section style={{ ...ui.card, padding: 20, textAlign: "center", color: "#6b7280", fontSize: 12 }}>{t.logsEmpty}</section> : null}
     <div aria-busy={loading} style={{ display: "grid", gap: 8 }}>{logs.map(log => <BarLogEntry key={log.id} log={log} lang={lang} />)}</div>
-    {loading ? <div role="status" aria-live="polite" style={{ minHeight: logs.length ? 52 : 120, display: "grid", placeItems: "center", color: "#6b7280", fontSize: 12 }}>{t.recentLogsLoading}</div> : null}
+    {loading ? <LoadingState label={t.recentLogsLoading} variant={logs.length ? "more" : "page"} /> : null}
     {hasMore && nextCursor && !loading && !error ? <button type="button" onClick={() => void load(nextCursor, true)} style={{ ...ui.subButton, minHeight: 44, marginTop: 10 }}>{t.loadMore}</button> : null}
   </div>;
 }

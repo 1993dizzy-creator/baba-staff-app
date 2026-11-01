@@ -6,6 +6,7 @@ import { getUser } from "@/lib/supabase/auth";
 import { useLanguage } from "@/lib/language-context";
 import { mypageText } from "@/lib/text";
 import Container from "@/components/Container";
+import LoadingState from "@/components/LoadingState";
 import { ui } from "@/lib/styles/ui";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
 
@@ -69,7 +70,7 @@ export default function MyPage() {
   }, [fetchMyInfo]);
 
   if (loading) {
-    return <Container>{t.loading}</Container>;
+    return <Container><LoadingState label={t.loading} variant="page" /></Container>;
   }
 
   if (loadError || !userInfo) {

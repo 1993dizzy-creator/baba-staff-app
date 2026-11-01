@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import BarLogEntry from "@/components/bar/BarLogEntry";
+import LoadingState from "@/components/LoadingState";
 import { fetchBarApi, handleBarApiUnauthorized } from "@/lib/bar/client-auth";
 import type { BarActivityLog } from "@/lib/bar/types";
 
@@ -96,7 +97,7 @@ export default function BarZoneRecentLogs({ zoneCode, lang, refreshKey, text }: 
       </button>
       {expanded ? (
         <div id={panelId} style={{ padding: "2px 2px 4px" }}>
-          {loading ? <p aria-live="polite" style={{ margin: "8px 0", color: "#6b7280", fontSize: 12 }}>{text.recentLogsLoading}</p> : null}
+          {loading ? <LoadingState label={text.recentLogsLoading} /> : null}
           {error ? <div role="alert" style={{ margin: "8px 0", color: "#b91c1c", fontSize: 12 }}>{error} <button type="button" onClick={() => void load(zoneCode, false)} style={{ marginLeft: 6, border: 0, padding: 0, background: "transparent", color: "#b91c1c", font: "inherit", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}>{text.retry}</button></div> : null}
           {!loading && !error && logs.length === 0 ? <p style={{ margin: "8px 0", color: "#6b7280", fontSize: 12 }}>{text.recentLogsEmpty}</p> : null}
           {!error && logs.length > 0 ? (
