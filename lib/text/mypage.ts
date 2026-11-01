@@ -2,6 +2,7 @@ export const mypageText = {
   ko: {
     noLoginInfo: "로그인 정보가 없음",
     fetchFail: "유저 정보 불러오기 실패",
+    retry: "다시 시도",
     loading: "불러오는 중...",
     title: "마이페이지",
     name: "이름",
@@ -17,6 +18,7 @@ export const mypageText = {
   vi: {
     noLoginInfo: "Không có thông tin đăng nhập",
     fetchFail: "Không thể tải thông tin người dùng",
+    retry: "Thử lại",
     loading: "Đang tải...",
     title: "Trang cá nhân",
     name: "Tên",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { getUser } from "@/lib/supabase/auth";
 import { useLanguage } from "@/lib/language-context";
@@ -24,6 +24,8 @@ export default function MyPage() {
   const { lang } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [loadError, setLoadError] = useState<"login" | "fetch" | null>(null);
+  const requestSequenceRef = useRef(0);
 
   const t = mypageText[lang];
 
@@ -32,38 +34,52 @@ export default function MyPage() {
     return value;
   };
 
-  const fetchMyInfo = async () => {
-    const savedUser = getUser();
-
-    if (!savedUser?.id) {
-      alert(t.noLoginInfo);
-      setLoading(false);
-      return;
+  const fetchMyInfo = useCallback(async () => {
+    const requestSequence = ++requestSequenceRef.current;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const savedUser = getUser();
+      if (!savedUser?.id) {
+        setUserInfo(null);
+        setLoadError("login");
+        return;
+      }
+      const { data, error } = await supabase
+        .from("users")
+        .select("id, username, name, part, position, role, birth_date, hire_date")
+        .eq("id", savedUser.id)
+        .single();
+      if (requestSequence !== requestSequenceRef.current) return;
+      if (error || !data) throw new Error("PROFILE_LOAD_FAILED");
+      setUserInfo(data);
+    } catch {
+      if (requestSequence === requestSequenceRef.current) {
+        setUserInfo(null);
+        setLoadError("fetch");
+      }
+    } finally {
+      if (requestSequence === requestSequenceRef.current) setLoading(false);
     }
-
-    const { data, error } = await supabase
-      .from("users")
-      .select("id, username, name, part, position, role, birth_date, hire_date")
-      .eq("id", savedUser.id)
-      .single();
-
-    if (error) {
-      console.error(error);
-      alert(t.fetchFail);
-      setLoading(false);
-      return;
-    }
-
-    setUserInfo(data);
-    setLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
-    fetchMyInfo();
-  }, []);
+    void fetchMyInfo();
+    return () => { requestSequenceRef.current += 1; };
+  }, [fetchMyInfo]);
 
   if (loading) {
     return <Container>{t.loading}</Container>;
+  }
+
+  if (loadError || !userInfo) {
+    return <Container>
+      <h1>{t.title}</h1>
+      <div role="alert" style={{ ...ui.card, padding: 20 }}>
+        <p>{loadError === "login" ? t.noLoginInfo : t.fetchFail}</p>
+        <button type="button" onClick={() => void fetchMyInfo()} style={ui.subButton}>{t.retry}</button>
+      </div>
+    </Container>;
   }
 
   return (
