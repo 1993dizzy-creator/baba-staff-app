@@ -16,6 +16,7 @@ type Labels = Record<
   | "assigneeColor"
   | "noAssignee"
   | "inactiveEmployee"
+  | "assignmentUnavailable"
   | "save"
   | "saving"
   | "cancel"
@@ -30,10 +31,11 @@ type Labels = Record<
   string
 >;
 
-export default function BarZoneEditModal({ zone, staff, canAssign, lang, labels, onClose, onSaved, returnFocusRef }: {
+export default function BarZoneEditModal({ zone, staff, canAssign, assignmentReady = true, lang, labels, onClose, onSaved, returnFocusRef }: {
   zone: BarZoneRecord;
   staff: BarStaffOption[];
   canAssign: boolean;
+  assignmentReady?: boolean;
   lang: "ko" | "vi";
   labels: Labels;
   onClose: () => void;
@@ -106,7 +108,7 @@ export default function BarZoneEditModal({ zone, staff, canAssign, lang, labels,
         version,
         [lang === "vi" ? "noteVi" : "noteKo"]: note,
       };
-      if (canAssign) {
+      if (canAssign && assignmentReady) {
         const nextAssigneeId = assigneeId ? Number(assigneeId) : null;
         const currentAssigneeId = zone.assignee?.id ?? null;
         const assignmentChanged = nextAssigneeId !== currentAssigneeId;
@@ -235,9 +237,11 @@ export default function BarZoneEditModal({ zone, staff, canAssign, lang, labels,
 
           {canAssign ? (
             <section style={sectionStyle}>
+              {!assignmentReady ? <p role="status" style={{ color: "#6b7280", fontSize: 12 }}>{labels.assignmentUnavailable}</p> : null}
               <label style={fieldStyle}>
                 <span style={fieldLabelStyle}>{labels.assignee}</span>
                 <select
+                  disabled={saving || !assignmentReady}
                   value={assigneeId}
                   onChange={(event) => {
                     const id = event.target.value;
@@ -248,8 +252,8 @@ export default function BarZoneEditModal({ zone, staff, canAssign, lang, labels,
                   style={inputStyle}
                 >
                   <option value="">{labels.noAssignee}</option>
-                  {zone.assignee && !zone.assignee.isActive && !staff.some((person) => person.id === zone.assignee?.id) ? (
-                    <option value={zone.assignee.id} disabled>{formatEmployeeNameWithLevel(zone.assignee.name, zone.assignee.levelInfo)} · {labels.inactiveEmployee}</option>
+                  {zone.assignee && (!assignmentReady || !zone.assignee.isActive) && !staff.some((person) => person.id === zone.assignee?.id) ? (
+                    <option value={zone.assignee.id} disabled>{formatEmployeeNameWithLevel(zone.assignee.name, zone.assignee.levelInfo)}{!zone.assignee.isActive ? ` · ${labels.inactiveEmployee}` : ""}</option>
                   ) : null}
                   {staff.map((person) => <option key={person.id} value={person.id}>{formatEmployeeNameWithLevel(person.name, person.levelInfo)}</option>)}
                 </select>
@@ -266,6 +270,7 @@ export default function BarZoneEditModal({ zone, staff, canAssign, lang, labels,
                           key={key}
                           type="button"
                           aria-pressed={selected}
+                          disabled={saving || !assignmentReady}
                           onClick={() => setColorKey(key)}
                           style={{ minHeight: 42, padding: "6px 4px", border: selected ? "1.5px solid #111827" : "1px solid #e5e7eb", borderRadius: 9, background: selected ? "#f3f4f6" : "#fff", color: "#4b5563", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 10, fontWeight: selected ? 700 : 600, cursor: "pointer", boxShadow: selected ? "0 0 0 2px rgba(17,24,39,.08)" : "none" }}
                         >

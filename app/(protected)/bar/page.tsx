@@ -21,7 +21,10 @@ export default function BarAreaPage() {
   const [selectedZone, setSelectedZone] = useState<BarZoneDefinition | null>(null);
   const [zones, setZones] = useState<BarZoneRecord[]>([]);
   const [staff, setStaff] = useState<BarStaffOption[]>([]);
-  const [loadError, setLoadError] = useState("");
+  const [zonesStatus, setZonesStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [staffStatus, setStaffStatus] = useState<"loading" | "ready" | "error">("loading");
+  const zonesRequestRef = useRef(0);
+  const staffRequestRef = useRef(0);
   const [isMapModalOpen, setIsMapModalOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [recentLogsRefreshKey, setRecentLogsRefreshKey] = useState(0);
@@ -36,30 +39,52 @@ export default function BarAreaPage() {
   const closeMapModal = useCallback(() => setIsMapModalOpen(false), []);
   const closeEditModal = useCallback(() => setIsEditOpen(false), []);
 
-  const loadData = useCallback(async () => {
-    setLoadError("");
+  const loadZones = useCallback(async () => {
+    const request = ++zonesRequestRef.current;
+    setZonesStatus("loading");
     try {
-      const requests: Promise<Response>[] = [fetchBarApi("/api/bar/zones", { cache: "no-store" })];
-      if (mayAssign) requests.push(fetchBarApi("/api/bar/staff", { cache: "no-store" }));
-      const [zonesResponse, staffResponse] = await Promise.all(requests);
-      if (await handleBarApiUnauthorized(zonesResponse)) return;
-      if (!zonesResponse.ok) throw new Error(t.loadError);
-      const zonesResult = await zonesResponse.json();
-      setZones(zonesResult.zones ?? []);
-      if (staffResponse) {
-        if (await handleBarApiUnauthorized(staffResponse)) return;
-        if (!staffResponse.ok) throw new Error(t.loadError);
-        setStaff((await staffResponse.json()).staff ?? []);
-      }
-    } catch (error) { setLoadError(error instanceof Error ? error.message : t.loadError); }
-  }, [mayAssign, t.loadError]);
+      const response = await fetchBarApi("/api/bar/zones", { cache: "no-store" });
+      if (await handleBarApiUnauthorized(response)) return;
+      const result = await response.json();
+      if (request !== zonesRequestRef.current) return;
+      if (!response.ok || !result.ok || !Array.isArray(result.zones)) throw new Error("ZONE_QUERY_FAILED");
+      setZones(result.zones);
+      setZonesStatus("ready");
+    } catch {
+      if (request === zonesRequestRef.current) setZonesStatus("error");
+    }
+  }, []);
+
+  const loadStaff = useCallback(async () => {
+    if (!mayAssign) return;
+    const request = ++staffRequestRef.current;
+    setStaffStatus("loading");
+    try {
+      const response = await fetchBarApi("/api/bar/staff", { cache: "no-store" });
+      if (await handleBarApiUnauthorized(response)) return;
+      const result = await response.json();
+      if (request !== staffRequestRef.current) return;
+      if (!response.ok || !result.ok || !Array.isArray(result.staff)) throw new Error("STAFF_QUERY_FAILED");
+      setStaff(result.staff);
+      setStaffStatus("ready");
+    } catch {
+      if (request === staffRequestRef.current) setStaffStatus("error");
+    }
+  }, [mayAssign]);
+
+  const loadData = useCallback(async () => {
+    await Promise.all([loadZones(), loadStaff()]);
+  }, [loadZones, loadStaff]);
 
   const handleSaved = useCallback(async () => {
     await loadData();
     setRecentLogsRefreshKey((current) => current + 1);
   }, [loadData]);
 
-  useEffect(() => { setUser(getUser()); setUserReady(true); }, []);
+  useEffect(() => {
+    setUser(getUser()); setUserReady(true);
+    return () => { zonesRequestRef.current += 1; staffRequestRef.current += 1; };
+  }, []);
   useEffect(() => { if (userReady) void loadData(); }, [loadData, userReady]);
   const mapLabels: BarZoneMapLabels = { upper: t.upper, middle: t.middle, lower: t.lower, leftShort: t.leftShort, rightShort: t.rightShort, unavailable: t.unavailable, equipmentShort: t.equipmentShort, mapAriaLabel: t.mapAriaLabel };
 
@@ -68,10 +93,11 @@ export default function BarAreaPage() {
       <BarZoneMap selectedCode={selectedZone?.code ?? null} onSelect={setSelectedZone} labels={mapLabels} lang={lang} zoneData={zoneData} />
     </section>
     <button ref={expandButtonRef} type="button" onClick={() => setIsMapModalOpen(true)} style={{ ...ui.subButton, minHeight: 48, marginBottom: 14, border: 0, background: "#111827", color: "#fff", fontWeight: 800 }}><span aria-hidden="true" style={{ marginRight: 6 }}>🔍</span>{t.enlargeMap}</button>
-    {loadError ? <p role="alert" style={{ color: "#b91c1c", fontSize: 13, fontWeight: 700 }}>{loadError}</p> : null}
+    {zonesStatus === "error" ? <p role="alert" style={{ color: "#b91c1c", fontSize: 13 }}>{t.zonesLoadError} <button type="button" onClick={() => void loadZones()} style={ui.subButton}>{t.retry}</button></p> : null}
+    {mayAssign && staffStatus === "error" ? <p role="alert" style={{ color: "#b91c1c", fontSize: 13 }}>{t.staffLoadError} <button type="button" onClick={() => void loadStaff()} style={ui.subButton}>{t.retry}</button></p> : null}
     <BarZoneDetail zone={selectedZone} data={selectedData} lang={lang} canEdit={mayEdit && Boolean(selectedData)} onEdit={() => setIsEditOpen(true)} editButtonRef={editButtonRef} recentLogsRefreshKey={recentLogsRefreshKey} text={{ selectZone: t.selectZone, keepingUnavailable: t.keepingUnavailable, noZoneInfo: t.noZoneInfo, photo: t.photo, note: t.note, assignee: t.assignee, inactiveEmployee: t.inactiveEmployee, editZone: t.editZone, photoUpdated: t.photoUpdated, recentLogs: t.recentLogs, recentLogsEmpty: t.recentLogsEmpty, recentLogsLoading: t.recentLogsLoading, recentLogsError: t.recentLogsError, retry: t.retry, viewAllLogs: t.viewAllLogs }} />
     {!selectedZone ? <BarZoneOverviewLogs lang={lang} text={{ title: t.allZoneRecentLogs, loading: t.recentLogsLoading, empty: t.allZoneLogsEmpty, error: t.recentLogsError, retry: t.retry, viewAll: t.viewAllLogs }} /> : null}
     {isMapModalOpen ? <BarZoneMapModal selectedCode={selectedZone?.code ?? null} onSelect={setSelectedZone} onClose={closeMapModal} labels={mapLabels} lang={lang} closeLabel={t.close} returnFocusRef={expandButtonRef} zoneData={zoneData} /> : null}
-    {isEditOpen && selectedData ? <BarZoneEditModal zone={selectedData} staff={staff} canAssign={mayAssign} lang={lang} labels={{ editZone: t.editZone, photo: t.photo, note: t.note, assignee: t.assignee, assigneeColor: t.assigneeColor, noAssignee: t.noAssignee, inactiveEmployee: t.inactiveEmployee, save: t.save, saving: t.saving, cancel: t.cancel, replacePhoto: t.replacePhoto, takePhoto: t.takePhoto, deletePhoto: t.deletePhoto, confirmDeletePhoto: t.confirmDeletePhoto, conflict: t.conflict, saveError: t.saveError, photoError: t.photoError, unsupportedPhoto: t.unsupportedPhoto }} onClose={closeEditModal} onSaved={handleSaved} returnFocusRef={editButtonRef} /> : null}
+    {isEditOpen && selectedData ? <BarZoneEditModal zone={selectedData} staff={staffStatus === "ready" ? staff : []} canAssign={mayAssign} assignmentReady={staffStatus === "ready"} lang={lang} labels={{ assignmentUnavailable: t.assignmentUnavailable, editZone: t.editZone, photo: t.photo, note: t.note, assignee: t.assignee, assigneeColor: t.assigneeColor, noAssignee: t.noAssignee, inactiveEmployee: t.inactiveEmployee, save: t.save, saving: t.saving, cancel: t.cancel, replacePhoto: t.replacePhoto, takePhoto: t.takePhoto, deletePhoto: t.deletePhoto, confirmDeletePhoto: t.confirmDeletePhoto, conflict: t.conflict, saveError: t.saveError, photoError: t.photoError, unsupportedPhoto: t.unsupportedPhoto }} onClose={closeEditModal} onSaved={handleSaved} returnFocusRef={editButtonRef} /> : null}
   </div>;
 }

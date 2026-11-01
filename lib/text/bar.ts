@@ -1,5 +1,8 @@
 export const barText = {
   ko: {
+    zonesLoadError: "구역 정보를 불러오지 못했습니다. 이전 조회 자료가 있을 수 있습니다.",
+    staffLoadError: "직원 정보를 불러오지 못했습니다. 재조회 전까지 담당자 변경을 사용할 수 없습니다.",
+    assignmentUnavailable: "직원 정보를 확인한 후 담당자와 색상을 변경할 수 있습니다. 메모와 사진은 저장할 수 있습니다.",
     logsMoreLoadError: "추가 로그를 불러오지 못했습니다. 기존 목록은 유지됩니다.",
     selectZone: "구조도에서 구역을 선택해 주세요.", enlargeMap: "확대해서 구역 선택", selectedZone: "선택한 구역",
     upper: "상단", middle: "중단", lower: "하단", leftShort: "좌", rightShort: "우", unavailable: "없음",
@@ -14,6 +17,9 @@ export const barText = {
     recentLogs: "최근 기록", recentLogsEmpty: "이 구역의 기록이 없습니다.", allZoneRecentLogs: "전체 구역 최근 기록", allZoneLogsEmpty: "최근 구역 기록이 없습니다.", recentLogsLoading: "기록을 불러오는 중…", recentLogsError: "최근 기록을 불러오지 못했습니다.", retry: "다시 시도", viewAllLogs: "전체 기록 보기", allBarLogs: "전체 BAR 기록 보기", zoneLogsSuffix: "구역 기록", zoneTab: "구역", keepingTab: "키핑",
   },
   vi: {
+    zonesLoadError: "Không thể tải thông tin khu vực. Có thể đang hiển thị dữ liệu trước đó.",
+    staffLoadError: "Không thể tải thông tin nhân viên. Vui lòng tải lại trước khi đổi người phụ trách.",
+    assignmentUnavailable: "Chỉ có thể đổi người phụ trách và màu sau khi xác nhận thông tin nhân viên. Vẫn có thể lưu ghi chú và ảnh.",
     logsMoreLoadError: "Không thể tải thêm nhật ký. Danh sách hiện tại được giữ nguyên.",
     selectZone: "Vui lòng chọn một khu vực trên sơ đồ.", enlargeMap: "Phóng to để chọn khu vực", selectedZone: "Khu vực đã chọn",
     upper: "Trên", middle: "Giữa", lower: "Dưới", leftShort: "T", rightShort: "P", unavailable: "Không có",
