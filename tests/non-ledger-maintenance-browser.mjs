@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 // Same isolated React DOM approach as login-keeping-browser.mjs: actual page,
@@ -25,8 +26,12 @@ export async function maintenanceFixture(pagePath, extraStubs = {}) {
   };
   function add(name, parent = import.meta.url) {
     const resolver = createRequire(parent);
-    const file = name in stubs ? name : name.startsWith('@/')
-      ? require.resolve('../' + name.slice(2) + '.ts') : resolver.resolve(name);
+    const parentUrl = parent.startsWith('file:') ? parent : pathToFileURL(parent);
+    const sourcePath = name.startsWith('@/') ? new URL('../'+name.slice(2),import.meta.url) : new URL(name,parentUrl);
+    const file = name in stubs ? name : name.startsWith('@/') || name.startsWith('.')
+      ? ['','.ts','.tsx','/index.ts'].map(ext=>fileURLToPath(new URL(sourcePath.href+ext))).find(file=>existsSync(file) && /\.(m?js|tsx?)$/.test(file))
+      : resolver.resolve(name);
+    assert.ok(file,`fixture cannot resolve ${name}`);
     if (ids.has(file)) return ids.get(file);
     const id = modules.length; ids.set(file, id); modules.push('');
     let code = file in stubs ? stubs[file] : readFileSync(file, 'utf8');
@@ -66,3 +71,14 @@ export async function maintenanceFixture(pagePath, extraStubs = {}) {
     await browser?.close(); await new Promise(resolve=>server.close(resolve)); throw error;
   }
 }
+
+export const attendanceStubs = {
+  '@/components/Container': 'module.exports=({children})=>children;',
+  '@/components/SubNav': 'module.exports=()=>null;',
+  '@/lib/navigation/attendance-tabs': 'exports.getAttendanceTabs=()=>[];',
+  '@/lib/supabase/auth': 'exports.getUser=()=>({id:99,role:"owner"});exports.isAdmin=user=>user?.role==="owner";',
+  '@/lib/common/business-time': 'exports.getBusinessDate=()=>"2026-10-01";',
+  '@/components/employee/EmployeeNameWithLevel': 'module.exports=({name})=>name;',
+  '@/components/attendance/AttendancePerfectScoreBadge': 'module.exports=()=>null;',
+  '@/components/attendance/useMonthlyAttendanceSummary': 'exports.useMonthlyAttendanceSummary=()=>new Map();',
+};

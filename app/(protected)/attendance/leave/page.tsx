@@ -265,6 +265,7 @@ export default function AttendanceLeavePage() {
   const hasLoadedRecordsRef = useRef(false);
   const usersRequestSequenceRef = useRef(0);
   const recordsRequestSequenceRef = useRef(0);
+  const holidaysRequestSequenceRef = useRef(0);
   const pendingActionKeysRef = useRef(new Set<string>());
   const calendarDateRef = useRef(calendarDate);
   calendarDateRef.current = calendarDate;
@@ -397,12 +398,18 @@ export default function AttendanceLeavePage() {
   // 공휴일은 users/leave records와 독립적으로 읽는다 — 이 요청이 실패해도 휴무
   // 관리 화면 전체를 500/사용불가로 만들지 않고, 캘린더의 공휴일 표시만 생략한다.
   const loadHolidays = useCallback(async (date: Date) => {
+    const requestSequence = ++holidaysRequestSequenceRef.current;
+    const month = formatDateKey(date).slice(0, 7);
+    const isCurrent = () => mountedRef.current &&
+      requestSequence === holidaysRequestSequenceRef.current &&
+      month === formatDateKey(calendarDateRef.current).slice(0, 7);
     try {
       const data = await requestHolidays(date);
-      if (mountedRef.current) setHolidays(data);
+      if (isCurrent()) setHolidays(data);
     } catch (error) {
+      if (!isCurrent()) return;
       console.warn("fetch holidays error (non-critical):", error);
-      if (mountedRef.current) setHolidays([]);
+      setHolidays([]);
     }
   }, []);
 
