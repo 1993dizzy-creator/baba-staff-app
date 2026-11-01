@@ -126,6 +126,9 @@ export default function AttendanceStaffPage() {
   const perfectSummary = useMonthlyAttendanceSummary(businessDate.slice(0, 7), `${businessDate}:${summaryRefreshKey}`, true);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [usersLoadFailed, setUsersLoadFailed] = useState(false);
+  const [recordsLoadFailed, setRecordsLoadFailed] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
   const [loginUser, setLoginUser] = useState<LoginUser | null>(null);
   const canManage = isAdmin(loginUser);
   const isMountedRef = useRef(true);
@@ -144,6 +147,19 @@ export default function AttendanceStaffPage() {
   } | null>(null);
   const [mutationError, setMutationError] = useState("");
   const [mutationBusy, setMutationBusy] = useState(false);
+  const queryCopy = lang === "vi"
+    ? {
+        usersError: "Không thể tải danh sách nhân viên.",
+        recordsError: "Không thể tải dữ liệu chấm công.",
+        stale: "Lần tải mới nhất không thành công. Dữ liệu đang hiển thị có thể chưa được cập nhật.",
+        retry: "Thử lại",
+      }
+    : {
+        usersError: "직원 목록을 불러오지 못했습니다.",
+        recordsError: "근태 기록을 불러오지 못했습니다.",
+        stale: "최신 조회에 실패했습니다. 표시된 자료는 최신이 아닐 수 있습니다.",
+        retry: "다시 시도",
+      };
   const actionCopy =
     lang === "vi"
       ? {
@@ -194,9 +210,11 @@ export default function AttendanceStaffPage() {
       const userData = await request;
       if (isMountedRef.current) {
         setUsers(userData.filter((user) => !isAdmin(user)));
+        setUsersLoadFailed(false);
       }
     } catch (error) {
       console.log("fetch users error:", error);
+      if (isMountedRef.current) setUsersLoadFailed(true);
     } finally {
       if (usersRequestRef.current === request) {
         usersRequestRef.current = null;
@@ -232,15 +250,35 @@ export default function AttendanceStaffPage() {
       ) {
         setRecords(recordData.records);
         setSummaryRevision(recordData.summaryRevision);
+        setRecordsLoadFailed(false);
       }
     } catch (error) {
       console.log("fetch attendance records error:", error);
+      if (
+        isMountedRef.current &&
+        requestSequence === recordsRequestSequenceRef.current
+      ) {
+        setRecordsLoadFailed(true);
+      }
     } finally {
       if (recordsRequestsRef.current.get(workDate) === request) {
         recordsRequestsRef.current.delete(workDate);
       }
     }
   }, []);
+
+  const retryQueries = async () => {
+    if (retryBusy) return;
+    setRetryBusy(true);
+    try {
+      await Promise.allSettled([
+        ...(usersLoadFailed ? [fetchUsers()] : []),
+        ...(recordsLoadFailed ? [fetchAttendanceRecords()] : []),
+      ]);
+    } finally {
+      if (isMountedRef.current) setRetryBusy(false);
+    }
+  };
 
   const applyAttendanceRecord = useCallback((record: AttendanceRecord) => {
     recordsRequestSequenceRef.current += 1;
@@ -526,9 +564,20 @@ export default function AttendanceStaffPage() {
       <SubNav tabs={tabs} />
 
       <div style={sectionStyle}>
+        {usersLoadFailed || recordsLoadFailed ? (
+          <div role="alert" style={{ ...emptyStyle, color: "#b91c1c", background: "#fef2f2" }}>
+            {usersLoadFailed ? <div>{queryCopy.usersError}</div> : null}
+            {recordsLoadFailed ? <div>{queryCopy.recordsError}</div> : null}
+            {users.length > 0 || records.length > 0 ? <div>{queryCopy.stale}</div> : null}
+            <button type="button" disabled={retryBusy} onClick={() => void retryQueries()} style={{ marginTop: 8 }}>
+              {retryBusy ? c.loading : queryCopy.retry}
+            </button>
+          </div>
+        ) : null}
         {isLoading ? (
           <div style={emptyStyle}>{c.loading}</div>
-        ) : groupedUsers.length === 0 ? (
+        ) : (usersLoadFailed && users.length === 0) || (recordsLoadFailed && records.length === 0) ? null
+        : groupedUsers.length === 0 ? (
           <div style={emptyStyle}>{c.noData}</div>
         ) : (
           groupedUsers.map((group) => (

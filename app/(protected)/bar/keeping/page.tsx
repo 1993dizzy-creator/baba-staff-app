@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KeepingListCard, KeepingSkeleton } from "@/components/bar/keeping/KeepingBasics";
 import { primaryButtonStyle, secondaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
 import type { BarKeepingListItem } from "@/lib/bar/keeping-types";
@@ -34,6 +34,7 @@ export default function BarKeepingPage() {
   const status = params.get("status") === "closed" ? "closed" : "active";
   const sort = params.get("sort") === "old_activity" ? "old_activity" : "recent_activity";
   const zone = params.get("zone");
+  const activeRequestRef = useRef<AbortController | null>(null);
 
   const replace = useCallback((changes: Record<string, string | null>) => {
     const nextParams = new URLSearchParams(params.toString());
@@ -49,24 +50,38 @@ export default function BarKeepingPage() {
     return () => window.clearTimeout(timer);
   }, [params, replace, search]);
 
-  const load = useCallback(async (cursor: string | undefined, signal?: AbortSignal) => {
+  const load = useCallback(async (cursor: string | undefined) => {
+    // A ref also blocks clicks queued before React disables the button.
+    if (cursor && activeRequestRef.current) return;
+    activeRequestRef.current?.abort();
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
+    const isCurrent = () => activeRequestRef.current === controller && !controller.signal.aborted;
     if (cursor) setMore(true); else setLoading(true);
+    if (!cursor) {
+      setMore(false);
+      setNext(null);
+      setManage(false);
+    }
     setError("");
     try {
       const requestParams = new URLSearchParams(queryKey);
       requestParams.set("sort", sort);
       if (cursor) requestParams.set("cursor", cursor);
-      const response = await fetchBarApi(`/api/bar/keepings?${requestParams}`, { cache: "no-store", signal });
+      const response = await fetchBarApi(`/api/bar/keepings?${requestParams}`, { cache: "no-store", signal: controller.signal });
+      if (!isCurrent()) return;
       if (await handleBarApiUnauthorized(response)) return;
       if (!response.ok) throw new Error(t.error);
       const result = await response.json() as Result;
+      if (!isCurrent()) return;
       setItems((current) => cursor ? [...current, ...result.items] : result.items);
       setNext(result.hasMore ? result.nextCursor : null);
       setManage(result.capabilities.manage);
     } catch (caught) {
-      if (!(caught instanceof DOMException && caught.name === "AbortError")) setError(caught instanceof Error ? caught.message : t.error);
+      if (isCurrent() && !(caught instanceof DOMException && caught.name === "AbortError")) setError(caught instanceof Error ? caught.message : t.error);
     } finally {
-      if (!signal?.aborted) {
+      if (isCurrent()) {
+        activeRequestRef.current = null;
         setLoading(false);
         setMore(false);
         setInitialized(true);
@@ -75,9 +90,11 @@ export default function BarKeepingPage() {
   }, [queryKey, sort, t.error]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void load(undefined, controller.signal);
-    return () => controller.abort();
+    void load(undefined);
+    return () => {
+      activeRequestRef.current?.abort();
+      activeRequestRef.current = null;
+    };
   }, [load]);
 
   useEffect(() => {
