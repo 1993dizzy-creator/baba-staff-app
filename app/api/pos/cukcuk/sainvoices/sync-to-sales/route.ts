@@ -469,6 +469,13 @@ export async function POST(req: Request) {
     const guardResponse = requirePosAdminSecret(req);
     if (guardResponse) return guardResponse;
 
+    // Staged activation requires the P1-2D migration first. Legacy callers keep
+    // their current close/response contract until the explicit cutover review.
+    if (process.env.POS_CUKCUK_RELIABLE_INGESTION === "enabled") {
+      const { handleReliableSalesSync } = await import("@/lib/pos/cukcuk/reliable-ingestion-server");
+      return handleReliableSalesSync(req, resolveSyncWindow);
+    }
+
     const body = (await req.json().catch(() => ({}))) as JsonObject;
     const requestedBusinessDate =
       typeof body.businessDate === "string" ? body.businessDate.trim() : "";
