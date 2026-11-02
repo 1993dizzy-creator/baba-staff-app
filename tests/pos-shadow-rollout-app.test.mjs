@@ -45,6 +45,8 @@ test('pilot API: disabled makes no history call; historical/uncertain receipts c
  }finally{if(previous===undefined)delete process.env.POS_INVENTORY_SHADOW_MODE;else process.env.POS_INVENTORY_SHADOW_MODE=previous;}
 });
 test('predeploy reprocessing: missing RPC holds without fallback writes; refresh/review policies are explicit and recover when installed',async()=>{
+ const previous=process.env.POS_REPROCESS_P1_ENABLED;process.env.POS_REPROCESS_P1_ENABLED='enabled';
+ try{
  let error={code:'PGRST202',message:'private schema details'},calls=0;
  const mod=load('lib/sales/inventory-deduction-reprocess.ts',{'server-only':{},
   '@/lib/sales/inventory-deduction-lock':{isInventoryDeductionBusy:e=>e.code==='55P03'},
@@ -57,4 +59,23 @@ test('predeploy reprocessing: missing RPC holds without fallback writes; refresh
   assert.equal(r.result,result);assert.equal(r.retryable,retryable);assert.equal(r.appliedDeductionCount,0);assert.equal(r.batchId,null);assert.doesNotMatch(JSON.stringify(r),/private schema/);
  }
  assert.equal(calls,6);error=null;assert.equal((await mod.prepareAndApplyReprocessInventoryDeduction({receiptId:10,actorUsername:'owner'})).result,'already_processed');
+ }finally{if(previous===undefined)delete process.env.POS_REPROCESS_P1_ENABLED;else process.env.POS_REPROCESS_P1_ENABLED=previous;}
+});
+
+test('app-first reprocess gate: OFF never calls previews, new tables or the uninstalled RPC',async()=>{
+ const previous=process.env.POS_REPROCESS_P1_ENABLED;
+ const forbidden=()=>{assert.fail('DB access before P1 enable');};
+ const mod=load('lib/sales/inventory-deduction-reprocess.ts',{'server-only':{},
+  '@/lib/sales/inventory-deduction-lock':{},
+  '@/lib/sales/inventory-deduction-unified-preview':{buildUnifiedInventoryDeductionPreview:forbidden},
+  '@/lib/sales/inventory-deduction-preview':{buildInventoryDeductionPreview:forbidden},
+  '@/lib/supabase/server':{supabaseServer:{rpc:forbidden,from:forbidden}},
+ });
+ try{
+  for(const value of [undefined,'off','disabled']){
+   if(value===undefined)delete process.env.POS_REPROCESS_P1_ENABLED;else process.env.POS_REPROCESS_P1_ENABLED=value;
+   const r=await mod.prepareAndApplyReprocessInventoryDeduction({receiptId:8111,actorUsername:'owner'});
+   assert.equal(r.result,'needs_check');assert.equal(r.failureReason,'pos_reprocess_migration_required');assert.equal(r.retryable,false);
+  }
+ }finally{if(previous===undefined)delete process.env.POS_REPROCESS_P1_ENABLED;else process.env.POS_REPROCESS_P1_ENABLED=previous;}
 });

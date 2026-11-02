@@ -226,6 +226,18 @@ async function executeReprocessPlan(params: {
 export async function prepareAndApplyReprocessInventoryDeduction(
   params: PrepareReprocessParams
 ): Promise<ReprocessInventoryDeductionResult> {
+  // App-first rollout: do not even probe the new RPC/table contract until its
+  // migration and schema cache have been separately approved and verified.
+  if (process.env.POS_REPROCESS_P1_ENABLED !== "enabled") {
+    return {
+      ok: false, result: "needs_check", receiptId: params.receiptId,
+      batchId: null, deductionReceiptId: null, fingerprint: params.expectedFingerprint ?? null,
+      reversedDeductionCount: 0, appliedDeductionCount: 0, affectedInventoryCount: 0,
+      rollbackOnly: false, failureReason: "pos_reprocess_migration_required",
+      retryable: false, requiresRefresh: false,
+      retryCondition: "p1_installed_cache_verified_and_reprocess_enabled",
+    };
+  }
   const unified = await buildUnifiedInventoryDeductionPreview({
     businessDateFrom: "1970-01-01",
     businessDateTo: "2999-12-31",

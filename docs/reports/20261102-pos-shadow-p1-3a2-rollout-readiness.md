@@ -24,6 +24,7 @@
 - P1-1 RPC 미설치(`PGRST202`/`42883`)에서 수정 재처리는 `needs_check / pos_reprocess_migration_required`다. batch/preview/복구를 클라이언트가 대신 생성하지 않는다. 최초 차감·기존 취소 경로를 새 함수로 바꾸지 않았다. 설치 후 다음 최신 preview에서 정상 경로를 다시 시도할 수 있다. 미설치 기간을 무기한 방치하는 배포는 승인 대상이 아니다.
 - 응답 유실(08000/08006/PGRST000)은 outcomeUnknown으로 구분한다. 실패를 미반영으로 단정하거나 legacy 요청을 자동 재전송하지 않고 결과/감사를 확인한 후 새로고침하도록 한다. 기존 journal dispatcher의 같은 요청 ID 기반 제한적 전송 재시도 계약은 변경하지 않았다.
 - 세 기능 플래그의 운영 값을 변경하지 않았다. 선배포 승인 시 `POS_INVENTORY_SHADOW_MODE != shadow`, `POS_CUKCUK_RELIABLE_INGESTION != enabled`, `INVENTORY_WRITER_MODE != journal`을 명시적으로 확인한다.
+- 앱 선배포 승인 단계에서 `POS_REPROCESS_P1_ENABLED` 기본 OFF 진입 차단을 추가했다. 이 값이 `enabled`가 아니면 preview/신규 테이블/RPC 호출 전에 보류한다. 운영 미설치 RPC를 호출해 오류를 확인하는 방식도 사용하지 않는다. 설치/cache 검증 후 이 플래그 활성화는 별도 승인 대상이다. 기존 PASS를 재사용하고 이 추가 가드와 기존 enabled 오류 분기만 2개 검사로 확인했다.
 
 ### 과거 이력·외부 Writer 관찰 정책
 
