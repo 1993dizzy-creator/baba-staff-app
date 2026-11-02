@@ -64,5 +64,8 @@ test("only the server-side service role can execute the reprocess function", () 
   assert.match(migration, /from public, anon, authenticated;/);
   assert.match(migration, /to service_role;/);
   assert.match(server, /SUPABASE_SERVICE_ROLE_KEY/);
-  assert.match(caller, /\.rpc\(\s*"reprocess_modified_sales_inventory_deduction_receipt"/);
+  assert.match(caller, /\.rpc\(\s*"prepare_and_apply_sales_inventory_reprocess"/);
+  const p1 = source("supabase/migrations/20261102101859_pos_reprocess_failure_persistence_and_dedup.sql");
+  assert.match(p1, /v_result := public\.reprocess_modified_sales_inventory_deduction_receipt\(/);
+  assert.match(p1, /revoke all on function public\.prepare_and_apply_sales_inventory_reprocess\([\s\S]*?from public,anon,authenticated/);
 });

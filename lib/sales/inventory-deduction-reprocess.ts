@@ -1,7 +1,6 @@
 import "server-only";
-import { inventoryDeductionWriteError, isInventoryDeductionBusy } from "@/lib/sales/inventory-deduction-lock";
+import { isInventoryDeductionBusy } from "@/lib/sales/inventory-deduction-lock";
 
-import { createHash } from "node:crypto";
 import { buildInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-preview";
 import { buildUnifiedInventoryDeductionPreview } from "@/lib/sales/inventory-deduction-unified-preview";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -68,10 +67,6 @@ const NEUTRAL_LINE_TYPES = new Set([
   "ignore",
   "manual",
 ]);
-
-function idempotencyKey(parts: Array<string | number | null>) {
-  return createHash("sha256").update(parts.join(":")).digest("hex");
-}
 
 function getHardBlockingReasons(receipt: PreviewReceipt) {
   const reasons = new Set<string>();
@@ -146,80 +141,69 @@ function hasIncompleteRecipeAncestor(
   return false;
 }
 
-async function findSupersededDeductionReceiptId(receiptId: number) {
-  const { data, error } = await supabaseServer
-    .from("pos_inventory_deduction_receipts")
-    .select("id")
-    .eq("receipt_id", receiptId)
-    .eq("status", "applied")
-    .order("applied_at", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  if (error) throw inventoryDeductionWriteError(error);
-  return data?.[0]?.id ? Number(data[0].id) : null;
-}
-
-async function saveReprocessBatch(params: {
+async function executeReprocessPlan(params: {
   previewReceipt: PreviewReceipt;
   currentFingerprint: string;
   actorUsername: string;
-  supersedesDeductionReceiptId: number | null;
 }) {
-  const now = new Date().toISOString();
-  const deductionCount = params.previewReceipt.lines.reduce(
-    (count, line) => count + line.deductions.length,
-    0
+  const candidateRows = params.previewReceipt.lines.flatMap(
+    (line: PreviewLine) =>
+      line.deductions.map((deduction) => {
+        return {
+          invoice_ref_id: params.previewReceipt.refId,
+          ref_detail_id: line.refDetailId,
+          pos_item_code: line.posItemCode,
+          pos_item_name: line.itemName,
+          pos_quantity: line.quantitySold,
+          mapping_type: line.mappingType,
+          inventory_item_id: deduction.inventoryItemId,
+          deduct_quantity: deduction.deductQuantity,
+          status: "selected",
+          error_message: null,
+          applied_at: null,
+          flow_version: "sales_db_v1",
+          receipt_id: params.previewReceipt.receiptId,
+          receipt_line_id: line.receiptLineId,
+          receipt_ref_no: params.previewReceipt.refNo,
+          business_date: params.previewReceipt.businessDate,
+          mapping_id: line.mappingId,
+          recipe_id: deduction.recipeId,
+          operation_type: "preview",
+          mapping_snapshot: {
+            ...line.mappingSnapshot,
+            recipeId: deduction.recipeId,
+            recipeVersion: deduction.recipeVersion,
+            inventoryItemId: deduction.inventoryItemId,
+            deductQuantityPerUnit: deduction.deductQuantityPerUnit,
+            workflowType: "reprocess_modified",
+            receiptContentFingerprint: params.currentFingerprint,
+          },
+          inventory_affecting_hash:
+            params.previewReceipt.inventoryAffectingHash,
+          amount_hash: params.previewReceipt.amountHash,
+          quantity_sold: line.quantitySold,
+          deduct_quantity_per_unit: deduction.deductQuantityPerUnit,
+          deduct_quantity_total: deduction.deductQuantity,
+          current_quantity_snapshot: deduction.currentQuantity,
+          after_quantity_snapshot: deduction.afterQuantity,
+          blocked_reason: null,
+        };
+      })
   );
-  const { data: batch, error: batchError } = await supabaseServer
-    .from("pos_inventory_deduction_batches")
-    .insert({
-      flow_version: "sales_db_v1",
-      business_date_from: params.previewReceipt.businessDate,
-      business_date_to: params.previewReceipt.businessDate,
-      source: "reprocess_modified",
-      status: "previewed",
-      receipt_count: 1,
-      ready_receipt_count: 1,
-      blocked_receipt_count: 0,
-      skipped_receipt_count: 0,
-      already_applied_receipt_count: 0,
-      created_by: params.actorUsername,
-      created_at: now,
-      previewed_at: now,
-      note: "reprocess_modified_receipt",
-      metadata: {
-        workflowType: "reprocess_modified",
-        receiptId: params.previewReceipt.receiptId,
-        currentFingerprint: params.currentFingerprint,
-        inventoryAffectingHash: params.previewReceipt.inventoryAffectingHash,
-        rollbackOnly: deductionCount === 0,
-      },
-      updated_at: now,
-    })
-    .select("id")
-    .single();
 
-  if (batchError || !batch) {
-    throw inventoryDeductionWriteError(batchError || { message: "Failed to create reprocess batch." });
-  }
 
-  const batchId = Number(batch.id);
-
-  try {
-    const { data: batchReceipt, error: receiptError } = await supabaseServer
-      .from("pos_inventory_deduction_receipts")
-      .insert({
-        batch_id: batchId,
-        receipt_id: params.previewReceipt.receiptId,
-        receipt_ref_no: params.previewReceipt.refNo,
-        business_date: params.previewReceipt.businessDate,
-        status: "ready",
-        inventory_affecting_hash: params.previewReceipt.inventoryAffectingHash,
+  // Candidate creation, deduplication and stock application share one DB transaction.
+  // A repeated failure reuses its result; changed dependencies permit a new attempt.
+  const { data, error } = await supabaseServer.rpc(
+    "prepare_and_apply_sales_inventory_reprocess",
+    {
+      p_receipt_id: params.previewReceipt.receiptId,
+      p_actor_username: params.actorUsername,
+      p_expected_receipt_updated_at: params.previewReceipt.previewedReceiptUpdatedAt,
+      p_expected_receipt_content_fingerprint: params.currentFingerprint,
+      p_expected_inventory_affecting_hash: params.previewReceipt.inventoryAffectingHash,
+      p_preview: {
         amount_hash: params.previewReceipt.amountHash,
-        previewed_receipt_updated_at:
-          params.previewReceipt.previewedReceiptUpdatedAt,
-        blocked_reasons: [],
         line_summary: {
           refId: params.previewReceipt.refId,
           refDate: params.previewReceipt.refDate,
@@ -228,110 +212,11 @@ async function saveReprocessBatch(params: {
           currentFingerprint: params.currentFingerprint,
           lines: params.previewReceipt.lines,
         },
-        selected_for_apply: true,
-        workflow_type: "reprocess_modified",
-        receipt_content_fingerprint: params.currentFingerprint,
-        supersedes_deduction_receipt_id:
-          params.supersedesDeductionReceiptId,
-        created_at: now,
-        updated_at: now,
-      })
-      .select("id")
-      .single();
-
-    if (receiptError || !batchReceipt) {
-      throw inventoryDeductionWriteError(receiptError || { message: "Failed to create reprocess receipt row." });
+      },
+      p_candidates: candidateRows,
     }
-
-    const batchReceiptId = Number(batchReceipt.id);
-    const candidateRows = params.previewReceipt.lines.flatMap(
-      (line: PreviewLine) =>
-        line.deductions.map((deduction) => {
-          const key = idempotencyKey([
-            "reprocess",
-            batchId,
-            params.previewReceipt.receiptId,
-            params.currentFingerprint,
-            "deduction",
-            line.receiptLineId,
-            deduction.inventoryItemId,
-            line.mappingId,
-            deduction.recipeId,
-            typeof line.mappingSnapshot?.comboChildIndex === "number"
-              ? line.mappingSnapshot.comboChildIndex
-              : null,
-          ]);
-
-          return {
-            invoice_ref_id: params.previewReceipt.refId,
-            ref_detail_id: line.refDetailId,
-            pos_item_code: line.posItemCode,
-            pos_item_name: line.itemName,
-            pos_quantity: line.quantitySold,
-            mapping_type: line.mappingType,
-            inventory_item_id: deduction.inventoryItemId,
-            deduct_quantity: deduction.deductQuantity,
-            status: "selected",
-            error_message: null,
-            applied_at: null,
-            flow_version: "sales_db_v1",
-            batch_id: batchId,
-            batch_receipt_id: batchReceiptId,
-            receipt_id: params.previewReceipt.receiptId,
-            receipt_line_id: line.receiptLineId,
-            receipt_ref_no: params.previewReceipt.refNo,
-            business_date: params.previewReceipt.businessDate,
-            mapping_id: line.mappingId,
-            recipe_id: deduction.recipeId,
-            operation_type: "preview",
-            mapping_snapshot: {
-              ...line.mappingSnapshot,
-              recipeId: deduction.recipeId,
-              recipeVersion: deduction.recipeVersion,
-              inventoryItemId: deduction.inventoryItemId,
-              deductQuantityPerUnit: deduction.deductQuantityPerUnit,
-              workflowType: "reprocess_modified",
-              receiptContentFingerprint: params.currentFingerprint,
-            },
-            inventory_affecting_hash:
-              params.previewReceipt.inventoryAffectingHash,
-            amount_hash: params.previewReceipt.amountHash,
-            idempotency_key: key,
-            quantity_sold: line.quantitySold,
-            deduct_quantity_per_unit: deduction.deductQuantityPerUnit,
-            deduct_quantity_total: deduction.deductQuantity,
-            current_quantity_snapshot: deduction.currentQuantity,
-            after_quantity_snapshot: deduction.afterQuantity,
-            blocked_reason: null,
-            updated_at: now,
-          };
-        })
-    );
-
-    for (let offset = 0; offset < candidateRows.length; offset += 500) {
-      const { error } = await supabaseServer
-        .from("pos_inventory_deductions")
-        .insert(candidateRows.slice(offset, offset + 500));
-      if (error) throw inventoryDeductionWriteError(error);
-    }
-
-    return {
-      batchId,
-      batchReceiptId,
-      candidateCount: candidateRows.length,
-    };
-  } catch (error) {
-    await supabaseServer
-      .from("pos_inventory_deduction_batches")
-      .update({
-        status: "failed",
-        error_message:
-          error instanceof Error ? error.message : "Reprocess batch save failed.",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", batchId);
-    throw error;
-  }
+  );
+  return { data, error, candidateCount: candidateRows.length };
 }
 
 export async function prepareAndApplyReprocessInventoryDeduction(
@@ -492,40 +377,24 @@ export async function prepareAndApplyReprocessInventoryDeduction(
     };
   }
 
-  const supersedesDeductionReceiptId =
-    await findSupersededDeductionReceiptId(params.receiptId);
-  const saved = await saveReprocessBatch({
+  const { data, error, candidateCount } = await executeReprocessPlan({
     previewReceipt,
     currentFingerprint: unifiedReceipt.currentFingerprint,
     actorUsername: params.actorUsername,
-    supersedesDeductionReceiptId,
   });
-
-  const { data, error } = await supabaseServer.rpc(
-    "reprocess_modified_sales_inventory_deduction_receipt",
-    {
-      p_batch_receipt_id: saved.batchReceiptId,
-      p_actor_username: params.actorUsername,
-      p_expected_receipt_updated_at: previewReceipt.previewedReceiptUpdatedAt,
-      p_expected_receipt_content_fingerprint:
-        unifiedReceipt.currentFingerprint,
-      p_expected_inventory_affecting_hash:
-        previewReceipt.inventoryAffectingHash,
-    }
-  );
 
   if (error) {
     return {
       ok: false,
       result: isInventoryDeductionBusy(error) ? "stale_preview" : "failed",
       receiptId: params.receiptId,
-      batchId: saved.batchId,
-      deductionReceiptId: saved.batchReceiptId,
+      batchId: null,
+      deductionReceiptId: null,
       fingerprint: unifiedReceipt.currentFingerprint,
       reversedDeductionCount: 0,
-      appliedDeductionCount: isInventoryDeductionBusy(error) ? 0 : saved.candidateCount,
+      appliedDeductionCount: 0,
       affectedInventoryCount: 0,
-      rollbackOnly: saved.candidateCount === 0,
+      rollbackOnly: candidateCount === 0,
       failureReason: isInventoryDeductionBusy(error) ? "inventory_busy_refresh_required" : error.message,
     };
   }
@@ -537,10 +406,10 @@ export async function prepareAndApplyReprocessInventoryDeduction(
       (rpcResult?.result as ReprocessInventoryDeductionResult["result"]) ??
       "failed",
     receiptId: Number(rpcResult?.receiptId ?? params.receiptId),
-    batchId: rpcResult?.batchId == null ? saved.batchId : Number(rpcResult.batchId),
+    batchId: rpcResult?.batchId == null ? null : Number(rpcResult.batchId),
     deductionReceiptId:
       rpcResult?.deductionReceiptId == null
-        ? saved.batchReceiptId
+        ? null
         : Number(rpcResult.deductionReceiptId),
     fingerprint:
       typeof rpcResult?.fingerprint === "string"
@@ -549,7 +418,7 @@ export async function prepareAndApplyReprocessInventoryDeduction(
     reversedDeductionCount: Number(rpcResult?.reversedDeductionCount ?? 0),
     appliedDeductionCount: Number(rpcResult?.appliedDeductionCount ?? 0),
     affectedInventoryCount: Number(rpcResult?.affectedInventoryCount ?? 0),
-    rollbackOnly: Boolean(rpcResult?.rollbackOnly ?? saved.candidateCount === 0),
+    rollbackOnly: Boolean(rpcResult?.rollbackOnly ?? candidateCount === 0),
     failureReason:
       typeof rpcResult?.failureReason === "string"
         ? rpcResult.failureReason
