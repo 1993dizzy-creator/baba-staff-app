@@ -30,6 +30,10 @@ export type ReprocessInventoryDeductionResult = {
   rollbackOnly: boolean;
   failureReason: string | null;
   rpcResult?: unknown;
+  retryable?: boolean;
+  requiresRefresh?: boolean;
+  retryCondition?: string;
+  outcomeUnknown?: boolean;
 };
 
 type PrepareReprocessParams = {
@@ -384,9 +388,12 @@ export async function prepareAndApplyReprocessInventoryDeduction(
   });
 
   if (error) {
+    const busy = isInventoryDeductionBusy(error) || error.code === "40001";
+    const notInstalled = ["PGRST202", "42883"].includes(error.code ?? "");
+    const unknown = ["08000", "08006", "PGRST000"].includes(error.code ?? "");
     return {
       ok: false,
-      result: isInventoryDeductionBusy(error) ? "stale_preview" : "failed",
+      result: busy ? "stale_preview" : notInstalled || error.code === "42501" ? "needs_check" : "failed",
       receiptId: params.receiptId,
       batchId: null,
       deductionReceiptId: null,
@@ -395,7 +402,13 @@ export async function prepareAndApplyReprocessInventoryDeduction(
       appliedDeductionCount: 0,
       affectedInventoryCount: 0,
       rollbackOnly: candidateCount === 0,
-      failureReason: isInventoryDeductionBusy(error) ? "inventory_busy_refresh_required" : error.message,
+      failureReason: busy ? "inventory_busy_refresh_required" : notInstalled ? "pos_reprocess_migration_required"
+        : error.code === "42501" ? "inventory_writer_permission_review_required" : unknown ? "inventory_reprocess_outcome_unknown" : "inventory_reprocess_rpc_failed",
+      retryable: busy,
+      requiresRefresh: busy || unknown,
+      outcomeUnknown: unknown,
+      retryCondition: busy ? "refresh_receipt_mapping_and_stock" : notInstalled ? "p1_rpc_installed_and_schema_cache_ready"
+        : unknown ? "reconcile_outcome_then_refresh" : "operator_contract_review",
     };
   }
 

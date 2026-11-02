@@ -60,16 +60,6 @@ async function purchaseCorrectionCountIssue(itemId:number,root:{id:number;create
     ? "purchase_correction_later_stock_check" : null;
 }
 
-const INVENTORY_IMAGE_BUCKET = "inventory-images";
-const POS_ITEM_MAPPING_FK_CONSTRAINT =
-  "pos_item_mappings_inventory_item_id_fkey";
-const POS_INVENTORY_DEDUCTION_FK_CONSTRAINT =
-  "pos_inventory_deductions_inventory_item_id_fkey";
-const INVENTORY_RELATED_HISTORY_FK_TARGETS = [
-  "inventory_logs",
-  "inventory_price_logs",
-  "inventory_snapshot_items",
-];
 const jsonError = (
   error: string,
   message: string,
@@ -157,6 +147,23 @@ const getSupabaseErrorField = (error: unknown, field: string) => {
   return typeof value === "string" ? value : undefined;
 };
 
+const writerContractResponse = (error: unknown) => {
+  const code = getSupabaseErrorField(error, "code");
+  if (code === "40001" || code === "55P03")
+    return jsonError("inventory_busy_refresh_required", "Refresh the item and retry with current quantities.", 409,
+      { retryable: true, requiresRefresh: true, retryCondition: "refresh_item_and_receipts" });
+  if (code === "42501")
+    return jsonError("inventory_writer_permission_review_required", "The inventory writer contract needs administrator review.", 403,
+      { retryable: false, requiresRefresh: false, retryCondition: "operator_contract_review" });
+  if (code === "PGRST202" || code === "42883")
+    return jsonError("inventory_writer_migration_required", "The required inventory writer is not available.", 503,
+      { retryable: false, requiresRefresh: false, retryCondition: "rpc_installed_and_schema_cache_ready" });
+  if (code && ["08000", "08006", "PGRST000"].includes(code))
+    return jsonError("inventory_write_outcome_unknown", "Check the saved item and audit before retrying.", 503,
+      { retryable: false, requiresRefresh: true, outcomeUnknown: true, retryCondition: "reconcile_outcome_then_refresh" });
+  return null;
+};
+
 const PACKAGE_CONTENT_UNITS = new Set(["ml", "g"]);
 
 const normalizeOptionalPositiveNumber = (value: unknown) => {
@@ -238,40 +245,6 @@ const enforceInventoryPartPayload = (
   }
 
   return null;
-};
-
-const isPosReferenceFkError = (error: unknown) => {
-  const code = getSupabaseErrorField(error, "code");
-  const message = getErrorMessage(error);
-  const details = getSupabaseErrorField(error, "details") ?? "";
-  const constraint = getSupabaseErrorField(error, "constraint") ?? "";
-
-  return (
-    code === "23503" &&
-    (message.includes(POS_ITEM_MAPPING_FK_CONSTRAINT) ||
-      details.includes(POS_ITEM_MAPPING_FK_CONSTRAINT) ||
-      constraint.includes(POS_ITEM_MAPPING_FK_CONSTRAINT) ||
-      message.includes(POS_INVENTORY_DEDUCTION_FK_CONSTRAINT) ||
-      details.includes(POS_INVENTORY_DEDUCTION_FK_CONSTRAINT) ||
-      constraint.includes(POS_INVENTORY_DEDUCTION_FK_CONSTRAINT))
-  );
-};
-
-const isInventoryRelatedHistoryFkError = (error: unknown) => {
-  const code = getSupabaseErrorField(error, "code");
-  const message = getErrorMessage(error);
-  const details = getSupabaseErrorField(error, "details") ?? "";
-  const constraint = getSupabaseErrorField(error, "constraint") ?? "";
-
-  return (
-    code === "23503" &&
-    INVENTORY_RELATED_HISTORY_FK_TARGETS.some(
-      (target) =>
-        message.includes(target) ||
-        details.includes(target) ||
-        constraint.includes(target)
-    )
-  );
 };
 
 const findDuplicateInventoryItem = async (
@@ -489,6 +462,8 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ ok: true, data: created.item, ledgerSync: created.ledgerSync ?? undefined });
   } catch (error) {
+    const contractResponse = writerContractResponse(error);
+    if (contractResponse) return contractResponse;
     console.error("[INVENTORY_POST_ERROR]", error);
     return NextResponse.json(
       { ok: false, error: "inventory_request_failed", message: INTERNAL_ERROR_MESSAGE },
@@ -1018,6 +993,8 @@ export async function PATCH(req: Request) {
       : undefined);
     return NextResponse.json({ ok: true, mode, ledgerSync });
   } catch (error) {
+    const contractResponse = writerContractResponse(error);
+    if (contractResponse) return contractResponse;
     console.error("[INVENTORY_PATCH_ERROR]", error);
     return NextResponse.json(
       { ok: false, error: "inventory_request_failed", message: INTERNAL_ERROR_MESSAGE },
@@ -1027,320 +1004,15 @@ export async function PATCH(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  try {
-    const { actor, response } = await authenticatedActorResponse();
-    if (response) return response;
-
-    const body = await req.json();
-    const {
-      id,
-      deleteRelatedHistory,
-      deletePosMappings,
-      deletePosReferences,
-    } = body;
-    const itemId = Number(id);
-    const shouldDeleteRelatedHistory = deleteRelatedHistory === true;
-    const shouldDeletePosReferences =
-      shouldDeleteRelatedHistory ||
-      deletePosReferences === true ||
-      deletePosMappings === true;
-
-    if (!id) {
-      return jsonError("missing_item_id", "Missing id", 400);
-    }
-
-    if (!Number.isFinite(itemId) || itemId <= 0) {
-      return jsonError("invalid_item_id", "Invalid id", 400);
-    }
-
-    if (!canDeleteInventoryItem(actor.role)) {
-      return jsonError(
-        "inventory_item_delete_forbidden",
-        "Inventory item deletion requires admin permission.",
-        403
-      );
-    }
-
-    // Never start multi-request history purges: a later FK/trigger error cannot
-    // roll back already deleted POS mappings or audit rows.
-    if (shouldDeleteRelatedHistory || deletePosReferences === true || deletePosMappings === true || process.env.INVENTORY_WRITER_MODE === "journal") {
-      return jsonError("inventory_history_preservation_required", "Deactivate the item to preserve its inventory and POS history.", 409);
-    }
-
-    const { data: targetItem, error: selectError } = await supabaseAdmin
-      .from("inventory")
-      .select(`
-        id,
-        item_name,
-        item_name_vi,
-        part,
-        category,
-        category_vi,
-        quantity,
-        purchase_price,
-        note,
-        unit,
-        code,
-        supplier,
-        low_stock_threshold,
-        low_stock_enabled,
-        package_content_quantity,
-        package_content_unit,
-        image_path
-      `)
-      .eq("id", itemId)
-      .maybeSingle();
-
-    if (selectError) {
-      return jsonError(
-        "inventory_item_select_failed",
-        INTERNAL_ERROR_MESSAGE,
-        500
-      );
-    }
-
-    if (!targetItem) {
-      return jsonError("inventory_item_not_found", "Target not found", 404);
-    }
-
-    const deletedItem = targetItem;
-
-    const [
-      mappingCountResult,
-      appliedDeductionCountResult,
-      failedDeductionCountResult,
-      inventoryLogCountResult,
-      inventoryPriceLogCountResult,
-      inventorySnapshotItemCountResult,
-    ] = await Promise.all([
-      supabaseAdmin
-        .from("pos_item_mappings")
-        .select("id", { count: "exact", head: true })
-        .eq("inventory_item_id", itemId),
-      supabaseAdmin
-        .from("pos_inventory_deductions")
-        .select("id", { count: "exact", head: true })
-        .eq("inventory_item_id", itemId)
-        .or(
-          "status.eq.applied,status.eq.success,applied_at.not.is.null,inventory_log_id.not.is.null"
-        ),
-      supabaseAdmin
-        .from("pos_inventory_deductions")
-        .select("id", { count: "exact", head: true })
-        .eq("inventory_item_id", itemId)
-        .eq("status", "failed")
-        .is("applied_at", null)
-        .is("inventory_log_id", null),
-      supabaseAdmin
-        .from("inventory_logs")
-        .select("id", { count: "exact", head: true })
-        .eq("item_id", itemId),
-      supabaseAdmin
-        .from("inventory_price_logs")
-        .select("id", { count: "exact", head: true })
-        .eq("item_id", itemId),
-      supabaseAdmin
-        .from("inventory_snapshot_items")
-        .select("id", { count: "exact", head: true })
-        .eq("item_id", itemId),
-    ]);
-
-    const relatedHistoryCountError =
-      mappingCountResult.error ||
-      appliedDeductionCountResult.error ||
-      failedDeductionCountResult.error ||
-      inventoryLogCountResult.error ||
-      inventoryPriceLogCountResult.error ||
-      inventorySnapshotItemCountResult.error;
-
-    if (relatedHistoryCountError) {
-      return jsonError(
-        "inventory_item_delete_failed",
-        INTERNAL_ERROR_MESSAGE,
-        500
-      );
-    }
-
-    const posMappingCount = mappingCountResult.count ?? 0;
-    const appliedDeductionCount = appliedDeductionCountResult.count ?? 0;
-    const failedDeductionCount = failedDeductionCountResult.count ?? 0;
-    const inventoryLogCount = inventoryLogCountResult.count ?? 0;
-    const inventoryPriceLogCount = inventoryPriceLogCountResult.count ?? 0;
-    const inventorySnapshotItemCount =
-      inventorySnapshotItemCountResult.count ?? 0;
-    const relatedHistoryCounts = {
-      inventoryLogCount,
-      inventoryPriceLogCount,
-      inventorySnapshotItemCount,
-      posMappingCount,
-      failedDeductionCount,
-      appliedDeductionCount,
-    };
-    const hasRelatedInventoryHistory =
-      inventoryLogCount > 0 ||
-      inventoryPriceLogCount > 0 ||
-      inventorySnapshotItemCount > 0;
-    const hasPosReferences =
-      posMappingCount > 0 ||
-      failedDeductionCount > 0 ||
-      appliedDeductionCount > 0;
-
-    if (!shouldDeleteRelatedHistory && hasRelatedInventoryHistory) {
-      return jsonError(
-        "inventory_item_has_related_history",
-        "This inventory item has related inventory history.",
-        409,
-        relatedHistoryCounts
-      );
-    }
-
-    if (!shouldDeletePosReferences && hasPosReferences) {
-      return jsonError(
-        "inventory_item_has_pos_references",
-        "This inventory item is linked to POS references.",
-        409,
-        relatedHistoryCounts
-      );
-    }
-
-    if (shouldDeletePosReferences) {
-      const { error: deductionDeleteError } = await supabaseAdmin
-        .from("pos_inventory_deductions")
-        .delete()
-        .eq("inventory_item_id", itemId);
-
-      if (deductionDeleteError) {
-        return jsonError(
-          "pos_inventory_deductions_delete_failed",
-          INTERNAL_ERROR_MESSAGE,
-          500,
-          relatedHistoryCounts
-        );
-      }
-    }
-
-    if (shouldDeletePosReferences) {
-      const { error: mappingDeleteError } = await supabaseAdmin
-        .from("pos_item_mappings")
-        .delete()
-        .eq("inventory_item_id", itemId);
-
-      if (mappingDeleteError) {
-        return jsonError(
-          "pos_item_mappings_delete_failed",
-          INTERNAL_ERROR_MESSAGE,
-          500,
-          relatedHistoryCounts
-        );
-      }
-    }
-
-    if (shouldDeleteRelatedHistory) {
-      const { error: inventoryLogDeleteError } = await supabaseAdmin
-        .from("inventory_logs")
-        .delete()
-        .eq("item_id", itemId);
-
-      if (inventoryLogDeleteError) {
-        return jsonError(
-          "inventory_logs_delete_failed",
-          INTERNAL_ERROR_MESSAGE,
-          500,
-          relatedHistoryCounts
-        );
-      }
-    }
-
-    if (shouldDeleteRelatedHistory) {
-      const { error: priceLogDeleteError } = await supabaseAdmin
-        .from("inventory_price_logs")
-        .delete()
-        .eq("item_id", itemId);
-
-      if (priceLogDeleteError) {
-        return jsonError(
-          "inventory_price_logs_delete_failed",
-          INTERNAL_ERROR_MESSAGE,
-          500,
-          relatedHistoryCounts
-        );
-      }
-    }
-
-    if (shouldDeleteRelatedHistory) {
-      const { error: snapshotItemDeleteError } = await supabaseAdmin
-        .from("inventory_snapshot_items")
-        .delete()
-        .eq("item_id", itemId);
-
-      if (snapshotItemDeleteError) {
-        return jsonError(
-          "inventory_snapshot_items_delete_failed",
-          INTERNAL_ERROR_MESSAGE,
-          500,
-          relatedHistoryCounts
-        );
-      }
-    }
-
-    const { error: deleteError } = await supabaseAdmin
-      .from("inventory")
-      .delete()
-      .eq("id", itemId);
-
-    if (deleteError) {
-      if (isInventoryRelatedHistoryFkError(deleteError)) {
-        return jsonError(
-          "inventory_item_has_related_history",
-          "This inventory item has related inventory history.",
-          409,
-          relatedHistoryCounts
-        );
-      }
-
-      if (isPosReferenceFkError(deleteError)) {
-        return jsonError(
-          "inventory_item_has_pos_references",
-          "This inventory item is linked to POS references.",
-          409,
-          relatedHistoryCounts
-        );
-      }
-
-      return jsonError(
-        "inventory_item_delete_failed",
-        INTERNAL_ERROR_MESSAGE,
-        500
-      );
-    }
-
-    let photoCleanupWarning: string | undefined;
-
-    if (deletedItem.image_path) {
-      const { error: removeImageError } = await supabaseAdmin.storage
-        .from(INVENTORY_IMAGE_BUCKET)
-        .remove([deletedItem.image_path]);
-
-      if (removeImageError) {
-        photoCleanupWarning = "inventory_photo_cleanup_warning";
-        console.warn("[INVENTORY_DELETE_IMAGE_CLEANUP_ERROR]", {
-          itemId,
-          imagePath: deletedItem.image_path,
-          message: removeImageError.message,
-        });
-      }
-    }
-
-    return NextResponse.json({
-      ok: true,
-      warning: photoCleanupWarning,
-    });
-  } catch (error) {
-    console.error("[INVENTORY_DELETE_ERROR]", error);
-    return jsonError(
-      "inventory_item_delete_failed",
-      INTERNAL_ERROR_MESSAGE,
-      500
-    );
-  }
+  const { actor, response } = await authenticatedActorResponse();
+  if (response) return response;
+  const body = await req.json().catch(() => null);
+  if (!body?.id) return jsonError("missing_item_id", "Missing id", 400);
+  const itemId = Number(body.id);
+  if (!Number.isSafeInteger(itemId) || itemId <= 0) return jsonError("invalid_item_id", "Invalid id", 400);
+  if (!canDeleteInventoryItem(actor.role)) return jsonError("inventory_item_delete_forbidden", "Inventory item deletion requires admin permission.", 403);
+  // Pre-deploy safe: no DB/Storage call, irrespective of schema, history or flags.
+  // This policy is permanent; retries cannot make a destructive request valid.
+  return jsonError("inventory_history_preservation_required", "Deactivate the item to preserve its inventory and POS history.", 409,
+    { retryable: false, requiresRefresh: false, nextAction: "deactivate_item" });
 }

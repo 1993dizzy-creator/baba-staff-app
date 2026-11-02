@@ -11,6 +11,7 @@ const modulePath='lib/sales/inventory-shadow.ts',routePath='app/api/admin/sales/
 test('CUKCUK capture cannot promote a caller revision or completeness claim past P1-2D',async()=>{
  let captured;const at='2026-10-12T12:00:00Z';
  const mod=load(modulePath,{'server-only':{},'node:crypto':{randomUUID:()=> 'synthetic'},
+  '@/lib/sales/inventory-shadow-observation-server':{receiptObservationPolicy:async()=>({disposition:'raw_only',reasons:['legacy_reprocess_baseline_requires_reconciliation'],automaticConfirmation:false})},
   '@/lib/supabase/server':{supabaseServer:{rpc:async(name,args)=>{
    if(name==='pos_shadow_read_receipt')return {data:{snapshotKey:'same',updatedAt:at,snapshot:{source:'cukcuk'}},error:null};
    if(name==='pos_ingest_shadow_evidence')return {data:{sourceComplete:false,sourceSequence:null,blockingReason:'source_order_uncertain'},error:null};
@@ -19,6 +20,7 @@ test('CUKCUK capture cannot promote a caller revision or completeness claim past
  });
  const result=await mod.captureInventoryShadow({receiptId:10,observationKey:'obs',sourceSequence:999,sourceComplete:true,proof:'caller claim',timeBasis:'physical_event'},'owner');
  assert.equal(result.result,'needs_review');assert.equal(captured.p_source_sequence,null);assert.equal(captured.p_evidence.blockingReason,'source_order_uncertain');
+ assert.equal(captured.p_evidence.observationPolicy.disposition,'raw_only');
 });
 test('shadow endpoint defaults disabled, requires owner/master, rejects live mode and invalid evidence',async()=>{
  let enabled=false,authorized=true,calls=0;

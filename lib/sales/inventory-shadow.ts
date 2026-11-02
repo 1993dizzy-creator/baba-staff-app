@@ -37,6 +37,8 @@ async function rpc(name: string, args: Record<string, unknown>): Promise<ShadowR
 // closed upstream observation; absent evidence is recorded as review, not guessed.
 export async function captureInventoryShadow(input: ShadowCaptureInput, actor: string) {
   const first = await rpc("pos_shadow_read_receipt", { p_receipt: input.receiptId, p_actor: actor });
+  const { receiptObservationPolicy } = await import("@/lib/sales/inventory-shadow-observation-server");
+  const observationPolicy = await receiptObservationPolicy(input.receiptId);
   let sourceComplete = input.sourceComplete === true;
   let sourceSequence = input.sourceSequence;
   let sourceReason: string | null = null;
@@ -75,8 +77,9 @@ export async function captureInventoryShadow(input: ShadowCaptureInput, actor: s
     p_observation_key: input.observationKey, p_source_sequence: sourceSequence,
     p_sale_snapshot: first.snapshot, p_effects: effects,
     p_evidence: { snapshotKey: first.snapshotKey, proof: input.proof ?? "",
+      observationPolicy,
       timeBasis: input.timeBasis ?? "unknown",
-      blockingReason: sourceReason ?? (!sourceComplete ? "source_snapshot_incomplete" : unsupported ? "mapping_scope_unresolved" : null) },
+      blockingReason: sourceReason ?? (!sourceComplete ? "source_snapshot_incomplete" : unsupported ? "mapping_scope_unresolved" : "external_writer_coverage_unverified") },
     p_actor: actor,
   });
 }

@@ -71,6 +71,33 @@ test('history purge is refused before any write, and journal mode routes deletio
   process.env.INVENTORY_WRITER_MODE='journal';assert.equal((await s.delete({id:1})).status,409);assert.deepEqual(s.calls,[]);
  }finally{if(previous===undefined)delete process.env.INVENTORY_WRITER_MODE;else process.env.INVENTORY_WRITER_MODE=previous;}
 });
+
+test('predeploy: every hard delete is non-retryable without touching DB or Storage before/after install',async()=>{
+ const previous=process.env.INVENTORY_WRITER_MODE;
+ try{
+  for(const mode of [undefined,'journal']){
+   if(mode===undefined)delete process.env.INVENTORY_WRITER_MODE;else process.env.INVENTORY_WRITER_MODE=mode;
+   for(const flags of [{},{deleteRelatedHistory:true},{deletePosMappings:true},{deletePosReferences:true}]){
+    const s=setup();const r=await s.delete({id:1,...flags});assert.equal(r.status,409);
+    const b=await r.json();assert.equal(b.retryable,false);assert.equal(b.nextAction,'deactivate_item');assert.deepEqual(s.calls,[]);assert.deepEqual(s.writes,[]);
+   }
+  }
+  const staff=setup({role:'staff'});assert.equal((await staff.delete({id:1})).status,403);assert.deepEqual(staff.calls,[]);
+  const auth=setup({authenticated:false});assert.equal((await auth.delete({id:1})).status,401);assert.deepEqual(auth.calls,[]);
+ }finally{if(previous===undefined)delete process.env.INVENTORY_WRITER_MODE;else process.env.INVENTORY_WRITER_MODE=previous;}
+});
+
+test('predeploy: legacy save works with Shadow off; new DB lock/schema/permission errors have bounded retry contracts',async()=>{
+ const previous=process.env.INVENTORY_WRITER_MODE;
+ try{
+  delete process.env.INVENTORY_WRITER_MODE;
+  const normal=setup();assert.equal((await normal.patch(edit())).status,200);assert.equal(normal.writes.length,2);
+  for(const [code,status,retryable] of [['40001',409,true],['55P03',409,true],['42501',403,false],['PGRST202',503,false],['42883',503,false],['08006',503,false]]){
+   let n=0;const s=setup({rpcHandler:async()=>{n++;return {error:{code,message:'private SQL details'},data:null};}});
+   const r=await s.patch(edit());assert.equal(r.status,status);const b=await r.json();assert.equal(b.retryable,retryable);assert.equal(n,1);assert.deepEqual(s.writes,[]);assert.doesNotMatch(JSON.stringify(b),/private SQL/);
+  }
+ }finally{if(previous===undefined)delete process.env.INVENTORY_WRITER_MODE;else process.env.INVENTORY_WRITER_MODE=previous;}
+});
 test('selected item GET rejects unauthenticated/invalid IDs before table reads',async()=>{const a=setup({authenticated:false});assert.equal((await a.get()).status,401);assert.equal(a.calls.length,0);const b=setup();for(const id of ['abc',0,-1,1.5])assert.equal((await b.get(id)).status,400);assert.equal(b.calls.length,0);});
 test('selected GET actual response is a one-item array with mapped supplier aliases',async()=>{const s=setup();const r=await s.get();assert.equal(r.status,200);const body=await r.json();assert.equal(body.data.length,1);assert.equal(body.data[0].updated_at,version);assert.deepEqual(body.supplierAliases,[{id:20,supplierName:'Alias',status:'linked',businessPartnerId:10}]);assert.equal(s.calls.filter(t=>t==='inventory').length,1);
  // Same partner option shape as the bootstrap stream: type, effective emoji, active flag.

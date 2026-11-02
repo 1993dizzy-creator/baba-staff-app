@@ -1,0 +1,60 @@
+{
+  "baseline": "2dac772e02334033c4ac35a16c479bbb0e0cc020",
+  "digest": "SHA256 UTF-8 LF",
+  "files": [
+    {
+      "order": 1,
+      "file": "20261102101859_pos_reprocess_failure_persistence_and_dedup.sql",
+      "transaction": "file-owned",
+      "sha256": "72b0d80cd43b916b5380b54d2ca825ae61a5733a82e6cedb4bf641a6e9802668"
+    },
+    {
+      "order": 2,
+      "file": "20261102103506_pos_shadow_sale_versions_and_jobs.sql",
+      "transaction": "file-owned",
+      "sha256": "3bf4d126ea218efaf26d71c9f9c266dd762c9bd22ab723b048d6924c086b5919"
+    },
+    {
+      "order": 3,
+      "file": "20261102103822_pos_shadow_temporal_settlement.sql",
+      "transaction": "file-owned",
+      "sha256": "caef61c151e59639bed83346fdac8358f2aff4dc6b1b94085f1b96cfdbf37e77"
+    },
+    {
+      "order": 4,
+      "file": "20261102110828_pos_shadow_writer_contract_and_order.sql",
+      "transaction": "file-owned",
+      "sha256": "86e0ec0e1b4eca09caacc96bedf6e6cd0a8733a04087fce8399500544c00deda"
+    },
+    {
+      "order": 5,
+      "file": "20261102113150_pos_reliable_cukcuk_ingestion.sql",
+      "transaction": "group-B-owned",
+      "sha256": "c47627b287a15b9b17baa0e27aa2e556177f60d3b0691a38a9dbb29879623f69"
+    },
+    {
+      "order": 6,
+      "file": "20261102120035_inventory_writer_event_journal.sql",
+      "transaction": "group-B-owned",
+      "sha256": "a4e2e88727306e3e70f6feae1a8dcbcb37eb3f85ed6f6e1515d1421a1fa7fa19"
+    },
+    {
+      "order": 7,
+      "file": "20261102120303_inventory_writer_shadow_integration.sql",
+      "transaction": "group-B-owned",
+      "sha256": "93713a7edf1fffaa95e66536fd82911aabd12467d52d3aeb32d8fc4dc5cde777"
+    },
+    {
+      "order": 8,
+      "file": "20261102142849_pos_signed_projection_epochs_and_handoff.sql",
+      "transaction": "group-B-owned",
+      "sha256": "4a56642e9536eab66a371cae49e387e0b89308cc2c2b6e2793ae143f13c7d0af"
+    },
+    {
+      "order": 9,
+      "file": "20261102144000_pos_writer_least_privilege_and_day_reconciliation.sql",
+      "transaction": "group-B-owned",
+      "sha256": "3397ced8224575e0e93094fceba863708fbafa0a3416dd9a242d48ffb361c4c3"
+    }
+  ]
+}

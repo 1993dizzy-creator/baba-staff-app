@@ -18,6 +18,7 @@ test('writer HTTP retries keep stable intent identity but preserve expected CAS 
 test('writer Shadow API is owner/master protected, default off, bounded and never accepts live mode',async()=>{
  const previous=process.env.POS_INVENTORY_SHADOW_MODE;let allowed=true,calls=[],fail=false;
  const route=load('app/api/admin/sales/inventory-shadow/writers/route.ts',{
+  '@/lib/sales/inventory-shadow-observation-server':{receiptObservationPolicy:async()=>({signedAdoptionAllowed:true,automaticConfirmation:false,reasons:['external_writer_coverage_unverified']})},
   'next/server':{NextResponse:{json:(v,o)=>Response.json(v,o)}},
   '@/lib/auth/server-auth':{requireRole:async roles=>{assert.deepEqual(roles,['owner','master']);return allowed?{ok:true,actor:{username:'owner'}}:{ok:false,code:'FORBIDDEN',status:403};}},
   '@/lib/supabase/server':{supabaseServer:{rpc:async(name,args)=>{calls.push({name,args});return fail?{error:{code:'23514',details:'private SQL payload'}}:{data:{automaticConfirmation:false}};}}},
