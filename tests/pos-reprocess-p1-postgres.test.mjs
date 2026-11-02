@@ -190,6 +190,8 @@ test('POS P1-1 failure persistence and dedup',{timeout:120000},async t=>{
   assert.equal(r.failureReason,'permission_denied');assert.equal((await q(db,'select count(*)::int n from pos_inventory_deduction_batches'))[0].n,0);
  });
  await t.test('production TS adapter -> real DB RPC: dedup, replenishment, and error counts',async()=>{
+  const previous=process.env.POS_REPROCESS_P1_ENABLED;process.env.POS_REPROCESS_P1_ENABLED='enabled';
+  try{
   const db=await setup();await initial(db);const p=await plan(db);let rpcCalls=0,syntheticError=null;
   const m={exports:{}};
   const dependencies={
@@ -215,6 +217,7 @@ test('POS P1-1 failure persistence and dedup',{timeout:120000},async t=>{
    syntheticError={code,message:'synthetic failure'};const r=await run();assert.equal(r.appliedDeductionCount,0);assert.equal(r.batchId,null);
    assert.equal(r.result,code==='55P03'?'stale_preview':'failed');
   }
+  }finally{if(previous===undefined)delete process.env.POS_REPROCESS_P1_ENABLED;else process.env.POS_REPROCESS_P1_ENABLED=previous;}
  });
  await t.test('installation rejects engine drift before adding columns or changing P0',async()=>{
   const db=await setup({p1:false});
