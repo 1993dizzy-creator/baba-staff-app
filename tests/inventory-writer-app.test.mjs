@@ -28,6 +28,16 @@ test('writer Shadow API is owner/master protected, default off, bounded and neve
   process.env.POS_INVENTORY_SHADOW_MODE='shadow';allowed=false;assert.equal((await call({action:'drain',limit:1})).status,403);allowed=true;
   for(const body of [{action:'drain',limit:101},{action:'compare',itemId:-1},{action:'inspect',mode:'live'},{action:'attest',eventId:'bad'}])assert.equal((await call(body)).status,400);
   assert.equal((await call({action:'drain',limit:10,actor:'forged'})).status,200);assert.equal(calls[0].args.p_actor,'owner');assert.equal(calls[0].name,'inventory_writer_shadow_drain');
+  const requestId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  for(const body of [
+   {action:'signed_compare',itemId:1},
+   {action:'define_epoch',itemId:1,startsAt:'2026-10-01T00:00:00Z',baseUnit:'ml',factors:{ml:{numerator:1,denominator:1}},expectedEpoch:null,proof:'verified item volume',requestId},
+   {action:'revise_event',eventId:requestId,epochId:1,effectiveAt:'2026-10-12T00:00:00Z',unit:'bottle',expectedRevision:null,proof:'verified delivery slip',requestId},
+   {action:'adopt_receipt',receiptId:10,expectedReceiptUpdatedAt:'2026-10-12T00:00:00Z',targets:[],proof:'verified opening baseline',requestId},
+   {action:'observe_sale',receiptId:10,parentVersion:null,kind:'cancel',expectedReceiptUpdatedAt:'2026-10-12T00:00:00Z',targets:[],proof:'verified economic cancellation',requestId},
+   {action:'reconcile_day',runId:requestId,requestId,external:{entries:[]}},
+  ]){assert.equal((await call({...body,actor:'forged',sourceComplete:true})).status,200);assert.equal(calls.at(-1).args.p_actor,'owner');assert.equal(calls.at(-1).args.sourceComplete,undefined);}
+  for(const body of [{action:'enable_handoff',receiptId:10,requestId},{action:'define_epoch',requestId:'invalid'},{action:'observe_sale',kind:'return'}, {action:'reconcile_day',requestId,runId:'invalid'},{action:'signed_compare',itemId:1,mode:'live'}])assert.equal((await call(body)).status,400);
   fail=true;const response=await call({action:'inspect'});assert.equal(response.status,409);assert.doesNotMatch(JSON.stringify(await response.json()),/private SQL/);
  }finally{if(previous===undefined)delete process.env.POS_INVENTORY_SHADOW_MODE;else process.env.POS_INVENTORY_SHADOW_MODE=previous;}
 });

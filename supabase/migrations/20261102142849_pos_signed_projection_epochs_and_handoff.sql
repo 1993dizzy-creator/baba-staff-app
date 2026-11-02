@@ -28,6 +28,13 @@ create table pos_signed_private.sale_versions (
  source_complete boolean not null default false check(not source_complete),
  created_at timestamptz not null default clock_timestamp()
 );
+-- Merely observing/adopting a baseline must not change legacy engine behavior.
+-- This explicit transition HOLD is separate, has no HTTP action, and is never
+-- enabled by this migration or by the Shadow feature flag.
+create table pos_signed_private.handoffs(
+ receipt_id bigint primary key references pos_signed_private.receipts(receipt_id),request_id uuid unique not null,
+ proof text not null,actor text not null,created_at timestamptz not null default clock_timestamp()
+);
 create index on pos_signed_private.sale_versions(receipt_id,id desc);
 create table pos_signed_private.route_requests (
  id bigint generated always as identity primary key,receipt_id bigint not null references pos_signed_private.receipts(receipt_id),
@@ -45,7 +52,7 @@ create function pos_signed_private.current_rpc_body(p_oid oid) returns text lang
  (select installed_body from inventory_writer_private.rpc_contracts where function_oid=p_oid))
 $$;
 do $$ declare n text;begin
- foreach n in array array['epochs','event_revisions','receipts','sale_versions','route_requests','projections','rpc_successors'] loop
+ foreach n in array array['epochs','event_revisions','receipts','sale_versions','handoffs','route_requests','projections','rpc_successors'] loop
   execute format('alter table pos_signed_private.%I enable row level security',n);
   execute format('create trigger immutable before update or delete on pos_signed_private.%I for each row execute function inventory_writer_private.immutable()',n);
   execute format('create trigger no_truncate before truncate on pos_signed_private.%I for each statement execute function inventory_writer_private.immutable()',n);
@@ -208,6 +215,26 @@ begin
  return jsonb_build_object('versionId',v_id,'automaticConfirmation',false,'sourceComplete',false);
 end $$;
 
+create function public.pos_signed_enable_handoff(p_receipt bigint,p_expected_at timestamptz,p_proof text,p_request uuid,p_actor text)
+returns jsonb language plpgsql security definer set search_path=pg_catalog,public as $$
+declare r public.pos_sales_receipts%rowtype;a pos_signed_private.receipts%rowtype;h pos_signed_private.handoffs%rowtype;v_current jsonb;
+begin
+ perform pos_signed_private.authorize(p_actor);perform inventory_writer_private.enter(true);
+ select * into strict r from public.pos_sales_receipts where id=p_receipt for update;
+ select * into strict a from pos_signed_private.receipts where receipt_id=r.id;
+ if p_request is null or length(btrim(coalesce(p_proof,'')))<10 then raise exception 'SIGNED_HANDOFF_EVIDENCE_REQUIRED';end if;
+ select * into h from pos_signed_private.handoffs where receipt_id=r.id;
+ if found then
+  if h.request_id<>p_request or h.proof<>p_proof then raise exception 'SIGNED_HANDOFF_CONFLICT';end if;
+  return jsonb_build_object('result','exclusive_hold','inventoryWritten',false);
+ end if;
+ if r.updated_at is distinct from p_expected_at then raise exception 'SIGNED_RECEIPT_STALE' using errcode='40001';end if;
+ select coalesce(jsonb_agg(to_jsonb(d) order by d.id),'[]') into v_current from public.pos_inventory_deductions d where d.receipt_id=r.id;
+ if v_current<>a.legacy_snapshot then raise exception 'SIGNED_HANDOFF_BASELINE_STALE' using errcode='40001';end if;
+ insert into pos_signed_private.handoffs(receipt_id,request_id,proof,actor) values(r.id,p_request,p_proof,p_actor);
+ return jsonb_build_object('result','exclusive_hold','inventoryWritten',false,'automaticConfirmation',false);
+end $$;
+
 create function pos_signed_private.route(p_receipt bigint,p_operation text,p_expected timestamptz,p_actor text) returns jsonb
 language plpgsql set search_path=pg_catalog,public as $$
 declare r public.pos_sales_receipts%rowtype;k text;v_result jsonb;
@@ -232,7 +259,7 @@ begin
   if p.prosrc<>c.installed_body then raise exception 'SIGNED_ROUTE_SOURCE_DRIFT';end if;
   v_id:=case when c.name='reprocess_modified_sales_inventory_deduction_receipt' then '(select receipt_id from public.pos_inventory_deduction_receipts where id=p_batch_receipt_id)' else 'p_receipt_id' end;
   v_at:=case when c.name='prepare_and_apply_sales_inventory_reprocess' then 'p_expected_receipt_updated_at' else 'p_expected_receipt_updated_at' end;
-  insertion:=format(E'\n if exists(select 1 from pos_signed_private.receipts where receipt_id=%s) then return pos_signed_private.route(%s,%L,%s,p_actor_username);end if; -- SIGNED_ROUTE_FENCE\n',v_id,v_id,c.name,v_at);
+  insertion:=format(E'\n if exists(select 1 from pos_signed_private.handoffs where receipt_id=%s) then return pos_signed_private.route(%s,%L,%s,p_actor_username);end if; -- SIGNED_ROUTE_FENCE\n',v_id,v_id,c.name,v_at);
   b:=regexp_replace(p.prosrc,'(^|\n)([ \t]*[Bb][Ee][Gg][Ii][Nn])([ \t\r\n])',E'\\1\\2'||insertion||E'\\3');
   d:=pg_get_functiondef(p.oid);execute replace(d,p.prosrc,b);
   if b=p.prosrc or b not like '%SIGNED_ROUTE_FENCE%' then raise exception 'SIGNED_ROUTE_PATCH_MISSING';end if;
@@ -244,7 +271,7 @@ end $route$;
 -- rather than execute a legacy deduction for an adopted receipt.
 do $$ declare p record;b text;begin
  select pr.* into strict p from inventory_writer_private.rpc_contracts c join pg_proc pr on pr.oid=c.function_oid where c.name='apply_sales_inventory_deduction_batch';
- b:=regexp_replace(p.prosrc,'(^|\n)([ \t]*[Bb][Ee][Gg][Ii][Nn])([ \t\r\n])',E'\\1\\2\n if exists(select 1 from public.pos_inventory_deduction_receipts d join pos_signed_private.receipts a on a.receipt_id=d.receipt_id where d.batch_id=p_batch_id) then return jsonb_build_object(''result'',''signed_batch_held'',''inventoryWritten'',false,''automaticConfirmation'',false,''reason'',''adopted_receipt_in_legacy_batch'');end if;\n\\3');
+ b:=regexp_replace(p.prosrc,'(^|\n)([ \t]*[Bb][Ee][Gg][Ii][Nn])([ \t\r\n])',E'\\1\\2\n if exists(select 1 from public.pos_inventory_deduction_receipts d join pos_signed_private.handoffs a on a.receipt_id=d.receipt_id where d.batch_id=p_batch_id) then return jsonb_build_object(''result'',''signed_batch_held'',''inventoryWritten'',false,''automaticConfirmation'',false,''reason'',''adopted_receipt_in_legacy_batch'');end if;\n\\3');
  if b=p.prosrc then raise exception 'SIGNED_BATCH_PATCH_MISSING';end if;
  execute replace(pg_get_functiondef(p.oid),p.prosrc,b);
  insert into pos_signed_private.rpc_successors values(p.oid,p.prosrc,b);
@@ -302,10 +329,12 @@ revoke all on all tables in schema pos_signed_private from public,anon,authentic
 revoke all on all sequences in schema pos_signed_private from public,anon,authenticated,service_role;
 revoke all on all functions in schema pos_signed_private from public,anon,authenticated,service_role;
 revoke all on function public.pos_signed_define_epoch(bigint,text,text,jsonb,bigint,text,uuid,text),
+ public.pos_signed_enable_handoff(bigint,timestamptz,text,uuid,text),
  public.pos_signed_revise_event(uuid,bigint,text,text,bigint,text,uuid,text,uuid),
  public.pos_signed_adopt_receipt(bigint,timestamptz,jsonb,text,uuid,text),
  public.pos_signed_observe_sale(bigint,bigint,text,jsonb,timestamptz,text,uuid,text),public.pos_signed_compare(bigint,text) from public,anon,authenticated,service_role;
 grant execute on function public.pos_signed_define_epoch(bigint,text,text,jsonb,bigint,text,uuid,text),
+ public.pos_signed_enable_handoff(bigint,timestamptz,text,uuid,text),
  public.pos_signed_revise_event(uuid,bigint,text,text,bigint,text,uuid,text,uuid),
  public.pos_signed_adopt_receipt(bigint,timestamptz,jsonb,text,uuid,text),
  public.pos_signed_observe_sale(bigint,bigint,text,jsonb,timestamptz,text,uuid,text),public.pos_signed_compare(bigint,text) to service_role;

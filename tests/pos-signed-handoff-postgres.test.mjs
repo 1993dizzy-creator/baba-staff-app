@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {nativeInventoryPostgres} from './helpers/inventory-native-postgres.mjs';
-import {writerFixture,save,item,rows as q,posCandidate,applyPos,apply} from './helpers/inventory-writer-integration-fixture.mjs';
+import {writerFixture,save,item,rows as q,posCandidate,applyPos,apply,writerMetadata} from './helpers/inventory-writer-integration-fixture.mjs';
 import {readMigration} from './helpers/pos-shadow-fixture.mjs';
 const migration='20261102142849_pos_signed_projection_epochs_and_handoff.sql';
 const proof='Synthetic signed source evidence, not production';
@@ -22,6 +22,7 @@ test('P1-2F signed handoff, immutable units/time interpretation and locks',{time
   await writerFixture(db);await db.exec(readMigration(migration));
   let ep,adoption,version,anchorEvent,anchorRevision;
   await t.test('successor contracts preserve OIDs/ACLs and drift detection',async()=>{
+   assert.deepEqual(await writerMetadata(db),db.writerOriginalCatalog);
    assert.equal((await q(db,'select count(*) n from pos_signed_private.rpc_successors'))[0].n,'4');
    const r=await rpc(db,'inventory_writer_inspect',['owner']);assert.ok(r.writers.every(w=>!w.drift));
    await db.exec('begin');
@@ -38,7 +39,15 @@ test('P1-2F signed handoff, immutable units/time interpretation and locks',{time
    const before=await audit(db);adoption=randomUUID();
    const result=await rpc(db,'pos_signed_adopt_receipt',[10,(await receipt(db)).updated_at,baseline,proof,adoption,'owner']);
    assert.equal(result.inventoryWritten,false);assert.deepEqual(await audit(db),before);
+   await assert.rejects(applyPos(db,c),/Batch cannot be applied from status applied/); // observation alone retains the original engine result
    assert.equal((await q(db,"select baseline->0->>'baseQuantity' q from pos_signed_private.receipts where receipt_id=10"))[0].q,'49.9800000000000000');
+   assert.equal((await q(db,'select count(*) n from pos_signed_private.handoffs'))[0].n,'0');
+   const key=randomUUID(),args=[10,(await receipt(db)).updated_at,proof,key,'owner'];
+   await db.exec('begin');
+   await q(db,"update pos_inventory_deductions set amount_hash='stale-baseline' where receipt_id=10");
+   await assert.rejects(rpc(db,'pos_signed_enable_handoff',args),e=>e.code==='40001');await db.exec('rollback');
+   assert.equal((await rpc(db,'pos_signed_enable_handoff',args)).result,'exclusive_hold');
+   assert.equal((await rpc(db,'pos_signed_enable_handoff',args)).result,'exclusive_hold');
   });
   await t.test('verified count on Oct11 and delayed Oct12 purchase are separate from saved timestamps',async()=>{
    await save(db,2);anchorEvent=await latest(db);anchorRevision=await revise(db,anchorEvent,ep,'2026-10-11T04:00:00Z');

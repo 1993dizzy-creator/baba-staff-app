@@ -11,7 +11,31 @@ export async function POST(req: Request) {
   const b = await req.json().catch(() => null);
   if (b?.mode !== undefined && b.mode !== "shadow") return NextResponse.json({ ok: false, code: "INVALID_WRITER_REQUEST" }, { status: 400 });
   let rpc: string, args: Record<string, unknown> = { p_actor: auth.actor.username };
+  const id = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v > 0;
+  const uuid = (v: unknown) => typeof v === "string" && /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(v);
+  const evidence = uuid(b?.requestId) && typeof b?.proof === "string" && b.proof.trim().length >= 10 && b.proof.length <= 2000;
+  const time = (v: unknown) => typeof v === "string" && /(?:Z|[+-]\d{2}:\d{2})$/.test(v) && Number.isFinite(Date.parse(v));
   if (b?.action === "inspect") rpc = "inventory_writer_inspect";
+  else if (b?.action === "signed_compare" && id(b.itemId)) { rpc = "pos_signed_compare"; args.p_item = b.itemId; }
+  else if (b?.action === "define_epoch" && evidence && id(b.itemId) && time(b.startsAt) && ["ml", "g", "each"].includes(b.baseUnit)
+    && b.factors && typeof b.factors === "object" && !Array.isArray(b.factors) && (b.expectedEpoch === null || id(b.expectedEpoch))) {
+    rpc = "pos_signed_define_epoch"; args = { ...args, p_item: b.itemId, p_from: b.startsAt, p_base: b.baseUnit, p_factors: b.factors,
+      p_expected: b.expectedEpoch, p_proof: b.proof, p_request: b.requestId };
+  } else if (b?.action === "revise_event" && evidence && uuid(b.eventId) && id(b.epochId) && time(b.effectiveAt) && typeof b.unit === "string"
+    && (b.expectedRevision === null || id(b.expectedRevision)) && (b.timingEventId == null || uuid(b.timingEventId))) {
+    rpc = "pos_signed_revise_event"; args = { ...args, p_event: b.eventId, p_epoch: b.epochId, p_unit: b.unit, p_at: b.effectiveAt,
+      p_expected: b.expectedRevision, p_proof: b.proof, p_request: b.requestId, p_timing_event: b.timingEventId ?? null };
+  } else if (b?.action === "adopt_receipt" && evidence && id(b.receiptId) && time(b.expectedReceiptUpdatedAt) && Array.isArray(b.targets) && b.targets.length <= 1000) {
+    rpc = "pos_signed_adopt_receipt"; args = { ...args, p_receipt: b.receiptId, p_expected_at: b.expectedReceiptUpdatedAt,
+      p_targets: b.targets, p_proof: b.proof, p_request: b.requestId };
+  } else if (b?.action === "observe_sale" && evidence && id(b.receiptId) && time(b.expectedReceiptUpdatedAt)
+    && (b.parentVersion === null || id(b.parentVersion)) && ["sale", "correction", "cancel"].includes(b.kind) && Array.isArray(b.targets) && b.targets.length <= 1000) {
+    rpc = "pos_signed_observe_sale"; args = { ...args, p_receipt: b.receiptId, p_parent: b.parentVersion, p_kind: b.kind,
+      p_targets: b.targets, p_expected_at: b.expectedReceiptUpdatedAt, p_proof: b.proof, p_request: b.requestId };
+  } else if (b?.action === "reconcile_day" && uuid(b.requestId) && uuid(b.runId) && b.external && typeof b.external === "object"
+    && Array.isArray(b.external.entries) && b.external.entries.length <= 50000) {
+    rpc = "pos_signed_reconcile_day"; args = { ...args, p_run: b.runId, p_external: b.external, p_request: b.requestId };
+  }
   else if (b?.action === "drain" && Number.isInteger(b.limit) && b.limit >= 1 && b.limit <= 100) {
     rpc = "inventory_writer_shadow_drain"; args.p_limit = b.limit;
   } else if (b?.action === "compare" && Number.isSafeInteger(b.itemId) && b.itemId > 0) {
