@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
+import {createHash} from 'node:crypto';
 import {atomicInventoryDatabase} from './helpers/inventory-atomic-fixture.mjs';
 import {safeFixture,snapshot as safeSnapshot} from './helpers/inventory-safe-correction-fixture.mjs';
 import * as partnerSelectOptionsModule from '../lib/partners/select-options.ts';
@@ -51,10 +52,25 @@ function setup({role='owner',authenticated=true,inactive=false,race=false,closed
  '@/lib/partners/select-options':partnerSelectOptionsModule,
  '@/lib/inventory/reasons':load('lib/inventory/reasons.ts'),
  '@/lib/inventory/parts':load('lib/inventory/parts.ts'),
+ '@/lib/inventory/writer-rpc':load('lib/inventory/writer-rpc.ts',{'server-only':{},'node:crypto':{createHash}}),
  });
- return {item,calls,writes,projections,get:(id=1)=>route.GET(new Request('http://test/api/inventory/items?itemId='+id)),patch:body=>route.PATCH(new Request('http://test/api/inventory/items',{method:'PATCH',body:JSON.stringify(body)}))};
+ return {item,calls,writes,projections,get:(id=1)=>route.GET(new Request('http://test/api/inventory/items?itemId='+id)),patch:body=>route.PATCH(new Request('http://test/api/inventory/items',{method:'PATCH',body:JSON.stringify(body)})),delete:body=>route.DELETE(new Request('http://test/api/inventory/items',{method:'DELETE',body:JSON.stringify(body)}))};
 }
 const edit=overrides=>({id:1,payload:{item_name:'Renamed'},source:'edit_form',reason:'other',expectedQuantity:2,expectedUpdatedAt:version,...overrides});
+
+test('journal mode sends the authenticated actor and explicit event to the common writer RPC',async()=>{
+ const previous=process.env.INVENTORY_WRITER_MODE;let captured;
+ try{process.env.INVENTORY_WRITER_MODE='journal';const s=setup({rpcHandler:async(name,args)=>{captured={name,args};return {data:{status:'ok',inventoryLogId:101},error:null};}});
+  const response=await s.patch(edit({payload:{quantity:3},inventoryEvent:{effectiveAt:'2026-10-12T12:00:00Z',proof:'synthetic measured quantity'}}));
+  assert.equal(response.status,200);assert.equal(captured.name,'inventory_writer_apply_v1');assert.equal(captured.args.p_actor_user_id,7);assert.equal(captured.args.p_operation,'inventory_update_with_audit_v1');assert.equal(captured.args.p_event.effectiveAt,'2026-10-12T12:00:00Z');
+ }finally{if(previous===undefined)delete process.env.INVENTORY_WRITER_MODE;else process.env.INVENTORY_WRITER_MODE=previous;}
+});
+test('history purge is refused before any write, and journal mode routes deletion to deactivation guidance',async()=>{
+ const previous=process.env.INVENTORY_WRITER_MODE;
+ try{delete process.env.INVENTORY_WRITER_MODE;const s=setup();assert.equal((await s.delete({id:1,deleteRelatedHistory:true})).status,409);assert.deepEqual(s.calls,[]);assert.deepEqual(s.writes,[]);
+  process.env.INVENTORY_WRITER_MODE='journal';assert.equal((await s.delete({id:1})).status,409);assert.deepEqual(s.calls,[]);
+ }finally{if(previous===undefined)delete process.env.INVENTORY_WRITER_MODE;else process.env.INVENTORY_WRITER_MODE=previous;}
+});
 test('selected item GET rejects unauthenticated/invalid IDs before table reads',async()=>{const a=setup({authenticated:false});assert.equal((await a.get()).status,401);assert.equal(a.calls.length,0);const b=setup();for(const id of ['abc',0,-1,1.5])assert.equal((await b.get(id)).status,400);assert.equal(b.calls.length,0);});
 test('selected GET actual response is a one-item array with mapped supplier aliases',async()=>{const s=setup();const r=await s.get();assert.equal(r.status,200);const body=await r.json();assert.equal(body.data.length,1);assert.equal(body.data[0].updated_at,version);assert.deepEqual(body.supplierAliases,[{id:20,supplierName:'Alias',status:'linked',businessPartnerId:10}]);assert.equal(s.calls.filter(t=>t==='inventory').length,1);
  // Same partner option shape as the bootstrap stream: type, effective emoji, active flag.

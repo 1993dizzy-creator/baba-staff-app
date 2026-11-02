@@ -61,7 +61,7 @@ function setup({ ledgerFailure = false, logId = 100, latestLogId = logId, reason
   const route = load('app/api/inventory/logs/route.ts', {
     '@/lib/inventory/daily-effective-purchases':load('lib/inventory/daily-effective-purchases.ts',{}),
     'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } },
-    '@/lib/auth/server-auth': { getAuthenticatedActor: async () => ({ ok: true, actor: { id: 7, username: 'staff', role: 'staff' } }) },
+    '@/lib/auth/server-auth': { getAuthenticatedActor: async () => ({ ok: true, actor: { id: 7, username: 'staff', role: 'staff' } }),requireRole:async()=>({ok:true,actor:{id:7,username:'master',role:'master'}}) },
     '@/lib/inventory/reasons': load('lib/inventory/reasons.ts'),
     '@/lib/inventory/keg-replacement-summary': {},
     '@/lib/supabase/server': { supabaseServer: supabase },
@@ -70,9 +70,17 @@ function setup({ ledgerFailure = false, logId = 100, latestLogId = logId, reason
     '@/lib/inventory/supplier-partners-server': { resolveInventorySupplier: async ({ payload }) => ({ supplier: payload.supplier, supplier_partner_id: 11 }) },
     '@/lib/inventory/price-logs': { insertInventoryPriceLog: async () => { calls.push('price-history'); } },
   });
-  return { log, item, calls, projectedAmounts, patch: body => route.PATCH(new Request('http://test/api/inventory/logs', { method: 'PATCH', body: JSON.stringify(body) })) };
+  return { log, item, calls, projectedAmounts, patch: body => route.PATCH(new Request('http://test/api/inventory/logs', { method: 'PATCH', body: JSON.stringify(body) })),delete:body=>route.DELETE(new Request('http://test/api/inventory/logs',{method:'DELETE',body:JSON.stringify(body)})) };
 }
 
+test('journal mode refuses audit rewrites before any source/ledger update', async () => {
+  const previous=process.env.INVENTORY_WRITER_MODE;
+  try { process.env.INVENTORY_WRITER_MODE='journal';const state=setup();const before=structuredClone(state.log);
+    const response=await state.patch({id:100,logIds:[100],syncCurrentItem:true});assert.equal(response.status,409);
+    assert.equal((await state.delete({logId:100})).status,409);
+    assert.deepEqual(state.log,before);assert.deepEqual(state.calls,[]);
+  } finally { if(previous===undefined)delete process.env.INVENTORY_WRITER_MODE;else process.env.INVENTORY_WRITER_MODE=previous; }
+});
 test('explicit purchase sync updates current economics and reports Ledger failure separately', async () => {
   const state = setup({ ledgerFailure: true, logId: 200, latestLogId: 200 });
   const response = await state.patch({ id: 200, logIds: [200], businessDate: '2026-09-10', syncCurrentItem: true });

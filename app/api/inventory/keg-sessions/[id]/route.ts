@@ -10,7 +10,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const sessionId = Number(id);
     if (!Number.isSafeInteger(sessionId) || sessionId <= 0) return NextResponse.json({ ok: false, code: "KEG_INVALID_REQUEST" }, { status: 400 });
     const body = await req.json();
-    return await runKegSafetyChange({ action: "edit-start", itemId: null, sessionId, actorUsername: auth.actor.username, body });
+    return await runKegSafetyChange({ action: "edit-start", itemId: null, sessionId, actorUsername: auth.actor.username, actorUserId: auth.actor.id, body });
   } catch {
     return NextResponse.json({ ok: false, code: "KEG_SAFETY_UNAVAILABLE" }, { status: 503 });
   }

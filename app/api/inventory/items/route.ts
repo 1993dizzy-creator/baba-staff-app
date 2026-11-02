@@ -42,6 +42,12 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+async function inventoryWrite(name: string, args: Record<string, unknown>, event?: unknown) {
+  if (process.env.INVENTORY_WRITER_MODE !== "journal") return supabaseAdmin.rpc(name, args);
+  const { inventoryWriterRpc } = await import("@/lib/inventory/writer-rpc");
+  return inventoryWriterRpc(supabaseAdmin, name, args, Number(args.p_actor_user_id), event);
+}
+
 async function purchaseCorrectionCountIssue(itemId:number,root:{id:number;created_at:string}) {
   const {data:latestCheck,error}=await supabaseAdmin.from("inventory_logs").select("id,reason,created_at")
     .eq("item_id",itemId).eq("reason","stock_check").order("created_at",{ascending:false}).order("id",{ascending:false}).limit(1).maybeSingle();
@@ -461,10 +467,10 @@ export async function POST(req: Request) {
     // One DB transaction writes the item, its first log, the first price history and (for a
     // purchase) the Ledger projection. A refused log leaves no item behind; never fall back to
     // separate writes if the RPC is missing.
-    const { data: created, error } = await supabaseAdmin.rpc("inventory_create_with_receipt_v1", {
+    const { data: created, error } = await inventoryWrite("inventory_create_with_receipt_v1", {
       p_payload: { ...serverPayload, ...(logReason === "purchase" && billedRequest ? billedAmountColumns(billedRequest) : {}) },
       p_reason: logReason, p_business_date: businessDate, p_actor_user_id: actor.id,
-    });
+    }, body.inventoryEvent);
     if (error) throw error;
     // The same duplicate found inside the transaction (double submit, retry after a lost response).
     if (created?.status === "duplicate") {
@@ -682,7 +688,7 @@ export async function PATCH(req: Request) {
         payload: { supplier: payload.supplier ?? null, supplierPartnerId: partnerId },
       })) ?? { supplier: payload.supplier ?? null, supplier_partner_id: partnerId };
       const { businessDate } = await resolveInventoryBusinessDate();
-      const { data: edited, error } = await supabaseAdmin.rpc("inventory_apply_purchase_receipt_edit_v1", {
+      const { data: edited, error } = await inventoryWrite("inventory_apply_purchase_receipt_edit_v1", {
         p_item_id: Number(id), p_purchase_log_id: purchaseLogId,
         p_expected_quantity: Number(prevItem.quantity), p_expected_item: prevItem,
         p_edit: {
@@ -692,7 +698,7 @@ export async function PATCH(req: Request) {
           ...(billedRequest ? billedAmountColumns(billedRequest) : {}),
         },
         p_business_date: businessDate, p_actor_user_id: actor.id,
-      });
+      }, body.inventoryEvent);
       if (error) throw error;
       if (edited?.status !== "ok") {
         const status = ["quantity_conflict", "inventory_conflict"].includes(edited?.status) ? 409
@@ -963,12 +969,12 @@ export async function PATCH(req: Request) {
       // A correction reduces an existing receipt; its 실청구금액 is changed only in 입고 수정.
       if (billedRequest?.mode === "manual") return jsonError("invalid_billed_amount", "A billed amount belongs to a new receipt.", 400);
       const businessDate = autoCorrectionBusinessDate ?? (await resolveInventoryBusinessDate()).businessDate;
-      const { data: correction, error } = await supabaseAdmin.rpc("inventory_apply_purchase_correction_v3", {
+      const { data: correction, error } = await inventoryWrite("inventory_apply_purchase_correction_v3", {
         p_item_id: Number(id), p_purchase_log_id: correctionPurchaseLogId ?? autoCorrectionRootId,
         p_expected_quantity: autoCorrectionRootId !== null ? Number(prevItem.quantity) : Number(expectedQuantity),
         p_expected_item: prevItem, p_payload: serverPayload,
         p_business_date: businessDate, p_actor_user_id: actor.id,
-      });
+      }, body.inventoryEvent);
       if (error && isBilledAmountEditRequired(error))
         return jsonError("purchase_billed_amount_edit_required", "This receipt has a manual billed amount. Use the receipt edit.", 409,
           { blockReason: "billed_amount_manual" });
@@ -996,11 +1002,11 @@ export async function PATCH(req: Request) {
     // A purchase save carries its 실청구금액; the RPC keeps it only for a new receipt and then
     // projects that receipt to the Ledger in the same transaction.
     const billedPayload = logReason === "purchase" && billedRequest ? billedAmountColumns(billedRequest) : {};
-    const { data: saved, error: saveError } = await supabaseAdmin.rpc("inventory_update_with_audit_v1", {
+    const { data: saved, error: saveError } = await inventoryWrite("inventory_update_with_audit_v1", {
       p_item_id: Number(id), p_expected_item: prevItem, p_payload: { ...serverPayload, ...billedPayload },
       p_business_date: businessDate, p_actor_user_id: actor.id, p_reason: logReason, p_source: logSource,
       p_price_business_date: mode !== "quick-save" && typeof body.business_date === "string" ? body.business_date : businessDate,
-    });
+    }, body.inventoryEvent);
     if (saveError) throw saveError;
     if (saved?.status !== "ok") {
       const status = ["inventory_conflict", "purchase_correction_required"].includes(saved?.status) ? 409 : saved?.status === "forbidden" ? 403 : saved?.status === "not_found" ? 404 : 400;
@@ -1053,6 +1059,12 @@ export async function DELETE(req: Request) {
         "Inventory item deletion requires admin permission.",
         403
       );
+    }
+
+    // Never start multi-request history purges: a later FK/trigger error cannot
+    // roll back already deleted POS mappings or audit rows.
+    if (shouldDeleteRelatedHistory || deletePosReferences === true || deletePosMappings === true || process.env.INVENTORY_WRITER_MODE === "journal") {
+      return jsonError("inventory_history_preservation_required", "Deactivate the item to preserve its inventory and POS history.", 409);
     }
 
     const { data: targetItem, error: selectError } = await supabaseAdmin

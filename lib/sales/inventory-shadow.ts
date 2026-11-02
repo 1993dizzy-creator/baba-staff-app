@@ -37,6 +37,17 @@ async function rpc(name: string, args: Record<string, unknown>): Promise<ShadowR
 // closed upstream observation; absent evidence is recorded as review, not guessed.
 export async function captureInventoryShadow(input: ShadowCaptureInput, actor: string) {
   const first = await rpc("pos_shadow_read_receipt", { p_receipt: input.receiptId, p_actor: actor });
+  let sourceComplete = input.sourceComplete === true;
+  let sourceSequence = input.sourceSequence;
+  let sourceReason: string | null = null;
+  if ((first.snapshot as Record<string, unknown> | undefined)?.source === "cukcuk") {
+    // P1-2D has no verified supplier sequence/completeness contract. A caller's
+    // local revision or sourceComplete assertion cannot promote it to one.
+    const intake = await rpc("pos_ingest_shadow_evidence", { p_receipt_id: input.receiptId }).catch(() => null);
+    sourceComplete = false;
+    sourceSequence = null;
+    sourceReason = typeof intake?.blockingReason === "string" ? intake.blockingReason : "ingestion_evidence_unavailable";
+  }
   const preview = await buildInventoryDeductionPreview({
     businessDateFrom: "1970-01-01", businessDateTo: "2999-12-31", receiptIds: [input.receiptId],
   });
@@ -61,11 +72,11 @@ export async function captureInventoryShadow(input: ShadowCaptureInput, actor: s
   }));
   return rpc("pos_shadow_capture_version", {
     p_receipt_id: input.receiptId, p_expected_updated_at: first.updatedAt,
-    p_observation_key: input.observationKey, p_source_sequence: input.sourceSequence,
+    p_observation_key: input.observationKey, p_source_sequence: sourceSequence,
     p_sale_snapshot: first.snapshot, p_effects: effects,
     p_evidence: { snapshotKey: first.snapshotKey, proof: input.proof ?? "",
       timeBasis: input.timeBasis ?? "unknown",
-      blockingReason: !input.sourceComplete ? "source_snapshot_incomplete" : unsupported ? "mapping_scope_unresolved" : null },
+      blockingReason: sourceReason ?? (!sourceComplete ? "source_snapshot_incomplete" : unsupported ? "mapping_scope_unresolved" : null) },
     p_actor: actor,
   });
 }

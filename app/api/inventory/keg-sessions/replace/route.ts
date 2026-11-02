@@ -9,7 +9,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const itemId = Number(body?.itemId);
     if (!Number.isSafeInteger(itemId) || itemId <= 0) return NextResponse.json({ ok: false, code: "KEG_INVALID_REQUEST" }, { status: 400 });
-    return await runKegSafetyChange({ action: "replace", itemId, sessionId: null, actorUsername: auth.actor.username, body });
+    return await runKegSafetyChange({ action: "replace", itemId, sessionId: null, actorUsername: auth.actor.username, actorUserId: auth.actor.id, body });
   } catch {
     return NextResponse.json({ ok: false, code: "KEG_SAFETY_UNAVAILABLE" }, { status: 503 });
   }

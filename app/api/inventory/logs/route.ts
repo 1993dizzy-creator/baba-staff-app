@@ -356,6 +356,10 @@ export async function PATCH(req: Request) {
       );
     }
 
+    if (process.env.INVENTORY_WRITER_MODE === "journal") {
+      return NextResponse.json({ ok: false, code: "INVENTORY_SOURCE_AUDIT_IMMUTABLE", error: "Use an inventory correction to preserve the original audit." }, { status: 409 });
+    }
+
     const body = await req.json();
     const id = Number(body?.id);
     const logIds: number[] = Array.isArray(body?.logIds)
@@ -650,6 +654,10 @@ export async function DELETE(req: Request) {
         { ok: false, error: auth.code, code: auth.code },
         { status: auth.status }
       );
+    }
+
+    if (process.env.INVENTORY_WRITER_MODE === "journal") {
+      return NextResponse.json({ ok: false, code: "INVENTORY_SOURCE_AUDIT_IMMUTABLE", error: "Inventory audit history must be preserved." }, { status: 409 });
     }
 
     const body = await req.json();

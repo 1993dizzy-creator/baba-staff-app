@@ -18,7 +18,7 @@ export function parseKegSafetyTime(value: unknown, defaultNow = false) {
 
 export async function runKegSafetyChange(options: {
     action: "replace" | "edit-start"; itemId: number | null; sessionId: number | null;
-    actorUsername: string; body: Record<string, unknown>;
+    actorUsername: string; actorUserId?: number; body: Record<string, unknown>;
 }) {
     const { action, itemId, sessionId, actorUsername, body } = options;
     const dryRun = body?.dryRun === true;
@@ -36,10 +36,21 @@ export async function runKegSafetyChange(options: {
     const businessDate = (await resolveInventoryBusinessDate(at)).businessDate;
     const args = { p_action: action, p_item_id: itemId, p_session_id: sessionId, p_at: at.toISOString(), p_business_date: businessDate,
         p_actor_username: actorUsername, p_expected_quantity: expectedQuantity };
+    const applyArgs = { ...args, p_preview_token: body.previewToken, p_request_id: body.requestId,
+        p_reason: String(body.reason ?? "").trim(), p_confirm: body.confirmed === true };
+    const apply = async () => {
+        if (process.env.INVENTORY_WRITER_MODE !== "journal") return supabaseServer.rpc("inventory_apply_keg_change", applyArgs);
+        const { inventoryWriterRpc } = await import("@/lib/inventory/writer-rpc");
+        // A committed replacement already has an explicit operator-selected at,
+        // request UUID, preview and before/after safety audit. This is distinct
+        // from inferring a physical time from an HTTP/DB observation timestamp.
+        const event = body.inventoryEvent ?? (action === "replace" ? { effectiveAt: at.toISOString(),
+            proof: `validated_keg_replacement_request:${body.requestId}`, physicalEventRef: body.requestId } : undefined);
+        return inventoryWriterRpc(supabaseServer, "inventory_apply_keg_change", applyArgs, Number(options.actorUserId), event);
+    };
     const { data, error } = dryRun
         ? await supabaseServer.rpc("inventory_preview_keg_change", args)
-        : await supabaseServer.rpc("inventory_apply_keg_change", { ...args, p_preview_token: body.previewToken,
-            p_request_id: body.requestId, p_reason: String(body.reason ?? "").trim(), p_confirm: body.confirmed === true });
+        : await apply();
     if (error) {
         const code = error.message.match(/KEG_[A-Z_]+/)?.[0] ?? "KEG_SAFETY_UNAVAILABLE";
         const status = code === "KEG_SAFETY_UNAVAILABLE" ? 503 : code.endsWith("NOT_FOUND") ? 404
