@@ -39,15 +39,15 @@ export async function captureInventoryShadow(input: ShadowCaptureInput, actor: s
   const first = await rpc("pos_shadow_read_receipt", { p_receipt: input.receiptId, p_actor: actor });
   const { receiptObservationPolicy } = await import("@/lib/sales/inventory-shadow-observation-server");
   const observationPolicy = await receiptObservationPolicy(input.receiptId);
-  let sourceComplete = input.sourceComplete === true;
-  let sourceSequence = input.sourceSequence;
-  let sourceReason: string | null = null;
+  // This pilot has no verified source/Writer completeness contract, for any
+  // source. Caller claims must not create an automatically settleable version.
+  const sourceComplete = false;
+  const sourceSequence = null;
+  let sourceReason: string | null = "source_snapshot_incomplete";
   if ((first.snapshot as Record<string, unknown> | undefined)?.source === "cukcuk") {
     // P1-2D has no verified supplier sequence/completeness contract. A caller's
     // local revision or sourceComplete assertion cannot promote it to one.
     const intake = await rpc("pos_ingest_shadow_evidence", { p_receipt_id: input.receiptId }).catch(() => null);
-    sourceComplete = false;
-    sourceSequence = null;
     sourceReason = typeof intake?.blockingReason === "string" ? intake.blockingReason : "ingestion_evidence_unavailable";
   }
   const preview = await buildInventoryDeductionPreview({

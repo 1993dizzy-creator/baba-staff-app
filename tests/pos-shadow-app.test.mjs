@@ -22,6 +22,20 @@ test('CUKCUK capture cannot promote a caller revision or completeness claim past
  assert.equal(result.result,'needs_review');assert.equal(captured.p_source_sequence,null);assert.equal(captured.p_evidence.blockingReason,'source_order_uncertain');
  assert.equal(captured.p_evidence.observationPolicy.disposition,'raw_only');
 });
+
+test('pilot capture: non-CUKCUK caller completeness and sequence claims are also held',async()=>{
+ let captured;const at='2026-10-12T12:00:00Z';
+ const mod=load(modulePath,{'server-only':{},'node:crypto':{randomUUID:()=> 'synthetic'},
+  '@/lib/sales/inventory-shadow-observation-server':{receiptObservationPolicy:async()=>({disposition:'signed_candidate',sourceComplete:false,writerCoverageComplete:false})},
+  '@/lib/supabase/server':{supabaseServer:{rpc:async(name,args)=>{
+   if(name==='pos_shadow_read_receipt')return {data:{snapshotKey:'same',updatedAt:at,snapshot:{source:'unverified-external'}},error:null};
+   assert.equal(name,'pos_shadow_capture_version');captured=args;return {data:{result:'needs_review'},error:null};
+  }}},'@/lib/sales/inventory-deduction-preview':{buildInventoryDeductionPreview:async()=>({receipts:[{receiptId:10,previewedReceiptUpdatedAt:at,lines:[]}]})},
+ });
+ await mod.captureInventoryShadow({receiptId:10,observationKey:'pilot',sourceSequence:999,sourceComplete:true,proof:'caller claim',timeBasis:'physical_event'},'owner');
+ assert.equal(captured.p_source_sequence,null);assert.equal(captured.p_evidence.blockingReason,'source_snapshot_incomplete');
+ assert.equal(captured.p_evidence.observationPolicy.writerCoverageComplete,false);
+});
 test('shadow endpoint defaults disabled, requires owner/master, rejects live mode and invalid evidence',async()=>{
  let enabled=false,authorized=true,calls=0;
  const route=load(routePath,{
