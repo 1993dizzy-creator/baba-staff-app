@@ -1,5 +1,10 @@
 -- P1-2 stage 1: shadow-only, additive, no backfill and no legacy engine changes.
 begin;
+do $preflight$ begin
+ if to_regprocedure('public.prepare_and_apply_sales_inventory_reprocess(bigint,text,timestamptz,text,text,jsonb,jsonb)') is null
+  or not exists(select 1 from pg_trigger where tgname='inventory_logs_pos_stock_check_boundary'
+   and tgrelid='public.inventory_logs'::regclass and tgenabled='O') then raise exception 'POS_SHADOW_REQUIRES_P1_AND_P0';end if;
+end $preflight$;
 create schema pos_inventory_shadow;
 revoke all on schema pos_inventory_shadow from public,anon,authenticated,service_role;
 
@@ -105,6 +110,23 @@ begin
 exception when invalid_datetime_format or datetime_field_overflow then return false;
 end;$$;
 
+-- One statement observes receipt + lines together. Volatile sync metadata and
+-- local surrogate line IDs do not define a new semantic sale version.
+create function pos_inventory_shadow.receipt_snapshot(p_receipt bigint) returns jsonb
+language sql stable set search_path=pg_catalog,public set timezone='UTC' as $$
+ select jsonb_build_object('updatedAt',r.updated_at,'snapshot',jsonb_build_object(
+  'source',r.source,'branchKey',coalesce(to_jsonb(r)->>'branch_id',''),'refId',r.ref_id,
+  'refDate',r.ref_date,'paymentStatus',r.payment_status,'isCanceled',r.is_canceled,
+  'lines',coalesce((select jsonb_agg(jsonb_build_object('refDetailId',to_jsonb(l)->'ref_detail_id',
+   'parentRefDetailId',to_jsonb(l)->'parent_ref_detail_id','itemCode',l.item_code,
+   'itemId',to_jsonb(l)->'item_id','unit',to_jsonb(l)->'unit_name','quantity',l.quantity,
+   'isExcluded',to_jsonb(l)->'is_excluded','isCanceled',l.is_canceled,
+   'isOption',to_jsonb(l)->'is_option','refDetailType',to_jsonb(l)->'ref_detail_type')
+   order by coalesce(to_jsonb(l)->>'ref_detail_id',''),l.id)
+   from public.pos_sales_receipt_lines l where l.receipt_id=r.id),'[]'::jsonb)))
+ from public.pos_sales_receipts r where r.id=p_receipt;
+$$;
+
 create function public.pos_shadow_capture_version(
  p_receipt_id bigint,p_expected_updated_at timestamptz,p_observation_key text,
  p_source_sequence bigint,p_sale_snapshot jsonb,p_effects jsonb,p_evidence jsonb,p_actor text
@@ -120,9 +142,14 @@ begin
   or jsonb_typeof(p_sale_snapshot) is distinct from 'object'
   or jsonb_typeof(p_effects) is distinct from 'array'
   or jsonb_typeof(p_evidence) is distinct from 'object' then raise exception 'POS_SHADOW_INVALID_OBSERVATION';end if;
- select * into r from public.pos_sales_receipts where id=p_receipt_id;
+ select * into r from public.pos_sales_receipts where id=p_receipt_id for share;
  if not found then raise exception 'POS_SHADOW_RECEIPT_NOT_FOUND';end if;
  if r.updated_at is distinct from p_expected_updated_at then return jsonb_build_object('result','stale_observation');end if;
+ if p_evidence ? 'snapshotKey' then
+  perform id from public.pos_sales_receipt_lines where receipt_id=r.id order by id for share;
+  if p_evidence->>'snapshotKey' is distinct from encode(sha256(convert_to((pos_inventory_shadow.receipt_snapshot(r.id)->'snapshot')::text,'UTF8')),'hex') then
+   return jsonb_build_object('result','stale_observation','reason','sale_lines_changed');end if;
+ end if;
  if nullif(r.source,'') is null or nullif(r.ref_id,'') is null then raise exception 'POS_SHADOW_SOURCE_IDENTITY_MISSING';end if;
  if exists(select 1 from jsonb_array_elements(p_effects) e
   where nullif(e->>'effectKey','') is null or (e->>'itemId')::bigint is null
@@ -148,7 +175,11 @@ begin
  v_semantic:=encode(sha256(convert_to(jsonb_build_object('sale',p_sale_snapshot,
    'canceled',r.is_canceled,'paid',r.payment_status)::text,'UTF8')),'hex');
  select coalesce(jsonb_agg(e order by e->>'effectKey'),'[]') into v_targets from jsonb_array_elements(p_effects) e;
- if p_source_sequence is null then
+ if p_evidence->>'blockingReason'='source_snapshot_incomplete' then
+  -- A partially committed upstream snapshot is an observation, not a sale
+  -- version. Do not consume its source sequence or obstruct the closed snapshot.
+  v_result:=jsonb_build_object('result','needs_review','reason','source_snapshot_incomplete');
+ elsif p_source_sequence is null then
   v_result:=jsonb_build_object('result','needs_review','reason','source_order_unknown');
  elsif s.last_sequence is not null and p_source_sequence<s.last_sequence then
   v_result:=jsonb_build_object('result','out_of_order','reason','older_source_sequence');
@@ -168,15 +199,24 @@ begin
    and (d.status in ('applied','success') or d.applied_at is not null or d.inventory_log_id is not null)
    and not exists(select 1 from public.pos_inventory_deductions rev where rev.reversal_of_deduction_id=d.id
     and rev.operation_type='revert' and (rev.status in ('applied','success','reverted') or rev.applied_at is not null or rev.inventory_log_id is not null));
+  if v_kind='sale' and (jsonb_array_length(v_legacy)>0 or to_jsonb(r)->>'is_modified'='true') then v_kind:='correction';end if;
   if v_kind='cancel' then
    if old.id is not null then
     select physical_targets,reason into v_targets,v_prior_reason from pos_inventory_shadow.plans where version_id=old.id order by id desc limit 1;
    else v_targets:=v_legacy;end if;
   end if;
   v_reason:=case
+   when p_evidence->>'blockingReason' in ('mapping_scope_unresolved','source_snapshot_incomplete') then p_evidence->>'blockingReason'
    when r.payment_status is distinct from 3 and not r.is_canceled then 'sale_not_confirmed'
    when v_kind='cancel' and old.id is null and jsonb_array_length(v_legacy)=0 then 'cancel_without_physical_baseline'
    when v_prior_reason is not null then 'previous_timing_unresolved'
+   when old.id is not null and p_evidence->>'timeBasis'='physical_event' and exists(
+     select 1 from jsonb_array_elements(v_targets) n
+     cross join lateral (select physical_targets from pos_inventory_shadow.plans where version_id=old.id order by id desc limit 1) prior
+     cross join lateral jsonb_array_elements(prior.physical_targets) prior_effect
+     where n->>'effectKey'=prior_effect->>'effectKey' and n->>'itemId'=prior_effect->>'itemId'
+      and (n->>'quantity')::numeric<>(prior_effect->>'quantity')::numeric
+      and n->>'effectiveAt' is distinct from prior_effect->>'effectiveAt') then 'physical_change_needs_split_events'
    when nullif(p_evidence->>'proof','') is null or p_evidence->>'timeBasis' is null
      or p_evidence->>'timeBasis' not in ('physical_event','historical_correction') then 'physical_time_unproven'
    when exists(select 1 from jsonb_array_elements(v_targets) e where not pos_inventory_shadow.valid_time(e->>'effectiveAt')

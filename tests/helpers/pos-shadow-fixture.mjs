@@ -22,17 +22,17 @@ export async function seedReceipt(db,id,ref='ref-'+id){
  await db.query("insert into pos_sales_receipts(id,ref_id,ref_no,business_date,ref_date,payment_status,is_canceled,final_amount,revision,updated_at) values($1,$2,'2601006796-synthetic','2026-10-09','2026-10-09T13:01:00Z',3,false,100000,0,clock_timestamp())",[id,ref]);
  await db.query("insert into pos_sales_receipt_lines(receipt_id,receipt_ref_id,item_code,item_name,quantity,unit_price,payment_status,is_canceled,raw_json) values($1,$2,'TEST','Synthetic Glenfiddich 15',1,100000,3,false,'{}')",[id,ref]);
 }
-export async function capture(db,{receipt=10,key='obs-1',seq=1,quantity=1,time='2026-10-09T13:01:00Z',effects,evidence}={}){
+export async function capture(db,{receipt=10,key='obs-1',seq=1,quantity=1,time='2026-10-09T13:01:00Z',effects,evidence,saleSnapshot}={}){
  const r=(await rows(db,'select to_jsonb(r) r from pos_sales_receipts r where id=$1',[receipt]))[0].r;
  return (await rows(db,'select pos_shadow_capture_version($1,$2,$3,$4,$5,$6,$7,$8) r',[
-  receipt,r.updated_at,key,seq,{quantity,canceled:r.is_canceled},
+  receipt,r.updated_at,key,seq,saleSnapshot??{quantity,canceled:r.is_canceled},
   JSON.stringify(effects??[{effectKey:'line-1',itemId:1,quantity,effectiveAt:time}]),
   evidence??{timeBasis:'historical_correction',proof:'synthetic authoritative fixture'},'owner']))[0].r;
 }
 export const claim=async(db,worker='synthetic-worker')=>(await rows(db,"select pos_shadow_claim($1,'owner') r",[worker]))[0].r;
-export async function register(db,{kind='count',quantity=10,time='2026-10-11T04:12:18Z',item=1,proof='synthetic complete timeline',coverage=true}={}){
+export async function register(db,{kind='count',quantity=10,time='2026-10-11T04:12:18Z',recordedAt,item=1,proof='synthetic complete timeline',coverage=true}={}){
  const reason=kind==='count'?'stock_check':kind==='purchase'?'purchase':'other';
- const id=(await rows(db,"insert into inventory_logs(item_id,reason,source,new_quantity,change_quantity,created_at) values($1,$2,'edit_form',$3,$4,$5) returning id",[item,reason,quantity,kind==='count'?0:quantity,time]))[0].id;
+ const id=(await rows(db,"insert into inventory_logs(item_id,reason,source,new_quantity,change_quantity,created_at) values($1,$2,'edit_form',$3,$4,$5) returning id",[item,reason,quantity,kind==='count'?0:quantity,recordedAt??time]))[0].id;
  const result=(await rows(db,"select pos_shadow_register_movement($1,$2,$3,$4,'owner') r",[id,kind,time,{proof,coverageComplete:coverage}]))[0].r;
  return {id,...result};
 }

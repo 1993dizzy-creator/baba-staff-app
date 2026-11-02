@@ -25,7 +25,10 @@ test('POS shadow version ledger and ownership',{timeout:120000},async t=>{
   await assert.rejects(db.exec('delete from pos_inventory_shadow.observations'),/POS_SHADOW_IMMUTABLE/);
  });
  await t.test('duplicate receipt identity shares stream; unknown sequence/time is explicit',async()=>{
-  const db=await setup();await capture(db);await seedReceipt(db,11,'ref-10');
+  const db=await setup();
+  assert.equal((await capture(db,{key:'partial',evidence:{blockingReason:'source_snapshot_incomplete'}})).reason,'source_snapshot_incomplete');
+  assert.equal((await q(db,'select count(*)::int n from pos_inventory_shadow.versions'))[0].n,0);
+  await capture(db);await seedReceipt(db,11,'ref-10');
   assert.equal((await capture(db,{receipt:11,key:'alias',seq:2})).result,'duplicate');
   assert.equal((await q(db,'select count(*)::int n from pos_inventory_shadow.streams'))[0].n,1);
   assert.equal((await capture(db,{key:'no-order',seq:null})).reason,'source_order_unknown');
