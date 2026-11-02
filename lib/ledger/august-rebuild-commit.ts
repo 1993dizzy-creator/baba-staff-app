@@ -16,6 +16,7 @@ import {
   type RebuildInput,
   type RebuildAdjustment,
   type SourceLink,
+// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 } from "./august-rebuild-plan.ts";
 
 const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -138,13 +139,13 @@ function buildEvents(input: RebuildInput, runId: string): SqlEvent[] {
     if (action.kind === "transfer") {
       if (action.effects.length !== 2) throw new Error(`INVALID_TRANSFER:${action.id}`);
       const amount = parseVndMilli(action.effects[0].signedAmountVnd);
-      const total = action.effects.reduce((sum,e) => sum+parseVndMilli(e.signedAmountVnd),0n);
-      if (total!==0n || amount === 0n) throw new Error(`INVALID_TRANSFER_BALANCE:${action.id}`);
+      const total = action.effects.reduce((sum,e) => sum+parseVndMilli(e.signedAmountVnd),BigInt(0));
+      if (total!==BigInt(0) || amount === BigInt(0)) throw new Error(`INVALID_TRANSFER_BALANCE:${action.id}`);
       events.push({
         key:`aug-rebuild:${runId}:${action.id}:1`,
         adjustmentId:action.id,kind:action.kind,sourceTransactionId:null,originalMovementId:null,
         businessDate:action.effects[0].businessDate,occurredAt:eventTime(action.effects[0].businessDate),
-        type:"transfer",amount:formatVndMilli(amount < 0n ? -amount : amount),
+        type:"transfer",amount:formatVndMilli(amount < BigInt(0) ? -amount : amount),
         movements:action.effects.map(e=>({accountId:ACCOUNT_IDS[e.account],amount:formatVndMilli(parseVndMilli(e.signedAmountVnd))})),
         sheetCells:[...action.sheetCells],evidenceReference:source,reason:action.rationale,
       });
@@ -213,7 +214,7 @@ export function createAugustApplyManifest(input: RebuildInput, runId: string): A
     if (sourceByKey.has(event.key)) throw new Error(`EVENT_ID_COLLISION:${event.key}`);
     sourceByKey.set(event.key,event);
     if (!event.reason.trim() || !event.evidenceReference.trim()) throw new Error(`MISSING_PROOF:${event.key}`);
-    if (!event.movements.length || event.movements.some(m=>parseVndMilli(m.amount)===0n)) {
+    if (!event.movements.length || event.movements.some(m=>parseVndMilli(m.amount)===BigInt(0))) {
       throw new Error(`INVALID_MOVEMENT:${event.key}`);
     }
   }

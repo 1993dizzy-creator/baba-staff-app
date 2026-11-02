@@ -172,16 +172,16 @@ export function parseVndMilli(amount: MoneyVnd): bigint {
   const negative = amount.startsWith("-");
   const unsigned = negative ? amount.slice(1) : amount;
   const [whole, fraction = ""] = unsigned.split(".");
-  const base = BigInt(whole) * 1000n + BigInt(fraction.padEnd(3, "0") || "0");
+  const base = BigInt(whole) * BigInt(1000) + BigInt(fraction.padEnd(3, "0") || "0");
   return negative ? -base : base;
 }
 
 export function formatVndMilli(value: bigint): string {
-  const minus = value < 0n ? "-" : "";
-  const absolute = value < 0n ? -value : value;
-  const fractional = absolute % 1000n;
-  if (fractional === 0n) return `${minus}${absolute / 1000n}`;
-  return `${minus}${absolute / 1000n}.${String(fractional).padStart(3, "0").replace(/0+$/, "")}`;
+  const minus = value < BigInt(0) ? "-" : "";
+  const absolute = value < BigInt(0) ? -value : value;
+  const fractional = absolute % BigInt(1000);
+  if (fractional === BigInt(0)) return `${minus}${absolute / BigInt(1000)}`;
+  return `${minus}${absolute / BigInt(1000)}.${String(fractional).padStart(3, "0").replace(/0+$/, "")}`;
 }
 
 function checkDate(date: string): boolean {
@@ -199,7 +199,7 @@ function getValue(record: Readonly<Record<FundAccount, MoneyVnd>>, account: Fund
 }
 
 function mapAdd(map: Map<string, bigint>, key: string, value: bigint): void {
-  map.set(key, (map.get(key) ?? 0n) + value);
+  map.set(key, (map.get(key) ?? BigInt(0)) + value);
 }
 
 function assertValidId(id: string, type: string): void {
@@ -222,12 +222,12 @@ function evaluateAction(
   if (!action.rationale.trim()) block("REASON_REQUIRED");
   if (action.evidence !== "verified") block(`UNVERIFIED_EVIDENCE:${action.evidence}`);
   const effects = action.effects;
-  const sum = effects.reduce((amount, e) => amount + parseVndMilli(e.signedAmountVnd), 0n);
+  const sum = effects.reduce((amount, e) => amount + parseVndMilli(e.signedAmountVnd), BigInt(0));
   if (!effects.length) block("EMPTY_EFFECTS");
   for (const e of effects) {
     if (!MONTH_DAYS.includes(e.businessDate)) block(`OUTSIDE_AUGUST:${e.businessDate}`);
     if (!FUND_ACCOUNTS.includes(e.account)) block(`INVALID_ACCOUNT:${e.account}`);
-    if (parseVndMilli(e.signedAmountVnd) === 0n) block("ZERO_EFFECT");
+    if (parseVndMilli(e.signedAmountVnd) === BigInt(0)) block("ZERO_EFFECT");
   }
   const original = action.originalMovementId ? movementById.get(action.originalMovementId) : undefined;
   if (action.originalMovementId) {
@@ -235,11 +235,11 @@ function evaluateAction(
     usedMovementIds.add(action.originalMovementId);
   }
   if (action.kind === "transfer") {
-    if (effects.length !== 2 || sum !== 0n || effects[0]?.businessDate !== effects[1]?.businessDate ||
+    if (effects.length !== 2 || sum !== BigInt(0) || effects[0]?.businessDate !== effects[1]?.businessDate ||
       effects[0]?.account === effects[1]?.account || action.originalMovementId || action.sourceTransactionId ||
       action.sheetCells.length < 2) block("INVALID_TRANSFER_PAIR");
   } else if (action.kind === "relocate-payment") {
-    if (!original || effects.length !== 2 || sum !== 0n) block("INVALID_RELOCATE_SOURCE");
+    if (!original || effects.length !== 2 || sum !== BigInt(0)) block("INVALID_RELOCATE_SOURCE");
     else if (effects[0]?.businessDate !== original.businessDate ||
       effects[0]?.account !== original.account ||
       parseVndMilli(effects[0].signedAmountVnd) !== -parseVndMilli(original.signedAmountVnd) ||
@@ -261,8 +261,8 @@ function evaluateAction(
       ["expense", "expense_recognition"].includes(tx.type) :
       ["sales", "income"].includes(tx.type));
     if (effects.length !== 1 || !supportedSource || alreadyPaid || action.originalMovementId) block("INVALID_RESTORATION_SOURCE");
-    if (action.kind === "restore-outflow" && sum >= 0n) block("OUTFLOW_MUST_BE_NEGATIVE");
-    if (action.kind === "restore-inflow" && sum <= 0n) block("INFLOW_MUST_BE_POSITIVE");
+    if (action.kind === "restore-outflow" && sum >= BigInt(0)) block("OUTFLOW_MUST_BE_NEGATIVE");
+    if (action.kind === "restore-inflow" && sum <= BigInt(0)) block("INFLOW_MUST_BE_POSITIVE");
   } else {
     block("UNKNOWN_ACTION_KIND");
   }
@@ -280,7 +280,7 @@ export function previewAugustRebuild(input: RebuildInput): RebuildPreview {
   if (input.contract.expectedSourceRows != null && input.contract.sourceRows !== input.contract.expectedSourceRows) block("SHEET_ROW_COUNT_CHANGED");
   const expectedCells = new Set<string>();
   const sourceDaily = new Map<string, bigint>();
-  let cardTotal = 0n;
+  let cardTotal = BigInt(0);
   for (const cell of input.sheetCells) {
     if (!cell.cell || expectedCells.has(cell.cell)) block(`DUPLICATE_OR_MISSING_SHEET_CELL:${cell.cell}`);
     expectedCells.add(cell.cell);
@@ -370,9 +370,9 @@ export function previewAugustRebuild(input: RebuildInput): RebuildPreview {
   for (const day of MONTH_DAYS) {
     for (const account of FUND_ACCOUNTS) {
       const key = aggregateKey(day, account);
-      const sheet = sourceDaily.get(key) ?? 0n;
-      const before = beforeDaily.get(key) ?? 0n;
-      const after = afterDaily.get(key) ?? 0n;
+      const sheet = sourceDaily.get(key) ?? BigInt(0);
+      const before = beforeDaily.get(key) ?? BigInt(0);
+      const after = afterDaily.get(key) ?? BigInt(0);
       const matches = sheet === after;
       if (sheet === before) beforeMatches++;
       if (matches) afterMatches++;
@@ -391,12 +391,12 @@ export function previewAugustRebuild(input: RebuildInput): RebuildPreview {
     for (const account of FUND_ACCOUNTS) {
       const current = getValue(appAmount, account);
       const expected = getValue(sheetAmount, account);
-      const projected = current + (accountDelta.get(account) ?? 0n);
+      const projected = current + (accountDelta.get(account) ?? BigInt(0));
       const difference = projected - expected;
       closing.push({month,account,sheetClosingVnd:formatVndMilli(expected),
         currentClosingVnd:formatVndMilli(current),projectedClosingVnd:formatVndMilli(projected),
-        differenceVnd:formatVndMilli(difference),matches:difference===0n});
-      if (difference!==0n) block(`MONTH_CLOSE_DIFFERENCE:${month}:${account}:${formatVndMilli(difference)}`);
+        differenceVnd:formatVndMilli(difference),matches:difference===BigInt(0)});
+      if (difference!==BigInt(0)) block(`MONTH_CLOSE_DIFFERENCE:${month}:${account}:${formatVndMilli(difference)}`);
     }
   };
   const augustCurrent = {} as Record<FundAccount, MoneyVnd>;
@@ -404,8 +404,8 @@ export function previewAugustRebuild(input: RebuildInput): RebuildPreview {
     let fromSheet = getValue(input.openingVnd, account);
     let fromCurrent = fromSheet;
     for (const day of MONTH_DAYS) {
-      fromSheet += sourceDaily.get(aggregateKey(day,account)) ?? 0n;
-      fromCurrent += beforeDaily.get(aggregateKey(day,account)) ?? 0n;
+      fromSheet += sourceDaily.get(aggregateKey(day,account)) ?? BigInt(0);
+      fromCurrent += beforeDaily.get(aggregateKey(day,account)) ?? BigInt(0);
     }
     if (fromSheet !== getValue(input.sheetClosingVnd,account)) block(`SHEET_OPENING_CLOSING_MISMATCH:${account}`);
     if (input.currentClosingVnd && fromCurrent !== getValue(input.currentClosingVnd,account)) {
@@ -421,7 +421,7 @@ export function previewAugustRebuild(input: RebuildInput): RebuildPreview {
     addMonth(future.month, future.currentClosingVnd, future.sheetClosingVnd);
   }
   for (const day of dayRecords) if (!day.matches) block(`DAILY_MISMATCH:${day.date}:${day.account}:${day.differenceVnd}`);
-  const augustDifference = closing.filter(v=>v.month===AUGUST_MONTH).reduce((sum,row)=>sum+parseVndMilli(row.differenceVnd),0n);
+  const augustDifference = closing.filter(v=>v.month===AUGUST_MONTH).reduce((sum,row)=>sum+parseVndMilli(row.differenceVnd),BigInt(0));
   return {
     decision:blockers.length===0?"GO_FOR_SEPARATE_APPROVAL":"BLOCKED",
     blockers, daily:dayRecords, closing,

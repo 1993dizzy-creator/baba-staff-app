@@ -11,6 +11,7 @@ import {
   type ExistingMovement,
   type SheetCell,
   type RebuildAdjustment,
+// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 } from '../lib/ledger/august-rebuild-plan.ts';
 
 const opening: Record<FundAccount,string> = {
@@ -47,11 +48,11 @@ const transfer:RebuildAdjustment = {
 };
 
 test('exact VND thousandths: never rounds 0.1, 91,763.1, or large legacy balances',()=>{
-  assert.equal(parseVndMilli('91763.1'),91763100n);
-  assert.equal(parseVndMilli('-149781532.5'),-149781532500n);
-  assert.equal(parseVndMilli('0.001'),1n);
-  assert.equal(formatVndMilli(-149781532500n),'-149781532.5');
-  assert.equal(formatVndMilli(91763100n),'91763.1');
+  assert.equal(parseVndMilli('91763.1'),BigInt(91763100));
+  assert.equal(parseVndMilli('-149781532.5'),-BigInt(149781532500));
+  assert.equal(parseVndMilli('0.001'),BigInt(1));
+  assert.equal(formatVndMilli(-BigInt(149781532500)),'-149781532.5');
+  assert.equal(formatVndMilli(BigInt(91763100)),'91763.1');
   for(const invalid of ['1,000','3.2631','1e4','Infinity','NaN','-','01','1.0001','']){
     assert.throws(()=>parseVndMilli(invalid),/INVALID_VND/);
   }
