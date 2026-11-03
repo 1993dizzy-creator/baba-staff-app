@@ -118,6 +118,6 @@ test('item log modal: no 동기화 button, 선택한 로그 only when not alread
  assert.match(page,/const changeable = QUICK_REASON_VALUES\.filter\(\(reason\) => reason !== log\.reason && inventoryReasonChangeIssue\(log, reason\) === null\);\s*if \(changeable\.length === 0\) return null;/);
  assert.ok(!page.includes('입고 수량·단가·거래처 정정은 아래 당일 로그'));
  assert.match(page,/const highlighted = selected && visibleTimelineEntries\.length > 1;/);
- // The daily/monthly sync features themselves stay.
- assert.ok(page.includes('MonthlyNameSyncPanel')&&page.includes('/api/inventory/snapshot/name-sync'));
+ // Language checking remains; the retired sync UI does not.
+ assert.ok(!page.includes('MonthlyNameSyncPanel')&&page.includes('/api/inventory/snapshot/name-sync'));
 });

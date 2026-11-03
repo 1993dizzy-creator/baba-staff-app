@@ -1,404 +1,46 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { getAuthenticatedActor } from "@/lib/auth/server-auth";
-import { syncInventoryLogRowsFromItem } from "@/lib/inventory/log-sync-server";
-import {
-  canRunInventorySnapshotNameSync,
-  findInventoryLogNameSyncItems,
-  isInventorySnapshotNameSyncEligible,
-  planInventoryLogNameUpdates,
-  type CurrentInventoryDailySyncRow,
-  type InventoryDailySyncLogRow,
-  type InventoryDailySyncPlan,
-} from "@/lib/inventory/snapshot-name-sync";
-import { inventoryPurchaseSourceKey, type InventoryDailySyncResult, type InventoryDailySyncTargetResult } from "@/lib/inventory/daily-sync-result";
-import { projectInventoryDisplaySyncLog, projectInventoryPurchaseLogs } from "@/lib/ledger/inventory-projection";
-import {
-  findInventoryLanguageMissingItems,
-  type InventoryLanguageRow,
-} from "@/lib/inventory/language-missing";
-import {
-  findMonthlyInventoryNameSyncItems,
-  inventoryNameSyncMonthRange,
-  isInventoryNameSyncMonth,
-  parseMonthlySyncTargets,
-  selectMonthlySyncPlans,
-} from "@/lib/inventory/monthly-name-sync";
+import { findInventoryLanguageMissingItems, type InventoryLanguageRow } from "@/lib/inventory/language-missing";
 
 export const dynamic = "force-dynamic";
-
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" } as const;
-// Legacy economic/display synchronization rewrites protected source rows.
-// Retain the review/planning code, but do not enable writes without a separately
-// reviewed correction flow. This is intentionally not an environment switch.
-const HISTORICAL_SYNC_BLOCKED = true;
-const SYNC_DISABLED_REASON = "INVENTORY_HISTORICAL_SYNC_DISABLED";
-const LOG_PAGE_SIZE = 1000;
-const LOG_SELECT = [
-  "id", "item_id", "business_date", "created_at", "reason", "source", "action", "change_quantity", "correction_of_inventory_log_id",
-  "prev_quantity", "new_quantity", "item_name", "item_name_vi", "part", "new_part",
-  "category", "category_vi", "new_category", "new_category_vi", "code", "new_code",
-  "unit", "new_unit", "new_purchase_price", "new_supplier", "purchase_supplier_partner_id", "billed_amount_mode",
-].join(", ");
-const INVENTORY_SELECT = [
-  "id", "item_name", "item_name_vi", "part", "category", "category_vi", "code", "unit",
-  "purchase_price", "supplier", "supplier_partner_id", "quantity", "is_active",
-].join(", ");
-const ECONOMIC_SYNC_FIELDS = new Set(["purchase_price", "supplier", "supplier_partner_id"]);
-const LANGUAGE_INVENTORY_SELECT = "id, item_name, item_name_vi, is_active, created_at, updated_at";
+const PAGE_SIZE = 1000;
 
-const createSupabaseAdmin = () => {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceRoleKey) throw new Error("Missing inventory daily sync server configuration");
-  return createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-};
-
-const isPositiveId = (value: number) => Number.isSafeInteger(value) && value > 0;
-const isValidBusinessDate = (value: unknown): value is string => {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const date = new Date(`${value}T00:00:00.000Z`);
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
-};
-
-async function loadDailySyncRows(
-  supabase: ReturnType<typeof createSupabaseAdmin>,
-  businessDate: string,
-  itemId?: number
-) {
-  const logs: InventoryDailySyncLogRow[] = [];
-  for (let from = 0; ; from += LOG_PAGE_SIZE) {
-    let query = supabase.from("inventory_logs").select(LOG_SELECT)
-      .eq("business_date", businessDate).not("item_id", "is", null);
-    if (itemId !== undefined) query = query.eq("item_id", itemId);
-    const result = await query.order("created_at", { ascending: true })
-      .order("id", { ascending: true }).range(from, from + LOG_PAGE_SIZE - 1);
-    if (result.error) return { ok: false as const, error: "inventory_daily_sync_logs_query_failed" };
-    const page = (result.data ?? []) as unknown as InventoryDailySyncLogRow[];
-    logs.push(...page);
-    if (page.length < LOG_PAGE_SIZE) break;
-  }
-
-  const itemIds = Array.from(new Set(logs.map((row) => Number(row.item_id)).filter(isPositiveId)));
-  if (itemIds.length === 0) return { ok: true as const, logs, inventoryItems: [] as CurrentInventoryDailySyncRow[] };
-
-  const inventoryResult = await supabase.from("inventory").select(INVENTORY_SELECT)
-    .in("id", itemIds).eq("is_active", true);
-  if (inventoryResult.error) return { ok: false as const, error: "inventory_daily_sync_inventory_query_failed" };
-  return {
-    ok: true as const,
-    logs,
-    inventoryItems: (inventoryResult.data ?? []) as unknown as CurrentInventoryDailySyncRow[],
-  };
-}
-
-async function loadActiveInventoryLanguageRows(
-  supabase: ReturnType<typeof createSupabaseAdmin>
-) {
-  const result = await supabase.from("inventory").select(LANGUAGE_INVENTORY_SELECT)
-    .eq("is_active", true).order("id", { ascending: true });
-  if (result.error) return { ok: false as const, error: "inventory_language_missing_query_failed" };
-  return {
-    ok: true as const,
-    inventoryItems: (result.data ?? []) as unknown as InventoryLanguageRow[],
-  };
-}
-
-async function loadOptionalSnapshotBatchId(
-  supabase: ReturnType<typeof createSupabaseAdmin>,
-  businessDate: string
-) {
-  const result = await supabase.from("inventory_snapshot_batches").select("id")
-    .eq("snapshot_date", businessDate).order("id", { ascending: false }).limit(1).maybeSingle();
-  if (result.error) return { ok: false as const, error: "inventory_daily_sync_batch_query_failed" };
-  return { ok: true as const, batchId: result.data ? Number(result.data.id) : null };
-}
-
-async function syncSnapshotItem(
-  supabase: ReturnType<typeof createSupabaseAdmin>,
-  batchId: number | null,
-  item: CurrentInventoryDailySyncRow
-) {
-  if (batchId === null) return 0;
-  const rows = await supabase.from("inventory_snapshot_items").select("id, change_quantity")
-    .eq("batch_id", batchId).eq("item_id", item.id);
-  if (rows.error) throw rows.error;
-
-  for (const row of rows.data ?? []) {
-    // Snapshots are closing balances without an original-purchase identity.
-    // Keep their historical money/payee unchanged; only synchronize display fields.
-    const result = await supabase.from("inventory_snapshot_items").update({
-      item_name: item.item_name,
-      item_name_vi: item.item_name_vi,
-      part: item.part,
-      category: item.category,
-      category_vi: item.category_vi,
-      code: item.code,
-      unit: item.unit,
-    }).eq("id", Number(row.id)).eq("batch_id", batchId).eq("item_id", item.id);
-    if (result.error) throw result.error;
-  }
-  return rows.data?.length ?? 0;
-}
-
-async function runItemSync({
-  supabase,
-  plan,
-  inventoryItem,
-  actorUserId,
-  snapshotBatchId,
-}: {
-  supabase: ReturnType<typeof createSupabaseAdmin>;
-  plan: InventoryDailySyncPlan;
-  inventoryItem: CurrentInventoryDailySyncRow;
-  actorUserId: number;
-  snapshotBatchId: number | null;
-}): Promise<InventoryDailySyncResult & { snapshotRowsUpdated: number; purchaseLogIds?: number[] }> {
-  const resultBase = {
-    itemId: plan.itemId, currentItemName: plan.currentItemName, currentItemNameVi: plan.currentItemNameVi,
-  };
-  const targets: InventoryDailySyncTargetResult[] = [];
-  let snapshotRowsUpdated = 0;
-  try {
-    for (const target of plan.targets) {
-      const economicChange = target.changes.some(change => ECONOMIC_SYNC_FIELDS.has(change.field));
-      const syncEconomics = !target.quantityReviewRequired && economicChange;
-      // Same-part display-only changes (names/category/code/unit) keep the pending candidate and
-      // let its category follow. Part, quantity and economic changes keep the existing review path.
-      const displayOnly = !economicChange && !target.quantityReviewRequired &&
-        !target.changes.some(change => change.field === "part");
-      const location = { ledgerMonth: plan.businessDate.slice(0, 7), sourceKey: inventoryPurchaseSourceKey(target.purchaseLogId) };
-      await syncInventoryLogRowsFromItem({
-        supabase,
-        item: target.syncItem,
-        purchaseLogIds: syncEconomics ? [target.purchaseLogId] : [],
-        displayOnlyLogIds: [...target.linkedCorrectionLogIds, ...(!syncEconomics ? [target.purchaseLogId] : [])],
-      });
-      if (target.quantityReviewRequired) {
-        await projectInventoryPurchaseLogs([target.purchaseLogId], actorUserId);
-        targets.push({ purchaseLogId: target.purchaseLogId, correctionLogId: target.correctionLogId,
-          status: "review_required", code: "QUANTITY_CORRECTION_REQUIRED", ...location });
-        continue;
-      }
-      const ledger = displayOnly
-        ? await projectInventoryDisplaySyncLog(target.purchaseLogId, actorUserId)
-          .then(result => ({ status: result.status, code: result.code, results: [result] }))
-        : await projectInventoryPurchaseLogs([target.purchaseLogId], actorUserId);
-      const projected = ledger.results.find(row => row.inventoryLogId === target.purchaseLogId) ?? ledger.results[0];
-      const status = ledger.status === "pending" ? "review_required" : ledger.status;
-      const supplierChanged = target.changes.some(change => change.field === "supplier" || change.field === "supplier_partner_id");
-      const code = status === "review_required" && ledger.code === "PURCHASE_AMOUNT_CONFIRMATION_REQUIRED" && supplierChanged
-        ? "SUPPLIER_CHANGE_CONFIRMATION_REQUIRED" : ledger.code || (status === "synced" ? "SYNCED" : "INVENTORY_DAILY_SYNC_FAILED");
-      targets.push({ purchaseLogId: target.purchaseLogId, correctionLogId: target.correctionLogId, status, code, ...location,
-        candidateId: projected?.candidateId ?? null, transactionId: projected?.transactionId ?? null });
-    }
-    snapshotRowsUpdated = await syncSnapshotItem(supabase, snapshotBatchId, inventoryItem);
-    const blocking = targets.find(target => target.status === "failed") || targets.find(target => target.status === "review_required");
-    return { ...resultBase, status: blocking?.status || "synced", code: blocking?.code,
-      purchaseLogIds: plan.logIds, targets, snapshotRowsUpdated };
-  } catch (error) {
-    console.error("[INVENTORY_DAILY_SYNC_ITEM_FAILED]", { itemId: plan.itemId, error });
-    for (const target of plan.targets) {
-      if (!targets.some(row => row.purchaseLogId === target.purchaseLogId)) targets.push({
-        purchaseLogId: target.purchaseLogId, correctionLogId: target.correctionLogId,
-        status: "failed", code: "INVENTORY_DAILY_SYNC_FAILED",
-      });
-    }
-    return { ...resultBase, status: "failed" as const, code: "INVENTORY_DAILY_SYNC_FAILED", targets, snapshotRowsUpdated };
-  }
-}
-
-// One month of logs in date/time/id order, paged so no row is skipped.
-async function loadMonthlySyncLogs(
-  supabase: ReturnType<typeof createSupabaseAdmin>,
-  range: { start: string; endExclusive: string }
-) {
-  const logs: InventoryDailySyncLogRow[] = [];
-  for (let from = 0; ; from += LOG_PAGE_SIZE) {
-    const result = await supabase.from("inventory_logs").select(LOG_SELECT)
-      .gte("business_date", range.start).lt("business_date", range.endExclusive).not("item_id", "is", null)
-      .order("business_date", { ascending: true }).order("created_at", { ascending: true }).order("id", { ascending: true })
-      .range(from, from + LOG_PAGE_SIZE - 1);
-    if (result.error) return { ok: false as const, error: "inventory_monthly_sync_logs_query_failed" };
-    const page = (result.data ?? []) as unknown as InventoryDailySyncLogRow[];
-    logs.push(...page);
-    if (page.length < LOG_PAGE_SIZE) return { ok: true as const, logs };
-  }
-}
-
-// All active items once (sync fields + language fields), paged.
-async function loadActiveInventoryForMonth(supabase: ReturnType<typeof createSupabaseAdmin>) {
-  const rows: (CurrentInventoryDailySyncRow & InventoryLanguageRow)[] = [];
-  for (let from = 0; ; from += LOG_PAGE_SIZE) {
-    const result = await supabase.from("inventory").select(`${INVENTORY_SELECT}, created_at, updated_at`)
-      .eq("is_active", true).order("id", { ascending: true }).range(from, from + LOG_PAGE_SIZE - 1);
-    if (result.error) return { ok: false as const, error: "inventory_monthly_sync_inventory_query_failed" };
-    const page = (result.data ?? []) as unknown as typeof rows;
-    rows.push(...page);
-    if (page.length < LOG_PAGE_SIZE) return { ok: true as const, inventoryItems: rows };
-  }
-}
-
-async function getMonthlySync(month: string) {
-  const range = inventoryNameSyncMonthRange(month);
-  const supabase = createSupabaseAdmin();
-  const [inventory, logs] = await Promise.all([
-    loadActiveInventoryForMonth(supabase),
-    range ? loadMonthlySyncLogs(supabase, range) : Promise.resolve({ ok: true as const, logs: [] as InventoryDailySyncLogRow[] }),
-  ]);
-  if (!inventory.ok) return NextResponse.json({ ok: false, error: inventory.error }, { status: 500, headers: NO_STORE_HEADERS });
-  if (!logs.ok) return NextResponse.json({ ok: false, error: logs.error }, { status: 500, headers: NO_STORE_HEADERS });
-  return NextResponse.json({
-    ok: true,
-    month,
-    canSync: false,
-    syncDisabledReason: SYNC_DISABLED_REASON,
-    // Not limited to the month: every active item whose name is missing in a language.
-    languageMissingItems: findInventoryLanguageMissingItems(inventory.inventoryItems),
-    monthlySyncItems: findMonthlyInventoryNameSyncItems(month, logs.logs, inventory.inventoryItems),
-  }, { headers: NO_STORE_HEADERS });
-}
-
-// 일괄 동기화: the rows the user saw, re-checked against a fresh read of the month. Only rows that
-// still need a sync run, each through the same runItemSync as the daily sync (same ledger review
-// rules, per-item failure isolation, its own businessDate and snapshot batch). No new economics.
-async function syncMonth(month: unknown, rawTargets: unknown, actorUserId: number) {
-  const targets = parseMonthlySyncTargets(month, rawTargets);
-  if (!targets) return NextResponse.json({ ok: false, error: "inventory_monthly_sync_invalid_request" }, { status: 400, headers: NO_STORE_HEADERS });
-  const syncMonthKey = month as string;
-  const range = inventoryNameSyncMonthRange(syncMonthKey)!;
-  const supabase = createSupabaseAdmin();
-  const [inventory, logs] = await Promise.all([loadActiveInventoryForMonth(supabase), loadMonthlySyncLogs(supabase, range)]);
-  if (!inventory.ok) return NextResponse.json({ ok: false, error: inventory.error }, { status: 500, headers: NO_STORE_HEADERS });
-  if (!logs.ok) return NextResponse.json({ ok: false, error: logs.error }, { status: 500, headers: NO_STORE_HEADERS });
-  const { plans, skipped } = selectMonthlySyncPlans(syncMonthKey, logs.logs, inventory.inventoryItems, targets);
-
-  // Snapshot batches are read for every date before the first write.
-  const batchIdByDate = new Map<string, number | null>();
-  for (const businessDate of new Set(plans.map(plan => plan.businessDate))) {
-    const batch = await loadOptionalSnapshotBatchId(supabase, businessDate);
-    if (!batch.ok) return NextResponse.json({ ok: false, error: batch.error }, { status: 500, headers: NO_STORE_HEADERS });
-    batchIdByDate.set(businessDate, batch.batchId);
-  }
-  const inventoryById = new Map(inventory.inventoryItems.map(item => [Number(item.id), item] as const));
-  const results = [];
-  for (const plan of plans) {
-    const result = await runItemSync({ supabase, plan, inventoryItem: inventoryById.get(plan.itemId)!, actorUserId, snapshotBatchId: batchIdByDate.get(plan.businessDate) ?? null });
-    results.push({ ...result, businessDate: plan.businessDate });
-  }
-  return NextResponse.json({
-    ok: true,
-    month: syncMonthKey,
-    results,
-    skipped,
-    syncedCount: results.filter(result => result.status === "synced").length,
-    reviewRequiredCount: results.filter(result => result.status === "review_required").length,
-    failedCount: results.filter(result => result.status === "failed").length,
-    skippedCount: skipped.length,
-  }, { headers: NO_STORE_HEADERS });
-}
-
-export async function GET(request: Request) {
+// Retain the URL for existing language-check callers. No historical sync queries
+// or writes remain; language completeness is independent of the selected date.
+export async function GET() {
   try {
     const auth = await getAuthenticatedActor();
     if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code, code: auth.code }, { status: auth.status, headers: NO_STORE_HEADERS });
-    const searchParams = new URL(request.url).searchParams;
-    if (searchParams.has("month")) {
-      const month = searchParams.get("month");
-      if (!isInventoryNameSyncMonth(month)) return NextResponse.json({ ok: false, error: "inventory_monthly_sync_invalid_month" }, { status: 400, headers: NO_STORE_HEADERS });
-      return await getMonthlySync(month);
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !serviceRoleKey) throw new Error("Missing inventory language-check configuration");
+    const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    const inventoryItems: InventoryLanguageRow[] = [];
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const result = await supabase.from("inventory").select("id, item_name, item_name_vi, is_active, created_at, updated_at")
+        .eq("is_active", true).order("id", { ascending: true }).range(from, from + PAGE_SIZE - 1);
+      if (result.error) return NextResponse.json({ ok: false, error: "inventory_language_missing_query_failed" }, { status: 500, headers: NO_STORE_HEADERS });
+      const rows = (result.data ?? []) as InventoryLanguageRow[];
+      inventoryItems.push(...rows);
+      if (rows.length < PAGE_SIZE) break;
     }
-    const businessDate = searchParams.get("businessDate");
-    if (!isValidBusinessDate(businessDate)) return NextResponse.json({ ok: false, error: "inventory_daily_sync_invalid_business_date" }, { status: 400, headers: NO_STORE_HEADERS });
-
-    const supabase = createSupabaseAdmin();
-    const languageRows = await loadActiveInventoryLanguageRows(supabase);
-    if (!languageRows.ok) return NextResponse.json({ ok: false, error: languageRows.error }, { status: 500, headers: NO_STORE_HEADERS });
-
-    if (!isInventorySnapshotNameSyncEligible(businessDate)) return NextResponse.json({
-      ok: true,
-      businessDate,
-      canSync: false,
-      syncDisabledReason: SYNC_DISABLED_REASON,
-      languageMissingItems: findInventoryLanguageMissingItems(languageRows.inventoryItems),
-      dailySyncItems: [],
-    }, { headers: NO_STORE_HEADERS });
-    const rows = await loadDailySyncRows(supabase, businessDate);
-    if (!rows.ok) return NextResponse.json({ ok: false, error: rows.error }, { status: 500, headers: NO_STORE_HEADERS });
-    return NextResponse.json({
-      ok: true,
-      businessDate,
-      canSync: false,
-      syncDisabledReason: SYNC_DISABLED_REASON,
-      languageMissingItems: findInventoryLanguageMissingItems(languageRows.inventoryItems),
-      dailySyncItems: findInventoryLogNameSyncItems(businessDate, rows.logs, rows.inventoryItems),
-    }, { headers: NO_STORE_HEADERS });
-  } catch (error) {
-    console.error("[INVENTORY_DAILY_SYNC_GET_FAILED]", error);
-    return NextResponse.json({ ok: false, error: "inventory_daily_sync_failed" }, { status: 500, headers: NO_STORE_HEADERS });
+    return NextResponse.json({ ok: true, canSync: false, languageMissingItems: findInventoryLanguageMissingItems(inventoryItems) }, { headers: NO_STORE_HEADERS });
+  } catch {
+    return NextResponse.json({ ok: false, error: "inventory_language_missing_query_failed" }, { status: 500, headers: NO_STORE_HEADERS });
   }
 }
 
-export async function POST(request: Request) {
+// Old clients must never restart a historical sync. Preserve the previous
+// authentication/role contract, then explicitly reject every retired action.
+export async function POST() {
   try {
     const auth = await getAuthenticatedActor();
     if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code, code: auth.code }, { status: auth.status, headers: NO_STORE_HEADERS });
-    if (!canRunInventorySnapshotNameSync(auth.actor.role)) return NextResponse.json({ ok: false, error: "inventory_snapshot_name_sync_forbidden" }, { status: 403, headers: NO_STORE_HEADERS });
-    if (HISTORICAL_SYNC_BLOCKED) return NextResponse.json({
-      ok: false, code: SYNC_DISABLED_REASON, error: SYNC_DISABLED_REASON,
-      message: "품목명은 최신 마스터를 자동 표시합니다. 과거 입고정보 동기화는 원본 보호를 위해 중지되어 있습니다.",
-      messageVi: "Tên mặt hàng tự động hiển thị theo danh mục hiện tại. Đồng bộ thông tin nhập cũ đã dừng để bảo vệ bản gốc.",
-    }, { status: 409, headers: NO_STORE_HEADERS });
-
-    let body: { action?: unknown; business_date?: unknown; item_id?: unknown; month?: unknown; targets?: unknown };
-    try { body = await request.json(); }
-    catch { return NextResponse.json({ ok: false, error: "inventory_daily_sync_invalid_body" }, { status: 400, headers: NO_STORE_HEADERS }); }
-    if (body.action === "sync_month") return await syncMonth(body.month, body.targets, auth.actor.id);
-    const action = body.action;
-    const businessDate = body.business_date;
-    const itemId = action === "sync_item" ? Number(body.item_id) : undefined;
-    if ((action !== "sync_item" && action !== "sync_all") || !isValidBusinessDate(businessDate) || (action === "sync_item" && !isPositiveId(Number(itemId)))) {
-      return NextResponse.json({ ok: false, error: "inventory_daily_sync_invalid_request" }, { status: 400, headers: NO_STORE_HEADERS });
-    }
-    if (!isInventorySnapshotNameSyncEligible(businessDate)) return NextResponse.json({ ok: false, error: "inventory_snapshot_name_sync_before_start_date" }, { status: 400, headers: NO_STORE_HEADERS });
-
-    const supabase = createSupabaseAdmin();
-    const rows = await loadDailySyncRows(supabase, businessDate, itemId);
-    if (!rows.ok) return NextResponse.json({ ok: false, error: rows.error }, { status: 500, headers: NO_STORE_HEADERS });
-    const plans = planInventoryLogNameUpdates(businessDate, rows.logs, rows.inventoryItems, itemId);
-    const snapshotBatch = await loadOptionalSnapshotBatchId(supabase, businessDate);
-    if (!snapshotBatch.ok) return NextResponse.json({ ok: false, error: snapshotBatch.error }, { status: 500, headers: NO_STORE_HEADERS });
-
-    const inventoryById = new Map(rows.inventoryItems.map((item) => [Number(item.id), item] as const));
-    const results = [];
-    for (const plan of plans) {
-      const inventoryItem = inventoryById.get(plan.itemId);
-      if (!inventoryItem) {
-        results.push({ itemId: plan.itemId, currentItemName: plan.currentItemName, currentItemNameVi: plan.currentItemNameVi, status: "failed" as const, code: "INVENTORY_ITEM_NOT_FOUND", targets: plan.targets.map(target => ({ purchaseLogId: target.purchaseLogId, correctionLogId: target.correctionLogId, status: "failed" as const, code: "INVENTORY_ITEM_NOT_FOUND" })) });
-        continue;
-      }
-      results.push(await runItemSync({
-        supabase,
-        plan,
-        inventoryItem,
-        actorUserId: auth.actor.id,
-        snapshotBatchId: snapshotBatch.batchId,
-      }));
-    }
-
-    return NextResponse.json({
-      ok: true,
-      businessDate,
-      snapshotBatchId: snapshotBatch.batchId,
-      results,
-      syncedCount: results.filter((result) => result.status === "synced").length,
-      reviewRequiredCount: results.filter((result) => result.status === "review_required").length,
-      failedCount: results.filter((result) => result.status === "failed").length,
-    }, { headers: NO_STORE_HEADERS });
-  } catch (error) {
-    console.error("[INVENTORY_DAILY_SYNC_POST_FAILED]", error);
+    if (!["owner", "master"].includes(String(auth.actor.role ?? "").trim().toLowerCase())) return NextResponse.json({ ok: false, error: "inventory_snapshot_name_sync_forbidden" }, { status: 403, headers: NO_STORE_HEADERS });
+    return NextResponse.json({ ok: false, code: "INVENTORY_HISTORICAL_SYNC_DISABLED", error: "INVENTORY_HISTORICAL_SYNC_DISABLED" }, { status: 409, headers: NO_STORE_HEADERS });
+  } catch {
     return NextResponse.json({ ok: false, error: "inventory_daily_sync_failed" }, { status: 500, headers: NO_STORE_HEADERS });
   }
 }
